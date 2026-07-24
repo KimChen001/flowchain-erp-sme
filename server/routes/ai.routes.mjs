@@ -20,6 +20,7 @@ import { buildUnknownGuidedFallbackResponse, classifyAiBusinessIntent, isTechnic
 import { businessContextToReadDb, readBusinessContext } from '../services/runtime-business-read-service.mjs'
 import { createAiHandlerRegistry, aiHandlersForPhase } from './ai-handler-registry.mjs'
 import { dispatchAiHandlers } from './ai-dispatcher.mjs'
+import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs'
 import { buildMrpPlan } from './mrp.routes.mjs'
 import {
   ensureMarketPrices,
@@ -511,6 +512,7 @@ function providerFailureResponse({ body, db, ctx }) {
 }
 
 const aiHandlerRegistry = createAiHandlerRegistry({
+  runBusinessQueryRuntime,
   buildAiResponseContractV2,
   buildAiSessionGroundedResponse,
   buildAiFinanceCollaborationResponse,

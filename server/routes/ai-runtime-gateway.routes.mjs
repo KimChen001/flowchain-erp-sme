@@ -1,4 +1,5 @@
 import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, buildAiRuntimeSafeFallbackV2 } from '../domain/ai-runtime-gateway-v2.mjs'
+import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs'
 
 export async function loadAiRuntimeFacts(repositories = {}, tenantId = '') {
   if (!tenantId) return {}
@@ -36,6 +37,11 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
       return true
     }
     try {
+      const businessQuery = await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
+      if (businessQuery) {
+        send(res, 200, businessQuery)
+        return true
+      }
       const facts = identity?.authenticated && identity.tenantId
         ? await loadAiRuntimeFacts(repositories, identity.tenantId)
         : {}

@@ -32,6 +32,7 @@ function readContextHandler({ id, resolve, when, action, summary, persist, timin
 }
 
 export const AI_HANDLER_IDS = Object.freeze({
+  businessQueryPlan: "business_query_plan",
   responseContractV2: "response_contract_v2",
   sessionGrounding: "session_grounding",
   financeFastPath: "finance_collaboration_fast_path",
@@ -67,6 +68,14 @@ export const AI_HANDLER_IDS = Object.freeze({
 
 export function createAiHandlerRegistry(d) {
   return Object.freeze([
+    {
+      id: AI_HANDLER_IDS.businessQueryPlan,
+      phase: "pre_read_context",
+      resolve: state => d.runBusinessQueryRuntime?.(state.ctx, state.db, state.body, { responseMode: 'chat' }),
+      fastPath: "business_query_plan",
+      modelTiming: "elapsed",
+      audit: result => ({ action: "ai_business_query_planned", summary: `AI query plan: ${result.planningVersion}`, entity: result.intent.name, persist: false }),
+    },
     {
       id: AI_HANDLER_IDS.responseContractV2,
       phase: "pre_read_context",
