@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "flowchain://schemas/business-query-plan-v1",
+  "title": "FlowChain BusinessQueryPlan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["planningVersion", "scope", "goals", "filters", "grouping", "comparison", "ranking", "requestedEvidence", "requestedActions", "ambiguities", "clarificationNeeded", "clarificationQuestion", "confidence"],
+  "properties": {
+    "planningVersion": { "const": "business-query-plan-v1" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityType", "mode", "entityIds", "entityNames", "source"],
+      "properties": {
+        "entityType": { "enum": ["supplier", "inventory", "procurement", "workspace"] },
+        "mode": { "enum": ["single", "set", "all", "current_context", "previous_result"] },
+        "entityIds": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 160 } },
+        "entityNames": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 160 } },
+        "source": { "enum": ["explicit", "global", "current_context", "previous_result", "clarification"] }
+      }
+    },
+    "goals": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "string" } },
+    "filters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeWindow", "dueState", "riskLevels", "statuses", "currencies"],
+      "properties": {
+        "timeWindow": { "enum": ["today", "current_week", "next_7_days", "next_30_days", "month_end", "overdue", "all"] },
+        "dueState": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "enum": ["due_now", "due_this_week", "overdue", "future_due", "ready_for_payment", "blocked", "partially_settled", "settled", "disputed", "held", "missing_evidence"] } },
+        "riskLevels": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "enum": ["critical", "high", "medium", "low"] } },
+        "statuses": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string", "maxLength": 80 } },
+        "currencies": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z]{3}$" } }
+      }
+    },
+    "grouping": { "type": "array", "maxItems": 5, "uniqueItems": true, "items": { "enum": ["supplier", "currency", "priority", "goal", "status"] } },
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "dimensions"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "dimensions": { "type": "array", "maxItems": 6, "uniqueItems": true, "items": { "enum": ["priority", "payment_readiness", "payment_blocks", "operational_risk", "data_quality"] } }
+      }
+    },
+    "ranking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "limit"],
+      "properties": { "enabled": { "type": "boolean" }, "limit": { "type": "integer", "minimum": 1, "maximum": 50 } }
+    },
+    "requestedEvidence": { "type": "boolean" },
+    "requestedActions": { "type": "array", "maxItems": 0 },
+    "ambiguities": { "type": "array", "maxItems": 10, "items": { "type": "string", "maxLength": 300 } },
+    "clarificationNeeded": { "type": "boolean" },
+    "clarificationQuestion": { "type": ["string", "null"], "maxLength": 500 },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}
