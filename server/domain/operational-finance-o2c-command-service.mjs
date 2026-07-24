@@ -303,9 +303,17 @@ export function createOperationalFinanceO2cCommandService({
       requestHash,
     );
     if (outside) return outside;
-    try {
-      return await prisma.$transaction(
-        async (tx) => {
+    const isTransientSerializationConflict = (error) => Boolean(
+      error?.code === "P2034" ||
+      error?.cause?.originalCode === "40001" ||
+      error?.cause?.code === "40001" ||
+      /serialization|deadlock|write conflict/i.test(text(error?.message)),
+    );
+    let retryCount = 0;
+    while (true) {
+      try {
+        return await prisma.$transaction(
+          async (tx) => {
           const actor = await resolveProvisionedActor(tx, signed);
           assertAuthorized({ actor, permission: commandPermission(commandType), tenantId: actor.tenantId });
           const inside = replay(
@@ -338,10 +346,15 @@ export function createOperationalFinanceO2cCommandService({
             },
           });
           return { ...result, idempotentReplay: false };
-        },
-        { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
-      );
-    } catch (error) {
+          },
+          { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
+        );
+      } catch (error) {
+        if (isTransientSerializationConflict(error) && retryCount < 2) {
+          retryCount += 1;
+          await new Promise((resolve) => setTimeout(resolve, retryCount * 25));
+          continue;
+        }
       if (error instanceof OperationalFinanceError) throw error;
       if (error?.code === "P2002")
         fail(
@@ -349,16 +362,14 @@ export function createOperationalFinanceO2cCommandService({
           "A finance document with the same governed identifier already exists.",
           409,
         );
-      if (
-        error?.code === "P2034" ||
-        /serialization|deadlock|write conflict/i.test(text(error?.message))
-      )
+      if (isTransientSerializationConflict(error))
         fail(
           "FINANCE_CONCURRENCY_CONFLICT",
           "Finance facts changed concurrently. Reload and retry.",
           409,
         );
-      throw error;
+        throw error;
+      }
     }
   }
 
