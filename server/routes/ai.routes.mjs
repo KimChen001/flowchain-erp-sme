@@ -18,6 +18,7 @@ import { buildAiReadContext } from '../domain/ai-read-context.mjs'
 import { getAiToolRegistry } from '../domain/ai-tool-registry.mjs'
 import { buildUnknownGuidedFallbackResponse, classifyAiBusinessIntent, isTechnicalProviderDiagnosticPrompt } from '../domain/ai-business-intent-router.mjs'
 import { businessContextToReadDb, readBusinessContext } from '../services/runtime-business-read-service.mjs'
+import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs'
 import { buildMrpPlan } from './mrp.routes.mjs'
 import {
   ensureMarketPrices,
@@ -535,6 +536,15 @@ export async function handleAiRoute(ctx) {
     }
 
     let branchStartedAt = Date.now()
+    const businessQuery = await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'chat' })
+    if (businessQuery) {
+      const result = { ...businessQuery, timingMs: Date.now() - startedAt, externalMs: 0, modelMs: Date.now() - branchStartedAt }
+      void recordAiEventBestEffort({ db, event, writeDb, repositories, action: 'ai_business_query_planned', summary: `AI executed ${result.planningVersion} with planner status ${result.plannerStatus}`, entity: result.intent.name, persist: false })
+      logAiTiming({ startedAt, branchStartedAt, branch: 'business_query_plan', body, result })
+      return send(res, 200, result)
+    }
+
+    branchStartedAt = Date.now()
     const responseContractV2 = detectCompoundBusinessQuery(body)
       ? null
       : buildAiResponseContractV2(db, body, { ensurePurchaseRequests, ensureInventoryMovements, ensureRfqs })

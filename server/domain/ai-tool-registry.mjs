@@ -449,6 +449,54 @@ export const aiToolRegistry = Object.freeze([
     audit: { recordInvocation: true, action: 'ai_tool_invoked' },
   },
   {
+    name: 'getSupplierPaymentSummary',
+    module: 'finance',
+    mode: 'read',
+    description: 'Read authorized supplier payable due, overdue, ready, and blocked summaries.',
+    requiredPermission: 'finance.payable.read',
+    sensitivityGroups: ['finance_amounts', 'finance_partner_snapshot'],
+    inputSchema: { supplierIds: 'string[]?', timeWindow: 'object' },
+    outputSchema: { state: 'business_result_state', counts: 'object', amounts: 'object', validity: 'record_validity_summary', evidence: 'evidence[]', limitations: 'string[]' },
+    outputCardTypes: ['business_query_section', 'evidence'],
+    requiresUserReview: false, writesBusinessData: false,
+    audit: { recordInvocation: true, action: 'ai_business_read_tool_invoked', planningVersion: 'business-query-plan-v1' },
+  },
+  {
+    name: 'getSupplierPaymentBlocks', module: 'finance', mode: 'read', description: 'Read deterministic supplier payment block reasons.',
+    requiredPermission: 'finance.payable.read', sensitivityGroups: ['finance_partner_snapshot'], inputSchema: { supplierIds: 'string[]?' }, outputSchema: { state: 'business_result_state', blocks: 'payment_block[]', evidence: 'evidence[]' }, outputCardTypes: ['business_query_section', 'evidence'], requiresUserReview: false, writesBusinessData: false,
+    audit: { recordInvocation: true, action: 'ai_business_read_tool_invoked', planningVersion: 'business-query-plan-v1' },
+  },
+  {
+    name: 'getSupplierOperationalFollowups', module: 'procurement', mode: 'read', description: 'Read PO, receiving, RFQ, and evidence follow-ups by supplier.',
+    requiredPermission: 'procurement.purchase_order.read', sensitivityGroups: ['finance_partner_snapshot'], inputSchema: { supplierIds: 'string[]?', goals: 'string[]' }, outputSchema: { state: 'business_result_state', rows: 'supplier_followup[]', evidence: 'evidence[]' }, outputCardTypes: ['business_query_section', 'evidence'], requiresUserReview: false, writesBusinessData: false,
+    audit: { recordInvocation: true, action: 'ai_business_read_tool_invoked', planningVersion: 'business-query-plan-v1' },
+  },
+  {
+    name: 'getSupplierActionSummary', module: 'srm', mode: 'read', description: 'Read the authorized cross-domain SupplierActionSummary projection.',
+    requiredPermission: 'procurement.purchase_order.read', sensitivityGroups: ['finance_amounts', 'finance_partner_snapshot'], inputSchema: { supplierIds: 'string[]?', timeWindow: 'object' }, outputSchema: { items: 'SupplierActionSummary[]', validity: 'record_validity_summary' }, outputCardTypes: ['business_query_section', 'evidence'], requiresUserReview: false, writesBusinessData: false,
+    audit: { recordInvocation: true, action: 'ai_business_read_tool_invoked', planningVersion: 'business-query-plan-v1' },
+  },
+  {
+    name: 'getSupplierPriorityList', module: 'srm', mode: 'read', description: 'Read deterministic supplier priority ranking using supplier-action-priority-v1.',
+    requiredPermission: 'procurement.purchase_order.read', sensitivityGroups: ['finance_partner_snapshot'], inputSchema: { supplierIds: 'string[]?', limit: 'number?' }, outputSchema: { rows: 'supplier_priority[]', algorithmVersion: 'string' }, outputCardTypes: ['business_query_section', 'evidence'], requiresUserReview: false, writesBusinessData: false,
+    audit: { recordInvocation: true, action: 'ai_business_read_tool_invoked', planningVersion: 'business-query-plan-v1' },
+  },
+  {
+    name: 'compareSupplierActionRisk', module: 'srm', mode: 'read', description: 'Compare deterministic action risk for an authorized supplier set.',
+    requiredPermission: 'procurement.purchase_order.read', sensitivityGroups: ['finance_amounts', 'finance_partner_snapshot'], inputSchema: { supplierIds: 'string[]' }, outputSchema: { rows: 'supplier_comparison[]', algorithmVersion: 'string' }, outputCardTypes: ['business_query_section', 'evidence'], requiresUserReview: false, writesBusinessData: false,
+    audit: { recordInvocation: true, action: 'ai_business_read_tool_invoked', planningVersion: 'business-query-plan-v1' },
+  },
+  {
+    name: 'getSupplierInvoiceExceptions', module: 'finance', mode: 'read', description: 'Read authorized supplier invoice dispute and match exceptions.',
+    requiredPermission: 'finance.supplier_invoice.read', sensitivityGroups: ['finance_amounts', 'finance_partner_snapshot'], inputSchema: { supplierIds: 'string[]?' }, outputSchema: { state: 'business_result_state', rows: 'invoice_exception[]', evidence: 'evidence[]' }, outputCardTypes: ['business_query_section', 'evidence'], requiresUserReview: false, writesBusinessData: false,
+    audit: { recordInvocation: true, action: 'ai_business_read_tool_invoked', planningVersion: 'business-query-plan-v1' },
+  },
+  {
+    name: 'getSupplierBankReconciliationExceptions', module: 'finance', mode: 'read', description: 'Read only Phase 5.3.1 safe bank reconciliation exception DTOs.',
+    requiredPermission: 'finance.bank_reconciliation.read', sensitivityGroups: ['finance_amounts', 'finance_partner_snapshot'], inputSchema: { supplierIds: 'string[]?' }, outputSchema: { state: 'business_result_state', rows: 'safe_bank_exception[]', evidence: 'evidence[]' }, outputCardTypes: ['business_query_section', 'evidence'], requiresUserReview: false, writesBusinessData: false,
+    audit: { recordInvocation: true, action: 'ai_business_read_tool_invoked', planningVersion: 'business-query-plan-v1', safeProjection: 'phase-5.3.1' },
+  },
+  {
     name: 'preparePurchaseRequestDraft',
     module: 'procurement',
     mode: 'draft_preparation',
@@ -487,6 +535,8 @@ export function getAiToolRegistry() {
   return aiToolRegistry.map((tool) => ({
     ...tool,
     inputSchema: { ...tool.inputSchema },
+    outputSchema: tool.outputSchema ? { ...tool.outputSchema } : undefined,
+    sensitivityGroups: tool.sensitivityGroups ? [...tool.sensitivityGroups] : undefined,
     outputCardTypes: [...tool.outputCardTypes],
     audit: { ...tool.audit },
   }))
