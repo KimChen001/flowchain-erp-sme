@@ -16,24 +16,24 @@ function readSource(...parts) {
   return fs.readFileSync(path.join(repoRoot, ...parts), 'utf8')
 }
 
-test('persistence config keeps JSON default independent of DATABASE_URL', () => {
+test('persistence config is PostgreSQL-only and requires DATABASE_URL', () => {
   assert.deepEqual(getPersistenceConfig({}), {
-    mode: 'json',
+    mode: 'database',
     databaseConfigured: false,
     databaseUrl: '',
   })
   assert.deepEqual(getPersistenceConfig({ DATABASE_URL: 'postgresql://user:pass@localhost:5432/flowchain' }), {
-    mode: 'json',
+    mode: 'database',
     databaseConfigured: true,
     databaseUrl: 'postgresql://user:pass@localhost:5432/flowchain',
   })
-  assert.equal(isDatabasePersistenceEnabled({}), false)
+  assert.throws(() => isDatabasePersistenceEnabled({}), { code: 'FLOWCHAIN_DATABASE_URL_REQUIRED' })
 })
 
-test('database mode validates DATABASE_URL only when explicitly selected', () => {
+test('database configuration validates DATABASE_URL for every runtime', () => {
   assert.throws(
     () => validateDatabasePersistenceConfig({ FLOWCHAIN_PERSISTENCE_MODE: 'database' }),
-    (error) => error.message === DATABASE_CONFIG_ERROR && error.code === 'FLOWCHAIN_DATABASE_CONFIG_MISSING'
+    (error) => error.message === DATABASE_CONFIG_ERROR && error.code === 'FLOWCHAIN_DATABASE_URL_REQUIRED'
   )
   assert.deepEqual(validateDatabasePersistenceConfig({
     FLOWCHAIN_PERSISTENCE_MODE: 'database',
@@ -48,7 +48,7 @@ test('database mode validates DATABASE_URL only when explicitly selected', () =>
 test('Prisma client module validates config before dynamic import', async () => {
   await assert.rejects(
     () => getPrismaClient({ FLOWCHAIN_PERSISTENCE_MODE: 'database' }),
-    /DATABASE_URL is required/
+    /FLOWCHAIN_DATABASE_URL_REQUIRED/
   )
 
   const source = readSource('server', 'persistence', 'prisma-client.mjs')
@@ -56,11 +56,11 @@ test('Prisma client module validates config before dynamic import', async () => 
   assert.ok(source.indexOf('validateDatabasePersistenceConfig') < source.indexOf("await import('@prisma/client')"))
 })
 
-test('Prisma schema contains low-risk foundations and read models only', () => {
+test('Prisma schema contains PostgreSQL runtime foundations and read models', () => {
   const schema = readSource('prisma', 'schema.prisma')
   const config = readSource('prisma.config.ts')
 
-  for (const model of ['Tenant', 'User', 'Supplier', 'Item', 'Warehouse', 'PaymentTerm', 'TaxCode', 'ActionDraft', 'ActionDraftValidation', 'ActionDraftAuditTrail', 'AuditLog', 'AiEvidence', 'PurchaseRequest', 'PurchaseRequestLine', 'Rfq', 'RfqLine', 'SupplierQuotation', 'SupplierQuotationLine', 'PurchaseOrder', 'PurchaseOrderLine', 'ReceivingDocument', 'ReceivingLine', 'SupplierInvoice', 'SupplierInvoiceLine', 'ThreeWayMatch', 'DocumentLink', 'ProcurementFollowup', 'InventoryBalance', 'InventoryLot', 'InventorySerial', 'InventoryMovement', 'InventoryException']) {
+  for (const model of ['Tenant', 'User', 'RuntimeRecord', 'Supplier', 'Item', 'Warehouse', 'PaymentTerm', 'TaxCode', 'ActionDraft', 'ActionDraftValidation', 'ActionDraftAuditTrail', 'AuditLog', 'AiEvidence', 'PurchaseRequest', 'PurchaseRequestLine', 'Rfq', 'RfqLine', 'SupplierQuotation', 'SupplierQuotationLine', 'PurchaseOrder', 'PurchaseOrderLine', 'ReceivingDocument', 'ReceivingLine', 'SupplierInvoice', 'SupplierInvoiceLine', 'ThreeWayMatch', 'DocumentLink', 'ProcurementFollowup', 'InventoryBalance', 'InventoryLot', 'InventorySerial', 'InventoryMovement', 'InventoryException']) {
     assert.match(schema, new RegExp(`model ${model} \\{`), model)
   }
 

@@ -1,6 +1,6 @@
 import { getPersistenceMode, PERSISTENCE_MODES } from '../repositories/adapter-registry.mjs'
 
-export const DATABASE_CONFIG_ERROR = 'DATABASE_URL is required when FLOWCHAIN_PERSISTENCE_MODE=database.'
+export const DATABASE_CONFIG_ERROR = 'FLOWCHAIN_DATABASE_URL_REQUIRED'
 
 function text(value = '') {
   return String(value ?? '').trim()
@@ -22,9 +22,9 @@ export function getPersistenceConfig(env = process.env) {
 
 export function validateDatabasePersistenceConfig(env = process.env) {
   const config = getPersistenceConfig(env)
-  if (config.mode === PERSISTENCE_MODES.database && !config.databaseConfigured) {
+  if (!config.databaseConfigured) {
     const error = new Error(DATABASE_CONFIG_ERROR)
-    error.code = 'FLOWCHAIN_DATABASE_CONFIG_MISSING'
+    error.code = DATABASE_CONFIG_ERROR
     error.status = 500
     throw error
   }
@@ -32,5 +32,6 @@ export function validateDatabasePersistenceConfig(env = process.env) {
 }
 
 export function isDatabasePersistenceEnabled(env = process.env) {
-  return getPersistenceMode(env) === PERSISTENCE_MODES.database
+  validateDatabasePersistenceConfig(env)
+  return true
 }

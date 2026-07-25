@@ -5,12 +5,11 @@ import { fileURLToPath } from "node:url";
 import { ProxyAgent } from "undici";
 import { execFileSync } from "node:child_process";
 import { loadEnv } from "../config/env.mjs";
-import { createJsonDb } from "../repositories/json-db.mjs";
 import {
   createRepositoryRegistry,
   getPersistenceMode,
 } from "../repositories/adapter-registry.mjs";
-import { runtimeFileMutexLimitations } from "../repositories/runtime-file-mutex.mjs";
+import { validateDatabasePersistenceConfig } from "../persistence/persistence-config.mjs";
 import { contentTypeFor, readBody, send, sendText } from "../utils/http.mjs";
 import { sendInternalServerError } from "../utils/safe-errors.mjs";
 import {
@@ -25,8 +24,6 @@ import {
 } from "../domain/audit-policy.mjs";
 import {
   createEmptyDataset,
-  resolveFlowchainDataMode,
-  shouldReadDemoData,
 } from "../domain/data-mode.mjs";
 import {
   isDatabaseModeWriteBlocked,
@@ -84,7 +81,6 @@ import { handleMrpRoute } from "./mrp.routes.mjs";
 import { handleSopRoute } from "./sop.routes.mjs";
 import { handleActionDraftsRoute } from "./action-drafts.routes.mjs";
 import { handleUserConfirmedActionsRoute } from "./user-confirmed-actions.routes.mjs";
-import { handleProcurementTransactionsRoute } from "./procurement-transactions.routes.mjs";
 import { handleProcurementWorkflowRoute } from "./procurement-workflow.routes.mjs";
 import { handleExceptionCasesRoute } from "./exception-cases.routes.mjs";
 import { handleUserDataRoute } from "./user-data.routes.mjs";
@@ -108,8 +104,6 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "..", "..");
-const dataFile = path.join(root, "data", "scm-demo.json");
-const jsonDb = createJsonDb(dataFile);
 const port = Number(process.env.SCM_API_PORT || 8787);
 const distDir = path.join(root, "dist");
 const staticAssetPath = (pathname) =>
@@ -160,21 +154,6 @@ const webProxyUrl =
   "http://127.0.0.1:15236";
 const webDispatcher = webProxyUrl ? new ProxyAgent(webProxyUrl) : undefined;
 const aiMaxTokens = Number(process.env.AI_MAX_TOKENS || 520);
-
-async function readDb() {
-  const dataMode = resolveFlowchainDataMode(process.env);
-  if (!shouldReadDemoData(dataMode))
-    return createEmptyDataset({ mode: dataMode.mode });
-  const db = await jsonDb.read();
-  db.__dataMode = dataMode.mode;
-  return db;
-}
-
-async function writeDb(db) {
-  const dataMode = resolveFlowchainDataMode(process.env);
-  if (!dataMode.writable) return;
-  await jsonDb.write(db);
-}
 
 async function sendStatic(req, res, url) {
   if (!["GET", "HEAD"].includes(req.method))
@@ -1471,6 +1450,7 @@ function supplierRecommendations(
 }
 
 export function createScmServer() {
+  validateDatabasePersistenceConfig(process.env);
   const localSessions = new Map();
   const localSessionSecret = createLocalSessionSecret(process.env);
   return http.createServer(async (req, res) => {
@@ -1478,9 +1458,9 @@ export function createScmServer() {
       if (req.method === "OPTIONS") return send(res, 204, {});
 
       const url = new URL(req.url || "/", `http://localhost:${port}`);
-      const db = await readDb();
+      const db = createEmptyDataset({ mode: "user" });
       const persistenceMode = getPersistenceMode(process.env);
-      const dataMode = resolveFlowchainDataMode(process.env);
+      const dataMode = { mode: "user", readsDemoData: false };
       const repositories = createRepositoryRegistry({ db, env: process.env });
       const identity = resolveRequestIdentity(
         req,
@@ -1497,22 +1477,7 @@ export function createScmServer() {
           dataMode: dataMode.mode,
           readsDemoData: dataMode.readsDemoData,
           persistenceMode,
-          runtimeWriteCoordination: runtimeFileMutexLimitations,
-          runtimeAdapters: {
-            masterData: repositories.masterData?.adapter || "unavailable",
-            items:
-              repositories.masterData?.itemRuntime?.adapter || "unavailable",
-            suppliers:
-              repositories.masterData?.supplierRuntime?.adapter ||
-              "unavailable",
-            customers:
-              repositories.masterData?.customerRuntime?.adapter ||
-              "unavailable",
-            inventory: repositories.inventoryRuntime?.adapter || "unavailable",
-            salesOrders: repositories.salesOrders?.adapter || "unavailable",
-            procurement:
-              repositories.procurementRuntime?.adapter || "unavailable",
-          },
+          authority: "postgresql",
           timestamp: new Date().toISOString(),
         });
       }
@@ -1542,48 +1507,46 @@ export function createScmServer() {
         } catch (error) {
           return send(res, 400, { error: error.message });
         }
-        if (persistenceMode === "database") {
-          const tenantId = String(
-            process.env.FLOWCHAIN_DEFAULT_TENANT_ID || "",
-          ).trim();
-          if (!tenantId)
-            return send(res, 403, {
-              code: "TENANT_CONTEXT_REQUIRED",
-              message: "Pilot workspace tenant is not configured.",
-            });
-          const prisma = await getPrismaClient(process.env);
-          const provisioned = await prisma.user.findFirst({
-            where: {
-              tenantId,
-              email: String(profile.email || "")
-                .trim()
-                .toLowerCase(),
-            },
-            include: { tenant: true },
+        const tenantId = String(
+          process.env.FLOWCHAIN_DEFAULT_TENANT_ID || "",
+        ).trim();
+        if (!tenantId)
+          return send(res, 403, {
+            code: "TENANT_CONTEXT_REQUIRED",
+            message: "Pilot workspace tenant is not configured.",
           });
-          if (!provisioned)
-            return send(res, 403, {
-              code: "USER_NOT_PROVISIONED",
-              message: "This email is not provisioned for the Pilot workspace.",
-            });
-          if (provisioned.status !== "active")
-            return send(res, 403, {
-              code: "USER_DISABLED",
-              message: "This workspace user is disabled.",
-            });
-          profile = {
-            id: provisioned.id,
+        const prisma = await getPrismaClient(process.env);
+        const provisioned = await prisma.user.findFirst({
+          where: {
             tenantId,
-            name: provisioned.name,
-            email: provisioned.email,
-            company: provisioned.tenant.name,
-            role: provisioned.role,
-            version: provisioned.version,
-          };
-        }
+            email: String(profile.email || "")
+              .trim()
+              .toLowerCase(),
+          },
+          include: { tenant: true },
+        });
+        if (!provisioned)
+          return send(res, 403, {
+            code: "USER_NOT_PROVISIONED",
+            message: "This email is not provisioned for the Pilot workspace.",
+          });
+        if (provisioned.status !== "active")
+          return send(res, 403, {
+            code: "USER_DISABLED",
+            message: "This workspace user is disabled.",
+          });
+        profile = {
+          id: provisioned.id,
+          tenantId,
+          name: provisioned.name,
+          email: provisioned.email,
+          company: provisioned.tenant.name,
+          role: provisioned.role,
+          version: provisioned.version,
+        };
         const session = createLocalSession(profile, {
           env: process.env,
-          authoritativeRole: persistenceMode === "database",
+          authoritativeRole: true,
         });
         localSessions.set(session.sessionId, session);
         const token = issueLocalSessionToken(session, localSessionSecret);
@@ -1625,65 +1588,6 @@ export function createScmServer() {
         return send(res, 200, db.forecastPlans || []);
       }
 
-      if (req.method === "POST" && url.pathname === "/api/forecast-plans") {
-        const body = await readBody(req);
-        const plan = {
-          id: body.id || `FCST-${Date.now()}`,
-          sku: body.sku,
-          name: body.name,
-          unit: body.unit,
-          method: body.method,
-          horizon: Number(body.horizon || 0),
-          scenario: body.scenario || "base",
-          promoLift: Number(body.promoLift || 0),
-          serviceLevel: Number(body.serviceLevel || 95),
-          leadTimeDays: Number(body.leadTimeDays || 14),
-          history: Array.isArray(body.history)
-            ? body.history.map(Number).filter(Number.isFinite)
-            : [],
-          metrics: body.metrics || {},
-          reconciliation: Array.isArray(body.reconciliation)
-            ? body.reconciliation
-            : [],
-          procurementSuggestion:
-            body.procurementSuggestion &&
-            typeof body.procurementSuggestion === "object"
-              ? {
-                  supplier: body.procurementSuggestion.supplier || "",
-                  buyer: body.procurementSuggestion.buyer || "",
-                  unitPrice: Number(body.procurementSuggestion.unitPrice || 0),
-                  quantity: Number(body.procurementSuggestion.quantity || 0),
-                  amount: Number(body.procurementSuggestion.amount || 0),
-                  priority: body.procurementSuggestion.priority || "中",
-                  firstStockoutMonth:
-                    body.procurementSuggestion.firstStockoutMonth || null,
-                  safetyFactor: Number(
-                    body.procurementSuggestion.safetyFactor || 1,
-                  ),
-                  basis:
-                    body.procurementSuggestion.basis || "peak-net-shortage",
-                }
-              : null,
-          recommendation: body.recommendation || "",
-          createdAt: new Date().toISOString(),
-        };
-        if (!plan.sku || plan.history.length < 6) {
-          return send(res, 400, {
-            error: "sku and at least 6 history points are required",
-          });
-        }
-        db.forecastPlans = [plan, ...(db.forecastPlans || [])].slice(0, 20);
-        event(
-          db,
-          "forecast_plan_saved",
-          `预测方案 ${plan.id} 已保存`,
-          plan.sku,
-        );
-        await writeDb(db);
-        return send(res, 201, plan);
-      }
-
-      const routeWriteDb = persistenceMode === "database" ? undefined : writeDb;
       const routeContext = {
         req,
         res,
@@ -1691,7 +1595,6 @@ export function createScmServer() {
         db,
         send,
         readBody,
-        writeDb: routeWriteDb,
         event,
         todayLabel,
         repositories,
@@ -1776,7 +1679,6 @@ export function createScmServer() {
       if (await handleActionDraftsRoute(routeContext)) return;
       if (await handleUserConfirmedActionsRoute(routeContext)) return;
       if (await handleProcurementWorkflowRoute(routeContext)) return;
-      if (await handleProcurementTransactionsRoute(routeContext)) return;
       if (await handleExceptionCasesRoute(routeContext)) return;
       if (await handleUserDataRoute(routeContext)) return;
       if (await handleMarketRoute(routeContext)) return;
