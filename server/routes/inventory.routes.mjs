@@ -1,4 +1,3 @@
-import { createJsonInventoryReadRepository } from "../repositories/json-inventory-read-repository.mjs";
 import {
   buildRuntimeInventoryAllocation,
   getRuntimeSkuAvailability,
@@ -25,22 +24,16 @@ function authoritativeQuery(url) {
 
 async function authoritativeService(ctx) {
   const env = ctx.env || process.env;
-  if (
-    env.FLOWCHAIN_PERSISTENCE_MODE !== "database" ||
-    !ctx.identity?.authenticated
-  )
-    return null;
+  if (!ctx.identity?.authenticated) return null;
   const prisma =
     ctx.inventoryPrisma || ctx.outboundPrisma || (await getPrismaClient(env));
   return createInventoryAuthoritativeReadService({ prisma });
 }
 
 function inventoryReadRepository(ctx) {
-  return (
-    ctx.repositories?.inventoryRuntime ||
-    ctx.repositories?.inventoryRead ||
-    createJsonInventoryReadRepository(ctx.db)
-  );
+  if (!ctx.repositories?.inventoryRead)
+    throw new Error("PostgreSQL inventory repository is not configured.");
+  return ctx.repositories.inventoryRead;
 }
 
 export async function handleInventoryRoute(ctx) {

@@ -1,5 +1,3 @@
-import { createJsonProcurementReadRepository } from '../repositories/json-procurement-read-repository.mjs'
-
 function query(url) {
   return {
     q: url.searchParams.get('q') || '',
@@ -11,7 +9,8 @@ function query(url) {
 }
 
 function procurementReadRepository(ctx) {
-  return ctx.repositories?.procurementRead || createJsonProcurementReadRepository(ctx.db)
+  if (!ctx.repositories?.procurementRead) throw new Error('PostgreSQL procurement repository is not configured.')
+  return ctx.repositories.procurementRead
 }
 
 export async function handleProcurementReadRoute(ctx) {
