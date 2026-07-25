@@ -1,5 +1,5 @@
 import { ITEM_MASTER, SUPPLIER_MASTER, WAREHOUSE_BINS } from "../../data/master-data";
-import { purchaseOrders, receivingDocs, SUPPLIER_INVOICES } from "../../data/demo-data";
+import { purchaseOrders, receivingDocs, SUPPLIER_INVOICES } from "../../data/empty-business-state";
 import type { ExcelBusinessSchema, ExcelFieldSchema } from "./excelSchemas";
 
 export type ValidationLevel = "valid" | "warning" | "error";

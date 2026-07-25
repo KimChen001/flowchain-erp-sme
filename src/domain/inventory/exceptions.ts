@@ -1,4 +1,4 @@
-import { INVENTORY_MOVEMENT_LEDGER, LOTS, TRANSFERS, VARIANCES } from "../../data/demo-data";
+import { INVENTORY_MOVEMENT_LEDGER, LOTS, TRANSFERS, VARIANCES } from "../../data/empty-business-state";
 import type { InventoryMovement } from "../../types/scm";
 import { INVENTORY_MOVEMENT_TYPE_LABELS, isInventoryMovementException, netInventoryImpact } from "./movements";
 

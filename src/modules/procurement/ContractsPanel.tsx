@@ -1,7 +1,7 @@
 import { Activity, AlertTriangle, DollarSign, FileSpreadsheet, Handshake } from "lucide-react";
 import { toast } from "sonner";
 import { Card, Chip, KpiCard, A } from "../../components/ui";
-import { CONTRACTS } from "../../data/demo-data";
+import { CONTRACTS } from "../../data/empty-business-state";
 import { exportRowsToCsv } from "../../lib/data-export";
 
 export default function ContractsPanel() {

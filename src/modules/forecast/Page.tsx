@@ -7,7 +7,7 @@ import { exportRowsToCsv } from "../../lib/data-export";
 import { fmt } from "../../lib/format";
 import { A, AppleTooltip, Card, Chip, Field, inputStyle, SectionHeader } from "../../components/ui";
 import { tableBodyTextClass, tdClass, tdNumericClass, tdWideClass, tdWideNumericClass, thClass, thWideClass } from "../../components/ui/workbenchTable";
-import { FORECAST_SKUS, supplierData } from "../../data/demo-data";
+import { FORECAST_SKUS, supplierData } from "../../data/empty-business-state";
 import { METHOD_LABEL, applyForecastScenario, demandDiagnostics, formatDemandSeries, formatEta, mapeGrade, parseDemandSeries, runForecast, type Method } from "../../domain/forecast";
 import { forecastProcurementProfileForSku } from "../../domain/forecast/purchase-request";
 import { buildMrpBomEvidence, buildMrpBomSourceSummary, buildMrpScheduleEvidence, selectMrpRow, type MrpPlan } from "../../domain/mrp";

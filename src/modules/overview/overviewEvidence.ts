@@ -4,7 +4,7 @@ import {
   inventoryItems,
   PORTAL_SUPPLIERS,
   SUPPLIER_CREDIT_MEMOS,
-} from "../../data/demo-data";
+} from "../../data/empty-business-state";
 import { inventoryPlan } from "../../domain/inventory/planning";
 import { INVENTORY_MOVEMENT_TYPE_LABELS, netInventoryImpact } from "../../domain/inventory/movements";
 import { statementToCockpitSignal } from "../../domain/procurement/reconciliation";

@@ -9,7 +9,7 @@ import { apiJson } from "../../lib/api-client";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { fmt } from "../../lib/format";
-import { purchaseOrders, qcExceptions, receivingDocs, SUPPLIER_INVOICES } from "../../data/demo-data";
+import { purchaseOrders, qcExceptions, receivingDocs, SUPPLIER_INVOICES } from "../../data/empty-business-state";
 import type { PurchaseOrder, ReceivingDoc, ReceivingDocLine, RecvStatus } from "../../types/scm";
 import { lineRemaining, poLinesOf, toNumber } from "../../domain/purchasing/helpers";
 import { grnLinesOf, isPostedGrn } from "../../domain/receiving/helpers";

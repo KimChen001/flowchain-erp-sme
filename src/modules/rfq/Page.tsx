@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { apiJson } from "../../lib/api-client";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { fmt } from "../../lib/format";
-import { RFQS, purchaseOrders } from "../../data/demo-data";
+import { RFQS, purchaseOrders } from "../../data/empty-business-state";
 import type { RfqRecord } from "../../types/scm";
 import { A, Card, Chip, DocumentHistoryPanel, Field, inputStyle, KpiCard, RecoveryActions, SectionHeader } from "../../components/ui";
 import ContextualImportActions from "../../components/import/ContextualImportActions";

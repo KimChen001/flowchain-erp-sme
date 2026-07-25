@@ -3,7 +3,7 @@ import { AlertOctagon, CheckCircle2, CreditCard, FileSpreadsheet, MoreHorizontal
 import { toast } from "sonner";
 import { Modal, Card, Chip, KpiCard, A } from "../../components/ui";
 import { DocumentActionBar, DocumentEvidencePanel, DocumentHeader, DocumentLinesTable, DocumentShell, DocumentStatusTimeline, DocumentTotals, type TimelineStep } from "../../components/document/DocumentShell";
-import { PURCHASE_RETURNS, SUPPLIER_CREDIT_MEMOS, SUPPLIER_INVOICES, SUPPLIER_RECONCILIATION_STATEMENTS, purchaseOrders, receivingDocs } from "../../data/demo-data";
+import { PURCHASE_RETURNS, SUPPLIER_CREDIT_MEMOS, SUPPLIER_INVOICES, SUPPLIER_RECONCILIATION_STATEMENTS, purchaseOrders, receivingDocs } from "../../data/empty-business-state";
 import { getPurchaseReturnLinkedDocuments } from "../../domain/procurement/document-links";
 import { calculateReturnFinancialImpact, creditMemoExportRows, getCreditMemoStatusTone, getReturnStatusTone, getReturnSummary, isReturnException, purchaseReturnExportRows, purchaseReturnLineExportRows } from "../../domain/procurement/returns";
 import { exportRowsToCsv } from "../../lib/data-export";

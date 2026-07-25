@@ -1,7 +1,7 @@
 import { AlertOctagon, Clock, CreditCard, FileSpreadsheet, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { Card, Chip, KpiCard, A } from "../../components/ui";
-import { PAYABLES, SUPPLIER_INVOICES } from "../../data/demo-data";
+import { PAYABLES, SUPPLIER_INVOICES } from "../../data/empty-business-state";
 import { invoiceToPayable, isInvoicePayableReady } from "../../domain/procurement/invoice-matching";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { fmt } from "../../lib/format";

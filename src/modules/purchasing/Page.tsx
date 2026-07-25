@@ -16,7 +16,7 @@ import { apiJson } from "../../lib/api-client";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { fmt } from "../../lib/format";
-import { purchaseOrders, receivingDocs, SUPPLIER_INVOICES } from "../../data/demo-data";
+import { purchaseOrders, receivingDocs, SUPPLIER_INVOICES } from "../../data/empty-business-state";
 import type { PurchaseOrder, ReceivingDoc, SupplierInvoice } from "../../types/scm";
 import {
   A,

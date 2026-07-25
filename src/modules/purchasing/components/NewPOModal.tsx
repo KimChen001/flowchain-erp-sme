@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { AlertCircle, Loader2, Plus, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { fmt } from "../../../lib/format";
-import { OWNERS, SKU_CATALOG, SUPPLIER_LIST } from "../../../data/demo-data";
+import { OWNERS, SKU_CATALOG, SUPPLIER_LIST } from "../../../data/empty-business-state";
 import type { POStatus, PurchaseOrder, PurchaseOrderDraft } from "../../../types/scm";
 import { A, Field, inputStyle, Modal } from "../../../components/ui";
 
