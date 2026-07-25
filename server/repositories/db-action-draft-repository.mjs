@@ -1,5 +1,5 @@
 import { actionDraftSchema, supportedActionDraftTypes, validateActionDraftPayload } from '../domain/action-draft-boundary.mjs'
-import { createJsonActionDraftRepository } from './json-action-draft-repository.mjs'
+import { createTransientActionDraftPreview } from './transient-action-draft-preview.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 
@@ -106,7 +106,7 @@ function mapActionDraftRecord(record = {}) {
 }
 
 export function createDbActionDraftRepository({ db = {}, env = process.env, prisma } = {}) {
-  const previewRepository = createJsonActionDraftRepository(db)
+  const previewRepository = createTransientActionDraftPreview(db)
 
   return {
     mode: 'database',

@@ -95,9 +95,9 @@ function safeSideEffects(actionType = '') {
   }
 }
 
-function buildCreatedRecord(state, action = {}) {
+function buildCreatedRecord(state, action = {}, idFactory) {
   const prefix = recordPrefix(action.actionType)
-  const id = nextScopedId(state, action.scope, prefix)
+  const id = idFactory ? idFactory(prefix) : nextScopedId(state, action.scope, prefix)
   const fields = action.reviewedFields || {}
   return {
     id,
@@ -118,6 +118,24 @@ function buildCreatedRecord(state, action = {}) {
   }
 }
 
+export function buildConfirmedActionRecord(action = {}, { idFactory } = {}) {
+  const state = { counters: new Map() }
+  const createdRecord = buildCreatedRecord(state, action, idFactory)
+  return {
+    ...action,
+    createdRecordId: createdRecord.id,
+    createdRecordType: createdRecord.type,
+    status: createdRecord.status,
+    createdRecord,
+    sideEffects: safeSideEffects(action.actionType),
+    auditPreview: action.auditPreview?.length ? action.auditPreview : [
+      { action: 'user_confirmed_creation', summary: `${action.actionType} will create/save ${createdRecord.type} ${createdRecord.id}.` },
+    ],
+    aiGeneratedDraftOnly: false,
+    userConfirmedCreation: true,
+  }
+}
+
 export function createInMemoryUserConfirmedActionRepository({ db = {} } = {}) {
   return {
     adapter: 'in-memory-user-confirmed-action-v1',
@@ -132,20 +150,9 @@ export function createInMemoryUserConfirmedActionRepository({ db = {} } = {}) {
       }
       const state = ensureState(db)
       const action = validation.action
-      const createdRecord = buildCreatedRecord(state, action)
-      const record = {
-        ...action,
-        createdRecordId: createdRecord.id,
-        createdRecordType: createdRecord.type,
-        status: createdRecord.status,
-        createdRecord,
-        sideEffects: safeSideEffects(action.actionType),
-        auditPreview: action.auditPreview?.length ? action.auditPreview : [
-          { action: 'user_confirmed_creation', summary: `${action.actionType} will create/save ${createdRecord.type} ${createdRecord.id}.` },
-        ],
-        aiGeneratedDraftOnly: false,
-        userConfirmedCreation: true,
-      }
+      const record = buildConfirmedActionRecord(action, {
+        idFactory: (prefix) => nextScopedId(state, action.scope, prefix),
+      })
       rowsFor(state, action.scope).unshift(record)
       return clone(record)
     },
