@@ -8,6 +8,7 @@ import {
   validateActionDraftPayload,
 } from './action-draft-boundary.mjs'
 import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
+import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 
 function createRouteContext({ method = 'GET', pathname = '/api/action-drafts/schema', body = {}, db = { auditLog: [] } } = {}) {
   let response = null
@@ -18,6 +19,7 @@ function createRouteContext({ method = 'GET', pathname = '/api/action-drafts/sch
       res: {},
       url: new URL(pathname, 'http://localhost'),
       db,
+      repositories: createTestRepositoryRegistry(db),
       send(_res, status, payload) {
         response = { status, payload }
       },
@@ -108,7 +110,7 @@ test('action draft schema documents confirmation and audit boundaries', () => {
 
 test('action draft preview route is preview-only and does not mutate db', async () => {
   const db = { auditLog: [], purchaseRequests: [] }
-  const before = JSON.stringify(db)
+  const beforeBusinessData = JSON.stringify(db.purchaseRequests)
   const route = createRouteContext({
     method: 'POST',
     pathname: '/api/action-drafts/preview',
@@ -126,7 +128,9 @@ test('action draft preview route is preview-only and does not mutate db', async 
   assert.equal(route.response.payload.previewOnly, true)
   assert.equal(route.response.payload.draft.type, 'supplier_followup_draft')
   assert.equal(route.wrote, false)
-  assert.equal(JSON.stringify(db), before)
+  assert.equal(JSON.stringify(db.purchaseRequests), beforeBusinessData)
+  assert.equal(db.auditLog.length, 1)
+  assert.equal(db.auditLog[0].action, 'draft_previewed')
 })
 
 test('action draft routes return schema and clean unsupported type failure', async () => {

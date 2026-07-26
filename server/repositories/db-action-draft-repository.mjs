@@ -1,21 +1,17 @@
 import { actionDraftSchema, supportedActionDraftTypes, validateActionDraftPayload } from '../domain/action-draft-boundary.mjs'
-import { createJsonActionDraftRepository } from './json-action-draft-repository.mjs'
+import { createTransientActionDraftPreview } from './transient-action-draft-preview.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 
 const supportedTypes = new Set(supportedActionDraftTypes.map((item) => item.type))
 
-function databaseEnv(env = process.env) {
-  return { ...env, FLOWCHAIN_PERSISTENCE_MODE: 'database' }
-}
-
 function requireDatabaseConfig(env = process.env) {
-  return validateDatabasePersistenceConfig(databaseEnv(env))
+  return validateDatabasePersistenceConfig(env)
 }
 
 async function resolvePrisma({ env = process.env, prisma } = {}) {
   requireDatabaseConfig(env)
-  return prisma || getPrismaClient(databaseEnv(env))
+  return prisma || getPrismaClient(env)
 }
 
 function text(value, fallback = '') {
@@ -106,7 +102,7 @@ function mapActionDraftRecord(record = {}) {
 }
 
 export function createDbActionDraftRepository({ db = {}, env = process.env, prisma } = {}) {
-  const previewRepository = createJsonActionDraftRepository(db)
+  const previewRepository = createTransientActionDraftPreview(db)
 
   return {
     mode: 'database',

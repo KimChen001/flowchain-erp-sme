@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Modal, Card, Chip, A } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { DocumentActionBar, DocumentEvidencePanel, DocumentHeader, DocumentLinesTable, DocumentShell, DocumentStatusTimeline, DocumentTotals, statusTone, type TimelineStep } from "../../components/document/DocumentShell";
-import { SUPPLIER_INVOICES, purchaseOrders, receivingDocs } from "../../data/demo-data";
+import { SUPPLIER_INVOICES, purchaseOrders, receivingDocs } from "../../data/empty-business-state";
 import { getInvoiceLinkedDocuments } from "../../domain/procurement/document-links";
 import { ContextualAIInsightPanel, type ContextualAIInsight } from "../../components/ai/ContextualAIInsightPanel";
 import { makeInvoiceInsight, type ContextualAiAction } from "../../domain/contextual-ai";

@@ -55,8 +55,6 @@ test('current context strips bearer token and maps manager to approver boundary'
 
 test('Alpha permission gate keeps legacy mutations blocked and preview routes distinct', () => {
   const legacyMutations = [
-    ['POST', '/api/forecast-plans'],
-    ['POST', '/api/sop-cycle'],
     ['POST', '/api/purchase-requests'],
     ['PATCH', '/api/purchase-requests/PR-1/status'],
     ['POST', '/api/purchase-requests/PR-1/convert-to-po'],
@@ -73,10 +71,15 @@ test('Alpha permission gate keeps legacy mutations blocked and preview routes di
     assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method, pathname }), true, pathname)
   }
 
+  for (const [method, pathname] of [['GET', '/api/mrp-plan'], ['POST', '/api/forecast-plans'], ['POST', '/api/sop-cycle']]) {
+    assert.equal(classifyRoute(method, pathname).classification, ROUTE_CLASSES.capabilityDisabled, pathname)
+    assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method, pathname }), false, pathname)
+  }
+
   assert.equal(classifyRoute('POST', '/api/action-drafts/preview').classification, ROUTE_CLASSES.previewOnly)
   assert.equal(classifyRoute('POST', '/api/action-drafts/save').classification, ROUTE_CLASSES.controlledPersistence)
   assert.equal(classifyRoute('POST', '/api/action-drafts/save').databaseMode, 'allowed-db-persistence')
-  assert.equal(classifyRoute('GET', '/api/mrp-plan').classification, ROUTE_CLASSES.readOnly)
+  assert.equal(classifyRoute('GET', '/api/mrp-plan').classification, ROUTE_CLASSES.capabilityDisabled)
 })
 
 test('ActionDraft and Forecast/MRP UI copy keeps final confirmation and release boundaries explicit', () => {

@@ -27,9 +27,7 @@ async function services(ctx, { needQuery, needCommand }) {
 }
 
 function ensureDatabaseMode(ctx) {
-  if (String((ctx.env || process.env).FLOWCHAIN_PERSISTENCE_MODE || '').trim().toLowerCase() === 'database') return true
-  unavailable(ctx, 'sales-reservation')
-  return false
+  return true
 }
 
 function ensureIdentity(ctx) {

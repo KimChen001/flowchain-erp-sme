@@ -16,7 +16,7 @@ const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
 const migrationsRoot = join(root, "prisma", "migrations");
 const baselineMigration = "20260720020000_settlement_workflow_mobile_foundation";
-const targetMigration = "20260722030000_bank_reconciliation_control_hardening";
+const targetMigration = "20260725010000_postgres_only_runtime_records";
 const prismaCli = join(root, "node_modules", "prisma", "build", "index.js");
 const freePort = () => new Promise((resolvePort, reject) => {
   const server = createServer().on("error", reject);

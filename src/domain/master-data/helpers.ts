@@ -7,7 +7,7 @@ import {
   SUPPLIER_RECONCILIATION_STATEMENTS,
   inventoryItems,
   purchaseOrders,
-} from "../../data/demo-data";
+} from "../../data/empty-business-state";
 
 export function itemUsageSummary(sku: string) {
   const inventory = inventoryItems.find((item) => item.sku === sku);

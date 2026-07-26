@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 import assert from 'node:assert/strict'
 import {
   buildInventoryExceptions,
@@ -97,7 +98,7 @@ function createDb() {
   }
 }
 
-function createRouteContext(method, pathname, db, repositories) {
+function createRouteContext(method, pathname, db, repositories = createTestRepositoryRegistry(db)) {
   let response = null
   return {
     ctx: {

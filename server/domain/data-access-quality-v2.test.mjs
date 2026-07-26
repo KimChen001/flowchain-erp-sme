@@ -3,9 +3,36 @@ import test from 'node:test'
 import fs from 'node:fs'
 import { buildDataAccessQualityV2, FORBIDDEN_DATA_ACCESS_ACTION_PATTERN, FORBIDDEN_DATA_ACCESS_TECHNICAL_PATTERN } from './data-access-quality-v2.mjs'
 import { buildOperationsControlTowerV2 } from './operations-control-tower-v2.mjs'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
-  return JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+  return createProductReviewScenarioDb()
+}
+
+function loadQualityGapDb() {
+  const db = loadDb()
+  db.supplierInvoices = []
+  db.purchaseRequests.push({
+    pr: 'PR-QUALITY-GAP',
+    sourceSku: 'SKU-QUALITY-GAP',
+    sourceName: '待补齐关系物料',
+    status: '待复核',
+  })
+  db.purchaseOrders.push({
+    po: 'PO-QUALITY-NO-GRN',
+    supplier: db.suppliers[0].name,
+    sourceSku: db.products[0].sku,
+    status: '已发出',
+    lines: [],
+  })
+  db.products.push({
+    sku: 'SKU-QUALITY-NO-EVIDENCE',
+    name: '待补齐库存证据物料',
+    currentStock: 0,
+    safetyStock: 10,
+    riskLevel: '高',
+  })
+  return db
 }
 
 function visibleText(value) {
@@ -41,7 +68,7 @@ test('sources cover core business areas', () => {
 })
 
 test('quality issues cover required data gaps', () => {
-  const quality = buildDataAccessQualityV2(loadDb())
+  const quality = buildDataAccessQualityV2(loadQualityGapDb())
   const categories = new Set(quality.qualityIssues.map((issue) => issue.category))
   for (const category of ['missing_supplier_response', 'missing_grn_evidence', 'missing_invoice_line', 'missing_supplier_profile_evidence', 'unmapped_field', 'data_quality_gap']) {
     assert.ok(categories.has(category), category)
@@ -51,7 +78,7 @@ test('quality issues cover required data gaps', () => {
 })
 
 test('relationship and evidence gaps include business chain breaks', () => {
-  const quality = buildDataAccessQualityV2(loadDb())
+  const quality = buildDataAccessQualityV2(loadQualityGapDb())
   const relationships = quality.relationshipGaps.map((gap) => gap.missingRelationship).join(' | ')
   for (const expected of ['PR → RFQ / PO', 'PO → GRN', 'GRN → Invoice', 'Supplier → Transaction Evidence', 'SKU → Inventory / Procurement Evidence']) {
     assert.match(relationships, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
@@ -63,7 +90,7 @@ test('relationship and evidence gaps include business chain breaks', () => {
 })
 
 test('downstream impacts align with AI and risk workspace', () => {
-  const quality = buildDataAccessQualityV2(loadDb())
+  const quality = buildDataAccessQualityV2(loadQualityGapDb())
   const targets = quality.downstreamImpacts.map((impact) => impact.target)
   assert.ok(targets.includes('AI Response Contract v2'))
   assert.ok(targets.includes('风险与异常'))

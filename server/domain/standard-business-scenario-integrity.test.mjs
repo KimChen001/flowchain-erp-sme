@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const fixture = JSON.parse(readFileSync(new URL('../../src/data/standard-business-scenario/contract-fixture.json', import.meta.url), 'utf8'));
+const fixture = JSON.parse(readFileSync(new URL('./test-fixtures/standard-business-scenario.json', import.meta.url), 'utf8'));
 
 test('standard business scenario keeps complete and reconcilable document chains', () => {
   const unique = (rows, key) => new Set(rows.map((row) => row[key])).size === rows.length;

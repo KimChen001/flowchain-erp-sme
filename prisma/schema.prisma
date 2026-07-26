@@ -87,11 +87,27 @@ model Tenant {
   bankStatementImportBatches            BankStatementImportBatch[]
   bankStatementImportRows               BankStatementImportRow[]
   bankStatementLines                    BankStatementLine[]
+  runtimeRecords                        RuntimeRecord[]
   bankReconciliationCandidates          BankReconciliationCandidate[]
   bankReconciliationGroups              BankReconciliationGroup[]
   bankReconciliationBankAllocations     BankReconciliationBankLineAllocation[]
   bankReconciliationCashbookAllocations BankReconciliationCashbookAllocation[]
   bankReconciliationExceptions          BankReconciliationException[]
+}
+
+model RuntimeRecord {
+  id        String   @id
+  tenantId  String
+  namespace String
+  recordKey String
+  payload   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, namespace, recordKey])
+  @@index([tenantId, namespace, updatedAt])
 }
 
 model User {

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Building2, FileSpreadsheet, Handshake, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Card, Chip, KpiCard, A } from "../../components/ui";
-import { PORTAL_SUPPLIERS } from "../../data/demo-data";
+import { PORTAL_SUPPLIERS } from "../../data/empty-business-state";
 import { apiJson } from "../../lib/api-client";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { fmt } from "../../lib/format";

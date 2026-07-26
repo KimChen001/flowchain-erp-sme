@@ -77,13 +77,12 @@ test('Sales Demand read model computes shortage risk summary and evidence', () =
   assert.equal(high.evidence.some((item) => item.type === 'sales_order'), true)
 })
 
-test('fallback/default sales orders are read-only and do not write back to db', () => {
+test('missing sales orders stay honestly empty and do not write back to db', () => {
   const db = { products: [], purchaseOrders: [], receivingDocs: [], suppliers: [] }
   const before = JSON.stringify(db)
   const model = buildSalesDemandReadModel(db)
 
-  assert.equal(model.orders.length >= 5, true)
-  assert.equal(model.orders.some((order) => order.sku === 'SKU-00412'), true)
+  assert.deepEqual(model.orders, [])
   assert.equal(JSON.stringify(db), before)
   assert.equal(Object.hasOwn(db, 'salesOrders'), false)
 })

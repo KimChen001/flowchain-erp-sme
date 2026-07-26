@@ -1,9 +1,5 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
-import { readFileSync, statSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { createEmptyDataset } from './data-mode.mjs'
 import {
   normalizeUserDataImportPayload,
@@ -11,19 +7,7 @@ import {
 } from './user-data-contract.mjs'
 import { handleUserDataRoute } from '../routes/user-data.routes.mjs'
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const demoDataPath = path.join(repoRoot, 'data', 'scm-demo.json')
 const DEMO_ID_PATTERN = /PO-2026-1282|SKU-00412|RFQ-26-0046|PR-2026-2401|GRN-202605-0418|INV-SZ-260601|SUP-SZXY/
-
-function fileSnapshot(filePath) {
-  const body = readFileSync(filePath)
-  const info = statSync(filePath)
-  return {
-    size: info.size,
-    mtimeMs: info.mtimeMs,
-    hash: createHash('sha256').update(body).digest('hex'),
-  }
-}
 
 function validUserPayload() {
   return {
@@ -146,13 +130,11 @@ test('R162 validation reports invalid references quantities and dates', () => {
   assert.ok(result.warnings.some((item) => item.code === 'missing_sku'))
 })
 
-test('R163 dry-run route returns normalized preview and does not mutate db or demo data', async () => {
+test('R163 dry-run route returns normalized preview without mutating runtime data', async () => {
   const db = createEmptyDataset({ mode: 'user' })
   const dbBefore = businessSnapshot(db)
-  const fileBefore = fileSnapshot(demoDataPath)
   const route = createRouteContext(validUserPayload(), db)
   assert.equal(await handleUserDataRoute(route.ctx), true)
-  const fileAfter = fileSnapshot(demoDataPath)
 
   assert.equal(route.response.status, 200)
   assert.equal(route.response.payload.ok, true)
@@ -167,7 +149,6 @@ test('R163 dry-run route returns normalized preview and does not mutate db or de
   assert.equal(route.response.payload.importPreview.purchaseOrders[0].id, 'PO-IMPORT-AC-0001')
   assert.equal(route.response.payload.normalizedData, undefined)
   assert.equal(businessSnapshot(db), dbBefore)
-  assert.deepEqual(fileAfter, fileBefore)
   assert.doesNotMatch(JSON.stringify(route.response.payload), DEMO_ID_PATTERN)
 })
 

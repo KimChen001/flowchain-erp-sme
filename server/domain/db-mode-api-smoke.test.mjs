@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createDatabaseRepositoryRegistry, createRepositoryRegistry } from '../repositories/adapter-registry.mjs'
+import {
+  createDatabaseRepositoryRegistry,
+  createRepositoryRegistry,
+  JSON_PERSISTENCE_REMOVED_ERROR,
+} from '../repositories/adapter-registry.mjs'
 import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
 import { handleAuditLogRoute } from '../routes/audit-log.routes.mjs'
 import { handleInventoryRoute } from '../routes/inventory.routes.mjs'
@@ -65,7 +69,7 @@ function createPrisma() {
   }
 }
 
-async function call(handler, { method = 'GET', path, db, repositories, body } = {}) {
+async function call(handler, { method = 'GET', path, db, repositories, body, identity } = {}) {
   let response = null
   const handled = await handler({
     req: { method, body, headers: {} },
@@ -73,6 +77,7 @@ async function call(handler, { method = 'GET', path, db, repositories, body } = 
     url: new URL(path, 'http://localhost'),
     db,
     repositories,
+    identity,
     send(_res, status, payload) {
       response = { status, payload }
     },
@@ -81,21 +86,19 @@ async function call(handler, { method = 'GET', path, db, repositories, body } = 
   return { handled, response }
 }
 
-test('JSON mode smoke routes run without DATABASE_URL', async () => {
+test('PostgreSQL-only registry fails closed without DATABASE_URL or with JSON mode', async () => {
   const db = createDb()
   const before = clone(db)
   const repositories = createRepositoryRegistry({ db, env: {} })
-
-  const master = await call(handleMasterDataRoute, { path: '/api/master-data/items', db, repositories })
-  const procurement = await call(handleProcurementReadRoute, { path: '/api/procurement/documents?type=po', db, repositories })
-  const inventory = await call(handleInventoryRoute, { path: '/api/inventory/items?q=A100', db, repositories })
-  const preview = await call(handleActionDraftsRoute, { method: 'POST', path: '/api/action-drafts/preview', db, repositories, body: { type: 'purchase_request_draft', payload: { itemIdOrSku: 'A100', quantity: 2 } } })
-
-  assert.equal(repositories.mode, 'json')
-  assert.equal(master.response.status, 200)
-  assert.equal(procurement.response.payload.documents[0].documentType, 'po')
-  assert.deepEqual(inventory.response.payload.items, [])
-  assert.equal(preview.response.payload.previewOnly, true)
+  assert.equal(repositories.mode, 'database')
+  await assert.rejects(
+    () => call(handleMasterDataRoute, { path: '/api/master-data/items', db, repositories }),
+    (error) => error?.code === 'FLOWCHAIN_DATABASE_URL_REQUIRED',
+  )
+  assert.throws(
+    () => createRepositoryRegistry({ db, env: { FLOWCHAIN_PERSISTENCE_MODE: 'json' } }),
+    (error) => error?.code === JSON_PERSISTENCE_REMOVED_ERROR,
+  )
   assert.deepEqual(db, before)
 })
 
@@ -103,6 +106,21 @@ test('DB mode smoke routes use DB adapters through repository context', async ()
   const db = createDb()
   const before = clone(db)
   const repositories = createDatabaseRepositoryRegistry({ db, env, prisma: createPrisma() })
+  const identity = {
+    complete: true,
+    authenticated: true,
+    tenantId: 'tenant-flowchain-sme',
+    userId: 'user-smoke',
+    role: 'admin',
+    roleIds: ['role-smoke-admin'],
+    permissionCodes: new Set(['audit.read', 'audit.read_sensitive']),
+    permissionSourceRoleIds: new Map([
+      ['audit.read', ['role-smoke-admin']],
+      ['audit.read_sensitive', ['role-smoke-admin']],
+    ]),
+    readWarehouseIds: new Set(),
+    operateWarehouseIds: new Set(),
+  }
 
   const checks = [
     [handleMasterDataRoute, '/api/master-data/items', 'items'],
@@ -114,7 +132,7 @@ test('DB mode smoke routes use DB adapters through repository context', async ()
     [handleAuditLogRoute, '/api/audit-log', null],
   ]
   for (const [handler, path, key] of checks) {
-    const result = await call(handler, { path, db, repositories })
+    const result = await call(handler, { path, db, repositories, identity })
     assert.equal(result.handled, true, path)
     assert.equal(result.response.status, 200, path)
     if (key) assert.equal(result.response.payload[key] !== undefined, true, path)
@@ -137,8 +155,8 @@ test('DB mode action draft preview is non-mutating and legacy mutations stay blo
   assert.equal(preview.response.status, 200)
   assert.equal(preview.response.payload.previewOnly, true)
   assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method: 'GET', pathname: '/api/mrp-plan' }), false)
-  assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method: 'POST', pathname: '/api/forecast-plans' }), true)
-  assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method: 'POST', pathname: '/api/sop-cycle' }), true)
+  assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method: 'POST', pathname: '/api/forecast-plans' }), false)
+  assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method: 'POST', pathname: '/api/sop-cycle' }), false)
   assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method: 'POST', pathname: '/api/purchase-requests' }), true)
   assert.deepEqual(databaseModeMutationBlockedPayload(), { error: 'This mutation is not available in database persistence mode yet.' })
   assert.deepEqual(db, before)

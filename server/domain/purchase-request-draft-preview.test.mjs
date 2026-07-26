@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildPurchaseRequestDraftPreview, validatePurchaseRequestDraftPayload } from './purchase-request-draft-preview.mjs'
 import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
+import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 
 function createDb() {
   return {
@@ -41,6 +42,7 @@ function createRouteContext(body, db = createDb()) {
       res: {},
       url: new URL('/api/action-drafts/preview', 'http://localhost'),
       db,
+      repositories: createTestRepositoryRegistry(db),
       send(_res, status, payload) {
         response = { status, payload }
       },
@@ -114,7 +116,8 @@ test('PR draft preview route is preview-only and does not mutate workspace db', 
   assert.equal(route.response.payload.previewOnly, true)
   assert.equal(route.response.payload.draft.payload.suggestedQuantity, 68)
   assert.equal(route.wrote, false)
-  assert.equal(JSON.stringify(db), before)
+  assert.equal(JSON.stringify({ ...db, auditLog: [] }), before)
+  assert.equal(db.auditLog[0].action, 'draft_previewed')
 })
 
 test('PR draft validation helper separates errors from quantity warnings', () => {

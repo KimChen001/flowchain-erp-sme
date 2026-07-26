@@ -1,27 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
-import { readFileSync, statSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { createEmptyDataset } from './data-mode.mjs'
 import { normalizeUserDataImportPayload } from './user-data-contract.mjs'
 import { createUserDataRuntimeDb } from './user-data-runtime.mjs'
 import { handleUserDataRoute } from '../routes/user-data.routes.mjs'
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const demoDataPath = path.join(repoRoot, 'data', 'scm-demo.json')
 const DEMO_ID_PATTERN = /PO-2026-1282|SKU-00412|RFQ-26-0046|PR-2026-2401|GRN-202605-0418|INV-SZ-260601|SUP-SZXY/
-
-function fileSnapshot(filePath) {
-  const body = readFileSync(filePath)
-  const info = statSync(filePath)
-  return {
-    size: info.size,
-    mtimeMs: info.mtimeMs,
-    hash: createHash('sha256').update(body).digest('hex'),
-  }
-}
 
 function validPayload() {
   return {
@@ -69,17 +53,14 @@ function businessSnapshot(db) {
 
 async function assertCommitDoesNotWrite(route) {
   const dbBefore = businessSnapshot(route.ctx.db)
-  const fileBefore = fileSnapshot(demoDataPath)
   assert.equal(await handleUserDataRoute(route.ctx), true)
-  const fileAfter = fileSnapshot(demoDataPath)
   assert.equal(businessSnapshot(route.ctx.db), dbBefore)
-  assert.deepEqual(fileAfter, fileBefore)
   assert.equal(route.response.payload.writesFiles, false)
   assert.equal(route.response.payload.writesDb, false)
   assert.equal(route.response.payload.overwritesDemoData, false)
 }
 
-test('R167 commit boundary blocks protected fixture mode and never writes protected fixture data', async () => {
+test('R167 commit boundary blocks non-authoritative preview mode and never writes runtime data', async () => {
   const route = createRouteContext({ db: createEmptyDataset({ mode: 'demo' }) })
   await assertCommitDoesNotWrite(route)
   assert.equal(route.response.status, 501)

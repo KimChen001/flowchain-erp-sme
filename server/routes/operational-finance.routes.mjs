@@ -48,11 +48,6 @@ function unavailable(ctx, capabilityId) {
 }
 
 function ensureBoundary(ctx) {
-  const env = ctx.env || process.env;
-  if (String(env.FLOWCHAIN_PERSISTENCE_MODE || "").toLowerCase() !== "database") {
-    unavailable(ctx, "supplier-invoice");
-    return false;
-  }
   if (!ctx.identity?.authenticated) {
     ctx.send(ctx.res, 401, {
       code: "AUTHENTICATION_REQUIRED",

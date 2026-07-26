@@ -1,5 +1,5 @@
 import { A } from "../../components/ui";
-import { PORTAL_SUPPLIERS } from "../../data/demo-data";
+import { PORTAL_SUPPLIERS } from "../../data/empty-business-state";
 import type { SupplierInvoiceMatchStatus } from "../../types/scm";
 
 export type SupplierPerformance = typeof PORTAL_SUPPLIERS[number] & {

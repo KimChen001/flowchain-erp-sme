@@ -8,7 +8,7 @@ import { operationalFinanceRequestHash } from "./operational-finance-command-ser
 const root = resolve(import.meta.dirname, "..", "..");
 const source = (...parts) => readFileSync(resolve(root, ...parts), "utf8");
 
-test("operational finance capabilities are beta, database-only, and explicitly enabled", () => {
+test("operational finance capabilities are beta and explicitly enabled in the PostgreSQL-only runtime", () => {
   for (const id of [
     "supplier-invoice",
     "three-way-match",
@@ -28,17 +28,9 @@ test("operational finance capabilities are beta, database-only, and explicitly e
     assert.equal(disabled.enabled, false);
     assert.equal(
       capabilityForEnvironment(id, {
-        FLOWCHAIN_PERSISTENCE_MODE: "database",
         FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
       }).enabled,
       true,
-    );
-    assert.equal(
-      capabilityForEnvironment(id, {
-        FLOWCHAIN_PERSISTENCE_MODE: "json",
-        FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
-      }).enabled,
-      false,
     );
   }
   const finance = capabilityForEnvironment("finance", {

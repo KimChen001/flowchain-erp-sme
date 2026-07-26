@@ -64,7 +64,7 @@ function mutationScope(identity) {
 }
 
 function assertEnabled(env) {
-  if (text(env.FLOWCHAIN_PERSISTENCE_MODE).toLowerCase() !== 'database' || text(env.FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING).toLowerCase() !== 'true') {
+  if (text(env.FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING).toLowerCase() !== 'true') {
     fail('OUTBOUND_CAPABILITY_NOT_AVAILABLE', 'Database outbound posting is not enabled for this runtime.', 409)
   }
 }

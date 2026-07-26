@@ -1,17 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { getDefaultSettingsRuntimeRepository } from '../repositories/settings-runtime-repository.mjs'
-import { authorizeMutation } from '../domain/mutation-authorization.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { mergeOperationalSettings, validateOperationalSection } from '../domain/workspace-settings-contract.mjs'
 import { roleLabel } from '../../shared/roles.mjs'
 import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 
-function settingsRepository(ctx) {
-  return ctx.repositories?.settingsRuntime || getDefaultSettingsRuntimeRepository()
-}
-
-const databaseMode = ctx => String((ctx.env || process.env).FLOWCHAIN_PERSISTENCE_MODE || '').toLowerCase() === 'database'
 const clone = value => structuredClone(value)
 const roleOptions = ['admin', 'manager', 'business-specialist', 'buyer', 'viewer']
 
@@ -75,10 +68,9 @@ async function updateDatabaseSection(ctx, section, next) {
 
 export async function handleSettingsRuntimeRoute(ctx) {
   const { req, res, url, send, readBody } = ctx
-  const repository = settingsRepository(ctx)
   if (req.method === 'GET' && url.pathname === '/api/settings-runtime') {
     try {
-      send(res, 200, databaseMode(ctx) ? (await getDatabaseSettings(ctx)).settings : await repository.getSettingsRuntime())
+      send(res, 200, (await getDatabaseSettings(ctx)).settings)
     } catch (error) {
       send(res, error?.status || error?.statusCode || 500, { code: error?.code, message: error?.message || '系统设置读取失败' })
     }
@@ -87,15 +79,9 @@ export async function handleSettingsRuntimeRoute(ctx) {
 
   const match = url.pathname.match(/^\/api\/settings-runtime\/([a-z-]+)$/)
   if (req.method === 'PATCH' && match) {
-    const authorization = databaseMode(ctx) ? { blocked: false, identity: ctx.identity } : authorizeMutation(ctx, { allowedRoles: ['admin', 'manager'], action: 'settings.section.update', resource: 'settings' })
-    if (authorization.blocked) return true
     try {
       const body = await readBody(req)
-      const result = databaseMode(ctx) ? await updateDatabaseSection(ctx, match[1], body.settings) : await repository.updateSettingsSection(match[1], body.settings, {
-        id: authorization.identity.userId,
-        name: authorization.identity.name,
-        role: authorization.identity.role,
-      })
+      const result = await updateDatabaseSection(ctx, match[1], body.settings)
       send(res, 200, result)
     } catch (error) {
       send(res, error?.status || error?.statusCode || 400, { code: error?.code, message: error?.message || '设置保存失败' })

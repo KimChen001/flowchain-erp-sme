@@ -5,12 +5,11 @@ import { fileURLToPath } from "node:url";
 import { ProxyAgent } from "undici";
 import { execFileSync } from "node:child_process";
 import { loadEnv } from "../config/env.mjs";
-import { createJsonDb } from "../repositories/json-db.mjs";
 import {
   createRepositoryRegistry,
   getPersistenceMode,
 } from "../repositories/adapter-registry.mjs";
-import { runtimeFileMutexLimitations } from "../repositories/runtime-file-mutex.mjs";
+import { validateDatabasePersistenceConfig } from "../persistence/persistence-config.mjs";
 import { contentTypeFor, readBody, send, sendText } from "../utils/http.mjs";
 import { sendInternalServerError } from "../utils/safe-errors.mjs";
 import {
@@ -25,8 +24,6 @@ import {
 } from "../domain/audit-policy.mjs";
 import {
   createEmptyDataset,
-  resolveFlowchainDataMode,
-  shouldReadDemoData,
 } from "../domain/data-mode.mjs";
 import {
   isDatabaseModeWriteBlocked,
@@ -84,12 +81,12 @@ import { handleMrpRoute } from "./mrp.routes.mjs";
 import { handleSopRoute } from "./sop.routes.mjs";
 import { handleActionDraftsRoute } from "./action-drafts.routes.mjs";
 import { handleUserConfirmedActionsRoute } from "./user-confirmed-actions.routes.mjs";
-import { handleProcurementTransactionsRoute } from "./procurement-transactions.routes.mjs";
 import { handleProcurementWorkflowRoute } from "./procurement-workflow.routes.mjs";
 import { handleExceptionCasesRoute } from "./exception-cases.routes.mjs";
 import { handleUserDataRoute } from "./user-data.routes.mjs";
 import { handleMarketRoute } from "./market.routes.mjs";
 import { handleAiRoute } from "./ai.routes.mjs";
+import { handleRuntimeCapabilityRoute } from "./runtime-capability.routes.mjs";
 import {
   actorFromBody,
   applyWorkflowTransition,
@@ -108,8 +105,6 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "..", "..");
-const dataFile = path.join(root, "data", "scm-demo.json");
-const jsonDb = createJsonDb(dataFile);
 const port = Number(process.env.SCM_API_PORT || 8787);
 const distDir = path.join(root, "dist");
 const staticAssetPath = (pathname) =>
@@ -160,21 +155,6 @@ const webProxyUrl =
   "http://127.0.0.1:15236";
 const webDispatcher = webProxyUrl ? new ProxyAgent(webProxyUrl) : undefined;
 const aiMaxTokens = Number(process.env.AI_MAX_TOKENS || 520);
-
-async function readDb() {
-  const dataMode = resolveFlowchainDataMode(process.env);
-  if (!shouldReadDemoData(dataMode))
-    return createEmptyDataset({ mode: dataMode.mode });
-  const db = await jsonDb.read();
-  db.__dataMode = dataMode.mode;
-  return db;
-}
-
-async function writeDb(db) {
-  const dataMode = resolveFlowchainDataMode(process.env);
-  if (!dataMode.writable) return;
-  await jsonDb.write(db);
-}
 
 async function sendStatic(req, res, url) {
   if (!["GET", "HEAD"].includes(req.method))
@@ -261,67 +241,8 @@ function ensureSopCycles(db) {
   return db.sopCycles;
 }
 
-const defaultRfqs = [
-  {
-    id: "RFQ-26-0042",
-    title: "Q3 铝合金型材集采",
-    category: "原材料",
-    suppliers: 6,
-    quoted: 5,
-    bestPrice: 18.6,
-    bestSupplier: "江苏铝合金集团",
-    due: "2026-06-10",
-    status: "比价中",
-  },
-  {
-    id: "RFQ-26-0043",
-    title: "标准紧固件年框",
-    category: "通用件",
-    suppliers: 8,
-    quoted: 8,
-    bestPrice: 0.42,
-    bestSupplier: "佛山标准件",
-    due: "2026-05-30",
-    status: "已授标",
-  },
-  {
-    id: "RFQ-26-0044",
-    title: "PCB 板代工",
-    category: "电子",
-    suppliers: 4,
-    quoted: 3,
-    bestPrice: 86.4,
-    bestSupplier: "深圳新元电气",
-    due: "2026-06-15",
-    status: "进行中",
-  },
-  {
-    id: "RFQ-26-0045",
-    title: "切削液 12 个月供货",
-    category: "耗材",
-    suppliers: 5,
-    quoted: 4,
-    bestPrice: 24.8,
-    bestSupplier: "广州化工耗材",
-    due: "2026-06-08",
-    status: "比价中",
-  },
-  {
-    id: "RFQ-26-0046",
-    title: "高精度数控刀具",
-    category: "工具",
-    suppliers: 3,
-    quoted: 2,
-    bestPrice: 312,
-    bestSupplier: "华东精工机械",
-    due: "2026-06-22",
-    status: "进行中",
-  },
-];
-
 function ensureRfqs(db) {
-  if (!Array.isArray(db.rfqs)) db.rfqs = defaultRfqs;
-  return db.rfqs;
+  return Array.isArray(db.rfqs) ? db.rfqs : [];
 }
 
 function publicUser(user) {
@@ -951,526 +872,14 @@ function supplierFlag(score, rejectRate) {
 }
 
 function supplierPerformance(db) {
-  const purchaseOrders = normalizePurchaseOrders(db);
-  const receivingDocs = db.receivingDocs || [];
-  const suppliers = new Map();
-
-  for (const item of db.suppliers || []) {
-    suppliers.set(item.name, {
-      name: item.name,
-      category: item.category || "未分类",
-      onTime: Number(item.onTimeRate || 0),
-      quality: Number(item.qualityRate || 0),
-      risk: item.risk || "中",
-      po: 0,
-      spend: 0,
-      received: 0,
-      passed: 0,
-      failed: 0,
-      exceptions: 0,
-      lastIssue: "",
-    });
-  }
-
-  for (const po of purchaseOrders) {
-    if (!po.supplier) continue;
-    if (!suppliers.has(po.supplier)) {
-      suppliers.set(po.supplier, {
-        name: po.supplier,
-        category: "采购供应商",
-        onTime: 90,
-        quality: 96,
-        risk: "中",
-        po: 0,
-        spend: 0,
-        received: 0,
-        passed: 0,
-        failed: 0,
-        exceptions: 0,
-        lastIssue: "",
-      });
-    }
-    const row = suppliers.get(po.supplier);
-    row.po += 1;
-    row.spend += Number(po.amount || 0);
-  }
-
-  for (const grn of receivingDocs) {
-    if (!grn.supplier) continue;
-    if (!suppliers.has(grn.supplier)) {
-      suppliers.set(grn.supplier, {
-        name: grn.supplier,
-        category: "收货供应商",
-        onTime: 90,
-        quality: 96,
-        risk: "中",
-        po: 0,
-        spend: 0,
-        received: 0,
-        passed: 0,
-        failed: 0,
-        exceptions: 0,
-        lastIssue: "",
-      });
-    }
-    const row = suppliers.get(grn.supplier);
-    const po = purchaseOrders.find((item) => item.po === grn.po);
-    const lines = po
-      ? normalizeGrnLines(grn, po, {
-          assumeApplied: postedReceivingStatuses.has(grn.status),
-        })
-      : [];
-    const passed = lines.length
-      ? lines.reduce((sum, line) => sum + Number(line.acceptedQty || 0), 0)
-      : Number(grn.passed || 0);
-    const failed = lines.length
-      ? lines.reduce((sum, line) => sum + Number(line.rejectedQty || 0), 0)
-      : Number(grn.failed || 0);
-    row.received += passed + failed;
-    row.passed += passed;
-    row.failed += failed;
-    if (failed > 0 || grn.status === "异常处理") {
-      row.exceptions += 1;
-      row.lastIssue = `${grn.grn} ${failed > 0 ? `不合格 ${failed}` : "异常处理"}`;
-    }
-  }
-
-  return Array.from(suppliers.values())
-    .map((row) => {
-      const inspectionQuality =
-        row.received > 0 ? (row.passed / row.received) * 100 : row.quality;
-      const blendedQuality =
-        row.received > 0
-          ? row.quality * 0.45 + inspectionQuality * 0.55
-          : row.quality;
-      const rejectRate =
-        row.received > 0 ? (row.failed / row.received) * 100 : 0;
-      const riskPenalty = row.risk === "高" ? 8 : row.risk === "中" ? 3 : 0;
-      const exceptionPenalty = Math.min(
-        14,
-        row.exceptions * 3 + rejectRate * 0.35,
-      );
-      const score = Math.max(
-        0,
-        Math.round(
-          row.onTime * 0.34 +
-            blendedQuality * 0.46 +
-            Math.min(100, row.po * 2 + 70) * 0.2 -
-            riskPenalty -
-            exceptionPenalty,
-        ),
-      );
-      const rating = Math.max(1, Math.min(5, Number((score / 20).toFixed(1))));
-      return {
-        ...row,
-        onTime: Number(row.onTime.toFixed(1)),
-        quality: Number(blendedQuality.toFixed(1)),
-        rejectRate: Number(rejectRate.toFixed(1)),
-        score,
-        rating,
-        flag: supplierFlag(score, rejectRate),
-      };
-    })
-    .sort((a, b) => b.score - a.score);
+  return Array.isArray(db.suppliers) ? db.suppliers : [];
 }
 
-const supplierQuotes = {
-  "SKU-00412": [
-    {
-      supplier: "深圳新元电气",
-      unitPrice: 2980,
-      currency: "CNY",
-      leadTimeDays: 7,
-      responseScore: 92,
-      capacity: 800,
-      risk: "中",
-      contractId: "BPA-26-ELEC",
-    },
-    {
-      supplier: "上海仪表科技",
-      unitPrice: 450,
-      currency: "USD",
-      leadTimeDays: 10,
-      responseScore: 84,
-      capacity: 260,
-      risk: "低",
-      contractId: "BPA-26-METER",
-    },
-    {
-      supplier: "华东精工机械",
-      unitPrice: 3380,
-      currency: "CNY",
-      leadTimeDays: 12,
-      responseScore: 78,
-      capacity: 180,
-      risk: "中",
-    },
-  ],
-  "SKU-00623": [
-    {
-      supplier: "深圳新元电气",
-      unitPrice: 12400,
-      currency: "CNY",
-      leadTimeDays: 9,
-      responseScore: 92,
-      capacity: 420,
-      risk: "中",
-      contractId: "BPA-26-ELEC",
-    },
-    {
-      supplier: "上海仪表科技",
-      unitPrice: 1830,
-      currency: "USD",
-      leadTimeDays: 11,
-      responseScore: 86,
-      capacity: 160,
-      risk: "低",
-      contractId: "BPA-26-METER",
-    },
-  ],
-  "SKU-00287": [
-    {
-      supplier: "江苏铝合金集团",
-      unitPrice: 142,
-      currency: "CNY",
-      leadTimeDays: 12,
-      responseScore: 88,
-      capacity: 3200,
-      risk: "低",
-      contractId: "BPA-26-ALU",
-    },
-    {
-      supplier: "华东精工机械",
-      unitPrice: 151,
-      currency: "CNY",
-      leadTimeDays: 14,
-      responseScore: 82,
-      capacity: 900,
-      risk: "中",
-    },
-  ],
-  "SKU-00142": [
-    {
-      supplier: "华东精工机械",
-      unitPrice: 86,
-      currency: "CNY",
-      leadTimeDays: 9,
-      responseScore: 82,
-      capacity: 5000,
-      risk: "低",
-    },
-    {
-      supplier: "佛山标准件",
-      unitPrice: 89,
-      currency: "CNY",
-      leadTimeDays: 7,
-      responseScore: 90,
-      capacity: 4200,
-      risk: "中",
-      contractId: "BPA-26-FASTENER",
-    },
-  ],
-  "SKU-00815": [
-    {
-      supplier: "华东精工机械",
-      unitPrice: 4600,
-      currency: "CNY",
-      leadTimeDays: 14,
-      responseScore: 82,
-      capacity: 220,
-      risk: "低",
-    },
-    {
-      supplier: "上海仪表科技",
-      unitPrice: 675,
-      currency: "USD",
-      leadTimeDays: 16,
-      responseScore: 84,
-      capacity: 120,
-      risk: "低",
-      contractId: "BPA-26-METER",
-    },
-  ],
-  "SKU-00744": [
-    {
-      supplier: "广州化工耗材",
-      unitPrice: 320,
-      currency: "CNY",
-      leadTimeDays: 8,
-      responseScore: 76,
-      capacity: 2000,
-      risk: "高",
-      contractId: "BPA-25-CHEM",
-    },
-    {
-      supplier: "佛山标准件",
-      unitPrice: 356,
-      currency: "CNY",
-      leadTimeDays: 10,
-      responseScore: 90,
-      capacity: 900,
-      risk: "中",
-    },
-  ],
-};
-
-const exchangeRatesToCny = { CNY: 1, USD: 7.18, EUR: 7.78 };
-
-const contractPriceRules = {
-  "BPA-26-ELEC": {
-    label: "电子件年框",
-    tiers: [
-      { minQty: 0, discount: 0.06 },
-      { minQty: 200, discount: 0.1 },
-      { minQty: 500, discount: 0.14 },
-    ],
-  },
-  "BPA-26-METER": {
-    label: "仪表进口框架",
-    tiers: [
-      { minQty: 0, discount: 0.04 },
-      { minQty: 100, discount: 0.08 },
-      { minQty: 300, discount: 0.12 },
-    ],
-  },
-  "BPA-26-ALU": {
-    label: "铝型材阶梯价",
-    tiers: [
-      { minQty: 0, discount: 0.03 },
-      { minQty: 1000, discount: 0.08 },
-      { minQty: 2500, discount: 0.12 },
-    ],
-  },
-  "BPA-26-FASTENER": {
-    label: "紧固件年框",
-    tiers: [
-      { minQty: 0, discount: 0.08 },
-      { minQty: 2000, discount: 0.16 },
-      { minQty: 5000, discount: 0.22 },
-    ],
-  },
-  "BPA-25-CHEM": {
-    label: "化工耗材临期合同",
-    tiers: [
-      { minQty: 0, discount: 0.02 },
-      { minQty: 1000, discount: 0.05 },
-    ],
-  },
-};
-
-const supplierCapacityCalendar = {
-  深圳新元电气: {
-    nextWindow: "2026-W25",
-    available: 620,
-    committed: 280,
-    reliability: 0.94,
-  },
-  上海仪表科技: {
-    nextWindow: "2026-W25",
-    available: 180,
-    committed: 90,
-    reliability: 0.9,
-  },
-  华东精工机械: {
-    nextWindow: "2026-W25",
-    available: 720,
-    committed: 410,
-    reliability: 0.86,
-  },
-  江苏铝合金集团: {
-    nextWindow: "2026-W26",
-    available: 2800,
-    committed: 1300,
-    reliability: 0.92,
-  },
-  佛山标准件: {
-    nextWindow: "2026-W25",
-    available: 3600,
-    committed: 1800,
-    reliability: 0.88,
-  },
-  广州化工耗材: {
-    nextWindow: "2026-W25",
-    available: 1200,
-    committed: 900,
-    reliability: 0.72,
-  },
-};
-
-function applyContractAndCurrency(quote, qty) {
-  const currency = quote.currency || "CNY";
-  const fxRate = exchangeRatesToCny[currency] || 1;
-  const listPriceCny = Number(quote.unitPrice || 0) * fxRate;
-  const contract = quote.contractId
-    ? contractPriceRules[quote.contractId]
-    : null;
-  const tier =
-    contract?.tiers
-      ?.filter((item) => qty >= Number(item.minQty || 0))
-      .sort((a, b) => Number(b.minQty || 0) - Number(a.minQty || 0))[0] || null;
-  const discount = Number(tier?.discount || 0);
-  const unitPriceCny = Number((listPriceCny * (1 - discount)).toFixed(2));
-  return {
-    currency,
-    fxRate,
-    listPriceCny: Number(listPriceCny.toFixed(2)),
-    unitPriceCny,
-    contractId: quote.contractId || "",
-    contractLabel: contract?.label || "",
-    contractDiscount: discount,
-    contractTierMinQty: Number(tier?.minQty || 0),
-  };
+function supplierRecommendations() {
+  return null;
 }
-
-function supplierRecommendations(
-  db,
-  { sku = "", quantity = 0, currentSupplier = "" } = {},
-) {
-  const performance = supplierPerformance(db);
-  const perfByName = new Map(performance.map((item) => [item.name, item]));
-  const quotes = supplierQuotes[sku] || [];
-  const qty = Math.max(0, Number(quantity || 0));
-  const enrichedQuotes = quotes.map((quote) => ({
-    ...quote,
-    pricing: applyContractAndCurrency(quote, qty),
-  }));
-  const minPrice = Math.min(
-    ...enrichedQuotes
-      .map((item) => Number(item.pricing.unitPriceCny || 0))
-      .filter(Boolean),
-    Infinity,
-  );
-  const candidates = enrichedQuotes
-    .map((quote) => {
-      const perf = perfByName.get(quote.supplier) || {};
-      const capacityCalendar = supplierCapacityCalendar[quote.supplier] || {
-        nextWindow: "待排产",
-        available: Number(quote.capacity || 0),
-        committed: 0,
-        reliability: 0.8,
-      };
-      const availableCapacity = Math.min(
-        Number(quote.capacity || 0),
-        Number(capacityCalendar.available || 0),
-      );
-      const priceIndex =
-        Number.isFinite(minPrice) && quote.pricing.unitPriceCny > 0
-          ? Math.min(100, (minPrice / quote.pricing.unitPriceCny) * 100)
-          : 70;
-      const deliveryIndex = Math.max(
-        40,
-        100 - Number(quote.leadTimeDays || 0) * 2,
-      );
-      const capacityIndex =
-        qty > 0 ? Math.min(100, (availableCapacity / qty) * 100) : 100;
-      const calendarIndex = Math.round(
-        capacityIndex * 0.65 +
-          Number(capacityCalendar.reliability || 0.8) * 100 * 0.35,
-      );
-      const riskPenalty =
-        quote.risk === "高" || perf.flag === "整改"
-          ? 14
-          : quote.risk === "中"
-            ? 5
-            : 0;
-      const qualityPenalty = Number(perf.rejectRate || 0) > 10 ? 8 : 0;
-      const score = Math.round(
-        Number(perf.score || 70) * 0.32 +
-          priceIndex * 0.24 +
-          deliveryIndex * 0.16 +
-          Number(quote.responseScore || 70) * 0.14 +
-          calendarIndex * 0.14 -
-          riskPenalty -
-          qualityPenalty,
-      );
-      return {
-        supplier: quote.supplier,
-        unitPrice: quote.pricing.unitPriceCny,
-        listPrice: quote.unitPrice,
-        listPriceCny: quote.pricing.listPriceCny,
-        currency: quote.pricing.currency,
-        fxRate: quote.pricing.fxRate,
-        contractId: quote.pricing.contractId,
-        contractLabel: quote.pricing.contractLabel,
-        contractDiscount: quote.pricing.contractDiscount,
-        contractTierMinQty: quote.pricing.contractTierMinQty,
-        leadTimeDays: quote.leadTimeDays,
-        responseScore: quote.responseScore,
-        capacity: quote.capacity,
-        availableCapacity,
-        capacityWindow: capacityCalendar.nextWindow,
-        capacityReliability: Number(capacityCalendar.reliability || 0),
-        capacityStatus:
-          qty > availableCapacity
-            ? "不足"
-            : qty > availableCapacity * 0.85
-              ? "紧张"
-              : "可承诺",
-        risk: quote.risk,
-        performanceScore: Number(perf.score || 0),
-        quality: Number(perf.quality || 0),
-        rejectRate: Number(perf.rejectRate || 0),
-        flag: perf.flag || "待评估",
-        score: Math.max(0, score),
-        amount: qty * Number(quote.pricing.unitPriceCny || 0),
-        isCurrent: quote.supplier === currentSupplier,
-        note: `折算价 ${quote.pricing.unitPriceCny} CNY，${quote.pricing.contractId ? `${quote.pricing.contractLabel} 折扣 ${(quote.pricing.contractDiscount * 100).toFixed(0)}%，` : ""}产能 ${availableCapacity}/${qty || 0}，窗口 ${capacityCalendar.nextWindow}，绩效 ${Number(perf.score || 0)}。`,
-      };
-    })
-    .sort((a, b) => b.score - a.score);
-
-  const primary = candidates[0] || null;
-  const backup =
-    candidates.find((item) => item.supplier !== primary?.supplier) || null;
-  const shouldSplit = Boolean(
-    primary &&
-    backup &&
-    qty > Number(primary.availableCapacity || primary.capacity || 0) * 0.85,
-  );
-  const split =
-    shouldSplit && primary && backup
-      ? [
-          {
-            supplier: primary.supplier,
-            quantity: Math.min(
-              qty,
-              primary.availableCapacity || primary.capacity,
-            ),
-            unitPrice: primary.unitPrice,
-          },
-          {
-            supplier: backup.supplier,
-            quantity: Math.max(
-              0,
-              qty -
-                Math.min(qty, primary.availableCapacity || primary.capacity),
-            ),
-            unitPrice: backup.unitPrice,
-          },
-        ].filter((item) => item.quantity > 0)
-      : [];
-  const needsRfq =
-    candidates.length < 2 ||
-    candidates.some((item) => item.flag === "整改" && item.score < 74) ||
-    (primary?.score || 0) < 78 ||
-    candidates.some((item) => item.capacityStatus === "不足");
-
-  return {
-    sku,
-    quantity: qty,
-    currentSupplier,
-    primary,
-    backup,
-    candidates,
-    split,
-    needsRfq,
-    rfqReason: needsRfq
-      ? "候选不足、绩效整改、产能不可承诺或综合评分低于阈值，建议发起 RFQ 或补充备选供应商。"
-      : "候选供应商评分、合同价格和产能窗口满足自动推荐阈值。",
-  };
-}
-
 export function createScmServer() {
+  validateDatabasePersistenceConfig(process.env);
   const localSessions = new Map();
   const localSessionSecret = createLocalSessionSecret(process.env);
   return http.createServer(async (req, res) => {
@@ -1478,9 +887,9 @@ export function createScmServer() {
       if (req.method === "OPTIONS") return send(res, 204, {});
 
       const url = new URL(req.url || "/", `http://localhost:${port}`);
-      const db = await readDb();
+      const db = createEmptyDataset({ mode: "user" });
       const persistenceMode = getPersistenceMode(process.env);
-      const dataMode = resolveFlowchainDataMode(process.env);
+      const dataMode = { mode: "user", readsDemoData: false };
       const repositories = createRepositoryRegistry({ db, env: process.env });
       const identity = resolveRequestIdentity(
         req,
@@ -1497,25 +906,12 @@ export function createScmServer() {
           dataMode: dataMode.mode,
           readsDemoData: dataMode.readsDemoData,
           persistenceMode,
-          runtimeWriteCoordination: runtimeFileMutexLimitations,
-          runtimeAdapters: {
-            masterData: repositories.masterData?.adapter || "unavailable",
-            items:
-              repositories.masterData?.itemRuntime?.adapter || "unavailable",
-            suppliers:
-              repositories.masterData?.supplierRuntime?.adapter ||
-              "unavailable",
-            customers:
-              repositories.masterData?.customerRuntime?.adapter ||
-              "unavailable",
-            inventory: repositories.inventoryRuntime?.adapter || "unavailable",
-            salesOrders: repositories.salesOrders?.adapter || "unavailable",
-            procurement:
-              repositories.procurementRuntime?.adapter || "unavailable",
-          },
+          authority: "postgresql",
           timestamp: new Date().toISOString(),
         });
       }
+
+      if (handleRuntimeCapabilityRoute({ req, res, url, send })) return;
 
       if (
         isDatabaseModeWriteBlocked({
@@ -1542,48 +938,46 @@ export function createScmServer() {
         } catch (error) {
           return send(res, 400, { error: error.message });
         }
-        if (persistenceMode === "database") {
-          const tenantId = String(
-            process.env.FLOWCHAIN_DEFAULT_TENANT_ID || "",
-          ).trim();
-          if (!tenantId)
-            return send(res, 403, {
-              code: "TENANT_CONTEXT_REQUIRED",
-              message: "Pilot workspace tenant is not configured.",
-            });
-          const prisma = await getPrismaClient(process.env);
-          const provisioned = await prisma.user.findFirst({
-            where: {
-              tenantId,
-              email: String(profile.email || "")
-                .trim()
-                .toLowerCase(),
-            },
-            include: { tenant: true },
+        const tenantId = String(
+          process.env.FLOWCHAIN_DEFAULT_TENANT_ID || "",
+        ).trim();
+        if (!tenantId)
+          return send(res, 403, {
+            code: "TENANT_CONTEXT_REQUIRED",
+            message: "Pilot workspace tenant is not configured.",
           });
-          if (!provisioned)
-            return send(res, 403, {
-              code: "USER_NOT_PROVISIONED",
-              message: "This email is not provisioned for the Pilot workspace.",
-            });
-          if (provisioned.status !== "active")
-            return send(res, 403, {
-              code: "USER_DISABLED",
-              message: "This workspace user is disabled.",
-            });
-          profile = {
-            id: provisioned.id,
+        const prisma = await getPrismaClient(process.env);
+        const provisioned = await prisma.user.findFirst({
+          where: {
             tenantId,
-            name: provisioned.name,
-            email: provisioned.email,
-            company: provisioned.tenant.name,
-            role: provisioned.role,
-            version: provisioned.version,
-          };
-        }
+            email: String(profile.email || "")
+              .trim()
+              .toLowerCase(),
+          },
+          include: { tenant: true },
+        });
+        if (!provisioned)
+          return send(res, 403, {
+            code: "USER_NOT_PROVISIONED",
+            message: "This email is not provisioned for the Pilot workspace.",
+          });
+        if (provisioned.status !== "active")
+          return send(res, 403, {
+            code: "USER_DISABLED",
+            message: "This workspace user is disabled.",
+          });
+        profile = {
+          id: provisioned.id,
+          tenantId,
+          name: provisioned.name,
+          email: provisioned.email,
+          company: provisioned.tenant.name,
+          role: provisioned.role,
+          version: provisioned.version,
+        };
         const session = createLocalSession(profile, {
           env: process.env,
-          authoritativeRole: persistenceMode === "database",
+          authoritativeRole: true,
         });
         localSessions.set(session.sessionId, session);
         const token = issueLocalSessionToken(session, localSessionSecret);
@@ -1621,69 +1015,6 @@ export function createScmServer() {
         });
       }
 
-      if (req.method === "GET" && url.pathname === "/api/forecast-plans") {
-        return send(res, 200, db.forecastPlans || []);
-      }
-
-      if (req.method === "POST" && url.pathname === "/api/forecast-plans") {
-        const body = await readBody(req);
-        const plan = {
-          id: body.id || `FCST-${Date.now()}`,
-          sku: body.sku,
-          name: body.name,
-          unit: body.unit,
-          method: body.method,
-          horizon: Number(body.horizon || 0),
-          scenario: body.scenario || "base",
-          promoLift: Number(body.promoLift || 0),
-          serviceLevel: Number(body.serviceLevel || 95),
-          leadTimeDays: Number(body.leadTimeDays || 14),
-          history: Array.isArray(body.history)
-            ? body.history.map(Number).filter(Number.isFinite)
-            : [],
-          metrics: body.metrics || {},
-          reconciliation: Array.isArray(body.reconciliation)
-            ? body.reconciliation
-            : [],
-          procurementSuggestion:
-            body.procurementSuggestion &&
-            typeof body.procurementSuggestion === "object"
-              ? {
-                  supplier: body.procurementSuggestion.supplier || "",
-                  buyer: body.procurementSuggestion.buyer || "",
-                  unitPrice: Number(body.procurementSuggestion.unitPrice || 0),
-                  quantity: Number(body.procurementSuggestion.quantity || 0),
-                  amount: Number(body.procurementSuggestion.amount || 0),
-                  priority: body.procurementSuggestion.priority || "中",
-                  firstStockoutMonth:
-                    body.procurementSuggestion.firstStockoutMonth || null,
-                  safetyFactor: Number(
-                    body.procurementSuggestion.safetyFactor || 1,
-                  ),
-                  basis:
-                    body.procurementSuggestion.basis || "peak-net-shortage",
-                }
-              : null,
-          recommendation: body.recommendation || "",
-          createdAt: new Date().toISOString(),
-        };
-        if (!plan.sku || plan.history.length < 6) {
-          return send(res, 400, {
-            error: "sku and at least 6 history points are required",
-          });
-        }
-        db.forecastPlans = [plan, ...(db.forecastPlans || [])].slice(0, 20);
-        event(
-          db,
-          "forecast_plan_saved",
-          `预测方案 ${plan.id} 已保存`,
-          plan.sku,
-        );
-        await writeDb(db);
-        return send(res, 201, plan);
-      }
-
-      const routeWriteDb = persistenceMode === "database" ? undefined : writeDb;
       const routeContext = {
         req,
         res,
@@ -1691,7 +1022,6 @@ export function createScmServer() {
         db,
         send,
         readBody,
-        writeDb: routeWriteDb,
         event,
         todayLabel,
         repositories,
@@ -1731,7 +1061,7 @@ export function createScmServer() {
         env: process.env,
         identity,
         localSessions,
-        supplierQuoteCount: Object.keys(supplierQuotes).length,
+        supplierQuoteCount: 0,
       };
 
       if (await handleMrpRoute(routeContext)) return;
@@ -1776,7 +1106,6 @@ export function createScmServer() {
       if (await handleActionDraftsRoute(routeContext)) return;
       if (await handleUserConfirmedActionsRoute(routeContext)) return;
       if (await handleProcurementWorkflowRoute(routeContext)) return;
-      if (await handleProcurementTransactionsRoute(routeContext)) return;
       if (await handleExceptionCasesRoute(routeContext)) return;
       if (await handleUserDataRoute(routeContext)) return;
       if (await handleMarketRoute(routeContext)) return;

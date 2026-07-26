@@ -3,7 +3,7 @@ import { AlertOctagon, AlertTriangle, Clock, CreditCard, FileSpreadsheet, Search
 import { toast } from "sonner";
 import { Modal, Card, Chip, KpiCard, A } from "../../components/ui";
 import { DocumentActionBar, DocumentEvidencePanel, DocumentHeader, DocumentLinesTable, DocumentShell, DocumentStatusTimeline, DocumentTotals, type TimelineStep } from "../../components/document/DocumentShell";
-import { SUPPLIER_INVOICES, SUPPLIER_RECONCILIATION_STATEMENTS, purchaseOrders, receivingDocs } from "../../data/demo-data";
+import { SUPPLIER_INVOICES, SUPPLIER_RECONCILIATION_STATEMENTS, purchaseOrders, receivingDocs } from "../../data/empty-business-state";
 import { getStatementLinkedDocuments } from "../../domain/procurement/document-links";
 import { getReconciliationStatusTone, getReconciliationSummary, isStatementException, reconciliationExportRows, reconciliationLineExportRows } from "../../domain/procurement/reconciliation";
 import { exportRowsToCsv } from "../../lib/data-export";

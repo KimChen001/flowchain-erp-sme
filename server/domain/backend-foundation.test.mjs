@@ -121,7 +121,8 @@ test('server health response omits provider keys models and proxy diagnostics by
   assert.match(healthBlock, /\.\.\.buildIdentity/)
   assert.match(healthBlock, /persistenceMode/)
   assert.match(healthBlock, /readsDemoData/)
-  assert.match(healthBlock, /runtimeAdapters/)
+  assert.match(healthBlock, /authority: ["']postgresql["']/)
+  assert.doesNotMatch(healthBlock, /runtimeAdapters|runtimeWriteCoordination/)
   assert.match(healthBlock, /timestamp/)
   assert.match(healthBlock, /dataMode: dataMode\.mode/)
   assert.doesNotMatch(healthBlock, /OPENAI_API_KEY|ARK_API_KEY|DOUBAO_API_KEY|OPENAI_MODEL|ARK_MODEL|DOUBAO_MODEL/)
@@ -129,12 +130,12 @@ test('server health response omits provider keys models and proxy diagnostics by
   assert.match(source, /sendInternalServerError\(res, send, error\)/)
 })
 
-test('database mode guard is before legacy auth and forecast writes', () => {
+test('database mode guard is before legacy auth and capability gate is registered', () => {
   const source = readSource('server', 'routes', 'scm-legacy.routes.mjs')
 
   const guardIndex = source.indexOf('isDatabaseModeWriteBlocked({')
   assert.ok(guardIndex < source.search(/url\.pathname === ["']\/api\/auth\/login["']/))
-  assert.ok(guardIndex < source.search(/url\.pathname === ["']\/api\/forecast-plans["']/))
+  assert.match(source, /handleRuntimeCapabilityRoute\(\{ req, res, url, send \}\)/)
   assert.deepEqual(databaseModeMutationBlockedPayload(), {
     error: 'This mutation is not available in database persistence mode yet.',
   })
@@ -142,7 +143,9 @@ test('database mode guard is before legacy auth and forecast writes', () => {
 
 test('database mode blocks legacy writes while allowing health and preview routes', async () => {
   const previous = process.env.FLOWCHAIN_PERSISTENCE_MODE
+  const previousDatabaseUrl = process.env.DATABASE_URL
   process.env.FLOWCHAIN_PERSISTENCE_MODE = 'database'
+  process.env.DATABASE_URL = 'postgresql://user:pass@127.0.0.1:5432/flowchain_backend_foundation_test'
   const server = createScmServer()
 
   try {
@@ -162,14 +165,15 @@ test('database mode blocks legacy writes while allowing health and preview route
     assert.equal(health.payload.dataMode, 'user')
     assert.equal(health.payload.readsDemoData, false)
     assert.equal(typeof health.payload.timestamp, 'string')
-    assert.equal(health.payload.runtimeWriteCoordination.processLocalMutex, true)
-    assert.equal(health.payload.runtimeWriteCoordination.multiProcessSafe, false)
-    assert.equal(mrp.status, 200)
-    assert.equal(mrp.payload.sourceMetadata.persistence, 'read-only-generated-plan')
+    assert.equal(health.payload.authority, 'postgresql')
+    assert.equal(health.payload.runtimeWriteCoordination, undefined)
+    assert.equal(mrp.status, 501)
+    assert.equal(mrp.payload.code, 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED')
+    assert.equal(mrp.payload.capability, 'material-requirements-planning')
     assert.equal(forecastPlan.status, 501)
-    assert.deepEqual(forecastPlan.payload, databaseModeMutationBlockedPayload())
+    assert.equal(forecastPlan.payload.code, 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED')
     assert.equal(sopCycle.status, 501)
-    assert.deepEqual(sopCycle.payload, databaseModeMutationBlockedPayload())
+    assert.equal(sopCycle.payload.code, 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED')
     assert.equal(blocked.status, 501)
     assert.deepEqual(blocked.payload, databaseModeMutationBlockedPayload())
     assert.equal(preview.status, 400)
@@ -180,11 +184,13 @@ test('database mode blocks legacy writes while allowing health and preview route
     } else {
       process.env.FLOWCHAIN_PERSISTENCE_MODE = previous
     }
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL
+    else process.env.DATABASE_URL = previousDatabaseUrl
     await closeServer(server)
   }
 })
 
-test('database mode returns clean config error when DB audit adapter is invoked without DATABASE_URL', async () => {
+test('server factory fails before listening when DATABASE_URL is missing', async () => {
   const previousMode = process.env.FLOWCHAIN_PERSISTENCE_MODE
   const previousDatabaseUrl = process.env.DATABASE_URL
   const previousTestHeaders = process.env.FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS
@@ -193,21 +199,11 @@ test('database mode returns clean config error when DB audit adapter is invoked 
   process.env.FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS = 'true'
   process.env.FLOWCHAIN_DEFAULT_TENANT_ID = 'tenant-backend-foundation'
   delete process.env.DATABASE_URL
-  const server = createScmServer()
-
   try {
-    const port = await listen(server)
-    const audit = await requestJson(port, 'GET', '/api/audit-log', undefined, {
-      'x-flowchain-user': 'backend-foundation-test',
-      'x-flowchain-role': 'admin',
+    assert.throws(() => createScmServer(), {
+      code: 'FLOWCHAIN_DATABASE_URL_REQUIRED',
+      message: 'FLOWCHAIN_DATABASE_URL_REQUIRED',
     })
-
-    assert.equal(audit.status, 500)
-    assert.deepEqual(audit.payload, {
-      error: 'DATABASE_URL is required when FLOWCHAIN_PERSISTENCE_MODE=database.',
-      code: 'FLOWCHAIN_DATABASE_CONFIG_MISSING',
-    })
-    assert.doesNotMatch(JSON.stringify(audit.payload), /postgres:\/\/|sk-/)
   } finally {
     if (previousMode === undefined) {
       delete process.env.FLOWCHAIN_PERSISTENCE_MODE
@@ -229,7 +225,6 @@ test('database mode returns clean config error when DB audit adapter is invoked 
     } else {
       process.env.FLOWCHAIN_DEFAULT_TENANT_ID = previousTenantId
     }
-    await closeServer(server)
   }
 })
 

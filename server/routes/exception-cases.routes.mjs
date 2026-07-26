@@ -5,18 +5,18 @@ import {
   hasExceptionCaseSourceContext,
 } from '../domain/exception-case-draft-builder.mjs'
 import { buildExceptionWorkflowDraft, exceptionCaseAuditPolicyEntry } from '../domain/exception-case-workflow.mjs'
-import { createInMemoryExceptionCaseRepository } from '../repositories/exception-case-repository.mjs'
 import { recordDatabaseAuditBestEffort } from '../domain/audit-policy.mjs'
 
 function repository(ctx) {
-  return ctx.repositories?.exceptionCases || createInMemoryExceptionCaseRepository({ db: ctx.db })
+  if (!ctx.repositories?.exceptionCases) throw new Error('PostgreSQL exception case repository is not configured.')
+  return ctx.repositories.exceptionCases
 }
 
 function scopeFrom(ctx, body = {}) {
   return {
-    tenantId: body.tenantId || ctx.req.headers['x-flowchain-tenant'] || 'demo-tenant',
-    userId: body.userId || ctx.req.headers['x-flowchain-user'] || 'demo-user',
-    dataMode: ctx.dataMode || body.dataMode || 'json',
+    tenantId: ctx.identity?.tenantId,
+    userId: ctx.identity?.userId,
+    dataMode: 'user',
   }
 }
 

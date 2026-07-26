@@ -2,7 +2,7 @@ import { actionDraftSchema, buildActionDraftSuggestion, validateActionDraftPaylo
 import { buildPurchaseRequestDraftPreview } from '../domain/purchase-request-draft-preview.mjs'
 import { buildRfqDraftPreview, buildSupplierFollowupDraftPreview } from '../domain/rfq-and-supplier-followup-draft-preview.mjs'
 
-export function createJsonActionDraftRepository(db = {}) {
+export function createTransientActionDraftPreview(db = {}) {
   return {
     getSchema: () => actionDraftSchema(),
     validateDraft: ({ type = '', payload = {} } = {}) => validateActionDraftPayload(type, payload),

@@ -35,10 +35,6 @@ function sendStructuredError(ctx, error) {
 
 async function handleFormalReceivingRead(ctx) {
   if (ctx.req.method !== 'GET') return false
-  const env = ctx.env || process.env
-  if (String(env.FLOWCHAIN_PERSISTENCE_MODE || '').toLowerCase() !== 'database') return false
-  if (!ctx.identity?.authenticated) { ctx.send(ctx.res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.' }); return true }
-  if (!ctx.identity?.tenantId) { ctx.send(ctx.res, 403, { code: 'TENANT_CONTEXT_REQUIRED', message: 'A server-resolved tenant context is required.' }); return true }
   const detail = ctx.url.pathname.match(/^\/api\/procurement\/receiving\/([^/]+)$/)
   const preview = ctx.url.pathname.match(/^\/api\/procurement\/receiving\/([^/]+)\/impact-preview$/)
   const evidence = ctx.url.pathname.match(/^\/api\/procurement\/receiving\/([^/]+)\/evidence$/)
@@ -46,6 +42,9 @@ async function handleFormalReceivingRead(ctx) {
   const reconciliation = ctx.url.pathname.match(/^\/api\/procurement\/receiving\/([^/]+)\/reconciliation$/)
   const poSummary = ctx.url.pathname.match(/^\/api\/procurement\/purchase-orders\/([^/]+)\/receiving-summary$/)
   if (!detail && !preview && !evidence && !links && !reconciliation && !poSummary) return false
+  const env = ctx.env || process.env
+  if (!ctx.identity?.authenticated) { ctx.send(ctx.res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.' }); return true }
+  if (!ctx.identity?.tenantId) { ctx.send(ctx.res, 403, { code: 'TENANT_CONTEXT_REQUIRED', message: 'A server-resolved tenant context is required.' }); return true }
   try {
     const service = await queryService(ctx)
     const identity = { identity: ctx.identity }
@@ -98,7 +97,7 @@ async function handleFormalReceivingCommand(ctx) {
 
 export async function handleReceivingRoute(ctx) {
   const {
-    req, res, url, db, send, readBody, writeDb, event, todayLabel,
+    req, res, url, db, send, readBody, event, todayLabel,
     normalizePurchaseOrders, postedReceivingStatuses, normalizeGrnLines,
     nextSequenceId, workflowDefinitions, applyReceivingToPoAndInventory,
     recordWorkflowCreation, actorFromBody, applyWorkflowTransition,
@@ -176,7 +175,7 @@ export async function handleReceivingRoute(ctx) {
     }
     db.receivingDocs.unshift(grn)
     event(db, 'receiving_created', `收货单 ${grn.grn} 已创建`, grn.grn)
-    await writeDb(db)
+    throw Object.assign(new Error('Legacy receiving mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
     return send(res, 201, grn)
   }
 
@@ -205,7 +204,7 @@ export async function handleReceivingRoute(ctx) {
         source: 'receiving',
         requestedStatus,
       })
-      await writeDb(db)
+      throw Object.assign(new Error('Legacy receiving mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
       return send(res, 409, { error: message })
     }
     const protectedChangeError = postedGrnProtectedChangeError(grn, body, po)
@@ -214,7 +213,7 @@ export async function handleReceivingRoute(ctx) {
         actor: actorFromBody(body, grn.receiver || 'system'),
         source: 'receiving',
       })
-      await writeDb(db)
+      throw Object.assign(new Error('Legacy receiving mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
       return send(res, 400, { error: protectedChangeError })
     }
     const aggregatePatch = !Array.isArray(body.lines) && (
@@ -268,7 +267,7 @@ export async function handleReceivingRoute(ctx) {
       }
     }
     event(db, 'receiving_status', `${grn.grn} 状态更新为 ${grn.status}`, grn.grn)
-    await writeDb(db)
+    throw Object.assign(new Error('Legacy receiving mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
     return send(res, 200, grn)
   }
 

@@ -88,19 +88,13 @@ test('action draft preview route remains non-mutating and never calls persistDra
   assert.deepEqual(db, before)
 })
 
-test('JSON mode save route returns safe not implemented without mutating business data', async () => {
+test('removed JSON mode fails before an action draft repository can be used', () => {
   const db = createDb()
   const before = clone(db)
-  const route = createRouteContext({
-    db,
-    repositories: createRepositoryRegistry({ db, env: {} }),
-    body: { draft: draft() },
-  })
-
-  assert.equal(await handleActionDraftsRoute(route.ctx), true)
-  assert.equal(route.response.status, 501)
-  assert.deepEqual(route.response.payload, { error: 'Action draft persistence is only available in database mode.' })
-  assert.equal(route.wrote, false)
+  assert.throws(
+    () => createRepositoryRegistry({ db, env: { FLOWCHAIN_PERSISTENCE_MODE: 'json' } }),
+    { code: 'FLOWCHAIN_JSON_PERSISTENCE_REMOVED' },
+  )
   assert.deepEqual(db, before)
 })
 
@@ -154,7 +148,7 @@ test('database mode save route returns clean config error without DATABASE_URL',
   assert.equal(route.response.status, 500)
   assert.deepEqual(route.response.payload, {
     error: DATABASE_CONFIG_ERROR,
-    code: 'FLOWCHAIN_DATABASE_CONFIG_MISSING',
+    code: DATABASE_CONFIG_ERROR,
   })
   assert.doesNotMatch(JSON.stringify(route.response.payload), /stack|postgres|password/)
 })

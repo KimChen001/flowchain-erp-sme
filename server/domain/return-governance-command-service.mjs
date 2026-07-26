@@ -213,7 +213,6 @@ function replay(execution, requestHash) {
 
 function assertEnabled(env) {
   if (
-    text(env.FLOWCHAIN_PERSISTENCE_MODE).toLowerCase() !== "database" ||
     text(env.FLOWCHAIN_ENABLE_DB_RETURNS_QUARANTINE).toLowerCase() !== "true"
   )
     fail(

@@ -1,9 +1,9 @@
-import { createJsonMasterDataRepository } from '../repositories/json-master-data-repository.mjs'
 import { selectMasterData } from '../domain/master-data-selectors.mjs'
 import { authorizeMutation } from '../domain/mutation-authorization.mjs'
 
 function masterDataRepository(ctx) {
-  return ctx.repositories?.masterData || createJsonMasterDataRepository(ctx.db)
+  if (!ctx.repositories?.masterData) throw new Error('PostgreSQL master data repository is not configured.')
+  return ctx.repositories.masterData
 }
 
 export async function handleMasterDataRoute(ctx) {

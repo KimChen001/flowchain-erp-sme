@@ -1,6 +1,6 @@
 import { AlertTriangle, CreditCard, FileText, HandCoins, ReceiptText } from "lucide-react";
 import { A } from "../../components/ui";
-import { PAYABLES, SUPPLIER_CREDIT_MEMOS, SUPPLIER_INVOICES, SUPPLIER_RECONCILIATION_STATEMENTS } from "../../data/demo-data";
+import { PAYABLES, SUPPLIER_CREDIT_MEMOS, SUPPLIER_INVOICES, SUPPLIER_RECONCILIATION_STATEMENTS } from "../../data/empty-business-state";
 import { invoiceToPayable, isInvoicePayableReady } from "../../domain/procurement/invoice-matching";
 import { fmt } from "../../lib/format";
 

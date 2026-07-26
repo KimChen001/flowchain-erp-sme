@@ -1,6 +1,6 @@
 import { CreditCard, FileSpreadsheet, FileText, HandCoins, ReceiptText } from "lucide-react";
 import { A, Card } from "../../components/ui";
-import { SUPPLIER_CREDIT_MEMOS, SUPPLIER_INVOICES, SUPPLIER_RECONCILIATION_STATEMENTS } from "../../data/demo-data";
+import { SUPPLIER_CREDIT_MEMOS, SUPPLIER_INVOICES, SUPPLIER_RECONCILIATION_STATEMENTS } from "../../data/empty-business-state";
 import { financePayables, settlementRows } from "./finance-summary";
 import type { FinanceTab } from "./Page";
 

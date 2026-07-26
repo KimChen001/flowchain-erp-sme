@@ -3,10 +3,10 @@ import {
   buildUserConfirmedActionAuditEntry,
   validateUserConfirmedActionRequest,
 } from '../domain/user-confirmed-business-action.mjs'
-import { createInMemoryUserConfirmedActionRepository } from '../repositories/user-confirmed-action-repository.mjs'
 
 function repository(ctx = {}) {
-  return ctx.repositories?.userConfirmedActions || createInMemoryUserConfirmedActionRepository({ db: ctx.db })
+  if (!ctx.repositories?.userConfirmedActions) throw new Error('PostgreSQL confirmed action repository is not configured.')
+  return ctx.repositories.userConfirmedActions
 }
 
 function text(value = '') {
@@ -15,9 +15,9 @@ function text(value = '') {
 
 function scopeFrom(ctx = {}, body = {}) {
   return {
-    tenantId: body.scope?.tenantId || body.tenantId || ctx.req.headers['x-flowchain-tenant'] || 'tenant-flowchain-sme',
-    userId: body.scope?.userId || body.userId || body.actor || ctx.req.headers['x-flowchain-user'] || 'user-local',
-    dataMode: body.scope?.dataMode || body.dataMode || ctx.dataMode || 'json',
+    tenantId: ctx.identity?.tenantId,
+    userId: ctx.identity?.userId,
+    dataMode: 'user',
   }
 }
 

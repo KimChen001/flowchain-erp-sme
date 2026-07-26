@@ -95,7 +95,6 @@ async function validateDefaultWarehouse(prisma, actor, warehouseId) {
 
 export async function handlePilotWorkspaceRoute(ctx) {
   if (!ctx.url.pathname.startsWith('/api/me/') && !ctx.url.pathname.startsWith('/api/workspace')) return false
-  if (String((ctx.env || process.env).FLOWCHAIN_PERSISTENCE_MODE || '').toLowerCase() !== 'database') return false
   const prisma = await getPrismaClient(ctx.env || process.env)
   try {
     const accept = ctx.url.pathname === '/api/workspace/invitations/accept'

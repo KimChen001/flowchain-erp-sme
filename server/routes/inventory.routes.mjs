@@ -1,4 +1,3 @@
-import { createJsonInventoryReadRepository } from "../repositories/json-inventory-read-repository.mjs";
 import {
   buildRuntimeInventoryAllocation,
   getRuntimeSkuAvailability,
@@ -25,27 +24,22 @@ function authoritativeQuery(url) {
 
 async function authoritativeService(ctx) {
   const env = ctx.env || process.env;
-  if (
-    env.FLOWCHAIN_PERSISTENCE_MODE !== "database" ||
-    !ctx.identity?.authenticated
-  )
-    return null;
+  if (!ctx.identity?.authenticated) return null;
   const prisma =
     ctx.inventoryPrisma || ctx.outboundPrisma || (await getPrismaClient(env));
   return createInventoryAuthoritativeReadService({ prisma });
 }
 
 function inventoryReadRepository(ctx) {
-  return (
-    ctx.repositories?.inventoryRuntime ||
-    ctx.repositories?.inventoryRead ||
-    createJsonInventoryReadRepository(ctx.db)
-  );
+  if (!ctx.repositories?.inventoryRead)
+    throw new Error("PostgreSQL inventory repository is not configured.");
+  return ctx.repositories.inventoryRead;
 }
 
 export async function handleInventoryRoute(ctx) {
   const { req, res, url, send } = ctx;
-  const repository = inventoryReadRepository(ctx);
+  let readRepository;
+  const repository = () => (readRepository ||= inventoryReadRepository(ctx));
   let runtimeModel;
   const allocationModel = async () =>
     (runtimeModel ||= buildRuntimeInventoryAllocation(
@@ -297,7 +291,7 @@ export async function handleInventoryRoute(ctx) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/inventory/items") {
-    send(res, 200, { items: await repository.listItems(query(url)) });
+    send(res, 200, { items: await repository().listItems(query(url)) });
     return true;
   }
 
@@ -309,7 +303,7 @@ export async function handleInventoryRoute(ctx) {
     });
     if (authorization.blocked) return true;
     try {
-      const item = await repository.upsertItem(
+      const item = await repository().upsertItem(
         await ctx.readBody(req),
         authorization.identity.userId,
       );
@@ -325,7 +319,7 @@ export async function handleInventoryRoute(ctx) {
 
   const itemMatch = url.pathname.match(/^\/api\/inventory\/items\/([^/]+)$/);
   if (req.method === "GET" && itemMatch) {
-    const item = await repository.getItem(itemMatch[1]);
+    const item = await repository().getItem(itemMatch[1]);
     if (!item) {
       send(res, 404, { error: "Inventory item not found" });
       return true;
@@ -335,12 +329,12 @@ export async function handleInventoryRoute(ctx) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/inventory/lots") {
-    send(res, 200, { lots: await repository.listLots(query(url)) });
+    send(res, 200, { lots: await repository().listLots(query(url)) });
     return true;
   }
 
   if (req.method === "GET" && url.pathname === "/api/inventory/serials") {
-    send(res, 200, { serials: await repository.listSerials(query(url)) });
+    send(res, 200, { serials: await repository().listSerials(query(url)) });
     return true;
   }
 
@@ -350,7 +344,7 @@ export async function handleInventoryRoute(ctx) {
       send(res, 200, await service.listMovements(authoritativeQuery(url), ctx));
       return true;
     }
-    send(res, 200, { movements: await repository.listMovements(query(url)) });
+    send(res, 200, { movements: await repository().listMovements(query(url)) });
     return true;
   }
 
@@ -421,12 +415,12 @@ export async function handleInventoryRoute(ctx) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/inventory/exceptions") {
-    send(res, 200, { exceptions: await repository.listExceptions(query(url)) });
+    send(res, 200, { exceptions: await repository().listExceptions(query(url)) });
     return true;
   }
 
   if (req.method === "GET" && url.pathname === "/api/inventory/summary") {
-    send(res, 200, { summary: await repository.getSummary() });
+    send(res, 200, { summary: await repository().getSummary() });
     return true;
   }
 

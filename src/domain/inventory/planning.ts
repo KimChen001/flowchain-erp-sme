@@ -1,8 +1,19 @@
-import {
-  INVENTORY_PLANNING_PROFILE,
-  INVENTORY_PROCUREMENT_PROFILE,
-  type InventoryPlanningProfile,
-} from "../../data/inventory-planning-profile";
+export type InventoryPlanningFacts = {
+  monthlyDemand: number;
+  unit: string;
+  leadTimeDays: number;
+  serviceLevel: number;
+  moq: number;
+  batchMultiple: number;
+  allocated: number;
+  inbound: number;
+  qaHold: number;
+  abc: "A" | "B" | "C";
+  xyz: "X" | "Y" | "Z";
+  supplier?: string;
+  unitPrice?: number;
+  buyer?: string;
+};
 
 export type InventoryItem = {
   sku: string;
@@ -20,21 +31,13 @@ export function roundUpToBatch(value: number, moq: number, batchMultiple: number
   return Math.ceil(floor / batchMultiple) * batchMultiple;
 }
 
-export function inventoryPlan(item: InventoryItem) {
-  const profile = INVENTORY_PLANNING_PROFILE[item.sku] ?? {
-    monthlyDemand: Math.max(item.min, 1),
-    unit: "件",
-    leadTimeDays: 10,
-    serviceLevel: 92,
-    moq: 1,
-    batchMultiple: 1,
-    allocated: 0,
-    inbound: 0,
-    qaHold: 0,
-    abc: "B",
-    xyz: "Y",
-  } satisfies InventoryPlanningProfile;
-  const procurement = INVENTORY_PROCUREMENT_PROFILE[item.sku] ?? { supplier: "待分配供应商", unitPrice: 0, buyer: "张磊" };
+export function inventoryPlan(item: InventoryItem, facts: InventoryPlanningFacts) {
+  const profile = facts;
+  const procurement = {
+    supplier: facts.supplier || "",
+    unitPrice: Number(facts.unitPrice || 0),
+    buyer: facts.buyer || "",
+  };
   const dailyDemand = profile.monthlyDemand / 30;
   const onHandAvailable = Math.max(0, item.qty - profile.allocated - profile.qaHold);
   const projectedAvailable = Math.max(0, onHandAvailable + profile.inbound);
@@ -49,7 +52,7 @@ export function inventoryPlan(item: InventoryItem) {
     : projectedAvailable <= reorderPoint || daysCover <= profile.leadTimeDays + 7
       ? "中"
       : "低";
-  const needsSourcing = suggestedQty > 0 && (!procurement.unitPrice || procurement.supplier === "待分配供应商");
+  const needsSourcing = suggestedQty > 0 && (!procurement.unitPrice || !procurement.supplier);
   const action = suggestedQty > 0
     ? needsSourcing ? "补供应商/报价" : priority === "高" ? "立即生成 PR" : "纳入本周补货"
     : profile.qaHold > 0 ? "释放冻结库存" : item.qty > item.max * 0.8 && item.turnover < 4 ? "降频采购/清理呆滞" : "保持监控";

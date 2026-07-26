@@ -41,6 +41,7 @@ function responseHarness({ method = 'POST', pathname = '/api/exception-cases', b
       url: new URL(`http://local${pathname}`),
       db: {},
       dataMode: 'test',
+      identity: { authenticated: true, tenantId: 'demo-tenant', userId: 'demo-user', role: 'admin' },
       repositories: {
         exceptionCases: repo,
         auditLog: {
@@ -62,8 +63,8 @@ function responseHarness({ method = 'POST', pathname = '/api/exception-cases', b
   }
 }
 
-async function createCase(repo, overrides = {}) {
-  return repo.createCase({ tenantId: 'demo-tenant', userId: 'demo-user', dataMode: 'test' }, { confirm: true, case: { ...baseCase, ...overrides } })
+async function createCase(repo, overrides = {}, dataMode = 'test') {
+  return repo.createCase({ tenantId: 'demo-tenant', userId: 'demo-user', dataMode }, { confirm: true, case: { ...baseCase, ...overrides } })
 }
 
 test('R241 baseline review confirms safe exception workflow extension points', () => {
@@ -134,7 +135,7 @@ test('R245 closure requires resolution model confirmation and does not mutate li
 
 test('R246-R248 routes expose workflow controls and create audit entries for confirmed updates', async () => {
   const repo = createInMemoryExceptionCaseRepository({ db: {} })
-  const item = await createCase(repo)
+  const item = await createCase(repo, {}, 'user')
   const patch = responseHarness({
     method: 'PATCH',
     pathname: `/api/exception-cases/${item.caseId}`,

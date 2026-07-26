@@ -1,7 +1,15 @@
-import { FORECAST_PROCUREMENT_PROFILE } from "../../data/forecast-planning-profile";
+export type ForecastProcurementFacts = {
+  sku: string;
+  supplier?: string;
+  unitPrice?: number;
+  buyer?: string;
+};
 
-export function forecastProcurementProfileForSku(sku: string) {
-  return FORECAST_PROCUREMENT_PROFILE[sku] ?? { supplier: "未选择供应商", unitPrice: 0, buyer: "张磊" };
+export function forecastProcurementProfileForSku(sku: string, facts: ForecastProcurementFacts[]) {
+  const match = facts.find((entry) => entry.sku === sku);
+  return {
+    supplier: match?.supplier || "",
+    unitPrice: Number(match?.unitPrice || 0),
+    buyer: match?.buyer || "",
+  };
 }
-
-export { FORECAST_PROCUREMENT_PROFILE };

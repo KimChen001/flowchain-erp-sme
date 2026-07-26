@@ -8,7 +8,7 @@ import {
   SUPPLIER_RECONCILIATION_STATEMENTS,
   purchaseOrders,
   receivingDocs,
-} from "../../data/demo-data";
+} from "../../data/empty-business-state";
 import { SUPPLIER_MASTER } from "../../data/master-data";
 import { fmt } from "../../lib/format";
 import type { SupplierMaster } from "../../types/scm";

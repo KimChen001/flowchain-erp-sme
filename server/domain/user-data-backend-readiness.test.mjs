@@ -44,7 +44,7 @@ test('R170 user data backend exposes import contract preview runtime and commit 
 test('R170 user data backend tests cover dry-run runtime commit and browser preview smoke', () => {
   assert.match(source('server', 'domain', 'user-data-import-dry-run.test.mjs'), /R163 dry-run route returns normalized preview/)
   assert.match(source('server', 'domain', 'user-data-runtime-ai.test.mjs'), /R165 AI answers imported user data/)
-  assert.match(source('server', 'domain', 'user-data-import-commit-boundary.test.mjs'), /R167 commit boundary blocks protected fixture mode/)
+  assert.match(source('server', 'domain', 'user-data-import-commit-boundary.test.mjs'), /R167 commit boundary blocks non-authoritative preview mode and never writes runtime data/)
   assert.match(source('tests', 'browser', 'user-data-import-preview.spec.ts'), /R169 user data import preview API stays compact and non-mutating/)
 })
 

@@ -11,17 +11,13 @@ import {
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 
-function databaseEnv(env = process.env) {
-  return { ...env, FLOWCHAIN_PERSISTENCE_MODE: 'database' }
-}
-
 function requireDatabaseConfig(env = process.env) {
-  return validateDatabasePersistenceConfig(databaseEnv(env))
+  return validateDatabasePersistenceConfig(env)
 }
 
 async function resolvePrisma({ env = process.env, prisma } = {}) {
   requireDatabaseConfig(env)
-  return prisma || getPrismaClient(databaseEnv(env))
+  return prisma || getPrismaClient(env)
 }
 
 function text(value, fallback = '') {

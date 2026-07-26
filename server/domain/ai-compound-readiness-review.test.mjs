@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -14,7 +15,7 @@ import {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 function runtimeDb() {
-  return JSON.parse(fs.readFileSync(path.join(repoRoot, 'data', 'scm-demo.json'), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function routeContext(body, db = runtimeDb()) {
@@ -101,10 +102,10 @@ test('R149 compound query works while detail lookup and unknown fallback remain 
   assert.ok(compound.subIntents.includes('receiving_gap_query'))
   assert.match(visibleText(compound), /未收货订单|供应商风险|今日待办/)
 
-  const supplier = await ask('广州化工耗材 这个供应商状态怎么样？')
+  const supplier = await ask('深圳新元电气 这个供应商状态怎么样？')
   assert.notEqual(supplier.intent.name, 'compound_business_query')
   assert.doesNotMatch(visibleText(supplier), /请提供供应商名称|请提供供应商 ID|供应商主数据中没有匹配记录/)
-  assert.match(visibleText(supplier), /广州化工耗材/)
+  assert.match(visibleText(supplier), /深圳新元电气/)
 
   const unknown = await ask('写一首采购宣言')
   assert.equal(unknown.intent.name, 'unknown_guided_fallback')

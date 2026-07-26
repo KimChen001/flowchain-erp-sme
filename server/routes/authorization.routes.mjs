@@ -5,12 +5,9 @@ import { buildAuthorizationDecisionSet, moduleVisibilityFor } from "../auth/auth
 import { createAuthorizationAdminService } from "../auth/authorization-admin-service.mjs"
 import { FIELD_GROUP_PERMISSION, permissionCodes } from "../auth/permission-catalog.mjs"
 
-const databaseMode = (ctx) => String((ctx.env || process.env).FLOWCHAIN_PERSISTENCE_MODE || "").toLowerCase() === "database"
-
 export async function handleAuthorizationRoute(ctx) {
   const { req, res, url, send, readBody } = ctx
   if (!url.pathname.startsWith("/api/authorization")) return false
-  if (!databaseMode(ctx)) { send(res, 409, { code: "AUTHORIZATION_DATABASE_REQUIRED", message: "Authorization governance requires database persistence." }); return true }
   try {
     const prisma = await getPrismaClient(ctx.env || process.env)
     const actor = await resolveProvisionedActor(prisma, ctx.identity)

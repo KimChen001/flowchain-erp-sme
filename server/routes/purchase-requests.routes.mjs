@@ -2,7 +2,7 @@ import { listImportedRecords } from '../repositories/import-persistence-reposito
 
 export async function handlePurchaseRequestsRoute(ctx) {
   const {
-    req, res, url, db, send, readBody, writeDb, event, todayLabel,
+    req, res, url, db, send, readBody, event, todayLabel,
     ensurePurchaseRequests, systemRequestSources, nextSequenceId,
     purchaseRequestStatuses, priorities, recordWorkflowCreation,
     actorFromBody, applyWorkflowTransition, recordValidationBlocked,
@@ -72,7 +72,7 @@ export async function handlePurchaseRequestsRoute(ctx) {
     })
     ensurePurchaseRequests(db).unshift(request)
     event(db, 'purchase_request_created', `采购申请 ${request.pr} 已提交审批`, request.pr)
-    await writeDb(db)
+    throw Object.assign(new Error('Legacy purchase request mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
     return send(res, 201, request)
   }
 
@@ -100,7 +100,7 @@ export async function handlePurchaseRequestsRoute(ctx) {
     if (body.reason) request.decisionReason = body.reason
     if (request.status === '已批准') request.approvedAt = new Date().toISOString()
     event(db, 'purchase_request_status', `${request.pr} 状态更新为 ${request.status}`, request.pr)
-    await writeDb(db)
+    throw Object.assign(new Error('Legacy purchase request mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
     return send(res, 200, request)
   }
 
@@ -115,7 +115,7 @@ export async function handlePurchaseRequestsRoute(ctx) {
         actor: request.buyer || request.requester || 'system',
         source: 'purchase-request',
       })
-      await writeDb(db)
+      throw Object.assign(new Error('Legacy purchase request mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
       return send(res, 409, { error: `cannot convert PR with status ${request.status}` })
     }
     const poId = nextSequenceId(db.purchaseOrders, 'po', 'PO-2026-', 1300)
@@ -168,7 +168,7 @@ export async function handlePurchaseRequestsRoute(ctx) {
     request.linkedPo = po.po
     request.convertedAt = new Date().toISOString()
     event(db, 'purchase_request_converted', `采购申请 ${request.pr} 已转为 ${po.po}`, po.po)
-    await writeDb(db)
+    throw Object.assign(new Error('Legacy purchase request mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
     return send(res, 201, { request, po })
   }
 

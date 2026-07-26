@@ -15,7 +15,7 @@ const realValues = /https:\/\/private\.example|LOCAL_ACCESS_VALUE|LOCAL_MODEL_VA
 const forbiddenActions = /自动批准|自动下单|发送|付款|写库存|写财务凭证|改主数据|覆盖数据/
 
 function dataFileStat() {
-  return fs.statSync(new URL('../../data/scm-demo.json', import.meta.url))
+  return fs.statSync(new URL('./test-fixtures/product-review-scenario.mjs', import.meta.url))
 }
 
 function assertDefaultSafe(summary) {

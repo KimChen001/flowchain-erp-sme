@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -8,7 +9,7 @@ import { handleAiRoute } from '../routes/ai.routes.mjs'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 function runtimeDb() {
-  return JSON.parse(fs.readFileSync(path.join(repoRoot, 'data', 'scm-demo.json'), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function routeContext(body, db = runtimeDb()) {

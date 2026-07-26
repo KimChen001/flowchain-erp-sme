@@ -2,7 +2,7 @@ import { useState } from "react";
 import { AlertCircle, AlertOctagon, CheckCircle2, FileSpreadsheet, MoreHorizontal, Package, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Modal, Card, Chip, KpiCard, A } from "../../components/ui";
-import { SUPPLIER_INVOICES, purchaseOrders, receivingDocs } from "../../data/demo-data";
+import { SUPPLIER_INVOICES, purchaseOrders, receivingDocs } from "../../data/empty-business-state";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { fmt } from "../../lib/format";
 import { invoiceToMatchQueueItem, type InvoiceMatchQueueItem } from "../../domain/procurement/invoice-matching";

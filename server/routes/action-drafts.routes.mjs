@@ -1,4 +1,3 @@
-import { createJsonActionDraftRepository } from '../repositories/json-action-draft-repository.mjs'
 import {
   actionDraftPreviewAuditEntry,
   actionDraftSavedAuditEntry,
@@ -6,7 +5,8 @@ import {
 } from '../domain/audit-policy.mjs'
 
 function actionDraftRepository(ctx) {
-  return ctx.repositories?.actionDrafts || createJsonActionDraftRepository(ctx.db)
+  if (!ctx.repositories?.actionDrafts) throw new Error('PostgreSQL action draft repository is not configured.')
+  return ctx.repositories.actionDrafts
 }
 
 export async function handleActionDraftsRoute(ctx) {

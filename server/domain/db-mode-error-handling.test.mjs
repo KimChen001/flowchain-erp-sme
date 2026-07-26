@@ -36,33 +36,32 @@ function draft() {
 
 function assertDatabaseConfigError(error) {
   assert.equal(error.message, DATABASE_CONFIG_ERROR)
-  assert.equal(error.code, 'FLOWCHAIN_DATABASE_CONFIG_MISSING')
+  assert.equal(error.code, DATABASE_CONFIG_ERROR)
   assert.doesNotMatch(JSON.stringify({ message: error.message, code: error.code }), /password|postgres|stack|OPENAI_API_KEY|Bearer/i)
   return true
 }
 
-test('JSON mode remains default and reads without DATABASE_URL', async () => {
+test('PostgreSQL mode is the only runtime and is selected by default', () => {
   const db = createDb()
   const registry = createRepositoryRegistry({ db, env: {} })
 
-  assert.equal(getPersistenceMode({}), 'json')
-  assert.equal(registry.mode, 'json')
-  assert.equal((await registry.masterData.listItems())[0].sku, 'JSON-ONLY')
-  assert.equal((await registry.procurementRead.listDocuments()).some((doc) => doc.id === 'PO-JSON-1'), true)
-  assert.equal((await registry.inventoryRead.listItems())[0].sku, 'JSON-ONLY')
+  assert.equal(getPersistenceMode({}), 'database')
+  assert.equal(registry.mode, 'database')
+  assert.equal(registry.masterData.adapter, 'db-master-data-v1')
+  assert.equal(registry.procurementRead.adapter, 'db-procurement-read-v1')
+  assert.equal(registry.inventoryRead.adapter, 'db-inventory-read-v1')
   assert.equal(registry.actionDrafts.previewDraft({ type: 'purchase_request_draft', payload: { itemIdOrSku: 'JSON-ONLY', quantity: 2 } }).ok, true)
-  assert.deepEqual(registry.auditLog.listAuditEntries(), [])
 })
 
-test('invalid persistence mode keeps documented JSON-compatible behavior', () => {
-  const registry = createRepositoryRegistry({
-    db: createDb(),
-    env: { FLOWCHAIN_PERSISTENCE_MODE: 'sqlite' },
-  })
-
-  assert.equal(getPersistenceMode({ FLOWCHAIN_PERSISTENCE_MODE: 'sqlite' }), 'json')
-  assert.equal(registry.mode, 'json')
-  assert.equal(typeof registry.masterData.listItems, 'function')
+test('removed and unsupported persistence modes fail closed', () => {
+  assert.throws(
+    () => createRepositoryRegistry({ db: createDb(), env: { FLOWCHAIN_PERSISTENCE_MODE: 'json' } }),
+    (error) => error.code === 'FLOWCHAIN_JSON_PERSISTENCE_REMOVED',
+  )
+  assert.throws(
+    () => createRepositoryRegistry({ db: createDb(), env: { FLOWCHAIN_PERSISTENCE_MODE: 'sqlite' } }),
+    (error) => error.code === 'FLOWCHAIN_PERSISTENCE_MODE_UNSUPPORTED',
+  )
 })
 
 test('explicit DB mode selects DB adapters even without DATABASE_URL', () => {

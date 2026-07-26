@@ -15,9 +15,10 @@ import {
   findBusinessChainByEntityV1,
   sanitizeCoreBusinessChainForAiV1,
 } from './core-business-chain-v1.mjs'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
-  return JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function visibleText(value) {
@@ -75,7 +76,10 @@ test('chain helpers expose navigation limitations and review-first draft suggest
   assert.ok(evidence.length >= 5)
   assert.ok(links.some((link) => link.moduleId === 'procurement:orders'))
   assert.ok(links.every((link) => link.returnContext?.returnLabel === '返回 今日行动'))
-  assert.ok(limitations.some((item) => /发票/.test(item.label)))
+  assert.ok(
+    evidence.some((item) => /发票/.test(item.evidenceLabel)) ||
+    limitations.some((item) => /发票/.test(item.label)),
+  )
   assert.equal(drafts[0].previewOnly, true)
   assert.equal(drafts[0].reviewRequired, true)
   assert.equal(drafts[0].requiresHumanReview, true)

@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createDatabaseRepositoryRegistry } from '../repositories/adapter-registry.mjs'
 import { createDbAuditLogRepository } from '../repositories/db-audit-log-repository.mjs'
+import { DATABASE_CONFIG_ERROR } from '../persistence/persistence-config.mjs'
 import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
 import { handleAuditLogRoute } from '../routes/audit-log.routes.mjs'
 import { handleAiRoute } from '../routes/ai.routes.mjs'
@@ -109,6 +110,17 @@ function createAuditRoute({ method = 'GET', path = '/api/audit-log', repositorie
       url: new URL(path, 'http://localhost'),
       db,
       env,
+      identity: {
+        authenticated: true,
+        complete: true,
+        tenantId: 'tenant-flowchain-sme',
+        userId: 'audit-reader',
+        roleIds: ['audit-reader-role'],
+        permissionCodes: new Set(['audit.read', 'audit.read_sensitive']),
+        permissionSourceRoleIds: new Map(),
+        readWarehouseIds: new Set(),
+        operateWarehouseIds: new Set(),
+      },
       repositories,
       send(_res, status, payload) {
         response = { status, payload }
@@ -267,7 +279,7 @@ test('audit log read route uses injected repository filters without mutating JSO
 
   assert.equal(await handleAuditLogRoute(route.ctx), true)
   assert.equal(route.response.status, 200)
-  assert.deepEqual(calls, [{ entityType: 'actionDraft', entityId: 'DRAFT-AUDIT-1', limit: 5 }])
+  assert.deepEqual(calls, [{ tenantId: 'tenant-flowchain-sme', entityType: 'actionDraft', entityId: 'DRAFT-AUDIT-1', limit: 5 }])
   assert.deepEqual(route.response.payload, [{ id: 'AUD-ROUTE-1', entityType: 'actionDraft', entityId: 'DRAFT-AUDIT-1' }])
   assert.equal(JSON.stringify(db), before)
 })
@@ -345,11 +357,11 @@ test('database audit adapter missing config fails cleanly and best-effort AI aud
 
   await assert.rejects(
     () => repository.listAuditEntries({ entityType: 'actionDraft' }),
-    (error) => error.code === 'FLOWCHAIN_DATABASE_CONFIG_MISSING' && !/postgresql:\/\/|password|stack/i.test(error.message),
+    (error) => error.code === DATABASE_CONFIG_ERROR && !/postgresql:\/\/|password|stack/i.test(error.message),
   )
   await assert.rejects(
     () => repository.recordAuditEntry({ action: 'draft_saved', entity: { type: 'actionDraft', id: 'DRAFT-AUDIT-1' } }),
-    (error) => error.code === 'FLOWCHAIN_DATABASE_CONFIG_MISSING' && !/postgresql:\/\/|password|stack/i.test(error.message),
+    (error) => error.code === DATABASE_CONFIG_ERROR && !/postgresql:\/\/|password|stack/i.test(error.message),
   )
 
   const bestEffort = await repository.recordAiEventBestEffort({
@@ -357,7 +369,7 @@ test('database audit adapter missing config fails cleanly and best-effort AI aud
     entity: { type: 'ai', id: 'supplier_status_query' },
     summary: 'Should not throw',
   })
-  assert.deepEqual(bestEffort, { ok: false, errorCode: 'FLOWCHAIN_DATABASE_CONFIG_MISSING' })
+  assert.deepEqual(bestEffort, { ok: false, errorCode: DATABASE_CONFIG_ERROR })
 })
 
 test('audit log route is read-only and does not expose route-level audit creation', async () => {

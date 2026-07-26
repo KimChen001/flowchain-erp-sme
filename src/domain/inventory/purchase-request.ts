@@ -1,19 +1,19 @@
 import { fmt } from "../../lib/format";
-import { inventoryPlan, type InventoryItem } from "./planning";
+import { inventoryPlan, type InventoryItem, type InventoryPlanningFacts } from "./planning";
 
-export function inventoryPurchaseRequestPayload(item: InventoryItem, overrides?: {
+export function inventoryPurchaseRequestPayload(item: InventoryItem, facts: InventoryPlanningFacts, overrides?: {
   quantity?: number;
   requiredDate?: string;
   reason?: string;
 }) {
-  const plan = inventoryPlan(item);
+  const plan = inventoryPlan(item, facts);
   const quantity = Math.max(0, Number(overrides?.quantity ?? plan.suggestedQty));
   return {
     source: "inventory",
     sourceSku: item.sku,
     sourceName: item.name,
     supplier: plan.supplier,
-    requester: "张磊",
+    requester: "",
     buyer: plan.buyer,
     requiredDate: overrides?.requiredDate || `${plan.leadTimeDays}天内`,
     quantity,

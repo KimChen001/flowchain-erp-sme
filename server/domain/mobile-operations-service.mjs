@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import { assertAuthorized, can } from "../auth/authorization-service.mjs";
-import { createProcurementWorkflowService } from "../services/procurement-workflow-service.mjs";
 import { assertWarehouseAccess, resolveProvisionedActor } from "./pilot-identity.mjs";
 import { createReceivingPostingCommandService, ReceivingCommandError } from "./receiving-posting-command-service.mjs";
 import { createReceivingWorkbenchQueryService } from "./receiving-workbench-query-service.mjs";
@@ -17,13 +16,11 @@ const serial = (value) => value?.toISOString?.() || value || null;
 const decimal = (value) => receivingDecimalString(receivingDecimalUnits(value || 0));
 const quantityUnits = (value, label) => { try { return receivingDecimalUnits(value || 0); } catch (error) { fail("RECEIVING_VALIDATION_FAILED", `${label}: ${error.message}`, 422); } };
 
-export function createMobileOperationsService({ prisma, procurementRepository, procurementAuthority, masterDataRepository, env = process.env, idFactory = randomUUID, now = () => new Date() } = {}) {
+export function createMobileOperationsService({ prisma, procurementAuthority, env = process.env, idFactory = randomUUID, now = () => new Date() } = {}) {
   if (!prisma) throw new Error("prisma is required");
   const actorFor = (context) => resolveProvisionedActor(prisma, context?.identity || context);
-  const databaseMode = text(env.FLOWCHAIN_PERSISTENCE_MODE).toLowerCase() === "database";
-  const procurement = !databaseMode && !procurementAuthority && procurementRepository ? createProcurementWorkflowService({ repository: procurementRepository, itemRepository: masterDataRepository }) : null;
   const requireProcurementAuthority = () => {
-    if (databaseMode && !procurementAuthority) fail("PROCUREMENT_DATABASE_AUTHORITY_REQUIRED", "Database mode mobile procurement requires the PostgreSQL command authority.", 409);
+    if (!procurementAuthority) fail("PROCUREMENT_DATABASE_AUTHORITY_REQUIRED", "Mobile procurement requires the PostgreSQL command authority.", 409);
   };
   const receivingCommand = createReceivingPostingCommandService({ prisma, env });
   const receivingRead = createReceivingWorkbenchQueryService({ prisma, capabilities: { posting: capabilityForEnvironment("receiving-posting", env), reversal: capabilityForEnvironment("receiving-reversal", env) } });
@@ -35,10 +32,8 @@ export function createMobileOperationsService({ prisma, procurementRepository, p
     const tasks = [];
     if (can({ actor, permission: "mobile.procurement.approval.read", tenantId: actor.tenantId }) && can({ actor, permission: "procurement.purchase_order.read", tenantId: actor.tenantId })) {
       requireProcurementAuthority();
-      if (procurementAuthority || procurementRepository) {
-        const rows = procurementAuthority
-          ? await procurementAuthority.listPurchaseOrdersForApproval(context, { includePrices: actor.permissionCodes.has("procurement.prices.read"), includePartner: actor.permissionCodes.has("finance.partner_snapshot.read") })
-          : (await procurementRepository.list("po")).filter((row) => row.status === "pending_approval");
+      if (procurementAuthority) {
+        const rows = await procurementAuthority.listPurchaseOrdersForApproval(context, { includePrices: actor.permissionCodes.has("procurement.prices.read"), includePartner: actor.permissionCodes.has("finance.partner_snapshot.read") });
         for (const po of rows.filter((row) => row.status === "pending_approval")) tasks.push(task({ taskId: `purchase_order_approval:${po.id}`, taskType: "purchase_order_approval", entityType: "PurchaseOrder", entityId: po.id, title: `Purchase order ${po.orderNumber || po.id}`, summary: text(po.supplierSnapshot?.supplierName || po.supplierId), amountSummary: actor.permissionCodes.has("procurement.prices.read") ? { amount: po.totalAmount, currency: po.currency } : null, availableActions: can({ actor, permission: "mobile.procurement.approval.execute", tenantId: actor.tenantId }) && can({ actor, permission: "procurement.purchase_order.approve", tenantId: actor.tenantId }) ? ["approve", "reject", "return_for_revision"] : [], entityVersion: po.version, deepLink: `/app/mobile/purchase-orders/${encodeURIComponent(po.id)}` }, actor));
       }
     }
@@ -61,10 +56,7 @@ export function createMobileOperationsService({ prisma, procurementRepository, p
   async function purchaseOrderDetail(id, context) {
     const actor = await actorFor(context); assertAuthorized({ actor, permission: "mobile.procurement.approval.read", tenantId: actor.tenantId }); assertAuthorized({ actor, permission: "procurement.purchase_order.read", tenantId: actor.tenantId });
     requireProcurementAuthority();
-    if (!procurementAuthority && !procurementRepository) fail("MOBILE_PO_NOT_AVAILABLE", "The canonical procurement repository is unavailable.", 409);
-    const po = procurementAuthority
-      ? await procurementAuthority.readPurchaseOrder(text(id), context, { includePrices: actor.permissionCodes.has("procurement.prices.read"), includePartner: actor.permissionCodes.has("finance.partner_snapshot.read") })
-      : await procurementRepository.get("po", text(id));
+    const po = await procurementAuthority.readPurchaseOrder(text(id), context, { includePrices: actor.permissionCodes.has("procurement.prices.read"), includePartner: actor.permissionCodes.has("finance.partner_snapshot.read") });
     if (!po) fail("PURCHASE_ORDER_NOT_FOUND", "Purchase order was not found.", 404);
     const prices = actor.permissionCodes.has("procurement.prices.read"), partner = actor.permissionCodes.has("finance.partner_snapshot.read");
     return { id: po.id, orderNumber: po.orderNumber || po.id, status: po.status, supplierSnapshot: partner ? po.supplierSnapshot || { id: po.supplierId } : null, lines: (po.lines || []).map((line) => ({ ...line, unitPrice: prices ? line.unitPrice : null, amount: prices ? line.amount ?? null : null })), amountSummary: prices ? { totalAmount: po.totalAmount, currency: po.currency } : null, sourceRequestId: po.sourcePrId, sourceRfqId: po.sourceRfqId, deliveryTerms: po.deliveryTerms || null, approvalTimeline: po.auditTrailIds || [], attachments: po.attachments || [], entityVersion: po.version, availableActions: po.status === "pending_approval" && actor.permissionCodes.has("mobile.procurement.approval.execute") && actor.permissionCodes.has("procurement.purchase_order.approve") ? ["approve", "reject", "return_for_revision"] : [], fieldVisibility: fieldVisibility(actor), limitations: [], deepLink: `/app/mobile/purchase-orders/${encodeURIComponent(po.id)}` };
@@ -76,14 +68,7 @@ export function createMobileOperationsService({ prisma, procurementRepository, p
       const command = action === "approve" ? "approvePurchaseOrder" : action === "reject" ? "rejectPurchaseOrder" : "returnPurchaseOrderForRevision";
       return procurementAuthority[command](text(id), input, context);
     }
-    if (!procurement) fail("MOBILE_PO_NOT_AVAILABLE", "The canonical procurement command is unavailable.", 409);
-    const key = text(input.idempotencyKey); if (!key) fail("IDEMPOTENCY_KEY_REQUIRED", "idempotencyKey is required.", 422); if (["reject", "return_for_revision"].includes(action) && !text(input.reason)) fail("PO_ACTION_REASON_REQUIRED", "A reason is required.", 422);
-    const commandType = `mobile.po.${action}`, requestHash = digest({ id: text(id), action, expectedVersion: input.expectedVersion, reason: text(input.reason) }), where = { tenantId_commandType_idempotencyKey: { tenantId: actor.tenantId, commandType, idempotencyKey: key } };
-    const prior = await prisma.businessCommandExecution.findUnique({ where }); if (prior) { if (prior.requestHash !== requestHash) fail("IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD", "The idempotency key was reused with another payload.", 409); return { ...prior.resultPayload, idempotentReplay: true }; }
-    let po; try { po = await procurement.transitionPurchaseOrder(text(id), action === "approve" ? "approved" : action === "reject" ? "rejected" : "draft", { expectedVersion: input.expectedVersion, actor: actor.user.id, reason: text(input.reason) }); } catch (error) { if (error.code === "VERSION_CONFLICT") fail("SYNC_VERSION_CONFLICT", "Purchase order changed concurrently.", 409, { entityId: text(id), expectedVersion: input.expectedVersion, currentVersion: error.currentVersion, conflictFields: ["status"], availableActions: ["reload"], serverTime: serial(now()) }); throw error; }
-    const result = { entityId: po.id, status: po.status, entityVersion: po.version, pendingSync: false, serverTime: serial(now()) };
-    await prisma.$transaction(async (tx) => { const execution = await tx.businessCommandExecution.create({ data: { id: idFactory(), tenantId: actor.tenantId, commandType, idempotencyKey: key, requestHash, status: "completed", entityType: "PurchaseOrder", entityId: po.id, resultPayload: result, completedAt: now() } }); await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: "mobile_po_facade", module: "procurement", action: `purchase_order_${action}`, entityType: "PurchaseOrder", entityId: po.id, summary: `${action} purchase order ${po.id}.`, metadata: { commandExecutionId: execution.id, expectedVersion: input.expectedVersion, sourceDeviceId: text(input.sourceDeviceId) || null } } }); await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "PurchaseOrder", entityId: po.id, operation: "upsert", entityVersion: po.version, actorId: actor.user.id, source: "mobile_po_facade", requestId: key, payloadHash: digest({ id: po.id, version: po.version, status: po.status }), sensitivityGroups: ["procurement_prices", "finance_partner_snapshot"], moduleKey: "procurement", authorizationClass: "procurement.purchase_order.read", resourceTenantId: actor.tenantId } }); }, { isolationLevel: "Serializable" });
-    return { ...result, idempotentReplay: false };
+    fail("MOBILE_PO_NOT_AVAILABLE", "The PostgreSQL procurement command authority did not handle this action.", 409);
   }
 
   async function searchReceivingPurchaseOrders(search, context) {

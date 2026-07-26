@@ -1,11 +1,9 @@
-import { resolve } from "node:path";
-import { createDurableProcurementRepository } from "../repositories/durable-procurement-repository.mjs";
 import { createProcurementWorkflowService } from "../services/procurement-workflow-service.mjs";
 import { authorizeMutation } from "../domain/mutation-authorization.mjs";
-const repository = createDurableProcurementRepository({
-  dataFile: resolve(process.env.FLOWCHAIN_PROCUREMENT_RUNTIME_FILE || "data/procurement-transactions.json"),
-});
-const repositoryFor = (ctx) => ctx.repositories?.procurementRuntime || repository;
+const repositoryFor = (ctx) => {
+  if (!ctx.repositories?.procurementRuntime) throw new Error("PostgreSQL procurement repository is not configured.");
+  return ctx.repositories.procurementRuntime;
+};
 const workflowService = (ctx) => createProcurementWorkflowService({
   repository: repositoryFor(ctx), itemRepository: ctx.repositories?.masterData,
   policyProvider: async () => ({

@@ -10,6 +10,7 @@ import { handleSearchRoute } from '../routes/search.routes.mjs'
 import { handleTodayCockpitRoute } from '../routes/today-cockpit.routes.mjs'
 import { buildActionDraftSuggestion } from './action-draft-boundary.mjs'
 import { buildTodayCockpit } from './today-cockpit-read-model.mjs'
+import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..')
 
@@ -70,6 +71,7 @@ function routeContext(method, pathname, db = createDb(), body = {}, helpers = {}
       res: {},
       url: new URL(pathname, 'http://localhost'),
       db,
+      repositories: createTestRepositoryRegistry(db),
       send(_res, status, payload) {
         response = { status, payload }
       },
@@ -167,7 +169,9 @@ test('system harness locks draft-first preview invariants', async () => {
   const unsupported = buildActionDraftSuggestion({ type: 'real_purchase_order_create', payload: {} })
   assert.equal(unsupported.ok, false)
   assert.equal(unsupported.status, 'unsupported_type')
-  assert.equal(snapshot(db), before)
+  assert.equal(snapshot({ ...db, auditLog: [] }), before)
+  assert.equal(db.auditLog.length, 3)
+  assert.ok(db.auditLog.every((entry) => entry.action === 'draft_previewed'))
 })
 
 test('system harness validates AI safety, timeout fast path, and sanitized fallback', async () => {

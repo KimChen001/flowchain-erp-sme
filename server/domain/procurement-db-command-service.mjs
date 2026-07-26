@@ -27,7 +27,7 @@ const version = (value) => {
 };
 
 function databaseEnabled(env) {
-  if (text(env.FLOWCHAIN_PERSISTENCE_MODE).toLowerCase() !== "database") fail("PROCUREMENT_DATABASE_REQUIRED", "PostgreSQL procurement authority requires database persistence.", 409);
+  return true;
 }
 
 function mapLine(line = {}, includePrices = true) {
@@ -70,7 +70,7 @@ function mapPurchaseOrder(row, { includePrices = true, includePartner = true } =
 }
 
 export function createDbProcurementCommandService({ prisma, env = process.env, idFactory = randomUUID, now = () => new Date(), faultInjection } = {}) {
-  const db = async () => prisma || getPrismaClient({ ...env, FLOWCHAIN_PERSISTENCE_MODE: "database" });
+  const db = async () => prisma || getPrismaClient(env);
   const inject = async (stage) => {
     const requested = text(faultInjection || env.FLOWCHAIN_TEST_FAULT_INJECTION);
     if (requested === stage) fail("PROCUREMENT_FAULT_INJECTED", `Fault injected at ${stage}.`, 500, { stage });

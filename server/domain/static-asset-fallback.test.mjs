@@ -28,6 +28,8 @@ async function request(port, method, pathname) {
 }
 
 test('SPA routes fall back to index while missing static assets return real 404 responses', async () => {
+  const previousDatabaseUrl = process.env.DATABASE_URL
+  process.env.DATABASE_URL = 'postgresql://user:pass@127.0.0.1:5432/flowchain_static_asset_test'
   const server = createScmServer()
   try {
     const port = await listen(server)
@@ -49,5 +51,7 @@ test('SPA routes fall back to index while missing static assets return real 404 
     }
   } finally {
     await close(server)
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL
+    else process.env.DATABASE_URL = previousDatabaseUrl
   }
 })

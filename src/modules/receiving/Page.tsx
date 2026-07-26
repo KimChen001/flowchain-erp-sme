@@ -9,7 +9,7 @@ import { apiJson } from "../../lib/api-client";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { fmt } from "../../lib/format";
-import { purchaseOrders, qcExceptions, receivingDocs, SUPPLIER_INVOICES } from "../../data/demo-data";
+import { purchaseOrders, qcExceptions, receivingDocs, SUPPLIER_INVOICES } from "../../data/empty-business-state";
 import type { PurchaseOrder, ReceivingDoc, ReceivingDocLine, RecvStatus } from "../../types/scm";
 import { lineRemaining, poLinesOf, toNumber } from "../../domain/purchasing/helpers";
 import { grnLinesOf, isPostedGrn } from "../../domain/receiving/helpers";
@@ -110,45 +110,24 @@ const ASNS: {
   id: string; po: string; supplier: string; eta: string; carrier: string;
   awb: string; cartons: number; weight: number; status: "在途" | "已抵港" | "清关中" | "已签收" | "延误";
 }[] = [
-  { id: "ASN-26-0421", po: "PO-2026-0142", supplier: "江苏铝合金集团", eta: "2026-05-28 14:00", carrier: "顺丰冷链", awb: "SF-26052812", cartons: 18, weight: 1280, status: "在途" },
-  { id: "ASN-26-0422", po: "PO-2026-0148", supplier: "深圳新元电气",   eta: "2026-05-28 09:30", carrier: "京东物流", awb: "JD-26052804", cartons: 42, weight:  620, status: "已抵港" },
-  { id: "ASN-26-0423", po: "PO-2026-0151", supplier: "佛山标准件",     eta: "2026-05-29 11:00", carrier: "德邦快运", awb: "DB-26052914", cartons: 12, weight:  840, status: "清关中" },
-  { id: "ASN-26-0424", po: "PO-2026-0156", supplier: "上海仪表科技",   eta: "2026-05-30 16:30", carrier: "顺丰速运", awb: "SF-26053016", cartons:  6, weight:  120, status: "在途" },
-  { id: "ASN-26-0425", po: "PO-2026-0162", supplier: "广州化工耗材",   eta: "2026-05-27 18:00", carrier: "中通快运", awb: "ZT-26052718", cartons:  9, weight:  360, status: "延误" },
-  { id: "ASN-26-0426", po: "PO-2026-0164", supplier: "华东精工机械",   eta: "2026-05-31 10:00", carrier: "京东物流", awb: "JD-26053110", cartons: 24, weight: 1860, status: "在途" },
 ];
 
 const QC_PLANS: {
   id: string; name: string; aql: string; sampleSize: string; criticalAQL: number; majorAQL: number; minorAQL: number;
   applies: string; method: string;
 }[] = [
-  { id: "QCP-001", name: "电子元器件 AQL 标准",   aql: "GB/T 2828.1 II", sampleSize: "N=125 → n=20",  criticalAQL: 0,    majorAQL: 1.0, minorAQL: 2.5, applies: "PCB / 控制板 / 传感器", method: "全项电测 + 外观" },
-  { id: "QCP-002", name: "原材料抽检",            aql: "GB/T 2828.1 II", sampleSize: "N=500 → n=50",  criticalAQL: 0,    majorAQL: 1.5, minorAQL: 4.0, applies: "铝合金型材",            method: "光谱分析 + 力学" },
-  { id: "QCP-003", name: "通用件免检",            aql: "供应商免检",     sampleSize: "N=∞ → n=0",     criticalAQL: 0,    majorAQL: 0,   minorAQL: 0,   applies: "M3~M12 紧固件",         method: "COA 核查" },
-  { id: "QCP-004", name: "化工耗材",              aql: "GB/T 2828.1 II", sampleSize: "N=80 → n=13",   criticalAQL: 0,    majorAQL: 1.0, minorAQL: 2.5, applies: "切削液 / 防锈油",        method: "理化指标全检" },
-  { id: "QCP-005", name: "精密工具",              aql: "GB/T 2828.1 III", sampleSize: "N=50 → n=20", criticalAQL: 0,    majorAQL: 0.65, minorAQL: 1.5, applies: "刀具 / 测量仪表",       method: "尺寸 + 硬度抽检" },
 ];
 
 const EXCEPTIONS: {
   id: string; grn: string; type: "数量短缺" | "外观破损" | "型号错发" | "AQL 拒收" | "单据不符" | "运输异常";
   detail: string; severity: "高" | "中" | "低"; owner: string; status: "待处理" | "处理中" | "已闭环"; createdAt: string;
 }[] = [
-  { id: "EX-26-0184", grn: "GRN-2026-0518", type: "AQL 拒收",   detail: "Major 缺陷 3 件 > AQL 1.0, 批次整体拒收", severity: "高", owner: "李婷",   status: "处理中", createdAt: "2026-05-25" },
-  { id: "EX-26-0185", grn: "GRN-2026-0521", type: "数量短缺",   detail: "实收 18 / 应收 20 (托盘 #4 缺失)",         severity: "中", owner: "刘建华", status: "处理中", createdAt: "2026-05-26" },
-  { id: "EX-26-0186", grn: "GRN-2026-0522", type: "外观破损",   detail: "8 件包装受潮, 已隔离待评估",                severity: "中", owner: "王志强", status: "待处理", createdAt: "2026-05-26" },
-  { id: "EX-26-0187", grn: "GRN-2026-0523", type: "型号错发",   detail: "实收 6061-T651 / 应收 6061-T6",             severity: "高", owner: "陈思远", status: "待处理", createdAt: "2026-05-27" },
-  { id: "EX-26-0188", grn: "GRN-2026-0516", type: "单据不符",   detail: "发票金额与 PO 不符 (差异 ¥8,600)",          severity: "低", owner: "周浩",   status: "已闭环", createdAt: "2026-05-22" },
-  { id: "EX-26-0189", grn: "GRN-2026-0509", type: "运输异常",   detail: "冷链温度记录超标 1.4°C × 4h",                severity: "高", owner: "李婷",   status: "已闭环", createdAt: "2026-05-19" },
 ];
 
 const SUPPLIER_RETURNS: {
   id: string; po: string; supplier: string; reason: string; qty: number; amount: number;
   status: "已开单" | "已发出" | "已确认" | "已结案"; createdAt: string;
 }[] = [
-  { id: "SRN-26-082", po: "PO-2026-0128", supplier: "广州化工耗材",   reason: "理化指标不合格", qty:  12, amount:  18400, status: "已确认", createdAt: "2026-05-18" },
-  { id: "SRN-26-083", po: "PO-2026-0136", supplier: "佛山标准件",     reason: "尺寸超差",        qty: 280, amount:   4200, status: "已发出", createdAt: "2026-05-22" },
-  { id: "SRN-26-084", po: "PO-2026-0142", supplier: "江苏铝合金集团", reason: "AQL Major 超标",  qty:   3, amount:  86400, status: "已开单", createdAt: "2026-05-26" },
-  { id: "SRN-26-085", po: "PO-2026-0118", supplier: "上海仪表科技",   reason: "校准证书缺失",    qty:   4, amount:  24800, status: "已结案", createdAt: "2026-05-10" },
 ];
 
 // ─── Receiving · Master Wrapper ───────────────────────────────────────────────

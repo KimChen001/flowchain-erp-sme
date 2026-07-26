@@ -67,7 +67,6 @@ const whereExecution = (tenantId, commandType, idempotencyKey) => ({
 });
 const enabled = (env) => {
   if (
-    text(env.FLOWCHAIN_PERSISTENCE_MODE).toLowerCase() !== "database" ||
     text(env.FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE).toLowerCase() !== "true"
   )
     fail(
