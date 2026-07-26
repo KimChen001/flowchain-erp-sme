@@ -166,7 +166,7 @@ try {
   const crossTenantArtifact = await request(`/api/intake/artifacts/${artifact.payload.id}`, { userId: "legacy-admin-b" });
   assert.ok([403, 404].includes(crossTenantArtifact.status), "Universal Intake cross-tenant ID probing must fail closed");
   assertions += 1;
-  const batch = await request("/api/intake/batches", { userId: "legacy-admin-a", method: "POST", body: { artifactId: artifact.payload.id, batchType: "generic" } });
+  const batch = await request("/api/intake/batches", { userId: "legacy-admin-a", method: "POST", body: { artifactId: artifact.payload.id, batchType: "item" } });
   check(batch.status, 201);
   const commit = await request(`/api/intake/batches/${batch.payload.id}/commit`, {
     userId: "legacy-admin-a", method: "POST", body: { idempotencyKey: "universal-blocked" },

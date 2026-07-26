@@ -17,7 +17,7 @@ const root = resolve(import.meta.dirname, "..");
 const migrationsRoot = join(root, "prisma", "migrations");
 const baselineMigration = "20260720020000_settlement_workflow_mobile_foundation";
 const targetMigration = "20260725010000_postgres_only_runtime_records";
-const latestMigration = "20260726010000_universal_intake_domain_foundation";
+const latestMigration = "20260727010000_schema_aware_structured_intake";
 const prismaCli = join(root, "node_modules", "prisma", "build", "index.js");
 const freePort = () => new Promise((resolvePort, reject) => {
   const server = createServer().on("error", reject);
