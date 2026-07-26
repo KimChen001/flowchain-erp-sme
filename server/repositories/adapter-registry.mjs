@@ -8,6 +8,7 @@ import { createDbUserConfirmedActionRepository } from './db-user-confirmed-actio
 import { createDbExceptionCaseRepository } from './db-exception-case-repository.mjs'
 import { createDbProcurementCommandService } from '../domain/procurement-db-command-service.mjs'
 import { createDbProcurementRuntimeRepository } from './db-procurement-runtime-repository.mjs'
+import { createDbIntakeRepository } from './db-intake-repository.mjs'
 
 export const PERSISTENCE_MODES = Object.freeze({ database: 'database' })
 export const JSON_PERSISTENCE_REMOVED_ERROR = 'FLOWCHAIN_JSON_PERSISTENCE_REMOVED'
@@ -56,6 +57,7 @@ export function createDatabaseRepositoryRegistry({ db = {}, env = process.env, p
     aiConversation: createTransientAiConversationRepository(),
     userDataRuntime: createDisabledUserDataRuntimeRepository(),
     userConfirmedActions: createDbUserConfirmedActionRepository({ env, prisma }),
+    intake: createDbIntakeRepository({ env, prisma }),
   }
 }
 
