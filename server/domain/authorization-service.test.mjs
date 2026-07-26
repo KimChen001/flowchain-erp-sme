@@ -12,13 +12,28 @@ test("permission catalog codes are stable, unique, system-defined records", () =
 })
 
 test("default templates preserve legacy mappings and return separation", () => {
-  assert.equal(defaultRoleTemplates.length, 6)
+  assert.equal(defaultRoleTemplates.length, 8)
   assert.equal(legacyRoleTemplateMap.admin, "workspace-administrator")
   assert.equal(legacyRoleTemplateMap.business_specialist, "operations-specialist")
   const procurement = defaultRoleTemplates.find((role) => role.roleKey === "procurement-specialist")
   const operations = defaultRoleTemplates.find((role) => role.roleKey === "operations-specialist")
   assert.ok(procurement.permissions.includes("returns.request.submit")); assert.ok(!procurement.permissions.includes("returns.posting.post")); assert.ok(!procurement.permissions.includes("returns.posting.reverse"))
   assert.ok(operations.permissions.includes("returns.posting.post")); assert.ok(!operations.permissions.includes("returns.authorization.approve")); assert.ok(!operations.permissions.includes("returns.posting.reverse"))
+})
+
+test("intake uploader, reviewer, and administrator duties remain separated", () => {
+  const uploader = defaultRoleTemplates.find((role) => role.roleKey === "intake-uploader")
+  const reviewer = defaultRoleTemplates.find((role) => role.roleKey === "intake-reviewer")
+  const administrator = defaultRoleTemplates.find((role) => role.roleKey === "workspace-administrator")
+  assert.ok(uploader.permissions.includes("intake.artifact.create"))
+  assert.ok(!uploader.permissions.includes("intake.mapping.manage"))
+  assert.ok(!uploader.permissions.includes("intake.review"))
+  assert.ok(!uploader.permissions.includes("intake.commit"))
+  assert.ok(reviewer.permissions.includes("intake.mapping.manage"))
+  assert.ok(reviewer.permissions.includes("intake.review"))
+  assert.ok(!reviewer.permissions.includes("intake.artifact.create"))
+  assert.ok(!reviewer.permissions.includes("intake.commit"))
+  assert.ok(administrator.permissions.includes("intake.commit"))
 })
 
 test("operations manager can review sensitive approval evidence without settlement posting authority", () => {
