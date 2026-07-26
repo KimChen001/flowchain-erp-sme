@@ -52,15 +52,15 @@ Implemented batch states:
 
 ```text
 uploaded -> profiling
-profiling -> mapping_required | validation_required | failed
+profiling -> mapping_required | validation_required | failed | cancelled
 mapping_required -> validation_required | failed | cancelled
 validation_required -> ready_for_review | mapping_required | failed | cancelled
 ready_for_review -> cancelled
 ```
 
-`approved`, `committing`, and `completed` are reserved contract states. Phase
-5.4A does not transition batches into them. `failed` and `cancelled` are
-terminal. Status is not exposed as a generic update field.
+`normalizing`, `approved`, `committing`, and `completed` are reserved contract
+states. Phase 5.4A does not transition batches into them. `failed` and
+`cancelled` are terminal. Status is not exposed as a generic update field.
 
 ## Database schema
 
@@ -93,10 +93,11 @@ Permissions:
 - `intake.review`
 - `intake.commit`
 
-Uploader permissions are separate from mapping activation and review approval.
-Workspace administrators receive the catalog permissions. Operational roles may
-receive upload/read permissions, but do not receive mapping, review, or commit
-authority by default.
+The default `Intake Uploader` role can register/read artifacts and create/read/
+cancel batches, but cannot manage mappings, review, or commit. The default
+`Intake Reviewer` role can read artifacts/batches and manage mappings/reviews,
+but cannot upload or commit. Workspace administrators receive the full catalog,
+including `intake.commit`; the commit adapter still fails closed.
 
 ## Audit
 
@@ -145,11 +146,28 @@ deployment, onboarding wizard, MRP, Forecast, or S&OP is part of Phase 5.4A.
 
 ## Migration result
 
-Pending implementation verification.
+Passed on 2026-07-26:
+
+- Fresh migration creates all nine explicit Intake tables, indexes, checks, and
+  tenant-consistent foreign keys.
+- Additive upgrade from the exact Phase 5.3.2 schema preserves existing data
+  and applies `20260726010000_universal_intake_domain_foundation`.
+- The database permission catalog constraint was additively extended for the
+  eight Intake permissions.
+- `npm run test:db:intake`: 30 passed, 0 failed, 0 skipped.
 
 ## Test result
 
-Pending implementation verification.
+Passed on 2026-07-26:
+
+- `npm test`: 1,090 tests total; 1,076 passed; 0 failed; 14 skipped.
+- `npm run test:api:intake`: 29 passed, 0 failed, 0 skipped.
+- `npm run test:browser:intake`: 1 passed, 0 failed, 0 skipped.
+- PostgreSQL-only contract: 14 passed, 0 failed, 0 skipped.
+- Typecheck and production build passed.
+- Existing PostgreSQL, API, authorization, mobile, attachment restart, bank
+  security, pilot-readiness, and Chromium gates passed.
+- `git diff --check` passed.
 
 ## Known limitations
 
