@@ -83,7 +83,7 @@ test('capability registry hides preview and unavailable modules by default', asy
   const returnsById = Object.fromEntries(returnsEnabled.payload.capabilities.map(row => [row.id, row]))
   for (const id of ['quarantine-inventory', 'return-request', 'return-authorization', 'return-posting']) assert.equal(returnsById[id].enabled, true)
 
-  const returnsWithoutDatabase = await call(handleCapabilitiesRoute, '/api/capabilities', { env: { FLOWCHAIN_ENABLE_DB_RETURNS_QUARANTINE: 'true' } })
-  const returnsWithoutDatabaseById = Object.fromEntries(returnsWithoutDatabase.payload.capabilities.map(row => [row.id, row]))
-  for (const id of ['quarantine-inventory', 'return-request', 'return-authorization', 'return-posting']) assert.equal(returnsWithoutDatabaseById[id].enabled, false)
+  const returnsWithoutLegacyMode = await call(handleCapabilitiesRoute, '/api/capabilities', { env: { FLOWCHAIN_ENABLE_DB_RETURNS_QUARANTINE: 'true' } })
+  const returnsWithoutLegacyModeById = Object.fromEntries(returnsWithoutLegacyMode.payload.capabilities.map(row => [row.id, row]))
+  for (const id of ['quarantine-inventory', 'return-request', 'return-authorization', 'return-posting']) assert.equal(returnsWithoutLegacyModeById[id].enabled, true)
 })

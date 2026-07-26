@@ -20,7 +20,6 @@ export async function handleSalesOrderWorkbenchRoute(ctx) {
   const shipmentRead = path.match(/^\/api\/sales\/shipments\/([^/]+)\/(workbench|evidence|links|reconciliation)$/)
   if (!collection && !entryData && !detail && !transition && !orderRead && !shipmentRead) return false
   if (!ctx.identity?.authenticated) { ctx.send(ctx.res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.' }); return true }
-  if (String((ctx.env || process.env).FLOWCHAIN_PERSISTENCE_MODE || '').toLowerCase() !== 'database') { ctx.send(ctx.res, 409, { code: 'OUTBOUND_CAPABILITY_NOT_AVAILABLE', message: 'Authoritative sales orders require database persistence.' }); return true }
   const isRead = (collection || entryData || orderRead || shipmentRead) && ctx.req.method === 'GET'
   const isCreate = collection && ctx.req.method === 'POST'
   const isEdit = detail && ctx.req.method === 'PATCH'

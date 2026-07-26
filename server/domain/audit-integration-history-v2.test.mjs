@@ -7,9 +7,10 @@ import {
   FORBIDDEN_AUDIT_HISTORY_TECHNICAL_PATTERN,
 } from './audit-integration-history-v2.mjs'
 import { handleAuditIntegrationHistoryRoute } from '../routes/audit-integration-history.routes.mjs'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
-  return JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function visibleText(value) {
@@ -64,7 +65,7 @@ test('review draft history covers action setup permission and boundary drafts', 
 
 test('collaboration draft history comes from Collaboration Notification Drafts', () => {
   const text = visibleText(buildAuditIntegrationHistoryV2(loadDb()).collaborationDraftHistory)
-  for (const expected of ['内部协同备注', '供应商沟通草稿', '财务复核说明', '数据质量说明']) {
+  for (const expected of ['内部协同备注', '供应商沟通草稿', '报表洞察复核说明', '数据质量说明']) {
     assert.match(text, new RegExp(expected))
   }
 })

@@ -61,7 +61,7 @@ const identity = (context) => {
   return value;
 };
 const enabled = (env) => {
-  if (text(env.FLOWCHAIN_PERSISTENCE_MODE).toLowerCase() !== "database" || text(env.FLOWCHAIN_ENABLE_DB_INTERNAL_SETTLEMENT).toLowerCase() !== "true")
+  if (text(env.FLOWCHAIN_ENABLE_DB_INTERNAL_SETTLEMENT).toLowerCase() !== "true")
     fail("INTERNAL_SETTLEMENT_CAPABILITY_NOT_AVAILABLE", "Internal settlement requires database persistence and explicit enablement.", 409);
 };
 const authorize = (actor, permission) => {

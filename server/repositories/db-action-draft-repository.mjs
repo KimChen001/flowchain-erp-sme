@@ -5,17 +5,13 @@ import { validateDatabasePersistenceConfig } from '../persistence/persistence-co
 
 const supportedTypes = new Set(supportedActionDraftTypes.map((item) => item.type))
 
-function databaseEnv(env = process.env) {
-  return { ...env, FLOWCHAIN_PERSISTENCE_MODE: 'database' }
-}
-
 function requireDatabaseConfig(env = process.env) {
-  return validateDatabasePersistenceConfig(databaseEnv(env))
+  return validateDatabasePersistenceConfig(env)
 }
 
 async function resolvePrisma({ env = process.env, prisma } = {}) {
   requireDatabaseConfig(env)
-  return prisma || getPrismaClient(databaseEnv(env))
+  return prisma || getPrismaClient(env)
 }
 
 function text(value, fallback = '') {

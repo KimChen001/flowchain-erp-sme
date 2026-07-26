@@ -14,9 +14,10 @@ import {
 } from './ai-runtime-provider-adapter-v2.mjs'
 import { handleAiRuntimeObservabilityRoute } from '../routes/ai-runtime-observability.routes.mjs'
 import { createScmServer } from '../routes/scm-legacy.routes.mjs'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
-  return JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function visibleText(value) {
@@ -315,6 +316,8 @@ test('provider-specific local-vs-assisted evaluation stays business visible', as
 })
 
 test('main route dispatcher exposes observability endpoints', async () => {
+  const previousDatabaseUrl = process.env.DATABASE_URL
+  process.env.DATABASE_URL = 'postgresql://user:pass@127.0.0.1:5432/flowchain_observability_test'
   const server = createScmServer()
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
@@ -336,6 +339,8 @@ test('main route dispatcher exposes observability endpoints', async () => {
     assert.equal(invalid.status, 400)
   } finally {
     await new Promise((resolve) => server.close(resolve))
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL
+    else process.env.DATABASE_URL = previousDatabaseUrl
   }
 })
 

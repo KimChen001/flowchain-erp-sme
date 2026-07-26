@@ -43,7 +43,6 @@ export async function seedMasterData(db = {}, options = {}) {
 
   const clientEnv = envForTestDatabase(options.env || process.env)
   if (clientEnv.DATABASE_URL) process.env.DATABASE_URL = clientEnv.DATABASE_URL
-  process.env.FLOWCHAIN_PERSISTENCE_MODE = 'database'
   const prisma = options.prisma || await getPrismaClient(clientEnv)
   const rows = preview.rows
 

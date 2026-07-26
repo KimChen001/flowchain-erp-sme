@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -71,7 +72,7 @@ function read(relativePath) {
 }
 
 function readDb() {
-  return JSON.parse(read('data/scm-demo.json'))
+  return createProductReviewScenarioDb()
 }
 
 function readmeCurrentProductState(readme = read('README.md')) {

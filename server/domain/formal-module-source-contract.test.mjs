@@ -52,7 +52,7 @@ test('formal inventory and sales routes use authoritative runtime repositories w
   const inventoryRoute = readFileSync(path.resolve(root, 'server/routes/inventory.routes.mjs'), 'utf8')
   const salesRoute = readFileSync(path.resolve(root, 'server/routes/sales-demand.routes.mjs'), 'utf8')
   assert.doesNotMatch(inventoryPage, /inventoryItems|SKU_CATALOG|LOTS|SERIALS|TRANSFERS|COUNT_PLANS|VARIANCES|INVENTORY_MOVEMENT_LEDGER/)
-  assert.match(inventoryRoute, /inventoryRuntime/)
+  assert.match(inventoryRoute, /ctx\.repositories\?\.inventoryRead/)
   assert.match(salesRoute, /repositories\?\.salesOrders/)
   assert.doesNotMatch(salesRoute, /sales-demand-read-model|scm-demo|demo-data/)
 })

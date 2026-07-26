@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 import assert from 'node:assert/strict'
 import { handleMasterDataRoute } from '../routes/master-data.routes.mjs'
 import {
@@ -11,7 +12,7 @@ import {
   listTaxCodes,
 } from './master-data.mjs'
 
-function createRouteContext(method, pathname, db, repositories) {
+function createRouteContext(method, pathname, db, repositories = createTestRepositoryRegistry(db)) {
   let response = null
   return {
     ctx: {

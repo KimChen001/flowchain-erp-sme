@@ -23,9 +23,10 @@ import { buildAiRuntimeResponseV2, buildAiRuntimeResponseV2Async } from './ai-ru
 import { buildAiRuntimeEvaluationV2 } from './ai-runtime-observability-v2.mjs'
 
 const providerKinds = ['openai_responses', 'deepseek_chat', 'doubao_chat']
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
-  return JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function visibleText(value) {

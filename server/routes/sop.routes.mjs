@@ -73,7 +73,7 @@ function buildSopDraft(db, ctx) {
 
 export async function handleSopRoute(ctx) {
   const {
-    req, res, url, db, send, readBody, writeDb, event,
+    req, res, url, db, send, readBody, event,
     ensurePurchaseRequests, ensureSopCycles, nextSequenceId, supplierPerformance,
   } = ctx
   const draftContext = { ensurePurchaseRequests, ensureSopCycles, supplierPerformance }
@@ -106,7 +106,7 @@ export async function handleSopRoute(ctx) {
     }
     db.sopCycles = [cycle, ...ensureSopCycles(db)].slice(0, 20)
     event(db, 'sop_cycle_saved', `S&OP ${cycle.cycle} v${cycle.version} ${cycle.status}`, cycle.id)
-    await writeDb(db)
+    throw Object.assign(new Error('Legacy S&OP mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
     return send(res, 201, cycle)
   }
 

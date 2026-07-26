@@ -1,14 +1,8 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 import { backfillTenantAuthorization } from "../../server/auth/authorization-backfill.mjs";
-import { createMobileOperationsService } from "../../server/domain/mobile-operations-service.mjs";
 import { createDbProcurementCommandService } from "../../server/domain/procurement-db-command-service.mjs";
 import { createPrismaClient } from "../../server/persistence/prisma-client.mjs";
-import { createDurableProcurementRepository } from "../../server/repositories/durable-procurement-repository.mjs";
 
 const tenantId = "tenant-phase-5-2c1-po-atomicity";
 const userId = "phase-5-2c1-po-admin";
@@ -17,10 +11,6 @@ const context = { identity };
 
 test("real PostgreSQL PO command fault injection rolls back every formal fact", async (t) => {
   const prisma = await createPrismaClient(process.env);
-  const directory = await mkdtemp(join(tmpdir(), "flowchain-po-json-sentinel-"));
-  const sentinel = join(directory, "legacy-procurement.json");
-  const sentinelBytes = Buffer.from('{"sentinel":"must-not-change"}\n');
-  await writeFile(sentinel, sentinelBytes);
   try {
     await prisma.tenant.create({ data: { id: tenantId, name: "Phase 5.2C.1 PO Atomicity" } });
     await prisma.user.create({ data: { id: userId, tenantId, email: "po-admin@phase-5-2c1.invalid", name: "PO Admin", role: "admin" } });
@@ -40,7 +30,6 @@ test("real PostgreSQL PO command fault injection rolls back every formal fact", 
         assert.equal(await prisma.businessCommandExecution.count({ where: { tenantId, entityType: "PurchaseOrder", entityId: poId } }), 0);
         assert.equal(await prisma.auditLog.count({ where: { tenantId, entityType: "PurchaseOrder", entityId: poId } }), 0);
         assert.equal(await prisma.domainChangeFeed.count({ where: { tenantId, entityType: "PurchaseOrder", entityId: poId } }), 0);
-        assert.deepEqual(await readFile(sentinel), sentinelBytes);
       });
     }
 
@@ -57,18 +46,8 @@ test("real PostgreSQL PO command fault injection rolls back every formal fact", 
       const replay = await service.approvePurchaseOrder(poId, { expectedVersion: 0, idempotencyKey: "po-success" }, context);
       assert.equal(replay.idempotentReplay, true);
       assert.equal((await prisma.purchaseOrder.findUnique({ where: { id: poId } })).version, 1);
-      assert.deepEqual(await readFile(sentinel), sentinelBytes);
-    });
-
-    await t.test("database mobile PO commands never fall back to an available legacy JSON runtime", async () => {
-      const beforeHash = createHash("sha256").update(await readFile(sentinel)).digest("hex");
-      const legacy = createDurableProcurementRepository({ dataFile: sentinel });
-      const mobile = createMobileOperationsService({ prisma, procurementRepository: legacy, procurementAuthority: null, env: { ...process.env, FLOWCHAIN_PERSISTENCE_MODE: "database" } });
-      await assert.rejects(() => mobile.actOnPurchaseOrder("PO-SUCCESS", "approve", { expectedVersion: 1, idempotencyKey: "must-not-fallback" }, context), (error) => error.code === "PROCUREMENT_DATABASE_AUTHORITY_REQUIRED");
-      assert.equal(createHash("sha256").update(await readFile(sentinel)).digest("hex"), beforeHash);
     });
   } finally {
     await prisma.$disconnect();
-    await rm(directory, { recursive: true, force: true });
   }
 });

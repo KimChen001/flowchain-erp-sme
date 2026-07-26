@@ -1,6 +1,6 @@
 export async function handlePurchaseOrdersRoute(ctx) {
   const {
-    req, res, url, db, send, readBody, writeDb, event, todayLabel,
+    req, res, url, db, send, readBody, event, todayLabel,
     normalizePurchaseOrders, nextSequenceId, normalizePoLine,
     normalizePurchaseOrder, calculatePoHeaderFromLines,
     purchaseOrderStatuses, priorities, recordWorkflowCreation,
@@ -82,7 +82,7 @@ export async function handlePurchaseOrdersRoute(ctx) {
     })
     db.purchaseOrders.unshift(po)
     event(db, 'purchase_order_created', `采购订单 ${po.po} 已提交审批`, po.po)
-    await writeDb(db)
+    throw Object.assign(new Error('Legacy purchase order mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
     return send(res, 201, po)
   }
 
@@ -112,7 +112,7 @@ export async function handlePurchaseOrdersRoute(ctx) {
         source: 'api',
         requestedStatus: nextStatus,
       })
-      await writeDb(db)
+      throw Object.assign(new Error('Legacy purchase order mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
       return send(res, 409, { error: message })
     }
     if (Array.isArray(body.lines)) {
@@ -136,7 +136,7 @@ export async function handlePurchaseOrdersRoute(ctx) {
       return send(res, error.status || 400, { error: error.message })
     }
     event(db, 'purchase_order_status', `${po.po} 状态更新为 ${po.status}`, po.po)
-    await writeDb(db)
+    throw Object.assign(new Error('Legacy purchase order mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
     return send(res, 200, normalizePurchaseOrder(po))
   }
 

@@ -9,9 +9,10 @@ import {
 import { buildWorkspaceSetupConfigV2 } from './workspace-setup-config-v2.mjs'
 import { buildReviewFirstActionWorkflowV2 } from './review-first-action-workflow-v2.mjs'
 import { handleUserRolePermissionVisibilityRoute } from '../routes/user-role-permission-visibility.routes.mjs'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
-  return JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function visibleText(value) {

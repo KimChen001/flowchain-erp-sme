@@ -241,7 +241,7 @@ export async function fetchExternalSignals() {
 }
 
 export async function handleMarketRoute(ctx) {
-  const { req, res, url, db, send, writeDb, event } = ctx
+  const { req, res, url, db, send, event } = ctx
 
   if (req.method === 'GET' && url.pathname === '/api/external-signals') {
     const external = await fetchExternalSignals()
@@ -274,7 +274,7 @@ export async function handleMarketRoute(ctx) {
     })
     db.marketPrices = prices
     event(db, 'market_prices_refresh', '行情数据已刷新', 'market-prices')
-    await writeDb(db)
+    throw Object.assign(new Error('Legacy market mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
     return send(res, 200, {
       asOf: now,
       source: '工作区行情数据',

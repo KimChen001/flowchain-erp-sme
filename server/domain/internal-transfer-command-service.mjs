@@ -25,7 +25,7 @@ const permissions = {
 export function createInternalTransferCommandService({ prisma, env = process.env, idFactory = randomUUID, now = () => new Date() } = {}) {
   if (!prisma) throw new Error("prisma is required");
   const enabled = () => {
-    if (text(env.FLOWCHAIN_PERSISTENCE_MODE).toLowerCase() !== "database" || text(env.FLOWCHAIN_ENABLE_DB_SETTLEMENT_WORKFLOW).toLowerCase() !== "true") fail("SETTLEMENT_WORKFLOW_CAPABILITY_NOT_AVAILABLE", "Internal transfers require the settlement workflow capability.", 409);
+    if (text(env.FLOWCHAIN_ENABLE_DB_SETTLEMENT_WORKFLOW).toLowerCase() !== "true") fail("SETTLEMENT_WORKFLOW_CAPABILITY_NOT_AVAILABLE", "Internal transfers require the settlement workflow capability.", 409);
   };
   const actorFor = async (db, context, permission) => {
     const actor = await resolveProvisionedActor(db, context?.identity || context);

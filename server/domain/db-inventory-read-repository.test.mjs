@@ -137,7 +137,7 @@ test('database inventory repository aliases and missing DB config stay clean', a
 
   await assert.rejects(
     () => repository.listItems(),
-    (error) => error.message === DATABASE_CONFIG_ERROR && error.code === 'FLOWCHAIN_DATABASE_CONFIG_MISSING'
+    (error) => error.message === DATABASE_CONFIG_ERROR && error.code === DATABASE_CONFIG_ERROR
   )
 
   const working = createDbInventoryReadRepository({ env, prisma: createPrisma() })

@@ -20,9 +20,10 @@ import {
   buildAiRuntimeResponseV2,
   buildAiRuntimeResponseV2Async,
 } from './ai-runtime-gateway-v2.mjs'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
-  return JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function visibleText(value) {

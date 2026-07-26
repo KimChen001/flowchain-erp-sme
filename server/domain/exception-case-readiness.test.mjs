@@ -64,7 +64,7 @@ function responseHarness({ method = 'GET', pathname = '/api/exception-cases', bo
 test('R231 baseline review keeps exception case boundary aligned with existing evidence audit and draft structures', () => {
   const inventoryExceptions = source('src', 'modules', 'inventory', 'InventoryExceptionDocuments.tsx')
   const evidence = source('src', 'domain', 'relationships', 'evidence.ts')
-  const actionDraftRepo = source('server', 'repositories', 'json-action-draft-repository.mjs')
+  const actionDraftRepo = source('server', 'repositories', 'db-action-draft-repository.mjs')
   const cockpit = source('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
   assert.match(inventoryExceptions, /库存异常单据/)
   assert.match(evidence, /resolvePoDelayEvidence/)

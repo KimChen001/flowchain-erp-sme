@@ -14,7 +14,7 @@ const forbiddenSummaryPattern = /provider|model|endpoint|API|key|token|JSON|payl
 const dangerousTextPattern = /自动批准|发送给供应商|直接付款|付款/
 
 function dataFileStat() {
-  return fs.statSync(new URL('../../data/scm-demo.json', import.meta.url))
+  return fs.statSync(new URL('./test-fixtures/product-review-scenario.mjs', import.meta.url))
 }
 
 function assertBusinessSafeSummary(summary) {

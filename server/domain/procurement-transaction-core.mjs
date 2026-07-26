@@ -41,7 +41,6 @@ function supplierName(row = {}) {
 
 export const PROCUREMENT_TRANSACTION_BASELINE = Object.freeze({
   inspectedFiles: [
-    'data/scm-demo.json',
     'server/domain/procurement-read-model.mjs',
     'server/domain/business-draft-builders.mjs',
     'server/domain/user-confirmed-business-action.mjs',

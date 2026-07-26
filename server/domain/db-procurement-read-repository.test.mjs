@@ -149,6 +149,6 @@ test('database procurement repository preserves type helpers and clean missing D
   assert.equal(repository.isDocumentType('unknown'), false)
   await assert.rejects(
     () => repository.listDocuments(),
-    (error) => error.message === DATABASE_CONFIG_ERROR && error.code === 'FLOWCHAIN_DATABASE_CONFIG_MISSING'
+    (error) => error.message === DATABASE_CONFIG_ERROR && error.code === DATABASE_CONFIG_ERROR
   )
 })

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import fs from 'node:fs'
 import http from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { buildAiRuntimeEvaluationV2 } from '../server/domain/ai-runtime-observability-v2.mjs'
+import { createEmptyDataset } from '../server/domain/data-mode.mjs'
 import {
   FORBIDDEN_AI_RUNTIME_PROVIDER_ACTION_PATTERN,
   FORBIDDEN_AI_RUNTIME_PROVIDER_TECHNICAL_PATTERN,
@@ -23,12 +23,8 @@ const REAL_NOT_RUN_MESSAGE = [
 ].join('\n')
 const FORBIDDEN_SUMMARY_PATTERN = /provider|model|endpoint|API|key|token|JSON|payload|fallback|mock|fake|OpenAI|DeepSeek|Doubao|豆包|system prompt|raw request|raw response|input package|full db/i
 
-function repoUrl(path) {
-  return new URL(path, import.meta.url)
-}
-
 export function loadSmokeDb() {
-  return JSON.parse(fs.readFileSync(repoUrl('../data/scm-demo.json'), 'utf8'))
+  return createEmptyDataset({ mode: 'test' })
 }
 
 export function parseSmokeArgs(argv = []) {

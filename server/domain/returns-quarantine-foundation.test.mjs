@@ -184,13 +184,13 @@ test("quarantine reads remain available while mutation capability is disabled", 
   assert.equal(enabled.response.payload.capability.enabled, true);
 });
 
-test("authoritative quarantine selectors fail closed without database identity", async () => {
-  const noDatabase = await route("/api/inventory/quarantine-balances/select", {
-    env: { FLOWCHAIN_PERSISTENCE_MODE: "json" },
+test("authoritative inventory selectors fail closed without authenticated identity", async () => {
+  const anonymousQuarantine = await route("/api/inventory/quarantine-balances/select", {
+    actor: { authenticated: false },
   });
-  assert.equal(noDatabase.response.status, 409);
+  assert.equal(anonymousQuarantine.response.status, 409);
   assert.equal(
-    noDatabase.response.payload.code,
+    anonymousQuarantine.response.payload.code,
     "AUTHORITATIVE_QUARANTINE_READ_NOT_AVAILABLE",
   );
 

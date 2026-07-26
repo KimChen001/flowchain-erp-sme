@@ -61,8 +61,7 @@ export function capabilityForEnvironment(id, env = process.env) {
   if (!entry) return undefined
   if (!entry.requiresExplicitEnable) return { ...entry }
   const explicit = String(env[entry.environmentFlag] || '').trim().toLowerCase() === 'true'
-  const databaseMode = String(env.FLOWCHAIN_PERSISTENCE_MODE || '').trim().toLowerCase() === 'database'
-  return { ...entry, enabled: entry.maturity !== 'unavailable' && explicit && (!entry.databaseOnly || databaseMode) }
+  return { ...entry, enabled: entry.maturity !== 'unavailable' && explicit }
 }
 
 export function capabilityRegistryForEnvironment(env = process.env) {

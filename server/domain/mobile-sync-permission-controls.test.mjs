@@ -1,8 +1,4 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 import { createDatabaseRepositoryRegistry } from "../repositories/adapter-registry.mjs";
 import {
@@ -166,17 +162,10 @@ test("cursor key rotation verifies a cursor genuinely signed by the previous key
   assert.throws(() => verifyCursor(previousCursor, { ...rotated, FLOWCHAIN_SYNC_CURSOR_PREVIOUS_KEYS: JSON.stringify({ k1: "weak" }) }, 2_000), (error) => error.code === "SYNC_CURSOR_KEY_WEAK");
 });
 
-test("database mode leaves the JSON procurement legacy runtime disabled unless explicitly enabled", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "flowchain-legacy-isolation-"));
-  const sentinel = join(directory, "must-not-exist.json");
-  try {
-    const disabled = createDatabaseRepositoryRegistry({ env: { FLOWCHAIN_PERSISTENCE_MODE: "database", FLOWCHAIN_ENABLE_LEGACY_PROCUREMENT_RUNTIME: "false", FLOWCHAIN_PROCUREMENT_RUNTIME_FILE: sentinel }, prisma: {} });
-    assert.equal(disabled.procurementLegacyRuntime, null);
-    assert.equal(existsSync(sentinel), false);
-    const enabled = createDatabaseRepositoryRegistry({ env: { FLOWCHAIN_PERSISTENCE_MODE: "database", FLOWCHAIN_ENABLE_LEGACY_PROCUREMENT_RUNTIME: "true", FLOWCHAIN_PROCUREMENT_RUNTIME_FILE: sentinel }, prisma: {} });
-    assert.equal(enabled.procurementLegacyRuntime.adapter, "durable-procurement-runtime-v2");
-    assert.equal(existsSync(sentinel), false);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+test("PostgreSQL repository registry exposes no legacy procurement runtime", () => {
+  const registry = createDatabaseRepositoryRegistry({
+    env: { FLOWCHAIN_ENABLE_LEGACY_PROCUREMENT_RUNTIME: "true" },
+    prisma: {},
+  });
+  assert.equal("procurementLegacyRuntime" in registry, false);
 });

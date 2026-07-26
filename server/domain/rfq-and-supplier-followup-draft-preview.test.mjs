@@ -7,6 +7,7 @@ import {
   validateSupplierFollowupDraftPayload,
 } from './rfq-and-supplier-followup-draft-preview.mjs'
 import { handleActionDraftsRoute } from '../routes/action-drafts.routes.mjs'
+import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 
 function createDb() {
   return {
@@ -41,6 +42,7 @@ function createRouteContext(body, db = createDb()) {
       res: {},
       url: new URL('/api/action-drafts/preview', 'http://localhost'),
       db,
+      repositories: createTestRepositoryRegistry(db),
       send(_res, status, payload) {
         response = { status, payload }
       },
@@ -106,7 +108,7 @@ test('missing item and supplier validations fail cleanly', () => {
 
 test('RFQ and supplier follow-up preview routes are non-mutating', async () => {
   const db = createDb()
-  const before = JSON.stringify(db)
+  const beforeBusinessData = JSON.stringify({ products: db.products, suppliers: db.suppliers, rfqs: db.rfqs })
   const rfqRoute = createRouteContext({ type: 'rfq_draft', payload: { itemIdOrSku: 'SKU-RFQ', quantity: 120 } }, db)
   await handleActionDraftsRoute(rfqRoute.ctx)
   assert.equal(rfqRoute.response.status, 200)
@@ -118,7 +120,9 @@ test('RFQ and supplier follow-up preview routes are non-mutating', async () => {
   assert.equal(supplierRoute.response.status, 200)
   assert.equal(supplierRoute.response.payload.previewOnly, true)
   assert.equal(supplierRoute.wrote, false)
-  assert.equal(JSON.stringify(db), before)
+  assert.equal(JSON.stringify({ products: db.products, suppliers: db.suppliers, rfqs: db.rfqs }), beforeBusinessData)
+  assert.equal(db.auditLog.length, 2)
+  assert.ok(db.auditLog.every((entry) => entry.action === 'draft_previewed'))
 })
 
 test('unsupported draft type still returns clean generic failure', async () => {

@@ -38,7 +38,7 @@ const mapPo = (row = {}) => ({
 });
 
 export function createDbProcurementRuntimeRepository({ prisma, env = process.env } = {}) {
-  const client = async () => prisma || getPrismaClient({ ...env, FLOWCHAIN_PERSISTENCE_MODE: "database" });
+  const client = async () => prisma || getPrismaClient(env);
   const authority = createDbProcurementCommandService({ prisma, env });
   const whereFor = (type, id, tenantId) => type === "po" ? { id: text(id), tenantId: text(tenantId) } : null;
   return {

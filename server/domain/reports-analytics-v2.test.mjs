@@ -4,9 +4,10 @@ import fs from 'node:fs'
 import { buildReportsAnalyticsV2, FORBIDDEN_REPORTS_ACTION_PATTERN, FORBIDDEN_REPORTS_TECHNICAL_PATTERN } from './reports-analytics-v2.mjs'
 import { buildOperationsControlTowerV2 } from './operations-control-tower-v2.mjs'
 import { buildDataAccessQualityV2 } from './data-access-quality-v2.mjs'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
-  return JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function visibleText(value) {

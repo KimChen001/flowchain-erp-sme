@@ -7,9 +7,10 @@ import {
   FORBIDDEN_AI_SUGGESTIONS_TECHNICAL_PATTERN,
 } from './ai-suggestions-workbench-v2.mjs'
 import { handleAiSuggestionsWorkbenchRoute } from '../routes/ai-suggestions-workbench.routes.mjs'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
-  return JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function visibleText(value) {

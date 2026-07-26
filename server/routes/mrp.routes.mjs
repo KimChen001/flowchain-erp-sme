@@ -43,7 +43,7 @@ const bomMaster = {
 
 const MRP_SOURCE_METADATA = Object.freeze({
   generatedFrom: 'json-products-plus-static-planning-profile',
-  productSource: 'data/scm-demo.json:products',
+  productSource: 'postgresql:item-master',
   demoPlanningProfile: 'server/routes/mrp.routes.mjs:mrpProfiles',
   staticBomSource: 'server/routes/mrp.routes.mjs:bomMaster',
   persistence: 'read-only-generated-plan',

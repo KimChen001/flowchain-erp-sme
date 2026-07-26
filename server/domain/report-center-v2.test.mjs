@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import fs from 'node:fs'
 import { buildGovernedReport, getReportCatalog, reportMetricCatalog } from './report-semantic-layer.mjs'
 import { cloneReportView, createReportView, deleteReportView, listReportViews, updateReportView } from '../repositories/report-view-repository.mjs'
 
-const db = JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+const db = {
+  salesOrders: [
+    { id: 'SO-TEST-001', customer: '华南自动化设备有限公司', orderDate: '2026-06-01', amount: 120000, currency: 'CNY', status: 'confirmed' },
+    { id: 'SO-TEST-002', customer: '华东精密制造有限公司', orderDate: '2026-03-01', amount: 80000, currency: 'CNY', status: 'confirmed' },
+  ],
+}
 const analyst = { id: 'analyst-1', name: '分析员', role: 'analyst' }
 const manager = { id: 'manager-1', name: '经理', role: 'manager' }
 

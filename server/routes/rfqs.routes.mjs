@@ -1,6 +1,6 @@
 export async function handleRfqsRoute(ctx) {
   const {
-    req, res, url, db, send, readBody, writeDb, event, todayLabel,
+    req, res, url, db, send, readBody, event, todayLabel,
     ensureRfqs, ensurePurchaseRequests, nextSequenceId,
     workflowDefinitions, recordWorkflowCreation, actorFromBody,
     applyWorkflowTransition, createPoLineFromRfq, normalizePurchaseOrder,
@@ -60,7 +60,7 @@ export async function handleRfqsRoute(ctx) {
     })
     rfqs.unshift(rfq)
     event(db, 'rfq_created', `询价单 ${rfq.id} 已创建`, rfq.id)
-    await writeDb(db)
+    throw Object.assign(new Error('Legacy RFQ mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
     return send(res, 201, rfq)
   }
 
@@ -160,7 +160,7 @@ export async function handleRfqsRoute(ctx) {
       event(db, 'purchase_order_created', `RFQ ${rfq.id} 授标生成 ${po.po}`, po.po)
     }
     event(db, 'rfq_status', `${rfq.id} 状态更新为 ${rfq.status}`, rfq.id)
-    await writeDb(db)
+    throw Object.assign(new Error('Legacy RFQ mutation was removed.'), { code: 'FLOWCHAIN_LEGACY_MUTATION_REMOVED', status: 501 })
     return send(res, 200, rfq)
   }
 

@@ -14,7 +14,7 @@ const permissions = { create: "finance.advance.create", submit: "finance.advance
 export function createAdvanceApplicationCommandService({ prisma, env = process.env, idFactory = randomUUID, now = () => new Date() } = {}) {
   if (!prisma) throw new Error("prisma is required");
   const actorFor = async (db, context, permission) => { const actor = await resolveProvisionedActor(db, context?.identity || context); assertAuthorized({ actor, permission, tenantId: actor.tenantId }); assertAuthorized({ actor, permission: "finance.amounts.read", tenantId: actor.tenantId }); return actor; };
-  const enabled = () => { if (text(env.FLOWCHAIN_PERSISTENCE_MODE).toLowerCase() !== "database" || text(env.FLOWCHAIN_ENABLE_DB_SETTLEMENT_WORKFLOW).toLowerCase() !== "true") fail("SETTLEMENT_WORKFLOW_CAPABILITY_NOT_AVAILABLE", "Advance application requires the settlement workflow capability.", 409); };
+  const enabled = () => { if (text(env.FLOWCHAIN_ENABLE_DB_SETTLEMENT_WORKFLOW).toLowerCase() !== "true") fail("SETTLEMENT_WORKFLOW_CAPABILITY_NOT_AVAILABLE", "Advance application requires the settlement workflow capability.", 409); };
   async function execute(command, input, context, payload, work) {
     enabled(); const initial = await actorFor(prisma, context, permissions[command]); const key = text(input.idempotencyKey); if (!key) fail("IDEMPOTENCY_KEY_REQUIRED", "idempotencyKey is required.", 422);
     const commandType = `${command}_advance_application`, requestHash = digest(payload), where = { tenantId_commandType_idempotencyKey: { tenantId: initial.tenantId, commandType, idempotencyKey: key } };

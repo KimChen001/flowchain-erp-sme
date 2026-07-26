@@ -4,7 +4,6 @@ import { createPilotImportService } from '../domain/pilot-import-service.mjs'
 
 export async function handlePilotImportRoute(ctx) {
   if (!ctx.url.pathname.startsWith('/api/imports')) return false
-  if (String((ctx.env || process.env).FLOWCHAIN_PERSISTENCE_MODE || '').toLowerCase() !== 'database') return false
   const prisma = await getPrismaClient(ctx.env || process.env); const service = createPilotImportService({ prisma })
   try {
     if (!ctx.identity?.authenticated) throw new PilotIdentityError('AUTHENTICATION_REQUIRED', 'Authentication is required.', 401)

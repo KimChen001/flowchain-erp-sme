@@ -12,6 +12,7 @@ import { createEmptyDataset } from './data-mode.mjs'
 import { createRepositoryRegistry } from '../repositories/adapter-registry.mjs'
 import { createInMemoryUserConfirmedActionRepository } from '../repositories/user-confirmed-action-repository.mjs'
 import { handleUserConfirmedActionsRoute } from '../routes/user-confirmed-actions.routes.mjs'
+import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 
 const root = path.resolve(import.meta.dirname, '..', '..')
 
@@ -56,7 +57,10 @@ function routeHarness({ body = confirmedBody(), method = 'POST', pathname = '/ap
       url: new URL(pathname, 'http://localhost'),
       db,
       dataMode: 'test',
-      repositories: repositories || createRepositoryRegistry({ db, env: {} }),
+      repositories: repositories || {
+        ...createTestRepositoryRegistry(db),
+        userConfirmedActions: createInMemoryUserConfirmedActionRepository({ db }),
+      },
       readBody: async (req) => req.body,
       send(_res, status, payload) {
         response = { status, payload }

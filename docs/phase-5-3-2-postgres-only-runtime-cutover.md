@@ -99,14 +99,53 @@ the existing database-backed APIs. Modules with no records return empty results.
 
 ## Test Results
 
-Results are recorded here after implementation and include startup boundaries,
-static runtime boundaries, fresh database boot, restart durability, the full
-unit/API/PostgreSQL matrix, browser coverage, build and typecheck.
+Validated locally on 2026-07-26 against the branch working tree:
+
+- PostgreSQL-only contract gate: 8 passed, 0 failed, 0 skipped. This covers a
+  missing `DATABASE_URL`, rejection of `FLOWCHAIN_PERSISTENCE_MODE=json`,
+  production-source scans, and the absence of legacy runtime packages/scripts.
+- Full Node test suite: 1,057 passed, 0 failed, 14 conditionally skipped out of
+  1,071 tests. Every skipped PostgreSQL transaction path was also exercised by
+  an isolated Embedded PostgreSQL gate with zero skips.
+- Typecheck and production build passed. The build emitted only the existing
+  large-chunk advisory.
+- Real-server API smoke passed for receiving, outbound, inventory operations,
+  returns/quarantine, operational finance, workspace settings, authorization,
+  and internal settlement. Persistence-sensitive flows were verified across
+  an API process restart.
+- Fresh and additive-upgrade PostgreSQL gates passed for receiving, outbound,
+  inventory operations, returns/quarantine, operational finance, internal
+  settlement, settlement/mobile, authorization, bank reconciliation, and the
+  v0.5.2B and v0.5.2C.1 upgrade boundaries.
+- Bank security gates passed for recursive projection redaction, mapping-secret
+  rejection before persistence, same-batch duplicate detection, read-only GET
+  services, tenant composite foreign keys, candidate v1.1 remaining-amount
+  scoring, and independent reconciliation-evidence recomputation.
+- Additional database gates passed for purchase-order fault-injection
+  atomicity, mobile sync controls, advance/dispute eligibility, receiving
+  decimal parity, and mobile authority policy.
+- Targeted Chromium gates passed for bank security/reconciliation,
+  authorization, settings/localization, receiving, outbound, inventory,
+  returns/quarantine, operational finance, internal settlement, governed
+  settlement, mobile operations/sync, and attachment durability across API
+  process restart.
 
 ## Known Limitations
 
-To be finalized after implementation. Phase 5.4 Universal Intake, external
-integrations, autonomous AI execution and cloud provisioning are out of scope.
+- The full Node suite reports 14 conditional PostgreSQL skips when a shared
+  `DATABASE_URL_TEST` is not supplied. The corresponding transaction suites
+  pass against isolated Embedded PostgreSQL databases, but the aggregate suite
+  still reports those skips by design.
+- Node/PostgreSQL test runs emit the existing `pg` deprecation warning for a
+  `client.query()` call issued while that client is already executing a query.
+  It does not currently fail a gate, but should be removed before upgrading to
+  `pg` 9.
+- The production build retains the existing large JavaScript chunk advisory.
+- Synthetic legacy JSON data is not migrated. Existing installations must use
+  normal PostgreSQL backup/migration procedures and reconfigure settings that
+  existed only in the retired runtime file.
+- Phase 5.4 Universal Intake, external integrations, autonomous AI execution,
+  cloud provisioning, and durable AI conversation history remain out of scope.
 
 ## Phase 5.4 Readiness
 

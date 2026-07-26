@@ -9,10 +9,12 @@ function auditLogRepository(ctx) {
 
 export async function handleAuditLogRoute(ctx) {
   const { req, res, url, send } = ctx
-  const repository = auditLogRepository(ctx)
 
   if (req.method === 'GET' && url.pathname === '/api/audit-log') {
-    const actor = await resolveProvisionedActor(await getPrismaClient(ctx.env || process.env), ctx.identity)
+    const repository = auditLogRepository(ctx)
+    const actor = ctx.identity?.authenticated && ctx.identity?.complete
+      ? ctx.identity
+      : await resolveProvisionedActor(await getPrismaClient(ctx.env || process.env), ctx.identity)
     assertAuthorized({ actor, permission: 'audit.read', tenantId: actor.tenantId })
     const sensitive = can({ actor, permission: 'audit.read_sensitive', tenantId: actor.tenantId })
     const entityType = url.searchParams.get('entityType') || ''

@@ -10,9 +10,10 @@ import { buildCollaborationNotificationDraftsV2 } from './collaboration-notifica
 import { buildDataAccessQualityV2 } from './data-access-quality-v2.mjs'
 import { buildUserRolePermissionVisibilityV2 } from './user-role-permission-visibility-v2.mjs'
 import { handleWorkspaceBoundaryVisibilityRoute } from '../routes/workspace-boundary-visibility.routes.mjs'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
-  return JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function visibleText(value) {

@@ -114,7 +114,6 @@ const uniqueError = (error) => error?.code === "P2002";
 
 function assertEnabled(env) {
   if (
-    env.FLOWCHAIN_PERSISTENCE_MODE !== "database" ||
     text(env.FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS).toLowerCase() !== "true"
   )
     fail(

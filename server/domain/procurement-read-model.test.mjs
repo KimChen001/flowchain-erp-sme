@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 import assert from 'node:assert/strict'
 import { handleProcurementReadRoute } from '../routes/procurement-read.routes.mjs'
 import {
@@ -101,6 +102,7 @@ function createRouteContext(pathname, db = clone(fixture)) {
       res: {},
       url: new URL(pathname, 'http://localhost'),
       db,
+      repositories: createTestRepositoryRegistry(db),
       send(_res, status, payload) {
         response = { status, payload }
       },

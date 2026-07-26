@@ -13,9 +13,10 @@ import {
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 import { createScmServer } from '../routes/scm-legacy.routes.mjs'
 import { extractBusinessContextFromAiResponseV2 } from './ai-runtime-conversation-context-v2.mjs'
+import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
-  return JSON.parse(fs.readFileSync(new URL('../../data/scm-demo.json', import.meta.url), 'utf8'))
+  return createProductReviewScenarioDb()
 }
 
 function visibleText(value) {
@@ -582,26 +583,28 @@ test('route handler serves provider-assisted success and failure as business-saf
 })
 
 test('main route dispatcher serves AI runtime endpoints', async () => {
-  const server = createScmServer()
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-  const address = server.address()
-  const base = `http://127.0.0.1:${address.port}`
-  try {
-    const readiness = await fetch(`${base}/api/ai-runtime/readiness`)
-    assert.equal(readiness.status, 200)
-    const response = await fetch(`${base}/api/ai-runtime/respond`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message: '今天有什么需要我处理？' }),
-    })
-    assert.equal(response.status, 200)
-    const empty = await fetch(`${base}/api/ai-runtime/respond`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message: '' }),
-    })
-    assert.equal(empty.status, 400)
-  } finally {
-    await new Promise((resolve) => server.close(resolve))
-  }
+  await withProcessEnv({ DATABASE_URL: 'postgresql://flowchain:flowchain@127.0.0.1:5432/flowchain_test' }, async () => {
+    const server = createScmServer()
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    const base = `http://127.0.0.1:${address.port}`
+    try {
+      const readiness = await fetch(`${base}/api/ai-runtime/readiness`)
+      assert.equal(readiness.status, 200)
+      const response = await fetch(`${base}/api/ai-runtime/respond`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: '今天有什么需要我处理？' }),
+      })
+      assert.equal(response.status, 200)
+      const empty = await fetch(`${base}/api/ai-runtime/respond`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: '' }),
+      })
+      assert.equal(empty.status, 400)
+    } finally {
+      await new Promise((resolve) => server.close(resolve))
+    }
+  })
 })

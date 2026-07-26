@@ -143,7 +143,9 @@ test('database mode guard is before legacy auth and forecast writes', () => {
 
 test('database mode blocks legacy writes while allowing health and preview routes', async () => {
   const previous = process.env.FLOWCHAIN_PERSISTENCE_MODE
+  const previousDatabaseUrl = process.env.DATABASE_URL
   process.env.FLOWCHAIN_PERSISTENCE_MODE = 'database'
+  process.env.DATABASE_URL = 'postgresql://user:pass@127.0.0.1:5432/flowchain_backend_foundation_test'
   const server = createScmServer()
 
   try {
@@ -181,6 +183,8 @@ test('database mode blocks legacy writes while allowing health and preview route
     } else {
       process.env.FLOWCHAIN_PERSISTENCE_MODE = previous
     }
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL
+    else process.env.DATABASE_URL = previousDatabaseUrl
     await closeServer(server)
   }
 })
