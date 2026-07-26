@@ -54,6 +54,7 @@ jobs:
       - run: npm run test:api:authorization
       - run: npm run test:db:intake
       - run: npm run test:api:intake
+      - run: npm run test:legacy-import-authority
       - run: npm run test:db:internal-settlement
       - run: npm run test:api:internal-settlement
       - run: npm run test:db:settlement-workflow-mobile

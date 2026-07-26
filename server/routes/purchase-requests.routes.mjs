@@ -1,5 +1,3 @@
-import { listImportedRecords } from '../repositories/import-persistence-repository.mjs'
-
 export async function handlePurchaseRequestsRoute(ctx) {
   const {
     req, res, url, db, send, readBody, event, todayLabel,
@@ -10,7 +8,7 @@ export async function handlePurchaseRequestsRoute(ctx) {
   } = ctx
 
   if (req.method === 'GET' && url.pathname === '/api/purchase-requests') {
-    return send(res, 200, [...listImportedRecords('purchaseRequests'), ...ensurePurchaseRequests(db)])
+    return send(res, 200, ensurePurchaseRequests(db))
   }
 
   if (req.method === 'POST' && url.pathname === '/api/purchase-requests') {

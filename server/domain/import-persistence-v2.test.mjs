@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { commitImportPreview, createImportPreview, getImportBatch, listImportedInventoryMovements, listImportedRecords, rollbackImportBatch } from '../repositories/import-persistence-repository.mjs'
+import { commitImportPreview, createImportPreview, getImportBatch, listImportedInventoryMovements, listImportedRecords, rollbackImportBatch } from './test-fixtures/legacy-import-persistence-repository.mjs'
 
 function preview(schemaId, rows) {
   return createImportPreview({ businessObject: schemaId, schemaVersion: '1', fileMetadata: { name: `${schemaId}.xlsx` }, sheetName: '导入数据', fieldMapping: {}, rows, validationErrors: [], validationWarnings: [] }, { actor: '测试用户' })

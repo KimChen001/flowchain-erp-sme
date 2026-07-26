@@ -490,7 +490,7 @@ function CapabilityRouteStatus({
         className="mx-auto mt-3 max-w-2xl text-sm leading-6"
         style={{ color: A.gray1 }}
       >
-        {t("capability.reason")}
+        {reason || t("capability.reason")}
       </p>
       <div className="mt-6 flex flex-wrap justify-center gap-2">
         <button

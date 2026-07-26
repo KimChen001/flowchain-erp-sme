@@ -14,11 +14,15 @@ test("Universal Intake preview reads empty PostgreSQL state and states every dis
     localStorage.setItem("flowchain:experimental-modules", JSON.stringify(["universal-intake"]));
   }, session);
 
+  await page.goto("/app/imports");
+  await expect(page.getByTestId("capability-route-blocked")).toContainText("Legacy direct imports are retired; use Universal Intake.");
+
   await page.goto("/app/universal-intake");
   await expect(page.getByRole("heading", { name: "Universal Intake Foundation" })).toBeVisible();
   await expect(page.getByText("0 个来源对象")).toBeVisible();
   await expect(page.getByText("0 个 PostgreSQL batch")).toBeVisible();
   for (const limitation of [
+    "Manual upload: preview enabled",
     "CSV/XLSX parsing: not yet enabled",
     "Business commit adapters: not yet enabled",
     "Email intake: not yet enabled",

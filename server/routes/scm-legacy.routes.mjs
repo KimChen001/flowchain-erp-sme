@@ -63,7 +63,6 @@ import { handleSalesDemandRoute } from "./sales-demand.routes.mjs";
 import { handleEvidenceGraphRoute } from "./evidence-graph.routes.mjs";
 import { handleDataAccessQualityRoute } from "./data-access-quality.routes.mjs";
 import { handleReportsAnalyticsRoute } from "./reports-analytics.routes.mjs";
-import { handleImportPersistenceRoute } from "./import-persistence.routes.mjs";
 import { handleReportViewsRoute } from "./report-views.routes.mjs";
 import { handleReviewFirstActionWorkflowRoute } from "./review-first-action-workflow.routes.mjs";
 import { handleAiSuggestionsWorkbenchRoute } from "./ai-suggestions-workbench.routes.mjs";
@@ -1076,7 +1075,6 @@ export function createScmServer() {
       if (await handleReportsAnalyticsRoute(routeContext)) return;
       if (await handlePilotImportRoute(routeContext)) return;
       if (await handlePilotOperationsRoute(routeContext)) return;
-      if (await handleImportPersistenceRoute(routeContext)) return;
       if (await handleReportViewsRoute(routeContext)) return;
       if (await handleReviewFirstActionWorkflowRoute(routeContext)) return;
       if (await handleAiSuggestionsWorkbenchRoute(routeContext)) return;

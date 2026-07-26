@@ -579,6 +579,7 @@ model WarehouseLocation {
   @@index([tenantId, warehouseId])
 }
 
+/// Legacy non-authoritative history only. New production writes are retired; Universal Intake uses IntakeBatch.
 model ImportBatch {
   id             String    @id
   tenantId       String
@@ -606,6 +607,7 @@ model ImportBatch {
   @@index([tenantId, status, createdAt])
 }
 
+/// Legacy non-authoritative history only. New validation writes use ValidationIssue.
 model ImportIssue {
   id            String  @id
   tenantId      String

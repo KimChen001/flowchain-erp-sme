@@ -40,6 +40,7 @@
     "test:db:postgres-only-runtime": "node scripts/verify-postgres-only-runtime-api.mjs",
     "test:db:intake": "node scripts/verify-intake-postgres.mjs",
     "test:api:intake": "node scripts/smoke-intake-api.mjs",
+    "test:legacy-import-authority": "node scripts/verify-legacy-import-authority.mjs",
     "test:db": "node --test server/domain/db-test-harness.test.mjs",
     "test:db:master-data": "node --test server/domain/master-data-db-parity.test.mjs",
     "test:db:receiving": "node scripts/verify-receiving-postgres.mjs",

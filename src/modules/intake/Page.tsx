@@ -46,6 +46,7 @@ type ValidationIssue = {
 };
 
 const limitations = [
+  "Manual upload: preview enabled",
   "CSV/XLSX parsing: not yet enabled",
   "Business commit adapters: not yet enabled",
   "Email intake: not yet enabled",

@@ -1,7 +1,8 @@
+// Archived Phase 5.3 pilot prototype. Test-only: production routes must never import this module.
 import { createHash, randomUUID } from 'node:crypto'
-import { PilotIdentityError, assertWarehouseAccess, resolveProvisionedActor } from './pilot-identity.mjs'
-import { assertAuthorized } from '../auth/authorization-service.mjs'
-import { receivingDecimalString, receivingDecimalUnits, receivingLocationKey } from './receiving-transaction-policy.mjs'
+import { PilotIdentityError, assertWarehouseAccess, resolveProvisionedActor } from '../pilot-identity.mjs'
+import { assertAuthorized } from '../../auth/authorization-service.mjs'
+import { receivingDecimalString, receivingDecimalUnits, receivingLocationKey } from '../receiving-transaction-policy.mjs'
 
 const TYPES = new Set(['items', 'suppliers', 'warehouses', 'locations', 'open_purchase_orders', 'opening_inventory_balances'])
 const OPEN_PO_STATUSES = new Set(['approved', 'issued', 'ready_for_receiving', 'partially_received'])
