@@ -16,7 +16,7 @@
     "test:browser": "playwright test",
     "test:browser:ai": "playwright test tests/browser/ai-copilot.spec.ts",
     "test:browser:receiving": "node scripts/run-receiving-playwright.mjs",
-    "test:browser:reports": "playwright test tests/browser/reports-currency-contract.spec.ts",
+    "test:browser:reports": "node scripts/run-reports-playwright.mjs",
     "test:browser:outbound": "node scripts/run-outbound-playwright.mjs",
     "test:browser:inventory-operations": "node scripts/run-inventory-operations-playwright.mjs",
     "test:browser:returns-quarantine": "node scripts/run-returns-quarantine-playwright.mjs",

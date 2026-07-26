@@ -33,6 +33,8 @@ export default defineConfig({
       command:
         process.env.PLAYWRIGHT_INTERNAL_SETTLEMENT_DB === "true"
           ? "node scripts/browser-operational-finance-api.mjs"
+          : process.env.PLAYWRIGHT_REPORTS_DB === "true"
+          ? "node scripts/browser-settings-api.mjs"
           : process.env.PLAYWRIGHT_SETTLEMENT_WORKFLOW_DB === "true"
           ? "node scripts/browser-operational-finance-api.mjs"
           : process.env.PLAYWRIGHT_MOBILE_OPERATIONS_DB === "true"
