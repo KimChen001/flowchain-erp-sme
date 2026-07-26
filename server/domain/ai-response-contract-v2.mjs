@@ -591,12 +591,12 @@ function inventoryRiskRows(models = {}) {
 
 function preferredTodayEvidence(models = {}, suppliers = []) {
   const preferred = []
-  const po1282 = documentById(models, 'PO-2026-1282')
-  const sku412 = asArray(models.inventoryItems).find((item) => text(item.sku).toUpperCase() === 'SKU-00412')
-  const rfq46 = documentById(models, 'RFQ-26-0046')
-  if (po1282) preferred.push(evidenceFromDocument(po1282, { summary: `${po1282.id} 仍需确认未收数量和供应商剩余交期。`, severity: 'risk' }))
-  if (sku412) preferred.push(evidenceFromInventory(sku412, { summary: `${sku412.sku} 当前低于安全库存，需和采购在途一起复核。`, severity: 'risk' }))
-  if (rfq46) preferred.push(evidenceFromDocument(rfq46, { summary: `${rfq46.id} 仍需确认供应商回复和授标依据。`, severity: 'warning' }))
+  const purchaseOrder = asArray(models.procurementDocuments).find((item) => item.type === 'purchaseOrder')
+  const inventoryItem = inventoryRiskRows(models)[0]
+  const rfq = asArray(models.procurementDocuments).find((item) => item.type === 'rfq')
+  if (purchaseOrder) preferred.push(evidenceFromDocument(purchaseOrder, { summary: `${purchaseOrder.id} 仍需确认未收数量和供应商剩余交期。`, severity: 'risk' }))
+  if (inventoryItem) preferred.push(evidenceFromInventory(inventoryItem, { summary: `${inventoryItem.sku} 当前库存风险需和采购在途一起复核。`, severity: 'risk' }))
+  if (rfq) preferred.push(evidenceFromDocument(rfq, { summary: `${rfq.id} 仍需确认供应商回复和授标依据。`, severity: 'warning' }))
   const supplier = suppliers.find((row) => row.risk === '高') || suppliers[0]
   if (supplier) preferred.push(evidenceFromSupplier(supplier))
   return preferred
@@ -951,7 +951,7 @@ function poIdFromQuestion(message = '', body = {}) {
     const type = text(candidate?.entityType || candidate?.type)
     if (/^PO-/i.test(id) || type === 'po' || type === 'purchase_order') return id.toUpperCase()
   }
-  return 'PO-2026-1282'
+  return ''
 }
 
 function buildPoPriorityContract(query, db, models, body) {

@@ -44,108 +44,14 @@ const RISK_LABELS = Object.freeze({
   blocked: '已阻塞',
 })
 
-const defaultBusinessSalesOrders = Object.freeze([
-  {
-    salesOrderId: 'SO-2026-0412-A',
-    customerName: '华东精密制造',
-    customerTier: '重点客户',
-    sku: 'SKU-00412',
-    itemName: '高扭矩伺服电机',
-    orderedQty: 120,
-    reservedQty: 36,
-    fulfilledQty: 0,
-    requestedDate: '2026-07-09',
-    promisedDate: '2026-07-12',
-    status: 'shortage_risk',
-    priority: '高',
-    linkedPurchaseOrders: ['PO-2026-1282'],
-    linkedSuppliers: ['深圳新元电气'],
-  },
-  {
-    salesOrderId: 'SO-2026-0412-B',
-    customerName: '宁波电子科技',
-    customerTier: '常规客户',
-    sku: 'SKU-00412',
-    itemName: '高扭矩伺服电机',
-    orderedQty: 48,
-    reservedQty: 32,
-    fulfilledQty: 0,
-    requestedDate: '2026-07-15',
-    promisedDate: '2026-07-18',
-    status: 'partially_allocated',
-    priority: '中',
-    linkedPurchaseOrders: ['PO-2026-1282'],
-    linkedSuppliers: ['深圳新元电气'],
-  },
-  {
-    salesOrderId: 'SO-2026-0508',
-    customerName: '杭州自动化设备',
-    customerTier: '常规客户',
-    sku: 'SKU-00287',
-    itemName: '标准轴承组件',
-    orderedQty: 80,
-    reservedQty: 80,
-    fulfilledQty: 0,
-    requestedDate: '2026-07-20',
-    promisedDate: '2026-07-22',
-    status: 'ready_to_ship',
-    priority: '低',
-    linkedPurchaseOrders: [],
-    linkedSuppliers: ['杭州精密组件'],
-  },
-  {
-    salesOrderId: 'SO-2026-1282',
-    customerName: '苏州机器人系统',
-    customerTier: '重点客户',
-    sku: 'SKU-01998',
-    itemName: '控制板模组',
-    orderedQty: 64,
-    reservedQty: 18,
-    fulfilledQty: 0,
-    requestedDate: '2026-07-11',
-    promisedDate: '2026-07-14',
-    status: 'shortage_risk',
-    priority: '高',
-    linkedPurchaseOrders: ['PO-2026-1282'],
-    linkedSuppliers: ['深圳新元电气'],
-  },
-  {
-    salesOrderId: 'SO-2026-SUP-RISK',
-    customerName: '上海智能装备',
-    customerTier: '重点客户',
-    sku: 'SKU-01024',
-    itemName: '精密传感器',
-    orderedQty: 42,
-    reservedQty: 12,
-    fulfilledQty: 0,
-    requestedDate: '2026-07-16',
-    promisedDate: '2026-07-19',
-    status: 'partially_allocated',
-    priority: '中',
-    linkedPurchaseOrders: ['PO-2026-1307'],
-    linkedSuppliers: ['华东精工机械'],
-  },
-])
-
 function sourceRows(db = {}) {
-  const dataMode = text(db.__dataMode)
-  if (dataMode && dataMode !== 'demo') {
-    return asArray(db.salesOrders).length
-      ? db.salesOrders
-      : asArray(db.salesDemand).length
-        ? db.salesDemand
-        : asArray(db.customerOrders)
-  }
   const rows = asArray(db.salesOrders).length
     ? db.salesOrders
     : asArray(db.salesDemand).length
       ? db.salesDemand
-      : asArray(db.customerOrders).length
-        ? db.customerOrders
-        : defaultBusinessSalesOrders
+      : asArray(db.customerOrders)
   return asArray(rows)
 }
-
 function normalizeStatus(value = '', shortageQty = 0, reservedQty = 0, orderedQty = 0, fulfilledQty = 0) {
   const raw = text(value).toLowerCase()
   if (STATUS_LABELS[raw]) return raw

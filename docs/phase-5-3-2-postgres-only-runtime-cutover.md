@@ -67,6 +67,44 @@ The formal server process will require `DATABASE_URL`. The removed
 There will be no database-to-JSON fallback, development fallback, or demo-data
 bootstrap. A fresh migrated database must return honest empty collections.
 
+## Audited Runtime Route Classification
+
+| Route | Classification | Authority / limitation |
+| --- | --- | --- |
+| `GET /api/rfqs` | PostgreSQL-backed | Authenticated, tenant-scoped `procurementRead`; an empty database returns `[]`. |
+| `GET /api/inventory-movements` | PostgreSQL-backed | Authenticated, tenant-scoped `inventoryRead`; an empty database returns `[]`. |
+| `GET /api/mrp-plan` | Capability-disabled | No authoritative PostgreSQL planning profile or BOM model. |
+| `GET/POST /api/sop-cycle` | Capability-disabled | No authoritative S&OP cycle model or persistence. |
+| `GET /api/supplier-performance` | Capability-disabled | No authoritative supplier-performance projection. |
+| `GET /api/supplier-recommendations` | Capability-disabled | No authoritative quote, capacity, contract-price, or FX model. |
+| `GET/POST /api/forecast-plans` | Capability-disabled | No authoritative forecast-plan model or persistence. |
+| `GET /api/external-signals` | Capability-disabled | No external provider with explicit provenance is configured. |
+| `GET /api/market-prices` and `POST /api/market-prices/refresh` | Capability-disabled | No external market-data provider with explicit provenance is configured. |
+
+Every capability-disabled route returns HTTP 501 with
+`FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED`, a stable capability identifier, a
+business-readable message, and non-empty limitations. Pure MRP calculation
+helpers remain available only for caller-supplied preview facts and do not read
+runtime fixtures.
+
+## Removed Test Mapping
+
+| Removed test suite | Reason | Replacement PostgreSQL or capability gate |
+| --- | --- | --- |
+| `json-adapter-contracts.test.mjs`, `json-adapter-contract-helpers.test.mjs` | JSON persistence is no longer a supported production authority. | `postgres-only-runtime.test.mjs` rejects JSON mode and scans the production composition root; the fresh-database API gate proves PostgreSQL-only behavior. |
+| `db-adapter-parity-harness.test.mjs`, `inventory-db-parity-harness.test.mjs`, `procurement-db-parity-harness.test.mjs` | JSON/database parity would preserve the retired fixture contract. | Database repository tests plus `test:db:postgres-only-runtime`, fresh migration, additive upgrade, and API smoke gates. |
+| `demo-data-dry-run.test.mjs`, `demo-data-isolation-readiness.test.mjs` | Demo dataset selection and dry-run bootstrap were removed. | Source-boundary checks and fresh empty PostgreSQL API assertions with no fixture identifiers. |
+| `mrp-bom-explosion.test.mjs`, `mrp-net-requirements.test.mjs`, `mrp-read-model-contract.test.mjs` | They asserted route-local `mrpProfiles`/`bomMaster` facts that are not authoritative. | `GET /api/mrp-plan` capability gate plus unit coverage for pure calculations using explicit preview input. There is no PostgreSQL MRP replacement yet. |
+| `procurement-transaction-core.test.mjs`, `procurement-workflow-foundation.test.mjs` | They exercised duplicate in-memory RFQ/quotation/award state. | PostgreSQL procurement repository/command tests; `GET /api/rfqs` now uses tenant-scoped `procurementRead`. Unsupported RFQ mutations remain fail-closed. |
+| Supplier recommendation fixture assertions formerly embedded in procurement/MRP coverage | Static quotes, capacity calendars, contract prices, and FX tables were removed. | `GET /api/supplier-recommendations` capability gate. There is no PostgreSQL recommendation model yet. |
+| Legacy import/parity coverage tied to JSON runtime (`demo-data-*`, adapter parity helpers) | Importing into the retired JSON business dataset is no longer valid. | PostgreSQL `pilot-import-service.test.mjs`, durable import correction tests, and PostgreSQL pilot import API/database gates. |
+| `master-data-repository.test.mjs`, `procurement-inventory-read-repositories.test.mjs` | They targeted superseded combined/in-memory adapter contracts. | Focused PostgreSQL master-data, procurement-read, inventory-read, selector, and fresh-database API tests. |
+| `settings-runtime-persistence.test.mjs`, `settings-runtime.routes.test.mjs` | File-backed settings persistence was retired. | PostgreSQL workspace settings API smoke and restart persistence gate. |
+
+No production route was removed merely to make a legacy test pass. Routes that
+do not have an authoritative model remain registered and fail closed through
+the capability gate.
+
 ## Migration Impact
 
 Existing PostgreSQL deployments use forward-only Prisma migrations. Legacy UAT
@@ -101,11 +139,13 @@ the existing database-backed APIs. Modules with no records return empty results.
 
 Validated locally on 2026-07-26 against the branch working tree:
 
-- PostgreSQL-only contract gate: 8 passed, 0 failed, 0 skipped. This covers a
-  missing `DATABASE_URL`, rejection of `FLOWCHAIN_PERSISTENCE_MODE=json`,
-  production-source scans, and the absence of legacy runtime packages/scripts.
-- Full Node test suite: 1,057 passed, 0 failed, 14 conditionally skipped out of
-  1,071 tests. Every skipped PostgreSQL transaction path was also exercised by
+- PostgreSQL-only contract gate: 14 passed, 0 failed, 0 skipped. The fresh
+  PostgreSQL-only API gate additionally passed 16 assertions with 0 failures
+  and 0 skips. Together they cover missing database configuration, rejection
+  of `FLOWCHAIN_PERSISTENCE_MODE=json`, production-source boundaries,
+  capability fail-closed behavior, and empty fresh-database responses.
+- Full Node test suite: 1,063 passed, 0 failed, 14 conditionally skipped out of
+  1,077 tests. Every skipped PostgreSQL transaction path was also exercised by
   an isolated Embedded PostgreSQL gate with zero skips.
 - Typecheck and production build passed. The build emitted only the existing
   large-chunk advisory.

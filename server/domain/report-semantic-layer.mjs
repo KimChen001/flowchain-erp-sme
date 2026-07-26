@@ -1,9 +1,3 @@
-import { importedDataOverlay, listImportedInventoryMovements } from '../repositories/import-persistence-repository.mjs'
-import { readFileSync } from 'node:fs'
-
-const standardScenario = JSON.parse(readFileSync(new URL('../../src/data/standard-business-scenario/contract-fixture.json', import.meta.url), 'utf8'))
-const standardPurchaseByPo = new Map((standardScenario.purchaseChains || []).map((row) => [row.po, row]))
-
 const SUBJECTS = Object.freeze({
   purchase_orders: { label: '采购订单', defaultDateField: 'date', detailRoute: '/app/procurement/orders', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   purchase_requests: { label: '采购申请', defaultDateField: 'date', detailRoute: '/app/procurement/requests', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
@@ -98,16 +92,6 @@ export const reportMetricCatalog = Object.freeze([
   metric('supplier_risk_count', '风险供应商数量', 'suppliers', 'number', 'count(risk)', '风险等级为中或高的供应商数。', '/app/master-data/suppliers?risk=true'),
 ])
 
-const STANDARD_SALES_MONTHLY = Object.freeze([
-  { id: 'SO-M-2026-01', date: '2026-01-31', amount: 4820000, quantity: 312, customer: '华南自动化设备有限公司', category: '工业自动化', currency: 'CNY', company: '新辰智能制造', status: 'delivered', onTime: true },
-  { id: 'SO-M-2026-02', date: '2026-02-28', amount: 3960000, quantity: 278, customer: '苏州精工系统集成有限公司', category: '工业自动化', currency: 'CNY', company: '新辰智能制造', status: 'delivered', onTime: true },
-  { id: 'SO-M-2026-03', date: '2026-03-31', amount: 5310000, quantity: 394, customer: '华南自动化设备有限公司', category: '机械部件', currency: 'CNY', company: '新辰智能制造', status: 'delivered', onTime: false },
-  { id: 'SO-M-2026-04', date: '2026-04-30', amount: 4750000, quantity: 341, customer: '苏州精工系统集成有限公司', category: '电气元件', currency: 'CNY', company: '新辰智能制造', status: 'partial', onTime: false },
-  { id: 'SO-M-2026-05', date: '2026-05-31', amount: 6120000, quantity: 432, customer: '华南自动化设备有限公司', category: '电气元件', currency: 'CNY', company: '新辰智能制造', status: 'delivered', onTime: true },
-  { id: 'SO-M-2026-06', date: '2026-06-30', amount: 5880000, quantity: 415, customer: '苏州精工系统集成有限公司', category: '机械部件', currency: 'CNY', company: '新辰智能制造', status: 'partial', onTime: true },
-  { id: 'SO-M-2026-07', date: '2026-07-11', amount: 7240000, quantity: 501, customer: '华南自动化设备有限公司', category: '工业自动化', currency: 'CNY', company: '新辰智能制造', status: 'open', onTime: false },
-])
-
 function number(value, fallback = 0) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback }
 function isoDate(value, fallback = '2026-07-11') {
   const raw = String(value || '').trim()
@@ -148,37 +132,21 @@ function group(rows, key, valueKey = 'amount') {
   rows.forEach((row) => { const label = row[key] || '未分类'; result.set(label, (result.get(label) || 0) + number(row[valueKey], 1)) })
   return [...result.entries()].map(([name, value]) => ({ name, value }))
 }
-function mergeByKey(primary = [], fallback = [], key) {
+function mergeByKey(primary = [], secondary = [], key) {
   const seen = new Set(primary.map((row) => String(row[key] || '')).filter(Boolean))
-  return [...primary, ...fallback.filter((row) => !seen.has(String(row[key] || '')))]
+  return [...primary, ...secondary.filter((row) => !seen.has(String(row[key] || '')))]
 }
 function sourceRows(data = {}) {
-  const overlay = importedDataOverlay()
-  const purchaseOrders = [...(overlay.purchaseOrders || []), ...(data.purchaseOrders || [])].map((row) => { const standard = standardPurchaseByPo.get(row.po || row.id); return { id: row.po || row.id, date: isoDate(standard?.poDate || row.created), supplier: row.supplier || row.supplierName, amount: number(row.amount || row.totalAmount || standard?.poAmount), quantity: number(row.items || row.totalOrderedQty || standard?.orderedQty), status: row.status, owner: row.owner, currency: row.currency || row.lines?.[0]?.currency || 'CNY', company: '新辰智能制造', category: row.category || '', sku: row.sourceSku || standard?.sku || '' } })
-  const purchaseRequests = [...(overlay.purchaseRequests || []), ...(data.purchaseRequests || [])].map((row) => ({ id: row.pr, date: isoDate(row.created || row.requiredDate), supplier: row.supplier, amount: number(row.amount), quantity: number(row.quantity), status: row.status, owner: row.buyer || row.requester, currency: row.currency || 'CNY', company: '新辰智能制造', category: row.category || '', sku: row.sourceSku }))
-  const rfqs = (data.rfqs || []).map((row) => ({ id: row.id, date: isoDate(row.createdAt || row.due), supplier: row.bestSupplier, amount: number(row.bestPrice) * number(row.quantity), quantity: number(row.quantity), status: row.status, currency: row.currency || 'CNY', company: '新辰智能制造', category: row.category, invited: number(row.suppliers || row.invitedSuppliers?.length), quoted: number(row.quoted) }))
-  const receiving = (data.receivingDocs || []).map((row) => ({ id: row.grn, date: isoDate(row.arrived), supplier: row.supplier, warehouse: row.warehouse, amount: number(row.amount), quantity: number(row.items), status: row.status, currency: 'CNY', company: '新辰智能制造', accepted: number(row.passed), rejected: number(row.failed) }))
-  const supplierNames = (data.suppliers || []).map((row) => row.name).filter(Boolean)
-  const standardInvoices = Array.from({ length: 8 }, (_, index) => {
-    const chain = standardScenario.purchaseChains[index % standardScenario.purchaseChains.length]
-    const monthNumber = index + 1
-    const variance = index % 4 === 0 ? 0 : index % 4 === 1 ? 18000 : index % 4 === 2 ? 42000 : 7600
-    return {
-      id: index < 3 ? chain.invoice : `${chain.invoice}-H${index + 1}`,
-      date: `2026-${String(monthNumber).padStart(2, '0')}-${String(12 + (index % 8)).padStart(2, '0')}`,
-      dueDate: `2026-${String(Math.min(monthNumber + 1, 9)).padStart(2, '0')}-20`, supplier: supplierNames[index % Math.max(supplierNames.length, 1)] || chain.supplier,
-      amount: number(chain.invoiceSubtotal) * (0.72 + index * 0.06), variance, status: index % 5 === 0 ? 'paid' : 'open', currency: 'CNY', company: '新辰智能制造',
-      po: chain.po, grn: chain.grn, matchStatus: variance === 0 ? 'matched' : index % 3 === 0 ? 'blocked' : index % 3 === 1 ? 'variance' : 'pending',
-      approvalStatus: index % 2 ? 'review' : 'approved', owner: ['陈思远', '张磊', '王敏'][index % 3], recommendedAction: variance ? '复核差异证据' : '进入结算复核',
-    }
-  })
-  const importedInvoices = (overlay.supplierInvoices || []).map((row) => ({ id: row.invoiceNumber, date: isoDate(row.invoiceDate), dueDate: isoDate(row.dueDate), supplier: row.supplierCode, amount: number(row.total), variance: number(row.varianceAmount), status: row.status || 'open', currency: row.currency || 'CNY', company: '新辰智能制造', po: row.relatedPo, grn: row.relatedGrn, matchStatus: number(row.varianceAmount) === 0 ? 'matched' : 'variance', approvalStatus: 'review', owner: row.owner || '待分配', recommendedAction: number(row.varianceAmount) === 0 ? '进入结算复核' : '复核差异证据' }))
-  const invoices = mergeByKey(importedInvoices, standardInvoices, 'id').map((row) => ({ ...row, overdueDays: Math.max(0, Math.floor((new Date('2026-07-11') - new Date(row.dueDate)) / 86400000)) }))
-  const products = mergeByKey(overlay.products || [], data.products || [], 'sku')
-  const balances = (overlay.inventoryBalances || []).length ? overlay.inventoryBalances.map((row) => ({ id: `${row.warehouse}/${row.bin}/${row.sku}`, date: isoDate(row.asOfDate), sku: row.sku, warehouse: row.warehouse, quantity: number(row.quantity), safetyStock: number(row.safetyStock), unitCost: number(row.unitCost), amount: number(row.quantity) * number(row.unitCost), status: row.status, currency: 'CNY', company: '新辰智能制造', category: row.category || '' })) : products.map((row) => ({ id: row.sku, date: '2026-07-11', sku: row.sku, warehouse: row.warehouse || '上海总仓', quantity: number(row.currentStock), safetyStock: number(row.safetyStock), monthlyDemand: number(row.monthlyDemand), unitCost: number(row.unitCost), amount: number(row.currentStock) * number(row.unitCost), status: row.stockoutRisk, currency: 'CNY', company: '新辰智能制造', category: row.category }))
-  const suppliers = mergeByKey(overlay.suppliers || [], data.suppliers || [], 'name').map((row) => ({ id: row.code || row.name, date: isoDate(row.updatedAt), supplier: row.name, category: row.category, status: row.status, risk: row.risk, onTimeRate: number(row.onTimeRate), qualityRate: number(row.qualityRate), currency: row.currency || 'CNY', company: '新辰智能制造' }))
-  const sales = STANDARD_SALES_MONTHLY.map((row) => ({ ...row }))
-  return { purchase_orders: purchaseOrders, purchase_requests: purchaseRequests, rfqs, receiving, supplier_invoices: invoices, three_way_matches: invoices, reconciliation: overlay.supplierReconciliations || [], settlement: [], sales_orders: sales, deliveries: sales, receipts: sales, inventory_balances: balances, inventory_movements: listImportedInventoryMovements(), suppliers }
+  const purchaseOrders = (data.purchaseOrders || []).map((row) => ({ id: row.po || row.id, date: isoDate(row.created || row.createdAt, ''), supplier: row.supplier || row.supplierName, amount: number(row.amount || row.totalAmount), quantity: number(row.items || row.totalOrderedQty), status: row.status, owner: row.owner, currency: row.currency || row.lines?.[0]?.currency || '', company: row.company || '', category: row.category || '', sku: row.sourceSku || '' }))
+  const purchaseRequests = (data.purchaseRequests || []).map((row) => ({ id: row.pr || row.id, date: isoDate(row.created || row.requiredDate, ''), supplier: row.supplier, amount: number(row.amount), quantity: number(row.quantity), status: row.status, owner: row.buyer || row.requester, currency: row.currency || '', company: row.company || '', category: row.category || '', sku: row.sourceSku }))
+  const rfqs = (data.rfqs || []).map((row) => ({ id: row.id, date: isoDate(row.createdAt || row.due, ''), supplier: row.bestSupplier, amount: number(row.bestPrice) * number(row.quantity), quantity: number(row.quantity), status: row.status, currency: row.currency || '', company: row.company || '', category: row.category, invited: number(row.suppliers || row.invitedSuppliers?.length), quoted: number(row.quoted) }))
+  const receiving = (data.receivingDocs || []).map((row) => ({ id: row.grn || row.id, date: isoDate(row.arrived || row.createdAt, ''), supplier: row.supplier, warehouse: row.warehouse, amount: number(row.amount), quantity: number(row.items), status: row.status, currency: row.currency || '', company: row.company || '', accepted: number(row.passed), rejected: number(row.failed) }))
+  const invoices = (data.supplierInvoices || []).map((row) => ({ id: row.invoiceNumber || row.id, date: isoDate(row.invoiceDate || row.createdAt, ''), dueDate: isoDate(row.dueDate, ''), supplier: row.supplier || row.supplierName || row.supplierCode, amount: number(row.total || row.amount), variance: number(row.varianceAmount), varianceType: row.varianceType || '', status: row.status || '', currency: row.currency || '', company: row.company || '', po: row.relatedPo, grn: row.relatedGrn, matchStatus: row.matchStatus || '', approvalStatus: row.approvalStatus || '', owner: row.owner || '', recommendedAction: row.recommendedAction || '' })).map((row) => ({ ...row, overdueDays: row.dueDate ? Math.max(0, Math.floor((new Date() - new Date(row.dueDate)) / 86400000)) : 0 }))
+  const products = data.products || data.items || []
+  const balances = (data.inventoryBalances || []).map((row) => ({ id: row.id || `${row.warehouse}/${row.bin}/${row.sku}`, date: isoDate(row.asOfDate || row.updatedAt, ''), sku: row.sku, warehouse: row.warehouse, quantity: number(row.quantity || row.onHandQuantity), safetyStock: number(row.safetyStock), unitCost: number(row.unitCost), amount: number(row.quantity || row.onHandQuantity) * number(row.unitCost), status: row.status, currency: row.currency || '', company: row.company || '', category: row.category || '' }))
+  const suppliers = (data.suppliers || []).map((row) => ({ id: row.code || row.id || row.name, date: isoDate(row.updatedAt, ''), supplier: row.name || row.supplierName, category: row.category, status: row.status, risk: row.risk || row.riskStatus, onTimeRate: number(row.onTimeRate), qualityRate: number(row.qualityRate), currency: row.currency || '', company: row.company || '' }))
+  const sales = (data.salesOrders || []).map((row) => ({ id: row.orderNo || row.id, date: isoDate(row.orderDate || row.createdAt, ''), amount: number(row.amount || row.totalAmount), quantity: number(row.quantity || row.totalQuantity), customer: row.customer || row.customerName, category: row.category || '', currency: row.currency || '', company: row.company || '', status: row.status || '', onTime: Boolean(row.onTime) }))
+  return { purchase_orders: purchaseOrders, purchase_requests: purchaseRequests, rfqs, receiving, supplier_invoices: invoices, three_way_matches: invoices, reconciliation: data.supplierReconciliations || [], settlement: data.settlements || [], sales_orders: sales, deliveries: data.deliveries || [], receipts: data.receipts || [], inventory_balances: balances, inventory_movements: data.inventoryMovements || [], suppliers, products }
 }
 
 const DASHBOARD_METRICS = Object.freeze({
@@ -242,7 +210,7 @@ function dashboardCharts(dashboard, filtered, query) {
     chart('finance_invoice_trend', '发票金额趋势', 'area', trend(invoices), '/app/finance/invoices', { unit: 'currency', valueFormat: 'currency', crossFilter: 'period' }),
     chart('finance_match_status', '匹配状态分布', 'donut', statusDistribution(invoices, 'matchStatus'), '/app/finance/invoices', { crossFilter: 'matchStatus' }),
     chart('finance_ap_aging', '应付账龄分布', 'stacked_bar', [{ name: '应付账龄', 未到期: sum(invoices.filter((row) => !row.overdueDays), 'amount'), '0–30 天': sum(invoices.filter((row) => row.overdueDays > 0 && row.overdueDays <= 30), 'amount'), '31–60 天': sum(invoices.filter((row) => row.overdueDays > 30 && row.overdueDays <= 60), 'amount'), '61–90 天': sum(invoices.filter((row) => row.overdueDays > 60 && row.overdueDays <= 90), 'amount'), '90 天以上': sum(invoices.filter((row) => row.overdueDays > 90), 'amount') }], '/app/finance/invoices', { unit: 'currency', valueFormat: 'currency', stack: true, seriesKeys: ['未到期', '0–30 天', '31–60 天', '61–90 天', '90 天以上'], crossFilter: 'aging' }),
-    chart('finance_variance_types', '差异类型分布', 'donut', [{ name: '数量差异', value: sum(invoices, 'variance') * .35 }, { name: '价格差异', value: sum(invoices, 'variance') * .4 }, { name: '税额差异', value: sum(invoices, 'variance') * .15 }, { name: '运费差异', value: sum(invoices, 'variance') * .1 }], '/app/finance/invoices?variance=true', { unit: 'currency', valueFormat: 'currency', crossFilter: 'varianceType' }),
+    chart('finance_variance_types', '差异类型分布', 'donut', group(invoices.filter((row) => row.varianceType), 'varianceType', 'variance'), '/app/finance/invoices?variance=true', { unit: 'currency', valueFormat: 'currency', crossFilter: 'varianceType' }),
     chart('finance_supplier_payable', `供应商应付金额 Top ${query.topN}`, 'horizontal_bar', top(invoices, 'supplier', query.topN), '/app/finance/invoices', { unit: 'currency', valueFormat: 'currency', crossFilter: 'supplier', orientation: 'horizontal' }),
   ]
   if (dashboard === 'procurement') return [
@@ -259,12 +227,12 @@ function dashboardCharts(dashboard, filtered, query) {
     chart('sales_fulfillment', '订单履约状态', 'donut', statusDistribution(sales), '/app/sales/orders', { crossFilter: 'status' }),
     chart('sales_ontime', '准时交付趋势', 'line', trend(sales.map((row) => ({ ...row, amount: row.onTime ? 100 : 0 }))), '/app/sales/deliveries', { unit: 'percentage', crossFilter: 'period' }),
     chart('sales_unshipped', '未发货与部分发货', 'stacked_bar', [{ name: '履约状态', 未发货: sales.filter((row) => row.status === 'open').length, 部分发货: sales.filter((row) => row.status === 'partial').length }], '/app/sales/orders', { stack: true, seriesKeys: ['未发货', '部分发货'], crossFilter: 'status' }),
-    chart('sales_returns', '销售退货趋势', 'line', trend(sales.map((row, index) => ({ ...row, amount: index % 3 === 0 ? Math.round(row.amount * .02) : 0 }))), '/app/sales/returns', { unit: 'currency', valueFormat: 'currency', crossFilter: 'period' }),
+    chart('sales_returns', '销售退货趋势', 'line', [], '/app/sales/returns', { unit: 'currency', valueFormat: 'currency', crossFilter: 'period' }),
   ]
   if (dashboard === 'inventory') return [
     chart('inventory_value_trend', '库存金额趋势', 'area', trend(balances), '/app/inventory/stock', { unit: 'currency', valueFormat: 'currency', crossFilter: 'period' }),
     chart('inventory_risk', '库存风险分布', 'donut', [{ name: '低于安全库存', value: balances.filter((row) => row.quantity < row.safetyStock).length }, { name: '正常', value: balances.filter((row) => row.quantity >= row.safetyStock).length }], '/app/inventory/stock', { crossFilter: 'risk' }),
-    chart('inventory_aging', '库龄分布', 'stacked_bar', [{ name: '库龄', '0–30 天': 42, '31–60 天': 28, '61–90 天': 18, '90 天以上': 12 }], '/app/inventory/stock', { stack: true, seriesKeys: ['0–30 天', '31–60 天', '61–90 天', '90 天以上'], crossFilter: 'aging' }),
+    chart('inventory_aging', '库龄分布', 'stacked_bar', [], '/app/inventory/stock', { stack: true, seriesKeys: ['0–30 天', '31–60 天', '61–90 天', '90 天以上'], crossFilter: 'aging' }),
     chart('inventory_warehouse', '仓库库存金额', 'horizontal_bar', top(balances, 'warehouse', query.topN), '/app/inventory/stock', { unit: 'currency', valueFormat: 'currency', crossFilter: 'warehouse' }),
     chart('inventory_in_out', '入库与出库趋势', 'line', trend(filtered.inventory_movements, 'quantity'), '/app/inventory/movements', { crossFilter: 'period' }),
     chart('inventory_category', '品类库存金额', 'bar', group(balances, 'category'), '/app/inventory/stock', { unit: 'currency', valueFormat: 'currency', crossFilter: 'category' }),

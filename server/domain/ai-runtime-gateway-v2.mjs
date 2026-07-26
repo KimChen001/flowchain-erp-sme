@@ -428,11 +428,11 @@ function reviewCards(intent, links = []) {
             : 'general_review'
   const target = draftType === 'purchase_request_draft' ? firstSku || links[0] || {} : firstPo || firstSku || firstRfq || links[0] || {}
   const payload = draftType === 'purchase_request_draft'
-    ? { itemIdOrSku: firstSku?.entityId || 'SKU-00412', quantity: 20, reason: title }
+    ? { itemIdOrSku: firstSku?.entityId || '', quantity: 20, reason: title }
     : draftType === 'supplier_followup_draft'
       ? { supplierIdOrName: firstRfq?.entityLabel || firstPo?.entityLabel || '供应商待确认', message: '请复核当前证据并确认后续跟进计划。', reason: title }
       : draftType === 'po_followup_draft'
-        ? { poId: firstPo?.entityId || 'PO-2026-1282', message: '请复核到货、收货和差异证据后确认后续跟进计划。', reason: title }
+        ? { poId: firstPo?.entityId || '', message: '请复核到货、收货和差异证据后确认后续跟进计划。', reason: title }
         : { reason: title }
   return [{
     title,
@@ -490,28 +490,22 @@ function importantObjects(ctx, request = {}) {
   const rfqId = matchId(message, 'RFQ')
   const soId = matchId(message, 'SO') || (text(request.focusTarget?.entityType).includes('sales') ? text(request.focusTarget?.entityId) : '')
   const po = firstById(rows.purchaseOrders, poId, ['po', 'id']) ||
-    firstById(rows.purchaseOrders, 'PO-2026-1282', ['po', 'id']) ||
     firstWithValue(rows.purchaseOrders, ['status', 'priority'], /部分到货|逾期|高|待审批|已发出/) ||
     rows.purchaseOrders[0]
   const sku = firstById(rows.products, skuId, ['sku', 'id', 'itemId']) ||
-    firstById(rows.products, 'SKU-00412', ['sku', 'id', 'itemId']) ||
     firstWithValue(rows.products, ['stockoutRisk', 'riskLevel', 'status'], /高|不足|低库存/) ||
     rows.products[0]
   const rfq = firstById(rows.rfqs, rfqId, ['id', 'rfq']) ||
-    firstById(rows.rfqs, 'RFQ-26-0046', ['id', 'rfq']) ||
     firstWithValue(rows.rfqs, ['status'], /进行中|待回复|比价/) ||
     rows.rfqs[0]
   const so = firstById(rows.salesOrders, soId, ['salesOrderId', 'id']) ||
-    firstById(rows.salesOrders, 'SO-2026-0412-A', ['salesOrderId', 'id']) ||
     firstWithValue(rows.salesOrders, ['deliveryRiskLevel', 'status'], /high|risk|高|shortage/) ||
     rows.salesOrders[0]
   const grn = firstById(rows.receivingDocs, text(po?.po || po?.id), ['po', 'poId', 'relatedPo']) ||
-    firstById(rows.receivingDocs, 'GRN-202605-0418', ['grn', 'id']) ||
     rows.receivingDocs[0]
   const invoice = firstById(rows.supplierInvoices, text(po?.po || po?.id), ['relatedPo', 'po', 'poId']) ||
     rows.supplierInvoices[0]
   const pr = firstById(rows.purchaseRequests, text(sku?.sku || sku?.id), ['sourceSku', 'sku', 'itemId']) ||
-    firstById(rows.purchaseRequests, 'PR-2026-2401', ['pr', 'id']) ||
     rows.purchaseRequests[0]
   return { po, sku, rfq, so, grn, invoice, pr }
 }
@@ -749,7 +743,7 @@ function evidenceForIntent(intent, ctx, request) {
     ]
   }
   if (intent.id === 'po_clarification') {
-    const candidates = cleanList(intent.candidates, ['PO-2026-1282', 'PO-2026-1284'])
+    const candidates = cleanList(intent.candidates)
     return candidates.map((poId) => evidence({
       id: poId,
       moduleId: 'procurement:orders',
@@ -766,7 +760,7 @@ function evidenceForIntent(intent, ctx, request) {
       id: 'SOP-PO-OVERDUE',
       moduleId: 'procurement:orders',
       entityType: 'purchase_order',
-      entityId: 'PO-2026-1282',
+      entityId: text(importantObjects(ctx, request).po?.po || importantObjects(ctx, request).po?.id),
       entityLabel: 'SOP-PO-OVERDUE',
       evidenceLabel: '逾期 PO 跟进',
       summary: 'SOP-PO-OVERDUE 内部处理建议：先核对 ETA、未到货明细、收货异常和供应商剩余交期；不得自动形成正式业务处理，只能进入逾期 PO 跟进复核草稿。',

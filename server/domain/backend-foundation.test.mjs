@@ -130,12 +130,12 @@ test('server health response omits provider keys models and proxy diagnostics by
   assert.match(source, /sendInternalServerError\(res, send, error\)/)
 })
 
-test('database mode guard is before legacy auth and forecast writes', () => {
+test('database mode guard is before legacy auth and capability gate is registered', () => {
   const source = readSource('server', 'routes', 'scm-legacy.routes.mjs')
 
   const guardIndex = source.indexOf('isDatabaseModeWriteBlocked({')
   assert.ok(guardIndex < source.search(/url\.pathname === ["']\/api\/auth\/login["']/))
-  assert.ok(guardIndex < source.search(/url\.pathname === ["']\/api\/forecast-plans["']/))
+  assert.match(source, /handleRuntimeCapabilityRoute\(\{ req, res, url, send \}\)/)
   assert.deepEqual(databaseModeMutationBlockedPayload(), {
     error: 'This mutation is not available in database persistence mode yet.',
   })
@@ -167,12 +167,13 @@ test('database mode blocks legacy writes while allowing health and preview route
     assert.equal(typeof health.payload.timestamp, 'string')
     assert.equal(health.payload.authority, 'postgresql')
     assert.equal(health.payload.runtimeWriteCoordination, undefined)
-    assert.equal(mrp.status, 200)
-    assert.equal(mrp.payload.sourceMetadata.persistence, 'read-only-generated-plan')
+    assert.equal(mrp.status, 501)
+    assert.equal(mrp.payload.code, 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED')
+    assert.equal(mrp.payload.capability, 'material-requirements-planning')
     assert.equal(forecastPlan.status, 501)
-    assert.deepEqual(forecastPlan.payload, databaseModeMutationBlockedPayload())
+    assert.equal(forecastPlan.payload.code, 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED')
     assert.equal(sopCycle.status, 501)
-    assert.deepEqual(sopCycle.payload, databaseModeMutationBlockedPayload())
+    assert.equal(sopCycle.payload.code, 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED')
     assert.equal(blocked.status, 501)
     assert.deepEqual(blocked.payload, databaseModeMutationBlockedPayload())
     assert.equal(preview.status, 400)

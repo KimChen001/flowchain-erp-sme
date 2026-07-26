@@ -598,10 +598,7 @@ const IMPORT_CONFIGS: ImportConfig[] = [
     templateFilename: "supplier-quotes-template.csv",
     requiredFields: ["RFQ编号", "供应商", "SKU", "品名", "报价单价", "MOQ", "交期天数", "币种", "有效期至"],
     optionalFields: ["付款条款", "备注"],
-    sampleRows: [
-      { RFQ编号: "RFQ-26-0042", 供应商: "江苏铝合金集团", SKU: "SKU-00287", 品名: "铝合金型材 6063", 报价单价: 18.6, MOQ: 500, 交期天数: 12, 币种: "CNY", 有效期至: "2026-06-30", 付款条款: "Net 45", 备注: "含税含运" },
-      { RFQ编号: "RFQ-26-0044", 供应商: "深圳新元电气", SKU: "SKU-00623", 品名: "控制器主板 V3.2", 报价单价: 11800, MOQ: 20, 交期天数: 18, 币种: "CNY", 有效期至: "2026-07-15", 付款条款: "Net 30", 备注: "" },
-    ],
+    sampleRows: [],
     notes: ["适用于 RFQ 后收集供应商 Excel 报价。", "导入后形成校验批次记录，RFQ 回写需通过后续审批流程。"],
     validateRow: (row, rows) => {
       const errors = baseErrors(row, ["RFQ编号", "供应商", "SKU", "品名", "报价单价", "MOQ", "交期天数", "有效期至"]);

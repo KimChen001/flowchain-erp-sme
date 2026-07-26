@@ -4,10 +4,13 @@ import { A, Card, Chip, KpiCard } from "../../components/ui";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { exportRowsToWorkbook } from "../../lib/excel/excelWorkbookService";
 import { fmt } from "../../lib/format";
-import { SETTLEMENT_DOCUMENTS } from "../../data/standard-business-scenario";
 
 export default function SettlementPreparation() {
-  const rows = SETTLEMENT_DOCUMENTS;
+  const rows: Array<{
+    settlementNo: string; supplier: string; supplierCode: string; settlementDate: string;
+    currency: string; invoiceAmount: number; creditAmount: number; adjustmentAmount: number;
+    actualSettlementAmount: number; reconciliationStatement: string; invoices: string[]; status: string;
+  }> = [];
 
   async function exportExcel() {
     if (!rows.length) return toast.warning("暂无可导出的数据");

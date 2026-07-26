@@ -147,7 +147,7 @@ export default function ForecastPanel({ initialView, onNavigate, onReviewActionD
   const peakGap = Math.max(0, ...reconciliation.map((r) => r.gap));
   const firstStockoutIndex = reconciliation.findIndex((r) => r.risk === "高");
   const stockoutMonths = reconciliation.filter((r) => r.risk === "高").length;
-  const procurementProfile = forecastProcurementProfileForSku(sku.sku);
+  const procurementProfile = forecastProcurementProfileForSku(sku.sku, []);
   const currentMrpRow = selectMrpRow(mrpPlan, sku.sku);
   const safetyFactor = serviceLevel >= 98 ? 1.18 : serviceLevel >= 95 ? 1.1 : 1.05;
   const recommendedQty = peakGap > 0 ? Math.ceil(peakGap * safetyFactor) : 0;

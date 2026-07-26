@@ -46,7 +46,7 @@ export const capabilityRegistry = [
   capability('reports', 'stable', true, false, 'Authoritative runtime analytics'),
   capability('settings', 'beta', true, true, 'Local/UAT workspace settings'),
   capability('imports', 'beta', true, true, 'Supplier, item, customer, and inventory imports are connected'),
-  capability('forecast', 'preview', true, false, 'Planning workflow remains experimental'),
+  capability('forecast', 'unavailable', false, false, 'Forecast and MRP planning are unavailable until PostgreSQL authoritative models exist'),
   capability('exception-cases', 'preview', true, false, 'Internal exception workflow preview'),
   capability('collaboration-drafts', 'preview', true, false, 'Internal draft-only workflow'),
   capability('review-actions', 'preview', true, false, 'Human review workflow preview'),

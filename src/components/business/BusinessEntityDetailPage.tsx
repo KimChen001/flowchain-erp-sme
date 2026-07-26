@@ -3,7 +3,6 @@ import { ArrowLeft, Clock3, FileText } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import type { AppRouteDefinition } from "../../app/routeRegistry";
 import { apiJson } from "../../lib/api-client";
-import { ITEM_MASTER, SUPPLIER_MASTER } from "../../data/master-data";
 import { DELIVERY_NOTES } from "../../modules/sales/deliveryData";
 import { SIGN_RECEIPTS } from "../../modules/sales/receiptData";
 import { INVENTORY_ADJUSTMENTS } from "../../modules/inventory/adjustmentData";
@@ -43,8 +42,6 @@ function formatValue(key: string, value: unknown) {
 
 function syncRecord(entityType: BusinessEntityType, id: string): RecordValue | null {
   const candidates: Partial<Record<BusinessEntityType, RecordValue[]>> = {
-    supplier: SUPPLIER_MASTER as unknown as RecordValue[],
-    item: ITEM_MASTER as unknown as RecordValue[],
     delivery_note: DELIVERY_NOTES as unknown as RecordValue[],
     sign_receipt: SIGN_RECEIPTS as unknown as RecordValue[],
     inventory_adjustment: INVENTORY_ADJUSTMENTS as unknown as RecordValue[],

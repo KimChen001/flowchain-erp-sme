@@ -36,6 +36,7 @@
     "check:ai-provider-env": "node scripts/ai-runtime-provider-env-check.mjs",
     "test:harness": "node --test server/domain/system-harness-product-review.test.mjs",
     "test:contracts": "node --test server/domain/postgres-only-runtime.test.mjs",
+    "test:db:postgres-only-runtime": "node scripts/verify-postgres-only-runtime-api.mjs",
     "test:db": "node --test server/domain/db-test-harness.test.mjs",
     "test:db:master-data": "node --test server/domain/master-data-db-parity.test.mjs",
     "test:db:receiving": "node scripts/verify-receiving-postgres.mjs",

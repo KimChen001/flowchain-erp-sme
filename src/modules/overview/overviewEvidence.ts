@@ -5,7 +5,7 @@ import {
   PORTAL_SUPPLIERS,
   SUPPLIER_CREDIT_MEMOS,
 } from "../../data/empty-business-state";
-import { inventoryPlan } from "../../domain/inventory/planning";
+import { inventoryPlan, type InventoryPlanningFacts } from "../../domain/inventory/planning";
 import { INVENTORY_MOVEMENT_TYPE_LABELS, netInventoryImpact } from "../../domain/inventory/movements";
 import { statementToCockpitSignal } from "../../domain/procurement/reconciliation";
 import { calculateReturnFinancialImpact } from "../../domain/procurement/returns";
@@ -49,11 +49,11 @@ export type EvidenceDetail = {
   suggestedAction: string;
 };
 
-export function overviewReplenishmentActions() {
+export function overviewReplenishmentActions(planningFacts: Record<string, InventoryPlanningFacts> = {}) {
   return inventoryItems
-    .filter((item) => item.status !== "正常")
+    .filter((item) => item.status !== "正常" && Boolean(planningFacts[item.sku]))
     .map((item) => {
-      const plan = inventoryPlan(item);
+      const plan = inventoryPlan(item, planningFacts[item.sku]);
       return {
         ...item,
         plan,

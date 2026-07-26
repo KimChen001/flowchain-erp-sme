@@ -129,16 +129,17 @@ test('Phase U.1 planning visible copy remains localized', () => {
   }
 })
 
-test('Planning routes remain read-only or DB-mode guarded legacy mutations', () => {
-  assert.equal(classifyRoute('GET', '/api/mrp-plan').classification, ROUTE_CLASSES.readOnly)
+test('Planning routes fail closed behind capability gates', () => {
+  assert.equal(classifyRoute('GET', '/api/mrp-plan').classification, ROUTE_CLASSES.capabilityDisabled)
   assert.equal(classifyRoute('GET', '/api/mrp-plan').writesJson, false)
 
   for (const [method, pathname] of [
     ['POST', '/api/forecast-plans'],
     ['POST', '/api/sop-cycle'],
-    ['POST', '/api/purchase-requests'],
   ]) {
-    assert.equal(classifyRoute(method, pathname).classification, ROUTE_CLASSES.legacyMutation, pathname)
-    assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method, pathname }), true, pathname)
+    assert.equal(classifyRoute(method, pathname).classification, ROUTE_CLASSES.capabilityDisabled, pathname)
+    assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method, pathname }), false, pathname)
   }
+  assert.equal(classifyRoute('POST', '/api/purchase-requests').classification, ROUTE_CLASSES.legacyMutation)
+  assert.equal(isDatabaseModeWriteBlocked({ persistenceMode: 'database', method: 'POST', pathname: '/api/purchase-requests' }), true)
 })
