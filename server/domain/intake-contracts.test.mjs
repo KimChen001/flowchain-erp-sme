@@ -11,13 +11,14 @@ import {
   validateGenericRecord,
 } from "./intake-contracts.mjs";
 
-test("intake batch state machine permits only Phase 5.4A transitions", () => {
-  const states = ["uploaded", "profiling", "mapping_required", "validation_required", "ready_for_review", "failed", "cancelled"];
+test("intake batch state machine enforces the Phase 5.4B parser pipeline", () => {
+  const states = ["uploaded", "profiling", "mapping_required", "normalizing", "validation_required", "ready_for_review", "failed", "cancelled"];
   const allowed = new Set([
     "uploaded:profiling", "uploaded:failed", "uploaded:cancelled",
-    "profiling:mapping_required", "profiling:validation_required", "profiling:failed", "profiling:cancelled",
-    "mapping_required:validation_required", "mapping_required:failed", "mapping_required:cancelled",
-    "validation_required:mapping_required", "validation_required:ready_for_review", "validation_required:failed", "validation_required:cancelled",
+    "profiling:mapping_required", "profiling:failed", "profiling:cancelled",
+    "mapping_required:normalizing", "mapping_required:failed", "mapping_required:cancelled",
+    "normalizing:validation_required", "normalizing:failed", "normalizing:cancelled",
+    "validation_required:mapping_required", "validation_required:normalizing", "validation_required:ready_for_review", "validation_required:failed", "validation_required:cancelled",
     "ready_for_review:failed", "ready_for_review:cancelled",
   ]);
   for (const from of states) {
@@ -26,7 +27,7 @@ test("intake batch state machine permits only Phase 5.4A transitions", () => {
       else assert.throws(() => assertBatchTransition(from, to), error => error instanceof IntakeError && error.code === "INTAKE_BATCH_TRANSITION_INVALID");
     }
   }
-  for (const reserved of ["normalizing", "approved", "committing", "completed"]) {
+  for (const reserved of ["approved", "committing", "completed"]) {
     assert.throws(() => assertBatchTransition("ready_for_review", reserved), error => error instanceof IntakeError && error.code === "INTAKE_BATCH_TRANSITION_INVALID");
   }
 });

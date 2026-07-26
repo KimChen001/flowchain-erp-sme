@@ -95,10 +95,14 @@ FlowChain uses the familiar SME inventory/ERP object skeleton for orientation: f
 - Retire legacy Pilot Import production routes and direct business-table writes;
   retain `ImportBatch`/`ImportIssue` only as non-authoritative history.
 
-### Phase 5.4B CSV/XLSX Intake
+### Phase 5.4B Schema-Aware Structured Intake
 
-- Start bounded CSV/XLSX parsing only after the Phase 5.4A contracts pass.
-- Preserve human review and governed commit boundaries.
+- Bounded CSV/XLSX/Paste parsing for Supplier, Item, and Customer.
+- Canonical versioned schemas, tenant custom fields, immutable schema
+  snapshots, deterministic mapping, normalization evidence, validation, and
+  review controls.
+- Parser-owned records; public direct record insertion is retired.
+- Business commit stays fail-closed.
 
 ### Phase 5.4C Governed Business Commit Adapters
 
@@ -107,6 +111,12 @@ FlowChain uses the familiar SME inventory/ERP object skeleton for orientation: f
 - Preserve tenant scope, permission separation, audit evidence, idempotency,
   and human approval.
 - Do not restore the retired Pilot Import write path.
+
+### Later configuration and unstructured intake
+
+- Dynamic Form Foundation and conditional field rules.
+- Workflow configuration and AI-assisted configuration.
+- Unstructured Email/PDF/Voice/Chat Intake.
 
 ## Non-goals
 

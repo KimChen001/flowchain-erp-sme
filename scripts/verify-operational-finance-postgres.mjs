@@ -14,7 +14,7 @@ const migrationsRoot = join(root, "prisma", "migrations");
 const phase4Migration = "20260718040000_operations_settings_closeout";
 const phase5P2pMigration = "20260718050000_operational_finance_p2p";
 const phase5O2cMigration = "20260718060000_operational_finance_o2c";
-const latestMigration = "20260726010000_universal_intake_domain_foundation";
+const latestMigration = "20260727010000_schema_aware_structured_intake";
 const node = process.execPath;
 const prismaCli = join(root, "node_modules", "prisma", "build", "index.js");
 

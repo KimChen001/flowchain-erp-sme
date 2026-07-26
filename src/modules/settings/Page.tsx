@@ -6,6 +6,7 @@ import { businessEntityRouteRegistry, type BusinessEntityType } from '../../comp
 import { fetchSettingsAudit, fetchSettingsRuntime, saveSettingsSection, type SettingsAuditEntry, type SettingsRuntime } from './settingsRuntime';
 import WorkspaceSettings from './WorkspaceSettings';
 import { useI18n } from '../../i18n/I18n';
+import CustomFieldsSettings from './CustomFieldsSettings';
 
 type View = keyof SettingsRuntime | 'audit';
 type NavigateFn = (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null) => void;
@@ -112,6 +113,7 @@ function Audit() {
 
 export default function SettingsPage({ initialView }: { initialView?: string; onNavigate: NavigateFn }) {
   const { t, locale } = useI18n();
+  if (initialView === 'custom-fields') return <CustomFieldsSettings />;
   if (['profile', 'company', 'roles', 'warehouse-access', 'readiness'].includes(initialView || '')) return <WorkspaceSettings view={initialView || 'profile'} />;
   const view = ((initialView === 'boundaries' ? 'advanced' : initialView) || 'company') as View;
   const [data, setData] = useState<SettingsRuntime | null>(null); const [draft, setDraft] = useState<SettingsRuntime | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [saving, setSaving] = useState(false); const [notice, setNotice] = useState('');

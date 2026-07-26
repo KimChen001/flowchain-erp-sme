@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 
 export const INTAKE_COMMIT_NOT_IMPLEMENTED = "FLOWCHAIN_INTAKE_COMMIT_NOT_IMPLEMENTED";
-export const INTAKE_COMMIT_MESSAGE = "Governed business commit adapters are not implemented in Phase 5.4A.";
+export const INTAKE_COMMIT_MESSAGE = "Governed business commit adapters are not implemented in Phase 5.4B.";
+export const INTAKE_DIRECT_RECORD_INSERT_RETIRED = "FLOWCHAIN_INTAKE_DIRECT_RECORD_INSERT_RETIRED";
 
 export const INTAKE_LIMITS = Object.freeze({
   maximumArtifactSizeBytes: 10 * 1024 * 1024,
@@ -12,7 +13,7 @@ export const INTAKE_LIMITS = Object.freeze({
   maximumRequestBytes: 14 * 1024 * 1024,
 });
 
-export const ALLOWED_SOURCE_TYPES = Object.freeze(["manual_upload"]);
+export const ALLOWED_SOURCE_TYPES = Object.freeze(["manual_upload", "manual_paste"]);
 export const RESERVED_SOURCE_TYPES = Object.freeze(["email_attachment", "api", "system_export"]);
 export const ALLOWED_MIME_TYPES = Object.freeze([
   "text/csv",
@@ -46,6 +47,7 @@ const IMPLEMENTED_BATCH_STATES = new Set([
   "uploaded",
   "profiling",
   "mapping_required",
+  "normalizing",
   "validation_required",
   "ready_for_review",
   "failed",
@@ -53,9 +55,10 @@ const IMPLEMENTED_BATCH_STATES = new Set([
 ]);
 const BATCH_TRANSITIONS = Object.freeze({
   uploaded: new Set(["profiling", "failed", "cancelled"]),
-  profiling: new Set(["mapping_required", "validation_required", "failed", "cancelled"]),
-  mapping_required: new Set(["validation_required", "failed", "cancelled"]),
-  validation_required: new Set(["mapping_required", "ready_for_review", "failed", "cancelled"]),
+  profiling: new Set(["mapping_required", "failed", "cancelled"]),
+  mapping_required: new Set(["normalizing", "failed", "cancelled"]),
+  normalizing: new Set(["validation_required", "failed", "cancelled"]),
+  validation_required: new Set(["mapping_required", "normalizing", "ready_for_review", "failed", "cancelled"]),
   ready_for_review: new Set(["failed", "cancelled"]),
   failed: new Set(),
   cancelled: new Set(),

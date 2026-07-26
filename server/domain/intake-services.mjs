@@ -70,6 +70,12 @@ function publicRecord(row) {
     recordType: row.recordType,
     status: row.status,
     fingerprint: row.fingerprint,
+    sourceFormat: row.sourceFormat,
+    sheetName: row.sheetName,
+    headerRowNumber: row.headerRowNumber,
+    sourceLocator: row.sourceLocator,
+    normalizationEvidence: row.normalizationEvidence,
+    excludedAt: row.excludedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -180,7 +186,7 @@ export function createIntakeServices({ repository, storage, idFactory = randomUU
       const actor = actorContext(context);
       const sourceType = text(input?.sourceType || "manual_upload", 40);
       if (!ALLOWED_SOURCE_TYPES.includes(sourceType)) {
-        failIntake("INTAKE_SOURCE_NOT_ENABLED", `${sourceType || "source"} is not enabled in Phase 5.4A.`, 501);
+        failIntake("INTAKE_SOURCE_NOT_ENABLED", `${sourceType || "source"} is not enabled in Phase 5.4B.`, 501);
       }
       if (!storage) failIntake("ARTIFACT_STORAGE_NOT_CONFIGURED", "Artifact storage is not configured.", 503);
       const mimeType = requireText(input?.mimeType, "mimeType", 160).toLowerCase();
@@ -323,7 +329,8 @@ export function createIntakeServices({ repository, storage, idFactory = randomUU
           const record = await tx.createRecord({
             id: idFactory(), tenantId: actor.tenantId, batchId: id, rowNumber,
             sourcePayload: result.payload, normalizedPayload: null, recordType: batch.batchType,
-            status, fingerprint: result.fingerprint,
+            status, fingerprint: result.fingerprint, sourceFormat: "internal_test_fixture",
+            sheetName: null, headerRowNumber: 1, sourceLocator: { rowNumber, headerRowNumber: 1 },
           });
           records.push(publicRecord(record));
           if (hasError) errors += 1;

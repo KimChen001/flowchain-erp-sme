@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
 import { capabilityForEnvironment } from "../domain/capability-registry.mjs";
-import { INTAKE_LIMITS, IntakeError } from "../domain/intake-contracts.mjs";
+import { INTAKE_DIRECT_RECORD_INSERT_RETIRED, INTAKE_LIMITS, IntakeError } from "../domain/intake-contracts.mjs";
 import { createIntakeServices } from "../domain/intake-services.mjs";
+import { createStructuredIntakeService } from "../domain/structured-intake-service.mjs";
+import { SUPPORTED_INTAKE_RECORD_TYPES } from "../domain/canonical-master-data-schemas.mjs";
 import { PilotIdentityError, resolveProvisionedActor } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { createDbIntakeRepository } from "../repositories/db-intake-repository.mjs";
@@ -53,12 +55,13 @@ function requestContext(ctx, actor) {
 }
 
 async function resources(ctx) {
-  if (ctx.intakeActor && ctx.intakeServices) return { actor: ctx.intakeActor, services: ctx.intakeServices };
+  if (ctx.intakeActor && ctx.intakeServices) return { actor: ctx.intakeActor, services: ctx.intakeServices, structured: ctx.structuredIntakeService };
   const prisma = ctx.intakePrisma || await getPrismaClient(ctx.env || process.env);
   const actor = await resolveProvisionedActor(prisma, ctx.identity, { allowMissingTestActor: true });
   const repository = ctx.repositories?.intake || createDbIntakeRepository({ prisma, env: ctx.env || process.env });
   const storage = ctx.intakeArtifactStorage ?? createArtifactStorageFromEnv(ctx.env || process.env);
-  return { actor, services: createIntakeServices({ repository, storage }) };
+  const services = createIntakeServices({ repository, storage });
+  return { actor, services, structured: createStructuredIntakeService({ repository, storage, baseServices: services }) };
 }
 
 function permission(actor, code) {
@@ -88,9 +91,32 @@ export async function handleIntakeRoute(ctx) {
   }
 
   try {
-    const { actor, services } = await resources(ctx);
+    const { actor, services, structured } = await resources(ctx);
     const context = requestContext(ctx, actor);
     const readBody = () => ctx.intakeReadBody ? ctx.intakeReadBody(ctx.req) : readBoundedJson(ctx.req);
+
+    if (path === "/api/intake/paste/table" && ctx.req.method === "POST") {
+      permission(actor, "intake.artifact.create");
+      permission(actor, "intake.batch.create");
+      ctx.send(ctx.res, 201, await structured.paste("table", await readBody(), context));
+      return true;
+    }
+    if (path === "/api/intake/paste/json" && ctx.req.method === "POST") {
+      permission(actor, "intake.artifact.create");
+      permission(actor, "intake.batch.create");
+      ctx.send(ctx.res, 201, await structured.paste("json", await readBody(), context));
+      return true;
+    }
+    if (path === "/api/intake/artifacts/profile" && ctx.req.method === "POST") {
+      permission(actor, "intake.artifact.read");
+      permission(actor, "intake.batch.create");
+      const body = await readBody();
+      const batch = body.batchId
+        ? { id: body.batchId }
+        : await services.batches.create({ artifactId: body.artifactId, batchType: body.recordType }, context);
+      ctx.send(ctx.res, 200, await structured.profile(batch.id, body, context));
+      return true;
+    }
 
     if (path === "/api/intake/artifacts") {
       if (ctx.req.method === "GET") {
@@ -115,7 +141,11 @@ export async function handleIntakeRoute(ctx) {
         ctx.send(ctx.res, 200, await services.batches.list(query(ctx.url), context));
       } else if (ctx.req.method === "POST") {
         permission(actor, "intake.batch.create");
-        ctx.send(ctx.res, 201, await services.batches.create(await readBody(), context));
+        const body = await readBody();
+        if (!SUPPORTED_INTAKE_RECORD_TYPES.includes(String(body?.batchType || ""))) {
+          throw new IntakeError("INTAKE_RECORD_TYPE_UNSUPPORTED", "Phase 5.4B supports only supplier, item, and customer.", 422);
+        }
+        ctx.send(ctx.res, 201, await services.batches.create(body, context));
       } else return false;
       return true;
     }
@@ -125,6 +155,53 @@ export async function handleIntakeRoute(ctx) {
       ctx.send(ctx.res, 200, await services.issues.list(decode(batchIssues[1]), query(ctx.url), context));
       return true;
     }
+    const batchProfile = path.match(/^\/api\/intake\/batches\/([^/]+)\/profile(?:\/(select-sheet|select-header))?$/);
+    if (batchProfile) {
+      const id = decode(batchProfile[1]);
+      if (ctx.req.method === "GET" && !batchProfile[2]) {
+        permission(actor, "intake.batch.read");
+        ctx.send(ctx.res, 200, await structured.getProfile(id, context));
+      } else if (ctx.req.method === "POST" && batchProfile[2]) {
+        permission(actor, "intake.batch.create");
+        ctx.send(ctx.res, 200, await structured.selectProfile(id, await readBody(), context));
+      } else return false;
+      return true;
+    }
+    const batchSchema = path.match(/^\/api\/intake\/batches\/([^/]+)\/schema$/);
+    if (batchSchema && ctx.req.method === "GET") {
+      permission(actor, "intake.batch.read");
+      ctx.send(ctx.res, 200, await structured.schema(decode(batchSchema[1]), context));
+      return true;
+    }
+    const batchSuggestions = path.match(/^\/api\/intake\/batches\/([^/]+)\/mapping-suggestions$/);
+    if (batchSuggestions && ctx.req.method === "GET") {
+      permission(actor, "intake.batch.read");
+      ctx.send(ctx.res, 200, await structured.suggestions(decode(batchSuggestions[1]), context));
+      return true;
+    }
+    const structuredAction = path.match(/^\/api\/intake\/batches\/([^/]+)\/(mapping|normalize|validate)$/);
+    if (structuredAction && ctx.req.method === "POST") {
+      const id = decode(structuredAction[1]);
+      if (structuredAction[2] === "mapping") {
+        permission(actor, "intake.mapping.manage");
+        ctx.send(ctx.res, 200, await structured.confirmMapping(id, await readBody(), context));
+      } else if (structuredAction[2] === "normalize") {
+        permission(actor, "intake.mapping.manage");
+        ctx.send(ctx.res, 200, await structured.normalize(id, context));
+      } else {
+        permission(actor, "intake.review");
+        ctx.send(ctx.res, 200, await structured.validate(id, context));
+      }
+      return true;
+    }
+    const issueReport = path.match(/^\/api\/intake\/batches\/([^/]+)\/issue-report$/);
+    if (issueReport && ctx.req.method === "GET") {
+      permission(actor, "intake.batch.read");
+      const report = await structured.issueReport(decode(issueReport[1]), context);
+      ctx.res.writeHead(200, { "content-type": report.contentType, "content-disposition": `attachment; filename="${report.filename}"`, "cache-control": "no-store" });
+      ctx.res.end(report.content);
+      return true;
+    }
     const batchRecords = path.match(/^\/api\/intake\/batches\/([^/]+)\/records$/);
     if (batchRecords) {
       if (ctx.req.method === "GET") {
@@ -132,7 +209,11 @@ export async function handleIntakeRoute(ctx) {
         ctx.send(ctx.res, 200, await services.batches.listRecords(decode(batchRecords[1]), query(ctx.url), context));
       } else if (ctx.req.method === "POST") {
         permission(actor, "intake.batch.create");
-        ctx.send(ctx.res, 201, await services.batches.addRecords(decode(batchRecords[1]), await readBody(), context));
+        ctx.send(ctx.res, 501, {
+          code: INTAKE_DIRECT_RECORD_INSERT_RETIRED,
+          message: "Public callers cannot insert IntakeRecord rows; register an artifact and use the controlled parser pipeline.",
+          limitations: ["IntakeRecord creation is owned by the Phase 5.4B parser and normalizer services."],
+        });
       } else return false;
       return true;
     }
@@ -204,6 +285,12 @@ export async function handleIntakeRoute(ctx) {
     if (issue && ctx.req.method === "POST") {
       permission(actor, "intake.review");
       ctx.send(ctx.res, 200, await services.issues.resolve(decode(issue[1]), context));
+      return true;
+    }
+    const recordReview = path.match(/^\/api\/intake\/records\/([^/]+)\/(exclude|restore)$/);
+    if (recordReview && ctx.req.method === "POST") {
+      permission(actor, "intake.review");
+      ctx.send(ctx.res, 200, await structured.exclude(decode(recordReview[1]), recordReview[2] === "exclude", context));
       return true;
     }
     const review = path.match(/^\/api\/intake\/reviews\/([^/]+)\/(approve|reject)$/);
