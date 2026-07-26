@@ -56,6 +56,7 @@ function publicBatch(row) {
     failureCode: row.failureCode,
     failureMessage: row.failureMessage,
     version: row.version,
+    reviewStatus: row.reviewSessions?.[0]?.status || null,
   };
 }
 
@@ -261,7 +262,7 @@ export function createIntakeServices({ repository, storage, idFactory = randomUU
     },
     get: async (id, context) => {
       const actor = actorContext(context);
-      const row = await repository.getBatch(actor.tenantId, id);
+      const row = await repository.getBatch(actor.tenantId, id, { reviewSessions: { orderBy: { startedAt: "desc" }, take: 1 } });
       if (!row) failIntake("INTAKE_BATCH_NOT_FOUND", "Intake batch was not found.", 404);
       return publicBatch(row);
     },

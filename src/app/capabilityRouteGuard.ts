@@ -22,6 +22,7 @@ const localCapabilityFallback: Record<string, ModuleCapability> = Object.fromEnt
   ["reports", "stable", "Authoritative runtime analytics"],
   ["settings", "beta", "Local/UAT workspace settings"],
   ["imports", "beta", "Supplier, item, customer, and inventory imports are connected"],
+  ["universal-intake", "preview", "Tenant-scoped Intake foundation without parsing or business commit adapters"],
   ["forecast", "unavailable", "Forecast and MRP planning are unavailable until PostgreSQL authoritative models exist"],
   ["exception-cases", "preview", "Internal exception workflow preview"],
   ["collaboration-drafts", "preview", "Internal draft-only workflow"],
