@@ -18,6 +18,14 @@ const definitions = [
   ["settings.export.read", "settings", "export", "read", "high"],
   ["audit.read", "audit", "audit_log", "read", "medium"],
   ["audit.read_sensitive", "audit", "audit_log", "read_sensitive", "high", ["audit_sensitive_metadata"]],
+  ["intake.artifact.create", "universal-intake", "artifact", "create", "medium"],
+  ["intake.artifact.read", "universal-intake", "artifact", "read", "medium"],
+  ["intake.batch.create", "universal-intake", "batch", "create", "medium"],
+  ["intake.batch.read", "universal-intake", "batch", "read", "medium"],
+  ["intake.batch.cancel", "universal-intake", "batch", "cancel", "high"],
+  ["intake.mapping.manage", "universal-intake", "mapping", "manage", "high"],
+  ["intake.review", "universal-intake", "review", "review", "critical"],
+  ["intake.commit", "universal-intake", "commit", "commit", "critical"],
   ["returns.request.read", "returns", "request", "read", "low"],
   ["returns.request.create", "returns", "request", "create", "medium"],
   ["returns.request.revise", "returns", "request", "revise", "medium"],
@@ -194,7 +202,7 @@ const without = (items, denied) => items.filter((code) => !denied.includes(code)
 
 export const defaultRoleTemplates = Object.freeze([
   { roleKey: "workspace-administrator", name: "Workspace Administrator", permissions: [...permissionCodes] },
-  { roleKey: "operations-manager", name: "Operations Manager", permissions: without([...byPrefix("returns.", "receiving.", "sales_order.", "shipment.", "inventory.", "finance.", "procurement.purchase_order.", "mobile."), "procurement.prices.read", "settings.workspace.read", "settings.users.read", "settings.roles.read", "settings.numbering.read", "settings.review_policy.read", "settings.modules.read", "settings.import.manage", "settings.export.read", "audit.read"], ["finance.settlement.post", "finance.settlement.reverse", "finance.bank_statement.import", "finance.bank_statement.validate", "finance.bank_statement.commit", "finance.bank_statement.void", "finance.bank_statement.export", "finance.bank_mapping.read", "finance.bank_mapping.manage", "finance.bank_reconciliation.generate_candidates", "finance.bank_reconciliation.confirm", "finance.bank_reconciliation.reverse", "finance.bank_reconciliation.dismiss_candidate", "finance.bank_reconciliation.resolve_exception", "finance.bank_reconciliation.export", "audit.read_sensitive"]) },
+  { roleKey: "operations-manager", name: "Operations Manager", permissions: without([...byPrefix("returns.", "receiving.", "sales_order.", "shipment.", "inventory.", "finance.", "procurement.purchase_order.", "mobile."), "procurement.prices.read", "settings.workspace.read", "settings.users.read", "settings.roles.read", "settings.numbering.read", "settings.review_policy.read", "settings.modules.read", "settings.import.manage", "settings.export.read", "audit.read", "intake.artifact.create", "intake.artifact.read", "intake.batch.create", "intake.batch.read", "intake.batch.cancel"], ["finance.settlement.post", "finance.settlement.reverse", "finance.bank_statement.import", "finance.bank_statement.validate", "finance.bank_statement.commit", "finance.bank_statement.void", "finance.bank_statement.export", "finance.bank_mapping.read", "finance.bank_mapping.manage", "finance.bank_reconciliation.generate_candidates", "finance.bank_reconciliation.confirm", "finance.bank_reconciliation.reverse", "finance.bank_reconciliation.dismiss_candidate", "finance.bank_reconciliation.resolve_exception", "finance.bank_reconciliation.export", "audit.read_sensitive"]) },
   { roleKey: "operations-specialist", name: "Operations Specialist", permissions: without([...byPrefix("returns.", "receiving.", "sales_order.", "shipment.", "inventory."), "finance.overview.read", "finance.supplier_invoice.read", "finance.supplier_invoice.create", "finance.supplier_invoice.revise", "finance.supplier_invoice.submit", "finance.three_way_match.read", "finance.three_way_match.execute", "finance.payable.read", "finance.supplier_credit.read", "finance.supplier_credit.create", "finance.customer_invoice.read", "finance.customer_invoice.create", "finance.customer_invoice.submit", "finance.receivable.read", "finance.receivable.dispute", "finance.receivable.resolve_dispute", "finance.receivable.record_external_reference", "finance.customer_credit.read", "finance.customer_credit.create"], ["returns.authorization.approve", "returns.authorization.reject", "returns.authorization.cancel", "returns.authorization.expire", "returns.posting.reverse", "returns.quarantine.release_reverse", "receiving.reverse", "shipment.reverse", "inventory.transfer.reverse", "inventory.count.review", "inventory.count.post", "inventory.count.reverse", "inventory.adjustment.post", "inventory.adjustment.reverse"]) },
   { roleKey: "procurement-specialist", name: "Procurement Specialist", permissions: ["returns.request.read", "returns.request.create", "returns.request.revise", "returns.request.submit", "returns.request.cancel", "returns.authorization.read", "returns.posting.read", "returns.quarantine.read", "receiving.read", "inventory.balance.read", "procurement.prices.read", "procurement.purchase_order.read", "procurement.purchase_order.revise", "mobile.sync.use", "mobile.tasks.read", "mobile.procurement.approval.read", "mobile.receiving.read", "mobile.receiving.prepare"] },
   { roleKey: "finance-specialist", name: "Finance Specialist", permissions: [...byPrefix("finance."), "mobile.sync.use", "mobile.tasks.read", "audit.read"] },
@@ -222,4 +230,5 @@ export const moduleReadPermissions = Object.freeze({
   finance: permissionCodes.filter((code) => code.startsWith("finance.") && code.endsWith(".read")),
   "mobile-operations": ["mobile.tasks.read", "mobile.procurement.approval.read", "mobile.receiving.read"],
   "audit-history": ["audit.read"],
+  "universal-intake": ["intake.artifact.read", "intake.batch.read"],
 })

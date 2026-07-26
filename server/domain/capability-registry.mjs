@@ -46,6 +46,7 @@ export const capabilityRegistry = [
   capability('reports', 'stable', true, false, 'Authoritative runtime analytics'),
   capability('settings', 'beta', true, true, 'Local/UAT workspace settings'),
   capability('imports', 'beta', true, true, 'Supplier, item, customer, and inventory imports are connected'),
+  capability('universal-intake', 'preview', true, true, 'Tenant-scoped Intake foundation without parsing or business commit adapters', { databaseOnly: true, requiresExplicitEnable: true, environmentFlag: 'FLOWCHAIN_ENABLE_UNIVERSAL_INTAKE' }),
   capability('forecast', 'unavailable', false, false, 'Forecast and MRP planning are unavailable until PostgreSQL authoritative models exist'),
   capability('exception-cases', 'preview', true, false, 'Internal exception workflow preview'),
   capability('collaboration-drafts', 'preview', true, false, 'Internal draft-only workflow'),
