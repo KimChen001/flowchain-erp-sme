@@ -35,9 +35,14 @@ FlowChain 已形成采购、库存、销售需求、供应商协同与发票匹�
 
 ## Current Status
 
-FlowChain runs today as a local-first workspace. Multi-tenant SaaS hosting and managed database deployment are on the roadmap.
+FlowChain runs on a PostgreSQL-only authoritative runtime. `DATABASE_URL` is
+required; the removed JSON persistence mode and production fixture fallbacks
+fail closed.
 
-Default local runtime behavior uses a deterministic workspace dataset. No production database, ORM, RDS, or PolarDB connection is required for local development.
+Universal Intake is entering a preview-only foundation phase. It defines
+tenant-scoped artifacts, batches, records, mappings, validation, and review,
+but does not yet parse complete CSV/XLSX workbooks or commit imported data into
+business tables.
 
 ## Core Modules
 

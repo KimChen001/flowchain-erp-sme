@@ -10,6 +10,7 @@
 
 ## Architecture
 
+- [Phase 5.4A Universal Intake domain foundation](phase-5-4a-universal-intake-domain-foundation.md)
 - [Architecture overview](architecture-overview-v1.md)
 - [Repository boundary](repository-boundary-v1.md)
 - [JSON adapter contract tests](json-adapter-contract-tests-v1.md)

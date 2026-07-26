@@ -81,6 +81,22 @@ FlowChain uses the familiar SME inventory/ERP object skeleton for orientation: f
 - Harden build, deployment, configuration, monitoring, error handling, and security.
 - Keep production-readiness claims tied to implemented infrastructure.
 
+## Phase 5.4 Universal Intake
+
+### Phase 5.4A Domain Foundation
+
+- Introduce tenant-scoped artifacts, batches, records, versioned mappings,
+  validation issues, reviews, blocked commit attempts, and source references.
+- Keep binary content outside PostgreSQL behind an artifact-storage port.
+- Enforce payload safety, permission separation, audit, and batch transitions.
+- Expose a preview-only foundation behind explicit capability enablement.
+- Keep every business-object commit adapter fail-closed.
+
+### Phase 5.4B CSV/XLSX Intake
+
+- Add bounded CSV/XLSX parsing only after the Phase 5.4A contracts pass.
+- Preserve human review and governed commit boundaries.
+
 ## Non-goals
 
 - Not a full ERP replacement.
