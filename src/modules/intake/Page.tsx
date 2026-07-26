@@ -133,7 +133,7 @@ export default function UniversalIntakePage() {
               <div key={artifact.id} className="rounded-lg border p-3" style={{ borderColor: A.border }}>
                 <div className="truncate text-sm font-medium" style={{ color: A.label }}>{artifact.originalFilename}</div>
                 <div className="mt-1 text-xs" style={{ color: A.sub }}>{artifact.sourceType} · {formatBytes(artifact.sizeBytes)}</div>
-                <div className="mt-1 truncate font-mono text-[10px]" style={{ color: A.gray2 }}>SHA-256 {artifact.checksumSha256}</div>
+                <div className="mt-1 truncate font-mono text-xs" style={{ color: A.gray2 }}>SHA-256 {artifact.checksumSha256}</div>
               </div>
             ))}
           </div>
