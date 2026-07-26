@@ -21,6 +21,7 @@
     "test:browser:inventory-operations": "node scripts/run-inventory-operations-playwright.mjs",
     "test:browser:returns-quarantine": "node scripts/run-returns-quarantine-playwright.mjs",
     "test:browser:settings": "node scripts/run-settings-playwright.mjs",
+    "test:browser:intake": "node scripts/run-intake-playwright.mjs",
     "test:browser:operational-finance": "node scripts/run-operational-finance-playwright.mjs",
     "test:browser:internal-settlement": "node scripts/run-internal-settlement-playwright.mjs",
     "test:browser:settlement-workflow": "node scripts/run-settlement-workflow-playwright.mjs",

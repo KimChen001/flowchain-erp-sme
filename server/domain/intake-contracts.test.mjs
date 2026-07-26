@@ -12,19 +12,23 @@ import {
 } from "./intake-contracts.mjs";
 
 test("intake batch state machine permits only Phase 5.4A transitions", () => {
-  for (const [from, to] of [
-    ["uploaded", "profiling"],
-    ["profiling", "mapping_required"],
-    ["mapping_required", "validation_required"],
-    ["validation_required", "ready_for_review"],
-    ["ready_for_review", "cancelled"],
-  ]) assert.equal(assertBatchTransition(from, to), to);
-  for (const [from, to] of [
-    ["uploaded", "completed"],
-    ["failed", "ready_for_review"],
-    ["cancelled", "approved"],
-    ["ready_for_review", "approved"],
-  ]) assert.throws(() => assertBatchTransition(from, to), error => error instanceof IntakeError && error.code === "INTAKE_BATCH_TRANSITION_INVALID");
+  const states = ["uploaded", "profiling", "mapping_required", "validation_required", "ready_for_review", "failed", "cancelled"];
+  const allowed = new Set([
+    "uploaded:profiling", "uploaded:failed", "uploaded:cancelled",
+    "profiling:mapping_required", "profiling:validation_required", "profiling:failed", "profiling:cancelled",
+    "mapping_required:validation_required", "mapping_required:failed", "mapping_required:cancelled",
+    "validation_required:mapping_required", "validation_required:ready_for_review", "validation_required:failed", "validation_required:cancelled",
+    "ready_for_review:failed", "ready_for_review:cancelled",
+  ]);
+  for (const from of states) {
+    for (const to of states) {
+      if (allowed.has(`${from}:${to}`)) assert.equal(assertBatchTransition(from, to), to);
+      else assert.throws(() => assertBatchTransition(from, to), error => error instanceof IntakeError && error.code === "INTAKE_BATCH_TRANSITION_INVALID");
+    }
+  }
+  for (const reserved of ["normalizing", "approved", "committing", "completed"]) {
+    assert.throws(() => assertBatchTransition("ready_for_review", reserved), error => error instanceof IntakeError && error.code === "INTAKE_BATCH_TRANSITION_INVALID");
+  }
 });
 
 test("payload safety rejects prototype and exact secret fields but allows business names", () => {
