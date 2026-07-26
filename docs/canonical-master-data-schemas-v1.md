@@ -39,4 +39,3 @@ mapping profile. Stable paths must not be renamed in place. A breaking schema
 change requires a new version and an explicit migration/compatibility policy.
 Tenant custom fields extend these schemas; they do not modify the registry or
 create tenant-specific core fields.
-

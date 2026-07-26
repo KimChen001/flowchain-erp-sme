@@ -54,4 +54,3 @@ published custom revisions. A batch captures that result once in
 `IntakeSchemaSnapshot`. Later publication or retirement cannot silently change
 an in-flight batch. Custom fields appear in a separate mapping group and
 normalize into `customFields`.
-
