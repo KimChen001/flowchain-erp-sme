@@ -87,6 +87,7 @@ import { handleMarketRoute } from "./market.routes.mjs";
 import { handleAiRoute } from "./ai.routes.mjs";
 import { handleRuntimeCapabilityRoute } from "./runtime-capability.routes.mjs";
 import { handleIntakeRoute } from "./intake.routes.mjs";
+import { handleCustomFieldsRoute } from "./custom-fields.routes.mjs";
 import {
   actorFromBody,
   applyWorkflowTransition,
@@ -1102,6 +1103,7 @@ export function createScmServer() {
       if (await handleProcurementReadRoute(routeContext)) return;
       if (await handleCapabilitiesRoute(routeContext)) return;
       if (await handleIntakeRoute(routeContext)) return;
+      if (await handleCustomFieldsRoute(routeContext)) return;
       if (await handleMasterDataRoute(routeContext)) return;
       if (await handleActionDraftsRoute(routeContext)) return;
       if (await handleUserConfirmedActionsRoute(routeContext)) return;

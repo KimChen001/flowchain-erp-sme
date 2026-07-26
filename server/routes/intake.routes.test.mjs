@@ -77,7 +77,7 @@ test("commit endpoint remains 501 after intake.commit authorization", async () =
     artifacts: {}, batches: {}, mappings: {}, issues: {}, reviews: {},
     commits: { attempt: async () => ({
       code: "FLOWCHAIN_INTAKE_COMMIT_NOT_IMPLEMENTED",
-      message: "Governed business commit adapters are not implemented in Phase 5.4A.",
+      message: "Governed business commit adapters are not implemented in Phase 5.4B.",
       attemptId: "attempt-1",
       status: "blocked",
       idempotentReplay: false,
@@ -88,6 +88,14 @@ test("commit endpoint remains 501 after intake.commit authorization", async () =
   assert.equal(sent[0].status, 501);
   assert.equal(sent[0].payload.code, "FLOWCHAIN_INTAKE_COMMIT_NOT_IMPLEMENTED");
   assert.equal(sent[0].payload.status, "blocked");
+});
+
+test("public direct IntakeRecord insertion is retired with a stable 501", async () => {
+  const { ctx, sent } = context({ method: "POST", path: "/api/intake/batches/batch-1/records", body: { records: [{ name: "bypass" }] } });
+  await handleIntakeRoute(ctx);
+  assert.equal(sent[0].status, 501);
+  assert.equal(sent[0].payload.code, "FLOWCHAIN_INTAKE_DIRECT_RECORD_INSERT_RETIRED");
+  assert.match(sent[0].payload.message, /controlled parser/i);
 });
 
 test("routes never expose service errors as raw stacks or Prisma objects", async () => {

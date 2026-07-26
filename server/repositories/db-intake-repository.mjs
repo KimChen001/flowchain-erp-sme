@@ -56,6 +56,15 @@ function createRepository(resolveClient) {
       });
       return result.count;
     },
+    updateBatch: async (tenantId, id, data) => (await client()).intakeBatch.updateMany({
+      where: { tenantId: requireTenantId(tenantId), id: requireId(id) },
+      data,
+    }),
+    deleteBatchParseResults: async (tenantId, batchId) => {
+      const db = await client();
+      await db.validationIssue.deleteMany({ where: { tenantId: requireTenantId(tenantId), batchId: requireId(batchId, "batchId") } });
+      return db.intakeRecord.deleteMany({ where: { tenantId: requireTenantId(tenantId), batchId: requireId(batchId, "batchId") } });
+    },
     createRecord: async data => (await client()).intakeRecord.create({ data }),
     createIssue: async data => (await client()).validationIssue.create({ data }),
     updateBatchCounts: async (tenantId, id, data) => (await client()).intakeBatch.updateMany({
@@ -76,6 +85,21 @@ function createRepository(resolveClient) {
       where: { tenantId: requireTenantId(tenantId), batchId: requireId(batchId, "batchId") },
       select: { fingerprint: true },
       take: 5_000,
+    }),
+    getRecord: async (tenantId, id) => (await client()).intakeRecord.findFirst({
+      where: { tenantId: requireTenantId(tenantId), id: requireId(id) },
+    }),
+    listAllRecords: async (tenantId, batchId) => (await client()).intakeRecord.findMany({
+      where: { tenantId: requireTenantId(tenantId), batchId: requireId(batchId, "batchId") },
+      orderBy: [{ rowNumber: "asc" }, { id: "asc" }],
+      take: 5_000,
+    }),
+    updateRecord: async (tenantId, id, data) => (await client()).intakeRecord.updateMany({
+      where: { tenantId: requireTenantId(tenantId), id: requireId(id) },
+      data,
+    }),
+    deleteIssues: async (tenantId, batchId) => (await client()).validationIssue.deleteMany({
+      where: { tenantId: requireTenantId(tenantId), batchId: requireId(batchId, "batchId") },
     }),
     createMappingProfile: async data => (await client()).mappingProfile.create({ data }),
     getMappingProfile: async (tenantId, id) => (await client()).mappingProfile.findFirst({
@@ -105,6 +129,11 @@ function createRepository(resolveClient) {
       where: { tenantId: requireTenantId(tenantId), id: requireId(id) },
       data: { status },
     }),
+    findActiveMapping: async (tenantId, recordType, sourceSignature) => (await client()).mappingProfile.findFirst({
+      where: { tenantId: requireTenantId(tenantId), recordType, sourceSignature, status: "active" },
+      include: { fieldMappings: { orderBy: [{ position: "asc" }, { id: "asc" }] } },
+      orderBy: [{ version: "desc" }],
+    }),
     retireActiveMappings: async (tenantId, recordType, sourceSignature, exceptId) => (await client()).mappingProfile.updateMany({
       where: { tenantId: requireTenantId(tenantId), recordType, sourceSignature, status: "active", id: { not: exceptId } },
       data: { status: "retired" },
@@ -119,6 +148,11 @@ function createRepository(resolveClient) {
       });
       return { rows: rows.slice(0, limit), nextCursor: rows.length > limit ? rows[limit - 1].id : null };
     },
+    listAllIssues: async (tenantId, batchId) => (await client()).validationIssue.findMany({
+      where: { tenantId: requireTenantId(tenantId), batchId: requireId(batchId, "batchId") },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: 10_000,
+    }),
     unresolvedErrorCount: async (tenantId, batchId) => (await client()).validationIssue.count({
       where: { tenantId: requireTenantId(tenantId), batchId: requireId(batchId, "batchId"), severity: "error", resolved: false },
     }),
@@ -137,6 +171,33 @@ function createRepository(resolveClient) {
       where: { tenantId_idempotencyKey: { tenantId: requireTenantId(tenantId), idempotencyKey: requireId(idempotencyKey, "idempotencyKey") } },
     }),
     createAudit: async data => (await client()).auditLog.create({ data }),
+    createSchemaSnapshot: async data => (await client()).intakeSchemaSnapshot.create({ data }),
+    getSchemaSnapshot: async (tenantId, batchId) => (await client()).intakeSchemaSnapshot.findFirst({
+      where: { tenantId: requireTenantId(tenantId), batchId: requireId(batchId, "batchId") },
+    }),
+    listCustomFields: async (tenantId, entityType) => (await client()).customFieldDefinition.findMany({
+      where: { tenantId: requireTenantId(tenantId), ...(entityType ? { entityType } : {}) },
+      include: { revisions: { include: { options: { orderBy: [{ position: "asc" }, { id: "asc" }] } }, orderBy: { version: "desc" } } },
+      orderBy: [{ entityType: "asc" }, { fieldKey: "asc" }],
+      take: 500,
+    }),
+    listPublishedCustomFields: async (tenantId, entityType) => (await client()).customFieldDefinition.findMany({
+      where: { tenantId: requireTenantId(tenantId), entityType, status: "published" },
+      include: { revisions: { include: { options: { orderBy: [{ position: "asc" }, { id: "asc" }] } }, orderBy: { version: "desc" } } },
+      orderBy: [{ fieldKey: "asc" }],
+      take: 200,
+    }),
+    getCustomField: async (tenantId, id) => (await client()).customFieldDefinition.findFirst({
+      where: { tenantId: requireTenantId(tenantId), id: requireId(id) },
+      include: { revisions: { include: { options: { orderBy: [{ position: "asc" }, { id: "asc" }] } }, orderBy: { version: "desc" } } },
+    }),
+    createCustomField: async data => (await client()).customFieldDefinition.create({ data }),
+    createCustomFieldRevision: async data => (await client()).customFieldRevision.create({ data }),
+    createCustomFieldOptions: async data => (await client()).customFieldOption.createMany({ data }),
+    updateCustomField: async (tenantId, id, data) => (await client()).customFieldDefinition.updateMany({
+      where: { tenantId: requireTenantId(tenantId), id: requireId(id) },
+      data,
+    }),
   };
 }
 

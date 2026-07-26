@@ -102,10 +102,15 @@ model Tenant {
   reviewSessions                        ReviewSession[]
   commitAttempts                        CommitAttempt[]
   sourceReferences                      SourceReference[]
+  customFieldDefinitions                CustomFieldDefinition[]
+  customFieldRevisions                  CustomFieldRevision[]
+  customFieldOptions                    CustomFieldOption[]
+  intakeSchemaSnapshots                 IntakeSchemaSnapshot[]
 }
 
 enum IntakeSourceType {
   manual_upload
+  manual_paste
   email_attachment
   api
   system_export
@@ -177,6 +182,28 @@ enum CommitAttemptStatus {
   failed
 }
 
+enum CustomFieldEntityType {
+  supplier
+  item
+  customer
+}
+
+enum CustomFieldStatus {
+  draft
+  published
+  retired
+}
+
+enum CustomFieldDataType {
+  text
+  long_text
+  integer
+  decimal
+  date
+  boolean
+  single_select
+}
+
 model InboundArtifact {
   id               String           @id
   tenantId         String
@@ -220,13 +247,19 @@ model IntakeBatch {
   failureCode      String?
   failureMessage   String?
   version          Int               @default(0)
+  sourceProfile    Json?
+  parserVersion    String?
+  selectedSheet    String?
+  headerRowNumber  Int?
+  mappingProfileId String?
 
-  tenant         Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  artifact       InboundArtifact   @relation(fields: [tenantId, artifactId], references: [tenantId, id], onDelete: Restrict)
-  records        IntakeRecord[]
-  issues         ValidationIssue[]
-  reviewSessions ReviewSession[]
-  commitAttempts CommitAttempt[]
+  tenant          Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  artifact        InboundArtifact        @relation(fields: [tenantId, artifactId], references: [tenantId, id], onDelete: Restrict)
+  records         IntakeRecord[]
+  issues          ValidationIssue[]
+  reviewSessions  ReviewSession[]
+  commitAttempts  CommitAttempt[]
+  schemaSnapshots IntakeSchemaSnapshot[]
 
   @@unique([tenantId, id])
   @@index([tenantId, status, createdAt])
@@ -234,17 +267,24 @@ model IntakeBatch {
 }
 
 model IntakeRecord {
-  id                String             @id
-  tenantId          String
-  batchId           String
-  rowNumber         Int
-  sourcePayload     Json
-  normalizedPayload Json?
-  recordType        String
-  status            IntakeRecordStatus @default(parsed)
-  fingerprint       String
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  id                    String             @id
+  tenantId              String
+  batchId               String
+  rowNumber             Int
+  sourcePayload         Json
+  normalizedPayload     Json?
+  recordType            String
+  status                IntakeRecordStatus @default(parsed)
+  fingerprint           String
+  sourceFormat          String
+  sheetName             String?
+  headerRowNumber       Int?
+  sourceLocator         Json
+  normalizationEvidence Json?
+  excludedByUserId      String?
+  excludedAt            DateTime?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
 
   tenant Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   batch  IntakeBatch       @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Cascade)
@@ -257,16 +297,20 @@ model IntakeRecord {
 }
 
 model MappingProfile {
-  id              String               @id
-  tenantId        String
-  name            String
-  recordType      String
-  sourceSignature String
-  version         Int                  @default(1)
-  status          MappingProfileStatus @default(draft)
-  createdByUserId String
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
+  id                  String               @id
+  tenantId            String
+  name                String
+  recordType          String
+  sourceSignature     String
+  version             Int                  @default(1)
+  status              MappingProfileStatus @default(draft)
+  createdByUserId     String
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  targetSchemaId      String?
+  targetSchemaVersion Int?
+  tenantSchemaHash    String?
+  sourceFormat        String?
 
   tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   fieldMappings FieldMapping[]
@@ -274,6 +318,89 @@ model MappingProfile {
   @@unique([tenantId, id])
   @@unique([tenantId, recordType, sourceSignature, version])
   @@index([tenantId, status, updatedAt])
+}
+
+model CustomFieldDefinition {
+  id                String                @id
+  tenantId          String
+  entityType        CustomFieldEntityType
+  fieldKey          String
+  status            CustomFieldStatus     @default(draft)
+  currentRevisionId String?
+  createdByUserId   String
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  tenant    Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  revisions CustomFieldRevision[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, entityType, fieldKey])
+  @@index([tenantId, entityType, status])
+}
+
+model CustomFieldRevision {
+  id              String              @id
+  tenantId        String
+  definitionId    String
+  version         Int
+  label           String
+  description     String?
+  dataType        CustomFieldDataType
+  required        Boolean             @default(false)
+  defaultValue    Json?
+  validationRules Json                @default("{}")
+  searchable      Boolean             @default(false)
+  filterable      Boolean             @default(false)
+  reportable      Boolean             @default(false)
+  sensitive       Boolean             @default(false)
+  createdByUserId String
+  createdAt       DateTime            @default(now())
+
+  tenant     Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  definition CustomFieldDefinition @relation(fields: [tenantId, definitionId], references: [tenantId, id], onDelete: Restrict)
+  options    CustomFieldOption[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, definitionId, version])
+  @@index([tenantId, definitionId, createdAt])
+}
+
+model CustomFieldOption {
+  id         String  @id
+  tenantId   String
+  revisionId String
+  value      String
+  label      String
+  position   Int
+  active     Boolean @default(true)
+
+  tenant   Tenant              @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  revision CustomFieldRevision @relation(fields: [tenantId, revisionId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, revisionId, value])
+  @@index([tenantId, revisionId, position])
+}
+
+model IntakeSchemaSnapshot {
+  id                     String   @id
+  tenantId               String
+  batchId                String
+  recordType             String
+  coreSchemaId           String
+  coreSchemaVersion      Int
+  tenantSchemaHash       String
+  snapshot               Json
+  customFieldRevisionIds String[]
+  createdAt              DateTime @default(now())
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  batch  IntakeBatch @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, batchId])
+  @@index([tenantId, recordType, createdAt])
 }
 
 model FieldMapping {
