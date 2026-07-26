@@ -6,6 +6,7 @@ export type ModuleCapability = {
   maturity: CapabilityMaturity;
   readReady: boolean;
   writeReady: boolean;
+  businessCommitReady?: boolean;
   reason: string;
 };
 
@@ -21,7 +22,8 @@ const localCapabilityFallback: Record<string, ModuleCapability> = Object.fromEnt
   ["finance", "beta", "Operational finance requires database mode and explicit enablement"],
   ["reports", "stable", "Authoritative runtime analytics"],
   ["settings", "beta", "Local/UAT workspace settings"],
-  ["imports", "beta", "Supplier, item, customer, and inventory imports are connected"],
+  ["imports", "unavailable", "Legacy direct imports are retired; use Universal Intake."],
+  ["universal-intake", "preview", "Tenant-scoped Intake foundation without parsing or business commit adapters"],
   ["forecast", "unavailable", "Forecast and MRP planning are unavailable until PostgreSQL authoritative models exist"],
   ["exception-cases", "preview", "Internal exception workflow preview"],
   ["collaboration-drafts", "preview", "Internal draft-only workflow"],
@@ -35,6 +37,7 @@ const localCapabilityFallback: Record<string, ModuleCapability> = Object.fromEnt
   enabled: maturity === "stable" || maturity === "beta",
   readReady: maturity !== "unavailable",
   writeReady: false,
+  businessCommitReady: id === "imports" || id === "universal-intake" ? false : undefined,
 } as ModuleCapability]));
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {

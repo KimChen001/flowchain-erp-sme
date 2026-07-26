@@ -2,14 +2,16 @@
 
 ## Current Shape
 
-FlowChain is currently a Vite/React frontend plus a Node HTTP API server. Runtime behavior remains JSON/demo-data-backed by default.
+FlowChain is a Vite/React frontend plus a Node HTTP API server with a
+PostgreSQL-only authoritative runtime.
 
 ```text
 React modules
   -> apiJson / fetch
   -> Node route handlers
-  -> domain read models and draft helpers
-  -> JSON demo data
+  -> domain services and tenant-scoped repositories
+  -> PostgreSQL authoritative models
+  -> external artifact storage ports where binary evidence is required
 ```
 
 ## Frontend Modules
@@ -123,21 +125,23 @@ Action draft routes expose:
 
 Preview supports PR draft, RFQ draft, and supplier follow-up draft paths among the supported draft types. Responses are preview-only and require confirmation. Current UAT behavior does not create real business documents from these drafts.
 
-## Future Repository / Database Boundary
+## Universal Intake Boundary
 
-The current JSON data source remains active. Future persistence work should introduce adapter boundaries gradually:
+Phase 5.4A adds explicit PostgreSQL aggregates for artifact metadata, Intake
+batches and records, mapping, validation, review, and blocked commit attempts.
+Binary content stays behind an artifact-storage interface. Intake payloads
+cannot be used as direct business-table write requests.
 
-- contract tests for JSON behavior;
-- persistence mode and adapter registry;
-- ActionDraft and AuditLog repositories;
-- Master Data repository;
-- Procurement and Inventory read repositories;
-- database/ORM adapters in a later phase.
+Universal Intake is the sole forward-looking intake authority. The legacy
+Pilot Import route graph is capability-disabled: authenticated
+`/api/imports*` and `/api/import-batches*` requests return stable HTTP 501
+retirement errors and never invoke a business repository. Legacy
+`ImportBatch`/`ImportIssue` rows are retained only as non-authoritative
+historical compatibility data, with no new production writes.
 
-## Current Data Source
+Phase ownership is explicit:
 
-The default demo data source is:
-
-- `data/scm-demo.json`
-
-This file is intentionally local demo state. It should not be treated as production persistence.
+- Phase 5.4A: governed metadata, preview, validation, review, and blocked commit
+  evidence.
+- Phase 5.4B: bounded CSV/XLSX parsing.
+- Phase 5.4C: governed, object-specific business commit adapters.

@@ -2,16 +2,21 @@
 
 ## Current State
 
-FlowChain is currently a local JSON-backed development project. It is suitable for product walkthroughs, workflow validation, architecture review, and repeatable local testing.
-
-It is not production-ready SaaS infrastructure.
+FlowChain has a PostgreSQL-only runtime and tenant-scoped operational
+foundations. Managed SaaS deployment and every future integration remain
+subject to explicit release gates.
 
 ## Data and Persistence
 
-- Current local data is deterministic and stored in JSON for development.
-- There is no production database yet.
-- There is no RDS, PolarDB, or ORM-backed production runtime connection.
-- `DATABASE_URL` is not required for normal test/build/runtime behavior.
+- `DATABASE_URL` is required.
+- JSON persistence and automatic production fallback are removed.
+- Universal Intake stores only metadata and bounded row structures in
+  PostgreSQL; artifact bytes remain in external storage.
+- Phase 5.4A does not provide business commit adapters.
+- Universal Intake is the sole forward-looking intake authority.
+- Legacy Pilot Import production routes are retired and fail closed. Existing
+  `ImportBatch` and `ImportIssue` rows are non-authoritative historical
+  compatibility data and receive no new production writes.
 
 ## Draft-first Boundary
 
@@ -45,10 +50,13 @@ The current project does not implement:
 - HR/payroll;
 - complex WMS execution;
 - real supplier message sending;
-- production-grade authorization and tenant isolation.
+- universal CSV/XLSX parsing, email intake, PDF/OCR, or automatic import commit.
 
 ## Operational Limits
 
-- Some legacy/manual write routes still exist as local compatibility surfaces.
-- Repository and persistence boundaries are being introduced incrementally.
-- Future database adapters should satisfy the same read/draft/safety contracts before replacing JSON-backed behavior.
+- Universal Intake is preview-only and requires explicit enablement.
+- Only manual artifact upload is enabled in Phase 5.4A.
+- Mapping activation and review require permissions distinct from upload.
+- Bounded CSV/XLSX parsing starts in Phase 5.4B.
+- Governed business-object commit adapters start in Phase 5.4C; commit requests
+  remain blocked in Phase 5.4A.

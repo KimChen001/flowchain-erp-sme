@@ -94,6 +94,7 @@ import { useI18n } from "../i18n/I18n";
 
 const ReportsPanel = React.lazy(() => import("../modules/reports/Page"));
 const ImportsPanel = React.lazy(() => import("../modules/imports/Page"));
+const UniversalIntakePanel = React.lazy(() => import("../modules/intake/Page"));
 
 function actionDraftErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message.trim() : "";
@@ -489,7 +490,7 @@ function CapabilityRouteStatus({
         className="mx-auto mt-3 max-w-2xl text-sm leading-6"
         style={{ color: A.gray1 }}
       >
-        {t("capability.reason")}
+        {reason || t("capability.reason")}
       </p>
       <div className="mt-6 flex flex-wrap justify-center gap-2">
         <button
@@ -773,6 +774,7 @@ export default function FlowChainApp() {
             "overview",
             "reports",
             "imports",
+            "universal-intake",
             "review-actions",
             "collaboration-drafts",
             "audit-history",
@@ -1196,6 +1198,7 @@ export default function FlowChainApp() {
     imports: (
       <ImportsPanel initialView={activeView as any} onNavigate={navigateTo} />
     ),
+    "universal-intake": <UniversalIntakePanel />,
     "exception-cases": <ExceptionCasesPage onNavigate={navigateTo} />,
     "collaboration-drafts": <CollaborationDraftsPage onNavigate={navigateTo} />,
     "review-actions": <ReviewFirstActionWorkflowV2 onNavigate={navigateTo} />,

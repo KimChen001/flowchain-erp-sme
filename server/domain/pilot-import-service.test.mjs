@@ -1,10 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { createPilotImportService } from './pilot-import-service.mjs'
+import { createPilotImportService } from './test-fixtures/legacy-pilot-import-service.mjs'
 import { cleanupReceivingScenario, expectCommandError, seedReceivingScenario, withLiveReceivingDatabase } from './receiving-posting-live-test-helpers.mjs'
 
-test('Pilot imports require Dry Run and commit all six datasets atomically', async t => {
+test('archived Pilot import prototype remains test-only and documents prior direct writes', async t => {
   await withLiveReceivingDatabase(t, async ({ prisma }) => {
     const scenario = await seedReceivingScenario(prisma)
     const identity = { ...scenario.actor, source: 'local_signed_session' }

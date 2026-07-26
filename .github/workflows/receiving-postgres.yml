@@ -52,6 +52,9 @@ jobs:
       - run: npm run test:api:settings
       - run: npm run test:db:authorization
       - run: npm run test:api:authorization
+      - run: npm run test:db:intake
+      - run: npm run test:api:intake
+      - run: npm run test:legacy-import-authority
       - run: npm run test:db:internal-settlement
       - run: npm run test:api:internal-settlement
       - run: npm run test:db:settlement-workflow-mobile
@@ -129,6 +132,7 @@ jobs:
       - run: npm run test:browser:inventory-operations
       - run: npm run test:browser:returns-quarantine
       - run: npm run test:browser:settings
+      - run: npm run test:browser:intake
       - run: npm run test:browser:operational-finance
       - run: npm run test:browser:authorization
       - run: npm run test:browser:internal-settlement

@@ -93,6 +93,287 @@ model Tenant {
   bankReconciliationBankAllocations     BankReconciliationBankLineAllocation[]
   bankReconciliationCashbookAllocations BankReconciliationCashbookAllocation[]
   bankReconciliationExceptions          BankReconciliationException[]
+  inboundArtifacts                      InboundArtifact[]
+  intakeBatches                         IntakeBatch[]
+  intakeRecords                         IntakeRecord[]
+  mappingProfiles                       MappingProfile[]
+  fieldMappings                         FieldMapping[]
+  validationIssues                      ValidationIssue[]
+  reviewSessions                        ReviewSession[]
+  commitAttempts                        CommitAttempt[]
+  sourceReferences                      SourceReference[]
+}
+
+enum IntakeSourceType {
+  manual_upload
+  email_attachment
+  api
+  system_export
+}
+
+enum IntakeBatchStatus {
+  uploaded
+  profiling
+  mapping_required
+  normalizing
+  validation_required
+  ready_for_review
+  approved
+  committing
+  completed
+  failed
+  cancelled
+}
+
+enum IntakeRecordStatus {
+  parsed
+  mapping_required
+  invalid
+  warning
+  valid
+  excluded
+}
+
+enum MappingProfileStatus {
+  draft
+  active
+  retired
+}
+
+enum FieldTransformType {
+  identity
+  trim
+  uppercase
+  lowercase
+  date
+  decimal
+  integer
+  boolean
+  currency_code
+}
+
+enum ValidationIssueSeverity {
+  error
+  warning
+  info
+}
+
+enum ReviewSessionStatus {
+  open
+  approved
+  rejected
+  cancelled
+}
+
+enum ReviewDecision {
+  approved
+  rejected
+}
+
+enum CommitAttemptStatus {
+  pending
+  blocked
+  succeeded
+  failed
+}
+
+model InboundArtifact {
+  id               String           @id
+  tenantId         String
+  sourceType       IntakeSourceType @default(manual_upload)
+  originalFilename String
+  mimeType         String
+  sizeBytes        BigInt
+  checksumSha256   String
+  storageProvider  String
+  storageKey       String
+  sourceExternalId String?
+  uploadedByUserId String
+  createdAt        DateTime         @default(now())
+  deletedAt        DateTime?
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  batches          IntakeBatch[]
+  sourceReferences SourceReference[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, checksumSha256])
+  @@unique([tenantId, sourceType, sourceExternalId])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, sourceType, createdAt])
+}
+
+model IntakeBatch {
+  id               String            @id
+  tenantId         String
+  artifactId       String
+  batchType        String
+  status           IntakeBatchStatus @default(uploaded)
+  recordCount      Int               @default(0)
+  validRecordCount Int               @default(0)
+  warningCount     Int               @default(0)
+  errorCount       Int               @default(0)
+  createdByUserId  String
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  completedAt      DateTime?
+  failureCode      String?
+  failureMessage   String?
+  version          Int               @default(0)
+
+  tenant         Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  artifact       InboundArtifact   @relation(fields: [tenantId, artifactId], references: [tenantId, id], onDelete: Restrict)
+  records        IntakeRecord[]
+  issues         ValidationIssue[]
+  reviewSessions ReviewSession[]
+  commitAttempts CommitAttempt[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, artifactId])
+}
+
+model IntakeRecord {
+  id                String             @id
+  tenantId          String
+  batchId           String
+  rowNumber         Int
+  sourcePayload     Json
+  normalizedPayload Json?
+  recordType        String
+  status            IntakeRecordStatus @default(parsed)
+  fingerprint       String
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  tenant Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  batch  IntakeBatch       @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Cascade)
+  issues ValidationIssue[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, batchId, rowNumber])
+  @@index([tenantId, batchId, status])
+  @@index([tenantId, batchId, fingerprint])
+}
+
+model MappingProfile {
+  id              String               @id
+  tenantId        String
+  name            String
+  recordType      String
+  sourceSignature String
+  version         Int                  @default(1)
+  status          MappingProfileStatus @default(draft)
+  createdByUserId String
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  fieldMappings FieldMapping[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, recordType, sourceSignature, version])
+  @@index([tenantId, status, updatedAt])
+}
+
+model FieldMapping {
+  id               String             @id
+  tenantId         String
+  mappingProfileId String
+  sourceField      String
+  targetField      String
+  transformType    FieldTransformType @default(identity)
+  required         Boolean            @default(false)
+  defaultValue     Json?
+  position         Int
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  mappingProfile MappingProfile @relation(fields: [tenantId, mappingProfileId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, mappingProfileId, sourceField])
+  @@index([tenantId, mappingProfileId, position])
+}
+
+model ValidationIssue {
+  id               String                  @id
+  tenantId         String
+  batchId          String
+  recordId         String?
+  severity         ValidationIssueSeverity
+  code             String
+  field            String?
+  message          String
+  details          Json?
+  resolved         Boolean                 @default(false)
+  resolvedByUserId String?
+  resolvedAt       DateTime?
+  createdAt        DateTime                @default(now())
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  batch  IntakeBatch   @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Cascade)
+  record IntakeRecord? @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, batchId, severity, resolved])
+  @@index([tenantId, recordId])
+}
+
+model ReviewSession {
+  id               String              @id
+  tenantId         String
+  batchId          String
+  status           ReviewSessionStatus @default(open)
+  reviewedByUserId String
+  startedAt        DateTime            @default(now())
+  completedAt      DateTime?
+  decision         ReviewDecision?
+  comment          String?
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  batch  IntakeBatch @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, batchId, status])
+}
+
+model CommitAttempt {
+  id                String              @id
+  tenantId          String
+  batchId           String
+  status            CommitAttemptStatus @default(blocked)
+  idempotencyKey    String
+  requestedByUserId String
+  createdAt         DateTime            @default(now())
+  completedAt       DateTime?
+  failureCode       String?
+  failureMessage    String?
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  batch  IntakeBatch @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, batchId, createdAt])
+}
+
+model SourceReference {
+  id                String   @id
+  tenantId          String
+  artifactId        String
+  externalSystem    String
+  externalReference String?
+  externalMessageId String?
+  externalThreadId  String?
+  sourceUrl         String?
+  createdAt         DateTime @default(now())
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  artifact InboundArtifact @relation(fields: [tenantId, artifactId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, artifactId])
+  @@index([tenantId, externalSystem, externalReference])
 }
 
 model RuntimeRecord {
@@ -298,6 +579,7 @@ model WarehouseLocation {
   @@index([tenantId, warehouseId])
 }
 
+/// Legacy non-authoritative history only. New production writes are retired; Universal Intake uses IntakeBatch.
 model ImportBatch {
   id             String    @id
   tenantId       String
@@ -325,6 +607,7 @@ model ImportBatch {
   @@index([tenantId, status, createdAt])
 }
 
+/// Legacy non-authoritative history only. New validation writes use ValidationIssue.
 model ImportIssue {
   id            String  @id
   tenantId      String
@@ -1318,10 +1601,10 @@ model InternalTransferDocument {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
-  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  fromAccount CashbookAccount @relation("InternalTransferFrom", fields: [tenantId, fromCashbookAccountId], references: [tenantId, id], onDelete: Restrict)
-  toAccount   CashbookAccount @relation("InternalTransferTo", fields: [tenantId, toCashbookAccountId], references: [tenantId, id], onDelete: Restrict)
-  entries     CashbookEntry[]
+  tenant                                Tenant                                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  fromAccount                           CashbookAccount                        @relation("InternalTransferFrom", fields: [tenantId, fromCashbookAccountId], references: [tenantId, id], onDelete: Restrict)
+  toAccount                             CashbookAccount                        @relation("InternalTransferTo", fields: [tenantId, toCashbookAccountId], references: [tenantId, id], onDelete: Restrict)
+  entries                               CashbookEntry[]
   bankReconciliationCashbookAllocations BankReconciliationCashbookAllocation[]
 
   @@unique([tenantId, transferNumber])
@@ -1793,10 +2076,10 @@ model BankReconciliationCashbookAllocation {
   allocatedAmount       Decimal  @db.Decimal(18, 4)
   createdAt             DateTime @default(now())
 
-  tenant        Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  group         BankReconciliationGroup @relation(fields: [tenantId, reconciliationGroupId], references: [tenantId, id], onDelete: Restrict)
-  cashbookEntry CashbookEntry           @relation(fields: [tenantId, cashbookEntryId], references: [tenantId, id], onDelete: Restrict)
-  settlement    SettlementDocument?     @relation(fields: [tenantId, settlementDocumentId], references: [tenantId, id], onDelete: Restrict)
+  tenant           Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  group            BankReconciliationGroup   @relation(fields: [tenantId, reconciliationGroupId], references: [tenantId, id], onDelete: Restrict)
+  cashbookEntry    CashbookEntry             @relation(fields: [tenantId, cashbookEntryId], references: [tenantId, id], onDelete: Restrict)
+  settlement       SettlementDocument?       @relation(fields: [tenantId, settlementDocumentId], references: [tenantId, id], onDelete: Restrict)
   internalTransfer InternalTransferDocument? @relation(fields: [tenantId, internalTransferId], references: [tenantId, id], onDelete: Restrict)
 
   @@unique([reconciliationGroupId, cashbookEntryId])

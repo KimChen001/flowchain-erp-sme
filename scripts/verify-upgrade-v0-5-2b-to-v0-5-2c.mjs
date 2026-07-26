@@ -17,6 +17,7 @@ const root = resolve(import.meta.dirname, "..");
 const migrationsRoot = join(root, "prisma", "migrations");
 const baselineMigration = "20260720020000_settlement_workflow_mobile_foundation";
 const targetMigration = "20260725010000_postgres_only_runtime_records";
+const latestMigration = "20260726010000_universal_intake_domain_foundation";
 const prismaCli = join(root, "node_modules", "prisma", "build", "index.js");
 const freePort = () => new Promise((resolvePort, reject) => {
   const server = createServer().on("error", reject);
@@ -102,8 +103,10 @@ try {
     (SELECT "version" FROM "User" WHERE "id"=$1) AS user_version`, [actorId])).rows[0];
 
   await execFileAsync(process.execPath, [prismaCli, "migrate", "deploy"], { cwd: root, env, maxBuffer: 20 * 1024 * 1024 });
-  const latest = await query(`SELECT "migration_name" FROM "_prisma_migrations" WHERE "finished_at" IS NOT NULL ORDER BY "finished_at" DESC LIMIT 1`);
-  assert.equal(latest.rows[0].migration_name, targetMigration);
+  const appliedMigrations = await query(`SELECT "migration_name" FROM "_prisma_migrations" WHERE "finished_at" IS NOT NULL ORDER BY "migration_name"`);
+  assert.ok(appliedMigrations.rows.some((row) => row.migration_name === targetMigration));
+  const latest = await query(`SELECT "migration_name" FROM "_prisma_migrations" WHERE "finished_at" IS NOT NULL ORDER BY "finished_at" DESC, "migration_name" DESC LIMIT 1`);
+  assert.equal(latest.rows[0].migration_name, latestMigration);
   const after = (await query(`SELECT
     (SELECT "status" FROM "PurchaseOrder" WHERE "id"='upgrade-po') AS po_status,
     (SELECT "version" FROM "PurchaseOrder" WHERE "id"='upgrade-po') AS po_version,

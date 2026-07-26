@@ -44,8 +44,8 @@ try {
 
   const first = await backfillTenantAuthorization(prisma, tenantId, { actorId: "user-admin", requestId: "db-gate" })
   const second = await backfillTenantAuthorization(prisma, tenantId, { actorId: "user-admin", requestId: "db-gate-replay" })
-  assert.equal(first.createdRoles, 6); assert.equal(second.createdRoles, 0); assert.equal(second.createdAssignments, 0)
-  assert.equal(await prisma.tenantRole.count({ where: { tenantId } }), 6)
+  assert.equal(first.createdRoles, 8); assert.equal(second.createdRoles, 0); assert.equal(second.createdAssignments, 0)
+  assert.equal(await prisma.tenantRole.count({ where: { tenantId } }), 8)
   const context = async (id, role) => resolveAuthorizationContext(identity(tenantId, id, role), { prisma, performLegacyBackfill: false })
   const admin = await context("user-admin", "admin"), manager = await context("user-manager", "manager"), ops = await context("user-ops", "business-specialist"), buyer = await context("user-buyer", "buyer"), viewer = await context("user-viewer", "viewer"), unknown = await context("user-unknown", "mystery-role")
   assert.equal(admin.permissionCodes.size, permissionCodes.length); assert.equal(decision(manager, "returns.posting.reverse", [warehouseId]), true)
@@ -64,7 +64,7 @@ try {
   await assert.rejects(() => service.assignUserRoles(admin, "user-buyer", [custom.id]), (error) => error.code === "AUTHORIZATION_ROLE_INACTIVE")
   await assert.rejects(() => service.assignUserRoles(admin, "user-admin", []), (error) => error.code === "AUTHORIZATION_LAST_ROLES_MANAGER")
 
-  const otherBackfill = await backfillTenantAuthorization(prisma, otherTenantId, { actorId: "user-other" }); assert.equal(otherBackfill.createdRoles, 6)
+  const otherBackfill = await backfillTenantAuthorization(prisma, otherTenantId, { actorId: "user-other" }); assert.equal(otherBackfill.createdRoles, 8)
   const otherRole = await prisma.tenantRole.findFirst({ where: { tenantId: otherTenantId } })
   await assert.rejects(() => service.assignUserRoles(admin, "user-buyer", [otherRole.id]), (error) => error.code === "AUTHORIZATION_CROSS_TENANT_ROLE_ASSIGNMENT")
   await assert.rejects(() => prisma.tenantRolePermission.create({ data: { id: randomUUID(), tenantId, roleId: custom.id, permissionCode: "tenant.custom.permission" } }))

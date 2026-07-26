@@ -1,3 +1,4 @@
+// Archived process-memory import prototype. Test-only: not a production repository.
 import { createHash, randomUUID } from 'node:crypto'
 
 const state = {

@@ -128,22 +128,20 @@ test('R181-R190 full safe user data loop respects commit gate, scope, deactivate
   }
 })
 
-test('R181-R190 source guardrails keep UI review-first and provider-free', () => {
+test('R181-R190 source guardrails keep the retired import UI fail-closed and provider-free', () => {
   const importsPage = fs.readFileSync(path.join(root, 'src/modules/imports/Page.tsx'), 'utf8')
   const routes = fs.readFileSync(path.join(root, 'src/app/routeRegistry.tsx'), 'utf8')
   const userDataRoutes = fs.readFileSync(path.join(root, 'server/routes/user-data.routes.mjs'), 'utf8')
 
-  assert.match(importsPage, /data-testid="user-data-import-panel"/)
-  assert.match(importsPage, /\/api\/user-data\/import\/preview/)
-  assert.match(importsPage, /\/api\/user-data\/import\/commit/)
-  assert.match(importsPage, /\/api\/user-data\/active-dataset/)
-  assert.match(importsPage, /\/api\/user-data\/import\/deactivate/)
-  assert.match(importsPage, /复核后提交/)
-  assert.match(importsPage, /智能助手保持只读/)
-  assert.match(importsPage, /不能提交、审批、付款、过账、发送或修改业务记录/)
-  assert.match(importsPage, /保存文件结果：\$\{userPreview\?\.writesFiles \? "是" : "否"\}/)
-  assert.match(importsPage, /保存到业务数据集：\$\{userPreview\?\.writesDb \? "是" : "否"\}/)
-  assert.match(importsPage, /覆盖当前工作区数据：\$\{userPreview\?\.overwritesDemoData \? "是" : "否"\}/)
+  assert.match(importsPage, /data-testid="legacy-import-retired-page"/)
+  assert.match(importsPage, /旧 Import 直接写入已停用/)
+  assert.match(importsPage, /Universal Intake 是唯一面向未来的数据接入权威/)
+  assert.match(importsPage, /Phase 5\.4B/)
+  assert.match(importsPage, /Phase 5\.4C/)
+  assert.doesNotMatch(importsPage, /\/api\/user-data\/import\/preview/)
+  assert.doesNotMatch(importsPage, /\/api\/user-data\/import\/commit/)
+  assert.doesNotMatch(importsPage, /\/api\/user-data\/active-dataset/)
+  assert.doesNotMatch(importsPage, /\/api\/user-data\/import\/deactivate/)
   assert.doesNotMatch(routes, /label:\s*["']AI Assistant["']/)
   assert.doesNotMatch(importsPage, /OPENAI_API_KEY|DOUBAO|ARK_API_KEY|fetch\(["']https:\/\/api\.openai/i)
   assert.doesNotMatch(userDataRoutes, /scm-demo\.json|writeFile/)
