@@ -131,3 +131,17 @@ Phase 5.4A adds explicit PostgreSQL aggregates for artifact metadata, Intake
 batches and records, mapping, validation, review, and blocked commit attempts.
 Binary content stays behind an artifact-storage interface. Intake payloads
 cannot be used as direct business-table write requests.
+
+Universal Intake is the sole forward-looking intake authority. The legacy
+Pilot Import route graph is capability-disabled: authenticated
+`/api/imports*` and `/api/import-batches*` requests return stable HTTP 501
+retirement errors and never invoke a business repository. Legacy
+`ImportBatch`/`ImportIssue` rows are retained only as non-authoritative
+historical compatibility data, with no new production writes.
+
+Phase ownership is explicit:
+
+- Phase 5.4A: governed metadata, preview, validation, review, and blocked commit
+  evidence.
+- Phase 5.4B: bounded CSV/XLSX parsing.
+- Phase 5.4C: governed, object-specific business commit adapters.

@@ -28,6 +28,15 @@ The `universal-intake` capability is preview-only and requires explicit
 environment enablement. Intake data never writes Supplier, Item, Customer,
 PurchaseOrder, Inventory, Invoice, or other operational tables.
 
+Universal Intake is the sole forward-looking intake authority. The legacy
+Pilot Import production service graph and direct business-table write routes
+are retired. Authenticated requests to `/api/imports*` and
+`/api/import-batches*` fail closed with HTTP 501 and
+`FLOWCHAIN_LEGACY_IMPORT_PIPELINE_RETIRED`; unauthenticated requests remain
+HTTP 401. The legacy `ImportBatch` and `ImportIssue` models remain only to
+preserve historical compatibility records. They are non-authoritative and no
+production route creates or mutates them.
+
 ## Domain model
 
 - `InboundArtifact`: immutable source metadata and a generated storage
@@ -156,13 +165,18 @@ Passed on 2026-07-26:
   eight Intake permissions.
 - `npm run test:db:intake`: 30 passed, 0 failed, 0 skipped.
 
+The migration is intentionally non-destructive: legacy `ImportBatch` and
+`ImportIssue` tables are retained as historical compatibility storage. Their
+presence does not make them an intake authority.
+
 ## Test result
 
-Passed on 2026-07-26:
+Passed on 2026-07-27:
 
-- `npm test`: 1,090 tests total; 1,076 passed; 0 failed; 14 skipped.
+- `npm test`: 1,096 tests total; 1,082 passed; 0 failed; 14 skipped.
 - `npm run test:api:intake`: 29 passed, 0 failed, 0 skipped.
-- `npm run test:browser:intake`: 1 passed, 0 failed, 0 skipped.
+- `npm run test:legacy-import-authority`: 47 passed, 0 failed, 0 skipped.
+- `npm run test:browser:intake`: 3 passed, 0 failed, 0 skipped.
 - PostgreSQL-only contract: 14 passed, 0 failed, 0 skipped.
 - Typecheck and production build passed.
 - Existing PostgreSQL, API, authorization, mobile, attachment restart, bank
@@ -175,9 +189,13 @@ Passed on 2026-07-26:
 - The local storage adapter is for tests and explicit local development.
 - Normalized payloads remain previews.
 - Commit attempts are always blocked.
+- Historical legacy import records remain readable only through database
+  administration or migration tooling; the retired production API does not
+  expose or mutate them.
 
 ## Phase 5.4B readiness
 
-Phase 5.4B may add bounded CSV/XLSX parsing only after the schema, state
-machine, authorization, audit, storage, payload safety, and fail-closed commit
-contracts pass their release gates.
+Phase 5.4B starts bounded CSV/XLSX parsing only after the schema, state machine,
+authorization, audit, storage, payload safety, and fail-closed commit contracts
+pass their release gates. Governed business-object commit adapters remain
+excluded from 5.4B and begin in Phase 5.4C.

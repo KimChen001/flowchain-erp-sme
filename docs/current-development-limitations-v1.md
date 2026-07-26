@@ -13,6 +13,10 @@ subject to explicit release gates.
 - Universal Intake stores only metadata and bounded row structures in
   PostgreSQL; artifact bytes remain in external storage.
 - Phase 5.4A does not provide business commit adapters.
+- Universal Intake is the sole forward-looking intake authority.
+- Legacy Pilot Import production routes are retired and fail closed. Existing
+  `ImportBatch` and `ImportIssue` rows are non-authoritative historical
+  compatibility data and receive no new production writes.
 
 ## Draft-first Boundary
 
@@ -53,3 +57,6 @@ The current project does not implement:
 - Universal Intake is preview-only and requires explicit enablement.
 - Only manual artifact upload is enabled in Phase 5.4A.
 - Mapping activation and review require permissions distinct from upload.
+- Bounded CSV/XLSX parsing starts in Phase 5.4B.
+- Governed business-object commit adapters start in Phase 5.4C; commit requests
+  remain blocked in Phase 5.4A.

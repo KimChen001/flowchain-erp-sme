@@ -91,11 +91,22 @@ FlowChain uses the familiar SME inventory/ERP object skeleton for orientation: f
 - Enforce payload safety, permission separation, audit, and batch transitions.
 - Expose a preview-only foundation behind explicit capability enablement.
 - Keep every business-object commit adapter fail-closed.
+- Make Universal Intake the sole forward-looking intake authority.
+- Retire legacy Pilot Import production routes and direct business-table writes;
+  retain `ImportBatch`/`ImportIssue` only as non-authoritative history.
 
 ### Phase 5.4B CSV/XLSX Intake
 
-- Add bounded CSV/XLSX parsing only after the Phase 5.4A contracts pass.
+- Start bounded CSV/XLSX parsing only after the Phase 5.4A contracts pass.
 - Preserve human review and governed commit boundaries.
+
+### Phase 5.4C Governed Business Commit Adapters
+
+- Introduce allowlisted, object-specific commit adapters only after the 5.4B
+  parsing and review contracts pass.
+- Preserve tenant scope, permission separation, audit evidence, idempotency,
+  and human approval.
+- Do not restore the retired Pilot Import write path.
 
 ## Non-goals
 

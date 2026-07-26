@@ -39,10 +39,13 @@ FlowChain runs on a PostgreSQL-only authoritative runtime. `DATABASE_URL` is
 required; the removed JSON persistence mode and production fixture fallbacks
 fail closed.
 
-Universal Intake is entering a preview-only foundation phase. It defines
-tenant-scoped artifacts, batches, records, mappings, validation, and review,
-but does not yet parse complete CSV/XLSX workbooks or commit imported data into
-business tables.
+Universal Intake is the sole forward-looking intake authority. Phase 5.4A
+defines tenant-scoped artifacts, batches, records, mappings, validation, and
+review as a preview-only foundation. Legacy Pilot Import production routes are
+retired and fail closed; their historical `ImportBatch` and `ImportIssue`
+records are non-authoritative compatibility history and receive no new writes.
+Bounded CSV/XLSX parsing begins in Phase 5.4B, and governed business commit
+adapters begin in Phase 5.4C.
 
 ## Core Modules
 
@@ -160,7 +163,10 @@ Read and preview APIs:
 - `GET /api/ai/tools`
 - `POST /api/ai/chat`
 
-Legacy/manual local write routes still exist for compatibility, including purchase request, RFQ, purchase order, receiving, forecast, S&OP, login, and market-signal routes. The AI and draft-first surfaces do not autonomously execute those writes.
+Legacy/manual local write routes still exist for compatibility in selected
+non-import workflows. The legacy Pilot Import routes are specifically retired
+and cannot write business tables. The AI and draft-first surfaces do not
+autonomously execute writes.
 
 ## AI Safety
 
@@ -206,8 +212,9 @@ Start here:
 
 ## Current Limitations
 
-- No production database.
-- No ORM-backed production runtime.
+- The authoritative runtime requires PostgreSQL and uses Prisma.
+- Universal Intake does not yet parse complete CSV/XLSX workbooks.
+- Universal Intake cannot commit into business tables.
 - No autonomous AI execution.
 - No complex WMS execution.
 - No automatic WMS release.

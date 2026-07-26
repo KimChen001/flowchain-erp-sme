@@ -11,6 +11,9 @@
 ## Architecture
 
 - [Phase 5.4A Universal Intake domain foundation](phase-5-4a-universal-intake-domain-foundation.md)
+- Universal Intake is the sole forward-looking intake authority. Legacy Pilot
+  Import production writes are retired; CSV/XLSX parsing and governed business
+  commit adapters are reserved for Phase 5.4B and Phase 5.4C respectively.
 - [Architecture overview](architecture-overview-v1.md)
 - [Repository boundary](repository-boundary-v1.md)
 - [JSON adapter contract tests](json-adapter-contract-tests-v1.md)
