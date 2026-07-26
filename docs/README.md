@@ -10,10 +10,13 @@
 
 ## Architecture
 
+- [Phase 5.4B Schema-Aware Structured Smart Intake](phase-5-4b-schema-aware-structured-intake.md)
+- [Custom Field Extension Foundation v1](custom-field-extension-foundation-v1.md)
+- [Canonical Master Data Schemas v1](canonical-master-data-schemas-v1.md)
 - [Phase 5.4A Universal Intake domain foundation](phase-5-4a-universal-intake-domain-foundation.md)
-- Universal Intake is the sole forward-looking intake authority. Legacy Pilot
-  Import production writes are retired; CSV/XLSX parsing and governed business
-  commit adapters are reserved for Phase 5.4B and Phase 5.4C respectively.
+- Universal Intake is the sole forward-looking intake authority. Structured
+  CSV/XLSX/Paste previews are active for Supplier, Item, and Customer; governed
+  business commit adapters remain reserved for Phase 5.4C.
 - [Architecture overview](architecture-overview-v1.md)
 - [Repository boundary](repository-boundary-v1.md)
 - [JSON adapter contract tests](json-adapter-contract-tests-v1.md)

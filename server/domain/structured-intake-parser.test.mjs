@@ -24,6 +24,11 @@ test("CSV parser supports explicit GB18030 and rejects ambiguous or duplicate he
   assert.throws(() => parseCsvArtifact(Buffer.from("single\nvalue\n")), error => error.code === "INTAKE_CSV_DELIMITER_REQUIRED");
 });
 
+test("CSV parser fails closed for malformed quotes and oversized rows", () => {
+  assert.throws(() => parseCsvArtifact(Buffer.from('code,name\nSUP-1,"unterminated\n'), { delimiter: "comma" }), error => error.code === "INTAKE_CSV_PARSE_FAILED");
+  assert.throws(() => parseCsvArtifact(Buffer.from(`code,name\nSUP-1,${"x".repeat(70_000)}\n`), { delimiter: "comma" }), error => error.code === "INTAKE_CSV_PARSE_FAILED");
+});
+
 test("Paste Table prefers deterministic tabular parsing and preserves provenance", () => {
   const parsed = parsePasteTable("code\tname\nSUP-1\tSuzhou Components\n");
   assert.equal(parsed.sourceFormat, "paste_table");
@@ -38,6 +43,11 @@ test("Paste JSON accepts only safe object arrays and blocks control, secret, and
   assert.throws(() => parsePasteJson('[{"password":"no"}]'), error => error.code === "INTAKE_PAYLOAD_SECRET_FIELD");
   assert.throws(() => parsePasteJson('[{"__proto__":{"polluted":true}}]'), error => error.code === "INTAKE_PAYLOAD_PROTOTYPE_KEY");
   assert.equal({}.polluted, undefined);
+});
+
+test("Paste adapters reject oversized and excessively nested input", () => {
+  assert.throws(() => parsePasteTable(`code\tname\nSUP-1\t${"x".repeat(10 * 1024 * 1024)}`), error => error.code === "INTAKE_PASTE_SIZE_LIMIT");
+  assert.throws(() => parsePasteJson('[{"a":{"b":{"c":{"d":{"e":{"f":1}}}}}}]'), error => error.code === "INTAKE_PAYLOAD_NESTING_LIMIT");
 });
 
 test("XLSX parser profiles a visible selected sheet without executing formulas", async () => {
@@ -64,4 +74,29 @@ test("XLSX parser rejects hidden-only workbooks and merged data regions", async 
   XLSX.utils.book_append_sheet(mergedBook, merged, "Items");
   const mergedBytes = XLSX.write(mergedBook, { type: "buffer", bookType: "xlsx" });
   await assert.rejects(() => parseXlsxArtifact(mergedBytes), error => error.code === "INTAKE_XLSX_MERGED_CELL_UNSUPPORTED");
+});
+
+test("XLSX parser records cached formulas but rejects formulas without cached results", async () => {
+  const cachedBook = XLSX.utils.book_new();
+  const cached = XLSX.utils.aoa_to_sheet([["code", "calculated"], ["SUP-1", null]]);
+  cached.B2 = { t: "n", f: "2+2", v: 4 };
+  cached["!ref"] = "A1:B2";
+  XLSX.utils.book_append_sheet(cachedBook, cached, "Suppliers");
+  const cachedResult = await parseXlsxArtifact(XLSX.write(cachedBook, { type: "buffer", bookType: "xlsx" }));
+  assert.ok(cachedResult.warnings.some(value => value.code === "INTAKE_XLSX_FORMULA_PRESENT"));
+
+  const missingBook = XLSX.utils.book_new();
+  const missing = XLSX.utils.aoa_to_sheet([["code", "calculated"], ["SUP-1", null]]);
+  missing.B2 = { t: "n", f: "2+2" };
+  missing["!ref"] = "A1:B2";
+  XLSX.utils.book_append_sheet(missingBook, missing, "Suppliers");
+  await assert.rejects(() => parseXlsxArtifact(XLSX.write(missingBook, { type: "buffer", bookType: "xlsx" })), error => error.code === "INTAKE_XLSX_FORMULA_RESULT_UNAVAILABLE");
+});
+
+test("XLSX parser rejects corrupt archives and excessive columns", async () => {
+  await assert.rejects(() => parseXlsxArtifact(Buffer.from("not-an-xlsx")), error => error.code === "INTAKE_XLSX_CORRUPT");
+  const wideBook = XLSX.utils.book_new();
+  const wide = XLSX.utils.aoa_to_sheet([Array.from({ length: 201 }, (_, index) => `field_${index}`), Array.from({ length: 201 }, () => "x")]);
+  XLSX.utils.book_append_sheet(wideBook, wide, "Wide");
+  await assert.rejects(() => parseXlsxArtifact(XLSX.write(wideBook, { type: "buffer", bookType: "xlsx" })), error => error.code === "INTAKE_COLUMN_LIMIT");
 });

@@ -32,6 +32,13 @@ test("confirmed mappings require all canonical required fields and unique target
     schema,
   });
   assert.equal(mappings.length, 2);
+  assert.throws(() => validateConfirmedMappings({
+    mappings: [
+      { sourceField: "code", targetField: "supplier.code", transformType: "integer" },
+      { sourceField: "name", targetField: "supplier.name", transformType: "trim" },
+    ],
+    schema,
+  }), error => error.code === "INTAKE_MAPPING_TRANSFORM_INCOMPATIBLE");
 });
 
 test("normalization separates standard and custom fields and records evidence", () => {
@@ -44,6 +51,7 @@ test("normalization separates standard and custom fields and records evidence", 
   };
   const result = normalizeStructuredRecord({
     source: { code: " SUP-1 ", name: "Suzhou Components", related: "yes" },
+    sourceLocator: { rowNumber: 2, sheetName: "Suppliers" },
     recordType: "supplier",
     schema: extended,
     mappingProfile: {
@@ -58,5 +66,6 @@ test("normalization separates standard and custom fields and records evidence", 
   assert.equal(result.normalizedPayload.fields.code, "SUP-1");
   assert.equal(result.normalizedPayload.customFields.is_related_party, true);
   assert.equal(result.evidence[0].mappingProfileId, "mapping-1");
+  assert.equal(result.evidence[0].sourceCell, "Suppliers:row-2:column-code");
   assert.deepEqual(validateNormalizedRecord({ normalizedPayload: result.normalizedPayload, schema: extended }), []);
 });

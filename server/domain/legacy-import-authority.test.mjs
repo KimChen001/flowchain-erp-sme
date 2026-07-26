@@ -66,8 +66,10 @@ test("production frontend exposes retirement guidance and no legacy commit clien
   assert.equal(importsPage.includes("/api/imports"), false);
   assert.equal(contextualActions.includes('type="file"'), false);
   assert.equal(contextualActions.includes("ImportPreviewDialog"), false);
-  assert.match(intakePage, /Manual upload: preview enabled/);
-  assert.match(intakePage, /Business commit adapters: not yet enabled/);
+  for (const sourceLabel of ["Upload CSV", "Upload XLSX", "Paste Table", "Paste JSON"]) assert.match(intakePage, new RegExp(sourceLabel));
+  assert.match(intakePage, /Business commit adapters are not available in Phase 5\.4B/);
+  assert.match(intakePage, /No Supplier, Item, or Customer will be created/);
+  assert.equal(intakePage.includes('method: "POST", body: JSON.stringify({ records:'), false);
   await assert.rejects(access(join(root, "src/lib/excel/importPersistenceApi.ts")));
   await assert.rejects(access(join(root, "src/components/import/ImportPreviewDialog.tsx")));
 });

@@ -15,7 +15,7 @@ import { LocalArtifactStorage } from "../server/storage/artifact-storage.mjs";
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
 const prismaCli = join(root, "node_modules", "prisma", "build", "index.js");
-const latestMigration = "20260726010000_universal_intake_domain_foundation";
+const latestMigration = "20260727010000_schema_aware_structured_intake";
 let assertions = 0;
 
 const check = (value, message) => {
@@ -154,14 +154,18 @@ async function verifyFreshRuntime() {
       records: [{ name: "", amount: "bad" }, { name: "Widget", amount: "12.50", supplierTokenNumber: "NORMAL-1" }],
     }, contextA);
     check(recordResult.counts.added === 2 && recordResult.counts.errors === 1 && recordResult.counts.valid === 1, "generic record validation persists honest counts");
-    const validation = await services.batches.transition(batch.id, "validation_required", { expectedVersion: 1 }, contextA);
+    const mappingRequired = await services.batches.transition(batch.id, "mapping_required", { expectedVersion: 1 }, contextA);
+    check(mappingRequired.status === "mapping_required", "batch requires mapping before normalization");
+    const normalizing = await services.batches.transition(batch.id, "normalizing", { expectedVersion: 2 }, contextA);
+    check(normalizing.status === "normalizing", "batch enters normalizing");
+    const validation = await services.batches.transition(batch.id, "validation_required", { expectedVersion: 3 }, contextA);
     check(validation.status === "validation_required", "batch enters validation_required");
-    await assert.rejects(() => services.batches.transition(batch.id, "ready_for_review", { expectedVersion: 2 }, contextA), error => error.code === "INTAKE_UNRESOLVED_ERRORS");
+    await assert.rejects(() => services.batches.transition(batch.id, "ready_for_review", { expectedVersion: 4 }, contextA), error => error.code === "INTAKE_UNRESOLVED_ERRORS");
     assertions += 1;
     const issueList = await services.issues.list(batch.id, {}, contextA);
     check(issueList.issues.length === 2 && issueList.issues.every(issue => !issue.resolved), "validation issues persist");
     for (const issue of issueList.issues) await services.issues.resolve(issue.id, contextA);
-    const ready = await services.batches.transition(batch.id, "ready_for_review", { expectedVersion: 2 }, contextA);
+    const ready = await services.batches.transition(batch.id, "ready_for_review", { expectedVersion: 4 }, contextA);
     check(ready.status === "ready_for_review", "resolved errors permit review readiness");
     const review = await services.reviews.open(batch.id, { comment: "Review foundation" }, contextA);
     const approved = await services.reviews.decide(review.id, "approved", { comment: "Approved for future adapter review only" }, contextA);

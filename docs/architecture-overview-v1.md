@@ -127,7 +127,7 @@ Preview supports PR draft, RFQ draft, and supplier follow-up draft paths among t
 
 ## Universal Intake Boundary
 
-Phase 5.4A adds explicit PostgreSQL aggregates for artifact metadata, Intake
+Phase 5.4A added explicit PostgreSQL aggregates for artifact metadata, Intake
 batches and records, mapping, validation, review, and blocked commit attempts.
 Binary content stays behind an artifact-storage interface. Intake payloads
 cannot be used as direct business-table write requests.
@@ -139,9 +139,15 @@ retirement errors and never invoke a business repository. Legacy
 `ImportBatch`/`ImportIssue` rows are retained only as non-authoritative
 historical compatibility data, with no new production writes.
 
+Phase 5.4B adds code-owned `supplier.v1`, `item.v1`, and `customer.v1`
+registries; versioned tenant custom fields; immutable batch schema snapshots;
+bounded CSV/XLSX/Paste adapters; deterministic mapping; normalization evidence;
+validation; and review controls. Public caller-driven `IntakeRecord` insertion
+is retired. Files are adapters, not the core intake model.
+
 Phase ownership is explicit:
 
 - Phase 5.4A: governed metadata, preview, validation, review, and blocked commit
   evidence.
-- Phase 5.4B: bounded CSV/XLSX parsing.
+- Phase 5.4B: bounded CSV/XLSX/Paste parsing and schema-aware preview.
 - Phase 5.4C: governed, object-specific business commit adapters.

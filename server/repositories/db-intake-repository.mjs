@@ -175,6 +175,37 @@ function createRepository(resolveClient) {
     getSchemaSnapshot: async (tenantId, batchId) => (await client()).intakeSchemaSnapshot.findFirst({
       where: { tenantId: requireTenantId(tenantId), batchId: requireId(batchId, "batchId") },
     }),
+    findStructuredReferenceFacts: async (tenantId, input = {}) => {
+      const db = await client();
+      const scope = requireTenantId(tenantId);
+      const supplierCodes = [...new Set((input.supplierCodes || []).map(String).map(value => value.trim()).filter(Boolean))].slice(0, 5_000);
+      const itemSkus = [...new Set((input.itemSkus || []).map(String).map(value => value.trim()).filter(Boolean))].slice(0, 5_000);
+      const paymentTermCodes = [...new Set((input.paymentTermCodes || []).map(String).map(value => value.trim()).filter(Boolean))].slice(0, 5_000);
+      const [suppliers, items, paymentTerms] = await Promise.all([
+        supplierCodes.length
+          ? db.supplier.findMany({
+            where: { tenantId: scope, code: { in: supplierCodes } },
+            select: { id: true, code: true, name: true, status: true, metadata: true },
+          })
+          : [],
+        itemSkus.length
+          ? db.item.findMany({
+            where: { tenantId: scope, sku: { in: itemSkus } },
+            select: {
+              id: true, sku: true, name: true, unit: true, status: true, category: true,
+              preferredSupplier: { select: { code: true } },
+            },
+          })
+          : [],
+        paymentTermCodes.length
+          ? db.paymentTerm.findMany({
+            where: { tenantId: scope, code: { in: paymentTermCodes } },
+            select: { code: true },
+          })
+          : [],
+      ]);
+      return { suppliers, items, paymentTerms };
+    },
     listCustomFields: async (tenantId, entityType) => (await client()).customFieldDefinition.findMany({
       where: { tenantId: requireTenantId(tenantId), ...(entityType ? { entityType } : {}) },
       include: { revisions: { include: { options: { orderBy: [{ position: "asc" }, { id: "asc" }] } }, orderBy: { version: "desc" } } },

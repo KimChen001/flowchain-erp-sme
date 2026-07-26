@@ -108,7 +108,7 @@ try {
   check(unauthenticated.status, 401, "authentication is required");
   check(unauthenticated.payload.code, "AUTHENTICATION_REQUIRED");
 
-  const contentBase64 = Buffer.from("name,amount\nWidget,10\n").toString("base64");
+  const contentBase64 = Buffer.from("code,name\nSUP-API-1,Suzhou Components\n").toString("base64");
   const denied = await request("/api/intake/artifacts", {
     userId: "intake-viewer", role: "viewer", method: "POST",
     body: { originalFilename: "denied.csv", mimeType: "text/csv", contentBase64 },
@@ -141,28 +141,41 @@ try {
 
   const batch = await request("/api/intake/batches", {
     userId: "intake-admin", role: "admin", method: "POST",
-    body: { artifactId: artifact.payload.id, batchType: "generic" },
+    body: { artifactId: artifact.payload.id, batchType: "supplier" },
   });
   check(batch.status, 201, "batch creation succeeds");
   check(batch.payload.status, "uploaded");
-  let current = await request(`/api/intake/batches/${batch.payload.id}/transitions`, {
-    userId: "intake-admin", role: "admin", method: "POST", body: { to: "profiling", expectedVersion: 0 },
+  const profiled = await request("/api/intake/artifacts/profile", {
+    userId: "intake-admin", role: "admin", method: "POST",
+    body: { batchId: batch.payload.id, sourceFormat: "csv" },
   });
-  check(current.status, 200, "batch enters profiling");
+  check(profiled.status, 200, "artifact profiling creates parser-owned records");
+  check(profiled.payload.profile.rowCount, 1);
 
-  const unsafeRecord = await request(`/api/intake/batches/${batch.payload.id}/records`, {
+  const retiredRecordInsert = await request(`/api/intake/batches/${batch.payload.id}/records`, {
     userId: "intake-admin", role: "admin", method: "POST",
     body: { records: [{ password: "not-allowed" }] },
   });
-  check(unsafeRecord.status, 422, "secret field scan fails closed");
-  check(unsafeRecord.payload.code, "INTAKE_PAYLOAD_SECRET_FIELD");
+  check(retiredRecordInsert.status, 501, "public direct record insertion fails closed");
+  check(retiredRecordInsert.payload.code, "FLOWCHAIN_INTAKE_DIRECT_RECORD_INSERT_RETIRED");
 
-  const records = await request(`/api/intake/batches/${batch.payload.id}/records`, {
+  const mapping = await request(`/api/intake/batches/${batch.payload.id}/mapping`, {
     userId: "intake-admin", role: "admin", method: "POST",
-    body: { records: [{ name: "Widget", amount: "10", supplierTokenNumber: "NORMAL-2" }], rules: [{ field: "amount", type: "decimal" }] },
+    body: { mappings: [
+      { sourceField: "code", targetFieldPath: "supplier.code", transformType: "trim" },
+      { sourceField: "name", targetFieldPath: "supplier.name", transformType: "trim" },
+    ] },
   });
-  check(records.status, 201, "bounded record preview is persisted");
-  check(records.payload.counts.valid, 1);
+  check(mapping.status, 200, "schema-aware mapping is confirmed");
+  const normalized = await request(`/api/intake/batches/${batch.payload.id}/normalize`, {
+    userId: "intake-admin", role: "admin", method: "POST", body: {},
+  });
+  check(normalized.status, 200, "normalization is parser-owned");
+  const validated = await request(`/api/intake/batches/${batch.payload.id}/validate`, {
+    userId: "intake-admin", role: "admin", method: "POST", body: {},
+  });
+  check(validated.status, 200, "structured preview validates");
+  check(validated.payload.counts.valid, 1);
 
   const commit = await request(`/api/intake/batches/${batch.payload.id}/commit`, {
     userId: "intake-admin", role: "admin", method: "POST",

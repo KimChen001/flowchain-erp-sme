@@ -4,6 +4,7 @@ import { capabilityForEnvironment } from "../domain/capability-registry.mjs";
 import { INTAKE_DIRECT_RECORD_INSERT_RETIRED, INTAKE_LIMITS, IntakeError } from "../domain/intake-contracts.mjs";
 import { createIntakeServices } from "../domain/intake-services.mjs";
 import { createStructuredIntakeService } from "../domain/structured-intake-service.mjs";
+import { SUPPORTED_INTAKE_RECORD_TYPES } from "../domain/canonical-master-data-schemas.mjs";
 import { PilotIdentityError, resolveProvisionedActor } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { createDbIntakeRepository } from "../repositories/db-intake-repository.mjs";
@@ -140,7 +141,11 @@ export async function handleIntakeRoute(ctx) {
         ctx.send(ctx.res, 200, await services.batches.list(query(ctx.url), context));
       } else if (ctx.req.method === "POST") {
         permission(actor, "intake.batch.create");
-        ctx.send(ctx.res, 201, await services.batches.create(await readBody(), context));
+        const body = await readBody();
+        if (!SUPPORTED_INTAKE_RECORD_TYPES.includes(String(body?.batchType || ""))) {
+          throw new IntakeError("INTAKE_RECORD_TYPE_UNSUPPORTED", "Phase 5.4B supports only supplier, item, and customer.", 422);
+        }
+        ctx.send(ctx.res, 201, await services.batches.create(body, context));
       } else return false;
       return true;
     }

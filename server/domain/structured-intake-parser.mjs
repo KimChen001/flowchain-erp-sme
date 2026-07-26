@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { parse as parseCsvSync } from "csv-parse/sync";
 import iconv from "iconv-lite";
-import * as XLSX from "xlsx";
+import readExcelFile from "read-excel-file/node";
 import yauzl from "yauzl";
 import { INTAKE_LIMITS, assertSafePayload, failIntake } from "./intake-contracts.mjs";
 
@@ -205,77 +205,112 @@ function inspectZip(bytes) {
       let entries = 0;
       let compressed = 0;
       let uncompressed = 0;
+      const xmlEntries = {};
+      let settled = false;
+      const fail = failure => {
+        if (settled) return;
+        settled = true;
+        zip.close();
+        reject(failure);
+      };
       zip.readEntry();
       zip.on("entry", entry => {
         entries += 1;
         compressed += Number(entry.compressedSize || 0);
         uncompressed += Number(entry.uncompressedSize || 0);
         if (entries > STRUCTURED_LIMITS.maximumZipEntries || uncompressed > STRUCTURED_LIMITS.maximumUncompressedBytes || (compressed > 0 && uncompressed / compressed > STRUCTURED_LIMITS.maximumCompressionRatio)) {
-          zip.close();
-          return reject(Object.assign(new Error("zip limits"), { code: "INTAKE_XLSX_ZIP_BOMB" }));
+          return fail(Object.assign(new Error("zip limits"), { code: "INTAKE_XLSX_ZIP_BOMB" }));
         }
-        zip.readEntry();
+        if (entry.fileName === "xl/workbook.xml" || /^xl\/worksheets\/sheet\d+\.xml$/.test(entry.fileName)) {
+          zip.openReadStream(entry, (streamError, stream) => {
+            if (streamError) return fail(streamError);
+            const chunks = [];
+            stream.on("data", chunk => chunks.push(chunk));
+            stream.on("error", fail);
+            stream.on("end", () => {
+              xmlEntries[entry.fileName] = Buffer.concat(chunks).toString("utf8");
+              if (!settled) zip.readEntry();
+            });
+          });
+        } else zip.readEntry();
       });
-      zip.on("end", () => resolve({ entries, compressedBytes: compressed, uncompressedBytes: uncompressed }));
-      zip.on("error", reject);
+      zip.on("end", () => {
+        if (settled) return;
+        settled = true;
+        resolve({ entries, compressedBytes: compressed, uncompressedBytes: uncompressed, xmlEntries });
+      });
+      zip.on("error", fail);
     });
   });
 }
 
-function cellValue(cell, warnings, locator) {
-  if (!cell) return "";
-  if (cell.f) {
-    if (cell.v === undefined || cell.v === null) parserFailure("INTAKE_XLSX_FORMULA_RESULT_UNAVAILABLE", "Formula cell has no trusted cached result.", 422, locator);
-    warnings.push({ code: "INTAKE_XLSX_FORMULA_PRESENT", locator });
+const decodeXml = value => String(value || "").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+
+function workbookSheets(xml, fallbackNames) {
+  const rows = [...String(xml || "").matchAll(/<sheet\b([^>]*)\/?>/g)].map((match, index) => {
+    const attributes = match[1];
+    return {
+      name: decodeXml(attributes.match(/\bname="([^"]*)"/)?.[1] || fallbackNames[index] || `Sheet ${index + 1}`),
+      state: attributes.match(/\bstate="([^"]*)"/)?.[1] || "visible",
+      index,
+    };
+  });
+  return rows.length ? rows : fallbackNames.map((name, index) => ({ name, state: "visible", index }));
+}
+
+function inspectSelectedSheetXml(xml, sheetName) {
+  if (/<mergeCell\b/.test(xml)) parserFailure("INTAKE_XLSX_MERGED_CELL_UNSUPPORTED", "Merged cells in the header or data region are not supported.", 422);
+  const warnings = [];
+  for (const match of String(xml || "").matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+    const body = match[2];
+    if (!/<f(?:\s[^>]*)?>/.test(body)) continue;
+    const cell = match[1].match(/\br="([^"]+)"/)?.[1] || null;
+    if (!/<v(?:\s[^>]*)?>[\s\S]*?<\/v>/.test(body)) {
+      parserFailure("INTAKE_XLSX_FORMULA_RESULT_UNAVAILABLE", "Formula cell has no trusted cached result.", 422, { sheetName, cell });
+    }
+    warnings.push({ code: "INTAKE_XLSX_FORMULA_PRESENT", locator: { sheetName, cell } });
   }
-  if (cell.t === "d" || cell.v instanceof Date) return new Date(cell.v).toISOString();
-  if (cell.t === "n" && typeof cell.w === "string" && cell.w.trim()) return cell.w.replace(/,/g, "");
-  return cell.v ?? "";
+  return warnings;
+}
+
+function normalizedWorkbookValue(value) {
+  if (value instanceof Date) return value.toISOString();
+  if (value === null || value === undefined) return "";
+  return value;
 }
 
 export async function parseXlsxArtifact(bytes, options = {}) {
   const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
   if (buffer.byteLength > INTAKE_LIMITS.maximumArtifactSizeBytes) parserFailure("INTAKE_ARTIFACT_SIZE_LIMIT", "Artifact exceeds 10 MB.", 413);
-  try { await inspectZip(buffer); } catch (error) {
+  let archive;
+  try { archive = await inspectZip(buffer); } catch (error) {
     if (error?.code === "INTAKE_XLSX_ZIP_BOMB") parserFailure("INTAKE_XLSX_ZIP_BOMB", "Workbook archive exceeds safe ZIP limits.", 413);
     parserFailure("INTAKE_XLSX_CORRUPT", "Workbook archive is corrupt or unsupported.", 422);
   }
   let workbook;
-  try { workbook = XLSX.read(buffer, { type: "buffer", cellDates: true, cellFormula: true, cellText: true, bookVBA: false }); }
+  try { workbook = await readExcelFile(buffer, { parseNumber: value => value }); }
   catch { parserFailure("INTAKE_XLSX_CORRUPT", "Workbook could not be parsed.", 422); }
-  if (workbook.SheetNames.length > STRUCTURED_LIMITS.maximumSheetCount) parserFailure("INTAKE_XLSX_SHEET_LIMIT", "Workbook contains too many sheets.", 413);
-  const metadata = workbook.Workbook?.Sheets || [];
-  const sheetList = workbook.SheetNames.map((name, index) => ({ name, state: metadata[index]?.Hidden === 2 ? "veryHidden" : metadata[index]?.Hidden === 1 ? "hidden" : "visible" }));
+  if (workbook.length > STRUCTURED_LIMITS.maximumSheetCount) parserFailure("INTAKE_XLSX_SHEET_LIMIT", "Workbook contains too many sheets.", 413);
+  const metadata = workbookSheets(archive.xmlEntries["xl/workbook.xml"], workbook.map(sheet => sheet.sheet));
+  const sheetList = metadata.map(sheet => ({ name: sheet.name, state: sheet.state }));
   const visible = sheetList.filter(sheet => sheet.state === "visible");
   const selectedSheet = String(options.sheetName || (visible.length === 1 ? visible[0].name : "")).trim();
   if (!selectedSheet) parserFailure("INTAKE_XLSX_SHEET_REQUIRED", "Select one visible workbook sheet.", 422, { sheetList });
   const selectedMetadata = sheetList.find(sheet => sheet.name === selectedSheet);
   if (!selectedMetadata) parserFailure("INTAKE_XLSX_SHEET_REQUIRED", "Selected sheet does not exist.", 422);
   if (selectedMetadata.state !== "visible") parserFailure("INTAKE_XLSX_HIDDEN_SHEET", "Hidden and veryHidden sheets cannot be selected automatically.", 422);
-  const sheet = workbook.Sheets[selectedSheet];
-  const range = sheet["!ref"] ? XLSX.utils.decode_range(sheet["!ref"]) : null;
-  if (!range) parserFailure("INTAKE_HEADER_MISSING", "Selected sheet is empty.", 422);
-  const headerRowIndex = Number.isInteger(options.headerRowNumber) && options.headerRowNumber > 0 ? options.headerRowNumber - 1 : range.s.r;
-  if ((sheet["!merges"] || []).some(merge => merge.s.r <= headerRowIndex || merge.s.r <= range.e.r && merge.e.r >= headerRowIndex + 1)) {
-    parserFailure("INTAKE_XLSX_MERGED_CELL_UNSUPPORTED", "Merged cells in the header or data region are not supported.", 422);
-  }
-  const warnings = [];
-  const matrix = [];
-  for (let row = headerRowIndex; row <= range.e.r; row += 1) {
-    if (matrix.length > INTAKE_LIMITS.maximumRecordCount) parserFailure("INTAKE_RECORD_COUNT_LIMIT", "Record count exceeds 5,000.", 413);
-    const values = [];
-    for (let column = range.s.c; column <= range.e.c; column += 1) {
-      if (column - range.s.c >= INTAKE_LIMITS.maximumFieldCount) parserFailure("INTAKE_COLUMN_LIMIT", "Column count exceeds 200.", 413);
-      const address = XLSX.utils.encode_cell({ r: row, c: column });
-      values.push(cellValue(sheet[address], warnings, { sheetName: selectedSheet, cell: address }));
-    }
-    matrix.push(values);
-  }
-  const profile = matrixProfile(matrix, { sourceFormat: "xlsx", sheetName: selectedSheet, headerRowNumber: 1 });
+  const sheetIndex = metadata.find(sheet => sheet.name === selectedSheet)?.index ?? 0;
+  const sheet = workbook.find(value => value.sheet === selectedSheet) || workbook[sheetIndex];
+  if (!sheet?.data?.length) parserFailure("INTAKE_HEADER_MISSING", "Selected sheet is empty.", 422);
+  const warnings = inspectSelectedSheetXml(archive.xmlEntries[`xl/worksheets/sheet${sheetIndex + 1}.xml`] || "", selectedSheet);
+  const matrix = sheet.data.map(row => row.map(normalizedWorkbookValue));
+  if (matrix.length - 1 > INTAKE_LIMITS.maximumRecordCount) parserFailure("INTAKE_RECORD_COUNT_LIMIT", "Record count exceeds 5,000.", 413);
+  if (Math.max(...matrix.map(row => row.length), 0) > INTAKE_LIMITS.maximumFieldCount) parserFailure("INTAKE_COLUMN_LIMIT", "Column count exceeds 200.", 413);
+  const headerRowIndex = Number.isInteger(options.headerRowNumber) && options.headerRowNumber > 0 ? options.headerRowNumber - 1 : 0;
+  const profile = matrixProfile(matrix, { sourceFormat: "xlsx", sheetName: selectedSheet, headerRowNumber: headerRowIndex + 1 });
   profile.records = profile.records.map(record => ({
     ...record,
-    rowNumber: record.rowNumber + headerRowIndex,
-    sourceLocator: { ...record.sourceLocator, rowNumber: record.rowNumber + headerRowIndex, headerRowNumber: headerRowIndex + 1 },
+    sourceLocator: { ...record.sourceLocator, headerRowNumber: headerRowIndex + 1 },
   }));
   return {
     sourceFormat: "xlsx",

@@ -84,6 +84,56 @@ function formatForArtifact(artifact, requested) {
   return "csv";
 }
 
+const sameText = (left, right) => text(left).toLowerCase() === text(right).toLowerCase();
+const fieldValue = (normalizedPayload, _recordType, key) => normalizedPayload?.fields?.[key];
+
+function referenceIssues(recordType, normalizedPayload, catalogs) {
+  const issues = [];
+  const paymentTermCode = fieldValue(normalizedPayload, recordType, "paymentTermCode");
+  if (paymentTermCode && !catalogs.paymentTerms.has(text(paymentTermCode).toLowerCase())) {
+    issues.push({ severity: "warning", code: "INTAKE_REFERENCE_PAYMENT_TERM_UNKNOWN", field: `${recordType}.paymentTermCode`, message: "Payment term code was not found in the tenant PostgreSQL master data." });
+  }
+  if (recordType === "supplier") {
+    const code = text(fieldValue(normalizedPayload, recordType, "code")).toLowerCase();
+    const existing = catalogs.suppliers.get(code);
+    if (existing) {
+      const metadata = existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata) ? existing.metadata : {};
+      const identical = sameText(existing.name, fieldValue(normalizedPayload, recordType, "name"))
+        && sameText(existing.status, fieldValue(normalizedPayload, recordType, "status"))
+        && (!fieldValue(normalizedPayload, recordType, "currency") || sameText(metadata.defaultCurrency || metadata.currency, fieldValue(normalizedPayload, recordType, "currency")))
+        && (!paymentTermCode || sameText(metadata.paymentTermsId || metadata.paymentTerms, paymentTermCode));
+      issues.push({
+        severity: identical ? "info" : "warning",
+        code: identical ? "INTAKE_REFERENCE_EXISTING_IDENTICAL" : "INTAKE_REFERENCE_EXISTING_DIFFERENT",
+        field: "supplier.code",
+        message: identical ? "Supplier already exists with the same comparable PostgreSQL facts." : "Supplier code already exists with different comparable PostgreSQL facts.",
+      });
+    }
+  }
+  if (recordType === "item") {
+    const sku = text(fieldValue(normalizedPayload, recordType, "sku")).toLowerCase();
+    const preferredSupplierCode = fieldValue(normalizedPayload, recordType, "preferredSupplierCode");
+    if (preferredSupplierCode && !catalogs.suppliers.has(text(preferredSupplierCode).toLowerCase())) {
+      issues.push({ severity: "warning", code: "INTAKE_REFERENCE_PREFERRED_SUPPLIER_UNKNOWN", field: "item.preferredSupplierCode", message: "Preferred supplier code was not found in the tenant PostgreSQL master data." });
+    }
+    const existing = catalogs.items.get(sku);
+    if (existing) {
+      const identical = sameText(existing.name, fieldValue(normalizedPayload, recordType, "name"))
+        && sameText(existing.unit, fieldValue(normalizedPayload, recordType, "unit"))
+        && sameText(existing.status, fieldValue(normalizedPayload, recordType, "status"))
+        && (!fieldValue(normalizedPayload, recordType, "category") || sameText(existing.category, fieldValue(normalizedPayload, recordType, "category")))
+        && (!preferredSupplierCode || sameText(existing.preferredSupplier?.code, preferredSupplierCode));
+      issues.push({
+        severity: identical ? "info" : "warning",
+        code: identical ? "INTAKE_REFERENCE_EXISTING_IDENTICAL" : "INTAKE_REFERENCE_EXISTING_DIFFERENT",
+        field: "item.sku",
+        message: identical ? "Item already exists with the same comparable PostgreSQL facts." : "Item SKU already exists with different comparable PostgreSQL facts.",
+      });
+    }
+  }
+  return issues;
+}
+
 export function createStructuredIntakeService({ repository, storage, baseServices, idFactory = randomUUID, clock = () => new Date() } = {}) {
   if (!repository || !storage || !baseServices) throw new Error("Structured Intake requires repository, storage, and base services.");
 
@@ -244,7 +294,27 @@ export function createStructuredIntakeService({ repository, storage, baseService
         await tx.updateBatch(actor.tenantId, batch.id, { mappingProfileId: id, version: { increment: 1 } });
         await tx.createAudit(audit({ idFactory, actor, action: "mapping_confirmed", entityType: "MappingProfile", entityId: id, requestId: context.requestId, after: { batchId: batch.id, version, fieldCount: mappings.length, tenantSchemaHash: schema.tenantSchemaHash } }));
       });
-      return repository.getMappingProfile(actor.tenantId, id);
+      const saved = await repository.getMappingProfile(actor.tenantId, id);
+      return {
+        id: saved.id,
+        name: saved.name,
+        recordType: saved.recordType,
+        sourceSignature: saved.sourceSignature,
+        sourceFormat: saved.sourceFormat,
+        targetSchemaId: saved.targetSchemaId,
+        targetSchemaVersion: saved.targetSchemaVersion,
+        tenantSchemaHash: saved.tenantSchemaHash,
+        version: saved.version,
+        status: saved.status,
+        fieldMappings: saved.fieldMappings.map(mapping => ({
+          sourceField: mapping.sourceField,
+          targetField: mapping.targetField,
+          transformType: mapping.transformType,
+          required: mapping.required,
+          defaultValue: mapping.defaultValue,
+          position: mapping.position,
+        })),
+      };
     },
     normalize: async (batchId, context) => {
       const actor = actorOf(context);
@@ -259,7 +329,7 @@ export function createStructuredIntakeService({ repository, storage, baseService
       await repository.transaction(async tx => {
         await tx.deleteIssues(actor.tenantId, batch.id);
         for (const record of records) {
-          const result = normalizeStructuredRecord({ source: record.sourcePayload, recordType: batch.batchType, schema, mappingProfile: profile });
+          const result = normalizeStructuredRecord({ source: record.sourcePayload, sourceLocator: record.sourceLocator, recordType: batch.batchType, schema, mappingProfile: profile });
           await tx.updateRecord(actor.tenantId, record.id, { normalizedPayload: result.normalizedPayload, normalizationEvidence: result.evidence, fingerprint: result.fingerprint, status: result.issues.length ? "invalid" : "parsed" });
           for (const issue of result.issues) await tx.createIssue({ id: idFactory(), tenantId: actor.tenantId, batchId: batch.id, recordId: record.id, ...issue, details: null });
         }
@@ -271,31 +341,78 @@ export function createStructuredIntakeService({ repository, storage, baseService
     validate: async (batchId, context) => {
       const actor = actorOf(context);
       const batch = await requireBatch(actor, batchId);
-      if (batch.status !== "validation_required") failIntake("INTAKE_VALIDATION_STATE_INVALID", "Batch is not ready for validation.", 409);
+      if (!["validation_required", "ready_for_review"].includes(batch.status)) failIntake("INTAKE_VALIDATION_STATE_INVALID", "Batch is not ready for validation.", 409);
       const schema = await requireSnapshot(actor, batch);
       const records = await repository.listAllRecords(actor.tenantId, batch.id);
+      const profile = batch.mappingProfileId ? await repository.getMappingProfile(actor.tenantId, batch.mappingProfileId) : null;
+      if (!profile || profile.tenantSchemaHash !== schema.tenantSchemaHash) failIntake("INTAKE_MAPPING_SCHEMA_MISMATCH", "Mapping does not match the captured schema.", 409);
+      const prepared = records.map(record => ({
+        record,
+        result: record.status === "excluded"
+          ? null
+          : normalizeStructuredRecord({ source: record.sourcePayload, sourceLocator: record.sourceLocator, recordType: batch.batchType, schema, mappingProfile: profile }),
+      }));
+      const supplierCodes = [];
+      const itemSkus = [];
+      const paymentTermCodes = [];
+      for (const entry of prepared) {
+        if (!entry.result) continue;
+        if (batch.batchType === "supplier") supplierCodes.push(fieldValue(entry.result.normalizedPayload, "supplier", "code"));
+        if (batch.batchType === "item") {
+          itemSkus.push(fieldValue(entry.result.normalizedPayload, "item", "sku"));
+          supplierCodes.push(fieldValue(entry.result.normalizedPayload, "item", "preferredSupplierCode"));
+        }
+        paymentTermCodes.push(fieldValue(entry.result.normalizedPayload, batch.batchType, "paymentTermCode"));
+      }
+      const facts = typeof repository.findStructuredReferenceFacts === "function"
+        ? await repository.findStructuredReferenceFacts(actor.tenantId, { supplierCodes, itemSkus, paymentTermCodes })
+        : { suppliers: [], items: [], paymentTerms: [] };
+      const catalogs = {
+        suppliers: new Map(facts.suppliers.map(row => [text(row.code).toLowerCase(), row])),
+        items: new Map(facts.items.map(row => [text(row.sku).toLowerCase(), row])),
+        paymentTerms: new Set(facts.paymentTerms.map(row => text(row.code).toLowerCase())),
+      };
       const seen = new Set();
       let valid = 0;
       let warnings = 0;
       let errors = 0;
+      let duplicates = 0;
+      let existingIdentical = 0;
+      let existingDifferent = 0;
+      let newRecords = 0;
       await repository.transaction(async tx => {
         await tx.deleteIssues(actor.tenantId, batch.id);
-        for (const record of records) {
-          if (record.status === "excluded") continue;
-          const issues = validateNormalizedRecord({ normalizedPayload: record.normalizedPayload || { fields: {}, customFields: {} }, schema });
-          if (seen.has(record.fingerprint)) issues.push({ severity: "error", code: "INTAKE_DUPLICATE_WITHIN_BATCH", field: null, message: "Record duplicates another normalized row in this batch." });
-          seen.add(record.fingerprint);
+        for (const { record, result } of prepared) {
+          if (!result) continue;
+          const issues = [
+            ...result.issues,
+            ...validateNormalizedRecord({ normalizedPayload: result.normalizedPayload, schema }),
+            ...referenceIssues(batch.batchType, result.normalizedPayload, catalogs),
+          ];
+          if (seen.has(result.fingerprint)) {
+            issues.push({ severity: "error", code: "INTAKE_DUPLICATE_WITHIN_BATCH", field: null, message: "Record duplicates another normalized row in this batch." });
+            duplicates += 1;
+          }
+          seen.add(result.fingerprint);
+          if (issues.some(issue => issue.code === "INTAKE_REFERENCE_EXISTING_IDENTICAL")) existingIdentical += 1;
+          if (issues.some(issue => issue.code === "INTAKE_REFERENCE_EXISTING_DIFFERENT")) existingDifferent += 1;
+          if (["supplier", "item"].includes(batch.batchType) && !issues.some(issue => ["INTAKE_REFERENCE_EXISTING_IDENTICAL", "INTAKE_REFERENCE_EXISTING_DIFFERENT"].includes(issue.code))) newRecords += 1;
           const hasError = issues.some(issue => issue.severity === "error");
           const hasWarning = issues.some(issue => issue.severity === "warning");
           const status = hasError ? "invalid" : hasWarning ? "warning" : "valid";
-          await tx.updateRecord(actor.tenantId, record.id, { status });
+          await tx.updateRecord(actor.tenantId, record.id, {
+            normalizedPayload: result.normalizedPayload,
+            normalizationEvidence: result.evidence,
+            fingerprint: result.fingerprint,
+            status,
+          });
           for (const issue of issues) await tx.createIssue({ id: idFactory(), tenantId: actor.tenantId, batchId: batch.id, recordId: record.id, ...issue, details: null });
           if (hasError) errors += 1; else if (hasWarning) warnings += 1; else valid += 1;
         }
         await tx.updateBatch(actor.tenantId, batch.id, { status: errors ? "validation_required" : "ready_for_review", validRecordCount: valid, warningCount: warnings, errorCount: errors, version: { increment: 1 } });
         await tx.createAudit(audit({ idFactory, actor, action: "validation_completed", entityType: "IntakeBatch", entityId: batch.id, requestId: context.requestId, after: { valid, warnings, errors, excluded: records.filter(record => record.status === "excluded").length } }));
       });
-      return { batch: batchDto(await requireBatch(actor, batch.id)), counts: { total: records.length, valid, warnings, errors, excluded: records.filter(record => record.status === "excluded").length } };
+      return { batch: batchDto(await requireBatch(actor, batch.id)), counts: { total: records.length, valid, warnings, errors, duplicates, new: newRecords, existingIdentical, existingDifferent, excluded: records.filter(record => record.status === "excluded").length } };
     },
     exclude: async (recordId, excluded, context) => {
       const actor = actorOf(context);

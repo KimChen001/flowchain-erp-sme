@@ -21,7 +21,7 @@ function actor(permissions = allPermissions, tenantId = "tenant-a") {
   };
 }
 
-function context({ method = "GET", path = "/api/intake/artifacts", permissions = allPermissions, authenticated = true, body = {}, services } = {}) {
+function context({ method = "GET", path = "/api/intake/artifacts", permissions = allPermissions, authenticated = true, body = {}, services, structured } = {}) {
   const sent = [];
   return {
     sent,
@@ -42,6 +42,7 @@ function context({ method = "GET", path = "/api/intake/artifacts", permissions =
         reviews: {},
         commits: {},
       },
+      structuredIntakeService: structured,
     },
   };
 }
@@ -88,6 +89,20 @@ test("commit endpoint remains 501 after intake.commit authorization", async () =
   assert.equal(sent[0].status, 501);
   assert.equal(sent[0].payload.code, "FLOWCHAIN_INTAKE_COMMIT_NOT_IMPLEMENTED");
   assert.equal(sent[0].payload.status, "blocked");
+});
+
+test("public batch creation accepts only Phase 5.4B master-data record types", async () => {
+  const { ctx, sent } = context({ method: "POST", path: "/api/intake/batches", body: { artifactId: "artifact-1", batchType: "purchase_order" } });
+  await handleIntakeRoute(ctx);
+  assert.equal(sent[0].status, 422);
+  assert.equal(sent[0].payload.code, "INTAKE_RECORD_TYPE_UNSUPPORTED");
+});
+
+test("Paste adapters dispatch to controlled structured service after both permissions", async () => {
+  const structured = { paste: async (kind, body) => ({ kind, recordType: body.recordType, parserOwned: true }) };
+  const { ctx, sent } = context({ method: "POST", path: "/api/intake/paste/table", body: { recordType: "supplier", content: "code\tname" }, structured });
+  await handleIntakeRoute(ctx);
+  assert.deepEqual(sent[0], { status: 201, payload: { kind: "table", recordType: "supplier", parserOwned: true } });
 });
 
 test("public direct IntakeRecord insertion is retired with a stable 501", async () => {

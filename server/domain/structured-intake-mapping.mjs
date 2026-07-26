@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { assertSafePayload, failIntake, fingerprintPayload } from "./intake-contracts.mjs";
+import { assertSafePayload, assertTransformType, failIntake, fingerprintPayload } from "./intake-contracts.mjs";
 
 const normalizedName = value => String(value || "").normalize("NFKC").trim().toLowerCase().replace(/[\s._-]+/g, "");
 const fieldKey = path => String(path).split(".").at(-1);
@@ -52,12 +52,21 @@ export function validateConfirmedMappings({ mappings, schema }) {
     if (targetSeen.has(targetField)) failIntake("INTAKE_MAPPING_TARGET_DUPLICATE", "A single-value target field can be mapped only once.", 422, { targetField });
     const field = fields.get(targetField);
     if (!field) failIntake("INTAKE_MAPPING_TARGET_UNKNOWN", "Mapping target is not present in the captured schema snapshot.", 422, { targetField });
+    const transformType = assertTransformType(mapping?.transformType);
+    const typedTransforms = { integer: "integer", decimal: "decimal", boolean: "boolean", date: "date", currency_code: "currency_code" };
+    const expectedType = typedTransforms[transformType];
+    if (expectedType && field.dataType !== expectedType) {
+      failIntake("INTAKE_MAPPING_TRANSFORM_INCOMPATIBLE", "Mapping transform is incompatible with the target field data type.", 422, { targetField, transformType, dataType: field.dataType });
+    }
+    if (["uppercase", "lowercase"].includes(transformType) && !["text", "long_text", "email", "single_select", "currency_code"].includes(field.dataType)) {
+      failIntake("INTAKE_MAPPING_TRANSFORM_INCOMPATIBLE", "Mapping transform is incompatible with the target field data type.", 422, { targetField, transformType, dataType: field.dataType });
+    }
     sourceSeen.add(sourceField);
     targetSeen.add(targetField);
     return {
       sourceField,
       targetField,
-      transformType: String(mapping?.transformType || "identity"),
+      transformType,
       required: Boolean(field.required),
       defaultValue: mapping?.defaultValue === undefined ? null : assertSafePayload({ value: mapping.defaultValue }).value,
       position: index,
@@ -99,7 +108,7 @@ function convert(value, field, transform) {
   return transform === "identity" && typeof raw !== "string" ? raw : text;
 }
 
-export function normalizeStructuredRecord({ source, recordType, schema, mappingProfile }) {
+export function normalizeStructuredRecord({ source, sourceLocator, recordType, schema, mappingProfile }) {
   const schemaFields = new Map(schema.fields.map(field => [field.fieldPath, field]));
   const fields = {};
   const customFields = {};
@@ -116,7 +125,9 @@ export function normalizeStructuredRecord({ source, recordType, schema, mappingP
       evidence.push({
         targetFieldPath: field.fieldPath,
         sourceColumn: mapping.sourceField,
-        sourceCell: null,
+        sourceCell: sourceLocator?.sheetName
+          ? `${sourceLocator.sheetName}:row-${sourceLocator.rowNumber}:column-${mapping.sourceField}`
+          : `row-${sourceLocator?.rowNumber || "unknown"}:column-${mapping.sourceField}`,
         transform: mapping.transformType,
         mappingProfileId: mappingProfile.id,
         mappingProfileVersion: mappingProfile.version,

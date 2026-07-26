@@ -12,7 +12,7 @@ subject to explicit release gates.
 - JSON persistence and automatic production fallback are removed.
 - Universal Intake stores only metadata and bounded row structures in
   PostgreSQL; artifact bytes remain in external storage.
-- Phase 5.4A does not provide business commit adapters.
+- Phase 5.4B does not provide business commit adapters.
 - Universal Intake is the sole forward-looking intake authority.
 - Legacy Pilot Import production routes are retired and fail closed. Existing
   `ImportBatch` and `ImportIssue` rows are non-authoritative historical
@@ -50,13 +50,17 @@ The current project does not implement:
 - HR/payroll;
 - complex WMS execution;
 - real supplier message sending;
-- universal CSV/XLSX parsing, email intake, PDF/OCR, or automatic import commit.
+- transaction-document intake, email intake, PDF/OCR, voice/chat extraction, or
+  automatic import commit.
 
 ## Operational Limits
 
 - Universal Intake is preview-only and requires explicit enablement.
-- Only manual artifact upload is enabled in Phase 5.4A.
+- Manual CSV/XLSX upload and Paste Table/Paste JSON are enabled only for
+  Supplier, Item, and Customer previews.
+- Custom fields extend those standard entities but do not create custom
+  entities or drive operational forms, conditional rules, or workflows.
+- Public direct IntakeRecord insertion is retired; parser ownership is required.
 - Mapping activation and review require permissions distinct from upload.
-- Bounded CSV/XLSX parsing starts in Phase 5.4B.
 - Governed business-object commit adapters start in Phase 5.4C; commit requests
-  remain blocked in Phase 5.4A.
+  remain blocked in Phase 5.4B.

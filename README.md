@@ -199,6 +199,9 @@ Start here:
 - [Final acceptance checklist](docs/final-acceptance-checklist-v1.md)
 - [Product scope and boundary](docs/product-scope-and-boundary-v1.md)
 - [Current development limitations](docs/current-development-limitations-v1.md)
+- [Phase 5.4B Structured Smart Intake](docs/phase-5-4b-schema-aware-structured-intake.md)
+- [Custom Field Extension Foundation](docs/custom-field-extension-foundation-v1.md)
+- [Canonical Master Data Schemas](docs/canonical-master-data-schemas-v1.md)
 - [Architecture overview](docs/architecture-overview-v1.md)
 - [Backend route map](docs/backend-route-map-v1.md)
 - [Repository boundary](docs/repository-boundary-v1.md)
@@ -213,7 +216,10 @@ Start here:
 ## Current Limitations
 
 - The authoritative runtime requires PostgreSQL and uses Prisma.
-- Universal Intake does not yet parse complete CSV/XLSX workbooks.
+- Universal Intake supports bounded CSV, XLSX, Paste Table, and Paste JSON
+  previews for Supplier, Item, and Customer only.
+- Custom fields extend those standard entities but do not yet drive
+  operational forms or workflow conditions.
 - Universal Intake cannot commit into business tables.
 - No autonomous AI execution.
 - No complex WMS execution.
