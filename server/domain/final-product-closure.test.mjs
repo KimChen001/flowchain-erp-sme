@@ -170,11 +170,14 @@ test('AI assistant final core questions remain structured and review-first', () 
     '这个 PO 为什么优先？',
     '这条核心业务链有什么证据？',
     '这条链路哪里证据不足？',
-    '打开这条链路的人工复核草稿。',
   ]
   for (const message of prompts) {
     const result = buildAiRuntimeResponseV2(readDb(), { message, activeModuleId: 'overview' })
     assert.equal(result.status, 200, message)
     assertRuntimeResponse(result.body, message)
   }
+  const targetlessDraft = buildAiRuntimeResponseV2(readDb(), { message: '打开这条链路的人工复核草稿。', activeModuleId: 'overview' })
+  assert.equal(targetlessDraft.status, 200)
+  assert.equal(targetlessDraft.body.reviewCards.length, 0)
+  assert.match(visibleText(targetlessDraft.body.dataLimitations), /当前上下文不足|选择具体对象|人工确认/)
 })

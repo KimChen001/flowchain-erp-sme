@@ -136,12 +136,21 @@ export function detectContextualDraftRequestV2(message = '') {
 }
 
 export function selectDraftTargetFromResolvedContextV2(resolvedContext = {}, conversationGrounding = {}, message = '') {
+  const carriedIntent = resolvedContext.intentCarryOver
+    || conversationGrounding.previousIntent
+    || conversationGrounding.context?.previousIntent
+    || ''
   const wanted = requestedType(message)
+    || (['po_priority', 'unreceived_orders', 'received_not_invoiced', 'three_way_match_variance'].includes(carriedIntent) ? 'PO' : '')
+  const explicitlyResolved = dedupeRefs(asArray(resolvedContext.entityRefs).map((item) => makeRef(item, 'resolved')))
+  const previousFocus = conversationGrounding.previousFocusTarget
+    || conversationGrounding.context?.previousFocusTarget
+    || null
   const refs = dedupeRefs([
-    ...asArray(resolvedContext.entityRefs).map((item) => makeRef(item, 'resolved')),
+    ...explicitlyResolved,
     conversationGrounding.activeRef ? makeRef(conversationGrounding.activeRef, 'activePage') : null,
     ...asArray(conversationGrounding.entityRefs).map((item) => makeRef(item, item.source || 'previousResponse')),
-    conversationGrounding.previousFocusTarget ? makeRef(conversationGrounding.previousFocusTarget, 'previousResponse') : null,
+    previousFocus ? makeRef(previousFocus, 'previousResponse') : null,
     ...asArray(conversationGrounding.previousNavigationRefs).map((item) => makeRef(item, 'navigation')),
     ...asArray(conversationGrounding.previousEvidenceRefs).map((item) => makeRef(item, 'evidence')),
   ].filter(Boolean))
@@ -149,7 +158,7 @@ export function selectDraftTargetFromResolvedContextV2(resolvedContext = {}, con
   const candidates = matched.length ? matched : refs
   const target = candidates[0] || null
   const sameConfidence = target ? candidates.filter((ref) => confidenceRank(ref.confidence) === confidenceRank(target.confidence)) : []
-  const ambiguous = Boolean(target && sameConfidence.length > 1 && !wanted)
+  const ambiguous = Boolean(target && sameConfidence.length > 1 && !wanted && explicitlyResolved.length !== 1 && !previousFocus)
   return {
     target,
     candidates,
@@ -287,7 +296,12 @@ export function buildContextualReviewCardsV2({ request = {}, intent = {}, contex
     target: selection.target,
     evidenceRefs,
     navigationRefs,
-  })
+  }) || (selection.target ? buildContextualActionDraftReviewCardV2({
+    message: request.message,
+    intent,
+    target: selection.target,
+    navigationRefs: navigationRefs.slice(0, 1),
+  }) : null)
   const dataLimitations = selection.limitation ? [{
     label: selection.target ? '草稿目标需人工确认' : '当前上下文不足',
     description: selection.limitation,
@@ -295,7 +309,7 @@ export function buildContextualReviewCardsV2({ request = {}, intent = {}, contex
     consequence: '建议先打开来源证据或明确业务对象后再进入人工复核。',
   }] : []
   return {
-    reviewCards: [card, ...asArray(baseReviewCards)].filter(Boolean).slice(0, 5),
+    reviewCards: [card].filter(Boolean),
     dataLimitations,
     draftRequest: detection,
     selectedTarget: selection.target,

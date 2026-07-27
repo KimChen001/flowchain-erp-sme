@@ -186,7 +186,7 @@ function suggestion(input = {}) {
     sourceObjectLabel: text(input.sourceObjectLabel || navigationLinks[0]?.entityLabel || labelFor(sourceObjectType, sourceObjectId)),
     conclusion: text(input.conclusion || input.reason || input.title),
     whyNow: text(input.whyNow || input.reason || '当前证据显示该事项会影响今日处理优先级。'),
-    keyEvidence: keyEvidence.length ? keyEvidence : ['当前工作区证据支持该建议，仍需业务负责人复核。'],
+    keyEvidence,
     businessImpact: text(input.businessImpact || '可能影响交付、采购周期或财务协同。'),
     suggestedAction: text(input.suggestedAction || '先查看证据，再生成内部复核草稿。'),
     navigationLinks: navigationLinks.length ? navigationLinks : [nav('打开风险与异常', 'risk_workspace', sourceObjectId)],

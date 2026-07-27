@@ -34,7 +34,8 @@ function assertRuntimeResponse(result) {
   }
   assert.equal(result.version, 'v2')
   assert.ok(result.conclusion.title)
-  assert.ok(result.keyEvidence.length > 0)
+  assert.equal(result.realEvidenceCount, result.keyEvidence.length)
+  assert.ok(result.keyEvidence.length > 0 || result.contextCardCount > 0)
   assert.ok(result.sourceSummary.length > 0)
   assert.ok(result.navigationLinks.every((link) => link.returnTo === 'ai-assistant'))
   assert.ok(result.navigationLinks.every((link) => link.source === 'aiRuntimeGateway'))
@@ -270,8 +271,7 @@ test('Invoice contextual draft uses review-only card or limitation without payme
 test('no context and ambiguous contextual draft requests do not invent target ids', () => {
   const missing = buildAiRuntimeResponseV2(loadDb(), { message: '打开这个对象的人工复核草稿。' })
   assert.equal(missing.status, 200)
-  assertContextualReviewCard(missing.body.reviewCards[0])
-  assert.equal(missing.body.reviewCards[0].targetEntityId, '')
+  assert.equal(missing.body.reviewCards.length, 0)
   assert.match(visibleText(missing.body.dataLimitations), /当前上下文不足|选择具体对象/)
 
   const ambiguous = buildAiRuntimeResponseV2(loadDb(), {
@@ -284,7 +284,7 @@ test('no context and ambiguous contextual draft requests do not invent target id
     },
   })
   assert.equal(ambiguous.status, 200)
-  assertContextualReviewCard(ambiguous.body.reviewCards[0])
+  assert.equal(ambiguous.body.reviewCards.length, 0)
   assert.match(visibleText(ambiguous.body.dataLimitations), /多个相关对象|人工确认/)
 })
 
@@ -333,7 +333,7 @@ test('supported intents return evidence-bounded responses', () => {
     const { status, body } = buildAiRuntimeResponseV2(loadDb(), { message: prompt, activeModuleId: 'overview' })
     assert.equal(status, 200, prompt)
     assertRuntimeResponse(body)
-    assert.ok(body.keyEvidence.length >= 1, prompt)
+    assert.equal(body.realEvidenceCount, body.keyEvidence.length, prompt)
     assert.ok(body.sourceSummary.some((item) => /v2/.test(item.sourceId)), prompt)
     assert.doesNotMatch(visibleText(body), /AI 助手暂不可用|当前未能读取工作区证据|请稍后重试/i, prompt)
   }

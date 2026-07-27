@@ -130,7 +130,7 @@ function linkTarget(moduleId, entityType = 'business_object', entityId = '') {
 function evidence(input = {}) {
   const moduleId = input.moduleId || 'overview'
   const entityType = input.entityType || 'business_object'
-  const entityId = text(input.entityId || input.id || input.objectLabel || input.label)
+  const entityId = text(input.entityId)
   const entityLabel = text(input.entityLabel || input.objectLabel || input.label || input.evidenceLabel, entityId || '来源证据')
   return {
     id: text(input.id, `${moduleId}-${entityId || entityLabel}`),
@@ -143,7 +143,7 @@ function evidence(input = {}) {
     entityType,
     entityId,
     moduleId,
-    evidenceType: text(input.evidenceType || '业务证据'),
+    evidenceType: text(input.evidenceType || 'navigation_context'),
     summary: text(input.summary || input.evidenceSummary || input.description, '当前工作区来源证据。'),
     value: input.value ?? null,
     status: text(input.status),
@@ -152,6 +152,18 @@ function evidence(input = {}) {
     navigationLinks: [nav(`查看${entityLabel}`, moduleId, entityType, entityId, entityLabel)],
     linkTarget: linkTarget(moduleId, entityType, entityId),
   }
+}
+
+function classifyEvidence(items = [], ctx = {}) {
+  const rows = sourceRows(ctx)
+  const factIds = new Set(Object.values(rows).flatMap((records) => asArray(records).flatMap((record) => [
+    record?.id, record?.po, record?.sku, record?.rfq, record?.salesOrderId,
+    record?.documentNumber, record?.invoiceNumber,
+  ])).map((value) => text(value)).filter(Boolean))
+  return items.map((item) => {
+    const isFact = Boolean(item.entityId) && factIds.has(text(item.entityId))
+    return { ...item, evidenceType: isFact ? 'business_fact' : item.evidenceType === 'database_aggregate' ? 'database_aggregate' : item.evidenceType }
+  })
 }
 function moduleLabel(moduleId = '') {
   if (moduleId === 'overview') return '今日行动'
@@ -479,8 +491,9 @@ function sourceRows(ctx) {
   const receivingDocs = asArray(db.receivingDocs)
   const supplierInvoices = asArray(db.supplierInvoices)
   const purchaseRequests = asArray(db.purchaseRequests)
+  const suppliers = asArray(db.suppliers)
   const salesOrders = asArray(ctx.salesDemand?.orders)
-  return { purchaseOrders, products, rfqs, receivingDocs, supplierInvoices, purchaseRequests, salesOrders }
+  return { purchaseOrders, products, rfqs, receivingDocs, supplierInvoices, purchaseRequests, suppliers, salesOrders }
 }
 function importantObjects(ctx, request = {}) {
   const rows = sourceRows(ctx)
@@ -779,6 +792,16 @@ function evidenceForIntent(intent, ctx, request) {
   ]
   if (intent.id === 'supplier_risk') return [
     ...objectEvidenceForIntent(intent, ctx, request),
+    ...sourceRows(ctx).suppliers.slice(0, 3).map((supplier) => evidence({
+      id: text(supplier.id || supplier.code || supplier.name),
+      moduleId: 'srm',
+      entityType: 'supplier',
+      entityId: text(supplier.id || supplier.code),
+      entityLabel: text(supplier.name || supplier.code || supplier.id),
+      evidenceLabel: '供应商业务记录',
+      summary: `${text(supplier.name || supplier.code || supplier.id)}，状态 ${text(supplier.status, '待复核')}，风险 ${text(supplier.riskLevel || supplier.risk, '待复核')}。`,
+      severity: /high|高/.test(text(supplier.riskLevel || supplier.risk)) ? 'risk' : 'warning',
+    })),
     evidence({ id: 'supplier-risk', moduleId: 'srm', entityType: 'supplier', entityLabel: '供应商运营档案 / 供应商风险', evidenceLabel: '风险信号', summary: `供应商运营档案风险信号：供应商观察项 ${number(ctx.reports.summary?.supplierRiskCount)} 项，涉及 PO / RFQ / Invoice 证据，供应商沟通草稿 ${number(ctx.collaboration.summary?.supplierDraftCount)} 条。`, severity: 'warning' }),
     evidence({ id: 'supplier-drafts', moduleId: 'collaboration-drafts', entityLabel: '供应商沟通草稿', evidenceLabel: '协同草稿', summary: `协同草稿 ${number(ctx.collaboration.summary?.totalDraftCount)} 条。` }),
   ]
@@ -841,30 +864,52 @@ function linksForEvidence(items) {
     (link) => `${link.moduleId}:${link.entityId}:${link.label}`,
   ).slice(0, 7)
 }
-function conclusionFor(intent, ev) {
+function conclusionFor(intent, realEvidence) {
   if (intent.id === 'unsafe_request') return {
     title: '无法执行该请求，已转为安全复核建议',
     summary: '该请求涉及正式业务处理、外部触达、数据变更或技术信息披露。AI 助手只基于当前工作区证据给出说明、草稿预览和人工复核入口。',
     severity: 'risk',
-    confidence: 'high',
+    confidence: realEvidence.length >= 2 ? 'high' : realEvidence.length ? 'medium' : 'low',
+  }
+  if (!realEvidence.length) return {
+    title: `${intent.label}：当前没有可核验业务记录`,
+    summary: '当前工作区没有可核验的供应商、SKU、采购订单或关联业务记录。可以创建或导入数据，或在本地显式加载演示场景。',
+    severity: 'warning',
+    confidence: 'low',
   }
   return {
     title: `${intent.label}：需要结合证据复核`,
-    summary: `已基于 ${ev.length} 组当前工作区证据组织回答，建议先查看证据、数据限制和人工复核入口。`,
-    severity: ev.some((item) => item.severity === 'risk') ? 'risk' : 'warning',
-    confidence: ev.length >= 2 ? 'high' : 'medium',
+    summary: `已基于 ${realEvidence.length} 组可核验业务证据组织回答，建议先查看证据、数据限制和人工复核入口。`,
+    severity: realEvidence.some((item) => item.severity === 'risk') ? 'risk' : 'warning',
+    confidence: realEvidence.length >= 2 ? 'high' : 'medium',
   }
 }
 function buildResponse({ request, intent, ctx, modeNotice = '', conversationGrounding = null, resolvedContext = null }) {
-  const ev = evidenceForIntent(intent, ctx, request)
+  const allEvidence = classifyEvidence(evidenceForIntent(intent, ctx, request), ctx)
+  const ev = allEvidence.filter((item) => ['business_fact', 'database_aggregate'].includes(item.evidenceType))
+  const contextCards = allEvidence.filter((item) => !['business_fact', 'database_aggregate'].includes(item.evidenceType))
   const links = linksForEvidence(ev)
+  const draftConversationGrounding = {
+    ...(conversationGrounding || {}),
+    entityRefs: [
+      ...asArray(conversationGrounding?.entityRefs),
+      ...ev.filter((item) => item.entityId).map((item) => ({
+        entityType: item.entityType,
+        entityId: item.entityId,
+        entityLabel: item.entityLabel,
+        moduleId: item.moduleId,
+        source: 'currentEvidence',
+        confidence: 'high',
+      })),
+    ],
+  }
   const extraLimitations = modeNotice ? [{ label: '外部辅助模式未启用', description: modeNotice, severity: 'warning', consequence: '已使用当前工作区证据辅助回答。' }] : []
   const contextualDraft = buildContextualReviewCardsV2({
     request,
     intent,
     contextBundle: { evidenceRefs: ev, navigationRefs: links },
     resolvedContext,
-    conversationGrounding,
+    conversationGrounding: draftConversationGrounding,
     baseReviewCards: ev.length ? reviewCards(intent, links) : [],
   })
   const limitations = collectLimitations(ctx, [...extraLimitations, ...conversationLimitations(resolvedContext || {}), ...contextualDraft.dataLimitations])
@@ -884,6 +929,10 @@ function buildResponse({ request, intent, ctx, modeNotice = '', conversationGrou
     },
     conclusion,
     keyEvidence: ev,
+    contextCards,
+    realEvidenceCount: ev.length,
+    contextCardCount: contextCards.length,
+    limitationCount: limitations.length,
     businessImpact: [
       impact('采购', '影响采购优先级、到货节奏和草稿复核顺序。', conclusion.severity, ev.map((item) => item.entityLabel)),
       impact('库存', '库存风险和数据限制需要与来源证据一起复核。', 'warning'),
@@ -895,7 +944,9 @@ function buildResponse({ request, intent, ctx, modeNotice = '', conversationGrou
     recommendedActions: recommendedActions(links, intent.id === 'unsafe_request'),
     navigationLinks: links,
     dataLimitations: limitations,
-    reviewCards: ev.length ? contextualDraft.reviewCards : [],
+    reviewCards: contextualDraft.draftRequest.isDraftRequest
+      ? (contextualDraft.selectedTarget && !contextualDraft.ambiguous ? contextualDraft.reviewCards : [])
+      : (ev.length ? contextualDraft.reviewCards : []),
     safetyBoundaries: SAFETY_BOUNDARIES,
     followUpQuestions: ['查看数据限制', '进入人工复核', '打开相关模块'],
     contextBreadcrumbs: conversationGrounding ? buildContextBreadcrumbsV2(conversationGrounding, resolvedContext || {}) : [],
@@ -958,7 +1009,7 @@ function buildContextBundle(request, ctx, intent, conversationGrounding = null, 
       focusTarget: request.focusTarget || null,
     },
     evidenceSources: sourceSummary(ctx),
-    businessObjects: cleanList(ctx.pilot.pilotScope?.includedBusinessObjects, ['PR', 'RFQ', 'PO', 'GRN', 'Invoice', 'Supplier', 'SKU']),
+    supportedEntityTypes: cleanList(ctx.pilot.pilotScope?.includedBusinessObjects, ['PR', 'RFQ', 'PO', 'GRN', 'Invoice', 'Supplier', 'SKU']),
     riskSignals: cleanList(asArray(ctx.pilot.riskAndBlockerItems).map((item) => item.itemLabel), ['数据限制', '人工复核']),
     dataQualitySignals: cleanList(asArray(ctx.data.qualityIssues).map((item) => item.title), ['数据质量事项']),
     reviewDraftSignals: cleanList(asArray(ctx.review.drafts).map((item) => item.title), ['行动草稿']),
@@ -1035,12 +1086,16 @@ export function buildAiRuntimeSafeFallbackV2(request = {}, reasonLabel = '当前
       dataScopeLabel: DATA_SCOPE,
     },
     conclusion: {
-      title: '当前工作区证据：需要结合来源复核',
-      summary: '已保留可用业务证据入口。建议先查看今日行动、库存管理、收货记录和人工复核入口，再继续处理。',
+      title: '当前没有可核验业务记录',
+      summary: '当前工作区没有可核验的供应商、SKU、采购订单或关联业务记录。已保留系统说明和操作入口。',
       severity: 'warning',
-      confidence: 'medium',
+      confidence: 'low',
     },
-    keyEvidence,
+    keyEvidence: [],
+    contextCards: keyEvidence,
+    realEvidenceCount: 0,
+    contextCardCount: keyEvidence.length,
+    limitationCount: 1,
     businessImpact: [
       impact('采购', '采购优先级和到货节奏需要结合来源证据人工复核。', 'warning'),
       impact('库存', '库存可用量和可承诺量需从库存管理继续核对。', 'warning'),
@@ -1050,7 +1105,7 @@ export function buildAiRuntimeSafeFallbackV2(request = {}, reasonLabel = '当前
     recommendedActions: recommendedActions(links),
     navigationLinks: links,
     dataLimitations: [cleanLimitation({ label: reasonLabel, description: '部分来源证据暂时未完整读取，已保留可用模块入口。', severity: 'warning', consequence: '请打开来源模块核对后再继续处理。' })],
-    reviewCards: keyEvidence.length ? reviewCards({ id: 'today_attention', label: '当前工作区证据' }, links) : [],
+    reviewCards: [],
     safetyBoundaries: SAFETY_BOUNDARIES,
     followUpQuestions: ['查看数据限制', '进入人工复核', '打开相关模块'],
     contextBreadcrumbs: [],
@@ -1062,10 +1117,10 @@ export function buildAiRuntimeSafeFallbackV2(request = {}, reasonLabel = '当前
       confidence: 'low',
     },
     sourceSummary: [
-      { sourceId: 'safe-local-evidence', sourceLabel: '当前工作区数据', signalCount: keyEvidence.length, navigationLinks: links.slice(0, 1) },
+      { sourceId: 'safe-local-context', sourceLabel: '系统说明与操作入口', signalCount: keyEvidence.length, navigationLinks: links.slice(0, 1) },
     ],
     readinessSignals: [
-      { signalLabel: '证据辅助回答', statusLabel: DATA_SCOPE, signalCount: keyEvidence.length },
+      { signalLabel: '可核验业务证据', statusLabel: DATA_SCOPE, signalCount: 0 },
       { signalLabel: '复核优先', statusLabel: '草稿预览和人工复核', signalCount: SAFETY_BOUNDARIES.length },
       { signalLabel: '数据限制', statusLabel: '集中展示', signalCount: 1 },
     ],

@@ -62,7 +62,7 @@ function providerInput(question = '今天有什么需要我处理？') {
   const draft = localDraft(question)
   return buildProviderInputPackageV2({
     requestIntent: { id: draft.intent, label: draft.conclusion.title },
-    businessObjects: ['PR', 'RFQ', 'PO', 'GRN', 'Invoice', 'Supplier', 'SKU'],
+    supportedEntityTypes: ['PR', 'RFQ', 'PO', 'GRN', 'Invoice', 'Supplier', 'SKU'],
     evidenceSources: draft.sourceSummary,
     navigationIndex: draft.navigationLinks,
     dataLimitations: draft.dataLimitations,
@@ -117,7 +117,7 @@ test('provider-specific request bodies are bounded and exclude secrets full data
     const core = buildBoundedProviderRequestCore(input)
     assert.ok(core.evidencePackage.keyEvidence.length <= 12)
     assert.ok(core.evidencePackage.sourceSummary.length <= 12)
-    assert.ok(core.evidencePackage.businessObjects.length <= 20)
+    assert.ok(core.evidencePackage.supportedEntityTypes.length <= 20)
     assert.ok(core.evidencePackage.dataLimitations.length <= 12)
     assert.ok(core.evidencePackage.readinessSignals.length <= 12)
     assert.ok(core.task.question.length <= 1200)

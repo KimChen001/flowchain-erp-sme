@@ -133,6 +133,10 @@ export type AiResponseV2 = {
   scope: AiResponseV2Scope;
   conclusion: AiResponseV2Conclusion;
   keyEvidence: AiResponseV2EvidenceItem[];
+  contextCards?: AiResponseV2EvidenceItem[];
+  realEvidenceCount?: number;
+  contextCardCount?: number;
+  limitationCount?: number;
   businessImpact: AiResponseV2BusinessImpactItem[];
   recommendedActions: AiResponseV2RecommendedAction[];
   navigationLinks: AiResponseV2NavigationLink[];

@@ -30,7 +30,7 @@ function boundedEvidencePackage(input = {}) {
   return {
     keyEvidence: asArray(evidencePackage.keyEvidence).slice(0, 12),
     sourceSummary: asArray(evidencePackage.sourceSummary).slice(0, 12),
-    businessObjects: asArray(evidencePackage.businessObjects).slice(0, 20),
+    supportedEntityTypes: asArray(evidencePackage.supportedEntityTypes).slice(0, 20),
     dataLimitations: asArray(evidencePackage.dataLimitations).slice(0, 12),
     readinessSignals: asArray(evidencePackage.readinessSignals).slice(0, 12),
   }

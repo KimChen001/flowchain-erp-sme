@@ -25,10 +25,11 @@ function visibleText(value) {
 function assertAvailableResponse(body, expectedPattern) {
   assert.equal(body.version, 'v2')
   assert.ok(body.conclusion?.title)
-  assert.ok(body.keyEvidence?.length > 0)
+  assert.equal(body.realEvidenceCount, body.keyEvidence?.length || 0)
+  assert.ok((body.keyEvidence?.length || 0) > 0 || body.contextCardCount > 0)
   assert.ok(body.businessImpact?.length > 0)
   assert.ok(body.recommendedActions?.length > 0)
-  assert.ok(body.navigationLinks?.length > 0)
+  if (body.realEvidenceCount > 0) assert.ok(body.navigationLinks?.length > 0)
   assert.ok(body.dataLimitations)
   assert.ok(body.reviewCards?.every((card) => card.previewOnly && card.reviewRequired && card.requiresHumanReview))
   const text = visibleText(body)

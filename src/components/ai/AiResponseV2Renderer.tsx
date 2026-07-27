@@ -65,11 +65,18 @@ export function AiResponseV2Renderer({ response, onReviewActionDraft, onFollowUp
     <div data-testid="ai-response-v2" data-answer-mode={focused.answerMode} className="space-y-3 rounded-xl p-3" style={{ background: A.white, border: `1px solid ${A.border}` }}>
       <section data-testid="ai-focused-conclusion">
         <div className="flex items-start justify-between gap-2"><div><h3 className="text-sm font-semibold leading-5" style={{ color: A.label }}>{focused.headline}</h3><p className="mt-1 text-xs leading-5" style={{ color: A.gray1 }}>{focused.summary}</p></div><Chip tone={focused.severity}>{severityLabel[focused.severity]}</Chip></div>
+        <div className="mt-2 flex gap-2 text-[11px]" style={{ color: A.gray2 }}>
+          <span>可核验业务证据 {response.realEvidenceCount ?? response.keyEvidence.length}</span>
+          <span>· 系统说明 {response.contextCardCount ?? response.contextCards?.length ?? 0}</span>
+          <span>· 数据限制 {response.limitationCount ?? response.dataLimitations.length}</span>
+        </div>
       </section>
 
       {focused.primaryItems.length ? <section data-testid="ai-focused-primary-items" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>重点事项</div>{focused.primaryItems.map((item) => <article key={item.id} className="rounded-lg p-2.5" style={{ background: A.gray6 }}><div className="flex items-start justify-between gap-2"><div className="min-w-0 text-xs font-semibold"><EvidenceLink item={item.evidence}>{item.title}</EvidenceLink></div>{item.status ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{item.status}</span> : null}</div><p className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>{item.reason}</p>{item.impact ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>影响：{item.impact}</p> : null}</article>)}</section> : null}
 
       {focused.primaryAction || focused.secondaryActions.length ? <section data-testid="ai-focused-actions"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>下一步</div><div className="mt-2 flex flex-wrap gap-2">{focused.primaryAction ? <Action action={focused.primaryAction} primary onReviewActionDraft={onReviewActionDraft} /> : null}{focused.secondaryActions.map((action, index) => <Action key={`${action.kind}-${action.label}-${index}`} action={action} onReviewActionDraft={onReviewActionDraft} />)}</div></section> : null}
+
+      {response.contextCards?.length ? <Detail title="系统说明与操作入口" testId="ai-context-details">{response.contextCards.slice(0, 5).map((item) => <div key={item.id} className="text-[11px] leading-5"><div className="font-semibold">{item.entityLabel || item.label}</div><div style={{ color: A.gray1 }}>{item.summary}</div></div>)}</Detail> : null}
 
       {focused.evidence.length || focused.businessImpact.length || focused.limitations.length ? <section className="space-y-2" data-testid="ai-focused-details">
         {focused.evidence.length ? <Detail title={`查看关键证据（${Math.min(5, focused.evidence.length)}）`} testId="ai-evidence-details">{focused.evidence.map((item) => <div key={item.id} className="text-[11px] leading-5"><EvidenceLink item={item} /><div style={{ color: A.gray2 }}>{[item.status, item.value, item.sourceLabel].filter((value) => value !== undefined && value !== null && value !== "").join(" · ")}</div></div>)}</Detail> : null}

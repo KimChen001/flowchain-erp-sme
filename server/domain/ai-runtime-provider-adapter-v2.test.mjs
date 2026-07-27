@@ -38,7 +38,8 @@ function visibleText(value) {
 function assertRuntimeResponse(response) {
   assert.equal(response.version, 'v2')
   assert.ok(response.conclusion?.title)
-  assert.ok(response.keyEvidence?.length > 0)
+  assert.equal(response.realEvidenceCount, response.keyEvidence?.length || 0)
+  assert.ok((response.keyEvidence?.length || 0) > 0 || response.contextCardCount > 0)
   assert.ok(response.navigationLinks.every((link) => link.returnTo === 'ai-assistant'))
   assert.ok(response.reviewCards.every((card) => card.previewOnly && card.reviewRequired && card.requiresHumanReview))
   assert.equal(response.dataScopeLabel, '当前工作区数据')
@@ -51,7 +52,7 @@ function localDraft(question = '今天有什么需要我处理？') {
 function contextBundleFromDraft(draft = localDraft()) {
   return {
     requestIntent: { id: draft.intent, label: draft.conclusion.title },
-    businessObjects: ['PR', 'RFQ', 'PO', 'GRN', 'Invoice', 'Supplier', 'SKU'],
+    supportedEntityTypes: ['PR', 'RFQ', 'PO', 'GRN', 'Invoice', 'Supplier', 'SKU'],
     evidenceSources: draft.sourceSummary,
     navigationIndex: draft.navigationLinks,
     dataLimitations: draft.dataLimitations,
@@ -94,7 +95,7 @@ test('provider input package is bounded and excludes full data and secrets', () 
   const input = buildProviderInputPackageV2(contextBundleFromDraft(draft), { message: '今天有什么需要我处理？'.repeat(100) }, draft)
   assert.ok(input.evidencePackage.keyEvidence.length <= 12)
   assert.ok(input.evidencePackage.sourceSummary.length <= 12)
-  assert.ok(input.evidencePackage.businessObjects.length <= 20)
+  assert.ok(input.evidencePackage.supportedEntityTypes.length <= 20)
   assert.ok(input.evidencePackage.dataLimitations.length <= 12)
   assert.ok(input.evidencePackage.readinessSignals.length <= 12)
   assert.ok(input.task.question.length <= 1200)
