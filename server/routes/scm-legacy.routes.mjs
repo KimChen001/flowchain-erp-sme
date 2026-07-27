@@ -88,6 +88,7 @@ import { handleAiRoute } from "./ai.routes.mjs";
 import { handleRuntimeCapabilityRoute } from "./runtime-capability.routes.mjs";
 import { handleIntakeRoute } from "./intake.routes.mjs";
 import { handleCustomFieldsRoute } from "./custom-fields.routes.mjs";
+import { localDevelopmentEnabled } from "../domain/local-development-contract.mjs";
 import {
   actorFromBody,
   applyWorkflowTransition,
@@ -912,6 +913,28 @@ export function createScmServer() {
         });
       }
 
+      if (req.method === "GET" && url.pathname === "/api/dev/local-status") {
+        if (!localDevelopmentEnabled(process.env))
+          return send(res, 404, { error: "Not found" });
+        const prisma = await getPrismaClient(process.env);
+        const tenantId = String(process.env.FLOWCHAIN_DEFAULT_TENANT_ID || "").trim();
+        const [tenant, users, demoMasterDataCount, demoScenarioCount] = await Promise.all([
+          prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } }),
+          prisma.user.findMany({ where: { tenantId, status: "active", email: { in: ["admin@flowchain.local", "kim@example.com"] } }, select: { email: true }, orderBy: { email: "asc" } }),
+          prisma.item.count({ where: { tenantId, id: { startsWith: "LOCAL-DEMO-ITEM-" } } }),
+          prisma.purchaseOrder.count({ where: { tenantId, id: { startsWith: "LOCAL-DEMO-PO-" } } }),
+        ]);
+        return send(res, 200, {
+          localDevelopment: true,
+          tenantId: tenant?.id || tenantId,
+          workspaceName: tenant?.name || "",
+          availableLoginEmails: users.map(user => user.email),
+          demoMasterDataLoaded: demoMasterDataCount > 0,
+          demoScenarioLoaded: demoScenarioCount > 0,
+          universalIntakeEnabled: process.env.FLOWCHAIN_ENABLE_UNIVERSAL_INTAKE !== "false",
+        });
+      }
+
       if (handleRuntimeCapabilityRoute({ req, res, url, send })) return;
 
       if (
@@ -1015,6 +1038,12 @@ export function createScmServer() {
           expiresAt: identity.expiresAt,
         });
       }
+
+      if (url.pathname.startsWith("/api/master-data") && !identity.authenticated)
+        return send(res, 401, {
+          code: "AUTHENTICATION_REQUIRED",
+          message: "Sign in to access tenant master data.",
+        });
 
       const routeContext = {
         req,

@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { createSecureClientMutationId } from "../../lib/client-id";
 
 type Order = {
   id: string;
@@ -199,7 +200,7 @@ type ShipmentWorkbench = {
 };
 
 const key = () =>
-  crypto.randomUUID ? crypto.randomUUID() : `outbound-${Date.now()}`;
+  createSecureClientMutationId("outbound");
 const pretty: Record<string, string> = {
   draft: "草稿",
   confirmed: "已确认",

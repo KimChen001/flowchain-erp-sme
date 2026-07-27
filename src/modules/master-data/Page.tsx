@@ -6,7 +6,7 @@ import type { ActiveContext } from "../ai-assistant/Panel";
 import MasterDataDetailModal, { type DetailRecord } from "./MasterDataDetailModal";
 import MasterDataOverview from "./MasterDataOverview";
 import MasterDataTables from "./MasterDataTables";
-import { fetchMasterDataSnapshot, type MasterDataSnapshot } from "./api";
+import { fetchMasterDataSnapshot, masterDataErrorStatus, type AsyncDataStatus, type MasterDataSnapshot } from "./api";
 import { exportMasterDataCsv } from "./export";
 import { CustomerTable, PrintTemplateTable } from "./StandardMasterTables";
 import { PRINT_TEMPLATE_CATALOG, type PrintTemplateCatalogItem } from "./standardData";
@@ -45,7 +45,7 @@ export default function MasterDataPage({
   const [search, setSearch] = useState("");
   const [detail, setDetail] = useState<DetailRecord | null>(null);
   const [masterData, setMasterData] = useState<MasterDataSnapshot>(fallbackMasterData);
-  const [masterDataError, setMasterDataError] = useState("");
+  const [loadStatus, setLoadStatus] = useState<AsyncDataStatus>("loading");
   const [templateCatalog, setTemplateCatalog] = useState<PrintTemplateCatalogItem[]>(PRINT_TEMPLATE_CATALOG);
 
   function openTab(next: MasterDataTab) {
@@ -84,8 +84,13 @@ export default function MasterDataPage({
   useEffect(() => {
     let alive = true;
     fetchMasterDataSnapshot(fallbackMasterData)
-      .then((snapshot) => { if (alive) { setMasterData(snapshot); setMasterDataError(""); } })
-      .catch(() => { if (alive) { setMasterData(fallbackMasterData); setMasterDataError("主数据 API 暂不可用，未使用前端静态数据替代。"); } });
+      .then((snapshot) => {
+        if (!alive) return;
+        setMasterData(snapshot);
+        const total = snapshot.items.length + snapshot.suppliers.length + snapshot.customers.length + snapshot.warehouses.length + snapshot.paymentTerms.length + snapshot.taxCodes.length;
+        setLoadStatus(total > 0 ? "ready_with_data" : "ready_empty");
+      })
+      .catch((error) => { if (alive) { setMasterData(fallbackMasterData); setLoadStatus(masterDataErrorStatus(error)); } });
     return () => { alive = false; };
   }, []);
 
@@ -157,7 +162,17 @@ export default function MasterDataPage({
 
   const [entityLabel, templateName] = importLabels[tab];
 
-  if (masterDataError) return <Card className="p-6"><h2 className="text-sm font-semibold" style={{ color: A.red }}>基础资料加载失败</h2><p className="mt-2 text-sm" style={{ color: A.sub }}>{masterDataError}</p><button onClick={() => window.location.reload()} className="mt-4 rounded-lg bg-slate-100 px-3 py-2 text-sm">重新加载</button></Card>;
+  if (loadStatus === "loading") return <Card className="p-6" aria-live="polite">正在加载基础资料…</Card>;
+  if (!["ready_with_data", "ready_empty"].includes(loadStatus)) {
+    const messages: Record<string, string> = {
+      unauthenticated: "登录已失效，请重新登录后查看基础资料。",
+      forbidden: "当前用户没有查看基础资料的权限。",
+      not_found: "基础资料服务路由不存在。",
+      server_error: "基础资料服务发生错误，请稍后重试。",
+      network_error: "无法连接基础资料服务，请检查网络或本地 API。",
+    };
+    return <Card className="p-6"><h2 className="text-sm font-semibold" style={{ color: A.red }}>基础资料加载失败</h2><p className="mt-2 text-sm" style={{ color: A.sub }}>{messages[loadStatus]}</p><button onClick={() => window.location.reload()} className="mt-4 rounded-lg bg-slate-100 px-3 py-2 text-sm">重新加载</button></Card>;
+  }
 
   return (
     <div className="space-y-4">
@@ -193,9 +208,11 @@ export default function MasterDataPage({
         ) : tab === "overview" ? (
           <MasterDataOverview data={masterData} onOpenTab={openTab} />
         ) : tab === "customers" ? (
-          <CustomerTable customers={filteredCustomers} />
+          filteredCustomers.length ? <CustomerTable customers={filteredCustomers} /> : <div className="p-10 text-center"><h2 className="font-semibold">暂无客户资料</h2><p className="mt-2 text-sm text-slate-500">可以通过 Structured Intake 导入，或在本地运行 pilot:setup:demo。</p></div>
         ) : tab === "print-templates" ? (
           <PrintTemplateTable templates={filteredTemplates} onCopy={(item) => setTemplateCatalog((current) => [...current, { ...item, id: `${item.id}-copy-${Date.now()}`, name: `${item.name} 副本`, isDefault: false, updatedAt: new Date().toLocaleString("zh-CN") }])} />
+        ) : tab === "suppliers" && !filteredSuppliers.length ? (
+          <div className="p-10 text-center"><h2 className="font-semibold">暂无供应商资料</h2><p className="mt-2 text-sm text-slate-500">可以通过 Structured Intake 导入，或在本地运行 pilot:setup:demo。</p></div>
         ) : (
           <MasterDataTables
             tab={tab as MasterDataTableTab}

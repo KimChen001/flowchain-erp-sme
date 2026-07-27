@@ -13,6 +13,7 @@ export const DATABASE_MODE_MUTATION_BLOCKED_ERROR = 'This mutation is not availa
 
 const routeDefinitions = [
   { method: 'GET', pattern: /^\/api\/health$/, group: 'health', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed' },
+  { method: 'GET', pattern: /^\/api\/dev\/local-status$/, group: 'local-development', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed-local-only' },
   { method: 'OPTIONS', pattern: /^\/.*$/, group: 'cors-preflight', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed' },
 
   { method: 'GET', pattern: /^\/api\/me$/, group: 'auth-context', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
@@ -27,7 +28,7 @@ const routeDefinitions = [
 
   { method: 'GET', pattern: /^\/api\/sales-demand\/(?:summary|orders|risks|impact|po-impact)(?:\/.*)?$/, group: 'sales-demand', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'GET', pattern: /^\/api\/evidence-graph(?:\/.*)?$/, group: 'evidence-graph', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
-  { method: 'GET', pattern: /^\/api\/master-data\/(?:items|suppliers|warehouses|payment-terms|tax-codes)(?:\/[^/]+)?$/, group: 'master-data', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
+  { method: 'GET', pattern: /^\/api\/master-data(?:\/(?:items|suppliers|customers|warehouses|payment-terms|tax-codes)(?:\/[^/]+)?)?$/, group: 'master-data', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'GET', pattern: /^\/api\/procurement\/(?:documents|links|followups|summary)(?:\/.*)?$/, group: 'procurement-read', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'GET', pattern: /^\/api\/procurement\/(?:transaction-baseline|transaction-chain|supplier-responses)(?:\/.*)?$/, group: 'procurement-transactions', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
   { method: 'GET', pattern: /^\/api\/procurement\/purchase-requests\/[^/]+\/operational-detail$/, group: 'procurement-transactions', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },

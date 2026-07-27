@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowLeft, Check, CheckCircle2, Landmark, Paperclip, Plu
 import { Card } from "../../components/ui";
 import { apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
+import { createSecureClientMutationId } from "../../lib/client-id";
 
 type Page<T> = { items: T[]; total: number; capability?: { enabled?: boolean } };
 type Account = { id: string; accountCode: string; name: string; accountType: string; currency: string; openingBalance: string | null; currentBalance: string | null; status: string; version: number };
@@ -12,7 +13,7 @@ type Entry = { id: string; entryNumber: string; direction: string; amount: strin
 type Reconciliation = { status: "matched" | "mismatch"; checks: Array<{ rule: string; status: string; expected: string; recorded: string }>; amount: string | null; allocationTotal: string | null; calculatedBalance: string | null };
 
 const post = <T,>(url: string, body: unknown) => apiJson<T>(url, { method: "POST", body: JSON.stringify(body) });
-const key = () => crypto.randomUUID();
+const key = () => createSecureClientMutationId("settlement");
 const show = (value: unknown) => value === null || value === undefined ? "No permission" : String(value);
 const statusClass = (value: string) => value === "matched" || value === "posted" || value === "settled" ? "bg-emerald-100 text-emerald-700" : value === "mismatch" ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-700";
 

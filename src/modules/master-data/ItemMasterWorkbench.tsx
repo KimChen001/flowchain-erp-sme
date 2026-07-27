@@ -625,6 +625,12 @@ export default function ItemMasterWorkbench({
       </div>
       {error && <p className="mt-3 text-xs text-red-600">{error}</p>}
       <div className="mt-3 overflow-auto">
+        {!error && shown.length === 0 && (
+          <div className="p-10 text-center">
+            <h2 className="font-semibold">暂无物料资料</h2>
+            <p className="mt-2 text-sm text-slate-500">可以新建物料、使用 Structured Intake，或在本地运行 pilot:setup:demo。</p>
+          </div>
+        )}
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b text-left">

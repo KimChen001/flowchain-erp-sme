@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router";
 import { AlertTriangle, ArrowLeft, Check, ClipboardCheck, CloudOff, PackageCheck, RefreshCw, Send, Wifi } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
+import { createSecureClientMutationId } from "../../lib/client-id";
 
 type Task = { taskId: string; taskType: string; entityId: string; title: string; summary?: string | null; status: string; amountSummary?: { amount?: string; currency?: string } | null; availableActions: string[]; entityVersion: number; deepLink: string; limitations?: string[]; updatedAt: string };
 type Po = { id: string; orderNumber: string; status: string; supplierSnapshot?: { supplierName?: string } | null; lines: Array<{ id?: string; sku?: string; itemNameSnapshot?: string; quantity?: number; unitSnapshot?: string; unitPrice?: number | null; amount?: number | null }>; amountSummary?: { totalAmount?: number; currency?: string } | null; entityVersion: number; availableActions: string[]; limitations: string[] };
@@ -13,7 +14,7 @@ const button = "inline-flex min-h-11 items-center justify-center gap-2 rounded-m
 const secondary = `${button} border border-slate-300 bg-white text-slate-800 hover:bg-slate-50`;
 const primary = `${button} bg-blue-700 text-white hover:bg-blue-800`;
 const danger = `${button} border border-rose-300 bg-white text-rose-700 hover:bg-rose-50`;
-const mutationId = () => crypto.randomUUID();
+const mutationId = () => createSecureClientMutationId("mobile");
 
 function StatusBar({ online, pending, conflict, tr }: { online: boolean; pending: boolean; conflict: string; tr: (zh: string, en: string) => string }) {
   return <div className="flex min-h-11 flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-4 py-2 text-sm" data-testid="mobile-network-status">

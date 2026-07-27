@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowRight, Link2, Loader2, ShieldCheck } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A } from "../../components/ui";
+import { createSecureClientMutationId } from "../../lib/client-id";
 
 type Capability = { enabled?: boolean; maturity?: string };
 type Detail = {
@@ -25,7 +26,7 @@ const label: Record<string, string> = {
 };
 const pretty = (value?: string | null) => label[value || ""] || value || "Unavailable";
 const stamp = (value?: string | null) => value ? new Date(value).toLocaleString() : "Unavailable";
-const newKey = () => typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `receiving-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const newKey = () => createSecureClientMutationId("receiving");
 
 function errorMessage(error: unknown) {
   if (!(error instanceof ApiError)) return "Receiving data could not be loaded.";

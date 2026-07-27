@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, FileSpreadsheet, Link2, RefreshCw, RotateC
 import { Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
+import { createSecureClientMutationId } from "../../lib/client-id";
 
 type Account = { id: string; accountCode: string; name: string; accountType: string; currency: string };
 type Mapping = { id: string; templateCode: string; name: string; version: number; cashbookAccountId: string };
@@ -11,7 +12,7 @@ type Line = { id: string; transactionDate: string; direction: "credit" | "debit"
 type Candidate = { id: string; cashbookEntryId: string; score: number; candidateType: string; algorithmVersion: string; evidence: Record<string, unknown> };
 type Group = { id: string; reconciliationNumber: string; workflowStatus: string; integrityStatus: string; totalBankAmount: string | null; totalCashbookAmount: string | null; differenceAmount: string | null; version: number; conclusion: string };
 type Exception = { id: string; exceptionType: string; severity: string; status: string; conclusion: string };
-const key = () => crypto.randomUUID();
+const key = () => createSecureClientMutationId("bank");
 const body = (value: unknown) => ({ method: "POST", body: JSON.stringify(value) });
 
 export default function BankReconciliationWorkbench({ initialView }: { initialView: "bank-statements" | "bank-reconciliation" }) {

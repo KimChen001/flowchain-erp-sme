@@ -109,6 +109,24 @@ function mapTaxCode(record = {}) {
   }
 }
 
+function mapCustomer(record = {}) {
+  const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload) ? record.payload : {}
+  return {
+    id: text(payload.id, record.id),
+    code: text(payload.code, record.recordKey),
+    name: text(payload.name, record.recordKey),
+    status: text(payload.status, 'active'),
+    currency: text(payload.currency, 'CNY'),
+    contact: text(payload.contact),
+    phone: text(payload.phone),
+    email: text(payload.email),
+    address: text(payload.address),
+    paymentTerms: text(payload.paymentTerms),
+    creditStatus: text(payload.creditStatus, '正常'),
+    sourceType: 'database',
+  }
+}
+
 function itemMatches(record = {}, idOrSku = '') {
   const key = lower(idOrSku)
   return [record.id, record.sku, record.name].some((value) => lower(value) === key)
@@ -157,6 +175,25 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
         take: safeLimit(filters.limit),
       })
       return records.map(mapSupplier)
+    },
+    listCustomers: async (filters = {}) => {
+      const client = await resolvePrisma({ env, prisma })
+      if (!client.runtimeRecord?.findMany) return []
+      const query = lower(filters.query)
+      const records = await client.runtimeRecord.findMany({
+        where: { ...tenantWhere(filters), namespace: 'master-data.customers' },
+        orderBy: [{ recordKey: 'asc' }],
+        take: safeLimit(filters.limit),
+      })
+      return records.map(mapCustomer).filter((customer) =>
+        (!query || [customer.id, customer.code, customer.name].some(value => lower(value).includes(query)))
+        && (!text(filters.status) || customer.status === text(filters.status)),
+      )
+    },
+    getCustomer: async (idOrCode = '', options = {}) => {
+      const customers = await createDbMasterDataRepository({ env, prisma }).listCustomers({ ...options, limit: 500 })
+      const key = lower(decodeURIComponent(String(idOrCode || '')))
+      return customers.find(customer => [customer.id, customer.code, customer.name].some(value => lower(value) === key)) || null
     },
     getSupplier: async (idOrName = '', options = {}) => {
       const client = await resolvePrisma({ env, prisma })
