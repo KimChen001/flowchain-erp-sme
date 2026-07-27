@@ -51,7 +51,8 @@ test('PO detail and draft review shell use shared recovery actions', () => {
   assert.match(purchasingSource, /返回采购工作台/)
   assert.match(actionDraftSource, /<RecoveryActions/)
   assert.match(actionDraftSource, /取消草稿/)
-  assert.match(actionDraftSource, /onConfirmSafeAction/)
+  assert.doesNotMatch(actionDraftSource, /onConfirmSafeAction|记录复核结果/)
+  assert.match(actionDraftSource, /文本草稿编辑器/)
   assert.match(actionDraftSource, /不外发/)
 })
 

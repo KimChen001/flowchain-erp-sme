@@ -37,12 +37,6 @@ export type ActionDraftPreview = {
   };
 };
 
-export type ConfirmedActionResult = {
-  createdRecordId?: string;
-  status?: string;
-  auditEventId?: string | null;
-};
-
 function text(value: unknown) {
   if (value === undefined || value === null || value === "") return "—";
   if (typeof value === "boolean") return value ? "是" : "否";
@@ -141,34 +135,6 @@ function draftSourceLabel(source?: string) {
   return labels[source || ""] || "业务上下文";
 }
 
-function confirmedActionTypeForDraft(type?: string) {
-  const map: Record<string, string> = {
-    purchase_request_draft: "create_purchase_request",
-    rfq_draft: "create_rfq",
-    supplier_followup_draft: "save_supplier_followup_note",
-    supplier_application: "create_supplier_application",
-    purchase_request: "create_purchase_request",
-    sourcing_event: "create_sourcing_event",
-    rfq: "create_rfq",
-    supplier_followup: "save_supplier_followup_note",
-    exception_note: "save_exception_case_note",
-  };
-  return map[type || ""] || "save_reviewed_draft";
-}
-
-function confirmedActionLabel(type?: string) {
-  const labels: Record<string, string> = {
-    create_supplier_application: "供应商准入复核记录",
-    create_purchase_request: "PR 复核记录",
-    create_sourcing_event: "寻源复核记录",
-    create_rfq: "RFQ 复核记录",
-    save_supplier_followup_note: "供应商跟进复核记录",
-    save_exception_case_note: "工单复核记录",
-    save_reviewed_draft: "已复核内部记录",
-  };
-  return labels[confirmedActionTypeForDraft(type)] || "已复核内部记录";
-}
-
 function isEditableScalar(value: unknown) {
   return ["string", "number", "boolean"].includes(typeof value) || value === null || value === undefined;
 }
@@ -195,7 +161,6 @@ export function ActionDraftReviewShell({
   onClose,
   onCancelPreview,
   onSaveDraft,
-  onConfirmSafeAction,
   onNavigate,
 }: {
   open: boolean;
@@ -205,15 +170,12 @@ export function ActionDraftReviewShell({
   onClose: () => void;
   onCancelPreview: () => void;
   onSaveDraft?: (draft: ActionDraftPreview) => Promise<void>;
-  onConfirmSafeAction?: (draft: ActionDraftPreview) => Promise<ConfirmedActionResult>;
   onNavigate?: (moduleId: string, focusTarget?: CanonicalFocusTarget | null) => void;
 }) {
   const [workingDraft, setWorkingDraft] = useState<ActionDraftPreview | null>(draft);
   const [saveStatus, setSaveStatus] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [confirmResult, setConfirmResult] = useState<ConfirmedActionResult | null>(null);
   const activeDraft = workingDraft || draft;
   const validation = activeDraft?.validation;
   const evidence = normalizeEvidenceLinks(activeDraft?.originEvidence || [], { source: "actionDraft" }).slice(0, 6);
@@ -224,7 +186,6 @@ export function ActionDraftReviewShell({
     setWorkingDraft(draft);
     setSaveStatus("");
     setSaveError("");
-    setConfirmResult(null);
   }, [draft?.id, draft?.updatedAt, open]);
 
   function updatePayloadField(key: string, value: string, original: unknown) {
@@ -265,27 +226,12 @@ export function ActionDraftReviewShell({
     await navigator.clipboard.writeText(content);
   }
 
-  async function confirmSafeAction() {
-    if (!activeDraft || !onConfirmSafeAction) return;
-    setConfirming(true);
-    setSaveError("");
-    try {
-      const result = await onConfirmSafeAction(activeDraft);
-      setConfirmResult(result);
-      setSaveStatus("复核结果已记录为内部记录。");
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "安全确认失败");
-    } finally {
-      setConfirming(false);
-    }
-  }
-
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={activeDraft?.title || "动作草稿预览"}
-      subtitle="审阅工作区：可编辑草稿，用户确认后也只保留允许范围内的安全内部记录"
+      subtitle="文本草稿编辑器：仅用于供应商消息或内部备注，不替代正式业务页面"
       width={860}
       footer={(
         <>
@@ -303,9 +249,6 @@ export function ActionDraftReviewShell({
           </button>
           <button type="button" onClick={saveDraft} disabled={!activeDraft || !onSaveDraft || saving} className={draftButtonClass} style={{ background: activeDraft && onSaveDraft ? A.blue : A.gray4, color: A.white }}>
             <Save size={12} className="mr-1 inline" />{saving ? "保留中" : "保留待复核草稿"}
-          </button>
-          <button type="button" onClick={confirmSafeAction} disabled={!activeDraft || !onConfirmSafeAction || confirming || Boolean(validation?.errors?.length)} className={`${draftButtonClass} text-white`} style={{ background: activeDraft && onConfirmSafeAction && !validation?.errors?.length ? A.green : A.gray3 }}>
-            {confirming ? "记录中" : "记录复核结果"}
           </button>
         </>
       )}
@@ -334,20 +277,6 @@ export function ActionDraftReviewShell({
             </div>
             {(saveStatus || saveError) && (
               <div className="mt-2 text-[11px]" style={{ color: saveError ? A.red : A.green }}>{saveError || saveStatus}</div>
-            )}
-          </section>
-          <section data-testid="confirmed-action-boundary" className="rounded-lg border px-3 py-3" style={{ borderColor: A.border, background: A.white }}>
-            <div className="text-[12px] font-semibold" style={{ color: A.label }}>{confirmedActionLabel(activeDraft.type)}</div>
-            <div className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>
-              已复核草稿 {activeDraft.id} 只能进入安全内部记录确认：{confirmedActionLabel(activeDraft.type)}。关联记录和依据仅作为引用，不会被自动修改。
-            </div>
-            <div className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>
-              危险动作保持禁用或不展示：不提交、不外发、不写库存、不写财务凭证、不处理资金、不改主数据。
-            </div>
-            {confirmResult && (
-              <div className="mt-2 rounded-md px-2 py-2 text-[11px]" style={{ background: "#f0faf4", color: A.green }}>
-                内部记录编号 {confirmResult.createdRecordId || "—"} · 状态 {confirmResult.status || "—"} · 审计 {confirmResult.auditEventId || "暂无"}
-              </div>
             )}
           </section>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-4">

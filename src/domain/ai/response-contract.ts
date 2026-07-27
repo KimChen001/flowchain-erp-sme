@@ -69,6 +69,11 @@ export type AiResponseV2NavigationLink = {
   source?: string;
   reason?: string;
   returnContext?: unknown;
+  focusTarget?: {
+    entityType: string;
+    entityId: string;
+    focusArea?: "exception" | "receiving" | "invoice" | "inventory" | "evidence" | "receiving-invoice-variance";
+  };
 };
 
 export type AiResponseV2DataLimitation = {

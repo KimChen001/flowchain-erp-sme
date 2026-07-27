@@ -3,6 +3,7 @@ export type CanonicalEvidenceModule = "sales" | "procurement" | "inventory" | "s
 export type CanonicalFocusTarget = {
   entityType: string;
   entityId: string;
+  focusArea?: "exception" | "receiving" | "invoice" | "inventory" | "evidence" | "receiving-invoice-variance";
 };
 
 export type CanonicalEvidenceLink = {

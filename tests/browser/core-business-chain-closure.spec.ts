@@ -72,8 +72,8 @@ test("core business chain closes sales inventory procurement receiving invoice f
   message = await ask(page, "这条链路哪里证据不足？");
   await expect(message).toContainText(/证据不足|发票差异证据待补充|数据限制/);
 
-  message = await ask(page, "打开这条链路的人工复核草稿。");
-  await expect(message).toContainText(/人工复核草稿|草稿预览|人工复核/);
-  await expect(message.getByRole("button", { name: "审阅草稿" }).first()).toBeVisible();
+  message = await ask(page, "生成这条链路的内部备注草稿。");
+  await expect(message).toContainText(/备注草稿|草稿预览|人工复核/);
+  await expect(message.getByTestId("ai-action-draft-preview")).toBeVisible();
   await expect(message).not.toContainText(/JSON|payload|entityType|documentType|mock|fake|demo|UAT/i);
 });

@@ -1,16 +1,14 @@
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
-import { Link } from "react-router";
 import type { ActionDraftPreviewRequest } from "../../modules/action-drafts/ActionDraftReviewShell";
 import type { AiResponseV2, AiResponseV2EvidenceItem, AiResponseV2NavigationLink, AiResponseV2ReviewCard } from "../../domain/ai/response-contract";
 import { toAiFocusedResponse, type AiFocusedAction } from "../../domain/ai/focused-response";
-import { routePathForId } from "../../app/routeRegistry";
-import { BusinessEntityLink } from "../business/BusinessEntityLink";
 import { businessEntityRouteRegistry, type BusinessEntityType } from "../business/businessEntityRoutes";
 import { A } from "../ui";
 
-type NavigateOptions = { returnTo?: string; entityLabel?: string; source?: string; returnContext?: unknown };
-type Navigate = (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null, options?: NavigateOptions) => void;
+type NavigateOptions = { returnTo?: string; entityLabel?: string; source?: string; returnContext?: unknown; query?: Record<string, string> };
+type FocusTarget = { entityType: string; entityId: string; focusArea?: "exception" | "receiving" | "invoice" | "inventory" | "evidence" | "receiving-invoice-variance" };
+type Navigate = (moduleId: string, focusTarget?: FocusTarget | null, options?: NavigateOptions) => void;
 
 const severityLabel = { info: "信息", warning: "提醒", risk: "风险", success: "正常" } as const;
 const severityTone = {
@@ -29,36 +27,64 @@ function entityType(value = ""): BusinessEntityType | null {
   return candidate in businessEntityRouteRegistry ? candidate as BusinessEntityType : null;
 }
 
-function EvidenceLink({ item, children }: { item: AiResponseV2EvidenceItem; children?: ReactNode }) {
+function EvidenceLink({ item, children, onNavigate }: { item: AiResponseV2EvidenceItem; children?: ReactNode; onNavigate?: Navigate }) {
   const type = entityType(item.entityType);
-  if (!type || !item.entityId) return <span style={{ color: A.label }}>{children || item.entityLabel || item.label}</span>;
-  return <BusinessEntityLink entityType={type} entityId={item.entityId} returnLabel="返回 AI 助手">{children || item.entityLabel || item.label || item.entityId}</BusinessEntityLink>;
+  const route = type ? businessEntityRouteRegistry[type] : null;
+  if (!route || !item.entityId || !onNavigate) return <span style={{ color: A.label }}>{children || item.entityLabel || item.label}</span>;
+  const focusArea = type === "purchase_order" ? "evidence" : undefined;
+  return <button type="button" data-action-kind="view_evidence" className="font-semibold text-blue-600 hover:underline" onClick={() => onNavigate(route.listRouteId, { entityType: type, entityId: item.entityId, focusArea }, { returnTo: "ai", entityLabel: item.entityLabel || item.entityId, source: "ai" })}>{children || item.entityLabel || item.label || item.entityId}</button>;
 }
 
 function reviewRequest(card: AiResponseV2ReviewCard): ActionDraftPreviewRequest | null {
-  if (!card.draftType) return null;
+  if (!card.draftType || !["supplier_followup_draft", "po_followup_draft", "exception_note", "inventory_exception_closure_draft"].includes(card.draftType)) return null;
   return { type: card.draftType, title: card.draftTitle || card.title, source: "ai_assistant", originEvidence: card.originEvidence || [], payload: { ...(card.payload || {}), reason: card.payload?.reason || card.description || card.allowedNextStep } };
 }
 
-function NavigationAction({ link, primary = false }: { link: AiResponseV2NavigationLink; primary?: boolean }) {
+function NavigationAction({ link, primary = false, onNavigate }: { link: AiResponseV2NavigationLink; primary?: boolean; onNavigate?: Navigate }) {
   const type = entityType(link.entityType);
   const className = primary ? "inline-flex min-h-9 items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "inline-flex min-h-9 items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold";
-  if (type && link.entityId) return <BusinessEntityLink entityType={type} entityId={link.entityId} returnLabel="返回 AI 助手" className={className}>{link.label}<ChevronRight size={13} /></BusinessEntityLink>;
-  return <Link to={routePathForId(link.moduleId)} className={className} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{link.label}<ChevronRight size={13} /></Link>;
+  if (!onNavigate) return null;
+  const focusTarget = link.focusTarget || (type && link.entityId ? {
+    entityType: type,
+    entityId: link.entityId,
+    ...(type === "purchase_order" ? { focusArea: "receiving-invoice-variance" as const } : {}),
+  } : null);
+  return <button type="button" data-testid="ai-business-navigation-action" data-action-kind="view_business_object" data-business-id={link.entityId || ""} className={className} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }} onClick={() => onNavigate(link.moduleId, focusTarget, { returnTo: "ai", entityLabel: link.label, source: "ai", returnContext: link.returnContext })}>{link.label}<ChevronRight size={13} /></button>;
 }
 
-function Action({ action, primary, onReviewActionDraft }: { action: AiFocusedAction; primary?: boolean; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void }) {
-  if (action.kind === "navigation") return <NavigationAction link={action.link} primary={primary} />;
+function structuredDraftTarget(card: AiResponseV2ReviewCard) {
+  const payload = card.payload || {};
+  const query = Object.fromEntries(Object.entries({
+    mode: "create",
+    itemId: payload.itemIdOrSku,
+    sku: payload.itemIdOrSku,
+    quantity: payload.quantity,
+    reason: payload.reason,
+    suppliers: Array.isArray(payload.supplierCandidates) ? payload.supplierCandidates.join(",") : payload.supplierCandidates,
+    due: payload.quotationDeadline || payload.requestedDeliveryDate,
+  }).filter(([, value]) => value !== undefined && value !== null && String(value) !== "").map(([key, value]) => [key, String(value)]));
+  if (card.draftType === "rfq_draft") return { moduleId: "procurement:rfq", query };
+  if (card.draftType === "task_draft") return { moduleId: "mobile-operations:tasks", query };
+  return { moduleId: "procurement:requests", query };
+}
+
+function Action({ action, primary, onNavigate, onReviewActionDraft }: { action: AiFocusedAction; primary?: boolean; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void }) {
+  if (action.kind === "navigation") return <NavigationAction link={action.link} primary={primary} onNavigate={onNavigate} />;
+  if (action.kind === "structured_draft") {
+    const target = structuredDraftTarget(action.card);
+    if (!onNavigate) return null;
+    return <button type="button" onClick={() => onNavigate(target.moduleId, null, { returnTo: "ai", entityLabel: action.label, source: "ai", query: target.query })} data-testid="ai-structured-draft-action" data-action-kind="create_formal_business_draft" className={primary ? "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold"} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{action.label}</button>;
+  }
   const request = reviewRequest(action.card);
   if (!request || !onReviewActionDraft) return null;
-  return <button type="button" onClick={() => onReviewActionDraft(request)} data-testid="ai-action-draft-preview" className={primary ? "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold"} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{action.label || "审阅草稿"}</button>;
+  return <button type="button" onClick={() => onReviewActionDraft(request)} data-testid="ai-action-draft-preview" data-action-kind="generate_text_draft" className={primary ? "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold"} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{action.label || "生成文本草稿"}</button>;
 }
 
 function Detail({ title, children, testId }: { title: string; children: ReactNode; testId: string }) {
   return <details data-testid={testId} className="rounded-lg" style={{ border: `1px solid ${A.border}` }}><summary className="cursor-pointer px-3 py-2 text-xs font-semibold" style={{ color: A.gray1 }}>{title}</summary><div className="space-y-2 px-3 pb-3">{children}</div></details>;
 }
 
-export function AiResponseV2Renderer({ response, onReviewActionDraft, onFollowUp }: { response: AiResponseV2; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; onFollowUp?: (prompt: string) => void }) {
+export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft, onFollowUp }: { response: AiResponseV2; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; onFollowUp?: (prompt: string) => void }) {
   if (!response || response.version !== "v2") return null;
   const focused = toAiFocusedResponse(response);
   return (
@@ -72,14 +98,14 @@ export function AiResponseV2Renderer({ response, onReviewActionDraft, onFollowUp
         </div>
       </section>
 
-      {focused.primaryItems.length ? <section data-testid="ai-focused-primary-items" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>重点事项</div>{focused.primaryItems.map((item) => <article key={item.id} className="rounded-lg p-2.5" style={{ background: A.gray6 }}><div className="flex items-start justify-between gap-2"><div className="min-w-0 text-xs font-semibold"><EvidenceLink item={item.evidence}>{item.title}</EvidenceLink></div>{item.status ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{item.status}</span> : null}</div><p className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>{item.reason}</p>{item.impact ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>影响：{item.impact}</p> : null}</article>)}</section> : null}
+      {focused.primaryItems.length ? <section data-testid="ai-focused-primary-items" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>重点事项</div>{focused.primaryItems.map((item) => <article key={item.id} className="rounded-lg p-2.5" style={{ background: A.gray6 }}><div className="flex items-start justify-between gap-2"><div className="min-w-0 text-xs font-semibold"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink></div>{item.status ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{item.status}</span> : null}</div><p className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>{item.reason}</p>{item.impact ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>影响：{item.impact}</p> : null}</article>)}</section> : null}
 
-      {focused.primaryAction || focused.secondaryActions.length ? <section data-testid="ai-focused-actions"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>下一步</div><div className="mt-2 flex flex-wrap gap-2">{focused.primaryAction ? <Action action={focused.primaryAction} primary onReviewActionDraft={onReviewActionDraft} /> : null}{focused.secondaryActions.map((action, index) => <Action key={`${action.kind}-${action.label}-${index}`} action={action} onReviewActionDraft={onReviewActionDraft} />)}</div></section> : null}
+      {focused.primaryAction || focused.secondaryActions.length ? <section data-testid="ai-focused-actions"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>下一步</div><div className="mt-2 flex flex-wrap gap-2">{focused.primaryAction ? <Action action={focused.primaryAction} primary onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} /> : null}{focused.secondaryActions.map((action, index) => <Action key={`${action.kind}-${action.label}-${index}`} action={action} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} />)}</div></section> : null}
 
       {response.contextCards?.length ? <Detail title="系统说明与操作入口" testId="ai-context-details">{response.contextCards.slice(0, 5).map((item) => <div key={item.id} className="text-[11px] leading-5"><div className="font-semibold">{item.entityLabel || item.label}</div><div style={{ color: A.gray1 }}>{item.summary}</div></div>)}</Detail> : null}
 
       {focused.evidence.length || focused.businessImpact.length || focused.limitations.length ? <section className="space-y-2" data-testid="ai-focused-details">
-        {focused.evidence.length ? <Detail title={`查看关键证据（${Math.min(5, focused.evidence.length)}）`} testId="ai-evidence-details">{focused.evidence.map((item) => <div key={item.id} className="text-[11px] leading-5"><EvidenceLink item={item} /><div style={{ color: A.gray2 }}>{[item.status, item.value, item.sourceLabel].filter((value) => value !== undefined && value !== null && value !== "").join(" · ")}</div></div>)}</Detail> : null}
+        {focused.evidence.length ? <Detail title={`查看关键证据（${Math.min(5, focused.evidence.length)}）`} testId="ai-evidence-details">{focused.evidence.map((item) => <div key={item.id} className="text-[11px] leading-5"><EvidenceLink item={item} onNavigate={onNavigate} /><div style={{ color: A.gray2 }}>{[item.status, item.value, item.sourceLabel].filter((value) => value !== undefined && value !== null && value !== "").join(" · ")}</div></div>)}</Detail> : null}
         {focused.businessImpact.length ? <Detail title="查看业务影响" testId="ai-impact-details">{focused.businessImpact.map((item) => <div key={`${item.area}-${item.impact}`} className="text-[11px] leading-5"><div className="font-semibold" style={{ color: A.label }}>{item.area} · {item.impact}</div><div style={{ color: A.gray1 }}>{item.explanation}</div></div>)}</Detail> : null}
         {focused.limitations.length ? <Detail title="查看数据限制" testId="ai-limitations-details">{focused.limitations.map((item) => <div key={item.label} className="text-[11px] leading-5"><div className="font-semibold" style={{ color: A.label }}>{item.label}</div><div style={{ color: A.gray1 }}>{item.description}</div>{item.consequence ? <div style={{ color: A.gray2 }}>{item.consequence}</div> : null}</div>)}</Detail> : null}
       </section> : null}

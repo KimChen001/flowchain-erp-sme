@@ -112,11 +112,13 @@ function normalizeSeverity(value = '') {
   return 'info'
 }
 function nav(label, moduleId, entityType = 'business_object', entityId = '', entityLabel = '') {
+  const normalizedType = text(entityType, 'business_object')
+  const normalizedId = text(entityId)
   return {
     label: text(label),
     moduleId: text(moduleId, 'overview'),
-    entityType: text(entityType, 'business_object'),
-    entityId: text(entityId),
+    entityType: normalizedType,
+    entityId: normalizedId,
     entityLabel: text(entityLabel || label),
     returnTo: 'ai-assistant',
     source: 'aiRuntimeGateway',
@@ -128,6 +130,14 @@ function nav(label, moduleId, entityType = 'business_object', entityId = '', ent
       returnLabel: '返回 AI 助手',
       originIntent: 'aiRuntimeGateway',
     },
+    ...(normalizedType === 'purchase_order' && normalizedId ? {
+      label: `查看并处理 ${normalizedId}`,
+      focusTarget: {
+        entityType: normalizedType,
+        entityId: normalizedId,
+        focusArea: 'receiving-invoice-variance',
+      },
+    } : {}),
   }
 }
 function linkTarget(moduleId, entityType = 'business_object', entityId = '') {
@@ -924,7 +934,10 @@ function buildResponse({ request, intent, ctx, modeNotice = '', conversationGrou
     contextBundle: { evidenceRefs: ev, navigationRefs: links },
     resolvedContext,
     conversationGrounding: draftConversationGrounding,
-    baseReviewCards: ev.length ? reviewCards(intent, links) : [],
+    // Information, diagnosis and navigation answers must lead to the real
+    // business object. A review card is only produced for an explicit draft
+    // request by the contextual draft classifier.
+    baseReviewCards: [],
   })
   const limitations = collectLimitations(ctx, [...extraLimitations, ...conversationLimitations(resolvedContext || {}), ...contextualDraft.dataLimitations])
   const conclusion = conclusionFor(intent, ev)
@@ -960,7 +973,7 @@ function buildResponse({ request, intent, ctx, modeNotice = '', conversationGrou
     dataLimitations: limitations,
     reviewCards: contextualDraft.draftRequest.isDraftRequest
       ? (contextualDraft.selectedTarget && !contextualDraft.ambiguous ? contextualDraft.reviewCards : [])
-      : (ev.length ? contextualDraft.reviewCards : []),
+      : [],
     safetyBoundaries: SAFETY_BOUNDARIES,
     followUpQuestions: ['查看数据限制', '进入人工复核', '打开相关模块'],
     contextBreadcrumbs: conversationGrounding ? buildContextBreadcrumbsV2(conversationGrounding, resolvedContext || {}) : [],

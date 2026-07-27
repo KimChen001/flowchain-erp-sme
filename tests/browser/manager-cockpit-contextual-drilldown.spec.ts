@@ -90,7 +90,7 @@ test("manager cockpit keeps dense surfaces and preserves drilldown recovery path
   const chipLabels = await runtimeChips.allTextContents();
   expect(new Set(chipLabels).size).toBe(chipLabels.length);
 
-  message = await ask(page, "打开这个对象的人工复核草稿。");
+  message = await ask(page, "生成这个对象的内部备注草稿。");
   await expect(message.getByTestId("ai-action-draft-preview").last()).toBeVisible({ timeout: 10000 });
   await message.getByTestId("ai-action-draft-preview").last().click();
   const shell = page.getByTestId("action-draft-review-shell");
@@ -100,6 +100,6 @@ test("manager cockpit keeps dense surfaces and preserves drilldown recovery path
   await expect(shell).toContainText("不提交");
   await expect(shell).toContainText("不外发");
   await expect(shell).toContainText("保留待复核草稿");
-  await expect(page.getByRole("button", { name: "记录复核结果" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "记录复核结果" })).toHaveCount(0);
   await expectCleanVisibleText(shell);
 });

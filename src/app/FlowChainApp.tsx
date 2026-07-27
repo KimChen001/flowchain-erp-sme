@@ -76,7 +76,6 @@ import {
   ActionDraftReviewShell,
   type ActionDraftPreview,
   type ActionDraftPreviewRequest,
-  type ConfirmedActionResult,
 } from "../modules/action-drafts/ActionDraftReviewShell";
 import ExceptionCasesPage from "../modules/exception-cases/Page";
 import SalesDemandPage from "../modules/sales/Page";
@@ -123,6 +122,7 @@ type GlobalSearchResult = {
 type GlobalSearchFocus = {
   entityType: string;
   entityId: string;
+  focusArea?: CanonicalFocusTarget["focusArea"];
   entityLabel?: string;
   source?: string;
   at: number;
@@ -922,6 +922,7 @@ export default function FlowChainApp() {
       entityLabel?: string;
       returnContext?: WorkflowContext | null;
       source?: string;
+      query?: Record<string, string>;
     } = {},
   ) {
     const requestedRoute = routeById(moduleId);
@@ -953,13 +954,22 @@ export default function FlowChainApp() {
                 : `返回${sourceLabel}`,
         })
       : null;
+    const nextIntent = navigationIntentFromModule(navigationId, {
+      focusTarget,
+      source: options.source || (focusTarget ? "evidence" : undefined),
+      returnTo: options.returnTo,
+      entityLabel: options.entityLabel,
+    });
+    if (options.query && Object.keys(options.query).length) {
+      const query = new URLSearchParams(options.query);
+      routerNavigate(`${routePathForId(nextIntent.activeId)}?${query.toString()}`);
+      if (nextIntent.returnTo) setFocusReturnActive(nextIntent.returnTo);
+      setFocusReturnContext(options.returnContext !== undefined ? options.returnContext : inferredReturnContext);
+      setSearchFocus(null);
+      return;
+    }
     applyNavigationIntent(
-      navigationIntentFromModule(navigationId, {
-        focusTarget,
-        source: options.source || (focusTarget ? "evidence" : undefined),
-        returnTo: options.returnTo,
-        entityLabel: options.entityLabel,
-      }),
+      nextIntent,
       options.returnContext !== undefined
         ? options.returnContext
         : inferredReturnContext,
@@ -967,6 +977,24 @@ export default function FlowChainApp() {
   }
 
   async function openActionDraftReview(request: ActionDraftPreviewRequest) {
+    if (request.type === "purchase_request_draft" || request.type === "rfq_draft" || request.type === "task_draft") {
+      const payload = request.payload || {};
+      const query = Object.fromEntries(Object.entries({
+        mode: "create",
+        itemId: payload.itemIdOrSku,
+        sku: payload.itemIdOrSku,
+        quantity: payload.quantity,
+        reason: payload.reason,
+        suppliers: Array.isArray(payload.supplierCandidates) ? payload.supplierCandidates.join(",") : payload.supplierCandidates,
+        due: payload.quotationDeadline || payload.requestedDeliveryDate,
+      }).filter(([, value]) => value !== undefined && value !== null && String(value) !== "").map(([key, value]) => [key, String(value)]));
+      navigateTo(
+        request.type === "rfq_draft" ? "procurement:rfq" : request.type === "task_draft" ? "mobile-operations:tasks" : "procurement:requests",
+        null,
+        { returnTo: "ai", entityLabel: request.title, source: "ai", query },
+      );
+      return;
+    }
     setDraftShellOpen(true);
     setDraftPreview(null);
     setDraftError("");
@@ -1006,55 +1034,6 @@ export default function FlowChainApp() {
     toast.success("草稿已保存", {
       description: "仅保存待复核草稿，不会创建业务单据。",
     });
-  }
-
-  function confirmedActionTypeForPreview(type: string) {
-    const map: Record<string, string> = {
-      purchase_request_draft: "create_purchase_request",
-      rfq_draft: "create_rfq",
-      supplier_followup_draft: "save_supplier_followup_note",
-    };
-    return map[type] || "save_reviewed_draft";
-  }
-
-  async function confirmSafeActionDraft(
-    draft: ActionDraftPreview,
-  ): Promise<ConfirmedActionResult> {
-    const response = await apiJson<{
-      createdRecordId?: string;
-      status?: string;
-      auditEventId?: string | null;
-      mutatesLinkedBusinessRecords?: boolean;
-      sideEffects?: Record<string, unknown>;
-    }>("/api/user-confirmed-actions", {
-      method: "POST",
-      body: JSON.stringify({
-        actionType: confirmedActionTypeForPreview(draft.type),
-        draftId: draft.id,
-        sourceTrigger: draft.source || "action_draft_review",
-        reviewedFields: draft.payload || {},
-        linkedRecords: draft.originEvidence || [],
-        evidenceReferences: draft.originEvidence || [],
-        auditPreview: draft.auditTrail || [],
-        confirm: true,
-        actor: "current_user",
-      }),
-    });
-    if (
-      response.mutatesLinkedBusinessRecords ||
-      response.sideEffects?.issuesPo ||
-      response.sideEffects?.sendsExternalEmail
-    ) {
-      throw new Error("确认边界异常：接口声明存在禁止的业务副作用。");
-    }
-    toast.success("安全动作已确认", {
-      description: `${response.createdRecordId || "记录"} · ${response.status || "已保存"}`,
-    });
-    return {
-      createdRecordId: response.createdRecordId,
-      status: response.status,
-      auditEventId: response.auditEventId,
-    };
   }
 
   function clearFocus() {
@@ -1939,7 +1918,6 @@ export default function FlowChainApp() {
           setDraftShellOpen(false);
         }}
         onSaveDraft={saveActionDraftReview}
-        onConfirmSafeAction={confirmSafeActionDraft}
         onNavigate={navigateTo}
       />
     </div>

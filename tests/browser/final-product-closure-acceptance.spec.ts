@@ -119,7 +119,7 @@ test("final product closure acceptance covers main surfaces AI chain governance 
   await expectBusinessAnswer(message, /收货|GRN|采购订单|PO|库存|SKU|今日行动/);
   message = await ask(page, "哪些库存项目需要关注？");
   await expectBusinessAnswer(message, /库存|SKU|补货|可用量|可承诺量/);
-  message = await ask(page, "打开这条链路的人工复核草稿。");
+  message = await ask(page, "生成这条链路的内部备注草稿。");
   await expectBusinessAnswer(message, /核心业务链|人工复核|草稿预览/);
   await expect(message.getByTestId("ai-action-draft-preview").last()).toBeVisible({ timeout: 10000 });
   await message.getByTestId("ai-action-draft-preview").last().click();

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
@@ -476,7 +476,7 @@ export default function PurchasingOrdersPage({
   onNavigate,
   onActiveContextChange,
 }: {
-  focus?: { entityType: string; entityId: string; at: number } | null;
+  focus?: { entityType: string; entityId: string; focusArea?: "exception" | "receiving" | "invoice" | "inventory" | "evidence" | "receiving-invoice-variance"; at: number } | null;
   onNavigate?: NavigateFn;
   onActiveContextChange?: (context: ActiveContext | null) => void;
 }) {
@@ -497,6 +497,9 @@ export default function PurchasingOrdersPage({
   }));
   const [selectedId, setSelectedId] = useState(purchaseOrders[0]?.po ?? "");
   const [viewMode, setViewMode] = useState<PurchaseOrderViewMode>("list");
+  const [highlightedArea, setHighlightedArea] = useState("");
+  const fulfillmentFocusRef = useRef<HTMLElement | null>(null);
+  const evidenceFocusRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -517,6 +520,19 @@ export default function PurchasingOrdersPage({
     setSelectedId(focus.entityId);
     setViewMode("detail");
   }, [focus?.at, focus?.entityType, focus?.entityId, orders]);
+
+  useEffect(() => {
+    if (viewMode !== "detail" || focus?.entityType !== "purchase_order" || focus.entityId !== selectedId) return;
+    const area = focus.focusArea || "receiving-invoice-variance";
+    setHighlightedArea(area);
+    const target = area === "evidence" ? evidenceFocusRef.current : fulfillmentFocusRef.current;
+    const frame = window.requestAnimationFrame(() => target?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    const timer = window.setTimeout(() => setHighlightedArea(""), 5000);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [focus?.at, focus?.entityId, focus?.entityType, focus?.focusArea, selectedId, viewMode]);
 
   const filtered = filterPurchaseOrdersForWorkbench(orders, filters).filter((order) => {
     const supplier = searchParams.get("supplier");
@@ -744,7 +760,6 @@ export default function PurchasingOrdersPage({
             ]}
           />
         </div>
-
         <Card className="p-4">
           <SectionTitle title="来源 PR / RFQ" />
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
@@ -761,6 +776,21 @@ export default function PurchasingOrdersPage({
           </div>
         </Card>
 
+        <section
+          ref={fulfillmentFocusRef}
+          data-testid="po-fulfillment-focus"
+          data-focus-highlight={highlightedArea === "receiving-invoice-variance" || highlightedArea === "receiving" || highlightedArea === "invoice" || highlightedArea === "exception" ? "true" : "false"}
+          className="scroll-mt-20 space-y-5 rounded-xl p-2 transition-all"
+          style={highlightedArea && highlightedArea !== "evidence" ? { background: "#fff8e6", boxShadow: `0 0 0 2px ${A.orange}55` } : undefined}
+        >
+          {highlightedArea && highlightedArea !== "evidence" ? (
+            <Card className="p-3" style={{ background: "#fffaf0", borderColor: `${A.orange}55` }}>
+              <div className="text-xs font-semibold" style={{ color: A.orange }}>AI 已定位：收货、发票差异与建议下一步</div>
+              <div className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>
+                {receivedStatus(selectedPO)} · {invoiceStatus(selectedPO)} · 建议：{nextStepForPo(selectedPO)}
+              </div>
+            </Card>
+          ) : null}
         <div>
           <SectionTitle title="收货 / GRN 明细行" />
           <DocumentLinesTable
@@ -819,7 +849,6 @@ export default function PurchasingOrdersPage({
             ]}
           />
         </div>
-
         <div>
           <SectionTitle title="三单匹配" right={<Chip label="行级解释" color={A.orange} bg="#fff8f0" />} />
           <DocumentLinesTable
@@ -863,6 +892,7 @@ export default function PurchasingOrdersPage({
             ]}
           />
         </div>
+        </section>
 
 
         <DocumentTotals
@@ -887,7 +917,13 @@ export default function PurchasingOrdersPage({
           />
         </div>
 
-        <div>
+        <div
+          ref={evidenceFocusRef}
+          data-testid="po-evidence-focus"
+          data-focus-highlight={highlightedArea === "evidence" ? "true" : "false"}
+          className="scroll-mt-20 rounded-xl p-2 transition-all"
+          style={highlightedArea === "evidence" ? { background: "#eef5ff", boxShadow: `0 0 0 2px ${A.blue}55` } : undefined}
+        >
           <SectionTitle title="证据链" />
           <DocumentEvidencePanel
             linkedDocuments={getPoLinkedDocuments(selectedPO, SUPPLIER_INVOICES, receivingDocs)}

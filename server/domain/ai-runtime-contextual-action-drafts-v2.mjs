@@ -120,10 +120,13 @@ function draftIntentFromText(message = '') {
 
 export function detectContextualDraftRequestV2(message = '') {
   const raw = rawText(message)
-  const isDraftRequest = /人工复核|复核草稿|预览草稿|生成草稿|草稿预览|进入人工复核|打开人工复核|open review draft|preview draft|show review draft|create review draft|draft preview|supplier follow-up draft|replenishment draft|invoice variance draft|receiving exception draft/i.test(raw)
-    || (/(预览|生成|打开|进入|create|show|open|preview)/i.test(raw) && /草稿|draft/i.test(raw))
+  const textDraft = /(消息|邮件|备注|说明|跟进话术|供应商.*跟进|跟进.*供应商|message|email|note|memo|follow-up)/i.test(raw)
+    && /(生成|起草|编辑|预览|草稿|write|draft|compose|preview)/i.test(raw)
+  const structuredDraft = /(PR|采购申请|RFQ|询价|任务|补货|task|replenishment)/i.test(raw)
+    && /(创建|新建|生成|预填|草稿|create|new|prefill|draft)/i.test(raw)
+  const isDraftRequest = textDraft || structuredDraft
   if (!isDraftRequest) {
-    return { isDraftRequest: false, draftIntent: 'generic_context_review', confidence: 'low', reasonLabel: '非草稿预览请求' }
+    return { isDraftRequest: false, draftIntent: 'generic_context_review', confidence: 'low', reasonLabel: '信息、诊断或导航请求不生成草稿' }
   }
   const draftIntent = draftIntentFromText(raw)
   const confidence = /人工复核|复核草稿|预览草稿|草稿预览|open review draft|preview draft|draft preview/i.test(raw) ? 'high' : 'medium'
