@@ -46,9 +46,16 @@ if (isMain) {
   }
   Object.assign(process.env, generated)
 
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+  const npmInvocation = (args) => {
+    if (process.env.npm_execpath) return { command: process.execPath, args: [process.env.npm_execpath, ...args] }
+    if (process.platform === 'win32') {
+      return { command: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', 'npm.cmd', ...args] }
+    }
+    return { command: 'npm', args }
+  }
   const run = (script, args = [], options = {}) => new Promise((resolvePromise, reject) => {
-    const child = spawn(npm, ['run', script, ...args], { cwd: root, env: process.env, stdio: 'inherit', ...options })
+    const invocation = npmInvocation(['run', script, ...args])
+    const child = spawn(invocation.command, invocation.args, { cwd: root, env: process.env, stdio: 'inherit', ...options })
     child.once('exit', (code) => code === 0 ? resolvePromise(child) : reject(new Error(`${script} exited with code ${code}`)))
     child.once('error', reject)
   })
@@ -70,7 +77,8 @@ if (isMain) {
   process.on('unhandledRejection', (error) => { console.error(error); stop(1) })
 
   const launch = (script, extra = []) => {
-    const child = spawn(npm, ['run', script, ...extra], { cwd: root, env: process.env, stdio: 'inherit' })
+    const invocation = npmInvocation(['run', script, ...extra])
+    const child = spawn(invocation.command, invocation.args, { cwd: root, env: process.env, stdio: 'inherit' })
     children.add(child)
     child.once('exit', (code) => { children.delete(child); if (!shuttingDown) stop(code || 1) })
     return child
