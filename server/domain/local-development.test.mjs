@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { assertLocalDevelopment, isLocalDatabaseUrl, localDevelopmentEnabled } from './local-development-contract.mjs'
+import { assertLocalDevelopment, isLocalDatabaseUrl, localDevelopmentEnabled, localPostgresTestHarnessEnabled } from './local-development-contract.mjs'
 import { localCommandPlan, parseEnvFile } from '../../scripts/dev-local.mjs'
 import { buildAiRuntimeResponseV2, buildAiRuntimeSafeFallbackV2 } from './ai-runtime-gateway-v2.mjs'
 import { buildGovernedReport } from './report-semantic-layer.mjs'
@@ -11,8 +11,12 @@ test('local development requires explicit development mode and localhost Postgre
   assert.equal(localDevelopmentEnabled(env), true)
   assert.doesNotThrow(() => assertLocalDevelopment(env))
   assert.throws(() => assertLocalDevelopment({ ...env, DATABASE_URL: '' }), /DATABASE_URL is required/)
-  assert.throws(() => assertLocalDevelopment({ ...env, NODE_ENV: 'production' }), /requires NODE_ENV=development/)
-  assert.throws(() => assertLocalDevelopment({ ...env, DATABASE_URL: 'postgresql://flowchain:secret@db.example.com:5432/flowchain' }), /localhost PostgreSQL/)
+  assert.throws(() => assertLocalDevelopment({ ...env, NODE_ENV: 'production' }), /controlled local development/)
+  assert.throws(() => assertLocalDevelopment({ ...env, DATABASE_URL: 'postgresql://flowchain:secret@db.example.com:5432/flowchain' }), /explicit localhost PostgreSQL test harness/)
+  const harness = { NODE_ENV: 'test', FLOWCHAIN_REQUIRE_REAL_POSTGRES_TESTS: 'true', DATABASE_URL: env.DATABASE_URL }
+  assert.equal(localPostgresTestHarnessEnabled(harness), true)
+  assert.doesNotThrow(() => assertLocalDevelopment(harness, 'test harness'))
+  assert.throws(() => assertLocalDevelopment({ ...harness, FLOWCHAIN_REQUIRE_REAL_POSTGRES_TESTS: 'false' }), /controlled local development/)
 })
 
 test('dev:local parses environment and scenario implies demo', () => {

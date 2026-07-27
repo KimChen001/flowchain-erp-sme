@@ -15,9 +15,15 @@ export function localDevelopmentEnabled(env = process.env) {
     && isLocalDatabaseUrl(env.DATABASE_URL)
 }
 
+export function localPostgresTestHarnessEnabled(env = process.env) {
+  return env.NODE_ENV === 'test'
+    && env.FLOWCHAIN_REQUIRE_REAL_POSTGRES_TESTS === 'true'
+    && isLocalDatabaseUrl(env.DATABASE_URL)
+}
+
 export function assertLocalDevelopment(env = process.env, action = 'Local setup') {
   if (!env.DATABASE_URL) throw new Error(`${action}: DATABASE_URL is required.`)
-  if (!localDevelopmentEnabled(env)) {
-    throw new Error(`${action}: requires NODE_ENV=development, FLOWCHAIN_DEV_LOCAL=true, and a localhost PostgreSQL DATABASE_URL.`)
+  if (!localDevelopmentEnabled(env) && !localPostgresTestHarnessEnabled(env)) {
+    throw new Error(`${action}: requires controlled local development or the explicit localhost PostgreSQL test harness.`)
   }
 }
