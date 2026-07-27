@@ -90,3 +90,8 @@
 ## Roadmap
 
 - [Roadmap v1](roadmap-v1.md)
+# Phase 5.4B.1 local truthfulness
+
+- [Local development workflow v1](local-development-workflow-v1.md)
+- [Local demo data v1](local-demo-data-v1.md)
+- [Zero-data truthfulness contract v1](zero-data-truthfulness-contract-v1.md)

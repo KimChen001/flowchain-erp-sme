@@ -169,6 +169,16 @@ const SEARCH_GROUP_ORDER = [
 ];
 const SEARCH_GROUP_VISIBLE_LIMIT = 5;
 
+type LocalDevelopmentStatus = {
+  localDevelopment: true;
+  tenantId: string;
+  workspaceName: string;
+  availableLoginEmails: string[];
+  demoMasterDataLoaded: boolean;
+  demoScenarioLoaded: boolean;
+  universalIntakeEnabled: boolean;
+};
+
 const FOCUS_ENTITY_LABELS: Record<string, string> = {
   customer_order: "销售订单",
   sales_order: "销售订单",
@@ -191,8 +201,10 @@ function searchGroupKey(type: string) {
 
 function LoginScreen({
   onLogin,
+  localStatus,
 }: {
   onLogin: (user: WorkspaceUser, token: string) => void;
+  localStatus: LocalDevelopmentStatus | null;
 }) {
   const [form, setForm] = useState({
     company: "FlowChain Workspace",
@@ -333,6 +345,19 @@ function LoginScreen({
               </div>
             </div>
           </div>
+          {localStatus && (
+            <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900" data-testid="local-login-metadata">
+              <div className="font-semibold">Local Development · {localStatus.workspaceName}</div>
+              <div className="mt-1">本地可用账户：{localStatus.availableLoginEmails.join("、")}</div>
+              <div className="mt-2 flex gap-2">
+                {localStatus.availableLoginEmails.map((email) => (
+                  <button key={email} type="button" className="rounded-md bg-white px-2 py-1" onClick={() => setForm((current) => ({ ...current, email }))}>
+                    {email === "admin@flowchain.local" ? "使用本地管理员" : "使用本地经理"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {(
             [
@@ -518,6 +543,7 @@ export default function FlowChainApp() {
   const { t, routeLabel, workspaceName, language } = useI18n();
   const location = useLocation();
   const routerNavigate = useNavigate();
+  const [localStatus, setLocalStatus] = useState<LocalDevelopmentStatus | null>(null);
   const [purchaseIntent, setPurchaseIntent] = useState<PurchaseIntent | null>(
     null,
   );
@@ -533,6 +559,9 @@ export default function FlowChainApp() {
         console.info("FlowChain build identity", identity);
       })
       .catch(() => {});
+  }, []);
+  useEffect(() => {
+    apiJson<LocalDevelopmentStatus>("/api/dev/local-status").then(setLocalStatus).catch(() => setLocalStatus(null));
   }, []);
   const [draftShellOpen, setDraftShellOpen] = useState(false);
   const [draftPreview, setDraftPreview] = useState<ActionDraftPreview | null>(
@@ -1224,7 +1253,7 @@ export default function FlowChainApp() {
   }
 
   if (!authToken || !user) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen onLogin={handleLogin} localStatus={localStatus} />;
   }
 
   return (
@@ -1410,6 +1439,7 @@ export default function FlowChainApp() {
             <span className="fc-label font-medium" style={{ color: A.label }}>
               {workspaceName || user.company}
             </span>
+            {localStatus && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800" title={`用户 ${user.email} · Demo ${localStatus.demoMasterDataLoaded ? "loaded" : "not loaded"} · Scenario ${localStatus.demoScenarioLoaded ? "loaded" : "not loaded"} · Universal Intake ${localStatus.universalIntakeEnabled ? "enabled" : "disabled"}`}>Local Development</span>}
           </div>
           <div className="flex items-center gap-2">
             <form

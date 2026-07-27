@@ -151,3 +151,8 @@ Phase ownership is explicit:
   evidence.
 - Phase 5.4B: bounded CSV/XLSX/Paste parsing and schema-aware preview.
 - Phase 5.4C: governed, object-specific business commit adapters.
+# Local development and zero-data boundary
+
+The local launcher is an orchestration layer, not a production bootstrap path. It requires an explicit local-development flag and localhost PostgreSQL, persists strong generated secrets outside Git, deploys existing migrations, and calls idempotent provisioning commands.
+
+Empty PostgreSQL reads remain authoritative. UI clients preserve transport and authorization errors, while AI and reports distinguish database facts from navigation context, policy boundaries, limitations, and no-record states.
