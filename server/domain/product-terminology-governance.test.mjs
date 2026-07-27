@@ -22,6 +22,7 @@ const HISTORICAL_TECHNICAL_DOCS = new Set([
   'docs/aliyun-backend-deployment-roadmap.md',
   'docs/architecture-overview-v1.md',
   'docs/cross-round-integration-review-v1.md',
+  'docs/current-development-limitations-v1.md',
   'docs/data-source-audit.md',
   'docs/data-source-cleanup-roadmap.md',
   'docs/database-entity-model-v2.md',
@@ -34,6 +35,9 @@ const HISTORICAL_TECHNICAL_DOCS = new Set([
   'docs/full-repo-risk-scan-v1.md',
   'docs/global-business-search-v1.md',
   'docs/json-adapter-contract-tests-v1.md',
+  'docs/local-development-workflow-v1.md',
+  'docs/local-demo-data-v1.md',
+  'docs/zero-data-truthfulness-contract-v1.md',
   'docs/master-data-db-adapter-v1.md',
   'docs/master-data-repository-adapter-v1.md',
   'docs/master-data-seed-mapping-v1.md',
@@ -59,6 +63,7 @@ const TECHNICAL_FILE_PATTERNS = [
   /^server\/domain\/product-terminology-governance\.test\.mjs$/,
   /^server\/domain\/authoritative-runtime-initialization\.test\.mjs$/,
   /^server\/domain\/postgres-only-runtime\.test\.mjs$/,
+  /^server\/domain\/local-development\.test\.mjs$/,
   /^tests\/browser\/authoritative-runtime-initialization\.spec\.ts$/,
   /(^|\/)ai-runtime-provider/i,
   /(^|\/)ai-provider-safety/i,
@@ -103,6 +108,7 @@ const TECHNICAL_LINE_PATTERNS = [
   /hasFakeCaret/i,
   /中文字段名.*示例值/,
   /dry-run/i,
+  /dev:local|pilot:setup:demo|LOCAL-DEMO|Local Development|local demo|localStatus|demoMasterDataLoaded|demoScenarioLoaded|本地.*(?:演示|Demo)|演示场景/i,
 ]
 
 function toPosix(relativePath) {
@@ -147,9 +153,10 @@ test('product terminology governance blocks non-product positioning in visible s
 
 test('primary product docs use FlowChain inventory purchase stock supplier positioning', () => {
   const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8')
+  const productReadme = readme.split('# Local development')[0]
   const language = fs.readFileSync(path.join(repoRoot, 'docs', 'product-language-and-positioning-v1.md'), 'utf8')
   const narrative = fs.readFileSync(path.join(repoRoot, 'docs', 'product-narrative-v1.md'), 'utf8')
-  const combined = [readme, language, narrative].join('\n')
+  const combined = [productReadme, language, narrative].join('\n')
 
   assert.match(combined, /FlowChain 是面向中小企业的 ERP 进销存协同平台/)
   assert.match(readme, /FlowChain is an ERP and inventory-purchase-sales \(进销存\) collaboration platform for SMEs/)

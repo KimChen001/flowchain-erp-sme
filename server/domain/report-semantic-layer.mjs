@@ -107,7 +107,7 @@ function normalizeQuery(input = {}) {
     company: filters.company || '', warehouse: filters.warehouse || '', supplier: filters.supplier || '', customer: filters.customer || '', category: filters.category || '', currency: filters.currency || 'CNY',
     dimensions: Array.isArray(input.dimensions) ? input.dimensions : [], measures: Array.isArray(input.measures) ? input.measures : [], sort: input.sort || null, limit: Math.min(200, Math.max(1, number(input.limit, 50))),
     comparison: ['none', 'previous_period', 'year_over_year'].includes(input.comparison || filters.comparison) ? (input.comparison || filters.comparison) : 'previous_period',
-    topN: [5, 8].includes(number(input.topN || filters.topN)) ? number(input.topN || filters.topN) : 8,
+    topN: [5, 10, 20].includes(number(input.topN || filters.topN)) ? number(input.topN || filters.topN) : 10,
     matchStatus: filters.matchStatus || '', aging: filters.aging || '', status: filters.status || '', risk: filters.risk || '', varianceType: filters.varianceType || '',
   }
 }
@@ -198,7 +198,7 @@ function previousQuery(query) {
   return { ...query, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) }
 }
 
-function top(rows, key, limit = 8, valueKey = 'amount') { return group(rows, key, valueKey).sort((a, b) => b.value - a.value).slice(0, limit) }
+function top(rows, key, limit = 10, valueKey = 'amount') { return group(rows, key, valueKey).sort((a, b) => b.value - a.value).slice(0, limit) }
 function statusDistribution(rows, key = 'status') { return group(rows, key).map((row) => ({ ...row, name: localizedValue(key, row.name), filterValue: row.name })) }
 function chart(id, title, type, data, drilldownPath, extra = {}) {
   return { id, title, type, data, categoryKey: 'name', valueKey: 'value', valueFormat: extra.valueFormat || 'number', unit: extra.unit || 'number', legend: extra.legend !== false, tooltip: true, colors: extra.colors || ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444'], drilldownPath, crossFilter: extra.crossFilter || null, emptyState: '当前筛选范围暂无可展示数据。', ...extra }
@@ -264,9 +264,11 @@ export function buildGovernedReport(data = {}, input = {}) {
   const kpis = metricIds.map((id) => {
     const definition = reportMetricCatalog.find((item) => item.id === id)
     const currentValue = calculate(id, filtered, query); const comparisonValue = query.comparison === 'none' ? null : calculate(id, comparisonRows, comparisonQuery)
+    const subjectRows = filtered[definition.subject] || []
+    const dataStatus = subjectRows.length === 0 ? 'no_records' : currentValue === 0 ? 'numeric_zero' : 'complete'
     const comparisonDelta = comparisonValue === null ? null : currentValue - comparisonValue
     const comparisonRate = comparisonValue ? comparisonDelta / Math.abs(comparisonValue) * 100 : null
-    return { ...definition, value: currentValue, currentValue, comparisonValue, comparisonDelta, comparisonRate, comparisonDirection: comparisonDelta === null || comparisonDelta === 0 ? 'flat' : comparisonDelta > 0 ? 'up' : 'down', comparisonLabel: query.comparison === 'year_over_year' ? '较上年同期' : query.comparison === 'previous_period' ? '较上期' : '未比较', comparisonUnit: definition.unit === 'percentage' ? 'percentage_points' : definition.unit, calculationLabel: definition.description, generatedAt: new Date().toISOString() }
+    return { ...definition, value: currentValue, currentValue, dataStatus, comparisonValue, comparisonDelta, comparisonRate, comparisonDirection: comparisonDelta === null || comparisonDelta === 0 ? 'flat' : comparisonDelta > 0 ? 'up' : 'down', comparisonLabel: query.comparison === 'year_over_year' ? '较上年同期' : query.comparison === 'previous_period' ? '较上期' : '未比较', comparisonUnit: definition.unit === 'percentage' ? 'percentage_points' : definition.unit, calculationLabel: definition.description, generatedAt: new Date().toISOString() }
   })
   const primary = dashboard === 'sales' ? filtered.sales_orders : dashboard === 'inventory' ? filtered.inventory_balances : dashboard === 'finance' ? filtered.supplier_invoices : dashboard === 'suppliers' ? filtered.purchase_orders : filtered.purchase_orders
   const charts = dashboardCharts(dashboard, filtered, query)

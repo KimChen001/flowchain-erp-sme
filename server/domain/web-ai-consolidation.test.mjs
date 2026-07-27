@@ -30,7 +30,7 @@ test('settings, PO, master data and reports expose consolidated product surfaces
   assert.match(purchasing, /sticky right-0/)
   assert.match(masterRoutes, /url\.pathname === '\/api\/master-data'/)
   for (const type of ['warehouse', 'bin', 'payment_term', 'tax_code']) assert.match(entityRoutes, new RegExp(`${type}:`))
-  assert.match(reports, /自定义看板/)
+  assert.match(reports, /调整当前视图/)
   assert.match(reports, /aria-label="比较方式"/)
   assert.doesNotMatch(reports, /<Card className="flex flex-wrap items-end gap-3 p-3" data-testid="dashboard-configuration"/)
 })
