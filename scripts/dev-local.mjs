@@ -21,6 +21,16 @@ export function localCommandPlan(argv = []) {
   }
 }
 
+export function localRuntimePorts(env = process.env) {
+  const apiPort = Number(env.SCM_API_PORT || 8787)
+  const frontendPort = Number(env.VITE_PORT || 5173)
+  return {
+    apiPort,
+    frontendPort,
+    apiProxyTarget: `http://127.0.0.1:${apiPort}`,
+  }
+}
+
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))
 if (isMain) {
   const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -83,8 +93,8 @@ if (isMain) {
     child.once('exit', (code) => { children.delete(child); if (!shuttingDown) stop(code || 1) })
     return child
   }
-  const apiPort = Number(process.env.SCM_API_PORT || 8787)
-  const frontendPort = Number(process.env.VITE_PORT || 5173)
+  const { apiPort, frontendPort, apiProxyTarget } = localRuntimePorts(process.env)
+  process.env.SCM_API_PROXY_TARGET = apiProxyTarget
   launch('dev:api')
   const health = `http://127.0.0.1:${apiPort}/api/health`
   let ready = false

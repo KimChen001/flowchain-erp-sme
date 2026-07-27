@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { assertLocalDevelopment, isLocalDatabaseUrl, localDevelopmentEnabled, localPostgresTestHarnessEnabled } from './local-development-contract.mjs'
-import { localCommandPlan, parseEnvFile } from '../../scripts/dev-local.mjs'
+import { localCommandPlan, localRuntimePorts, parseEnvFile } from '../../scripts/dev-local.mjs'
 import { buildAiRuntimeResponseV2, buildAiRuntimeSafeFallbackV2 } from './ai-runtime-gateway-v2.mjs'
 import { buildGovernedReport } from './report-semantic-layer.mjs'
 
@@ -22,6 +22,11 @@ test('local development requires explicit development mode and localhost Postgre
 test('dev:local parses environment and scenario implies demo', () => {
   assert.deepEqual(parseEnvFile('NODE_ENV=development\n# comment\nSCM_API_PORT=8787\n'), { NODE_ENV: 'development', SCM_API_PORT: '8787' })
   assert.deepEqual(localCommandPlan(['--scenario']), { demo: true, scenario: true, setupCommands: ['db:generate', 'db:migrate:deploy', 'pilot:setup'] })
+  assert.deepEqual(localRuntimePorts({ SCM_API_PORT: '8791', VITE_PORT: '5174' }), {
+    apiPort: 8791,
+    frontendPort: 5174,
+    apiProxyTarget: 'http://127.0.0.1:8791',
+  })
 })
 
 test('AI empty data reports zero real evidence and never high confidence', () => {
@@ -39,6 +44,18 @@ test('AI safe fallback distinguishes system context from real evidence', () => {
   assert.equal(result.keyEvidence.length, 0)
   assert.ok(result.contextCardCount > 0)
   assert.equal(result.conclusion.confidence, 'low')
+})
+
+test('AI supplier SKU and PO object review uses loaded business facts', () => {
+  const db = {
+    suppliers: [{ id: 'LOCAL-DEMO-SUP-1', name: 'Local Supplier', status: 'active' }],
+    products: [{ id: 'LOCAL-DEMO-ITEM-1', sku: 'LOCAL-DEMO-SKU-1', itemName: 'Local Item', onHand: 8, safetyStock: 20 }],
+    purchaseOrders: [{ id: 'LOCAL-DEMO-PO-1', po: 'LOCAL-DEMO-PO-1', status: 'open', supplier: 'Local Supplier', items: 10, received: 2 }],
+  }
+  const { body: result } = buildAiRuntimeResponseV2(db, { message: '供应商 / SKU / PO 相关对象', activeModuleId: 'master-data' })
+  assert.ok(result.realEvidenceCount >= 2)
+  assert.match(JSON.stringify(result.keyEvidence), /LOCAL-DEMO-PO-1|LOCAL-DEMO-SKU-1/)
+  assert.doesNotMatch(JSON.stringify(result.keyEvidence), /LOCAL-当前工作区数据/)
 })
 
 test('governed report applies supported Top N values and distinguishes no records from numeric zero', () => {

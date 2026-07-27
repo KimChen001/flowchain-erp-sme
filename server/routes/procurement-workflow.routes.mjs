@@ -63,8 +63,11 @@ export async function handleProcurementWorkflowRoute(ctx) {
   const { req, res, url, send, readBody } = ctx;
   const runtimeRepository = repositoryFor(ctx);
   const service = workflowService(ctx);
-  if (req.method === "GET" && url.pathname === "/api/procurement/requests")
-    return send(res, 200, await runtimeRepository.list("pr")) || true;
+  if (req.method === "GET" && url.pathname === "/api/procurement/requests") {
+    if (!ctx.identity?.authenticated || !ctx.identity.tenantId) return send(res, 401, { code: "TENANT_CONTEXT_REQUIRED", message: "An authenticated tenant context is required." }) || true;
+    const snapshot = await ctx.repositories.procurementRead.snapshot({ tenantId: ctx.identity.tenantId });
+    return send(res, 200, snapshot.purchaseRequests) || true;
+  }
   const requestDetail = url.pathname.match(/^\/api\/procurement\/requests\/([^/]+)$/);
   if (req.method === "GET" && requestDetail) {
     const request = await runtimeRepository.get("pr", decodeURIComponent(requestDetail[1]));
@@ -197,8 +200,11 @@ export async function handleProcurementWorkflowRoute(ctx) {
   }
   if (req.method === "GET" && url.pathname === "/api/procurement/rfqs")
     return send(res, 200, await runtimeRepository.list("rfq")) || true;
-  if (req.method === "GET" && url.pathname === "/api/procurement/orders")
-    return send(res, 200, await runtimeRepository.list("po")) || true;
+  if (req.method === "GET" && url.pathname === "/api/procurement/orders") {
+    if (!ctx.identity?.authenticated || !ctx.identity.tenantId) return send(res, 401, { code: "TENANT_CONTEXT_REQUIRED", message: "An authenticated tenant context is required." }) || true;
+    const snapshot = await ctx.repositories.procurementRead.snapshot({ tenantId: ctx.identity.tenantId });
+    return send(res, 200, snapshot.purchaseOrders) || true;
+  }
   const orderDetail = url.pathname.match(/^\/api\/procurement\/orders\/([^/]+)$/);
   if (req.method === "GET" && orderDetail) {
     const order = await runtimeRepository.get("po", decodeURIComponent(orderDetail[1]));

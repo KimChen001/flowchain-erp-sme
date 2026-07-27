@@ -68,8 +68,33 @@ function safeLimit(value, fallback = 500) {
 function mapPurchaseRequest(record = {}) {
   const line = firstLine(record)
   const meta = metadata(record)
+  const lines = asArray(record.lines).map((entry) => ({
+    lineId: entry.id,
+    id: entry.id,
+    itemId: text(entry.itemId) || null,
+    sku: text(entry.sku) || null,
+    itemNameSnapshot: text(entry.itemName),
+    itemName: text(entry.itemName),
+    quantity: numberFrom(entry.quantity, 0),
+    unitSnapshot: text(entry.unit) || null,
+    unit: text(entry.unit),
+    estimatedUnitPrice: numberFrom(entry.unitPrice, 0),
+    unitPrice: numberFrom(entry.unitPrice, 0),
+    estimatedAmount: numberFrom(entry.amount, 0),
+    amount: numberFrom(entry.amount, 0),
+    currency: text(record.currency, 'CNY'),
+    metadata: metadata(entry),
+  }))
   return {
+    id: record.id,
     pr: record.id,
+    version: numberFrom(meta.version, 0),
+    requesterId: text(meta.requesterId || record.requester),
+    departmentId: text(meta.departmentId),
+    defaultCurrency: text(record.currency, 'CNY'),
+    defaultNeedByDate: isoDate(record.requiredDate),
+    totalAmount: numberFrom(record.amount, 0),
+    lines,
     sourceSku: text(line.sku || meta.sku),
     sourceName: text(line.itemName || meta.itemName),
     itemId: text(line.itemId || meta.itemId),
@@ -128,7 +153,10 @@ function mapPurchaseOrder(record = {}) {
   const ordered = lineQuantity(record.lines, 'orderedQuantity', numberFrom(meta.orderedQuantity, 0))
   const received = lineQuantity(record.lines, 'receivedQuantity', numberFrom(meta.receivedQuantity, 0))
   return {
+    id: record.id,
     po: record.id,
+    orderNumber: text(meta.orderNumber, record.id),
+    version: numberFrom(record.version, 0),
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
     eta: isoDate(record.expectedDate),
@@ -147,6 +175,24 @@ function mapPurchaseOrder(record = {}) {
     sourceName: text(line.itemName || meta.itemName),
     itemId: text(line.itemId || meta.itemId),
     lineCount: asArray(record.lines).length,
+    lines: asArray(record.lines).map((entry) => ({
+      poLineId: entry.id,
+      id: entry.id,
+      poId: record.id,
+      itemId: text(entry.itemId),
+      sku: text(entry.sku),
+      itemName: text(entry.itemName),
+      quantityOrdered: numberFrom(entry.orderedQuantity, 0),
+      orderedQuantity: numberFrom(entry.orderedQuantity, 0),
+      quantityReceived: numberFrom(entry.receivedQuantity, 0),
+      receivedQuantity: numberFrom(entry.receivedQuantity, 0),
+      unit: text(entry.unit),
+      unitPrice: numberFrom(entry.unitPrice, 0),
+      lineAmount: numberFrom(entry.amount, 0),
+      amount: numberFrom(entry.amount, 0),
+      currency: text(record.currency, 'CNY'),
+      status: numberFrom(entry.receivedQuantity, 0) >= numberFrom(entry.orderedQuantity, 0) ? 'received' : 'open',
+    })),
     createdAt: isoDate(record.createdAt),
     updatedAt: isoDate(record.updatedAt),
   }
@@ -261,6 +307,10 @@ export function createDbProcurementReadRepository({ env = process.env, prisma } 
   return {
     mode: 'database',
     adapter: 'db-procurement-read-v1',
+    snapshot: async (filters = {}) => {
+      const client = await resolvePrisma({ env, prisma })
+      return loadProcurementSnapshot(client, filters)
+    },
     listDocuments: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const snapshot = await loadProcurementSnapshot(client, filters)

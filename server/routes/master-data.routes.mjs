@@ -13,6 +13,9 @@ export async function handleMasterDataRoute(ctx) {
   const tenantScope = (extra = {}) => ({ ...(ctx.identity?.tenantId ? { tenantId: ctx.identity.tenantId } : {}), ...extra })
   const scopedRepository = new Proxy(repository, {
     get(target, property) {
+      if (property === 'listManagedItems' && typeof target[property] !== 'function') {
+        return (filters = {}) => target.listItems(tenantScope({ purchasableOnly: true, ...filters }))
+      }
       if (!['listManagedItems', 'listWarehouses', 'listPaymentTerms', 'listTaxCodes'].includes(String(property))) return target[property]
       return (filters = {}) => target[property](tenantScope(filters))
     },
@@ -194,7 +197,15 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/suppliers/select') {
-    send(res, 200, { suppliers: await repository.selectSuppliers({ query:url.searchParams.get('query')||'' }) })
+    const query = String(url.searchParams.get('query') || '').trim().toLowerCase()
+    const suppliers = await repository.listSuppliers(tenantScope())
+    send(res, 200, {
+      suppliers: suppliers.filter(row => !query || [row.id, row.name].some(value => String(value || '').toLowerCase().includes(query))).map(row => ({
+        ...row,
+        supplierName: row.name,
+        supplierCode: row.id,
+      })),
+    })
     return true
   }
 

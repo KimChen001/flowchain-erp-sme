@@ -1,6 +1,6 @@
 export async function handlePurchaseRequestsRoute(ctx) {
   const {
-    req, res, url, db, send, readBody, event, todayLabel,
+    req, res, url, db, send, readBody, event, todayLabel, repositories, identity,
     ensurePurchaseRequests, systemRequestSources, nextSequenceId,
     purchaseRequestStatuses, priorities, recordWorkflowCreation,
     actorFromBody, applyWorkflowTransition, recordValidationBlocked,
@@ -8,7 +8,10 @@ export async function handlePurchaseRequestsRoute(ctx) {
   } = ctx
 
   if (req.method === 'GET' && url.pathname === '/api/purchase-requests') {
-    return send(res, 200, ensurePurchaseRequests(db))
+    if (!identity?.authenticated || !identity.tenantId) return send(res, 401, { code: 'TENANT_CONTEXT_REQUIRED', message: 'An authenticated tenant context is required.' })
+    if (!repositories?.procurementRead?.snapshot) return send(res, 503, { code: 'FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE', message: 'The PostgreSQL procurement read model is unavailable.' })
+    const snapshot = await repositories.procurementRead.snapshot({ tenantId: identity.tenantId })
+    return send(res, 200, snapshot.purchaseRequests)
   }
 
   if (req.method === 'POST' && url.pathname === '/api/purchase-requests') {

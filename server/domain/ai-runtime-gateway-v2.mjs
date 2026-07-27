@@ -64,7 +64,12 @@ function asArray(value) { return Array.isArray(value) ? value : [] }
 function number(value, fallback = 0) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback }
 function text(value, fallback = '') { return sanitize(String(value ?? '').trim() || fallback) }
 function sanitize(value = '') {
-  return String(value ?? '')
+  const identifiers = []
+  const masked = String(value ?? '').replace(/\b[A-Z0-9]+(?:[-_][A-Z0-9]+)+\b/gi, (identifier) => {
+    const index = identifiers.push(identifier) - 1
+    return `\uE000${index}\uE001`
+  })
+  return masked
     .replace(/自动批准|自动下单|正式创建\s*PO|下发\s*PO|发送\s*PO|发布\s*RFQ|邀请供应商|发送邮件|发送|推送|已发送|提交收货/ig, '正式业务处理')
     .replace(/Receive Submit|Submit Receipt|库存过账|Post Invoice|Approve Invoice|Mark as Paid|Payment execution|Export to Accounting|会计过账|付款/ig, '正式资金或凭证处理')
     .replace(/修改供应商主数据|更新银行账户|发布风险评级|自动黑名单|自动暂停供应商/ig, '供应商资料正式变更')
@@ -72,6 +77,7 @@ function sanitize(value = '') {
     .replace(/sent|delivered|dispatched|webhook|portal invite/ig, '外部触达动作')
     .replace(/JSON|dry-run|tenantId|userId|datasetId|writesDb|writesFiles|tool_result|provider|model|endpoint|token|API key|API|fallback|deterministic|mock|fake|demo|UAT|sample data|demo data|response_card|entityType|documentType|raw enum|payload|webhook|database|schema|environment|Coupa|RBAC|production|deploy|go-live|system prompt|prompt package/ig, DATA_SCOPE)
     .replace(/\bDB\b/g, DATA_SCOPE)
+    .replace(/\uE000(\d+)\uE001/g, (_match, index) => identifiers[Number(index)] || '')
 }
 function cleanList(items = [], fallback = []) {
   const values = asArray(items).map((item) => text(typeof item === 'string' ? item : item?.label || item?.title || item?.summary || item?.description)).filter(Boolean)
@@ -230,6 +236,14 @@ function detectIntent(request) {
   const message = request.message
   const unsafe = detectUnsafeRequest(message)
   if (unsafe) return { id: 'unsafe_request', label: '安全边界请求', unsafe }
+  if (/相关对象|关联对象/.test(message) || (
+    /供应商/.test(message) &&
+    /SKU/i.test(message) &&
+    /\bPO\b|采购订单/i.test(message) &&
+    !/主链|链路|核心业务链/.test(message)
+  )) {
+    return { id: 'related_objects', label: '供应商 / SKU / PO 相关对象' }
+  }
   const groundedPoIds = asArray(request.sessionGrounding?.lastVisibleBusinessIds?.po)
   if (/这个\s*PO|该\s*PO|刚才.*PO/.test(message) && groundedPoIds.length > 1) {
     return { id: 'po_clarification', label: 'PO 选择确认', candidates: groundedPoIds.slice(0, 4) }
