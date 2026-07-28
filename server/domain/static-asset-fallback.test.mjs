@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { createScmServer } from '../routes/scm-legacy.routes.mjs'
+import { createScmServer } from '../bootstrap/scm-server.mjs'
 
 async function listen(server) {
   await new Promise((resolve, reject) => {

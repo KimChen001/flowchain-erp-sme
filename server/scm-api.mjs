@@ -1,1 +1,1 @@
-export { createScmServer, startScmServer } from './routes/scm-legacy.routes.mjs'
+export { createScmServer, startScmServer } from './bootstrap/scm-server.mjs'

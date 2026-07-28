@@ -11,7 +11,7 @@ import {
   validateAiRuntimeRequest,
 } from './ai-runtime-gateway-v2.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
-import { createScmServer } from '../routes/scm-legacy.routes.mjs'
+import { createScmServer } from '../bootstrap/scm-server.mjs'
 import { extractBusinessContextFromAiResponseV2 } from './ai-runtime-conversation-context-v2.mjs'
 import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 

@@ -13,7 +13,7 @@ import {
   FORBIDDEN_AI_RUNTIME_PROVIDER_TECHNICAL_PATTERN,
 } from './ai-runtime-provider-adapter-v2.mjs'
 import { handleAiRuntimeObservabilityRoute } from '../routes/ai-runtime-observability.routes.mjs'
-import { createScmServer } from '../routes/scm-legacy.routes.mjs'
+import { createScmServer } from '../bootstrap/scm-server.mjs'
 import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
