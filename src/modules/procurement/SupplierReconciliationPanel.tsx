@@ -67,7 +67,7 @@ export default function SupplierReconciliationPanel() {
     return statements
       .filter((statement) => statusFilter === "全部" || statement.status === statusFilter)
       .filter((statement) => settlementFilter === "全部" || statement.settlementStatus === settlementFilter)
-      .filter((statement) => !q || [statement.statementNo, statement.supplier, statement.supplierCode || ""].some((value) => value.toLowerCase().includes(q)))
+      .filter((statement) => !q || [statement.statementNo, statement.supplier, statement.supplierCode].some((value) => String(value || "").toLowerCase().includes(q)))
       .filter((statement) => !p || statementPeriod(statement).toLowerCase().includes(p));
   }, [period, search, settlementFilter, statements, statusFilter]);
 

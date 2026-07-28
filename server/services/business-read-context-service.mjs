@@ -1,23 +1,25 @@
 const clone = value => structuredClone(value)
 const array = value => Array.isArray(value) ? value : []
 
-async function call(repository, method, fallback = []) {
+async function call(repository, method, fallback = [], ...args) {
   if (!repository || typeof repository[method] !== 'function') return clone(fallback)
-  return await repository[method]()
+  return await repository[method](...args)
 }
 
 export function createBusinessReadContextService({ repositories = {}, dataMode = 'user' } = {}) {
   return {
-    async read() {
+    async read(options = {}) {
       const masterData = repositories.masterData
+      const scope = { tenantId: options.tenantId }
+      const itemMethod = typeof masterData?.listManagedItems === 'function' ? 'listManagedItems' : 'listItems'
       const [items, suppliers, customers, itemSupplierRelationships, inventoryItems, salesOrders, procurement] = await Promise.all([
-        call(masterData, 'listManagedItems'),
-        call(masterData, 'listSuppliers'),
-        call(masterData, 'listCustomers'),
-        call(masterData, 'listAllItemSupplierRelationships'),
-        call(repositories.inventoryRuntime, 'listItems'),
-        call(repositories.salesOrders, 'listOrders'),
-        call(repositories.procurementRuntime, 'snapshot', {}),
+        call(masterData, itemMethod, [], scope),
+        call(masterData, 'listSuppliers', [], scope),
+        call(masterData, 'listCustomers', [], scope),
+        call(masterData, 'listAllItemSupplierRelationships', [], scope),
+        call(repositories.inventoryRuntime, 'listItems', [], scope),
+        call(repositories.salesOrders, 'listOrders', [], scope),
+        call(repositories.procurementRuntime, 'snapshot', {}, scope),
       ])
       const dataLimitations = []
       if (!repositories.procurementRuntime) dataLimitations.push('procurement_runtime_unavailable')

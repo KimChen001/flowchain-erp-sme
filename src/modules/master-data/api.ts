@@ -121,21 +121,21 @@ function supplierByIdOrName(suppliers: SupplierMaster[], value: unknown) {
   const key = text(value).toLowerCase();
   if (!key) return null;
   return suppliers.find((supplier) =>
-    [supplier.code, supplier.name].some((candidate) => candidate.toLowerCase() === key)
+    [supplier.code, supplier.name].some((candidate) => text(candidate).toLowerCase() === key)
   ) || null;
 }
 
 function fallbackItem(fallback: ItemMaster[], apiItem: ApiMasterItem, index: number) {
   const key = text(apiItem.sku || apiItem.itemId || apiItem.id || apiItem.itemName || apiItem.name).toLowerCase();
   return fallback.find((item) =>
-    [item.sku, item.name].some((candidate) => candidate.toLowerCase() === key)
+    [item.sku, item.name].some((candidate) => text(candidate).toLowerCase() === key)
   ) || fallback[index];
 }
 
 function fallbackSupplier(fallback: SupplierMaster[], apiSupplier: ApiMasterSupplier, index: number) {
   const key = text(apiSupplier.supplierCode || apiSupplier.id || apiSupplier.supplierName || apiSupplier.name).toLowerCase();
   return fallback.find((supplier) =>
-    [supplier.code, supplier.name].some((candidate) => candidate.toLowerCase() === key)
+    [supplier.code, supplier.name].some((candidate) => text(candidate).toLowerCase() === key)
   ) || fallback[index];
 }
 

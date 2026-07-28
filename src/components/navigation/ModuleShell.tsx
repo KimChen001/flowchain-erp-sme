@@ -20,7 +20,6 @@ export function ModuleShell({ route, children, capabilities = {} }: { route: App
       {showModuleHeader && <div className="fc-module-header">
         <div>
           <h1 className="fc-module-title" data-testid="module-title">{route.moduleId === "settings" && workspaceName ? workspaceName : routeLabel(root, true)}</h1>
-          <p className="fc-page-subtitle mt-1">{root.description}</p>
         </div>
       </div>}
       {subRoutes.length > 0 && (
@@ -32,7 +31,6 @@ export function ModuleShell({ route, children, capabilities = {} }: { route: App
         <div className="fc-page-header" data-testid="page-header">
           <div className="min-w-0">
             <h1 className="fc-page-title" data-testid="page-title">{workspaceName && route.moduleId === "settings" ? `${workspaceName} · ${routeLabel(route)}` : routeLabel(route)}</h1>
-            <p className="fc-page-subtitle mt-1">{route.description}</p>
           </div>
         </div>
       )}

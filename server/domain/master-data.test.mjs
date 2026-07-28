@@ -178,6 +178,37 @@ test('GET /api/master-data/items/:id returns 404 for missing item', async () => 
   assert.deepEqual(route.response.payload, { error: 'Item not found' })
 })
 
+test('item supplier relationships fail closed when PostgreSQL read model is unavailable', async () => {
+  const route = createRouteContext(
+    'GET',
+    '/api/master-data/items/ITEM-A100/suppliers',
+    createDb(),
+    { masterData: {} },
+  )
+  const handled = await handleMasterDataRoute(route.ctx)
+
+  assert.ok(handled)
+  assert.equal(route.response.status, 501)
+  assert.equal(route.response.payload.code, 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED')
+  assert.equal(route.response.payload.capability, 'item-supplier-relationships')
+  assert.ok(route.response.payload.limitations.length)
+})
+
+test('supplier item relationships fail closed when PostgreSQL read model is unavailable', async () => {
+  const route = createRouteContext(
+    'GET',
+    '/api/master-data/suppliers/SUP-001/items',
+    createDb(),
+    { masterData: {} },
+  )
+  const handled = await handleMasterDataRoute(route.ctx)
+
+  assert.ok(handled)
+  assert.equal(route.response.status, 501)
+  assert.equal(route.response.payload.code, 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED')
+  assert.equal(route.response.payload.capability, 'supplier-item-relationships')
+})
+
 test('GET /api/master-data/suppliers returns supplier collection', async () => {
   const rows = [{ id: 'SUP-RUNTIME', supplierCode: 'SUP-RUNTIME', supplierName: 'Runtime Supplier', status: 'active' }]
   const route = createRouteContext('GET', '/api/master-data/suppliers', createDb(), { masterData: { listSuppliers: async () => rows } })

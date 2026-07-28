@@ -1,7 +1,7 @@
 import PurchasingRequests from "../purchase-requests/Page";
+import PurchasingOrdersPage from "../purchasing/Page";
 import { ProcurementEmptyState } from "./ProcurementEmptyState";
 import { ProcurementWorkbench } from "./ProcurementWorkbench";
-import { PurchaseOrderList } from "./PurchaseOrderList";
 import type { ProcurementFocus, ProcurementNavigate } from "./procurementTypes";
 import type { PurchaseIntent } from "../../types/scm";
 import type { ActiveContext } from "../ai-assistant/Panel";
@@ -27,7 +27,7 @@ const emptyViews: Record<string, [string, string]> = {
 export default function ProcurementPanel({ intent = null, view = "workbench", focus = null, onNavigate, onActiveContextChange }: ProcurementPanelProps) {
   if (!view || view === "workbench" || view === "overview") return <ProcurementWorkbench onNavigate={onNavigate} />;
   if (view === "requests") return <PurchasingRequests intent={intent} focus={focus} onNavigate={onNavigate} onActiveContextChange={onActiveContextChange} />;
-  if (view === "orders") return <PurchaseOrderList focus={focus} onNavigate={onNavigate} />;
+  if (view === "orders") return <PurchasingOrdersPage focus={focus} onNavigate={onNavigate} onActiveContextChange={onActiveContextChange} />;
   const [title, description] = emptyViews[view] || ["当前视图暂无数据", ""];
   return <ProcurementEmptyState title={title} description={description} />;
 }

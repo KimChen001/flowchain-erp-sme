@@ -109,7 +109,7 @@ export default function SupplierInvoiceRegister({ mode = "finance", focus, onNav
         invoice.supplier,
         invoice.relatedPo,
         invoice.relatedGrn || "",
-      ].some((value) => value.toLowerCase().includes(q)));
+      ].some((value) => String(value || "").toLowerCase().includes(q)));
   }, [invoices, search, statusFilter, varianceFilter, searchParams]);
 
   useEffect(() => {

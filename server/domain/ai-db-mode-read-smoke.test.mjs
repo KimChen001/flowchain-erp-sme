@@ -53,6 +53,7 @@ function createPrisma({ auditWrites = [] } = {}) {
     purchaseOrder: model([{ id: 'PO-DB-1', status: 'issued', supplierName: 'DB Components', sourceRequestId: 'PR-DB-1', amount: 1500, currency: 'CNY', lines: [{ sku: 'DB-A100', itemName: 'DB Motor A100', orderedQuantity: 10, receivedQuantity: 2, amount: 1500 }], metadata: {} }]),
     receivingDocument: model([{ id: 'GRN-DB-1', poId: 'PO-DB-1', supplierName: 'DB Components', status: 'inspecting', lines: [{ sku: 'DB-A100', acceptedQty: 2, rejectedQty: 0 }], metadata: {} }]),
     supplierInvoice: model([{ id: 'INV-DB-1', supplierName: 'DB Components', relatedPoId: 'PO-DB-1', relatedGrnId: 'GRN-DB-1', amount: 1800, currency: 'CNY', status: 'pending', varianceAmount: 300, lines: [{ sku: 'DB-A100', amount: 1800 }] }]),
+    salesOrder: model([]),
     documentLink: model([]),
     procurementFollowup: model([{ id: 'FOLLOWUP-DB-1', type: 'invoice_variance', title: 'Review DB invoice variance', documentType: 'invoice', documentId: 'INV-DB-1', supplierName: 'DB Components', severity: 'high', status: 'open', nextAction: 'Review DB variance', evidence: [{ type: 'invoice', id: 'INV-DB-1', label: 'INV-DB-1' }] }]),
     actionDraft: {

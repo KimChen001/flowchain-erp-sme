@@ -44,9 +44,7 @@ import {
   Field,
   inputStyle,
   Modal,
-  RecoveryActions,
 } from "../components/ui";
-import { BusinessBackLink } from "../components/navigation/BusinessBackLink";
 import {
   ModuleShell,
   NotFoundRecovery,
@@ -85,6 +83,11 @@ import AuditHistoryPage from "../modules/audit-history/Page";
 import PilotReadinessPage from "../modules/pilot-readiness/Page";
 import { ReviewFirstActionWorkflowV2 } from "../components/actions/ReviewFirstActionWorkflowV2";
 import { BusinessEntityDetailPage } from "../components/business/BusinessEntityDetailPage";
+import {
+  businessEntityPath,
+  businessEntityRouteRegistry,
+  type BusinessEntityType,
+} from "../components/business/businessEntityRoutes";
 import OutboundWorkbench from "../modules/sales/OutboundWorkbench";
 import InventoryOperationsWorkbench from "../modules/inventory/InventoryOperationsWorkbench";
 import MobileOperationsPage from "../modules/mobile/MobileOperationsPage";
@@ -586,8 +589,8 @@ export default function FlowChainApp() {
   const [searchFocus, setSearchFocus] = useState<GlobalSearchFocus | null>(
     null,
   );
-  const [focusReturnActive, setFocusReturnActive] = useState("overview");
-  const [focusReturnContext, setFocusReturnContext] =
+  const [, setFocusReturnActive] = useState("overview");
+  const [, setFocusReturnContext] =
     useState<WorkflowContext | null>(null);
   const searchRef = useRef<HTMLFormElement | null>(null);
   migrateLegacySessionStorage();
@@ -735,24 +738,32 @@ export default function FlowChainApp() {
   }, [authToken]);
 
   useEffect(() => {
-    if (!activeRoute?.entityType || !activeRoute.entityIdParam) return;
+    if (!activeRoute?.entityType || !activeRoute.entityIdParam) {
+      setSearchFocus((current) =>
+        current?.source === "detailUrl" ? null : current,
+      );
+      return;
+    }
     const entityId = decodeURIComponent(
       location.pathname.split("/").filter(Boolean).at(-1) || "",
     );
     if (!entityId) return;
+    const focusArea = new URLSearchParams(location.search).get("focus") as CanonicalFocusTarget["focusArea"] | null;
     setSearchFocus((current) =>
       current?.entityType === activeRoute.entityType &&
-      current.entityId === entityId
+      current.entityId === entityId &&
+      current.focusArea === (focusArea || undefined)
         ? current
         : {
             entityType: activeRoute.entityType!,
             entityId,
+            focusArea: focusArea || undefined,
             entityLabel: entityId,
             source: "detailUrl",
             at: Date.now(),
           },
     );
-  }, [activeRoute?.id, location.pathname]);
+  }, [activeRoute?.id, location.pathname, location.search]);
 
   const localizedNavItems = useMemo(() => navItems.map(item => {
     const root = routeById(item.routeId);
@@ -968,6 +979,22 @@ export default function FlowChainApp() {
       setSearchFocus(null);
       return;
     }
+    if (focusTarget && focusTarget.entityType in businessEntityRouteRegistry) {
+      const entityType = focusTarget.entityType as BusinessEntityType;
+      const params = new URLSearchParams();
+      if (focusTarget.focusArea) params.set("focus", focusTarget.focusArea);
+      const detailPath = businessEntityPath(entityType, focusTarget.entityId);
+      routerNavigate(params.size ? `${detailPath}?${params.toString()}` : detailPath);
+      if (nextIntent.returnTo) setFocusReturnActive(nextIntent.returnTo);
+      setFocusReturnContext(options.returnContext !== undefined ? options.returnContext : inferredReturnContext);
+      setSearchFocus({
+        ...focusTarget,
+        entityLabel: options.entityLabel,
+        source: options.source || "businessNavigation",
+        at: Date.now(),
+      });
+      return;
+    }
     applyNavigationIntent(
       nextIntent,
       options.returnContext !== undefined
@@ -1036,30 +1063,6 @@ export default function FlowChainApp() {
     });
   }
 
-  function clearFocus() {
-    setSearchFocus(null);
-    setFocusReturnContext(null);
-  }
-
-  function returnFromFocus() {
-    const context = focusReturnContext;
-    routerNavigate(
-      routePathForId(context?.sourceRoute || focusReturnActive || "overview"),
-    );
-    setSearchFocus(
-      context?.sourceEntityId && context.sourceEntityType
-        ? {
-            entityType: context.sourceEntityType,
-            entityId: context.sourceEntityId,
-            entityLabel: context.sourceLabel,
-            source: context.originIntent || "businessReturn",
-            at: Date.now(),
-          }
-        : null,
-    );
-    setFocusReturnContext(null);
-  }
-
   function openSearchResult(result: GlobalSearchResult) {
     applyNavigationIntent(
       navigationIntentFromGlobalSearchResult(result, { returnTo: active }),
@@ -1074,23 +1077,6 @@ export default function FlowChainApp() {
     setSearchOpen(false);
     setActiveSearchIndex(-1);
   }
-
-  const focusEntityLabel = searchFocus
-    ? `${SEARCH_TYPE_LABELS[searchFocus.entityType] || searchFocus.entityType} · ${searchFocus.entityLabel || searchFocus.entityId}`
-    : "";
-  const focusSourceLabel =
-    searchFocus?.source === "ai" || searchFocus?.source === "aiRuntimeGateway"
-      ? "AI 助手"
-      : searchFocus?.source === "globalSearch"
-        ? "全局搜索"
-        : searchFocus?.source === "evidenceGraph" ||
-            searchFocus?.source === "evidence"
-          ? "证据链"
-          : "业务跳转";
-  const focusReturnHint =
-    searchFocus?.source === "ai" || searchFocus?.source === "aiRuntimeGateway"
-      ? "返回 AI 结果"
-      : "可返回来源对象或返回列表";
 
   const panels: Record<string, React.ReactNode> = {
     overview: (
@@ -1750,73 +1736,6 @@ export default function FlowChainApp() {
             >
               {activeRoute ? (
                 <ModuleShell route={activeRoute} capabilities={capabilities}>
-                  {searchFocus && (
-                    <div
-                      className="mb-4 rounded-xl px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
-                      data-testid="focus-banner"
-                      style={{
-                        background: "#f0f6ff",
-                        border: `1px solid ${A.border}`,
-                      }}
-                    >
-                      <div className="min-w-0">
-                        <div
-                          className="text-[11px] font-semibold"
-                          style={{ color: A.blue }}
-                        >
-                          当前聚焦
-                        </div>
-                        <div
-                          className="mt-1 truncate text-sm font-semibold tabular-nums"
-                          style={{ color: A.label }}
-                        >
-                          {focusEntityLabel}
-                        </div>
-                        <div
-                          className="mt-1 text-[11px]"
-                          style={{ color: A.sub }}
-                        >
-                          来源：{focusSourceLabel}，{focusReturnHint}。
-                        </div>
-                      </div>
-                      <RecoveryActions
-                        className="shrink-0"
-                        actions={[
-                          {
-                            key: "previous",
-                            label: "返回上一层",
-                            onClick: returnFromFocus,
-                            kind: "previous",
-                            tone: "primary",
-                          },
-                          {
-                            key: "module",
-                            label: "返回列表",
-                            onClick: () =>
-                              routerNavigate(
-                                routeById(
-                                  activeRoute.defaultChildId ||
-                                    activeRoute.parentId ||
-                                    activeModule,
-                                )?.path || "/app/overview",
-                              ),
-                            kind: "module",
-                          },
-                          {
-                            key: "clear",
-                            label: "清除聚焦",
-                            onClick: clearFocus,
-                            kind: "clear",
-                            tone: "subtle",
-                          },
-                        ]}
-                      />
-                      <BusinessBackLink
-                        context={focusReturnContext}
-                        onReturn={returnFromFocus}
-                      />
-                    </div>
-                  )}
                   {capabilityAccess.status === "loading" ? (
                     <CapabilityRouteStatus
                       moduleLabel={activeModuleLabel}

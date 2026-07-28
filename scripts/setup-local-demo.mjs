@@ -50,6 +50,14 @@ export async function seedLocalDemo(prisma, env = process.env) {
       })
     }
     await tx.warehouse.upsert({ where: { id: 'LOCAL-DEMO-WH-001' }, create: { id: 'LOCAL-DEMO-WH-001', tenantId, code: 'LOCAL-DEMO', name: '本地演示仓', metadata: marker }, update: {} })
+    const localUsers = await tx.user.findMany({ where: { tenantId, status: 'active' }, select: { id: true } })
+    for (const user of localUsers) {
+      await tx.userWarehouseScope.upsert({
+        where: { tenantId_userId_warehouseId: { tenantId, userId: user.id, warehouseId: 'LOCAL-DEMO-WH-001' } },
+        create: { id: `LOCAL-DEMO-SCOPE-${user.id}`, tenantId, userId: user.id, warehouseId: 'LOCAL-DEMO-WH-001', accessLevel: 'operate' },
+        update: { accessLevel: 'operate' },
+      })
+    }
     for (const code of ['A-01', 'A-02', 'QC-01']) {
       const id = `LOCAL-DEMO-LOC-${code.replace('-', '')}`
       await tx.warehouseLocation.upsert({ where: { id }, create: { id, tenantId, warehouseId: 'LOCAL-DEMO-WH-001', code, locationKey: code.toLowerCase(), name: `本地演示库位 ${code}` }, update: {} })

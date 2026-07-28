@@ -55,20 +55,26 @@ export default function MasterDataPage({
   }
 
   useEffect(() => {
-    if (initialView) setTab(initialView);
+    if (initialView) {
+      setTab(initialView);
+      setDetail(null);
+      setSearch("");
+    }
   }, [initialView]);
 
   useEffect(() => {
     if (!focus?.entityId) return;
-    const normalized = focus.entityId.toLowerCase();
+    const normalized = String(focus.entityId || "").toLowerCase();
     if (focus.entityType === "item") {
+      if (initialView !== "overview" && initialView !== "items") return;
       setTab("items");
       return;
     }
     if (focus.entityType === "supplier") {
+      if (initialView !== "overview" && initialView !== "suppliers") return;
       const supplier = masterData.suppliers.find((entry) =>
-        entry.code.toLowerCase() === normalized ||
-        entry.name.toLowerCase() === normalized
+        String(entry.code || "").toLowerCase() === normalized ||
+        String(entry.name || "").toLowerCase() === normalized
       );
       if (!supplier) return;
       setTab("suppliers");
@@ -76,10 +82,11 @@ export default function MasterDataPage({
       return;
     }
     if (focus.entityType === "warehouse" || focus.entityType === "bin") {
+      if (initialView !== "overview" && initialView !== "warehouses") return;
       setTab("warehouses");
       setSearch(focus.entityId);
     }
-  }, [focus?.at, focus?.entityType, focus?.entityId, masterData]);
+  }, [focus?.at, focus?.entityType, focus?.entityId, initialView, masterData]);
 
   useEffect(() => {
     let alive = true;
@@ -121,22 +128,22 @@ export default function MasterDataPage({
 
   const query = search.trim().toLowerCase();
   const filteredItems = useMemo(() => masterData.items.filter((item) =>
-    !query || [item.sku, item.name, item.category, item.defaultSupplier, item.defaultBin, item.defaultTaxCode].some((value) => value.toLowerCase().includes(query))
+    !query || [item.sku, item.name, item.category, item.defaultSupplier, item.defaultBin, item.defaultTaxCode].some((value) => String(value || "").toLowerCase().includes(query))
   ), [masterData.items, query]);
   const filteredSuppliers = useMemo(() => masterData.suppliers.filter((item) =>
-    !query || [item.code, item.name, item.category, item.contact, item.paymentTerms, item.defaultTaxCode].some((value) => value.toLowerCase().includes(query))
+    !query || [item.code, item.name, item.category, item.contact, item.paymentTerms, item.defaultTaxCode].some((value) => String(value || "").toLowerCase().includes(query))
   ), [masterData.suppliers, query]);
   const filteredWarehouses = useMemo(() => masterData.warehouses.filter((item) =>
-    !query || [item.warehouseCode, item.warehouseName, item.zone, item.bin, item.owner].some((value) => value.toLowerCase().includes(query))
+    !query || [item.warehouseCode, item.warehouseName, item.zone, item.bin, item.owner].some((value) => String(value || "").toLowerCase().includes(query))
   ), [masterData.warehouses, query]);
   const filteredTaxCodes = useMemo(() => masterData.taxCodes.filter((item) =>
-    !query || [item.code, item.name, item.type, item.region, item.description].some((value) => value.toLowerCase().includes(query))
+    !query || [item.code, item.name, item.type, item.region, item.description].some((value) => String(value || "").toLowerCase().includes(query))
   ), [masterData.taxCodes, query]);
   const filteredPaymentTerms = useMemo(() => masterData.paymentTerms.filter((item) =>
-    !query || [item.code, item.name, item.description].some((value) => value.toLowerCase().includes(query))
+    !query || [item.code, item.name, item.description].some((value) => String(value || "").toLowerCase().includes(query))
   ), [masterData.paymentTerms, query]);
-  const filteredCustomers = useMemo(() => masterData.customers.filter((item) => !query || [item.code, item.name, item.contact, item.phone, item.address, item.paymentTerms].some((value) => value.toLowerCase().includes(query))), [masterData.customers, query]);
-  const filteredTemplates = useMemo(() => templateCatalog.filter((item) => !query || [item.name, item.documentType].some((value) => value.toLowerCase().includes(query))), [query, templateCatalog]);
+  const filteredCustomers = useMemo(() => masterData.customers.filter((item) => !query || [item.code, item.name, item.contact, item.phone, item.address, item.paymentTerms].some((value) => String(value || "").toLowerCase().includes(query))), [masterData.customers, query]);
+  const filteredTemplates = useMemo(() => templateCatalog.filter((item) => !query || [item.name, item.documentType].some((value) => String(value || "").toLowerCase().includes(query))), [query, templateCatalog]);
 
   function exportCurrent() {
     if (tab === "customers" || tab === "print-templates") return;

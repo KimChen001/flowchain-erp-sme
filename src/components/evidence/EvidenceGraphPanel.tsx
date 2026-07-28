@@ -68,6 +68,8 @@ const typeLabels: Record<string, string> = {
 
 const relatedLabels: Record<string, string> = {
   salesOrders: "客户订单",
+  items: "物料资料",
+  inventoryItems: "库存余额",
   inventoryAvailability: "SKU / 库存",
   purchaseRequests: "采购申请",
   rfqs: "RFx",
@@ -88,6 +90,10 @@ const limitationLabels: Record<string, string> = {
   missing_daily_demand_history: "当前工作区缺少完整日需求历史",
   current_workspace_data_limited: "当前数据范围有限，需人工复核",
   record_not_found: "未找到对应业务记录。",
+  warehouse_runtime_not_connected: "仓库运行时关系尚未接入证据图",
+  bin_runtime_not_connected: "库位运行时关系尚未接入证据图",
+  receipt_runtime_has_no_records: "当前工作区暂无可关联的收货记录",
+  invoice_runtime_has_no_records: "当前工作区暂无可关联的发票记录",
 };
 
 function typeLabel(type = "") {

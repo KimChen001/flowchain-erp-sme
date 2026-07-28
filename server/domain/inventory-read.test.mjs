@@ -107,6 +107,7 @@ function createRouteContext(method, pathname, db, repositories = createTestRepos
       url: new URL(pathname, 'http://localhost'),
       db,
       repositories,
+      identity: { authenticated: true, tenantId: 'tenant-test', userId: 'user-test', role: 'manager', source: 'test' },
       send(_res, status, payload) {
         response = { status, payload }
       },

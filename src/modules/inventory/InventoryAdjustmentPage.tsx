@@ -17,7 +17,7 @@ export default function InventoryAdjustmentPage() {
   const { values, setValue, selectedId, setSelectedId } = useListRouteState({ moduleId: "inventory", routeId: "inventory:adjustments", defaults: adjustmentListDefaults });
   const { q: search, status } = values;
   const selected = INVENTORY_ADJUSTMENTS.find((item) => item.id === selectedId) || null;
-  const rows = useMemo(() => INVENTORY_ADJUSTMENTS.filter((item) => (!search.trim() || [item.adjustmentNo, item.warehouse, item.adjustmentType, item.reason].some((value) => value.toLowerCase().includes(search.trim().toLowerCase()))) && (status === "全部" || item.status === status)), [search, status]);
+  const rows = useMemo(() => INVENTORY_ADJUSTMENTS.filter((item) => (!search.trim() || [item.adjustmentNo, item.warehouse, item.adjustmentType, item.reason].some((value) => String(value || "").toLowerCase().includes(search.trim().toLowerCase()))) && (status === "全部" || item.status === status)), [search, status]);
   return <div className="space-y-4" data-testid="inventory-adjustment-page">
     <div className="flex justify-end"><button className="fc-action-button fc-action-primary" onClick={() => navigate("/app/inventory/adjustments/new")}>新建调整单</button></div>
     <div className="grid grid-cols-3 gap-3"><KpiCard label="调整单" value={String(INVENTORY_ADJUSTMENTS.length)} icon={ClipboardList} color={A.blue} /><KpiCard label="待审核" value={String(INVENTORY_ADJUSTMENTS.filter((item) => item.status === "待审核").length)} icon={FileEdit} color={A.orange} /><KpiCard label="已审核" value={String(INVENTORY_ADJUSTMENTS.filter((item) => item.status === "已审核").length)} icon={CheckCircle2} color={A.green} /></div>

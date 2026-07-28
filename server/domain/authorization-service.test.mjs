@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { authorize, buildAuthorizationDecisionSet, redactFieldGroups } from "../auth/authorization-service.mjs"
+import { authorize, buildAuthorizationDecisionSet, moduleVisibilityFor, redactFieldGroups } from "../auth/authorization-service.mjs"
 import { defaultRoleTemplates, legacyRoleTemplateMap, permissionCatalog, permissionCodeSet } from "../auth/permission-catalog.mjs"
 
 const actor = (permissions = [], overrides = {}) => ({ complete: true, authenticated: true, tenantId: "tenant-a", userId: "user-a", roleIds: ["role-a"], inactiveRoleIds: [], permissionCodes: new Set(permissions), permissionSourceRoleIds: new Map(permissions.map((code) => [code, ["role-a"]])), readWarehouseIds: new Set(["warehouse-a"]), operateWarehouseIds: new Set(["warehouse-a"]), ...overrides })
@@ -56,4 +56,18 @@ test("field visibility redacts on the server with null rather than substituted v
   const denied = buildAuthorizationDecisionSet({ actor: actor([]), permissions: ["finance.overview.read"], fieldGroups: ["finance_amounts"] })
   const value = redactFieldGroups({ totalAmount: "125.00", currency: "CNY" }, denied.fieldVisibility, { totalAmount: "finance_amounts" })
   assert.equal(value.totalAmount, null); assert.equal(value.currency, "CNY"); assert.equal(value.fieldVisibility.finance_amounts.reasonCode, "FIELD_PERMISSION_DENIED")
+})
+
+test("sales read navigation remains visible when write lifecycle capabilities are disabled", () => {
+  const visibility = moduleVisibilityFor(
+    actor(["sales_order.read"]),
+    {
+      sales: { enabled: true, readReady: true },
+      "sales-order-lifecycle": { enabled: false, readReady: true },
+      "sales-shipment-posting": { enabled: false, readReady: true },
+    },
+  )
+  assert.equal(visibility.sales.permissionAllowed, true)
+  assert.equal(visibility.sales.capabilityAllowed, true)
+  assert.equal(visibility.sales.visible, true)
 })

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, RefreshCw } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip } from "../../components/ui";
@@ -63,13 +63,6 @@ type InventoryException = {
   status?: string;
   reason?: string;
 };
-type Relationship = {
-  active?: boolean;
-  approved?: boolean;
-  preferred?: boolean;
-  supplierId?: string;
-  supplier?: { id?: string; supplierName?: string; name?: string };
-};
 type Focus = {
   entityType: string;
   entityId: string;
@@ -78,11 +71,38 @@ type Focus = {
 
 const endpointFor: Record<string, { url: string; key: string }> = {
   overview: { url: "/api/inventory/balances", key: "balances" },
-  warnings: { url: "/api/inventory/items", key: "items" },
+  warnings: { url: "/api/inventory/balances", key: "balances" },
   lots: { url: "/api/inventory/lots", key: "lots" },
   serials: { url: "/api/inventory/serials", key: "serials" },
   movements: { url: "/api/inventory/movements", key: "movements" },
   exceptions: { url: "/api/inventory/exceptions", key: "exceptions" },
+};
+
+const emptyStateFor: Record<string, { title: string; description: string }> = {
+  overview: {
+    title: "当前工作区暂无库存余额",
+    description: "尚未读取到当前用户有权查看的仓库库存余额。",
+  },
+  movements: {
+    title: "当前工作区暂无库存流水",
+    description: "库存余额可以由本地场景显式加载；只有正式入库、出库、调拨或调整过账后才会产生流水。",
+  },
+  warnings: {
+    title: "当前没有库存预警",
+    description: "当前可见库存余额未低于安全库存或再订货点。",
+  },
+  lots: {
+    title: "当前工作区暂无批次记录",
+    description: "只有启用批次管理并完成正式库存过账后才会出现批次记录。",
+  },
+  serials: {
+    title: "当前工作区暂无序列号记录",
+    description: "只有启用序列号管理并完成正式库存过账后才会出现序列号记录。",
+  },
+  exceptions: {
+    title: "当前没有库存异常",
+    description: "当前可见库存记录未产生需要处理的异常。",
+  },
 };
 
 function quantity(item: Item) {
@@ -93,60 +113,6 @@ function reorder(item: Item) {
 }
 function isShort(item: Item) {
   return quantity(item) < reorder(item);
-}
-
-function ReplenishmentAction({ item }: { item: Item }) {
-  const [state, setState] = useState<"loading" | "ready" | "missing" | "error">(
-    "loading",
-  );
-  const itemId = item.itemId || item.sku;
-  useEffect(() => {
-    let alive = true;
-    apiJson<{ relationships: Relationship[] }>(
-      `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
-    )
-      .then(({ relationships = [] }) => {
-        if (alive)
-          setState(
-            relationships.some(
-              (row) =>
-                row.active !== false &&
-                row.approved !== false &&
-                (row.supplierId || row.supplier?.id),
-            )
-              ? "ready"
-              : "missing",
-          );
-      })
-      .catch(() => {
-        if (alive) setState("error");
-      });
-    return () => {
-      alive = false;
-    };
-  }, [itemId]);
-  if (state === "loading")
-    return (
-      <span className="text-xs" style={{ color: A.sub }}>
-        校验供应关系...
-      </span>
-    );
-  if (state !== "ready")
-    return (
-      <EntityLink kind="item" id={itemId} className="text-xs">
-        维护供应商关系
-      </EntityLink>
-    );
-  const suggested = Math.max(1, reorder(item) - quantity(item));
-  return (
-    <Link
-      className="rounded-md px-3 py-1.5 text-xs font-semibold"
-      style={{ background: "#eef5ff", color: A.blue }}
-      to={`/app/procurement/requests?itemId=${encodeURIComponent(itemId)}&sku=${encodeURIComponent(item.sku)}&quantity=${suggested}&source=inventory`}
-    >
-      新建采购申请
-    </Link>
-  );
 }
 
 export default function InventoryPage({
@@ -255,6 +221,10 @@ export default function InventoryPage({
     supportedFilterNames.forEach((name) => next.delete(name));
     setSearchParams(next);
   };
+  const emptyState = emptyStateFor[view] || {
+    title: "当前工作区暂无库存记录",
+    description: "页面不会用固定 SKU、批次、序列号或移动记录补足空数据。",
+  };
 
   return (
     <div className="space-y-4">
@@ -310,9 +280,9 @@ export default function InventoryPage({
       {state === "ready" && visible.length === 0 && (
         <Card className="p-10 text-center">
           <Boxes className="mx-auto mb-3" size={28} color={A.gray2} />
-          <div className="text-sm font-semibold">当前工作区暂无库存记录</div>
+          <div className="text-sm font-semibold">{emptyState.title}</div>
           <p className="mt-2 text-xs" style={{ color: A.sub }}>
-            页面不会用固定 SKU、批次、序列号或移动记录补足空数据。
+            {emptyState.description}
           </p>
         </Card>
       )}
@@ -402,9 +372,6 @@ export default function InventoryPage({
                         >
                           库存详情
                         </button>
-                        {view === "warnings" && isShort(item) && (
-                          <ReplenishmentAction item={item} />
-                        )}
                       </div>
                     </td>
                   </tr>

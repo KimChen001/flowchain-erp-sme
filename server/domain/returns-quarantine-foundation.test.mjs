@@ -188,18 +188,18 @@ test("authoritative inventory selectors fail closed without authenticated identi
   const anonymousQuarantine = await route("/api/inventory/quarantine-balances/select", {
     actor: { authenticated: false },
   });
-  assert.equal(anonymousQuarantine.response.status, 409);
+  assert.equal(anonymousQuarantine.response.status, 401);
   assert.equal(
     anonymousQuarantine.response.payload.code,
-    "AUTHORITATIVE_QUARANTINE_READ_NOT_AVAILABLE",
+    "AUTHENTICATION_REQUIRED",
   );
 
   const anonymous = await route("/api/inventory/balances/select", {
     actor: { authenticated: false },
   });
-  assert.equal(anonymous.response.status, 409);
+  assert.equal(anonymous.response.status, 401);
   assert.equal(
     anonymous.response.payload.code,
-    "AUTHORITATIVE_INVENTORY_READ_NOT_AVAILABLE",
+    "AUTHENTICATION_REQUIRED",
   );
 });

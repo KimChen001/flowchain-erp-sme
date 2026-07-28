@@ -236,10 +236,35 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   const supplierItems = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/items$/)
-  if (req.method === 'GET' && supplierItems) { send(res,200,{relationships:await repository.listSupplierItems(decodeURIComponent(supplierItems[1]))}); return true }
+  if (req.method === 'GET' && supplierItems) {
+    if (typeof repository.listSupplierItems !== 'function') {
+      send(res, 501, {
+        code: 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED',
+        capability: 'supplier-item-relationships',
+        message: '供应商–SKU 关系 read model 尚未接入当前 PostgreSQL repository。',
+        limitations: ['供应商基础资料可读取，但可供应物料关系暂不可用。'],
+      })
+      return true
+    }
+    send(res,200,{relationships:await repository.listSupplierItems(decodeURIComponent(supplierItems[1]), tenantScope())})
+    return true
+  }
 
   const itemSuppliers = url.pathname.match(/^\/api\/master-data\/items\/([^/]+)\/suppliers$/)
-  if (req.method === 'GET' && itemSuppliers) { const itemId=decodeURIComponent(itemSuppliers[1]); send(res,200,{relationships:await repository.listItemSuppliers(itemId),suppliers:await repository.approvedSuppliersForItem(itemId)}); return true }
+  if (req.method === 'GET' && itemSuppliers) {
+    if (typeof repository.listItemSuppliers !== 'function' || typeof repository.approvedSuppliersForItem !== 'function') {
+      send(res, 501, {
+        code: 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED',
+        capability: 'item-supplier-relationships',
+        message: 'SKU–供应商关系 read model 尚未接入当前 PostgreSQL repository。',
+        limitations: ['物料基础资料可读取，但可采购供应商关系暂不可用。'],
+      })
+      return true
+    }
+    const itemId=decodeURIComponent(itemSuppliers[1])
+    send(res,200,{relationships:await repository.listItemSuppliers(itemId, tenantScope()),suppliers:await repository.approvedSuppliersForItem(itemId, tenantScope())})
+    return true
+  }
   if (req.method === 'POST' && itemSuppliers) { if(authorizeWrite('item-supplier-relationship').blocked)return true; try{send(res,201,{relationship:await repository.createItemSupplier(decodeURIComponent(itemSuppliers[1]),await readBody(req),actor())})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})} return true }
   const relationshipMatch=url.pathname.match(/^\/api\/master-data\/items\/([^/]+)\/suppliers\/([^/]+)$/)
   if(req.method==='PATCH'&&relationshipMatch){if(authorizeWrite('item-supplier-relationship').blocked)return true;try{send(res,200,{relationship:await repository.updateItemSupplier(decodeURIComponent(relationshipMatch[1]),decodeURIComponent(relationshipMatch[2]),await readBody(req),actor())})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})}return true}

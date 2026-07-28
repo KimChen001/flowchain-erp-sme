@@ -28,13 +28,13 @@ test('AI assistant UI has duplicate request guard, abort, and timeout fallback',
   assert.match(aiPanelSource, /UTF-8 byte bodies for PowerShell Chinese prompt tests/)
 })
 
-test('global focus recovery renders return and clear focus controls', () => {
+test('global focus recovery preserves canonical return context without redundant focus chrome', () => {
   assert.match(uiSource, /export function RecoveryActions/)
-  assert.match(appSource, /当前聚焦/)
-  assert.match(appSource, /<RecoveryActions/)
-  assert.match(appSource, /返回上一层/)
-  assert.match(appSource, /清除聚焦/)
-  assert.match(appSource, /setSearchFocus\(null\)/)
+  assert.match(appSource, /buildReturnContext/)
+  assert.match(appSource, /setFocusReturnContext/)
+  assert.match(appSource, /returnLabel:\s*searchFocus\?\.entityId/)
+  assert.doesNotMatch(appSource, />\s*当前聚焦\s*</)
+  assert.doesNotMatch(appSource, /data-testid="focus-banner"/)
 })
 
 test('inventory SKU focus renders a local detail and canonical entity navigation', () => {
@@ -47,8 +47,8 @@ test('inventory SKU focus renders a local detail and canonical entity navigation
 
 test('PO detail and draft review shell use shared recovery actions', () => {
   assert.match(purchasingSource, /<RecoveryActions/)
-  assert.match(purchasingSource, /返回列表/)
-  assert.match(purchasingSource, /返回采购工作台/)
+  assert.match(purchasingSource, /返回采购订单/)
+  assert.match(purchasingSource, /查看三单匹配/)
   assert.match(actionDraftSource, /<RecoveryActions/)
   assert.match(actionDraftSource, /取消草稿/)
   assert.doesNotMatch(actionDraftSource, /onConfirmSafeAction|记录复核结果/)

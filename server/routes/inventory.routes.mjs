@@ -25,8 +25,9 @@ function authoritativeQuery(url) {
 async function authoritativeService(ctx) {
   const env = ctx.env || process.env;
   if (!ctx.identity?.authenticated) return null;
-  const prisma =
-    ctx.inventoryPrisma || ctx.outboundPrisma || (await getPrismaClient(env));
+  const injected = ctx.inventoryPrisma || ctx.outboundPrisma;
+  if (!injected && !env.DATABASE_URL) return null;
+  const prisma = injected || (await getPrismaClient(env));
   return createInventoryAuthoritativeReadService({ prisma });
 }
 
@@ -38,8 +39,19 @@ function inventoryReadRepository(ctx) {
 
 export async function handleInventoryRoute(ctx) {
   const { req, res, url, send } = ctx;
+  if (url.pathname.startsWith("/api/inventory") && !ctx.identity?.authenticated) {
+    send(res, 401, {
+      code: "AUTHENTICATION_REQUIRED",
+      message: "Authentication is required.",
+    });
+    return true;
+  }
   let readRepository;
   const repository = () => (readRepository ||= inventoryReadRepository(ctx));
+  const scopedQuery = () => ({
+    ...query(url),
+    tenantId: ctx.identity.tenantId,
+  });
   let runtimeModel;
   const allocationModel = async () =>
     (runtimeModel ||= buildRuntimeInventoryAllocation(
@@ -291,7 +303,7 @@ export async function handleInventoryRoute(ctx) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/inventory/items") {
-    send(res, 200, { items: await repository().listItems(query(url)) });
+    send(res, 200, { items: await repository().listItems(scopedQuery()) });
     return true;
   }
 
@@ -319,7 +331,9 @@ export async function handleInventoryRoute(ctx) {
 
   const itemMatch = url.pathname.match(/^\/api\/inventory\/items\/([^/]+)$/);
   if (req.method === "GET" && itemMatch) {
-    const item = await repository().getItem(itemMatch[1]);
+    const item = await repository().getItem(itemMatch[1], {
+      tenantId: ctx.identity.tenantId,
+    });
     if (!item) {
       send(res, 404, { error: "Inventory item not found" });
       return true;
@@ -329,12 +343,12 @@ export async function handleInventoryRoute(ctx) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/inventory/lots") {
-    send(res, 200, { lots: await repository().listLots(query(url)) });
+    send(res, 200, { lots: await repository().listLots(scopedQuery()) });
     return true;
   }
 
   if (req.method === "GET" && url.pathname === "/api/inventory/serials") {
-    send(res, 200, { serials: await repository().listSerials(query(url)) });
+    send(res, 200, { serials: await repository().listSerials(scopedQuery()) });
     return true;
   }
 
@@ -344,7 +358,7 @@ export async function handleInventoryRoute(ctx) {
       send(res, 200, await service.listMovements(authoritativeQuery(url), ctx));
       return true;
     }
-    send(res, 200, { movements: await repository().listMovements(query(url)) });
+    send(res, 200, { movements: await repository().listMovements(scopedQuery()) });
     return true;
   }
 
@@ -415,12 +429,12 @@ export async function handleInventoryRoute(ctx) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/inventory/exceptions") {
-    send(res, 200, { exceptions: await repository().listExceptions(query(url)) });
+    send(res, 200, { exceptions: await repository().listExceptions(scopedQuery()) });
     return true;
   }
 
   if (req.method === "GET" && url.pathname === "/api/inventory/summary") {
-    send(res, 200, { summary: await repository().getSummary() });
+    send(res, 200, { summary: await repository().getSummary({ tenantId: ctx.identity.tenantId }) });
     return true;
   }
 

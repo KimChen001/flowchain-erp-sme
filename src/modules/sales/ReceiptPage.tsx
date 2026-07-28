@@ -19,7 +19,7 @@ export default function ReceiptPage() {
   const { q: search, status } = values;
   const selected = SIGN_RECEIPTS.find((item) => item.id === selectedId) || null;
   const [printing, setPrinting] = useState<SignReceipt | null>(null);
-  const rows = useMemo(() => SIGN_RECEIPTS.filter((item) => (!search.trim() || [item.receiptNo, item.deliveryNo, item.salesOrderNo, item.customerName, item.receiverName].some((value) => value.toLowerCase().includes(search.trim().toLowerCase()))) && (status === "全部" || item.status === status)), [search, status]);
+  const rows = useMemo(() => SIGN_RECEIPTS.filter((item) => (!search.trim() || [item.receiptNo, item.deliveryNo, item.salesOrderNo, item.customerName, item.receiverName].some((value) => String(value || "").toLowerCase().includes(search.trim().toLowerCase()))) && (status === "全部" || item.status === status)), [search, status]);
   const exceptionQty = (item: SignReceipt) => item.lines.reduce((sum, line) => sum + Math.max(0, line.shippedQty - line.receivedQty) + line.damagedQty, 0);
   return <div className="space-y-4" data-testid="receipt-page">
     <div className="flex justify-end"><button className="fc-action-button fc-action-primary" onClick={() => navigate("/app/sales/receipts/new")}>新建签收单</button></div>

@@ -147,7 +147,7 @@ export function buildAuthorizationDecisionSet({ actor, permissions = [], tenantI
 
 export function moduleVisibilityFor(actor, capabilities = {}, workspaceEnabledModuleIds = null) {
   return Object.fromEntries(Object.entries(moduleReadPermissions).map(([moduleId, permissions]) => {
-    const capabilityIds = ({ "returns-quarantine": ["return-request", "return-authorization", "return-posting", "quarantine-inventory"], receiving: ["receiving-posting"], sales: ["sales-order-lifecycle", "sales-shipment-posting"], inventory: ["inventory", "stock-transfer", "cycle-count", "inventory-adjustment-document"], finance: ["finance"], "mobile-operations": ["mobile-operations", "mobile-sync"] })[moduleId] || [moduleId]
+    const capabilityIds = ({ "returns-quarantine": ["return-request", "return-authorization", "return-posting", "quarantine-inventory"], receiving: ["receiving-posting"], sales: ["sales"], inventory: ["inventory", "stock-transfer", "cycle-count", "inventory-adjustment-document"], finance: ["finance"], "mobile-operations": ["mobile-operations", "mobile-sync"] })[moduleId] || [moduleId]
     const registered = capabilityIds.map((id) => capabilities[id]).filter(Boolean)
     const capabilityAllowed = registered.length === 0 || registered.some((capability) => Boolean(capability.enabled && capability.readReady))
     const preferenceAllowed = !workspaceEnabledModuleIds || workspaceEnabledModuleIds.has(moduleId)
