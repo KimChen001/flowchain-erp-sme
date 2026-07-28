@@ -224,7 +224,10 @@ const status = (value: string) => pretty[value] || value;
 const stamp = (value?: string | null) =>
   value ? new Date(value).toLocaleString("zh-CN") : "—";
 function message(error: unknown) {
-  if (!(error instanceof ApiError)) return "请求失败，请刷新后重试。";
+  if (!(error instanceof ApiError)) return "网络连接失败，请检查连接后重试。";
+  if (error.status === 401) return "登录已失效，请重新登录后读取销售订单。";
+  if (error.status === 403) return "当前账号没有读取销售订单的权限。";
+  if (error.status >= 500) return "销售订单服务暂时不可用，请稍后重试。";
   const map: Record<string, string> = {
     PERMISSION_DENIED: "当前角色只能查看，不能执行此操作。",
     WAREHOUSE_SCOPE_DENIED: "当前账号没有相关仓库权限。",
@@ -365,6 +368,7 @@ function OrderList() {
       }
       setData(result);
     } catch (e) {
+      setData(null);
       setError(message(e));
     }
   }, [params.toString(), page]);

@@ -16,12 +16,12 @@ type ProcurementPanelProps = {
 };
 
 const emptyViews: Record<string, [string, string]> = {
-  rfq: ["暂无询价单", "采购申请需要询价时，记录将显示在这里。"],
-  receiving: ["暂无采购收货记录", "采购订单收货后，记录将显示在这里。"],
-  invoices: ["暂无供应商发票", "供应商发票录入后，记录将显示在这里。"],
-  match: ["暂无匹配记录", "收货与发票数据完整后可进行三单匹配。"],
-  returns: ["暂无采购退货记录", "采购退货发生后，记录将显示在这里。"],
-  contracts: ["暂无采购合同", "当前未接通合同 runtime repository。"],
+  rfq: ["询价与报价列表尚未接入", "PostgreSQL RFQ read repository 已存在，但 canonical 列表页面尚未在此路由接通。"],
+  receiving: ["采购收货列表尚未接入", "可从采购订单详情进入已关联的真实收货单；此路由暂不声称当前工作区没有记录。"],
+  invoices: ["供应商发票列表尚未接入", "可从采购订单详情查看已关联发票事实；canonical 发票列表仍需后续接通。"],
+  match: ["三单匹配列表尚未接入", "当前真实 PO、GRN 与 Invoice 比对请从采购订单详情查看；此路由不再显示虚假的无记录结论。"],
+  returns: ["采购退货工作台尚未接入", "退货与隔离库存 repository 基础已存在，但采购 canonical route 尚未接通。"],
+  contracts: ["采购合同能力尚未接入", "当前没有 PostgreSQL 合同 runtime repository，页面不会返回静态合同。"],
 };
 
 export default function ProcurementPanel({ intent = null, view = "workbench", focus = null, onNavigate, onActiveContextChange }: ProcurementPanelProps) {

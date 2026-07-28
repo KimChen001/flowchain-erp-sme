@@ -129,14 +129,20 @@ test('summary sanitizer rejects forbidden default output terms', () => {
 
 test('env check does not write env files persistent output or current workspace data', () => {
   const before = dataFileStat()
+  const artifactPaths = ['../../test-results', '../../playwright-report', '../../blob-report']
+  const beforeArtifacts = artifactPaths.map(path => {
+    const url = new URL(path, import.meta.url)
+    return fs.existsSync(url) ? fs.statSync(url).mtimeMs : null
+  })
   const result = runEnvCheck({ env: {} })
   const after = dataFileStat()
   assert.equal(result.exitCode, 0)
   assert.equal(after.mtimeMs, before.mtimeMs)
   assert.equal(fs.existsSync(new URL('../../.env', import.meta.url)), false)
-  for (const path of ['../../test-results', '../../playwright-report', '../../blob-report']) {
-    assert.equal(fs.existsSync(new URL(path, import.meta.url)), false)
-  }
+  assert.deepEqual(artifactPaths.map(path => {
+    const url = new URL(path, import.meta.url)
+    return fs.existsSync(url) ? fs.statSync(url).mtimeMs : null
+  }), beforeArtifacts)
 })
 
 test('inspection helper is value-free and does not expose raw config object in summary', () => {

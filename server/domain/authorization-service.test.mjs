@@ -71,3 +71,22 @@ test("sales read navigation remains visible when write lifecycle capabilities ar
   assert.equal(visibility.sales.capabilityAllowed, true)
   assert.equal(visibility.sales.visible, true)
 })
+
+test("capability scope keeps read separate from create, posting, and reversal", () => {
+  const current = actor(["sales_order.read", "sales_order.create", "shipment.post", "shipment.reverse"])
+  const readOnlyCapability = { enabled: true, readReady: true, writeReady: false }
+  assert.equal(authorize({ actor: current, permission: "sales_order.read", tenantId: "tenant-a", resource: { capability: readOnlyCapability, scopeLevel: "read" } }).allowed, true)
+  for (const permission of ["sales_order.create", "shipment.post", "shipment.reverse"]) {
+    const decision = authorize({ actor: current, permission, tenantId: "tenant-a", resource: { capability: readOnlyCapability, scopeLevel: "operate" } })
+    assert.equal(decision.allowed, false, permission)
+    assert.equal(decision.reasonCode, "AUTHORIZATION_CAPABILITY_DISABLED", permission)
+  }
+  const readDisabled = authorize({
+    actor: current,
+    permission: "sales_order.read",
+    tenantId: "tenant-a",
+    resource: { capability: { enabled: true, readReady: false, writeReady: true }, scopeLevel: "read" },
+  })
+  assert.equal(readDisabled.allowed, false)
+  assert.equal(readDisabled.reasonCode, "AUTHORIZATION_CAPABILITY_DISABLED")
+})

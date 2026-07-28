@@ -299,6 +299,7 @@ export default function InventoryPage({
                     "在手量",
                     "预留量",
                     "可用量",
+                    "安全库存 / 再订货点",
                     "状态",
                     "操作",
                   ].map((h) => (
@@ -351,6 +352,9 @@ export default function InventoryPage({
                       {view === "overview"
                         ? item.availableQuantity || "0.0000"
                         : quantity(item)}
+                    </td>
+                    <td className="px-4 py-3 tabular-nums">
+                      {Number(item.safetyStock || 0)} / {reorder(item)}
                     </td>
                     <td className="px-4 py-3">
                       {view === "warnings" && isShort(item) ? (

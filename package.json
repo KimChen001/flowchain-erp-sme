@@ -20,6 +20,7 @@
     "test:browser:receiving": "node scripts/run-receiving-playwright.mjs",
     "test:browser:reports": "node scripts/run-reports-playwright.mjs",
     "test:browser:outbound": "node scripts/run-outbound-playwright.mjs",
+    "test:browser:product-recovery": "node scripts/run-product-recovery-playwright.mjs",
     "test:browser:inventory-operations": "node scripts/run-inventory-operations-playwright.mjs",
     "test:browser:returns-quarantine": "node scripts/run-returns-quarantine-playwright.mjs",
     "test:browser:settings": "node scripts/run-settings-playwright.mjs",

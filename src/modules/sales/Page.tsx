@@ -93,6 +93,9 @@ function limitationLabel(code: string) {
     missing_supplier_risk_records: "当前工作区缺少完整供应商风险记录",
     current_workspace_data_limited: "当前数据范围有限，需人工复核",
     record_not_found: "未找到对应记录",
+    inventory_availability_not_joined: "尚未关联权威库存可用量",
+    purchase_supply_not_joined: "尚未关联采购在途与供应商交付承诺",
+    risk_summary_aggregates_multiple_lines: "风险数量为多明细行汇总",
   } as Record<string, string>)[code] || code;
 }
 
@@ -291,6 +294,14 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
                     <div className="font-semibold text-sm tabular-nums" style={{ color: A.label }}><EntityLink kind="sales_order" id={order.salesOrderId}>{order.salesOrderId}</EntityLink> · {order.customerName}</div>
                     <div className="mt-1 text-xs truncate" style={{ color: A.sub }}><EntityLink kind="item" id={order.sku}>{order.sku}</EntityLink> / {order.itemName} · 缺口 {qty(order.shortageQty)} · 承诺日期 {order.promisedDate || "待确认"}</div>
                     <div className="mt-1 text-[11px] leading-5 line-clamp-2" style={{ color: A.gray1 }}>{order.deliveryRiskReason}</div>
+                    <div className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>
+                      事实依据：订购 {qty(order.orderedQty)} · 已预留 {qty(order.reservedQty)} · 已履约 {qty(order.fulfilledQty)} · 未覆盖 {qty(order.shortageQty)}
+                    </div>
+                    {order.dataLimitations.length > 0 && (
+                      <div className="mt-1 text-[11px] leading-5" style={{ color: A.orange }}>
+                        数据限制：{order.dataLimitations.map(limitationLabel).join("；")}
+                      </div>
+                    )}
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {[
                         ["订单", "sales"],
@@ -306,7 +317,9 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
                       ))}
                     </div>
                   </div>
-                  <div className="text-[11px] leading-5" style={{ color: A.orange }}>建议动作：优先复核库存分配、在途采购和供应商交付承诺。</div>
+                  <div className="text-[11px] leading-5" style={{ color: A.orange }}>
+                    建议动作：人工复核库存分配及交付条件。当前没有权威采购在途或供应商承诺关联，不能据此判断补货到达时间。
+                  </div>
                   <div className="flex justify-end">
                     <Link to={`/app/sales/orders/${encodeURIComponent(order.salesOrderId)}`} className="px-3 py-1.5 rounded-md font-medium" style={{ background: "#f0f6ff", color: A.blue }}>查看详情</Link>
                   </div>

@@ -303,6 +303,7 @@ function matchStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
 }
 
 function nextStepForPo(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
+  if (receivedStatus(po, facts) === "未收货") return "等待收货";
   const status = matchStatus(po, facts);
   if (status === "缺少收货") return "等待收货";
   if (status === "缺少发票") return "等待发票";
@@ -687,6 +688,12 @@ export default function PurchasingOrdersPage({
     navigateOrderWithReturn(selectedPO, moduleId, focusTarget, label);
   }
 
+  function focusFulfillmentEvidence() {
+    setHighlightedArea("receiving-invoice-variance");
+    fulfillmentFocusRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.setTimeout(() => setHighlightedArea(""), 5000);
+  }
+
   const detailContent = selectedPO && (() => {
     const poLines = buildPoLineRows(selectedPO, facts);
     const grnRows = buildGrnRows(selectedPO, facts);
@@ -730,9 +737,9 @@ export default function PurchasingOrdersPage({
             }] : []),
             ...(firstInvoice ? [{
               key: "invoice",
-              label: "查看供应商发票", onClick: () => navigateWithReturn("procurement:invoices", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber), kind: "module" as const, tone: "subtle" as const,
+              label: "查看供应商发票", onClick: focusFulfillmentEvidence, kind: "module" as const, tone: "subtle" as const,
             }] : []),
-            { key: "match", label: "查看三单匹配", onClick: () => navigateWithReturn("procurement:match"), kind: "module", tone: "subtle" },
+            { key: "match", label: "查看三单匹配", onClick: focusFulfillmentEvidence, kind: "module", tone: "subtle" },
           ]}
         />
 
