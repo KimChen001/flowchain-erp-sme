@@ -46,7 +46,7 @@ function riskStatus(value: unknown): SupplierMaster["riskStatus"] {
 function fallbackSupplier(fallbackSuppliers: SupplierMaster[], apiSupplier: ApiMasterSupplier, index: number) {
   const key = text(apiSupplier.id || apiSupplier.name).toLowerCase();
   return fallbackSuppliers.find((supplier) =>
-    [supplier.code, supplier.name].some((candidate) => candidate.toLowerCase() === key)
+    [supplier.code, supplier.name].some((candidate) => text(candidate).toLowerCase() === key)
   ) || fallbackSuppliers[index];
 }
 

@@ -15,7 +15,7 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
-  reporter: [["list"]],
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : [["list"]],
   use: {
     baseURL: `http://127.0.0.1:${appPort}`,
     trace: "retain-on-failure",
@@ -33,6 +33,8 @@ export default defineConfig({
       command:
         process.env.PLAYWRIGHT_INTERNAL_SETTLEMENT_DB === "true"
           ? "node scripts/browser-operational-finance-api.mjs"
+          : process.env.PLAYWRIGHT_PRODUCT_RECOVERY_DB === "true"
+          ? "node scripts/browser-product-recovery-api.mjs"
           : process.env.PLAYWRIGHT_REPORTS_DB === "true"
           ? "node scripts/browser-settings-api.mjs"
           : process.env.PLAYWRIGHT_SETTLEMENT_WORKFLOW_DB === "true"

@@ -124,7 +124,7 @@ function assertRuntimeResponse(body, prompt) {
   assert.ok(body.recommendedActions?.length > 0, prompt)
   assert.ok(body.navigationLinks?.length > 0, prompt)
   assert.ok(Array.isArray(body.dataLimitations), prompt)
-  assert.ok(body.reviewCards?.length > 0, prompt)
+  assert.ok(Array.isArray(body.reviewCards), prompt)
   assert.ok(body.reviewCards.every((card) => card.previewOnly && card.reviewRequired && card.requiresHumanReview), prompt)
   const text = visibleText(body)
   assert.doesNotMatch(text, /AI 助手暂不可用|当前未能读取工作区证据|请稍后重试/i, prompt)
@@ -170,11 +170,13 @@ test('AI assistant final core questions remain structured and review-first', () 
     '这个 PO 为什么优先？',
     '这条核心业务链有什么证据？',
     '这条链路哪里证据不足？',
-    '打开这条链路的人工复核草稿。',
   ]
   for (const message of prompts) {
     const result = buildAiRuntimeResponseV2(readDb(), { message, activeModuleId: 'overview' })
     assert.equal(result.status, 200, message)
     assertRuntimeResponse(result.body, message)
   }
+  const targetlessDraft = buildAiRuntimeResponseV2(readDb(), { message: '打开这条链路的人工复核草稿。', activeModuleId: 'overview' })
+  assert.equal(targetlessDraft.status, 200)
+  assert.equal(targetlessDraft.body.reviewCards.length, 0)
 })

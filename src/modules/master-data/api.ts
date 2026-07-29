@@ -1,4 +1,4 @@
-import { apiJson } from "../../lib/api-client";
+import { ApiError, apiJson } from "../../lib/api-client";
 import type { ItemMaster, PaymentTerm, SupplierMaster, TaxCode, WarehouseBin } from "../../types/scm";
 import type { CustomerMaster } from "./standardData";
 
@@ -82,17 +82,6 @@ function arrayField<T>(payload: unknown, key: string): T[] {
   return payload[key] as T[];
 }
 
-async function readOptional<T>(url: string, key: string): Promise<T[] | undefined> {
-  try {
-    return arrayField<T>(await apiJson<unknown>(url), key);
-  } catch (error) {
-    if ((import.meta as any).env?.DEV) {
-      console.warn(`[master-data] falling back for ${url}`, error);
-    }
-    return undefined;
-  }
-}
-
 function text(value: unknown, fallback = "") {
   const next = String(value ?? "").trim();
   return next || fallback;
@@ -132,21 +121,21 @@ function supplierByIdOrName(suppliers: SupplierMaster[], value: unknown) {
   const key = text(value).toLowerCase();
   if (!key) return null;
   return suppliers.find((supplier) =>
-    [supplier.code, supplier.name].some((candidate) => candidate.toLowerCase() === key)
+    [supplier.code, supplier.name].some((candidate) => text(candidate).toLowerCase() === key)
   ) || null;
 }
 
 function fallbackItem(fallback: ItemMaster[], apiItem: ApiMasterItem, index: number) {
   const key = text(apiItem.sku || apiItem.itemId || apiItem.id || apiItem.itemName || apiItem.name).toLowerCase();
   return fallback.find((item) =>
-    [item.sku, item.name].some((candidate) => candidate.toLowerCase() === key)
+    [item.sku, item.name].some((candidate) => text(candidate).toLowerCase() === key)
   ) || fallback[index];
 }
 
 function fallbackSupplier(fallback: SupplierMaster[], apiSupplier: ApiMasterSupplier, index: number) {
   const key = text(apiSupplier.supplierCode || apiSupplier.id || apiSupplier.supplierName || apiSupplier.name).toLowerCase();
   return fallback.find((supplier) =>
-    [supplier.code, supplier.name].some((candidate) => candidate.toLowerCase() === key)
+    [supplier.code, supplier.name].some((candidate) => text(candidate).toLowerCase() === key)
   ) || fallback[index];
 }
 
@@ -274,25 +263,26 @@ export function normalizeTaxCodeRows(
   });
 }
 
-export async function fetchMasterDataSnapshot(fallback: MasterDataSnapshot): Promise<MasterDataSnapshot> {
-  let items: ApiMasterItem[] | undefined;
-  let suppliers: ApiMasterSupplier[] | undefined;
-  let warehouses: ApiMasterWarehouse[] | undefined;
-  let paymentTerms: ApiPaymentTerm[] | undefined;
-  let taxCodes: ApiTaxCode[] | undefined;
-  let customers: CustomerMaster[] | undefined;
-  try {
-    const payload = await apiJson<unknown>("/api/master-data");
-    items = arrayField<ApiMasterItem>(payload, "items");
-    suppliers = arrayField<ApiMasterSupplier>(payload, "suppliers");
-    warehouses = arrayField<ApiMasterWarehouse>(payload, "warehouses");
-    paymentTerms = arrayField<ApiPaymentTerm>(payload, "paymentTerms");
-    taxCodes = arrayField<ApiTaxCode>(payload, "taxCodes");
-    customers = arrayField<CustomerMaster>(payload, "customers");
-  } catch (error) {
-    if ((import.meta as any).env?.DEV) console.warn("[master-data] canonical snapshot unavailable", error);
+export type AsyncDataStatus = "loading" | "ready_with_data" | "ready_empty" | "unauthenticated" | "forbidden" | "not_found" | "server_error" | "network_error";
+
+export function masterDataErrorStatus(error: unknown): Exclude<AsyncDataStatus, "loading" | "ready_with_data" | "ready_empty"> {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return "unauthenticated";
+    if (error.status === 403) return "forbidden";
+    if (error.status === 404) return "not_found";
+    return "server_error";
   }
-  if (!items || !suppliers || !customers || !warehouses || !paymentTerms || !taxCodes) throw new Error("主数据 API 返回不完整");
+  return "network_error";
+}
+
+export async function fetchMasterDataSnapshot(fallback: MasterDataSnapshot): Promise<MasterDataSnapshot> {
+  const payload = await apiJson<unknown>("/api/master-data");
+  const items = arrayField<ApiMasterItem>(payload, "items");
+  const suppliers = arrayField<ApiMasterSupplier>(payload, "suppliers");
+  const warehouses = arrayField<ApiMasterWarehouse>(payload, "warehouses");
+  const paymentTerms = arrayField<ApiPaymentTerm>(payload, "paymentTerms");
+  const taxCodes = arrayField<ApiTaxCode>(payload, "taxCodes");
+  const customers = arrayField<CustomerMaster>(payload, "customers");
   const apiSnapshot: MasterDataApiSnapshot = { items, suppliers, customers, warehouses, paymentTerms, taxCodes };
   const normalizedSuppliers = normalizeSupplierRows(apiSnapshot.suppliers, fallback.suppliers);
   return {

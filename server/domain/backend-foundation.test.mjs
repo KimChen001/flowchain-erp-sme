@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
-import { createScmServer } from '../routes/scm-legacy.routes.mjs'
+import { createScmServer } from '../bootstrap/scm-server.mjs'
 import { handleAiRoute } from '../routes/ai.routes.mjs'
 import { handleContextRoute } from '../routes/context.routes.mjs'
 import { normalizeAuditEvent } from './audit-foundation.mjs'
@@ -86,7 +86,7 @@ test('server factory imports with backend foundation routes', () => {
 })
 
 test('server route context injects repository registry for repository-compatible routes', () => {
-  const source = readSource('server', 'routes', 'scm-legacy.routes.mjs')
+  const source = readSource('server', 'bootstrap', 'scm-server.mjs')
 
   assert.match(source, /import \{[^}]*createRepositoryRegistry[^}]*\} from ["']\.\.\/repositories\/adapter-registry\.mjs["']/)
   assert.match(source, /const repositories = createRepositoryRegistry\(\{ db, env: process\.env \}\)/)
@@ -111,7 +111,7 @@ test('global server errors are sanitized before returning 500 responses', () => 
 })
 
 test('server health response omits provider keys models and proxy diagnostics by default', () => {
-  const source = readSource('server', 'routes', 'scm-legacy.routes.mjs')
+  const source = readSource('server', 'bootstrap', 'scm-server.mjs')
   const healthBlock = source.slice(
     source.search(/url\.pathname === ["']\/api\/health["']/),
     source.search(/if\s*\(\s*req\.method === ["']POST["'] && url\.pathname === ["']\/api\/auth\/login["']/),
@@ -131,7 +131,7 @@ test('server health response omits provider keys models and proxy diagnostics by
 })
 
 test('database mode guard is before legacy auth and capability gate is registered', () => {
-  const source = readSource('server', 'routes', 'scm-legacy.routes.mjs')
+  const source = readSource('server', 'bootstrap', 'scm-server.mjs')
 
   const guardIndex = source.indexOf('isDatabaseModeWriteBlocked({')
   assert.ok(guardIndex < source.search(/url\.pathname === ["']\/api\/auth\/login["']/))

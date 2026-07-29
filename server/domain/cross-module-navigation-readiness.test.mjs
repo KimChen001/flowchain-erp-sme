@@ -68,9 +68,9 @@ test('R206-R208 AI insight, cockpit, and transactional links preserve workflow r
   assert.doesNotMatch(aiPanel, /Back to AI Assistant/)
   assert.match(cockpit, /returnLabel:\s*"返回 今日行动"/)
   assert.match(cockpit, /source:\s*"todayCockpit"/)
-  assert.match(purchasing, /returnLabel:\s*`返回采购订单 \$\{selectedPO\.po\}`/)
-  assert.match(purchasing, /relatedRecordsForEntity\(\{[^}]+purchaseOrders/)
-  assert.match(purchasing, /"purchaseOrder", selectedPO\.po/)
+  assert.match(purchasing, /returnLabel:\s*`返回采购订单 \$\{order\.po\}`/)
+  assert.match(purchasing, /buildGrnRows\(selectedPO, facts\)/)
+  assert.match(purchasing, /buildInvoiceRows\(selectedPO, facts\)/)
   assert.match(receiving, /returnLabel:\s*`返回收货单 \$\{selectedGrn\.grn\}`/)
   assert.match(receiving, /"grn", selectedGrn\.grn/)
   assert.match(invoice, /returnLabel:\s*`返回供应商发票 \$\{selectedInvoice\.invoiceNumber\}`/)
@@ -88,8 +88,8 @@ test('R210 guardrails keep AI embedded provider-free and non-mutating', () => {
     source('src', 'modules', 'receiving', 'Page.tsx'),
     source('src', 'modules', 'procurement', 'SupplierInvoiceRegister.tsx'),
   ].join('\n')
-  assert.match(app, /focusReturnContext/)
-  assert.match(app, /BusinessBackLink/)
+  assert.match(app, /setFocusReturnContext/)
+  assert.match(app, /buildReturnContext/)
   assert.doesNotMatch(routes, /label:\s*["']AI Assistant["']/)
   assert.doesNotMatch(routes, /label:\s*["']AI Command Center["']/)
   assert.doesNotMatch(routes, /label:\s*["']Ask AI["']/)

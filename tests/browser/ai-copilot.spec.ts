@@ -110,14 +110,13 @@ async function openDraftPreview(page: Page, draftType: string) {
   return shell;
 }
 
-async function expectConfirmedSafeActionBoundary(page: Page, expectedLabel: string | RegExp = "记录复核结果") {
-  await expect(page.getByRole("button", { name: expectedLabel })).toBeVisible();
+async function expectTextDraftBoundary(page: Page) {
   const shell = page.getByTestId("action-draft-review-shell");
-  await expect(shell).toContainText("只能进入安全内部记录确认");
-  await expect(shell).toContainText("危险动作保持禁用或不展示");
+  await expect(shell).toContainText("文本草稿编辑器");
   await expect(shell).toContainText("不外发");
   await expect(shell).toContainText("不写库存");
   await expect(shell).toContainText("不处理资金");
+  await expect(page.getByRole("button", { name: "记录复核结果" })).toHaveCount(0);
 }
 
 async function closeDraftPreview(page: Page) {
@@ -337,39 +336,37 @@ test.describe("AI Copilot browser controlled review", () => {
     await expect(assistant).not.toContainText("PO-2026-1282 被列为优先事项");
   });
 
-  test("R127 SKU risk draft preview opens review shell without creating business records", async ({ page }) => {
+  test("R127 SKU replenishment opens the formal prefilled PR page", async ({ page }) => {
     await openLoggedInApp(page);
     await openAssistant(page);
-    const assistant = await askAssistant(page, "SKU-00412 为什么风险高？");
+    const assistant = await askAssistant(page, "为 SKU-00412 创建 PR 草稿");
 
     await expect(assistant).toContainText("SKU-00412");
-    await expect(assistant).toContainText(/预览.*补货 PR 草稿|补货 PR 草稿/);
-
-    const shell = await openDraftPreview(page, "purchase_request_draft");
-    await expect(shell).toContainText("SKU-00412");
-    await expect(shell).toContainText("待复核草稿");
-    await expectConfirmedSafeActionBoundary(page);
-
-    await closeDraftPreview(page);
-    await expect(page.getByTestId("ai-assistant-panel")).toBeVisible();
-    await expect(page.getByTestId("ai-assistant-messages")).toContainText("SKU-00412");
+    const action = assistant.getByTestId("ai-structured-draft-action");
+    await expect(action).toContainText("创建正式 PR 草稿");
+    await action.click();
+    await expect(page).toHaveURL(/\/app\/procurement\/requests\?.*(itemId|sku)=SKU-00412/);
+    await expect(page.getByTestId("action-draft-review-shell")).toBeHidden();
   });
 
   test("R128 PO and RFQ follow-up draft previews stay review-first", async ({ page }) => {
     await openLoggedInApp(page);
     await openAssistant(page);
 
-    await askAssistant(page, "解释 PO-2026-1282 为什么优先");
-    let shell = await openDraftPreview(page, "po_followup_draft");
-    await expect(shell).toContainText("PO-2026-1282");
-    await expectConfirmedSafeActionBoundary(page);
-    await closeDraftPreview(page);
+    const poAnswer = await askAssistant(page, "解释 PO-2026-1282 为什么优先");
+    await expect(poAnswer.getByTestId("ai-action-draft-preview")).toHaveCount(0);
+    const poAction = poAnswer.locator('[data-testid="ai-business-navigation-action"][data-business-id="PO-2026-1282"]');
+    await expect(poAction).toBeVisible();
+    await poAction.click();
+    await expect(page.getByTestId("po-fulfillment-focus")).toHaveAttribute("data-focus-highlight", "true");
+    await expect(page.getByTestId("action-draft-review-shell")).toBeHidden();
+    await restoreAssistant(page);
 
-    await askAssistant(page, "RFQ-26-0046 需要怎么跟进？");
-    shell = await openDraftPreview(page, "supplier_followup_draft");
+    await askAssistant(page, "为 RFQ-26-0046 生成供应商消息草稿");
+    const shell = await openDraftPreview(page, "supplier_followup_draft");
     await expect(shell).toContainText("RFQ-26-0046");
     await expect(shell).toContainText(/不形成正式业务处理|不外发/);
-    await expectConfirmedSafeActionBoundary(page);
+    await expectTextDraftBoundary(page);
   });
 
   test("R129 full AI Copilot workspace scenario stays evidence-backed and review-first", async ({ page }) => {
@@ -397,10 +394,11 @@ test.describe("AI Copilot browser controlled review", () => {
     await expect(assistant).toContainText("不得自动");
     await expectCleanAssistantOutput(assistant);
 
+    await askAssistant(page, "生成 PO-2026-1282 的内部备注草稿");
     const shell = await openDraftPreview(page, "po_followup_draft");
     await expect(shell).toContainText("PO-2026-1282");
     await expect(shell).toContainText("待复核草稿");
-    await expectConfirmedSafeActionBoundary(page);
+    await expectTextDraftBoundary(page);
     await expect(page.getByRole("button", { name: "保留待复核草稿" })).toBeVisible();
   });
 });

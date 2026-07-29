@@ -64,3 +64,14 @@ The current project does not implement:
 - Mapping activation and review require permissions distinct from upload.
 - Governed business-object commit adapters start in Phase 5.4C; commit requests
   remain blocked in Phase 5.4B.
+# Phase 5.4B.1 limitations
+
+- Supplier, Item, and Customer formal commit workflows remain outside this stabilization release.
+- The local scenario is preview data and deliberately performs no inventory posting, payment, or irreversible finance action.
+- Demo removal is intentionally manual and prefix-scoped; the launcher never wipes a database.
+- Dependency major-version hardening remains a separate backlog. On 2026-07-27,
+  `npm audit --omit=dev` reported 8 production dependency advisories
+  (4 moderate, 4 high, 0 critical). This stabilization release does not mix in
+  major upgrades to Prisma, React Router, Undici, or XLSX. Structured Intake
+  keeps its bounded production parser path; the legacy `xlsx` dependency
+  remains in the separately governed bank-statement and workbook surfaces.

@@ -69,6 +69,11 @@ export type AiResponseV2NavigationLink = {
   source?: string;
   reason?: string;
   returnContext?: unknown;
+  focusTarget?: {
+    entityType: string;
+    entityId: string;
+    focusArea?: "exception" | "receiving" | "invoice" | "inventory" | "evidence" | "receiving-invoice-variance";
+  };
 };
 
 export type AiResponseV2DataLimitation = {
@@ -133,6 +138,10 @@ export type AiResponseV2 = {
   scope: AiResponseV2Scope;
   conclusion: AiResponseV2Conclusion;
   keyEvidence: AiResponseV2EvidenceItem[];
+  contextCards?: AiResponseV2EvidenceItem[];
+  realEvidenceCount?: number;
+  contextCardCount?: number;
+  limitationCount?: number;
   businessImpact: AiResponseV2BusinessImpactItem[];
   recommendedActions: AiResponseV2RecommendedAction[];
   navigationLinks: AiResponseV2NavigationLink[];

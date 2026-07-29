@@ -44,9 +44,7 @@ import {
   Field,
   inputStyle,
   Modal,
-  RecoveryActions,
 } from "../components/ui";
-import { BusinessBackLink } from "../components/navigation/BusinessBackLink";
 import {
   ModuleShell,
   NotFoundRecovery,
@@ -76,7 +74,6 @@ import {
   ActionDraftReviewShell,
   type ActionDraftPreview,
   type ActionDraftPreviewRequest,
-  type ConfirmedActionResult,
 } from "../modules/action-drafts/ActionDraftReviewShell";
 import ExceptionCasesPage from "../modules/exception-cases/Page";
 import SalesDemandPage from "../modules/sales/Page";
@@ -86,6 +83,11 @@ import AuditHistoryPage from "../modules/audit-history/Page";
 import PilotReadinessPage from "../modules/pilot-readiness/Page";
 import { ReviewFirstActionWorkflowV2 } from "../components/actions/ReviewFirstActionWorkflowV2";
 import { BusinessEntityDetailPage } from "../components/business/BusinessEntityDetailPage";
+import {
+  businessEntityPath,
+  businessEntityRouteRegistry,
+  type BusinessEntityType,
+} from "../components/business/businessEntityRoutes";
 import OutboundWorkbench from "../modules/sales/OutboundWorkbench";
 import InventoryOperationsWorkbench from "../modules/inventory/InventoryOperationsWorkbench";
 import MobileOperationsPage from "../modules/mobile/MobileOperationsPage";
@@ -123,6 +125,7 @@ type GlobalSearchResult = {
 type GlobalSearchFocus = {
   entityType: string;
   entityId: string;
+  focusArea?: CanonicalFocusTarget["focusArea"];
   entityLabel?: string;
   source?: string;
   at: number;
@@ -169,6 +172,16 @@ const SEARCH_GROUP_ORDER = [
 ];
 const SEARCH_GROUP_VISIBLE_LIMIT = 5;
 
+type LocalDevelopmentStatus = {
+  localDevelopment: true;
+  tenantId: string;
+  workspaceName: string;
+  availableLoginEmails: string[];
+  demoMasterDataLoaded: boolean;
+  demoScenarioLoaded: boolean;
+  universalIntakeEnabled: boolean;
+};
+
 const FOCUS_ENTITY_LABELS: Record<string, string> = {
   customer_order: "销售订单",
   sales_order: "销售订单",
@@ -191,8 +204,10 @@ function searchGroupKey(type: string) {
 
 function LoginScreen({
   onLogin,
+  localStatus,
 }: {
   onLogin: (user: WorkspaceUser, token: string) => void;
+  localStatus: LocalDevelopmentStatus | null;
 }) {
   const [form, setForm] = useState({
     company: "FlowChain Workspace",
@@ -333,6 +348,19 @@ function LoginScreen({
               </div>
             </div>
           </div>
+          {localStatus && (
+            <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900" data-testid="local-login-metadata">
+              <div className="font-semibold">Local Development · {localStatus.workspaceName}</div>
+              <div className="mt-1">本地可用账户：{localStatus.availableLoginEmails.join("、")}</div>
+              <div className="mt-2 flex gap-2">
+                {localStatus.availableLoginEmails.map((email) => (
+                  <button key={email} type="button" className="rounded-md bg-white px-2 py-1" onClick={() => setForm((current) => ({ ...current, email }))}>
+                    {email === "admin@flowchain.local" ? "使用本地管理员" : "使用本地经理"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {(
             [
@@ -518,6 +546,7 @@ export default function FlowChainApp() {
   const { t, routeLabel, workspaceName, language } = useI18n();
   const location = useLocation();
   const routerNavigate = useNavigate();
+  const [localStatus, setLocalStatus] = useState<LocalDevelopmentStatus | null>(null);
   const [purchaseIntent, setPurchaseIntent] = useState<PurchaseIntent | null>(
     null,
   );
@@ -533,6 +562,9 @@ export default function FlowChainApp() {
         console.info("FlowChain build identity", identity);
       })
       .catch(() => {});
+  }, []);
+  useEffect(() => {
+    apiJson<LocalDevelopmentStatus>("/api/dev/local-status").then(setLocalStatus).catch(() => setLocalStatus(null));
   }, []);
   const [draftShellOpen, setDraftShellOpen] = useState(false);
   const [draftPreview, setDraftPreview] = useState<ActionDraftPreview | null>(
@@ -557,8 +589,8 @@ export default function FlowChainApp() {
   const [searchFocus, setSearchFocus] = useState<GlobalSearchFocus | null>(
     null,
   );
-  const [focusReturnActive, setFocusReturnActive] = useState("overview");
-  const [focusReturnContext, setFocusReturnContext] =
+  const [, setFocusReturnActive] = useState("overview");
+  const [, setFocusReturnContext] =
     useState<WorkflowContext | null>(null);
   const searchRef = useRef<HTMLFormElement | null>(null);
   migrateLegacySessionStorage();
@@ -706,24 +738,32 @@ export default function FlowChainApp() {
   }, [authToken]);
 
   useEffect(() => {
-    if (!activeRoute?.entityType || !activeRoute.entityIdParam) return;
+    if (!activeRoute?.entityType || !activeRoute.entityIdParam) {
+      setSearchFocus((current) =>
+        current?.source === "detailUrl" ? null : current,
+      );
+      return;
+    }
     const entityId = decodeURIComponent(
       location.pathname.split("/").filter(Boolean).at(-1) || "",
     );
     if (!entityId) return;
+    const focusArea = new URLSearchParams(location.search).get("focus") as CanonicalFocusTarget["focusArea"] | null;
     setSearchFocus((current) =>
       current?.entityType === activeRoute.entityType &&
-      current.entityId === entityId
+      current.entityId === entityId &&
+      current.focusArea === (focusArea || undefined)
         ? current
         : {
             entityType: activeRoute.entityType!,
             entityId,
+            focusArea: focusArea || undefined,
             entityLabel: entityId,
             source: "detailUrl",
             at: Date.now(),
           },
     );
-  }, [activeRoute?.id, location.pathname]);
+  }, [activeRoute?.id, location.pathname, location.search]);
 
   const localizedNavItems = useMemo(() => navItems.map(item => {
     const root = routeById(item.routeId);
@@ -760,6 +800,13 @@ export default function FlowChainApp() {
     capabilities,
     experimentalModuleIds,
   });
+  const routeWriteCapabilityBlocked = Boolean(
+    activeRoute?.capabilityId &&
+      capabilityAccess.status === "blocked" &&
+      capabilityAccess.capability.maturity !== "preview" &&
+      capabilityAccess.capability.readReady &&
+      !capabilityAccess.capability.enabled,
+  );
   const authorizationModule = panelModule === "returns-quarantine" ? "returns-quarantine" : panelModule === "receiving-posting" ? "receiving" : activeModule;
   const authorizationAccess = authorizationVisibility?.[authorizationModule];
   const navPermissionVisible = (moduleId: string) => {
@@ -893,6 +940,7 @@ export default function FlowChainApp() {
       entityLabel?: string;
       returnContext?: WorkflowContext | null;
       source?: string;
+      query?: Record<string, string>;
     } = {},
   ) {
     const requestedRoute = routeById(moduleId);
@@ -924,13 +972,38 @@ export default function FlowChainApp() {
                 : `返回${sourceLabel}`,
         })
       : null;
-    applyNavigationIntent(
-      navigationIntentFromModule(navigationId, {
-        focusTarget,
-        source: options.source || (focusTarget ? "evidence" : undefined),
-        returnTo: options.returnTo,
+    const nextIntent = navigationIntentFromModule(navigationId, {
+      focusTarget,
+      source: options.source || (focusTarget ? "evidence" : undefined),
+      returnTo: options.returnTo,
+      entityLabel: options.entityLabel,
+    });
+    if (options.query && Object.keys(options.query).length) {
+      const query = new URLSearchParams(options.query);
+      routerNavigate(`${routePathForId(nextIntent.activeId)}?${query.toString()}`);
+      if (nextIntent.returnTo) setFocusReturnActive(nextIntent.returnTo);
+      setFocusReturnContext(options.returnContext !== undefined ? options.returnContext : inferredReturnContext);
+      setSearchFocus(null);
+      return;
+    }
+    if (focusTarget && focusTarget.entityType in businessEntityRouteRegistry) {
+      const entityType = focusTarget.entityType as BusinessEntityType;
+      const params = new URLSearchParams();
+      if (focusTarget.focusArea) params.set("focus", focusTarget.focusArea);
+      const detailPath = businessEntityPath(entityType, focusTarget.entityId);
+      routerNavigate(params.size ? `${detailPath}?${params.toString()}` : detailPath);
+      if (nextIntent.returnTo) setFocusReturnActive(nextIntent.returnTo);
+      setFocusReturnContext(options.returnContext !== undefined ? options.returnContext : inferredReturnContext);
+      setSearchFocus({
+        ...focusTarget,
         entityLabel: options.entityLabel,
-      }),
+        source: options.source || "businessNavigation",
+        at: Date.now(),
+      });
+      return;
+    }
+    applyNavigationIntent(
+      nextIntent,
       options.returnContext !== undefined
         ? options.returnContext
         : inferredReturnContext,
@@ -938,6 +1011,24 @@ export default function FlowChainApp() {
   }
 
   async function openActionDraftReview(request: ActionDraftPreviewRequest) {
+    if (request.type === "purchase_request_draft" || request.type === "rfq_draft" || request.type === "task_draft") {
+      const payload = request.payload || {};
+      const query = Object.fromEntries(Object.entries({
+        mode: "create",
+        itemId: payload.itemIdOrSku,
+        sku: payload.itemIdOrSku,
+        quantity: payload.quantity,
+        reason: payload.reason,
+        suppliers: Array.isArray(payload.supplierCandidates) ? payload.supplierCandidates.join(",") : payload.supplierCandidates,
+        due: payload.quotationDeadline || payload.requestedDeliveryDate,
+      }).filter(([, value]) => value !== undefined && value !== null && String(value) !== "").map(([key, value]) => [key, String(value)]));
+      navigateTo(
+        request.type === "rfq_draft" ? "procurement:rfq" : request.type === "task_draft" ? "mobile-operations:tasks" : "procurement:requests",
+        null,
+        { returnTo: "ai", entityLabel: request.title, source: "ai", query },
+      );
+      return;
+    }
     setDraftShellOpen(true);
     setDraftPreview(null);
     setDraftError("");
@@ -979,79 +1070,6 @@ export default function FlowChainApp() {
     });
   }
 
-  function confirmedActionTypeForPreview(type: string) {
-    const map: Record<string, string> = {
-      purchase_request_draft: "create_purchase_request",
-      rfq_draft: "create_rfq",
-      supplier_followup_draft: "save_supplier_followup_note",
-    };
-    return map[type] || "save_reviewed_draft";
-  }
-
-  async function confirmSafeActionDraft(
-    draft: ActionDraftPreview,
-  ): Promise<ConfirmedActionResult> {
-    const response = await apiJson<{
-      createdRecordId?: string;
-      status?: string;
-      auditEventId?: string | null;
-      mutatesLinkedBusinessRecords?: boolean;
-      sideEffects?: Record<string, unknown>;
-    }>("/api/user-confirmed-actions", {
-      method: "POST",
-      body: JSON.stringify({
-        actionType: confirmedActionTypeForPreview(draft.type),
-        draftId: draft.id,
-        sourceTrigger: draft.source || "action_draft_review",
-        reviewedFields: draft.payload || {},
-        linkedRecords: draft.originEvidence || [],
-        evidenceReferences: draft.originEvidence || [],
-        auditPreview: draft.auditTrail || [],
-        confirm: true,
-        actor: "current_user",
-      }),
-    });
-    if (
-      response.mutatesLinkedBusinessRecords ||
-      response.sideEffects?.issuesPo ||
-      response.sideEffects?.sendsExternalEmail
-    ) {
-      throw new Error("确认边界异常：接口声明存在禁止的业务副作用。");
-    }
-    toast.success("安全动作已确认", {
-      description: `${response.createdRecordId || "记录"} · ${response.status || "已保存"}`,
-    });
-    return {
-      createdRecordId: response.createdRecordId,
-      status: response.status,
-      auditEventId: response.auditEventId,
-    };
-  }
-
-  function clearFocus() {
-    setSearchFocus(null);
-    setFocusReturnContext(null);
-  }
-
-  function returnFromFocus() {
-    const context = focusReturnContext;
-    routerNavigate(
-      routePathForId(context?.sourceRoute || focusReturnActive || "overview"),
-    );
-    setSearchFocus(
-      context?.sourceEntityId && context.sourceEntityType
-        ? {
-            entityType: context.sourceEntityType,
-            entityId: context.sourceEntityId,
-            entityLabel: context.sourceLabel,
-            source: context.originIntent || "businessReturn",
-            at: Date.now(),
-          }
-        : null,
-    );
-    setFocusReturnContext(null);
-  }
-
   function openSearchResult(result: GlobalSearchResult) {
     applyNavigationIntent(
       navigationIntentFromGlobalSearchResult(result, { returnTo: active }),
@@ -1066,23 +1084,6 @@ export default function FlowChainApp() {
     setSearchOpen(false);
     setActiveSearchIndex(-1);
   }
-
-  const focusEntityLabel = searchFocus
-    ? `${SEARCH_TYPE_LABELS[searchFocus.entityType] || searchFocus.entityType} · ${searchFocus.entityLabel || searchFocus.entityId}`
-    : "";
-  const focusSourceLabel =
-    searchFocus?.source === "ai" || searchFocus?.source === "aiRuntimeGateway"
-      ? "AI 助手"
-      : searchFocus?.source === "globalSearch"
-        ? "全局搜索"
-        : searchFocus?.source === "evidenceGraph" ||
-            searchFocus?.source === "evidence"
-          ? "证据链"
-          : "业务跳转";
-  const focusReturnHint =
-    searchFocus?.source === "ai" || searchFocus?.source === "aiRuntimeGateway"
-      ? "返回 AI 结果"
-      : "可返回来源对象或返回列表";
 
   const panels: Record<string, React.ReactNode> = {
     overview: (
@@ -1224,7 +1225,7 @@ export default function FlowChainApp() {
   }
 
   if (!authToken || !user) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen onLogin={handleLogin} localStatus={localStatus} />;
   }
 
   return (
@@ -1410,6 +1411,7 @@ export default function FlowChainApp() {
             <span className="fc-label font-medium" style={{ color: A.label }}>
               {workspaceName || user.company}
             </span>
+            {localStatus && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800" title={`用户 ${user.email} · Demo ${localStatus.demoMasterDataLoaded ? "loaded" : "not loaded"} · Scenario ${localStatus.demoScenarioLoaded ? "loaded" : "not loaded"} · Universal Intake ${localStatus.universalIntakeEnabled ? "enabled" : "disabled"}`}>Local Development</span>}
           </div>
           <div className="flex items-center gap-2">
             <form
@@ -1741,73 +1743,6 @@ export default function FlowChainApp() {
             >
               {activeRoute ? (
                 <ModuleShell route={activeRoute} capabilities={capabilities}>
-                  {searchFocus && (
-                    <div
-                      className="mb-4 rounded-xl px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
-                      data-testid="focus-banner"
-                      style={{
-                        background: "#f0f6ff",
-                        border: `1px solid ${A.border}`,
-                      }}
-                    >
-                      <div className="min-w-0">
-                        <div
-                          className="text-[11px] font-semibold"
-                          style={{ color: A.blue }}
-                        >
-                          当前聚焦
-                        </div>
-                        <div
-                          className="mt-1 truncate text-sm font-semibold tabular-nums"
-                          style={{ color: A.label }}
-                        >
-                          {focusEntityLabel}
-                        </div>
-                        <div
-                          className="mt-1 text-[11px]"
-                          style={{ color: A.sub }}
-                        >
-                          来源：{focusSourceLabel}，{focusReturnHint}。
-                        </div>
-                      </div>
-                      <RecoveryActions
-                        className="shrink-0"
-                        actions={[
-                          {
-                            key: "previous",
-                            label: "返回上一层",
-                            onClick: returnFromFocus,
-                            kind: "previous",
-                            tone: "primary",
-                          },
-                          {
-                            key: "module",
-                            label: "返回列表",
-                            onClick: () =>
-                              routerNavigate(
-                                routeById(
-                                  activeRoute.defaultChildId ||
-                                    activeRoute.parentId ||
-                                    activeModule,
-                                )?.path || "/app/overview",
-                              ),
-                            kind: "module",
-                          },
-                          {
-                            key: "clear",
-                            label: "清除聚焦",
-                            onClick: clearFocus,
-                            kind: "clear",
-                            tone: "subtle",
-                          },
-                        ]}
-                      />
-                      <BusinessBackLink
-                        context={focusReturnContext}
-                        onReturn={returnFromFocus}
-                      />
-                    </div>
-                  )}
                   {capabilityAccess.status === "loading" ? (
                     <CapabilityRouteStatus
                       moduleLabel={activeModuleLabel}
@@ -1822,7 +1757,8 @@ export default function FlowChainApp() {
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Access denied" : "无权访问"}</h2>
                       <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "Your effective roles do not grant read permission for this module." : "当前有效角色未授予此模块的读取权限。"}</p>
                     </Card>
-                  ) : authorizationAccess && !authorizationAccess.capabilityAllowed ? (
+                  ) : (authorizationAccess && !authorizationAccess.capabilityAllowed) ||
+                    routeWriteCapabilityBlocked ? (
                     <Card className="p-10 text-center" data-testid="capability-route-blocked">
                       <Lock className="mx-auto text-slate-500" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability unavailable" : "能力暂不可用"}</h2>
@@ -1909,7 +1845,6 @@ export default function FlowChainApp() {
           setDraftShellOpen(false);
         }}
         onSaveDraft={saveActionDraftReview}
-        onConfirmSafeAction={confirmSafeActionDraft}
         onNavigate={navigateTo}
       />
     </div>

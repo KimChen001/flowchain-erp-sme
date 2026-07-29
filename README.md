@@ -250,3 +250,15 @@ Start here:
 - Phase 6 DB persistence, tenant isolation, RBAC, audit
 - Phase 7 Collaboration Notification Draft Adapters: Email, Slack, Microsoft Teams, DingTalk, WeCom, Feishu
 - Phase 8 deployment and launch hardening
+# Local development
+
+First start:
+
+```powershell
+Copy-Item .env.local.example .env.local
+npm run dev:local -- --demo
+```
+
+Daily use `npm run dev:local`; for the complete explicit preview use `npm run dev:local -- --scenario`. Local login accounts are `admin@flowchain.local` and `kim@example.com`.
+
+Demo data is never loaded implicitly or returned as a production fallback. Use a separate PostgreSQL database and artifact directory for every worktree. See [Local development workflow](docs/local-development-workflow-v1.md), including shutdown, demo reset, and port-conflict guidance.

@@ -21,7 +21,7 @@ export default function DeliveryPage() {
   const { q: search, status, customer, sort } = values;
   const filteredRows = useMemo(() => DELIVERY_NOTES.filter((note) => {
     const query = search.trim().toLowerCase();
-    return (!query || [note.deliveryNo, note.salesOrderNo, note.customerName, note.warehouse].some((value) => value.toLowerCase().includes(query)))
+    return (!query || [note.deliveryNo, note.salesOrderNo, note.customerName, note.warehouse].some((value) => String(value || "").toLowerCase().includes(query)))
       && (status === "全部" || note.status === status) && (customer === "全部客户" || note.customerName === customer);
   }).sort((left, right) => sort === "deliveryDate-asc" ? left.deliveryDate.localeCompare(right.deliveryDate) : sort === "deliveryDate-desc" ? right.deliveryDate.localeCompare(left.deliveryDate) : sort === "customer-asc" ? left.customerName.localeCompare(right.customerName, "zh-CN") : 0), [customer, search, sort, status]);
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));

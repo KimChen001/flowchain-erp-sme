@@ -6,6 +6,7 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { tableLinkClass } from "../../components/ui/workbenchTable";
+import { createClientTemporaryId } from "../../lib/client-id";
 
 type Item = {
   itemId: string;
@@ -74,7 +75,7 @@ type PR = {
 type FieldError = { field?: string; message?: string };
 const today = () => new Date().toISOString().slice(0, 10);
 const makeLine = (date = today()): Line => ({
-  lineId: crypto.randomUUID(),
+  lineId: createClientTemporaryId("pr-line"),
   sourceType: "catalog_item",
   lineBasis: "quantity",
   itemId: "",

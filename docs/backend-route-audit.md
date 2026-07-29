@@ -1,55 +1,80 @@
 # Backend Route Audit
 
-## Current Route Shape
+Status: current as of 2026-07-29.
 
-FlowChain still runs a lightweight Node HTTP server through `server/routes/scm-legacy.routes.mjs`. Route handlers are split by domain but share the same runtime JSON repository and helper context.
+## Runtime composition
 
-## Read Routes
+The production entry point is:
 
-- `/api/health`: runtime health and API availability.
-- `/api/context`: active workbench context.
-- `/api/search`: global business search.
-- `/api/today-cockpit`: read-only overview aggregation for procurement and inventory workbench cards, evidence, and recommended next actions.
-- `/api/inventory/*`: inventory item, lot, serial, movement, exception, and summary reads.
-- `/api/procurement/*`: procurement document, link, follow-up, and summary reads.
-- `/api/master-data/*`: supplier, item, and master-data reads.
-- `/api/market/*`: market reference reads.
-- `/api/ai/tools`: AI tool registry.
-- `/api/action-drafts/schema`: preview-only action draft schema and supported draft types.
-- `/api/purchase-requests`, `/api/rfqs`, `/api/purchase-orders`, `/api/receiving-docs`: legacy list reads for existing UI screens.
+```text
+server/index.mjs
+  -> server/scm-api.mjs
+  -> server/bootstrap/scm-server.mjs
+  -> server/bootstrap/route-dispatcher.mjs
+  -> server/routes/*.routes.mjs
+  -> server/domain/* services
+  -> server/repositories/db-*.mjs
+  -> Prisma / PostgreSQL
+```
 
-## Write Routes
+`server/bootstrap/scm-server.mjs` is the composition root. It owns HTTP startup,
+authentication context, capability and legacy-mutation guards, route-context
+construction, static asset fallback, and safe top-level error handling.
+`server/bootstrap/route-dispatcher.mjs` owns the ordered route-handler chain and
+short-circuits after the first handler accepts the request. Neither file is a
+home for new business rules.
 
-- `/api/auth/login`: creates or updates user session state.
-- `/api/forecast-plans`: saves forecast plans.
-- `/api/purchase-requests`: creates PRs.
-- `/api/purchase-requests/:id/status`: updates PR workflow status.
-- `/api/purchase-requests/:id/convert-to-po`: converts approved PRs.
-- `/api/rfqs`: creates RFQs.
-- `/api/rfqs/:id/status`: updates RFQ state and can create a PO when awarded.
-- `/api/purchase-orders`: creates POs.
-- `/api/purchase-orders/:id/status`: updates PO status and lines.
-- `/api/receiving-docs`: creates GRNs.
-- `/api/receiving-docs/:id`: updates GRN status and can apply inventory.
-- `/api/ai/chat`: answers questions and records AI events.
+All production repositories are created by
+`server/repositories/adapter-registry.mjs`. The registry rejects removed JSON
+persistence and returns PostgreSQL adapters. Test fixtures live below
+`server/domain/test-fixtures/` and are not reachable from the production entry
+point.
+
+## Route authority
+
+| Area | Main handlers | Authority |
+| --- | --- | --- |
+| Master data | `master-data.routes.mjs` | PostgreSQL `db-master-data-repository` |
+| Procurement reads | `procurement-read.routes.mjs`, `procurement-workflow.routes.mjs` | PostgreSQL procurement repositories and command service |
+| Purchase orders | `purchase-orders.routes.mjs` | PostgreSQL procurement read/authority |
+| Receiving | `receiving.routes.mjs` | PostgreSQL reads; legacy mutation endpoints fail closed |
+| Receiving posting | receiving routes plus posting services | Explicitly enabled PostgreSQL command service |
+| Inventory | `inventory.routes.mjs`, `inventory-operations.routes.mjs` | PostgreSQL inventory read and governed command services |
+| Sales/outbound | `sales-order-workbench.routes.mjs`, `outbound.routes.mjs` | PostgreSQL sales/outbound services |
+| AI | `ai-runtime-gateway.routes.mjs`, `ai.routes.mjs` | Repository-backed evidence plus bounded provider adapters |
+| Universal Intake | `intake.routes.mjs` | PostgreSQL intake repository; business commit remains constrained |
+| Operational finance | `operational-finance.routes.mjs` | Optional PostgreSQL extension, never payment execution |
+| Bank reconciliation | `bank-reconciliation.routes.mjs` | Optional evidence/reconciliation extension |
 
 ## Preview-only Routes
 
-- `/api/action-drafts/preview`: validates and returns a reviewable action draft shape without calling `writeDb`, creating PR/RFQ/PO records, closing inventory exceptions, sending supplier messages, or persisting a draft.
+- `GET /api/action-drafts/schema` returns the supported draft contract.
+- `POST /api/action-drafts/preview` validates and renders a reviewable text
+  draft without creating or changing a business document.
+- Preview routes are separate from `POST /api/action-drafts/save`; saving keeps
+  an internal review draft and is not business-document execution.
 
-## Boundary Observations
+## Fail-closed boundaries
 
-- Procurement read APIs are now separated from legacy write handlers.
-- Today Cockpit v2 reuses procurement and inventory read models and is covered by read-only mutation tests.
-- Evidence links are normalized in the frontend through `src/lib/evidenceLinks.ts`; backend read responses remain compatible.
-- Action draft preview routes are intentionally separate from write routes and remain non-mutating.
-- Existing AI chat and auth routes still write runtime events or user records; smoke tests against the shared local JSON file should account for that behavior.
-- Inventory read APIs already follow a pure domain model pattern and provided the template for procurement read APIs.
-- Search and AI still use their existing domain-specific assemblers. Procurement read-model evidence is now normalized for future reuse, but those consumers should be consolidated only after ranking, card shape, and intent tests are expanded.
+- Forecast/MRP, S&OP, supplier performance, supplier recommendation, market
+  prices, external signals, and legacy import routes return explicit capability
+  errors where authoritative models are unavailable.
+- Legacy PR/RFQ/PO/receiving mutation URLs are classified and blocked in
+  database mode.
+- Unknown non-GET API routes require review rather than being treated as safe.
+- Empty PostgreSQL repositories return truthful empty collections; no production
+  route imports a business fixture.
 
-## Backend Risk Register
+## Remaining architecture work
 
-- Runtime JSON remains both seed and persistence layer, so any route that records events can change local data.
-- Legacy route context contains many helpers; accidental use of `writeDb` in new read routes should be blocked by tests and review.
-- Some older health/auth wording still references environment details and should stay out of customer-facing UI.
-- The database migration path needs explicit entity IDs, document links, audit events, and immutable posted-document rules before a managed database cutover.
+1. Split local session/authentication and static asset delivery out of
+   `server/bootstrap/scm-server.mjs`.
+2. Group the flat ordered handler chain into core, extension, and internal
+   registrars without changing precedence.
+3. Move command/read services into domain modules (`procurement`, `inventory`,
+   `supplier`, `workflow`, `ai`) without rewriting their working behavior.
+4. Replace broad route-context helper injection with narrow handler
+   dependencies.
+5. Move finance/bank/settlement composition behind an extension registrar.
+6. Generate route classification from the same route registrations so the
+   guard table cannot drift from the dispatcher.

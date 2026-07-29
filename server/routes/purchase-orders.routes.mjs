@@ -1,6 +1,6 @@
 export async function handlePurchaseOrdersRoute(ctx) {
   const {
-    req, res, url, db, send, readBody, event, todayLabel,
+    req, res, url, db, send, readBody, event, todayLabel, repositories, identity,
     normalizePurchaseOrders, nextSequenceId, normalizePoLine,
     normalizePurchaseOrder, calculatePoHeaderFromLines,
     purchaseOrderStatuses, priorities, recordWorkflowCreation,
@@ -8,7 +8,23 @@ export async function handlePurchaseOrdersRoute(ctx) {
   } = ctx
 
   if (req.method === 'GET' && url.pathname === '/api/purchase-orders') {
-    return send(res, 200, normalizePurchaseOrders(db))
+    if (!identity?.authenticated || !identity.tenantId) return send(res, 401, { code: 'TENANT_CONTEXT_REQUIRED', message: 'An authenticated tenant context is required.' })
+    if (!repositories?.procurementRead?.snapshot) return send(res, 503, { code: 'FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE', message: 'The PostgreSQL procurement read model is unavailable.' })
+    const snapshot = await repositories.procurementRead.snapshot({ tenantId: identity.tenantId })
+    return send(res, 200, snapshot.purchaseOrders)
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/purchase-orders-workbench') {
+    if (!identity?.authenticated || !identity.tenantId) return send(res, 401, { code: 'TENANT_CONTEXT_REQUIRED', message: 'An authenticated tenant context is required.' })
+    if (!repositories?.procurementRead?.snapshot) return send(res, 503, { code: 'FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE', message: 'The PostgreSQL procurement read model is unavailable.' })
+    const snapshot = await repositories.procurementRead.snapshot({ tenantId: identity.tenantId })
+    return send(res, 200, {
+      purchaseOrders: snapshot.purchaseOrders,
+      receivingDocs: snapshot.receivingDocs,
+      supplierInvoices: snapshot.supplierInvoices,
+      documentLinks: snapshot.documentLinks,
+      procurementFollowups: snapshot.procurementFollowups,
+    })
   }
 
   if (req.method === 'POST' && url.pathname === '/api/purchase-orders') {

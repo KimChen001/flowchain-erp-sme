@@ -104,7 +104,7 @@ test('SKU and PO impact expose affected sales orders and business data limitatio
   assert.equal(limited.dataLimitations.includes('sample_data'), false)
 })
 
-test('Sales Demand route reads and explicitly persists runtime orders while rejecting unsupported writes', async () => {
+test('Sales Demand route reads repository facts and fails closed for the removed legacy mutation', async () => {
   const db = createDb()
   const listRoute = routeContext('GET', '/api/sales-demand/orders', db)
   assert.equal(await handleSalesDemandRoute(listRoute.ctx), true)
@@ -122,8 +122,9 @@ test('Sales Demand route reads and explicitly persists runtime orders while reje
 
   const writeRoute = routeContext('POST', '/api/sales-demand/orders', db)
   assert.equal(await handleSalesDemandRoute(writeRoute.ctx), true)
-  assert.equal(writeRoute.response.status, 201)
-  assert.equal(writeRoute.response.payload.order.salesOrderId, 'SO-RUNTIME-WRITE')
+  assert.equal(writeRoute.response.status, 501)
+  assert.equal(writeRoute.response.payload.code, 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED')
+  assert.equal(writeRoute.response.payload.capability, 'sales-order-lifecycle')
   assert.equal(writeRoute.wrote, false)
 
   const unsupported = routeContext('PATCH', '/api/sales-demand/orders/SO-HIGH', db)

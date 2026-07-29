@@ -120,10 +120,13 @@ function draftIntentFromText(message = '') {
 
 export function detectContextualDraftRequestV2(message = '') {
   const raw = rawText(message)
-  const isDraftRequest = /人工复核|复核草稿|预览草稿|生成草稿|草稿预览|进入人工复核|打开人工复核|open review draft|preview draft|show review draft|create review draft|draft preview|supplier follow-up draft|replenishment draft|invoice variance draft|receiving exception draft/i.test(raw)
-    || (/(预览|生成|打开|进入|create|show|open|preview)/i.test(raw) && /草稿|draft/i.test(raw))
+  const textDraft = /(消息|邮件|备注|说明|跟进话术|供应商.*跟进|跟进.*供应商|message|email|note|memo|follow-up)/i.test(raw)
+    && /(生成|起草|编辑|预览|草稿|write|draft|compose|preview)/i.test(raw)
+  const structuredDraft = /(PR|采购申请|RFQ|询价|任务|补货|task|replenishment)/i.test(raw)
+    && /(创建|新建|生成|预填|草稿|create|new|prefill|draft)/i.test(raw)
+  const isDraftRequest = textDraft || structuredDraft
   if (!isDraftRequest) {
-    return { isDraftRequest: false, draftIntent: 'generic_context_review', confidence: 'low', reasonLabel: '非草稿预览请求' }
+    return { isDraftRequest: false, draftIntent: 'generic_context_review', confidence: 'low', reasonLabel: '信息、诊断或导航请求不生成草稿' }
   }
   const draftIntent = draftIntentFromText(raw)
   const confidence = /人工复核|复核草稿|预览草稿|草稿预览|open review draft|preview draft|draft preview/i.test(raw) ? 'high' : 'medium'
@@ -136,12 +139,21 @@ export function detectContextualDraftRequestV2(message = '') {
 }
 
 export function selectDraftTargetFromResolvedContextV2(resolvedContext = {}, conversationGrounding = {}, message = '') {
+  const carriedIntent = resolvedContext.intentCarryOver
+    || conversationGrounding.previousIntent
+    || conversationGrounding.context?.previousIntent
+    || ''
   const wanted = requestedType(message)
+    || (['po_priority', 'unreceived_orders', 'received_not_invoiced', 'three_way_match_variance'].includes(carriedIntent) ? 'PO' : '')
+  const explicitlyResolved = dedupeRefs(asArray(resolvedContext.entityRefs).map((item) => makeRef(item, 'resolved')))
+  const previousFocus = conversationGrounding.previousFocusTarget
+    || conversationGrounding.context?.previousFocusTarget
+    || null
   const refs = dedupeRefs([
-    ...asArray(resolvedContext.entityRefs).map((item) => makeRef(item, 'resolved')),
+    ...explicitlyResolved,
     conversationGrounding.activeRef ? makeRef(conversationGrounding.activeRef, 'activePage') : null,
     ...asArray(conversationGrounding.entityRefs).map((item) => makeRef(item, item.source || 'previousResponse')),
-    conversationGrounding.previousFocusTarget ? makeRef(conversationGrounding.previousFocusTarget, 'previousResponse') : null,
+    previousFocus ? makeRef(previousFocus, 'previousResponse') : null,
     ...asArray(conversationGrounding.previousNavigationRefs).map((item) => makeRef(item, 'navigation')),
     ...asArray(conversationGrounding.previousEvidenceRefs).map((item) => makeRef(item, 'evidence')),
   ].filter(Boolean))
@@ -149,7 +161,7 @@ export function selectDraftTargetFromResolvedContextV2(resolvedContext = {}, con
   const candidates = matched.length ? matched : refs
   const target = candidates[0] || null
   const sameConfidence = target ? candidates.filter((ref) => confidenceRank(ref.confidence) === confidenceRank(target.confidence)) : []
-  const ambiguous = Boolean(target && sameConfidence.length > 1 && !wanted)
+  const ambiguous = Boolean(target && sameConfidence.length > 1 && !wanted && explicitlyResolved.length !== 1 && !previousFocus)
   return {
     target,
     candidates,
@@ -287,7 +299,12 @@ export function buildContextualReviewCardsV2({ request = {}, intent = {}, contex
     target: selection.target,
     evidenceRefs,
     navigationRefs,
-  })
+  }) || (selection.target ? buildContextualActionDraftReviewCardV2({
+    message: request.message,
+    intent,
+    target: selection.target,
+    navigationRefs: navigationRefs.slice(0, 1),
+  }) : null)
   const dataLimitations = selection.limitation ? [{
     label: selection.target ? '草稿目标需人工确认' : '当前上下文不足',
     description: selection.limitation,
@@ -295,7 +312,7 @@ export function buildContextualReviewCardsV2({ request = {}, intent = {}, contex
     consequence: '建议先打开来源证据或明确业务对象后再进入人工复核。',
   }] : []
   return {
-    reviewCards: [card, ...asArray(baseReviewCards)].filter(Boolean).slice(0, 5),
+    reviewCards: [card].filter(Boolean),
     dataLimitations,
     draftRequest: detection,
     selectedTarget: selection.target,

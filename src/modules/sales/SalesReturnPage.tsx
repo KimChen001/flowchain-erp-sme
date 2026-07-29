@@ -15,7 +15,7 @@ export default function SalesReturnPage() {
   const { values, setValue, selectedId, setSelectedId } = useListRouteState({ moduleId: "sales", routeId: "sales:returns", defaults: returnListDefaults });
   const { q: search, status } = values;
   const selected = SALES_RETURNS.find((item) => item.id === selectedId) || null;
-  const rows = useMemo(() => SALES_RETURNS.filter((item) => (!search.trim() || [item.returnNo, item.customer, item.salesOrderNo, item.deliveryNo, item.returnReason].some((value) => value.toLowerCase().includes(search.trim().toLowerCase()))) && (status === "全部" || item.status === status)), [search, status]);
+  const rows = useMemo(() => SALES_RETURNS.filter((item) => (!search.trim() || [item.returnNo, item.customer, item.salesOrderNo, item.deliveryNo, item.returnReason].some((value) => String(value || "").toLowerCase().includes(search.trim().toLowerCase()))) && (status === "全部" || item.status === status)), [search, status]);
   return <div className="space-y-4" data-testid="sales-return-page">
     <div className="flex justify-end"><button className="fc-action-button fc-action-primary" onClick={() => navigate("/app/sales/returns/new")}>新建退货单</button></div>
     <div className="grid grid-cols-3 gap-3"><KpiCard label="退货单" value={String(SALES_RETURNS.length)} icon={RotateCcw} color={A.blue} /><KpiCard label="处理中" value={String(SALES_RETURNS.filter((item) => ["待审核", "待收货", "处理中"].includes(item.status)).length)} icon={ClipboardList} color={A.orange} /><KpiCard label="退货数量" value={String(SALES_RETURNS.reduce((sum, item) => sum + item.totalQuantity, 0))} icon={PackageOpen} color={A.purple} /></div>

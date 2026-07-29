@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip } from "../../components/ui";
+import { createSecureClientMutationId } from "../../lib/client-id";
 
 type Capability = { enabled: boolean; maturity?: string };
 type Entry = {
@@ -48,7 +49,7 @@ const button =
   "rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40";
 const secondary =
   "rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40";
-const key = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
+const key = (prefix: string) => createSecureClientMutationId(prefix);
 const enabled = (entry: Entry | null) =>
   Boolean(
     entry && Object.values(entry.capabilities).every((item) => item.enabled),

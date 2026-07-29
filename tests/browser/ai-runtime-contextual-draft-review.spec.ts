@@ -45,7 +45,7 @@ async function expectResponseSections(message: Locator) {
   }
 }
 
-test("AI Assistant opens contextual action draft review from multi-turn business context", async ({ page }) => {
+test("AI Assistant navigates information to the PO and opens editor only for an explicit note", async ({ page }) => {
   await openLoggedInApp(page);
   const panel = await openAssistant(page);
 
@@ -56,7 +56,7 @@ test("AI Assistant opens contextual action draft review from multi-turn business
   await expectResponseSections(message);
   await expect(message).toContainText(/上下文|采购订单|PO/);
 
-  message = await ask(page, "打开这个对象的人工复核草稿。");
+  message = await ask(page, "生成这个 PO 的内部备注草稿。");
   await expectResponseSections(message);
   await expect(message).toContainText("上下文");
   await expect(message).toContainText("草稿预览");
@@ -78,10 +78,7 @@ test("AI Assistant opens contextual action draft review from multi-turn business
   await openAssistant(page);
 
   message = await ask(page, "生成草稿并直接发给供应商。");
-  await expect(message).toContainText("草稿预览");
-  await expect(message).toContainText("人工复核");
-  await expect(message).toContainText("不形成正式业务处理");
-  await expect(message).toContainText("不外发");
+  await expect(message.getByTestId("ai-action-draft-preview")).toHaveCount(0);
   await expect(message).not.toContainText(forbiddenExecutionText);
   await expect(message).not.toContainText(forbiddenTechnicalText);
 

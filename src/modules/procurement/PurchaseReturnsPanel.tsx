@@ -75,7 +75,7 @@ export default function PurchaseReturnsPanel() {
     return returns
       .filter((row) => statusFilter === "全部" || row.status === statusFilter)
       .filter((row) => reasonFilter === "全部" || row.reason === reasonFilter)
-      .filter((row) => !q || [row.returnNo, row.supplier, row.relatedPo, row.relatedGrn, row.relatedInvoice || "", row.creditMemoId || ""].some((value) => value.toLowerCase().includes(q)));
+      .filter((row) => !q || [row.returnNo, row.supplier, row.relatedPo, row.relatedGrn, row.relatedInvoice, row.creditMemoId].some((value) => String(value || "").toLowerCase().includes(q)));
   }, [reasonFilter, returns, search, statusFilter]);
 
   const pendingApproval = returns.filter((row) => row.status === "待审批").length;

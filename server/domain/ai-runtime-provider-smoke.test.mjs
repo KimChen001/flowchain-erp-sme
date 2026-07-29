@@ -106,11 +106,17 @@ test('verbose smoke exposes only sanitized diagnostic labels', async () => {
 
 test('smoke harness does not write env files persistent output or current workspace data', async () => {
   const before = dataFileStat()
+  const artifactPaths = ['../../test-results', '../../playwright-report', '../../blob-report']
+  const beforeArtifacts = artifactPaths.map(path => {
+    const url = new URL(path, import.meta.url)
+    return fs.existsSync(url) ? fs.statSync(url).mtimeMs : null
+  })
   await runProviderSmoke({ mode: 'fake-safe', kind: 'doubao_chat', env: {} })
   const after = dataFileStat()
   assert.equal(after.mtimeMs, before.mtimeMs)
   assert.equal(fs.existsSync(new URL('../../.env', import.meta.url)), false)
-  for (const path of ['../../test-results', '../../playwright-report', '../../blob-report']) {
-    assert.equal(fs.existsSync(new URL(path, import.meta.url)), false)
-  }
+  assert.deepEqual(artifactPaths.map(path => {
+    const url = new URL(path, import.meta.url)
+    return fs.existsSync(url) ? fs.statSync(url).mtimeMs : null
+  }), beforeArtifacts)
 })

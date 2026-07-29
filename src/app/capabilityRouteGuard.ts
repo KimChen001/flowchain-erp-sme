@@ -19,6 +19,7 @@ const localCapabilityFallback: Record<string, ModuleCapability> = Object.fromEnt
   ["procurement", "stable", "Canonical PR and draft PO workflow"],
   ["sales", "stable", "Durable sales order runtime"],
   ["inventory", "stable", "Durable inventory balances and movements"],
+  ["inventory-bin-read", "unavailable", "库存库位读取模型尚未接入当前 PostgreSQL 运行时"],
   ["finance", "beta", "Operational finance requires database mode and explicit enablement"],
   ["reports", "stable", "Authoritative runtime analytics"],
   ["settings", "beta", "Local/UAT workspace settings"],

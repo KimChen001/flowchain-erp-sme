@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { apiJson } from "../../lib/api-client";
 import { Card, Chip, A } from "../../components/ui";
+import { createSecureClientMutationId } from "../../lib/client-id";
 
 type Capability = { enabled?: boolean; reason?: string };
 type SourceLine = {
@@ -49,7 +50,7 @@ const primary =
   "rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40";
 const secondary =
   "rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40";
-const key = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
+const key = (prefix: string) => createSecureClientMutationId(prefix);
 const json = (method: string, body?: unknown): RequestInit => ({
   method,
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),

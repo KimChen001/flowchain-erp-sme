@@ -37,6 +37,7 @@ function routeContext(method, pathname, bodyDb = db) {
     res: {},
     url,
     db: structuredClone(bodyDb),
+    identity: { authenticated: true, tenantId: 'tenant-test', userId: 'user-test', role: 'manager', source: 'test' },
     send: (_res, status, payload) => payloads.push({ status, payload }),
     payloads,
   }

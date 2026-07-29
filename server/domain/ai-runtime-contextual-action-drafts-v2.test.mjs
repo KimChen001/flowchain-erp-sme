@@ -24,12 +24,10 @@ function visibleText(value) {
 
 test('detects contextual draft requests in Chinese and English', () => {
   const cases = [
-    ['打开这个对象的人工复核草稿', 'generic_context_review'],
     ['预览供应商跟进草稿', 'supplier_follow_up'],
     ['生成补货复核草稿', 'sku_replenishment'],
-    ['发票差异复核草稿', 'invoice_variance_review'],
-    ['open review draft', 'generic_context_review'],
-    ['preview draft', 'generic_context_review'],
+    ['生成发票差异说明草稿', 'invoice_variance_review'],
+    ['write an internal note draft', 'generic_context_review'],
     ['supplier follow-up draft', 'supplier_follow_up'],
     ['replenishment draft', 'sku_replenishment'],
   ]
@@ -40,6 +38,7 @@ test('detects contextual draft requests in Chinese and English', () => {
     assert.ok(['high', 'medium'].includes(detected.confidence))
   }
   assert.equal(detectContextualDraftRequestV2('这个 PO 为什么优先？').isDraftRequest, false)
+  assert.equal(detectContextualDraftRequestV2('打开这个对象的人工复核草稿').isDraftRequest, false)
 })
 
 test('selects draft targets from resolved context active fallback and evidence fallback', () => {
@@ -139,7 +138,7 @@ test('builds bounded preview-only review card with required fields', () => {
 
 test('no context returns limitation and does not invent an object id', () => {
   const result = buildContextualReviewCardsV2({
-    request: { message: '打开这个对象的人工复核草稿' },
+    request: { message: '生成这个对象的内部备注草稿' },
     intent: { id: 'unknown_guided_fallback' },
     resolvedContext: {},
     conversationGrounding: {},
@@ -152,7 +151,7 @@ test('no context returns limitation and does not invent an object id', () => {
 
 test('ambiguous target adds limitation while keeping selected target review-only', () => {
   const result = buildContextualReviewCardsV2({
-    request: { message: '打开这个对象的人工复核草稿' },
+    request: { message: '生成这个对象的内部备注草稿' },
     intent: { id: 'today_attention' },
     resolvedContext: {
       entityRefs: [

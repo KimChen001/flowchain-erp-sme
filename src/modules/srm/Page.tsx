@@ -77,6 +77,39 @@ const empty = () => ({
 });
 const statusLabel = { draft: "草稿", active: "启用", inactive: "停用" };
 
+function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): Supplier {
+  const text = (candidate: unknown, fallback = "") => String(candidate ?? "").trim() || fallback;
+  const id = text(value.id || value.supplierCode || value.name || value.supplierName);
+  const supplierName = text(value.supplierName || value.name, id);
+  const rawStatus = text(value.status, "active");
+  return {
+    id,
+    supplierCode: text(value.supplierCode, id),
+    supplierName,
+    shortName: text(value.shortName),
+    status: (["draft", "active", "inactive"].includes(rawStatus) ? rawStatus : "active") as Supplier["status"],
+    businessType: text(value.businessType),
+    categories: Array.isArray(value.categories) ? value.categories.map((item) => text(item)).filter(Boolean) : [],
+    contactName: text(value.contactName),
+    telephone: text(value.telephone),
+    email: text(value.email),
+    address: text(value.address),
+    postalCode: text(value.postalCode),
+    deliveryCycleDays: Number(value.deliveryCycleDays || 0),
+    defaultCurrency: text(value.defaultCurrency, "CNY"),
+    paymentTermsId: text(value.paymentTermsId),
+    settlementMethod: text(value.settlementMethod),
+    creditCode: text(value.creditCode),
+    taxIdentificationNumber: text(value.taxIdentificationNumber),
+    bankName: text(value.bankName),
+    bankAccountName: text(value.bankAccountName),
+    bankAccountNumber: text(value.bankAccountNumber),
+    internalComment: text(value.internalComment),
+    version: Number(value.version || 1),
+    updatedAt: text(value.updatedAt),
+  };
+}
+
 export default function SupplierMasterPage({
   focus,
   onNavigate,
@@ -100,6 +133,7 @@ export default function SupplierMasterPage({
     [fieldErrors, setFieldErrors] = useState<any[]>([]),
     [relationships, setRelationships] = useState<Relationship[]>([]),
     [items, setItems] = useState<Item[]>([]),
+    [relationshipLimitation, setRelationshipLimitation] = useState(""),
     [relationForm, setRelationForm] = useState({
       itemId: "",
       preferred: false,
@@ -117,7 +151,7 @@ export default function SupplierMasterPage({
       const data = await request<{ suppliers: Supplier[] }>(
         `/api/master-data/suppliers?query=${encodeURIComponent(query)}&status=${status}&category=${encodeURIComponent(category)}`,
       );
-      setRows(data.suppliers);
+      setRows((data.suppliers || []).map((supplier) => normalizeSupplier(supplier)));
     } catch (e: any) {
       setError(e.message || "供应商数据加载失败");
     } finally {
@@ -137,23 +171,34 @@ export default function SupplierMasterPage({
   );
   const openDetail = async (id: string) => {
     try {
-      const [{ supplier }, rels, catalog] = await Promise.all([
-        request<{ supplier: Supplier }>(
-          `/api/master-data/suppliers/${encodeURIComponent(id)}`,
-        ),
+      const { supplier } = await request<{ supplier: Supplier }>(
+        `/api/master-data/suppliers/${encodeURIComponent(id)}`,
+      );
+      const normalizedSupplier = normalizeSupplier(supplier);
+      setSelected(normalizedSupplier);
+      const [rels, catalog] = await Promise.allSettled([
         request<{ relationships: Relationship[] }>(
           `/api/master-data/suppliers/${encodeURIComponent(id)}/items`,
         ),
         request<{ items: Item[] }>("/api/master-data/items?purchasable=true"),
       ]);
-      setSelected(supplier);
-      setRelationships(rels.relationships);
-      setItems(catalog.items);
+      setRelationships(rels.status === "fulfilled" ? rels.value.relationships : []);
+      setItems(catalog.status === "fulfilled" ? (catalog.value.items || []).map((item) => ({
+        itemId: String(item.itemId || (item as any).id || item.sku || ""),
+        sku: String(item.sku || ""),
+        itemName: String(item.itemName || (item as any).name || item.sku || ""),
+        status: String(item.status || "active"),
+      })) : []);
+      setRelationshipLimitation(
+        rels.status === "rejected"
+          ? rels.reason instanceof Error ? rels.reason.message : "供应商–SKU 关系暂不可用"
+          : "",
+      );
       onActiveContextChange?.({
         module: "srm",
         entityType: "supplier",
-        entityId: supplier.id,
-        entityLabel: supplier.supplierName,
+        entityId: normalizedSupplier.id,
+        entityLabel: normalizedSupplier.supplierName,
       });
     } catch (e: any) {
       toast.error(e.message);
@@ -391,6 +436,7 @@ export default function SupplierMasterPage({
         </Card>
         <Card className="p-5">
           <h2 className="text-sm font-semibold">可供应物料</h2>
+          {relationshipLimitation && <p role="alert" className="mt-2 text-xs text-amber-700">{relationshipLimitation}</p>}
           <div className="mt-3 grid gap-2 md:grid-cols-4">
             <select
               aria-label="选择 SKU"

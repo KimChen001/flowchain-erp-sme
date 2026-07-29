@@ -22,7 +22,8 @@ export type AiFocusedPrimaryItem = {
 
 export type AiFocusedAction =
   | { kind: "navigation"; label: string; link: AiResponseV2NavigationLink }
-  | { kind: "review"; label: string; card: AiResponseV2ReviewCard };
+  | { kind: "text_draft"; label: string; card: AiResponseV2ReviewCard }
+  | { kind: "structured_draft"; label: string; card: AiResponseV2ReviewCard };
 
 export type AiFocusedResponseModel = {
   answerMode: AiFocusedAnswerMode;
@@ -51,7 +52,7 @@ function priorityScore(item: AiResponseV2EvidenceItem) {
 
 function answerMode(response: AiResponseV2): AiFocusedAnswerMode {
   const query = `${response.query || ""} ${response.intent || ""}`;
-  if (response.reviewCards?.length || /草稿|draft/i.test(query)) return "draft";
+  if (response.reviewCards?.length && /草稿|draft|消息|备注|说明|新建|创建/i.test(query)) return "draft";
   if ((!response.keyEvidence?.length && response.dataLimitations?.length) || /数据不足|缺少数据|not_found|missing/i.test(query)) return "insufficient";
   if (/比较|对比|同比|上期|comparison|compare/i.test(query)) return "comparison";
   if (/多少|数量|状态|还有|status|count|remaining/i.test(query)) return "status";
@@ -60,9 +61,19 @@ function answerMode(response: AiResponseV2): AiFocusedAnswerMode {
 }
 
 function actions(response: AiResponseV2) {
-  const review = (response.reviewCards || []).map<AiFocusedAction>((card) => ({ kind: "review", label: card.allowedNextStep || "审阅草稿", card }));
   const navigation = (response.navigationLinks || []).filter((link) => Boolean(link.moduleId)).map<AiFocusedAction>((link) => ({ kind: "navigation", label: link.label, link }));
-  return [...review, ...navigation];
+  const drafts = (response.reviewCards || []).map<AiFocusedAction>((card) => {
+    const structured = ["purchase_request_draft", "rfq_draft", "task_draft"].includes(card.draftType || "");
+    return {
+      kind: structured ? "structured_draft" : "text_draft",
+      label: structured
+        ? card.draftType === "rfq_draft" ? "创建正式 RFQ 草稿" : card.draftType === "task_draft" ? "创建正式任务草稿" : "创建正式 PR 草稿"
+        : card.allowedNextStep || "生成文本草稿",
+      card,
+    };
+  });
+  const explicitDraftRequest = /草稿|draft|消息|备注|说明|新建|创建/i.test(`${response.query || ""} ${response.intent || ""}`);
+  return explicitDraftRequest ? [...drafts, ...navigation] : navigation;
 }
 
 export function toAiFocusedResponse(response: AiResponseV2): AiFocusedResponseModel {

@@ -66,7 +66,7 @@ test('Pilot workspace APIs provision users, protect admin actions, and enforce w
       await prisma.tenant.update({ where: { id: setupTenantId }, data: { name: 'Preserved Workspace' } })
       await execFileAsync(process.execPath, [setupScript, `--tenant-id=${setupTenantId}`, '--workspace-name=Must Not Overwrite'], { env: process.env })
       assert.equal((await prisma.tenant.findUnique({ where: { id: setupTenantId } })).name, 'Preserved Workspace')
-      await prisma.userWarehouseScope.deleteMany({ where: { tenantId: setupTenantId } }); await prisma.user.deleteMany({ where: { tenantId: setupTenantId } }); await prisma.warehouse.deleteMany({ where: { tenantId: setupTenantId } }); await prisma.tenant.delete({ where: { id: setupTenantId } })
+      await prisma.userWarehouseScope.deleteMany({ where: { tenantId: setupTenantId } }); await prisma.user.deleteMany({ where: { tenantId: setupTenantId } }); await prisma.auditLog.deleteMany({ where: { tenantId: setupTenantId } }); await prisma.warehouse.deleteMany({ where: { tenantId: setupTenantId } }); await prisma.tenant.delete({ where: { id: setupTenantId } })
     } finally {
       await prisma.workspaceInvitation.deleteMany({ where: { tenantId: scenario.tenantId } })
       await prisma.userWarehouseScope.deleteMany({ where: { tenantId: scenario.tenantId } })

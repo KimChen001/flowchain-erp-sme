@@ -56,6 +56,7 @@ type AiNavigateOptions = {
   entityLabel?: string;
   source?: string;
   returnContext?: unknown;
+  query?: Record<string, string>;
 };
 
 type AiNavigate = (moduleId: string, focusTarget?: CanonicalFocusTarget | null, options?: AiNavigateOptions) => void;

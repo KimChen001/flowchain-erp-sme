@@ -31,14 +31,13 @@ test('R193 PO delayed risk stays aligned with open partially received PO logic',
   assert.match(source('src', 'modules', 'purchasing', 'Page.tsx'), /poDelayedRisk/)
 })
 
-test('R194 SKU detail supports supplier-gated canonical replenishment navigation', () => {
+test('R194 inventory warnings avoid dead supplier-gated replenishment navigation', () => {
   const inventory = source('src', 'modules', 'inventory', 'Page.tsx')
   assert.match(inventory, /<EntityLink kind="item"/)
-  assert.match(inventory, /新建采购申请/)
-  assert.match(inventory, /维护供应商关系/)
-  assert.match(inventory, /\/app\/procurement\/requests\?itemId=/)
-  assert.match(inventory, /approved/)
-  assert.match(inventory, /preferred/)
+  assert.doesNotMatch(inventory, /新建采购申请/)
+  assert.doesNotMatch(inventory, /维护供应商关系/)
+  assert.doesNotMatch(inventory, /\/app\/procurement\/requests\?itemId=/)
+  assert.match(inventory, /\/api\/inventory\/balances/)
   assert.doesNotMatch(inventory, /预览 PR|auto-create|自动创建 PR/)
 })
 

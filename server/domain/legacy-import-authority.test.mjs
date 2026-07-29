@@ -9,7 +9,10 @@ const root = resolve(import.meta.dirname, "../..");
 const source = path => readFile(join(root, path), "utf8");
 
 test("production route graph cannot reach archived direct-import implementations", async () => {
-  const composition = await source("server/routes/scm-legacy.routes.mjs");
+  const composition = [
+    await source("server/bootstrap/scm-server.mjs"),
+    await source("server/bootstrap/route-dispatcher.mjs"),
+  ].join("\n");
   const retiredRoute = await source("server/routes/pilot-import.routes.mjs");
   const purchaseRequests = await source("server/routes/purchase-requests.routes.mjs");
   for (const forbidden of [

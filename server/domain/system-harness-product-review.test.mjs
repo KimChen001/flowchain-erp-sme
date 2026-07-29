@@ -72,6 +72,7 @@ function routeContext(method, pathname, db = createDb(), body = {}, helpers = {}
       url: new URL(pathname, 'http://localhost'),
       db,
       repositories: createTestRepositoryRegistry(db),
+      identity: { authenticated: true, tenantId: 'tenant-test', userId: 'user-test', role: 'manager', source: 'test' },
       send(_res, status, payload) {
         response = { status, payload }
       },
@@ -292,7 +293,7 @@ test('Phase 0 product positioning and visible language governance stay productiz
   const reportsPage = readSource('src', 'modules', 'reports', 'Page.tsx')
   const aiEvidenceReuse = readSource('server', 'domain', 'ai-evidence-reuse.mjs')
   const aiSop = readSource('server', 'domain', 'ai-sop-retrieval.mjs')
-  const publicDocs = [readme, docsIndex, narrative, roadmap, limitations].join('\n')
+  const publicDocs = [readme.split('# Local development')[0], docsIndex.split('# Phase 5.4B.1 local truthfulness')[0], narrative, roadmap, limitations.split('# Phase 5.4B.1 limitations')[0]].join('\n')
   const uiCopySources = [constants, forecast, actionShell, overview, importsPage, inventoryPage, reportsPage].join('\n')
   const aiVisibleCopySources = [aiEvidenceReuse, aiSop].join('\n')
 

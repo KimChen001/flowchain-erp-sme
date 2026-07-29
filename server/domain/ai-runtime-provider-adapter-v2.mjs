@@ -147,8 +147,8 @@ export function buildProviderInputPackageV2(contextBundle = {}, request = {}, lo
     sourceLabel: cleanText(item.sourceLabel, '来源证据').slice(0, 100),
     signalCount: Number(item.signalCount) || 0,
   }))
-  const businessObjects = uniqueBy([
-    ...asArray(contextBundle.businessObjects).map((label) => ({ label: cleanText(label).slice(0, 80) })),
+  const supportedEntityTypes = uniqueBy([
+    ...asArray(contextBundle.supportedEntityTypes).map((label) => ({ label: cleanText(label).slice(0, 80) })),
     ...keyEvidence.map((item) => ({ label: cleanText(item.objectLabel).slice(0, 80) })),
   ], (item) => item.label).slice(0, 20)
   return {
@@ -161,7 +161,7 @@ export function buildProviderInputPackageV2(contextBundle = {}, request = {}, lo
     evidencePackage: {
       keyEvidence,
       sourceSummary,
-      businessObjects,
+      supportedEntityTypes,
       reviewDraftSummary: asArray(localDraftResponse.reviewCards).slice(0, 3).map(compactReviewDraft),
       dataLimitations: asArray(localDraftResponse.dataLimitations).slice(0, 12).map(compactLimitation),
       readinessSignals: asArray(localDraftResponse.readinessSignals).slice(0, 12).map((item) => ({
@@ -275,7 +275,7 @@ export function validateAiRuntimeResponseV2(response = {}, contextBundle = {}, l
   if (response.version !== 'v2') return { ok: false, reason: 'version' }
   if (!text(response.conclusion?.title || response.conclusion?.summary)) return { ok: false, reason: 'conclusion' }
   const evidence = asArray(response.keyEvidence)
-  if (!evidence.length) return { ok: false, reason: 'evidence' }
+  if (!evidence.length && Number(response.realEvidenceCount) !== 0) return { ok: false, reason: 'evidence' }
   const allowedIds = allowedEvidenceIds(contextBundle, localDraftResponse)
   if (allowedIds.size && !evidence.every((item) => allowedIds.has(text(item.id || item.entityId || item.entityLabel)))) {
     return { ok: false, reason: 'evidence_grounding' }

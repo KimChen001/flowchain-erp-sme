@@ -36,7 +36,7 @@ test('configured runtime is always PostgreSQL', () => {
 })
 
 test('production composition root has no JSON bootstrap or write path', async () => {
-  const source = await readFile(path.join(root, 'server', 'routes', 'scm-legacy.routes.mjs'), 'utf8')
+  const source = await readFile(path.join(root, 'server', 'bootstrap', 'scm-server.mjs'), 'utf8')
   assert.doesNotMatch(source, /createJsonDb|scm-demo\.json|jsonDb|runtimeFileMutex|writeDb\s*\(/)
 })
 

@@ -11,7 +11,7 @@ import {
   validateAiRuntimeRequest,
 } from './ai-runtime-gateway-v2.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
-import { createScmServer } from '../routes/scm-legacy.routes.mjs'
+import { createScmServer } from '../bootstrap/scm-server.mjs'
 import { extractBusinessContextFromAiResponseV2 } from './ai-runtime-conversation-context-v2.mjs'
 import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
@@ -34,7 +34,8 @@ function assertRuntimeResponse(result) {
   }
   assert.equal(result.version, 'v2')
   assert.ok(result.conclusion.title)
-  assert.ok(result.keyEvidence.length > 0)
+  assert.equal(result.realEvidenceCount, result.keyEvidence.length)
+  assert.ok(result.keyEvidence.length > 0 || result.contextCardCount > 0)
   assert.ok(result.sourceSummary.length > 0)
   assert.ok(result.navigationLinks.every((link) => link.returnTo === 'ai-assistant'))
   assert.ok(result.navigationLinks.every((link) => link.source === 'aiRuntimeGateway'))
@@ -191,7 +192,7 @@ test('unsafe follow-up with resolved context still refuses execution', () => {
   assert.doesNotMatch(visibleText(q2.body), FORBIDDEN_AI_RUNTIME_ACTION_PATTERN)
 })
 
-test('PO contextual draft opens review-first card from multi-turn context', () => {
+test('PO information routes to the object while an explicit note request opens the text editor contract', () => {
   const q1 = buildAiRuntimeResponseV2(loadDb(), { message: '今天有什么需要我处理？', activeModuleId: 'overview' })
   const q2 = buildAiRuntimeResponseV2(loadDb(), {
     message: '那这个 PO 为什么优先？',
@@ -199,8 +200,17 @@ test('PO contextual draft opens review-first card from multi-turn context', () =
     conversationContext: contextFrom(q1.body),
   })
   const po = q2.body.resolvedContext.entityRefs[0]
+  assert.equal(q2.body.reviewCards.length, 0)
+  const poNavigation = q2.body.navigationLinks.find((link) => link.entityType === 'purchase_order')
+  assert.ok(poNavigation)
+  assert.match(poNavigation.label, /查看并处理/)
+  assert.deepEqual(poNavigation.focusTarget, {
+    entityType: 'purchase_order',
+    entityId: poNavigation.entityId,
+    focusArea: 'receiving-invoice-variance',
+  })
   const q3 = buildAiRuntimeResponseV2(loadDb(), {
-    message: '打开这个对象的人工复核草稿。',
+    message: '生成这个 PO 的内部备注草稿。',
     activeModuleId: 'overview',
     conversationContext: contextFrom(q2.body),
   })
@@ -257,7 +267,7 @@ test('Invoice contextual draft uses review-only card or limitation without payme
     conversationContext: contextFrom(q1.body),
   })
   const q3 = buildAiRuntimeResponseV2(loadDb(), {
-    message: '生成发票差异复核草稿。',
+    message: '生成发票差异说明草稿。',
     activeModuleId: 'finance',
     conversationContext: contextFrom(q2.body),
   })
@@ -270,8 +280,7 @@ test('Invoice contextual draft uses review-only card or limitation without payme
 test('no context and ambiguous contextual draft requests do not invent target ids', () => {
   const missing = buildAiRuntimeResponseV2(loadDb(), { message: '打开这个对象的人工复核草稿。' })
   assert.equal(missing.status, 200)
-  assertContextualReviewCard(missing.body.reviewCards[0])
-  assert.equal(missing.body.reviewCards[0].targetEntityId, '')
+  assert.equal(missing.body.reviewCards.length, 0)
   assert.match(visibleText(missing.body.dataLimitations), /当前上下文不足|选择具体对象/)
 
   const ambiguous = buildAiRuntimeResponseV2(loadDb(), {
@@ -284,11 +293,11 @@ test('no context and ambiguous contextual draft requests do not invent target id
     },
   })
   assert.equal(ambiguous.status, 200)
-  assertContextualReviewCard(ambiguous.body.reviewCards[0])
+  assert.equal(ambiguous.body.reviewCards.length, 0)
   assert.match(visibleText(ambiguous.body.dataLimitations), /多个相关对象|人工确认/)
 })
 
-test('unsafe disguised draft request keeps draft preview boundary only', () => {
+test('unsafe direct-send request does not create a generic reviewed record', () => {
   const q1 = buildAiRuntimeResponseV2(loadDb(), { message: '这个 PO 为什么优先？', activeModuleId: 'procurement' })
   const q2 = buildAiRuntimeResponseV2(loadDb(), {
     message: '生成草稿并直接发给供应商。',
@@ -297,7 +306,7 @@ test('unsafe disguised draft request keeps draft preview boundary only', () => {
   })
   assert.equal(q2.status, 200)
   assertRuntimeResponse(q2.body)
-  assertContextualReviewCard(q2.body.reviewCards[0], { draftType: 'po_followup_draft' })
+  assert.equal(q2.body.reviewCards.length, 0)
   assert.match(visibleText(q2.body), /草稿预览|人工复核|不形成正式业务处理|不外发/)
   assert.doesNotMatch(visibleText(q2.body), FORBIDDEN_AI_RUNTIME_ACTION_PATTERN)
 })
@@ -333,7 +342,7 @@ test('supported intents return evidence-bounded responses', () => {
     const { status, body } = buildAiRuntimeResponseV2(loadDb(), { message: prompt, activeModuleId: 'overview' })
     assert.equal(status, 200, prompt)
     assertRuntimeResponse(body)
-    assert.ok(body.keyEvidence.length >= 1, prompt)
+    assert.equal(body.realEvidenceCount, body.keyEvidence.length, prompt)
     assert.ok(body.sourceSummary.some((item) => /v2/.test(item.sourceId)), prompt)
     assert.doesNotMatch(visibleText(body), /AI 助手暂不可用|当前未能读取工作区证据|请稍后重试/i, prompt)
   }
@@ -347,7 +356,7 @@ test('core business chain questions explain sales inventory procurement receivin
     ['这个收货异常会影响发票匹配吗？', /收货|GRN|发票|匹配/],
     ['这张发票差异会影响什么财务协同？', /发票|差异|财务协同|人工复核/],
     ['这条链路哪里证据不足？', /证据不足|发票差异证据待补充|数据限制/],
-    ['打开这条链路的人工复核草稿。', /人工复核草稿|草稿预览|人工复核/],
+    ['生成这条链路的内部备注草稿。', /备注草稿|草稿预览|人工复核/],
   ]
   let previous = null
   for (const [message, expected] of prompts) {

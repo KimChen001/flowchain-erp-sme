@@ -7,7 +7,7 @@ export async function readBusinessContext(ctx) {
   return await createBusinessReadContextService({
     repositories: ctx.repositories || {},
     dataMode: ctx.dataMode || 'user',
-  }).read()
+  }).read({ tenantId: ctx.identity?.tenantId })
 }
 
 function legacyRouteTestContext(db) {

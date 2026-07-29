@@ -4,6 +4,7 @@ import { AlertTriangle, FilePlus2, RefreshCw } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { A, Card, Chip } from "../../components/ui";
+import { createSecureClientMutationId } from "../../lib/client-id";
 
 type Capability = { enabled?: boolean; maturity?: string; reason?: string };
 type Invoice = {
@@ -496,7 +497,7 @@ function NewInvoice() {
           method: "POST",
           body: JSON.stringify({
             ...body(),
-            idempotencyKey: crypto.randomUUID(),
+            idempotencyKey: createSecureClientMutationId("o2c"),
           }),
         },
       );

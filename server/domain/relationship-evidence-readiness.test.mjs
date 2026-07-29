@@ -76,12 +76,15 @@ test('R214 evidence resolver keeps risk level separate from reason and produces 
   assert.match(evidence, /dataLimitations/)
 })
 
-test('R215-R216 high-value surfaces use shared relationship and evidence resolvers', () => {
+test('R215-R216 high-value surfaces retain authoritative evidence without a duplicate PO relationship panel', () => {
   const purchasing = source('src', 'modules', 'purchasing', 'Page.tsx')
   const receiving = source('src', 'modules', 'receiving', 'Page.tsx')
   const invoice = source('src', 'modules', 'procurement', 'SupplierInvoiceRegister.tsx')
   const aiReadiness = source('src', 'domain', 'contextual-ai', 'readiness.ts')
-  assert.match(purchasing, /relatedRecordsForEntity/)
+  assert.match(purchasing, /buildGrnRows/)
+  assert.match(purchasing, /buildInvoiceRows/)
+  assert.match(purchasing, /buildMatchRows/)
+  assert.doesNotMatch(purchasing, /DocumentEvidencePanel/)
   assert.match(receiving, /relatedRecordsForEntity/)
   assert.match(invoice, /relatedRecordsForEntity/)
   assert.match(aiReadiness, /resolvePoDelayEvidence/)

@@ -68,8 +68,33 @@ function safeLimit(value, fallback = 500) {
 function mapPurchaseRequest(record = {}) {
   const line = firstLine(record)
   const meta = metadata(record)
+  const lines = asArray(record.lines).map((entry) => ({
+    lineId: entry.id,
+    id: entry.id,
+    itemId: text(entry.itemId) || null,
+    sku: text(entry.sku) || null,
+    itemNameSnapshot: text(entry.itemName),
+    itemName: text(entry.itemName),
+    quantity: numberFrom(entry.quantity, 0),
+    unitSnapshot: text(entry.unit) || null,
+    unit: text(entry.unit),
+    estimatedUnitPrice: numberFrom(entry.unitPrice, 0),
+    unitPrice: numberFrom(entry.unitPrice, 0),
+    estimatedAmount: numberFrom(entry.amount, 0),
+    amount: numberFrom(entry.amount, 0),
+    currency: text(record.currency, 'CNY'),
+    metadata: metadata(entry),
+  }))
   return {
+    id: record.id,
     pr: record.id,
+    version: numberFrom(meta.version, 0),
+    requesterId: text(meta.requesterId || record.requester),
+    departmentId: text(meta.departmentId),
+    defaultCurrency: text(record.currency, 'CNY'),
+    defaultNeedByDate: isoDate(record.requiredDate),
+    totalAmount: numberFrom(record.amount, 0),
+    lines,
     sourceSku: text(line.sku || meta.sku),
     sourceName: text(line.itemName || meta.itemName),
     itemId: text(line.itemId || meta.itemId),
@@ -128,18 +153,26 @@ function mapPurchaseOrder(record = {}) {
   const ordered = lineQuantity(record.lines, 'orderedQuantity', numberFrom(meta.orderedQuantity, 0))
   const received = lineQuantity(record.lines, 'receivedQuantity', numberFrom(meta.receivedQuantity, 0))
   return {
+    id: record.id,
     po: record.id,
+    orderNumber: text(meta.orderNumber, record.id),
+    version: numberFrom(record.version, 0),
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
     eta: isoDate(record.expectedDate),
+    expectedDeliveryDate: isoDate(record.expectedDate),
     owner: text(record.owner),
     amount: numberFrom(record.amount, lineQuantity(record.lines, 'amount', 0)),
+    subtotal: numberFrom(meta.subtotal, numberFrom(record.amount, lineQuantity(record.lines, 'amount', 0))),
+    taxAmount: numberFrom(meta.taxAmount, 0),
+    totalAmount: numberFrom(meta.totalAmount, numberFrom(record.amount, lineQuantity(record.lines, 'amount', 0))),
     currency: text(record.currency, 'CNY'),
     items: ordered,
     received,
     totalOrderedQty: ordered,
     totalReceivedQty: received,
     status: text(record.status, 'draft'),
+    transmissionStatus: text(meta.transmissionStatus, record.status === 'draft' ? 'not_sent' : 'sent'),
     priority: text(record.priority),
     sourceRequest: text(record.sourceRequestId),
     sourceRfq: text(record.sourceRfqId),
@@ -147,6 +180,35 @@ function mapPurchaseOrder(record = {}) {
     sourceName: text(line.itemName || meta.itemName),
     itemId: text(line.itemId || meta.itemId),
     lineCount: asArray(record.lines).length,
+    warehouseId: text(meta.targetWarehouseId || meta.warehouseId),
+    targetWarehouseId: text(meta.targetWarehouseId || meta.warehouseId),
+    lines: asArray(record.lines).map((entry) => ({
+      ...metadata(entry),
+      poLineId: entry.id,
+      id: entry.id,
+      poId: record.id,
+      itemId: text(entry.itemId),
+      sku: text(entry.sku),
+      itemName: text(entry.itemName),
+      itemNameSnapshot: text(entry.itemName),
+      specification: text(metadata(entry).specification),
+      quantityOrdered: numberFrom(entry.orderedQuantity, 0),
+      orderedQuantity: numberFrom(entry.orderedQuantity, 0),
+      quantityReceived: numberFrom(entry.receivedQuantity, 0),
+      receivedQuantity: numberFrom(entry.receivedQuantity, 0),
+      unit: text(entry.unit),
+      unitPrice: numberFrom(entry.unitPrice, 0),
+      lineAmount: numberFrom(entry.amount, 0),
+      amount: numberFrom(entry.amount, 0),
+      currency: text(record.currency, 'CNY'),
+      warehouseId: text(metadata(entry).targetWarehouseId || metadata(entry).warehouseId),
+      targetWarehouseId: text(metadata(entry).targetWarehouseId || metadata(entry).warehouseId),
+      requiredDate: isoDate(metadata(entry).requestedDate || metadata(entry).requiredDate),
+      requestedDate: isoDate(metadata(entry).requestedDate || metadata(entry).requiredDate),
+      promisedDate: isoDate(metadata(entry).promisedDate || record.expectedDate),
+      status: numberFrom(entry.receivedQuantity, 0) >= numberFrom(entry.orderedQuantity, 0) ? 'received' : 'open',
+    })),
+    created: isoDate(record.createdAt),
     createdAt: isoDate(record.createdAt),
     updatedAt: isoDate(record.updatedAt),
   }
@@ -160,6 +222,8 @@ function mapReceivingDocument(record = {}) {
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
     status: text(record.status, 'receiving'),
+    workflowStatus: text(record.workflowStatus),
+    postingStatus: text(record.postingStatus),
     arrived: isoDate(record.arrivedAt || record.createdAt),
     receiver: text(record.receiver),
     warehouse: text(record.warehouseId || meta.warehouse),
@@ -167,6 +231,25 @@ function mapReceivingDocument(record = {}) {
     passed: lineQuantity(record.lines, 'acceptedQty', 0),
     failed: lineQuantity(record.lines, 'rejectedQty', 0),
     currency: text(record.currency, 'CNY'),
+    lines: asArray(record.lines).map((entry) => ({
+      ...metadata(entry),
+      grnLineId: entry.id,
+      id: entry.id,
+      poLineId: text(entry.purchaseOrderLineId),
+      poId: text(record.poId),
+      sku: text(entry.sku),
+      itemName: text(entry.itemName),
+      receivedQty: numberFrom(entry.acceptedQty, 0) + numberFrom(entry.rejectedQty, 0),
+      acceptedQty: numberFrom(entry.acceptedQty, 0),
+      rejectedQty: numberFrom(entry.rejectedQty, 0),
+      unit: text(entry.unit),
+      warehouseId: text(entry.warehouseId || record.warehouseId),
+      location: text(entry.location),
+      status: numberFrom(entry.rejectedQty, 0) > 0 ? 'exception' : 'received',
+    })),
+    postedAt: isoDate(record.postedAt),
+    postedBy: text(record.postedById),
+    inventoryApplied: text(record.postingStatus) === 'posted',
     createdAt: isoDate(record.createdAt),
     updatedAt: isoDate(record.updatedAt),
   }
@@ -174,7 +257,17 @@ function mapReceivingDocument(record = {}) {
 
 function mapSupplierInvoice(record = {}) {
   const meta = metadata(record)
+  const varianceAmount = numberFrom(record.varianceAmount, 0)
+  const varianceType = text(meta.varianceType, varianceAmount ? '金额差异' : '无差异')
+  const rawMatchStatus = text(record.matchStatus)
+  const matchStatus = rawMatchStatus === 'variance'
+    ? '差异待处理'
+    : rawMatchStatus === 'matched'
+      ? '自动匹配'
+      : rawMatchStatus || (varianceAmount ? '差异待处理' : '未匹配')
+  const rawStatus = text(record.status, 'draft')
   return {
+    id: record.id,
     invoiceNumber: record.id,
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
@@ -183,10 +276,47 @@ function mapSupplierInvoice(record = {}) {
     invoiceDate: isoDate(record.invoiceDate),
     dueDate: isoDate(record.dueDate),
     amount: numberFrom(record.amount, lineQuantity(record.lines, 'amount', 0)),
+    subtotal: numberFrom(record.subtotalAmount, numberFrom(record.amount, lineQuantity(record.lines, 'amount', 0))),
+    tax: numberFrom(record.enteredTaxAmount, 0),
+    total: numberFrom(record.totalAmount, numberFrom(record.amount, lineQuantity(record.lines, 'amount', 0))),
     currency: text(record.currency, 'CNY'),
-    status: text(record.status, 'pending'),
-    matchStatus: text(record.matchStatus),
-    varianceAmount: numberFrom(record.varianceAmount, 0),
+    status: varianceAmount ? '存在差异' : rawStatus,
+    matchStatus,
+    varianceType,
+    varianceAmount,
+    receivedDate: isoDate(record.createdAt),
+    paymentTerms: text(meta.paymentTerms),
+    owner: text(meta.owner),
+    apOwner: text(meta.apOwner),
+    source: text(meta.source, 'manual-entry'),
+    postedToAp: Boolean(record.approvedAt),
+    paid: Boolean(meta.paid),
+    lines: asArray(record.lines).map((entry) => {
+      const lineMeta = metadata(entry)
+      const quantity = numberFrom(entry.quantity, 0)
+      const unitPrice = numberFrom(entry.unitPrice, 0)
+      const lineSubtotal = numberFrom(entry.lineAmount, numberFrom(entry.amount, quantity * unitPrice))
+      const taxAmount = numberFrom(entry.enteredTaxAmount, 0)
+      const lineVarianceAmount = numberFrom(lineMeta.varianceAmount, varianceAmount)
+      return {
+        ...lineMeta,
+        lineId: entry.id,
+        sku: text(entry.sku),
+        name: text(entry.itemName),
+        description: text(entry.itemName),
+        poLine: text(entry.purchaseOrderLineId),
+        grnLine: text(entry.receivingLineId),
+        quantity,
+        unit: text(entry.unit),
+        unitPrice,
+        taxRate: numberFrom(lineMeta.taxRate, 0),
+        taxAmount,
+        lineSubtotal,
+        lineTotal: lineSubtotal + taxAmount,
+        varianceType: text(lineMeta.varianceType, lineVarianceAmount ? varianceType : '无差异'),
+        varianceAmount: lineVarianceAmount,
+      }
+    }),
     createdAt: isoDate(record.createdAt),
     updatedAt: isoDate(record.updatedAt),
   }
@@ -261,6 +391,10 @@ export function createDbProcurementReadRepository({ env = process.env, prisma } 
   return {
     mode: 'database',
     adapter: 'db-procurement-read-v1',
+    snapshot: async (filters = {}) => {
+      const client = await resolvePrisma({ env, prisma })
+      return loadProcurementSnapshot(client, filters)
+    },
     listDocuments: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const snapshot = await loadProcurementSnapshot(client, filters)

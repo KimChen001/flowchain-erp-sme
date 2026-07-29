@@ -9,6 +9,17 @@ function masterDataRepository(ctx) {
 export async function handleMasterDataRoute(ctx) {
   const { req, res, url, send, readBody } = ctx
   const repository = masterDataRepository(ctx)
+  if (!url.pathname.startsWith('/api/master-data')) return false
+  const tenantScope = (extra = {}) => ({ ...(ctx.identity?.tenantId ? { tenantId: ctx.identity.tenantId } : {}), ...extra })
+  const scopedRepository = new Proxy(repository, {
+    get(target, property) {
+      if (property === 'listManagedItems' && typeof target[property] !== 'function') {
+        return (filters = {}) => target.listItems(tenantScope({ purchasableOnly: true, ...filters }))
+      }
+      if (!['listManagedItems', 'listWarehouses', 'listPaymentTerms', 'listTaxCodes'].includes(String(property))) return target[property]
+      return (filters = {}) => target[property](tenantScope(filters))
+    },
+  })
   const authorizeWrite = resource => authorizeMutation(ctx, {
     allowedRoles: ['admin', 'manager', 'business-specialist', 'procurement-specialist', 'analyst'],
     action: 'maintain',
@@ -18,7 +29,7 @@ export async function handleMasterDataRoute(ctx) {
 
   const selectorMatch = url.pathname.match(/^\/api\/master-data\/(departments|currencies|units|commodities|warehouses|payment-terms|tax-codes)\/select$/)
   if (req.method === 'GET' && selectorMatch) {
-    const options = await selectMasterData(repository, selectorMatch[1])
+    const options = await selectMasterData(scopedRepository, selectorMatch[1])
     send(res, 200, { options })
     return true
   }
@@ -26,12 +37,12 @@ export async function handleMasterDataRoute(ctx) {
   if (req.method === 'GET' && url.pathname === '/api/master-data') {
     const [items, suppliers, customers, warehouses, paymentTerms, taxCodes] =
       await Promise.all([
-        repository.listItems(),
-        repository.listSuppliers(),
-        repository.listCustomers(),
-        repository.listWarehouses(),
-        repository.listPaymentTerms(),
-        repository.listTaxCodes(),
+        repository.listItems(tenantScope()),
+        repository.listSuppliers(tenantScope()),
+        repository.listCustomers(tenantScope()),
+        repository.listWarehouses(tenantScope()),
+        repository.listPaymentTerms(tenantScope()),
+        repository.listTaxCodes(tenantScope()),
       ])
     send(res, 200, {
       items,
@@ -45,10 +56,10 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/customers') {
-    send(res, 200, { customers: await repository.listCustomers({
+    send(res, 200, { customers: await repository.listCustomers(tenantScope({
       query: url.searchParams.get('query') || '',
       status: url.searchParams.get('status') || '',
-    }) })
+    })) })
     return true
   }
 
@@ -84,7 +95,7 @@ export async function handleMasterDataRoute(ctx) {
     /^\/api\/master-data\/customers\/([^/]+)$/,
   )
   if (req.method === 'GET' && customerMatch) {
-    const customer = await repository.getCustomer(customerMatch[1])
+    const customer = await repository.getCustomer(customerMatch[1], tenantScope())
     send(
       res,
       customer ? 200 : 404,
@@ -100,9 +111,9 @@ export async function handleMasterDataRoute(ctx) {
     send(res, 200, {
       items: await (managed && repository.listManagedItems
         ? repository.listManagedItems
-        : repository.listItems)({
+        : repository.listItems)(tenantScope({
         purchasableOnly: url.searchParams.get('purchasable') === 'true',
-      }),
+      })),
     })
     return true
   }
@@ -133,9 +144,9 @@ export async function handleMasterDataRoute(ctx) {
   if (req.method === 'GET' && itemMatch) {
     const itemId = itemMatch[1]
     const managedItem = repository.getManagedItem
-      ? await repository.getManagedItem(itemId)
+      ? await repository.getManagedItem(itemId, tenantScope())
       : null
-    const item = managedItem || await repository.getItem(itemId)
+    const item = managedItem || await repository.getItem(itemId, tenantScope())
     if (!item) {
       send(res, 404, { error: 'Item not found' })
       return true
@@ -171,7 +182,7 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/suppliers') {
-    send(res, 200, { suppliers: await repository.listSuppliers({ query:url.searchParams.get('query')||'', status:url.searchParams.get('status')||'', category:url.searchParams.get('category')||'' }) })
+    send(res, 200, { suppliers: await repository.listSuppliers(tenantScope({ query:url.searchParams.get('query')||'', status:url.searchParams.get('status')||'', category:url.searchParams.get('category')||'' })) })
     return true
   }
 
@@ -186,7 +197,15 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/suppliers/select') {
-    send(res, 200, { suppliers: await repository.selectSuppliers({ query:url.searchParams.get('query')||'' }) })
+    const query = String(url.searchParams.get('query') || '').trim().toLowerCase()
+    const suppliers = await repository.listSuppliers(tenantScope())
+    send(res, 200, {
+      suppliers: suppliers.filter(row => !query || [row.id, row.name].some(value => String(value || '').toLowerCase().includes(query))).map(row => ({
+        ...row,
+        supplierName: row.name,
+        supplierCode: row.id,
+      })),
+    })
     return true
   }
 
@@ -201,7 +220,7 @@ export async function handleMasterDataRoute(ctx) {
     /^\/api\/master-data\/suppliers\/([^/]+)$/,
   )
   if (req.method === 'GET' && supplierMatch) {
-    const supplier = await repository.getSupplier(supplierMatch[1])
+    const supplier = await repository.getSupplier(supplierMatch[1], tenantScope())
     if (!supplier) {
       send(res, 404, { error: 'Supplier not found' })
       return true
@@ -217,16 +236,41 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   const supplierItems = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/items$/)
-  if (req.method === 'GET' && supplierItems) { send(res,200,{relationships:await repository.listSupplierItems(decodeURIComponent(supplierItems[1]))}); return true }
+  if (req.method === 'GET' && supplierItems) {
+    if (typeof repository.listSupplierItems !== 'function') {
+      send(res, 501, {
+        code: 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED',
+        capability: 'supplier-item-relationships',
+        message: '供应商–SKU 关系 read model 尚未接入当前 PostgreSQL repository。',
+        limitations: ['供应商基础资料可读取，但可供应物料关系暂不可用。'],
+      })
+      return true
+    }
+    send(res,200,{relationships:await repository.listSupplierItems(decodeURIComponent(supplierItems[1]), tenantScope())})
+    return true
+  }
 
   const itemSuppliers = url.pathname.match(/^\/api\/master-data\/items\/([^/]+)\/suppliers$/)
-  if (req.method === 'GET' && itemSuppliers) { const itemId=decodeURIComponent(itemSuppliers[1]); send(res,200,{relationships:await repository.listItemSuppliers(itemId),suppliers:await repository.approvedSuppliersForItem(itemId)}); return true }
+  if (req.method === 'GET' && itemSuppliers) {
+    if (typeof repository.listItemSuppliers !== 'function' || typeof repository.approvedSuppliersForItem !== 'function') {
+      send(res, 501, {
+        code: 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED',
+        capability: 'item-supplier-relationships',
+        message: 'SKU–供应商关系 read model 尚未接入当前 PostgreSQL repository。',
+        limitations: ['物料基础资料可读取，但可采购供应商关系暂不可用。'],
+      })
+      return true
+    }
+    const itemId=decodeURIComponent(itemSuppliers[1])
+    send(res,200,{relationships:await repository.listItemSuppliers(itemId, tenantScope()),suppliers:await repository.approvedSuppliersForItem(itemId, tenantScope())})
+    return true
+  }
   if (req.method === 'POST' && itemSuppliers) { if(authorizeWrite('item-supplier-relationship').blocked)return true; try{send(res,201,{relationship:await repository.createItemSupplier(decodeURIComponent(itemSuppliers[1]),await readBody(req),actor())})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})} return true }
   const relationshipMatch=url.pathname.match(/^\/api\/master-data\/items\/([^/]+)\/suppliers\/([^/]+)$/)
   if(req.method==='PATCH'&&relationshipMatch){if(authorizeWrite('item-supplier-relationship').blocked)return true;try{send(res,200,{relationship:await repository.updateItemSupplier(decodeURIComponent(relationshipMatch[1]),decodeURIComponent(relationshipMatch[2]),await readBody(req),actor())})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})}return true}
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/warehouses') {
-    send(res, 200, { warehouses: await repository.listWarehouses() })
+    send(res, 200, { warehouses: await repository.listWarehouses(tenantScope()) })
     return true
   }
 
@@ -234,7 +278,7 @@ export async function handleMasterDataRoute(ctx) {
     /^\/api\/master-data\/(warehouses|bins)\/([^/]+)$/,
   )
   if (req.method === 'GET' && warehouseMatch) {
-    const rows = await repository.listWarehouses()
+    const rows = await repository.listWarehouses(tenantScope())
     const key = decodeURIComponent(warehouseMatch[2]).toLowerCase()
     const warehouse = rows.find((row) =>
       warehouseMatch[1] === 'bins'
@@ -255,7 +299,7 @@ export async function handleMasterDataRoute(ctx) {
     req.method === 'GET' &&
     url.pathname === '/api/master-data/payment-terms'
   ) {
-    send(res, 200, { paymentTerms: await repository.listPaymentTerms() })
+    send(res, 200, { paymentTerms: await repository.listPaymentTerms(tenantScope()) })
     return true
   }
 
@@ -264,7 +308,7 @@ export async function handleMasterDataRoute(ctx) {
   )
   if (req.method === 'GET' && paymentTermMatch) {
     const key = decodeURIComponent(paymentTermMatch[1]).toLowerCase()
-    const paymentTerm = (await repository.listPaymentTerms()).find((row) =>
+    const paymentTerm = (await repository.listPaymentTerms(tenantScope())).find((row) =>
       [row.id, row.code, row.label, row.name].some(
         (value) => String(value || '').toLowerCase() === key,
       ),
@@ -278,7 +322,7 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/tax-codes') {
-    send(res, 200, { taxCodes: await repository.listTaxCodes() })
+    send(res, 200, { taxCodes: await repository.listTaxCodes(tenantScope()) })
     return true
   }
 
@@ -287,7 +331,7 @@ export async function handleMasterDataRoute(ctx) {
   )
   if (req.method === 'GET' && taxCodeMatch) {
     const key = decodeURIComponent(taxCodeMatch[1]).toLowerCase()
-    const taxCode = (await repository.listTaxCodes()).find((row) =>
+    const taxCode = (await repository.listTaxCodes(tenantScope())).find((row) =>
       [row.id, row.code, row.label, row.name].some(
         (value) => String(value || '').toLowerCase() === key,
       ),
