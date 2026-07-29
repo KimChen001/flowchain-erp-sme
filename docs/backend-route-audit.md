@@ -10,6 +10,7 @@ The production entry point is:
 server/index.mjs
   -> server/scm-api.mjs
   -> server/bootstrap/scm-server.mjs
+  -> server/bootstrap/route-dispatcher.mjs
   -> server/routes/*.routes.mjs
   -> server/domain/* services
   -> server/repositories/db-*.mjs
@@ -17,8 +18,10 @@ server/index.mjs
 ```
 
 `server/bootstrap/scm-server.mjs` is the composition root. It owns HTTP startup,
-authentication context, capability and legacy-mutation guards, route dispatch,
-static asset fallback, and safe top-level error handling. It must not become a
+authentication context, capability and legacy-mutation guards, route-context
+construction, static asset fallback, and safe top-level error handling.
+`server/bootstrap/route-dispatcher.mjs` owns the ordered route-handler chain and
+short-circuits after the first handler accepts the request. Neither file is a
 home for new business rules.
 
 All production repositories are created by
@@ -64,12 +67,14 @@ point.
 
 ## Remaining architecture work
 
-1. Split route dispatch from HTTP/auth/static concerns in
+1. Split local session/authentication and static asset delivery out of
    `server/bootstrap/scm-server.mjs`.
-2. Move command/read services into domain modules (`procurement`, `inventory`,
+2. Group the flat ordered handler chain into core, extension, and internal
+   registrars without changing precedence.
+3. Move command/read services into domain modules (`procurement`, `inventory`,
    `supplier`, `workflow`, `ai`) without rewriting their working behavior.
-3. Replace broad route-context helper injection with narrow handler
+4. Replace broad route-context helper injection with narrow handler
    dependencies.
-4. Move finance/bank/settlement composition behind an extension registrar.
-5. Generate route classification from the same route registrations so the
+5. Move finance/bank/settlement composition behind an extension registrar.
+6. Generate route classification from the same route registrations so the
    guard table cannot drift from the dispatcher.

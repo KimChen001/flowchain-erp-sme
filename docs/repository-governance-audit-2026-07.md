@@ -64,7 +64,8 @@ React entry
   -> routeRegistry (159 route definitions)
   -> module pages/workbenches
   -> api-client / direct fetch calls
-  -> server/bootstrap/scm-server (HTTP, auth, guards, dispatch, static files)
+  -> server/bootstrap/scm-server (HTTP, auth, guards, route context, static files)
+  -> server/bootstrap/route-dispatcher (ordered handler chain)
   -> route handlers
   -> a mix of route orchestration and large domain services
   -> db repositories / direct Prisma services
@@ -212,7 +213,8 @@ recommended.
 
 | File or group | Purpose/current usage | Problem | Decision |
 | --- | --- | --- | --- |
-| `server/bootstrap/scm-server.mjs` | Production composition root | Still combines HTTP, auth, dispatch, and compatibility helpers | REFACTOR incrementally |
+| `server/bootstrap/scm-server.mjs` | Production composition root | Still combines HTTP, auth, route context, static files, and compatibility helpers | REFACTOR incrementally |
+| `server/bootstrap/route-dispatcher.mjs` | Ordered route chain | Correctly isolates dispatch, but remains a flat core/extension/internal list | REFACTOR into registrars after route classification is unified |
 | `server/routes/scm-legacy.routes.mjs` | Former misleading location of composition root | Name described an obsolete architecture | MOVE completed |
 | `server/repositories/db-*.mjs` | PostgreSQL adapters | Correct authoritative boundary | KEEP |
 | `server/repositories/adapter-registry.mjs` | Repository composition and JSON rejection | Correct single production mode | KEEP |
@@ -245,6 +247,9 @@ recommended.
 - Moved the production server composition root from the misleading
   `server/routes/scm-legacy.routes.mjs` path to
   `server/bootstrap/scm-server.mjs`.
+- Extracted the ordered handler chain into
+  `server/bootstrap/route-dispatcher.mjs`; bootstrap now has one dispatch call,
+  and contract tests protect ordering and short-circuit behavior.
 - Updated composition-root contract tests to the canonical bootstrap path.
 - Deleted 31 confirmed empty source stubs and empty barrel files.
 - Replaced the stale JSON-era backend route audit with the current
