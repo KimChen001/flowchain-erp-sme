@@ -17,7 +17,7 @@ import {
   X,
   ChevronRight,
 } from "lucide-react";
-import { navGroups, navItems } from "./routes";
+import { navGroups, navItems } from "./routes.tsx";
 import {
   defaultRouteForModule,
   routeById,
@@ -677,6 +677,12 @@ export default function FlowChainApp() {
     } else {
       const route = routeByPath(location.pathname);
       if (
+        route?.directAccessBehavior === "LEGACY_REDIRECT" &&
+        route.canonicalReplacement
+      ) {
+        const destination = routeById(route.canonicalReplacement);
+        if (destination) routerNavigate(destination.path, { replace: true });
+      } else if (
         route &&
         !route.parentId &&
         route.entryBehavior === "redirect-to-default-child"
@@ -769,7 +775,9 @@ export default function FlowChainApp() {
     const root = routeById(item.routeId);
     return {
       ...item,
-      label: root ? routeLabel(root, true) : item.label,
+      label:
+        item.navigationLabel ||
+        (root ? routeLabel(root, !root.parentId) : item.label),
       children: item.children?.map(child => {
         const route = routeById(child.id);
         return { ...child, label: route ? routeLabel(route) : child.label };
@@ -777,18 +785,16 @@ export default function FlowChainApp() {
     };
   }), [routeLabel]);
 
-  function navItemMatchesActive(item: (typeof localizedNavItems)[number]) {
-    return (
-      item.id === activeModule ||
-      Boolean(
-        item.children?.some(
-          (child) => child.id === (activeRoute?.currentActiveMenuId || active),
-        ),
-      )
+  const activeNavigationRouteId = activeRoute?.currentActiveMenuId || active;
+  const activeNavItem =
+    localizedNavItems.find(
+      (item) =>
+        item.routeId === activeNavigationRouteId ||
+        item.children?.some((child) => child.id === activeNavigationRouteId),
+    ) ||
+    localizedNavItems.find(
+      (item) => item.moduleId === activeModule && !routeById(item.routeId)?.parentId,
     );
-  }
-
-  const activeNavItem = localizedNavItems.find(navItemMatchesActive);
   const activeModuleLabel =
     (activeRoute ? routeLabel(activeRoute, true) : "") || activeNavItem?.label || activeModule;
   const activeChildLabel = activeRoute?.parentId
@@ -809,10 +815,22 @@ export default function FlowChainApp() {
   );
   const authorizationModule = panelModule === "returns-quarantine" ? "returns-quarantine" : panelModule === "receiving-posting" ? "receiving" : activeModule;
   const authorizationAccess = authorizationVisibility?.[authorizationModule];
-  const navPermissionVisible = (moduleId: string) => {
+  const navPermissionVisible = (
+    moduleId: string,
+    classification: "CORE" | "EXTENSION" | "INTERNAL" | "FROZEN" | "LEGACY",
+  ) => {
     if (!authorizationVisibility) return true;
-    if (moduleId === "inventory") return Boolean(authorizationVisibility.inventory?.visible || authorizationVisibility["returns-quarantine"]?.visible);
-    return authorizationVisibility[moduleId]?.visible ?? true;
+    if (moduleId === "inventory")
+      return classification === "CORE"
+        ? authorizationVisibility.inventory?.permissionAllowed ?? true
+        : Boolean(
+            authorizationVisibility.inventory?.visible ||
+              authorizationVisibility["returns-quarantine"]?.visible,
+          );
+    const access = authorizationVisibility[moduleId];
+    return classification === "CORE"
+      ? access?.permissionAllowed ?? true
+      : access?.visible ?? true;
   };
   const contentMaxWidthClass =
     panelModule === "srm"
@@ -1321,8 +1339,15 @@ export default function FlowChainApp() {
                       );
                       if (
                         !item ||
-                        (enabledModuleIds && !enabledModuleIds.has(item.id)) ||
-                        !navPermissionVisible(item.id)
+                        (item.classification === "EXTENSION" &&
+                          enabledModuleIds &&
+                          !enabledModuleIds.has(
+                            item.requiredCapability || item.moduleId,
+                          )) ||
+                        !navPermissionVisible(
+                          item.moduleId,
+                          item.classification,
+                        )
                       )
                         return null;
                       const isActive = activeNavItem?.id === item.id;
@@ -1332,7 +1357,7 @@ export default function FlowChainApp() {
                             aria-label={
                               item.id === "reports" ? "报表与分析" : undefined
                             }
-                            onClick={() => navigateTo(item.id)}
+                            onClick={() => navigateTo(item.routeId)}
                             className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm font-medium transition-colors duration-150"
                             style={
                               isActive
@@ -1351,7 +1376,9 @@ export default function FlowChainApp() {
                               strokeWidth={isActive ? 2 : 1.8}
                             />
                             <span className="truncate">{item.label}</span>
-                            {capabilities[item.id]?.maturity === "beta" && (
+                            {capabilities[
+                              item.requiredCapability || item.moduleId
+                            ]?.maturity === "beta" && (
                               <span className="ml-auto rounded bg-blue-500/20 px-1.5 py-0.5 text-[9px] text-blue-100">
                                 Beta
                               </span>
@@ -1394,16 +1421,21 @@ export default function FlowChainApp() {
           <div className="flex min-w-0 items-center gap-2 text-sm">
             <select
               aria-label={t("nav.primary")}
-              value={activeModule}
+              value={activeNavItem?.routeId || activeModule}
               onChange={(event) => navigateTo(event.target.value)}
               className="max-w-[150px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs lg:hidden"
             >
               {localizedNavItems
                 .filter(
-                  (item) => !enabledModuleIds || enabledModuleIds.has(item.id),
+                  (item) =>
+                    item.classification !== "EXTENSION" ||
+                    !enabledModuleIds ||
+                    enabledModuleIds.has(
+                      item.requiredCapability || item.moduleId,
+                    ),
                 )
                 .map((item) => (
-                  <option key={item.id} value={item.id}>
+                  <option key={item.id} value={item.routeId}>
                     {item.label}
                   </option>
                 ))}

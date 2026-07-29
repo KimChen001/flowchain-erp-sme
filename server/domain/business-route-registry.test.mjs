@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const registry = readFileSync(new URL('../../src/app/routeRegistry.tsx', import.meta.url), 'utf8');
+const routeTypes = readFileSync(new URL('../../src/app/routes/route-types.ts', import.meta.url), 'utf8');
 const entityRoutes = readFileSync(new URL('../../src/components/business/businessEntityRoutes.ts', import.meta.url), 'utf8');
 const link = readFileSync(new URL('../../src/components/business/BusinessEntityLink.tsx', import.meta.url), 'utf8');
 
@@ -14,9 +15,9 @@ test('business route registry contains all required deep links and return metada
     '/app/sales/orders/:id', '/app/sales/deliveries/:id', '/app/sales/receipts/:id', '/app/inventory/adjustments/:id',
   ];
   for (const path of paths) assert.match(registry, new RegExp(path.replace(/[/:]/g, (value) => `\\${value}`)));
-  assert.match(registry, /entityType\?: string/);
-  assert.match(registry, /entityIdParam\?: string/);
-  assert.match(registry, /returnListRouteId\?: string/);
+  assert.match(routeTypes, /entityType\?: string/);
+  assert.match(routeTypes, /entityIdParam\?: string/);
+  assert.match(routeTypes, /returnListRouteId\?: string/);
   assert.match(entityRoutes, /businessEntityRouteRegistry/);
 });
 

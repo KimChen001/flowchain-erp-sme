@@ -1,5 +1,11 @@
 import type React from "react";
 import {
+  buildRouteManifest,
+  primaryNavigationRoutes,
+  type AppEntryBehavior,
+  type AppRouteDefinition,
+} from "./routes/index.ts";
+import {
   AlertTriangle,
   BarChart2,
   ClipboardList,
@@ -18,42 +24,7 @@ import {
   Users,
 } from "lucide-react";
 
-export type AppPageType =
-  | "module-overview"
-  | "list"
-  | "detail"
-  | "create"
-  | "edit"
-  | "analysis"
-  | "settings";
-export type AppEntryBehavior = "redirect-to-default-child" | "landing";
-
-export type AppRouteDefinition = {
-  id: string;
-  path: string;
-  moduleId: string;
-  moduleLabel: string;
-  label: string;
-  description?: string;
-  parentId?: string;
-  defaultChildId?: string;
-  entryBehavior?: AppEntryBehavior;
-  icon?: React.ElementType;
-  showInSidebar?: boolean;
-  showInModuleNav?: boolean;
-  showInBreadcrumb?: boolean;
-  pageType?: AppPageType;
-  currentActiveMenuId?: string;
-  entityType?: string;
-  entityIdParam?: string;
-  returnListRouteId?: string;
-  legacyIds?: string[];
-  panelId?: string;
-  viewId?: string;
-  capabilityId?: string;
-  group?: "主导航" | "高级与内部";
-  order: number;
-};
+export type { AppRouteDefinition } from "./routes/index.ts";
 
 const module = (
   definition: Omit<
@@ -79,7 +50,7 @@ const page = (
   showInBreadcrumb: true,
 });
 
-export const appRouteRegistry: AppRouteDefinition[] = [
+const declaredAppRoutes: AppRouteDefinition[] = [
   module({
     id: "overview",
     path: "/app/overview",
@@ -2183,6 +2154,8 @@ export const appRouteRegistry: AppRouteDefinition[] = [
   }),
 ];
 
+export const appRouteRegistry = buildRouteManifest(declaredAppRoutes);
+
 const normalizePath = (value: string) =>
   value.length > 1 ? value.replace(/\/+$/, "") : value;
 
@@ -2222,7 +2195,12 @@ export function defaultRouteForModule(moduleId: string) {
 
 export function routesForModule(moduleId: string) {
   return appRouteRegistry
-    .filter((route) => route.moduleId === moduleId && route.showInModuleNav)
+    .filter(
+      (route) =>
+        route.moduleId === moduleId &&
+        route.showInModuleNav &&
+        route.navigationVisibility !== "HIDDEN",
+    )
     .sort((a, b) => a.order - b.order);
 }
 
@@ -2250,25 +2228,41 @@ export function recoveryModuleForPath(pathname: string) {
 }
 
 const modules = appRouteRegistry
-  .filter((route) => route.showInSidebar && !route.parentId)
-  .sort((a, b) => a.order - b.order);
+  .filter((route) => route.navigationVisibility === "PRIMARY");
 
-export const navItems = modules.map((root) => ({
-  icon: root.icon || Database,
-  label: root.moduleLabel,
-  id: root.moduleId,
-  routeId: root.id,
-  children: routesForModule(root.moduleId).map((route) => ({
-    id: route.id,
-    label: route.label,
-    path: route.path,
-  })),
+const primaryNavIcons: Record<string, React.ElementType> = {
+  overview: BarChart2,
+  procurement: Handshake,
+  "procurement:receiving": Package,
+  inventory: Package,
+  "master-data:suppliers": Users,
+  "master-data:items": Database,
+  "universal-intake": FileSpreadsheet,
+  "review-actions": FileCheck2,
+};
+
+export const navItems = primaryNavigationRoutes(modules).map((route) => ({
+  icon: primaryNavIcons[route.id] || route.icon || Database,
+  label: route.navigationLabel || route.label,
+  id: route.id,
+  moduleId: route.moduleId,
+  routeId: route.id,
+  classification: route.classification,
+  navigationLabel: route.navigationLabel,
+  requiredCapability: route.requiredCapability,
+  children: route.parentId
+    ? []
+    : routesForModule(route.moduleId).map((child) => ({
+        id: child.id,
+        label: child.label,
+        path: child.path,
+      })),
 }));
 
-export const navGroups = (["主导航", "高级与内部"] as const).map((label) => ({
-  label,
-  itemIds: modules
-    .filter((route) => route.group === label)
-    .map((route) => route.moduleId),
-  defaultCollapsed: label === "高级与内部",
-}));
+export const navGroups = [
+  {
+    label: "主导航" as const,
+    itemIds: navItems.map((item) => item.id),
+    defaultCollapsed: false,
+  },
+];
