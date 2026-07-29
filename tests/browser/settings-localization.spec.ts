@@ -13,14 +13,16 @@ async function session(page: any, value: any) {
     localStorage.setItem("flowchain:current-user", JSON.stringify(user));
   }, value);
 }
-const zhNavigation = ["我的资料", "公司与工作区", "用户与角色", "仓库与权限", "系统就绪状态", "编号规则", "复核策略", "菜单与模块", "AI 治理", "操作日志", "高级设置"];
-const enNavigation = ["My Profile", "Company & Workspace", "Users & Roles", "Warehouse Access", "System Readiness", "Numbering Rules", "Review Policies", "Menu & Modules", "AI Governance", "Audit Log", "Advanced Settings"];
+const zhNavigation = ["我的资料", "公司与工作区", "用户与角色", "仓库与权限", "系统就绪状态", "编号规则", "复核策略", "菜单与模块", "AI 治理", "操作日志"];
+const enNavigation = ["My Profile", "Company & Workspace", "Users & Roles", "Warehouse Access", "System Readiness", "Numbering Rules", "Review Policies", "Menu & Modules", "AI Governance", "Audit Log"];
 
 async function expectNavigation(page: any, labels: string[], rejected: string[]) {
   const nav = page.getByTestId("module-subnav");
   await expect(nav).toBeVisible();
   for (const label of labels) await expect(nav.getByRole("link", { name: label, exact: true })).toBeVisible();
-  for (const label of rejected) await expect(nav.getByText(label, { exact: true })).toHaveCount(0);
+  for (const label of [...rejected, "高级设置", "Advanced Settings"]) {
+    await expect(nav.getByText(label, { exact: true })).toHaveCount(0);
+  }
 }
 
 test("workspace language, locale, timezone, persistence, and disabled capability remain independent", async ({ page, request }) => {
