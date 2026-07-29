@@ -144,7 +144,7 @@ test("P2P schema extends legacy invoice and match models without parallel duplic
 
 test("focused finance routes are registered and exclude generic mutation and payment execution", () => {
   const routes = source("server", "routes", "operational-finance.routes.mjs");
-  const server = source("server", "bootstrap", "scm-server.mjs");
+  const dispatcher = source("server", "bootstrap", "route-dispatcher.mjs");
   const command = source(
     "server",
     "domain",
@@ -157,7 +157,7 @@ test("focused finance routes are registered and exclude generic mutation and pay
     "/api/finance/supplier-credit-memos",
   ])
     assert.match(routes, new RegExp(route.replaceAll("/", "\\/")));
-  assert.match(server, /handleOperationalFinanceRoute/);
+  assert.match(dispatcher, /handleOperationalFinanceRoute/);
   assert.doesNotMatch(routes, /generic-finance-mutation|\/api\/finance\/mutate/);
   assert.match(command, /isolationLevel: "Serializable"/);
   assert.match(command, /businessCommandExecution/);
