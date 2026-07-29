@@ -23,6 +23,14 @@ test("SME navigation, direct access and browser history follow the route manifes
   await login(page, request);
 
   await page.goto("/app/overview");
+  await expect(page).toHaveURL(/\/app\/overview\/risks$/);
+  await expect(
+    page.getByTestId("module-subnav").getByRole("link", {
+      name: "首页概览",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTitle(/Universal Intake disabled/)).toBeVisible();
   const sidebar = page.locator("aside");
   for (const label of [
     "今日",
@@ -31,8 +39,6 @@ test("SME navigation, direct access and browser history follow the route manifes
     "库存",
     "供应商",
     "物料",
-    "数据接入",
-    "复核队列",
     "AI 助手",
   ]) {
     await expect(sidebar.getByRole("button", { name: label, exact: true })).toBeVisible();
@@ -46,6 +52,57 @@ test("SME navigation, direct access and browser history follow the route manifes
   ]) {
     await expect(sidebar.getByText(hidden, { exact: true })).toHaveCount(0);
   }
+  await expect(
+    sidebar.getByRole("button", { name: "数据接入", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    sidebar.getByRole("button", { name: "复核队列", exact: true }),
+  ).toHaveCount(0);
+
+  const apiServerErrors: string[] = [];
+  page.on("response", (response) => {
+    if (response.url().includes("/api/") && response.status() >= 500) {
+      apiServerErrors.push(`${response.status()} ${response.url()}`);
+    }
+  });
+  for (const destination of [
+    { label: "今日", path: /\/app\/overview\/risks$/ },
+    { label: "采购", path: /\/app\/procurement\/workbench$/ },
+    { label: "收货", path: /\/app\/procurement\/receiving$/ },
+    { label: "库存", path: /\/app\/inventory\/stock$/ },
+    { label: "供应商", path: /\/app\/master-data\/suppliers$/ },
+    { label: "物料", path: /\/app\/master-data\/items$/ },
+  ]) {
+    await sidebar
+      .getByRole("button", { name: destination.label, exact: true })
+      .click();
+    await expect(page).toHaveURL(destination.path);
+    await expect(page.getByTestId("module-shell")).toBeVisible();
+    await expect(page.getByTestId("not-found-recovery")).toHaveCount(0);
+    await expect(page.getByTestId("capability-route-blocked")).toHaveCount(0);
+    await expect(page.getByText(/模块加载失败/)).toHaveCount(0);
+    if (destination.label === "收货") {
+      await expect(page.getByTestId("procurement-receiving-list")).toBeVisible();
+      await expect(page.getByText("采购收货列表尚未接入")).toHaveCount(0);
+      await expect(
+        page.getByRole("link", { name: "收货单 LOCAL-DEMO-GRN-001" }),
+      ).toBeVisible();
+    }
+  }
+  expect(apiServerErrors).toEqual([]);
+
+  await page.goto("/app/procurement/rfq");
+  await expect(page.getByTestId("procurement-rfq-list")).toBeVisible();
+  await expect(page.getByText("询价与报价列表尚未接入")).toHaveCount(0);
+
+  await page.goto("/app/procurement/contracts");
+  await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
+
+  await page.goto("/app/universal-intake");
+  await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
+  await page.goto("/app/review-actions");
+  await expect(page).toHaveURL(/\/app\/review-actions\/waiting$/);
+  await expect(page.getByText(/当前不可进入/)).toBeVisible();
 
   await sidebar.getByRole("button", { name: "采购", exact: true }).click();
   await expect(page).toHaveURL(/\/app\/procurement\/workbench$/);

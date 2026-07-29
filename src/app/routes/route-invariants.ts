@@ -67,6 +67,15 @@ export function validateRouteManifest(routes: GovernedAppRouteDefinition[]) {
         !routes.some((candidate) => candidate.id === route.canonicalReplacement))
     )
       issues.push(`invalid legacy replacement: ${route.id}`);
+    if (
+      route.navigationVisibility === "PRIMARY" &&
+      !route.parentId &&
+      routes.some((candidate) => candidate.parentId === route.id) &&
+      (route.entryBehavior !== "redirect-to-default-child" ||
+        !route.defaultChildId ||
+        route.defaultChildId === route.id)
+    )
+      issues.push(`primary route has no canonical child entry: ${route.id}`);
   }
 
   return issues;

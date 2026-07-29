@@ -58,6 +58,12 @@ test("normal SME navigation is deterministic and excludes non-product surfaces",
         !["LEGACY", "INTERNAL", "FROZEN"].includes(route.classification),
     ),
   );
+  for (const route of first.filter((candidate) => !candidate.parentId)) {
+    const hasChild = routes.some((candidate) => candidate.parentId === route.id);
+    if (!hasChild) continue;
+    assert.equal(route.entryBehavior, "redirect-to-default-child");
+    assert.notEqual(route.defaultChildId, route.id);
+  }
 });
 
 test("capability and permission metadata remain declarative boundaries", () => {

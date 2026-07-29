@@ -2,6 +2,8 @@ import PurchasingRequests from "../purchase-requests/Page";
 import PurchasingOrdersPage from "../purchasing/Page";
 import { ProcurementEmptyState } from "./ProcurementEmptyState";
 import { ProcurementWorkbench } from "./ProcurementWorkbench";
+import { ReceivingListPage } from "./ReceivingListPage";
+import { RfqListPage } from "./RfqListPage";
 import type { ProcurementFocus, ProcurementNavigate } from "./procurementTypes";
 import type { PurchaseIntent } from "../../types/scm";
 import type { ActiveContext } from "../ai-assistant/Panel";
@@ -16,8 +18,6 @@ type ProcurementPanelProps = {
 };
 
 const emptyViews: Record<string, [string, string]> = {
-  rfq: ["询价与报价列表尚未接入", "PostgreSQL RFQ read repository 已存在，但 canonical 列表页面尚未在此路由接通。"],
-  receiving: ["采购收货列表尚未接入", "可从采购订单详情进入已关联的真实收货单；此路由暂不声称当前工作区没有记录。"],
   invoices: ["供应商发票列表尚未接入", "可从采购订单详情查看已关联发票事实；canonical 发票列表仍需后续接通。"],
   match: ["三单匹配列表尚未接入", "当前真实 PO、GRN 与 Invoice 比对请从采购订单详情查看；此路由不再显示虚假的无记录结论。"],
   returns: ["采购退货工作台尚未接入", "退货与隔离库存 repository 基础已存在，但采购 canonical route 尚未接通。"],
@@ -28,6 +28,8 @@ export default function ProcurementPanel({ intent = null, view = "workbench", fo
   if (!view || view === "workbench" || view === "overview") return <ProcurementWorkbench onNavigate={onNavigate} />;
   if (view === "requests") return <PurchasingRequests intent={intent} focus={focus} onNavigate={onNavigate} onActiveContextChange={onActiveContextChange} />;
   if (view === "orders") return <PurchasingOrdersPage focus={focus} onNavigate={onNavigate} onActiveContextChange={onActiveContextChange} />;
+  if (view === "rfq") return <RfqListPage />;
+  if (view === "receiving") return <ReceivingListPage />;
   const [title, description] = emptyViews[view] || ["当前视图暂无数据", ""];
   return <ProcurementEmptyState title={title} description={description} />;
 }

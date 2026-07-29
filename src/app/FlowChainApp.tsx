@@ -1789,7 +1789,8 @@ export default function FlowChainApp() {
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Access denied" : "无权访问"}</h2>
                       <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "Your effective roles do not grant read permission for this module." : "当前有效角色未授予此模块的读取权限。"}</p>
                     </Card>
-                  ) : (authorizationAccess && !authorizationAccess.capabilityAllowed) ||
+                  ) : activeRoute.directAccessBehavior === "FROZEN_UNAVAILABLE" ||
+                    (authorizationAccess && !authorizationAccess.capabilityAllowed) ||
                     routeWriteCapabilityBlocked ? (
                     <Card className="p-10 text-center" data-testid="capability-route-blocked">
                       <Lock className="mx-auto text-slate-500" size={34} />

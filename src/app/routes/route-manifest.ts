@@ -34,6 +34,7 @@ const internalModules = new Set([
 ]);
 
 const frozenRouteIds = new Set([
+  "procurement:contracts",
   "finance:reconciliation",
   "finance:bank-statements",
   "finance:bank-reconciliation",
@@ -104,6 +105,11 @@ function classificationFor(route: AppRouteDefinition): RouteClassification {
   if (route.moduleId === "imports") return "LEGACY";
   if (route.moduleId === "forecast" || frozenRouteIds.has(route.id))
     return "FROZEN";
+  if (
+    route.moduleId === "universal-intake" ||
+    route.moduleId === "review-actions"
+  )
+    return "EXTENSION";
   if (
     internalModules.has(route.moduleId) ||
     route.id === "settings:advanced"
@@ -277,7 +283,6 @@ export function buildRouteManifest(
     return Object.freeze({
       ...route,
       ...authority,
-      capabilityId: route.capabilityId || authority.requiredCapability,
     });
   });
 }

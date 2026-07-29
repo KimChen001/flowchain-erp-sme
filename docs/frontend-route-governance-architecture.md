@@ -11,8 +11,10 @@ not used.
 FlowChain is directly usable without SAP, Odoo, Kingdee, or another ERP. For
 each business object, PostgreSQL-backed FlowChain repositories are the single
 authoritative system unless the route explicitly declares another provenance.
-The normal navigation focuses on Today, Procurement, Receiving, Inventory,
-Suppliers, Items, Universal Intake, AI, and Review Queue.
+The always-available navigation focuses on Today, Procurement, Receiving,
+Inventory, Suppliers, Items, and AI. Universal Intake and Review Queue join
+the primary navigation only when their explicit preview capabilities are
+enabled.
 
 ## Connected Enterprise Mode
 
