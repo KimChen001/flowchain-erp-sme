@@ -35,12 +35,6 @@ const internalModules = new Set([
 
 const frozenRouteIds = new Set([
   "procurement:contracts",
-  "finance:reconciliation",
-  "finance:bank-statements",
-  "finance:bank-reconciliation",
-  "finance:settlement",
-  "finance:reconciliation-detail",
-  "finance:settlement-detail",
 ]);
 
 const procurementExtensionRoutes = new Set([

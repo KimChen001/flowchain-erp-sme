@@ -81,6 +81,16 @@ test("capability and permission metadata remain declarative boundaries", () => {
       .some((route) => route.id === procurement.id),
     "navigation metadata must not impersonate runtime authorization",
   );
+  for (const [id, capability] of [
+    ["finance:reconciliation", "internal-settlement"],
+    ["finance:settlement", "internal-settlement"],
+    ["finance:bank-statements", "bank-statement-reconciliation"],
+    ["finance:bank-reconciliation", "bank-statement-reconciliation"],
+  ]) {
+    const route = routes.find((candidate) => candidate.id === id);
+    assert.equal(route.classification, "EXTENSION", id);
+    assert.equal(route.requiredCapability, capability, id);
+  }
 });
 
 test("hidden and searchable route projections respect classifications", () => {

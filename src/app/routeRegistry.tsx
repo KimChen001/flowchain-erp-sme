@@ -1335,6 +1335,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     parentId: "finance",
     pageType: "list",
     viewId: "reconciliation",
+    capabilityId: "internal-settlement",
     order: 64,
   }),
   page({
@@ -1373,6 +1374,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     parentId: "finance",
     pageType: "list",
     viewId: "settlement",
+    capabilityId: "internal-settlement",
     order: 65,
   }),
   page({
@@ -1464,6 +1466,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     parentId: "finance:reconciliation",
     pageType: "detail",
     currentActiveMenuId: "finance:reconciliation",
+    capabilityId: "internal-settlement",
     entityType: "reconciliation_statement",
     entityIdParam: "id",
     returnListRouteId: "finance:reconciliation",
@@ -1481,6 +1484,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     parentId: "finance:settlement",
     pageType: "detail",
     currentActiveMenuId: "finance:settlement",
+    capabilityId: "internal-settlement",
     entityType: "settlement_document",
     entityIdParam: "id",
     returnListRouteId: "finance:settlement",
