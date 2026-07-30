@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("disabled inventory operations remain readable and action-free", async ({
+test("disabled inventory operations fail closed in UI and API", async ({
   page,
   request,
 }) => {
@@ -13,9 +13,13 @@ test("disabled inventory operations remain readable and action-free", async ({
     localStorage.setItem("flowchain:current-user", JSON.stringify(user));
   }, session);
   await page.goto("/app/inventory/operations");
-  await expect(page.getByTestId("inventory-operations-readonly")).toBeVisible();
+  await expect(page.getByTestId("capability-route-blocked")).toContainText(
+    "能力暂不可用",
+  );
   await page.goto("/app/inventory/transfers/new");
-  await expect(page.getByTestId("create-transfer")).toBeDisabled();
+  await expect(page.getByTestId("capability-route-blocked")).toContainText(
+    "能力暂不可用",
+  );
   const mutation = await request.post("/api/inventory/adjustments", {
     headers: { Authorization: `Bearer ${session.token}` },
     data: {
