@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Card } from "../../components/ui";
 import { procurementApi } from "./procurementApi";
 import type { ProcurementDocument } from "./procurementTypes";
@@ -72,7 +71,15 @@ export function RfqListPage() {
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.id} className="border-t">
-                    <td className="p-3"><BusinessEntityLink entityType="rfq" entityId={row.id}>{row.id}</BusinessEntityLink></td>
+                    <td className="p-3">
+                      <span
+                        className="font-semibold tabular-nums text-slate-700"
+                        title="RFQ 详情页尚未接通"
+                        data-testid="rfq-id-unlinked"
+                      >
+                        {row.id}
+                      </span>
+                    </td>
                     <td className="p-3"><div className="font-medium">{row.title || "—"}</div>{row.itemName && <div className="mt-1" style={{ color: A.sub }}>{row.itemName}</div>}</td>
                     <td className="p-3 tabular-nums">{Number.isFinite(row.quantity) ? Number(row.quantity).toLocaleString() : "—"} {row.unit || ""}</td>
                     <td className="p-3 tabular-nums">{row.respondedSupplierCount ?? 0} / {row.supplierCount ?? 0}</td>
