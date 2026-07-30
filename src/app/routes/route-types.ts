@@ -20,6 +20,7 @@ export type DirectAccessBehavior =
   | "FROZEN_UNAVAILABLE"
   | "INTERNAL_ONLY"
   | "LEGACY_REDIRECT"
+  | "LEGACY_UNAVAILABLE"
   | "NOT_IMPLEMENTED";
 
 export type RouteMaturity =
@@ -55,6 +56,7 @@ export type RouteAuthorityMetadata = {
   writeMaturity: RouteMaturity;
   requiredCapability?: string;
   requiredPermission?: string;
+  compatibilityOnly?: boolean;
   canonicalReplacement?: string;
   knownLimitations?: string;
 };

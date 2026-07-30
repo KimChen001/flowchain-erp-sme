@@ -7,6 +7,93 @@ import type {
   RouteMaturity,
 } from "./route-types";
 
+const ids = (value: string) =>
+  new Set(value.trim().split(/\s+/).filter(Boolean));
+
+export const routeClassificationIds: Record<RouteClassification, Set<string>> = {
+  CORE: ids(`
+    overview overview:risks overview:ai
+    master-data master-data:items master-data:suppliers master-data:customers
+    master-data:warehouses master-data:bins master-data:payment-terms
+    master-data:tax-codes master-data:print-templates
+    master-data:supplier-detail master-data:item-detail
+    master-data:customer-detail master-data:warehouse-detail
+    master-data:bin-detail master-data:payment-term-detail
+    master-data:tax-code-detail
+    procurement procurement:workbench procurement:requests procurement:rfq
+    procurement:orders procurement:receiving procurement:request-detail
+    procurement:rfq-detail procurement:order-detail
+    procurement:receiving-detail
+    inventory inventory:stock inventory:movements inventory:warnings
+    inventory:lots inventory:serials inventory:bins inventory:exceptions
+    reports reports:overview reports:procurement reports:sales
+    reports:inventory reports:finance reports:suppliers reports:library
+    settings settings:profile settings:warehouse-access settings:readiness
+    settings:company settings:roles settings:numbering settings:review
+    settings:modules settings:ai settings:audit
+  `),
+  EXTENSION: ids(`
+    procurement:invoices procurement:match procurement:receiving:new
+    procurement:receiving:edit procurement:returns
+    sales sales:orders sales:order-new sales:delivery sales:delivery:new
+    sales:delivery:edit sales:receipts sales:receipts:new sales:returns
+    sales:returns:new sales:risks sales:evidence sales:order-detail
+    sales:shipment-detail sales:delivery-detail sales:receipt-detail
+    inventory:operations inventory:returns inventory:return-requests
+    inventory:return-request-new inventory:return-request-detail
+    inventory:return-authorizations inventory:return-authorization-detail
+    inventory:return-postings inventory:return-posting-detail
+    inventory:quarantine inventory:adjustments inventory:adjustments:new
+    inventory:adjustment-detail inventory:count inventory:count:new
+    inventory:count-detail inventory:transfer inventory:transfer:new
+    inventory:transfer-detail
+    finance finance:overview finance:invoices finance:payables
+    finance:customer-invoices finance:receivables finance:aging
+    finance:customer-credit-notes finance:credits finance:reconciliation
+    finance:bank-statements finance:bank-reconciliation finance:settlement
+    finance:three-way-match finance:invoice-detail
+    finance:customer-invoice-new finance:customer-invoice-detail
+    finance:match-detail finance:reconciliation-detail
+    finance:settlement-detail finance:credit-memo-detail
+    mobile-operations mobile-operations:tasks mobile-operations:receiving
+    mobile-operations:task mobile-operations:po-detail
+    mobile-operations:receiving-detail mobile-operations:settlement-detail
+    settings:custom-fields
+    universal-intake review-actions review-actions:waiting
+    review-actions:data-limited
+  `),
+  INTERNAL: ids(`
+    settings:advanced
+    exception-cases exception-cases:open exception-cases:review
+    collaboration-drafts collaboration-drafts:review
+    collaboration-drafts:limited
+    audit-history audit-history:ai audit-history:drafts audit-history:data
+    audit-history:objects
+    pilot-readiness pilot-readiness:modules pilot-readiness:data
+    pilot-readiness:ai pilot-readiness:governance
+    pilot-readiness:checklist
+  `),
+  FROZEN: ids(`
+    procurement:contracts
+    forecast forecast:cockpit forecast:demand forecast:mrp
+    forecast:replenishment forecast:parameters
+  `),
+  LEGACY: ids(`
+    imports imports:pilot imports:templates imports:validation imports:failed
+  `),
+};
+
+const classificationById = new Map<string, RouteClassification>();
+for (const [classification, routeIds] of Object.entries(
+  routeClassificationIds,
+) as Array<[RouteClassification, Set<string>]>) {
+  for (const routeId of routeIds) {
+    if (classificationById.has(routeId))
+      throw new Error(`route has multiple classifications: ${routeId}`);
+    classificationById.set(routeId, classification);
+  }
+}
+
 const primaryNavigation: Record<
   string,
   { navigationOrder: number; navigationLabel: string }
@@ -24,36 +111,24 @@ const primaryNavigation: Record<
   "review-actions": { navigationOrder: 80, navigationLabel: "复核队列" },
 };
 
-const primaryRouteIds = new Set(Object.keys(primaryNavigation));
+const compatibilityRouteIds = ids(`
+  finance:reconciliation finance:reconciliation-detail
+  finance:settlement finance:settlement-detail
+  finance:bank-statements finance:bank-reconciliation
+`);
 
-const internalModules = new Set([
-  "exception-cases",
-  "collaboration-drafts",
-  "audit-history",
-  "pilot-readiness",
-]);
-
-const frozenRouteIds = new Set([
-  "procurement:contracts",
-]);
-
-const procurementExtensionRoutes = new Set([
-  "procurement:receiving:new",
-  "procurement:receiving:edit",
-  "procurement:invoices",
-  "procurement:match",
-  "procurement:returns",
-]);
-
-const inventoryExtensionPrefixes = [
-  "inventory:operations",
-  "inventory:returns",
-  "inventory:return-",
-  "inventory:quarantine",
-  "inventory:adjustment",
-  "inventory:count",
-  "inventory:transfer",
-];
+const authoritativeWriteRouteIds = ids(`
+  master-data master-data:items master-data:suppliers master-data:customers
+  master-data:warehouses master-data:payment-terms master-data:tax-codes
+  master-data:supplier-detail master-data:item-detail
+  master-data:customer-detail master-data:warehouse-detail
+  master-data:payment-term-detail master-data:tax-code-detail
+  procurement:requests procurement:request-detail
+  procurement:orders procurement:order-detail
+  settings settings:profile settings:warehouse-access settings:company
+  settings:roles settings:numbering settings:review settings:modules
+  settings:ai settings:audit
+`);
 
 const ownerByModule: Record<string, string> = {
   overview: "src/modules/overview",
@@ -95,188 +170,353 @@ const apiByModule: Record<string, string> = {
   "pilot-readiness": "/api/pilot-readiness",
 };
 
-function classificationFor(route: AppRouteDefinition): RouteClassification {
-  if (route.moduleId === "imports") return "LEGACY";
-  if (route.moduleId === "forecast" || frozenRouteIds.has(route.id))
-    return "FROZEN";
-  if (
-    route.moduleId === "universal-intake" ||
-    route.moduleId === "review-actions"
-  )
-    return "EXTENSION";
-  if (
-    internalModules.has(route.moduleId) ||
-    route.id === "settings:advanced"
-  )
-    return "INTERNAL";
-  if (
-    route.moduleId === "sales" ||
-    route.moduleId === "finance" ||
-    route.moduleId === "mobile-operations" ||
-    procurementExtensionRoutes.has(route.id) ||
-    inventoryExtensionPrefixes.some((prefix) => route.id.startsWith(prefix))
-  )
-    return "EXTENSION";
-  return "CORE";
+const routeCapability = new Map<string, string>();
+const mapCapability = (capability: string, routeIds: string) => {
+  for (const routeId of ids(routeIds)) routeCapability.set(routeId, capability);
+};
+mapCapability(
+  "sales",
+  "sales sales:orders sales:risks sales:evidence sales:order-detail",
+);
+mapCapability(
+  "stock-transfer",
+  "inventory:operations inventory:transfer inventory:transfer:new inventory:transfer-detail",
+);
+mapCapability(
+  "inventory-adjustment-document",
+  "inventory:adjustments inventory:adjustments:new inventory:adjustment-detail",
+);
+mapCapability(
+  "cycle-count",
+  "inventory:count inventory:count:new inventory:count-detail",
+);
+mapCapability(
+  "return-request",
+  "inventory:returns inventory:return-requests inventory:return-request-new inventory:return-request-detail procurement:returns sales:returns sales:returns:new",
+);
+mapCapability(
+  "return-authorization",
+  "inventory:return-authorizations inventory:return-authorization-detail",
+);
+mapCapability(
+  "return-posting",
+  "inventory:return-postings inventory:return-posting-detail",
+);
+mapCapability("quarantine-inventory", "inventory:quarantine");
+mapCapability(
+  "receiving-posting",
+  "procurement:receiving:new procurement:receiving:edit",
+);
+mapCapability(
+  "supplier-invoice",
+  "procurement:invoices finance:invoices finance:invoice-detail",
+);
+mapCapability(
+  "three-way-match",
+  "procurement:match finance:three-way-match finance:match-detail",
+);
+mapCapability("payable-obligation", "finance:payables");
+mapCapability(
+  "customer-invoice",
+  "finance:customer-invoices finance:customer-invoice-new finance:customer-invoice-detail",
+);
+mapCapability("receivable-obligation", "finance:receivables finance:aging");
+mapCapability("customer-credit-note", "finance:customer-credit-notes");
+mapCapability(
+  "supplier-credit-memo",
+  "finance:credits finance:credit-memo-detail",
+);
+mapCapability(
+  "cashbook",
+  "finance:reconciliation finance:reconciliation-detail",
+);
+mapCapability(
+  "internal-settlement",
+  "finance:settlement finance:settlement-detail",
+);
+mapCapability(
+  "bank-statement-reconciliation",
+  "finance:bank-statements finance:bank-reconciliation",
+);
+mapCapability("finance", "finance finance:overview");
+mapCapability(
+  "mobile-operations",
+  "mobile-operations mobile-operations:tasks mobile-operations:receiving mobile-operations:task mobile-operations:po-detail mobile-operations:receiving-detail mobile-operations:settlement-detail",
+);
+mapCapability("universal-intake", "universal-intake settings:custom-fields");
+mapCapability(
+  "review-actions",
+  "review-actions review-actions:waiting review-actions:data-limited",
+);
+
+const routePermission = new Map<string, string>();
+const mapPermission = (permission: string, routeIds: string) => {
+  for (const routeId of ids(routeIds)) routePermission.set(routeId, permission);
+};
+mapPermission(
+  "procurement.purchase_order.read",
+  "procurement procurement:workbench procurement:orders procurement:order-detail",
+);
+mapPermission(
+  "receiving.read",
+  "procurement:receiving procurement:receiving:new procurement:receiving:edit procurement:receiving-detail",
+);
+mapPermission(
+  "finance.supplier_invoice.read",
+  "procurement:invoices finance:invoices finance:invoice-detail",
+);
+mapPermission(
+  "finance.three_way_match.read",
+  "procurement:match finance:three-way-match finance:match-detail",
+);
+mapPermission("returns.request.read", "procurement:returns");
+mapPermission(
+  "inventory.balance.read",
+  "inventory inventory:stock inventory:movements inventory:warnings inventory:lots inventory:serials inventory:bins inventory:exceptions inventory:operations",
+);
+mapPermission(
+  "inventory.transfer.read",
+  "inventory:transfer inventory:transfer:new inventory:transfer-detail",
+);
+mapPermission(
+  "inventory.count.read",
+  "inventory:count inventory:count:new inventory:count-detail",
+);
+mapPermission(
+  "inventory.adjustment.read",
+  "inventory:adjustments inventory:adjustments:new inventory:adjustment-detail",
+);
+mapPermission(
+  "returns.request.read",
+  "inventory:returns inventory:return-requests inventory:return-request-new inventory:return-request-detail sales:returns sales:returns:new",
+);
+mapPermission(
+  "returns.authorization.read",
+  "inventory:return-authorizations inventory:return-authorization-detail",
+);
+mapPermission(
+  "returns.posting.read",
+  "inventory:return-postings inventory:return-posting-detail",
+);
+mapPermission("returns.quarantine.read", "inventory:quarantine");
+mapPermission(
+  "sales_order.read",
+  "sales sales:orders sales:order-new sales:risks sales:evidence sales:order-detail",
+);
+mapPermission(
+  "shipment.read",
+  "sales:delivery sales:delivery:new sales:delivery:edit sales:receipts sales:receipts:new sales:shipment-detail sales:delivery-detail sales:receipt-detail",
+);
+mapPermission("finance.overview.read", "finance finance:overview");
+mapPermission("finance.payable.read", "finance:payables");
+mapPermission(
+  "finance.customer_invoice.read",
+  "finance:customer-invoices finance:customer-invoice-new finance:customer-invoice-detail",
+);
+mapPermission("finance.receivable.read", "finance:receivables finance:aging");
+mapPermission("finance.customer_credit.read", "finance:customer-credit-notes");
+mapPermission(
+  "finance.supplier_credit.read",
+  "finance:credits finance:credit-memo-detail",
+);
+mapPermission(
+  "finance.cashbook.read",
+  "finance:reconciliation finance:reconciliation-detail",
+);
+mapPermission(
+  "finance.settlement.read",
+  "finance:settlement finance:settlement-detail",
+);
+mapPermission("finance.bank_statement.read", "finance:bank-statements");
+mapPermission(
+  "finance.bank_reconciliation.read",
+  "finance:bank-reconciliation",
+);
+mapPermission(
+  "mobile.tasks.read",
+  "mobile-operations mobile-operations:tasks mobile-operations:task mobile-operations:po-detail mobile-operations:settlement-detail",
+);
+mapPermission(
+  "mobile.receiving.read",
+  "mobile-operations:receiving mobile-operations:receiving-detail",
+);
+mapPermission("intake.batch.read", "universal-intake settings:custom-fields");
+mapPermission(
+  "settings.workspace.read",
+  "settings settings:profile settings:warehouse-access settings:company settings:ai",
+);
+mapPermission("settings.diagnostics.read", "settings:readiness settings:advanced");
+mapPermission("settings.roles.read", "settings:roles");
+mapPermission("settings.numbering.read", "settings:numbering");
+mapPermission("custom_field.read", "settings:custom-fields");
+mapPermission("settings.review_policy.read", "settings:review");
+mapPermission("settings.modules.read", "settings:modules");
+mapPermission("audit.read", "settings:audit audit-history audit-history:ai audit-history:drafts audit-history:data audit-history:objects");
+
+export function classificationForRouteId(routeId: string) {
+  return classificationById.get(routeId);
 }
 
-function capabilityFor(
-  route: AppRouteDefinition,
-  classification: RouteClassification,
-) {
-  if (route.capabilityId) return route.capabilityId;
-  if (route.moduleId === "universal-intake") return "universal-intake";
-  if (route.moduleId === "review-actions") return "review-actions";
-  if (route.moduleId === "sales") return "sales";
-  if (route.moduleId === "finance") return "finance";
-  if (route.moduleId === "mobile-operations") return "mobile-operations";
-  if (route.id.startsWith("inventory:returns")) return "return-request";
-  if (route.id.startsWith("inventory:return-authorization"))
-    return "return-authorization";
-  if (route.id.startsWith("inventory:return-posting")) return "return-posting";
-  if (route.id === "inventory:quarantine") return "quarantine-inventory";
-  if (route.id.startsWith("inventory:adjustment"))
-    return "inventory-adjustment-document";
-  if (route.id.startsWith("inventory:count")) return "cycle-count";
-  if (
-    route.id.startsWith("inventory:transfer") ||
-    route.id === "inventory:operations"
-  )
-    return "stock-transfer";
-  if (route.id.startsWith("procurement:receiving:"))
-    return "receiving-posting";
-  if (route.id === "procurement:invoices") return "supplier-invoice";
-  if (route.id === "procurement:match") return "three-way-match";
-  if (route.id === "procurement:returns") return "return-request";
-  if (classification === "FROZEN") return route.moduleId;
-  return undefined;
+function capabilityFor(route: AppRouteDefinition) {
+  return routeCapability.get(route.id) || route.capabilityId;
 }
 
 function permissionFor(route: AppRouteDefinition) {
-  if (route.moduleId === "sales")
-    return route.id.includes("delivery") ||
-      route.id.includes("shipment") ||
-      route.id.includes("receipt")
-      ? "shipment.read"
-      : "sales_order.read";
-  if (route.moduleId === "inventory") {
-    if (route.id.includes("return")) return "returns.request.read";
-    if (route.id.includes("quarantine")) return "returns.quarantine.read";
-    if (route.id.includes("transfer")) return "inventory.transfer.read";
-    if (route.id.includes("count")) return "inventory.count.read";
-    if (route.id.includes("adjustment")) return "inventory.adjustment.read";
-    return "inventory.balance.read";
-  }
-  if (route.moduleId === "procurement") {
-    if (route.id.includes("receiving")) return "receiving.read";
-    if (route.id.includes("invoice")) return "finance.supplier_invoice.read";
-    if (route.id.includes("match")) return "finance.three_way_match.read";
-    return "procurement.purchase_order.read";
-  }
-  if (route.moduleId === "finance") return "finance.overview.read";
-  if (route.moduleId === "mobile-operations") return "mobile.tasks.read";
-  if (route.moduleId === "universal-intake") return "intake.batch.read";
-  if (route.moduleId === "settings") return "settings.workspace.read";
-  if (route.moduleId === "audit-history") return "audit.read";
-  return undefined;
+  return routePermission.get(route.id);
 }
 
 function navigationFor(
   route: AppRouteDefinition,
   classification: RouteClassification,
 ): NavigationVisibility {
-  if (primaryRouteIds.has(route.id)) return "PRIMARY";
-  if (
-    classification === "INTERNAL" ||
-    classification === "FROZEN" ||
-    classification === "LEGACY"
-  )
+  if (compatibilityRouteIds.has(route.id)) return "HIDDEN";
+  if (primaryNavigation[route.id]) return "PRIMARY";
+  if (["INTERNAL", "FROZEN", "LEGACY"].includes(classification))
     return "HIDDEN";
-  if (route.pageType === "detail" || route.pageType === "create" || route.pageType === "edit")
+  if (
+    route.pageType === "detail" ||
+    route.pageType === "create" ||
+    route.pageType === "edit"
+  )
     return "CONTEXTUAL";
   return "SECONDARY";
 }
 
-function maturityFor(classification: RouteClassification): RouteMaturity {
-  if (classification === "EXTENSION") return "CAPABILITY_GATED";
+function readMaturityFor(
+  route: AppRouteDefinition,
+  classification: RouteClassification,
+): RouteMaturity {
+  if (route.id === "procurement:rfq-detail") return "UNAVAILABLE";
+  if (classification === "EXTENSION") {
+    if (route.moduleId === "universal-intake" || route.moduleId === "review-actions")
+      return "PREVIEW";
+    return "CAPABILITY_GATED";
+  }
   if (classification === "FROZEN") return "UNAVAILABLE";
   if (classification === "INTERNAL") return "INTERNAL_PREVIEW";
   if (classification === "LEGACY") return "RETIRED";
   return "AUTHORITATIVE";
 }
 
-function limitationFor(classification: RouteClassification) {
+function writeMaturityFor(
+  route: AppRouteDefinition,
+  classification: RouteClassification,
+): RouteMaturity {
+  if (route.id === "procurement:rfq-detail") return "UNAVAILABLE";
+  if (classification === "EXTENSION") {
+    if (route.moduleId === "universal-intake" || route.moduleId === "review-actions")
+      return "PREVIEW";
+    return "CAPABILITY_GATED";
+  }
+  if (classification === "FROZEN") return "UNAVAILABLE";
+  if (classification === "INTERNAL") return "INTERNAL_PREVIEW";
+  if (classification === "LEGACY") return "RETIRED";
+  return authoritativeWriteRouteIds.has(route.id)
+    ? "AUTHORITATIVE"
+    : "UNAVAILABLE";
+}
+
+function directAccessFor(
+  route: AppRouteDefinition,
+  classification: RouteClassification,
+  requiredCapability?: string,
+  requiredPermission?: string,
+) {
+  if (route.id === "imports") return "LEGACY_REDIRECT" as const;
+  if (classification === "LEGACY") return "LEGACY_UNAVAILABLE" as const;
+  if (route.id === "procurement:rfq-detail") return "NOT_IMPLEMENTED" as const;
+  if (classification === "FROZEN") return "FROZEN_UNAVAILABLE" as const;
+  if (classification === "INTERNAL") return "INTERNAL_ONLY" as const;
+  if (requiredCapability) return "CAPABILITY_REQUIRED" as const;
+  if (requiredPermission) return "PERMISSION_REQUIRED" as const;
+  return "RENDER" as const;
+}
+
+function limitationFor(
+  route: AppRouteDefinition,
+  classification: RouteClassification,
+) {
+  if (route.id === "procurement:rfq-detail")
+    return "Canonical RFQ detail has not been connected.";
+  if (compatibilityRouteIds.has(route.id))
+    return "Compatibility extension; not part of the default SME Core surface.";
+  if (route.id === "imports")
+    return "Retired legacy root; redirects exactly to Universal Intake.";
+  if (classification === "LEGACY")
+    return "Retired legacy route; no one-to-one Universal Intake replacement exists.";
   if (classification === "EXTENSION")
-    return "Available only when its explicit database capability is enabled.";
+    return "Available only when its exact capability and permission are enabled.";
   if (classification === "FROZEN")
     return "No authoritative enabled product capability is claimed.";
   if (classification === "INTERNAL")
     return "Internal governance surface; excluded from normal SME navigation.";
-  if (classification === "LEGACY")
-    return "Retired compatibility entry; canonical replacement is Universal Intake.";
+  if (
+    route.id.startsWith("procurement:requests") ||
+    route.id.startsWith("procurement:rfq")
+  )
+    return "No dedicated frontend read permission exists; backend tenant and authorization checks remain authoritative.";
   return "Runtime authorization and tenant scope remain enforced by the API.";
 }
 
 export function authorityForRoute(
   route: AppRouteDefinition,
 ): RouteAuthorityMetadata {
-  const classification = classificationFor(route);
-  const requiredCapability = capabilityFor(route, classification);
+  const classification = classificationForRouteId(route.id);
+  if (!classification) throw new Error(`unclassified route: ${route.id}`);
+  const requiredCapability = capabilityFor(route);
   const requiredPermission = permissionFor(route);
-  const maturity =
-    route.moduleId === "universal-intake" || route.moduleId === "review-actions"
-      ? "PREVIEW"
-      : maturityFor(classification);
-  const directAccessBehavior =
-    classification === "LEGACY"
-      ? "LEGACY_REDIRECT"
-      : classification === "FROZEN"
-        ? "FROZEN_UNAVAILABLE"
-        : classification === "INTERNAL"
-          ? "INTERNAL_ONLY"
-          : requiredCapability
-            ? "CAPABILITY_REQUIRED"
-            : requiredPermission
-              ? "PERMISSION_REQUIRED"
-              : "RENDER";
 
   return {
     classification,
     navigationVisibility: navigationFor(route, classification),
     ...primaryNavigation[route.id],
-    directAccessBehavior,
+    directAccessBehavior: directAccessFor(
+      route,
+      classification,
+      requiredCapability,
+      requiredPermission,
+    ),
     owner: ownerByModule[route.moduleId] || "src/app/FlowChainApp.tsx",
     businessObject: route.entityType || route.moduleId,
-    apiDependency: apiByModule[route.moduleId],
+    apiDependency:
+      route.id === "procurement:rfq"
+        ? "/api/procurement/documents?type=rfq"
+        : apiByModule[route.moduleId],
     repositoryAuthority:
       classification === "LEGACY"
         ? "Retired legacy route"
-        : classification === "FROZEN"
-          ? "Capability gate"
+        : classification === "FROZEN" ||
+            route.id === "procurement:rfq-detail"
+          ? "Capability or direct-route boundary"
           : classification === "INTERNAL"
             ? "Internal preview boundary"
             : "Tenant-scoped PostgreSQL repositories",
-    readMaturity: maturity,
-    writeMaturity:
-      classification === "CORE" && maturity === "AUTHORITATIVE"
-        ? "AUTHORITATIVE"
-        : maturity,
+    readMaturity: readMaturityFor(route, classification),
+    writeMaturity: writeMaturityFor(route, classification),
     requiredCapability,
     requiredPermission,
-    canonicalReplacement:
-      classification === "LEGACY" ? "universal-intake" : undefined,
-    knownLimitations: limitationFor(classification),
+    compatibilityOnly: compatibilityRouteIds.has(route.id) || undefined,
+    canonicalReplacement: route.id === "imports" ? "universal-intake" : undefined,
+    knownLimitations: limitationFor(route, classification),
   };
 }
 
 export function buildRouteManifest(
   routes: AppRouteDefinition[],
 ): GovernedAppRouteDefinition[] {
-  return routes.map((route) => {
-    const authority = authorityForRoute(route);
-    return Object.freeze({
+  const declaredIds = new Set(routes.map((route) => route.id));
+  for (const policyId of classificationById.keys()) {
+    if (!declaredIds.has(policyId))
+      throw new Error(`route policy references nonexistent route: ${policyId}`);
+  }
+  for (const route of routes) {
+    if (!classificationById.has(route.id))
+      throw new Error(`unclassified route: ${route.id}`);
+  }
+  return routes.map((route) =>
+    Object.freeze({
       ...route,
-      ...authority,
-    });
-  });
+      ...authorityForRoute(route),
+    }),
+  );
 }
