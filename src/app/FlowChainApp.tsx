@@ -838,8 +838,10 @@ export default function FlowChainApp() {
   const activeNavigationRouteId = activeRoute?.currentActiveMenuId || active;
   const activeNavItem =
     localizedNavItems.find(
+      (item) => item.routeId === activeNavigationRouteId,
+    ) ||
+    localizedNavItems.find(
       (item) =>
-        item.routeId === activeNavigationRouteId ||
         item.children?.some((child) => child.id === activeNavigationRouteId),
     ) ||
     localizedNavItems.find(
@@ -1402,6 +1404,7 @@ export default function FlowChainApp() {
                       return (
                         <div key={item.id} className="space-y-0.5">
                           <button
+                            aria-current={isActive ? "page" : undefined}
                             aria-label={
                               item.id === "reports" ? "报表与分析" : undefined
                             }

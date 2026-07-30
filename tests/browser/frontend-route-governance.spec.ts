@@ -136,7 +136,16 @@ test("SME navigation, direct access and browser history follow the route manifes
     await expect(page.getByTestId("not-found-recovery")).toHaveCount(0);
     await expect(page.getByTestId("capability-route-blocked")).toHaveCount(0);
     await expect(page.getByText(/模块加载失败/)).toHaveCount(0);
+    await expect(
+      sidebar.getByRole("button", {
+        name: destination.label,
+        exact: true,
+      }),
+    ).toHaveAttribute("aria-current", "page");
     if (destination.label === "收货") {
+      await expect(
+        sidebar.getByRole("button", { name: "采购", exact: true }),
+      ).not.toHaveAttribute("aria-current", "page");
       await expect(page.getByTestId("procurement-receiving-list")).toBeVisible();
       await expect(page.getByText("采购收货列表尚未接入")).toHaveCount(0);
       await expect(
@@ -172,6 +181,10 @@ test("SME navigation, direct access and browser history follow the route manifes
   await expect(page).toHaveURL(/\/app\/procurement\/workbench$/);
   await page.goForward();
   await expect(page).toHaveURL(/\/app\/procurement\/receiving$/);
+  await page.reload();
+  await expect(
+    sidebar.getByRole("button", { name: "收货", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
 
   await page.goto(
     "/app/procurement/orders/LOCAL-DEMO-PO-002?focus=receiving-invoice-variance",
