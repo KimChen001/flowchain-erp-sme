@@ -21,7 +21,8 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     master-data:bin-detail master-data:payment-term-detail
     master-data:tax-code-detail
     procurement procurement:workbench procurement:requests procurement:rfq
-    procurement:orders procurement:receiving procurement:request-detail
+    procurement:orders procurement:receiving procurement:invoices
+    procurement:match procurement:request-detail
     procurement:rfq-detail procurement:order-detail
     procurement:receiving-detail
     inventory inventory:stock inventory:movements inventory:warnings
@@ -33,8 +34,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     settings:modules settings:ai settings:audit
   `),
   EXTENSION: ids(`
-    procurement:invoices procurement:match procurement:receiving:new
-    procurement:receiving:edit procurement:returns
+    procurement:receiving:new procurement:receiving:edit procurement:returns
     sales sales:orders sales:order-new sales:delivery sales:delivery:new
     sales:delivery:edit sales:receipts sales:receipts:new sales:returns
     sales:returns:new sales:risks sales:evidence sales:order-detail
@@ -209,11 +209,11 @@ mapCapability(
 );
 mapCapability(
   "supplier-invoice",
-  "procurement:invoices finance:invoices finance:invoice-detail",
+  "finance:invoices finance:invoice-detail",
 );
 mapCapability(
   "three-way-match",
-  "procurement:match finance:three-way-match finance:match-detail",
+  "finance:three-way-match finance:match-detail",
 );
 mapCapability("payable-obligation", "finance:payables");
 mapCapability(

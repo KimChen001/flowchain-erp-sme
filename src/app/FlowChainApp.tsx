@@ -20,6 +20,7 @@ import {
 import { navGroups, navItems } from "./routes.tsx";
 import {
   defaultRouteForModule,
+  primarySurfaceRoute,
   routeById,
   routeByPath,
   routePathForId,
@@ -836,9 +837,12 @@ export default function FlowChainApp() {
   }), [routeLabel]);
 
   const activeNavigationRouteId = activeRoute?.currentActiveMenuId || active;
+  const activePrimarySurfaceId = activeRoute
+    ? primarySurfaceRoute(activeRoute).id
+    : activeNavigationRouteId;
   const activeNavItem =
     localizedNavItems.find(
-      (item) => item.routeId === activeNavigationRouteId,
+      (item) => item.routeId === activePrimarySurfaceId,
     ) ||
     localizedNavItems.find(
       (item) =>

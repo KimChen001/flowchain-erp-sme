@@ -4,6 +4,7 @@ import {
   primaryNavigationRoutes,
   type AppEntryBehavior,
   type AppRouteDefinition,
+  type GovernedAppRouteDefinition,
 } from "./routes/index.ts";
 import {
   AlertTriangle,
@@ -408,7 +409,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     moduleLabel: "采购管理",
     label: "供应商发票",
     description: "查看供应商发票及匹配状态。",
-    parentId: "procurement",
+    parentId: "procurement:receiving",
     pageType: "list",
     panelId: "procurement",
     viewId: "invoices",
@@ -421,7 +422,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     moduleLabel: "采购管理",
     label: "三单匹配",
     description: "比对采购订单、收货单和发票。",
-    parentId: "procurement",
+    parentId: "procurement:receiving",
     pageType: "analysis",
     viewId: "match",
     order: 36,
@@ -2208,6 +2209,32 @@ export function routesForModule(moduleId: string) {
     .sort((a, b) => a.order - b.order);
 }
 
+export function primarySurfaceRoute(
+  route: AppRouteDefinition,
+): GovernedAppRouteDefinition {
+  let current: GovernedAppRouteDefinition | undefined = routeById(route.id);
+  while (current) {
+    if (current.navigationVisibility === "PRIMARY") return current;
+    current = current.parentId ? routeById(current.parentId) : undefined;
+  }
+  return moduleRoute(route.moduleId) || appRouteRegistry[0];
+}
+
+export function routesForPrimarySurface(route: AppRouteDefinition) {
+  const surface = primarySurfaceRoute(route);
+  return [
+    surface,
+    ...appRouteRegistry
+      .filter(
+        (candidate) =>
+          candidate.parentId === surface.id &&
+          candidate.showInModuleNav &&
+          candidate.navigationVisibility !== "HIDDEN",
+      )
+      .sort((a, b) => a.order - b.order),
+  ];
+}
+
 export function breadcrumbRoutes(route: AppRouteDefinition) {
   const home = routeById("overview")!;
   const ancestors: AppRouteDefinition[] = [];
@@ -2216,8 +2243,12 @@ export function breadcrumbRoutes(route: AppRouteDefinition) {
     ancestors.unshift(current);
     current = current.parentId ? routeById(current.parentId) : undefined;
   }
+  const surface = primarySurfaceRoute(route);
+  const surfaceIndex = ancestors.findIndex((item) => item.id === surface.id);
+  const visibleAncestors =
+    surfaceIndex >= 0 ? ancestors.slice(surfaceIndex) : ancestors;
   const result =
-    route.moduleId === "overview" ? ancestors : [home, ...ancestors];
+    route.moduleId === "overview" ? visibleAncestors : [home, ...visibleAncestors];
   return result.filter(
     (item, index) =>
       item.showInBreadcrumb !== false &&

@@ -47,7 +47,7 @@ export function ReceivingListPage() {
         </button>
       </Card>
 
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden" data-testid="receiving-record-list">
         {state === "loading" ? (
           <div className="py-16 text-center text-sm" style={{ color: A.sub }}>
             正在读取收货记录…
@@ -71,58 +71,55 @@ export function ReceivingListPage() {
             </div>
           </div>
         ) : (
-          <>
-            <div className="grid gap-3 p-3 md:hidden">
-              {rows.map((row) => (
-                <article key={row.id} className="rounded-lg border p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <BusinessEntityLink entityType="receiving_doc" entityId={row.id}>
-                      {row.id}
-                    </BusinessEntityLink>
+          <div className="divide-y">
+            {rows.map((row) => {
+              const poId = row.poId || row.po;
+              return (
+                <article key={row.id} className="p-4 sm:p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <BusinessEntityLink entityType="receiving_doc" entityId={row.id}>
+                        {row.id}
+                      </BusinessEntityLink>
+                      <div className="mt-1 text-xs" style={{ color: A.sub }}>
+                        采购订单{" "}
+                        <BusinessEntityLink entityType="purchase_order" entityId={poId}>
+                          {poId || "—"}
+                        </BusinessEntityLink>
+                      </div>
+                    </div>
                     <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold">
                       {row.status || "—"}
                     </span>
                   </div>
-                  <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
-                    <div><span style={{ color: A.sub }}>采购订单</span><div className="mt-1"><BusinessEntityLink entityType="purchase_order" entityId={row.poId || row.po}>{row.poId || row.po || "—"}</BusinessEntityLink></div></div>
-                    <div><span style={{ color: A.sub }}>供应商</span><div className="mt-1">{row.supplierName || "—"}</div></div>
-                    <div><span style={{ color: A.sub }}>合格 / 拒收</span><div className="mt-1">{quantity(row.acceptedQty)} / {quantity(row.rejectedQty)}</div></div>
-                    <div><span style={{ color: A.sub }}>到货日期</span><div className="mt-1">{row.arrived || row.createdAt || "—"}</div></div>
-                  </div>
+                  <dl className="mt-4 grid gap-x-6 gap-y-4 text-xs sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+                    <div>
+                      <dt style={{ color: A.sub }}>供应商</dt>
+                      <dd className="mt-1 font-medium">{row.supplierName || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt style={{ color: A.sub }}>收货 / 合格 / 拒收</dt>
+                      <dd className="mt-1 font-medium tabular-nums">
+                        {quantity(row.receivedQuantity)} / {quantity(row.acceptedQty)} / {quantity(row.rejectedQty)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt style={{ color: A.sub }}>仓库</dt>
+                      <dd className="mt-1 font-medium">{row.warehouse || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt style={{ color: A.sub }}>到货日期</dt>
+                      <dd className="mt-1 font-medium">{row.arrived || row.createdAt || "—"}</dd>
+                    </div>
+                    <div>
+                      <dt style={{ color: A.sub }}>收货人</dt>
+                      <dd className="mt-1 font-medium">{row.receiver || "—"}</dd>
+                    </div>
+                  </dl>
                 </article>
-              ))}
-            </div>
-            <div className="hidden overflow-x-auto md:block">
-              <table className="w-full min-w-[900px] text-left text-xs">
-                <thead className="bg-slate-50" style={{ color: A.sub }}>
-                  <tr>
-                    <th className="p-3 font-medium">GRN</th>
-                    <th className="p-3 font-medium">采购订单</th>
-                    <th className="p-3 font-medium">供应商</th>
-                    <th className="p-3 font-medium">状态</th>
-                    <th className="p-3 font-medium">收货 / 合格 / 拒收</th>
-                    <th className="p-3 font-medium">仓库</th>
-                    <th className="p-3 font-medium">到货日期</th>
-                    <th className="p-3 font-medium">收货人</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.id} className="border-t">
-                      <td className="p-3"><BusinessEntityLink entityType="receiving_doc" entityId={row.id}>{row.id}</BusinessEntityLink></td>
-                      <td className="p-3"><BusinessEntityLink entityType="purchase_order" entityId={row.poId || row.po}>{row.poId || row.po || "—"}</BusinessEntityLink></td>
-                      <td className="p-3">{row.supplierName || "—"}</td>
-                      <td className="p-3"><span className="rounded bg-slate-100 px-2 py-1 font-semibold">{row.status || "—"}</span></td>
-                      <td className="p-3 tabular-nums">{quantity(row.receivedQuantity)} / {quantity(row.acceptedQty)} / {quantity(row.rejectedQty)}</td>
-                      <td className="p-3">{row.warehouse || "—"}</td>
-                      <td className="p-3">{row.arrived || row.createdAt || "—"}</td>
-                      <td className="p-3">{row.receiver || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
+              );
+            })}
+          </div>
         )}
       </Card>
     </div>

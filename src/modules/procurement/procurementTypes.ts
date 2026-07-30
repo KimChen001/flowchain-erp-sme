@@ -32,5 +32,16 @@ export type ProcurementDocument = {
   acceptedQty?: number;
   rejectedQty?: number;
   linkedInvoices?: string[];
+  relatedGrn?: string;
+  grnId?: string;
+  invoiceId?: string;
+  invoiceDate?: string;
+  invoiceStatus?: string;
+  amount?: number;
+  currency?: string;
+  poAmount?: number;
+  invoiceAmount?: number;
+  blockingReason?: string;
+  exceptionReason?: string;
 };
 export type ProcurementWorkItem = { id: string; type: string; status: string; amount: number; bucket: "approval" | "tracking"; kind: EntityKind; signals?: string[] };
