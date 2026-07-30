@@ -1,15 +1,22 @@
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { defaultRouteForModule, moduleRoute, recoveryModuleForPath, routesForModule, type AppRouteDefinition } from "../../app/routeRegistry";
+import { defaultRouteForModule, moduleRoute, recoveryModuleForPath, routesForModule } from "../../app/routeRegistry";
+import {
+  isRouteVisibleInNavigation,
+  type GovernedAppRouteDefinition,
+  type GovernedRouteAccessContext,
+} from "../../app/routes/index.ts";
 import { A } from "../ui";
 import { AppBreadcrumb } from "./AppBreadcrumb";
 import { useI18n } from "../../i18n/I18n";
 
-export function ModuleShell({ route, children, capabilities = {} }: { route: AppRouteDefinition; children: React.ReactNode; capabilities?: Record<string, { enabled: boolean }> }) {
+export function ModuleShell({ route, children, routeAccess }: { route: GovernedAppRouteDefinition; children: React.ReactNode; routeAccess: GovernedRouteAccessContext }) {
   const navigate = useNavigate();
   const { routeLabel, workspaceName, language } = useI18n();
   const root = moduleRoute(route.moduleId) || route;
-  const subRoutes = routesForModule(route.moduleId).filter((item) => !item.capabilityId || capabilities[item.capabilityId]?.enabled === true);
+  const subRoutes = routesForModule(route.moduleId).filter((item) =>
+    isRouteVisibleInNavigation(item, "SECONDARY", routeAccess),
+  );
   const activeMenuId = route.currentActiveMenuId || route.id;
   const showModuleHeader = route.id === root.id;
   const showPageHeader = route.id !== root.id && route.pageType !== "detail" && route.moduleId !== "reports";
