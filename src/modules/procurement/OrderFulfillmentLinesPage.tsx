@@ -144,11 +144,6 @@ function money(value: number, currency: string) {
   }).format(value);
 }
 
-function progress(value: number, total: number) {
-  if (total <= 0) return 0;
-  return Math.min(100, Math.max(0, (value / total) * 100));
-}
-
 function statusTone(status: OrderFulfillmentLine["status"]) {
   if (status === "已完成") return "bg-emerald-50 text-emerald-700";
   if (status === "待收货") return "bg-slate-100 text-slate-700";
@@ -187,9 +182,9 @@ function EvidenceLinks({ row, type }: { row: OrderFulfillmentLine; type: "receiv
     ? unique(row.receivingEvidence.map((entry) => entry.document.grn).filter(Boolean))
     : unique(row.invoiceEvidence.map((entry) => entry.invoice.id).filter(Boolean));
   if (ids.length === 0)
-    return <span className="text-[11px]" style={{ color: A.sub }}>暂无行级证据</span>;
+    return <span className="text-xs" style={{ color: A.sub }}>—</span>;
   return (
-    <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px]">
+    <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs">
       {ids.map((id) => (
         <BusinessEntityLink
           key={id}
@@ -199,20 +194,6 @@ function EvidenceLinks({ row, type }: { row: OrderFulfillmentLine; type: "receiv
           {id}
         </BusinessEntityLink>
       ))}
-    </div>
-  );
-}
-
-function QuantityProgress({ value, total, unit }: { value: number; total: number; unit: string }) {
-  return (
-    <div>
-      <div className="font-semibold tabular-nums">{quantity(value, unit)}</div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
-        <div
-          className="h-full rounded-full bg-blue-500"
-          style={{ width: `${progress(value, total)}%` }}
-        />
-      </div>
     </div>
   );
 }
@@ -261,10 +242,20 @@ export function OrderFulfillmentLinesPage() {
   return (
     <div className="space-y-4" data-testid="procurement-order-fulfillment-lines">
       <Card className="p-4 sm:p-5">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-          <p className="max-w-3xl text-xs" style={{ color: A.sub }}>
-            按采购订单行核对订购、收货与开票进度；数量只按正式 PO Line、GRN Line 和 Invoice Line 关联。
-          </p>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+            {[
+              ["未完成订单行", openCount],
+              ["部分收货", partialCount],
+              ["已收未票", receivedNotInvoicedCount],
+              ["需要复核", exceptionCount],
+            ].map(([label, value]) => (
+              <div key={label} className="flex items-baseline gap-2">
+                <span style={{ color: A.sub }}>{label}</span>
+                <strong className="text-sm tabular-nums">{value}</strong>
+              </div>
+            ))}
+          </div>
           <button
             type="button"
             onClick={() => void load()}
@@ -274,20 +265,7 @@ export function OrderFulfillmentLinesPage() {
             刷新
           </button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {[
-            ["未完成订单行", openCount],
-            ["部分收货", partialCount],
-            ["已收未票", receivedNotInvoicedCount],
-            ["需要复核", exceptionCount],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-xl bg-slate-50 px-4 py-3">
-              <div className="text-xs" style={{ color: A.sub }}>{label}</div>
-              <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
-            </div>
-          ))}
-        </div>
-        <div className="mt-4 flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-3">
           <label className="relative min-w-[240px] flex-1">
             <Search className="absolute left-3 top-2.5" size={16} color={A.sub} />
             <input
@@ -331,57 +309,68 @@ export function OrderFulfillmentLinesPage() {
           </div>
         ) : (
           <>
-            <div className="hidden xl:block">
-              <table className="w-full table-fixed text-left text-xs">
-                <thead className="bg-slate-50" style={{ color: A.sub }}>
-                  <tr>
-                    <th className="w-[11%] px-3 py-3">采购订单</th>
-                    <th className="w-[8%] px-3 py-3">行</th>
-                    <th className="w-[12%] px-3 py-3">供应商</th>
-                    <th className="w-[14%] px-3 py-3">物料</th>
-                    <th className="w-[10%] px-3 py-3">PO 行金额</th>
-                    <th className="w-[8%] px-3 py-3">订购</th>
-                    <th className="w-[12%] px-3 py-3">已收</th>
-                    <th className="w-[12%] px-3 py-3">已开票</th>
-                    <th className="w-[8%] px-3 py-3">剩余</th>
-                    <th className="w-[9%] px-3 py-3">状态</th>
+            <div className="hidden border-b border-slate-100 px-4 py-3 text-xs md:flex md:items-center md:justify-between">
+              <div>
+                <strong className="text-sm">采购订单行</strong>
+                <span className="ml-2" style={{ color: A.sub }}>当前显示 {filtered.length} / {rows.length} 行</span>
+              </div>
+            </div>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="min-w-[1500px] w-full text-left text-xs">
+                <thead className="sticky top-0 z-10 bg-slate-50" style={{ color: A.sub }}>
+                  <tr className="border-b border-slate-200">
+                    <th className="w-[190px] whitespace-nowrap px-3 py-3 font-semibold">采购订单</th>
+                    <th className="w-[60px] whitespace-nowrap px-3 py-3 font-semibold">行</th>
+                    <th className="w-[150px] px-3 py-3 font-semibold">供应商</th>
+                    <th className="w-[190px] px-3 py-3 font-semibold">物料 / SKU</th>
+                    <th className="w-[95px] whitespace-nowrap px-3 py-3 font-semibold">PO 状态</th>
+                    <th className="w-[120px] whitespace-nowrap px-3 py-3 text-right font-semibold">PO 行金额</th>
+                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">订购</th>
+                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">已收</th>
+                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">已开票</th>
+                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">待收</th>
+                    <th className="w-[105px] whitespace-nowrap px-3 py-3 text-right font-semibold">已收未票</th>
+                    <th className="w-[110px] whitespace-nowrap px-3 py-3 text-right font-semibold">金额差异</th>
+                    <th className="w-[105px] whitespace-nowrap px-3 py-3 font-semibold">履约状态</th>
+                    <th className="w-[170px] px-3 py-3 font-semibold">关联 GRN / Invoice</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y">
-                  {filtered.map((row) => (
-                    <tr key={row.id} data-testid={`fulfillment-line-${row.id}`} className="align-top">
-                      <td className="break-words px-3 py-4">
+                <tbody className="divide-y divide-slate-100">
+                  {filtered.map((row, index) => (
+                    <tr
+                      key={row.id}
+                      data-testid={`fulfillment-line-${row.id}`}
+                      className={`align-middle transition-colors hover:bg-blue-50/50 ${index % 2 === 0 ? "bg-white" : "bg-slate-50/60"}`}
+                    >
+                      <td className="whitespace-nowrap px-3 py-3 font-semibold">
                         <BusinessEntityLink entityType="purchase_order" entityId={row.poId}>{row.poId}</BusinessEntityLink>
-                        <div className="mt-1 text-[11px]" style={{ color: A.sub }}>{poStatusLabel(row.poStatus)}</div>
                       </td>
-                      <td className="break-words px-3 py-4">
-                        <div className="font-semibold">{row.lineNumber}</div>
-                        <div className="mt-1 font-mono text-[10px]" style={{ color: A.sub }}>{row.id}</div>
-                      </td>
-                      <td className="break-words px-3 py-4"><SupplierDisplay row={row} /></td>
-                      <td className="break-words px-3 py-4">
+                      <td className="px-3 py-3 font-semibold tabular-nums" title={row.id}>{row.lineNumber}</td>
+                      <td className="px-3 py-3"><SupplierDisplay row={row} /></td>
+                      <td className="px-3 py-3">
                         <div className="font-medium">{row.itemName || "—"}</div>
-                        <div className="mt-1 font-mono text-[11px]" style={{ color: A.sub }}>{row.sku || "—"}</div>
+                        <div className="mt-1 font-mono text-xs" style={{ color: A.sub }}>{row.sku || "—"}</div>
                       </td>
-                      <td className="px-3 py-4 font-semibold tabular-nums">{money(row.lineAmount, row.currency)}</td>
-                      <td className="px-3 py-4 font-semibold tabular-nums">{quantity(row.orderedQuantity, row.unit)}</td>
-                      <td className="px-3 py-4">
-                        <QuantityProgress value={row.receivedQuantity} total={row.orderedQuantity} unit={row.unit} />
-                        <EvidenceLinks row={row} type="receiving" />
+                      <td className="whitespace-nowrap px-3 py-3">{poStatusLabel(row.poStatus)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{money(row.lineAmount, row.currency)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{quantity(row.orderedQuantity, row.unit)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{quantity(row.receivedQuantity, row.unit)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{quantity(row.invoicedQuantity, row.unit)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{quantity(row.remainingToReceive, row.unit)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{quantity(row.receivedNotInvoiced, row.unit)}</td>
+                      <td className={`whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums ${row.varianceAmount !== 0 ? "text-rose-700" : ""}`}>
+                        {money(row.varianceAmount, row.currency)}
                       </td>
-                      <td className="px-3 py-4">
-                        <QuantityProgress value={row.invoicedQuantity} total={row.orderedQuantity} unit={row.unit} />
-                        <EvidenceLinks row={row} type="invoice" />
+                      <td className="whitespace-nowrap px-3 py-3">
+                        <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${statusTone(row.status)}`}>{row.status}</span>
                       </td>
-                      <td className="px-3 py-4 tabular-nums">
-                        <div>待收 {quantity(row.remainingToReceive, row.unit)}</div>
-                        <div className="mt-1 text-[11px]" style={{ color: A.sub }}>已收未票 {quantity(row.receivedNotInvoiced, row.unit)}</div>
-                      </td>
-                      <td className="px-3 py-4">
-                        <span className={`inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${statusTone(row.status)}`}>{row.status}</span>
-                        {row.varianceAmount !== 0 && (
-                          <div className="mt-2 text-[11px] text-rose-700">差异 {money(row.varianceAmount, row.currency)}</div>
-                        )}
+                      <td className="px-3 py-3">
+                        <div className="grid grid-cols-[42px_1fr] gap-x-2 gap-y-1">
+                          <span style={{ color: A.sub }}>GRN</span>
+                          <EvidenceLinks row={row} type="receiving" />
+                          <span style={{ color: A.sub }}>Invoice</span>
+                          <EvidenceLinks row={row} type="invoice" />
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -389,18 +378,18 @@ export function OrderFulfillmentLinesPage() {
               </table>
             </div>
 
-            <div className="divide-y xl:hidden">
+            <div className="divide-y md:hidden">
               {filtered.map((row) => (
                 <article key={row.id} data-testid={`fulfillment-line-mobile-${row.id}`} className="p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <BusinessEntityLink entityType="purchase_order" entityId={row.poId}>{row.poId}</BusinessEntityLink>
                       <div className="mt-1 text-xs font-medium">行 {row.lineNumber} · {row.itemName || row.sku}</div>
-                      <div className="mt-1 break-words text-[11px]" style={{ color: A.sub }}>
+                      <div className="mt-1 break-words text-xs" style={{ color: A.sub }}>
                         <SupplierDisplay row={row} /> · {row.sku || "SKU 待补齐"} · {row.id}
                       </div>
                     </div>
-                    <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${statusTone(row.status)}`}>{row.status}</span>
+                    <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusTone(row.status)}`}>{row.status}</span>
                   </div>
                   <div className="mt-4 grid grid-cols-2 gap-4 text-xs sm:grid-cols-4">
                     <div><div style={{ color: A.sub }}>订购</div><div className="mt-1 font-semibold">{quantity(row.orderedQuantity, row.unit)}</div></div>
