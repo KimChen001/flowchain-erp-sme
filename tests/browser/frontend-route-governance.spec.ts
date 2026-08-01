@@ -90,17 +90,20 @@ test("SME navigation, direct access and browser history follow the route manifes
   for (const label of [
     "今日",
     "采购",
-    "收货",
+    "采购履约",
     "库存",
+    "销售",
     "供应商",
     "物料",
+    "报表",
     "AI 助手",
   ]) {
     await expect(sidebar.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
   for (const hidden of [
-    "销售管理",
     "结算管理",
+    "系统参数",
+    "移动作业",
     "预测与 MRP",
     "数据接入与质量",
     "试点准备度",
@@ -123,10 +126,12 @@ test("SME navigation, direct access and browser history follow the route manifes
   for (const destination of [
     { label: "今日", path: /\/app\/overview\/risks$/ },
     { label: "采购", path: /\/app\/procurement\/workbench$/ },
-    { label: "收货", path: /\/app\/procurement\/receiving$/ },
+    { label: "采购履约", path: /\/app\/procurement\/receiving$/ },
     { label: "库存", path: /\/app\/inventory\/stock$/ },
+    { label: "销售", path: /\/app\/sales\/orders$/ },
     { label: "供应商", path: /\/app\/master-data\/suppliers$/ },
     { label: "物料", path: /\/app\/master-data\/items$/ },
+    { label: "报表", path: /\/app\/reports\/overview$/ },
   ]) {
     await sidebar
       .getByRole("button", { name: destination.label, exact: true })
@@ -142,11 +147,11 @@ test("SME navigation, direct access and browser history follow the route manifes
         exact: true,
       }),
     ).toHaveAttribute("aria-current", "page");
-    if (destination.label === "收货") {
+    if (destination.label === "采购履约") {
       await expect(
         sidebar.getByRole("button", { name: "采购", exact: true }),
       ).not.toHaveAttribute("aria-current", "page");
-      await expect(page.getByTestId("module-title")).toHaveText("收货");
+      await expect(page.getByTestId("module-title")).toHaveText("采购履约");
       const receivingSubnav = page.getByTestId("module-subnav");
       await expect(
         receivingSubnav.getByRole("link", { name: "采购收货", exact: true }),
@@ -176,6 +181,28 @@ test("SME navigation, direct access and browser history follow the route manifes
         page.getByRole("link", { name: "收货单 LOCAL-DEMO-GRN-001" }),
       ).toBeVisible();
     }
+    if (destination.label === "销售") {
+      await expect(
+        page.getByTestId("module-subnav").getByRole("link", {
+          name: "销售订单",
+          exact: true,
+        }),
+      ).toHaveAttribute("aria-current", "page");
+      await expect(
+        page.getByTestId("module-subnav").getByRole("link", {
+          name: "销售出库单 / 发货单",
+          exact: true,
+        }),
+      ).toHaveCount(0);
+    }
+    if (destination.label === "报表") {
+      await expect(
+        page.getByTestId("module-subnav").getByRole("link", {
+          name: "经营总览",
+          exact: true,
+        }),
+      ).toHaveAttribute("aria-current", "page");
+    }
   }
   expect(apiServerErrors).toEqual([]);
 
@@ -190,7 +217,7 @@ test("SME navigation, direct access and browser history follow the route manifes
     }),
   ).toHaveAttribute("aria-current", "page");
   await expect(
-    sidebar.getByRole("button", { name: "收货", exact: true }),
+    sidebar.getByRole("button", { name: "采购履约", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await expect(
     sidebar.getByRole("button", { name: "采购", exact: true }),
@@ -209,7 +236,7 @@ test("SME navigation, direct access and browser history follow the route manifes
     }),
   ).toHaveAttribute("aria-current", "page");
   await expect(
-    sidebar.getByRole("button", { name: "收货", exact: true }),
+    sidebar.getByRole("button", { name: "采购履约", exact: true }),
   ).toHaveAttribute("aria-current", "page");
 
   await page.goto("/app/procurement/rfq");
@@ -232,7 +259,7 @@ test("SME navigation, direct access and browser history follow the route manifes
 
   await sidebar.getByRole("button", { name: "采购", exact: true }).click();
   await expect(page).toHaveURL(/\/app\/procurement\/workbench$/);
-  await sidebar.getByRole("button", { name: "收货", exact: true }).click();
+  await sidebar.getByRole("button", { name: "采购履约", exact: true }).click();
   await expect(page).toHaveURL(/\/app\/procurement\/receiving$/);
   await page.goBack();
   await expect(page).toHaveURL(/\/app\/procurement\/workbench$/);
@@ -240,7 +267,7 @@ test("SME navigation, direct access and browser history follow the route manifes
   await expect(page).toHaveURL(/\/app\/procurement\/receiving$/);
   await page.reload();
   await expect(
-    sidebar.getByRole("button", { name: "收货", exact: true }),
+    sidebar.getByRole("button", { name: "采购履约", exact: true }),
   ).toHaveAttribute("aria-current", "page");
 
   await page.goto(
@@ -266,7 +293,80 @@ test("SME navigation, direct access and browser history follow the route manifes
   await expect(page).toHaveURL(/\/app\/universal-intake$/);
 });
 
-test("exact route capabilities hide secondary entries and block direct access", async ({
+test("procurement invoice and match records use canonical authoritative read details", async ({
+  page,
+  request,
+}) => {
+  await login(page, request);
+
+  await page.goto("/app/procurement/invoices");
+  const invoiceLink = page.getByRole("link", {
+    name: "供应商发票 LOCAL-DEMO-INV-001",
+    exact: true,
+  });
+  await expect(invoiceLink).toBeVisible();
+  await invoiceLink.click();
+  await expect(page).toHaveURL(/\/app\/procurement\/invoices\/LOCAL-DEMO-INV-001/);
+  await expect(page.getByTestId("procurement-invoice-detail")).toContainText(
+    "LOCAL-DEMO-INV-001",
+  );
+  await expect(
+    page.getByRole("link", { name: "采购订单 LOCAL-DEMO-PO-001" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "收货单 LOCAL-DEMO-GRN-001" }),
+  ).toBeVisible();
+  await expect(page.getByText(/执行匹配|批准发票|发票过账/)).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId("procurement-invoice-detail")).toContainText(
+    "LOCAL-DEMO-INV-001",
+  );
+  await page.goBack();
+  await expect(page).toHaveURL(/\/app\/procurement\/invoices$/);
+
+  await page.goto("/app/procurement/three-way-match");
+  const matchLink = page.getByRole("link", {
+    name: "三单匹配 MATCH-LOCAL-DEMO-INV-001",
+    exact: true,
+  });
+  await expect(matchLink).toBeVisible();
+  await matchLink.click();
+  await expect(page).toHaveURL(
+    /\/app\/procurement\/three-way-match\/MATCH-LOCAL-DEMO-INV-001/,
+  );
+  const matchDetail = page.getByTestId("procurement-threeWayMatch-detail");
+  await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
+  await expect(
+    matchDetail.getByRole("link", {
+      name: "供应商发票 LOCAL-DEMO-INV-001",
+    }),
+  ).toBeVisible();
+  await expect(matchDetail).toContainText(/差异|匹配/);
+  await expect(page.getByText(/执行匹配|批准匹配|匹配过账/)).toHaveCount(0);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/app\/procurement\/three-way-match$/);
+  await page.goForward();
+  await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
+
+  await page.goto("/app/procurement/invoices/UNKNOWN-INVOICE");
+  await expect(page.getByTestId("procurement-document-not-found")).toContainText(
+    "UNKNOWN-INVOICE",
+  );
+  await page.goto("/app/procurement/three-way-match/UNKNOWN-MATCH");
+  await expect(page.getByTestId("procurement-document-not-found")).toContainText(
+    "UNKNOWN-MATCH",
+  );
+
+  await page.route("**/api/procurement/documents?type=invoice", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"documents":[]}' });
+  });
+  await page.goto("/app/procurement/invoices/LOCAL-DEMO-INV-001");
+  await expect(page.getByTestId("procurement-document-not-found")).toContainText(
+    "LOCAL-DEMO-INV-001",
+  );
+});
+
+test("exact route capabilities gate transactions without blocking core invoice reads", async ({
   page,
   request,
 }) => {
@@ -293,9 +393,9 @@ test("exact route capabilities hide secondary entries and block direct access", 
   ).toHaveCount(0);
 
   await page.goto("/app/procurement/invoices");
-  await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
+  await expect(page.getByTestId("procurement-supplier-invoice-list")).toBeVisible();
   await page.goto("/app/procurement/three-way-match");
-  await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
+  await expect(page.getByTestId("procurement-three-way-match-list")).toBeVisible();
 
   await page.goto("/app/inventory/stock");
   await expect(
@@ -355,7 +455,7 @@ test("exact route permissions govern primary navigation and direct access", asyn
     page.locator("aside").getByRole("button", { name: "采购", exact: true }),
   ).toBeVisible();
   await expect(
-    page.locator("aside").getByRole("button", { name: "收货", exact: true }),
+    page.locator("aside").getByRole("button", { name: "采购履约", exact: true }),
   ).toHaveCount(0);
   await expect(page.getByTestId("authorization-route-denied")).toHaveCount(0);
 
@@ -372,7 +472,7 @@ test("receiving permission does not grant purchase order access", async ({
 
   await page.goto("/app/procurement/receiving");
   await expect(
-    page.locator("aside").getByRole("button", { name: "收货", exact: true }),
+    page.locator("aside").getByRole("button", { name: "采购履约", exact: true }),
   ).toBeVisible();
   await expect(
     page.locator("aside").getByRole("button", { name: "采购", exact: true }),

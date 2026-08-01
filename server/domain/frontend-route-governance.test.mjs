@@ -27,7 +27,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 159);
+  assert.equal(routes.length, 161);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -44,7 +44,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    159,
+    161,
   );
   assert.throws(
     () =>
@@ -60,7 +60,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
   );
   assert.throws(
     () => manifest.buildRouteManifest(routes.filter((route) => route.id !== "overview:ai")),
-    /route policy references nonexistent route: overview:ai/,
+    /classification policy references nonexistent route: overview:ai/,
   );
 });
 
@@ -74,8 +74,10 @@ test("normal SME navigation is deterministic and excludes non-product surfaces",
       "procurement",
       "procurement:receiving",
       "inventory",
+      "sales",
       "master-data:suppliers",
       "master-data:items",
+      "reports",
       "universal-intake",
       "review-actions",
     ],
@@ -128,6 +130,14 @@ test("capability and permission metadata remain declarative boundaries", () => {
     "finance.supplier_invoice.read",
   );
   assert.equal(
+    routes.find((route) => route.id === "procurement:invoice-detail").requiredPermission,
+    "finance.supplier_invoice.read",
+  );
+  assert.equal(
+    routes.find((route) => route.id === "procurement:match-detail").requiredPermission,
+    "finance.three_way_match.read",
+  );
+  assert.equal(
     routes.find((route) => route.id === "inventory:transfer").requiredPermission,
     "inventory.transfer.read",
   );
@@ -138,19 +148,33 @@ test("capability and permission metadata remain declarative boundaries", () => {
 });
 
 test("hidden and searchable route projections respect classifications", () => {
+  const searchable = invariants.searchableRouteManifest(routes);
   assert.ok(
     routes
       .filter((route) => ["FROZEN", "INTERNAL"].includes(route.classification))
       .every((route) => route.navigationVisibility === "HIDDEN"),
   );
   assert.ok(
-    invariants
-      .searchableRouteManifest(routes)
-      .every(
+    searchable.every(
         (route) =>
           !["FROZEN", "INTERNAL", "LEGACY"].includes(route.classification),
       ),
   );
+  assert.ok(searchable.some((route) => route.id === "procurement:rfq"));
+  assert.ok(searchable.some((route) => route.id === "sales"));
+  assert.ok(searchable.some((route) => route.id === "reports"));
+  for (const id of [
+    "procurement:rfq-detail",
+    "procurement:contracts",
+    "imports",
+    "imports:pilot",
+    "settings:advanced",
+    "finance:reconciliation",
+    "procurement:invoice-detail",
+    "procurement:match-detail",
+  ]) {
+    assert.equal(searchable.some((route) => route.id === id), false, id);
+  }
   assert.ok(
     routes
       .filter((route) => route.compatibilityOnly)
@@ -195,10 +219,26 @@ test("legacy redirects and canonical operational deep links remain exact", () =>
     byId("procurement:receiving-detail").path,
     "/app/procurement/receiving/:id",
   );
+  assert.equal(
+    byId("procurement:invoice-detail").path,
+    "/app/procurement/invoices/:id",
+  );
+  assert.equal(
+    byId("procurement:match-detail").path,
+    "/app/procurement/three-way-match/:id",
+  );
   assert.equal(registry.routeByPath("/app/procurement/orders/PO-002").id, "procurement:order-detail");
   assert.equal(
     registry.routeByPath("/app/procurement/receiving/GRN-001").id,
     "procurement:receiving-detail",
+  );
+  assert.equal(
+    registry.routeByPath("/app/procurement/invoices/INV-001").id,
+    "procurement:invoice-detail",
+  );
+  assert.equal(
+    registry.routeByPath("/app/procurement/three-way-match/MATCH-INV-001").id,
+    "procurement:match-detail",
   );
 });
 
@@ -215,6 +255,15 @@ test("read and write maturity are independent from CORE classification", () => {
     assert.equal(byId(id).writeMaturity, "UNAVAILABLE", id);
   }
   assert.equal(byId("procurement:requests").writeMaturity, "AUTHORITATIVE");
+  assert.equal(byId("settings:audit").writeMaturity, "UNAVAILABLE");
+  for (const id of ["procurement:invoice-detail", "procurement:match-detail"]) {
+    assert.equal(byId(id).classification, "CORE", id);
+    assert.equal(byId(id).readMaturity, "AUTHORITATIVE", id);
+    assert.equal(byId(id).writeMaturity, "UNAVAILABLE", id);
+    assert.equal(byId(id).navigationVisibility, "CONTEXTUAL", id);
+    assert.equal(byId(id).requiredCapability, undefined, id);
+    assert.equal(byId(id).directAccessBehavior, "PERMISSION_REQUIRED", id);
+  }
   assert.ok(
     routes
       .filter((route) => route.classification === "FROZEN")
@@ -249,6 +298,52 @@ test("runtime access helpers fail closed for exact capabilities and permissions"
   );
 });
 
+test("policy assignment, references, and route-level capability drift fail closed", () => {
+  const capabilityMap = new Map();
+  manifest.assignUniquePolicy(capabilityMap, "route", "alpha", "capability policy");
+  manifest.assignUniquePolicy(capabilityMap, "route", "alpha", "capability policy");
+  assert.equal(capabilityMap.get("route"), "alpha");
+  assert.throws(
+    () => manifest.assignUniquePolicy(capabilityMap, "route", "beta", "capability policy"),
+    /capability policy conflict for route: alpha vs beta/,
+  );
+
+  const permissionMap = new Map();
+  manifest.assignUniquePolicy(permissionMap, "route", "read.alpha", "permission policy");
+  assert.throws(
+    () => manifest.assignUniquePolicy(permissionMap, "route", "read.beta", "permission policy"),
+    /permission policy conflict for route: read.alpha vs read.beta/,
+  );
+
+  for (const policyName of [
+    "classification policy",
+    "capability policy",
+    "permission policy",
+    "primary navigation",
+    "compatibility policy",
+    "authoritative write policy",
+  ]) {
+    assert.throws(
+      () =>
+        manifest.validateRoutePolicyReferences(new Set(["known"]), {
+          [policyName]: ["missing"],
+        }),
+      new RegExp(`${policyName} references nonexistent route: missing`),
+    );
+  }
+
+  const reconciliation = routes.find((route) => route.id === "finance:reconciliation");
+  assert.equal(reconciliation.requiredCapability, "cashbook");
+  assert.throws(
+    () =>
+      manifest.authorityForRoute({
+        ...reconciliation,
+        capabilityId: "internal-settlement",
+      }),
+    /route capability drift for finance:reconciliation: internal-settlement vs cashbook/,
+  );
+});
+
 test("human-readable route authority matrix covers the executable manifest", () => {
   const matrix = readFileSync(
     new URL("../../docs/frontend-route-authority-matrix.md", import.meta.url),
@@ -261,5 +356,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /159\/159 frontend route stability audit/);
+  assert.match(matrix, /161\/161 frontend route stability audit/);
 });
