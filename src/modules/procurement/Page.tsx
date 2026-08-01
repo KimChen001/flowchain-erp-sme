@@ -3,6 +3,7 @@ import PurchasingOrdersPage from "../purchasing/Page";
 import { ProcurementEmptyState } from "./ProcurementEmptyState";
 import { ProcurementWorkbench } from "./ProcurementWorkbench";
 import { ProcurementDocumentDetailPage } from "./ProcurementDocumentDetailPage";
+import { OrderFulfillmentLinesPage } from "./OrderFulfillmentLinesPage";
 import { ReceivingListPage } from "./ReceivingListPage";
 import { RfqListPage } from "./RfqListPage";
 import { SupplierInvoiceListPage } from "./SupplierInvoiceListPage";
@@ -31,6 +32,7 @@ export default function ProcurementPanel({ intent = null, view = "workbench", fo
   if (view === "orders") return <PurchasingOrdersPage focus={focus} onNavigate={onNavigate} onActiveContextChange={onActiveContextChange} />;
   if (view === "rfq") return <RfqListPage />;
   if (view === "receiving") return <ReceivingListPage />;
+  if (view === "order-lines") return <OrderFulfillmentLinesPage />;
   if (view === "invoices") return <SupplierInvoiceListPage />;
   if (view === "match") return <ThreeWayMatchListPage />;
   if (view === "invoice-detail") return <ProcurementDocumentDetailPage kind="invoice" documentId={focus?.entityId || ""} />;

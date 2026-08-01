@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { appRouteRegistry } from "../../src/app/routeRegistry";
 
-test("161/161 frontend route stability audit resolves without crashes, route 404s, or API 5xx responses", async ({
+test("162/162 frontend route stability audit resolves without crashes, route 404s, or API 5xx responses", async ({
   page,
   request,
 }) => {
@@ -52,6 +52,6 @@ test("161/161 frontend route stability audit resolves without crashes, route 404
 
   expect(
     failures,
-    `${appRouteRegistry.length}/161 frontend route stability audit; business semantics are covered separately`,
+    `${appRouteRegistry.length}/162 frontend route stability audit; business semantics are covered separately`,
   ).toEqual([]);
 });

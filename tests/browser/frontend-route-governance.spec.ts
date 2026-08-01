@@ -157,6 +157,9 @@ test("SME navigation, direct access and browser history follow the route manifes
         receivingSubnav.getByRole("link", { name: "采购收货", exact: true }),
       ).toHaveAttribute("aria-current", "page");
       await expect(
+        receivingSubnav.getByRole("link", { name: "订单履约明细", exact: true }),
+      ).toBeVisible();
+      await expect(
         receivingSubnav.getByRole("link", { name: "供应商发票", exact: true }),
       ).toBeVisible();
       await expect(
@@ -205,6 +208,35 @@ test("SME navigation, direct access and browser history follow the route manifes
     }
   }
   expect(apiServerErrors).toEqual([]);
+
+  await page.goto("/app/procurement/order-lines");
+  await expect(page.getByTestId("procurement-order-fulfillment-lines")).toBeVisible();
+  await expect(
+    page.getByTestId("module-subnav").getByRole("link", {
+      name: "订单履约明细",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(
+    sidebar.getByRole("button", { name: "采购履约", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  const fulfilledPoLine = page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-001-LINE-001");
+  await expect(fulfilledPoLine).toContainText("50 pcs");
+  await expect(fulfilledPoLine).toContainText("20 pcs");
+  await expect(fulfilledPoLine).toContainText("待收 30 pcs");
+  await expect(fulfilledPoLine).toContainText("部分收货");
+  await expect(
+    fulfilledPoLine.getByRole("link", { name: "收货单 LOCAL-DEMO-GRN-001" }),
+  ).toBeVisible();
+  await expect(
+    fulfilledPoLine.getByRole("link", { name: "供应商发票 LOCAL-DEMO-INV-001" }),
+  ).toBeVisible();
+  await expect(page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-002-LINE-001")).toContainText("待收货");
+  expect(
+    await page.getByTestId("order-fulfillment-line-list").evaluate(
+      (element) => element.scrollWidth <= element.clientWidth,
+    ),
+  ).toBe(true);
 
   await page.goto("/app/procurement/invoices");
   await expect(page.getByTestId("procurement-supplier-invoice-list")).toBeVisible();
@@ -364,6 +396,27 @@ test("procurement invoice and match records use canonical authoritative read det
   await expect(page.getByTestId("procurement-document-not-found")).toContainText(
     "LOCAL-DEMO-INV-001",
   );
+});
+
+test("order fulfillment lines keep empty workspaces truthful", async ({ page, request }) => {
+  await login(page, request);
+  await page.route("**/api/purchase-orders-workbench", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        purchaseOrders: [],
+        receivingDocs: [],
+        supplierInvoices: [],
+        documentLinks: [],
+        procurementFollowups: [],
+      }),
+    });
+  });
+  await page.goto("/app/procurement/order-lines");
+  await expect(page.getByText("当前工作区暂无采购订单行", { exact: true })).toBeVisible();
+  await expect(page.getByText("不会使用固定 PO、收货或发票记录补足空数据。", { exact: true })).toBeVisible();
+  await expect(page.getByText("LOCAL-DEMO-PO-001", { exact: true })).toHaveCount(0);
 });
 
 test("exact route capabilities gate transactions without blocking core invoice reads", async ({

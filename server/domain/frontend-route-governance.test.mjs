@@ -9,6 +9,7 @@ let routes;
 let registry;
 let invariants;
 let manifest;
+let fulfillment;
 
 before(async () => {
   vite = await createServer({
@@ -19,6 +20,7 @@ before(async () => {
   registry = await vite.ssrLoadModule("/src/app/routeRegistry.tsx");
   invariants = await vite.ssrLoadModule("/src/app/routes/route-invariants.ts");
   manifest = await vite.ssrLoadModule("/src/app/routes/route-manifest.ts");
+  fulfillment = await vite.ssrLoadModule("/src/modules/procurement/OrderFulfillmentLinesPage.tsx");
   routes = registry.appRouteRegistry;
 });
 
@@ -27,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 161);
+  assert.equal(routes.length, 162);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -44,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    161,
+    162,
   );
   assert.throws(
     () =>
@@ -126,6 +128,10 @@ test("capability and permission metadata remain declarative boundaries", () => {
     assert.equal(route.requiredCapability, capability, id);
   }
   assert.equal(
+    routes.find((route) => route.id === "procurement:order-lines").requiredPermission,
+    "procurement.purchase_order.read",
+  );
+  assert.equal(
     routes.find((route) => route.id === "procurement:invoices").requiredPermission,
     "finance.supplier_invoice.read",
   );
@@ -161,6 +167,7 @@ test("hidden and searchable route projections respect classifications", () => {
       ),
   );
   assert.ok(searchable.some((route) => route.id === "procurement:rfq"));
+  assert.ok(searchable.some((route) => route.id === "procurement:order-lines"));
   assert.ok(searchable.some((route) => route.id === "sales"));
   assert.ok(searchable.some((route) => route.id === "reports"));
   for (const id of [
@@ -212,6 +219,10 @@ test("legacy redirects and canonical operational deep links remain exact", () =>
   assert.equal(byId("procurement:rfq-detail").readMaturity, "UNAVAILABLE");
   assert.equal(byId("procurement:rfq-detail").writeMaturity, "UNAVAILABLE");
   assert.equal(
+    byId("procurement:order-lines").path,
+    "/app/procurement/order-lines",
+  );
+  assert.equal(
     byId("procurement:order-detail").path,
     "/app/procurement/orders/:id",
   );
@@ -249,6 +260,7 @@ test("read and write maturity are independent from CORE classification", () => {
     "overview:risks",
     "procurement:rfq",
     "procurement:receiving",
+    "procurement:order-lines",
     "inventory:stock",
   ]) {
     assert.equal(byId(id).readMaturity, "AUTHORITATIVE", id);
@@ -344,6 +356,54 @@ test("policy assignment, references, and route-level capability drift fail close
   );
 });
 
+test("order fulfillment lines join receiving and invoice evidence by exact PO line", () => {
+  const rows = fulfillment.buildOrderFulfillmentLines({
+    purchaseOrders: [{
+      po: "PO-1",
+      supplier: "Supplier A",
+      status: "已发出",
+      currency: "CNY",
+      lines: [{
+        poLineId: "PO-1-L1",
+        sku: "SHARED-SKU",
+        itemName: "Item A",
+        quantityOrdered: 10,
+        quantityReceived: 4,
+        unit: "pcs",
+        unitPrice: 25,
+        currency: "CNY",
+      }],
+    }],
+    receivingDocs: [{
+      grn: "GRN-EXACT",
+      lines: [{ poLineId: "PO-1-L1", sku: "SHARED-SKU", receivedQty: 4 }],
+    }, {
+      grn: "GRN-SAME-SKU-WRONG-LINE",
+      lines: [{ poLineId: "PO-2-L1", sku: "SHARED-SKU", receivedQty: 9 }],
+    }],
+    supplierInvoices: [{
+      id: "INV-EXACT",
+      lines: [{ poLine: "PO-1-L1", sku: "SHARED-SKU", quantity: 3, varianceAmount: 5 }],
+    }, {
+      id: "INV-SAME-SKU-WRONG-LINE",
+      lines: [{ poLine: "PO-2-L1", sku: "SHARED-SKU", quantity: 8, varianceAmount: 0 }],
+    }],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].lineAmount, 250);
+  assert.equal(rows[0].receivedQuantity, 4);
+  assert.equal(rows[0].invoicedQuantity, 3);
+  assert.equal(rows[0].remainingToReceive, 6);
+  assert.equal(rows[0].receivedNotInvoiced, 1);
+  assert.equal(rows[0].receivingEvidence.length, 1);
+  assert.equal(rows[0].receivingEvidence[0].document.grn, "GRN-EXACT");
+  assert.equal(rows[0].invoiceEvidence.length, 1);
+  assert.equal(rows[0].invoiceEvidence[0].invoice.id, "INV-EXACT");
+  assert.equal(rows[0].varianceAmount, 5);
+  assert.equal(rows[0].status, "部分收货");
+});
+
 test("human-readable route authority matrix covers the executable manifest", () => {
   const matrix = readFileSync(
     new URL("../../docs/frontend-route-authority-matrix.md", import.meta.url),
@@ -356,5 +416,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /161\/161 frontend route stability audit/);
+  assert.match(matrix, /162\/162 frontend route stability audit/);
 });

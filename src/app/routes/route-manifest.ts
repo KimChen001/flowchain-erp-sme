@@ -21,7 +21,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     master-data:bin-detail master-data:payment-term-detail
     master-data:tax-code-detail
     procurement procurement:workbench procurement:requests procurement:rfq
-    procurement:orders procurement:receiving procurement:invoices
+    procurement:orders procurement:receiving procurement:order-lines procurement:invoices
     procurement:match procurement:request-detail
     procurement:rfq-detail procurement:order-detail
     procurement:receiving-detail procurement:invoice-detail
@@ -279,7 +279,7 @@ const mapPermission = (permission: string, routeIds: string) => {
 };
 mapPermission(
   "procurement.purchase_order.read",
-  "procurement procurement:workbench procurement:orders procurement:order-detail",
+  "procurement procurement:workbench procurement:orders procurement:order-lines procurement:order-detail",
 );
 mapPermission(
   "receiving.read",

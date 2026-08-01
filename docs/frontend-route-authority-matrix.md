@@ -16,12 +16,12 @@ backend-authorized.
 
 ## Classification summary
 
-- Core: 65
+- Core: 66
 - Extension: 66
 - Internal: 18
 - Frozen: 7
 - Legacy: 5
-- Total: 161
+- Total: 162
 
 ## Default SME navigation
 
@@ -32,7 +32,7 @@ Settings remains in the profile menu. Finance and Mobile Operations remain
 hidden Extensions; Frozen, Legacy, and Internal surfaces remain outside normal
 navigation.
 
-The 161/161 frontend route stability audit verifies
+The 162/162 frontend route stability audit verifies
 resolution, shell rendering, no route-level 404 recovery, no render crash, and
 no observed API 5xx. It does not prove business semantics, data authority,
 permission correctness, capability correctness, or complete functionality.
@@ -93,6 +93,7 @@ classification and navigation metadata.
 | `procurement:rfq` | `/app/procurement/rfq` | 询价与报价 | `procurement` | CORE | SECONDARY | no | procurement | `src/modules/procurement` | /api/procurement/documents?type=rfq | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | No dedicated frontend read permission exists; backend tenant and authorization checks remain authoritative. |
 | `procurement:orders` | `/app/procurement/orders` | 采购订单 | `procurement` | CORE | SECONDARY | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | procurement.purchase_order.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:receiving` | `/app/procurement/receiving` | 采购收货 | `procurement` | CORE | PRIMARY | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | receiving.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `procurement:order-lines` | `/app/procurement/order-lines` | 订单履约明细 | `procurement` | CORE | SECONDARY | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | procurement.purchase_order.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:invoices` | `/app/procurement/invoices` | 供应商发票 | `procurement` | CORE | SECONDARY | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | finance.supplier_invoice.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:match` | `/app/procurement/three-way-match` | 三单匹配 | `procurement` | CORE | SECONDARY | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | finance.three_way_match.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:receiving:new` | `/app/procurement/receiving/new` | 新建收货单 | `procurement` | EXTENSION | CONTEXTUAL | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | receiving-posting | receiving.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
