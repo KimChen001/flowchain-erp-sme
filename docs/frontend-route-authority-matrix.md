@@ -9,25 +9,62 @@ navigation and direct access. Backend tenant scope and authorization remain
 authoritative. Routes showing “—” have no matching frontend permission or
 capability contract and must not invent one.
 
+Route-search projection uses governed route metadata and excludes unavailable,
+internal, retired, compatibility-only, denied, and unresolved parameterized
+destinations. Business-object global search remains API-driven and
+backend-authorized.
+
 ## Classification summary
 
-- Core: 56
-- Extension: 73
+- Core: 65
+- Extension: 66
 - Internal: 18
 - Frozen: 7
 - Legacy: 5
-- Total: 159
+- Total: 161
 
 ## Default SME navigation
 
-The deterministic primary order is Today, Procurement, Receiving, Inventory,
-Suppliers, Items, Universal Intake when explicitly enabled, and Review Queue
-when explicitly enabled. Compatibility-only Finance routes remain hidden.
+The deterministic default primary order is Today, Procurement, Procurement
+Fulfillment, Inventory, Sales, Suppliers, Items, and Reports. Universal Intake
+and Review Queue are conditional on their exact capability and authorization.
+Settings remains in the profile menu. Finance and Mobile Operations remain
+hidden Extensions; Frozen, Legacy, and Internal surfaces remain outside normal
+navigation.
 
-The 159/159 frontend route stability audit verifies resolution, shell rendering,
-no route-level 404 recovery, no render crash, and no observed API 5xx. It does
-not prove business semantics, data authority, permission correctness, capability
-correctness, or complete functionality.
+The 161/161 frontend route stability audit verifies
+resolution, shell rendering, no route-level 404 recovery, no render crash, and
+no observed API 5xx. It does not prove business semantics, data authority,
+permission correctness, capability correctness, or complete functionality.
+
+## Root-module product matrix
+
+This projection is generated with executable assertions against the route
+classification and navigation metadata.
+
+| Route surface | Product placement |
+| --- | --- |
+| `overview` | DEFAULT_PRIMARY |
+| `procurement` | DEFAULT_PRIMARY |
+| `procurement:receiving` | DEFAULT_PRIMARY |
+| `inventory` | DEFAULT_PRIMARY |
+| `sales` | DEFAULT_PRIMARY |
+| `master-data:suppliers` | DEFAULT_PRIMARY |
+| `master-data:items` | DEFAULT_PRIMARY |
+| `reports` | DEFAULT_PRIMARY |
+| `universal-intake` | CONDITIONAL_PRIMARY |
+| `review-actions` | CONDITIONAL_PRIMARY |
+| `settings` | PROFILE_MENU |
+| `finance` | EXTENSION_HIDDEN |
+| `mobile-operations` | EXTENSION_HIDDEN |
+| `forecast` | FROZEN |
+| `imports` | LEGACY |
+| `exception-cases` | INTERNAL |
+| `collaboration-drafts` | INTERNAL |
+| `audit-history` | INTERNAL |
+| `pilot-readiness` | INTERNAL |
+
+## Executable route matrix
 
 | Route ID | Path | Label | Module | Classification | Navigation visibility | Compatibility only | Business object | Frontend owner | API dependency | Repository authority | Read maturity | Write maturity | Capability | Permission | Direct-access behavior | Canonical replacement | Known limitations |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -66,8 +103,10 @@ correctness, or complete functionality.
 | `procurement:rfq-detail` | `/app/procurement/rfq/:id` | RFQ 详情 | `procurement` | CORE | CONTEXTUAL | no | rfq | `src/modules/procurement` | /api/procurement/* | Capability or direct-route boundary | UNAVAILABLE | UNAVAILABLE | — | — | NOT_IMPLEMENTED | — | Canonical RFQ detail has not been connected. |
 | `procurement:order-detail` | `/app/procurement/orders/:id` | 采购订单详情 | `procurement` | CORE | CONTEXTUAL | no | purchase_order | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | procurement.purchase_order.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:receiving-detail` | `/app/procurement/receiving/:id` | 收货单详情 | `procurement` | CORE | CONTEXTUAL | no | receiving_doc | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | receiving.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
-| `sales` | `/app/sales` | 销售订单 | `sales` | EXTENSION | SECONDARY | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales | sales_order.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
-| `sales:orders` | `/app/sales/orders` | 销售订单 | `sales` | EXTENSION | SECONDARY | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales | sales_order.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
+| `procurement:invoice-detail` | `/app/procurement/invoices/:id` | 供应商发票详情 | `procurement` | CORE | CONTEXTUAL | no | supplier_invoice | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | finance.supplier_invoice.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `procurement:match-detail` | `/app/procurement/three-way-match/:id` | 三单匹配详情 | `procurement` | CORE | CONTEXTUAL | no | three_way_match | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | finance.three_way_match.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `sales` | `/app/sales` | 销售订单 | `sales` | CORE | PRIMARY | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | sales | sales_order.read | CAPABILITY_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `sales:orders` | `/app/sales/orders` | 销售订单 | `sales` | CORE | SECONDARY | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | sales | sales_order.read | CAPABILITY_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `sales:order-new` | `/app/sales/orders/new` | 新建销售订单 | `sales` | EXTENSION | CONTEXTUAL | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales-order-lifecycle | sales_order.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `sales:delivery` | `/app/sales/deliveries` | 销售出库单 / 发货单 | `sales` | EXTENSION | SECONDARY | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales-shipment-draft | shipment.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `sales:delivery:new` | `/app/sales/deliveries/new` | 新建发货单 | `sales` | EXTENSION | CONTEXTUAL | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales-shipment-draft | shipment.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
@@ -76,9 +115,9 @@ correctness, or complete functionality.
 | `sales:receipts:new` | `/app/sales/receipts/new` | 新建签收单 | `sales` | EXTENSION | CONTEXTUAL | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales-shipment-posting | shipment.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `sales:returns` | `/app/sales/returns` | 销售退货单 | `sales` | EXTENSION | SECONDARY | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | return-request | returns.request.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `sales:returns:new` | `/app/sales/returns/new` | 新建销售退货单 | `sales` | EXTENSION | CONTEXTUAL | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | return-request | returns.request.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
-| `sales:risks` | `/app/sales/risks` | 交付风险 | `sales` | EXTENSION | SECONDARY | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales | sales_order.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
-| `sales:evidence` | `/app/sales/evidence` | 订单证据链 | `sales` | EXTENSION | SECONDARY | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales | sales_order.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
-| `sales:order-detail` | `/app/sales/orders/:id` | 销售订单详情 | `sales` | EXTENSION | CONTEXTUAL | no | sales_order | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales | sales_order.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
+| `sales:risks` | `/app/sales/risks` | 交付风险 | `sales` | CORE | SECONDARY | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | sales | sales_order.read | CAPABILITY_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `sales:evidence` | `/app/sales/evidence` | 订单证据链 | `sales` | CORE | SECONDARY | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | sales | sales_order.read | CAPABILITY_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `sales:order-detail` | `/app/sales/orders/:id` | 销售订单详情 | `sales` | CORE | CONTEXTUAL | no | sales_order | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | sales | sales_order.read | CAPABILITY_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `sales:shipment-detail` | `/app/sales/shipments/:id` | 发货工作台 | `sales` | EXTENSION | CONTEXTUAL | no | shipment | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales-shipment-draft | shipment.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `sales:delivery-detail` | `/app/sales/deliveries/:id` | 发货单详情 | `sales` | EXTENSION | CONTEXTUAL | no | delivery_note | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales-shipment-draft | shipment.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `sales:receipt-detail` | `/app/sales/receipts/:id` | 签收单详情 | `sales` | EXTENSION | CONTEXTUAL | no | sign_receipt | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales-shipment-posting | shipment.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
@@ -137,7 +176,7 @@ correctness, or complete functionality.
 | `mobile-operations:po-detail` | `/app/mobile/purchase-orders/:id` | 采购订单审批 | `mobile-operations` | EXTENSION | CONTEXTUAL | no | mobile-operations | `src/modules/mobile` | /api/mobile/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | mobile-operations | mobile.tasks.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `mobile-operations:receiving-detail` | `/app/mobile/receiving/:id` | 收货详情 | `mobile-operations` | EXTENSION | CONTEXTUAL | no | mobile-operations | `src/modules/mobile` | /api/mobile/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | mobile-operations | mobile.receiving.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `mobile-operations:settlement-detail` | `/app/mobile/settlements/:id` | 结算任务 | `mobile-operations` | EXTENSION | CONTEXTUAL | no | mobile-operations | `src/modules/mobile` | /api/mobile/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | mobile-operations | mobile.tasks.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
-| `reports` | `/app/reports` | 经营总览 | `reports` | CORE | SECONDARY | no | reports | `src/modules/reports` | /api/reports/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `reports` | `/app/reports` | 经营总览 | `reports` | CORE | PRIMARY | no | reports | `src/modules/reports` | /api/reports/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `reports:overview` | `/app/reports/overview` | 经营总览 | `reports` | CORE | SECONDARY | no | reports | `src/modules/reports` | /api/reports/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `reports:procurement` | `/app/reports/procurement` | 采购分析 | `reports` | CORE | SECONDARY | no | reports | `src/modules/reports` | /api/reports/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `reports:sales` | `/app/reports/sales` | 销售分析 | `reports` | CORE | SECONDARY | no | reports | `src/modules/reports` | /api/reports/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
@@ -156,7 +195,7 @@ correctness, or complete functionality.
 | `settings:review` | `/app/settings/review` | 复核策略 | `settings` | CORE | SECONDARY | no | settings | `src/modules/settings` | /api/settings/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | settings.review_policy.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `settings:modules` | `/app/settings/modules` | 菜单与模块 | `settings` | CORE | SECONDARY | no | settings | `src/modules/settings` | /api/settings/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | settings.modules.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `settings:ai` | `/app/settings/ai` | AI 治理 | `settings` | CORE | SECONDARY | no | settings | `src/modules/settings` | /api/settings/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | settings.workspace.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
-| `settings:audit` | `/app/settings/audit` | 操作日志 | `settings` | CORE | SECONDARY | no | settings | `src/modules/settings` | /api/settings/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | audit.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `settings:audit` | `/app/settings/audit` | 操作日志 | `settings` | CORE | SECONDARY | no | settings | `src/modules/settings` | /api/settings/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | audit.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `settings:advanced` | `/app/settings/advanced` | 高级设置 | `settings` | INTERNAL | HIDDEN | no | settings | `src/modules/settings` | /api/settings/* | Internal preview boundary | INTERNAL_PREVIEW | INTERNAL_PREVIEW | — | settings.diagnostics.read | INTERNAL_ONLY | — | Internal governance surface; excluded from normal SME navigation. |
 | `forecast` | `/app/forecast` | 计划驾驶舱 | `forecast` | FROZEN | HIDDEN | no | forecast | `src/modules/forecast` | /api/forecast-plans, /api/mrp-plan | Capability or direct-route boundary | UNAVAILABLE | UNAVAILABLE | — | — | FROZEN_UNAVAILABLE | — | No authoritative enabled product capability is claimed. |
 | `forecast:cockpit` | `/app/forecast/cockpit` | 计划驾驶舱 | `forecast` | FROZEN | HIDDEN | no | forecast | `src/modules/forecast` | /api/forecast-plans, /api/mrp-plan | Capability or direct-route boundary | UNAVAILABLE | UNAVAILABLE | — | — | FROZEN_UNAVAILABLE | — | No authoritative enabled product capability is claimed. |
