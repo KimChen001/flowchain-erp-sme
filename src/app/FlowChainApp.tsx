@@ -1409,9 +1409,6 @@ export default function FlowChainApp() {
                         <div key={item.id} className="space-y-0.5">
                           <button
                             aria-current={isActive ? "page" : undefined}
-                            aria-label={
-                              item.id === "reports" ? "报表与分析" : undefined
-                            }
                             onClick={() => navigateTo(item.routeId)}
                             className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm font-medium transition-colors duration-150"
                             style={
@@ -1967,6 +1964,8 @@ export default function FlowChainApp() {
                             "supplier",
                             "item",
                             "settlement_document",
+                            "supplier_invoice",
+                            "three_way_match",
                           ].includes(activeRoute.entityType) ? (
                           <BusinessEntityDetailPage route={activeRoute} />
                         ) : (

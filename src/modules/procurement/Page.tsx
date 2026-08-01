@@ -2,6 +2,7 @@ import PurchasingRequests from "../purchase-requests/Page";
 import PurchasingOrdersPage from "../purchasing/Page";
 import { ProcurementEmptyState } from "./ProcurementEmptyState";
 import { ProcurementWorkbench } from "./ProcurementWorkbench";
+import { ProcurementDocumentDetailPage } from "./ProcurementDocumentDetailPage";
 import { ReceivingListPage } from "./ReceivingListPage";
 import { RfqListPage } from "./RfqListPage";
 import { SupplierInvoiceListPage } from "./SupplierInvoiceListPage";
@@ -32,6 +33,8 @@ export default function ProcurementPanel({ intent = null, view = "workbench", fo
   if (view === "receiving") return <ReceivingListPage />;
   if (view === "invoices") return <SupplierInvoiceListPage />;
   if (view === "match") return <ThreeWayMatchListPage />;
+  if (view === "invoice-detail") return <ProcurementDocumentDetailPage kind="invoice" documentId={focus?.entityId || ""} />;
+  if (view === "match-detail") return <ProcurementDocumentDetailPage kind="threeWayMatch" documentId={focus?.entityId || ""} />;
   const [title, description] = emptyViews[view] || ["当前视图暂无数据", ""];
   return <ProcurementEmptyState title={title} description={description} />;
 }

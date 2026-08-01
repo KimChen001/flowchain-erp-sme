@@ -67,7 +67,7 @@ export function SupplierInvoiceListPage() {
               <article key={row.id} className="p-4 sm:p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <div className="font-semibold text-blue-600">{row.id}</div>
+                    <BusinessEntityLink entityType="supplier_invoice" entityId={row.id}>{row.id}</BusinessEntityLink>
                     <div className="mt-1 text-xs" style={{ color: A.sub }}>{row.supplierName || "未关联供应商"}</div>
                   </div>
                   <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold">{row.matchStatus || row.invoiceStatus || "—"}</span>

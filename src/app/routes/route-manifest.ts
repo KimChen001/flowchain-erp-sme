@@ -24,9 +24,11 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     procurement:orders procurement:receiving procurement:invoices
     procurement:match procurement:request-detail
     procurement:rfq-detail procurement:order-detail
-    procurement:receiving-detail
+    procurement:receiving-detail procurement:invoice-detail
+    procurement:match-detail
     inventory inventory:stock inventory:movements inventory:warnings
     inventory:lots inventory:serials inventory:bins inventory:exceptions
+    sales sales:orders sales:risks sales:evidence sales:order-detail
     reports reports:overview reports:procurement reports:sales
     reports:inventory reports:finance reports:suppliers reports:library
     settings settings:profile settings:warehouse-access settings:readiness
@@ -35,10 +37,10 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
   `),
   EXTENSION: ids(`
     procurement:receiving:new procurement:receiving:edit procurement:returns
-    sales sales:orders sales:order-new sales:delivery sales:delivery:new
+    sales:order-new sales:delivery sales:delivery:new
     sales:delivery:edit sales:receipts sales:receipts:new sales:returns
-    sales:returns:new sales:risks sales:evidence sales:order-detail
-    sales:shipment-detail sales:delivery-detail sales:receipt-detail
+    sales:returns:new sales:shipment-detail sales:delivery-detail
+    sales:receipt-detail
     inventory:operations inventory:returns inventory:return-requests
     inventory:return-request-new inventory:return-request-detail
     inventory:return-authorizations inventory:return-authorization-detail
@@ -100,15 +102,20 @@ const primaryNavigation: Record<
 > = {
   overview: { navigationOrder: 10, navigationLabel: "今日" },
   procurement: { navigationOrder: 20, navigationLabel: "采购" },
-  "procurement:receiving": { navigationOrder: 30, navigationLabel: "收货" },
+  "procurement:receiving": {
+    navigationOrder: 30,
+    navigationLabel: "采购履约",
+  },
   inventory: { navigationOrder: 40, navigationLabel: "库存" },
+  sales: { navigationOrder: 50, navigationLabel: "销售" },
   "master-data:suppliers": {
-    navigationOrder: 50,
+    navigationOrder: 60,
     navigationLabel: "供应商",
   },
-  "master-data:items": { navigationOrder: 60, navigationLabel: "物料" },
-  "universal-intake": { navigationOrder: 70, navigationLabel: "数据接入" },
-  "review-actions": { navigationOrder: 80, navigationLabel: "复核队列" },
+  "master-data:items": { navigationOrder: 70, navigationLabel: "物料" },
+  reports: { navigationOrder: 80, navigationLabel: "报表" },
+  "universal-intake": { navigationOrder: 90, navigationLabel: "数据接入" },
+  "review-actions": { navigationOrder: 100, navigationLabel: "复核队列" },
 };
 
 const compatibilityRouteIds = ids(`
@@ -127,7 +134,7 @@ const authoritativeWriteRouteIds = ids(`
   procurement:orders procurement:order-detail
   settings settings:profile settings:warehouse-access settings:company
   settings:roles settings:numbering settings:review settings:modules
-  settings:ai settings:audit
+  settings:ai
 `);
 
 const ownerByModule: Record<string, string> = {
@@ -171,8 +178,24 @@ const apiByModule: Record<string, string> = {
 };
 
 const routeCapability = new Map<string, string>();
+export function assignUniquePolicy(
+  map: Map<string, string>,
+  routeId: string,
+  value: string,
+  policyName: string,
+) {
+  const existing = map.get(routeId);
+  if (existing !== undefined && existing !== value) {
+    throw new Error(
+      `${policyName} conflict for ${routeId}: ${existing} vs ${value}`,
+    );
+  }
+  map.set(routeId, value);
+}
+
 const mapCapability = (capability: string, routeIds: string) => {
-  for (const routeId of ids(routeIds)) routeCapability.set(routeId, capability);
+  for (const routeId of ids(routeIds))
+    assignUniquePolicy(routeCapability, routeId, capability, "capability policy");
 };
 mapCapability(
   "sales",
@@ -251,7 +274,8 @@ mapCapability(
 
 const routePermission = new Map<string, string>();
 const mapPermission = (permission: string, routeIds: string) => {
-  for (const routeId of ids(routeIds)) routePermission.set(routeId, permission);
+  for (const routeId of ids(routeIds))
+    assignUniquePolicy(routePermission, routeId, permission, "permission policy");
 };
 mapPermission(
   "procurement.purchase_order.read",
@@ -263,11 +287,11 @@ mapPermission(
 );
 mapPermission(
   "finance.supplier_invoice.read",
-  "procurement:invoices finance:invoices finance:invoice-detail",
+  "procurement:invoices procurement:invoice-detail finance:invoices finance:invoice-detail",
 );
 mapPermission(
   "finance.three_way_match.read",
-  "procurement:match finance:three-way-match finance:match-detail",
+  "procurement:match procurement:match-detail finance:three-way-match finance:match-detail",
 );
 mapPermission("returns.request.read", "procurement:returns");
 mapPermission(
@@ -340,7 +364,7 @@ mapPermission(
   "mobile.receiving.read",
   "mobile-operations:receiving mobile-operations:receiving-detail",
 );
-mapPermission("intake.batch.read", "universal-intake settings:custom-fields");
+mapPermission("intake.batch.read", "universal-intake");
 mapPermission(
   "settings.workspace.read",
   "settings settings:profile settings:warehouse-access settings:company settings:ai",
@@ -358,7 +382,17 @@ export function classificationForRouteId(routeId: string) {
 }
 
 function capabilityFor(route: AppRouteDefinition) {
-  return routeCapability.get(route.id) || route.capabilityId;
+  const governedCapability = routeCapability.get(route.id);
+  if (
+    governedCapability &&
+    route.capabilityId &&
+    governedCapability !== route.capabilityId
+  ) {
+    throw new Error(
+      `route capability drift for ${route.id}: ${route.capabilityId} vs ${governedCapability}`,
+    );
+  }
+  return governedCapability || route.capabilityId;
 }
 
 function permissionFor(route: AppRouteDefinition) {
@@ -505,10 +539,7 @@ export function buildRouteManifest(
   routes: AppRouteDefinition[],
 ): GovernedAppRouteDefinition[] {
   const declaredIds = new Set(routes.map((route) => route.id));
-  for (const policyId of classificationById.keys()) {
-    if (!declaredIds.has(policyId))
-      throw new Error(`route policy references nonexistent route: ${policyId}`);
-  }
+  validateRoutePolicyReferences(declaredIds);
   for (const route of routes) {
     if (!classificationById.has(route.id))
       throw new Error(`unclassified route: ${route.id}`);
@@ -519,4 +550,36 @@ export function buildRouteManifest(
       ...authorityForRoute(route),
     }),
   );
+}
+
+type RoutePolicyReferences = Partial<
+  Record<
+    | "classification policy"
+    | "capability policy"
+    | "permission policy"
+    | "primary navigation"
+    | "compatibility policy"
+    | "authoritative write policy",
+    Iterable<string>
+  >
+>;
+
+export function validateRoutePolicyReferences(
+  declaredIds: Set<string>,
+  references: RoutePolicyReferences = {
+    "classification policy": classificationById.keys(),
+    "capability policy": routeCapability.keys(),
+    "permission policy": routePermission.keys(),
+    "primary navigation": Object.keys(primaryNavigation),
+    "compatibility policy": compatibilityRouteIds,
+    "authoritative write policy": authoritativeWriteRouteIds,
+  },
+) {
+  for (const [policyName, policyIds] of Object.entries(references)) {
+    for (const routeId of policyIds || []) {
+      if (!declaredIds.has(routeId)) {
+        throw new Error(`${policyName} references nonexistent route: ${routeId}`);
+      }
+    }
+  }
 }

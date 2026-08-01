@@ -67,7 +67,7 @@ export function ThreeWayMatchListPage() {
               <article key={row.id} className="p-4 sm:p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <div className="font-semibold">{row.id}</div>
+                    <BusinessEntityLink entityType="three_way_match" entityId={row.id}>{row.id}</BusinessEntityLink>
                     <div className="mt-1 text-xs" style={{ color: A.sub }}>{row.supplierName || "未关联供应商"}</div>
                   </div>
                   <span className="rounded bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">{row.matchStatus || row.status || "—"}</span>
@@ -75,7 +75,7 @@ export function ThreeWayMatchListPage() {
                 <dl className="mt-4 grid gap-x-6 gap-y-4 text-xs sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                   <div><dt style={{ color: A.sub }}>采购订单</dt><dd className="mt-1"><BusinessEntityLink entityType="purchase_order" entityId={row.poId || row.po}>{row.poId || row.po || "—"}</BusinessEntityLink></dd></div>
                   <div><dt style={{ color: A.sub }}>收货单</dt><dd className="mt-1"><BusinessEntityLink entityType="receiving_doc" entityId={row.grnId}>{row.grnId || "—"}</BusinessEntityLink></dd></div>
-                  <div><dt style={{ color: A.sub }}>供应商发票</dt><dd className="mt-1 font-medium text-blue-600">{row.invoiceId || "—"}</dd></div>
+                  <div><dt style={{ color: A.sub }}>供应商发票</dt><dd className="mt-1"><BusinessEntityLink entityType="supplier_invoice" entityId={row.invoiceId}>{row.invoiceId || "—"}</BusinessEntityLink></dd></div>
                   <div><dt style={{ color: A.sub }}>PO 金额</dt><dd className="mt-1 font-medium tabular-nums">{money(row.poAmount, row.currency)}</dd></div>
                   <div><dt style={{ color: A.sub }}>发票金额</dt><dd className="mt-1 font-medium tabular-nums">{money(row.invoiceAmount, row.currency)}</dd></div>
                   <div><dt style={{ color: A.sub }}>差异金额</dt><dd className="mt-1 font-medium tabular-nums">{money(row.varianceAmount, row.currency)}</dd></div>

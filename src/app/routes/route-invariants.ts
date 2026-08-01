@@ -113,6 +113,17 @@ export function searchableRouteManifest(
   access?: GovernedRouteAccessContext,
 ) {
   return orderedRouteManifest(routes).filter((route) => {
+    if (route.path.includes(":")) return false;
+    if (
+      [
+        "FROZEN_UNAVAILABLE",
+        "INTERNAL_ONLY",
+        "LEGACY_REDIRECT",
+        "LEGACY_UNAVAILABLE",
+        "NOT_IMPLEMENTED",
+      ].includes(route.directAccessBehavior)
+    )
+      return false;
     if (
       ["INTERNAL", "FROZEN", "LEGACY"].includes(route.classification) ||
       route.compatibilityOnly
