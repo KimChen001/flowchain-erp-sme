@@ -72,6 +72,11 @@ export function ProcurementDocumentDetailPage({
   const poId = record?.relatedPo || record?.poId || record?.po;
   const grnId = record?.relatedGrn || record?.grnId;
   const invoiceId = isInvoice ? record?.id : record?.invoiceId;
+  const blockingReason =
+    record?.blockingReason ||
+    record?.exceptionReason ||
+    relatedMatch?.blockingReason ||
+    relatedMatch?.exceptionReason;
 
   return (
     <div className="space-y-4" data-testid={`procurement-${kind}-detail`}>
@@ -132,8 +137,15 @@ export function ProcurementDocumentDetailPage({
                   <BusinessEntityLink entityType="three_way_match" entityId={relatedMatch.id}>{relatedMatch.id || "—"}</BusinessEntityLink>
                 </Fact>
               )}
-              <Fact label={isInvoice ? "发票状态" : "匹配状态"}>{status}</Fact>
-              <Fact label="PO 金额">{money(record.poAmount, record.currency)}</Fact>
+              {isInvoice ? (
+                <>
+                  <Fact label="发票状态">{record.invoiceStatus || "—"}</Fact>
+                  <Fact label="匹配状态">{record.matchStatus || "—"}</Fact>
+                </>
+              ) : (
+                <Fact label="匹配状态">{status}</Fact>
+              )}
+              <Fact label="PO 金额">{money(record.poAmount ?? relatedMatch?.poAmount, record.currency)}</Fact>
               <Fact label="发票金额">{money(record.amount ?? record.invoiceAmount, record.currency)}</Fact>
               <Fact label="差异金额">{money(record.varianceAmount, record.currency)}</Fact>
               <Fact label="币种">{record.currency || "—"}</Fact>
@@ -141,9 +153,9 @@ export function ProcurementDocumentDetailPage({
               {isInvoice && <Fact label="到期日">{record.dueDate || "—"}</Fact>}
             </dl>
 
-            {(record.blockingReason || record.exceptionReason) && (
+            {blockingReason && (
               <div className="mt-4 rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-900">
-                {record.blockingReason || record.exceptionReason}
+                {blockingReason}
               </div>
             )}
           </>
