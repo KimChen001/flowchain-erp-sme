@@ -289,6 +289,79 @@ test('GET /api/procurement/documents/:type/:id contract handles found, missing, 
   assert.equal(JSON.stringify(invalid.response.payload).includes('stack'), false)
 })
 
+test('GET /api/procurement/documents/:type/:id dispatches all canonical types without list fallback', async () => {
+  const aliases = new Map([
+    ['purchase-request', 'pr'],
+    ['rfq', 'rfq'],
+    ['purchase-order', 'po'],
+    ['receiving', 'grn'],
+    ['supplier-invoice', 'invoice'],
+    ['3wm', 'threeWayMatch'],
+  ])
+  for (const [routeType, canonicalType] of aliases) {
+    let response = null
+    let observed = null
+    const repositories = {
+      procurementRead: {
+        normalizeDocumentType: normalizeProcurementDocumentType,
+        listDocuments: async () => { throw new Error('listDocuments must not be called') },
+        getDocument: async (type, id, options) => {
+          observed = { type, id, options }
+          return { id, documentType: type }
+        },
+      },
+    }
+    await handleProcurementReadRoute({
+      req: { method: 'GET' },
+      res: {},
+      url: new URL(`/api/procurement/documents/${routeType}/DOC%2F001`, 'http://localhost'),
+      identity: { authenticated: true, tenantId: 'tenant-a' },
+      repositories,
+      send(_res, status, payload) { response = { status, payload } },
+    })
+    assert.equal(response.status, 200)
+    assert.deepEqual(response.payload, { document: { id: 'DOC%2F001', documentType: canonicalType } })
+    assert.deepEqual(observed, { type: canonicalType, id: 'DOC%2F001', options: { tenantId: 'tenant-a' } })
+  }
+})
+
+test('GET /api/procurement/documents/:type/:id fails before repository reads for invalid type and missing tenant context', async () => {
+  let reads = 0
+  const repositories = {
+    procurementRead: {
+      normalizeDocumentType: normalizeProcurementDocumentType,
+      getDocument: async () => { reads += 1; return null },
+    },
+  }
+  for (const identity of [
+    { authenticated: false, tenantId: '' },
+    { authenticated: true, tenantId: '' },
+  ]) {
+    let response = null
+    await handleProcurementReadRoute({
+      req: { method: 'GET' },
+      res: {},
+      url: new URL('/api/procurement/documents/po/PO-1', 'http://localhost'),
+      identity,
+      repositories,
+      send(_res, status, payload) { response = { status, payload } },
+    })
+    assert.equal(response.status, 401)
+  }
+
+  let invalidResponse = null
+  await handleProcurementReadRoute({
+    req: { method: 'GET' },
+    res: {},
+    url: new URL('/api/procurement/documents/customer/CUST-1', 'http://localhost'),
+    identity: { authenticated: true, tenantId: 'tenant-a' },
+    repositories,
+    send(_res, status, payload) { invalidResponse = { status, payload } },
+  })
+  assert.equal(invalidResponse.status, 400)
+  assert.equal(reads, 0)
+})
+
 test('GET /api/procurement/documents/:type/:id requires authentication and keeps tenant-invisible records hidden', async () => {
   let unauthorizedResponse = null
   const unauthorized = {
@@ -310,7 +383,7 @@ test('GET /api/procurement/documents/:type/:id requires authentication and keeps
     identity: { authenticated: true, tenantId: 'tenant-a' },
     repositories: {
       procurementRead: {
-        isDocumentType: (type) => type === 'invoice',
+        normalizeDocumentType: normalizeProcurementDocumentType,
         getDocument: async (_type, _id, options) => {
           observedScope = options
           return options.tenantId === 'tenant-b'

@@ -52,7 +52,30 @@ Missing optional data remains empty, `null`, or omitted. The read model does not
 - Query filtering supports `q`, `type`, `status`, `supplier`, and `limit` where relevant.
 - Route responses use stable top-level wrappers: `documents`, `document`, `links`, `followups`, and `summary`.
 
+## Direct Database Detail Reads
+
+`GET /api/procurement/documents/:type/:id` dispatches to one explicit reader for each canonical document type. Every primary Prisma query includes both `tenantId` and a case-insensitive exact document-ID predicate. Another tenant's document is therefore indistinguishable from an unknown document and returns `404` through the HTTP route.
+
+Detail reads do not call the bounded procurement snapshot, do not use the snapshot's 500-row collection window, and do not depend on list ordering or pagination. Supporting queries are restricted to the exact parent relationship needed by the requested document.
+
+| Type | Primary authority | Supporting query | Maximum queries |
+| --- | --- | --- | ---: |
+| PR | `PurchaseRequest` by tenant and ID | None | 1 |
+| RFQ | `Rfq` by tenant and ID | Supplier quotations by tenant and exact `rfqId` | 2 |
+| PO | `PurchaseOrder` by tenant and ID | GRN references by tenant and exact `poId` | 2 |
+| GRN | `ReceivingDocument` by tenant and ID | Invoice references by tenant and exact `relatedGrnId` | 2 |
+| Invoice | `SupplierInvoice` by tenant and ID | None; Related Match uses the documented projection below | 1 |
+| Three-way Match | Deterministic Supplier Invoice projection | Exact Invoice, then exact related PO and GRN when identified by the Invoice | 1–3 |
+
+The snapshot remains unchanged for document lists, links, followups, summaries, workbench reads, and broader reporting projections. This detail refactor changes no schema, migration, endpoint, frontend route, permission, capability, or write behavior.
+
 ## Three-Way Match
+
+The procurement detail authority for `threeWayMatch` is a deterministic server-owned read projection, not an independently persisted Match document. Its formal identity is `MATCH-{invoiceId}`. The direct reader validates that format, derives the Invoice ID once, and reads the exact tenant-scoped Supplier Invoice. It then reads only the PO and GRN IDs explicitly recorded on that Invoice when those facts are needed by the canonical Match builder.
+
+The operational-finance domain has a persisted `ThreeWayMatch` model for Match execution and finance workflows. Procurement detail does not try that model first or use it as a fallback: local Product Recovery scenario data and the existing canonical procurement read model expose the Invoice-derived projection even when no persisted Match exists. This keeps one authority per read contract and prevents guessed relationships.
+
+Supplier Invoice `relatedDocuments` may include the projected Match reference only under this documented identity contract. The reference is not described as a persisted foreign key or independently stored `DocumentLink`.
 
 Three-way match rows expose:
 

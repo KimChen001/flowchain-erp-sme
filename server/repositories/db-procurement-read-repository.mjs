@@ -2,9 +2,14 @@ import {
   buildProcurementDocumentLinks,
   buildProcurementDocuments,
   buildProcurementFollowups,
+  buildProcurementPurchaseOrders,
+  buildProcurementPurchaseRequests,
+  buildProcurementReceivingDocs,
+  buildProcurementRfqs,
   buildProcurementSummary,
+  buildProcurementSupplierInvoices,
+  buildProcurementThreeWayMatches,
   filterProcurementRows,
-  getProcurementDocument,
   isProcurementDocumentType,
   normalizeProcurementDocumentType,
 } from '../domain/procurement-read-model.mjs'
@@ -63,6 +68,26 @@ function tenantWhere(filters = {}) {
 
 function safeLimit(value, fallback = 500) {
   return Math.min(500, Math.max(1, Number(value || fallback)))
+}
+
+function decodeDocumentId(value) {
+  const encoded = text(value)
+  if (!encoded) return ''
+  try {
+    return decodeURIComponent(encoded)
+  } catch {
+    return ''
+  }
+}
+
+function documentWhere(tenantId, id) {
+  return {
+    tenantId,
+    id: {
+      equals: id,
+      mode: 'insensitive',
+    },
+  }
 }
 
 function mapPurchaseRequest(record = {}) {
@@ -353,6 +378,120 @@ function mapFollowup(record = {}) {
   }
 }
 
+async function readPurchaseRequestDocument(client, { id, tenantId }) {
+  const record = await client.purchaseRequest.findFirst({
+    where: documentWhere(tenantId, id),
+    include: { lines: true },
+  })
+  if (!record) return null
+  return buildProcurementPurchaseRequests({ purchaseRequests: [mapPurchaseRequest(record)] })[0] || null
+}
+
+async function readRfqDocument(client, { id, tenantId }) {
+  const record = await client.rfq.findFirst({
+    where: documentWhere(tenantId, id),
+    include: { lines: true },
+  })
+  if (!record) return null
+  const quotations = await client.supplierQuotation.findMany({
+    where: { tenantId, rfqId: record.id },
+    select: { id: true, rfqId: true },
+  })
+  return buildProcurementRfqs({ rfqs: [mapRfq(record, quotations)] })[0] || null
+}
+
+async function readPurchaseOrderDocument(client, { id, tenantId }) {
+  const record = await client.purchaseOrder.findFirst({
+    where: documentWhere(tenantId, id),
+    include: { lines: true },
+  })
+  if (!record) return null
+  const receivingDocuments = await client.receivingDocument.findMany({
+    where: { tenantId, poId: record.id },
+    select: { id: true, poId: true },
+  })
+  return buildProcurementPurchaseOrders({
+    purchaseOrders: [mapPurchaseOrder(record)],
+    receivingDocs: receivingDocuments.map((row) => ({ grn: row.id, po: row.poId })),
+  })[0] || null
+}
+
+async function readReceivingDocument(client, { id, tenantId }) {
+  const record = await client.receivingDocument.findFirst({
+    where: documentWhere(tenantId, id),
+    include: { lines: true },
+  })
+  if (!record) return null
+  const supplierInvoices = await client.supplierInvoice.findMany({
+    where: { tenantId, relatedGrnId: record.id },
+    select: { id: true, relatedGrnId: true },
+  })
+  return buildProcurementReceivingDocs({
+    receivingDocs: [mapReceivingDocument(record)],
+    supplierInvoices: supplierInvoices.map((row) => ({ invoiceNumber: row.id, relatedGrn: row.relatedGrnId })),
+  })[0] || null
+}
+
+async function readSupplierInvoiceDocument(client, { id, tenantId }) {
+  const record = await client.supplierInvoice.findFirst({
+    where: documentWhere(tenantId, id),
+    include: { lines: true },
+  })
+  if (!record) return null
+  return buildProcurementSupplierInvoices({ supplierInvoices: [mapSupplierInvoice(record)] })[0] || null
+}
+
+async function readThreeWayMatchDocument(client, { id, tenantId }) {
+  const matchId = id.match(/^MATCH-(.+)$/i)
+  if (!matchId?.[1]) return null
+  const invoice = await client.supplierInvoice.findFirst({
+    where: documentWhere(tenantId, matchId[1]),
+    include: { lines: true },
+  })
+  if (!invoice) return null
+
+  const [purchaseOrder, receivingDocument] = await Promise.all([
+    invoice.relatedPoId
+      ? client.purchaseOrder.findFirst({
+        where: documentWhere(tenantId, invoice.relatedPoId),
+        include: { lines: true },
+      })
+      : null,
+    invoice.relatedGrnId
+      ? client.receivingDocument.findFirst({
+        where: documentWhere(tenantId, invoice.relatedGrnId),
+        include: { lines: true },
+      })
+      : null,
+  ])
+
+  return buildProcurementThreeWayMatches({
+    supplierInvoices: [mapSupplierInvoice(invoice)],
+    purchaseOrders: purchaseOrder ? [mapPurchaseOrder(purchaseOrder)] : [],
+    receivingDocs: receivingDocument ? [mapReceivingDocument(receivingDocument)] : [],
+  })[0] || null
+}
+
+const directReaders = Object.freeze({
+  pr: readPurchaseRequestDocument,
+  rfq: readRfqDocument,
+  po: readPurchaseOrderDocument,
+  grn: readReceivingDocument,
+  invoice: readSupplierInvoiceDocument,
+  threeWayMatch: readThreeWayMatchDocument,
+})
+
+export const DIRECT_PROCUREMENT_DOCUMENT_TYPES = Object.freeze(Object.keys(directReaders))
+
+export async function getDirectProcurementDocument(client, type, id, tenantId) {
+  const canonicalType = normalizeProcurementDocumentType(type)
+  const reader = directReaders[canonicalType]
+  if (!reader) return null
+  const requestedId = decodeDocumentId(id)
+  if (!requestedId) return null
+  return reader(client, { id: requestedId, tenantId })
+}
+
 async function loadProcurementSnapshot(client, filters = {}) {
   const where = tenantWhere(filters)
   const take = safeLimit(filters.limit)
@@ -402,8 +541,7 @@ export function createDbProcurementReadRepository({ env = process.env, prisma } 
     },
     getDocument: async (type, id, options = {}) => {
       const client = await resolvePrisma({ env, prisma })
-      const snapshot = await loadProcurementSnapshot(client, options)
-      return getProcurementDocument(snapshot, type, id)
+      return getDirectProcurementDocument(client, type, id, tenantWhere(options).tenantId)
     },
     listLinks: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })

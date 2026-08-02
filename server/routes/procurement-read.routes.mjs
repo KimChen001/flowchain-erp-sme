@@ -37,11 +37,12 @@ export async function handleProcurementReadRoute(ctx) {
 
   const documentMatch = url.pathname.match(/^\/api\/procurement\/documents\/([^/]+)\/([^/]+)$/)
   if (req.method === 'GET' && documentMatch) {
-    if (!repository.isDocumentType(documentMatch[1])) {
+    const documentType = repository.normalizeDocumentType(documentMatch[1])
+    if (!documentType) {
       send(res, 400, { error: 'Invalid procurement document type' })
       return true
     }
-    const document = await repository.getDocument(documentMatch[1], documentMatch[2], tenantId ? { tenantId } : {})
+    const document = await repository.getDocument(documentType, documentMatch[2], tenantId ? { tenantId } : {})
     if (!document) {
       send(res, 404, { error: 'Procurement document not found' })
       return true
