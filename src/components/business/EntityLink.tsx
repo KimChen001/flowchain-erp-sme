@@ -18,5 +18,5 @@ const routeFor: Record<EntityKind, (id: string) => string> = {
 export function EntityLink({ kind, id, children, className = "" }: { kind: EntityKind; id?: string | null; children?: ReactNode; className?: string }) {
   const value = String(id || "").trim();
   if (!value) return <span className={className}>{children}</span>;
-  return <Link className={`fc-entity-link font-semibold underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${className}`} to={routeFor[kind](value)}>{children ?? value}</Link>;
+  return <Link className={`fc-entity-link font-semibold text-blue-600 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${className}`} to={routeFor[kind](value)}>{children ?? value}</Link>;
 }

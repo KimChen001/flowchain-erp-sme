@@ -32,6 +32,11 @@ test.beforeAll(async () => {
 });
 
 test("authoritative Product Recovery pages remain useful and truthful", async ({ page, request }) => {
+  const adminLogin = await request.post("/api/auth/login", {
+    data: { email: "admin@flowchain.local", name: "Initial Admin", company: "Product Recovery" },
+  });
+  expect(adminLogin.ok()).toBeTruthy();
+
   const login = await request.post("/api/auth/login", {
     data: { email: "kim@example.com", name: "Product Recovery", company: "Product Recovery" },
   });
@@ -49,6 +54,15 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByText("部分收货").first()).toBeVisible();
   await expect(page.getByText("发票差异").first()).toBeVisible();
   await capture(page, "01-procurement-orders");
+
+  await page.goto("/app/procurement/order-lines");
+  const fulfillmentTable = page.getByTestId("order-fulfillment-line-list").getByRole("table");
+  await expect(fulfillmentTable).toBeVisible();
+  await expect(fulfillmentTable.getByRole("columnheader", { name: "已收", exact: true })).toBeVisible();
+  await expect(fulfillmentTable.getByRole("columnheader", { name: "已开票", exact: true })).toBeVisible();
+  await expect(page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-001-LINE-001")).toContainText("20 pcs");
+  await expect(page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-002-LINE-001")).toContainText("40 pcs");
+  await capture(page, "01a-order-fulfillment-lines");
 
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-001");
   await expect(page.getByRole("heading", { name: "采购订单 / PO" })).toBeVisible();

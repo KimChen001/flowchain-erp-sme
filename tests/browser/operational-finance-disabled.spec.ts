@@ -21,7 +21,7 @@ test("disabled operational finance remains fail-closed", async ({
   await page.goto("/app/finance/overview");
   const blocked = page.getByTestId("capability-route-blocked");
   await expect(blocked).toBeVisible();
-  await expect(blocked).toContainText("beta");
+  await expect(blocked).toContainText("能力暂不可用");
 
   const read = await request.get("/api/finance/customer-invoices", {
     headers: { Authorization: `Bearer ${session.token}` },

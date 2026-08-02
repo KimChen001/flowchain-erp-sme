@@ -34,6 +34,7 @@ import { roleLabel } from "../../shared/roles.mjs";
 import { handleRuntimeCapabilityRoute } from "../routes/runtime-capability.routes.mjs";
 import { dispatchApiRoute } from "./route-dispatcher.mjs";
 import { localDevelopmentEnabled } from "../domain/local-development-contract.mjs";
+import { capabilityForEnvironment } from "../domain/capability-registry.mjs";
 import {
   actorFromBody,
   applyWorkflowTransition,
@@ -876,7 +877,7 @@ export function createScmServer() {
           availableLoginEmails: users.map(user => user.email),
           demoMasterDataLoaded: demoMasterDataCount > 0,
           demoScenarioLoaded: demoScenarioCount > 0,
-          universalIntakeEnabled: process.env.FLOWCHAIN_ENABLE_UNIVERSAL_INTAKE !== "false",
+          universalIntakeEnabled: capabilityForEnvironment("universal-intake", process.env)?.enabled === true,
         });
       }
 

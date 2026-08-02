@@ -1,29 +1,55 @@
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { defaultRouteForModule, moduleRoute, recoveryModuleForPath, routesForModule, type AppRouteDefinition } from "../../app/routeRegistry";
+import {
+  defaultRouteForModule,
+  moduleRoute,
+  primarySurfaceRoute,
+  recoveryModuleForPath,
+  routesForModule,
+  routesForPrimarySurface,
+} from "../../app/routeRegistry";
+import {
+  isRouteVisibleInNavigation,
+  type GovernedAppRouteDefinition,
+  type GovernedRouteAccessContext,
+} from "../../app/routes/index.ts";
 import { A } from "../ui";
 import { AppBreadcrumb } from "./AppBreadcrumb";
 import { useI18n } from "../../i18n/I18n";
 
-export function ModuleShell({ route, children, capabilities = {} }: { route: AppRouteDefinition; children: React.ReactNode; capabilities?: Record<string, { enabled: boolean }> }) {
+export function ModuleShell({ route, children, routeAccess }: { route: GovernedAppRouteDefinition; children: React.ReactNode; routeAccess: GovernedRouteAccessContext }) {
   const navigate = useNavigate();
   const { routeLabel, workspaceName, language } = useI18n();
-  const root = moduleRoute(route.moduleId) || route;
-  const subRoutes = routesForModule(route.moduleId).filter((item) => !item.capabilityId || capabilities[item.capabilityId]?.enabled === true);
+  const moduleRoot = moduleRoute(route.moduleId) || route;
+  const root = primarySurfaceRoute(route);
+  const standalonePrimarySurface = root.id !== moduleRoot.id;
+  const rootLabel = root.navigationLabel || routeLabel(root, !standalonePrimarySurface);
+  const subRoutes = standalonePrimarySurface
+    ? routesForPrimarySurface(root).filter(
+        (item) =>
+          (item.id === root.id &&
+            isRouteVisibleInNavigation(item, "PRIMARY", routeAccess)) ||
+          isRouteVisibleInNavigation(item, "SECONDARY", routeAccess),
+      )
+    : routesForModule(route.moduleId).filter(
+        (item) =>
+          primarySurfaceRoute(item).id === moduleRoot.id &&
+          isRouteVisibleInNavigation(item, "SECONDARY", routeAccess),
+      );
   const activeMenuId = route.currentActiveMenuId || route.id;
   const showModuleHeader = route.id === root.id;
   const showPageHeader = route.id !== root.id && route.pageType !== "detail" && route.moduleId !== "reports";
   return (
     <div className="fc-module-shell" data-testid="module-shell" data-route-id={route.id}>
       <AppBreadcrumb route={route} />
-      {!showModuleHeader && <span className="sr-only" data-testid="module-title">{routeLabel(root, true)}</span>}
+      {!showModuleHeader && <span className="sr-only" data-testid="module-title">{rootLabel}</span>}
       {showModuleHeader && <div className="fc-module-header">
         <div>
-          <h1 className="fc-module-title" data-testid="module-title">{route.moduleId === "settings" && workspaceName ? workspaceName : routeLabel(root, true)}</h1>
+          <h1 className="fc-module-title" data-testid="module-title">{route.moduleId === "settings" && workspaceName ? workspaceName : rootLabel}</h1>
         </div>
       </div>}
-      {subRoutes.length > 0 && (
-        <nav className="fc-module-subnav" aria-label={language === "en-US" ? `${routeLabel(root, true)} navigation` : `${routeLabel(root, true)}二级导航`} data-testid="module-subnav">
+      {subRoutes.length > 1 && (
+        <nav className="fc-module-subnav" aria-label={language === "en-US" ? `${rootLabel} navigation` : `${rootLabel}二级导航`} data-testid="module-subnav">
           {subRoutes.map((item) => <Link key={item.id} to={item.path} aria-current={activeMenuId === item.id ? "page" : undefined} className={activeMenuId === item.id ? "is-active" : ""}>{routeLabel(item)}</Link>)}
         </nav>
       )}

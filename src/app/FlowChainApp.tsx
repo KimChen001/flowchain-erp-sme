@@ -17,9 +17,10 @@ import {
   X,
   ChevronRight,
 } from "lucide-react";
-import { navGroups, navItems } from "./routes";
+import { navGroups, navItems } from "./routes.tsx";
 import {
   defaultRouteForModule,
+  primarySurfaceRoute,
   routeById,
   routeByPath,
   routePathForId,
@@ -59,6 +60,13 @@ import {
   type CapabilityLoadState,
   type ModuleCapability,
 } from "./capabilityRouteGuard";
+import {
+  capabilityIdForRoute,
+  hasRoutePermission,
+  isRouteVisibleInNavigation,
+  type GovernedRouteAccessContext,
+  type RouteRegistryLoadState,
+} from "./routes/index.ts";
 
 import ReceivingPanel from "../modules/receiving/Page";
 import ReceivingPostingWorkbench from "../modules/receiving/ReceivingPostingWorkbench";
@@ -602,7 +610,21 @@ export default function FlowChainApp() {
   >({});
   const [capabilityLoadState, setCapabilityLoadState] =
     useState<CapabilityLoadState>("loading");
-  const [authorizationVisibility, setAuthorizationVisibility] = useState<Record<string, { visible: boolean; permissionAllowed: boolean; capabilityAllowed: boolean }> | null>(null);
+  const [authorizationLoadState, setAuthorizationLoadState] =
+    useState<RouteRegistryLoadState>("loading");
+  const [effectivePermissionCodes, setEffectivePermissionCodes] = useState<
+    Set<string>
+  >(new Set());
+  const [authorizationVisibility, setAuthorizationVisibility] = useState<
+    Record<
+      string,
+      {
+        visible: boolean;
+        permissionAllowed: boolean;
+        capabilityAllowed: boolean;
+      }
+    >
+  >({});
   const [experimentalModuleIds, setExperimentalModuleIds] = useState<
     Set<string>
   >(() => readExperimentalModuleIds());
@@ -677,6 +699,16 @@ export default function FlowChainApp() {
     } else {
       const route = routeByPath(location.pathname);
       if (
+        route?.directAccessBehavior === "LEGACY_REDIRECT" &&
+        route.canonicalReplacement
+      ) {
+        const destination = routeById(route.canonicalReplacement);
+        if (destination)
+          routerNavigate(
+            `${destination.path}${location.search}${location.hash}`,
+            { replace: true },
+          );
+      } else if (
         route &&
         !route.parentId &&
         route.entryBehavior === "redirect-to-default-child"
@@ -686,7 +718,7 @@ export default function FlowChainApp() {
           routerNavigate(destination.path, { replace: true });
       }
     }
-  }, [location.pathname, routerNavigate]);
+  }, [location.hash, location.pathname, location.search, routerNavigate]);
 
   const activeRoute = routeByPath(location.pathname);
   const active = activeRoute?.id || "not-found";
@@ -731,10 +763,35 @@ export default function FlowChainApp() {
   }, [authToken, experimentalModuleIds]);
 
   useEffect(() => {
-    if (!authToken) { setAuthorizationVisibility(null); return; }
-    apiJson<{ moduleVisibility: Record<string, { visible: boolean; permissionAllowed: boolean; capabilityAllowed: boolean }> }>("/api/authorization/context")
-      .then((result) => setAuthorizationVisibility(result.moduleVisibility))
-      .catch(() => setAuthorizationVisibility(null));
+    if (!authToken) {
+      setAuthorizationLoadState("loading");
+      setEffectivePermissionCodes(new Set());
+      setAuthorizationVisibility({});
+      return;
+    }
+    setAuthorizationLoadState("loading");
+    setEffectivePermissionCodes(new Set());
+    apiJson<{
+      effectivePermissions: string[];
+      moduleVisibility: Record<
+        string,
+        {
+          visible: boolean;
+          permissionAllowed: boolean;
+          capabilityAllowed: boolean;
+        }
+      >;
+    }>("/api/authorization/context")
+      .then((result) => {
+        setAuthorizationVisibility(result.moduleVisibility);
+        setEffectivePermissionCodes(new Set(result.effectivePermissions));
+        setAuthorizationLoadState("ready");
+      })
+      .catch(() => {
+        setAuthorizationVisibility({});
+        setEffectivePermissionCodes(new Set());
+        setAuthorizationLoadState("failed");
+      });
   }, [authToken]);
 
   useEffect(() => {
@@ -769,7 +826,9 @@ export default function FlowChainApp() {
     const root = routeById(item.routeId);
     return {
       ...item,
-      label: root ? routeLabel(root, true) : item.label,
+      label:
+        item.navigationLabel ||
+        (root ? routeLabel(root, !root.parentId) : item.label),
       children: item.children?.map(child => {
         const route = routeById(child.id);
         return { ...child, label: route ? routeLabel(route) : child.label };
@@ -777,43 +836,56 @@ export default function FlowChainApp() {
     };
   }), [routeLabel]);
 
-  function navItemMatchesActive(item: (typeof localizedNavItems)[number]) {
-    return (
-      item.id === activeModule ||
-      Boolean(
-        item.children?.some(
-          (child) => child.id === (activeRoute?.currentActiveMenuId || active),
-        ),
-      )
+  const activeNavigationRouteId = activeRoute?.currentActiveMenuId || active;
+  const activePrimarySurfaceId = activeRoute
+    ? primarySurfaceRoute(activeRoute).id
+    : activeNavigationRouteId;
+  const activeNavItem =
+    localizedNavItems.find(
+      (item) => item.routeId === activePrimarySurfaceId,
+    ) ||
+    localizedNavItems.find(
+      (item) =>
+        item.children?.some((child) => child.id === activeNavigationRouteId),
+    ) ||
+    localizedNavItems.find(
+      (item) => item.moduleId === activeModule && !routeById(item.routeId)?.parentId,
     );
-  }
-
-  const activeNavItem = localizedNavItems.find(navItemMatchesActive);
   const activeModuleLabel =
     (activeRoute ? routeLabel(activeRoute, true) : "") || activeNavItem?.label || activeModule;
   const activeChildLabel = activeRoute?.parentId
     ? routeLabel(activeRoute)
     : undefined;
-  const capabilityAccess = resolveCapabilityRouteAccess({
-    moduleId: activeRoute?.capabilityId || activeModule,
-    loadState: capabilityLoadState,
-    capabilities,
-    experimentalModuleIds,
-  });
-  const routeWriteCapabilityBlocked = Boolean(
-    activeRoute?.capabilityId &&
-      capabilityAccess.status === "blocked" &&
-      capabilityAccess.capability.maturity !== "preview" &&
-      capabilityAccess.capability.readReady &&
-      !capabilityAccess.capability.enabled,
+  const activeCapabilityId = activeRoute
+    ? capabilityIdForRoute(activeRoute)
+    : undefined;
+  const capabilityAccess = activeCapabilityId
+    ? resolveCapabilityRouteAccess({
+        moduleId: activeCapabilityId,
+        loadState: capabilityLoadState,
+        capabilities,
+        experimentalModuleIds,
+      })
+    : null;
+  const routeAccess = useMemo<GovernedRouteAccessContext>(
+    () => ({
+      capabilityLoadState,
+      enabledCapabilityIds: enabledModuleIds,
+      authorizationLoadState,
+      effectivePermissionCodes,
+      moduleVisibility: authorizationVisibility,
+    }),
+    [
+      authorizationLoadState,
+      capabilityLoadState,
+      effectivePermissionCodes,
+      enabledModuleIds,
+      authorizationVisibility,
+    ],
   );
-  const authorizationModule = panelModule === "returns-quarantine" ? "returns-quarantine" : panelModule === "receiving-posting" ? "receiving" : activeModule;
-  const authorizationAccess = authorizationVisibility?.[authorizationModule];
-  const navPermissionVisible = (moduleId: string) => {
-    if (!authorizationVisibility) return true;
-    if (moduleId === "inventory") return Boolean(authorizationVisibility.inventory?.visible || authorizationVisibility["returns-quarantine"]?.visible);
-    return authorizationVisibility[moduleId]?.visible ?? true;
-  };
+  const activeRouteHasPermission = activeRoute
+    ? hasRoutePermission(activeRoute, effectivePermissionCodes)
+    : false;
   const contentMaxWidthClass =
     panelModule === "srm"
       ? "max-w-[1440px]"
@@ -1319,20 +1391,25 @@ export default function FlowChainApp() {
                       const item = localizedNavItems.find(
                         (entry) => entry.id === itemId,
                       );
+                      const governedRoute = item
+                        ? routeById(item.routeId)
+                        : undefined;
                       if (
                         !item ||
-                        (enabledModuleIds && !enabledModuleIds.has(item.id)) ||
-                        !navPermissionVisible(item.id)
+                        !governedRoute ||
+                        !isRouteVisibleInNavigation(
+                          governedRoute,
+                          "PRIMARY",
+                          routeAccess,
+                        )
                       )
                         return null;
                       const isActive = activeNavItem?.id === item.id;
                       return (
                         <div key={item.id} className="space-y-0.5">
                           <button
-                            aria-label={
-                              item.id === "reports" ? "报表与分析" : undefined
-                            }
-                            onClick={() => navigateTo(item.id)}
+                            aria-current={isActive ? "page" : undefined}
+                            onClick={() => navigateTo(item.routeId)}
                             className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm font-medium transition-colors duration-150"
                             style={
                               isActive
@@ -1351,7 +1428,9 @@ export default function FlowChainApp() {
                               strokeWidth={isActive ? 2 : 1.8}
                             />
                             <span className="truncate">{item.label}</span>
-                            {capabilities[item.id]?.maturity === "beta" && (
+                            {governedRoute.requiredCapability &&
+                              capabilities[governedRoute.requiredCapability]
+                                ?.maturity === "beta" && (
                               <span className="ml-auto rounded bg-blue-500/20 px-1.5 py-0.5 text-[9px] text-blue-100">
                                 Beta
                               </span>
@@ -1394,16 +1473,24 @@ export default function FlowChainApp() {
           <div className="flex min-w-0 items-center gap-2 text-sm">
             <select
               aria-label={t("nav.primary")}
-              value={activeModule}
+              value={activeNavItem?.routeId || activeModule}
               onChange={(event) => navigateTo(event.target.value)}
               className="max-w-[150px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs lg:hidden"
             >
               {localizedNavItems
-                .filter(
-                  (item) => !enabledModuleIds || enabledModuleIds.has(item.id),
-                )
+                .filter((item) => {
+                  const governedRoute = routeById(item.routeId);
+                  return Boolean(
+                    governedRoute &&
+                      isRouteVisibleInNavigation(
+                        governedRoute,
+                        "PRIMARY",
+                        routeAccess,
+                      ),
+                  );
+                })
                 .map((item) => (
-                  <option key={item.id} value={item.id}>
+                  <option key={item.id} value={item.routeId}>
                     {item.label}
                   </option>
                 ))}
@@ -1742,35 +1829,104 @@ export default function FlowChainApp() {
               className={`mx-auto w-full ${contentMaxWidthClass}`}
             >
               {activeRoute ? (
-                <ModuleShell route={activeRoute} capabilities={capabilities}>
-                  {capabilityAccess.status === "loading" ? (
-                    <CapabilityRouteStatus
-                      moduleLabel={activeModuleLabel}
-                      maturity={capabilityAccess.capability.maturity}
-                      reason={capabilityAccess.capability.reason}
-                      loading
-                      onNavigate={routerNavigate}
-                    />
-                  ) : authorizationAccess && !authorizationAccess.permissionAllowed ? (
+                <ModuleShell route={activeRoute} routeAccess={routeAccess}>
+                  {activeRoute.directAccessBehavior === "LEGACY_REDIRECT" ? (
+                    <Card className="p-10 text-center" data-testid="legacy-route-redirecting">
+                      <Loader2 className="mx-auto animate-spin text-slate-500" size={32} />
+                      <h2 className="mt-3 text-lg font-semibold">正在转到正式数据接入页面</h2>
+                    </Card>
+                  ) : activeRoute.directAccessBehavior === "NOT_IMPLEMENTED" ? (
+                    <Card className="p-10 text-center" data-testid="route-not-implemented">
+                      <AlertTriangle className="mx-auto text-amber-600" size={34} />
+                      <h2 className="mt-3 text-lg font-semibold">页面尚未接通</h2>
+                      <p className="mt-2 text-sm text-slate-500">
+                        {activeRoute.knownLimitations || "当前路径已识别，但正式业务页面尚未接通。"}
+                      </p>
+                      <button
+                        type="button"
+                        className="mt-5 text-sm font-semibold text-blue-600 hover:underline"
+                        onClick={() =>
+                          routerNavigate(
+                            routeById(activeRoute.returnListRouteId || "")?.path ||
+                              "/app/overview",
+                          )
+                        }
+                      >
+                        返回{routeById(activeRoute.returnListRouteId || "")?.label || "上一层"}
+                      </button>
+                    </Card>
+                  ) : activeRoute.directAccessBehavior === "LEGACY_UNAVAILABLE" ? (
+                    <Card className="p-10 text-center" data-testid="legacy-route-unavailable">
+                      <AlertTriangle className="mx-auto text-amber-600" size={34} />
+                      <h2 className="mt-3 text-lg font-semibold">旧页面已停用</h2>
+                      <p className="mt-2 text-sm text-slate-500">
+                        该旧路径没有一对一替代页面，不会跳转到无关功能。
+                      </p>
+                      <button
+                        type="button"
+                        className="mt-5 text-sm font-semibold text-blue-600 hover:underline"
+                        onClick={() => routerNavigate("/app/universal-intake")}
+                      >
+                        前往统一数据接入
+                      </button>
+                    </Card>
+                  ) : activeRoute.directAccessBehavior === "INTERNAL_ONLY" ? (
+                    <Card className="p-10 text-center" data-testid="internal-route-blocked">
+                      <Lock className="mx-auto text-slate-500" size={34} />
+                      <h2 className="mt-3 text-lg font-semibold">内部页面不可从普通工作台进入</h2>
+                      <p className="mt-2 text-sm text-slate-500">
+                        此页面属于内部治理边界，不是默认 SME 产品入口。
+                      </p>
+                    </Card>
+                  ) : activeRoute.directAccessBehavior === "FROZEN_UNAVAILABLE" ? (
+                    <Card className="p-10 text-center" data-testid="capability-route-blocked">
+                      <Lock className="mx-auto text-slate-500" size={34} />
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability unavailable" : "能力暂不可用"}</h2>
+                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "This frozen product surface is not available." : "该冻结业务能力未作为正式产品功能启用。"}</p>
+                    </Card>
+                  ) : activeRoute.requiredPermission &&
+                    authorizationLoadState === "loading" ? (
+                    <Card className="p-10 text-center" data-testid="authorization-route-loading">
+                      <Loader2 className="mx-auto animate-spin text-slate-500" size={32} />
+                      <h2 className="mt-3 text-lg font-semibold">正在验证访问权限</h2>
+                    </Card>
+                  ) : activeRoute.requiredPermission &&
+                    authorizationLoadState === "failed" ? (
+                    <Card className="p-10 text-center" data-testid="authorization-route-unavailable">
+                      <ShieldAlert className="mx-auto text-amber-600" size={34} />
+                      <h2 className="mt-3 text-lg font-semibold">无法验证当前访问权限</h2>
+                      <p className="mt-2 text-sm text-slate-500">请刷新页面或重新登录。</p>
+                    </Card>
+                  ) : activeRoute.requiredPermission &&
+                    !activeRouteHasPermission ? (
                     <Card className="p-10 text-center" data-testid="authorization-route-denied">
                       <ShieldAlert className="mx-auto text-amber-600" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Access denied" : "无权访问"}</h2>
-                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "Your effective roles do not grant read permission for this module." : "当前有效角色未授予此模块的读取权限。"}</p>
+                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "Your effective permissions do not grant access to this route." : "当前有效权限未授予此页面的读取权限。"}</p>
                     </Card>
-                  ) : (authorizationAccess && !authorizationAccess.capabilityAllowed) ||
-                    routeWriteCapabilityBlocked ? (
+                  ) : activeCapabilityId &&
+                    capabilityLoadState === "loading" ? (
+                    <CapabilityRouteStatus
+                      moduleLabel={activeModuleLabel}
+                      maturity={capabilityAccess?.capability.maturity || "unavailable"}
+                      reason={capabilityAccess?.capability.reason || ""}
+                      loading
+                      onNavigate={routerNavigate}
+                    />
+                  ) : activeCapabilityId &&
+                    capabilityLoadState === "failed" ? (
+                    <Card className="p-10 text-center" data-testid="capability-registry-unavailable">
+                      <Lock className="mx-auto text-slate-500" size={34} />
+                      <h2 className="mt-3 text-lg font-semibold">能力注册表暂不可用</h2>
+                      <p className="mt-2 text-sm text-slate-500">无法验证该扩展能力是否启用，页面已按安全策略关闭。</p>
+                    </Card>
+                  ) : activeCapabilityId &&
+                    capabilityAccess?.status === "blocked" ? (
                     <Card className="p-10 text-center" data-testid="capability-route-blocked">
                       <Lock className="mx-auto text-slate-500" size={34} />
                       <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability unavailable" : "能力暂不可用"}</h2>
                       <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "Permission is present, but this capability is disabled." : "权限已具备，但该业务能力当前未启用。"}</p>
                     </Card>
-                  ) : capabilityAccess.status === "blocked" ? (
-                    <CapabilityRouteStatus
-                      moduleLabel={activeModuleLabel}
-                      maturity={capabilityAccess.capability.maturity}
-                      reason={capabilityAccess.reason}
-                      onNavigate={routerNavigate}
-                    />
                   ) : (
                     <PanelErrorBoundary
                       key={location.pathname}
@@ -1808,6 +1964,8 @@ export default function FlowChainApp() {
                             "supplier",
                             "item",
                             "settlement_document",
+                            "supplier_invoice",
+                            "three_way_match",
                           ].includes(activeRoute.entityType) ? (
                           <BusinessEntityDetailPage route={activeRoute} />
                         ) : (

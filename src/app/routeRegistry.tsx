@@ -1,5 +1,12 @@
 import type React from "react";
 import {
+  buildRouteManifest,
+  primaryNavigationRoutes,
+  type AppEntryBehavior,
+  type AppRouteDefinition,
+  type GovernedAppRouteDefinition,
+} from "./routes/index.ts";
+import {
   AlertTriangle,
   BarChart2,
   ClipboardList,
@@ -18,42 +25,7 @@ import {
   Users,
 } from "lucide-react";
 
-export type AppPageType =
-  | "module-overview"
-  | "list"
-  | "detail"
-  | "create"
-  | "edit"
-  | "analysis"
-  | "settings";
-export type AppEntryBehavior = "redirect-to-default-child" | "landing";
-
-export type AppRouteDefinition = {
-  id: string;
-  path: string;
-  moduleId: string;
-  moduleLabel: string;
-  label: string;
-  description?: string;
-  parentId?: string;
-  defaultChildId?: string;
-  entryBehavior?: AppEntryBehavior;
-  icon?: React.ElementType;
-  showInSidebar?: boolean;
-  showInModuleNav?: boolean;
-  showInBreadcrumb?: boolean;
-  pageType?: AppPageType;
-  currentActiveMenuId?: string;
-  entityType?: string;
-  entityIdParam?: string;
-  returnListRouteId?: string;
-  legacyIds?: string[];
-  panelId?: string;
-  viewId?: string;
-  capabilityId?: string;
-  group?: "主导航" | "高级与内部";
-  order: number;
-};
+export type { AppRouteDefinition } from "./routes/index.ts";
 
 const module = (
   definition: Omit<
@@ -79,7 +51,7 @@ const page = (
   showInBreadcrumb: true,
 });
 
-export const appRouteRegistry: AppRouteDefinition[] = [
+const declaredAppRoutes: AppRouteDefinition[] = [
   module({
     id: "overview",
     path: "/app/overview",
@@ -88,8 +60,8 @@ export const appRouteRegistry: AppRouteDefinition[] = [
     label: "今日待办",
     description: "查看今天需要关注的经营事项。",
     icon: BarChart2,
-    defaultChildId: "overview",
-    entryBehavior: "landing",
+    defaultChildId: "overview:risks",
+    entryBehavior: "redirect-to-default-child",
     group: "主导航",
     order: 10,
   }),
@@ -431,13 +403,26 @@ export const appRouteRegistry: AppRouteDefinition[] = [
     order: 34,
   }),
   page({
+    id: "procurement:order-lines",
+    path: "/app/procurement/order-lines",
+    moduleId: "procurement",
+    moduleLabel: "采购管理",
+    label: "订单履约明细",
+    description: "按采购订单行查看订购、收货、开票与剩余数量。",
+    parentId: "procurement:receiving",
+    pageType: "analysis",
+    panelId: "procurement",
+    viewId: "order-lines",
+    order: 34.5,
+  }),
+  page({
     id: "procurement:invoices",
     path: "/app/procurement/invoices",
     moduleId: "procurement",
     moduleLabel: "采购管理",
     label: "供应商发票",
     description: "查看供应商发票及匹配状态。",
-    parentId: "procurement",
+    parentId: "procurement:receiving",
     pageType: "list",
     panelId: "procurement",
     viewId: "invoices",
@@ -450,7 +435,7 @@ export const appRouteRegistry: AppRouteDefinition[] = [
     moduleLabel: "采购管理",
     label: "三单匹配",
     description: "比对采购订单、收货单和发票。",
-    parentId: "procurement",
+    parentId: "procurement:receiving",
     pageType: "analysis",
     viewId: "match",
     order: 36,
@@ -588,6 +573,44 @@ export const appRouteRegistry: AppRouteDefinition[] = [
     showInModuleNav: false,
     showInBreadcrumb: true,
     order: 36.4,
+  },
+  {
+    id: "procurement:invoice-detail",
+    path: "/app/procurement/invoices/:id",
+    moduleId: "procurement",
+    panelId: "procurement",
+    viewId: "invoice-detail",
+    moduleLabel: "采购管理",
+    label: "供应商发票详情",
+    parentId: "procurement:invoices",
+    pageType: "detail",
+    currentActiveMenuId: "procurement:invoices",
+    entityType: "supplier_invoice",
+    entityIdParam: "id",
+    returnListRouteId: "procurement:invoices",
+    showInSidebar: false,
+    showInModuleNav: false,
+    showInBreadcrumb: true,
+    order: 36.5,
+  },
+  {
+    id: "procurement:match-detail",
+    path: "/app/procurement/three-way-match/:id",
+    moduleId: "procurement",
+    panelId: "procurement",
+    viewId: "match-detail",
+    moduleLabel: "采购管理",
+    label: "三单匹配详情",
+    parentId: "procurement:match",
+    pageType: "detail",
+    currentActiveMenuId: "procurement:match",
+    entityType: "three_way_match",
+    entityIdParam: "id",
+    returnListRouteId: "procurement:match",
+    showInSidebar: false,
+    showInModuleNav: false,
+    showInBreadcrumb: true,
+    order: 36.6,
   },
 
   module({
@@ -1402,6 +1425,7 @@ export const appRouteRegistry: AppRouteDefinition[] = [
     parentId: "finance",
     pageType: "list",
     viewId: "settlement",
+    capabilityId: "internal-settlement",
     order: 65,
   }),
   page({
@@ -1510,6 +1534,7 @@ export const appRouteRegistry: AppRouteDefinition[] = [
     parentId: "finance:settlement",
     pageType: "detail",
     currentActiveMenuId: "finance:settlement",
+    capabilityId: "internal-settlement",
     entityType: "settlement_document",
     entityIdParam: "id",
     returnListRouteId: "finance:settlement",
@@ -2031,8 +2056,8 @@ export const appRouteRegistry: AppRouteDefinition[] = [
     moduleLabel: "行动草稿与人工复核",
     label: "行动草稿工作台",
     icon: FileCheck2,
-    defaultChildId: "review-actions",
-    entryBehavior: "landing",
+    defaultChildId: "review-actions:waiting",
+    entryBehavior: "redirect-to-default-child",
     group: "高级与内部",
     order: 150,
   }),
@@ -2183,6 +2208,8 @@ export const appRouteRegistry: AppRouteDefinition[] = [
   }),
 ];
 
+export const appRouteRegistry = buildRouteManifest(declaredAppRoutes);
+
 const normalizePath = (value: string) =>
   value.length > 1 ? value.replace(/\/+$/, "") : value;
 
@@ -2222,8 +2249,39 @@ export function defaultRouteForModule(moduleId: string) {
 
 export function routesForModule(moduleId: string) {
   return appRouteRegistry
-    .filter((route) => route.moduleId === moduleId && route.showInModuleNav)
+    .filter(
+      (route) =>
+        route.moduleId === moduleId &&
+        route.showInModuleNav &&
+        route.navigationVisibility !== "HIDDEN",
+    )
     .sort((a, b) => a.order - b.order);
+}
+
+export function primarySurfaceRoute(
+  route: AppRouteDefinition,
+): GovernedAppRouteDefinition {
+  let current: GovernedAppRouteDefinition | undefined = routeById(route.id);
+  while (current) {
+    if (current.navigationVisibility === "PRIMARY") return current;
+    current = current.parentId ? routeById(current.parentId) : undefined;
+  }
+  return moduleRoute(route.moduleId) || appRouteRegistry[0];
+}
+
+export function routesForPrimarySurface(route: AppRouteDefinition) {
+  const surface = primarySurfaceRoute(route);
+  return [
+    surface,
+    ...appRouteRegistry
+      .filter(
+        (candidate) =>
+          candidate.parentId === surface.id &&
+          candidate.showInModuleNav &&
+          candidate.navigationVisibility !== "HIDDEN",
+      )
+      .sort((a, b) => a.order - b.order),
+  ];
 }
 
 export function breadcrumbRoutes(route: AppRouteDefinition) {
@@ -2234,8 +2292,12 @@ export function breadcrumbRoutes(route: AppRouteDefinition) {
     ancestors.unshift(current);
     current = current.parentId ? routeById(current.parentId) : undefined;
   }
+  const surface = primarySurfaceRoute(route);
+  const surfaceIndex = ancestors.findIndex((item) => item.id === surface.id);
+  const visibleAncestors =
+    surfaceIndex >= 0 ? ancestors.slice(surfaceIndex) : ancestors;
   const result =
-    route.moduleId === "overview" ? ancestors : [home, ...ancestors];
+    route.moduleId === "overview" ? visibleAncestors : [home, ...visibleAncestors];
   return result.filter(
     (item, index) =>
       item.showInBreadcrumb !== false &&
@@ -2250,25 +2312,43 @@ export function recoveryModuleForPath(pathname: string) {
 }
 
 const modules = appRouteRegistry
-  .filter((route) => route.showInSidebar && !route.parentId)
-  .sort((a, b) => a.order - b.order);
+  .filter((route) => route.navigationVisibility === "PRIMARY");
 
-export const navItems = modules.map((root) => ({
-  icon: root.icon || Database,
-  label: root.moduleLabel,
-  id: root.moduleId,
-  routeId: root.id,
-  children: routesForModule(root.moduleId).map((route) => ({
-    id: route.id,
-    label: route.label,
-    path: route.path,
-  })),
+const primaryNavIcons: Record<string, React.ElementType> = {
+  overview: BarChart2,
+  procurement: Handshake,
+  "procurement:receiving": Package,
+  inventory: Package,
+  sales: ClipboardList,
+  "master-data:suppliers": Users,
+  "master-data:items": Database,
+  reports: FileSpreadsheet,
+  "universal-intake": FileSpreadsheet,
+  "review-actions": FileCheck2,
+};
+
+export const navItems = primaryNavigationRoutes(modules).map((route) => ({
+  icon: primaryNavIcons[route.id] || route.icon || Database,
+  label: route.navigationLabel || route.label,
+  id: route.id,
+  moduleId: route.moduleId,
+  routeId: route.id,
+  classification: route.classification,
+  navigationLabel: route.navigationLabel,
+  requiredCapability: route.requiredCapability,
+  children: route.parentId
+    ? []
+    : routesForModule(route.moduleId).map((child) => ({
+        id: child.id,
+        label: child.label,
+        path: child.path,
+      })),
 }));
 
-export const navGroups = (["主导航", "高级与内部"] as const).map((label) => ({
-  label,
-  itemIds: modules
-    .filter((route) => route.group === label)
-    .map((route) => route.moduleId),
-  defaultCollapsed: label === "高级与内部",
-}));
+export const navGroups = [
+  {
+    label: "主导航" as const,
+    itemIds: navItems.map((item) => item.id),
+    defaultCollapsed: false,
+  },
+];

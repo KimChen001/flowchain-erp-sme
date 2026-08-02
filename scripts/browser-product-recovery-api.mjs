@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
+import { backfillTenantAuthorization } from "../server/auth/authorization-backfill.mjs";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
 import { seedLocalDemo } from "./setup-local-demo.mjs";
 import { seedLocalScenario } from "./setup-local-scenario.mjs";
@@ -16,6 +17,8 @@ const prismaCli = join(root, "node_modules", "prisma", "build", "index.js");
 const tenantId = "tenant-flowchain-local";
 const email = "kim@example.com";
 const actorId = `USR-${createHash("sha256").update(email).digest("hex").slice(0, 16)}`;
+const adminEmail = "admin@flowchain.local";
+const adminActorId = `USR-${createHash("sha256").update(adminEmail).digest("hex").slice(0, 16)}`;
 const apiPort = Number(process.env.PLAYWRIGHT_API_PORT || 18787);
 const freePort = () => new Promise((resolvePort, reject) => {
   const socket = createNetServer().on("error", reject);
@@ -74,6 +77,16 @@ try {
   await prisma.tenant.create({ data: { id: tenantId, name: "Product Recovery Browser Tenant" } });
   await prisma.user.create({
     data: {
+      id: adminActorId,
+      tenantId,
+      email: adminEmail,
+      name: "Initial Admin",
+      role: "admin",
+      jobTitle: "工作区管理员",
+    },
+  });
+  await prisma.user.create({
+    data: {
       id: actorId,
       tenantId,
       email,
@@ -86,6 +99,7 @@ try {
   if (process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY !== "true") {
     await seedLocalScenario(prisma, process.env);
   }
+  await backfillTenantAuthorization(prisma, tenantId, { actorId: adminActorId });
   const { createScmServer } = await import("../server/scm-api.mjs");
   server = createScmServer();
   server.listen(apiPort, "127.0.0.1", () => {
