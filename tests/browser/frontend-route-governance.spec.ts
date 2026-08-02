@@ -223,7 +223,10 @@ test("SME navigation, direct access and browser history follow the route manifes
   const fulfilledPoLine = page.getByTestId("fulfillment-line-LOCAL-DEMO-PO-001-LINE-001");
   await expect(fulfilledPoLine).toContainText("50 pcs");
   await expect(fulfilledPoLine).toContainText("20 pcs");
-  await expect(fulfilledPoLine).toContainText("待收 30 pcs");
+  await expect(
+    page.getByTestId("order-fulfillment-line-list").getByRole("columnheader", { name: "待收", exact: true }),
+  ).toBeVisible();
+  await expect(fulfilledPoLine).toContainText("30 pcs");
   await expect(fulfilledPoLine).toContainText("部分收货");
   await expect(
     fulfilledPoLine.getByRole("link", { name: "收货单 LOCAL-DEMO-GRN-001" }),
@@ -389,8 +392,8 @@ test("procurement invoice and match records use canonical authoritative read det
     "UNKNOWN-MATCH",
   );
 
-  await page.route("**/api/procurement/documents?type=invoice", async (route) => {
-    await route.fulfill({ status: 200, contentType: "application/json", body: '{"documents":[]}' });
+  await page.route("**/api/procurement/documents/invoice/LOCAL-DEMO-INV-001", async (route) => {
+    await route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"Procurement document not found"}' });
   });
   await page.goto("/app/procurement/invoices/LOCAL-DEMO-INV-001");
   await expect(page.getByTestId("procurement-document-not-found")).toContainText(

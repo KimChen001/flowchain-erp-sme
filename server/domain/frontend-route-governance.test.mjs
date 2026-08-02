@@ -404,6 +404,27 @@ test("order fulfillment lines join receiving and invoice evidence by exact PO li
   assert.equal(rows[0].status, "部分收货");
 });
 
+test("procurement details use canonical single-document reads and preserve status-aware failures", () => {
+  const apiSource = readFileSync(
+    new URL("../../src/modules/procurement/procurementApi.ts", import.meta.url),
+    "utf8",
+  );
+  const detailSource = readFileSync(
+    new URL("../../src/modules/procurement/ProcurementDocumentDetailPage.tsx", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(apiSource, /getDocument:\s*\(type: ProcurementDocumentType, id: string\)/);
+  assert.match(apiSource, /encodeURIComponent\(type\).*encodeURIComponent\(id\)/s);
+  assert.match(detailSource, /procurementApi\.getDocument\(kind, documentId\)/);
+  assert.match(detailSource, /procurementApi\.getDocument\("threeWayMatch", matchReference\.id\)/);
+  assert.doesNotMatch(detailSource, /listDocuments\(/);
+  for (const status of [401, 403, 404]) {
+    assert.match(detailSource, new RegExp(`error\\.status === ${status}`));
+  }
+  assert.doesNotMatch(detailSource, /执行匹配|批准发票|发票过账|付款/);
+});
+
 test("human-readable route authority matrix covers the executable manifest", () => {
   const matrix = readFileSync(
     new URL("../../docs/frontend-route-authority-matrix.md", import.meta.url),
