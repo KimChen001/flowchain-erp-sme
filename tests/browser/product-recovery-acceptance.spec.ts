@@ -46,6 +46,18 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
     localStorage.setItem("flowchain:auth-token", token);
     localStorage.setItem("flowchain:current-user", JSON.stringify(user));
   }, session);
+  const documentRequests: string[] = [];
+  const consoleIssues: string[] = [];
+  page.on("request", (browserRequest) => {
+    const url = new URL(browserRequest.url());
+    if (url.pathname.startsWith("/api/procurement/documents")) {
+      documentRequests.push(`${url.pathname}${url.search}`);
+    }
+  });
+  page.on("console", (message) => {
+    if (["warning", "error"].includes(message.type())) consoleIssues.push(message.text());
+  });
+  page.on("pageerror", (error) => consoleIssues.push(error.message));
 
   await page.goto("/app/procurement/orders");
   await expect(page.getByText("LOCAL-DEMO-PO-001", { exact: true })).toBeVisible();
@@ -90,6 +102,65 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-002?focus=receiving-invoice-variance");
   await expect(page.getByTestId("po-fulfillment-focus")).toHaveAttribute("data-focus-highlight", "true");
   await capture(page, "04-ai-po-002-focus");
+
+  documentRequests.length = 0;
+  await page.goto("/app/procurement/invoices/LOCAL-DEMO-INV-001");
+  const invoiceDetail = page.getByTestId("procurement-invoice-detail");
+  await expect(invoiceDetail).toContainText("LOCAL-DEMO-INV-001");
+  await expect(invoiceDetail.getByRole("link", { name: "采购订单 LOCAL-DEMO-PO-001" })).toBeVisible();
+  await expect(invoiceDetail.getByRole("link", { name: "收货单 LOCAL-DEMO-GRN-001" })).toBeVisible();
+  await expect(invoiceDetail.getByRole("link", { name: "三单匹配 MATCH-LOCAL-DEMO-INV-001" })).toBeVisible();
+  expect(documentRequests).toContain("/api/procurement/documents/invoice/LOCAL-DEMO-INV-001");
+  expect(documentRequests).toContain("/api/procurement/documents/threeWayMatch/MATCH-LOCAL-DEMO-INV-001");
+  expect(documentRequests.some((requestUrl) => requestUrl.includes("?type=invoice"))).toBeFalsy();
+  await expect(page.getByText(/执行匹配|批准发票|发票过账|付款/)).toHaveCount(0);
+
+  documentRequests.length = 0;
+  await page.goto("/app/procurement/three-way-match/MATCH-LOCAL-DEMO-INV-001");
+  const matchDetail = page.getByTestId("procurement-threeWayMatch-detail");
+  await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
+  await expect(matchDetail.getByRole("link", { name: "供应商发票 LOCAL-DEMO-INV-001" })).toBeVisible();
+  expect(documentRequests).toContain("/api/procurement/documents/threeWayMatch/MATCH-LOCAL-DEMO-INV-001");
+  expect(documentRequests.some((requestUrl) => requestUrl.includes("?type=threeWayMatch"))).toBeFalsy();
+  await page.reload();
+  await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
+  await page.goBack();
+  await expect(page).toHaveURL(/\/app\/procurement\/invoices\/LOCAL-DEMO-INV-001/);
+  await page.goForward();
+  await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
+  expect(consoleIssues).toEqual([]);
+
+  await page.route("**/api/procurement/documents/invoice/ERROR-404", async (route) => {
+    await route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"Procurement document not found"}' });
+  });
+  await page.goto("/app/procurement/invoices/ERROR-404");
+  await expect(page.getByTestId("procurement-document-not-found")).toContainText("对当前租户不可见");
+
+  await page.route("**/api/procurement/documents/invoice/ERROR-401", async (route) => {
+    await route.fulfill({ status: 401, contentType: "application/json", body: '{"code":"TENANT_CONTEXT_REQUIRED"}' });
+  });
+  await page.goto("/app/procurement/invoices/ERROR-401");
+  await expect(page.getByTestId("procurement-document-unauthenticated")).toContainText("登录状态已失效");
+
+  await page.route("**/api/procurement/documents/invoice/ERROR-403", async (route) => {
+    await route.fulfill({ status: 403, contentType: "application/json", body: '{"code":"FORBIDDEN"}' });
+  });
+  await page.goto("/app/procurement/invoices/ERROR-403");
+  await expect(page.getByTestId("procurement-document-forbidden")).toContainText("没有查看该文档的权限");
+
+  await page.route("**/api/procurement/documents/invoice/ERROR-500", async (route) => {
+    await route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"Internal server error"}' });
+  });
+  await page.goto("/app/procurement/invoices/ERROR-500");
+  await expect(page.getByTestId("procurement-document-read-error")).toContainText("暂时无法读取，可重试");
+  await expect(page.getByRole("button", { name: "重试", exact: true })).toBeVisible();
+
+  await page.route("**/api/procurement/documents/invoice/ERROR-NETWORK", async (route) => {
+    await route.abort("failed");
+  });
+  await page.goto("/app/procurement/invoices/ERROR-NETWORK");
+  await expect(page.getByTestId("procurement-document-read-error")).toContainText("暂时无法读取，可重试");
+  await expect(page.getByText("LOCAL-DEMO-INV-001", { exact: true })).toHaveCount(0);
 
   await page.goto("/app/sales/orders");
   await expect(page.getByTestId("outbound-order-list")).toBeVisible();

@@ -2,10 +2,28 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Card } from "../../components/ui";
+import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
 import type { ProcurementDocument } from "./procurementTypes";
 
 type DetailKind = "invoice" | "threeWayMatch";
+type ReadState = "loading" | "loaded" | "notFound" | "unauthenticated" | "forbidden" | "error";
+
+function readFailureState(error: unknown): Exclude<ReadState, "loading" | "loaded"> {
+  if (!(error instanceof ApiError)) return "error";
+  if (error.status === 404) return "notFound";
+  if (error.status === 401) return "unauthenticated";
+  if (error.status === 403) return "forbidden";
+  return "error";
+}
+
+function readFailureMessage(error: unknown) {
+  const state = readFailureState(error);
+  if (state === "notFound") return "关联三单匹配当前不存在或对当前租户不可见。";
+  if (state === "unauthenticated") return "登录状态已失效，无法读取关联三单匹配。";
+  if (state === "forbidden") return "当前用户没有查看关联三单匹配的权限。";
+  return "关联三单匹配暂时无法读取，可刷新后重试。";
+}
 
 function money(value?: number, currency = "CNY") {
   if (!Number.isFinite(value)) return "—";
@@ -34,31 +52,41 @@ export function ProcurementDocumentDetailPage({
 }) {
   const [record, setRecord] = useState<ProcurementDocument | null>(null);
   const [relatedMatch, setRelatedMatch] = useState<ProcurementDocument | null>(null);
-  const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
+  const [relatedMatchNotice, setRelatedMatchNotice] = useState("");
+  const [state, setState] = useState<ReadState>("loading");
 
   const load = useCallback(async () => {
-    if (!documentId) return;
+    if (!documentId) {
+      setState("notFound");
+      return;
+    }
     setState("loading");
+    setRecord(null);
+    setRelatedMatch(null);
+    setRelatedMatchNotice("");
     try {
-      const [rows, matches] = await Promise.all([
-        procurementApi.listDocuments(kind),
-        kind === "invoice"
-          ? procurementApi.listDocuments("threeWayMatch")
-          : Promise.resolve([]),
-      ]);
-      setRecord(
-        rows.find((row) => (row.id || row.invoiceNumber) === documentId) || null,
-      );
-      setRelatedMatch(
-        kind === "invoice"
-          ? matches.find((row) => row.invoiceId === documentId) || null
-          : null,
-      );
+      const document = await procurementApi.getDocument(kind, documentId);
+      setRecord(document);
       setState("loaded");
-    } catch {
+
+      if (kind === "invoice") {
+        const matchReference = document.relatedDocuments?.find(
+          (candidate) => candidate.type === "threeWayMatch" && candidate.id,
+        );
+        if (matchReference) {
+          try {
+            setRelatedMatch(
+              await procurementApi.getDocument("threeWayMatch", matchReference.id),
+            );
+          } catch (error) {
+            setRelatedMatchNotice(readFailureMessage(error));
+          }
+        }
+      }
+    } catch (error) {
       setRecord(null);
       setRelatedMatch(null);
-      setState("error");
+      setState(readFailureState(error));
     }
   }, [documentId, kind]);
 
@@ -96,16 +124,30 @@ export function ProcurementDocumentDetailPage({
       <Card className="p-4 sm:p-5">
         {state === "loading" ? (
           <div className="py-16 text-center text-sm" style={{ color: A.sub }}>正在读取{title}…</div>
+        ) : state === "notFound" ? (
+          <div className="py-16 text-center" data-testid="procurement-document-not-found">
+            <div className="text-sm font-semibold">当前工作区未找到该采购文档，或该文档对当前租户不可见</div>
+            <div className="mt-2 text-xs" style={{ color: A.sub }}>文档编号：{documentId}</div>
+          </div>
+        ) : state === "unauthenticated" ? (
+          <div className="py-16 text-center" data-testid="procurement-document-unauthenticated">
+            <div className="text-sm font-semibold">登录状态已失效或缺少有效会话</div>
+            <div className="mt-2 text-xs" style={{ color: A.sub }}>请重新登录后读取该采购文档；页面未使用静态数据替代。</div>
+          </div>
+        ) : state === "forbidden" ? (
+          <div className="py-16 text-center" data-testid="procurement-document-forbidden">
+            <div className="text-sm font-semibold">当前用户没有查看该文档的权限</div>
+            <div className="mt-2 text-xs" style={{ color: A.sub }}>权限不足不会被显示成普通空数据，也不会返回替代业务记录。</div>
+          </div>
         ) : state === "error" ? (
-          <div className="py-16 text-center">
-            <div className="text-sm font-semibold">{title}加载失败</div>
-            <div className="mt-2 text-xs" style={{ color: A.sub }}>未使用静态数据替代失败的业务读取。</div>
+          <div className="py-16 text-center" data-testid="procurement-document-read-error">
+            <div className="text-sm font-semibold">采购文档暂时无法读取，可重试</div>
+            <div className="mt-2 text-xs" style={{ color: A.sub }}>服务或网络读取失败；未使用静态数据替代失败的业务读取。</div>
             <button type="button" onClick={() => void load()} className="mt-3 text-sm font-semibold text-blue-600">重试</button>
           </div>
         ) : !record ? (
-          <div className="py-16 text-center" data-testid="procurement-document-not-found">
-            <div className="text-sm font-semibold">当前工作区未找到 {documentId}</div>
-            <div className="mt-2 text-xs" style={{ color: A.sub }}>该编号不存在、已不可见，或不属于当前租户。</div>
+          <div className="py-16 text-center" data-testid="procurement-document-read-error">
+            <div className="text-sm font-semibold">采购文档暂时无法读取，可重试</div>
           </div>
         ) : (
           <>
@@ -156,6 +198,11 @@ export function ProcurementDocumentDetailPage({
             {blockingReason && (
               <div className="mt-4 rounded-lg bg-amber-50 px-3 py-3 text-sm text-amber-900">
                 {blockingReason}
+              </div>
+            )}
+            {relatedMatchNotice && (
+              <div className="mt-4 rounded-lg bg-slate-50 px-3 py-3 text-xs" style={{ color: A.sub }} data-testid="related-match-read-limitation">
+                {relatedMatchNotice}
               </div>
             )}
           </>

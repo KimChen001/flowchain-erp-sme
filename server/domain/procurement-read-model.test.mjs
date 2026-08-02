@@ -289,6 +289,44 @@ test('GET /api/procurement/documents/:type/:id contract handles found, missing, 
   assert.equal(JSON.stringify(invalid.response.payload).includes('stack'), false)
 })
 
+test('GET /api/procurement/documents/:type/:id requires authentication and keeps tenant-invisible records hidden', async () => {
+  let unauthorizedResponse = null
+  const unauthorized = {
+    req: { method: 'GET' },
+    res: {},
+    url: new URL('/api/procurement/documents/invoice/INV-TENANT-B', 'http://localhost'),
+    identity: { authenticated: false, tenantId: '' },
+    send(_res, status, payload) { unauthorizedResponse = { status, payload } },
+  }
+  await handleProcurementReadRoute(unauthorized)
+  assert.equal(unauthorizedResponse.status, 401)
+
+  let scopedResponse = null
+  let observedScope = null
+  const tenantScoped = {
+    req: { method: 'GET' },
+    res: {},
+    url: new URL('/api/procurement/documents/invoice/INV-TENANT-B', 'http://localhost'),
+    identity: { authenticated: true, tenantId: 'tenant-a' },
+    repositories: {
+      procurementRead: {
+        isDocumentType: (type) => type === 'invoice',
+        getDocument: async (_type, _id, options) => {
+          observedScope = options
+          return options.tenantId === 'tenant-b'
+            ? { id: 'INV-TENANT-B', documentType: 'invoice' }
+            : null
+        },
+      },
+    },
+    send(_res, status, payload) { scopedResponse = { status, payload } },
+  }
+  await handleProcurementReadRoute(tenantScoped)
+  assert.deepEqual(observedScope, { tenantId: 'tenant-a' })
+  assert.equal(scopedResponse.status, 404)
+  assert.equal(scopedResponse.payload.error, 'Procurement document not found')
+})
+
 test('procurement route contracts cover links, followups, summary, repeated calls, and no mutation', async () => {
   const db = clone(fixture)
   const before = snapshot(db)

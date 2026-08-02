@@ -2,6 +2,8 @@ import type { EntityKind } from "../../components/business/EntityLink";
 
 export type ProcurementFocus = { entityType: string; entityId: string; at: number } | null;
 export type ProcurementNavigate = (moduleId: string, focus?: unknown) => void;
+export type ProcurementDocumentType = "pr" | "rfq" | "po" | "grn" | "invoice" | "threeWayMatch";
+export type ProcurementDocumentReference = { type: ProcurementDocumentType; id: string; label?: string };
 export type PurchaseRequestSummary = { id: string; status: string; totalAmount: number };
 export type PurchaseOrderLine = { sourcePurchaseRequestLineId: string; itemNameSnapshot: string; estimatedAmount: number };
 export type PurchaseOrder = { id: string; status: string; transmissionStatus: string; totalAmount: number; supplierId: string; supplierSnapshot?: { supplierName?: string }; targetWarehouseId?: string; sourcePrId?: string; sourcePurchaseRequestId?: string; lines: PurchaseOrderLine[] };
@@ -43,5 +45,6 @@ export type ProcurementDocument = {
   invoiceAmount?: number;
   blockingReason?: string;
   exceptionReason?: string;
+  relatedDocuments?: ProcurementDocumentReference[];
 };
 export type ProcurementWorkItem = { id: string; type: string; status: string; amount: number; bucket: "approval" | "tracking"; kind: EntityKind; signals?: string[] };
