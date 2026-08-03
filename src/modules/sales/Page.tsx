@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Boxes, ClipboardList, FileText, GitBranch, PackageSearch, ShoppingCart, Truck, Users } from "lucide-react";
+import { AlertTriangle, Boxes, ClipboardList, FileText, PackageSearch, ShoppingCart, Truck, Users } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
-import { A, Card, Chip, KpiCard, SectionHeader } from "../../components/ui";
+import { A, Card, Chip, SectionHeader } from "../../components/ui";
 import type { InventoryAvailability } from "../inventory/api";
 import {
   BusinessObjectDetailModal,
@@ -20,12 +20,24 @@ import { BusinessDocumentForm } from "../../components/business/BusinessDocument
 import { Link, useLocation, useSearchParams } from "react-router";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
 import { EntityLink } from "../../components/business/EntityLink";
+import {
+  tableMinMdClass,
+  tableBaseClass,
+  tableScrollClass,
+  tdActionClass,
+  tdIdClass,
+  tdNameClass,
+  tdNowrapClass,
+  tdNumericClass,
+  thClass,
+} from "../../components/ui/workbenchTable";
 import OutboundWorkbench from "./OutboundWorkbench";
 
 type SalesOrder = {
   salesOrderId: string;
   customerName: string;
   customerTier: string;
+  itemId: string;
   sku: string;
   itemName: string;
   orderedQty: number;
@@ -124,7 +136,7 @@ export default function SalesDemandPage(props: SalesDemandPageProps) {
 }
 
 function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDemandPageProps) {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const view = viewFromInitial(initialView);
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [availability] = useState<InventoryAvailability[]>([]);
@@ -132,7 +144,7 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
   const [loadingOrders, setLoadingOrders] = useState(true);
   const [ordersError, setOrdersError] = useState("");
   const [allocationWarning] = useState("库存分配尚未接入销售订单运行时仓库，当前不展示未经接入的可承诺量。");
-  const [selectedOrderId, setSelectedOrderId] = useState("");
+  const [selectedOrderId, setSelectedOrderId] = useState(() => searchParams.get("orderId") || "");
   const [detailOpen, setDetailOpen] = useState(false);
 
   useEffect(() => {
@@ -153,6 +165,20 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
 
     return () => { alive = false; };
   }, []);
+
+  useEffect(() => {
+    if (view !== "evidence" || focus?.entityId) return;
+    const orderId = searchParams.get("orderId") || "";
+    if (orderId !== selectedOrderId) setSelectedOrderId(orderId);
+  }, [focus?.entityId, searchParams, selectedOrderId, view]);
+
+  function selectEvidenceOrder(orderId: string) {
+    setSelectedOrderId(orderId);
+    const next = new URLSearchParams(searchParams);
+    if (orderId) next.set("orderId", orderId);
+    else next.delete("orderId");
+    setSearchParams(next, { replace: true });
+  }
 
   useEffect(() => {
     if (!focus?.entityId) return;
@@ -195,12 +221,6 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
       .filter((order) => order.deliveryRiskLevel !== "low")
       .sort((a, b) => riskRank[a.deliveryRiskLevel] - riskRank[b.deliveryRiskLevel] || b.shortageQty - a.shortageQty);
   }, [orders]);
-  const evidenceOrders = useMemo(() => {
-    if (selectedOrder) return [selectedOrder];
-    if (focusedOrder) return [focusedOrder];
-    return riskOrders.length ? riskOrders.slice(0, 3) : orders.slice(0, 3);
-  }, [focusedOrder, orders, riskOrders, selectedOrder]);
-
   const activeSummary = summary || {
     totalOrders: orders.length,
     riskOrderCount: riskOrders.length,
@@ -212,12 +232,12 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {view === "risks" && <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <ActionableMetricCard label="客户订单" value={String(activeSummary.totalOrders)} description="查看当前工作区全部订单" to="/app/sales/orders" icon={ClipboardList} color={A.blue} />
         <ActionableMetricCard label="交付风险" value={String(activeSummary.riskOrderCount)} description={`${activeSummary.highRiskOrderCount} 个高风险订单`} to="/app/sales/orders?risk=true" icon={AlertTriangle} color={activeSummary.highRiskOrderCount ? A.red : A.orange} />
         <ActionableMetricCard label="缺口数量" value={qty(activeSummary.shortageQty)} description="查看影响交付承诺的订单" to="/app/sales/orders?risk=blocked" icon={PackageSearch} color={A.red} />
         <ActionableMetricCard label="已预留数量" value={qty(activeSummary.reservedQty)} description="查看库存分配证据" to="/app/sales/orders?status=unshipped" icon={Boxes} color={A.green} />
-      </div>
+      </div>}
 
       <OrderDetailModal
         order={detailOpen ? selectedOrder : null}
@@ -258,7 +278,7 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
                       <td className="px-3 py-3 tabular-nums" style={{ color: A.blue }}><EntityLink kind="sales_order" id={order.salesOrderId}>{order.salesOrderId}</EntityLink></td>
                       <td className="px-3 py-3" style={{ color: A.label }}>{order.customerName}</td>
                       <td className="px-3 py-3">
-                        <div className="tabular-nums" style={{ color: A.label }}><EntityLink kind="item" id={order.sku}>{order.sku}</EntityLink></div>
+                        <div className="tabular-nums" style={{ color: A.label }}><EntityLink kind="item" id={order.itemId}>{order.sku}</EntityLink></div>
                         <div className="fc-caption truncate max-w-[180px]" style={{ color: A.sub }}>{order.itemName}</div>
                       </td>
                       <td className="px-3 py-3 tabular-nums" style={{ color: A.label }}>{qty(order.orderedQty)}</td>
@@ -282,59 +302,61 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
       {!loadingOrders && !ordersError && orders.length > 0 && view === "risks" && (
         <Card>
           <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${A.border}` }}>
-            <SectionHeader title="交付风险队列" />
-            <span className="text-[11px]" style={{ color: A.sub }}>仅显示中高风险和阻断订单</span>
+            <div>
+              <SectionHeader title="交付风险查询" />
+              <p className="mt-1 text-xs" style={{ color: A.sub }}>逐行查看订单缺口、承诺日期、风险原因和可核验履约事实。</p>
+            </div>
+            <span className="text-xs" style={{ color: A.sub }}>{riskOrders.length} 条风险订单</span>
           </div>
-          <div className="divide-y" style={{ borderColor: A.border }}>
-            {riskOrders.map((order) => (
-              <div key={order.salesOrderId} className="p-4">
-                <div className="grid grid-cols-[120px_1fr_180px_120px] gap-3 items-start">
-                  <Chip label={order.deliveryRiskLabel} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} />
-                  <div className="min-w-0">
-                    <div className="font-semibold text-sm tabular-nums" style={{ color: A.label }}><EntityLink kind="sales_order" id={order.salesOrderId}>{order.salesOrderId}</EntityLink> · {order.customerName}</div>
-                    <div className="mt-1 text-xs truncate" style={{ color: A.sub }}><EntityLink kind="item" id={order.sku}>{order.sku}</EntityLink> / {order.itemName} · 缺口 {qty(order.shortageQty)} · 承诺日期 {order.promisedDate || "待确认"}</div>
-                    <div className="mt-1 text-[11px] leading-5 line-clamp-2" style={{ color: A.gray1 }}>{order.deliveryRiskReason}</div>
-                    <div className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>
-                      事实依据：订购 {qty(order.orderedQty)} · 已预留 {qty(order.reservedQty)} · 已履约 {qty(order.fulfilledQty)} · 未覆盖 {qty(order.shortageQty)}
-                    </div>
-                    {order.dataLimitations.length > 0 && (
-                      <div className="mt-1 text-[11px] leading-5" style={{ color: A.orange }}>
-                        数据限制：{order.dataLimitations.map(limitationLabel).join("；")}
+          <div className={tableScrollClass}>
+            <table className={tableMinMdClass}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${A.border}` }}>
+                  {["销售订单", "客户", "SKU / 物料", "订购", "已预留", "已履约", "缺口", "承诺日期", "风险", "风险原因", "操作"].map((header) => (
+                    <th key={header} className={thClass}>{header}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {riskOrders.map((order) => (
+                  <tr key={order.salesOrderId} style={{ borderBottom: `1px solid ${A.border}` }}>
+                    <td className={tdIdClass}><EntityLink kind="sales_order" id={order.salesOrderId}>{order.salesOrderId}</EntityLink></td>
+                    <td className={tdNameClass}>{order.customerName}</td>
+                    <td className={tdNameClass}>
+                      <EntityLink kind="item" id={order.itemId}>{order.sku}</EntityLink>
+                      <div className="max-w-[180px] truncate text-xs" style={{ color: A.sub }}>{order.itemName}</div>
+                    </td>
+                    <td className={tdNumericClass}>{qty(order.orderedQty)}</td>
+                    <td className={tdNumericClass}>{qty(order.reservedQty)}</td>
+                    <td className={tdNumericClass}>{qty(order.fulfilledQty)}</td>
+                    <td className={`${tdNumericClass} font-semibold`} style={{ color: order.shortageQty > 0 ? A.red : A.gray2 }}>{qty(order.shortageQty)}</td>
+                    <td className={tdNowrapClass}>{order.promisedDate || "待确认"}</td>
+                    <td className={tdNowrapClass}><Chip label={order.deliveryRiskLabel} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
+                    <td className="max-w-[320px] px-4 py-3">
+                      <div className="line-clamp-2 text-xs" style={{ color: A.gray1 }}>{order.deliveryRiskReason}</div>
+                      {order.dataLimitations.length > 0 && (
+                        <div className="mt-1 line-clamp-2 text-[11px]" style={{ color: A.orange }}>数据限制：{order.dataLimitations.map(limitationLabel).join("；")}</div>
+                      )}
+                    </td>
+                    <td className={tdActionClass}>
+                      <div className="flex gap-2">
+                        <Link to={`/app/sales/orders/${encodeURIComponent(order.salesOrderId)}`} className="rounded-md bg-blue-50 px-3 py-1.5 font-medium text-blue-700">查看订单</Link>
+                        <Link to={`/app/sales/evidence?orderId=${encodeURIComponent(order.salesOrderId)}`} className="rounded-md bg-slate-100 px-3 py-1.5 font-medium text-slate-700">查看证据</Link>
                       </div>
-                    )}
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {[
-                        ["订单", "sales"],
-                        ["库存", "inventory"],
-                        ["采购", "procurement:orders"],
-                        ["证据链", "sales:evidence"],
-                      ].map(([label, target]) => (
-                        <button key={label} onClick={() => { if (target === "sales:evidence") setSelectedOrderId(order.salesOrderId); onNavigate?.(target); }}
-                          className="rounded-full px-2 py-0.5 fc-caption font-semibold"
-                          style={{ background: A.gray6, color: A.blue }}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="text-[11px] leading-5" style={{ color: A.orange }}>
-                    建议动作：人工复核库存分配及交付条件。当前没有权威采购在途或供应商承诺关联，不能据此判断补货到达时间。
-                  </div>
-                  <div className="flex justify-end">
-                    <Link to={`/app/sales/orders/${encodeURIComponent(order.salesOrderId)}`} className="px-3 py-1.5 rounded-md font-medium" style={{ background: "#f0f6ff", color: A.blue }}>查看详情</Link>
-                  </div>
-                </div>
-              </div>
-            ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
             {riskOrders.length === 0 && (
-              <div className="p-6 text-sm" style={{ color: A.sub }}>当前没有需要进入风险队列的客户订单。</div>
+              <div className="p-6 text-sm" style={{ color: A.sub }}>当前没有需要进入风险队列的销售订单。</div>
             )}
           </div>
         </Card>
       )}
 
       {!loadingOrders && !ordersError && orders.length > 0 && view === "evidence" && (
-        <EvidenceChainView orders={evidenceOrders} allOrders={orders} selectedOrderId={selectedOrder?.salesOrderId || ""} onSelectOrder={setSelectedOrderId} onNavigate={onNavigate} />
+        <EvidenceChainView allOrders={orders} selectedOrderId={selectedOrderId} onSelectOrder={selectEvidenceOrder} onNavigate={onNavigate} />
       )}
     </div>
   );
@@ -444,20 +466,18 @@ function OrderDetailModal({
 }
 
 function EvidenceChainView({
-  orders,
   allOrders,
   selectedOrderId,
   onSelectOrder,
   onNavigate,
 }: {
-  orders: SalesOrder[];
   allOrders: SalesOrder[];
   selectedOrderId: string;
   onSelectOrder: (orderId: string) => void;
   onNavigate?: EvidenceNavigate;
 }) {
   const hasSelectedOrder = Boolean(selectedOrderId);
-  const selectedOrder = orders[0] || allOrders.find((order) => order.salesOrderId === selectedOrderId) || null;
+  const selectedOrder = allOrders.find((order) => order.salesOrderId === selectedOrderId) || null;
   const [graph, setGraph] = useState<EvidenceGraphResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -524,51 +544,50 @@ function EvidenceChainView({
 
   return (
     <div className="space-y-4">
-      <Card className="p-5">
-        <SectionHeader title="主证据链" right={<Chip label="只读证据" color={A.blue} bg="#f0f6ff" />} />
-        {!hasSelectedOrder && (
-          <div className="mb-4 rounded-xl p-3" style={{ background: A.gray6 }}>
-            <div className="text-xs font-semibold" style={{ color: A.label }}>选择客户订单</div>
-            <div className="mt-2 grid grid-cols-1 gap-2">
-              {allOrders.slice(0, 6).map((order) => (
-                <button
-                  key={order.salesOrderId}
-                  type="button"
-                  onClick={() => onSelectOrder(order.salesOrderId)}
-                  className="rounded-lg px-3 py-2 text-left text-[11px]"
-                  style={{ background: A.white, color: A.label }}
-                >
-                  <span className="font-semibold tabular-nums">{order.salesOrderId}</span>
-                  <span style={{ color: A.sub }}> · {order.customerName} · {order.deliveryRiskLabel}</span>
-                </button>
-              ))}
-            </div>
+      <Card>
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${A.border}` }}>
+          <div>
+            <SectionHeader title="订单证据查询" />
+            <p className="mt-1 text-xs" style={{ color: A.sub }}>选择销售订单后读取其真实关联记录、风险信号和数据限制。</p>
           </div>
-        )}
-        <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-6">
-          {[
-            ["客户订单", ClipboardList],
-            ["SKU", PackageSearch],
-            ["库存可用量", Boxes],
-            ["采购订单", ShoppingCart],
-            ["供应商", Users],
-            ["收货单", Truck],
-          ].map(([label, Icon], index) => {
-            const NextIcon = Icon as typeof ClipboardList;
-            return (
-              <div key={label as string} className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: A.gray6, color: A.blue }}>
-                  <NextIcon size={14} />
-                </div>
-                <div className="flex-1 rounded-lg px-3 py-2 text-xs font-semibold" style={{ background: A.white, color: A.label, boxShadow: `0 0 0 0.5px ${A.border}` }}>{label as string}</div>
-                {index < 5 && <GitBranch size={14} style={{ color: A.gray2 }} />}
-              </div>
-            );
-          })}
+          <Chip label="只读证据" color={A.blue} bg="#f0f6ff" />
         </div>
-        <p className="mt-4 text-[11px] leading-5" style={{ color: A.sub }}>
-          客户订单 → SKU → 库存可用量 → 采购订单 → 供应商 → 收货单。展示跨单据的关联证据、相关记录和返回路径。
-        </p>
+        <div className={tableScrollClass}>
+          <table className={tableBaseClass}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${A.border}` }}>
+                {["销售订单", "客户", "SKU / 物料", "状态", "交付风险", "缺口", "操作"].map((header) => (
+                  <th key={header} className={thClass}>{header}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {allOrders.map((order) => (
+                <tr key={order.salesOrderId} style={{ borderBottom: `1px solid ${A.border}`, background: selectedOrderId === order.salesOrderId ? "#f0f6ff" : A.white }}>
+                  <td className={tdIdClass}><EntityLink kind="sales_order" id={order.salesOrderId}>{order.salesOrderId}</EntityLink></td>
+                  <td className={tdNameClass}>{order.customerName}</td>
+                  <td className={tdNameClass}>
+                    <EntityLink kind="item" id={order.itemId}>{order.sku}</EntityLink>
+                    <div className="max-w-[200px] truncate text-xs" style={{ color: A.sub }}>{order.itemName}</div>
+                  </td>
+                  <td className={tdNowrapClass}>{order.statusLabel}</td>
+                  <td className={tdNowrapClass}><Chip label={order.deliveryRiskLabel} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
+                  <td className={tdNumericClass}>{qty(order.shortageQty)}</td>
+                  <td className={tdActionClass}>
+                    <button
+                      type="button"
+                      onClick={() => onSelectOrder(order.salesOrderId)}
+                      disabled={selectedOrderId === order.salesOrderId}
+                      className="rounded-md bg-blue-50 px-3 py-1.5 font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-default disabled:bg-slate-100 disabled:text-slate-500"
+                    >
+                      {selectedOrderId === order.salesOrderId ? "已选择" : "查看证据"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
       {hasSelectedOrder ? (
@@ -585,12 +604,14 @@ function EvidenceChainView({
             sourceLabel={selectedOrder ? `客户订单 ${selectedOrder.salesOrderId}` : ""}
             returnContext={returnContext}
             returnTo="sales:evidence"
+            showReturnPath={false}
+            showNavigationHints={false}
           />
           {error && fallbackSummary}
         </>
       ) : (
         <Card className="p-5 text-sm leading-6" style={{ color: A.sub }}>
-          请选择一条客户订单读取证据链。页面会展示主证据链、相关记录、风险信号、数据限制和返回路径。
+          请选择一条销售订单读取证据。页面只展示当前工作区能够核验的关联记录、风险信号和数据限制。
         </Card>
       )}
     </div>

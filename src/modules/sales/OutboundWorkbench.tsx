@@ -10,6 +10,17 @@ import {
 } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
+import {
+  tableMinSmClass,
+  tableScrollClass,
+  tdActionClass,
+  tdIdClass,
+  tdNameClass,
+  tdNowrapClass,
+  tdNumericClass,
+  thClass,
+} from "../../components/ui/workbenchTable";
 
 type Order = {
   id: string;
@@ -221,6 +232,10 @@ const pretty: Record<string, string> = {
   unavailable: "不可用",
 };
 const status = (value: string) => pretty[value] || value;
+const reconciliationRuleLabel = (value: string) => ({
+  "available = onHand - reserved": "可用量 = 在库量 - 预留量",
+  "reserved + fulfilled <= ordered": "预留量 + 已履约量不超过订购量",
+}[value] || value);
 const stamp = (value?: string | null) =>
   value ? new Date(value).toLocaleString("zh-CN") : "—";
 function message(error: unknown) {
@@ -233,7 +248,7 @@ function message(error: unknown) {
     WAREHOUSE_SCOPE_DENIED: "当前账号没有相关仓库权限。",
     SALES_ORDER_ON_HOLD: "销售订单当前已暂停，不能执行发货过账。请先恢复订单。",
     OUTBOUND_CAPABILITY_NOT_AVAILABLE:
-      "当前 Outbound Beta 功能未由管理员启用，页面为只读状态。",
+      "当前销售订单写入能力未启用，页面保持只读。",
     SALES_ORDER_VERSION_CONFLICT: "订单已发生变化，请刷新后重新预览。",
     SHIPMENT_VERSION_CONFLICT: "发货单已变化，请刷新后重新预览。",
     OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT:
@@ -277,16 +292,19 @@ const Button = ({
   disabled,
   onClick,
   testId,
+  ariaLabel,
   tone = "primary",
 }: {
   children: React.ReactNode;
   disabled?: boolean;
   onClick?: () => void;
   testId?: string;
+  ariaLabel?: string;
   tone?: "primary" | "secondary" | "danger";
 }) => (
   <button
     data-testid={testId}
+    aria-label={ariaLabel}
     disabled={disabled}
     onClick={onClick}
     className={`${tone === "primary" ? "bg-blue-600 text-white" : tone === "danger" ? "bg-red-600 text-white" : "bg-slate-100 text-slate-800"} rounded-lg px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50`}
@@ -379,25 +397,9 @@ function OrderList() {
   const select = "rounded-lg border px-3 py-2 text-sm";
   return (
     <div className="space-y-4" data-testid="outbound-order-list">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">销售履约工作台</h1>
-          <p className="text-sm text-slate-500">
-            Authoritative PostgreSQL · 正式销售订单与出库闭环
-          </p>
-        </div>
-        {data?.capabilities.salesOrderLifecycle.enabled && (
-          <Link
-            to="/app/sales/orders/new"
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white"
-          >
-            新建销售订单
-          </Link>
-        )}
-      </div>
       {data && !data.capabilities.salesOrderLifecycle.enabled && (
         <div role="status" className="rounded-lg bg-slate-100 p-3 text-slate-700">
-          当前 Outbound Beta 功能未由管理员启用，销售订单工作台为只读状态。
+          销售订单当前为只读；订单、库存预留和履约事实来自 PostgreSQL。
         </div>
       )}
       {error && (
@@ -405,7 +407,20 @@ function OrderList() {
           {error}
         </div>
       )}
-      <Section title="销售订单">
+      <Section title="销售订单查询">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-slate-500">
+            查询订单、客户、库存预留、履约状态和承诺日期。
+          </p>
+          {data?.capabilities.salesOrderLifecycle.enabled && (
+            <Link
+              to="/app/sales/orders/new"
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white"
+            >
+              新建销售订单
+            </Link>
+          )}
+        </div>
         <div className="mb-3 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
           <label className="text-xs">
             搜索
@@ -469,10 +484,10 @@ function OrderList() {
             </select>
           </label>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px] text-sm">
+        <div className={tableScrollClass}>
+          <table className={tableMinSmClass}>
             <thead>
-              <tr className="border-b text-left text-xs text-slate-500">
+              <tr className="border-b">
                 {[
                   "订单号",
                   "客户",
@@ -485,7 +500,7 @@ function OrderList() {
                   "更新时间",
                   "操作",
                 ].map((x) => (
-                  <th className="p-2" key={x}>
+                  <th className={thClass} key={x}>
                     {x}
                   </th>
                 ))}
@@ -494,30 +509,34 @@ function OrderList() {
             <tbody>
               {data?.orders.map((row) => (
                 <tr key={row.id} className="border-b">
-                  <td className="p-2 font-semibold">{row.orderNumber}</td>
-                  <td className="p-2">{row.customerName}</td>
-                  <td className="p-2">
+                  <td className={tdIdClass}>
+                    <BusinessEntityLink entityType="sales_order" entityId={row.id}>
+                      {row.orderNumber}
+                    </BusinessEntityLink>
+                  </td>
+                  <td className={tdNameClass}>{row.customerName}</td>
+                  <td className={tdNowrapClass}>
                     <Badge value={row.workflowStatus} />
                   </td>
-                  <td className="p-2">
+                  <td className={tdNowrapClass}>
                     <Badge value={row.reservationStatus} />
                   </td>
-                  <td className="p-2">
+                  <td className={tdNowrapClass}>
                     <Badge value={row.fulfillmentStatus} />
                   </td>
-                  <td className="p-2">{row.currency}</td>
-                  <td className="p-2">{row.totalLines}</td>
-                  <td className="p-2 tabular-nums">
+                  <td className={tdNowrapClass}>{row.currency}</td>
+                  <td className={tdNumericClass}>{row.totalLines}</td>
+                  <td className={tdNumericClass}>
                     {row.orderedQuantity} / {row.reservedQuantity} /{" "}
                     {row.fulfilledQuantity}
                   </td>
-                  <td className="p-2">{stamp(row.updatedAt)}</td>
-                  <td className="p-2">
+                  <td className={tdNowrapClass}>{stamp(row.updatedAt)}</td>
+                  <td className={tdActionClass}>
                     <Link
-                      className="text-blue-600 underline"
+                      className="inline-flex rounded-md bg-blue-50 px-3 py-1.5 font-medium text-blue-700 hover:bg-blue-100"
                       to={`/app/sales/orders/${encodeURIComponent(row.id)}`}
                     >
-                      打开
+                      查看
                     </Link>
                   </td>
                 </tr>
@@ -665,7 +684,7 @@ function OrderEntry() {
       <div className="mx-auto max-w-3xl space-y-4" data-testid="sales-order-entry-readonly">
         <h1 className="text-xl font-semibold">新建销售订单</h1>
         <div role="status" className="rounded-lg bg-slate-100 p-4 text-slate-700">
-          当前 Outbound Beta 功能未由管理员启用，销售订单工作台为只读状态。
+          当前销售订单写入能力未启用，页面保持只读。
         </div>
         <Link className="text-blue-700 underline" to="/app/sales/orders">
           返回销售订单列表
@@ -1038,7 +1057,7 @@ function OrderDetail({ id }: { id: string }) {
           role="status"
           className="rounded-lg bg-slate-100 p-3 text-slate-700"
         >
-          当前 Outbound Beta 功能未由管理员启用，页面为只读状态。
+          当前销售订单写入能力未启用，页面保持只读。
         </div>
       )}
       <section className="rounded-xl border bg-white p-5">
@@ -1109,13 +1128,13 @@ function OrderDetail({ id }: { id: string }) {
                 创建发货草稿
               </Button>
             )}
-            <Button tone="secondary" onClick={() => void refresh()}>
+            <Button tone="secondary" onClick={() => void refresh()} ariaLabel="刷新销售订单">
               <RefreshCw size={15} />
             </Button>
           </div>
         </div>
       </section>
-      <Section title="Smart Links">
+      <Section title="关联记录">
         <div className="flex flex-wrap gap-2">
           {data.smartLinks.map((link) =>
             link.enabled ? (
@@ -1171,7 +1190,9 @@ function OrderDetail({ id }: { id: string }) {
                 return (
                   <tr className="border-t" key={line.id}>
                     <td className="p-2">
-                      {line.sku}
+                      <BusinessEntityLink entityType="item" entityId={line.itemId}>
+                        {line.sku}
+                      </BusinessEntityLink>
                       <div className="text-xs text-slate-500">
                         {line.itemName}
                       </div>
@@ -1272,10 +1293,10 @@ function OrderDetail({ id }: { id: string }) {
           headers={["流水 ID", "SKU", "仓库", "入", "出", "类型"]}
         />
       </Section>
-      <Section id="evidence" title="Evidence Timeline">
+      <Section id="evidence" title="订单证据与时间线">
         <Timeline rows={data.evidence} />
       </Section>
-      <Section id="reconciliation" title="Outbound Reconciliation">
+      <Section id="reconciliation" title="履约一致性检查">
         <div className="mb-2 flex items-center gap-2">
           <CheckCircle2 size={17} />
           <Badge value={data.reconciliation.status} />
@@ -1290,7 +1311,7 @@ function OrderDetail({ id }: { id: string }) {
             className="border-t py-2 text-xs"
             key={`${x.affectedEntity.type}-${x.affectedEntity.id}`}
           >
-            {x.rule} · {status(x.status)} · 计算 {x.calculated} / 记录{" "}
+            {reconciliationRuleLabel(x.rule)} · {status(x.status)} · 计算 {x.calculated} / 记录{" "}
             {x.recorded}
           </div>
         ))}
@@ -1472,7 +1493,7 @@ function OrderDetail({ id }: { id: string }) {
                 <PreviewView preview={preview} />
               ) : (
                 <p className="mt-3 text-xs text-slate-500">
-                  必须先读取服务端 Preview，前端不计算权威库存。
+                  必须先读取服务端预览，前端不计算权威库存。
                 </p>
               )}
               <div className="mt-4 flex gap-2">
@@ -1481,7 +1502,7 @@ function OrderDetail({ id }: { id: string }) {
                   disabled={saving}
                   onClick={() => void loadPreview()}
                 >
-                  Preview
+                  读取预览
                 </Button>
                 <Button
                   testId="confirm-outbound-action"
@@ -1597,7 +1618,7 @@ function ShipmentDetail({ id }: { id: string }) {
                 {data.shipment.shipmentNumber}
               </h1>
               <span className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700">
-                Authoritative PostgreSQL
+                PostgreSQL 正式记录
               </span>
             </div>
             <p className="text-sm text-slate-500">
@@ -1682,10 +1703,10 @@ function ShipmentDetail({ id }: { id: string }) {
           </div>
         ))}
       </Section>
-      <Section title="Evidence Timeline">
+      <Section title="发货证据与时间线">
         <Timeline rows={data.evidence} />
       </Section>
-      <Section title="Reconciliation & AI Explain">
+      <Section title="一致性检查与辅助说明">
         <div className="flex items-center gap-2">
           <ShieldCheck size={18} />
           <Badge value={data.reconciliation.status} />
@@ -1718,8 +1739,7 @@ function ShipmentDetail({ id }: { id: string }) {
             </label>
           )}
           <p className="mt-2 text-xs text-slate-500">
-            发货时 On Hand 与 Reserved 同时下降，因此 Available
-            不会再次下降。冲销没有“强制绕过”选项。
+            发货时在库量与预留量同时下降，因此可用量不会再次下降。冲销没有“强制绕过”选项。
           </p>
           {preview && <PreviewView preview={preview} />}
           <div className="mt-4 flex gap-2">
@@ -1727,7 +1747,7 @@ function ShipmentDetail({ id }: { id: string }) {
               testId="shipment-preview"
               onClick={() => void loadPreview()}
             >
-              Preview
+              读取预览
             </Button>
             <Button
               testId="confirm-shipment-action"
@@ -1792,7 +1812,7 @@ function Timeline({ rows }: { rows: Workbench["evidence"] }) {
           </div>
           {x.commandExecutionId && (
             <div className="text-[11px] text-slate-400">
-              Command {x.commandExecutionId} · Key {x.idempotencyKey}
+              命令记录 {x.commandExecutionId} · 幂等键 {x.idempotencyKey}
             </div>
           )}
         </div>
@@ -1808,7 +1828,7 @@ function PreviewView({ preview }: { preview: Preview }) {
       className={`mt-3 rounded-lg border p-3 text-xs ${preview.allowed ? "bg-emerald-50" : "bg-amber-50"}`}
     >
       <div className="font-semibold">
-        {preview.allowed ? "Preview 允许执行" : "Preview 已阻断"}
+        {preview.allowed ? "预览允许执行" : "预览已阻断"}
       </div>
       {preview.blockingIssues.map((x) => (
         <div className="mt-1 text-red-700" key={x.code}>

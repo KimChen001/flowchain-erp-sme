@@ -366,6 +366,8 @@ export default function EvidenceGraphPanel({
   sourceLabel,
   returnContext,
   returnTo,
+  showReturnPath = true,
+  showNavigationHints = true,
 }: {
   graph: EvidenceGraphResponse | null;
   loading?: boolean;
@@ -378,6 +380,8 @@ export default function EvidenceGraphPanel({
   sourceLabel?: string;
   returnContext?: EvidenceReturnContext | null;
   returnTo?: string;
+  showReturnPath?: boolean;
+  showNavigationHints?: boolean;
 }) {
   if (loading) {
     return <Card className="p-6 text-sm" style={{ color: A.sub }}>正在读取证据链...</Card>;
@@ -385,7 +389,7 @@ export default function EvidenceGraphPanel({
   if (error || !graph) {
     return (
       <div className="space-y-3">
-        <ReturnPathBar anchor={null} sourceLabel={sourceLabel} onBack={onBack} onReturnSource={onReturnSource} onReturnList={onReturnList} />
+        {showReturnPath && <ReturnPathBar anchor={null} sourceLabel={sourceLabel} onBack={onBack} onReturnSource={onReturnSource} onReturnList={onReturnList} />}
         <Card className="p-6 text-sm leading-6" style={{ color: A.orange }}>
           {error || "当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。"}
         </Card>
@@ -394,14 +398,14 @@ export default function EvidenceGraphPanel({
   }
   return (
     <div className="space-y-4" data-testid="evidence-graph-panel">
-      <ReturnPathBar anchor={graph.anchor || null} sourceLabel={sourceLabel} onBack={onBack} onReturnSource={onReturnSource} onReturnList={onReturnList} />
+      {showReturnPath && <ReturnPathBar anchor={graph.anchor || null} sourceLabel={sourceLabel} onBack={onBack} onReturnSource={onReturnSource} onReturnList={onReturnList} />}
       <EvidencePrimaryPath graph={graph} onNavigate={onNavigate} returnContext={returnContext} returnTo={returnTo} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.25fr_0.75fr]">
         <RelatedRecordsPanel graph={graph} onNavigate={onNavigate} returnContext={returnContext} returnTo={returnTo} />
         <div className="space-y-4">
           <RiskSignalsPanel graph={graph} />
           <DataLimitationsPanel items={graph.dataLimitations || []} />
-          <NavigationHintsPanel graph={graph} onRetry={onRetry} />
+          {showNavigationHints && <NavigationHintsPanel graph={graph} onRetry={onRetry} />}
         </div>
       </div>
     </div>

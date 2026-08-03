@@ -272,8 +272,8 @@ test('system harness records typography grep boundary for current product scope'
   assert.match(routeRegistry, /id: "sales:risks"[\s\S]*?label: "交付风险"/)
   assert.doesNotMatch(salesPage, /交付风险协同/)
   assert.match(salesPage, /客户订单列表/)
-  assert.match(salesPage, /交付风险队列/)
-  assert.match(salesPage, /主证据链/)
+  assert.match(salesPage, /交付风险查询/)
+  assert.match(salesPage, /订单证据查询/)
   assert.doesNotMatch(salesPage, /客户订单与交付风险|交付风险订单/)
 })
 
