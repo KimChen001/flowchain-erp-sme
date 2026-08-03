@@ -86,12 +86,14 @@ test('server factory imports with backend foundation routes', () => {
 })
 
 test('server route context injects repository registry for repository-compatible routes', () => {
-  const source = readSource('server', 'bootstrap', 'scm-server.mjs')
+  const source = readSource('server', 'bootstrap', 'http-request-handler.mjs')
+  const contextSource = readSource('server', 'bootstrap', 'request-context.mjs')
 
   assert.match(source, /import \{[^}]*createRepositoryRegistry[^}]*\} from ["']\.\.\/repositories\/adapter-registry\.mjs["']/)
-  assert.match(source, /const repositories = createRepositoryRegistry\(\{ db, env: process\.env \}\)/)
-  assert.match(source, /routeContext = \{[\s\S]*repositories,[\s\S]*\}/)
-  assert.ok(source.indexOf('const repositories = createRepositoryRegistry') < source.indexOf('const routeContext = {'))
+  assert.match(source, /const repositories = createRepositoryRegistry\(\{ db, env \}\)/)
+  assert.match(source, /createRouteContext\(\{[\s\S]*repositories,[\s\S]*\}\)/)
+  assert.match(contextSource, /repositories,[\s\S]*\.\.\.domain,[\s\S]*\.\.\.runtime/)
+  assert.ok(source.indexOf('const repositories = createRepositoryRegistry') < source.indexOf('createRouteContext({'))
 })
 
 test('global server errors are sanitized before returning 500 responses', () => {
@@ -111,10 +113,11 @@ test('global server errors are sanitized before returning 500 responses', () => 
 })
 
 test('server health response omits provider keys models and proxy diagnostics by default', () => {
-  const source = readSource('server', 'bootstrap', 'scm-server.mjs')
+  const source = readSource('server', 'bootstrap', 'runtime-routes.mjs')
+  const errorBoundary = readSource('server', 'bootstrap', 'server-error-boundary.mjs')
   const healthBlock = source.slice(
     source.search(/url\.pathname === ["']\/api\/health["']/),
-    source.search(/if\s*\(\s*req\.method === ["']POST["'] && url\.pathname === ["']\/api\/auth\/login["']/),
+    source.search(/if\s*\(req\.method === ["']GET["'] && url\.pathname === ["']\/api\/dev\/local-status["']/),
   )
 
   assert.match(healthBlock, /service: ["']flowchain-scm-api["']/)
@@ -127,14 +130,14 @@ test('server health response omits provider keys models and proxy diagnostics by
   assert.match(healthBlock, /dataMode: dataMode\.mode/)
   assert.doesNotMatch(healthBlock, /OPENAI_API_KEY|ARK_API_KEY|DOUBAO_API_KEY|OPENAI_MODEL|ARK_MODEL|DOUBAO_MODEL/)
   assert.doesNotMatch(healthBlock, /DATABASE_URL|POSTGRES_URL|OPENAI|ARK|DOUBAO|openai:|doubao:|(?<![A-Za-z])(?:provider|model|proxy|secret|token|password)\s*:/i)
-  assert.match(source, /sendInternalServerError\(res, send, error\)/)
+  assert.match(errorBoundary, /sendInternalServerError\(res, send, error\)/)
 })
 
 test('database mode guard is before legacy auth and capability gate is registered', () => {
-  const source = readSource('server', 'bootstrap', 'scm-server.mjs')
+  const source = readSource('server', 'bootstrap', 'http-request-handler.mjs')
 
   const guardIndex = source.indexOf('isDatabaseModeWriteBlocked({')
-  assert.ok(guardIndex < source.search(/url\.pathname === ["']\/api\/auth\/login["']/))
+  assert.ok(guardIndex < source.indexOf('handleSessionRoutes({'))
   assert.match(source, /handleRuntimeCapabilityRoute\(\{ req, res, url, send \}\)/)
   assert.deepEqual(databaseModeMutationBlockedPayload(), {
     error: 'This mutation is not available in database persistence mode yet.',
