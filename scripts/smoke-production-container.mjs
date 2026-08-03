@@ -92,7 +92,28 @@ const prisma = await createPrismaClient(process.env);
 try {
   await prisma.tenant.create({ data: { id: ${JSON.stringify(tenantId)}, name: "Container Smoke Tenant" } });
   await prisma.user.create({ data: { id: ${JSON.stringify(userId)}, tenantId: ${JSON.stringify(tenantId)}, email: ${JSON.stringify(email)}, name: "Container Smoke User", role: "manager", status: "active" } });
-  await prisma.purchaseOrder.create({ data: { id: ${JSON.stringify(purchaseOrderId)}, tenantId: ${JSON.stringify(tenantId)}, status: "issued", supplierName: "Container Smoke Supplier", amount: "125.00", currency: "CNY", lines: { create: [{ id: ${JSON.stringify(`${purchaseOrderId}-LINE-1`)}, sku: "CI-SKU-1", itemName: "Container Smoke Item", orderedQuantity: "5", receivedQuantity: "0", unit: "EA", unitPrice: "25.00", amount: "125.00" }] } } } });
+  await prisma.purchaseOrder.create({
+    data: {
+      id: ${JSON.stringify(purchaseOrderId)},
+      tenantId: ${JSON.stringify(tenantId)},
+      status: "issued",
+      supplierName: "Container Smoke Supplier",
+      amount: "125.00",
+      currency: "CNY",
+      lines: {
+        create: [{
+          id: ${JSON.stringify(`${purchaseOrderId}-LINE-1`)},
+          sku: "CI-SKU-1",
+          itemName: "Container Smoke Item",
+          orderedQuantity: "5",
+          receivedQuantity: "0",
+          unit: "EA",
+          unitPrice: "25.00",
+          amount: "125.00",
+        }],
+      },
+    },
+  });
 } finally {
   await prisma.$disconnect();
 }
