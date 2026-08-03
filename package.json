@@ -42,6 +42,8 @@
     "test:contracts": "node --test server/domain/postgres-only-runtime.test.mjs",
     "test:local-dev": "node --test server/domain/local-development.test.mjs server/domain/client-id-source-contract.test.mjs",
     "test:db:postgres-only-runtime": "node scripts/verify-postgres-only-runtime-api.mjs",
+    "test:db:production-runtime": "node scripts/run-postgres-test-files.mjs tests/postgres/production-readiness.test.mjs",
+    "test:container:production": "node scripts/smoke-production-container.mjs",
     "test:db:intake": "node scripts/verify-intake-postgres.mjs",
     "test:api:intake": "node scripts/smoke-intake-api.mjs",
     "test:db:structured-intake": "node scripts/verify-structured-intake-postgres.mjs",
