@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { ProxyAgent } from "undici";
 import { execFileSync } from "node:child_process";
 import { loadEnv } from "../config/env.mjs";
+import { validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import {
   createRepositoryRegistry,
   getPersistenceMode,
@@ -30,6 +31,8 @@ import {
   sendDatabaseModeMutationBlocked,
 } from "../domain/route-classification.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { buildLivenessPayload, checkRuntimeReadiness } from "../domain/runtime-readiness.mjs";
+import { createServerLifecycle, registerShutdownSignals } from "./server-lifecycle.mjs";
 import { roleLabel } from "../../shared/roles.mjs";
 import { handleRuntimeCapabilityRoute } from "../routes/runtime-capability.routes.mjs";
 import { dispatchApiRoute } from "./route-dispatcher.mjs";
@@ -72,14 +75,9 @@ function gitValue(args, fallback = "unknown") {
     return fallback;
   }
 }
-const buildIdentity = Object.freeze({
-  commitSha:
-    process.env.FLOWCHAIN_COMMIT_SHA || gitValue(["rev-parse", "HEAD"]),
-  branch:
-    process.env.FLOWCHAIN_BRANCH ||
-    gitValue(["branch", "--show-current"], "detached"),
-  runtimeMode:
-    process.env.NODE_ENV === "production" ? "production" : "local-dev",
+const gitBuildFallback = Object.freeze({
+  commitSha: gitValue(["rev-parse", "HEAD"]),
+  branch: gitValue(["branch", "--show-current"], "detached"),
 });
 
 await loadEnv(root);
@@ -826,7 +824,8 @@ function supplierPerformance(db) {
 function supplierRecommendations() {
   return null;
 }
-export function createScmServer() {
+export function createScmServer({ readinessCheck = checkRuntimeReadiness } = {}) {
+  validateProductionRuntimeConfig(process.env);
   validateDatabasePersistenceConfig(process.env);
   const localSessions = new Map();
   const localSessionSecret = createLocalSessionSecret(process.env);
@@ -835,6 +834,16 @@ export function createScmServer() {
       if (req.method === "OPTIONS") return send(res, 204, {});
 
       const url = new URL(req.url || "/", `http://localhost:${port}`);
+
+      if (req.method === "GET" && url.pathname === "/api/health") {
+        return send(res, 200, buildLivenessPayload({ env: process.env, gitFallback: gitBuildFallback }));
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/ready") {
+        const readiness = await readinessCheck({ env: process.env });
+        return send(res, readiness.status, readiness.payload);
+      }
+
       const db = createEmptyDataset({ mode: "user" });
       const persistenceMode = getPersistenceMode(process.env);
       const dataMode = { mode: "user", readsDemoData: false };
@@ -845,19 +854,6 @@ export function createScmServer() {
         localSessionSecret,
         process.env,
       );
-
-      if (req.method === "GET" && url.pathname === "/api/health") {
-        return send(res, 200, {
-          ok: true,
-          service: "flowchain-scm-api",
-          ...buildIdentity,
-          dataMode: dataMode.mode,
-          readsDemoData: dataMode.readsDemoData,
-          persistenceMode,
-          authority: "postgresql",
-          timestamp: new Date().toISOString(),
-        });
-      }
 
       if (req.method === "GET" && url.pathname === "/api/dev/local-status") {
         if (!localDevelopmentEnabled(process.env))
@@ -1054,8 +1050,22 @@ export function createScmServer() {
   });
 }
 
-export function startScmServer(listenPort = port) {
+export function startScmServer(listenPort = port, options = {}) {
   const server = createScmServer();
+  const lifecycle = createServerLifecycle({
+    server,
+    logger: options.logger || console,
+    shutdownTimeoutMs: options.shutdownTimeoutMs,
+  });
+  const unregisterSignals = registerShutdownSignals({ lifecycle, logger: options.logger || console });
+  server.lifecycle = lifecycle;
+  server.shutdown = async (reason = "manual") => {
+    try {
+      await lifecycle.shutdown(reason);
+    } finally {
+      unregisterSignals();
+    }
+  };
   server.listen(listenPort, () => {
     console.log(`FlowChain listening on http://127.0.0.1:${listenPort}`);
   });

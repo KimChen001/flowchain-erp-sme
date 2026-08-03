@@ -63,6 +63,12 @@ try {
     FLOWCHAIN_DEFAULT_TENANT_ID: tenantId,
     FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: "false",
     FLOWCHAIN_LOCAL_SESSION_SECRET: `browser-${randomUUID()}`,
+    FLOWCHAIN_ATTACHMENT_STORAGE_PROVIDER: "local",
+    FLOWCHAIN_UPLOAD_STORAGE_DIR: join(directory, "attachments"),
+    FLOWCHAIN_ALLOW_TEST_TEMP_ATTACHMENT_STORAGE: "true",
+    FLOWCHAIN_COMMIT_SHA: "outbound-browser-smoke",
+    FLOWCHAIN_BRANCH: "test/outbound-browser-smoke",
+    FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: "false",
     SCM_API_PORT: String(apiPort),
     NODE_ENV: "production",
   });

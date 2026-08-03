@@ -72,7 +72,7 @@ async function main() {
   const pg = new EmbeddedPostgres({ databaseDir: directory, user: 'flowchain_smoke', password, port: pgPort, persistent: false, onLog: () => {}, onError: () => {} })
   let api
   let prisma
-  const env = { ...process.env, DATABASE_URL: url, DATABASE_URL_TEST: url, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: 'true', FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: 'false', FLOWCHAIN_LOCAL_SESSION_SECRET: `smoke-${randomUUID()}`, SCM_API_PORT: String(apiPort), NODE_ENV: 'production' }
+  const env = { ...process.env, DATABASE_URL: url, DATABASE_URL_TEST: url, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: 'true', FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: 'false', FLOWCHAIN_LOCAL_SESSION_SECRET: `smoke-${randomUUID()}`, FLOWCHAIN_ATTACHMENT_STORAGE_PROVIDER: 'local', FLOWCHAIN_UPLOAD_STORAGE_DIR: join(directory, 'attachments'), FLOWCHAIN_ALLOW_TEST_TEMP_ATTACHMENT_STORAGE: 'true', FLOWCHAIN_COMMIT_SHA: 'receiving-api-smoke', FLOWCHAIN_BRANCH: 'test/receiving-api-smoke', FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: 'false', SCM_API_PORT: String(apiPort), NODE_ENV: 'production' }
   const base = `http://127.0.0.1:${apiPort}`
   try {
     await pg.initialise(); await pg.start(); await pg.createDatabase(database)

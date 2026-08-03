@@ -112,19 +112,21 @@ test('global server errors are sanitized before returning 500 responses', () => 
 
 test('server health response omits provider keys models and proxy diagnostics by default', () => {
   const source = readSource('server', 'bootstrap', 'scm-server.mjs')
+  const healthSource = readSource('server', 'domain', 'runtime-readiness.mjs')
   const healthBlock = source.slice(
     source.search(/url\.pathname === ["']\/api\/health["']/),
-    source.search(/if\s*\(\s*req\.method === ["']POST["'] && url\.pathname === ["']\/api\/auth\/login["']/),
+    source.indexOf('const db = createEmptyDataset'),
   )
 
-  assert.match(healthBlock, /service: ["']flowchain-scm-api["']/)
-  assert.match(healthBlock, /\.\.\.buildIdentity/)
-  assert.match(healthBlock, /persistenceMode/)
-  assert.match(healthBlock, /readsDemoData/)
-  assert.match(healthBlock, /authority: ["']postgresql["']/)
+  assert.match(healthBlock, /buildLivenessPayload/)
+  assert.ok(source.indexOf('url.pathname === "/api/health"') < source.indexOf('const repositories = createRepositoryRegistry'))
+  assert.match(healthSource, /service/)
+  assert.match(healthSource, /runtimeBuildIdentity/)
+  assert.match(healthSource, /persistenceMode/)
+  assert.match(healthSource, /authority: ["']postgresql["']/)
   assert.doesNotMatch(healthBlock, /runtimeAdapters|runtimeWriteCoordination/)
-  assert.match(healthBlock, /timestamp/)
-  assert.match(healthBlock, /dataMode: dataMode\.mode/)
+  assert.match(healthSource, /timestamp/)
+  assert.doesNotMatch(healthBlock, /createRepositoryRegistry|getPrismaClient|healthCheck/)
   assert.doesNotMatch(healthBlock, /OPENAI_API_KEY|ARK_API_KEY|DOUBAO_API_KEY|OPENAI_MODEL|ARK_MODEL|DOUBAO_MODEL/)
   assert.doesNotMatch(healthBlock, /DATABASE_URL|POSTGRES_URL|OPENAI|ARK|DOUBAO|openai:|doubao:|(?<![A-Za-z])(?:provider|model|proxy|secret|token|password)\s*:/i)
   assert.match(source, /sendInternalServerError\(res, send, error\)/)
@@ -162,8 +164,9 @@ test('database mode blocks legacy writes while allowing health and preview route
     assert.equal(health.payload.service, 'flowchain-scm-api')
     assert.equal(health.payload.runtimeMode, 'local-dev')
     assert.equal(health.payload.persistenceMode, 'database')
-    assert.equal(health.payload.dataMode, 'user')
-    assert.equal(health.payload.readsDemoData, false)
+    assert.equal(health.payload.live, true)
+    assert.equal(health.payload.dataMode, undefined)
+    assert.equal(health.payload.readsDemoData, undefined)
     assert.equal(typeof health.payload.timestamp, 'string')
     assert.equal(health.payload.authority, 'postgresql')
     assert.equal(health.payload.runtimeWriteCoordination, undefined)

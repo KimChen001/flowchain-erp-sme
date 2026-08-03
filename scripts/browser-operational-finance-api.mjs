@@ -527,6 +527,8 @@ try {
     FLOWCHAIN_DEFAULT_TENANT_ID: tenantId,
     FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: "false",
     FLOWCHAIN_LOCAL_SESSION_SECRET: `finance-browser-${randomUUID()}-secure`,
+    FLOWCHAIN_COMMIT_SHA: "operational-finance-browser-smoke",
+    FLOWCHAIN_BRANCH: "test/operational-finance-browser-smoke",
     SCM_API_PORT: String(apiPort),
     NODE_ENV: "production",
   });
