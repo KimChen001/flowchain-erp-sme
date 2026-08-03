@@ -16,13 +16,13 @@ RUN find server -type f -name "*.test.mjs" -delete \
 
 FROM build AS release-dependencies
 
-# Keep production dependencies plus the exact Prisma CLI already present in
-# the npm cache because migrations are an explicit release operation. Remove
-# devDependencies from the stage-local manifest before the offline install so
-# npm never needs metadata for omitted tools such as Playwright.
+# Keep production dependencies plus the exact Prisma CLI because migrations
+# are an explicit release operation. Remove devDependencies from the
+# stage-local manifest first so omitted tools such as Playwright are never
+# resolved into the release dependency tree.
 RUN npm prune --omit=dev \
     && node -e "const fs=require('node:fs');const p=require('./package.json');delete p.devDependencies;p.dependencies={...p.dependencies,prisma:'7.8.0'};fs.writeFileSync('./package.json',JSON.stringify(p))" \
-    && npm install --offline --no-save --omit=dev --ignore-scripts --package-lock=false
+    && npm install --no-save --omit=dev --ignore-scripts --package-lock=false
 
 FROM node:24-bookworm-slim AS runtime
 
