@@ -67,7 +67,7 @@ FlowChain uses the familiar SME inventory/ERP object skeleton for orientation: f
 
 - Introduce database-backed persistence behind repository adapters.
 - Add tenant isolation, user roles, permissions, and audit logs.
-- Keep local JSON-backed behavior available for development until explicitly replaced.
+- PostgreSQL-only authority is complete; the retired JSON runtime must not be restored as a development or production fallback.
 
 ## Phase 7 Collaboration Notification Draft Adapters
 

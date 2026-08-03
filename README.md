@@ -39,6 +39,12 @@ FlowChain runs on a PostgreSQL-only authoritative runtime. `DATABASE_URL` is
 required; the removed JSON persistence mode and production fixture fallbacks
 fail closed.
 
+The first production deployment foundation provides an immutable Node 24
+container, fail-fast production configuration, separate liveness/readiness,
+graceful shutdown, and a controlled single-instance Staging reference. See
+[Production Deployment Foundation v1](docs/production-deployment-foundation-v1.md)
+and [Staging deployment](deploy/README.md).
+
 Universal Intake is the sole forward-looking intake authority. Phase 5.4A
 defines tenant-scoped artifacts, batches, records, mappings, validation, and
 review as a preview-only foundation. Legacy Pilot Import production routes are
@@ -114,6 +120,8 @@ npm run build
 
 Read and preview APIs:
 
+- `GET /api/health` (lightweight liveness)
+- `GET /api/ready` (PostgreSQL, tenant, attachment, and configuration readiness)
 - `GET /api/me`
 - `GET /api/tenants/current`
 - `GET /api/search`
@@ -199,6 +207,8 @@ Start here:
 - [Final acceptance checklist](docs/final-acceptance-checklist-v1.md)
 - [Product scope and boundary](docs/product-scope-and-boundary-v1.md)
 - [Current development limitations](docs/current-development-limitations-v1.md)
+- [Production deployment foundation](docs/production-deployment-foundation-v1.md)
+- [Controlled Staging deployment](deploy/README.md)
 - [Phase 5.4B Structured Smart Intake](docs/phase-5-4b-schema-aware-structured-intake.md)
 - [Custom Field Extension Foundation](docs/custom-field-extension-foundation-v1.md)
 - [Canonical Master Data Schemas](docs/canonical-master-data-schemas-v1.md)

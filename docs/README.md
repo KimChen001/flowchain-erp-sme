@@ -1,5 +1,11 @@
 # FlowChain Docs Index
 
+## Operations
+
+- [Production deployment foundation v1](production-deployment-foundation-v1.md)
+- [Controlled single-instance Staging deployment](../deploy/README.md)
+- [Local development workflow v1](local-development-workflow-v1.md)
+
 ## Product
 
 - [Product language and positioning](product-language-and-positioning-v1.md)
@@ -90,7 +96,7 @@
 ## Roadmap
 
 - [Roadmap v1](roadmap-v1.md)
-# Phase 5.4B.1 local truthfulness
+## Phase 5.4B.1 local truthfulness
 
 - [Local development workflow v1](local-development-workflow-v1.md)
 - [Local demo data v1](local-demo-data-v1.md)

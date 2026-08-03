@@ -1,4 +1,38 @@
-# FlowChain Project Handoff
+# FlowChain Project Handoff — Current Runtime
+
+Last updated: 2026-08-03
+
+FlowChain now runs on a PostgreSQL-only authoritative runtime. JSON production
+persistence and static production fallbacks are retired and fail closed. The
+current deployment entry points are:
+
+- [README](README.md)
+- [Production Deployment Foundation v1](docs/production-deployment-foundation-v1.md)
+- [Controlled Staging deployment](deploy/README.md)
+- [PostgreSQL persistence contract](docs/persistence-mode-and-adapter-registry-v1.md)
+- [Current development limitations](docs/current-development-limitations-v1.md)
+
+Current operators must provide `DATABASE_URL`, explicit database persistence,
+a provisioned tenant, a stable Session Secret, durable attachment storage, and
+immutable build identity. `GET /api/health` is lightweight liveness;
+`GET /api/ready` verifies PostgreSQL, tenant, attachment storage, and runtime
+configuration before traffic is accepted. Migrations are a separate release
+step and never run during image build or application startup.
+
+Use this bootstrap prompt for future work:
+
+```text
+Continue FlowChain from the current repository README and docs/production-deployment-foundation-v1.md. Preserve PostgreSQL-only authority, tenant scope, and the reviewed deployment/configuration contracts. Do not read or output local environment secrets.
+```
+
+<details>
+<summary>Historical June 2026 JSON/UAT handoff (archived; do not use for current operation)</summary>
+
+The material below records the retired pre-PostgreSQL UAT environment. Its
+JSON authority, public HTTP host, static market data, and deployment commands
+are historical only and must not be restored.
+
+# Historical FlowChain Project Handoff
 
 Last updated: 2026-06-13
 
@@ -10,16 +44,16 @@ Local workspace:
 C:\Users\chinc\Documents\Codex\2026-06-04\erp-saas\scm-source
 ```
 
-Public UAT URL:
+Historical public UAT URL (removed):
 
 ```text
-http://121.40.160.213:8787
+[historical host removed]
 ```
 
 Aliyun server:
 
 ```text
-Host: 121.40.160.213
+Host: [historical host removed]
 OS: Ubuntu 22.04
 App directory: /opt/flowchain
 Service: flowchain
@@ -250,7 +284,7 @@ curl http://127.0.0.1:8787/api/market-prices
 Verify from local machine:
 
 ```powershell
-Invoke-WebRequest http://121.40.160.213:8787/api/health -UseBasicParsing
+Invoke-WebRequest http://historical-host.invalid:8787/api/health -UseBasicParsing
 ```
 
 ## Important Security Notes
@@ -263,7 +297,7 @@ Invoke-WebRequest http://121.40.160.213:8787/api/health -UseBasicParsing
 
 ## Current Known Limitations
 
-- Data is JSON-based, not a real database.
+- Historical limitation: data was JSON-based rather than database-backed.
 - User login is demo-only and does not use password hashing or JWT.
 - Multi-tenant data isolation is not implemented yet.
 - Market prices are UAT sample/cache data, not official exchange data.
@@ -294,3 +328,5 @@ Use this at the start of a new Codex conversation:
 ```text
 请继续 FlowChain 项目。项目路径是 C:\Users\chinc\Documents\Codex\2026-06-04\erp-saas\scm-source。请先读取 PROJECT_HANDOFF.md、package.json、server/scm-api.mjs 和 src/app/App.tsx，然后继续开发。不要读取或输出 .env.local 里的密钥。
 ```
+
+</details>
