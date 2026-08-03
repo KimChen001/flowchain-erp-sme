@@ -307,7 +307,7 @@ test('GET /api/ai/tools returns controlled AI tool registry', async () => {
 
   assert.ok(handled)
   assert.equal(route.response.status, 200)
-  assert.equal(route.response.payload.tools.length, 43)
+  assert.equal(route.response.payload.tools.length, 42)
   assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getSupplierStatus'))
   assert.ok(route.response.payload.tools.some((tool) => tool.name === 'resolveSupplierEntity'))
   assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getSupplierOperationalSummary'))
@@ -338,6 +338,7 @@ test('GET /api/ai/tools returns controlled AI tool registry', async () => {
     assert.equal(tool.audit.recordInvocation, true)
   }
   assert.ok(route.response.payload.tools.some((tool) => tool.name === 'preparePurchaseRequestDraft'))
+  assert.equal(route.response.payload.tools.some((tool) => tool.name === 'prepareInventoryExceptionDraft'), false)
   assert.equal(route.response.payload.tools.find((tool) => tool.name === 'getSupplierStatus').mode, 'read')
   assert.equal(route.response.payload.tools.find((tool) => tool.name === 'prepareRfqDraft').requiresUserReview, true)
   assert.equal(route.response.payload.tools.every((tool) => tool.writesBusinessData === false), true)

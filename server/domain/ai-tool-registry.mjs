@@ -470,17 +470,6 @@ export const aiToolRegistry = Object.freeze([
     writesBusinessData: false,
     audit: { recordInvocation: true, action: 'ai_draft_prepared' },
   },
-  {
-    name: 'prepareInventoryExceptionDraft',
-    module: 'inventory',
-    mode: 'draft_preparation',
-    description: 'Prepare a reviewable inventory exception draft structure from operational context.',
-    inputSchema: { text: 'string' },
-    outputCardTypes: ['inventory_exception_draft', 'missing_fields', 'confidence_summary', 'recommended_actions'],
-    requiresUserReview: true,
-    writesBusinessData: false,
-    audit: { recordInvocation: true, action: 'ai_draft_prepared' },
-  },
 ])
 
 export function getAiToolRegistry() {
