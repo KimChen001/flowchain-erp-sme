@@ -2,6 +2,9 @@
 FROM node:24-bookworm-slim AS build
 
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci
 
@@ -14,9 +17,12 @@ RUN find server -type f -name "*.test.mjs" -delete \
 FROM build AS release-dependencies
 
 # Keep production dependencies plus the exact Prisma CLI already present in
-# the lockfile because migrations are an explicit release operation.
+# the npm cache because migrations are an explicit release operation. Remove
+# devDependencies from the stage-local manifest before the offline install so
+# npm never needs metadata for omitted tools such as Playwright.
 RUN npm prune --omit=dev \
-    && npm install --offline --no-save --omit=dev --ignore-scripts --package-lock=false prisma@7.8.0
+    && node -e "const fs=require('node:fs');const p=require('./package.json');delete p.devDependencies;p.dependencies={...p.dependencies,prisma:'7.8.0'};fs.writeFileSync('./package.json',JSON.stringify(p))" \
+    && npm install --offline --no-save --omit=dev --ignore-scripts --package-lock=false
 
 FROM node:24-bookworm-slim AS runtime
 
@@ -31,7 +37,11 @@ LABEL org.opencontainers.image.revision=${FLOWCHAIN_COMMIT_SHA} \
       org.opencontainers.image.ref.name=${FLOWCHAIN_BRANCH}
 
 WORKDIR /app
-RUN mkdir -p /var/lib/flowchain/uploads && chown -R node:node /var/lib/flowchain
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/flowchain/uploads \
+    && chown -R node:node /var/lib/flowchain
 
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json /app/prisma.config.ts ./
 COPY --from=release-dependencies --chown=node:node /app/node_modules ./node_modules
