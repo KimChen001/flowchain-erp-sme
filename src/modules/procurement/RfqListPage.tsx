@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import { Link } from "react-router";
 import { A, Card } from "../../components/ui";
 import { procurementApi } from "./procurementApi";
 import type { ProcurementDocument } from "./procurementTypes";
+
+const RFQ_STATUS_LABELS: Record<string, string> = {
+  draft: "草稿",
+  open: "开放",
+  collecting_quotes: "收集报价",
+  closed: "已关闭",
+  cancelled: "已取消",
+};
 
 export function RfqListPage() {
   const [rows, setRows] = useState<ProcurementDocument[]>([]);
@@ -72,19 +81,19 @@ export function RfqListPage() {
                 {rows.map((row) => (
                   <tr key={row.id} className="border-t">
                     <td className="p-3">
-                      <span
-                        className="font-semibold tabular-nums text-slate-700"
-                        title="RFQ 详情页尚未接通"
-                        data-testid="rfq-id-unlinked"
+                      <Link
+                        className="font-semibold tabular-nums text-blue-600 hover:underline"
+                        to={`/app/procurement/rfq/${encodeURIComponent(row.id || "")}`}
+                        data-testid={`rfq-id-link-${row.id}`}
                       >
                         {row.id}
-                      </span>
+                      </Link>
                     </td>
                     <td className="p-3"><div className="font-medium">{row.title || "—"}</div>{row.itemName && <div className="mt-1" style={{ color: A.sub }}>{row.itemName}</div>}</td>
                     <td className="p-3 tabular-nums">{Number.isFinite(row.quantity) ? Number(row.quantity).toLocaleString() : "—"} {row.unit || ""}</td>
                     <td className="p-3 tabular-nums">{row.respondedSupplierCount ?? 0} / {row.supplierCount ?? 0}</td>
                     <td className="p-3">{row.dueDate || "—"}</td>
-                    <td className="p-3"><span className="rounded bg-slate-100 px-2 py-1 font-semibold">{row.status || "—"}</span></td>
+                    <td className="p-3"><span className="rounded bg-slate-100 px-2 py-1 font-semibold">{row.status ? RFQ_STATUS_LABELS[row.status] || row.status : "—"}</span></td>
                   </tr>
                 ))}
               </tbody>

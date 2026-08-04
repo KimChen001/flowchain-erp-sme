@@ -214,9 +214,9 @@ test("legacy redirects and canonical operational deep links remain exact", () =>
   }
   assert.equal(
     byId("procurement:rfq-detail").directAccessBehavior,
-    "NOT_IMPLEMENTED",
+    "RENDER",
   );
-  assert.equal(byId("procurement:rfq-detail").readMaturity, "UNAVAILABLE");
+  assert.equal(byId("procurement:rfq-detail").readMaturity, "AUTHORITATIVE");
   assert.equal(byId("procurement:rfq-detail").writeMaturity, "UNAVAILABLE");
   assert.equal(
     byId("procurement:order-lines").path,

@@ -20,6 +20,7 @@ import {
 import { navGroups, navItems } from "./routes.tsx";
 import {
   defaultRouteForModule,
+  entityIdForRoutePath,
   primarySurfaceRoute,
   routeById,
   routeByPath,
@@ -74,6 +75,7 @@ import InventoryPanel from "../modules/inventory/Page";
 import ForecastPanel from "../modules/forecast/Page";
 import OverviewPanel from "../modules/overview/Page";
 import ProcurementPanel from "../modules/procurement/Page";
+import { CanonicalRfqDetailPage } from "../modules/procurement/CanonicalRfqDetailPage";
 import FinanceWorkbench from "../modules/finance/Page";
 import SrmPage from "../modules/srm/Page";
 import MasterDataPage from "../modules/master-data/Page";
@@ -801,9 +803,7 @@ export default function FlowChainApp() {
       );
       return;
     }
-    const entityId = decodeURIComponent(
-      location.pathname.split("/").filter(Boolean).at(-1) || "",
-    );
+    const entityId = entityIdForRoutePath(activeRoute, location.pathname);
     if (!entityId) return;
     const focusArea = new URLSearchParams(location.search).get("focus") as CanonicalFocusTarget["focusArea"] | null;
     setSearchFocus((current) =>
@@ -1948,7 +1948,9 @@ export default function FlowChainApp() {
                           </div>
                         }
                       >
-                        {activeRoute.panelId === "receiving-workbench" ? (
+                        {activeRoute.id === "procurement:rfq-detail" ? (
+                          <CanonicalRfqDetailPage documentId={entityIdForRoutePath(activeRoute, location.pathname)} />
+                        ) : activeRoute.panelId === "receiving-workbench" ? (
                           panels["receiving-workbench"]
                         ) : activeRoute.panelId === "outbound-workbench" ? (
                           panels["outbound-workbench"]

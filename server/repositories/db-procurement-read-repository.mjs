@@ -13,6 +13,7 @@ import {
   isProcurementDocumentType,
   normalizeProcurementDocumentType,
 } from '../domain/procurement-read-model.mjs'
+import { normalizeProcurementAuthorityStatus } from '../domain/procurement-status-authority.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 
@@ -41,10 +42,33 @@ function numberFrom(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+function nullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value?.toNumber === 'function') return value.toNumber()
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 function isoDate(value) {
   if (!value) return ''
   const date = value instanceof Date ? value : new Date(value)
   return Number.isNaN(date.getTime()) ? text(value) : date.toISOString().slice(0, 10)
+}
+
+function isoDateTime(value) {
+  if (!value) return ''
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(date.getTime()) ? text(value) : date.toISOString()
+}
+
+function canonicalStatus(domain, value) {
+  const raw = text(value)
+  if (!raw) return null
+  try {
+    return normalizeProcurementAuthorityStatus(domain, raw)
+  } catch {
+    return null
+  }
 }
 
 function metadata(record = {}) {
@@ -152,7 +176,7 @@ function mapRfq(record = {}, quotations = []) {
     id: record.id,
     title: text(record.title, record.id),
     category: text(record.category),
-    status: text(record.status, 'active'),
+    status: canonicalStatus('rfq', record.status) || text(record.status, 'active'),
     suppliers: numberFrom(record.supplierCount, quoteCount),
     quoted: numberFrom(record.respondedSupplierCount, quoteCount),
     due: isoDate(record.dueDate),
@@ -169,6 +193,119 @@ function mapRfq(record = {}, quotations = []) {
     currency: text(record.currency, 'CNY'),
     createdAt: isoDate(record.createdAt),
     updatedAt: isoDate(record.updatedAt),
+  }
+}
+
+function mapRfqDetail(record = {}, quotations = []) {
+  const base = buildProcurementRfqs({ rfqs: [mapRfq(record, quotations)] })[0] || null
+  if (!base) return null
+
+  const recordMeta = metadata(record)
+  const lines = asArray(record.lines).map((entry) => {
+    const lineMeta = metadata(entry)
+    return {
+      id: entry.id,
+      itemId: text(entry.itemId) || null,
+      sku: text(entry.sku) || null,
+      itemName: text(entry.itemName) || null,
+      quantity: nullableNumber(entry.quantity),
+      unit: text(entry.unit) || null,
+      targetUnitPrice: nullableNumber(lineMeta.targetUnitPrice ?? lineMeta.referencePrice ?? lineMeta.targetPrice),
+      requiredDate: isoDate(lineMeta.requiredDate ?? lineMeta.requiredByDate),
+      deliveryLocation: text(lineMeta.deliveryLocation ?? lineMeta.warehouseId ?? lineMeta.warehouseReference) || null,
+    }
+  })
+
+  const quotationDetails = asArray(quotations).map((quotation) => {
+    const quotationMeta = metadata(quotation)
+    const revisionValue = quotationMeta.revisionNumber ?? quotationMeta.revision
+    const parsedRevision = nullableNumber(revisionValue)
+    return {
+      id: quotation.id,
+      supplierId: text(quotation.supplierId) || null,
+      supplierName: text(quotation.supplierName) || null,
+      status: canonicalStatus('supplierQuotation', quotation.status),
+      statusRaw: text(quotation.status) || null,
+      quotedAmount: nullableNumber(quotation.quotedAmount),
+      currency: text(quotation.currency, record.currency || 'CNY'),
+      submittedAt: isoDateTime(quotation.submittedAt),
+      deliveryDate: isoDate(quotationMeta.deliveryDate ?? quotationMeta.promisedDate),
+      paymentTerms: text(quotationMeta.paymentTerms) || null,
+      validity: text(quotationMeta.validity ?? quotationMeta.validUntil) || null,
+      revisionNumber: parsedRevision,
+      isLatest: null,
+      lines: asArray(quotation.lines).map((line) => ({
+        id: line.id,
+        itemId: text(line.itemId) || null,
+        sku: text(line.sku) || null,
+        itemName: text(line.itemName) || null,
+        quantity: nullableNumber(line.quantity),
+        unit: text(line.unit) || null,
+        unitPrice: nullableNumber(line.unitPrice),
+        amount: nullableNumber(line.amount),
+      })),
+    }
+  })
+
+  const participantsById = new Map()
+  const identifiedNames = new Set()
+  for (const quotation of quotationDetails) {
+    if (!quotation.supplierId) continue
+    const participant = participantsById.get(quotation.supplierId) || {
+      supplierId: quotation.supplierId,
+      supplierName: null,
+      participationState: 'quotation_recorded',
+    }
+    if (!participant.supplierName && quotation.supplierName) participant.supplierName = quotation.supplierName
+    participantsById.set(quotation.supplierId, participant)
+    if (quotation.supplierName) identifiedNames.add(quotation.supplierName.toLowerCase())
+  }
+  const participantsByName = new Map()
+  for (const quotation of quotationDetails) {
+    if (quotation.supplierId || !quotation.supplierName) continue
+    const nameKey = quotation.supplierName.toLowerCase()
+    if (identifiedNames.has(nameKey) || participantsByName.has(nameKey)) continue
+    participantsByName.set(nameKey, {
+      supplierId: null,
+      supplierName: quotation.supplierName,
+      participationState: 'quotation_recorded',
+    })
+  }
+  const knownParticipants = [...participantsById.values(), ...participantsByName.values()]
+
+  const relatedEvidence = [
+    { type: 'rfq', id: record.id, label: text(record.title, record.id), relation: 'canonical_record' },
+    ...(record.sourceRequestId ? [{ type: 'pr', id: record.sourceRequestId, label: record.sourceRequestId, relation: 'source_request' }] : []),
+    ...(record.linkedPoId ? [{ type: 'po', id: record.linkedPoId, label: record.linkedPoId, relation: 'linked_po' }] : []),
+    ...quotationDetails.map((quotation) => ({ type: 'supplier_quotation', id: quotation.id, label: quotation.id, relation: 'quotation' })),
+  ]
+
+  const limitations = [
+    '当前 Prisma 模型没有独立的 RFQ 邀请关系；供应商参与事实仅来自 supplierCount/respondedSupplierCount 和已关联报价。',
+    '当前 Prisma 模型没有 quotation revision/version authority；revision number 和 latest indicator 不可推断。',
+  ]
+  if (recordMeta.requesterId || recordMeta.owner) limitations.push('当前读取 contract 没有 RFQ owner/requester 的独立权限字段。')
+  if (!canonicalStatus('rfq', record.status)) limitations.push('RFQ 状态不是当前状态目录的 canonical 值，已按不可用状态返回。')
+
+  return {
+    ...base,
+    status: canonicalStatus('rfq', record.status),
+    statusRaw: text(record.status) || null,
+    description: text(recordMeta.description) || null,
+    lines,
+    suppliers: {
+      invitedCount: numberFrom(record.supplierCount, 0),
+      respondedCount: numberFrom(record.respondedSupplierCount, quotationDetails.length),
+      knownParticipants,
+      invitationAuthority: 'unavailable',
+    },
+    quotations: quotationDetails,
+    relatedEvidence,
+    revisionAuthority: {
+      available: false,
+      reason: 'No quotation revision/version model is present in the current Prisma schema.',
+    },
+    limitations,
   }
 }
 
@@ -395,9 +532,9 @@ async function readRfqDocument(client, { id, tenantId }) {
   if (!record) return null
   const quotations = await client.supplierQuotation.findMany({
     where: { tenantId, rfqId: record.id },
-    select: { id: true, rfqId: true },
+    include: { lines: true },
   })
-  return buildProcurementRfqs({ rfqs: [mapRfq(record, quotations)] })[0] || null
+  return mapRfqDetail(record, quotations)
 }
 
 async function readPurchaseOrderDocument(client, { id, tenantId }) {

@@ -287,6 +287,11 @@ test('GET /api/procurement/documents/:type/:id contract handles found, missing, 
   await handleProcurementReadRoute(invalid.ctx)
   assert.equal(invalid.response.status, 400)
   assert.equal(JSON.stringify(invalid.response.payload).includes('stack'), false)
+
+  const malformedId = createRouteContext('/api/procurement/documents/rfq/RFQ%ZZ001')
+  await handleProcurementReadRoute(malformedId.ctx)
+  assert.equal(malformedId.response.status, 400)
+  assert.equal(JSON.stringify(malformedId.response.payload).includes('stack'), false)
 })
 
 test('GET /api/procurement/documents/:type/:id dispatches all canonical types without list fallback', async () => {
@@ -320,8 +325,8 @@ test('GET /api/procurement/documents/:type/:id dispatches all canonical types wi
       send(_res, status, payload) { response = { status, payload } },
     })
     assert.equal(response.status, 200)
-    assert.deepEqual(response.payload, { document: { id: 'DOC%2F001', documentType: canonicalType } })
-    assert.deepEqual(observed, { type: canonicalType, id: 'DOC%2F001', options: { tenantId: 'tenant-a' } })
+    assert.deepEqual(response.payload, { document: { id: 'DOC/001', documentType: canonicalType } })
+    assert.deepEqual(observed, { type: canonicalType, id: 'DOC/001', options: { tenantId: 'tenant-a' } })
   }
 })
 

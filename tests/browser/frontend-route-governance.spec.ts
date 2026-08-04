@@ -585,11 +585,12 @@ test("authorization context failure never exposes permission-gated routes", asyn
   ).toHaveCount(0);
 });
 
-test("RFQ list does not advertise an unimplemented detail and direct access is truthful", async ({
+test("RFQ list links to the canonical exact-read detail route", async ({
   page,
   request,
 }) => {
   await login(page, request);
+  let detailReads = 0;
   await page.route("**/api/procurement/documents?type=rfq", async (route) => {
     await route.fulfill({
       status: 200,
@@ -605,17 +606,44 @@ test("RFQ list does not advertise an unimplemented detail and direct access is t
       }),
     });
   });
+  await page.route("**/api/procurement/documents/rfq/RFQ-TEST-001", async (route) => {
+    detailReads += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        document: {
+          id: "RFQ-TEST-001",
+          title: "Route semantics test",
+          status: "open",
+          currency: "CNY",
+          lines: [],
+          suppliers: {
+            invitedCount: 0,
+            respondedCount: 0,
+            knownParticipants: [],
+            invitationAuthority: "unavailable",
+          },
+          quotations: [],
+          relatedEvidence: [],
+          revisionAuthority: { available: false, reason: "Unavailable" },
+          limitations: [
+            "当前 Prisma 模型没有独立的 RFQ 邀请关系。",
+            "当前 Prisma 模型没有 quotation revision/version authority。",
+          ],
+        },
+      }),
+    });
+  });
 
   await page.goto("/app/procurement/rfq");
-  await expect(page.getByTestId("rfq-id-unlinked")).toHaveText("RFQ-TEST-001");
-  await expect(
-    page.getByRole("link", { name: /RFQ-TEST-001/ }),
-  ).toHaveCount(0);
-
-  await page.goto("/app/procurement/rfq/RFQ-TEST-001");
-  await expect(page.getByTestId("route-not-implemented")).toBeVisible();
-  await expect(page.getByText("页面尚未接通", { exact: true })).toBeVisible();
-  await expect(page.getByText(/今日采购待办/)).toHaveCount(0);
+  await page.getByTestId("rfq-id-link-RFQ-TEST-001").click();
+  await expect(page).toHaveURL(/\/app\/procurement\/rfq\/RFQ-TEST-001$/);
+  await expect(page.getByTestId("canonical-rfq-detail")).toContainText("Route semantics test");
+  await expect(page.getByTestId("rfq-lines")).toContainText("没有权威行项目");
+  await expect(page.getByTestId("rfq-quotations")).toContainText("没有权威报价记录");
+  expect(detailReads).toBe(1);
+  await expect(page.getByTestId("route-not-implemented")).toHaveCount(0);
 });
 
 test("legacy root preserves URL semantics while retired children stay truthful", async ({
