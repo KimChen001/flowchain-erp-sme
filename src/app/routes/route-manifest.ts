@@ -420,7 +420,6 @@ function readMaturityFor(
   route: AppRouteDefinition,
   classification: RouteClassification,
 ): RouteMaturity {
-  if (route.id === "procurement:rfq-detail") return "UNAVAILABLE";
   if (classification === "EXTENSION") {
     if (route.moduleId === "universal-intake" || route.moduleId === "review-actions")
       return "PREVIEW";
@@ -458,7 +457,6 @@ function directAccessFor(
 ) {
   if (route.id === "imports") return "LEGACY_REDIRECT" as const;
   if (classification === "LEGACY") return "LEGACY_UNAVAILABLE" as const;
-  if (route.id === "procurement:rfq-detail") return "NOT_IMPLEMENTED" as const;
   if (classification === "FROZEN") return "FROZEN_UNAVAILABLE" as const;
   if (classification === "INTERNAL") return "INTERNAL_ONLY" as const;
   if (requiredCapability) return "CAPABILITY_REQUIRED" as const;
@@ -471,7 +469,7 @@ function limitationFor(
   classification: RouteClassification,
 ) {
   if (route.id === "procurement:rfq-detail")
-    return "Canonical RFQ detail has not been connected.";
+    return "只读展示当前租户的 RFQ、行项目、已关联报价和明确证据关系；当前模型不提供邀请名单或 quotation revision authority。";
   if (compatibilityRouteIds.has(route.id))
     return "Compatibility extension; not part of the default SME Core surface.";
   if (route.id === "imports")
@@ -515,13 +513,16 @@ export function authorityForRoute(
     apiDependency:
       route.id === "procurement:rfq"
         ? "/api/procurement/documents?type=rfq"
-        : apiByModule[route.moduleId],
+        : route.id === "procurement:rfq-detail"
+          ? "/api/procurement/documents/rfq/:id"
+          : apiByModule[route.moduleId],
     repositoryAuthority:
       classification === "LEGACY"
         ? "Retired legacy route"
-        : classification === "FROZEN" ||
-            route.id === "procurement:rfq-detail"
-          ? "Capability or direct-route boundary"
+        : route.id === "procurement:rfq-detail"
+          ? "Tenant-scoped PostgreSQL direct document repository"
+          : classification === "FROZEN"
+            ? "Capability or direct-route boundary"
           : classification === "INTERNAL"
             ? "Internal preview boundary"
             : "Tenant-scoped PostgreSQL repositories",

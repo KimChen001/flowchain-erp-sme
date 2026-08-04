@@ -4,6 +4,59 @@ export type ProcurementFocus = { entityType: string; entityId: string; at: numbe
 export type ProcurementNavigate = (moduleId: string, focus?: unknown) => void;
 export type ProcurementDocumentType = "pr" | "rfq" | "po" | "grn" | "invoice" | "threeWayMatch";
 export type ProcurementDocumentReference = { type: ProcurementDocumentType; id: string; label?: string };
+export type ProcurementRfqLine = {
+  id: string;
+  itemId?: string | null;
+  sku?: string | null;
+  itemName?: string | null;
+  quantity?: number | null;
+  unit?: string | null;
+  targetUnitPrice?: number | null;
+  requiredDate?: string;
+  deliveryLocation?: string | null;
+};
+export type ProcurementQuotationLine = {
+  id: string;
+  itemId?: string | null;
+  sku?: string | null;
+  itemName?: string | null;
+  quantity?: number | null;
+  unit?: string | null;
+  unitPrice?: number | null;
+  amount?: number | null;
+};
+export type ProcurementRfqQuotation = {
+  id: string;
+  supplierId?: string | null;
+  supplierName?: string | null;
+  status?: string | null;
+  statusRaw?: string | null;
+  quotedAmount?: number | null;
+  currency?: string;
+  submittedAt?: string;
+  deliveryDate?: string;
+  paymentTerms?: string | null;
+  validity?: string | null;
+  revisionNumber?: number | null;
+  isLatest?: boolean | null;
+  lines: ProcurementQuotationLine[];
+};
+export type ProcurementRfqDocument = ProcurementDocument & {
+  status: string | null;
+  statusRaw?: string | null;
+  description?: string | null;
+  lines: ProcurementRfqLine[];
+  suppliers: {
+    invitedCount: number;
+    respondedCount: number;
+    knownParticipants: Array<{ supplierId?: string | null; supplierName?: string | null; participationState: string }>;
+    invitationAuthority: "unavailable";
+  };
+  quotations: ProcurementRfqQuotation[];
+  relatedEvidence: Array<{ type: string; id: string; label: string; relation: string }>;
+  revisionAuthority: { available: false; reason: string };
+  limitations: string[];
+};
 export type PurchaseRequestSummary = { id: string; status: string; totalAmount: number };
 export type PurchaseOrderLine = { sourcePurchaseRequestLineId: string; itemNameSnapshot: string; estimatedAmount: number };
 export type PurchaseOrder = { id: string; status: string; transmissionStatus: string; totalAmount: number; supplierId: string; supplierSnapshot?: { supplierName?: string }; targetWarehouseId?: string; sourcePrId?: string; sourcePurchaseRequestId?: string; lines: PurchaseOrderLine[] };
@@ -11,6 +64,8 @@ export type ProcurementDocument = {
   id?: string;
   invoiceNumber?: string;
   relatedPo?: string;
+  linkedPr?: string;
+  linkedPo?: string;
   po?: string;
   poId?: string;
   supplierName?: string;
@@ -28,6 +83,7 @@ export type ProcurementDocument = {
   status?: string;
   arrived?: string;
   createdAt?: string;
+  updatedAt?: string;
   receiver?: string;
   warehouse?: string;
   receivedQuantity?: number;
@@ -46,5 +102,6 @@ export type ProcurementDocument = {
   blockingReason?: string;
   exceptionReason?: string;
   relatedDocuments?: ProcurementDocumentReference[];
+  evidence?: Array<Record<string, unknown>>;
 };
 export type ProcurementWorkItem = { id: string; type: string; status: string; amount: number; bucket: "approval" | "tracking"; kind: EntityKind; signals?: string[] };

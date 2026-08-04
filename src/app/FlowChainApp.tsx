@@ -74,6 +74,7 @@ import InventoryPanel from "../modules/inventory/Page";
 import ForecastPanel from "../modules/forecast/Page";
 import OverviewPanel from "../modules/overview/Page";
 import ProcurementPanel from "../modules/procurement/Page";
+import { CanonicalRfqDetailPage } from "../modules/procurement/CanonicalRfqDetailPage";
 import FinanceWorkbench from "../modules/finance/Page";
 import SrmPage from "../modules/srm/Page";
 import MasterDataPage from "../modules/master-data/Page";
@@ -1948,7 +1949,9 @@ export default function FlowChainApp() {
                           </div>
                         }
                       >
-                        {activeRoute.panelId === "receiving-workbench" ? (
+                        {activeRoute.id === "procurement:rfq-detail" ? (
+                          <CanonicalRfqDetailPage documentId={location.pathname.split("/").filter(Boolean).at(-1) || ""} />
+                        ) : activeRoute.panelId === "receiving-workbench" ? (
                           panels["receiving-workbench"]
                         ) : activeRoute.panelId === "outbound-workbench" ? (
                           panels["outbound-workbench"]
