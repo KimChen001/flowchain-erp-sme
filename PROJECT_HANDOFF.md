@@ -1,6 +1,6 @@
 # FlowChain Project Handoff — Current Runtime
 
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 FlowChain now runs on a PostgreSQL-only authoritative runtime. JSON production
 persistence and static production fallbacks are retired and fail closed. The
@@ -9,6 +9,8 @@ current deployment entry points are:
 - [README](README.md)
 - [Production Deployment Foundation v1](docs/production-deployment-foundation-v1.md)
 - [Controlled Staging deployment](deploy/README.md)
+- [Technical delivery path v2](docs/technical-delivery-path-v2.md)
+- [Procurement status authority v1](docs/procurement-status-authority-v1.md)
 - [PostgreSQL persistence contract](docs/persistence-mode-and-adapter-registry-v1.md)
 - [Current development limitations](docs/current-development-limitations-v1.md)
 
@@ -18,6 +20,13 @@ immutable build identity. `GET /api/health` is lightweight liveness;
 `GET /api/ready` verifies PostgreSQL, tenant, attachment storage, and runtime
 configuration before traffic is accepted. Migrations are a separate release
 step and never run during image build or application startup.
+
+The current server ownership is intentionally decomposed: `scm-server.mjs`
+is the composition root, `http-request-handler.mjs` owns HTTP orchestration,
+`runtime-routes.mjs` owns unauthenticated liveness/readiness and local
+diagnostics, and `server-lifecycle.mjs` owns signals, HTTP drain, forced
+connection close, and Prisma disconnect. Do not restore those concerns as an
+inline route chain in `scm-server.mjs`.
 
 Use this bootstrap prompt for future work:
 

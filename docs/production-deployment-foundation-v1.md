@@ -4,6 +4,25 @@
 
 FlowChain is a PostgreSQL-only Node 24 monolith. This foundation makes its current runtime repeatable and observable without changing business routes, authority, Prisma schema, authentication design, or product capabilities.
 
+## Runtime ownership
+
+Production lifecycle support follows the decomposed server runtime:
+
+```text
+scm-server.mjs
+  -> composition and production validation only
+http-request-handler.mjs
+  -> HTTP orchestration and established route precedence
+runtime-routes.mjs
+  -> health, readiness, and local diagnostics
+server-lifecycle.mjs
+  -> SIGTERM/SIGINT, HTTP drain, forced connection close, and Prisma disconnect
+```
+
+The runtime route owner executes before repository construction, Session
+identity parsing, and business route context creation. `scm-server.mjs` does
+not contain an inline HTTP route chain or lifecycle implementation.
+
 ## Container contract
 
 The repository `Dockerfile` uses a locked multi-stage build. The build stage runs `npm ci`, generates Prisma Client, and builds the Vite frontend. The final image runs as the non-root `node` user and contains only the built frontend, server/shared runtime, Prisma schema and migrations, package metadata, and locked Node modules required by the application and the separate migration release step. It contains no Git directory, environment file, local JSON data, local attachment data, browser artifacts, or test sources.
