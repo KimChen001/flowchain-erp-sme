@@ -131,6 +131,7 @@ jobs:
       - run: npm run test:browser:reports
       - run: npm run test:browser:outbound
       - run: npm run test:browser:product-recovery
+      - run: npm run test:browser:canonical-rfq-detail
       - run: npm run test:browser:inventory-operations
       - run: npm run test:browser:returns-quarantine
       - run: npm run test:browser:settings

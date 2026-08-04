@@ -44,6 +44,87 @@ const pg = new EmbeddedPostgres({
 let prisma;
 let server;
 
+async function seedCanonicalRfqBrowserScenario(client) {
+  await client.rfq.create({
+    data: {
+      id: "LOCAL-DEMO-RFQ-001",
+      tenantId,
+      title: "本地演示控制器询价",
+      category: "控制器",
+      status: "collecting_quotes",
+      supplierCount: 1,
+      respondedSupplierCount: 1,
+      dueDate: new Date("2030-01-10T00:00:00.000Z"),
+      sourceRequestId: "LOCAL-DEMO-PR-001",
+      linkedPoId: "LOCAL-DEMO-PO-001",
+      currency: "CNY",
+      metadata: {
+        browserAcceptance: true,
+        description: "用于验证 RFQ 权威详情读取的 PostgreSQL 场景记录。",
+      },
+      lines: {
+        create: [{
+          id: "LOCAL-DEMO-RFQL-001",
+          itemId: "LOCAL-DEMO-ITEM-001",
+          sku: "LDM-001",
+          itemName: "本地演示控制器",
+          quantity: 50,
+          unit: "pcs",
+          metadata: {
+            browserAcceptance: true,
+            targetUnitPrice: 100,
+            requiredDate: "2030-01-15",
+            deliveryLocation: "LOCAL-DEMO-WH-001",
+          },
+        }],
+      },
+    },
+  });
+  await client.supplierQuotation.create({
+    data: {
+      id: "LOCAL-DEMO-QUOTE-001",
+      tenantId,
+      rfqId: "LOCAL-DEMO-RFQ-001",
+      supplierId: "LOCAL-DEMO-SUP-001",
+      supplierName: "本地演示供应商 A",
+      status: "submitted",
+      quotedAmount: 4900,
+      currency: "CNY",
+      submittedAt: new Date("2030-01-05T08:30:00.000Z"),
+      metadata: {
+        browserAcceptance: true,
+        deliveryDate: "2030-01-14",
+        paymentTerms: "NET30",
+        validity: "2030-01-20",
+      },
+      lines: {
+        create: [{
+          id: "LOCAL-DEMO-QUOTEL-001",
+          itemId: "LOCAL-DEMO-ITEM-001",
+          sku: "LDM-001",
+          itemName: "本地演示控制器",
+          quantity: 50,
+          unit: "pcs",
+          unitPrice: 98,
+          amount: 4900,
+          metadata: { browserAcceptance: true },
+        }],
+      },
+    },
+  });
+  await client.rfq.create({
+    data: {
+      id: "LOCAL-DEMO-RFQ EMPTY",
+      tenantId,
+      title: "无行项目与报价的合法询价",
+      status: "draft",
+      dueDate: new Date("2030-02-01T00:00:00.000Z"),
+      currency: "CNY",
+      metadata: { browserAcceptance: true },
+    },
+  });
+}
+
 async function cleanup() {
   await new Promise((resolveClose) => server?.close(resolveClose) || resolveClose());
   await prisma?.$disconnect().catch(() => {});
@@ -98,6 +179,9 @@ try {
   await seedLocalDemo(prisma, process.env);
   if (process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY !== "true") {
     await seedLocalScenario(prisma, process.env);
+    if (process.env.PLAYWRIGHT_CANONICAL_RFQ_DETAIL === "true") {
+      await seedCanonicalRfqBrowserScenario(prisma);
+    }
   }
   await backfillTenantAuthorization(prisma, tenantId, { actorId: adminActorId });
   const { createScmServer } = await import("../server/scm-api.mjs");
