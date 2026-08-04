@@ -40,7 +40,7 @@ async function cleanup() {
 
 try {
   await pg.initialise(); await pg.start(); await pg.createDatabase(database)
-  Object.assign(process.env, { DATABASE_URL: url, DATABASE_URL_TEST: url, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: 'true', FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: 'false', FLOWCHAIN_LOCAL_SESSION_SECRET: `browser-${randomUUID()}`, SCM_API_PORT: String(apiPort), NODE_ENV: 'production' })
+  Object.assign(process.env, { DATABASE_URL: url, DATABASE_URL_TEST: url, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: 'true', FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: 'false', FLOWCHAIN_LOCAL_SESSION_SECRET: `browser-${randomUUID()}`, FLOWCHAIN_ATTACHMENT_STORAGE_PROVIDER: 'local', FLOWCHAIN_UPLOAD_STORAGE_DIR: join(directory, 'attachments'), FLOWCHAIN_ALLOW_TEST_TEMP_ATTACHMENT_STORAGE: 'true', FLOWCHAIN_COMMIT_SHA: 'receiving-browser-smoke', FLOWCHAIN_BRANCH: 'test/receiving-browser-smoke', FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: 'false', SCM_API_PORT: String(apiPort), NODE_ENV: 'production' })
   await execFileAsync(node, [prismaCli, 'migrate', 'deploy'], { cwd: root, env: process.env, maxBuffer: 10 * 1024 * 1024 })
   prisma = await createPrismaClient(process.env)
   await prisma.tenant.create({ data: { id: tenantId, name: 'Receiving Browser Tenant' } })

@@ -1,11 +1,18 @@
-# Alpha Operator Guide
+# Historical Alpha Operator Guide
+
+> **Archived:** This guide describes the retired pre-PostgreSQL Alpha/UAT
+> workflow. It is retained for historical test context only. Do not use it to
+> operate or deploy the current runtime. Current authority is PostgreSQL-only;
+> JSON persistence and production fixture fallbacks have been removed. Start
+> with the repository README, `docs/production-deployment-foundation-v1.md`,
+> and `deploy/README.md`.
 
 FlowChain is an AI-assisted SCM, procurement, inventory, and planning workbench for SMEs. This guide is for controlled Alpha operation only. It is not production ERP guidance, not autonomous execution guidance, and not production MRP guidance.
 
 ## Alpha Boundary
 
-- JSON mode is the default runtime mode.
-- DB mode is opt-in and should be used only when the operator intentionally tests repository-backed reads.
+- Historical note: JSON mode was once the default; that mode is now retired and fails closed.
+- Current operation requires the PostgreSQL repository-backed runtime.
 - Test preview-first and draft-first flows before any save-shell flow.
 - ActionDraft final confirmation is disabled and not implemented.
 - ActionDraft review may preview, edit simple fields, copy, and save an ActionDraft shell only.
@@ -142,7 +149,7 @@ Scenario H: SRM `查看高风险供应商` to supplier evidence to internal navi
 - Confirm current HEAD with `git log -1 --oneline`.
 - Start the API with `npm run api`.
 - Start the frontend with `npm run dev`.
-- Open `/api/health` first. Expected safe fields include `ok`, `service`, `mode`, `port`, `persistenceMode`, `timestamp`, `diagnostics.healthCheck`, `diagnostics.aiChat`, and current demo counts.
+- Historical troubleshooting note: current `/api/health` is lightweight liveness and exposes only safe service/build/runtime identity. Use `/api/ready` for PostgreSQL, Tenant, attachment storage, and configuration readiness; neither endpoint returns demo counts or provider diagnostics.
 - If the frontend loads but API calls fail, confirm the Vite proxy target: `SCM_API_PROXY_TARGET` should point at the API port that is actually running.
 - If port `8787` is occupied by a stale local API, stop only that known stale Node process or run the API on another port, for example `SCM_API_PORT=8788`, then start Vite with `SCM_API_PROXY_TARGET=http://127.0.0.1:8788`.
 - If manually testing Chinese prompts from PowerShell, send a UTF-8 byte body instead of a plain string body so request text is not garbled.

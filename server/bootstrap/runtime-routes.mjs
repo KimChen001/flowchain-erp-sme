@@ -1,5 +1,9 @@
 import { capabilityForEnvironment } from "../domain/capability-registry.mjs";
 import { localDevelopmentEnabled } from "../domain/local-development-contract.mjs";
+import {
+  buildLivenessPayload,
+  checkRuntimeReadiness,
+} from "../domain/runtime-readiness.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { send } from "../utils/http.mjs";
 
@@ -9,20 +13,23 @@ export async function handleRuntimeRoutes({
   url,
   env,
   buildIdentity,
-  dataMode,
-  persistenceMode,
+  readinessCheck = checkRuntimeReadiness,
 }) {
   if (req.method === "GET" && url.pathname === "/api/health") {
-    send(res, 200, {
-      ok: true,
-      service: "flowchain-scm-api",
-      ...buildIdentity,
-      dataMode: dataMode.mode,
-      readsDemoData: dataMode.readsDemoData,
-      persistenceMode,
-      authority: "postgresql",
-      timestamp: new Date().toISOString(),
-    });
+    send(
+      res,
+      200,
+      buildLivenessPayload({
+        env,
+        gitFallback: buildIdentity,
+      }),
+    );
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/ready") {
+    const readiness = await readinessCheck({ env });
+    send(res, readiness.status, readiness.payload);
     return true;
   }
 

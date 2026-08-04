@@ -21,6 +21,7 @@ export function createHttpRequestHandler({
   port,
   distDir,
   buildIdentity,
+  readinessCheck,
   localSessions,
   localSessionSecret,
   domain,
@@ -31,9 +32,19 @@ export function createHttpRequestHandler({
     if (req.method === "OPTIONS") return send(res, 204, {});
 
     const url = new URL(req.url || "/", `http://localhost:${port}`);
-    const db = createEmptyDataset({ mode: "user" });
     const persistenceMode = getPersistenceMode(env);
     const dataMode = { mode: "user", readsDemoData: false };
+
+    if (await handleRuntimeRoutes({
+      req,
+      res,
+      url,
+      env,
+      buildIdentity,
+      readinessCheck,
+    })) return;
+
+    const db = createEmptyDataset({ mode: "user" });
     const repositories = createRepositoryRegistry({ db, env });
     const identity = resolveRequestIdentity(
       req,
@@ -42,7 +53,6 @@ export function createHttpRequestHandler({
       env,
     );
 
-    if (await handleRuntimeRoutes({ req, res, url, env, buildIdentity, dataMode, persistenceMode })) return;
     if (handleRuntimeCapabilityRoute({ req, res, url, send })) return;
 
     if (isDatabaseModeWriteBlocked({ persistenceMode, method: req.method, pathname: url.pathname })) {

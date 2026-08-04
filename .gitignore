@@ -9,6 +9,7 @@ blob-report/
 .env.*.local
 .local/
 *.local.env
+deploy/env.production
 
 *.log
 data/system-settings.json

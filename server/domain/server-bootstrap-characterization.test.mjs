@@ -48,17 +48,15 @@ test("server bootstrap preserves health, preflight, session, API 404, and SPA bo
     const healthPayload = JSON.parse(health.body);
     assert.deepEqual({
       ok: healthPayload.ok,
+      live: healthPayload.live,
       service: healthPayload.service,
       persistenceMode: healthPayload.persistenceMode,
-      dataMode: healthPayload.dataMode,
-      readsDemoData: healthPayload.readsDemoData,
       authority: healthPayload.authority,
     }, {
       ok: true,
+      live: true,
       service: "flowchain-scm-api",
       persistenceMode: "database",
-      dataMode: "user",
-      readsDemoData: false,
       authority: "postgresql",
     });
     assert.equal(preflight.status, 204);

@@ -4,12 +4,15 @@ import { fileURLToPath } from "node:url";
 import { ProxyAgent } from "undici";
 import { execFileSync } from "node:child_process";
 import { loadEnv } from "../config/env.mjs";
+import { validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import { validateDatabasePersistenceConfig } from "../persistence/persistence-config.mjs";
 import { createHttpRequestHandler } from "./http-request-handler.mjs";
 import { withServerErrorBoundary } from "./server-error-boundary.mjs";
 import {
   createLocalSessionSecret,
 } from "../domain/local-signed-session.mjs";
+import { checkRuntimeReadiness } from "../domain/runtime-readiness.mjs";
+import { createServerLifecycle, registerShutdownSignals } from "./server-lifecycle.mjs";
 import {
   actorFromBody,
   applyWorkflowTransition,
@@ -735,7 +738,8 @@ function supplierPerformance(db) {
 function supplierRecommendations() {
   return null;
 }
-export function createScmServer() {
+export function createScmServer({ readinessCheck = checkRuntimeReadiness } = {}) {
+  validateProductionRuntimeConfig(process.env);
   validateDatabasePersistenceConfig(process.env);
   const localSessions = new Map();
   const localSessionSecret = createLocalSessionSecret(process.env);
@@ -743,6 +747,7 @@ export function createScmServer() {
     port,
     distDir,
     buildIdentity,
+    readinessCheck,
     localSessions,
     localSessionSecret,
     domain: {
@@ -789,10 +794,27 @@ export function createScmServer() {
   return http.createServer(withServerErrorBoundary(handleRequest));
 }
 
-export function startScmServer(listenPort = port) {
-  const server = createScmServer();
+export function startScmServer(listenPort = port, options = {}) {
+  const logger = options.logger || console;
+  const server = createScmServer({
+    readinessCheck: options.readinessCheck || checkRuntimeReadiness,
+  });
+  const lifecycle = createServerLifecycle({
+    server,
+    logger,
+    shutdownTimeoutMs: options.shutdownTimeoutMs,
+  });
+  const unregisterSignals = registerShutdownSignals({ lifecycle, logger });
+  server.lifecycle = lifecycle;
+  server.shutdown = async (reason = "manual") => {
+    try {
+      await lifecycle.shutdown(reason);
+    } finally {
+      unregisterSignals();
+    }
+  };
   server.listen(listenPort, () => {
-    console.log(`FlowChain listening on http://127.0.0.1:${listenPort}`);
+    logger.info?.(`FlowChain listening on http://127.0.0.1:${listenPort}`);
   });
   return server;
 }

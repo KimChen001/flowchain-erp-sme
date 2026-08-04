@@ -154,3 +154,18 @@ jobs:
           path: |
             playwright-report
             test-results
+
+  production-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Verify final production image
+        run: npm run test:container:production
+        env:
+          FLOWCHAIN_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          FLOWCHAIN_BRANCH: ${{ github.head_ref || github.ref_name }}

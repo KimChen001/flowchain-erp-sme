@@ -1,0 +1,34 @@
+services:
+  flowchain:
+    image: ${FLOWCHAIN_IMAGE:?Set FLOWCHAIN_IMAGE to an immutable image digest or version tag}
+    restart: unless-stopped
+    env_file:
+      - env.production
+    environment:
+      NODE_ENV: production
+      SCM_API_PORT: 8787
+    ports:
+      - "127.0.0.1:${FLOWCHAIN_HTTP_PORT:-8787}:8787"
+    volumes:
+      - flowchain_attachments:/var/lib/flowchain/uploads
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  migrate:
+    profiles: ["release"]
+    image: ${FLOWCHAIN_IMAGE:?Set FLOWCHAIN_IMAGE to the same immutable image used by the application}
+    env_file:
+      - env.production
+    environment:
+      NODE_ENV: production
+    command: ["npx", "prisma", "migrate", "deploy"]
+    restart: "no"
+
+volumes:
+  flowchain_attachments:
+    name: ${FLOWCHAIN_ATTACHMENT_VOLUME:-flowchain-staging-attachments}

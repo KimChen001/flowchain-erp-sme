@@ -5,7 +5,14 @@ const decode = value => JSON.parse(Buffer.from(value, 'base64url').toString('utf
 const sign = (value, secret) => createHmac('sha256', secret).update(value).digest('base64url')
 
 export function createLocalSessionSecret(env = process.env) {
-  return String(env.FLOWCHAIN_LOCAL_SESSION_SECRET || randomBytes(32).toString('base64url'))
+  const configured = String(env.FLOWCHAIN_LOCAL_SESSION_SECRET || '')
+  if (String(env.NODE_ENV || '').trim().toLowerCase() === 'production' && !configured) {
+    const error = new Error('FLOWCHAIN_LOCAL_SESSION_SECRET is required in production.')
+    error.code = 'FLOWCHAIN_LOCAL_SESSION_SECRET_REQUIRED'
+    error.status = 500
+    throw error
+  }
+  return configured || randomBytes(32).toString('base64url')
 }
 
 export function issueLocalSessionToken(session, secret, { ttlSeconds = 8 * 60 * 60, now = Date.now() } = {}) {
