@@ -194,11 +194,11 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await capture(page, "09-inventory-warnings");
 
   await page.goto("/app/procurement/workbench");
-  await expect(page.getByRole("heading", { name: "今日采购待办：2" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今日采购待办：3" })).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-PO-001", { exact: true })).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-PO-002", { exact: true })).toBeVisible();
   await expect(page.getByText("partially_received", { exact: false })).toBeVisible();
-  await expect(page.getByText("open", { exact: false })).toBeVisible();
+  await expect(page.getByText("issued", { exact: false })).toBeVisible();
   await expect(page.getByText("发票差异", { exact: true })).toBeVisible();
   await expect(page.getByText("三单匹配异常", { exact: true })).toBeVisible();
   await capture(page, "10-procurement-workbench");
