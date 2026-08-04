@@ -36,7 +36,7 @@ function failureState(error: unknown): Exclude<ReadState, "loading" | "loaded" |
 }
 
 function statusLabel(value: string | null | undefined, labels: Record<string, string>) {
-  return value ? labels[value] || value : "未提供";
+  return value ? labels[value] || "未提供" : "未提供";
 }
 
 function number(value: number | null | undefined) {
@@ -53,15 +53,13 @@ function money(value: number | null | undefined, currency = "CNY") {
 }
 
 function date(value?: string | null) {
-  return value ? value.replace("T", " ").replace(".000Z", "") : "—";
-}
-
-function decodeRouteId(value: string) {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return "";
-  }
+  if (!value) return "—";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) return value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toISOString().replace("T", " ").replace("Z", " UTC");
 }
 
 function RelatedEvidence({ record }: { record: ProcurementRfqDocument }) {
@@ -101,7 +99,7 @@ function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotat
   return (
     <tr className="border-t align-top" data-testid={`rfq-quotation-${quotation.id}`}>
       <td className="p-3 font-medium">{quotation.id}</td>
-      <td className="p-3"><div>{quotation.supplierName || quotation.supplierId || "未提供"}</div>{quotation.lines.length > 0 && <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: A.sub }}>{quotation.lines.map((line) => <div key={line.id}>{line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity)} {line.unit || ""} · {money(line.unitPrice, quotation.currency || currency)}</div>)}</div>}</td>
+      <td className="p-3"><div>{quotation.supplierName || quotation.supplierId || "未提供"}</div>{quotation.lines.length > 0 && <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: A.sub }}>{quotation.lines.map((line) => <div key={line.id} data-testid={`rfq-quotation-line-${line.id}`}>{line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity)} {line.unit || ""} · {money(line.unitPrice, quotation.currency || currency)}</div>)}</div>}</td>
       <td className="p-3">{statusLabel(quotation.status, QUOTATION_STATUS_LABELS)}</td>
       <td className="p-3 tabular-nums">{money(quotation.quotedAmount, quotation.currency || currency)}</td>
       <td className="p-3"><div>{date(quotation.submittedAt)}</div><div className="mt-1 text-[11px]" style={{ color: A.sub }}>交期：{quotation.deliveryDate || "未提供"}</div><div className="text-[11px]" style={{ color: A.sub }}>付款：{quotation.paymentTerms || "未提供"} · 有效期：{quotation.validity || "未提供"}</div></td>
@@ -188,24 +186,23 @@ function LoadedRfq({ record }: { record: ProcurementRfqDocument }) {
 
 export function CanonicalRfqDetailPage({ documentId }: { documentId: string }) {
   const navigate = useNavigate();
-  const decodedDocumentId = decodeRouteId(documentId);
   const [record, setRecord] = useState<ProcurementRfqDocument | null>(null);
-  const [state, setState] = useState<ReadState>(decodedDocumentId.trim() ? "loading" : "malformed");
+  const [state, setState] = useState<ReadState>(documentId.trim() ? "loading" : "malformed");
 
   const load = useCallback(async () => {
-    if (!decodedDocumentId.trim()) {
+    if (!documentId.trim()) {
       setState("malformed");
       return;
     }
     setState("loading");
     setRecord(null);
     try {
-      setRecord(await procurementApi.getRfqDocument(decodedDocumentId));
+      setRecord(await procurementApi.getRfqDocument(documentId));
       setState("loaded");
     } catch (error) {
       setState(failureState(error));
     }
-  }, [decodedDocumentId]);
+  }, [documentId]);
 
   useEffect(() => { void load(); }, [load]);
 

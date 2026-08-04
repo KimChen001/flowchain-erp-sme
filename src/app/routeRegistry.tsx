@@ -2213,6 +2213,39 @@ export const appRouteRegistry = buildRouteManifest(declaredAppRoutes);
 const normalizePath = (value: string) =>
   value.length > 1 ? value.replace(/\/+$/, "") : value;
 
+export function routeParamsForPath(
+  route: Pick<AppRouteDefinition, "path">,
+  pathname: string,
+) {
+  const templateSegments = normalizePath(route.path).split("/").filter(Boolean);
+  const pathSegments = normalizePath(pathname).split("/").filter(Boolean);
+  if (templateSegments.length !== pathSegments.length) return null;
+
+  const params: Record<string, string> = {};
+  for (let index = 0; index < templateSegments.length; index += 1) {
+    const templateSegment = templateSegments[index];
+    const pathSegment = pathSegments[index];
+    if (!templateSegment.startsWith(":")) {
+      if (templateSegment !== pathSegment) return null;
+      continue;
+    }
+    try {
+      params[templateSegment.slice(1)] = decodeURIComponent(pathSegment);
+    } catch {
+      return null;
+    }
+  }
+  return params;
+}
+
+export function entityIdForRoutePath(
+  route: Pick<AppRouteDefinition, "path" | "entityIdParam">,
+  pathname: string,
+) {
+  if (!route.entityIdParam) return "";
+  return routeParamsForPath(route, pathname)?.[route.entityIdParam] || "";
+}
+
 export function routeByPath(pathname: string) {
   const path = normalizePath(pathname);
   return (
@@ -2220,7 +2253,7 @@ export function routeByPath(pathname: string) {
     appRouteRegistry.find(
       (route) =>
         route.path.includes(":") &&
-        new RegExp(`^${route.path.replace(/:[^/]+/g, "[^/]+")}$`).test(path),
+        routeParamsForPath(route, path) !== null,
     )
   );
 }

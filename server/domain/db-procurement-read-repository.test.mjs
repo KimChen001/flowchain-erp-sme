@@ -264,6 +264,37 @@ test('RFQ direct detail returns canonical lines, quotation lines, evidence, and 
   assert.equal(document.limitations.some((item) => item.includes('revision')), true)
 })
 
+test('RFQ participants prefer supplier ids and deduplicate name-only quotation facts', async () => {
+  const records = createRecords()
+  records.supplierQuotations.push(
+    { id: 'SQ-DB-2', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-1', supplierName: 'ABC Components Renamed', status: 'submitted', lines: [] },
+    { id: 'SQ-DB-3', tenantId, rfqId: 'RFQ-DB-1', supplierId: null, supplierName: 'ABC Components', status: 'submitted', lines: [] },
+    { id: 'SQ-DB-4', tenantId, rfqId: 'RFQ-DB-1', supplierId: null, supplierName: 'Name Only Supplier', status: 'submitted', lines: [] },
+    { id: 'SQ-DB-5', tenantId, rfqId: 'RFQ-DB-1', supplierId: null, supplierName: 'name only supplier', status: 'submitted', lines: [] },
+    { id: 'SQ-DB-6', tenantId, rfqId: 'RFQ-DB-1', supplierId: null, supplierName: null, status: 'submitted', lines: [] },
+  )
+  const repository = createDbProcurementReadRepository({ env, prisma: createPrisma(records) })
+  const document = await repository.getDocument('rfq', 'RFQ-DB-1', { tenantId })
+
+  assert.deepEqual(document.suppliers.knownParticipants, [
+    { supplierId: 'SUP-1', supplierName: 'ABC Components', participationState: 'quotation_recorded' },
+    { supplierId: null, supplierName: 'Name Only Supplier', participationState: 'quotation_recorded' },
+  ])
+})
+
+test('RFQ detail never presents unknown raw statuses as canonical values', async () => {
+  const records = createRecords()
+  records.rfqs[0].status = 'future_rfq_status'
+  records.supplierQuotations[0].status = 'future_quote_status'
+  const repository = createDbProcurementReadRepository({ env, prisma: createPrisma(records) })
+  const document = await repository.getDocument('rfq', 'RFQ-DB-1', { tenantId })
+
+  assert.equal(document.status, null)
+  assert.equal(document.statusRaw, 'future_rfq_status')
+  assert.equal(document.quotations[0].status, null)
+  assert.equal(document.quotations[0].statusRaw, 'future_quote_status')
+})
+
 test('historical direct lookup is independent of bounded list windows and broad collections', async () => {
   const target = createRecords().purchaseRequests[0]
   const unexpected = (delegate, method) => async () => { throw new Error(`unexpected broad procurement query: ${delegate}.${method}`) }

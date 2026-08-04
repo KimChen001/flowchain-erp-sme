@@ -247,17 +247,31 @@ function mapRfqDetail(record = {}, quotations = []) {
     }
   })
 
-  const knownParticipants = quotationDetails
-    .filter((quotation) => quotation.supplierId || quotation.supplierName)
-    .map((quotation) => ({
+  const participantsById = new Map()
+  const identifiedNames = new Set()
+  for (const quotation of quotationDetails) {
+    if (!quotation.supplierId) continue
+    const participant = participantsById.get(quotation.supplierId) || {
       supplierId: quotation.supplierId,
+      supplierName: null,
+      participationState: 'quotation_recorded',
+    }
+    if (!participant.supplierName && quotation.supplierName) participant.supplierName = quotation.supplierName
+    participantsById.set(quotation.supplierId, participant)
+    if (quotation.supplierName) identifiedNames.add(quotation.supplierName.toLowerCase())
+  }
+  const participantsByName = new Map()
+  for (const quotation of quotationDetails) {
+    if (quotation.supplierId || !quotation.supplierName) continue
+    const nameKey = quotation.supplierName.toLowerCase()
+    if (identifiedNames.has(nameKey) || participantsByName.has(nameKey)) continue
+    participantsByName.set(nameKey, {
+      supplierId: null,
       supplierName: quotation.supplierName,
       participationState: 'quotation_recorded',
-    }))
-    .filter((supplier, index, rows) => rows.findIndex((candidate) =>
-      (candidate.supplierId && candidate.supplierId === supplier.supplierId) ||
-      (!candidate.supplierId && candidate.supplierName && candidate.supplierName === supplier.supplierName)
-    ) === index)
+    })
+  }
+  const knownParticipants = [...participantsById.values(), ...participantsByName.values()]
 
   const relatedEvidence = [
     { type: 'rfq', id: record.id, label: text(record.title, record.id), relation: 'canonical_record' },

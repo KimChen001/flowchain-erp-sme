@@ -42,7 +42,14 @@ export async function handleProcurementReadRoute(ctx) {
       send(res, 400, { error: 'Invalid procurement document type' })
       return true
     }
-    const document = await repository.getDocument(documentType, documentMatch[2], tenantId ? { tenantId } : {})
+    let documentId
+    try {
+      documentId = decodeURIComponent(documentMatch[2])
+    } catch {
+      send(res, 400, { error: 'Invalid procurement document id' })
+      return true
+    }
+    const document = await repository.getDocument(documentType, documentId, tenantId ? { tenantId } : {})
     if (!document) {
       send(res, 404, { error: 'Procurement document not found' })
       return true

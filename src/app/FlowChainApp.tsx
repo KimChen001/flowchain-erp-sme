@@ -20,6 +20,7 @@ import {
 import { navGroups, navItems } from "./routes.tsx";
 import {
   defaultRouteForModule,
+  entityIdForRoutePath,
   primarySurfaceRoute,
   routeById,
   routeByPath,
@@ -802,9 +803,7 @@ export default function FlowChainApp() {
       );
       return;
     }
-    const entityId = decodeURIComponent(
-      location.pathname.split("/").filter(Boolean).at(-1) || "",
-    );
+    const entityId = entityIdForRoutePath(activeRoute, location.pathname);
     if (!entityId) return;
     const focusArea = new URLSearchParams(location.search).get("focus") as CanonicalFocusTarget["focusArea"] | null;
     setSearchFocus((current) =>
@@ -1950,7 +1949,7 @@ export default function FlowChainApp() {
                         }
                       >
                         {activeRoute.id === "procurement:rfq-detail" ? (
-                          <CanonicalRfqDetailPage documentId={location.pathname.split("/").filter(Boolean).at(-1) || ""} />
+                          <CanonicalRfqDetailPage documentId={entityIdForRoutePath(activeRoute, location.pathname)} />
                         ) : activeRoute.panelId === "receiving-workbench" ? (
                           panels["receiving-workbench"]
                         ) : activeRoute.panelId === "outbound-workbench" ? (
