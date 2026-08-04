@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
+import { PURCHASE_ORDER_STATUS } from "./procurement-status-authority.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "./receiving-transaction-policy.mjs";
 
 export class ProcurementCommandError extends Error {
@@ -94,7 +95,7 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
     databaseEnabled(env);
     const client = await db();
     const actor = await actorFor(client, context, "procurement.purchase_order.read");
-    const rows = await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, status: "pending_approval" }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }, { id: "asc" }], take: Math.min(200, Math.max(1, Number(options.limit || 100))) });
+    const rows = await client.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, status: PURCHASE_ORDER_STATUS.PENDING_APPROVAL }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }, { id: "asc" }], take: Math.min(200, Math.max(1, Number(options.limit || 100))) });
     return rows.map((row) => mapPurchaseOrder(row, options));
   }
 
@@ -129,10 +130,10 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
       const row = await tx.purchaseOrder.findFirst({ where: { id: text(id), tenantId: actor.tenantId }, include: { lines: true } });
       if (!row) fail("PURCHASE_ORDER_NOT_FOUND", "Purchase order was not found.", 404);
       if (row.version !== expectedVersion) fail("SYNC_VERSION_CONFLICT", "Purchase order changed concurrently.", 409, { entityId: row.id, expectedVersion, currentVersion: row.version, conflictFields: ["version", "status"], availableActions: ["reload"], serverTime: serial(now()) });
-      if (row.status !== "pending_approval") fail("PURCHASE_ORDER_WORKFLOW_CONFLICT", `Purchase order cannot be ${action}ed from ${row.status}.`, 409);
-      const nextStatus = action === "approve" ? "approved" : action === "reject" ? "rejected" : "draft";
+      if (row.status !== PURCHASE_ORDER_STATUS.PENDING_APPROVAL) fail("PURCHASE_ORDER_WORKFLOW_CONFLICT", `Purchase order cannot be ${action}ed from ${row.status}.`, 409);
+      const nextStatus = action === "approve" ? PURCHASE_ORDER_STATUS.APPROVED : action === "reject" ? PURCHASE_ORDER_STATUS.REJECTED : PURCHASE_ORDER_STATUS.DRAFT;
       const timeline = [...(Array.isArray(row.metadata?.approvalTimeline) ? row.metadata.approvalTimeline : []), { action, actorId: actor.user.id, at: serial(now()), reason: text(input.reason) || null }];
-      const updated = await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus: action === "approve" ? "approved" : row.receivingBaseStatus, version: { increment: 1 }, metadata: { ...(row.metadata || {}), approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } }, include: { lines: true } });
+      const updated = await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus: action === "approve" ? PURCHASE_ORDER_STATUS.APPROVED : row.receivingBaseStatus, version: { increment: 1 }, metadata: { ...(row.metadata || {}), approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } }, include: { lines: true } });
       await inject("after_po_update");
       const result = { entityType: "PurchaseOrder", entityId: updated.id, status: updated.status, entityVersion: updated.version, purchaseOrder: mapPurchaseOrder(updated), pendingSync: false, serverTime: serial(now()) };
       await inject("before_audit");

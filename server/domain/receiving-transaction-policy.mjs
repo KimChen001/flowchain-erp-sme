@@ -1,8 +1,15 @@
+import {
+  RECEIVABLE_PURCHASE_ORDER_INPUTS,
+  RECEIVING_POSTABLE_WORKFLOW_INPUTS,
+  isPurchaseOrderReceivable,
+  isReceivingWorkflowPostable,
+} from './procurement-status-authority.mjs'
+
 const SCALE = 10_000n
 const ZERO = 0n
 
-export const RECEIVABLE_WORKFLOW_STATUSES = new Set(['approved', 'ready_for_receiving', 'partially_received'])
-export const RECEIVABLE_PO_STATUSES = new Set(['approved', 'issued', 'ready_for_receiving', 'partially_received'])
+export const RECEIVABLE_WORKFLOW_STATUSES = new Set(RECEIVING_POSTABLE_WORKFLOW_INPUTS)
+export const RECEIVABLE_PO_STATUSES = new Set(RECEIVABLE_PURCHASE_ORDER_INPUTS)
 export const DOWNSTREAM_MOVEMENT_TYPES = [
   'outbound_posting',
   'sales_outbound',
@@ -58,8 +65,8 @@ export async function buildReceivingPostingPlan({ prisma, tenantId, receivingDoc
 
   if (receivingDocument.postingStatus !== 'unposted') blockingIssues.push(issue('RECEIVING_ALREADY_POSTED', 'Receiving document is not unposted.'))
   if (!receivingDocument.lines.length) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', 'Receiving document has no lines.'))
-  if (!RECEIVABLE_WORKFLOW_STATUSES.has(receivingDocument.workflowStatus)) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Workflow status ${receivingDocument.workflowStatus} does not allow posting.`))
-  if (!RECEIVABLE_PO_STATUSES.has(purchaseOrder.status)) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Purchase order status ${purchaseOrder.status} does not allow receiving.`))
+  if (!isReceivingWorkflowPostable(receivingDocument.workflowStatus)) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Workflow status ${receivingDocument.workflowStatus} does not allow posting.`))
+  if (!isPurchaseOrderReceivable(purchaseOrder.status)) blockingIssues.push(issue('RECEIVING_VALIDATION_FAILED', `Purchase order status ${purchaseOrder.status} does not allow receiving.`))
 
   for (const line of receivingDocument.lines) {
     const accepted = safeUnits(line.acceptedQty, blockingIssues, `Receiving line ${line.id} acceptedQty`)
