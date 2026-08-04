@@ -16,6 +16,8 @@
 
 ## Architecture
 
+- [Technical delivery path v2](technical-delivery-path-v2.md)
+- [Procurement status authority v1](procurement-status-authority-v1.md)
 - [Phase 5.4B Schema-Aware Structured Smart Intake](phase-5-4b-schema-aware-structured-intake.md)
 - [Custom Field Extension Foundation v1](custom-field-extension-foundation-v1.md)
 - [Canonical Master Data Schemas v1](canonical-master-data-schemas-v1.md)
@@ -95,6 +97,7 @@
 
 ## Roadmap
 
+- [Technical delivery path v2](technical-delivery-path-v2.md)
 - [Roadmap v1](roadmap-v1.md)
 ## Phase 5.4B.1 local truthfulness
 

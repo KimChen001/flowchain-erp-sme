@@ -1,5 +1,5 @@
 import { buildPurchaseOrderDraft, buildRfqDraft, buildSourcingEventDraft } from './business-draft-builders.mjs'
-import { normalizeProcurementStatus } from './procurement-status-model.mjs'
+import { normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 import { validateUserConfirmedActionRequest } from './user-confirmed-business-action.mjs'
 
 function asArray(value) {
@@ -110,7 +110,7 @@ export function buildOperationalPurchaseRequestDetail(input = {}, context = {}) 
   return {
     id,
     type: 'purchaseRequest',
-    status: missingFields.length ? 'needs_info' : normalizeProcurementStatus('purchaseRequest', pr.status || 'requested'),
+    status: missingFields.length ? 'needs_info' : normalizeProcurementAuthorityStatus('purchaseRequestPreview', pr.status || 'requested'),
     requester: text(pr.requester || pr.actor || pr.provenance?.confirmedBy),
     actor: text(pr.actor || pr.provenance?.confirmedBy),
     sku,
@@ -206,7 +206,7 @@ export function buildSupplierResponse(input = {}) {
     validityDate: text(input.validityDate),
     qualityComplianceNotes: text(input.qualityComplianceNotes || input.complianceNotes || input.notes),
     source: text(input.source, 'manual'),
-    status: missingFields.length ? 'incomplete' : normalizeProcurementStatus('supplierResponse', input.status || 'received'),
+    status: missingFields.length ? 'incomplete' : normalizeProcurementAuthorityStatus('supplierResponseDraft', input.status || 'received'),
     missingFields,
     createdAt: text(input.createdAt) || new Date().toISOString(),
     updatedAt: text(input.updatedAt) || text(input.createdAt) || new Date().toISOString(),

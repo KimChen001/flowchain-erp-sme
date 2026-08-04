@@ -41,7 +41,7 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.getByLabel("交易数量").fill("4.0000");
   await page.getByTestId("outbound-preview").click();
   await expect(page.getByTestId("outbound-preview-result")).toContainText(
-    "Preview 允许执行",
+    "预览允许执行",
   );
   await page.getByTestId("confirm-outbound-action").click();
   await expect(page.getByTestId("availability-balance")).toContainText(

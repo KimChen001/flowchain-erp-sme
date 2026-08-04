@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import {
   PR_TRANSITIONS,
   PO_TRANSITIONS,
+  RFQ_TRANSITIONS,
+  PURCHASE_ORDER_STATUS,
+  PURCHASE_REQUEST_STATUS,
+  RFQ_STATUS,
   assertVersion,
   procurementError,
   recommendProcurementPath,
@@ -152,7 +156,7 @@ export function createProcurementWorkflowService({
           id: input.id || id("PR"),
           workspaceId: input.workspaceId || "default",
           companyId: input.companyId || "default",
-          status: "draft",
+          status: PURCHASE_REQUEST_STATUS.DRAFT,
           procurementPath: "undecided",
           procurementPathDecision: null,
           requesterId: actor,
@@ -194,7 +198,7 @@ export function createProcurementWorkflowService({
         if (!pr)
           throw procurementError("ENTITY_NOT_FOUND", "采购申请不存在", [], 404);
         assertVersion(pr, input.expectedVersion);
-        if (pr.status !== "draft")
+        if (pr.status !== PURCHASE_REQUEST_STATUS.DRAFT)
           throw procurementError(
             "INVALID_STATE_TRANSITION",
             "只有草稿可以编辑",
@@ -359,7 +363,7 @@ export function createProcurementWorkflowService({
         if (!pr)
           throw procurementError("ENTITY_NOT_FOUND", "采购申请不存在", [], 404);
         assertVersion(pr, input.expectedVersion);
-        if (pr.status !== "approved")
+        if (pr.status !== PURCHASE_REQUEST_STATUS.APPROVED)
           throw procurementError(
             "INVALID_STATE_TRANSITION",
             "只有已批准采购申请可以发起询价",
@@ -367,7 +371,7 @@ export function createProcurementWorkflowService({
             409,
           );
         const po = doc.purchaseOrders.find(
-          (x) => x.sourcePrId === prId && x.status !== "cancelled",
+          (x) => x.sourcePrId === prId && x.status !== PURCHASE_ORDER_STATUS.CANCELLED,
         );
         if (po)
           throw procurementError(
@@ -379,7 +383,7 @@ export function createProcurementWorkflowService({
         const existing = doc.rfqs.find(
           (x) =>
             x.sourcePrId === prId &&
-            !["cancelled", "closed"].includes(x.status),
+            ![RFQ_STATUS.CANCELLED, RFQ_STATUS.CLOSED].includes(x.status),
         );
         if (existing)
           return { purchaseRequest: pr, rfq: existing, replayed: true };
@@ -395,7 +399,7 @@ export function createProcurementWorkflowService({
           lines: structuredClone(pr.lines),
           comments: pr.comments || "",
           sourcePurchaseRequestId: pr.id,
-          status: "draft",
+          status: RFQ_STATUS.DRAFT,
           version: 1,
           createdAt: t,
           createdBy: actor,
@@ -444,13 +448,13 @@ export function createProcurementWorkflowService({
         if (!pr)
           throw procurementError("ENTITY_NOT_FOUND", "采购申请不存在", [], 404);
         assertVersion(pr, input.expectedVersion);
-        const existing = doc.purchaseOrders.filter((x) => x.sourcePrId === prId && x.status !== "cancelled");
+        const existing = doc.purchaseOrders.filter((x) => x.sourcePrId === prId && x.status !== PURCHASE_ORDER_STATUS.CANCELLED);
         if (existing.length) return { purchaseRequest: pr, createdPurchaseOrders: existing, replayed: true };
         if (
           doc.rfqs.some(
             (x) =>
               x.sourcePrId === prId &&
-              !["cancelled", "closed"].includes(x.status),
+              ![RFQ_STATUS.CANCELLED, RFQ_STATUS.CLOSED].includes(x.status),
           )
         )
           throw procurementError(
@@ -459,7 +463,7 @@ export function createProcurementWorkflowService({
             [],
             409,
           );
-        if (pr.status !== "approved") throw procurementError("INVALID_STATE_TRANSITION", "只有已批准采购申请可以生成采购订单", [], 409);
+        if (pr.status !== PURCHASE_REQUEST_STATUS.APPROVED) throw procurementError("INVALID_STATE_TRANSITION", "只有已批准采购申请可以生成采购订单", [], 409);
         if (!pr.lines?.length || pr.lines.some((line) => !line.supplierId || !line.currency || !(line.targetWarehouseId || line.warehouseId || line.serviceLocationId)))
           throw procurementError("DIRECT_PO_NOT_ALLOWED", "采购行缺少供应商、币种或交付地点", [{ field: "lines" }]);
         const t = now();
@@ -473,12 +477,12 @@ export function createProcurementWorkflowService({
         const createdPurchaseOrders = [...groups.values()].map((group) => {
           const lines = group.lines.map((line) => ({ ...structuredClone(line), sourcePurchaseRequestLineId: line.lineId }));
           const totalAmount = lines.reduce((sum, line) => sum + Number(line.estimatedAmount), 0);
-          const po = { id: id("PO"), sourcePrId: pr.id, sourcePurchaseRequestId: pr.id, sourceRfqId: null, procurementPath: "direct_po", supplierId: group.supplierId, supplierSnapshot: lines[0]?.supplierSnapshot || { id: group.supplierId, supplierCode: group.supplierId, supplierName: group.supplierId }, currency: group.currency, targetWarehouseId: group.warehouseId, paymentTermsId: group.paymentTermsId, shippingTermsId: group.shippingTermsId, selectedContractId: group.selectedContractId, orderDate: t.slice(0, 10), subtotal: totalAmount, taxAmount: 0, totalAmount, lines, supplierFacingNote: "", internalContext: lines.map((line) => ({ sourceLineId: line.lineId, internalLineComment: line.internalLineComment || null })), status: "draft", transmissionStatus: "not_sent", version: 1, createdAt: t, createdBy: actor, updatedAt: t, updatedBy: actor, auditTrailIds: [] };
+          const po = { id: id("PO"), sourcePrId: pr.id, sourcePurchaseRequestId: pr.id, sourceRfqId: null, procurementPath: "direct_po", supplierId: group.supplierId, supplierSnapshot: lines[0]?.supplierSnapshot || { id: group.supplierId, supplierCode: group.supplierId, supplierName: group.supplierId }, currency: group.currency, targetWarehouseId: group.warehouseId, paymentTermsId: group.paymentTermsId, shippingTermsId: group.shippingTermsId, selectedContractId: group.selectedContractId, orderDate: t.slice(0, 10), subtotal: totalAmount, taxAmount: 0, totalAmount, lines, supplierFacingNote: "", internalContext: lines.map((line) => ({ sourceLineId: line.lineId, internalLineComment: line.internalLineComment || null })), status: PURCHASE_ORDER_STATUS.DRAFT, transmissionStatus: "not_sent", version: 1, createdAt: t, createdBy: actor, updatedAt: t, updatedBy: actor, auditTrailIds: [] };
           po.auditTrailIds.push(audit(doc, { actor, entityType: "purchase_order", entityId: po.id, action: "PO_CREATED_FROM_PR", relatedEntityIds: [pr.id], idempotencyKey: key, after: po, result: "success" }));
           return po;
         });
         pr.procurementPath = "direct_po";
-        pr.status = "converted";
+        pr.status = PURCHASE_REQUEST_STATUS.CONVERTED;
         pr.linkedPurchaseOrderIds = createdPurchaseOrders.map((po) => po.id);
         pr.version++;
         pr.updatedAt = t;
@@ -528,14 +532,7 @@ export function createProcurementWorkflowService({
         if (!rfq)
           throw procurementError("ENTITY_NOT_FOUND", "询价单不存在", [], 404);
         assertVersion(rfq, args.expectedVersion);
-        const allowed = {
-          draft: ["open", "cancelled"],
-          open: ["collecting_quotes", "cancelled"],
-          collecting_quotes: ["closed", "cancelled"],
-          cancelled: [],
-          closed: [],
-        };
-        if (!allowed[rfq.status]?.includes(next))
+        if (!RFQ_TRANSITIONS[rfq.status]?.includes(next))
           throw procurementError(
             "INVALID_STATE_TRANSITION",
             `不能从 ${rfq.status} 转换为 ${next}`,

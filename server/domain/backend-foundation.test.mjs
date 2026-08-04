@@ -86,12 +86,14 @@ test('server factory imports with backend foundation routes', () => {
 })
 
 test('server route context injects repository registry for repository-compatible routes', () => {
-  const source = readSource('server', 'bootstrap', 'scm-server.mjs')
+  const source = readSource('server', 'bootstrap', 'http-request-handler.mjs')
+  const contextSource = readSource('server', 'bootstrap', 'request-context.mjs')
 
   assert.match(source, /import \{[^}]*createRepositoryRegistry[^}]*\} from ["']\.\.\/repositories\/adapter-registry\.mjs["']/)
-  assert.match(source, /const repositories = createRepositoryRegistry\(\{ db, env: process\.env \}\)/)
-  assert.match(source, /routeContext = \{[\s\S]*repositories,[\s\S]*\}/)
-  assert.ok(source.indexOf('const repositories = createRepositoryRegistry') < source.indexOf('const routeContext = {'))
+  assert.match(source, /const repositories = createRepositoryRegistry\(\{ db, env \}\)/)
+  assert.match(source, /createRouteContext\(\{[\s\S]*repositories,[\s\S]*\}\)/)
+  assert.match(contextSource, /repositories,[\s\S]*\.\.\.domain,[\s\S]*\.\.\.runtime/)
+  assert.ok(source.indexOf('const repositories = createRepositoryRegistry') < source.indexOf('createRouteContext({'))
 })
 
 test('global server errors are sanitized before returning 500 responses', () => {
@@ -111,15 +113,16 @@ test('global server errors are sanitized before returning 500 responses', () => 
 })
 
 test('server health response omits provider keys models and proxy diagnostics by default', () => {
-  const source = readSource('server', 'bootstrap', 'scm-server.mjs')
+  const source = readSource('server', 'bootstrap', 'runtime-routes.mjs')
   const healthSource = readSource('server', 'domain', 'runtime-readiness.mjs')
+  const handlerSource = readSource('server', 'bootstrap', 'http-request-handler.mjs')
+  const errorBoundary = readSource('server', 'bootstrap', 'server-error-boundary.mjs')
   const healthBlock = source.slice(
     source.search(/url\.pathname === ["']\/api\/health["']/),
-    source.indexOf('const db = createEmptyDataset'),
+    source.search(/if\s*\(req\.method === ["']GET["'] && url\.pathname === ["']\/api\/ready["']/),
   )
 
   assert.match(healthBlock, /buildLivenessPayload/)
-  assert.ok(source.indexOf('url.pathname === "/api/health"') < source.indexOf('const repositories = createRepositoryRegistry'))
   assert.match(healthSource, /service/)
   assert.match(healthSource, /runtimeBuildIdentity/)
   assert.match(healthSource, /persistenceMode/)
@@ -127,16 +130,18 @@ test('server health response omits provider keys models and proxy diagnostics by
   assert.doesNotMatch(healthBlock, /runtimeAdapters|runtimeWriteCoordination/)
   assert.match(healthSource, /timestamp/)
   assert.doesNotMatch(healthBlock, /createRepositoryRegistry|getPrismaClient|healthCheck/)
+  assert.ok(handlerSource.indexOf('handleRuntimeRoutes({') < handlerSource.indexOf('createRepositoryRegistry({'))
+  assert.ok(handlerSource.indexOf('handleRuntimeRoutes({') < handlerSource.indexOf('resolveRequestIdentity('))
   assert.doesNotMatch(healthBlock, /OPENAI_API_KEY|ARK_API_KEY|DOUBAO_API_KEY|OPENAI_MODEL|ARK_MODEL|DOUBAO_MODEL/)
   assert.doesNotMatch(healthBlock, /DATABASE_URL|POSTGRES_URL|OPENAI|ARK|DOUBAO|openai:|doubao:|(?<![A-Za-z])(?:provider|model|proxy|secret|token|password)\s*:/i)
-  assert.match(source, /sendInternalServerError\(res, send, error\)/)
+  assert.match(errorBoundary, /sendInternalServerError\(res, send, error\)/)
 })
 
 test('database mode guard is before legacy auth and capability gate is registered', () => {
-  const source = readSource('server', 'bootstrap', 'scm-server.mjs')
+  const source = readSource('server', 'bootstrap', 'http-request-handler.mjs')
 
   const guardIndex = source.indexOf('isDatabaseModeWriteBlocked({')
-  assert.ok(guardIndex < source.search(/url\.pathname === ["']\/api\/auth\/login["']/))
+  assert.ok(guardIndex < source.indexOf('handleSessionRoutes({'))
   assert.match(source, /handleRuntimeCapabilityRoute\(\{ req, res, url, send \}\)/)
   assert.deepEqual(databaseModeMutationBlockedPayload(), {
     error: 'This mutation is not available in database persistence mode yet.',
@@ -162,9 +167,9 @@ test('database mode blocks legacy writes while allowing health and preview route
     assert.equal(health.status, 200)
     assert.equal(health.payload.ok, true)
     assert.equal(health.payload.service, 'flowchain-scm-api')
+    assert.equal(health.payload.live, true)
     assert.equal(health.payload.runtimeMode, 'local-dev')
     assert.equal(health.payload.persistenceMode, 'database')
-    assert.equal(health.payload.live, true)
     assert.equal(health.payload.dataMode, undefined)
     assert.equal(health.payload.readsDemoData, undefined)
     assert.equal(typeof health.payload.timestamp, 'string')
@@ -307,7 +312,7 @@ test('GET /api/ai/tools returns controlled AI tool registry', async () => {
 
   assert.ok(handled)
   assert.equal(route.response.status, 200)
-  assert.equal(route.response.payload.tools.length, 43)
+  assert.equal(route.response.payload.tools.length, 42)
   assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getSupplierStatus'))
   assert.ok(route.response.payload.tools.some((tool) => tool.name === 'resolveSupplierEntity'))
   assert.ok(route.response.payload.tools.some((tool) => tool.name === 'getSupplierOperationalSummary'))
@@ -338,6 +343,7 @@ test('GET /api/ai/tools returns controlled AI tool registry', async () => {
     assert.equal(tool.audit.recordInvocation, true)
   }
   assert.ok(route.response.payload.tools.some((tool) => tool.name === 'preparePurchaseRequestDraft'))
+  assert.equal(route.response.payload.tools.some((tool) => tool.name === 'prepareInventoryExceptionDraft'), false)
   assert.equal(route.response.payload.tools.find((tool) => tool.name === 'getSupplierStatus').mode, 'read')
   assert.equal(route.response.payload.tools.find((tool) => tool.name === 'prepareRfqDraft').requiresUserReview, true)
   assert.equal(route.response.payload.tools.every((tool) => tool.writesBusinessData === false), true)

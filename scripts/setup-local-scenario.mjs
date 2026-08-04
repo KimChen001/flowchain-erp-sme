@@ -1,5 +1,6 @@
 import { getPrismaClient, disconnectPrismaClient } from '../server/persistence/prisma-client.mjs'
 import { assertLocalDevelopment } from '../server/domain/local-development-contract.mjs'
+import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../server/domain/procurement-status-authority.mjs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
@@ -13,12 +14,12 @@ export async function seedLocalScenario(prisma, env = process.env) {
   return prisma.$transaction(async tx => {
     await tx.purchaseRequest.upsert({
       where: { id: 'LOCAL-DEMO-PR-001' },
-      create: { id: 'LOCAL-DEMO-PR-001', tenantId, status: 'open', requester: 'Local Demo', priority: 'high', requiredDate: new Date('2030-01-15T00:00:00Z'), amount: 5000, source: 'local_demo_scenario', metadata, lines: { create: [{ id: 'LOCAL-DEMO-PRL-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: '本地演示控制器', quantity: 50, unit: 'pcs', unitPrice: 100, amount: 5000, metadata }] } },
+      create: { id: 'LOCAL-DEMO-PR-001', tenantId, status: PURCHASE_REQUEST_STATUS.SUBMITTED, requester: 'Local Demo', priority: 'high', requiredDate: new Date('2030-01-15T00:00:00Z'), amount: 5000, source: 'local_demo_scenario', metadata, lines: { create: [{ id: 'LOCAL-DEMO-PRL-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: '本地演示控制器', quantity: 50, unit: 'pcs', unitPrice: 100, amount: 5000, metadata }] } },
       update: {},
     })
       for (const [id, status, itemId, sku, quantity, receivedQuantity, expectedDate] of [
-        ['LOCAL-DEMO-PO-001', 'partially_received', 'LOCAL-DEMO-ITEM-001', 'LDM-001', 50, 20, '2030-01-12T00:00:00Z'],
-        ['LOCAL-DEMO-PO-002', 'open', 'LOCAL-DEMO-ITEM-002', 'LDM-002', 40, 0, '2030-01-18T00:00:00Z'],
+        ['LOCAL-DEMO-PO-001', PURCHASE_ORDER_STATUS.PARTIALLY_RECEIVED, 'LOCAL-DEMO-ITEM-001', 'LDM-001', 50, 20, '2030-01-12T00:00:00Z'],
+        ['LOCAL-DEMO-PO-002', PURCHASE_ORDER_STATUS.ISSUED, 'LOCAL-DEMO-ITEM-002', 'LDM-002', 40, 0, '2030-01-18T00:00:00Z'],
       ]) {
         const poMetadata = { ...metadata, transmissionStatus: 'sent', targetWarehouseId: 'LOCAL-DEMO-WH-001' }
         await tx.purchaseOrder.upsert({

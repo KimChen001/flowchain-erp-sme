@@ -1,43 +1,18 @@
 import http from "node:http";
-import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ProxyAgent } from "undici";
 import { execFileSync } from "node:child_process";
 import { loadEnv } from "../config/env.mjs";
 import { validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
-import {
-  createRepositoryRegistry,
-  getPersistenceMode,
-} from "../repositories/adapter-registry.mjs";
 import { validateDatabasePersistenceConfig } from "../persistence/persistence-config.mjs";
-import { contentTypeFor, readBody, send, sendText } from "../utils/http.mjs";
-import { sendInternalServerError } from "../utils/safe-errors.mjs";
+import { createHttpRequestHandler } from "./http-request-handler.mjs";
+import { withServerErrorBoundary } from "./server-error-boundary.mjs";
 import {
-  createLocalSession,
   createLocalSessionSecret,
-  issueLocalSessionToken,
-  resolveRequestIdentity,
 } from "../domain/local-signed-session.mjs";
-import {
-  legacyMutationBlockedAuditEntry,
-  recordDatabaseAuditBestEffort,
-} from "../domain/audit-policy.mjs";
-import {
-  createEmptyDataset,
-} from "../domain/data-mode.mjs";
-import {
-  isDatabaseModeWriteBlocked,
-  sendDatabaseModeMutationBlocked,
-} from "../domain/route-classification.mjs";
-import { getPrismaClient } from "../persistence/prisma-client.mjs";
-import { buildLivenessPayload, checkRuntimeReadiness } from "../domain/runtime-readiness.mjs";
+import { checkRuntimeReadiness } from "../domain/runtime-readiness.mjs";
 import { createServerLifecycle, registerShutdownSignals } from "./server-lifecycle.mjs";
-import { roleLabel } from "../../shared/roles.mjs";
-import { handleRuntimeCapabilityRoute } from "../routes/runtime-capability.routes.mjs";
-import { dispatchApiRoute } from "./route-dispatcher.mjs";
-import { localDevelopmentEnabled } from "../domain/local-development-contract.mjs";
-import { capabilityForEnvironment } from "../domain/capability-registry.mjs";
 import {
   actorFromBody,
   applyWorkflowTransition,
@@ -58,9 +33,6 @@ const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "..", "..");
 const port = Number(process.env.SCM_API_PORT || 8787);
 const distDir = path.join(root, "dist");
-const staticAssetPath = (pathname) =>
-  pathname.startsWith("/assets/") ||
-  /\.(?:js|css|map|json|png|jpe?g|svg|webp|ico|woff2?|ttf)$/i.test(pathname);
 
 function gitValue(args, fallback = "unknown") {
   try {
@@ -75,9 +47,14 @@ function gitValue(args, fallback = "unknown") {
     return fallback;
   }
 }
-const gitBuildFallback = Object.freeze({
-  commitSha: gitValue(["rev-parse", "HEAD"]),
-  branch: gitValue(["branch", "--show-current"], "detached"),
+const buildIdentity = Object.freeze({
+  commitSha:
+    process.env.FLOWCHAIN_COMMIT_SHA || gitValue(["rev-parse", "HEAD"]),
+  branch:
+    process.env.FLOWCHAIN_BRANCH ||
+    gitValue(["branch", "--show-current"], "detached"),
+  runtimeMode:
+    process.env.NODE_ENV === "production" ? "production" : "local-dev",
 });
 
 await loadEnv(root);
@@ -93,52 +70,7 @@ const openaiDispatcher = openaiProxyUrl
 const arkProxyUrl =
   process.env.ARK_PROXY_URL || process.env.DOUBAO_PROXY_URL || "";
 const arkDispatcher = arkProxyUrl ? new ProxyAgent(arkProxyUrl) : undefined;
-const webProxyUrl =
-  process.env.WEB_PROXY_URL ||
-  process.env.OPENAI_PROXY_URL ||
-  process.env.HTTPS_PROXY ||
-  process.env.HTTP_PROXY ||
-  "http://127.0.0.1:15236";
-const webDispatcher = webProxyUrl ? new ProxyAgent(webProxyUrl) : undefined;
 const aiMaxTokens = Number(process.env.AI_MAX_TOKENS || 520);
-
-async function sendStatic(req, res, url) {
-  if (!["GET", "HEAD"].includes(req.method))
-    return send(res, 404, { error: "Not found" });
-  const decodedPath = decodeURIComponent(url.pathname);
-  const requested = decodedPath === "/" ? "/index.html" : decodedPath;
-  const normalized = path.normalize(requested).replace(/^(\.\.[/\\])+/, "");
-  let filePath = path.join(distDir, normalized);
-  if (!filePath.startsWith(distDir)) return sendText(res, 403, "Forbidden");
-
-  try {
-    const info = await stat(filePath);
-    if (info.isDirectory()) filePath = path.join(filePath, "index.html");
-  } catch {
-    if (staticAssetPath(decodedPath)) {
-      res.writeHead(404, {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-cache",
-      });
-      return res.end(req.method === "HEAD" ? undefined : "Not found");
-    }
-    filePath = path.join(distDir, "index.html");
-  }
-
-  try {
-    const body = await readFile(filePath);
-    res.writeHead(200, {
-      "Content-Type": contentTypeFor(filePath),
-      "Cache-Control": filePath.endsWith("index.html")
-        ? "no-cache"
-        : "public, max-age=31536000, immutable",
-    });
-    if (req.method === "HEAD") return res.end();
-    return res.end(body);
-  } catch {
-    return sendText(res, 404, "Not found");
-  }
-}
 
 function todayLabel() {
   const now = new Date();
@@ -189,24 +121,6 @@ function ensureSopCycles(db) {
 
 function ensureRfqs(db) {
   return Array.isArray(db.rfqs) ? db.rfqs : [];
-}
-
-function publicUser(user) {
-  if (!user) return null;
-  const { token, ...safeUser } = user;
-  return safeUser;
-}
-
-function normalizeLogin(body) {
-  const email = String(body.email || "")
-    .trim()
-    .toLowerCase();
-  const name = String(body.name || "").trim();
-  const company = String(body.company || "").trim();
-  if (!email || !name || !company) {
-    throw new Error("company, name and email are required");
-  }
-  return { email, name, company };
 }
 
 function nextSequenceId(items, field, prefix, start) {
@@ -829,235 +743,68 @@ export function createScmServer({ readinessCheck = checkRuntimeReadiness } = {})
   validateDatabasePersistenceConfig(process.env);
   const localSessions = new Map();
   const localSessionSecret = createLocalSessionSecret(process.env);
-  return http.createServer(async (req, res) => {
-    try {
-      if (req.method === "OPTIONS") return send(res, 204, {});
-
-      const url = new URL(req.url || "/", `http://localhost:${port}`);
-
-      if (req.method === "GET" && url.pathname === "/api/health") {
-        return send(res, 200, buildLivenessPayload({ env: process.env, gitFallback: gitBuildFallback }));
-      }
-
-      if (req.method === "GET" && url.pathname === "/api/ready") {
-        const readiness = await readinessCheck({ env: process.env });
-        return send(res, readiness.status, readiness.payload);
-      }
-
-      const db = createEmptyDataset({ mode: "user" });
-      const persistenceMode = getPersistenceMode(process.env);
-      const dataMode = { mode: "user", readsDemoData: false };
-      const repositories = createRepositoryRegistry({ db, env: process.env });
-      const identity = resolveRequestIdentity(
-        req,
-        localSessions,
-        localSessionSecret,
-        process.env,
-      );
-
-      if (req.method === "GET" && url.pathname === "/api/dev/local-status") {
-        if (!localDevelopmentEnabled(process.env))
-          return send(res, 404, { error: "Not found" });
-        const prisma = await getPrismaClient(process.env);
-        const tenantId = String(process.env.FLOWCHAIN_DEFAULT_TENANT_ID || "").trim();
-        const [tenant, users, demoMasterDataCount, demoScenarioCount] = await Promise.all([
-          prisma.tenant.findUnique({ where: { id: tenantId }, select: { id: true, name: true } }),
-          prisma.user.findMany({ where: { tenantId, status: "active", email: { in: ["admin@flowchain.local", "kim@example.com"] } }, select: { email: true }, orderBy: { email: "asc" } }),
-          prisma.item.count({ where: { tenantId, id: { startsWith: "LOCAL-DEMO-ITEM-" } } }),
-          prisma.purchaseOrder.count({ where: { tenantId, id: { startsWith: "LOCAL-DEMO-PO-" } } }),
-        ]);
-        return send(res, 200, {
-          localDevelopment: true,
-          tenantId: tenant?.id || tenantId,
-          workspaceName: tenant?.name || "",
-          availableLoginEmails: users.map(user => user.email),
-          demoMasterDataLoaded: demoMasterDataCount > 0,
-          demoScenarioLoaded: demoScenarioCount > 0,
-          universalIntakeEnabled: capabilityForEnvironment("universal-intake", process.env)?.enabled === true,
-        });
-      }
-
-      if (handleRuntimeCapabilityRoute({ req, res, url, send })) return;
-
-      if (
-        isDatabaseModeWriteBlocked({
-          persistenceMode,
-          method: req.method,
-          pathname: url.pathname,
-        })
-      ) {
-        await recordDatabaseAuditBestEffort(
-          { repositories },
-          legacyMutationBlockedAuditEntry({
-            method: req.method,
-            pathname: url.pathname,
-          }),
-        );
-        return sendDatabaseModeMutationBlocked(res, send);
-      }
-
-      if (req.method === "POST" && url.pathname === "/api/auth/login") {
-        const body = await readBody(req);
-        let profile;
-        try {
-          profile = normalizeLogin(body);
-        } catch (error) {
-          return send(res, 400, { error: error.message });
-        }
-        const tenantId = String(
-          process.env.FLOWCHAIN_DEFAULT_TENANT_ID || "",
-        ).trim();
-        if (!tenantId)
-          return send(res, 403, {
-            code: "TENANT_CONTEXT_REQUIRED",
-            message: "Pilot workspace tenant is not configured.",
-          });
-        const prisma = await getPrismaClient(process.env);
-        const provisioned = await prisma.user.findFirst({
-          where: {
-            tenantId,
-            email: String(profile.email || "")
-              .trim()
-              .toLowerCase(),
-          },
-          include: { tenant: true },
-        });
-        if (!provisioned)
-          return send(res, 403, {
-            code: "USER_NOT_PROVISIONED",
-            message: "This email is not provisioned for the Pilot workspace.",
-          });
-        if (provisioned.status !== "active")
-          return send(res, 403, {
-            code: "USER_DISABLED",
-            message: "This workspace user is disabled.",
-          });
-        profile = {
-          id: provisioned.id,
-          tenantId,
-          name: provisioned.name,
-          email: provisioned.email,
-          company: provisioned.tenant.name,
-          role: provisioned.role,
-          version: provisioned.version,
-        };
-        const session = createLocalSession(profile, {
-          env: process.env,
-          authoritativeRole: true,
-        });
-        localSessions.set(session.sessionId, session);
-        const token = issueLocalSessionToken(session, localSessionSecret);
-        return send(res, 200, {
-          token,
-          expiresAt: new Date(session.expiresAt).toISOString(),
-          user: {
-            id: session.userId,
-            name: session.name,
-            email: session.email,
-            company: session.company,
-            role: session.role,
-            roleLabel: roleLabel(session.role),
-            tenantId: session.tenantId,
-          },
-        });
-      }
-
-      if (req.method === "GET" && url.pathname === "/api/auth/me") {
-        if (
-          !identity.authenticated ||
-          identity.source !== "local_signed_session"
-        )
-          return send(res, 401, {
-            code: "INVALID_SESSION",
-            error: "invalid or expired workspace session token",
-          });
-        return send(res, 200, {
-          id: identity.userId,
-          name: identity.name,
-          email: identity.email,
-          role: identity.role,
-          tenantId: identity.tenantId,
-          expiresAt: identity.expiresAt,
-        });
-      }
-
-      if (url.pathname.startsWith("/api/master-data") && !identity.authenticated)
-        return send(res, 401, {
-          code: "AUTHENTICATION_REQUIRED",
-          message: "Sign in to access tenant master data.",
-        });
-
-      const routeContext = {
-        req,
-        res,
-        url,
-        db,
-        send,
-        readBody,
-        event,
-        todayLabel,
-        repositories,
-        ensurePurchaseRequests,
-        systemRequestSources,
-        nextSequenceId,
-        purchaseRequestStatuses,
-        priorities,
-        recordWorkflowCreation,
-        actorFromBody,
-        applyWorkflowTransition,
-        recordValidationBlocked,
-        createPoLineFromRequest,
-        normalizePurchaseOrder,
-        normalizePurchaseOrders,
-        normalizePoLine,
-        calculatePoHeaderFromLines,
-        ensureRfqs,
-        workflowDefinitions,
-        createPoLineFromRfq,
-        postedReceivingStatuses,
-        normalizeGrnLines,
-        applyReceivingToPoAndInventory,
-        postedGrnProtectedChangeError,
-        warehouseIdFor,
-        toNumber,
-        ensureInventoryMovements,
-        ensureSopCycles,
-        supplierPerformance,
-        supplierRecommendations,
-        ensureEvents,
-        ensureAuditLog,
-        openaiDispatcher,
-        arkDispatcher,
-        aiMaxTokens,
-        dataMode: dataMode.mode,
-        env: process.env,
-        identity,
-        localSessions,
-        supplierQuoteCount: 0,
-      };
-
-      if (await dispatchApiRoute(routeContext)) return;
-
-      if (!url.pathname.startsWith("/api/")) return sendStatic(req, res, url);
-      return send(res, 404, { error: "Not found" });
-    } catch (error) {
-      if (res.headersSent) {
-        res.end();
-        return;
-      }
-      return sendInternalServerError(res, send, error);
-    }
+  const handleRequest = createHttpRequestHandler({
+    port,
+    distDir,
+    buildIdentity,
+    readinessCheck,
+    localSessions,
+    localSessionSecret,
+    domain: {
+      event,
+      todayLabel,
+      ensurePurchaseRequests,
+      systemRequestSources,
+      nextSequenceId,
+      purchaseRequestStatuses,
+      priorities,
+      recordWorkflowCreation,
+      actorFromBody,
+      applyWorkflowTransition,
+      recordValidationBlocked,
+      createPoLineFromRequest,
+      normalizePurchaseOrder,
+      normalizePurchaseOrders,
+      normalizePoLine,
+      calculatePoHeaderFromLines,
+      ensureRfqs,
+      workflowDefinitions,
+      createPoLineFromRfq,
+      postedReceivingStatuses,
+      normalizeGrnLines,
+      applyReceivingToPoAndInventory,
+      postedGrnProtectedChangeError,
+      warehouseIdFor,
+      toNumber,
+      ensureInventoryMovements,
+      ensureSopCycles,
+      supplierPerformance,
+      supplierRecommendations,
+      ensureEvents,
+      ensureAuditLog,
+    },
+    runtime: {
+      openaiDispatcher,
+      arkDispatcher,
+      aiMaxTokens,
+      supplierQuoteCount: 0,
+    },
+    env: process.env,
   });
+  return http.createServer(withServerErrorBoundary(handleRequest));
 }
 
 export function startScmServer(listenPort = port, options = {}) {
-  const server = createScmServer();
+  const logger = options.logger || console;
+  const server = createScmServer({
+    readinessCheck: options.readinessCheck || checkRuntimeReadiness,
+  });
   const lifecycle = createServerLifecycle({
     server,
-    logger: options.logger || console,
+    logger,
     shutdownTimeoutMs: options.shutdownTimeoutMs,
   });
-  const unregisterSignals = registerShutdownSignals({ lifecycle, logger: options.logger || console });
+  const unregisterSignals = registerShutdownSignals({ lifecycle, logger });
   server.lifecycle = lifecycle;
   server.shutdown = async (reason = "manual") => {
     try {
@@ -1067,7 +814,7 @@ export function startScmServer(listenPort = port, options = {}) {
     }
   };
   server.listen(listenPort, () => {
-    console.log(`FlowChain listening on http://127.0.0.1:${listenPort}`);
+    logger.info?.(`FlowChain listening on http://127.0.0.1:${listenPort}`);
   });
   return server;
 }

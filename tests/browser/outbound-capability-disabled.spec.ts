@@ -24,17 +24,17 @@ test("disabled outbound capability makes list and direct entry read-only", async
   await expect(page.getByRole("link", { name: "新建销售订单" })).toHaveCount(0);
   await expect(page.getByTestId("capability-route-blocked")).toHaveCount(0);
   await expect(page.getByRole("status")).toContainText(
-    "销售订单工作台为只读状态",
+    "销售订单当前为只读",
   );
 
-  await orderRow.getByRole("link", { name: "打开" }).click();
+  await orderRow.getByRole("link", { name: "查看" }).click();
   await expect(page).toHaveURL(
     /\/app\/sales\/orders\/outbound-browser-permission-order$/,
   );
   await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();
   await expect(page.getByRole("heading", { name: "SO-PERMISSION" })).toBeVisible();
   await expect(page.getByText("Permission Customer", { exact: false })).toBeVisible();
-  await expect(page.getByRole("status")).toContainText("页面为只读状态");
+  await expect(page.getByRole("status")).toContainText("销售订单写入能力未启用");
   await expect(page.getByTestId("confirm-sales-order")).toHaveCount(0);
   await expect(page.getByTestId("open-reserve")).toHaveCount(0);
   await expect(page.getByTestId("open-shipment-draft")).toHaveCount(0);

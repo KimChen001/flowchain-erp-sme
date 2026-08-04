@@ -18,6 +18,8 @@ import { buildAiReadContext } from '../domain/ai-read-context.mjs'
 import { getAiToolRegistry } from '../domain/ai-tool-registry.mjs'
 import { buildUnknownGuidedFallbackResponse, classifyAiBusinessIntent, isTechnicalProviderDiagnosticPrompt } from '../domain/ai-business-intent-router.mjs'
 import { businessContextToReadDb, readBusinessContext } from '../services/runtime-business-read-service.mjs'
+import { createAiHandlerRegistry, aiHandlersForPhase } from './ai-handler-registry.mjs'
+import { dispatchAiHandlers } from './ai-dispatcher.mjs'
 import { buildMrpPlan } from './mrp.routes.mjs'
 import {
   ensureMarketPrices,
@@ -508,8 +510,54 @@ function providerFailureResponse({ body, db, ctx }) {
   }
 }
 
+const aiHandlerRegistry = createAiHandlerRegistry({
+  buildAiResponseContractV2,
+  buildAiSessionGroundedResponse,
+  buildAiFinanceCollaborationResponse,
+  buildAiMasterDataQualityResponse,
+  buildAiInventoryAllocationResponse,
+  buildAiSalesDemandResponse,
+  buildAiEvidenceGraphResponse,
+  buildAiDataLimitationResponse,
+  buildAiChatStatusResponse,
+  buildAiProcurementOperationalResponse,
+  buildAiEvidenceReuseResponse,
+  buildAiReceivingGapResponse,
+  buildAiSupplierOperationalResponse,
+  buildAiRfqOperationalResponse,
+  buildAiCockpitFastPathResponse,
+  buildAiDraftPreparationResponse,
+  buildAiCompoundQueryResponse,
+  shouldRunInventoryBeforeProcurement,
+  shouldRunInventoryStatusBeforeReadContext,
+  shouldUseLocalWorkbenchReply,
+  localAiReply,
+  aiConfidence,
+  marketPriceReply,
+  getAiProviderSafetyState,
+  isTechnicalProviderDiagnosticPrompt,
+  buildUnknownGuidedFallbackResponse,
+  classifyAiBusinessIntent,
+  providerDisabledResponse,
+  shouldFetchExternalSignals,
+  fetchExternalSignals,
+  callConfiguredAi,
+  providerFailureResponse,
+})
+
 export async function handleAiRoute(ctx) {
-  const { req, res, url, db: legacyDb, send, readBody, event, repositories, ensurePurchaseRequests, ensureInventoryMovements, ensureRfqs } = ctx
+  const {
+    req,
+    res,
+    url,
+    db: legacyDb,
+    send,
+    readBody,
+    repositories,
+    ensurePurchaseRequests,
+    ensureInventoryMovements,
+    ensureRfqs,
+  } = ctx
   let db = legacyDb
   const dataMode = ctx.dataMode || db?.__dataMode || ''
 
@@ -518,589 +566,72 @@ export async function handleAiRoute(ctx) {
     return true
   }
 
-  if (req.method === 'POST' && url.pathname === '/api/ai/chat') {
-    const startedAt = Date.now()
-    const body = await readBody(req)
-    body.question = normalizeAiChatMessage(body)
-    if (!body.question) return send(res, 400, { error: 'question is required' })
+  if (req.method !== 'POST' || url.pathname !== '/api/ai/chat') return false
 
-    const authoritativeRuntime = repositories?.procurementRuntime || repositories?.inventoryRuntime || repositories?.salesOrders || typeof repositories?.masterData?.listManagedItems === 'function'
-    let businessReadContext = null
-    if (authoritativeRuntime) {
-      businessReadContext = await readBusinessContext(ctx)
-      db = businessContextToReadDb(businessReadContext)
-    }
-
-    let branchStartedAt = Date.now()
-    const responseContractV2 = detectCompoundBusinessQuery(body)
-      ? null
-      : buildAiResponseContractV2(db, body, { ensurePurchaseRequests, ensureInventoryMovements, ensureRfqs })
-    if (responseContractV2) {
-      const result = {
-        ...responseContractV2,
-        fastPath: 'response_contract_v2',
-        timingMs: Date.now() - startedAt,
-        modelMs: Date.now() - branchStartedAt,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_response_contract_v2', summary: `AI answered ${result.intent.name} with response contract v2`, entity: result.intent.name, persist: false })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'response_contract_v2', body, result })
-      return send(res, 200, result)
-    }
-
-    branchStartedAt = Date.now()
-    const sessionGrounded = buildAiSessionGroundedResponse(db, body, { cache: {} })
-    if (sessionGrounded) {
-      const result = {
-        ...sessionGrounded,
-        fastPath: 'session_grounding',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: Date.now() - branchStartedAt,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_session_grounding_query', summary: `AI answered ${result.intent.name} via ${result.provider}`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'session_grounding', body, result })
-      return send(res, 200, result)
-    }
-
-    branchStartedAt = Date.now()
-    const financeFastPath = buildAiFinanceCollaborationResponse(db, body)
-    if (financeFastPath) {
-      const result = {
-        ...financeFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_finance_collaboration_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'finance_collaboration_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const masterDataFastPath = buildAiMasterDataQualityResponse(db, body)
-    if (masterDataFastPath) {
-      const result = {
-        ...masterDataFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_master_data_quality_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name, persist: false })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'master_data_quality_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const repositoryBackedReadContext = hasRepositoryBackedAiReadContext(repositories)
-    const fastPathModuleId = String(body.moduleId || body.activeContext?.module || '').trim().toLowerCase()
-    const compoundCandidate = detectCompoundBusinessQuery(body)
-
-    const inventoryAllocationFastPath = buildAiInventoryAllocationResponse(db, body)
-    if (!compoundCandidate && inventoryAllocationFastPath) {
-      const result = {
-        ...inventoryAllocationFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_inventory_allocation_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name, persist: false })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'inventory_allocation_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    const salesDemandFastPath = buildAiSalesDemandResponse(db, body)
-    if (!compoundCandidate && salesDemandFastPath) {
-      const result = {
-        ...salesDemandFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_sales_demand_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name, persist: false })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'sales_demand_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    const evidenceGraphFastPath = buildAiEvidenceGraphResponse(db, body)
-    if (!compoundCandidate && evidenceGraphFastPath) {
-      const result = {
-        ...evidenceGraphFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_evidence_graph_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name, persist: false })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'evidence_graph_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    const dataLimitationFastPath = buildAiDataLimitationResponse(db, body, { cache: {} })
-    if (!compoundCandidate && dataLimitationFastPath) {
-      const result = {
-        ...dataLimitationFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_data_limitation_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name, persist: false })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'data_limitation_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const statusBeforeProcurement = buildAiChatStatusResponse(db, body, { ensurePurchaseRequests, ensureInventoryMovements })
-    if (
-      !compoundCandidate &&
-      !repositoryBackedReadContext &&
-      dataMode === 'user' &&
-      statusBeforeProcurement?.intent?.name === 'inventory_status_query' &&
-      shouldRunInventoryBeforeProcurement(body, statusBeforeProcurement)
-    ) {
-      const result = {
-        ...statusBeforeProcurement,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_status_fast_path', summary: `AI answered ${result.intent.name} before procurement routing`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'inventory_status_before_procurement', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const procurementFastPath = buildAiProcurementOperationalResponse(db, body, { ensurePurchaseRequests, ensureRfqs })
-    if (!compoundCandidate && procurementFastPath) {
-      const result = {
-        ...procurementFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_procurement_operational_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'procurement_operational_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const supplierFollowupFastPath = buildAiEvidenceReuseResponse(db, body, { cache: {} })
-    if (
-      !repositoryBackedReadContext &&
-      !compoundCandidate &&
-      supplierFollowupFastPath?.intent?.name === 'supplier_followup_query' &&
-      !['srm', 'supplier'].includes(fastPathModuleId)
-    ) {
-      const result = {
-        ...supplierFollowupFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_supplier_followup_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name, persist: false })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'supplier_followup_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const receivingGapFastPath = buildAiReceivingGapResponse(db, body)
-    if (!compoundCandidate && receivingGapFastPath) {
-      const result = {
-        ...receivingGapFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_receiving_gap_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name, persist: false })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'receiving_gap_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const supplierFastPath = buildAiSupplierOperationalResponse(db, body, { ensurePurchaseRequests, ensureInventoryMovements, ensureRfqs })
-    if (!compoundCandidate && supplierFastPath && (!repositoryBackedReadContext || ['srm', 'supplier'].includes(fastPathModuleId))) {
-      const result = {
-        ...supplierFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_supplier_operational_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'supplier_operational_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const rfqFastPath = buildAiRfqOperationalResponse(db, body, { ensureRfqs })
-    if (!compoundCandidate && rfqFastPath) {
-      const result = {
-        ...rfqFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_rfq_operational_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'rfq_operational_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    if (!compoundCandidate && !repositoryBackedReadContext) {
-      const cockpitFastPath = buildAiCockpitFastPathResponse(db, body, { cache: {} })
-      if (cockpitFastPath) {
-        const result = {
-          ...cockpitFastPath,
-          fastPath: 'pre_read_context',
-          usedWeb: false,
-          timingMs: Date.now() - startedAt,
-          externalMs: 0,
-          modelMs: 0,
-        }
-        void recordAiEventBestEffort({ db, event, repositories, action: 'ai_cockpit_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name, persist: false })
-        logAiTiming({ startedAt, branchStartedAt, branch: 'cockpit_fast_path_pre_read_context', body, result })
-        send(res, 200, result)
-        return true
-      }
-    }
-
-    branchStartedAt = Date.now()
-    const statusFastPath = statusBeforeProcurement || buildAiChatStatusResponse(db, body, { ensurePurchaseRequests, ensureInventoryMovements })
-    if (
-      !compoundCandidate &&
-      (
-        (!repositoryBackedReadContext && shouldRunInventoryStatusBeforeReadContext(body, statusFastPath)) ||
-        statusFastPath?.intent?.name === 'planning_status_query'
-      )
-    ) {
-      const result = {
-        ...statusFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_status_fast_path', summary: `AI answered ${result.intent.name} before read-context build`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'status_fast_path_pre_read_context', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const draftFastPath = buildAiDraftPreparationResponse(db, body, {
-      authorization: req.headers.authorization || '',
-    })
-    if (!compoundCandidate && draftFastPath) {
-      const result = {
-        ...draftFastPath,
-        fastPath: 'pre_read_context',
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      const missingCount = result.cards.find((card) => card.type === 'missing_fields')?.fields?.length || 0
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_draft_prepared', summary: `AI prepared ${result.intent.name} before read-context build with ${missingCount} missing fields`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'draft_preparation_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    const aiReadContext = await buildAiReadContext(db, { ...ctx, businessReadContext, businessReadDb: db })
-    const readModelCache = aiReadContext.cache
-
-    branchStartedAt = Date.now()
-    const compoundQuery = buildAiCompoundQueryResponse(db, body, {
-      cache: readModelCache,
-      ensurePurchaseRequests,
-      ensureInventoryMovements,
-      ensureRfqs,
-    })
-    if (compoundQuery) {
-      const result = {
-        ...compoundQuery,
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_compound_query', summary: `AI answered compound query with ${result.subIntents?.length || 0} sub-intents`, entity: result.intent.name, persist: false })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'compound_query', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const cockpitFastPathQuery = buildAiCockpitFastPathResponse(db, body, { cache: readModelCache })
-    if (cockpitFastPathQuery) {
-      const result = {
-        ...cockpitFastPathQuery,
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_cockpit_fast_path', summary: `AI answered ${result.intent.name} via ${result.provider}`, entity: result.intent.name, persist: false })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'cockpit_fast_path', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const supplierOperationalQuery = buildAiSupplierOperationalResponse(db, body, { ensurePurchaseRequests, ensureInventoryMovements, ensureRfqs })
-    if (supplierOperationalQuery && (!repositoryBackedReadContext || ['srm', 'supplier'].includes(fastPathModuleId))) {
-      const result = {
-        ...supplierOperationalQuery,
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_supplier_operational_query', summary: `AI answered ${result.intent.name} via ${result.provider}`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'supplier_operational', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const evidenceReuseQuery = buildAiEvidenceReuseResponse(db, body, { cache: readModelCache })
-    if (evidenceReuseQuery) {
-      const result = {
-        ...evidenceReuseQuery,
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_evidence_reuse_query', summary: `AI answered ${result.intent.name} via ${result.provider}`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'evidence_reuse', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const statusQuery = buildAiChatStatusResponse(db, body, { ensurePurchaseRequests, ensureInventoryMovements })
-    const deferredProcurementException = statusQuery?.intent?.name === 'procurement_exception_query' ? statusQuery : null
-    if (statusQuery && !deferredProcurementException) {
-      const result = {
-        ...statusQuery,
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_chat_status_query', summary: `AI answered ${result.intent.name} via ${result.provider}`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'status_query', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const procurementOperationalQuery = buildAiProcurementOperationalResponse(db, body, { ensurePurchaseRequests, ensureRfqs })
-    if (procurementOperationalQuery) {
-      const result = {
-        ...procurementOperationalQuery,
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_procurement_operational_query', summary: `AI answered ${result.intent.name} via ${result.provider}`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'procurement_operational', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const rfqOperationalQuery = buildAiRfqOperationalResponse(db, body, { ensureRfqs })
-    if (rfqOperationalQuery) {
-      const result = {
-        ...rfqOperationalQuery,
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_rfq_operational_query', summary: `AI answered ${result.intent.name} via ${result.provider}`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'rfq_operational', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    if (deferredProcurementException) {
-      branchStartedAt = Date.now()
-      const result = {
-        ...deferredProcurementException,
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_chat_status_query', summary: `AI answered ${result.intent.name} via ${result.provider}`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'deferred_procurement_exception', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const financeCollaborationQuery = buildAiFinanceCollaborationResponse(db, body)
-    if (financeCollaborationQuery) {
-      const result = {
-        ...financeCollaborationQuery,
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_finance_collaboration_query', summary: `AI answered ${result.intent.name} via ${result.provider}`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'finance_collaboration', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    branchStartedAt = Date.now()
-    const draftPreparation = buildAiDraftPreparationResponse(db, body, {
-      authorization: req.headers.authorization || '',
-    })
-    if (draftPreparation) {
-      const result = {
-        ...draftPreparation,
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      const missingCount = result.cards.find((card) => card.type === 'missing_fields')?.fields?.length || 0
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_draft_prepared', summary: `AI prepared ${result.intent.name} with ${missingCount} missing fields`, entity: result.intent.name })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'draft_preparation', body, result })
-      send(res, 200, result)
-      return true
-    }
-
-    if (shouldUseLocalWorkbenchReply(body.question)) {
-      branchStartedAt = Date.now()
-      const result = {
-        provider: 'local',
-        content: localAiReply(body, db, ctx),
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      result.confidence = aiConfidence(body, db, result, ctx)
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_chat', summary: `AI answered ${body.moduleId || 'unknown'} question via ${result.provider}`, entity: body.moduleId || 'ai' })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'local_workbench', body, result })
-      return send(res, 200, result)
-    }
-
-    const priceAnswer = marketPriceReply(body.question, db)
-    if (priceAnswer) {
-      branchStartedAt = Date.now()
-      const result = {
-        provider: 'market-data',
-        content: priceAnswer,
-        message: priceAnswer,
-        usedWeb: false,
-        timingMs: Date.now() - startedAt,
-        externalMs: 0,
-        modelMs: 0,
-      }
-      result.confidence = aiConfidence(body, db, result, ctx)
-      void recordAiEventBestEffort({ db, event, repositories, action: 'ai_chat', summary: `AI answered ${body.moduleId || 'unknown'} question via ${result.provider}`, entity: body.moduleId || 'ai' })
-      logAiTiming({ startedAt, branchStartedAt, branch: 'market_data', body, result })
-      return send(res, 200, result)
-    }
-
-    const providerSafety = getAiProviderSafetyState()
-    if (!providerSafety.enabled) {
-      branchStartedAt = Date.now()
-      const intentRoute = classifyAiBusinessIntent(body)
-      const technicalDiagnostic = isTechnicalProviderDiagnosticPrompt(body.question)
-      const result = technicalDiagnostic
-        ? providerDisabledResponse({ startedAt, branchStartedAt, body })
-        : {
-            ...buildUnknownGuidedFallbackResponse(body, intentRoute),
-            timingMs: Date.now() - startedAt,
-            externalMs: 0,
-            modelMs: Date.now() - branchStartedAt,
-          }
-      void recordAiEventBestEffort({
-        db,
-        event,
-        repositories,
-        action: technicalDiagnostic ? 'ai_chat_provider_blocked' : 'ai_guided_fallback',
-        summary: technicalDiagnostic ? `AI provider fallback blocked for ${body.moduleId || 'unknown'}` : `AI guided unknown ${body.moduleId || 'unknown'} question`,
-        entity: body.moduleId || 'ai',
-        persist: technicalDiagnostic,
-      })
-      logAiTiming({ startedAt, branchStartedAt, branch: technicalDiagnostic ? 'provider_disabled' : 'guided_fallback', body, result })
-      return send(res, 200, result)
-    }
-
-    const hasMarketAnswer = Boolean(priceAnswer)
-    const useWeb = !hasMarketAnswer && (body.useWeb === true || (body.useWeb !== false && shouldFetchExternalSignals(body.question)))
-    let externalMs = 0
-    if (useWeb) {
-      const externalStartedAt = Date.now()
-      body.externalSignals = await fetchExternalSignals()
-      externalMs = Date.now() - externalStartedAt
-    }
-    let result
-    const modelStartedAt = Date.now()
-    branchStartedAt = modelStartedAt
-    try {
-      result = await callConfiguredAi(body, db, ctx)
-    } catch (error) {
-      result = providerFailureResponse({ body, db, ctx })
-    }
-    const modelMs = Date.now() - modelStartedAt
-    result = {
-      ...result,
-      usedWeb: useWeb,
-      timingMs: Date.now() - startedAt,
-      externalMs,
-      modelMs,
-    }
-    result.confidence = aiConfidence(body, db, result, ctx)
-    void recordAiEventBestEffort({ db, event, repositories, action: 'ai_chat', summary: `AI answered ${body.moduleId || 'unknown'} question via ${result.provider}`, entity: body.moduleId || 'ai' })
-    logAiTiming({ startedAt, branchStartedAt, branch: 'configured_ai', body, result })
-    return send(res, 200, result)
+  const startedAt = Date.now()
+  const body = await readBody(req)
+  body.question = normalizeAiChatMessage(body)
+  if (!body.question) {
+    send(res, 400, { error: 'question is required' })
+    return true
   }
 
-  return false
+  const authoritativeRuntime =
+    repositories?.procurementRuntime ||
+    repositories?.inventoryRuntime ||
+    repositories?.salesOrders ||
+    typeof repositories?.masterData?.listManagedItems === 'function'
+  let businessReadContext = null
+  if (authoritativeRuntime) {
+    businessReadContext = await readBusinessContext(ctx)
+    db = businessContextToReadDb(businessReadContext)
+  }
+
+  const routeOptions = {
+    ensurePurchaseRequests,
+    ensureInventoryMovements,
+    ensureRfqs,
+  }
+  const state = {
+    ctx,
+    db,
+    body,
+    dataMode,
+    startedAt,
+    branchStartedAt: startedAt,
+    routeOptions,
+    compoundCandidate: detectCompoundBusinessQuery(body),
+    repositoryBackedReadContext: hasRepositoryBackedAiReadContext(repositories),
+    fastPathModuleId: String(body.moduleId || body.activeContext?.module || '').trim().toLowerCase(),
+    statusBeforeProcurement: null,
+    deferredProcurementException: null,
+    readModelCache: null,
+    recordEvent: recordAiEventBestEffort,
+    logTiming: logAiTiming,
+  }
+
+  const preReadResult = await dispatchAiHandlers({
+    handlers: aiHandlersForPhase(aiHandlerRegistry, 'pre_read_context'),
+    state,
+  })
+  if (preReadResult.handled) return true
+
+  const aiReadContext = await buildAiReadContext(db, {
+    ...ctx,
+    businessReadContext,
+    businessReadDb: db,
+  })
+  state.readModelCache = aiReadContext.cache
+
+  const readContextResult = await dispatchAiHandlers({
+    handlers: aiHandlersForPhase(aiHandlerRegistry, 'read_context'),
+    state,
+  })
+  if (readContextResult.handled) return true
+
+  const fallbackResult = await dispatchAiHandlers({
+    handlers: aiHandlersForPhase(aiHandlerRegistry, 'fallback'),
+    state,
+  })
+  return fallbackResult.handled
 }

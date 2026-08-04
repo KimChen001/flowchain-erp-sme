@@ -69,6 +69,35 @@ test("production runtime configuration is centralized, fail-fast, and redacted",
   );
 });
 
+test("production lifecycle composes with the decomposed server runtime", () => {
+  const serverSource = readFileSync(resolve(import.meta.dirname, "../bootstrap/scm-server.mjs"), "utf8");
+  const handlerSource = readFileSync(resolve(import.meta.dirname, "../bootstrap/http-request-handler.mjs"), "utf8");
+  const runtimeRoutesSource = readFileSync(resolve(import.meta.dirname, "../bootstrap/runtime-routes.mjs"), "utf8");
+  const lifecycleSource = readFileSync(resolve(import.meta.dirname, "../bootstrap/server-lifecycle.mjs"), "utf8");
+  const compositionBlock = serverSource.slice(
+    serverSource.indexOf("export function createScmServer"),
+    serverSource.indexOf("export function startScmServer"),
+  );
+  const startBlock = serverSource.slice(serverSource.indexOf("export function startScmServer"));
+
+  assert.match(compositionBlock, /validateProductionRuntimeConfig\(process\.env\)/);
+  assert.match(compositionBlock, /createHttpRequestHandler\(\{/);
+  assert.match(compositionBlock, /readinessCheck,/);
+  assert.doesNotMatch(compositionBlock, /url\.pathname|resolveRequestIdentity|sendStaticAsset|sendInternalServerError/);
+  assert.match(runtimeRoutesSource, /url\.pathname === "\/api\/health"/);
+  assert.match(runtimeRoutesSource, /buildLivenessPayload/);
+  assert.match(runtimeRoutesSource, /url\.pathname === "\/api\/ready"/);
+  assert.match(runtimeRoutesSource, /readinessCheck\(\{ env \}\)/);
+  assert.ok(handlerSource.indexOf("handleRuntimeRoutes({") < handlerSource.indexOf("createRepositoryRegistry({"));
+  assert.ok(handlerSource.indexOf("handleRuntimeRoutes({") < handlerSource.indexOf("resolveRequestIdentity("));
+  assert.match(startBlock, /createServerLifecycle\(\{/);
+  assert.match(startBlock, /registerShutdownSignals\(\{/);
+  assert.doesNotMatch(startBlock, /closeAllConnections|disconnectPrismaClient|signalTarget\.once/);
+  assert.match(lifecycleSource, /closeAllConnections/);
+  assert.match(lifecycleSource, /disconnectPrismaClient/);
+  assert.match(lifecycleSource, /signalTarget\.once/);
+});
+
 test("Mobile Sync secrets are required only when the capability is enabled", () => {
   assert.doesNotThrow(() => validateProductionRuntimeConfig(validProductionEnv({ FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: "false" })));
   assert.throws(

@@ -1,5 +1,14 @@
-export const PR_TRANSITIONS = { draft: ['submitted','cancelled'], submitted: ['approved','rejected','draft','cancelled'], approved: ['draft','cancelled','converted'], rejected: [], cancelled: [], converted: [] }
-export const PO_TRANSITIONS = { draft: ['pending_approval','cancelled'], pending_approval: ['approved','rejected','draft','cancelled'], approved: ['issued','cancelled'], rejected: ['draft'], issued: [], cancelled: [] }
+import {
+  PROCUREMENT_STATUS_TRANSITIONS,
+  PURCHASE_ORDER_STATUS,
+  PURCHASE_REQUEST_STATUS,
+  RFQ_STATUS,
+} from './procurement-status-authority.mjs'
+
+export const PR_TRANSITIONS = PROCUREMENT_STATUS_TRANSITIONS.purchaseRequest
+export const PO_TRANSITIONS = PROCUREMENT_STATUS_TRANSITIONS.purchaseOrderWorkflow
+export const RFQ_TRANSITIONS = PROCUREMENT_STATUS_TRANSITIONS.rfq
+export { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS, RFQ_STATUS }
 export const PROCUREMENT_PATHS = ['undecided','direct_po','rfq']
 
 export function procurementError(code, message, details = [], status = 422, extra = {}) {
