@@ -90,7 +90,7 @@ function createRecords() {
       metadata: {},
       lines: [{ id: 'RFQL-DB-1', sku: 'A100', itemId: 'ITEM-A100', itemName: 'Motor A100', quantity: 10, unit: 'pcs' }],
     }],
-    supplierQuotations: [{ id: 'SQ-DB-1', tenantId, rfqId: 'RFQ-DB-1', supplierName: 'ABC Components' }],
+    supplierQuotations: [{ id: 'SQ-DB-1', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-1', supplierName: 'ABC Components', status: 'received', quotedAmount: 1180, currency: 'CNY', submittedAt: new Date('2026-06-10T10:00:00.000Z'), metadata: { deliveryDate: '2026-06-30', paymentTerms: 'NET30' }, lines: [{ id: 'SQL-DB-1', sku: 'A100', itemName: 'Motor A100', quantity: 10, unit: 'pcs', unitPrice: 118, amount: 1180 }] }],
     purchaseOrders: [{
       id: 'PO-DB-1',
       tenantId,
@@ -219,6 +219,7 @@ test('direct dispatch covers every canonical type with exact bounded Prisma quer
       for (const [delegate, method, where] of entry.support) {
         const supportingCall = calls.find((call) => call.delegate === delegate && call.method === method)
         assert.deepEqual(supportingCall.query.where, where)
+        if (entry.type === 'rfq') assert.deepEqual(supportingCall.query.include, { lines: true })
       }
       assert.equal(calls.some((call) => call.query.take === 500), false)
       assert.equal(calls.every((call) => call.method === 'findFirst' || Boolean(call.query.where)), true)
@@ -240,8 +241,27 @@ test('direct documents preserve the former snapshot contract output', async () =
   for (const [type, id] of cases) {
     const repository = createDbProcurementReadRepository({ env, prisma: createPrisma() })
     const direct = await repository.getDocument(type, id, { tenantId })
-    assert.deepEqual(direct, snapshotDocuments.find((document) => document.documentType === type && document.id === id))
+    const snapshot = snapshotDocuments.find((document) => document.documentType === type && document.id === id)
+    assert.equal(direct.documentType, snapshot.documentType)
+    assert.equal(direct.id, snapshot.id)
+    assert.equal(direct.status, snapshot.status)
+    assert.equal(direct.currency, snapshot.currency)
   }
+})
+
+test('RFQ direct detail returns canonical lines, quotation lines, evidence, and explicit authority limits', async () => {
+  const repository = createDbProcurementReadRepository({ env, prisma: createPrisma() })
+  const document = await repository.getDocument('rfq', 'RFQ-DB-1', { tenantId })
+
+  assert.equal(document.status, 'open')
+  assert.equal(document.lines[0].id, 'RFQL-DB-1')
+  assert.equal(document.quotations[0].id, 'SQ-DB-1')
+  assert.equal(document.quotations[0].status, 'submitted')
+  assert.equal(document.quotations[0].lines[0].unitPrice, 118)
+  assert.equal(document.suppliers.knownParticipants[0].supplierId, 'SUP-1')
+  assert.equal(document.relatedEvidence.some((item) => item.type === 'pr' && item.id === 'PR-DB-1'), true)
+  assert.equal(document.revisionAuthority.available, false)
+  assert.equal(document.limitations.some((item) => item.includes('revision')), true)
 })
 
 test('historical direct lookup is independent of bounded list windows and broad collections', async () => {
