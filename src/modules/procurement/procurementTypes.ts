@@ -17,6 +17,8 @@ export type ProcurementRfqLine = {
 };
 export type ProcurementQuotationLine = {
   id: string;
+  rfqLineId?: string | null;
+  sourceQuotationLineId?: string | null;
   itemId?: string | null;
   sku?: string | null;
   itemName?: string | null;
@@ -24,6 +26,24 @@ export type ProcurementQuotationLine = {
   unit?: string | null;
   unitPrice?: number | null;
   amount?: number | null;
+  deliveryDate?: string;
+};
+export type ProcurementQuotationRevision = {
+  id: string;
+  revisionNumber: number;
+  status?: string | null;
+  statusRaw?: string | null;
+  currency: string;
+  quotedAmount?: number | null;
+  submittedAt?: string;
+  deliveryDate?: string;
+  paymentTerms?: string | null;
+  validity?: string | null;
+  source?: string;
+  createdByActorId?: string | null;
+  createdAt?: string;
+  isLatest: boolean;
+  lines: ProcurementQuotationLine[];
 };
 export type ProcurementRfqQuotation = {
   id: string;
@@ -40,6 +60,23 @@ export type ProcurementRfqQuotation = {
   revisionNumber?: number | null;
   isLatest?: boolean | null;
   lines: ProcurementQuotationLine[];
+  latestRevision?: ProcurementQuotationRevision | null;
+  revisions: ProcurementQuotationRevision[];
+  historicalRevisions: ProcurementQuotationRevision[];
+};
+export type ProcurementRfqParticipant = {
+  participationId?: string | null;
+  supplierId: string;
+  supplierName?: string | null;
+  status?: string | null;
+  statusRaw?: string | null;
+  participationState: string;
+  responseState: "response_recorded" | "no_response" | "declined" | "withdrawn";
+  invitedAt?: string;
+  respondedAt?: string;
+  withdrawnAt?: string;
+  authoritySource: "participation" | "quotation";
+  quotationIds: string[];
 };
 export type ProcurementRfqDocument = ProcurementDocument & {
   status: string | null;
@@ -47,14 +84,16 @@ export type ProcurementRfqDocument = ProcurementDocument & {
   description?: string | null;
   lines: ProcurementRfqLine[];
   suppliers: {
+    participantCount: number;
     invitedCount: number;
     respondedCount: number;
-    knownParticipants: Array<{ supplierId?: string | null; supplierName?: string | null; participationState: string }>;
-    invitationAuthority: "unavailable";
+    noResponseCount: number;
+    knownParticipants: ProcurementRfqParticipant[];
+    invitationAuthority: "authoritative";
   };
   quotations: ProcurementRfqQuotation[];
   relatedEvidence: Array<{ type: string; id: string; label: string; relation: string }>;
-  revisionAuthority: { available: false; reason: string };
+  revisionAuthority: { available: true; immutable: true; latestRule: "maximum_revision_number" };
   limitations: string[];
 };
 export type PurchaseRequestSummary = { id: string; status: string; totalAmount: number };
