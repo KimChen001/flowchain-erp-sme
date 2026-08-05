@@ -19,7 +19,6 @@ const supplierPostingMigration =
   "20260718020000_supplier_return_posting_kernel";
 const customerReceiptMigration =
   "20260718030000_customer_return_receipt_kernel";
-const latestMigration = "20260727010000_schema_aware_structured_intake";
 const node = process.execPath;
 const prismaCli = join(root, "node_modules", "prisma", "build", "index.js");
 
@@ -109,6 +108,10 @@ async function migrationNames() {
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
+}
+
+async function latestMigrationName() {
+  return (await migrationNames()).at(-1);
 }
 
 async function applyPhase4ABaseline(pg, database, url, secrets) {
@@ -883,7 +886,7 @@ async function verifyGovernanceUpgrade(pg, database, url, secrets) {
     `SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY migration_name`,
   );
   assert.ok(migrations.rows.some(row => row.migration_name === customerReceiptMigration));
-  assert.equal(migrations.rows.at(-1).migration_name, latestMigration);
+  assert.equal(migrations.rows.at(-1).migration_name, await latestMigrationName());
 }
 
 async function verifySupplierPostingUpgrade(
@@ -936,7 +939,7 @@ async function verifySupplierPostingUpgrade(
     `SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY migration_name`,
   );
   assert.ok(migrations.rows.some(row => row.migration_name === customerReceiptMigration));
-  assert.equal(migrations.rows.at(-1).migration_name, latestMigration);
+  assert.equal(migrations.rows.at(-1).migration_name, await latestMigrationName());
 }
 
 const pgPort = await availablePort();
