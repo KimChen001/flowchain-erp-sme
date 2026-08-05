@@ -60,7 +60,7 @@ test('Prisma schema contains PostgreSQL runtime foundations and read models', ()
   const schema = readSource('prisma', 'schema.prisma')
   const config = readSource('prisma.config.ts')
 
-  for (const model of ['Tenant', 'User', 'RuntimeRecord', 'Supplier', 'Item', 'Warehouse', 'PaymentTerm', 'TaxCode', 'ActionDraft', 'ActionDraftValidation', 'ActionDraftAuditTrail', 'AuditLog', 'AiEvidence', 'PurchaseRequest', 'PurchaseRequestLine', 'Rfq', 'RfqLine', 'SupplierQuotation', 'SupplierQuotationLine', 'PurchaseOrder', 'PurchaseOrderLine', 'ReceivingDocument', 'ReceivingLine', 'SupplierInvoice', 'SupplierInvoiceLine', 'ThreeWayMatch', 'DocumentLink', 'ProcurementFollowup', 'InventoryBalance', 'InventoryLot', 'InventorySerial', 'InventoryMovement', 'InventoryException']) {
+  for (const model of ['Tenant', 'User', 'RuntimeRecord', 'Supplier', 'Item', 'Warehouse', 'PaymentTerm', 'TaxCode', 'ActionDraft', 'ActionDraftValidation', 'ActionDraftAuditTrail', 'AuditLog', 'AiEvidence', 'PurchaseRequest', 'PurchaseRequestLine', 'Rfq', 'RfqLine', 'RfqSupplierParticipation', 'SupplierQuotation', 'SupplierQuotationLine', 'SupplierQuotationRevision', 'SupplierQuotationRevisionLine', 'PurchaseOrder', 'PurchaseOrderLine', 'ReceivingDocument', 'ReceivingLine', 'SupplierInvoice', 'SupplierInvoiceLine', 'ThreeWayMatch', 'DocumentLink', 'ProcurementFollowup', 'InventoryBalance', 'InventoryLot', 'InventorySerial', 'InventoryMovement', 'InventoryException']) {
     assert.match(schema, new RegExp(`model ${model} \\{`), model)
   }
 

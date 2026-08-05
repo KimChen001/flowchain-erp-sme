@@ -77,7 +77,15 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(quotation).toContainText("已提交");
   await expect(quotation).toContainText("4,900");
   await expect(quotation).toContainText("2030-01-05 08:30:00.000 UTC");
-  await expect(page.getByTestId("rfq-quotation-line-LOCAL-DEMO-QUOTEL-001")).toContainText("LDM-001 · 50 pcs");
+  await expect(page.getByTestId("rfq-quotation-line-LOCAL-DEMO-REVLINE-002")).toContainText("LDM-001 · 50 pcs");
+  await expect(page.getByTestId("rfq-revision-LOCAL-DEMO-REV-002")).toContainText("Revision 2 · 当前版本");
+  await expect(page.getByTestId("rfq-revision-LOCAL-DEMO-REV-001")).toContainText("Revision 1 · 历史版本");
+  await expect(page.getByTestId("rfq-revision-line-LOCAL-DEMO-REVLINE-001")).toContainText("100");
+
+  await expect(page.getByTestId("rfq-participant-LOCAL-DEMO-SUP-001")).toContainText("已记录响应");
+  await expect(page.getByTestId("rfq-participant-LOCAL-DEMO-SUP-002")).toContainText("暂无响应");
+  await expect(page.getByTestId("rfq-participant-LOCAL-DEMO-SUP-003")).toContainText("已拒绝");
+  await expect(page.getByTestId("rfq-participant-LOCAL-DEMO-SUP-004")).toContainText("已撤回");
 
   const evidence = page.getByTestId("rfq-related-evidence");
   await expect(evidence).toContainText("LOCAL-DEMO-PR-001");
@@ -86,10 +94,10 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(evidence.getByRole("link", { name: "打开记录" })).toHaveCount(2);
 
   const limitations = page.getByTestId("rfq-data-limitations");
-  await expect(limitations).toContainText("没有独立的 RFQ 邀请关系");
-  await expect(limitations).toContainText("供应商参与事实仅来自");
-  await expect(limitations).toContainText("没有 quotation revision/version authority");
-  await expect(limitations).toContainText("latest indicator 不可推断");
+  await expect(limitations).toContainText("RFQ Supplier Participation");
+  await expect(limitations).toContainText("不证明邮件送达");
+  await expect(limitations).toContainText("最大 revisionNumber");
+  await expect(limitations).toContainText("没有 Supplier Response 或 Append Revision HTTP 写命令");
   await expectNoWriteActions(page);
 
   expect(documentRequests.filter((path) => path === "/api/procurement/documents?type=rfq")).toHaveLength(1);
@@ -122,7 +130,7 @@ test("direct RFQ refresh uses only the encoded exact endpoint", async ({ page, r
   await expect(page.getByTestId("canonical-rfq-detail")).toContainText("LOCAL-DEMO-RFQL-001");
   await expect(page.getByTestId("canonical-rfq-detail")).toContainText("LOCAL-DEMO-QUOTE-001");
   await page.reload();
-  await expect(page.getByTestId("rfq-quotation-line-LOCAL-DEMO-QUOTEL-001")).toBeVisible();
+  await expect(page.getByTestId("rfq-quotation-line-LOCAL-DEMO-REVLINE-002")).toBeVisible();
 
   expect(documentRequests).toEqual([exactRfqPath(RFQ_ID), exactRfqPath(RFQ_ID)]);
   expect(allRequests.some((path) => /snapshot|fixture/i.test(path))).toBeFalsy();
@@ -147,7 +155,7 @@ test("encoded empty RFQ remains a valid authoritative record with subsection emp
   await expect(detail).toContainText("无行项目与报价的合法询价");
   await expect(page.getByTestId("rfq-lines")).toContainText("当前 RFQ 没有权威行项目");
   await expect(page.getByTestId("rfq-quotations")).toContainText("当前 RFQ 没有权威报价记录");
-  await expect(page.getByTestId("rfq-suppliers")).toContainText("当前没有可展示的已关联供应商");
+  await expect(page.getByTestId("rfq-suppliers")).toContainText("当前 RFQ 没有权威供应商参与记录");
   await expect(detail).not.toContainText("LOCAL-DEMO-QUOTE-001");
   await expect(detail).not.toContainText("本地演示供应商 A");
   await expectNoWriteActions(page);

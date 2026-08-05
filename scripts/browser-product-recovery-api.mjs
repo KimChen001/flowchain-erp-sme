@@ -52,7 +52,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
       title: "本地演示控制器询价",
       category: "控制器",
       status: "collecting_quotes",
-      supplierCount: 1,
+      supplierCount: 4,
       respondedSupplierCount: 1,
       dueDate: new Date("2030-01-10T00:00:00.000Z"),
       sourceRequestId: "LOCAL-DEMO-PR-001",
@@ -111,6 +111,77 @@ async function seedCanonicalRfqBrowserScenario(client) {
         }],
       },
     },
+  });
+  await client.supplierQuotationRevision.create({
+    data: {
+      id: "LOCAL-DEMO-REV-001",
+      tenantId,
+      quotationId: "LOCAL-DEMO-QUOTE-001",
+      revisionNumber: 1,
+      status: "submitted",
+      quotedAmount: 5000,
+      currency: "CNY",
+      submittedAt: new Date("2030-01-04T08:30:00.000Z"),
+      deliveryDate: new Date("2030-01-16T00:00:00.000Z"),
+      paymentTerms: "NET15",
+      source: "internal_recording",
+      metadata: { browserAcceptance: true },
+      lines: {
+        create: [{
+          id: "LOCAL-DEMO-REVLINE-001",
+          sourceQuotationLineId: "LOCAL-DEMO-QUOTEL-001",
+          rfqLineId: "LOCAL-DEMO-RFQL-001",
+          itemId: "LOCAL-DEMO-ITEM-001",
+          skuSnapshot: "LDM-001",
+          itemNameSnapshot: "本地演示控制器",
+          quantity: 50,
+          unit: "pcs",
+          unitPrice: 100,
+          amount: 5000,
+          metadata: { browserAcceptance: true },
+        }],
+      },
+    },
+  });
+  await client.supplierQuotationRevision.create({
+    data: {
+      id: "LOCAL-DEMO-REV-002",
+      tenantId,
+      quotationId: "LOCAL-DEMO-QUOTE-001",
+      revisionNumber: 2,
+      status: "submitted",
+      quotedAmount: 4900,
+      currency: "CNY",
+      submittedAt: new Date("2030-01-05T08:30:00.000Z"),
+      deliveryDate: new Date("2030-01-14T00:00:00.000Z"),
+      paymentTerms: "NET30",
+      validUntil: new Date("2030-01-20T00:00:00.000Z"),
+      source: "internal_recording",
+      metadata: { browserAcceptance: true },
+      lines: {
+        create: [{
+          id: "LOCAL-DEMO-REVLINE-002",
+          sourceQuotationLineId: "LOCAL-DEMO-QUOTEL-001",
+          rfqLineId: "LOCAL-DEMO-RFQL-001",
+          itemId: "LOCAL-DEMO-ITEM-001",
+          skuSnapshot: "LDM-001",
+          itemNameSnapshot: "本地演示控制器",
+          quantity: 50,
+          unit: "pcs",
+          unitPrice: 98,
+          amount: 4900,
+          metadata: { browserAcceptance: true },
+        }],
+      },
+    },
+  });
+  await client.rfqSupplierParticipation.createMany({
+    data: [
+      { id: "LOCAL-DEMO-RFQSP-001", tenantId, rfqId: "LOCAL-DEMO-RFQ-001", supplierId: "LOCAL-DEMO-SUP-001", status: "response_recorded", invitedAt: new Date("2030-01-02T00:00:00.000Z"), respondedAt: new Date("2030-01-05T08:30:00.000Z"), metadata: { browserAcceptance: true } },
+      { id: "LOCAL-DEMO-RFQSP-002", tenantId, rfqId: "LOCAL-DEMO-RFQ-001", supplierId: "LOCAL-DEMO-SUP-002", status: "invited_internal", invitedAt: new Date("2030-01-02T00:00:00.000Z"), metadata: { browserAcceptance: true } },
+      { id: "LOCAL-DEMO-RFQSP-003", tenantId, rfqId: "LOCAL-DEMO-RFQ-001", supplierId: "LOCAL-DEMO-SUP-003", status: "declined", invitedAt: new Date("2030-01-02T00:00:00.000Z"), metadata: { browserAcceptance: true } },
+      { id: "LOCAL-DEMO-RFQSP-004", tenantId, rfqId: "LOCAL-DEMO-RFQ-001", supplierId: "LOCAL-DEMO-SUP-004", status: "withdrawn", invitedAt: new Date("2030-01-02T00:00:00.000Z"), withdrawnAt: new Date("2030-01-06T00:00:00.000Z"), metadata: { browserAcceptance: true } },
+    ],
   });
   await client.rfq.create({
     data: {

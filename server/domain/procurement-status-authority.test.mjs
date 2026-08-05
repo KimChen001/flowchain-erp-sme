@@ -6,9 +6,11 @@ import {
   PROCUREMENT_STATUS_VALUES,
   PURCHASE_ORDER_STATUS,
   PURCHASE_REQUEST_STATUS,
+  RFQ_SUPPLIER_PARTICIPATION_STATUS,
   RECEIVABLE_PURCHASE_ORDER_INPUTS,
   RECEIVING_POSTABLE_WORKFLOW_INPUTS,
   RFQ_STATUS,
+  SUPPLIER_QUOTATION_REVISION_STATUS,
   assertProcurementAuthorityTransition,
   canTransitionProcurementAuthorityStatus,
   isProcurementAuthorityStatus,
@@ -47,6 +49,22 @@ test('formal procurement status domains expose one canonical catalog', () => {
     'closed',
     'cancelled',
   ])
+  assert.deepEqual(PROCUREMENT_STATUS_VALUES.rfqSupplierParticipation, [
+    'planned',
+    'invited_internal',
+    'response_recorded',
+    'declined',
+    'withdrawn',
+    'closed',
+  ])
+  assert.deepEqual(PROCUREMENT_STATUS_VALUES.supplierQuotationRevision, [
+    'draft',
+    'incomplete',
+    'submitted',
+    'shortlisted',
+    'not_selected',
+    'withdrawn',
+  ])
   assert.deepEqual(PROCUREMENT_STATUS_VALUES.purchaseOrder, [
     'draft',
     'pending_approval',
@@ -59,6 +77,8 @@ test('formal procurement status domains expose one canonical catalog', () => {
   ])
   assert.equal(PURCHASE_REQUEST_STATUS.SUBMITTED, 'submitted')
   assert.equal(RFQ_STATUS.COLLECTING_QUOTES, 'collecting_quotes')
+  assert.equal(RFQ_SUPPLIER_PARTICIPATION_STATUS.RESPONSE_RECORDED, 'response_recorded')
+  assert.equal(SUPPLIER_QUOTATION_REVISION_STATUS.SUBMITTED, 'submitted')
   assert.equal(PURCHASE_ORDER_STATUS.FULLY_RECEIVED, 'fully_received')
   assert.throws(() => PROCUREMENT_STATUS_VALUES.purchaseRequest.push('other'), TypeError)
 })
@@ -67,6 +87,8 @@ test('compatibility values normalize at boundaries without becoming canonical va
   assert.equal(normalizeProcurementAuthorityStatus('purchaseRequest', 'open'), 'submitted')
   assert.equal(normalizeProcurementAuthorityStatus('purchaseRequest', 'pending_review'), 'submitted')
   assert.equal(normalizeProcurementAuthorityStatus('rfq', 'active'), 'open')
+  assert.equal(normalizeProcurementAuthorityStatus('rfqSupplierParticipation', 'responded'), 'response_recorded')
+  assert.equal(normalizeProcurementAuthorityStatus('supplierQuotationRevision', 'received'), 'submitted')
   assert.equal(normalizeProcurementAuthorityStatus('purchaseOrder', 'open'), 'issued')
   assert.equal(normalizeProcurementAuthorityStatus('purchaseOrder', 'ready_for_receiving'), 'issued')
   assert.equal(normalizeProcurementAuthorityStatus('receivingWorkflow', 'approved'), 'ready_for_receiving')
