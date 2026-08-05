@@ -15,7 +15,7 @@ import { LocalArtifactStorage } from "../server/storage/artifact-storage.mjs";
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
 const prismaCli = join(root, "node_modules", "prisma", "build", "index.js");
-const latestMigration = "20260727010000_schema_aware_structured_intake";
+const intakeMigration = "20260727010000_schema_aware_structured_intake";
 let assertions = 0;
 
 const check = (value, message) => {
@@ -83,14 +83,14 @@ async function verifyAdditiveUpgrade() {
     await cp(join(root, "prisma", "migrations", "migration_lock.toml"), join(tempPrisma, "migrations", "migration_lock.toml"), { recursive: true });
     const { readdir } = await import("node:fs/promises");
     for (const entry of await readdir(join(root, "prisma", "migrations"), { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name === latestMigration) continue;
+      if (!entry.isDirectory() || entry.name >= intakeMigration) continue;
       await cp(join(root, "prisma", "migrations", entry.name), join(tempPrisma, "migrations", entry.name), { recursive: true });
     }
     await migrate(pg.url, join(tempPrisma, "schema.prisma"));
     let prisma = await createPrismaClient({ ...process.env, DATABASE_URL: pg.url });
     await prisma.tenant.create({ data: { id: "upgrade-tenant", name: "Upgrade Tenant" } });
     await prisma.$disconnect();
-    await cp(join(root, "prisma", "migrations", latestMigration), join(tempPrisma, "migrations", latestMigration), { recursive: true });
+    await cp(join(root, "prisma", "migrations", intakeMigration), join(tempPrisma, "migrations", intakeMigration), { recursive: true });
     await migrate(pg.url, join(tempPrisma, "schema.prisma"));
     prisma = await createPrismaClient({ ...process.env, DATABASE_URL: pg.url });
     check(await prisma.tenant.count({ where: { id: "upgrade-tenant" } }) === 1, "additive upgrade preserves existing tenant");
