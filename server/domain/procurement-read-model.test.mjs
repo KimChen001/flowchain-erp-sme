@@ -336,10 +336,12 @@ test('GET RFQ detail preserves authoritative participation and revision DTO fiel
     documentType: 'rfq',
     suppliers: {
       participantCount: 2,
-      invitedCount: 2,
-      respondedCount: 1,
+      invitedInternalCount: 2,
+      responseRecordedCount: 1,
       noResponseCount: 1,
-      invitationAuthority: 'authoritative',
+      participationAuthority: 'authoritative',
+      invitationDeliveryAuthority: 'unavailable',
+      externalSupplierIdentityAuthority: 'unavailable',
       knownParticipants: [
         { supplierId: 'SUP-RESPONSE', responseState: 'response_recorded' },
         { supplierId: 'SUP-NO-RESPONSE', responseState: 'no_response' },

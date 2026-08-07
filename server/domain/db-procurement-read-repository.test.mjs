@@ -99,7 +99,7 @@ function createRecords() {
       ],
     }],
     rfqSupplierParticipations: [
-      { id: 'RFQSP-DB-1', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-1', status: 'responded', respondedAt: new Date('2026-06-10T10:00:00.000Z'), createdAt: new Date('2026-06-03T00:00:00.000Z'), supplier: { id: 'SUP-1', name: 'ABC Components' } },
+      { id: 'RFQSP-DB-1', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-1', status: 'response_recorded', respondedAt: new Date('2026-06-10T10:00:00.000Z'), createdAt: new Date('2026-06-03T00:00:00.000Z'), supplier: { id: 'SUP-1', name: 'ABC Components' } },
       { id: 'RFQSP-DB-2', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-2', status: 'invited_internal', invitedAt: new Date('2026-06-04T00:00:00.000Z'), createdAt: new Date('2026-06-04T00:00:00.000Z'), supplier: { id: 'SUP-2', name: 'No Response Components' } },
       { id: 'RFQSP-DB-3', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-3', status: 'declined', invitedAt: new Date('2026-06-04T00:00:00.000Z'), createdAt: new Date('2026-06-04T00:00:00.000Z'), supplier: { id: 'SUP-3', name: 'Declined Components' } },
     ],
@@ -283,6 +283,7 @@ test('RFQ direct detail returns authoritative participation and immutable revisi
   assert.equal(document.status, 'open')
   assert.equal(document.lines[0].id, 'RFQL-DB-1')
   assert.equal(document.quotations[0].id, 'SQ-DB-1')
+  assert.equal(document.quotations[0].authorityState, 'revision_authoritative')
   assert.equal(document.quotations[0].status, 'submitted')
   assert.equal(document.quotations[0].lines[0].unitPrice, 118)
   assert.equal(document.quotations[0].latestRevision.revisionNumber, 2)
@@ -293,8 +294,11 @@ test('RFQ direct detail returns authoritative participation and immutable revisi
   assert.equal(document.suppliers.knownParticipants[0].supplierId, 'SUP-1')
   assert.equal(document.suppliers.knownParticipants[1].responseState, 'no_response')
   assert.equal(document.suppliers.knownParticipants[2].responseState, 'declined')
-  assert.equal(document.suppliers.invitationAuthority, 'authoritative')
-  assert.equal(document.suppliers.respondedCount, 1)
+  assert.equal(document.suppliers.participationAuthority, 'authoritative')
+  assert.equal(document.suppliers.invitationDeliveryAuthority, 'unavailable')
+  assert.equal(document.suppliers.externalSupplierIdentityAuthority, 'unavailable')
+  assert.equal(document.suppliers.responseRecordedCount, 1)
+  assert.equal(document.suppliers.invitedInternalCount, 2)
   assert.equal(document.suppliers.noResponseCount, 1)
   assert.equal(document.relatedEvidence.some((item) => item.type === 'pr' && item.id === 'PR-DB-1'), true)
   assert.equal(document.revisionAuthority.available, true)
@@ -314,6 +318,7 @@ test('RFQ participants use authoritative supplier ids and preserve quotation-onl
   const quotationOnly = document.suppliers.knownParticipants.find((participant) => participant.supplierId === 'SUP-4')
   assert.equal(quotationOnly.authoritySource, 'quotation')
   assert.equal(quotationOnly.responseState, 'response_recorded')
+  assert.ok(document.limitations.some((limitation) => limitation.includes('缺少 RFQ Supplier Participation')))
 })
 
 test('RFQ detail never presents unknown raw statuses as canonical values', async () => {
@@ -327,6 +332,23 @@ test('RFQ detail never presents unknown raw statuses as canonical values', async
   assert.equal(document.statusRaw, 'future_rfq_status')
   assert.equal(document.quotations[0].status, null)
   assert.equal(document.quotations[0].statusRaw, 'future_quote_status')
+})
+
+test('RFQ quotation without a revision exposes no authoritative commercial fields', async () => {
+  const records = createRecords()
+  records.supplierQuotations[0].revisions = []
+  const repository = createDbProcurementReadRepository({ env, prisma: createPrisma(records) })
+  const document = await repository.getDocument('rfq', 'RFQ-DB-1', { tenantId })
+  const quotation = document.quotations[0]
+
+  assert.equal(quotation.authorityState, 'revision_missing')
+  assert.equal(quotation.status, null)
+  assert.equal(quotation.statusRaw, null)
+  assert.equal(quotation.quotedAmount, null)
+  assert.equal(quotation.currency, null)
+  assert.equal(quotation.submittedAt, '')
+  assert.deepEqual(quotation.lines, [])
+  assert.ok(document.limitations.some((limitation) => limitation.includes('没有 Revision')))
 })
 
 test('historical direct lookup is independent of bounded list windows and broad collections', async () => {

@@ -259,10 +259,11 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
       id: quotation.id,
       supplierId: text(quotation.supplierId) || null,
       supplierName: text(quotation.supplierName) || null,
-      status: latestRevision ? latestRevision.status : canonicalStatus('supplierQuotation', quotation.status),
-      statusRaw: (latestRevision ? latestRevision.statusRaw : text(quotation.status)) || null,
+      authorityState: latestRevision ? 'revision_authoritative' : 'revision_missing',
+      status: latestRevision?.status ?? null,
+      statusRaw: latestRevision?.statusRaw ?? null,
       quotedAmount: latestRevision?.quotedAmount ?? null,
-      currency: latestRevision?.currency ?? text(quotation.currency, record.currency || 'CNY'),
+      currency: latestRevision?.currency ?? null,
       submittedAt: latestRevision?.submittedAt ?? '',
       deliveryDate: latestRevision?.deliveryDate ?? '',
       paymentTerms: latestRevision?.paymentTerms ?? null,
@@ -277,6 +278,7 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
   })
 
   const participantsById = new Map()
+  const quotationOnlySupplierIds = new Set()
   const quotationSupplierIds = new Set(quotationDetails.map((quotation) => quotation.supplierId).filter(Boolean))
   for (const participation of asArray(participations)) {
     const supplierId = text(participation.supplierId)
@@ -307,6 +309,7 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
   }
   for (const quotation of quotationDetails) {
     if (!quotation.supplierId || participantsById.has(quotation.supplierId)) continue
+    quotationOnlySupplierIds.add(quotation.supplierId)
     participantsById.set(quotation.supplierId, {
       participationId: null,
       supplierId: quotation.supplierId,
@@ -323,11 +326,11 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
     })
   }
   const knownParticipants = [...participantsById.values()]
-  const invitedCount = asArray(participations).filter((participation) => {
+  const invitedInternalCount = asArray(participations).filter((participation) => {
     const status = canonicalStatus('rfqSupplierParticipation', participation.status)
-    return status && status !== 'planned'
+    return Boolean(isoDateTime(participation.invitedAt)) || status === 'invited_internal'
   }).length
-  const respondedCount = knownParticipants.filter((participant) => participant.responseState === 'response_recorded').length
+  const responseRecordedCount = knownParticipants.filter((participant) => participant.responseState === 'response_recorded').length
   const noResponseCount = knownParticipants.filter((participant) => participant.responseState === 'no_response').length
 
   const relatedEvidence = [
@@ -344,6 +347,8 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
   ]
   if (recordMeta.requesterId || recordMeta.owner) limitations.push('当前读取 contract 没有 RFQ owner/requester 的独立权限字段。')
   if (!canonicalStatus('rfq', record.status)) limitations.push('RFQ 状态不是当前状态目录的 canonical 值，已按不可用状态返回。')
+  if (quotationOnlySupplierIds.size > 0) limitations.push('存在报价但缺少 RFQ Supplier Participation 的兼容记录；参与事实仍需后续内部命令补齐。')
+  if (quotationDetails.some((quotation) => quotation.authorityState === 'revision_missing')) limitations.push('存在没有 Revision 的兼容报价聚合；其旧表头商业字段不是当前报价权威，已按不可用返回。')
 
   return {
     ...base,
@@ -353,11 +358,13 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
     lines,
     suppliers: {
       participantCount: knownParticipants.length,
-      invitedCount,
-      respondedCount,
+      responseRecordedCount,
       noResponseCount,
+      invitedInternalCount,
       knownParticipants,
-      invitationAuthority: 'authoritative',
+      participationAuthority: 'authoritative',
+      invitationDeliveryAuthority: 'unavailable',
+      externalSupplierIdentityAuthority: 'unavailable',
     },
     quotations: quotationDetails,
     relatedEvidence,

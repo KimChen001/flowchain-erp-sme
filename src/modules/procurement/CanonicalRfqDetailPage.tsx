@@ -131,13 +131,14 @@ function RevisionSummary({ revision, currency }: { revision: ProcurementQuotatio
 }
 
 function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotation; currency: string }) {
+  const hasAuthority = quotation.authorityState === "revision_authoritative";
   return (
     <tr className="border-t align-top" data-testid={`rfq-quotation-${quotation.id}`}>
       <td className="p-3 font-medium">{quotation.id}</td>
       <td className="p-3"><div>{quotation.supplierName || quotation.supplierId || "未提供"}</div>{quotation.lines.length > 0 && <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: A.sub }}>{quotation.lines.map((line) => <div key={line.id} data-testid={`rfq-quotation-line-${line.id}`}>{line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity)} {line.unit || ""} · {money(line.unitPrice, quotation.currency || currency)}</div>)}</div>}</td>
-      <td className="p-3">{statusLabel(quotation.status, QUOTATION_STATUS_LABELS)}</td>
-      <td className="p-3 tabular-nums">{money(quotation.quotedAmount, quotation.currency || currency)}</td>
-      <td className="p-3"><div>{date(quotation.submittedAt)}</div><div className="mt-1 text-[11px]" style={{ color: A.sub }}>交期：{quotation.deliveryDate || "未提供"}</div><div className="text-[11px]" style={{ color: A.sub }}>付款：{quotation.paymentTerms || "未提供"} · 有效期：{quotation.validity || "未提供"}</div></td>
+      <td className="p-3">{hasAuthority ? statusLabel(quotation.status, QUOTATION_STATUS_LABELS) : "Revision 缺失"}</td>
+      <td className="p-3 tabular-nums">{hasAuthority ? money(quotation.quotedAmount, quotation.currency || currency) : "不可用"}</td>
+      <td className="p-3">{hasAuthority ? <><div>{date(quotation.submittedAt)}</div><div className="mt-1 text-[11px]" style={{ color: A.sub }}>交期：{quotation.deliveryDate || "未提供"}</div><div className="text-[11px]" style={{ color: A.sub }}>付款：{quotation.paymentTerms || "未提供"} · 有效期：{quotation.validity || "未提供"}</div></> : <div style={{ color: A.sub }}>无权威商业字段</div>}</td>
       <td className="p-3">
         {quotation.revisions.length === 0
           ? <div style={{ color: A.sub }}>尚无权威 Revision</div>
@@ -167,7 +168,7 @@ function LoadedRfq({ record }: { record: ProcurementRfqDocument }) {
             ["来源 PR", record.linkedPr || "—"],
             ["创建时间", date(record.createdAt)],
             ["更新时间", date(record.updatedAt)],
-            ["供应商响应", `${record.suppliers.respondedCount} / ${record.suppliers.participantCount}`],
+            ["已记录响应", `${record.suppliers.responseRecordedCount} / ${record.suppliers.participantCount}`],
             ["关联 PO", record.linkedPo || "—"],
           ].map(([label, value]) => (
             <div key={label} className="rounded-lg bg-slate-50 p-3">
@@ -197,12 +198,12 @@ function LoadedRfq({ record }: { record: ProcurementRfqDocument }) {
       </Card>
 
       <Card className="p-4" data-testid="rfq-suppliers">
-        <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold">供应商参与事实</h2><span className="text-xs" style={{ color: A.sub }}>{record.suppliers.respondedCount} 家已响应 · {record.suppliers.noResponseCount} 家暂无响应</span></div>
+        <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold">内部参与记录</h2><span className="text-xs" style={{ color: A.sub }}>{record.suppliers.invitedInternalCount} 家有内部邀请记录 · {record.suppliers.responseRecordedCount} 家已记录响应 · {record.suppliers.noResponseCount} 家尚无响应</span></div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {record.suppliers.knownParticipants.map((supplier) => <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="font-medium">{supplier.supplierName || "未提供名称"}</div><div className="mt-1" style={{ color: A.sub }}>{supplier.supplierId} · {statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS)}</div><div className="mt-1 font-medium">{RESPONSE_STATE_LABELS[supplier.responseState] || "状态不可用"}</div></div>)}
           {record.suppliers.knownParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>当前 RFQ 没有权威供应商参与记录。</div>}
         </div>
-        <p className="mt-3 text-xs" style={{ color: A.sub }}>参与状态来自 RFQ Supplier Participation；内部邀请不代表邮件送达、Supplier Portal 身份或外部提交。</p>
+        <p className="mt-3 text-xs" style={{ color: A.sub }}>参与状态来自 RFQ Supplier Participation；内部邀请时间仅表示内部记录，不代表邮件送达、Supplier Portal 账号或外部提交。</p>
       </Card>
 
       <Card className="overflow-hidden" data-testid="rfq-quotations">

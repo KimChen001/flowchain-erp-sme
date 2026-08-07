@@ -47,12 +47,13 @@ export type ProcurementQuotationRevision = {
 };
 export type ProcurementRfqQuotation = {
   id: string;
+  authorityState: "revision_authoritative" | "revision_missing";
   supplierId?: string | null;
   supplierName?: string | null;
   status?: string | null;
   statusRaw?: string | null;
   quotedAmount?: number | null;
-  currency?: string;
+  currency?: string | null;
   submittedAt?: string;
   deliveryDate?: string;
   paymentTerms?: string | null;
@@ -85,11 +86,13 @@ export type ProcurementRfqDocument = ProcurementDocument & {
   lines: ProcurementRfqLine[];
   suppliers: {
     participantCount: number;
-    invitedCount: number;
-    respondedCount: number;
+    responseRecordedCount: number;
     noResponseCount: number;
+    invitedInternalCount: number;
     knownParticipants: ProcurementRfqParticipant[];
-    invitationAuthority: "authoritative";
+    participationAuthority: "authoritative";
+    invitationDeliveryAuthority: "unavailable";
+    externalSupplierIdentityAuthority: "unavailable";
   };
   quotations: ProcurementRfqQuotation[];
   relatedEvidence: Array<{ type: string; id: string; label: string; relation: string }>;

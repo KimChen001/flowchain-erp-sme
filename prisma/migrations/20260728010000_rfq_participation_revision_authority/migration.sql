@@ -62,10 +62,28 @@ END $$;
 CREATE UNIQUE INDEX "Supplier_tenantId_id_key" ON "Supplier"("tenantId", "id");
 CREATE UNIQUE INDEX "Rfq_tenantId_id_key" ON "Rfq"("tenantId", "id");
 CREATE UNIQUE INDEX "SupplierQuotation_tenantId_id_key" ON "SupplierQuotation"("tenantId", "id");
+CREATE UNIQUE INDEX "SupplierQuotation_tenantId_rfqId_supplierId_key" ON "SupplierQuotation"("tenantId", "rfqId", "supplierId");
 
+ALTER TABLE "RfqLine" ADD COLUMN "tenantId" TEXT;
+UPDATE "RfqLine" AS line
+SET "tenantId" = rfq."tenantId"
+FROM "Rfq" AS rfq
+WHERE rfq."id" = line."rfqId";
+ALTER TABLE "RfqLine" ALTER COLUMN "tenantId" SET NOT NULL;
+CREATE UNIQUE INDEX "RfqLine_tenantId_id_key" ON "RfqLine"("tenantId", "id");
+ALTER TABLE "RfqLine" DROP CONSTRAINT "RfqLine_rfqId_fkey";
+ALTER TABLE "RfqLine" ADD CONSTRAINT "RfqLine_tenantId_fkey"
+  FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "RfqLine" ADD CONSTRAINT "RfqLine_tenantId_rfqId_fkey"
+  FOREIGN KEY ("tenantId", "rfqId") REFERENCES "Rfq"("tenantId", "id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "SupplierQuotation" ALTER COLUMN "rfqId" SET NOT NULL;
+ALTER TABLE "SupplierQuotation" ALTER COLUMN "supplierId" SET NOT NULL;
 ALTER TABLE "SupplierQuotation" DROP CONSTRAINT "SupplierQuotation_rfqId_fkey";
 ALTER TABLE "SupplierQuotation" ADD CONSTRAINT "SupplierQuotation_tenantId_rfqId_fkey"
   FOREIGN KEY ("tenantId", "rfqId") REFERENCES "Rfq"("tenantId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "SupplierQuotation" ADD CONSTRAINT "SupplierQuotation_tenantId_supplierId_fkey"
+  FOREIGN KEY ("tenantId", "supplierId") REFERENCES "Supplier"("tenantId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 CREATE TABLE "RfqSupplierParticipation" (
   "id" TEXT NOT NULL,
@@ -147,6 +165,7 @@ CREATE INDEX "SupplierQuotationRevision_tenantId_quotationId_revisionNumber_idx"
 CREATE INDEX "SupplierQuotationRevision_tenantId_createdAt_idx" ON "SupplierQuotationRevision"("tenantId", "createdAt");
 
 CREATE UNIQUE INDEX "SupplierQuotationRevisionLine_tenantId_id_key" ON "SupplierQuotationRevisionLine"("tenantId", "id");
+CREATE UNIQUE INDEX "SupplierQuotationRevisionLine_tenantId_revisionId_rfqLineId_key" ON "SupplierQuotationRevisionLine"("tenantId", "revisionId", "rfqLineId");
 CREATE INDEX "SupplierQuotationRevisionLine_tenantId_revisionId_idx" ON "SupplierQuotationRevisionLine"("tenantId", "revisionId");
 CREATE INDEX "SupplierQuotationRevisionLine_tenantId_rfqLineId_idx" ON "SupplierQuotationRevisionLine"("tenantId", "rfqLineId");
 CREATE INDEX "SupplierQuotationRevisionLine_tenantId_sourceQuotationLineId_idx" ON "SupplierQuotationRevisionLine"("tenantId", "sourceQuotationLineId");
@@ -169,6 +188,8 @@ ALTER TABLE "SupplierQuotationRevisionLine" ADD CONSTRAINT "SupplierQuotationRev
   FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE "SupplierQuotationRevisionLine" ADD CONSTRAINT "SupplierQuotationRevisionLine_tenantId_revisionId_fkey"
   FOREIGN KEY ("tenantId", "revisionId") REFERENCES "SupplierQuotationRevision"("tenantId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "SupplierQuotationRevisionLine" ADD CONSTRAINT "SupplierQuotationRevisionLine_tenantId_rfqLineId_fkey"
+  FOREIGN KEY ("tenantId", "rfqLineId") REFERENCES "RfqLine"("tenantId", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- One deterministic Revision 1 and participation fact for every safe legacy response.
 INSERT INTO "SupplierQuotationRevision" (

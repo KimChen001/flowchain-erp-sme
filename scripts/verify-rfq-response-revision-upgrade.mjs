@@ -85,8 +85,9 @@ try {
   assert.equal(revision.quotedAmount, legacyBefore.amount);
   assert.deepEqual(revision.metadata, legacyBefore.metadata);
   assert.equal(revision.source, "legacy_backfill");
-  const revisionLine = (await query(successDatabase, `SELECT "sourceQuotationLineId","quantity"::text AS quantity,"unitPrice"::text AS "unitPrice","amount"::text AS amount,"metadata" FROM "SupplierQuotationRevisionLine"`)).rows[0];
+  const revisionLine = (await query(successDatabase, `SELECT "sourceQuotationLineId","rfqLineId","quantity"::text AS quantity,"unitPrice"::text AS "unitPrice","amount"::text AS amount,"metadata" FROM "SupplierQuotationRevisionLine"`)).rows[0];
   assert.equal(revisionLine.sourceQuotationLineId, "quotation-line-upgrade");
+  assert.equal(revisionLine.rfqLineId, null);
   assert.deepEqual({ quantity: revisionLine.quantity, unitPrice: revisionLine.unitPrice, amount: revisionLine.amount, metadata: revisionLine.metadata }, legacyLineBefore);
   const participation = (await query(successDatabase, `SELECT * FROM "RfqSupplierParticipation" WHERE "rfqId"=$1`, [ids.rfqId])).rows[0];
   assert.equal(participation.supplierId, ids.supplierId);
@@ -100,6 +101,15 @@ try {
   await assert.rejects(() => query(successDatabase, `DELETE FROM "SupplierQuotationRevisionLine" WHERE "id"=$1`, [revisionLineId]), /append-only/);
   await query(successDatabase, `INSERT INTO "SupplierQuotationRevision" ("id","tenantId","quotationId","revisionNumber","status","currency","quotedAmount","source") VALUES ('revision-two',$1,'quotation-upgrade',2,'submitted','CNY',120.0000,'internal_recording')`, [ids.tenantId]);
   assert.equal((await query(successDatabase, `SELECT max("revisionNumber") AS latest FROM "SupplierQuotationRevision" WHERE "quotationId"='quotation-upgrade'`)).rows[0].latest, 2);
+
+  await query(successDatabase, `INSERT INTO "Rfq" ("id","tenantId","title","status","currency","updatedAt") VALUES ('rfq-upgrade-other',$1,'Other RFQ','open','CNY',CURRENT_TIMESTAMP)`, [ids.tenantId]);
+  await query(successDatabase, `INSERT INTO "RfqLine" ("id","tenantId","rfqId","sku","quantity","unit") VALUES ('rfq-line-upgrade-other',$1,'rfq-upgrade-other','OTHER-SKU',1.0000,'EA')`, [ids.tenantId]);
+  await query(successDatabase, `INSERT INTO "SupplierQuotation" ("id","tenantId","rfqId","supplierId","supplierName","status","currency","updatedAt") VALUES ('quotation-upgrade-other',$1,'rfq-upgrade-other',$2,'RFQ Upgrade Supplier','submitted','CNY',CURRENT_TIMESTAMP)`, [ids.tenantId, ids.supplierId]);
+  await assert.rejects(() => query(successDatabase, `INSERT INTO "SupplierQuotation" ("id","tenantId","rfqId","supplierId","supplierName","status","currency","updatedAt") VALUES ('quotation-upgrade-duplicate',$1,$2,$3,'RFQ Upgrade Supplier','submitted','CNY',CURRENT_TIMESTAMP)`, [ids.tenantId, ids.rfqId, ids.supplierId]), /duplicate key/);
+
+  const otherTenant = await seedBase(successDatabase, "-other-tenant");
+  await query(successDatabase, `INSERT INTO "RfqLine" ("id","tenantId","rfqId","sku","quantity","unit") VALUES ('rfq-line-upgrade-other-tenant',$1,$2,'OTHER-TENANT-SKU',1.0000,'EA')`, [otherTenant.tenantId, otherTenant.rfqId]);
+  await assert.rejects(() => query(successDatabase, `INSERT INTO "SupplierQuotationRevisionLine" ("id","tenantId","revisionId","rfqLineId","quantity","unitPrice","amount") VALUES ('revision-line-cross-tenant',$1,'revision-two','rfq-line-upgrade-other-tenant',1.0000,1.0000,1.0000)`, [ids.tenantId]), /foreign key/);
 
   await expectPreflight("missing", async (database) => {
     const base = await seedBase(database, "-missing");
