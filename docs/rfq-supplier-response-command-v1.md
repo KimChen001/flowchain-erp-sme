@@ -99,4 +99,4 @@ Stable responses use 401 for missing authentication, 403 for missing exact permi
 
 ## Non-goals
 
-This version adds no response form or revision button, Supplier Portal, email delivery, external identity, public submission, comparison, scoring, award, approval, PO conversion, AI mutation, automatic communication, deletion, or overwrite. A later UI phase may call these commands after its interaction and authorization design is reviewed.
+This version adds no response form or revision button, Supplier Portal, email delivery, external identity, public submission, scoring, award, approval, PO conversion, AI mutation, automatic communication, deletion, or overwrite. The read-only RFQ Supplier Comparison contract is documented separately; it does not rank or recommend suppliers. A later UI phase may call these commands after its interaction and authorization design is reviewed.

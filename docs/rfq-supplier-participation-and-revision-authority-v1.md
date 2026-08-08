@@ -69,4 +69,4 @@ The detail projection derives quotation status, currency, amount, submitted time
 
 Participation and immutable revision schema remain the database authority. Authorized internal users may now record an initial response or append a revision through the idempotent Supplier Response command kernel documented in `docs/rfq-supplier-response-command-v1.md`. Those HTTP writes validate exact RFQ lines and commit Participation, revision history, current summary, audit, change feed, and command result atomically.
 
-The canonical RFQ Detail UI remains read-only. Supplier Portal, email delivery, external supplier identity, public submission, comparison, award, PO conversion, and AI mutation remain unavailable.
+The canonical RFQ Detail UI remains read-only. A tenant-scoped, price-authorized Comparison read contract now exposes maximum-revision facts, exact line coverage, and currency limitations without ranking or recommendation. Supplier Portal, email delivery, external supplier identity, public submission, award, PO conversion, and AI mutation remain unavailable.

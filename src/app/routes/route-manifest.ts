@@ -469,7 +469,7 @@ function limitationFor(
   classification: RouteClassification,
 ) {
   if (route.id === "procurement:rfq-detail")
-    return "只读展示当前租户的 RFQ、行项目、已关联报价和明确证据关系；当前模型不提供邀请名单或 quotation revision authority。";
+    return "只读展示当前租户的 RFQ、行项目、参与记录、最大 revisionNumber 报价和明确证据关系；内部 response/revision command 与 Comparison read contract 不在此 UI 路由内。";
   if (compatibilityRouteIds.has(route.id))
     return "Compatibility extension; not part of the default SME Core surface.";
   if (route.id === "imports")
