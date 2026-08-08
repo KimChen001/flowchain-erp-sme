@@ -27,14 +27,12 @@ function collectRuntimeIssues(page: Page) {
 
 async function expectNoWriteActions(page: Page) {
   const detail = page.getByTestId("canonical-rfq-detail");
-  await expect(detail).not.toContainText(
-    /Create Response|Edit RFQ|Close RFQ|Add Revision|Compare|Award|Approve|Convert to PO|Send Invitation|AI Execute|创建响应|编辑 RFQ|关闭 RFQ|添加修订|比较报价|授标|批准供应商|转为 PO|发送邀请/,
-  );
+  const writeAction = /response|revision|compare|award|approve|convert|invitation|portal|execute|创建响应|记录响应|编辑询价|关闭询价|添加修订|追加修订|比较报价|授标|批准供应商|转为 PO|发送邀请/i;
   await expect(
-    detail.getByRole("button", { name: /response|revision|compare|award|approve|convert|invitation|portal|execute/i }),
+    detail.getByRole("button", { name: writeAction }),
   ).toHaveCount(0);
   await expect(
-    detail.getByRole("link", { name: /response|revision|compare|award|approve|convert|invitation|portal|execute/i }),
+    detail.getByRole("link", { name: writeAction }),
   ).toHaveCount(0);
 }
 
@@ -97,7 +95,7 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(limitations).toContainText("RFQ Supplier Participation");
   await expect(limitations).toContainText("不证明邮件送达");
   await expect(limitations).toContainText("最大 revisionNumber");
-  await expect(limitations).toContainText("没有 Supplier Response 或 Append Revision HTTP 写命令");
+  await expect(limitations).toContainText("内部授权命令内核");
   await expectNoWriteActions(page);
 
   expect(documentRequests.filter((path) => path === "/api/procurement/documents?type=rfq")).toHaveLength(1);
