@@ -33,7 +33,11 @@ model Tenant {
   aiEvidence                            AiEvidence[]
   purchaseRequests                      PurchaseRequest[]
   rfqs                                  Rfq[]
+  rfqLines                              RfqLine[]
   supplierQuotations                    SupplierQuotation[]
+  rfqSupplierParticipations             RfqSupplierParticipation[]
+  supplierQuotationRevisions            SupplierQuotationRevision[]
+  supplierQuotationRevisionLines        SupplierQuotationRevisionLine[]
   purchaseOrders                        PurchaseOrder[]
   receivingDocuments                    ReceivingDocument[]
   supplierInvoices                      SupplierInvoice[]
@@ -554,6 +558,7 @@ model User {
   reservationEvents    InventoryReservationEvent[] @relation("ReservationEventActor")
   shipmentsPosted      ShipmentDocument[]          @relation("ShipmentPostedBy")
   shipmentsReversed    ShipmentDocument[]          @relation("ShipmentReversedBy")
+  quotationRevisionsCreated SupplierQuotationRevision[] @relation("SupplierQuotationRevisionCreator")
 
   @@unique([tenantId, email])
   @@unique([tenantId, id])
@@ -635,7 +640,10 @@ model Supplier {
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
   items  Item[]
+  rfqParticipations RfqSupplierParticipation[]
+  quotations SupplierQuotation[]
 
+  @@unique([tenantId, id])
   @@unique([tenantId, code])
   @@index([tenantId, name])
 }
@@ -973,13 +981,16 @@ model Rfq {
   tenant     Tenant              @relation(fields: [tenantId], references: [id])
   lines      RfqLine[]
   quotations SupplierQuotation[]
+  supplierParticipations RfqSupplierParticipation[]
 
+  @@unique([tenantId, id])
   @@index([tenantId, status])
   @@index([tenantId, dueDate])
 }
 
 model RfqLine {
   id       String   @id
+  tenantId String
   rfqId    String
   itemId   String?
   sku      String?
@@ -988,16 +999,19 @@ model RfqLine {
   unit     String?
   metadata Json?
 
-  rfq Rfq @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  tenant              Tenant                          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  rfq                 Rfq                             @relation(fields: [tenantId, rfqId], references: [tenantId, id], onDelete: Cascade)
+  quotationRevisionLines SupplierQuotationRevisionLine[]
 
-  @@index([rfqId])
+  @@unique([tenantId, id])
+  @@index([tenantId, rfqId])
 }
 
 model SupplierQuotation {
   id           String    @id
   tenantId     String
-  rfqId        String?
-  supplierId   String?
+  rfqId        String
+  supplierId   String
   supplierName String?
   status       String    @default("submitted")
   quotedAmount Decimal?  @db.Decimal(18, 4)
@@ -1007,10 +1021,14 @@ model SupplierQuotation {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  tenant Tenant                  @relation(fields: [tenantId], references: [id])
-  rfq    Rfq?                    @relation(fields: [rfqId], references: [id])
-  lines  SupplierQuotationLine[]
+  tenant    Tenant                      @relation(fields: [tenantId], references: [id])
+  rfq       Rfq                         @relation(fields: [tenantId, rfqId], references: [tenantId, id], onDelete: Restrict)
+  supplier  Supplier                    @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: Restrict)
+  lines     SupplierQuotationLine[]
+  revisions SupplierQuotationRevision[]
 
+  @@unique([tenantId, id])
+  @@unique([tenantId, rfqId, supplierId])
   @@index([tenantId, rfqId])
   @@index([tenantId, supplierName])
 }
@@ -1030,6 +1048,86 @@ model SupplierQuotationLine {
   supplierQuotation SupplierQuotation @relation(fields: [supplierQuotationId], references: [id], onDelete: Cascade)
 
   @@index([supplierQuotationId])
+}
+
+model RfqSupplierParticipation {
+  id          String    @id
+  tenantId    String
+  rfqId       String
+  supplierId  String
+  status      String    @default("planned")
+  invitedAt   DateTime?
+  respondedAt DateTime?
+  withdrawnAt DateTime?
+  version     Int       @default(0)
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  rfq      Rfq      @relation(fields: [tenantId, rfqId], references: [tenantId, id], onDelete: Restrict)
+  supplier Supplier @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, rfqId, supplierId])
+  @@index([tenantId, rfqId, status])
+  @@index([tenantId, supplierId, status])
+}
+
+model SupplierQuotationRevision {
+  id               String    @id
+  tenantId         String
+  quotationId      String
+  revisionNumber   Int
+  status           String
+  currency         String
+  quotedAmount     Decimal?  @db.Decimal(18, 4)
+  submittedAt      DateTime?
+  validUntil       DateTime?
+  deliveryDate     DateTime?
+  paymentTerms     String?
+  createdByActorId String?
+  source           String
+  metadata         Json?
+  createdAt        DateTime  @default(now())
+
+  tenant         Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  quotation      SupplierQuotation         @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+  createdByActor User?                     @relation("SupplierQuotationRevisionCreator", fields: [tenantId, createdByActorId], references: [tenantId, id], onDelete: Restrict)
+  lines          SupplierQuotationRevisionLine[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, quotationId, revisionNumber])
+  @@index([tenantId, quotationId, revisionNumber])
+  @@index([tenantId, createdAt])
+}
+
+model SupplierQuotationRevisionLine {
+  id                      String    @id
+  tenantId                String
+  revisionId              String
+  rfqLineId               String?
+  sourceQuotationLineId   String?
+  itemId                  String?
+  skuSnapshot             String?
+  itemNameSnapshot        String?
+  quantity                Decimal?  @db.Decimal(18, 4)
+  unit                    String?
+  unitPrice               Decimal?  @db.Decimal(18, 4)
+  amount                  Decimal?  @db.Decimal(18, 4)
+  deliveryDate            DateTime?
+  metadata                Json?
+  createdAt               DateTime  @default(now())
+
+  tenant   Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  revision SupplierQuotationRevision @relation(fields: [tenantId, revisionId], references: [tenantId, id], onDelete: Restrict)
+  rfqLine  RfqLine?                  @relation(fields: [tenantId, rfqLineId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, revisionId, rfqLineId])
+  @@index([tenantId, revisionId])
+  @@index([tenantId, rfqLineId])
+  @@index([tenantId, sourceQuotationLineId])
 }
 
 model PurchaseOrder {

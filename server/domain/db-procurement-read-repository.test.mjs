@@ -90,7 +90,19 @@ function createRecords() {
       metadata: {},
       lines: [{ id: 'RFQL-DB-1', sku: 'A100', itemId: 'ITEM-A100', itemName: 'Motor A100', quantity: 10, unit: 'pcs' }],
     }],
-    supplierQuotations: [{ id: 'SQ-DB-1', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-1', supplierName: 'ABC Components', status: 'received', quotedAmount: 1180, currency: 'CNY', submittedAt: new Date('2026-06-10T10:00:00.000Z'), metadata: { deliveryDate: '2026-06-30', paymentTerms: 'NET30' }, lines: [{ id: 'SQL-DB-1', sku: 'A100', itemName: 'Motor A100', quantity: 10, unit: 'pcs', unitPrice: 118, amount: 1180 }] }],
+    supplierQuotations: [{
+      id: 'SQ-DB-1', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-1', supplierName: 'ABC Components', status: 'received', quotedAmount: 1180, currency: 'CNY', submittedAt: new Date('2026-06-10T10:00:00.000Z'), metadata: {},
+      lines: [{ id: 'SQL-DB-1', sku: 'A100', itemName: 'Motor A100', quantity: 10, unit: 'pcs', unitPrice: 118, amount: 1180 }],
+      revisions: [
+        { id: 'SQR-DB-1', revisionNumber: 1, status: 'received', quotedAmount: 1200, currency: 'CNY', submittedAt: new Date('2026-06-09T10:00:00.000Z'), source: 'legacy_backfill', createdAt: new Date('2026-06-09T10:00:00.000Z'), metadata: { deliveryDate: '2026-07-02', paymentTerms: 'NET15' }, lines: [{ id: 'SQRL-DB-1', sourceQuotationLineId: 'SQL-DB-1', skuSnapshot: 'A100', itemNameSnapshot: 'Motor A100', quantity: 10, unit: 'pcs', unitPrice: 120, amount: 1200 }] },
+        { id: 'SQR-DB-2', revisionNumber: 2, status: 'submitted', quotedAmount: 1180, currency: 'CNY', submittedAt: new Date('2026-06-10T10:00:00.000Z'), deliveryDate: new Date('2026-06-30T00:00:00.000Z'), paymentTerms: 'NET30', source: 'internal_recording', createdAt: new Date('2026-06-10T10:00:00.000Z'), metadata: {}, lines: [{ id: 'SQRL-DB-2', rfqLineId: 'RFQL-DB-1', sourceQuotationLineId: 'SQL-DB-1', skuSnapshot: 'A100', itemNameSnapshot: 'Motor A100', quantity: 10, unit: 'pcs', unitPrice: 118, amount: 1180 }] },
+      ],
+    }],
+    rfqSupplierParticipations: [
+      { id: 'RFQSP-DB-1', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-1', status: 'response_recorded', respondedAt: new Date('2026-06-10T10:00:00.000Z'), createdAt: new Date('2026-06-03T00:00:00.000Z'), supplier: { id: 'SUP-1', name: 'ABC Components' } },
+      { id: 'RFQSP-DB-2', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-2', status: 'invited_internal', invitedAt: new Date('2026-06-04T00:00:00.000Z'), createdAt: new Date('2026-06-04T00:00:00.000Z'), supplier: { id: 'SUP-2', name: 'No Response Components' } },
+      { id: 'RFQSP-DB-3', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-3', status: 'declined', invitedAt: new Date('2026-06-04T00:00:00.000Z'), createdAt: new Date('2026-06-04T00:00:00.000Z'), supplier: { id: 'SUP-3', name: 'Declined Components' } },
+    ],
     purchaseOrders: [{
       id: 'PO-DB-1',
       tenantId,
@@ -154,6 +166,7 @@ function createPrisma(records = createRecords()) {
     purchaseRequest: createModel('purchaseRequest', records.purchaseRequests),
     rfq: createModel('rfq', records.rfqs),
     supplierQuotation: createModel('supplierQuotation', records.supplierQuotations),
+    rfqSupplierParticipation: createModel('rfqSupplierParticipation', records.rfqSupplierParticipations),
     purchaseOrder: createModel('purchaseOrder', records.purchaseOrders),
     receivingDocument: createModel('receivingDocument', records.receivingDocuments),
     supplierInvoice: createModel('supplierInvoice', records.supplierInvoices),
@@ -191,7 +204,10 @@ test('direct dispatch covers every canonical type with exact bounded Prisma quer
   assert.deepEqual(new Set(DIRECT_PROCUREMENT_DOCUMENT_TYPES), new Set(['pr', 'rfq', 'po', 'grn', 'invoice', 'threeWayMatch']))
   const cases = [
     { type: 'pr', id: 'PR-DB-1', primary: 'purchaseRequest', support: [] },
-    { type: 'rfq', id: 'RFQ-DB-1', primary: 'rfq', support: [['supplierQuotation', 'findMany', { tenantId, rfqId: 'RFQ-DB-1' }]] },
+    { type: 'rfq', id: 'RFQ-DB-1', primary: 'rfq', support: [
+      ['supplierQuotation', 'findMany', { tenantId, rfqId: 'RFQ-DB-1' }],
+      ['rfqSupplierParticipation', 'findMany', { tenantId, rfqId: 'RFQ-DB-1' }],
+    ] },
     { type: 'po', id: 'PO-DB-1', primary: 'purchaseOrder', support: [['receivingDocument', 'findMany', { tenantId, poId: 'PO-DB-1' }]] },
     { type: 'grn', id: 'GRN-DB-1', primary: 'receivingDocument', support: [['supplierInvoice', 'findMany', { tenantId, relatedGrnId: 'GRN-DB-1' }]] },
     { type: 'invoice', id: 'INV-DB-1', primary: 'supplierInvoice', support: [] },
@@ -219,7 +235,18 @@ test('direct dispatch covers every canonical type with exact bounded Prisma quer
       for (const [delegate, method, where] of entry.support) {
         const supportingCall = calls.find((call) => call.delegate === delegate && call.method === method)
         assert.deepEqual(supportingCall.query.where, where)
-        if (entry.type === 'rfq') assert.deepEqual(supportingCall.query.include, { lines: true })
+        if (entry.type === 'rfq' && delegate === 'supplierQuotation') {
+          assert.deepEqual(supportingCall.query.include, {
+            lines: true,
+            revisions: {
+              include: { lines: true },
+              orderBy: [{ revisionNumber: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+            },
+          })
+        }
+        if (entry.type === 'rfq' && delegate === 'rfqSupplierParticipation') {
+          assert.deepEqual(supportingCall.query.include, { supplier: true })
+        }
       }
       assert.equal(calls.some((call) => call.query.take === 500), false)
       assert.equal(calls.every((call) => call.method === 'findFirst' || Boolean(call.query.where)), true)
@@ -249,43 +276,55 @@ test('direct documents preserve the former snapshot contract output', async () =
   }
 })
 
-test('RFQ direct detail returns canonical lines, quotation lines, evidence, and explicit authority limits', async () => {
+test('RFQ direct detail returns authoritative participation and immutable revision history', async () => {
   const repository = createDbProcurementReadRepository({ env, prisma: createPrisma() })
   const document = await repository.getDocument('rfq', 'RFQ-DB-1', { tenantId })
 
   assert.equal(document.status, 'open')
   assert.equal(document.lines[0].id, 'RFQL-DB-1')
   assert.equal(document.quotations[0].id, 'SQ-DB-1')
+  assert.equal(document.quotations[0].authorityState, 'revision_authoritative')
   assert.equal(document.quotations[0].status, 'submitted')
   assert.equal(document.quotations[0].lines[0].unitPrice, 118)
+  assert.equal(document.quotations[0].latestRevision.revisionNumber, 2)
+  assert.equal(document.quotations[0].latestRevision.isLatest, true)
+  assert.deepEqual(document.quotations[0].revisions.map((revision) => revision.revisionNumber), [2, 1])
+  assert.deepEqual(document.quotations[0].historicalRevisions.map((revision) => revision.revisionNumber), [1])
+  assert.equal(document.quotations[0].historicalRevisions[0].lines[0].unitPrice, 120)
   assert.equal(document.suppliers.knownParticipants[0].supplierId, 'SUP-1')
+  assert.equal(document.suppliers.knownParticipants[1].responseState, 'no_response')
+  assert.equal(document.suppliers.knownParticipants[2].responseState, 'declined')
+  assert.equal(document.suppliers.participationAuthority, 'authoritative')
+  assert.equal(document.suppliers.invitationDeliveryAuthority, 'unavailable')
+  assert.equal(document.suppliers.externalSupplierIdentityAuthority, 'unavailable')
+  assert.equal(document.suppliers.responseRecordedCount, 1)
+  assert.equal(document.suppliers.invitedInternalCount, 2)
+  assert.equal(document.suppliers.noResponseCount, 1)
   assert.equal(document.relatedEvidence.some((item) => item.type === 'pr' && item.id === 'PR-DB-1'), true)
-  assert.equal(document.revisionAuthority.available, false)
-  assert.equal(document.limitations.some((item) => item.includes('revision')), true)
+  assert.equal(document.revisionAuthority.available, true)
+  assert.equal(document.revisionAuthority.latestRule, 'maximum_revision_number')
 })
 
-test('RFQ participants prefer supplier ids and deduplicate name-only quotation facts', async () => {
+test('RFQ participants use authoritative supplier ids and preserve quotation-only response facts', async () => {
   const records = createRecords()
-  records.supplierQuotations.push(
-    { id: 'SQ-DB-2', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-1', supplierName: 'ABC Components Renamed', status: 'submitted', lines: [] },
-    { id: 'SQ-DB-3', tenantId, rfqId: 'RFQ-DB-1', supplierId: null, supplierName: 'ABC Components', status: 'submitted', lines: [] },
-    { id: 'SQ-DB-4', tenantId, rfqId: 'RFQ-DB-1', supplierId: null, supplierName: 'Name Only Supplier', status: 'submitted', lines: [] },
-    { id: 'SQ-DB-5', tenantId, rfqId: 'RFQ-DB-1', supplierId: null, supplierName: 'name only supplier', status: 'submitted', lines: [] },
-    { id: 'SQ-DB-6', tenantId, rfqId: 'RFQ-DB-1', supplierId: null, supplierName: null, status: 'submitted', lines: [] },
-  )
+  records.supplierQuotations.push({
+    id: 'SQ-DB-4', tenantId, rfqId: 'RFQ-DB-1', supplierId: 'SUP-4', supplierName: 'Quotation Only Supplier', status: 'submitted', lines: [],
+    revisions: [{ id: 'SQR-DB-4', revisionNumber: 1, status: 'submitted', currency: 'CNY', quotedAmount: 1300, source: 'internal_recording', createdAt: new Date('2026-06-11T00:00:00.000Z'), lines: [] }],
+  })
   const repository = createDbProcurementReadRepository({ env, prisma: createPrisma(records) })
   const document = await repository.getDocument('rfq', 'RFQ-DB-1', { tenantId })
 
-  assert.deepEqual(document.suppliers.knownParticipants, [
-    { supplierId: 'SUP-1', supplierName: 'ABC Components', participationState: 'quotation_recorded' },
-    { supplierId: null, supplierName: 'Name Only Supplier', participationState: 'quotation_recorded' },
-  ])
+  assert.equal(document.suppliers.knownParticipants.filter((participant) => participant.supplierId === 'SUP-1').length, 1)
+  const quotationOnly = document.suppliers.knownParticipants.find((participant) => participant.supplierId === 'SUP-4')
+  assert.equal(quotationOnly.authoritySource, 'quotation')
+  assert.equal(quotationOnly.responseState, 'response_recorded')
+  assert.ok(document.limitations.some((limitation) => limitation.includes('缺少 RFQ Supplier Participation')))
 })
 
 test('RFQ detail never presents unknown raw statuses as canonical values', async () => {
   const records = createRecords()
   records.rfqs[0].status = 'future_rfq_status'
-  records.supplierQuotations[0].status = 'future_quote_status'
+  records.supplierQuotations[0].revisions[1].status = 'future_quote_status'
   const repository = createDbProcurementReadRepository({ env, prisma: createPrisma(records) })
   const document = await repository.getDocument('rfq', 'RFQ-DB-1', { tenantId })
 
@@ -293,6 +332,23 @@ test('RFQ detail never presents unknown raw statuses as canonical values', async
   assert.equal(document.statusRaw, 'future_rfq_status')
   assert.equal(document.quotations[0].status, null)
   assert.equal(document.quotations[0].statusRaw, 'future_quote_status')
+})
+
+test('RFQ quotation without a revision exposes no authoritative commercial fields', async () => {
+  const records = createRecords()
+  records.supplierQuotations[0].revisions = []
+  const repository = createDbProcurementReadRepository({ env, prisma: createPrisma(records) })
+  const document = await repository.getDocument('rfq', 'RFQ-DB-1', { tenantId })
+  const quotation = document.quotations[0]
+
+  assert.equal(quotation.authorityState, 'revision_missing')
+  assert.equal(quotation.status, null)
+  assert.equal(quotation.statusRaw, null)
+  assert.equal(quotation.quotedAmount, null)
+  assert.equal(quotation.currency, null)
+  assert.equal(quotation.submittedAt, '')
+  assert.deepEqual(quotation.lines, [])
+  assert.ok(document.limitations.some((limitation) => limitation.includes('没有 Revision')))
 })
 
 test('historical direct lookup is independent of bounded list windows and broad collections', async () => {
@@ -311,6 +367,7 @@ test('historical direct lookup is independent of bounded list windows and broad 
     purchaseRequest,
     rfq: forbidden,
     supplierQuotation: forbidden,
+    rfqSupplierParticipation: forbidden,
     purchaseOrder: forbidden,
     receivingDocument: forbidden,
     supplierInvoice: forbidden,

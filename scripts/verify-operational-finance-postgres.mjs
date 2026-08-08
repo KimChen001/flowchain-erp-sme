@@ -14,7 +14,6 @@ const migrationsRoot = join(root, "prisma", "migrations");
 const phase4Migration = "20260718040000_operations_settings_closeout";
 const phase5P2pMigration = "20260718050000_operational_finance_p2p";
 const phase5O2cMigration = "20260718060000_operational_finance_o2c";
-const latestMigration = "20260727010000_schema_aware_structured_intake";
 const node = process.execPath;
 const prismaCli = join(root, "node_modules", "prisma", "build", "index.js");
 
@@ -89,6 +88,10 @@ async function migrationNames() {
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
+}
+
+async function latestMigrationName() {
+  return (await migrationNames()).at(-1);
 }
 
 async function applyThroughPhase4(pg, database, databaseUrl, secrets) {
@@ -201,7 +204,7 @@ try {
     upgradeDatabase,
     `SELECT "migration_name" FROM "_prisma_migrations" WHERE "finished_at" IS NOT NULL ORDER BY "finished_at" DESC, "migration_name" DESC LIMIT 1`,
   );
-  assert.equal(latest.rows[0].migration_name, latestMigration);
+  assert.equal(latest.rows[0].migration_name, await latestMigrationName());
   const legacy = await query(
     pg,
     upgradeDatabase,

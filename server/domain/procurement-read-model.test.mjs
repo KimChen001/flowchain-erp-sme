@@ -330,6 +330,62 @@ test('GET /api/procurement/documents/:type/:id dispatches all canonical types wi
   }
 })
 
+test('GET RFQ detail preserves authoritative participation and revision DTO fields', async () => {
+  const authoritativeRfq = {
+    id: 'RFQ-AUTHORITY-1',
+    documentType: 'rfq',
+    suppliers: {
+      participantCount: 2,
+      invitedInternalCount: 2,
+      responseRecordedCount: 1,
+      noResponseCount: 1,
+      participationAuthority: 'authoritative',
+      invitationDeliveryAuthority: 'unavailable',
+      externalSupplierIdentityAuthority: 'unavailable',
+      knownParticipants: [
+        { supplierId: 'SUP-RESPONSE', responseState: 'response_recorded' },
+        { supplierId: 'SUP-NO-RESPONSE', responseState: 'no_response' },
+      ],
+    },
+    quotations: [{
+      id: 'QUOTE-AUTHORITY-1',
+      latestRevision: { id: 'REVISION-2', revisionNumber: 2, isLatest: true },
+      revisions: [
+        { id: 'REVISION-2', revisionNumber: 2, isLatest: true },
+        { id: 'REVISION-1', revisionNumber: 1, isLatest: false },
+      ],
+      historicalRevisions: [{ id: 'REVISION-1', revisionNumber: 1, isLatest: false }],
+    }],
+    revisionAuthority: { available: true, immutable: true, latestRule: 'maximum_revision_number' },
+  }
+  let response = null
+  let observed = null
+  await handleProcurementReadRoute({
+    req: { method: 'GET' },
+    res: {},
+    url: new URL('/api/procurement/documents/rfq/RFQ-AUTHORITY-1', 'http://localhost'),
+    identity: { authenticated: true, tenantId: 'tenant-a' },
+    repositories: {
+      procurementRead: {
+        normalizeDocumentType: normalizeProcurementDocumentType,
+        listDocuments: async () => { throw new Error('listDocuments must not be called') },
+        getDocument: async (type, id, options) => {
+          observed = { type, id, options }
+          return authoritativeRfq
+        },
+      },
+    },
+    send(_res, status, payload) { response = { status, payload } },
+  })
+
+  assert.equal(response.status, 200)
+  assert.deepEqual(observed, { type: 'rfq', id: 'RFQ-AUTHORITY-1', options: { tenantId: 'tenant-a' } })
+  assert.equal(response.payload.document.suppliers.knownParticipants[1].responseState, 'no_response')
+  assert.equal(response.payload.document.quotations[0].latestRevision.revisionNumber, 2)
+  assert.deepEqual(response.payload.document.quotations[0].historicalRevisions.map((revision) => revision.revisionNumber), [1])
+  assert.equal(response.payload.document.revisionAuthority.latestRule, 'maximum_revision_number')
+})
+
 test('GET /api/procurement/documents/:type/:id fails before repository reads for invalid type and missing tenant context', async () => {
   let reads = 0
   const repositories = {

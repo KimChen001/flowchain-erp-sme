@@ -30,6 +30,24 @@ export const SUPPLIER_QUOTATION_STATUS = freezeRecord({
   WITHDRAWN: 'withdrawn',
 })
 
+export const RFQ_SUPPLIER_PARTICIPATION_STATUS = freezeRecord({
+  PLANNED: 'planned',
+  INVITED_INTERNAL: 'invited_internal',
+  RESPONSE_RECORDED: 'response_recorded',
+  DECLINED: 'declined',
+  WITHDRAWN: 'withdrawn',
+  CLOSED: 'closed',
+})
+
+export const SUPPLIER_QUOTATION_REVISION_STATUS = freezeRecord({
+  DRAFT: 'draft',
+  INCOMPLETE: 'incomplete',
+  SUBMITTED: 'submitted',
+  SHORTLISTED: 'shortlisted',
+  NOT_SELECTED: 'not_selected',
+  WITHDRAWN: 'withdrawn',
+})
+
 export const PURCHASE_ORDER_STATUS = freezeRecord({
   DRAFT: 'draft',
   PENDING_APPROVAL: 'pending_approval',
@@ -100,6 +118,8 @@ export const PROCUREMENT_STATUS_VALUES = Object.freeze({
   purchaseRequest: valuesOf(PURCHASE_REQUEST_STATUS),
   rfq: valuesOf(RFQ_STATUS),
   supplierQuotation: valuesOf(SUPPLIER_QUOTATION_STATUS),
+  rfqSupplierParticipation: valuesOf(RFQ_SUPPLIER_PARTICIPATION_STATUS),
+  supplierQuotationRevision: valuesOf(SUPPLIER_QUOTATION_REVISION_STATUS),
   purchaseOrder: valuesOf(PURCHASE_ORDER_STATUS),
   receivingWorkflow: valuesOf(RECEIVING_WORKFLOW_STATUS),
   receivingPosting: valuesOf(RECEIVING_POSTING_STATUS),
@@ -232,6 +252,24 @@ const PROCUREMENT_STATUS_ALIASES = Object.freeze({
     已取消: 'cancelled',
   }),
   supplierQuotation: freezeRecord({
+    received: 'submitted',
+    草稿: 'draft',
+    已提交: 'submitted',
+    已入围: 'shortlisted',
+    未中选: 'not_selected',
+    已撤回: 'withdrawn',
+  }),
+  rfqSupplierParticipation: freezeRecord({
+    invited: 'invited_internal',
+    responded: 'response_recorded',
+    已计划: 'planned',
+    已内部邀请: 'invited_internal',
+    已记录响应: 'response_recorded',
+    已拒绝: 'declined',
+    已撤回: 'withdrawn',
+    已关闭: 'closed',
+  }),
+  supplierQuotationRevision: freezeRecord({
     received: 'submitted',
     草稿: 'draft',
     已提交: 'submitted',
