@@ -114,6 +114,32 @@ test("route rejects non-object JSON and redacts unexpected persistence failures"
   assert.doesNotMatch(JSON.stringify(failed.sent), /P2002|secret|database URL/);
 });
 
+test("route maps malformed encoded RFQ and Supplier IDs to stable validation errors", async () => {
+  const service = {
+    recordInitialResponse: async () => { throw new Error("service must not be called"); },
+    appendRevision: async () => { throw new Error("service must not be called"); },
+  };
+  const invalidRfq = routeContext({
+    path: "/api/procurement/rfqs/%E0%A4%A/supplier-responses",
+    service,
+  });
+  await handleRfqSupplierResponseRoute(invalidRfq.ctx);
+  assert.deepEqual(invalidRfq.sent, [{
+    status: 422,
+    payload: { code: "RFQ_ID_INVALID", message: "rfqId is invalid." },
+  }]);
+
+  const invalidSupplier = routeContext({
+    path: "/api/procurement/rfqs/rfq-1/supplier-responses/%E0%A4%A/revisions",
+    service,
+  });
+  await handleRfqSupplierResponseRoute(invalidSupplier.ctx);
+  assert.deepEqual(invalidSupplier.sent, [{
+    status: 422,
+    payload: { code: "SUPPLIER_ID_INVALID", message: "supplierId is invalid." },
+  }]);
+});
+
 test("route ignores unrelated methods and paths", async () => {
   const { ctx, sent } = routeContext({ path: "/api/procurement/rfqs/rfq-1/supplier-responses" });
   ctx.req.method = "GET";

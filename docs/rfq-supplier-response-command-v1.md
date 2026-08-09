@@ -73,11 +73,15 @@ Responses are accepted only for canonical RFQ status `open` or `collecting_quote
 
 Participation transitions are:
 
-- Missing: create `response_recorded`, `invitedAt = null`, and set `respondedAt`.
-- `planned`: transition to `response_recorded` and increment Participation version.
-- `invited_internal`: transition to `response_recorded`, preserve `invitedAt`, set `respondedAt`, and increment version.
-- `response_recorded`: revision append is allowed; initial create still rejects an existing quotation aggregate.
+- Missing plus draft: create `planned`, keep `invitedAt = null` and `respondedAt = null`, and record only `internalDraftStarted` metadata.
+- `planned` plus draft: preserve `planned` and `respondedAt`; increment the Participation version only for the internal-draft metadata update.
+- `invited_internal` plus draft: preserve `invited_internal`, `invitedAt`, and `respondedAt`; increment the Participation version only for the internal-draft metadata update.
+- Missing, `planned`, or `invited_internal` plus submitted: transition to `response_recorded`, preserve authoritative `invitedAt`, and set `respondedAt` from the supplied valid `submittedAt` or server time.
+- `response_recorded` plus a later draft: preserve both `response_recorded` and the original `respondedAt`.
+- `response_recorded` plus a later submitted revision: preserve the original `respondedAt`; initial create still rejects an existing quotation aggregate.
 - `declined`, `withdrawn`, or `closed`: reject until a separate future reopen command exists.
+
+Draft revisions always persist `submittedAt = null`; a client-supplied timestamp does not turn a working draft into a submitted response. Submitted revisions persist the supplied valid timestamp or server time, and that same event time drives a new Participation `respondedAt` transition.
 
 ## Line and Decimal policy
 

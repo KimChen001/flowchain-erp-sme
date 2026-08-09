@@ -39,6 +39,14 @@ async function service(ctx) {
   return createRfqSupplierResponseCommandService({ prisma, env: ctx.env || process.env });
 }
 
+function decodeRouteId(value, code, label) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new RfqSupplierResponseCommandError(code, `${label} is invalid.`, 422);
+  }
+}
+
 export async function handleRfqSupplierResponseRoute(ctx) {
   const initial = ctx.url.pathname.match(/^\/api\/procurement\/rfqs\/([^/]+)\/supplier-responses$/);
   const append = ctx.url.pathname.match(/^\/api\/procurement\/rfqs\/([^/]+)\/supplier-responses\/([^/]+)\/revisions$/);
@@ -48,6 +56,10 @@ export async function handleRfqSupplierResponseRoute(ctx) {
     return true;
   }
   try {
+    const rfqId = decodeRouteId(initial?.[1] || append?.[1], "RFQ_ID_INVALID", "rfqId");
+    const supplierId = append
+      ? decodeRouteId(append[2], "SUPPLIER_ID_INVALID", "supplierId")
+      : null;
     const body = await ctx.readBody(ctx.req);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new RfqSupplierResponseCommandError(
@@ -60,9 +72,9 @@ export async function handleRfqSupplierResponseRoute(ctx) {
     const input = { ...body, idempotencyKey };
     const command = await service(ctx);
     if (initial) {
-      ctx.send(ctx.res, 201, await command.recordInitialResponse(decodeURIComponent(initial[1]), input, { identity: ctx.identity }));
+      ctx.send(ctx.res, 201, await command.recordInitialResponse(rfqId, input, { identity: ctx.identity }));
     } else {
-      ctx.send(ctx.res, 201, await command.appendRevision(decodeURIComponent(append[1]), decodeURIComponent(append[2]), input, { identity: ctx.identity }));
+      ctx.send(ctx.res, 201, await command.appendRevision(rfqId, supplierId, input, { identity: ctx.identity }));
     }
   } catch (error) {
     sendError(ctx, error);
