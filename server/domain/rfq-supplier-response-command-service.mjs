@@ -124,7 +124,7 @@ function canonicalPayload(kind, rfqId, supplierId, input = {}) {
     expectedVersion: expectedVersion(source.expectedVersion),
     submissionMode,
     currency,
-    submittedAt: optionalDate(source.submittedAt, "submittedAt"),
+    submittedAt: submissionMode === "submitted" ? optionalDate(source.submittedAt, "submittedAt") : null,
     validUntil: optionalDate(source.validUntil, "validUntil"),
     deliveryDate: optionalDate(source.deliveryDate, "deliveryDate"),
     paymentTerms: text(source.paymentTerms) || null,
@@ -300,7 +300,9 @@ export function createRfqSupplierResponseCommandService({
           };
         });
         const quotedAmount = fixed(calculatedLines.reduce((sum, line) => sum + decimalUnits(line.amount, "amount"), 0n));
-        const recordedAt = payload.submittedAt ? new Date(payload.submittedAt) : now();
+        const responseSubmittedAt = payload.submissionMode === "submitted"
+          ? payload.submittedAt ? new Date(payload.submittedAt) : now()
+          : null;
 
         if (!participation) {
           participation = await tx.rfqSupplierParticipation.create({
@@ -309,21 +311,38 @@ export function createRfqSupplierResponseCommandService({
               tenantId: actor.tenantId,
               rfqId: payload.rfqId,
               supplierId: payload.supplierId,
-              status: RFQ_SUPPLIER_PARTICIPATION_STATUS.RESPONSE_RECORDED,
+              status: responseSubmittedAt
+                ? RFQ_SUPPLIER_PARTICIPATION_STATUS.RESPONSE_RECORDED
+                : RFQ_SUPPLIER_PARTICIPATION_STATUS.PLANNED,
               invitedAt: null,
-              respondedAt: recordedAt,
+              respondedAt: responseSubmittedAt,
               version: 0,
-              metadata: { recordedInternally: true },
+              metadata: responseSubmittedAt
+                ? { recordedInternally: true }
+                : { internalDraftStarted: true },
             },
           });
-        } else if (participationStatus !== RFQ_SUPPLIER_PARTICIPATION_STATUS.RESPONSE_RECORDED || !participation.respondedAt) {
+        } else if (responseSubmittedAt && (participationStatus !== RFQ_SUPPLIER_PARTICIPATION_STATUS.RESPONSE_RECORDED || !participation.respondedAt)) {
           participation = await tx.rfqSupplierParticipation.update({
             where: { id: participation.id },
             data: {
               status: RFQ_SUPPLIER_PARTICIPATION_STATUS.RESPONSE_RECORDED,
-              respondedAt: participation.respondedAt || recordedAt,
+              respondedAt: participationStatus === RFQ_SUPPLIER_PARTICIPATION_STATUS.RESPONSE_RECORDED
+                ? participation.respondedAt || responseSubmittedAt
+                : responseSubmittedAt,
               version: { increment: 1 },
               metadata: { ...jsonObject(participation.metadata), recordedInternally: true },
+            },
+          });
+        } else if (!responseSubmittedAt && [
+          RFQ_SUPPLIER_PARTICIPATION_STATUS.PLANNED,
+          RFQ_SUPPLIER_PARTICIPATION_STATUS.INVITED_INTERNAL,
+        ].includes(participationStatus)) {
+          participation = await tx.rfqSupplierParticipation.update({
+            where: { id: participation.id },
+            data: {
+              version: { increment: 1 },
+              metadata: { ...jsonObject(participation.metadata), internalDraftStarted: true },
             },
           });
         }
@@ -359,7 +378,7 @@ export function createRfqSupplierResponseCommandService({
             status: revisionStatus,
             currency: payload.currency,
             quotedAmount,
-            submittedAt: payload.submissionMode === "submitted" ? recordedAt : payload.submittedAt ? recordedAt : null,
+            submittedAt: responseSubmittedAt,
             validUntil: payload.validUntil ? new Date(payload.validUntil) : null,
             deliveryDate: payload.deliveryDate ? new Date(payload.deliveryDate) : null,
             paymentTerms: payload.paymentTerms,
@@ -377,7 +396,7 @@ export function createRfqSupplierResponseCommandService({
             status: revisionStatus,
             quotedAmount,
             currency: payload.currency,
-            submittedAt: payload.submissionMode === "submitted" ? recordedAt : payload.submittedAt ? recordedAt : null,
+            submittedAt: responseSubmittedAt,
             metadata: summaryMetadata,
           },
         });
@@ -408,10 +427,12 @@ export function createRfqSupplierResponseCommandService({
             actorId: actor.user.id,
             source: "rfq_supplier_response_command_service",
             module: "procurement",
-            action: kind === "create" ? "supplier_response_recorded" : "supplier_quotation_revision_appended",
+            action: kind === "create"
+              ? payload.submissionMode === "submitted" ? "supplier_response_recorded" : "supplier_response_draft_started"
+              : "supplier_quotation_revision_appended",
             entityType: "SupplierQuotation",
             entityId: quotation.id,
-            summary: `${kind === "create" ? "Recorded" : "Revised"} internal supplier response ${quotation.id} at revision ${revisionNumber}.`,
+            summary: `${kind === "create" ? payload.submissionMode === "submitted" ? "Recorded" : "Started draft for" : "Revised"} internal supplier response ${quotation.id} at revision ${revisionNumber}.`,
             metadata: { commandType, rfqId: payload.rfqId, supplierId: payload.supplierId, quotationId: quotation.id, revisionId, revisionNumber, submissionMode: payload.submissionMode, idempotencyKey },
           },
         });

@@ -21,6 +21,7 @@ function responseInput({
   supplierId,
   expectedVersion = 0,
   submissionMode = "submitted",
+  submittedAt = null,
   lines = [
     { rfqLineId: "rfq-command-line-1", quantity: "3.3333", unitPrice: "0.3000" },
     { rfqLineId: "rfq-command-line-2", quantity: "2.0000", unitPrice: "4.5678" },
@@ -32,7 +33,7 @@ function responseInput({
     supplierId,
     submissionMode,
     currency: "CNY",
-    submittedAt: null,
+    submittedAt,
     validUntil: "2026-08-31T00:00:00.000Z",
     deliveryDate: "2026-08-15T00:00:00.000Z",
     paymentTerms: "NET30",
@@ -66,6 +67,8 @@ test("real PostgreSQL RFQ Supplier Response command kernel", async (t) => {
     const supplierIds = [
       "supplier-command-main",
       "supplier-command-draft",
+      "supplier-command-draft-missing",
+      "supplier-command-draft-planned",
       "supplier-command-wrong-line",
       "supplier-command-duplicate-line",
       "supplier-command-incomplete",
@@ -108,7 +111,8 @@ test("real PostgreSQL RFQ Supplier Response command kernel", async (t) => {
     ] });
 
     await t.test("initial response commits participation, revision authority, audit, feed, and command result atomically", async () => {
-      const input = responseInput({ key: "initial-main", supplierId: "supplier-command-main" });
+      const submittedAt = "2026-07-29T09:00:00.000Z";
+      const input = responseInput({ key: "initial-main", supplierId: "supplier-command-main", submittedAt });
       const result = await service.recordInitialResponse("rfq-command-main", input, context);
       assert.equal(result.entityVersion, 1);
       assert.equal(result.revisionNumber, 1);
@@ -126,11 +130,14 @@ test("real PostgreSQL RFQ Supplier Response command kernel", async (t) => {
       ]);
       assert.equal(participation.status, "response_recorded");
       assert.equal(participation.invitedAt, null);
+      assert.equal(participation.respondedAt.toISOString(), submittedAt);
       assert.equal(participation.version, 0);
       assert.equal(quotation.status, "submitted");
+      assert.equal(quotation.submittedAt.toISOString(), submittedAt);
       assert.equal(decimal(quotation.quotedAmount), "10.1356");
       assert.equal(quotation.metadata.currentRevisionNumber, 1);
       assert.equal(revision.lines.length, 2);
+      assert.equal(revision.submittedAt.toISOString(), submittedAt);
       assert.deepEqual(revision.lines.map((line) => decimal(line.amount)), ["1.0000", "9.1356"]);
       assert.equal(decimal(revision.quotedAmount), "10.1356");
       assert.equal(execution.status, "completed");
@@ -152,6 +159,7 @@ test("real PostgreSQL RFQ Supplier Response command kernel", async (t) => {
     await t.test("append creates Revision 2 and preserves Revision 1", async () => {
       const quotation = await prisma.supplierQuotation.findUnique({ where: { tenantId_rfqId_supplierId: { tenantId, rfqId: "rfq-command-main", supplierId: "supplier-command-main" } } });
       const before = await prisma.supplierQuotationRevision.findFirst({ where: { tenantId, quotationId: quotation.id, revisionNumber: 1 }, include: { lines: { orderBy: { rfqLineId: "asc" } } } });
+      const participationBefore = await prisma.rfqSupplierParticipation.findUnique({ where: { tenantId_rfqId_supplierId: { tenantId, rfqId: "rfq-command-main", supplierId: "supplier-command-main" } } });
       const snapshot = JSON.stringify(before);
       const input = responseInput({
         key: "append-main-2",
@@ -169,7 +177,13 @@ test("real PostgreSQL RFQ Supplier Response command kernel", async (t) => {
       assert.equal(result.status, "draft");
       assert.equal(result.quotedAmount, "5.0000");
       const unchanged = await prisma.supplierQuotationRevision.findUnique({ where: { id: before.id }, include: { lines: { orderBy: { rfqLineId: "asc" } } } });
+      const draftRevision = await prisma.supplierQuotationRevision.findUnique({ where: { id: result.revisionId } });
+      const participationAfter = await prisma.rfqSupplierParticipation.findUnique({ where: { id: participationBefore.id } });
       assert.equal(JSON.stringify(unchanged), snapshot);
+      assert.equal(draftRevision.submittedAt, null);
+      assert.equal(participationAfter.status, "response_recorded");
+      assert.equal(participationAfter.respondedAt.toISOString(), participationBefore.respondedAt.toISOString());
+      assert.equal(participationAfter.version, participationBefore.version);
       assert.equal(await prisma.supplierQuotationRevision.count({ where: { tenantId, quotationId: quotation.id } }), 2);
     });
 
@@ -256,21 +270,101 @@ test("real PostgreSQL RFQ Supplier Response command kernel", async (t) => {
       );
     });
 
-    await t.test("partial draft is incomplete and invited participation preserves evidence while incrementing version", async () => {
+    await t.test("drafts preserve planned and invited authority until a submitted revision records the response", async () => {
+      const missingDraft = await service.recordInitialResponse(
+        "rfq-command-main",
+        responseInput({
+          key: "draft-missing-participation",
+          supplierId: "supplier-command-draft-missing",
+          submissionMode: "draft",
+          submittedAt: "2026-07-28T07:00:00.000Z",
+          lines: [{ rfqLineId: "rfq-command-line-1", quantity: "1.0000", unitPrice: "0.2000" }],
+        }),
+        context,
+      );
+      const [missingParticipation, missingRevision, missingQuotation, missingAudit] = await Promise.all([
+        prisma.rfqSupplierParticipation.findUnique({ where: { id: missingDraft.participationId } }),
+        prisma.supplierQuotationRevision.findUnique({ where: { id: missingDraft.revisionId } }),
+        prisma.supplierQuotation.findUnique({ where: { id: missingDraft.quotationId } }),
+        prisma.auditLog.findFirst({ where: { tenantId, entityId: missingDraft.quotationId, source: "rfq_supplier_response_command_service" } }),
+      ]);
+      assert.equal(missingParticipation.status, "planned");
+      assert.equal(missingParticipation.invitedAt, null);
+      assert.equal(missingParticipation.respondedAt, null);
+      assert.equal(missingParticipation.metadata.internalDraftStarted, true);
+      assert.equal(missingRevision.submittedAt, null);
+      assert.equal(missingQuotation.submittedAt, null);
+      assert.equal(missingAudit.action, "supplier_response_draft_started");
+
+      await prisma.rfqSupplierParticipation.create({
+        data: {
+          id: "participation-command-planned-draft",
+          tenantId,
+          rfqId: "rfq-command-main",
+          supplierId: "supplier-command-draft-planned",
+          status: "planned",
+          version: 2,
+          metadata: { source: "internal_plan" },
+        },
+      });
+      const plannedDraft = await service.recordInitialResponse(
+        "rfq-command-main",
+        responseInput({ key: "draft-planned", supplierId: "supplier-command-draft-planned", submissionMode: "draft" }),
+        context,
+      );
+      const [plannedParticipation, plannedRevision] = await Promise.all([
+        prisma.rfqSupplierParticipation.findUnique({ where: { id: "participation-command-planned-draft" } }),
+        prisma.supplierQuotationRevision.findUnique({ where: { id: plannedDraft.revisionId } }),
+      ]);
+      assert.equal(plannedParticipation.status, "planned");
+      assert.equal(plannedParticipation.respondedAt, null);
+      assert.equal(plannedParticipation.version, 3);
+      assert.equal(plannedParticipation.metadata.source, "internal_plan");
+      assert.equal(plannedParticipation.metadata.internalDraftStarted, true);
+      assert.equal(plannedRevision.submittedAt, null);
+
       const invitedAt = new Date("2026-07-28T08:00:00.000Z");
       await prisma.rfqSupplierParticipation.create({ data: { id: "participation-command-draft", tenantId, rfqId: "rfq-command-main", supplierId: "supplier-command-draft", status: "invited_internal", invitedAt, version: 4 } });
       const result = await service.recordInitialResponse(
         "rfq-command-main",
-        responseInput({ key: "draft-partial", supplierId: "supplier-command-draft", submissionMode: "draft", lines: [{ rfqLineId: "rfq-command-line-1", quantity: "1.0000", unitPrice: "0.1000" }] }),
+        responseInput({ key: "draft-partial", supplierId: "supplier-command-draft", submissionMode: "draft", submittedAt: "2026-07-28T09:00:00.000Z", lines: [{ rfqLineId: "rfq-command-line-1", quantity: "1.0000", unitPrice: "0.1000" }] }),
         context,
       );
       assert.equal(result.status, "incomplete");
       assert.equal(result.quotedAmount, "0.1000");
-      const participation = await prisma.rfqSupplierParticipation.findUnique({ where: { id: "participation-command-draft" } });
-      assert.equal(participation.status, "response_recorded");
-      assert.equal(participation.invitedAt.toISOString(), invitedAt.toISOString());
-      assert.equal(participation.respondedAt.toISOString(), fixedNow.toISOString());
-      assert.equal(participation.version, 5);
+      const [draftParticipation, draftRevision] = await Promise.all([
+        prisma.rfqSupplierParticipation.findUnique({ where: { id: "participation-command-draft" } }),
+        prisma.supplierQuotationRevision.findUnique({ where: { id: result.revisionId } }),
+      ]);
+      assert.equal(draftParticipation.status, "invited_internal");
+      assert.equal(draftParticipation.invitedAt.toISOString(), invitedAt.toISOString());
+      assert.equal(draftParticipation.respondedAt, null);
+      assert.equal(draftParticipation.version, 5);
+      assert.equal(draftParticipation.metadata.internalDraftStarted, true);
+      assert.equal(draftRevision.submittedAt, null);
+
+      const submittedAt = "2026-07-29T09:30:00.000Z";
+      const submitted = await service.appendRevision(
+        "rfq-command-main",
+        "supplier-command-draft",
+        responseInput({
+          key: "draft-to-submitted",
+          supplierId: "supplier-command-draft",
+          expectedVersion: 1,
+          submissionMode: "submitted",
+          submittedAt,
+        }),
+        context,
+      );
+      const [submittedParticipation, submittedRevision] = await Promise.all([
+        prisma.rfqSupplierParticipation.findUnique({ where: { id: "participation-command-draft" } }),
+        prisma.supplierQuotationRevision.findUnique({ where: { id: submitted.revisionId } }),
+      ]);
+      assert.equal(submittedParticipation.status, "response_recorded");
+      assert.equal(submittedParticipation.invitedAt.toISOString(), invitedAt.toISOString());
+      assert.equal(submittedParticipation.respondedAt.toISOString(), submittedAt);
+      assert.equal(submittedParticipation.version, 6);
+      assert.equal(submittedRevision.submittedAt.toISOString(), submittedAt);
     });
 
     await t.test("pending command execution returns a stable in-progress conflict", async () => {
