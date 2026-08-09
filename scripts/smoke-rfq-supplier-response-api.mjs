@@ -209,10 +209,14 @@ try {
 
   const comparison = await request(comparisonPath, { userId: "rfq-response-api-admin", role: "admin" });
   check(comparison.status, 200, "comparison loads through full route dispatcher");
-  check(comparison.payload.comparisonAvailability, "side_by_side_available", "two same-currency responses are side-by-side available");
+  check(comparison.payload.comparisonAvailability, "single_eligible_response", "only the complete submitted response is eligible");
   check(comparison.payload.responses.length, 2, "comparison returns both suppliers");
   check(comparison.payload.responses[0].latestRevision.revisionNumber, 2, "comparison selects maximum revision number");
   check(comparison.payload.responses[0].coverage.state, "partial", "comparison exposes latest coverage gap");
+  check(comparison.payload.responses[0].comparisonEligibility, "not_ready", "latest draft remains visible but not eligible");
+  check(comparison.payload.responses[1].comparisonEligibility, "eligible", "complete submitted response is eligible");
+  check(comparison.payload.summary.eligibleResponseCount, 1, "eligible response summary excludes draft revision");
+  check(comparison.payload.participationSummary.responseRecordedCount, 2, "submitted participation evidence remains authoritative after later draft");
   check(comparison.payload.rankingAuthority, "unavailable", "comparison does not rank");
   check(comparison.payload.awardAuthority, "unavailable", "comparison does not award");
 
