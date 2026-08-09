@@ -65,6 +65,8 @@ There is no RFQ list scan, procurement snapshot, fixture fallback, fuzzy join, o
 
 The detail projection derives quotation status, currency, amount, submitted time, payment terms, validity, delivery date, and line prices/quantities from the maximum `revisionNumber`. It returns `authorityState: revision_authoritative` only when that revision exists. If a quotation has no revision, it returns `authorityState: revision_missing`, null/empty commercial fields, and an explicit limitation instead of falling back to the mutable compatibility header. A quotation with no participation is likewise surfaced as a quotation-only compatibility record.
 
-## Current non-goals
+## Internal command boundary
 
-This version adds no Supplier Response UI, response/revision HTTP write command, comparison, award, PO conversion, Supplier Portal, email delivery, external supplier identity, or AI mutation. The next phase must introduce an authorized, idempotent append command with audit/change-feed facts before new revisions can be recorded through HTTP.
+Participation and immutable revision schema remain the database authority. Authorized internal users may now record an initial response or append a revision through the idempotent Supplier Response command kernel documented in `docs/rfq-supplier-response-command-v1.md`. Those HTTP writes validate exact RFQ lines and commit Participation, revision history, current summary, audit, change feed, and command result atomically.
+
+The canonical RFQ Detail UI remains read-only. Supplier Portal, email delivery, external supplier identity, public submission, comparison, award, PO conversion, and AI mutation remain unavailable.

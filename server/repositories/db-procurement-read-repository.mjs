@@ -343,7 +343,7 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
   const limitations = [
     'RFQ Supplier Participation 仅表达内部采购参与事实；invited_internal 不证明邮件送达、Supplier Portal 身份或外部登录。',
     '报价 latest authority 仅由最大 revisionNumber 决定；模型不维护 isLatest 标志或 current revision 指针。',
-    '当前阶段没有 Supplier Response 或 Append Revision HTTP 写命令。',
+    'Supplier Response 与 Append Revision HTTP 写入仅可通过内部授权命令内核；当前 RFQ 页面仍保持只读。',
   ]
   if (recordMeta.requesterId || recordMeta.owner) limitations.push('当前读取 contract 没有 RFQ owner/requester 的独立权限字段。')
   if (!canonicalStatus('rfq', record.status)) limitations.push('RFQ 状态不是当前状态目录的 canonical 值，已按不可用状态返回。')
