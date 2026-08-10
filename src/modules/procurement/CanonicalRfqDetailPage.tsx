@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ExternalLink, FilePlus2, RefreshCw, TriangleAlert } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { A, Card, Chip } from "../../components/ui";
 import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
+import { RfqSupplierResponseDialog } from "./RfqSupplierResponseDialog";
 import type { ProcurementQuotationRevision, ProcurementRfqDocument, ProcurementRfqQuotation } from "./procurementTypes";
 
 type ReadState = "loading" | "loaded" | "notFound" | "unauthenticated" | "forbidden" | "error" | "network" | "malformed";
@@ -148,9 +149,23 @@ function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotat
   );
 }
 
-function LoadedRfq({ record }: { record: ProcurementRfqDocument }) {
+function LoadedRfq({ record, canCreate, canRevise, notice, onReload, onSuccessReload }: { record: ProcurementRfqDocument; canCreate: boolean; canRevise: boolean; notice: string | null; onReload: () => Promise<void>; onSuccessReload: () => Promise<void> }) {
+  const [editor, setEditor] = useState<{ supplier: typeof record.suppliers.knownParticipants[number]; mode: "initial" | "append" } | null>(null);
+  const quotationFor = (supplierId: string) => record.quotations.find((quotation) => quotation.supplierId === supplierId) || null;
+  const responseWorkflowOpen = ["open", "collecting_quotes"].includes(record.status || "");
+  const openEditor = (supplier: typeof record.suppliers.knownParticipants[number]) => {
+    const quotation = quotationFor(supplier.supplierId);
+    if (!responseWorkflowOpen || ["declined", "withdrawn", "closed"].includes(supplier.status || "")) return;
+    if (quotation) {
+      if (!quotation.latestRevision || !canRevise) return;
+      setEditor({ supplier, mode: "append" });
+    } else if (canCreate) {
+      setEditor({ supplier, mode: "initial" });
+    }
+  };
   return (
     <div className="space-y-4" data-testid="canonical-rfq-detail">
+      {notice && <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800" data-testid="rfq-response-notice">{notice}</div>}
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -158,7 +173,7 @@ function LoadedRfq({ record }: { record: ProcurementRfqDocument }) {
             <h1 className="mt-1 text-xl font-semibold">{record.title || record.id}</h1>
             {record.description && <p className="mt-2 text-sm" style={{ color: A.sub }}>{record.description}</p>}
           </div>
-          <Chip label={statusLabel(record.status, RFQ_STATUS_LABELS)} color={A.blue} bg="#eff6ff" />
+          <div className="flex flex-wrap items-center gap-2"><Chip label={statusLabel(record.status, RFQ_STATUS_LABELS)} color={A.blue} bg="#eff6ff" />{!responseWorkflowOpen && <span className="text-xs" style={{ color: A.sub }}>当前 RFQ 状态不允许录入新的供应商响应。</span>}</div>
         </div>
         <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
@@ -200,7 +215,13 @@ function LoadedRfq({ record }: { record: ProcurementRfqDocument }) {
       <Card className="p-4" data-testid="rfq-suppliers">
         <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold">内部参与记录</h2><span className="text-xs" style={{ color: A.sub }}>{record.suppliers.invitedInternalCount} 家有内部邀请记录 · {record.suppliers.responseRecordedCount} 家已记录响应 · {record.suppliers.noResponseCount} 家尚无响应</span></div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {record.suppliers.knownParticipants.map((supplier) => <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="font-medium">{supplier.supplierName || "未提供名称"}</div><div className="mt-1" style={{ color: A.sub }}>{supplier.supplierId} · {statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS)}</div><div className="mt-1 font-medium">{RESPONSE_STATE_LABELS[supplier.responseState] || "状态不可用"}</div></div>)}
+          {record.suppliers.knownParticipants.map((supplier) => {
+            const quotation = quotationFor(supplier.supplierId);
+            const disabledByStatus = !responseWorkflowOpen || ["declined", "withdrawn", "closed"].includes(supplier.status || "");
+            const actionLabel = quotation ? "新增 Revision" : "录入报价";
+            const allowed = quotation ? canRevise : canCreate;
+            return <div key={supplier.supplierId} className="rounded-lg border p-3 text-xs" data-testid={`rfq-participant-${supplier.supplierId}`}><div className="flex items-start justify-between gap-2"><div><div className="font-medium">{supplier.supplierName || "未提供名称"}</div><div className="mt-1" style={{ color: A.sub }}>{supplier.supplierId} · {statusLabel(supplier.status, PARTICIPATION_STATUS_LABELS)}</div></div>{!disabledByStatus && allowed && <button type="button" data-testid={`rfq-response-action-${supplier.supplierId}`} className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-blue-200 px-2 py-1 font-semibold text-blue-700" onClick={() => openEditor(supplier)}><FilePlus2 size={13} />{actionLabel}</button>}</div><div className="mt-1 font-medium">{RESPONSE_STATE_LABELS[supplier.responseState] || "状态不可用"}</div>{quotation && <div className="mt-1 text-[11px]" style={{ color: A.sub }}>当前 Revision：{quotation.latestRevision?.revisionNumber || quotation.revisionNumber || "—"} · 历史版本只读</div>}</div>;
+          })}
           {record.suppliers.knownParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>当前 RFQ 没有权威供应商参与记录。</div>}
         </div>
         <p className="mt-3 text-xs" style={{ color: A.sub }}>参与状态来自 RFQ Supplier Participation；内部邀请时间仅表示内部记录，不代表邮件送达、Supplier Portal 账号或外部提交。</p>
@@ -217,13 +238,15 @@ function LoadedRfq({ record }: { record: ProcurementRfqDocument }) {
       </Card>
 
       <RelatedEvidence record={record} />
+      {editor && <RfqSupplierResponseDialog key={`${editor.mode}:${editor.supplier.supplierId}:${record.updatedAt || ""}`} open={Boolean(editor)} record={record} participant={editor.supplier} mode={editor.mode} canCreate={canCreate} canRevise={canRevise} onClose={() => setEditor(null)} onReload={onReload} onSuccess={onSuccessReload} />}
     </div>
   );
 }
 
-export function CanonicalRfqDetailPage({ documentId }: { documentId: string }) {
+export function CanonicalRfqDetailPage({ documentId, effectivePermissionCodes, authorizationLoadState }: { documentId: string; effectivePermissionCodes: Set<string>; authorizationLoadState: "loading" | "ready" | "failed" }) {
   const navigate = useNavigate();
   const [record, setRecord] = useState<ProcurementRfqDocument | null>(null);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [state, setState] = useState<ReadState>(documentId.trim() ? "loading" : "malformed");
 
   const load = useCallback(async () => {
@@ -242,8 +265,9 @@ export function CanonicalRfqDetailPage({ documentId }: { documentId: string }) {
   }, [documentId]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setSuccessNotice(null); }, [documentId]);
 
-  if (state === "loaded" && record) return <LoadedRfq record={record} />;
+  if (state === "loaded" && record) return <LoadedRfq record={record} canCreate={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.create")} canRevise={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.revise")} notice={successNotice} onReload={async () => { setSuccessNotice(null); await load(); }} onSuccessReload={async () => { setSuccessNotice("报价已保存，正在读取服务器权威结果。"); await load(); }} />;
 
   const messages: Record<Exclude<ReadState, "loading" | "loaded">, string> = {
     malformed: "RFQ 链接缺少有效编号。",

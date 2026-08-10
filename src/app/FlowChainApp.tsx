@@ -1949,7 +1949,7 @@ export default function FlowChainApp() {
                         }
                       >
                         {activeRoute.id === "procurement:rfq-detail" ? (
-                          <CanonicalRfqDetailPage documentId={entityIdForRoutePath(activeRoute, location.pathname)} />
+                          <CanonicalRfqDetailPage documentId={entityIdForRoutePath(activeRoute, location.pathname)} effectivePermissionCodes={effectivePermissionCodes} authorizationLoadState={authorizationLoadState} />
                         ) : activeRoute.panelId === "receiving-workbench" ? (
                           panels["receiving-workbench"]
                         ) : activeRoute.panelId === "outbound-workbench" ? (
