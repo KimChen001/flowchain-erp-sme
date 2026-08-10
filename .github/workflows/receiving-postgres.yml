@@ -71,6 +71,8 @@ jobs:
       - run: npm run test:db:po-command-atomicity
       - run: npm run test:db:rfq-response-revisions
       - run: npm run test:db:rfq-supplier-response-command
+      - run: npm run test:db:rfq-supplier-comparison
+      - run: npm run test:api:rfq-supplier-response
       - run: npm run test:db:upgrade-v0-5-2b-to-v0-5-2c
       - run: npm run test:integration:attachment-restart
       - run: npm run attachment:health-check

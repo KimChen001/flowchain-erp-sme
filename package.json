@@ -78,6 +78,8 @@
     "test:db:po-command-atomicity": "node scripts/run-postgres-test-files.mjs tests/postgres/procurement-db-atomicity.test.mjs",
     "test:db:rfq-response-revisions": "node scripts/verify-rfq-response-revision-upgrade.mjs && node scripts/run-postgres-test-files.mjs tests/postgres/rfq-participation-revision-authority.test.mjs",
     "test:db:rfq-supplier-response-command": "node scripts/run-postgres-test-files.mjs tests/postgres/rfq-supplier-response-command.test.mjs",
+    "test:db:rfq-supplier-comparison": "node scripts/run-postgres-test-files.mjs tests/postgres/rfq-supplier-comparison.test.mjs",
+    "test:api:rfq-supplier-response": "node scripts/smoke-rfq-supplier-response-api.mjs",
     "test:db:upgrade-v0-5-2b-to-v0-5-2c": "node scripts/verify-upgrade-v0-5-2b-to-v0-5-2c.mjs",
     "test:integration:attachment-restart": "node scripts/run-postgres-test-files.mjs tests/postgres/attachment-restart-diagnostics.test.mjs",
     "test:ops:attachment-diagnostics": "node scripts/run-postgres-test-files.mjs tests/postgres/attachment-restart-diagnostics.test.mjs",

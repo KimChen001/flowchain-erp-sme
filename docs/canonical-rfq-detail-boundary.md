@@ -26,4 +26,4 @@ Related PR, PO, RFQ, and quotation IDs are emitted only when the corresponding e
 
 The route preserves the procurement read contract: 400 for an unsupported type, 401 for an invalid session or missing tenant context, 404 for a missing or tenant-invisible RFQ, and 500 for an unhandled service failure after the normal runtime redaction boundary. The page distinguishes loading, malformed ID, not found, unauthenticated, forbidden, temporary service failure, and network-unavailable states.
 
-This phase adds no RFQ response/revision HTTP write command, comparison, award, PO draft conversion, Supplier Portal, external identity, email, or AI mutation.
+RFQ response/revision HTTP writes are now available only through the internal authorized command kernel. The separate Comparison read contract is tenant-scoped and fact-only; it does not rank or recommend. This UI phase still adds no response/revision form, award, PO draft conversion, Supplier Portal, external identity, email, or AI mutation.
