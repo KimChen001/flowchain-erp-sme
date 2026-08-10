@@ -22,10 +22,10 @@ export type ProcurementQuotationLine = {
   itemId?: string | null;
   sku?: string | null;
   itemName?: string | null;
-  quantity?: number | null;
+  quantity?: string | null;
   unit?: string | null;
-  unitPrice?: number | null;
-  amount?: number | null;
+  unitPrice?: string | null;
+  amount?: string | null;
   deliveryDate?: string;
 };
 export type ProcurementQuotationRevision = {
@@ -34,7 +34,7 @@ export type ProcurementQuotationRevision = {
   status?: string | null;
   statusRaw?: string | null;
   currency: string;
-  quotedAmount?: number | null;
+  quotedAmount?: string | null;
   submittedAt?: string;
   deliveryDate?: string;
   paymentTerms?: string | null;
@@ -52,7 +52,7 @@ export type ProcurementRfqQuotation = {
   supplierName?: string | null;
   status?: string | null;
   statusRaw?: string | null;
-  quotedAmount?: number | null;
+  quotedAmount?: string | null;
   currency?: string | null;
   submittedAt?: string;
   deliveryDate?: string;

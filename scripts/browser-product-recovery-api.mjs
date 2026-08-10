@@ -20,6 +20,7 @@ const actorId = `USR-${createHash("sha256").update(email).digest("hex").slice(0,
 const adminEmail = "admin@flowchain.local";
 const adminActorId = `USR-${createHash("sha256").update(adminEmail).digest("hex").slice(0, 16)}`;
 const apiPort = Number(process.env.PLAYWRIGHT_API_PORT || 18787);
+const unsafeScaledDecimal = "90071992547409.1234";
 const freePort = () => new Promise((resolvePort, reject) => {
   const socket = createNetServer().on("error", reject);
   socket.listen(0, "127.0.0.1", () => {
@@ -164,7 +165,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
       quotationId: "LOCAL-DEMO-QUOTE-001",
       revisionNumber: 2,
       status: "submitted",
-      quotedAmount: 4900,
+      quotedAmount: supplierResponseAcceptance ? unsafeScaledDecimal : 4900,
       currency: "CNY",
       submittedAt: new Date("2030-01-05T08:30:00.000Z"),
       deliveryDate: new Date("2030-01-14T00:00:00.000Z"),
@@ -180,10 +181,10 @@ async function seedCanonicalRfqBrowserScenario(client) {
           itemId: "LOCAL-DEMO-ITEM-001",
           skuSnapshot: "LDM-001",
           itemNameSnapshot: "本地演示控制器",
-          quantity: 50,
+          quantity: supplierResponseAcceptance ? unsafeScaledDecimal : 50,
           unit: "pcs",
-          unitPrice: 98,
-          amount: 4900,
+          unitPrice: supplierResponseAcceptance ? "1.0000" : 98,
+          amount: supplierResponseAcceptance ? unsafeScaledDecimal : 4900,
           metadata: { browserAcceptance: true },
         }],
       },

@@ -5,6 +5,8 @@ const SUPPLIER_A = "LOCAL-DEMO-SUP-001";
 const SUPPLIER_B = "LOCAL-DEMO-SUP-002";
 const LINE_1 = "LOCAL-DEMO-RFQL-001";
 const LINE_2 = "LOCAL-DEMO-RFQL-002";
+const UNSAFE_SCALED_DECIMAL = "90071992547409.1234";
+const UNSAFE_SCALED_DECIMAL_WITH_SECOND_LINE = "90071992548434.1234";
 const detailPath = (id = RFQ_ID) => `/api/procurement/documents/rfq/${encodeURIComponent(id)}`;
 const initialPath = `/api/procurement/rfqs/${encodeURIComponent(RFQ_ID)}/supplier-responses`;
 const appendPath = (supplierId: string) => `/api/procurement/rfqs/${encodeURIComponent(RFQ_ID)}/supplier-responses/${encodeURIComponent(supplierId)}/revisions`;
@@ -58,6 +60,9 @@ test("planned Supplier progresses draft to submitted revisions with one idempote
   await expect(page.getByTestId("rfq-response-action-LOCAL-DEMO-SUP-003")).toHaveCount(0);
   await expect(page.getByTestId("rfq-response-action-LOCAL-DEMO-SUP-004")).toHaveCount(0);
   await page.getByTestId(`rfq-response-action-${SUPPLIER_B}`).click();
+  await expect(page.getByLabel("提交模式", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("rfq-supplier-response-editor")).toContainText("保存草稿不会记录为供应商已响应");
+  await expect(page.getByTestId("rfq-supplier-response-editor")).toContainText("正式提交需要覆盖全部 RFQ 行项目");
   await selectLine(page, LINE_1, "10.0000", "12.3456");
 
   let firstAttempt = true;
@@ -107,11 +112,20 @@ test("submitted quotation appends Revision 3 and surfaces a real stale-version c
   const session = await login(page, request);
   await page.goto(`/app/procurement/rfq/${RFQ_ID}`);
   await page.getByTestId(`rfq-response-action-${SUPPLIER_A}`).click();
+  await expect(page.getByLabel(`报价数量 ${LINE_1}`)).toHaveValue(UNSAFE_SCALED_DECIMAL);
+  await expect(page.getByLabel(`单价 ${LINE_1}`)).toHaveValue("1.0000");
   await selectLine(page, LINE_2, "25.0000", "41.0000");
   await page.getByTestId("rfq-response-submit").click();
   const supplierARevision3 = await quotationFor(page, "本地演示供应商 A");
   await expect(supplierARevision3).toContainText("Revision 3 · 当前版本");
   await expect(supplierARevision3).toContainText("Revision 2 · 历史版本");
+  const detailAfterAppend = await request.get(detailPath(), { headers: { Authorization: `Bearer ${session.token}` } });
+  expect(detailAfterAppend.ok()).toBeTruthy();
+  const quotationAfterAppend = (await detailAfterAppend.json()).document.quotations.find((item: { supplierId: string }) => item.supplierId === SUPPLIER_A);
+  expect(quotationAfterAppend.latestRevision.quotedAmount).toBe(UNSAFE_SCALED_DECIMAL_WITH_SECOND_LINE);
+  expect(quotationAfterAppend.latestRevision.lines.find((line: { rfqLineId: string }) => line.rfqLineId === LINE_1).quantity).toBe(UNSAFE_SCALED_DECIMAL);
+  expect(quotationAfterAppend.latestRevision.lines.find((line: { rfqLineId: string }) => line.rfqLineId === LINE_1).unitPrice).toBe("1.0000");
+  expect(quotationAfterAppend.revisions.find((revision: { revisionNumber: number }) => revision.revisionNumber === 2).lines[0].quantity).toBe(UNSAFE_SCALED_DECIMAL);
 
   await page.getByTestId(`rfq-response-action-${SUPPLIER_A}`).click();
   const concurrent = await request.post(appendPath(SUPPLIER_A), {

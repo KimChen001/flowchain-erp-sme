@@ -87,8 +87,8 @@ function initialLines(record: ProcurementRfqDocument, quotation: ProcurementRfqQ
     const prior = previous.get(line.id);
     return {
       rfqLineId: line.id,
-      quantity: prior?.quantity == null ? "" : String(prior.quantity),
-      unitPrice: prior?.unitPrice == null ? "" : String(prior.unitPrice),
+      quantity: prior?.quantity ?? "",
+      unitPrice: prior?.unitPrice ?? "",
       deliveryDate: dateInput(prior?.deliveryDate),
       selected: Boolean(prior),
     };
@@ -125,7 +125,6 @@ export function RfqSupplierResponseDialog({
   const [validUntil, setValidUntil] = useState(dateInput(quotation?.latestRevision?.validity));
   const [deliveryDate, setDeliveryDate] = useState(dateInput(quotation?.latestRevision?.deliveryDate));
   const [lines, setLines] = useState<EditableLine[]>(() => initialLines(record, quotation));
-  const [submissionMode, setSubmissionMode] = useState<"draft" | "submitted">("draft");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const attemptRef = useRef<Attempt | null>(null);
@@ -196,8 +195,8 @@ export function RfqSupplierResponseDialog({
     <Modal open={open} onClose={submitting ? () => undefined : onClose} title={title} subtitle="内部采购记录；服务器负责 Decimal 金额与版本权威。" width={900} footer={(
       <>
         <button type="button" className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold" style={{ color: A.sub }} disabled={submitting} onClick={onClose}><X size={15} />取消</button>
-        <button type="button" data-testid="rfq-response-save-draft" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold" disabled={submitting || !canSubmit} onClick={() => { setSubmissionMode("draft"); void submit("draft"); }}><Save size={15} />保存草稿</button>
-        <button type="button" data-testid="rfq-response-submit" className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={submitting || !canSubmit} onClick={() => { setSubmissionMode("submitted"); void submit("submitted"); }}><Send size={15} />记录并提交报价</button>
+        <button type="button" data-testid="rfq-response-save-draft" className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold" disabled={submitting || !canSubmit} onClick={() => void submit("draft")}><Save size={15} />保存草稿</button>
+        <button type="button" data-testid="rfq-response-submit" className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" disabled={submitting || !canSubmit} onClick={() => void submit("submitted")}><Send size={15} />记录并提交报价</button>
       </>
     )}>
       <div className="space-y-5" data-testid="rfq-supplier-response-editor">
@@ -209,11 +208,14 @@ export function RfqSupplierResponseDialog({
         </div>
         {mode === "append" && <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-xs text-blue-800">现有报价历史不会被修改，本次保存将创建新的报价版本。</div>}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="text-xs font-semibold" style={{ color: A.sub }}>提交模式<select aria-label="提交模式" className="mt-1 h-9 w-full rounded-lg border px-2 text-sm" value={submissionMode} onChange={(event) => setSubmissionMode(event.target.value as "draft" | "submitted")}><option value="draft">草稿</option><option value="submitted">正式提交</option></select></label>
           <label className="text-xs font-semibold" style={{ color: A.sub }}>币种<input aria-label="币种" className="mt-1 h-9 w-full rounded-lg border px-2 text-sm uppercase" maxLength={3} value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
           <label className="text-xs font-semibold" style={{ color: A.sub }}>付款条款<input aria-label="付款条款" className="mt-1 h-9 w-full rounded-lg border px-2 text-sm" placeholder="例如 NET30" value={paymentTerms} onChange={(event) => setPaymentTerms(event.target.value)} /></label>
           <label className="text-xs font-semibold" style={{ color: A.sub }}>报价有效期<input aria-label="报价有效期" type="date" className="mt-1 h-9 w-full rounded-lg border px-2 text-sm" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} /></label>
           <label className="text-xs font-semibold">整体交付日期<input aria-label="整体交付日期" type="date" className="mt-1 h-9 w-full rounded-lg border px-2 text-sm" value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} /></label>
+        </div>
+        <div className="space-y-1 text-xs" style={{ color: A.sub }}>
+          <p>保存草稿不会记录为供应商已响应。</p>
+          <p>正式提交需要覆盖全部 RFQ 行项目。</p>
         </div>
         <Card className="overflow-hidden" data-testid="rfq-response-line-editor">
           <div className="border-b p-4"><h3 className="text-sm font-semibold">RFQ 行项目</h3><p className="mt-1 text-xs" style={{ color: A.sub }}>RFQ 行 ID、SKU、物料和需求数量是只读源事实；只填写供应商报价字段。</p></div>

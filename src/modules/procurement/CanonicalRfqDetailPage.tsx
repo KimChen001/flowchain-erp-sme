@@ -56,11 +56,26 @@ function statusLabel(value: string | null | undefined, labels: Record<string, st
   return value ? labels[value] || "未提供" : "未提供";
 }
 
-function number(value: number | null | undefined) {
+function exactDisplay(value: string, minimumFractionDigits = 0) {
+  if (!/^\d+(?:\.\d+)?$/.test(value)) return null;
+  const [whole, rawFraction = ""] = value.split(".");
+  const fraction = rawFraction.replace(/0+$/, "").padEnd(minimumFractionDigits, "0");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return fraction ? `${grouped}.${fraction}` : grouped;
+}
+
+function number(value: number | string | null | undefined) {
+  if (typeof value === "string") return exactDisplay(value) || "—";
   return value == null || !Number.isFinite(value) ? "—" : value.toLocaleString("zh-CN", { maximumFractionDigits: 4 });
 }
 
-function money(value: number | null | undefined, currency = "CNY") {
+function money(value: number | string | null | undefined, currency = "CNY") {
+  if (typeof value === "string") {
+    const formatted = exactDisplay(value, 2);
+    if (!formatted) return "—";
+    const symbols: Record<string, string> = { CNY: "¥", USD: "US$", EUR: "€", GBP: "£", JPY: "JP¥" };
+    return symbols[currency] ? `${symbols[currency]}${formatted}` : `${formatted} ${currency}`;
+  }
   if (value == null || !Number.isFinite(value)) return "—";
   try {
     return new Intl.NumberFormat("zh-CN", { style: "currency", currency, maximumFractionDigits: 2 }).format(value);
