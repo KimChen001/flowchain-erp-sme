@@ -45,6 +45,7 @@ let prisma;
 let server;
 
 async function seedCanonicalRfqBrowserScenario(client) {
+  const supplierResponseAcceptance = process.env.PLAYWRIGHT_CANONICAL_RFQ_SUPPLIER_RESPONSE === "true";
   await client.rfq.create({
     data: {
       id: "LOCAL-DEMO-RFQ-001",
@@ -76,7 +77,20 @@ async function seedCanonicalRfqBrowserScenario(client) {
             requiredDate: "2030-01-15",
             deliveryLocation: "LOCAL-DEMO-WH-001",
           },
-        }],
+        }, ...(supplierResponseAcceptance ? [{
+          id: "LOCAL-DEMO-RFQL-002",
+          itemId: "LOCAL-DEMO-ITEM-002",
+          sku: "LDM-002",
+          itemName: "本地演示传感器",
+          quantity: 25,
+          unit: "pcs",
+          metadata: {
+            browserAcceptance: true,
+            targetUnitPrice: 40,
+            requiredDate: "2030-01-16",
+            deliveryLocation: "LOCAL-DEMO-WH-001",
+          },
+        }] : [])],
       },
     },
   });
@@ -178,7 +192,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
   await client.rfqSupplierParticipation.createMany({
     data: [
       { id: "LOCAL-DEMO-RFQSP-001", tenantId, rfqId: "LOCAL-DEMO-RFQ-001", supplierId: "LOCAL-DEMO-SUP-001", status: "response_recorded", invitedAt: new Date("2030-01-02T00:00:00.000Z"), respondedAt: new Date("2030-01-05T08:30:00.000Z"), metadata: { browserAcceptance: true } },
-      { id: "LOCAL-DEMO-RFQSP-002", tenantId, rfqId: "LOCAL-DEMO-RFQ-001", supplierId: "LOCAL-DEMO-SUP-002", status: "invited_internal", invitedAt: new Date("2030-01-02T00:00:00.000Z"), metadata: { browserAcceptance: true } },
+      { id: "LOCAL-DEMO-RFQSP-002", tenantId, rfqId: "LOCAL-DEMO-RFQ-001", supplierId: "LOCAL-DEMO-SUP-002", status: supplierResponseAcceptance ? "planned" : "invited_internal", invitedAt: supplierResponseAcceptance ? null : new Date("2030-01-02T00:00:00.000Z"), metadata: { browserAcceptance: true } },
       { id: "LOCAL-DEMO-RFQSP-003", tenantId, rfqId: "LOCAL-DEMO-RFQ-001", supplierId: "LOCAL-DEMO-SUP-003", status: "declined", invitedAt: new Date("2030-01-02T00:00:00.000Z"), metadata: { browserAcceptance: true } },
       { id: "LOCAL-DEMO-RFQSP-004", tenantId, rfqId: "LOCAL-DEMO-RFQ-001", supplierId: "LOCAL-DEMO-SUP-004", status: "withdrawn", invitedAt: new Date("2030-01-02T00:00:00.000Z"), withdrawnAt: new Date("2030-01-06T00:00:00.000Z"), metadata: { browserAcceptance: true } },
     ],
@@ -194,6 +208,22 @@ async function seedCanonicalRfqBrowserScenario(client) {
       metadata: { browserAcceptance: true },
     },
   });
+  if (supplierResponseAcceptance) {
+    await client.rfq.create({
+      data: {
+        id: "LOCAL-DEMO-RFQ-CLOSED",
+        tenantId,
+        title: "已关闭的供应商响应询价",
+        status: "closed",
+        currency: "CNY",
+        metadata: { browserAcceptance: true },
+        lines: { create: [{ id: "LOCAL-DEMO-RFQL-CLOSED", itemId: "LOCAL-DEMO-ITEM-001", sku: "LDM-001", itemName: "本地演示控制器", quantity: 1, unit: "pcs", metadata: { browserAcceptance: true } }] },
+      },
+    });
+    await client.rfqSupplierParticipation.create({
+      data: { id: "LOCAL-DEMO-RFQSP-CLOSED", tenantId, rfqId: "LOCAL-DEMO-RFQ-CLOSED", supplierId: "LOCAL-DEMO-SUP-002", status: "planned", metadata: { browserAcceptance: true } },
+    });
+  }
 }
 
 async function cleanup() {
@@ -250,7 +280,7 @@ try {
   await seedLocalDemo(prisma, process.env);
   if (process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY !== "true") {
     await seedLocalScenario(prisma, process.env);
-    if (process.env.PLAYWRIGHT_CANONICAL_RFQ_DETAIL === "true") {
+    if (process.env.PLAYWRIGHT_CANONICAL_RFQ_DETAIL === "true" || process.env.PLAYWRIGHT_CANONICAL_RFQ_SUPPLIER_RESPONSE === "true") {
       await seedCanonicalRfqBrowserScenario(prisma);
     }
   }
