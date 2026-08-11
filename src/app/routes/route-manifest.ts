@@ -23,7 +23,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     procurement procurement:workbench procurement:requests procurement:rfq
     procurement:orders procurement:receiving procurement:order-lines procurement:invoices
     procurement:match procurement:request-detail
-    procurement:rfq-detail procurement:order-detail
+    procurement:rfq-detail procurement:rfq-comparison procurement:order-detail
     procurement:receiving-detail procurement:invoice-detail
     procurement:match-detail
     inventory inventory:stock inventory:movements inventory:warnings
@@ -293,6 +293,7 @@ mapPermission(
   "finance.three_way_match.read",
   "procurement:match procurement:match-detail finance:three-way-match finance:match-detail",
 );
+mapPermission("procurement.prices.read", "procurement:rfq-comparison");
 mapPermission("returns.request.read", "procurement:returns");
 mapPermission(
   "inventory.balance.read",
@@ -470,6 +471,8 @@ function limitationFor(
 ) {
   if (route.id === "procurement:rfq-detail")
     return "只读展示当前租户的 RFQ、行项目、参与记录、最大 revisionNumber 报价和明确证据关系；内部 response/revision command 与 Comparison read contract 不在此 UI 路由内。";
+  if (route.id === "procurement:rfq-comparison")
+    return "只读展示当前租户 RFQ 的供应商报价比较、Participation 摘要与非有效响应；不排名、不推荐、不授标、不转换 PO，币种不做汇率换算。";
   if (compatibilityRouteIds.has(route.id))
     return "Compatibility extension; not part of the default SME Core surface.";
   if (route.id === "imports")
@@ -515,12 +518,16 @@ export function authorityForRoute(
         ? "/api/procurement/documents?type=rfq"
         : route.id === "procurement:rfq-detail"
           ? "/api/procurement/documents/rfq/:id"
+          : route.id === "procurement:rfq-comparison"
+            ? "/api/procurement/rfqs/:rfqId/comparison"
           : apiByModule[route.moduleId],
     repositoryAuthority:
       classification === "LEGACY"
         ? "Retired legacy route"
         : route.id === "procurement:rfq-detail"
           ? "Tenant-scoped PostgreSQL direct document repository"
+          : route.id === "procurement:rfq-comparison"
+            ? "Tenant-scoped PostgreSQL RFQ Supplier Comparison Read Model"
           : classification === "FROZEN"
             ? "Capability or direct-route boundary"
           : classification === "INTERNAL"

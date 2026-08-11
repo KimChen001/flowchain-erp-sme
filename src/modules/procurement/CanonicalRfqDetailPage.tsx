@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ExternalLink, RefreshCw, Scale, TriangleAlert } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { A, Card, Chip } from "../../components/ui";
 import { ApiError } from "../../lib/api-client";
@@ -148,7 +148,7 @@ function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotat
   );
 }
 
-function LoadedRfq({ record }: { record: ProcurementRfqDocument }) {
+function LoadedRfq({ record, canCompare }: { record: ProcurementRfqDocument; canCompare: boolean }) {
   return (
     <div className="space-y-4" data-testid="canonical-rfq-detail">
       <Card className="p-5">
@@ -158,7 +158,16 @@ function LoadedRfq({ record }: { record: ProcurementRfqDocument }) {
             <h1 className="mt-1 text-xl font-semibold">{record.title || record.id}</h1>
             {record.description && <p className="mt-2 text-sm" style={{ color: A.sub }}>{record.description}</p>}
           </div>
-          <Chip label={statusLabel(record.status, RFQ_STATUS_LABELS)} color={A.blue} bg="#eff6ff" />
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip label={statusLabel(record.status, RFQ_STATUS_LABELS)} color={A.blue} bg="#eff6ff" />
+            {canCompare && <Link
+              className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700"
+              data-testid="rfq-comparison-link"
+              to={`/app/procurement/rfq/${encodeURIComponent(record.id || "")}/comparison`}
+            >
+              <Scale size={15} />比较供应商报价
+            </Link>}
+          </div>
         </div>
         <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
@@ -221,7 +230,7 @@ function LoadedRfq({ record }: { record: ProcurementRfqDocument }) {
   );
 }
 
-export function CanonicalRfqDetailPage({ documentId }: { documentId: string }) {
+export function CanonicalRfqDetailPage({ documentId, canCompare = false }: { documentId: string; canCompare?: boolean }) {
   const navigate = useNavigate();
   const [record, setRecord] = useState<ProcurementRfqDocument | null>(null);
   const [state, setState] = useState<ReadState>(documentId.trim() ? "loading" : "malformed");
@@ -243,7 +252,7 @@ export function CanonicalRfqDetailPage({ documentId }: { documentId: string }) {
 
   useEffect(() => { void load(); }, [load]);
 
-  if (state === "loaded" && record) return <LoadedRfq record={record} />;
+  if (state === "loaded" && record) return <LoadedRfq record={record} canCompare={canCompare} />;
 
   const messages: Record<Exclude<ReadState, "loading" | "loaded">, string> = {
     malformed: "RFQ 链接缺少有效编号。",

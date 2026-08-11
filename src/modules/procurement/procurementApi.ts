@@ -1,5 +1,5 @@
 import { apiJson } from "../../lib/api-client";
-import type { ProcurementDocument, ProcurementDocumentType, ProcurementRfqDocument, PurchaseOrder, PurchaseRequestSummary } from "./procurementTypes";
+import type { ProcurementDocument, ProcurementDocumentType, ProcurementRfqDocument, PurchaseOrder, PurchaseRequestSummary, RfqSupplierComparison } from "./procurementTypes";
 
 export const procurementApi = {
   listRequests: () => apiJson<PurchaseRequestSummary[]>("/api/procurement/requests"),
@@ -13,4 +13,8 @@ export const procurementApi = {
     apiJson<{ document: ProcurementRfqDocument }>(
       `/api/procurement/documents/rfq/${encodeURIComponent(id)}`,
     ).then((payload) => payload.document),
+  getRfqSupplierComparison: (id: string) =>
+    apiJson<RfqSupplierComparison>(
+      `/api/procurement/rfqs/${encodeURIComponent(id)}/comparison`,
+    ),
 };
