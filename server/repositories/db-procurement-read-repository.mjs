@@ -14,6 +14,7 @@ import {
   normalizeProcurementDocumentType,
 } from '../domain/procurement-read-model.mjs'
 import { normalizeProcurementAuthorityStatus } from '../domain/procurement-status-authority.mjs'
+import { exactRfqDecimalString } from '../domain/rfq-commercial-decimal.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 
@@ -226,7 +227,7 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
           status: canonicalStatus('supplierQuotationRevision', revision.status),
           statusRaw: text(revision.status) || null,
           currency: text(revision.currency, record.currency || 'CNY'),
-          quotedAmount: nullableNumber(revision.quotedAmount),
+          quotedAmount: exactRfqDecimalString(revision.quotedAmount),
           submittedAt: isoDateTime(revision.submittedAt),
           deliveryDate: isoDate(revision.deliveryDate ?? revisionMeta.deliveryDate ?? revisionMeta.promisedDate),
           paymentTerms: text(revision.paymentTerms ?? revisionMeta.paymentTerms) || null,
@@ -241,10 +242,10 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
             itemId: text(line.itemId) || null,
             sku: text(line.skuSnapshot) || null,
             itemName: text(line.itemNameSnapshot) || null,
-            quantity: nullableNumber(line.quantity),
+            quantity: exactRfqDecimalString(line.quantity),
             unit: text(line.unit) || null,
-            unitPrice: nullableNumber(line.unitPrice),
-            amount: nullableNumber(line.amount),
+            unitPrice: exactRfqDecimalString(line.unitPrice),
+            amount: exactRfqDecimalString(line.amount),
             deliveryDate: isoDate(line.deliveryDate),
           })),
           isLatest: false,

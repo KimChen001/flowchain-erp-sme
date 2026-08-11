@@ -2,6 +2,7 @@ import { assertAuthorized } from "../auth/authorization-service.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { normalizeProcurementAuthorityStatus } from "./procurement-status-authority.mjs";
+import { exactRfqDecimalString } from "./rfq-commercial-decimal.mjs";
 
 export class RfqSupplierComparisonError extends Error {
   constructor(code, message, status = 400, details) {
@@ -18,15 +19,6 @@ const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 const fail = (code, message, status = 400, details) => {
   throw new RfqSupplierComparisonError(code, message, status, details);
 };
-
-function exactDecimal(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value.toFixed === "function") return value.toFixed(4);
-  const raw = text(value);
-  if (!/^\d+(?:\.\d{1,4})?$/.test(raw)) return null;
-  const [whole, fraction = ""] = raw.split(".");
-  return `${whole}.${fraction.padEnd(4, "0")}`;
-}
 
 function isoDateTime(value) {
   if (!value) return null;
@@ -48,7 +40,7 @@ function mapRfqLine(line) {
     itemId: text(line.itemId) || null,
     sku: text(line.sku) || null,
     itemName: text(line.itemName) || null,
-    requestedQuantity: exactDecimal(line.quantity),
+    requestedQuantity: exactRfqDecimalString(line.quantity),
     unit: text(line.unit) || null,
   };
 }
@@ -93,10 +85,10 @@ function mapResponse(quotation, targetLines) {
       itemId: text(line.itemId) || null,
       sku: text(line.skuSnapshot) || null,
       itemName: text(line.itemNameSnapshot) || null,
-      quantity: exactDecimal(line.quantity),
+      quantity: exactRfqDecimalString(line.quantity),
       unit: text(line.unit) || null,
-      unitPrice: exactDecimal(line.unitPrice),
-      amount: exactDecimal(line.amount),
+      unitPrice: exactRfqDecimalString(line.unitPrice),
+      amount: exactRfqDecimalString(line.amount),
       deliveryDate: isoDateTime(line.deliveryDate),
     }))
     .sort((left, right) => compareText(left.rfqLineId || "", right.rfqLineId || "") || compareText(left.revisionLineId, right.revisionLineId));
@@ -134,7 +126,7 @@ function mapResponse(quotation, targetLines) {
       status,
       statusRaw: text(latest.status) || null,
       currency: text(latest.currency) || null,
-      quotedAmount: exactDecimal(latest.quotedAmount),
+      quotedAmount: exactRfqDecimalString(latest.quotedAmount),
       submittedAt: isoDateTime(latest.submittedAt),
       validUntil: isoDateTime(latest.validUntil),
       deliveryDate: isoDateTime(latest.deliveryDate),

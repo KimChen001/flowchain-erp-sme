@@ -4,6 +4,7 @@ import { createPrismaClient } from "../../server/persistence/prisma-client.mjs";
 import { createDbProcurementReadRepository } from "../../server/repositories/db-procurement-read-repository.mjs";
 
 const tenantId = "tenant-rfq-revision-authority";
+const unsafeScaledDecimal = "90071992547409.1234";
 
 test("real PostgreSQL RFQ participation and append-only revision authority", async () => {
   const prisma = await createPrismaClient(process.env);
@@ -25,7 +26,7 @@ test("real PostgreSQL RFQ participation and append-only revision authority", asy
       { id: "participation-declined", tenantId, rfqId: "rfq-revision-authority", supplierId: "supplier-rfq-declined", status: "declined", invitedAt: new Date("2026-07-27T07:00:00Z") },
       { id: "participation-withdrawn", tenantId, rfqId: "rfq-revision-authority", supplierId: "supplier-rfq-withdrawn", status: "withdrawn", invitedAt: new Date("2026-07-27T06:00:00Z"), withdrawnAt: new Date("2026-07-27T10:00:00Z") },
     ] });
-    await prisma.supplierQuotationRevision.create({ data: { id: "revision-two", tenantId, quotationId: "quotation-revision-authority", revisionNumber: 2, status: "submitted", currency: "CNY", quotedAmount: "19.5000", source: "internal_recording", lines: { create: { id: "revision-line-two", rfqLineId: "rfq-revision-line", sourceQuotationLineId: "legacy-quotation-line", skuSnapshot: "REV-SKU", itemNameSnapshot: "Revision Item", quantity: "2.0000", unit: "EA", unitPrice: "9.7500", amount: "19.5000" } } } });
+    await prisma.supplierQuotationRevision.create({ data: { id: "revision-two", tenantId, quotationId: "quotation-revision-authority", revisionNumber: 2, status: "submitted", currency: "CNY", quotedAmount: unsafeScaledDecimal, source: "internal_recording", lines: { create: { id: "revision-line-two", rfqLineId: "rfq-revision-line", sourceQuotationLineId: "legacy-quotation-line", skuSnapshot: "REV-SKU", itemNameSnapshot: "Revision Item", quantity: unsafeScaledDecimal, unit: "EA", unitPrice: "1.0000", amount: unsafeScaledDecimal } } } });
     await prisma.supplierQuotationRevision.create({ data: { id: "revision-one", tenantId, quotationId: "quotation-revision-authority", revisionNumber: 1, status: "submitted", currency: "CNY", quotedAmount: "20.0000", source: "internal_recording" } });
 
     const repository = createDbProcurementReadRepository({ env: process.env, prisma });
@@ -40,7 +41,16 @@ test("real PostgreSQL RFQ participation and append-only revision authority", asy
     assert.equal(detail.suppliers.knownParticipants.find((item) => item.supplierId === "supplier-rfq-no-response").responseState, "no_response");
     assert.equal(detail.quotations[0].latestRevision.revisionNumber, 2);
     assert.deepEqual(detail.quotations[0].revisions.map((revision) => revision.revisionNumber), [2, 1]);
-    assert.equal(detail.quotations[0].latestRevision.lines[0].unitPrice, 9.75);
+    const storedRevision = await prisma.supplierQuotationRevision.findUnique({ where: { id: "revision-two" }, include: { lines: true } });
+    assert.equal(storedRevision.quotedAmount.toFixed(4), unsafeScaledDecimal);
+    assert.equal(storedRevision.lines[0].quantity.toFixed(4), unsafeScaledDecimal);
+    assert.equal(storedRevision.lines[0].unitPrice.toFixed(4), "1.0000");
+    assert.equal(storedRevision.lines[0].amount.toFixed(4), unsafeScaledDecimal);
+    assert.equal(detail.quotations[0].quotedAmount, unsafeScaledDecimal);
+    assert.equal(detail.quotations[0].latestRevision.quotedAmount, unsafeScaledDecimal);
+    assert.equal(detail.quotations[0].latestRevision.lines[0].quantity, unsafeScaledDecimal);
+    assert.equal(detail.quotations[0].latestRevision.lines[0].unitPrice, "1.0000");
+    assert.equal(detail.quotations[0].latestRevision.lines[0].amount, unsafeScaledDecimal);
 
     await assert.rejects(() => prisma.supplierQuotationRevision.update({ where: { id: "revision-two" }, data: { quotedAmount: "1.0000" } }), /append-only/);
     await assert.rejects(() => prisma.supplierQuotationRevisionLine.delete({ where: { id: "revision-line-two" } }), /append-only/);

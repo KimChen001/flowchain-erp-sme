@@ -22,10 +22,10 @@ export type ProcurementQuotationLine = {
   itemId?: string | null;
   sku?: string | null;
   itemName?: string | null;
-  quantity?: number | null;
+  quantity?: string | null;
   unit?: string | null;
-  unitPrice?: number | null;
-  amount?: number | null;
+  unitPrice?: string | null;
+  amount?: string | null;
   deliveryDate?: string;
 };
 export type ProcurementQuotationRevision = {
@@ -34,7 +34,7 @@ export type ProcurementQuotationRevision = {
   status?: string | null;
   statusRaw?: string | null;
   currency: string;
-  quotedAmount?: number | null;
+  quotedAmount?: string | null;
   submittedAt?: string;
   deliveryDate?: string;
   paymentTerms?: string | null;
@@ -52,7 +52,7 @@ export type ProcurementRfqQuotation = {
   supplierName?: string | null;
   status?: string | null;
   statusRaw?: string | null;
-  quotedAmount?: number | null;
+  quotedAmount?: string | null;
   currency?: string | null;
   submittedAt?: string;
   deliveryDate?: string;
@@ -98,6 +98,42 @@ export type ProcurementRfqDocument = ProcurementDocument & {
   relatedEvidence: Array<{ type: string; id: string; label: string; relation: string }>;
   revisionAuthority: { available: true; immutable: true; latestRule: "maximum_revision_number" };
   limitations: string[];
+};
+export type RfqResponseLineInput = {
+  rfqLineId: string;
+  quantity: string;
+  unitPrice: string;
+  deliveryDate?: string | null;
+};
+export type RfqSupplierResponseCommandInput = {
+  supplierId: string;
+  expectedVersion: number;
+  submissionMode: "draft" | "submitted";
+  currency: string;
+  submittedAt?: string | null;
+  validUntil?: string | null;
+  deliveryDate?: string | null;
+  paymentTerms?: string | null;
+  lines: RfqResponseLineInput[];
+  idempotencyKey: string;
+};
+export type RfqSupplierResponseCommandResult = {
+  entityType: "SupplierQuotation";
+  entityId: string;
+  entityVersion: number;
+  rfqId: string;
+  supplierId: string;
+  quotationId: string;
+  revisionId: string;
+  revisionNumber: number;
+  status: string;
+  currency: string;
+  quotedAmount: string;
+  lineCount: number;
+  participationId: string;
+  participationVersion: number;
+  serverTime: string;
+  idempotentReplay: boolean;
 };
 export type PurchaseRequestSummary = { id: string; status: string; totalAmount: number };
 export type PurchaseOrderLine = { sourcePurchaseRequestLineId: string; itemNameSnapshot: string; estimatedAmount: number };
