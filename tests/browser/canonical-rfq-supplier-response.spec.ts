@@ -108,13 +108,16 @@ test("planned Supplier progresses draft to submitted revisions with one idempote
   expect(issues).toEqual([]);
 });
 
-test("submitted quotation appends Revision 3 and surfaces a real stale-version conflict", async ({ page, request }) => {
+test("submitted quotation preserves date-only values and surfaces a real stale-version conflict", async ({ page, request }) => {
   const session = await login(page, request);
   await page.goto(`/app/procurement/rfq/${RFQ_ID}`);
   await page.getByTestId(`rfq-response-action-${SUPPLIER_A}`).click();
   await expect(page.getByLabel(`报价数量 ${LINE_1}`)).toHaveValue(UNSAFE_SCALED_DECIMAL);
   await expect(page.getByLabel(`单价 ${LINE_1}`)).toHaveValue("1.0000");
+  await page.getByLabel("报价有效期").fill("2030-03-31");
+  await page.getByLabel("整体交付日期").fill("2030-02-20");
   await selectLine(page, LINE_2, "25.0000", "41.0000");
+  await page.getByLabel(`行交期 ${LINE_2}`).fill("2030-02-18");
   await page.getByTestId("rfq-response-submit").click();
   const supplierARevision3 = await quotationFor(page, "本地演示供应商 A");
   await expect(supplierARevision3).toContainText("Revision 3 · 当前版本");
@@ -125,9 +128,20 @@ test("submitted quotation appends Revision 3 and surfaces a real stale-version c
   expect(quotationAfterAppend.latestRevision.quotedAmount).toBe(UNSAFE_SCALED_DECIMAL_WITH_SECOND_LINE);
   expect(quotationAfterAppend.latestRevision.lines.find((line: { rfqLineId: string }) => line.rfqLineId === LINE_1).quantity).toBe(UNSAFE_SCALED_DECIMAL);
   expect(quotationAfterAppend.latestRevision.lines.find((line: { rfqLineId: string }) => line.rfqLineId === LINE_1).unitPrice).toBe("1.0000");
-  expect(quotationAfterAppend.revisions.find((revision: { revisionNumber: number }) => revision.revisionNumber === 2).lines[0].quantity).toBe(UNSAFE_SCALED_DECIMAL);
+  expect(quotationAfterAppend.latestRevision.validity).toBe("2030-03-31");
+  expect(quotationAfterAppend.latestRevision.deliveryDate).toBe("2030-02-20");
+  expect(quotationAfterAppend.latestRevision.lines.find((line: { rfqLineId: string }) => line.rfqLineId === LINE_2).deliveryDate).toBe("2030-02-18");
+  const previousRevision = quotationAfterAppend.revisions.find((revision: { revisionNumber: number }) => revision.revisionNumber === 2);
+  expect(previousRevision.lines[0].quantity).toBe(UNSAFE_SCALED_DECIMAL);
+  expect(previousRevision.validity).toBe("2030-01-20");
+  expect(previousRevision.deliveryDate).toBe("2030-01-14");
+  expect(previousRevision.lines[0].deliveryDate).toBe("");
 
+  await page.reload();
   await page.getByTestId(`rfq-response-action-${SUPPLIER_A}`).click();
+  await expect(page.getByLabel("报价有效期")).toHaveValue("2030-03-31");
+  await expect(page.getByLabel("整体交付日期")).toHaveValue("2030-02-20");
+  await expect(page.getByLabel(`行交期 ${LINE_2}`)).toHaveValue("2030-02-18");
   const concurrent = await request.post(appendPath(SUPPLIER_A), {
     headers: { Authorization: `Bearer ${session.token}`, "Idempotency-Key": globalThis.crypto.randomUUID() },
     data: {
