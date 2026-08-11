@@ -1,5 +1,5 @@
 import { apiJson } from "../../lib/api-client";
-import type { ProcurementDocument, ProcurementDocumentType, ProcurementRfqDocument, PurchaseOrder, PurchaseRequestSummary, RfqSupplierComparison } from "./procurementTypes";
+import type { ProcurementDocument, ProcurementDocumentType, ProcurementRfqDocument, PurchaseOrder, PurchaseRequestSummary, RfqSupplierComparison, RfqSupplierResponseCommandInput, RfqSupplierResponseCommandResult } from "./procurementTypes";
 
 export const procurementApi = {
   listRequests: () => apiJson<PurchaseRequestSummary[]>("/api/procurement/requests"),
@@ -16,5 +16,23 @@ export const procurementApi = {
   getRfqSupplierComparison: (id: string) =>
     apiJson<RfqSupplierComparison>(
       `/api/procurement/rfqs/${encodeURIComponent(id)}/comparison`,
+    ),
+  recordRfqSupplierResponse: (rfqId: string, input: RfqSupplierResponseCommandInput) =>
+    apiJson<RfqSupplierResponseCommandResult>(
+      `/api/procurement/rfqs/${encodeURIComponent(rfqId)}/supplier-responses`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": input.idempotencyKey },
+        body: JSON.stringify(input),
+      },
+    ),
+  appendRfqSupplierResponseRevision: (rfqId: string, supplierId: string, input: RfqSupplierResponseCommandInput) =>
+    apiJson<RfqSupplierResponseCommandResult>(
+      `/api/procurement/rfqs/${encodeURIComponent(rfqId)}/supplier-responses/${encodeURIComponent(supplierId)}/revisions`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": input.idempotencyKey },
+        body: JSON.stringify(input),
+      },
     ),
 };

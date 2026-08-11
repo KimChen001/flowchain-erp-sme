@@ -27,7 +27,7 @@ function collectRuntimeIssues(page: Page) {
 
 async function expectNoWriteActions(page: Page) {
   const detail = page.getByTestId("canonical-rfq-detail");
-  const writeAction = /response|revision|compare|award|approve|convert|invitation|portal|execute|创建响应|记录响应|编辑询价|关闭询价|添加修订|追加修订|比较报价|授标|批准供应商|转为 PO|发送邀请/i;
+  const writeAction = /compare|award|approve|convert|invitation|portal|execute|编辑询价|关闭询价|比较报价|授标|批准供应商|转为 PO|发送邀请/i;
   await expect(
     detail.getByRole("button", { name: writeAction }),
   ).toHaveCount(0);

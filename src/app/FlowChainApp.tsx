@@ -1952,7 +1952,8 @@ export default function FlowChainApp() {
                         {activeRoute.id === "procurement:rfq-detail" ? (
                           <CanonicalRfqDetailPage
                             documentId={entityIdForRoutePath(activeRoute, location.pathname)}
-                            canCompare={effectivePermissionCodes.has("procurement.prices.read")}
+                            effectivePermissionCodes={effectivePermissionCodes}
+                            authorizationLoadState={authorizationLoadState}
                           />
                         ) : activeRoute.id === "procurement:rfq-comparison" ? (
                           <CanonicalRfqComparisonPage documentId={entityIdForRoutePath(activeRoute, location.pathname)} />
