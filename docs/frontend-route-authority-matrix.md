@@ -21,7 +21,7 @@ backend-authorized.
 - Internal: 18
 - Frozen: 7
 - Legacy: 5
-- Total: 162
+- Total: 163
 
 ## Default SME navigation
 
@@ -32,7 +32,7 @@ Settings remains in the profile menu. Finance and Mobile Operations remain
 hidden Extensions; Frozen, Legacy, and Internal surfaces remain outside normal
 navigation.
 
-The 162/162 frontend route stability audit verifies
+The 163/163 frontend route stability audit verifies
 resolution, shell rendering, no route-level 404 recovery, no render crash, and
 no observed API 5xx. It does not prove business semantics, data authority,
 permission correctness, capability correctness, or complete functionality.
@@ -102,6 +102,7 @@ classification and navigation metadata.
 | `procurement:contracts` | `/app/procurement/contracts` | 框架合同 | `procurement` | FROZEN | HIDDEN | no | procurement | `src/modules/procurement` | /api/procurement/* | Capability or direct-route boundary | UNAVAILABLE | UNAVAILABLE | — | — | FROZEN_UNAVAILABLE | — | No authoritative enabled product capability is claimed. |
 | `procurement:request-detail` | `/app/procurement/requests/:id` | 采购申请详情 | `procurement` | CORE | CONTEXTUAL | no | purchase_request | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:rfq-detail` | `/app/procurement/rfq/:id` | RFQ 详情 | `procurement` | CORE | CONTEXTUAL | no | rfq | `src/modules/procurement` | /api/procurement/documents/rfq/:id | Tenant-scoped PostgreSQL direct document repository | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | 只读展示当前租户的 RFQ、行项目、参与记录、最大 revisionNumber 报价和明确证据关系；内部 response/revision command 与 Comparison read contract 不在此 UI 路由内。 |
+| `procurement:rfq-comparison` | `/app/procurement/rfq/:id/comparison` | 供应商报价比较 | `procurement` | CORE | CONTEXTUAL | no | rfq_supplier_comparison | `src/modules/procurement` | /api/procurement/rfqs/:rfqId/comparison | Tenant-scoped PostgreSQL RFQ Supplier Comparison Read Model | AUTHORITATIVE | UNAVAILABLE | — | procurement.prices.read | PERMISSION_REQUIRED | — | 只读展示当前租户 RFQ 的供应商报价比较、Participation 摘要与非有效响应；不排名、不推荐、不授标、不转换 PO，币种不做汇率换算。 |
 | `procurement:order-detail` | `/app/procurement/orders/:id` | 采购订单详情 | `procurement` | CORE | CONTEXTUAL | no | purchase_order | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | procurement.purchase_order.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:receiving-detail` | `/app/procurement/receiving/:id` | 收货单详情 | `procurement` | CORE | CONTEXTUAL | no | receiving_doc | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | receiving.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:invoice-detail` | `/app/procurement/invoices/:id` | 供应商发票详情 | `procurement` | CORE | CONTEXTUAL | no | supplier_invoice | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | finance.supplier_invoice.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
