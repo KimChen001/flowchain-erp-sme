@@ -22,6 +22,7 @@
     "test:browser:outbound": "node scripts/run-outbound-playwright.mjs",
     "test:browser:product-recovery": "node scripts/run-product-recovery-playwright.mjs",
     "test:browser:canonical-rfq-detail": "node scripts/run-canonical-rfq-detail-playwright.mjs",
+    "test:browser:canonical-rfq-comparison": "node scripts/run-canonical-rfq-comparison-playwright.mjs",
     "test:browser:inventory-operations": "node scripts/run-inventory-operations-playwright.mjs",
     "test:browser:returns-quarantine": "node scripts/run-returns-quarantine-playwright.mjs",
     "test:browser:settings": "node scripts/run-settings-playwright.mjs",
