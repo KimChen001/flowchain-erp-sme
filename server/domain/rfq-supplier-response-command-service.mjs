@@ -222,6 +222,18 @@ export function createRfqSupplierResponseCommandService({
         if (![RFQ_STATUS.OPEN, RFQ_STATUS.COLLECTING_QUOTES].includes(rfqStatus)) {
           fail("RFQ_RESPONSE_WORKFLOW_CONFLICT", "Supplier responses may be recorded only while the RFQ is open for responses.", 409, { rfqId: rfq.id, currentStatus: rfqStatus, availableActions: ["reload"] });
         }
+        const awardDecision = await tx.rfqAwardDecision.findUnique({
+          where: { tenantId_rfqId: { tenantId: actor.tenantId, rfqId: payload.rfqId } },
+          select: { id: true },
+        });
+        if (awardDecision) {
+          fail(
+            "RFQ_RESPONSE_AWARD_EXISTS",
+            "Supplier responses cannot be changed after a reviewed Award Decision exists.",
+            409,
+            { rfqId: payload.rfqId, awardDecisionId: awardDecision.id, availableActions: ["reload"] },
+          );
+        }
 
         await tx.$queryRawUnsafe('SELECT "id" FROM "Supplier" WHERE "tenantId"=$1 AND "id"=$2 FOR UPDATE', actor.tenantId, payload.supplierId);
         const supplier = await tx.supplier.findFirst({ where: { tenantId: actor.tenantId, id: payload.supplierId } });
