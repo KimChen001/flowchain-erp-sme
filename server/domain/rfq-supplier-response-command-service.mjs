@@ -159,6 +159,13 @@ function replayExecution(row, requestHash) {
   return { ...row.resultPayload, idempotentReplay: true };
 }
 
+function isPostgresConcurrencyError(error) {
+  if (error?.code === "P2034") return true;
+  if (error?.code !== "P2010") return false;
+  const metadata = JSON.stringify(error?.meta || {});
+  return /40001|40P01|serializ|deadlock/i.test(metadata);
+}
+
 export function createRfqSupplierResponseCommandService({
   prisma,
   env = process.env,
@@ -489,7 +496,7 @@ export function createRfqSupplierResponseCommandService({
         }
         fail("RFQ_RESPONSE_CONCURRENCY_CONFLICT", "Supplier response facts changed concurrently. Reload and retry.", 409, { expectedVersion: payload.expectedVersion, availableActions: ["reload"] });
       }
-      if (error?.code === "P2034") {
+      if (isPostgresConcurrencyError(error)) {
         const awardDecision = await client.rfqAwardDecision.findUnique({
           where: { tenantId_rfqId: { tenantId: initialActor.tenantId, rfqId: payload.rfqId } },
           select: { id: true },
