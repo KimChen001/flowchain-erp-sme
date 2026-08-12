@@ -29,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 162);
+  assert.equal(routes.length, 163);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -46,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    162,
+    163,
   );
   assert.throws(
     () =>
@@ -218,6 +218,14 @@ test("legacy redirects and canonical operational deep links remain exact", () =>
   );
   assert.equal(byId("procurement:rfq-detail").readMaturity, "AUTHORITATIVE");
   assert.equal(byId("procurement:rfq-detail").writeMaturity, "UNAVAILABLE");
+  assert.equal(byId("procurement:rfq-comparison").path, "/app/procurement/rfq/:id/comparison");
+  assert.equal(byId("procurement:rfq-comparison").readMaturity, "AUTHORITATIVE");
+  assert.equal(byId("procurement:rfq-comparison").writeMaturity, "UNAVAILABLE");
+  assert.equal(byId("procurement:rfq-comparison").requiredPermission, "procurement.prices.read");
+  assert.equal(byId("procurement:rfq-comparison").apiDependency, "/api/procurement/rfqs/:rfqId/comparison");
+  assert.equal(byId("procurement:rfq-comparison").businessObject, "rfq_supplier_comparison");
+  assert.equal(byId("procurement:rfq-comparison").navigationVisibility, "CONTEXTUAL");
+  assert.equal(byId("procurement:rfq-comparison").repositoryAuthority, "Tenant-scoped PostgreSQL RFQ Supplier Comparison Read Model");
   assert.equal(
     byId("procurement:order-lines").path,
     "/app/procurement/order-lines",
@@ -437,5 +445,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /162\/162 frontend route stability audit/);
+  assert.match(matrix, /163\/163 frontend route stability audit/);
 });

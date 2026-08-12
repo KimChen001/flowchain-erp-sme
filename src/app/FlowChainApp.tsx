@@ -76,6 +76,7 @@ import ForecastPanel from "../modules/forecast/Page";
 import OverviewPanel from "../modules/overview/Page";
 import ProcurementPanel from "../modules/procurement/Page";
 import { CanonicalRfqDetailPage } from "../modules/procurement/CanonicalRfqDetailPage";
+import { CanonicalRfqComparisonPage } from "../modules/procurement/CanonicalRfqComparisonPage";
 import FinanceWorkbench from "../modules/finance/Page";
 import SrmPage from "../modules/srm/Page";
 import MasterDataPage from "../modules/master-data/Page";
@@ -1949,7 +1950,13 @@ export default function FlowChainApp() {
                         }
                       >
                         {activeRoute.id === "procurement:rfq-detail" ? (
-                          <CanonicalRfqDetailPage documentId={entityIdForRoutePath(activeRoute, location.pathname)} effectivePermissionCodes={effectivePermissionCodes} authorizationLoadState={authorizationLoadState} />
+                          <CanonicalRfqDetailPage
+                            documentId={entityIdForRoutePath(activeRoute, location.pathname)}
+                            effectivePermissionCodes={effectivePermissionCodes}
+                            authorizationLoadState={authorizationLoadState}
+                          />
+                        ) : activeRoute.id === "procurement:rfq-comparison" ? (
+                          <CanonicalRfqComparisonPage documentId={entityIdForRoutePath(activeRoute, location.pathname)} />
                         ) : activeRoute.panelId === "receiving-workbench" ? (
                           panels["receiving-workbench"]
                         ) : activeRoute.panelId === "outbound-workbench" ? (

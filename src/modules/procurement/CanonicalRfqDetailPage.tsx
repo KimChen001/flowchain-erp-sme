@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ExternalLink, FilePlus2, RefreshCw, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ExternalLink, FilePlus2, RefreshCw, Scale, TriangleAlert } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { A, Card, Chip } from "../../components/ui";
 import { ApiError } from "../../lib/api-client";
@@ -164,7 +164,7 @@ function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotat
   );
 }
 
-function LoadedRfq({ record, canCreate, canRevise, notice, onReload, onSuccessReload }: { record: ProcurementRfqDocument; canCreate: boolean; canRevise: boolean; notice: string | null; onReload: () => Promise<void>; onSuccessReload: () => Promise<void> }) {
+function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload, onSuccessReload }: { record: ProcurementRfqDocument; canCompare: boolean; canCreate: boolean; canRevise: boolean; notice: string | null; onReload: () => Promise<void>; onSuccessReload: () => Promise<void> }) {
   const [editor, setEditor] = useState<{ supplier: typeof record.suppliers.knownParticipants[number]; mode: "initial" | "append" } | null>(null);
   const quotationFor = (supplierId: string) => record.quotations.find((quotation) => quotation.supplierId === supplierId) || null;
   const responseWorkflowOpen = ["open", "collecting_quotes"].includes(record.status || "");
@@ -188,7 +188,17 @@ function LoadedRfq({ record, canCreate, canRevise, notice, onReload, onSuccessRe
             <h1 className="mt-1 text-xl font-semibold">{record.title || record.id}</h1>
             {record.description && <p className="mt-2 text-sm" style={{ color: A.sub }}>{record.description}</p>}
           </div>
-          <div className="flex flex-wrap items-center gap-2"><Chip label={statusLabel(record.status, RFQ_STATUS_LABELS)} color={A.blue} bg="#eff6ff" />{!responseWorkflowOpen && <span className="text-xs" style={{ color: A.sub }}>当前 RFQ 状态不允许录入新的供应商响应。</span>}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip label={statusLabel(record.status, RFQ_STATUS_LABELS)} color={A.blue} bg="#eff6ff" />
+            {canCompare && <Link
+              className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700"
+              data-testid="rfq-comparison-link"
+              to={`/app/procurement/rfq/${encodeURIComponent(record.id || "")}/comparison`}
+            >
+              <Scale size={15} />比较供应商报价
+            </Link>}
+          </div>
+          {!responseWorkflowOpen && <span className="text-xs" style={{ color: A.sub }}>当前 RFQ 状态不允许录入新的供应商响应。</span>}
         </div>
         <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
@@ -282,7 +292,7 @@ export function CanonicalRfqDetailPage({ documentId, effectivePermissionCodes, a
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { setSuccessNotice(null); }, [documentId]);
 
-  if (state === "loaded" && record) return <LoadedRfq record={record} canCreate={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.create")} canRevise={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.revise")} notice={successNotice} onReload={async () => { setSuccessNotice(null); await load(); }} onSuccessReload={async () => { setSuccessNotice("报价已保存，正在读取服务器权威结果。"); await load(); }} />;
+  if (state === "loaded" && record) return <LoadedRfq record={record} canCompare={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.prices.read")} canCreate={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.create")} canRevise={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_response.revise")} notice={successNotice} onReload={async () => { setSuccessNotice(null); await load(); }} onSuccessReload={async () => { setSuccessNotice("报价已保存，正在读取服务器权威结果。"); await load(); }} />;
 
   const messages: Record<Exclude<ReadState, "loading" | "loaded">, string> = {
     malformed: "RFQ 链接缺少有效编号。",
