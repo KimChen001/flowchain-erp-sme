@@ -103,7 +103,7 @@ test("comparison renders empty, draft-only, single, and historical-only states",
   await login(page, request);
   for (const [id, availability, context] of [
     ["LOCAL-DEMO-RFQ EMPTY", "暂无可比较的有效报价", "尚无供应商参与记录"],
-    ["LOCAL-DEMO-RFQ-COMPARISON-NO-QUOTE", "暂无可比较的有效报价", "已有参与记录，但尚无报价"],
+    ["LOCAL-DEMO-RFQ-COMPARISON-NO-QUOTE", "暂无可比较的有效报价", "已参与但尚无报价"],
     ["LOCAL-DEMO-RFQ-COMPARISON-DRAFT", "暂无可比较的有效报价", "现有报价均为草稿"],
     ["LOCAL-DEMO-RFQ-COMPARISON-SINGLE", "当前只有 1 个有效报价", "本地演示供应商 A"],
     ["LOCAL-DEMO-RFQ-COMPARISON-HISTORICAL", "暂无可比较的有效报价", "历史报价"],

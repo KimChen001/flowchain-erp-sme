@@ -190,8 +190,8 @@ function LoadedComparison({ comparison }: { comparison: RfqSupplierComparison })
       </Card>
 
       <Card className="p-4" data-testid="rfq-comparison-non-response">
-        <h2 className="text-sm font-semibold">尚无有效报价的供应商</h2>
-        <p className="mt-1 text-xs" style={{ color: A.sub }}>这里展示 Participation 记录，不创建或暗示报价行。</p>
+        <h2 className="text-sm font-semibold">已参与但尚无报价</h2>
+        <p className="mt-1 text-xs" style={{ color: A.sub }}>这里展示已有 Participation、但尚不存在 SupplierQuotation 报价记录的供应商。</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{comparison.nonResponseParticipants.map((participant) => <div className="rounded-lg border p-3 text-xs" data-testid={`rfq-comparison-non-response-${participant.supplierId}`} key={participant.supplierId}><div className="font-medium">{participant.supplierName || "未提供名称"}</div><div className="mt-1" style={{ color: A.sub }}>{participant.supplierId}</div><div className="mt-2">{PARTICIPATION_STATUS_LABELS[participant.status || ""] || participant.statusRaw || "状态不可识别"}</div><div className="mt-1" style={{ color: A.sub }}>内部邀请时间：{date(participant.invitedAt)}</div><div className="mt-1" style={{ color: A.sub }}>响应状态：尚无报价记录</div></div>)}{comparison.nonResponseParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>当前没有仅有 Participation、尚无报价的供应商。</div>}</div>
       </Card>
 

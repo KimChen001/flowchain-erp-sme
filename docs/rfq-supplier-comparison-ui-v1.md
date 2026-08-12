@@ -24,7 +24,7 @@ When eligible responses use more than one currency, the page displays: “报价
 
 ## Participation context
 
-The Participation summary and `尚无有效报价的供应商` section use the same authoritative snapshot as the comparison response. They show internal participation states and internal invitation timestamps only. They do not claim email delivery, portal acceptance, supplier login, or external submission, and they do not create synthetic quotation rows.
+The Participation summary and `已参与但尚无报价` section use the same authoritative snapshot as the comparison response. This section only contains suppliers with an authoritative Participation record and no SupplierQuotation aggregate. Suppliers with draft, incomplete, withdrawn, or otherwise non-eligible quotations remain in the quotation response matrix and are not synthetic non-response rows. The section shows internal participation states and internal invitation timestamps only. It does not claim email delivery, portal acceptance, supplier login, or external submission, and it does not create synthetic quotation rows.
 
 ## Failure states and non-goals
 
