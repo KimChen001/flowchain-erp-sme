@@ -476,9 +476,31 @@ export function createRfqSupplierResponseCommandService({
       if (error?.code === "P2002") {
         const committed = replayExecution(await client.businessCommandExecution.findUnique({ where: executionWhere }), requestHash);
         if (committed) return committed;
+        const awardDecision = await client.rfqAwardDecision.findUnique({
+          where: { tenantId_rfqId: { tenantId: initialActor.tenantId, rfqId: payload.rfqId } },
+          select: { id: true },
+        });
+        if (awardDecision) {
+          fail("RFQ_RESPONSE_AWARD_EXISTS", "Supplier responses cannot be changed after a reviewed Award Decision exists.", 409, {
+            rfqId: payload.rfqId,
+            awardDecisionId: awardDecision.id,
+            availableActions: ["reload"],
+          });
+        }
         fail("RFQ_RESPONSE_CONCURRENCY_CONFLICT", "Supplier response facts changed concurrently. Reload and retry.", 409, { expectedVersion: payload.expectedVersion, availableActions: ["reload"] });
       }
       if (error?.code === "P2034") {
+        const awardDecision = await client.rfqAwardDecision.findUnique({
+          where: { tenantId_rfqId: { tenantId: initialActor.tenantId, rfqId: payload.rfqId } },
+          select: { id: true },
+        });
+        if (awardDecision) {
+          fail("RFQ_RESPONSE_AWARD_EXISTS", "Supplier responses cannot be changed after a reviewed Award Decision exists.", 409, {
+            rfqId: payload.rfqId,
+            awardDecisionId: awardDecision.id,
+            availableActions: ["reload"],
+          });
+        }
         fail("RFQ_RESPONSE_CONCURRENCY_CONFLICT", "Supplier response facts changed concurrently. Reload and retry.", 409, { expectedVersion: payload.expectedVersion, availableActions: ["reload"] });
       }
       throw error;
