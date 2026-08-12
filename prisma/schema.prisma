@@ -39,6 +39,7 @@ model Tenant {
   rfqSupplierParticipations             RfqSupplierParticipation[]
   supplierQuotationRevisions            SupplierQuotationRevision[]
   supplierQuotationRevisionLines        SupplierQuotationRevisionLine[]
+  rfqAwardDecisions                     RfqAwardDecision[]
   purchaseOrders                        PurchaseOrder[]
   receivingDocuments                    ReceivingDocument[]
   supplierInvoices                      SupplierInvoice[]
@@ -560,6 +561,7 @@ model User {
   shipmentsPosted      ShipmentDocument[]          @relation("ShipmentPostedBy")
   shipmentsReversed    ShipmentDocument[]          @relation("ShipmentReversedBy")
   quotationRevisionsCreated SupplierQuotationRevision[] @relation("SupplierQuotationRevisionCreator")
+  rfqAwardDecisionsMade     RfqAwardDecision[]          @relation("RfqAwardDecisionActor")
 
   @@unique([tenantId, email])
   @@unique([tenantId, id])
@@ -643,6 +645,7 @@ model Supplier {
   items  Item[]
   rfqParticipations RfqSupplierParticipation[]
   quotations SupplierQuotation[]
+  rfqAwardDecisions RfqAwardDecision[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -983,6 +986,7 @@ model Rfq {
   lines      RfqLine[]
   quotations SupplierQuotation[]
   supplierParticipations RfqSupplierParticipation[]
+  awardDecisions         RfqAwardDecision[]
 
   @@unique([tenantId, id])
   @@index([tenantId, status])
@@ -1022,14 +1026,16 @@ model SupplierQuotation {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  tenant    Tenant                      @relation(fields: [tenantId], references: [id])
-  rfq       Rfq                         @relation(fields: [tenantId, rfqId], references: [tenantId, id], onDelete: Restrict)
-  supplier  Supplier                    @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: Restrict)
-  lines     SupplierQuotationLine[]
-  revisions SupplierQuotationRevision[]
+  tenant         Tenant                      @relation(fields: [tenantId], references: [id])
+  rfq            Rfq                         @relation(fields: [tenantId, rfqId], references: [tenantId, id], onDelete: Restrict)
+  supplier       Supplier                    @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: Restrict)
+  lines          SupplierQuotationLine[]
+  revisions      SupplierQuotationRevision[]
+  awardDecisions RfqAwardDecision[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, rfqId, supplierId])
+  @@unique([tenantId, id, rfqId, supplierId])
   @@index([tenantId, rfqId])
   @@index([tenantId, supplierName])
 }
@@ -1092,13 +1098,15 @@ model SupplierQuotationRevision {
   metadata         Json?
   createdAt        DateTime  @default(now())
 
-  tenant         Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  quotation      SupplierQuotation         @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
-  createdByActor User?                     @relation("SupplierQuotationRevisionCreator", fields: [tenantId, createdByActorId], references: [tenantId, id], onDelete: Restrict)
+  tenant         Tenant                          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  quotation      SupplierQuotation               @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+  createdByActor User?                           @relation("SupplierQuotationRevisionCreator", fields: [tenantId, createdByActorId], references: [tenantId, id], onDelete: Restrict)
   lines          SupplierQuotationRevisionLine[]
+  awardDecisions RfqAwardDecision[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, quotationId, revisionNumber])
+  @@unique([tenantId, id, quotationId, revisionNumber])
   @@index([tenantId, quotationId, revisionNumber])
   @@index([tenantId, createdAt])
 }
@@ -1129,6 +1137,36 @@ model SupplierQuotationRevisionLine {
   @@index([tenantId, revisionId])
   @@index([tenantId, rfqLineId])
   @@index([tenantId, sourceQuotationLineId])
+}
+
+model RfqAwardDecision {
+  id                      String   @id
+  tenantId                String
+  rfqId                   String
+  supplierId              String
+  quotationId             String
+  quotationRevisionId     String
+  quotationRevisionNumber Int
+  currency                String
+  quotedAmount            Decimal  @db.Decimal(18, 4)
+  decisionReason          String
+  decidedByActorId        String
+  decidedAt               DateTime
+  metadata                Json?
+  createdAt               DateTime @default(now())
+
+  tenant            Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  rfq               Rfq                       @relation(fields: [tenantId, rfqId], references: [tenantId, id], onDelete: Restrict)
+  supplier          Supplier                  @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: Restrict)
+  quotation         SupplierQuotation         @relation(fields: [tenantId, quotationId, rfqId, supplierId], references: [tenantId, id, rfqId, supplierId], onDelete: Restrict)
+  quotationRevision SupplierQuotationRevision @relation(fields: [tenantId, quotationRevisionId, quotationId, quotationRevisionNumber], references: [tenantId, id, quotationId, revisionNumber], onDelete: Restrict)
+  decidedByActor    User                      @relation("RfqAwardDecisionActor", fields: [tenantId, decidedByActorId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, rfqId])
+  @@index([tenantId, supplierId])
+  @@index([tenantId, quotationId, quotationRevisionId])
+  @@index([tenantId, decidedAt])
 }
 
 model PurchaseOrder {
