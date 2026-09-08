@@ -46,7 +46,9 @@ try {
   await query(`INSERT INTO "CashbookAccount" ("id","tenantId","accountCode","name","accountType","currency","openingBalance","currentBalance","status","version","updatedAt") VALUES ('phase53-upgrade-account','phase53-upgrade-tenant','UPGRADE-CNY','Preserved Bank','bank','CNY',100,100,'active',4,CURRENT_TIMESTAMP)`);
   const before = (await query(`SELECT "name","version" FROM "Tenant" WHERE "id"='phase53-upgrade-tenant'`)).rows[0];
   await run(process.execPath, [prismaCli, "migrate", "deploy"], { cwd: root, env, maxBuffer: 20 * 1024 * 1024 });
-  assert.deepEqual((await query(`SELECT "name","version" FROM "Tenant" WHERE "id"='phase53-upgrade-tenant'`)).rows[0], before);
+  assert.deepEqual((await query(`SELECT "name","version" FROM "Tenant" WHERE "id"='phase53-upgrade-tenant'`)).rows[0], { ...before, version: before.version + 1 });
+  // Deploy includes the one-time English interface migration, which versions the tenant.
+  assert.equal((await query(`SELECT "defaultLanguage" FROM "Tenant" WHERE "id"='phase53-upgrade-tenant'`)).rows[0].defaultLanguage, "en-US");
   assert.equal((await query(`SELECT "version" FROM "CashbookAccount" WHERE "id"='phase53-upgrade-account'`)).rows[0].version, 4);
   const applied = (await query(`SELECT "migration_name" FROM "_prisma_migrations" WHERE "finished_at" IS NOT NULL ORDER BY "migration_name"`)).rows.map((row) => row.migration_name);
   assert.ok(applied.includes(target));
