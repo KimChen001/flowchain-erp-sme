@@ -239,7 +239,7 @@ export function createMobileSyncService({ prisma, env = process.env, idFactory =
           return { acknowledgedSequence: String(sequence), serverTime: serial(now()) };
         }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 });
       } catch (error) {
-        if (error?.code === "P2034" && attempt < 2) continue;
+        if (isTransactionConflict(error) && attempt < 2) continue;
         throw error;
       }
     }
@@ -256,3 +256,4 @@ export function createMobileSyncService({ prisma, env = process.env, idFactory =
 }
 
 export { issueCursor, verifyCursor };
+import { isTransactionConflict } from "../persistence/transaction-conflict.mjs";

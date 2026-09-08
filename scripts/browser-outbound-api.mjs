@@ -79,7 +79,7 @@ try {
   });
   prisma = await createPrismaClient(process.env);
   await prisma.tenant.create({
-    data: { id: tenantId, name: "Outbound Browser Tenant" },
+    data: { id: tenantId, name: "Outbound Browser Tenant", defaultLanguage: "zh-CN" },
   });
   await prisma.user.create({
     data: {

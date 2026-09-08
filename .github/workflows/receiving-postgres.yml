@@ -50,6 +50,7 @@ jobs:
       - run: npm run test:db:operational-finance
       - run: npm run test:api:operational-finance
       - run: npm run test:api:settings
+      - run: npm run test:db:english
       - run: npm run test:db:authorization
       - run: npm run test:api:authorization
       - run: npm run test:db:intake
@@ -131,6 +132,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://generate_only:generate_only@127.0.0.1:55432/flowchain_generate_only?schema=public
       - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser:english
       - run: npm run test:browser:receiving
       - run: npm run test:browser:reports
       - run: npm run test:browser:outbound
