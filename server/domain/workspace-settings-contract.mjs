@@ -1,4 +1,4 @@
-export const SUPPORTED_LANGUAGES = ['zh-CN', 'en-US']
+export const SUPPORTED_LANGUAGES = ['en-US', 'zh-CN']
 export const SUPPORTED_LOCALES = ['zh-CN', 'en-US']
 export const SUPPORTED_TIMEZONES = [
   'Asia/Shanghai',
@@ -102,7 +102,7 @@ export function assertSupportedCurrency(value) {
 }
 
 export function effectiveLanguage(user, tenant) {
-  return normalizeLanguagePreference(user?.languagePreference) || (SUPPORTED_LANGUAGES.includes(tenant?.defaultLanguage) ? tenant.defaultLanguage : 'zh-CN')
+  return normalizeLanguagePreference(user?.languagePreference) || (SUPPORTED_LANGUAGES.includes(tenant?.defaultLanguage) ? tenant.defaultLanguage : 'en-US')
 }
 
 export function mergeOperationalSettings(value) {

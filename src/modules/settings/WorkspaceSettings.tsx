@@ -202,8 +202,8 @@ export default function WorkspaceSettings({ view }: { view: string }) {
     readiness: t("settings.readiness"),
   } as Record<string, string>)[view] || t("nav.settings");
   const languageOptions = [
-    { value: "zh-CN", label: `${t("settings.chinese")} — zh-CN` },
     { value: "en-US", label: `${t("settings.english")} — en-US` },
+    { value: "zh-CN", label: `${t("settings.chinese")} — zh-CN` },
   ];
   const timezoneOptions = workspace.options.timezones.map(value => ({ value, label: `${value} — ${timezoneLabels[value]?.[language === "en-US" ? "en" : "zh"] || value}` }));
   const currencyOptions = workspace.options.currencies.map(value => ({ value, label: `${value} — ${currencyLabels[value]?.[language === "en-US" ? "en" : "zh"] || value}` }));

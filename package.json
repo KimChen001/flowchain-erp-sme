@@ -16,6 +16,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test server/domain/*.test.mjs server/routes/*.test.mjs",
     "test:browser": "playwright test",
+    "test:browser:english": "playwright test --config playwright.english.config.ts",
+    "test:db:english": "node scripts/run-postgres-test-files.mjs tests/postgres/english-default-language.test.mjs",
     "test:browser:ai": "playwright test tests/browser/ai-copilot.spec.ts",
     "test:browser:receiving": "node scripts/run-receiving-playwright.mjs",
     "test:browser:reports": "node scripts/run-reports-playwright.mjs",

@@ -14,7 +14,7 @@ model Tenant {
   locale                 String    @default("zh-CN")
   currency               String    @default("CNY")
   timezone               String    @default("Asia/Shanghai")
-  defaultLanguage        String    @default("zh-CN")
+  defaultLanguage        String    @default("en-US")
   operationalSettings    Json      @default("{}")
   workspaceCompletedAt   DateTime?
   openingBalanceLockedAt DateTime?
