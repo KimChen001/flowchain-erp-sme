@@ -1,3 +1,4 @@
+import { KnowledgeLibrary } from "./KnowledgeLibrary";
 import { useI18n } from "../../i18n/I18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Maximize2, MessageCircle, Minimize2, Plus, RotateCcw, Send, Square, Sparkles, X } from "lucide-react";
@@ -1554,6 +1555,8 @@ export default function FloatingAiAssistant({
   onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void;
 }) {
   const { language } = useI18n();
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
+  const [queryMode, setQueryMode] = useState<"business" | "knowledge">("business");
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState("");
@@ -1672,6 +1675,7 @@ export default function FloatingAiAssistant({
       const safeConversationContext = buildSafeConversationContext(messages, context, sessionGrounding);
       const response = await postAiRuntimeResponse({
         answerLanguage: language,
+        queryMode,
         message,
         activeModuleId: moduleId,
         activeViewId: context?.view,
@@ -1731,6 +1735,7 @@ export default function FloatingAiAssistant({
 
   return (
     <div className="fixed right-3 bottom-3 z-40 pointer-events-none sm:right-5 sm:bottom-5" data-testid="ai-assistant-root">
+      {knowledgeOpen && <KnowledgeLibrary onClose={() => setKnowledgeOpen(false)} />}
       {open && (
         <div
           ref={panelRef}
@@ -1742,24 +1747,24 @@ export default function FloatingAiAssistant({
             <div className="min-w-0">
               <div className="text-sm font-semibold flex items-center gap-2" style={{ color: A.label }}>
                 <Sparkles size={15} style={{ color: A.blue }} />
-                AI 助手
+                {language === "zh-CN" ? "AI 助手" : "AI assistant"}
               </div>
               <div data-testid="ai-context-chip" className="text-[11px] truncate" style={{ color: A.gray2 }}>
-                当前上下文：{contextLabel}
+                {language === "zh-CN" ? "当前上下文：" : "Context: "}{contextLabel}
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <button type="button" onClick={startNewConversation} className="flex h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium hover:bg-slate-100" style={{ color: A.gray1 }} aria-label="新对话"><Plus size={13} />新对话</button>
+              <button type="button" onClick={startNewConversation} className="flex h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={language === "zh-CN" ? "新对话" : "New conversation"}><Plus size={13} />{language === "zh-CN" ? "新对话" : "New conversation"}</button>
               <button type="button" onClick={() => setExpanded((value) => !value)} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={expanded ? "收起 AI 工作区" : "展开 AI 工作区"}>{expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
-              <button type="button" onClick={minimizeAssistant} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }} aria-label="最小化 AI 助手"><X size={15} /></button>
+              <button type="button" onClick={minimizeAssistant} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={language === "zh-CN" ? "最小化 AI 助手" : "Minimize AI assistant"}><X size={15} /></button>
             </div>
           </div>
 
           <div ref={scrollRef} data-testid="ai-assistant-messages" className="min-h-0 flex-1 overflow-auto px-4 py-3 space-y-3">
             {messages.length === 0 && (
               <div className="rounded-xl px-3 py-3 space-y-3" style={{ background: A.gray6, color: A.sub }}>
-                <p data-testid="ai-runtime-boundary" className="text-xs leading-5" style={{ color: A.gray1 }}>基于当前工作区数据 · 涉及业务变更时需要确认</p>
-                <p className="text-xs leading-5" style={{ color: A.sub }}>直接提问，我会先给出结论、重点事项和建议下一步。</p>
+                <p data-testid="ai-runtime-boundary" className="text-xs leading-5" style={{ color: A.gray1 }}>{language === 'zh-CN' ? '基于当前工作区数据 · 涉及业务变更时需要确认' : 'Based on workspace data · Business changes require confirmation'}</p>
+                <p className="text-xs leading-5" style={{ color: A.sub }}>{language === 'zh-CN' ? '询问业务情况，或从产品与公司知识库查找有来源的资料。' : 'Ask about business records, or search product and company knowledge with sources.'}</p>
                 <div className="flex flex-wrap gap-2">
                   {emptyPrompts.slice(0, 4).map((prompt) => (
                     <button
@@ -1825,13 +1830,17 @@ export default function FloatingAiAssistant({
               <div className="flex justify-start">
                 <div className="rounded-2xl px-3 py-2 text-sm flex items-center gap-2" style={{ background: A.gray6, color: A.gray1 }}>
                   <Loader2 size={14} className="animate-spin" />
-                  {slowRequest ? currentRequestLabel : "正在确认查询范围"}
+                  {slowRequest ? currentRequestLabel : (language === "zh-CN" ? "正在确认查询范围" : "Checking your question")}
                 </div>
               </div>
             )}
           </div>
 
           <div className="px-4 pb-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <label>{language === 'zh-CN' ? '查询范围' : 'Search'} <select data-testid="ai-query-mode" value={queryMode} onChange={e => setQueryMode(e.target.value as 'business' | 'knowledge')} className="rounded border p-1"><option value="business">{language === 'zh-CN' ? '业务记录' : 'Business records'}</option><option value="knowledge">{language === 'zh-CN' ? '产品／公司知识库' : 'Product & company knowledge'}</option></select></label>
+              <button type="button" data-testid="ai-knowledge-library" className="text-blue-700 underline" onClick={() => setKnowledgeOpen(true)}>{language === 'zh-CN' ? '管理资料' : 'Knowledge library'}</button>
+            </div>
             <div className="flex items-end gap-2">
               <textarea
                 value={input}
@@ -1856,7 +1865,7 @@ export default function FloatingAiAssistant({
                 data-testid="ai-assistant-send"
                 className="w-10 h-10 rounded-xl flex items-center justify-center text-white disabled:cursor-not-allowed"
                 style={{ background: asking || input.trim() ? A.blue : A.gray3 }}
-                aria-label={asking ? "取消请求" : "发送"}
+                aria-label={asking ? (language === "zh-CN" ? "取消请求" : "Cancel request") : (language === "zh-CN" ? "发送" : "Send")}
               >
                 {asking ? <Square size={14} /> : <Send size={16} />}
               </button>
@@ -1871,10 +1880,10 @@ export default function FloatingAiAssistant({
         data-testid="ai-assistant-toggle"
         className="pointer-events-auto h-12 rounded-full pl-4 pr-5 flex items-center gap-2 text-sm font-semibold text-white shadow-xl hover:shadow-2xl transition-shadow"
         style={{ background: A.blue }}
-        aria-label={open ? "最小化 AI 助手" : "展开 AI 助手"}
+        aria-label={open ? (language === "zh-CN" ? "最小化 AI 助手" : "Minimize AI assistant") : (language === "zh-CN" ? "展开 AI 助手" : "Open AI assistant")}
       >
         <MessageCircle size={18} />
-        AI 助手
+        {language === "zh-CN" ? "AI 助手" : "AI assistant"}
       </button>
     </div>
   );

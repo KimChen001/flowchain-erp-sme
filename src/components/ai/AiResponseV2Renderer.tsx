@@ -1,3 +1,4 @@
+import { RagAnswerCard } from "../../modules/ai-assistant/KnowledgeLibrary";
 import { BusinessQueryPresentation } from "./BusinessQueryPresentation";
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
@@ -87,6 +88,7 @@ function Detail({ title, children, testId }: { title: string; children: ReactNod
 
 export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft, onFollowUp }: { response: AiResponseV2; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; onFollowUp?: (prompt: string) => void }) {
   if (!response || response.version !== "v2") return null;
+  if (response.rag) return <RagAnswerCard rag={response.rag} title={response.conclusion.title} summary={response.conclusion.summary} />;
   const focused = toAiFocusedResponse(response);
   return (
     <div data-testid="ai-response-v2" data-answer-mode={focused.answerMode} className="space-y-3 rounded-xl p-3" style={{ background: A.white, border: `1px solid ${A.border}` }}>

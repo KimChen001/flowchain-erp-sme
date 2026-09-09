@@ -51,6 +51,7 @@ jobs:
       - run: npm run test:api:operational-finance
       - run: npm run test:api:settings
       - run: npm run test:db:english
+      - run: npm run test:db:ai-knowledge
       - run: npm run test:db:authorization
       - run: npm run test:api:authorization
       - run: npm run test:db:intake
