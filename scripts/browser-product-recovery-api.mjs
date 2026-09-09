@@ -353,7 +353,7 @@ try {
     maxBuffer: 10 * 1024 * 1024,
   });
   prisma = await createPrismaClient(process.env);
-  await prisma.tenant.create({ data: { id: tenantId, name: "Product Recovery Browser Tenant" } });
+  await prisma.tenant.create({ data: { id: tenantId, name: "Product Recovery Browser Tenant", defaultLanguage: "zh-CN" } });
   await prisma.user.create({
     data: {
       id: adminActorId,

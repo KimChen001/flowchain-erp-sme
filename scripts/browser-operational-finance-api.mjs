@@ -222,6 +222,7 @@ async function seed() {
     data: {
       id: tenantId,
       name: "Operational Finance Browser",
+      defaultLanguage: "zh-CN",
       timezone: "America/New_York",
       operationalSettings: {
         settlementPolicy: {

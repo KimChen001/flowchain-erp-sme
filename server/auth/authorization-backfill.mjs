@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import { defaultRoleTemplates, legacyRoleTemplateMap } from "./permission-catalog.mjs"
+import { isTransactionConflict } from "../persistence/transaction-conflict.mjs"
 
 const stableId = (...parts) => `AUTH-${createHash("sha256").update(parts.join(":"), "utf8").digest("hex").slice(0, 28)}`
 const normalizedLegacyRole = (value) => String(value || "").trim().toLowerCase()
@@ -77,7 +78,7 @@ export async function backfillTenantAuthorization(prisma, tenantId, { actorId = 
     try {
       return await prisma.$transaction(work, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 })
     } catch (error) {
-      if (error?.code !== "P2034" || attempt === 4) throw error
+      if (!isTransactionConflict(error) || attempt === 4) throw error
       await new Promise(resolve => setTimeout(resolve, attempt * 25))
     }
   }

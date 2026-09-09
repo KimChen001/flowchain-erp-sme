@@ -220,6 +220,8 @@ function LoginScreen({
   onLogin: (user: WorkspaceUser, token: string) => void;
   localStatus: LocalDevelopmentStatus | null;
 }) {
+  const { language, setGuestLanguage } = useI18n();
+  const tr = (en: string, zh: string) => language === "en-US" ? en : zh;
   const [form, setForm] = useState({
     company: "FlowChain Workspace",
     name: "Kim",
@@ -241,10 +243,10 @@ function LoginScreen({
       localStorage.setItem(AUTH_TOKEN_KEY, result.token);
       localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(result.user));
       onLogin(result.user, result.token);
-      toast.success("登录成功，用户档案已保存");
+      toast.success(tr("Signed in. Your profile has been saved.", "登录成功，用户档案已保存"));
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "登录失败，请检查服务连接状态",
+        error instanceof Error ? error.message : tr("Unable to sign in. Check the service connection.", "登录失败，请检查服务连接状态"),
       );
     } finally {
       setLoading(false);
@@ -282,7 +284,7 @@ function LoginScreen({
                 {PRODUCT_NAME}
               </div>
               <div className="text-sm" style={{ color: A.sub }}>
-                {PRODUCT_TAGLINE}
+                {tr("AI-powered inventory and supply chain workspace", PRODUCT_TAGLINE)}
               </div>
             </div>
           </div>
@@ -292,22 +294,21 @@ function LoginScreen({
               className="text-[38px] leading-tight font-semibold mb-4"
               style={{ color: A.label }}
             >
-              把基础资料、采购、销售、库存和经营分析连接到同一个工作台。
+              {tr("Connect purchasing, sales, inventory, and business insights in one workspace.", "把基础资料、采购、销售、库存和经营分析连接到同一个工作台。")}
             </h1>
             <p
               className="text-base leading-7 max-w-xl"
               style={{ color: A.sub }}
             >
-              FlowChain 是面向中小企业的 ERP
-              进销存协同平台，当前连接基础资料、采购、销售、库存、经营分析和运营财务。付款、收款、退款、税务与总账执行尚未启用。
+              {tr("FlowChain brings master data, purchasing, sales, inventory, analytics, and operational finance together for small and medium businesses. Payment, collection, refund, tax, and general-ledger execution are not enabled.", "FlowChain 是面向中小企业的 ERP 进销存协同平台，当前连接基础资料、采购、销售、库存、经营分析和运营财务。付款、收款、退款、税务与总账执行尚未启用。")}
             </p>
           </div>
 
           <div className="grid grid-cols-3 gap-3 max-w-xl">
             {[
-              ["采", "采购协同"],
-              ["库", "库存管理"],
-              ["析", "经营洞察"],
+              [tr("Buy", "采"), tr("Purchasing", "采购协同")],
+              [tr("Stock", "库"), tr("Inventory", "库存管理")],
+              [tr("Plan", "析"), tr("Business insights", "经营洞察")],
             ].map(([value, label]) => (
               <div
                 key={label}
@@ -352,21 +353,28 @@ function LoginScreen({
                 className="text-base font-semibold"
                 style={{ color: A.label }}
               >
-                进入工作台
+                {tr("Sign in to your workspace", "进入工作台")}
               </div>
               <div className="text-xs" style={{ color: A.gray1 }}>
-                输入用户信息，进入 FlowChain 工作台
+                {tr("Enter your details to open FlowChain", "输入用户信息，进入 FlowChain 工作台")}
               </div>
             </div>
           </div>
+          <label className="block text-xs font-medium" style={{ color: A.gray1 }}>
+            {tr("Interface language", "界面语言")}
+            <select aria-label="Interface language / 界面语言" value={language} onChange={event => setGuestLanguage(event.target.value as "en-US" | "zh-CN")} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white p-2">
+              <option value="en-US">English</option>
+              <option value="zh-CN">中文</option>
+            </select>
+          </label>
           {localStatus && (
             <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900" data-testid="local-login-metadata">
               <div className="font-semibold">Local Development · {localStatus.workspaceName}</div>
-              <div className="mt-1">本地可用账户：{localStatus.availableLoginEmails.join("、")}</div>
+              <div className="mt-1">{tr("Available local accounts: ", "本地可用账户：")}{localStatus.availableLoginEmails.join(", ")}</div>
               <div className="mt-2 flex gap-2">
                 {localStatus.availableLoginEmails.map((email) => (
                   <button key={email} type="button" className="rounded-md bg-white px-2 py-1" onClick={() => setForm((current) => ({ ...current, email }))}>
-                    {email === "admin@flowchain.local" ? "使用本地管理员" : "使用本地经理"}
+                    {email === "admin@flowchain.local" ? tr("Use local administrator", "使用本地管理员") : tr("Use local manager", "使用本地经理")}
                   </button>
                 ))}
               </div>
@@ -375,9 +383,9 @@ function LoginScreen({
 
           {(
             [
-              ["company", "公司名称"],
-              ["name", "姓名"],
-              ["email", "邮箱"],
+              ["company", tr("Company name", "公司名称")],
+              ["name", tr("Name", "姓名")],
+              ["email", tr("Email", "邮箱")],
             ] as const
           ).map(([key, label]) => (
             <label key={key} className="block">
@@ -410,7 +418,7 @@ function LoginScreen({
             ) : (
               <ShieldCheck size={15} />
             )}
-            {loading ? "正在进入" : `进入 ${PRODUCT_NAME}`}
+            {loading ? tr("Signing in", "正在进入") : tr(`Open ${PRODUCT_NAME}`, `进入 ${PRODUCT_NAME}`)}
           </button>
         </form>
       </div>
@@ -1341,7 +1349,7 @@ export default function FlowChainApp() {
                 {PRODUCT_NAME}
               </div>
               <div className="fc-caption mt-1" style={{ color: A.sidebarSub }}>
-                {PRODUCT_TAGLINE}
+                {language === "en-US" ? "AI-powered inventory and supply chain workspace" : PRODUCT_TAGLINE}
               </div>
             </div>
           </div>

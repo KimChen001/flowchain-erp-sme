@@ -40,8 +40,8 @@ test('receiving workbench posts and reverses through real PostgreSQL APIs', asyn
   await expect(page.getByText(/receipt_reversal/)).toBeVisible()
 
   await page.getByText('Kim', { exact: true }).click()
-  await page.getByRole('button', { name: '我的资料' }).click()
+  await page.getByRole('button', { name: 'My Profile' }).click()
   await expect(page.getByTestId('workspace-settings-profile')).toBeVisible()
   await expect(page.locator('input[value="kim@example.com"]')).toBeVisible()
-  await expect(page.getByRole('textbox', { name: '角色' })).toHaveValue('经理')
+  await expect(page.getByRole('textbox', { name: 'Role', exact: true })).toHaveValue('Manager')
 })

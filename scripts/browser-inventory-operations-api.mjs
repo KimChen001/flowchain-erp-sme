@@ -80,7 +80,7 @@ try {
   });
   prisma = await createPrismaClient(process.env);
   await prisma.tenant.create({
-    data: { id: tenantId, name: "Inventory Browser Tenant" },
+    data: { id: tenantId, name: "Inventory Browser Tenant", defaultLanguage: "zh-CN" },
   });
   const users = [
     { email: "kim@example.com", name: "Kim", role: "manager" },

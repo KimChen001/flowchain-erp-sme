@@ -461,19 +461,21 @@ type I18nValue = {
   formatDateTime: (value: string | Date) => string;
   formatNumber: (value: number) => string;
   refresh: () => Promise<void>;
+  setGuestLanguage: (language: SupportedLanguage) => void;
 };
 
 const fallback: I18nValue = {
-  language: "zh-CN",
+  language: "en-US",
   locale: "zh-CN",
   timezone: "Asia/Shanghai",
   workspaceName: "",
-  defaultLanguage: "zh-CN",
-  t: key => zh[key],
+  defaultLanguage: "en-US",
+  t: key => en[key],
   routeLabel: route => route.label,
   formatDateTime: value => new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Shanghai" }).format(new Date(value)),
   formatNumber: value => new Intl.NumberFormat("zh-CN").format(value),
   refresh: async () => {},
+  setGuestLanguage: () => {},
 };
 
 const I18nContext = createContext<I18nValue>(fallback);
@@ -481,22 +483,28 @@ const I18nContext = createContext<I18nValue>(fallback);
 export function I18nProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<LocalizationPayload>({
     languagePreference: null,
-    defaultLanguage: "zh-CN",
-    effectiveLanguage: "zh-CN",
+    defaultLanguage: "en-US",
+    effectiveLanguage: "en-US",
     locale: "zh-CN",
     timezone: "Asia/Shanghai",
     workspaceName: "",
   });
   const refresh = useCallback(async () => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
-      setState(current => ({ ...current, effectiveLanguage: "zh-CN", locale: "zh-CN", timezone: "Asia/Shanghai", workspaceName: "" }));
+      const guestLanguage = localStorage.getItem("flowchain:guest-language") === "zh-CN" ? "zh-CN" : "en-US";
+      setState({ languagePreference: null, defaultLanguage: "en-US", effectiveLanguage: guestLanguage, locale: "zh-CN", timezone: "Asia/Shanghai", workspaceName: "" });
       return;
     }
     try {
       setState(await apiJson<LocalizationPayload>("/api/me/localization"));
     } catch {
-      setState(current => ({ ...current, effectiveLanguage: current.effectiveLanguage || "zh-CN" }));
+      setState(current => ({ ...current, effectiveLanguage: current.effectiveLanguage || "en-US" }));
     }
+  }, []);
+  const setGuestLanguage = useCallback((language: SupportedLanguage) => {
+    if (localStorage.getItem(AUTH_TOKEN_KEY)) return;
+    localStorage.setItem("flowchain:guest-language", language);
+    setState(current => ({ ...current, effectiveLanguage: language }));
   }, []);
   useEffect(() => {
     void refresh();
@@ -525,8 +533,9 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       formatDateTime: value => new Intl.DateTimeFormat(state.locale, { dateStyle: "medium", timeStyle: "short", timeZone: state.timezone }).format(new Date(value)),
       formatNumber: value => new Intl.NumberFormat(state.locale).format(value),
       refresh,
+      setGuestLanguage,
     };
-  }, [refresh, state]);
+  }, [refresh, setGuestLanguage, state]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 

@@ -15,7 +15,7 @@ test('workspace localization priority separates language, locale, and timezone',
   const tenant = { defaultLanguage: 'en-US', locale: 'zh-CN', timezone: 'America/New_York' }
   assert.equal(effectiveLanguage({ languagePreference: 'zh-CN' }, tenant), 'zh-CN')
   assert.equal(effectiveLanguage({ languagePreference: null }, tenant), 'en-US')
-  assert.equal(effectiveLanguage({}, { defaultLanguage: '' }), 'zh-CN')
+  assert.equal(effectiveLanguage({}, { defaultLanguage: '' }), 'en-US')
   assert.equal(normalizeLanguagePreference('workspace'), null)
   assert.equal(tenant.locale, 'zh-CN')
   assert.equal(tenant.timezone, 'America/New_York')

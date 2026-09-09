@@ -53,7 +53,7 @@ async function cleanup() {
 
 async function seed() {
   await prisma.tenant.create({
-    data: { id: tenantId, name: "Returns Browser Tenant" },
+    data: { id: tenantId, name: "Returns Browser Tenant", defaultLanguage: "zh-CN" },
   });
   await prisma.warehouse.createMany({
     data: [

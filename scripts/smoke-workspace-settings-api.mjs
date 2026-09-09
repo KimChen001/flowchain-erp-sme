@@ -103,7 +103,7 @@ try {
   let token = login.token;
 
   let workspace = await request(base, "/api/workspace", { token });
-  assert.equal(workspace.defaultLanguage, "zh-CN");
+  assert.equal(workspace.defaultLanguage, "en-US");
   assert.equal(workspace.locale, "zh-CN");
   workspace = await request(base, "/api/workspace", {
     token, method: "PATCH", body: { ...workspace, companyName: "FlowChain Operations", workspaceName: "Operations Workspace", defaultLanguage: "en-US", locale: "en-US", timezone: "America/New_York", baseCurrency: "CNY" },
