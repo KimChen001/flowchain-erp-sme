@@ -75,3 +75,25 @@ test('priority ranking is deterministic and independent of input order', () => {
   assert.deepEqual(first.items.map((row) => [row.supplier.id, row.priority.score]), second.items.map((row) => [row.supplier.id, row.priority.score]))
   assert.equal(first.items[0].priority.algorithmVersion, SUPPLIER_ACTION_PRIORITY_VERSION)
 })
+
+
+test('mixed currencies never produce a combined payable amount', () => {
+  const cny = invoice('cny', 'a')
+  const usd = invoice('usd', 'a', { currency: 'USD' })
+  const result = buildSupplierActionSummaries({ actor, records: { suppliers: [supplier('a')], invoices: [cny, usd], payables: [payable('cny', 'a', cny), payable('usd', 'a', usd, { currency: 'USD' })] } })
+  assert.equal(result.items[0].payment.dueCount, 2)
+  assert.equal(result.items[0].payment.dueAmount, null)
+  assert.equal(result.items[0].payment.overdueAmount, null)
+})
+
+
+test('currency and blocked-payment filters apply before computing facts', () => {
+  const cny = invoice('cny', 'a')
+  const usd = invoice('usd', 'a', { currency: 'USD', status: 'disputed' })
+  const records = { suppliers: [supplier('a')], invoices: [cny, usd], payables: [payable('cny', 'a', cny), payable('usd', 'a', usd, { currency: 'USD', outstandingAmount: 25 })] }
+  const filtered = buildSupplierActionSummaries({ actor, records, filters: { currencies: ['USD'], dueState: ['blocked'] } }).items[0]
+  assert.equal(filtered.payment.dueCount, 1)
+  assert.equal(filtered.payment.dueAmount, 25)
+  assert.deepEqual(filtered.payment.blocks.map(block => block.payableId), ['usd'])
+  assert.ok(!filtered.evidence.some(item => item.id === 'cny'))
+})

@@ -18,7 +18,7 @@ test("AI handler registry keeps unique ordered phases and stable precedence", ()
     [...new Set(registry.map(handler => handler.phase))],
     ["pre_read_context", "read_context", "fallback"],
   );
-  assert.equal(aiHandlersForPhase(registry, "pre_read_context")[0].id, AI_HANDLER_IDS.responseContractV2);
+  assert.equal(aiHandlersForPhase(registry, "pre_read_context")[0].id, AI_HANDLER_IDS.businessQueryPlan);
   assert.equal(aiHandlersForPhase(registry, "fallback").at(-1).id, AI_HANDLER_IDS.configuredAi);
   assert.ok(ids.indexOf(AI_HANDLER_IDS.financeFastPath) < ids.indexOf(AI_HANDLER_IDS.procurementFastPath));
   assert.ok(ids.indexOf(AI_HANDLER_IDS.procurementQuery) < ids.indexOf(AI_HANDLER_IDS.financeQuery));

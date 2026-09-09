@@ -1,18 +1,13 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
-const demoUser = {
-  id: 'ai-business-query-browser-user',
-  company: '新辰智能制造',
-  name: 'AI Query Reviewer',
-  email: 'ai-query-reviewer@example.invalid',
-  role: '供应链经理',
-}
-
 async function openApp(page: Page) {
-  await page.addInitScript((user) => {
-    window.localStorage.setItem('flowchain:auth-token', 'ai-business-query-browser-token')
+  const login = await page.request.post('/api/auth/login', { data: { email: 'manager@example.com', name: 'Ignored', company: 'Ignored' } })
+  expect(login.ok(), await login.text()).toBeTruthy()
+  const session = await login.json()
+  await page.addInitScript(({ token, user }) => {
+    window.localStorage.setItem('flowchain:auth-token', token)
     window.localStorage.setItem('flowchain:current-user', JSON.stringify(user))
-  }, demoUser)
+  }, session)
   await page.goto('/')
   await expect(page.getByTestId('app-main')).toBeVisible({ timeout: 15_000 })
   await page.getByTestId('ai-assistant-toggle').click()
@@ -34,24 +29,22 @@ async function expectNoInternalLeakage(assistant: Locator) {
 }
 
 test.describe('Phase 5.4A business query planning', () => {
-  test('global supplier payment query renders scope and unavailable facts without a false zero', async ({ page }) => {
+  test('global supplier payment query renders authorized database facts', async ({ page }) => {
     await openApp(page)
     const assistant = await ask(page, '有哪些供应商需要付款？')
     await expect(assistant.getByTestId('ai-business-query-presentation')).toBeVisible()
-    await expect(assistant.getByTestId('ai-business-query-scope')).toHaveText('全部供应商')
-    await expect(assistant).toContainText('需要付款')
-    const payment = assistant.getByTestId('ai-business-query-section').filter({ hasText: '需要付款' })
-    await expect(payment).toHaveAttribute('data-state', 'unavailable')
-    await expect(payment).toContainText('数据不可用')
-    await expect(payment).not.toContainText(/到期\s*0|可付款\s*0/)
+    await expect(assistant.getByTestId('ai-business-query-scope')).toHaveText('All suppliers')
+    await expect(assistant).toContainText('Payments due')
+    const payment = assistant.getByTestId('ai-business-query-section').filter({ hasText: 'Payments due' })
+    await expect(payment).toHaveAttribute('data-state', /confirmed|confirmed_zero|incomplete/)
     await expectNoInternalLeakage(assistant)
   })
 
   test('multi-goal question renders stable payment, invoice, and overdue PO sections', async ({ page }) => {
     await openApp(page)
     const assistant = await ask(page, '帮我同时看看供应商付款、延期 PO 和发票差异。')
-    await expect(assistant.getByTestId('ai-business-query-scope')).toHaveText('全部供应商')
-    for (const label of ['需要付款', '付款准备度', '发票差异', '延期 PO']) await expect(assistant).toContainText(label)
+    await expect(assistant.getByTestId('ai-business-query-scope')).toHaveText('All suppliers')
+    for (const label of ['Payments due', 'Payment readiness', 'Invoice exceptions', 'Overdue POs']) await expect(assistant).toContainText(label)
     await expect(assistant.getByTestId('ai-business-query-section')).toHaveCount(4)
     await expectNoInternalLeakage(assistant)
   })
@@ -59,7 +52,7 @@ test.describe('Phase 5.4A business query planning', () => {
   test('unknown supplier produces clarification and executes no result section', async ({ page }) => {
     await openApp(page)
     const assistant = await ask(page, '为什么 Supplier Missing 暂时不能付款？')
-    await expect(assistant.getByTestId('ai-business-query-clarification')).toContainText(/未找到 Supplier Missing|请确认供应商/)
+    await expect(assistant.getByTestId('ai-business-query-clarification')).toContainText(/Which suppliers should I check/)
     await expect(assistant.getByTestId('ai-business-query-section')).toHaveCount(0)
     await expectNoInternalLeakage(assistant)
   })

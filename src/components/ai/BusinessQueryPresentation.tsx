@@ -25,38 +25,38 @@ const countLabels: Record<string, [string, string]> = { due: ["Due", "到期"], 
 
 function BusinessQueryRow({ row }: { row: Record<string, unknown> }) {
   const { language } = useI18n();
-  const index = language === "zh-CN" ? 1 : 0;
+  const languageIndex = language === "zh-CN" ? 1 : 0;
   const supplier = row.supplier && typeof row.supplier === "object" ? row.supplier as Record<string, unknown> : {};
   const priority = row.priority && typeof row.priority === "object" ? row.priority as Record<string, unknown> : {};
   const blocks = Array.isArray(row.blocks) ? row.blocks as Array<Record<string, unknown>> : [];
   const overduePoIds = Array.isArray(row.overduePoIds) ? row.overduePoIds : [];
-  const title = String(supplier.displayName || supplier.name || supplier.id || (index ? "供应商事项" : "Supplier item"));
+  const title = String(supplier.displayName || supplier.name || supplier.id || (languageIndex ? "供应商事项" : "Supplier item"));
   return (
     <div className="min-w-0 rounded-lg px-2.5 py-2" style={{ background: A.gray6 }}>
       <div className="flex min-w-0 items-center justify-between gap-2">
         <span className="min-w-0 truncate text-[11px] font-semibold" style={{ color: A.label }}>{title}</span>
-        {priority.level ? <span className="shrink-0 text-[10px]" style={{ color: A.gray2 }}>{String(priority.level)} · {String(priority.score ?? "")}</span> : null}
+        {priority.level ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{String(priority.level)} · {String(priority.score ?? "")}</span> : null}
       </div>
-      {blocks.length ? <div className="mt-1 space-y-0.5">{blocks.slice(0, 3).map((block, index) => <div key={`${String(block.payableId)}-${index}`} className="break-words text-[10px] leading-4" style={{ color: A.red }}>{blockReasonLabels[String(block.reason)]?.[index] || String(block.reason)}</div>)}</div> : null}
-      {overduePoIds.length ? <div className="mt-1 break-words text-[10px] leading-4" style={{ color: A.gray1 }}>{index ? "延期 PO：" : "Overdue POs: "}{overduePoIds.slice(0, 4).map(String).join("、")}</div> : null}
+      {blocks.length ? <div className="mt-1 space-y-0.5">{blocks.slice(0, 3).map((block, index) => <div key={`${String(block.payableId)}-${index}`} className="break-words text-[11px] leading-4" style={{ color: A.red }}>{blockReasonLabels[String(block.reason)]?.[languageIndex] || String(block.reason)}</div>)}</div> : null}
+      {overduePoIds.length ? <div className="mt-1 break-words text-[11px] leading-4" style={{ color: A.gray1 }}>{languageIndex ? "延期 PO：" : "Overdue POs: "}{overduePoIds.slice(0, 4).map(String).join("、")}</div> : null}
     </div>
   );
 }
 
 function BusinessQuerySection({ section }: { section: AiBusinessQuerySectionCard }) {
-  const { language } = useI18n();
-  const index = language === "zh-CN" ? 1 : 0;
+  const { language, formatNumber } = useI18n();
+  const languageIndex = language === "zh-CN" ? 1 : 0;
   const tone = businessStateTone[section.state] || businessStateTone.unavailable;
   const metrics = [...Object.entries(section.counts || {}), ...Object.entries(section.amounts || {}).map(([key, value]) => [`amount_${key}`, value] as [string, number | null])].filter(([, value]) => value !== null && value !== undefined);
   return (
     <article data-testid="ai-business-query-section" data-state={section.state} className="min-w-0 space-y-2 rounded-xl p-3" style={{ border: `1px solid ${A.border}` }}>
       <div className="flex min-w-0 items-center justify-between gap-2">
         <h4 className="min-w-0 truncate text-xs font-semibold" style={{ color: A.label }}>{section.label}</h4>
-        <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ color: tone.color, background: tone.bg }}>{section.stateLabel}</span>
+        <span className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold" style={{ color: tone.color, background: tone.bg }}>{section.stateLabel}</span>
       </div>
-      {metrics.length ? <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">{metrics.slice(0, 6).map(([key, value]) => <div key={key} className="min-w-0 rounded-lg px-2 py-1.5" style={{ background: A.gray6 }}><div className="truncate text-[10px]" style={{ color: A.gray2 }}>{key.startsWith("amount_") ? `${countLabels[key.slice(7)]?.[index] || key.slice(7)}${index ? "金额" : " amount"}` : countLabels[key]?.[index] || key}</div><div className="truncate text-[11px] font-semibold" style={{ color: A.label }}>{Number(value).toLocaleString()}</div></div>)}</div> : null}
+      {metrics.length ? <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">{metrics.slice(0, 6).map(([key, value]) => <div key={key} className="min-w-0 rounded-lg px-2 py-1.5" style={{ background: A.gray6 }}><div className="truncate text-[11px]" style={{ color: A.gray2 }}>{key.startsWith("amount_") ? `${countLabels[key.slice(7)]?.[languageIndex] || key.slice(7)}${languageIndex ? "金额" : " amount"}` : countLabels[key]?.[languageIndex] || key}</div><div className="truncate text-[11px] font-semibold" style={{ color: A.label }}>{formatNumber(Number(value))}</div></div>)}</div> : null}
       {section.rows?.length ? <div className="space-y-1.5">{section.rows.slice(0, 5).map((row, index) => <BusinessQueryRow key={`${section.goal}-${index}`} row={row} />)}</div> : null}
-      {section.limitations?.length ? <div className="break-words text-[10px] leading-4" style={{ color: A.gray2 }}>{section.limitations.join("；")}</div> : null}
+      {section.limitations?.length ? <div className="break-words text-[11px] leading-4" style={{ color: A.gray2 }}>{section.limitations.join("；")}</div> : null}
     </article>
   );
 }
@@ -68,7 +68,7 @@ export function BusinessQueryPresentation({ response }: { response: AiResponseV2
     <section data-testid="ai-business-query-presentation" className="min-w-0 space-y-3">
       <div className="flex min-w-0 flex-wrap gap-1.5">
         <span data-testid="ai-business-query-scope" className="max-w-full truncate rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: "#eef5ff", color: A.blue }}>{query.scopeBadge}</span>
-        {query.goalLabels.slice(0, 8).map((label) => <span key={label} className="rounded-full px-2 py-1 text-[10px]" style={{ background: A.gray6, color: A.gray1 }}>{label}</span>)}
+        {query.goalLabels.slice(0, 8).map((label) => <span key={label} className="rounded-full px-2 py-1 text-[11px]" style={{ background: A.gray6, color: A.gray1 }}>{label}</span>)}
       </div>
       {query.clarification?.needed ? <div data-testid="ai-business-query-clarification" className="break-words rounded-xl p-3 text-xs leading-5" style={{ background: "#fff7db", color: "#6f4900" }}>{query.clarification.question}</div> : null}
       {query.sectionCards.length ? <div className="grid min-w-0 grid-cols-1 gap-2">{query.sectionCards.map((section) => <BusinessQuerySection key={section.goal} section={section} />)}</div> : null}

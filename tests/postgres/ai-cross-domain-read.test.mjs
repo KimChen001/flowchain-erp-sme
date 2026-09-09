@@ -23,7 +23,7 @@ function actor(permissionCodes = permissions) {
     inactiveRoleIds: [],
     permissionCodes: new Set(permissionCodes),
     permissionSourceRoleIds: new Map(),
-    readWarehouseIds: new Set(),
+    readWarehouseIds: new Set(["AI-WAREHOUSE"]),
     operateWarehouseIds: new Set(),
   }
 }
@@ -99,7 +99,7 @@ async function seed(prisma) {
     id: 'PO-INCOMPLETE', tenantId, supplierId: null, status: 'issued', currency: 'CNY',
   } })
   await prisma.receivingDocument.create({ data: {
-    id: 'GRN-D-EXCEPTION', documentNumber: 'GRN-D-EXCEPTION', tenantId, poId: 'PO-D-PARTIAL', supplierId: 'supplier-d',
+    warehouseId: 'AI-WAREHOUSE', id: 'GRN-D-EXCEPTION', documentNumber: 'GRN-D-EXCEPTION', tenantId, poId: 'PO-D-PARTIAL', supplierId: 'supplier-d',
     status: 'exception', workflowStatus: 'draft', postingStatus: 'unposted', currency: 'CNY',
     lines: { create: [{ id: 'GRN-D-L1', acceptedQty: '4.0000', rejectedQty: '2.0000' }] },
   } })
@@ -157,6 +157,10 @@ test('real PostgreSQL supplier action summary returns authoritative cross-domain
     assert.ok(full.items.every((item) => item.priority.algorithmVersion === 'supplier-action-priority-v1'))
     assert.ok(full.items.flatMap((item) => item.evidence).every((item) => item.id && item.route))
     assert.ok(!full.items.some((item) => item.supplier.id === 'supplier-cross-tenant'))
+
+    const restricted = await service.read({}, { actor: { ...actor(), readWarehouseIds: new Set() } })
+    assert.equal(restricted.items.find(item => item.supplier.id === 'supplier-d').receiving.exceptionCount, 0)
+    assert.ok(!JSON.stringify(restricted).includes('GRN-D-EXCEPTION'))
 
     const repeated = await service.read({}, { actor: actor() })
     assert.deepEqual(repeated.items.map((item) => item.supplier.id), full.items.map((item) => item.supplier.id))

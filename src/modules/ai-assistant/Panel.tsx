@@ -1,3 +1,4 @@
+import { useI18n } from "../../i18n/I18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Maximize2, MessageCircle, Minimize2, Plus, RotateCcw, Send, Square, Sparkles, X } from "lucide-react";
 import {
@@ -1552,6 +1553,7 @@ export default function FloatingAiAssistant({
   onNavigate?: AiNavigate;
   onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void;
 }) {
+  const { language } = useI18n();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState("");
@@ -1669,6 +1671,7 @@ export default function FloatingAiAssistant({
     try {
       const safeConversationContext = buildSafeConversationContext(messages, context, sessionGrounding);
       const response = await postAiRuntimeResponse({
+        answerLanguage: language,
         message,
         activeModuleId: moduleId,
         activeViewId: context?.view,

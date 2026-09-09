@@ -74,3 +74,18 @@ test('unavailable source is not aggregated as confirmed zero when scope has no r
   assert.equal(pack.sections[0].state, 'unavailable')
   assert.deepEqual(pack.sections[0].counts, {})
 })
+
+
+test('unsupported filters ask for clarification without executing a broader query', async () => {
+  let reads = 0
+  const pack = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ filters: { statuses: ['draft'] } }), { summaryService: { read: async () => { reads++; return { items: [] } } } })
+  assert.equal(reads, 0)
+  assert.equal(pack.clarification.needed, true)
+  assert.match(pack.clarification.questionEn, /not supported/)
+})
+
+test('priority ranking applies a stable limit and hides unrelated zero-result suppliers', async () => {
+  const lower = { ...structuredClone(summary), supplier: { id: 's2' }, priority: { score: 1, level: 'low' } }
+  const pack = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ goals: ['supplier_priority'], ranking: { enabled: true, limit: 1 } }), { summaryService: { read: async () => ({ items: [lower, summary] }) } })
+  assert.deepEqual(pack.sections[0].rows.map(row => row.supplier.id), ['s1'])
+})

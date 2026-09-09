@@ -50,6 +50,22 @@ function sectionRows(rows, section) {
   return rows.map((row) => ({ supplier: row.supplier, ...row[section] }))
 }
 
+function relevantRows(rows, goal) {
+  const predicates = {
+    supplier_payables_due: row => row.payment?.dueCount > 0,
+    supplier_payables_overdue: row => row.payment?.overdueCount > 0,
+    supplier_payment_blocks: row => row.payment?.blockedCount > 0,
+    supplier_payment_readiness: row => row.payment?.dueCount > 0,
+    supplier_invoice_exceptions: row => row.invoice?.mismatchCount > 0 || row.invoice?.disputedCount > 0 || row.invoice?.missingEvidenceCount > 0,
+    supplier_overdue_purchase_orders: row => row.procurement?.overduePoCount > 0,
+    supplier_receiving_exceptions: row => row.receiving?.exceptionCount > 0 || row.receiving?.pendingEvidenceCount > 0,
+    supplier_rfq_followups: row => row.rfq?.awaitingResponseCount > 0 || row.rfq?.expiredCount > 0,
+    supplier_bank_reconciliation_exceptions: row => row.reconciliation?.blockingExceptionCount > 0 || row.reconciliation?.unreconciledPaymentCount > 0,
+    supplier_missing_evidence: row => row.invoice?.missingEvidenceCount > 0 || row.receiving?.pendingEvidenceCount > 0,
+  }
+  return predicates[goal] ? rows.filter(predicates[goal]) : rows
+}
+
 function buildSection(goal, definition, rows, sourceStatus) {
   const section = definition.section
   const state = section === 'comparison' || section === 'priority' || section === 'followups'
@@ -69,9 +85,12 @@ function buildSection(goal, definition, rows, sourceStatus) {
     }
     return output
   }, {})
+  if (section === "payment" && new Set(rows.flatMap(row => row.payment?.currencies || [])).size > 1) {
+    for (const key of Object.keys(amounts)) amounts[key] = null
+  }
   const evidence = rows.flatMap((row) => row.evidence || []).slice(0, 50)
   const limitations = [...new Set(rows.flatMap((row) => row.dataQuality?.limitations || []))]
-  return { goal, state, conclusionCode: `${goal}:${state}`, counts, amounts, rows: sectionRows(rows, section), evidence, limitations }
+  return { goal, state, conclusionCode: `${goal}:${state}`, counts, amounts, rows: sectionRows(relevantRows(rows, goal), section), evidence, limitations }
 }
 
 function scopeSummary(plan, rows) {
@@ -86,7 +105,8 @@ function scopeSummary(plan, rows) {
 export async function executeBusinessQueryPlan(planCandidate, context = {}) {
   const plan = assertValidBusinessQueryPlan(planCandidate)
   assertReadOnlyGoalRegistry()
-  if (plan.clarificationNeeded) return {
+  const unsupported = plan.filters.statuses.length > 0 || plan.grouping.some(group => group !== "supplier") || plan.filters.dueState.some(state => ["settled", "due_this_week"].includes(state))
+  if (plan.clarificationNeeded || unsupported) return {
     plan,
     scopeSummary: { entityType: plan.scope.entityType, mode: plan.scope.mode, entityCount: 0, label: '需要澄清' },
     sections: [],
@@ -96,13 +116,15 @@ export async function executeBusinessQueryPlan(planCandidate, context = {}) {
     availableFollowups: [],
     fieldVisibility: {},
     sourceStatus: {},
-    clarification: { needed: true, question: plan.clarificationQuestion },
+    clarification: { needed: true, question: unsupported ? "当前查询尚不支持该状态或分组条件。请按供应商查询未结清事项，或使用本周时间范围。" : plan.clarificationQuestion, questionEn: unsupported ? "This status or grouping filter is not supported yet. Ask for outstanding supplier items, or use a current-week time window." : null },
     executedTools: [],
   }
   const timeWindow = resolveBusinessTimeWindow(plan.filters.timeWindow, { now: context.now || new Date(), timezone: context.timezone || 'UTC', expression: context.message || '' })
   if (!context.summaryService || typeof context.summaryService.read !== 'function') throw new Error('summaryService.read is required')
-  const summary = await context.summaryService.read({ timeWindow }, context)
-  const rows = scopeRows(summary.items || [], plan.scope)
+  const summary = await context.summaryService.read({ timeWindow, filters: plan.filters }, context)
+  let rows = scopeRows(summary.items || [], plan.scope)
+  if (plan.filters.riskLevels.length) rows = rows.filter(row => plan.filters.riskLevels.includes(row.priority?.level))
+  if (plan.ranking.enabled) rows = [...rows].sort((a, b) => (b.priority?.score || 0) - (a.priority?.score || 0) || a.supplier.id.localeCompare(b.supplier.id)).slice(0, plan.ranking.limit)
   const sections = []
   const executedTools = []
   const failures = []

@@ -104,7 +104,7 @@ function emptySourceState(state) {
   return { state, recordValiditySummary: validitySummary({ unavailable: state === 'unavailable', hiddenCount: state === 'hidden' ? 1 : 0 }) }
 }
 
-export function buildSupplierActionSummaries({ records = {}, actor, sourceAvailability = {}, timeWindow, now = new Date() } = {}) {
+export function buildSupplierActionSummaries({ records = {}, actor, sourceAvailability = {}, timeWindow, filters = {}, now = new Date() } = {}) {
   const current = now instanceof Date ? now : new Date(now)
   const available = {
     suppliers: sourceAvailability.suppliers !== false,
@@ -144,21 +144,29 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
 
   const summaries = partitions.suppliers.validRecords.map((supplier) => {
     const id = supplierKey(supplier)
-    const payables = partitions.payables.validRecords.filter((row) => payableSupplierId(row) === id)
-    const invoices = partitions.invoices.validRecords.filter((row) => text(row.supplierId) === id)
-    const purchaseOrders = partitions.purchaseOrders.validRecords.filter((row) => text(row.supplierId) === id)
-    const receiving = partitions.receiving.validRecords.filter((row) => text(row.supplierId) === id || purchaseOrders.some((po) => text(row.poId) === text(po.id)))
-    const rfqs = available.rfqs && visible.purchaseOrders ? array(records.rfqs).filter((row) => text(row.supplierId) === id || array(row.invitedSupplierIds).map(text).includes(id)) : []
-    const bankExceptions = safeRecords.bankExceptions.filter((row) => !row.supplierId || text(row.supplierId) === id)
+    const currencyMatches = row => !filters.currencies?.length || filters.currencies.includes(text(row.currency))
+    const payables = partitions.payables.validRecords.filter((row) => payableSupplierId(row) === id && currencyMatches(row))
+    const invoices = partitions.invoices.validRecords.filter((row) => text(row.supplierId) === id && currencyMatches(row))
+    const purchaseOrders = partitions.purchaseOrders.validRecords.filter((row) => text(row.supplierId) === id && currencyMatches(row))
+    const receiving = partitions.receiving.validRecords.filter((row) => currencyMatches(row) && (text(row.supplierId) === id || purchaseOrders.some((po) => text(row.poId) === text(po.id))))
+    const rfqs = available.rfqs && visible.purchaseOrders ? array(records.rfqs).filter((row) => currencyMatches(row) && (text(row.supplierId) === id || array(row.invitedSupplierIds).map(text).includes(id))) : []
+    const bankExceptions = safeRecords.bankExceptions.filter((row) => text(row.supplierId) === id)
     const activePayables = payables.filter((row) => !['settled', 'cancelled', 'voided'].includes(text(row.status).toLowerCase()) && decimal(row.outstandingAmount) > 0)
-    const scopedPayables = timeWindow?.type && timeWindow.type !== 'all' ? activePayables.filter((row) => inWindow(row.dueDate, timeWindow)) : activePayables
-    const blocks = activePayables.flatMap((payable) => blockReasonsForPayable(payable, safeRecords).map((reason) => ({ payableId: payable.id, reason, supplierId: id })))
+    const windowPayables = timeWindow?.type && timeWindow.type !== 'all' ? activePayables.filter((row) => inWindow(row.dueDate, timeWindow)) : activePayables
+    const matchesDueState = payable => {
+      if (!filters.dueState?.length) return true
+      const reasons = blockReasonsForPayable(payable, safeRecords)
+      return filters.dueState.some(state => state === 'overdue' ? isOverdue(payable.dueDate, current) : state === 'blocked' ? reasons.length > 0 : state === 'ready_for_payment' ? reasons.length === 0 : state === 'held' ? reasons.includes('payment_hold') : state === 'missing_evidence' ? reasons.some(reason => ['missing_invoice', 'missing_receiving_evidence'].includes(reason)) : state === 'future_due' ? date(payable.dueDate) > current : state === 'partially_settled' ? text(payable.status) === 'partially_settled' : state === 'disputed' ? reasons.includes('invoice_disputed') : state === 'due_now' ? date(payable.dueDate) && date(payable.dueDate) <= current : false)
+    }
+    const scopedPayables = windowPayables.filter(matchesDueState)
+    const blocks = scopedPayables.flatMap((payable) => blockReasonsForPayable(payable, safeRecords).map((reason) => ({ payableId: payable.id, reason, supplierId: id })))
     const blockedIds = new Set(blocks.map((row) => row.payableId))
     const ready = scopedPayables.filter((row) => !blockedIds.has(row.id))
-    const overdue = activePayables.filter((row) => isOverdue(row.dueDate, current))
+    const overdue = scopedPayables.filter((row) => isOverdue(row.dueDate, current))
     const maxOverdueDays = overdue.reduce((max, row) => Math.max(max, Math.floor((current.getTime() - date(row.dueDate).getTime()) / 86_400_000)), 0)
-    const dueAmount = scopedPayables.reduce((sum, row) => sum + (decimal(row.outstandingAmount) || 0), 0)
-    const overdueAmount = overdue.reduce((sum, row) => sum + (decimal(row.outstandingAmount) || 0), 0)
+    const currencies = unique(scopedPayables.map(row => text(row.currency)))
+    const dueAmount = currencies.length > 1 ? null : scopedPayables.reduce((sum, row) => sum + (decimal(row.outstandingAmount) || 0), 0)
+    const overdueAmount = currencies.length > 1 ? null : overdue.reduce((sum, row) => sum + (decimal(row.outstandingAmount) || 0), 0)
     const openInvoices = invoices.filter((row) => !['paid', 'cancelled', 'voided'].includes(text(row.status).toLowerCase()))
     const mismatchInvoices = invoices.filter((row) => /exception|mismatch|variance|差异/.test(text(row.matchStatus).toLowerCase()) || decimal(row.varianceAmount) !== null && decimal(row.varianceAmount) !== 0)
     const disputedInvoices = invoices.filter((row) => /disput|争议/.test(`${text(row.status)} ${text(row.matchStatus)}`.toLowerCase()))
@@ -183,6 +191,7 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
     const result = {
       supplier: { id, code: text(supplier.code) || null, name: visible.partner ? text(supplier.name) : null, displayName: visible.partner ? text(supplier.name) : '受限供应商', fieldVisibility: { partner: visible.partner } },
       payment: {
+        currencies,
         state: sourceState(available.payables, visible.payables, partitions.payables, scopedPayables.length),
         dueCount: available.payables && visible.payables ? scopedPayables.length : null,
         dueAmount: available.payables && visible.payables && visible.amounts ? dueAmount : null,
@@ -272,17 +281,23 @@ async function loadIf(allowed, loader) {
 export function createSupplierActionSummaryReadService({ prisma, env = process.env, now = () => new Date(), bankService } = {}) {
   if (!prisma) throw new Error('prisma is required')
   return {
-    async read({ timeWindow } = {}, context = {}) {
+    async read({ timeWindow, filters } = {}, context = {}) {
       const actor = context.actor || await resolveProvisionedActor(prisma, context.identity || context, { allowMissingTestActor: true })
       const tenantId = actor.tenantId
       const allowed = (code) => can({ actor, permission: code, tenantId })
+      const warehouseIds = [...(actor.readWarehouseIds || [])]
+      const warehouseFilter = actor.allWarehouses ? {} : { AND: [
+        { OR: [{ warehouseId: null }, { warehouseId: { in: warehouseIds } }] },
+        { lines: { every: { OR: [{ warehouseId: null }, { warehouseId: { in: warehouseIds } }] } } },
+        { OR: [{ warehouseId: { in: warehouseIds } }, { lines: { some: { warehouseId: { in: warehouseIds } } } }] },
+      ] }
       const [suppliers, payables, invoices, settlements, purchaseOrders, receiving, rfqs] = await Promise.all([
         prisma.supplier.findMany({ where: { tenantId }, orderBy: [{ id: 'asc' }] }),
         loadIf(allowed('finance.payable.read'), () => prisma.payableObligation.findMany({ where: { tenantId }, include: { supplierInvoice: { include: { matchRuns: { include: { exceptions: true } } } } }, orderBy: [{ dueDate: 'asc' }, { id: 'asc' }] })),
         loadIf(allowed('finance.supplier_invoice.read'), () => prisma.supplierInvoice.findMany({ where: { tenantId }, include: { matchRuns: { include: { exceptions: true } } }, orderBy: [{ id: 'asc' }] })),
         loadIf(allowed('finance.settlement.read'), () => prisma.settlementDocument.findMany({ where: { tenantId }, include: { allocations: true }, orderBy: [{ id: 'asc' }] })),
         loadIf(allowed('procurement.purchase_order.read'), () => prisma.purchaseOrder.findMany({ where: { tenantId }, include: { lines: true }, orderBy: [{ id: 'asc' }] })),
-        loadIf(allowed('receiving.read'), () => prisma.receivingDocument.findMany({ where: { tenantId }, include: { lines: true, attachments: true }, orderBy: [{ id: 'asc' }] })),
+        loadIf(allowed('receiving.read'), () => prisma.receivingDocument.findMany({ where: { tenantId, ...warehouseFilter }, include: { lines: true, attachments: true }, orderBy: [{ id: 'asc' }] })),
         loadIf(allowed('procurement.purchase_order.read'), () => prisma.rfq.findMany({ where: { tenantId }, include: { lines: true }, orderBy: [{ id: 'asc' }] })),
       ])
       let bankExceptions = []
@@ -302,6 +317,7 @@ export function createSupplierActionSummaryReadService({ prisma, env = process.e
         actor,
         sourceAvailability: { bankReconciliation: bankAvailable },
         timeWindow,
+        filters,
         now: now(),
       })
     },

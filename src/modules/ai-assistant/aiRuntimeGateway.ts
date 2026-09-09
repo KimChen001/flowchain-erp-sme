@@ -3,6 +3,7 @@ import type { AiResponseV2 } from "../../domain/ai/response-contract";
 import type { ActiveContext } from "./Panel";
 
 export type AiRuntimeRequestV2 = {
+  answerLanguage?: "en-US" | "zh-CN";
   message: string;
   activeModuleId?: string;
   activeViewId?: string;

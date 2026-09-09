@@ -222,7 +222,7 @@ async function seed() {
     data: {
       id: tenantId,
       name: "Operational Finance Browser",
-      defaultLanguage: "zh-CN",
+      defaultLanguage: process.env.PLAYWRIGHT_AI_QUERY === "true" ? "en-US" : "zh-CN",
       timezone: "America/New_York",
       operationalSettings: {
         settlementPolicy: {
