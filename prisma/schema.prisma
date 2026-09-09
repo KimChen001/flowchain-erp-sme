@@ -3223,6 +3223,11 @@ model AiKnowledgeChunk {
   documentId String
   position Int
   content String
+  contentHash String?
+  embedding Json?
+  embeddingModel String?
+  embeddingDimensions Int?
+  embeddedAt DateTime?
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
   @@unique([documentId, position])
 }

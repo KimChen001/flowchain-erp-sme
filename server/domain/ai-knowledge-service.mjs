@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { Document } from '@langchain/core/documents'
 import { BaseRetriever } from '@langchain/core/retrievers'
 import { RunnableLambda, RunnableSequence } from '@langchain/core/runnables'
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters'
 import { canCallConfiguredProvider, callConfiguredProvider } from './ai-runtime-provider-adapter-v2.mjs'
+import { callConfiguredEmbeddingProvider, cosineSimilarity } from './ai-embedding-provider.mjs'
 
 export const KNOWLEDGE_AUDIENCES = Object.freeze([null, 'finance.payable.read', 'procurement.purchase_order.read'])
 export class KnowledgeError extends Error {
@@ -14,7 +15,7 @@ const readable = actor => ({ tenantId: actor.tenantId, status: 'active', OR: [{ 
 const manageable = actor => Boolean(actor.permissionCodes?.has('settings.workspace.manage'))
 const docSelect = { id: true, title: true, language: true, requiredPermission: true, createdAt: true, _count: { select: { chunks: true } } }
 
-export function createKnowledgeService(prisma) {
+export function createKnowledgeService(prisma, { env = process.env, embeddingProvider = callConfiguredEmbeddingProvider } = {}) {
   return {
     async list(actor) {
       return { canManage: manageable(actor), items: await prisma.aiKnowledgeDocument.findMany({ where: readable(actor), select: docSelect, orderBy: { createdAt: 'desc' }, take: 100 }) }
@@ -29,8 +30,9 @@ export function createKnowledgeService(prisma) {
       if (requiredPermission && !actor.permissionCodes?.has(requiredPermission)) fail('KNOWLEDGE_AUDIENCE_DENIED', 'You must belong to the selected reader group.', 403)
       const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 120, separators: ['\n\n', '\n', '。', '. ', ' ', ''] })
       const chunks = await splitter.splitText(content)
+      const embedded = await embeddingProvider(chunks, env)
       const documentId = randomUUID()
-      return prisma.aiKnowledgeDocument.create({ data: { id: documentId, tenantId: actor.tenantId, title, language: body.language === 'zh-CN' ? 'zh-CN' : 'en-US', requiredPermission, createdById: actor.user?.id || actor.userId, chunks: { create: chunks.map((content, position) => ({ id: randomUUID(), position, content })) } }, select: docSelect })
+      return prisma.aiKnowledgeDocument.create({ data: { id: documentId, tenantId: actor.tenantId, title, language: body.language === 'zh-CN' ? 'zh-CN' : 'en-US', requiredPermission, createdById: actor.user?.id || actor.userId, chunks: { create: chunks.map((content, position) => ({ id: randomUUID(), position, content, contentHash: createHash('sha256').update(content).digest('hex'), ...(embedded.ok ? { embedding: embedded.vectors[position], embeddingModel: embedded.model, embeddingDimensions: embedded.dimensions, embeddedAt: new Date() } : {}) })) } }, select: docSelect })
     },
     async get(actor, id) {
       const document = await prisma.aiKnowledgeDocument.findFirst({ where: { ...readable(actor), id }, include: { chunks: { orderBy: { position: 'asc' } } } })
@@ -46,7 +48,7 @@ export function createKnowledgeService(prisma) {
     async documents(actor) {
       const chunks = await prisma.aiKnowledgeChunk.findMany({ where: { document: readable(actor) }, include: { document: { select: { id: true, title: true, language: true, createdAt: true } } }, orderBy: [{ documentId: 'asc' }, { position: 'asc' }], take: 2001 })
       if (chunks.length > 2000) fail('KNOWLEDGE_INDEX_LIMIT', 'The local index exceeds 2,000 chunks. Archive older documents before searching.', 409)
-      return chunks.map(row => new Document({ pageContent: row.content, metadata: { id: row.id, documentId: row.documentId, title: row.document.title, position: row.position, language: row.document.language } }))
+      return chunks.map(row => new Document({ pageContent: row.content, metadata: { id: row.id, documentId: row.documentId, title: row.document.title, position: row.position, language: row.document.language, contentHash: row.contentHash, embedding: row.embedding, embeddingModel: row.embeddingModel, embeddingDimensions: row.embeddingDimensions } }))
     },
   }
 }
@@ -61,7 +63,7 @@ export function knowledgeTokens(text) {
 // The actor-scoped corpus is fetched anew for every request; no shared tenant cache.
 export class WorkspaceKnowledgeRetriever extends BaseRetriever {
   lc_namespace = ['flowchain', 'retrievers']
-  constructor({ loadDocuments, limit = 5 }) { super(); this.loadDocuments = loadDocuments; this.limit = limit }
+  constructor({ loadDocuments, limit = 5, queryEmbedding = null, embeddingModel = null }) { super(); this.loadDocuments = loadDocuments; this.limit = limit; this.queryEmbedding = queryEmbedding; this.embeddingModel = embeddingModel }
   async _getRelevantDocuments(query) {
     const documents = await this.loadDocuments()
     const tokens = documents.map(doc => knowledgeTokens(`${doc.metadata.title} ${doc.pageContent}`))
@@ -78,13 +80,19 @@ export class WorkspaceKnowledgeRetriever extends BaseRetriever {
       }
       return { document, score }
     })
-    return scored.filter(item => item.score > 0).sort((a, b) => b.score - a.score || a.document.metadata.id.localeCompare(b.document.metadata.id)).slice(0, this.limit).map(item => item.document)
+    const lexical = scored.filter(item => item.score > 0).sort((a, b) => b.score - a.score || a.document.metadata.id.localeCompare(b.document.metadata.id))
+    const semantic = this.queryEmbedding ? documents.map(document => ({ document, score: document.metadata.embeddingModel === this.embeddingModel ? cosineSimilarity(this.queryEmbedding, document.metadata.embedding) : null })).filter(item => item.score !== null && item.score > 0).sort((a, b) => b.score - a.score) : []
+    const fused = new Map()
+    lexical.forEach((item, rank) => fused.set(item.document.metadata.id, { document: item.document, score: (fused.get(item.document.metadata.id)?.score || 0) + 1 / (60 + rank) }))
+    semantic.forEach((item, rank) => fused.set(item.document.metadata.id, { document: item.document, score: (fused.get(item.document.metadata.id)?.score || 0) + 1.25 / (60 + rank) }))
+    return [...fused.values()].sort((a, b) => b.score - a.score || a.document.metadata.id.localeCompare(b.document.metadata.id)).slice(0, this.limit).map(item => item.document)
   }
 }
 
 export async function answerKnowledgeQuery({ question, language = 'en-US', actor, service, env = {}, provider = callConfiguredProvider }) {
   const zh = language === 'zh-CN'
-  const retriever = new WorkspaceKnowledgeRetriever({ loadDocuments: () => service.documents(actor) })
+  const queryVector = await callConfiguredEmbeddingProvider([question], env)
+  const retriever = new WorkspaceKnowledgeRetriever({ loadDocuments: () => service.documents(actor), queryEmbedding: queryVector.ok ? queryVector.vectors[0] : null, embeddingModel: queryVector.ok ? queryVector.model : null })
   const chain = RunnableSequence.from([
     RunnableLambda.from(async input => ({ question: input, documents: await retriever.invoke(input) })),
     RunnableLambda.from(async ({ question, documents }) => {

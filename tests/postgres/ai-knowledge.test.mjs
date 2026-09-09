@@ -9,13 +9,17 @@ test('knowledge ingestion, retrieval, audience isolation, and archive persist in
   const reader = { ...admin, permissionCodes: new Set() }
   try {
     await prisma.tenant.createMany({ data: [{ id: 'rag-t1', name: 'RAG workspace' }, { id: 'rag-t2', name: 'Other workspace' }] })
-    const service = createKnowledgeService(prisma)
+    const service = createKnowledgeService(prisma, { embeddingProvider: async inputs => ({ ok: true, model: 'embedding-test-v1', dimensions: 3, vectors: inputs.map((_, index) => [1, index, 0]) }) })
     const doc = await service.add(admin, { title: 'Example Zephyr product guide', content: 'Zephyr uses a 24 volt supply. Its warranty lasts 18 months. This is fictional demonstration information.' })
     const secret = await service.add(admin, { title: 'Private finance note', content: 'Confidential Zephyr purchase discount is available only to finance reviewers.', requiredPermission: 'finance.payable.read' })
     const other = await service.add({ ...admin, tenantId: 'rag-t2' }, { title: 'Other tenant Zephyr guide', content: 'Other workspace proprietary Zephyr documentation must not be visible here.' })
     const answer = await answerKnowledgeQuery({ question: 'Zephyr warranty', actor: reader, service })
     assert.match(answer.answer, /18 months/)
     assert.deepEqual(answer.citations.map(c => c.documentId), [doc.id])
+    const indexed = (await service.documents(reader)).find(row => row.metadata.documentId === doc.id)
+    assert.equal(indexed.metadata.embeddingModel, 'embedding-test-v1')
+    assert.equal(indexed.metadata.embeddingDimensions, 3)
+    assert.match(indexed.metadata.contentHash, /^[a-f0-9]{64}$/)
     await assert.rejects(service.get(reader, secret.id), { status: 404 })
     await assert.rejects(service.get(admin, other.id), { status: 404 })
     const restartedService = createKnowledgeService(prisma)
