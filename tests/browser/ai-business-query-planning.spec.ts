@@ -1,9 +1,15 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
-async function openApp(page: Page) {
+async function openApp(page: Page, language?: "en-US" | "zh-CN") {
   const login = await page.request.post('/api/auth/login', { data: { email: 'manager@example.com', name: 'Ignored', company: 'Ignored' } })
   expect(login.ok(), await login.text()).toBeTruthy()
   const session = await login.json()
+  if (language) {
+    const headers = { Authorization: `Bearer ${session.token}` }
+    const profile = await (await page.request.get('/api/me/profile', { headers })).json()
+    const update = await page.request.patch('/api/me/profile', { headers, data: { ...profile, languagePreference: language } })
+    expect(update.ok(), await update.text()).toBeTruthy()
+  }
   await page.addInitScript(({ token, user }) => {
     window.localStorage.setItem('flowchain:auth-token', token)
     window.localStorage.setItem('flowchain:current-user', JSON.stringify(user))
@@ -68,4 +74,12 @@ test.describe('Phase 5.4A business query planning', () => {
       expect(overflow.body).toBeLessThanOrEqual(1)
     })
   }
+
+  test('Chinese preference changes query results while retaining English as workspace default', async ({ page }) => {
+    await openApp(page, 'zh-CN')
+    const assistant = await ask(page, '有哪些供应商需要付款？')
+    await expect(assistant.getByTestId('ai-business-query-scope')).toHaveText('全部供应商')
+    await expect(assistant).toContainText('需要付款')
+    await expectNoInternalLeakage(assistant)
+  })
 })

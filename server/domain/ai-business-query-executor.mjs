@@ -68,29 +68,32 @@ function relevantRows(rows, goal) {
 
 function buildSection(goal, definition, rows, sourceStatus) {
   const section = definition.section
-  const state = section === 'comparison' || section === 'priority' || section === 'followups'
+  const matchingRows = relevantRows(rows, goal)
+  let state = section === 'comparison' || section === 'priority' || section === 'followups'
     ? rows.length ? 'confirmed' : 'confirmed_zero'
     : section === 'inventory' ? 'unavailable' : aggregateState(rows, section, sourceStatus)
-  const counts = rows.reduce((output, row) => {
+  if (state === "confirmed" && matchingRows.length === 0) state = "confirmed_zero"
+  const metricRows = ["hidden", "incomplete", "unavailable"].includes(state) ? rows : matchingRows
+  const counts = metricRows.reduce((output, row) => {
     for (const [key, value] of Object.entries(countsFor(section, row[section]))) {
       if (value === null || value === undefined) output[key] = null
       else if (output[key] !== null) output[key] = (output[key] || 0) + value
     }
     return output
   }, {})
-  const amounts = rows.reduce((output, row) => {
+  const amounts = metricRows.reduce((output, row) => {
     for (const [key, value] of Object.entries(amountsFor(section, row[section]))) {
       if (value === null || value === undefined) output[key] = null
       else if (output[key] !== null) output[key] = (output[key] || 0) + value
     }
     return output
   }, {})
-  if (section === "payment" && new Set(rows.flatMap(row => row.payment?.currencies || [])).size > 1) {
+  if (section === "payment" && new Set(metricRows.flatMap(row => row.payment?.currencies || [])).size > 1) {
     for (const key of Object.keys(amounts)) amounts[key] = null
   }
-  const evidence = rows.flatMap((row) => row.evidence || []).slice(0, 50)
+  const evidence = matchingRows.flatMap((row) => row.evidence || []).slice(0, 50)
   const limitations = [...new Set(rows.flatMap((row) => row.dataQuality?.limitations || []))]
-  return { goal, state, conclusionCode: `${goal}:${state}`, counts, amounts, rows: sectionRows(relevantRows(rows, goal), section), evidence, limitations }
+  return { goal, state, conclusionCode: `${goal}:${state}`, counts, amounts, rows: sectionRows(matchingRows, section), evidence, limitations }
 }
 
 function scopeSummary(plan, rows) {
@@ -144,7 +147,7 @@ export async function executeBusinessQueryPlan(planCandidate, context = {}) {
     scopeSummary: scopeSummary(plan, rows),
     sections,
     validitySummary: summary.recordValiditySummary,
-    evidence: rows.flatMap((row) => row.evidence || []).slice(0, 100),
+    evidence: [...new Map(sections.flatMap(section => section.evidence || []).map(item => [`${item.entityType || item.type}:${item.entityId || item.id}`, item])).values()].slice(0, 100),
     limitations: [...new Set([...timeWindow.limitations, ...rows.flatMap((row) => row.dataQuality?.limitations || []), ...failures.map((row) => `${row.goal}:${row.reason}`)])],
     availableFollowups: ['查看付款阻断', '查看延期采购订单', '查看发票差异', '查看缺失证据'],
     fieldVisibility: summary.fieldVisibility,

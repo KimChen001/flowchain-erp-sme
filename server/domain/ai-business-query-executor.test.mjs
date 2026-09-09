@@ -89,3 +89,13 @@ test('priority ranking applies a stable limit and hides unrelated zero-result su
   const pack = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ goals: ['supplier_priority'], ranking: { enabled: true, limit: 1 } }), { summaryService: { read: async () => ({ items: [lower, summary] }) } })
   assert.deepEqual(pack.sections[0].rows.map(row => row.supplier.id), ['s1'])
 })
+
+
+test('healthy invoices do not appear as exceptions or leak into follow-up evidence', async () => {
+  const healthy = structuredClone(summary)
+  healthy.invoice = { state: 'confirmed', openCount: 1, mismatchCount: 0, disputedCount: 0, missingEvidenceCount: 0 }
+  const pack = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ goals: ['supplier_invoice_exceptions'] }), { summaryService: { read: async () => ({ items: [healthy] }) } })
+  assert.equal(pack.sections[0].state, 'confirmed_zero')
+  assert.deepEqual(pack.sections[0].rows, [])
+  assert.deepEqual(pack.evidence, [])
+})
