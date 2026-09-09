@@ -4,6 +4,13 @@ import { AlertTriangle, Boxes, RefreshCw } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
+
+const copy = (label: string) =>
+  workspaceCopy(
+    label,
+    typeof document === "undefined" ? "en-US" : document.documentElement.lang,
+  );
 
 type Item = {
   id?: string;
@@ -230,14 +237,14 @@ export default function InventoryPage({
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold">库存管理</h2>
+          <h2 className="text-lg font-semibold">{copy("库存管理")}</h2>
           <p className="mt-1 text-xs" style={{ color: A.sub }}>
-            仅显示库存运行时仓库中的正式记录；没有记录时保持为空。
+            {copy("仅显示库存运行时仓库中的正式记录；没有记录时保持为空。")}
           </p>
         </div>
         <button
           onClick={load}
-          aria-label="刷新库存"
+          aria-label={copy("刷新库存")}
           className="rounded-md p-2"
           style={{ color: A.blue }}
         >
@@ -247,11 +254,11 @@ export default function InventoryPage({
       {activeFilters.length > 0 && (
         <Card className="p-4" data-testid="inventory-active-filters">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-semibold">当前筛选：</span>
+            <span className="font-semibold">{copy("当前筛选：")}</span>
             {activeFilters.map((filter) => (
               <Chip
                 key={filter.name}
-                label={`${filter.label}：${filter.value}`}
+                label={`${copy(filter.label)}: ${filter.value}`}
                 color={A.blue}
                 bg="#eef5ff"
               />
@@ -262,27 +269,27 @@ export default function InventoryPage({
               style={{ background: A.gray6, color: A.label }}
               onClick={clearFilters}
             >
-              清除筛选
+              {copy("清除筛选")}
             </button>
           </div>
         </Card>
       )}
       {state === "loading" && (
         <Card className="p-8 text-sm" style={{ color: A.sub }}>
-          正在读取库存运行时数据...
+          {copy("正在读取库存运行时数据...")}
         </Card>
       )}
       {state === "error" && (
         <Card className="p-8 text-sm" style={{ color: A.red }}>
-          库存数据读取失败。请检查运行时服务后重试。
+          {copy("库存数据读取失败。请检查运行时服务后重试。")}
         </Card>
       )}
       {state === "ready" && visible.length === 0 && (
         <Card className="p-10 text-center">
           <Boxes className="mx-auto mb-3" size={28} color={A.gray2} />
-          <div className="text-sm font-semibold">{emptyState.title}</div>
+          <div className="text-sm font-semibold">{copy(emptyState.title)}</div>
           <p className="mt-2 text-xs" style={{ color: A.sub }}>
-            {emptyState.description}
+            {copy(emptyState.description)}
           </p>
         </Card>
       )}
@@ -304,7 +311,7 @@ export default function InventoryPage({
                     "操作",
                   ].map((h) => (
                     <th key={h} className="px-4 py-3 text-left">
-                      {h}
+                      {copy(h)}
                     </th>
                   ))}
                 </tr>
@@ -374,7 +381,7 @@ export default function InventoryPage({
                           style={{ background: A.gray6, color: A.label }}
                           onClick={() => setSelectedSku(item.sku)}
                         >
-                          库存详情
+                          {copy("库存详情")}
                         </button>
                       </div>
                     </td>
@@ -460,23 +467,23 @@ export default function InventoryPage({
                 view === "warnings" && isShort(selected) ? A.orange : A.green
               }
             />
-            <h3 className="text-sm font-semibold">库存详情 · {selected.sku}</h3>
+            <h3 className="text-sm font-semibold">{copy("库存详情")} · {selected.sku}</h3>
           </div>
           <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
             <span>
-              在手：
+              {copy("在手")}:
               {view === "overview"
                 ? selected.onHandQuantity || "0.0000"
                 : Number(selected.onHandQuantity || 0)}
             </span>
             <span>
-              预留：
+              {copy("预留")}:
               {view === "overview"
                 ? selected.reservedQuantity || "0.0000"
                 : Number(selected.reservedQuantity || 0)}
             </span>
             <span>
-              可用：
+              {copy("可用")}:
               {view === "overview"
                 ? selected.availableQuantity || "0.0000"
                 : quantity(selected)}
@@ -496,7 +503,7 @@ function SimpleTable({ headers, rows }: { headers: string[]; rows: any[][] }) {
           <tr style={{ borderBottom: `1px solid ${A.border}` }}>
             {headers.map((h) => (
               <th key={h} className="px-4 py-3 text-left">
-                {h}
+                {copy(h)}
               </th>
             ))}
           </tr>

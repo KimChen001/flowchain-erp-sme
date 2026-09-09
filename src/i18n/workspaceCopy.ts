@@ -121,6 +121,17 @@ const operationalEnglish: Record<string, string> = {
   '质量合格率': 'Quality pass rate', '响应分': 'Response score', '风险状态': 'Risk status', '开放 PO': 'Open POs', '对账异常': 'Reconciliation exceptions',
   '查看运营档案': 'View operational profile', '整改关注': 'Remediation watch', '战略': 'Strategic', '核心': 'Core', '无': 'None', '营业执照 / 质量体系': 'Business license / quality system',
   '证照即将到期': 'Certificate expiring soon', '需年度复核': 'Annual review required', '年度复核': 'Annual review', '资质文件 / 税务资料 / 联系信息': 'Qualification, tax, and contact documents', '稳定': 'Stable',
+  '仅显示库存运行时仓库中的正式记录；没有记录时保持为空。': 'Only posted records from the inventory runtime are shown. The page stays empty when no records exist.',
+  '刷新库存': 'Refresh inventory', '当前筛选：': 'Active filters:', '正在读取库存运行时数据...': 'Loading inventory runtime data...', '库存数据读取失败。请检查运行时服务后重试。': 'Could not load inventory data. Check the runtime service and try again.',
+  '当前工作区暂无库存余额': 'No inventory balances in this workspace', '尚未读取到当前用户有权查看的仓库库存余额。': 'No warehouse inventory balances are available to the current user.',
+  '当前工作区暂无库存流水': 'No inventory movements in this workspace', '库存余额可以由本地场景显式加载；只有正式入库、出库、调拨或调整过账后才会产生流水。': 'Inventory balances can be loaded through a local scenario. Movements appear only after a receipt, issue, transfer, or adjustment is posted.',
+  '当前没有库存预警': 'No inventory alerts', '当前可见库存余额未低于安全库存或再订货点。': 'Visible inventory balances are not below safety stock or the reorder point.',
+  '当前工作区暂无批次记录': 'No lot records in this workspace', '只有启用批次管理并完成正式库存过账后才会出现批次记录。': 'Lot records appear after lot tracking is enabled and inventory is posted.',
+  '当前工作区暂无序列号记录': 'No serial records in this workspace', '只有启用序列号管理并完成正式库存过账后才会出现序列号记录。': 'Serial records appear after serial tracking is enabled and inventory is posted.',
+  '当前没有库存异常': 'No inventory exceptions', '当前可见库存记录未产生需要处理的异常。': 'Visible inventory records have no exceptions that require action.',
+  '当前工作区暂无库存记录': 'No inventory records in this workspace', '页面不会用固定 SKU、批次、序列号或移动记录补足空数据。': 'The page does not fill empty results with fixed SKUs, lots, serials, or movements.',
+  'SKU / 物料': 'SKU / item', '仓库 / 库位': 'Warehouse / location', '在手量': 'On hand', '预留量': 'Reserved', '可用量': 'Available', '安全库存 / 再订货点': 'Safety stock / reorder point', '库存详情': 'Inventory details', '在手': 'On hand', '预留': 'Reserved', '可用': 'Available',
+  '批次': 'Lot', '数量': 'Quantity', '序列号': 'Serial number', '移动单号': 'Movement number', '入库': 'Inbound', '出库': 'Outbound', '日期': 'Date', '异常单号': 'Exception number', '数量影响': 'Quantity impact',
 };
 export function workspaceCopy(label: string, language: string): string {
   return language === 'en-US' ? english[label] || operationalEnglish[label] || label : label;
