@@ -46,8 +46,8 @@ test('R111 panel has explicit minimize restore outside click and cleanup behavio
   assert.match(panelSource, /document\.addEventListener\("keydown", handleKeyDown\)/)
   assert.match(panelSource, /event\.key === "Escape"/)
   assert.match(panelSource, /panelRef\.current\?\.contains\(target\)/)
-  assert.match(panelSource, /aria-label="最小化 AI 助手"/)
-  assert.match(panelSource, /aria-label=\{open \? "最小化 AI 助手" : "展开 AI 助手"\}/)
+  assert.match(panelSource, /aria-label=\{language === "zh-CN" \? "最小化 AI 助手" : "Minimize AI assistant"\}/)
+  assert.match(panelSource, /aria-label=\{open \? \(language === "zh-CN" \? "最小化 AI 助手" : "Minimize AI assistant"\) : \(language === "zh-CN" \? "展开 AI 助手" : "Open AI assistant"\)\}/)
 })
 
 test('R111 minimize and navigation preserve messages input evidence and actions', () => {

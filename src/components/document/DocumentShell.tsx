@@ -4,6 +4,9 @@ import { A, Card, Chip } from "../ui";
 import { RelatedRecordsPanel } from "../navigation/RelatedRecordsPanel";
 import { resolveBusinessLinkedRecord, type BusinessLinkedRecord, type BusinessLinkedRecordInput } from "../../lib/businessLinks";
 import type { WorkflowContext } from "../../lib/workflowContext";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
+
+const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 export type DocumentTone = "neutral" | "info" | "success" | "warning" | "danger" | "purple";
 export type DocumentField = {
@@ -93,7 +96,7 @@ export function DocumentShell({
             {moduleLabel && <Chip label={String(moduleLabel)} color={A.blue} bg="#f0f6ff" />}
             {status && <Chip label={status} color={style.color} bg={style.bg} />}
           </div>
-          <h2 className="text-lg font-semibold tracking-tight" style={{ color: A.label }}>{title}</h2>
+          <h2 className="text-lg font-semibold tracking-tight" style={{ color: A.label }}>{copy(title)}</h2>
           <div className="text-xs mt-1" style={{ color: A.sub }}>
             {documentNo && <span className="font-semibold tabular-nums" style={{ color: A.blue }}>{documentNo}</span>}
             {documentNo && subtitle ? <span> · </span> : null}
@@ -127,8 +130,8 @@ export function DocumentHeader({ fields, columns = 4 }: { fields: DocumentField[
           const style = documentToneStyle(field.tone);
           return (
             <div key={field.label} className="min-w-0">
-              <div className="fc-caption font-medium" style={{ color: A.gray2 }}>{field.label}</div>
-              <div className="text-xs font-semibold mt-1 truncate" style={{ color: field.tone ? style.color : A.label }}>{field.value || "—"}</div>
+              <div className="fc-caption font-medium" style={{ color: A.gray2 }}>{copy(field.label)}</div>
+              <div className="text-xs font-semibold mt-1 truncate" style={{ color: field.tone ? style.color : A.label }}>{typeof field.value === "string" ? copy(field.value) : field.value || "—"}</div>
               {field.helper && <div className="fc-caption leading-4 mt-0.5 truncate" style={{ color: A.sub }}>{field.helper}</div>}
             </div>
           );
@@ -157,7 +160,7 @@ export function DocumentLinesTable<T extends Record<string, unknown>>({
             <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
               {columns.map((column) => (
                 <th key={column.key} className={`${column.align === "right" ? "text-right" : column.align === "center" ? "text-center" : "text-left"} ${compact ? "px-3 py-2" : "px-4 py-3"} font-medium whitespace-nowrap`} style={{ color: A.gray1 }}>
-                  {column.label}
+                  {copy(column.label)}
                 </th>
               ))}
             </tr>
@@ -165,13 +168,13 @@ export function DocumentLinesTable<T extends Record<string, unknown>>({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-8 text-center" style={{ color: A.gray2 }}>{emptyText}</td>
+                <td colSpan={columns.length} className="px-4 py-8 text-center" style={{ color: A.gray2 }}>{copy(emptyText)}</td>
               </tr>
             ) : rows.map((row, index) => (
               <tr key={String((row as any).id || (row as any).lineId || index)} style={{ borderBottom: index < rows.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
                 {columns.map((column) => (
                   <td key={column.key} className={`${column.align === "right" ? "text-right" : column.align === "center" ? "text-center" : "text-left"} ${compact ? "px-3 py-2" : "px-4 py-3"} whitespace-nowrap`} style={{ color: A.label }}>
-                    {column.render ? column.render(row, index) : String(row[column.key] ?? "—")}
+                    {column.render ? column.render(row, index) : copy(String(row[column.key] ?? "—"))}
                   </td>
                 ))}
               </tr>
@@ -196,7 +199,7 @@ export function DocumentTotals({ totals, columns = 4 }: { totals: DocumentTotal[
           const style = documentToneStyle(total.tone);
           return (
             <div key={total.label} className="rounded-lg px-3 py-2" style={{ background: total.tone ? style.bg : A.gray6 }}>
-              <div className="fc-caption" style={{ color: A.gray2 }}>{total.label}</div>
+              <div className="fc-caption" style={{ color: A.gray2 }}>{copy(total.label)}</div>
               <div className="text-sm font-semibold mt-0.5 truncate" style={{ color: total.tone ? style.color : A.label }}>{total.value}</div>
             </div>
           );
@@ -226,7 +229,7 @@ export function DocumentStatusTimeline({ steps }: { steps: TimelineStep[] }) {
                 {index < steps.length - 1 && <div className="h-px w-20 mt-2" style={{ background: color }} />}
               </div>
               <div className="ml-2 -mt-0.5">
-                <div className="text-xs font-semibold" style={{ color: step.status === "pending" ? A.gray1 : A.label }}>{step.label}</div>
+                <div className="text-xs font-semibold" style={{ color: step.status === "pending" ? A.gray1 : A.label }}>{copy(step.label)}</div>
                 {step.helper && <div className="fc-caption mt-0.5" style={{ color: A.gray2 }}>{step.helper}</div>}
               </div>
             </div>
@@ -282,10 +285,10 @@ export function DocumentEvidencePanel({
     <Card className="p-4">
       <div className="grid grid-cols-1 lg:grid-cols-[0.9fr_1.1fr] gap-4">
         <div>
-          <div className="text-xs font-semibold mb-2" style={{ color: A.label }}>关联单据</div>
+          <div className="text-xs font-semibold mb-2" style={{ color: A.label }}>{copy("关联单据")}</div>
           <div className="space-y-1.5">
             {linkedDocuments.length === 0 ? (
-              <div className="text-[11px]" style={{ color: A.gray2 }}>暂无关联单据</div>
+              <div className="text-[11px]" style={{ color: A.gray2 }}>{copy("暂无关联单据")}</div>
             ) : resolvedRecords.map((doc) => {
               const style = documentToneStyle(doc.disabledReason ? "warning" : "info");
               const clickable = doc.routeAvailable && doc.focusTarget && onNavigate;
@@ -299,7 +302,7 @@ export function DocumentEvidencePanel({
                   disabled={!clickable}
                   className="w-full rounded-lg px-2.5 py-2 text-left disabled:cursor-default"
                   style={{ background: style.bg, color: style.color }}>
-                  <div className="fc-caption font-medium">{doc.relationshipLabel}</div>
+                  <div className="fc-caption font-medium">{copy(doc.relationshipLabel)}</div>
                   <div className="text-xs font-semibold mt-0.5 truncate">{doc.displayLabel}</div>
                   {doc.disabledReason ? <div className="mt-0.5 fc-caption">{doc.disabledReason}</div> : null}
                 </button>
@@ -308,13 +311,13 @@ export function DocumentEvidencePanel({
           </div>
         </div>
         <div>
-          <div className="text-xs font-semibold mb-2" style={{ color: A.label }}>证据 / 来源</div>
+          <div className="text-xs font-semibold mb-2" style={{ color: A.label }}>{copy("证据 / 来源")}</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {evidence.map((row) => {
               const style = documentToneStyle(row.tone);
               return (
                 <div key={row.label} className="rounded-lg px-2.5 py-2" style={{ background: row.tone ? style.bg : A.gray6 }}>
-                  <div className="fc-caption" style={{ color: A.gray2 }}>{row.label}</div>
+                  <div className="fc-caption" style={{ color: A.gray2 }}>{copy(row.label)}</div>
                   <div className="text-[11px] font-semibold mt-0.5 truncate" style={{ color: row.tone ? style.color : A.label }}>{row.value || "—"}</div>
                 </div>
               );
@@ -322,9 +325,9 @@ export function DocumentEvidencePanel({
           </div>
           {(confidence || provenance || notes) && (
             <div className="mt-3 rounded-lg p-3 text-[11px] leading-5" style={{ background: A.gray6, color: A.sub }}>
-              {confidence && <div><span className="font-semibold" style={{ color: A.gray1 }}>置信度：</span>{confidence}</div>}
-              {provenance && <div><span className="font-semibold" style={{ color: A.gray1 }}>来源：</span>{provenance}</div>}
-              {notes && <div><span className="font-semibold" style={{ color: A.gray1 }}>备注：</span>{notes}</div>}
+              {confidence && <div><span className="font-semibold" style={{ color: A.gray1 }}>{copy("置信度")}:</span>{confidence}</div>}
+              {provenance && <div><span className="font-semibold" style={{ color: A.gray1 }}>{copy("来源")}:</span>{provenance}</div>}
+              {notes && <div><span className="font-semibold" style={{ color: A.gray1 }}>{copy("备注")}:</span>{notes}</div>}
             </div>
           )}
         </div>

@@ -1,3 +1,4 @@
+import { workspaceCopy } from "../i18n/workspaceCopy";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Toaster, toast } from "sonner";
@@ -28,6 +29,7 @@ import {
 } from "./routeRegistry";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../lib/constants";
 import {
+  ApiError,
   apiJson,
   AUTH_TOKEN_KEY,
   CURRENT_USER_KEY,
@@ -798,7 +800,14 @@ export default function FlowChainApp() {
         setEffectivePermissionCodes(new Set(result.effectivePermissions));
         setAuthorizationLoadState("ready");
       })
-      .catch(() => {
+      .catch((error) => {
+        if (error instanceof ApiError && error.status === 401) {
+          localStorage.removeItem(AUTH_TOKEN_KEY);
+          localStorage.removeItem(CURRENT_USER_KEY);
+          setAuthToken("");
+          setUser(null);
+          return;
+        }
         setAuthorizationVisibility({});
         setEffectivePermissionCodes(new Set());
         setAuthorizationLoadState("failed");
@@ -836,14 +845,14 @@ export default function FlowChainApp() {
     return {
       ...item,
       label:
-        item.navigationLabel ||
+        (item.navigationLabel ? workspaceCopy(item.navigationLabel, language) : "") ||
         (root ? routeLabel(root, !root.parentId) : item.label),
       children: item.children?.map(child => {
         const route = routeById(child.id);
         return { ...child, label: route ? routeLabel(route) : child.label };
       }),
     };
-  }), [routeLabel]);
+  }), [routeLabel, language]);
 
   const activeNavigationRouteId = activeRoute?.currentActiveMenuId || active;
   const activePrimarySurfaceId = activeRoute
@@ -1756,8 +1765,8 @@ export default function FlowChainApp() {
             <button
               type="button"
               disabled
-              aria-label="通知中心尚未接入"
-              title="通知中心尚未接入"
+              aria-label={language === 'en-US' ? 'Notifications unavailable' : '通知中心尚未接入'}
+              title={language === 'en-US' ? 'Notifications unavailable' : '通知中心尚未接入'}
               className="relative p-2 rounded-md opacity-45"
               style={{ color: A.gray1 }}
             >
@@ -1782,7 +1791,7 @@ export default function FlowChainApp() {
                     className="fc-caption leading-tight"
                     style={{ color: A.gray2 }}
                   >
-                    {user.roleLabel || roleLabel(user.role)}
+                    {workspaceCopy(user.roleLabel || roleLabel(user.role), language)}
                   </div>
                 </div>
               </button>
@@ -1842,14 +1851,14 @@ export default function FlowChainApp() {
                   {activeRoute.directAccessBehavior === "LEGACY_REDIRECT" ? (
                     <Card className="p-10 text-center" data-testid="legacy-route-redirecting">
                       <Loader2 className="mx-auto animate-spin text-slate-500" size={32} />
-                      <h2 className="mt-3 text-lg font-semibold">正在转到正式数据接入页面</h2>
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Opening the supported data intake page" : "正在转到正式数据接入页面"}</h2>
                     </Card>
                   ) : activeRoute.directAccessBehavior === "NOT_IMPLEMENTED" ? (
                     <Card className="p-10 text-center" data-testid="route-not-implemented">
                       <AlertTriangle className="mx-auto text-amber-600" size={34} />
-                      <h2 className="mt-3 text-lg font-semibold">页面尚未接通</h2>
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Page unavailable" : "页面尚未接通"}</h2>
                       <p className="mt-2 text-sm text-slate-500">
-                        {activeRoute.knownLimitations || "当前路径已识别，但正式业务页面尚未接通。"}
+                        {activeRoute.knownLimitations || (language === "en-US" ? "This route is recognized, but its production page is not connected." : "当前路径已识别，但正式业务页面尚未接通。")}
                       </p>
                       <button
                         type="button"
@@ -1861,30 +1870,30 @@ export default function FlowChainApp() {
                           )
                         }
                       >
-                        返回{routeById(activeRoute.returnListRouteId || "")?.label || "上一层"}
+                        {language === "en-US" ? "Back to " : "返回"}{routeById(activeRoute.returnListRouteId || "") ? routeLabel(routeById(activeRoute.returnListRouteId || "")!) : (language === "en-US" ? "previous page" : "上一层")}
                       </button>
                     </Card>
                   ) : activeRoute.directAccessBehavior === "LEGACY_UNAVAILABLE" ? (
                     <Card className="p-10 text-center" data-testid="legacy-route-unavailable">
                       <AlertTriangle className="mx-auto text-amber-600" size={34} />
-                      <h2 className="mt-3 text-lg font-semibold">旧页面已停用</h2>
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Legacy page retired" : "旧页面已停用"}</h2>
                       <p className="mt-2 text-sm text-slate-500">
-                        该旧路径没有一对一替代页面，不会跳转到无关功能。
+                        {language === "en-US" ? "This legacy route has no direct replacement." : "该旧路径没有一对一替代页面，不会跳转到无关功能。"}
                       </p>
                       <button
                         type="button"
                         className="mt-5 text-sm font-semibold text-blue-600 hover:underline"
                         onClick={() => routerNavigate("/app/universal-intake")}
                       >
-                        前往统一数据接入
+                        {language === "en-US" ? "Open unified data intake" : "前往统一数据接入"}
                       </button>
                     </Card>
                   ) : activeRoute.directAccessBehavior === "INTERNAL_ONLY" ? (
                     <Card className="p-10 text-center" data-testid="internal-route-blocked">
                       <Lock className="mx-auto text-slate-500" size={34} />
-                      <h2 className="mt-3 text-lg font-semibold">内部页面不可从普通工作台进入</h2>
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Internal page" : "内部页面不可从普通工作台进入"}</h2>
                       <p className="mt-2 text-sm text-slate-500">
-                        此页面属于内部治理边界，不是默认 SME 产品入口。
+                        {language === "en-US" ? "This governance page is not available from the standard SME workspace." : "此页面属于内部治理边界，不是默认 SME 产品入口。"}
                       </p>
                     </Card>
                   ) : activeRoute.directAccessBehavior === "FROZEN_UNAVAILABLE" ? (
@@ -1897,14 +1906,14 @@ export default function FlowChainApp() {
                     authorizationLoadState === "loading" ? (
                     <Card className="p-10 text-center" data-testid="authorization-route-loading">
                       <Loader2 className="mx-auto animate-spin text-slate-500" size={32} />
-                      <h2 className="mt-3 text-lg font-semibold">正在验证访问权限</h2>
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Checking access" : "正在验证访问权限"}</h2>
                     </Card>
                   ) : activeRoute.requiredPermission &&
                     authorizationLoadState === "failed" ? (
                     <Card className="p-10 text-center" data-testid="authorization-route-unavailable">
                       <ShieldAlert className="mx-auto text-amber-600" size={34} />
-                      <h2 className="mt-3 text-lg font-semibold">无法验证当前访问权限</h2>
-                      <p className="mt-2 text-sm text-slate-500">请刷新页面或重新登录。</p>
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Could not check access" : "无法验证当前访问权限"}</h2>
+                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "Refresh the page or sign in again." : "请刷新页面或重新登录。"}</p>
                     </Card>
                   ) : activeRoute.requiredPermission &&
                     !activeRouteHasPermission ? (
@@ -1926,8 +1935,8 @@ export default function FlowChainApp() {
                     capabilityLoadState === "failed" ? (
                     <Card className="p-10 text-center" data-testid="capability-registry-unavailable">
                       <Lock className="mx-auto text-slate-500" size={34} />
-                      <h2 className="mt-3 text-lg font-semibold">能力注册表暂不可用</h2>
-                      <p className="mt-2 text-sm text-slate-500">无法验证该扩展能力是否启用，页面已按安全策略关闭。</p>
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability registry unavailable" : "能力注册表暂不可用"}</h2>
+                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "The application could not verify whether this capability is enabled." : "无法验证该扩展能力是否启用，页面已按安全策略关闭。"}</p>
                     </Card>
                   ) : activeCapabilityId &&
                     capabilityAccess?.status === "blocked" ? (
@@ -1945,7 +1954,7 @@ export default function FlowChainApp() {
                         fallback={
                           <div
                             className="grid grid-cols-2 gap-3 lg:grid-cols-4"
-                            aria-label="模块加载中"
+                            aria-label={language === "en-US" ? "Loading module" : "模块加载中"}
                           >
                             {[0, 1, 2, 3].map((item) => (
                               <div

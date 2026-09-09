@@ -1,3 +1,4 @@
+import { runBusinessQueryRuntime } from "./ai-business-query-runtime.mjs";
 import { buildAiDraftPreparationResponse } from "./ai-draft-preparation.mjs";
 import { buildAiChatStatusResponse } from "./ai-chat-status.mjs";
 import { buildAiEvidenceGraphResponse } from "./ai-evidence-graph-query.mjs";
@@ -17,6 +18,7 @@ function bind(toolNames, handlerId, implementation) {
 }
 
 export const aiToolHandlerRegistry = Object.freeze([
+  ...bind(["getSupplierPaymentSummary", "getSupplierPaymentBlocks", "getSupplierOperationalFollowups", "getSupplierActionSummary", "getSupplierPriorityList", "compareSupplierActionRisk", "getSupplierInvoiceExceptions", "getSupplierBankReconciliationExceptions"], AI_HANDLER_IDS.businessQueryPlan, runBusinessQueryRuntime),
   ...bind([
     "getSalesDemandSummary",
     "getCustomerDeliveryRisks",

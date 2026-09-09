@@ -15,6 +15,9 @@ import type { CanonicalFocusTarget } from "../../lib/evidenceLinks";
 import { grnLinesOf } from "../../domain/receiving/helpers";
 import { poLinesOf, toNumber } from "../../domain/purchasing/helpers";
 import { scoreStyle, supplierScoreSnapshot } from "./scoring";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
+
+const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 type SrmTabTarget = "overview" | "master" | "performance" | "certification" | "sourcing" | "contracts";
 type NavigateFn = (moduleId: string, focusTarget?: CanonicalFocusTarget | null, options?: { returnTo?: string; entityLabel?: string; source?: string }) => void;
@@ -48,7 +51,7 @@ function NavigationButton({
       className="h-7 rounded-md px-2 text-[11px] font-semibold"
       style={{ background: "#f0f6ff", color: A.blue }}
     >
-      {children}
+      {typeof children === "string" ? copy(children) : children}
     </button>
   );
 }
@@ -74,7 +77,7 @@ function SimpleTable<T>({
                   className={`${column.align === "right" ? "text-right" : column.align === "center" ? "text-center" : "text-left"} px-3 py-2 font-medium whitespace-nowrap`}
                   style={{ color: A.gray1 }}
                 >
-                  {column.label}
+                  {copy(column.label)}
                 </th>
               ))}
             </tr>
@@ -82,7 +85,7 @@ function SimpleTable<T>({
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-8 text-center" style={{ color: A.gray2 }}>{emptyText}</td>
+                <td colSpan={columns.length} className="px-4 py-8 text-center" style={{ color: A.gray2 }}>{copy(emptyText)}</td>
               </tr>
             ) : rows.map((row, index) => (
               <tr key={index} style={{ borderBottom: index < rows.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
@@ -197,7 +200,7 @@ export default function SupplierDetailModal({
     <BusinessObjectDetailModal
       open={Boolean(row)}
       onClose={onClose}
-      title="Supplier Operational Profile / 供应商运营档案"
+      title={copy("Supplier Operational Profile / 供应商运营档案")}
       subtitle={`${row.supplier.code} · ${row.supplier.name} · ${row.category}`}
       width={1360}
     >
@@ -217,7 +220,7 @@ export default function SupplierDetailModal({
           { label: "已收未票金额", value: fmt(row.p2pSummary.receivedNotInvoicedAmount), tone: row.p2pSummary.receivedNotInvoicedAmount ? "warning" : "good" },
         ]} />
 
-        <DetailSection title="概览">
+        <DetailSection title={copy("概览")}>
           <DetailFieldGrid fields={[
             { label: "Supplier ID", value: row.supplier.code },
             { label: "Supplier Name", value: row.supplier.name },
@@ -241,7 +244,7 @@ export default function SupplierDetailModal({
           <DetailFieldGrid fields={p2pFields} />
         </DetailSection>
 
-        <DetailSection title="相关 RFQ / Quote">
+        <DetailSection title={copy("相关 RFQ / Quote")}>
           <SimpleTable
             rows={row.relatedRfqs}
             columns={[
@@ -258,16 +261,16 @@ export default function SupplierDetailModal({
               { key: "risk", label: "风险提示", render: (rfq) => rfq.quoted < rfq.suppliers ? "报价样本未满" : "低风险" },
               { key: "action", label: "操作", render: (rfq) => (
                 <div className="flex gap-1.5">
-                  <NavigationButton onClick={() => go("procurement:rfq", { entityType: "rfq", entityId: rfq.id }, rfq.id)}>查看 RFQ</NavigationButton>
-                  <NavigationButton onClick={() => go("procurement:rfq", { entityType: "rfq", entityId: rfq.id }, rfq.id)}>查看报价比较</NavigationButton>
-                  <NavigationButton onClick={() => preview("授标建议草稿", "仅打开内部复核草稿，不生成正式 PO。")}>查看授标建议草稿</NavigationButton>
+                  <NavigationButton onClick={() => go("procurement:rfq", { entityType: "rfq", entityId: rfq.id }, rfq.id)}>{copy("查看 RFQ")}</NavigationButton>
+                  <NavigationButton onClick={() => go("procurement:rfq", { entityType: "rfq", entityId: rfq.id }, rfq.id)}>{copy("查看报价比较")}</NavigationButton>
+                  <NavigationButton onClick={() => preview("授标建议草稿", "仅打开内部复核草稿，不生成正式 PO。")}>{copy("查看授标建议草稿")}</NavigationButton>
                 </div>
               ) },
             ]}
           />
         </DetailSection>
 
-        <DetailSection title="相关 PO">
+        <DetailSection title={copy("相关 PO")}>
           <SimpleTable
             rows={row.relatedPurchaseOrders}
             columns={[
@@ -286,18 +289,18 @@ export default function SupplierDetailModal({
               { key: "next", label: "当前下一步", render: (po) => po.received < po.items ? "跟进收货证据" : "复核发票匹配" },
               { key: "action", label: "操作", render: (po) => (
                 <div className="flex gap-1.5">
-                  <NavigationButton onClick={() => go("procurement:orders", { entityType: "purchase_order", entityId: po.po }, po.po)}>查看 PO</NavigationButton>
-                  <NavigationButton onClick={() => go("procurement:orders", { entityType: "purchase_order", entityId: po.po }, po.po)}>查看 PO Line</NavigationButton>
-                  <NavigationButton onClick={() => go("procurement:receiving", { entityType: "receiving_doc", entityId: row.relatedReceivingDocs.find((doc) => doc.po === po.po)?.grn || "" }, po.po)}>查看收货记录</NavigationButton>
-                  <NavigationButton onClick={() => go("procurement:invoices", { entityType: "supplier_invoice", entityId: row.relatedInvoices.find((invoice) => invoice.relatedPo === po.po)?.invoiceNumber || "" }, po.po)}>查看发票记录</NavigationButton>
-                  <NavigationButton onClick={() => go("procurement:match")}>查看三单匹配</NavigationButton>
+                  <NavigationButton onClick={() => go("procurement:orders", { entityType: "purchase_order", entityId: po.po }, po.po)}>{copy("查看 PO")}</NavigationButton>
+                  <NavigationButton onClick={() => go("procurement:orders", { entityType: "purchase_order", entityId: po.po }, po.po)}>{copy("查看 PO Line")}</NavigationButton>
+                  <NavigationButton onClick={() => go("procurement:receiving", { entityType: "receiving_doc", entityId: row.relatedReceivingDocs.find((doc) => doc.po === po.po)?.grn || "" }, po.po)}>{copy("查看收货记录")}</NavigationButton>
+                  <NavigationButton onClick={() => go("procurement:invoices", { entityType: "supplier_invoice", entityId: row.relatedInvoices.find((invoice) => invoice.relatedPo === po.po)?.invoiceNumber || "" }, po.po)}>{copy("查看发票记录")}</NavigationButton>
+                  <NavigationButton onClick={() => go("procurement:match")}>{copy("查看三单匹配")}</NavigationButton>
                 </div>
               ) },
             ]}
           />
         </DetailSection>
 
-        <DetailSection title="收货 / GRN 表现">
+        <DetailSection title={copy("收货 / GRN 表现")}>
           <DetailFieldGrid fields={[
             { label: "准时收货率", value: percent(row.p2pSummary.onTimeReceiptRate), tone: row.p2pSummary.onTimeReceiptRate < 90 ? "warning" : "good" },
             { label: "异常收货数", value: row.p2pSummary.receivingExceptionCount, tone: row.p2pSummary.receivingExceptionCount ? "warning" : "good" },
@@ -327,7 +330,7 @@ export default function SupplierDetailModal({
           </div>
         </DetailSection>
 
-        <DetailSection title="发票 / 三单匹配">
+        <DetailSection title={copy("发票 / 三单匹配")}>
           <DetailFieldGrid fields={[
             { label: "发票数量", value: row.p2pSummary.invoiceCount },
             { label: "发票总额", value: fmt(row.p2pSummary.invoiceTotalAmount) },
@@ -361,7 +364,7 @@ export default function SupplierDetailModal({
           </div>
         </DetailSection>
 
-        <DetailSection title="已收未票 / 未开票风险">
+        <DetailSection title={copy("已收未票 / 未开票风险")}>
           <SimpleTable
             rows={uninvoicedRows}
             columns={[
@@ -378,7 +381,7 @@ export default function SupplierDetailModal({
           />
         </DetailSection>
 
-        <DetailSection title="风险信号">
+        <DetailSection title={copy("风险信号")}>
           <SimpleTable
             rows={row.riskSignals}
             columns={[
@@ -392,7 +395,7 @@ export default function SupplierDetailModal({
           />
         </DetailSection>
 
-        <DetailSection title="绩效指标">
+        <DetailSection title={copy("绩效指标")}>
           <DetailFieldGrid fields={[
             { label: "RFQ 响应率", value: percent(row.p2pSummary.quoteResponseRate), tone: row.p2pSummary.quoteResponseRate < 90 ? "warning" : "good" },
             { label: "平均报价交期", value: row.relatedRfqs.length ? `${Math.round(12 + row.relatedRfqs.length)} 天` : "待补齐" },
@@ -407,11 +410,11 @@ export default function SupplierDetailModal({
             { label: "供应商运营评分", value: `${score.overall} / 内部复核`, tone: score.overall < 65 ? "danger" : score.overall < 85 ? "warning" : "good" },
           ]} />
           <div className="mt-3 rounded-lg p-3 text-[11px] leading-5" style={{ background: A.white, color: A.sub }}>
-            当前评分仅用于内部复核，不会自动影响供应商状态，不会改写供应商资料，也不会触发外部通知。
+            {copy("当前评分仅用于内部复核，不会自动影响供应商状态，不会改写供应商资料，也不会触发外部通知。")}
           </div>
         </DetailSection>
 
-        <DetailSection title="联系人与地址，只读">
+        <DetailSection title={copy("联系人与地址，只读")}>
           <DetailFieldGrid fields={[
             { label: "联系人姓名", value: row.supplier.contact },
             { label: "职务", value: "销售 / 客户经理" },
@@ -423,7 +426,7 @@ export default function SupplierDetailModal({
           ]} />
         </DetailSection>
 
-        <DetailSection title="证书 / 合规占位，只读">
+        <DetailSection title={copy("证书 / 合规占位，只读")}>
           <SimpleTable
             rows={[
               { name: "营业执照", date: "2026-12-31", status: row.supplier.certificationStatus, complete: row.supplier.certificationStatus === "已认证" ? "完整" : "待补齐", missing: row.supplier.certificationStatus === "已认证" ? "无" : "证照影像与年审日期" },
@@ -439,15 +442,15 @@ export default function SupplierDetailModal({
           />
         </DetailSection>
 
-        <DetailSection title="评论与附件">
+        <DetailSection title={copy("评论与附件")}>
           <div className="grid grid-cols-3 gap-3 text-[11px] leading-5" style={{ color: A.sub }}>
             <div className="rounded-lg p-3" style={{ background: A.white }}>采购负责人备注：{row.nextAction}。</div>
-            <div className="rounded-lg p-3" style={{ background: A.white }}>附件占位：报价比较、收货异常说明、发票差异说明均以只读引用展示。</div>
-            <div className="rounded-lg p-3" style={{ background: A.white }}>协同边界：当前仅生成内部草稿或预览。</div>
+            <div className="rounded-lg p-3" style={{ background: A.white }}>{copy("附件占位：报价比较、收货异常说明、发票差异说明均以只读引用展示。")}</div>
+            <div className="rounded-lg p-3" style={{ background: A.white }}>{copy("协同边界：当前仅生成内部草稿或预览。")}</div>
           </div>
         </DetailSection>
 
-        <DetailSection title="历史记录">
+        <DetailSection title={copy("历史记录")}>
           <SimpleTable
             rows={[
               { time: row.p2pSummary.latestTransactionDate, event: "读取最近交易证据", owner: row.buyerOwner, note: "RFQ / PO / GRN / Invoice 运营证据已汇总" },
@@ -488,12 +491,12 @@ export default function SupplierDetailModal({
           } as Record<string, string>)[item] || item}
         />
 
-        <DetailSection title="内部草稿动作">
+        <DetailSection title={copy("内部草稿动作")}>
           <div className="grid grid-cols-4 gap-2">
-            <button type="button" onClick={() => preview("内部复核备注草稿", "仅保存为负责人复核前的说明，不改业务记录。")} className="h-9 rounded-lg text-xs font-semibold" style={{ background: "#f0f6ff", color: A.blue }}>生成内部复核备注草稿</button>
-            <button type="button" onClick={() => preview("供应商风险说明草稿", "只解释证据和影响，不发布风险评级。")} className="h-9 rounded-lg text-xs font-semibold" style={{ background: "#fff8f0", color: A.orange }}>生成供应商风险说明草稿</button>
-            <button type="button" onClick={() => preview("供应商沟通草稿", "仅用于内部预览，不会外发。")} className="h-9 rounded-lg text-xs font-semibold" style={{ background: A.gray6, color: A.label }}>生成供应商沟通草稿</button>
-            <button type="button" onClick={() => preview("需人工复核预览", "只标记复核建议，不改变当前状态。")} className="h-9 rounded-lg text-xs font-semibold" style={{ background: "#f0faf4", color: A.green }}>标记需人工复核预览</button>
+            <button type="button" onClick={() => preview("内部复核备注草稿", "仅保存为负责人复核前的说明，不改业务记录。")} className="h-9 rounded-lg text-xs font-semibold" style={{ background: "#f0f6ff", color: A.blue }}>{copy("生成内部复核备注草稿")}</button>
+            <button type="button" onClick={() => preview("供应商风险说明草稿", "只解释证据和影响，不发布风险评级。")} className="h-9 rounded-lg text-xs font-semibold" style={{ background: "#fff8f0", color: A.orange }}>{copy("生成供应商风险说明草稿")}</button>
+            <button type="button" onClick={() => preview("供应商沟通草稿", "仅用于内部预览，不会外发。")} className="h-9 rounded-lg text-xs font-semibold" style={{ background: A.gray6, color: A.label }}>{copy("生成供应商沟通草稿")}</button>
+            <button type="button" onClick={() => preview("需人工复核预览", "只标记复核建议，不改变当前状态。")} className="h-9 rounded-lg text-xs font-semibold" style={{ background: "#f0faf4", color: A.green }}>{copy("标记需人工复核预览")}</button>
           </div>
           {previewMessage && (
             <div className="mt-3 rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: A.white, color: A.green }}>

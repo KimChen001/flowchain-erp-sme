@@ -131,7 +131,31 @@ export type AiRuntimeFollowUpSuggestion = {
   requiresReview?: boolean;
 };
 
+export type AiBusinessQuerySectionCard = {
+  goal: string;
+  label: string;
+  state: "confirmed" | "confirmed_zero" | "incomplete" | "hidden" | "unavailable";
+  stateLabel: string;
+  counts: Record<string, number | null>;
+  amounts: Record<string, number | null>;
+  rows: Array<Record<string, unknown>>;
+  limitations: string[];
+};
+
+export type AiBusinessQueryPresentation = {
+  planningVersion: "business-query-plan-v1";
+  plannerStatus: string;
+  scopeBadge: string;
+  scopeMode: "single" | "set" | "all" | "current_context" | "previous_result";
+  goalLabels: string[];
+  sectionCards: AiBusinessQuerySectionCard[];
+  clarification?: { needed: boolean; question?: string | null };
+  fieldVisibility?: { amounts?: boolean; partner?: boolean };
+  validitySummary?: { validCount?: number; incompleteCount?: number; invalidCount?: number; hiddenCount?: number; unavailable?: boolean } | null;
+};
+
 export type AiResponseV2 = {
+  rag?: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string }> };
   version: "v2";
   query: string;
   intent: string;
@@ -151,4 +175,5 @@ export type AiResponseV2 = {
   contextBreadcrumbs?: AiRuntimeContextBreadcrumb[];
   followUpSuggestions?: AiRuntimeFollowUpSuggestion[];
   resolvedContext?: AiRuntimeResolvedContext;
+  businessQuery?: AiBusinessQueryPresentation;
 };

@@ -22,6 +22,7 @@ model Tenant {
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
+  knowledgeDocuments                    AiKnowledgeDocument[]
   users                                 User[]
   suppliers                             Supplier[]
   items                                 Item[]
@@ -3202,4 +3203,26 @@ model InventoryException {
 
   @@index([tenantId, status])
   @@index([tenantId, sku])
+}
+model AiKnowledgeDocument {
+  id String @id
+  tenantId String
+  title String
+  language String @default("en-US")
+  requiredPermission String?
+  status String @default("active")
+  createdById String
+  createdAt DateTime @default(now())
+  chunks AiKnowledgeChunk[]
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@index([tenantId, status])
+}
+
+model AiKnowledgeChunk {
+  id String @id
+  documentId String
+  position Int
+  content String
+  document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  @@unique([documentId, position])
 }

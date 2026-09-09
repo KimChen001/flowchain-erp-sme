@@ -238,3 +238,12 @@ test('observability local-vs-assisted covers provider-specific success and unsaf
     assertCleanVisible(unsafe.body)
   }
 })
+
+
+test('semantic planning retains the question and server-owned schema while dropping arbitrary context', () => {
+  const request = buildBoundedProviderRequestCore({ task: { type: 'business_query_planning', message: 'Which suppliers have overdue payments?', currentContext: { entityType: 'supplier', entityId: 'supplier-a', secret: 'DO_NOT_SEND' }, allowedGoals: ['executePayment'], previousResult: [] }, responseShape: { unsafe: 'DO_NOT_SEND' } });
+  assert.equal(request.task.question, 'Which suppliers have overdue payments?');
+  assert.equal(request.responseShape.properties.planningVersion.const, 'business-query-plan-v1');
+  assert.doesNotMatch(JSON.stringify(request), /DO_NOT_SEND|executePayment/);
+  assert.equal(request.safetyPolicy.readOnly, true);
+});

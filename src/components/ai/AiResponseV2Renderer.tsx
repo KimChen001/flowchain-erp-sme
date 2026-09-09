@@ -1,3 +1,5 @@
+import { RagAnswerCard } from "../../modules/ai-assistant/KnowledgeLibrary";
+import { BusinessQueryPresentation } from "./BusinessQueryPresentation";
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import type { ActionDraftPreviewRequest } from "../../modules/action-drafts/ActionDraftReviewShell";
@@ -86,6 +88,7 @@ function Detail({ title, children, testId }: { title: string; children: ReactNod
 
 export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft, onFollowUp }: { response: AiResponseV2; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; onFollowUp?: (prompt: string) => void }) {
   if (!response || response.version !== "v2") return null;
+  if (response.rag) return <RagAnswerCard rag={response.rag} title={response.conclusion.title} summary={response.conclusion.summary} />;
   const focused = toAiFocusedResponse(response);
   return (
     <div data-testid="ai-response-v2" data-answer-mode={focused.answerMode} className="space-y-3 rounded-xl p-3" style={{ background: A.white, border: `1px solid ${A.border}` }}>
@@ -97,6 +100,8 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
           <span>· 数据限制 {response.limitationCount ?? response.dataLimitations.length}</span>
         </div>
       </section>
+
+      <BusinessQueryPresentation response={response} />
 
       {focused.primaryItems.length ? <section data-testid="ai-focused-primary-items" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>重点事项</div>{focused.primaryItems.map((item) => <article key={item.id} className="rounded-lg p-2.5" style={{ background: A.gray6 }}><div className="flex items-start justify-between gap-2"><div className="min-w-0 text-xs font-semibold"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink></div>{item.status ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{item.status}</span> : null}</div><p className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>{item.reason}</p>{item.impact ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>影响：{item.impact}</p> : null}</article>)}</section> : null}
 

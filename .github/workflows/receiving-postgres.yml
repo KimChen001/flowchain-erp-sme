@@ -2,8 +2,12 @@ name: Receiving PostgreSQL Workbench
 
 on:
   push:
-    branches: [main, 'codex/**', 'release/**']
+    branches: [main, 'release/**']
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   verify:
@@ -51,6 +55,7 @@ jobs:
       - run: npm run test:api:operational-finance
       - run: npm run test:api:settings
       - run: npm run test:db:english
+      - run: npm run test:db:ai-knowledge
       - run: npm run test:db:authorization
       - run: npm run test:api:authorization
       - run: npm run test:db:intake
@@ -97,6 +102,13 @@ jobs:
       - run: npm run test:db:bank-security-hardening
       - run: npm run test:api:bank-projection-security
       - run: npm run test:db:bank-candidate-quality
+      - run: npm run test:domain:ai-record-validity
+      - run: npm run test:domain:ai-query-planner
+      - run: npm run test:domain:ai-query-executor
+      - run: npm run test:domain:supplier-action-summary
+      - run: npm run test:ai:business-query-planning
+      - run: npm run test:db:ai-cross-domain-read
+      - run: npm run test:api:ai-business-query
       - run: npm run bank:mapping-security-scan
         env:
           DATABASE_URL: postgresql://flowchain_ci:flowchain_ci_password@127.0.0.1:55432/flowchain_ci_diagnostics?schema=public
@@ -153,6 +165,7 @@ jobs:
       - run: npm run test:browser:mobile-sync-controls
       - run: npm run test:browser:bank-reconciliation
       - run: npm run test:browser:bank-security-hardening
+      - run: npm run test:browser:ai-business-query-planning
       - name: Upload Product Recovery browser evidence
         if: always()
         uses: actions/upload-artifact@v4

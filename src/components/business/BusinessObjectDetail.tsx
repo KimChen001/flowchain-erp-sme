@@ -1,6 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { CheckCircle2, FileText, ShieldCheck } from "lucide-react";
 import { A, Card, Chip, Modal, SectionHeader } from "../ui";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
+
+const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 export type DetailField = {
   label: string;
@@ -55,9 +58,9 @@ export function CompactKpiStrip({ items }: { items: DetailField[] }) {
     <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
       {items.map((item) => (
         <div key={item.label} className="rounded-lg p-3" style={{ background: A.gray6 }}>
-          <div className="fc-caption" style={{ color: A.gray2 }}>{item.label}</div>
+          <div className="fc-caption" style={{ color: A.gray2 }}>{copy(item.label)}</div>
           <div className="mt-1 text-sm font-semibold tabular-nums truncate" style={{ color: toneColor(item.tone) }}>
-            {item.value ?? "待确认"}
+            {typeof item.value === "string" ? copy(item.value) : item.value ?? copy("待确认")}
           </div>
         </div>
       ))}
@@ -88,9 +91,9 @@ export function DetailFieldGrid({ fields, columns = 4 }: { fields: DetailField[]
     <div className={`grid ${grid} gap-2`}>
       {fields.map((field) => (
         <div key={field.label} className="rounded-lg p-2.5" style={{ background: A.white }}>
-          <div className="fc-caption" style={{ color: A.gray2 }}>{field.label}</div>
+          <div className="fc-caption" style={{ color: A.gray2 }}>{copy(field.label)}</div>
           <div className="mt-1 text-xs font-semibold truncate" style={{ color: toneColor(field.tone) }}>
-            {field.value ?? "待确认"}
+            {typeof field.value === "string" ? copy(field.value) : field.value ?? copy("待确认")}
           </div>
         </div>
       ))}
@@ -110,7 +113,7 @@ export function EvidenceSummaryPanel({
           <div key={item.label} className="flex items-start gap-2 rounded-lg p-2.5" style={{ background: A.white }}>
             <FileText size={13} className="mt-0.5 shrink-0" style={{ color: toneColor(item.tone || "info") }} />
             <div className="min-w-0">
-              <div className="fc-caption font-semibold" style={{ color: A.gray1 }}>{item.label}</div>
+              <div className="fc-caption font-semibold" style={{ color: A.gray1 }}>{copy(item.label)}</div>
               <div className="mt-0.5 text-[11px] leading-5" style={{ color: A.sub }}>{item.value}</div>
             </div>
           </div>
@@ -133,7 +136,7 @@ export function DataLimitationsPanel({
       <div className="flex flex-wrap gap-1.5">
         {visible.map((item) => (
           <span key={item} className="rounded-full px-2 py-1 text-[11px] font-medium" style={{ background: A.white, color: A.orange }}>
-            {labelFor(item)}
+            {copy(labelFor(item))}
           </span>
         ))}
       </div>
@@ -168,7 +171,7 @@ export function ReviewActionPanel({ objectLabel }: { objectLabel: string }) {
               className="h-8 rounded-lg text-[11px] font-semibold"
               style={decision === item ? { background: "#0f172a", color: A.white } : { background: A.white, color: A.gray1 }}
             >
-              {decisionLabels[item]}
+              {copy(decisionLabels[item])}
             </button>
           ))}
         </div>
@@ -177,11 +180,11 @@ export function ReviewActionPanel({ objectLabel }: { objectLabel: string }) {
           onChange={(event) => setReason(event.target.value)}
           className="w-full min-h-[72px] rounded-lg px-3 py-2 text-xs outline-none"
           style={{ background: A.white, color: A.label, boxShadow: "0 0 0 0.5px rgba(15,23,42,0.12)" }}
-          placeholder="填写复核原因、补充资料要求或暂缓说明"
+          placeholder={copy("填写复核原因、补充资料要求或暂缓说明")}
         />
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5 text-[11px]" style={{ color: A.sub }}>
-            <ShieldCheck size={13} /> 所有动作仅生成内部复核预览，不自动改主档、不发外部通知。
+            <ShieldCheck size={13} /> {copy("所有动作仅生成内部复核预览，不自动改主档、不发外部通知。")}
           </div>
           <button
             type="button"
@@ -189,7 +192,7 @@ export function ReviewActionPanel({ objectLabel }: { objectLabel: string }) {
             className="h-8 px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
             style={{ background: "#f0f6ff", color: A.blue }}
           >
-            <CheckCircle2 size={13} /> 生成复核预览
+            <CheckCircle2 size={13} /> {copy("生成复核预览")}
           </button>
         </div>
         {message && (

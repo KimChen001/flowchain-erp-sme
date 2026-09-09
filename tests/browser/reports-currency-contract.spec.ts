@@ -1,12 +1,23 @@
 import { expect, test, type Page } from '@playwright/test'
 
-const user = { id: 'reports-currency-user', company: '新辰智能制造', name: '张磊', email: 'reports-currency@example.com', role: '供应链经理' }
-
 async function authenticate(page: Page) {
-  await page.addInitScript(profile => {
-    localStorage.setItem('flowchain:auth-token', 'reports-currency-token')
-    localStorage.setItem('flowchain:current-user', JSON.stringify(profile))
-  }, user)
+  const response = await page.request.post('/api/auth/login', { data: { email: 'manager@example.com', name: 'Ignored', company: 'Ignored' } })
+  expect(response.ok()).toBeTruthy()
+  const session = await response.json()
+  await page.route('**/api/me/localization', route => route.fulfill({
+    json: {
+      languagePreference: 'en-US',
+      defaultLanguage: 'zh-CN',
+      effectiveLanguage: 'en-US',
+      locale: 'en-US',
+      timezone: 'America/New_York',
+      workspaceName: 'FlowChain Operations',
+    },
+  }))
+  await page.addInitScript(({ token, user }) => {
+    localStorage.setItem('flowchain:auth-token', token)
+    localStorage.setItem('flowchain:current-user', JSON.stringify(user))
+  }, session)
 }
 
 function collectRuntimeErrors(page: Page) {
@@ -21,10 +32,10 @@ test('reports overview presents a business-safe empty amount state', async ({ pa
   const errors = collectRuntimeErrors(page)
   await page.goto('/app/reports/overview')
   await expect(page.getByTestId('bi-dashboard')).toHaveAttribute('data-view', 'overview')
-  await expect(page.getByRole('button', { name: /采购订单金额/ })).toContainText('暂无金额数据')
+  await expect(page.getByRole('button', { name: /Purchase order amount/ })).toContainText('No monetary data')
   await expect(page.getByTestId('reports-multi-currency-status')).toHaveCount(0)
-  await expect(page.getByText('请选择币种')).toHaveCount(0)
-  await expect(page.getByTestId('reports-data-scope-limitations')).toContainText('数据范围说明')
+  await expect(page.getByText('Select a currency')).toHaveCount(0)
+  await expect(page.getByTestId('reports-data-scope-limitations')).toContainText('Data scope notes')
   await expect(page.locator('body')).not.toContainText(/_runtime_|\b[a-z]+(?:_[a-z]+)+\b/)
   expect(errors.join('\n')).not.toContain('Invalid currency code')
 })
@@ -49,9 +60,9 @@ test('reports overview renders an unfiltered single-currency scope safely', asyn
   })
   await page.goto('/app/reports/overview')
   await expect(page.getByTestId('bi-dashboard')).toHaveAttribute('data-view', 'overview')
-  await expect(page.getByText('币种：人民币（CNY）')).toBeVisible()
-  await expect(page.getByRole('button', { name: /采购订单金额/ })).toContainText(/¥\s?100/)
-  await expect(page.getByText('经营总览模块加载失败')).toHaveCount(0)
+  await expect(page.getByText('Currency: Chinese yuan (CNY)')).toBeVisible()
+  await expect(page.getByRole('button', { name: /Purchase order amount/ })).toContainText(/¥\s?100/)
+  await expect(page.getByText('Business overview module failed')).toHaveCount(0)
   expect(errors.join('\n')).not.toContain('Invalid currency code')
 })
 
@@ -78,8 +89,8 @@ test('reports overview presents an unconverted multi-currency scope without cras
   })
   await page.goto('/app/reports/overview')
   await expect(page.getByTestId('bi-dashboard')).toHaveAttribute('data-view', 'overview')
-  await expect(page.getByTestId('reports-multi-currency-status')).toContainText('多币种，未折算')
-  await expect(page.getByTestId('reports-multi-currency-status')).toContainText('请选择币种')
-  await expect(page.getByText('经营总览模块加载失败')).toHaveCount(0)
+  await expect(page.getByTestId('reports-multi-currency-status')).toContainText('Multiple currencies, not converted')
+  await expect(page.getByTestId('reports-multi-currency-status')).toContainText('Select a currency')
+  await expect(page.getByText('Business overview module failed')).toHaveCount(0)
   expect(errors.join('\n')).not.toContain('Invalid currency code')
 })

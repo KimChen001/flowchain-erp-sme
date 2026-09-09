@@ -29,10 +29,17 @@ the product fallback.
 
 ## Remaining localization work
 
-This change establishes the default and localizes the login entry. It is not a
-claim of complete English coverage. The AI panel, response cards, server-generated
-answers, and several business pages still contain Chinese literals. These require
-an incremental translation pass with English and Chinese acceptance scenarios.
+The primary navigation, every registered route/breadcrumb label, item workspace,
+purchasing workbench, and sales-order workbench now use the active UI language.
+Stored seeded and business values remain unchanged. Run `npm run audit:i18n` to rank
+remaining potential display literals; the report is deliberately heuristic because
+Chinese business values and API status enums must not be rewritten as UI copy.
+
+This is not yet a claim of complete English coverage. Supplier details, purchasing
+detail views, receiving, returns/quarantine, and some AI response surfaces are the
+largest remaining areas. Translate them at their presentation boundary with both
+English and Chinese acceptance scenarios. A regression test requires every Chinese
+route, module, breadcrumb, and primary-navigation label to have an English mapping.
 
 For the conversational agent, carry an explicit response language through the
 request, tool presentation, provider instructions, validation, and fallback.
