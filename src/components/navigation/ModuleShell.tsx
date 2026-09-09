@@ -1,3 +1,4 @@
+import { workspaceCopy } from "../../i18n/workspaceCopy";
 import React from "react";
 import { Link, useNavigate } from "react-router";
 import {
@@ -23,7 +24,7 @@ export function ModuleShell({ route, children, routeAccess }: { route: GovernedA
   const moduleRoot = moduleRoute(route.moduleId) || route;
   const root = primarySurfaceRoute(route);
   const standalonePrimarySurface = root.id !== moduleRoot.id;
-  const rootLabel = root.navigationLabel || routeLabel(root, !standalonePrimarySurface);
+  const rootLabel = (root.navigationLabel ? workspaceCopy(root.navigationLabel, language) : "") || routeLabel(root, !standalonePrimarySurface);
   const subRoutes = standalonePrimarySurface
     ? routesForPrimarySurface(root).filter(
         (item) =>

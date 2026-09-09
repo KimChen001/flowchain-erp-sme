@@ -1,3 +1,4 @@
+import { workspaceCopy } from "../i18n/workspaceCopy";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Toaster, toast } from "sonner";
@@ -836,14 +837,14 @@ export default function FlowChainApp() {
     return {
       ...item,
       label:
-        item.navigationLabel ||
+        (item.navigationLabel ? workspaceCopy(item.navigationLabel, language) : "") ||
         (root ? routeLabel(root, !root.parentId) : item.label),
       children: item.children?.map(child => {
         const route = routeById(child.id);
         return { ...child, label: route ? routeLabel(route) : child.label };
       }),
     };
-  }), [routeLabel]);
+  }), [routeLabel, language]);
 
   const activeNavigationRouteId = activeRoute?.currentActiveMenuId || active;
   const activePrimarySurfaceId = activeRoute
@@ -1756,8 +1757,8 @@ export default function FlowChainApp() {
             <button
               type="button"
               disabled
-              aria-label="通知中心尚未接入"
-              title="通知中心尚未接入"
+              aria-label={language === 'en-US' ? 'Notifications unavailable' : '通知中心尚未接入'}
+              title={language === 'en-US' ? 'Notifications unavailable' : '通知中心尚未接入'}
               className="relative p-2 rounded-md opacity-45"
               style={{ color: A.gray1 }}
             >
@@ -1782,7 +1783,7 @@ export default function FlowChainApp() {
                     className="fc-caption leading-tight"
                     style={{ color: A.gray2 }}
                   >
-                    {user.roleLabel || roleLabel(user.role)}
+                    {workspaceCopy(user.roleLabel || roleLabel(user.role), language)}
                   </div>
                 </div>
               </button>

@@ -1,3 +1,5 @@
+import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { useI18n } from "../../i18n/I18n";
 import { useEffect, useMemo, useState } from "react";
 import { Database, FileSpreadsheet, Package, Printer, Search, Tags, Truck, Users, Warehouse } from "lucide-react";
 import ContextualImportActions from "../../components/import/ContextualImportActions";
@@ -41,6 +43,8 @@ export default function MasterDataPage({
   onNavigate?: (routeId: string, focus?: unknown) => void;
   onActiveContextChange?: (context: ActiveContext | null) => void;
 }) {
+  const { language } = useI18n();
+  const copy = (label: string) => workspaceCopy(label, language);
   const [tab, setTab] = useState<MasterDataTab>(initialView);
   const [search, setSearch] = useState("");
   const [detail, setDetail] = useState<DetailRecord | null>(null);
@@ -169,7 +173,7 @@ export default function MasterDataPage({
 
   const [entityLabel, templateName] = importLabels[tab];
 
-  if (loadStatus === "loading") return <Card className="p-6" aria-live="polite">正在加载基础资料…</Card>;
+  if (loadStatus === "loading") return <Card className="p-6" aria-live="polite">{copy("正在加载基础资料…")}</Card>;
   if (!["ready_with_data", "ready_empty"].includes(loadStatus)) {
     const messages: Record<string, string> = {
       unauthenticated: "登录已失效，请重新登录后查看基础资料。",
@@ -178,17 +182,17 @@ export default function MasterDataPage({
       server_error: "基础资料服务发生错误，请稍后重试。",
       network_error: "无法连接基础资料服务，请检查网络或本地 API。",
     };
-    return <Card className="p-6"><h2 className="text-sm font-semibold" style={{ color: A.red }}>基础资料加载失败</h2><p className="mt-2 text-sm" style={{ color: A.sub }}>{messages[loadStatus]}</p><button onClick={() => window.location.reload()} className="mt-4 rounded-lg bg-slate-100 px-3 py-2 text-sm">重新加载</button></Card>;
+    return <Card className="p-6"><h2 className="text-sm font-semibold" style={{ color: A.red }}>{copy("基础资料加载失败")}</h2><p className="mt-2 text-sm" style={{ color: A.sub }}>{messages[loadStatus]}</p><button onClick={() => window.location.reload()} className="mt-4 rounded-lg bg-slate-100 px-3 py-2 text-sm">{copy("重新加载")}</button></Card>;
   }
 
   return (
     <div className="space-y-4">
       <MasterDataDetailModal detail={detail} onClose={() => setDetail(null)} />
       <div className="grid grid-cols-4 gap-3">
-        <KpiCard label="物料资料" value={String(masterData.items.length)} sub={`${masterData.items.filter((item) => item.status === "待完善").length} 条待完善`} icon={Package} color={A.blue} />
-        <KpiCard label="供应商资料" value={String(masterData.suppliers.length)} sub={`${masterData.suppliers.filter((item) => item.riskStatus === "高").length} 个高风险`} icon={Truck} color={A.purple} />
-        <KpiCard label="仓库 / 库位" value={String(masterData.warehouses.length)} sub={`${masterData.warehouses.filter((item) => item.available).length} 个可用`} icon={Warehouse} color={A.green} />
-        <KpiCard label="客户资料" value={String(masterData.customers.length)} sub={`${masterData.customers.filter((item) => item.creditStatus !== "正常").length} 个需关注`} icon={Users} color={A.orange} />
+        <KpiCard label={copy("物料资料")} value={String(masterData.items.length)} sub={`${masterData.items.filter((item) => item.status === "待完善").length} ${language === "en-US" ? "incomplete" : "条待完善"}`} icon={Package} color={A.blue} />
+        <KpiCard label={copy("供应商资料")} value={String(masterData.suppliers.length)} sub={`${masterData.suppliers.filter((item) => item.riskStatus === "高").length} ${language === "en-US" ? "high risk" : "个高风险"}`} icon={Truck} color={A.purple} />
+        <KpiCard label={copy("仓库 / 库位")} value={String(masterData.warehouses.length)} sub={`${masterData.warehouses.filter((item) => item.available).length} ${language === "en-US" ? "available" : "个可用"}`} icon={Warehouse} color={A.green} />
+        <KpiCard label={copy("客户资料")} value={String(masterData.customers.length)} sub={`${masterData.customers.filter((item) => item.creditStatus !== "正常").length} ${language === "en-US" ? "need attention" : "个需关注"}`} icon={Users} color={A.orange} />
       </div>
 
       <div className="flex items-center justify-between gap-3">
@@ -197,14 +201,14 @@ export default function MasterDataPage({
           <div className="h-8 px-2 rounded-lg flex items-center gap-1.5" style={{ background: A.white, boxShadow: "0 0 0 0.5px rgba(0,0,0,0.08)" }}>
             <Search size={12} style={{ color: A.gray2 }} />
             <input value={search} onChange={(event) => setSearch(event.target.value)}
-              placeholder="搜索基础资料"
+              placeholder={copy("搜索基础资料")}
               className="w-44 bg-transparent outline-none text-xs"
               style={{ color: A.label }} />
           </div>
           <button onClick={exportCurrent}
             className="h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5"
             style={{ background: "#f0f6ff", color: A.blue }}>
-            <FileSpreadsheet size={13} /> 导出当前结果
+            <FileSpreadsheet size={13} /> {copy("导出当前结果")}
           </button>
         </div>
       </div>
@@ -215,11 +219,11 @@ export default function MasterDataPage({
         ) : tab === "overview" ? (
           <MasterDataOverview data={masterData} onOpenTab={openTab} />
         ) : tab === "customers" ? (
-          filteredCustomers.length ? <CustomerTable customers={filteredCustomers} /> : <div className="p-10 text-center"><h2 className="font-semibold">暂无客户资料</h2><p className="mt-2 text-sm text-slate-500">可以通过 Structured Intake 导入，或在本地运行 pilot:setup:demo。</p></div>
+          filteredCustomers.length ? <CustomerTable customers={filteredCustomers} /> : <div className="p-10 text-center"><h2 className="font-semibold">{copy("暂无客户资料")}</h2><p className="mt-2 text-sm text-slate-500">{copy("可以通过 Structured Intake 导入，或在本地运行 pilot:setup:demo。")}</p></div>
         ) : tab === "print-templates" ? (
           <PrintTemplateTable templates={filteredTemplates} onCopy={(item) => setTemplateCatalog((current) => [...current, { ...item, id: `${item.id}-copy-${Date.now()}`, name: `${item.name} 副本`, isDefault: false, updatedAt: new Date().toLocaleString("zh-CN") }])} />
         ) : tab === "suppliers" && !filteredSuppliers.length ? (
-          <div className="p-10 text-center"><h2 className="font-semibold">暂无供应商资料</h2><p className="mt-2 text-sm text-slate-500">可以通过 Structured Intake 导入，或在本地运行 pilot:setup:demo。</p></div>
+          <div className="p-10 text-center"><h2 className="font-semibold">{copy("暂无供应商资料")}</h2><p className="mt-2 text-sm text-slate-500">{copy("可以通过 Structured Intake 导入，或在本地运行 pilot:setup:demo。")}</p></div>
         ) : (
           <MasterDataTables
             tab={tab as MasterDataTableTab}

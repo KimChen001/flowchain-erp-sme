@@ -1,3 +1,5 @@
+import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { useI18n } from "../../i18n/I18n";
 import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Field, inputStyle } from "../../components/ui";
@@ -119,6 +121,8 @@ export default function ItemMasterWorkbench({
   focus?: { entityType: string; entityId: string; at: number } | null;
   onNavigate?: (routeId: string, focus?: unknown) => void;
 }) {
+  const { language } = useI18n();
+  const copy = (label: string) => workspaceCopy(label, language);
   const [items, setItems] = useState<MasterItem[]>([]);
   const [selected, setSelected] = useState<MasterItem | null>(null);
   const [editing, setEditing] = useState<Partial<MasterItem> | null>(null);
@@ -187,28 +191,28 @@ export default function ItemMasterWorkbench({
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold">
-              {selected ? `编辑 ${selected.sku}` : "新建 SKU"}
+              {selected ? `${copy("编辑")} ${selected.sku}` : copy("新建 SKU")}
             </h2>
             <p className="text-xs" style={{ color: A.sub }}>
-              基础信息、采购库存属性与追踪属性
+              {copy("基础信息、采购库存属性与追踪属性")}
             </p>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setEditing(null)}>取消</button>
+            <button onClick={() => setEditing(null)}>{copy("取消")}</button>
             <button
               className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
               onClick={save}
             >
-              保存
+              {copy("保存")}
             </button>
           </div>
         </div>
         {error && <p className="mt-3 text-xs text-red-600">{error}</p>}
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
           {fields.map(([key, label, inputType]) => (
-            <Field key={key} label={label}>
+            <Field key={key} label={copy(label)}>
               <input
-                aria-label={label}
+                aria-label={copy(label)}
                 disabled={Boolean(selected) && key === "itemId"}
                 type={inputType}
                 value={String(editing[key] ?? "")}
@@ -225,7 +229,7 @@ export default function ItemMasterWorkbench({
               />
             </Field>
           ))}
-          <Field label="状态">
+          <Field label={copy("状态")}>
             <select
               value={editing.status}
               onChange={(e) =>
@@ -233,8 +237,8 @@ export default function ItemMasterWorkbench({
               }
               style={inputStyle}
             >
-              <option value="active">启用</option>
-              <option value="inactive">停用</option>
+              <option value="active">{copy("启用")}</option>
+              <option value="inactive">{copy("停用")}</option>
             </select>
           </Field>
           {(
@@ -269,7 +273,7 @@ export default function ItemMasterWorkbench({
               className="text-xs text-blue-600"
               onClick={() => setSelected(null)}
             >
-              ← 返回 SKU 列表
+              {copy("← 返回 SKU 列表")}
             </button>
             <h2 className="mt-2 text-base font-semibold">
               {selected.sku} · {selected.itemName}
@@ -282,13 +286,13 @@ export default function ItemMasterWorkbench({
             onClick={() => setEditing(selected)}
             className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
           >
-            编辑 SKU
+            {copy("编辑 SKU")}
           </button>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
           {fields.map(([key, label]) => (
             <div key={key} className="rounded-lg bg-slate-50 p-3">
-              <div className="text-[11px] text-slate-500">{label}</div>
+              <div className="text-[11px] text-slate-500">{copy(label)}</div>
               <div className="mt-1 text-xs font-medium">
                 {String(selected[key] ?? "—") || "—"}
               </div>
@@ -296,9 +300,9 @@ export default function ItemMasterWorkbench({
           ))}
         </div>
         <div className="mt-4 text-xs text-slate-500">
-          创建：{selected.createdBy} · {selected.createdAt}
+          {language === "en-US" ? "Created: " : "创建："}{selected.createdBy} · {selected.createdAt}
           <br />
-          更新：{selected.updatedBy} · {selected.updatedAt}
+          {language === "en-US" ? "Updated: " : "更新："}{selected.updatedBy} · {selected.updatedAt}
         </div>
       </Card>
     );
@@ -306,30 +310,30 @@ export default function ItemMasterWorkbench({
     <Card className="p-4">
       <div className="flex flex-wrap items-center gap-2">
         <input
-          aria-label="搜索 SKU"
-          placeholder="搜索 SKU 编码或物料名称"
+          aria-label={copy("搜索 SKU")}
+          placeholder={copy("搜索 SKU 编码或物料名称")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           style={inputStyle}
         />
         <select
-          aria-label="状态筛选"
+          aria-label={copy("状态筛选")}
           value={status}
           onChange={(e) => setStatus(e.target.value)}
           style={inputStyle}
         >
-          <option value="">全部状态</option>
-          <option value="active">启用</option>
-          <option value="inactive">停用</option>
+          <option value="">{copy("全部状态")}</option>
+          <option value="active">{copy("启用")}</option>
+          <option value="inactive">{copy("停用")}</option>
         </select>
         <input
-          placeholder="物料类型"
+          placeholder={copy("物料类型")}
           value={type}
           onChange={(e) => setType(e.target.value)}
           style={inputStyle}
         />
         <input
-          placeholder="分类"
+          placeholder={copy("分类")}
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           style={inputStyle}
@@ -341,28 +345,28 @@ export default function ItemMasterWorkbench({
             setEditing({ ...empty });
           }}
         >
-          新建 SKU
+          {copy("新建 SKU")}
         </button>
       </div>
       {error && <p className="mt-3 text-xs text-red-600">{error}</p>}
       <div className="mt-3 overflow-auto">
         {!error && shown.length === 0 && (
           <div className="p-10 text-center">
-            <h2 className="font-semibold">暂无物料资料</h2>
-            <p className="mt-2 text-sm text-slate-500">可以新建物料、使用 Structured Intake，或在本地运行 pilot:setup:demo。</p>
+            <h2 className="font-semibold">{copy("暂无物料资料")}</h2>
+            <p className="mt-2 text-sm text-slate-500">{copy("可以新建物料、使用 Structured Intake，或在本地运行 pilot:setup:demo。")}</p>
           </div>
         )}
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b text-left">
               <th className="p-2">SKU</th>
-              <th>物料名称</th>
-              <th>类型</th>
-              <th>分类</th>
-              <th>单位</th>
-              <th>规格</th>
-              <th>状态</th>
-              <th>操作</th>
+              <th>{copy("物料名称")}</th>
+              <th>{copy("类型")}</th>
+              <th>{copy("分类")}</th>
+              <th>{copy("单位")}</th>
+              <th>{copy("规格")}</th>
+              <th>{copy("状态")}</th>
+              <th>{copy("操作")}</th>
             </tr>
           </thead>
           <tbody>
@@ -387,7 +391,7 @@ export default function ItemMasterWorkbench({
                       setEditing(item);
                     }}
                   >
-                    编辑
+                    {copy("编辑")}
                   </button>
                 </td>
               </tr>

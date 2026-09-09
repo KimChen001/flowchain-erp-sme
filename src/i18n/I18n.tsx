@@ -1,3 +1,4 @@
+import { workspaceCopy } from "./workspaceCopy";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiJson, AUTH_TOKEN_KEY } from "../lib/api-client";
 import type { AppRouteDefinition } from "../app/routeRegistry";
@@ -528,7 +529,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       t,
       routeLabel: (route, module = false) => {
         const key = routeKeys[module ? route.moduleId : route.id] || routeKeys[route.id];
-        return key ? t(key) : (module ? route.moduleLabel : route.label);
+        return key ? t(key) : workspaceCopy(module ? route.moduleLabel : route.label, state.effectiveLanguage);
       },
       formatDateTime: value => new Intl.DateTimeFormat(state.locale, { dateStyle: "medium", timeStyle: "short", timeZone: state.timezone }).format(new Date(value)),
       formatNumber: value => new Intl.NumberFormat(state.locale).format(value),
