@@ -9,6 +9,8 @@ import {
   Sparkles,
 } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
+import { useI18n } from "../../i18n/I18n";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import {
@@ -21,6 +23,9 @@ import {
   tdNumericClass,
   thClass,
 } from "../../components/ui/workbenchTable";
+
+const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
+const englishUi = () => typeof document === "undefined" || document.documentElement.lang === "en-US";
 
 type Order = {
   id: string;
@@ -231,7 +236,7 @@ const pretty: Record<string, string> = {
   mismatch: "不一致",
   unavailable: "不可用",
 };
-const status = (value: string) => pretty[value] || value;
+const status = (value: string) => copy(pretty[value] || value);
 const reconciliationRuleLabel = (value: string) => ({
   "available = onHand - reserved": "可用量 = 在库量 - 预留量",
   "reserved + fulfilled <= ordered": "预留量 + 已履约量不超过订购量",
@@ -329,6 +334,7 @@ function smartLinkPath(link: SmartLink) {
 }
 
 export default function OutboundWorkbench() {
+  const { language } = useI18n();
   const location = useLocation();
   const shipment = location.pathname.match(
     /^\/app\/sales\/shipments\/([^/]+)$/,
@@ -399,7 +405,7 @@ function OrderList() {
     <div className="space-y-4" data-testid="outbound-order-list">
       {data && !data.capabilities.salesOrderLifecycle.enabled && (
         <div role="status" className="rounded-lg bg-slate-100 p-3 text-slate-700">
-          销售订单当前为只读；订单、库存预留和履约事实来自 PostgreSQL。
+          {copy("销售订单当前为只读；订单、库存预留和履约事实来自 PostgreSQL。")}
         </div>
       )}
       {error && (
@@ -407,29 +413,29 @@ function OrderList() {
           {error}
         </div>
       )}
-      <Section title="销售订单查询">
+      <Section title={copy("销售订单查询")}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-slate-500">
-            查询订单、客户、库存预留、履约状态和承诺日期。
+            {copy("查询订单、客户、库存预留、履约状态和承诺日期。")}
           </p>
           {data?.capabilities.salesOrderLifecycle.enabled && (
             <Link
               to="/app/sales/orders/new"
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white"
             >
-              新建销售订单
+              {copy("新建销售订单")}
             </Link>
           )}
         </div>
         <div className="mb-3 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
           <label className="text-xs">
-            搜索
+            {copy("搜索")}
             <input
-              aria-label="搜索销售订单"
+              aria-label={copy("搜索销售订单")}
               value={value("search")}
               onChange={(e) => update({ search: e.target.value, page: 1 })}
               className={`${select} mt-1 w-full`}
-              placeholder="订单号或客户"
+              placeholder={copy("订单号或客户")}
             />
           </label>
           <Filter
@@ -451,23 +457,23 @@ function OrderList() {
             values={["not_fulfilled", "partially_fulfilled", "fully_fulfilled"]}
           />
           <label className="text-xs">
-            币种
+            {copy("币种")}
             <select
-              aria-label="币种筛选"
+              aria-label={copy("币种筛选")}
               className={`${select} mt-1 w-full`}
               value={value("currency")}
               onChange={(e) => update({ currency: e.target.value, page: 1 })}
             >
-              <option value="">全部</option>
+              <option value="">{copy("全部")}</option>
               {["CNY", "USD", "EUR"].map((x) => (
                 <option key={x}>{x}</option>
               ))}
             </select>
           </label>
           <label className="text-xs">
-            排序
+            {copy("排序")}
             <select
-              aria-label="订单排序"
+              aria-label={copy("订单排序")}
               className={`${select} mt-1 w-full`}
               value={`${value("sort", "updatedAt")}:${value("direction", "desc")}`}
               onChange={(e) => {
@@ -475,12 +481,12 @@ function OrderList() {
                 update({ sort, direction, page: 1 });
               }}
             >
-              <option value="updatedAt:desc">更新时间（新到旧）</option>
-              <option value="updatedAt:asc">更新时间（旧到新）</option>
-              <option value="promisedDate:asc">承诺日期（升序）</option>
-              <option value="promisedDate:desc">承诺日期（降序）</option>
-              <option value="orderNumber:asc">订单号（升序）</option>
-              <option value="orderNumber:desc">订单号（降序）</option>
+              <option value="updatedAt:desc">{copy("更新时间（新到旧）")}</option>
+              <option value="updatedAt:asc">{copy("更新时间（旧到新）")}</option>
+              <option value="promisedDate:asc">{copy("承诺日期（升序）")}</option>
+              <option value="promisedDate:desc">{copy("承诺日期（降序）")}</option>
+              <option value="orderNumber:asc">{copy("订单号（升序）")}</option>
+              <option value="orderNumber:desc">{copy("订单号（降序）")}</option>
             </select>
           </label>
         </div>
@@ -501,7 +507,7 @@ function OrderList() {
                   "操作",
                 ].map((x) => (
                   <th className={thClass} key={x}>
-                    {x}
+                    {copy(x)}
                   </th>
                 ))}
               </tr>
@@ -536,7 +542,7 @@ function OrderList() {
                       className="inline-flex rounded-md bg-blue-50 px-3 py-1.5 font-medium text-blue-700 hover:bg-blue-100"
                       to={`/app/sales/orders/${encodeURIComponent(row.id)}`}
                     >
-                      查看
+                      {copy("查看")}
                     </Link>
                   </td>
                 </tr>
@@ -545,19 +551,19 @@ function OrderList() {
           </table>
           {data && data.orders.length === 0 && (
             <div className="p-8 text-center text-sm text-slate-500">
-              暂无符合当前筛选条件的正式销售订单。
+              {copy("暂无符合当前筛选条件的正式销售订单。")}
               <button
                 className="ml-2 text-blue-700 underline"
                 onClick={() => setParams({})}
               >
-                清除筛选
+                {copy("清除筛选")}
               </button>
             </div>
           )}
         </div>
         <div className="mt-3 flex items-center justify-between text-sm">
           <span>
-            第 {data?.page || page} / {totalPages} 页 · 共 {data?.total || 0} 条
+            {englishUi() ? `Page ${data?.page || page} of ${totalPages} · ${data?.total || 0} results` : `第 ${data?.page || page} / ${totalPages} 页 · 共 ${data?.total || 0} 条`}
           </span>
           <div className="flex gap-2">
             <Button
@@ -565,14 +571,14 @@ function OrderList() {
               disabled={page <= 1}
               onClick={() => update({ page: page - 1 })}
             >
-              上一页
+              {copy("上一页")}
             </Button>
             <Button
               tone="secondary"
               disabled={page >= totalPages}
               onClick={() => update({ page: page + 1 })}
             >
-              下一页
+              {copy("下一页")}
             </Button>
           </div>
         </div>
@@ -594,14 +600,14 @@ function Filter({
 }) {
   return (
     <label className="text-xs">
-      {label}
+      {copy(label)}
       <select
-        aria-label={label}
+        aria-label={copy(label)}
         className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
-        <option value="">全部</option>
+        <option value="">{copy("全部")}</option>
         {values.map((x) => (
           <option value={x} key={x}>
             {status(x)}
@@ -682,12 +688,12 @@ function OrderEntry() {
   if (!capability.enabled)
     return (
       <div className="mx-auto max-w-3xl space-y-4" data-testid="sales-order-entry-readonly">
-        <h1 className="text-xl font-semibold">新建销售订单</h1>
+        <h1 className="text-xl font-semibold">{copy("新建销售订单")}</h1>
         <div role="status" className="rounded-lg bg-slate-100 p-4 text-slate-700">
-          当前销售订单写入能力未启用，页面保持只读。
+          {copy("当前销售订单写入能力未启用，页面保持只读。")}
         </div>
         <Link className="text-blue-700 underline" to="/app/sales/orders">
-          返回销售订单列表
+          {copy("返回销售订单列表")}
         </Link>
       </div>
     );
@@ -697,9 +703,9 @@ function OrderEntry() {
       data-testid="sales-order-entry"
     >
       <div>
-        <h1 className="text-xl font-semibold">新建销售订单草稿</h1>
+        <h1 className="text-xl font-semibold">{copy("新建销售订单草稿")}</h1>
         <p className="text-sm text-slate-500">
-          SKU、物料名称与单位由 PostgreSQL Item 主数据快照。
+          {copy("SKU、物料名称与单位由 PostgreSQL Item 主数据快照。")}
         </p>
       </div>
       {error && (
@@ -707,30 +713,30 @@ function OrderEntry() {
           {error}
         </div>
       )}
-      <Section title="订单信息">
+      <Section title={copy("订单信息")}>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="text-sm">
-            订单号
+            {copy("订单号")}
             <input
-              aria-label="订单号"
+              aria-label={copy("订单号")}
               className="mt-1 w-full rounded-lg border p-2"
               value={orderNumber}
               onChange={(e) => setOrderNumber(e.target.value)}
             />
           </label>
           <label className="text-sm">
-            客户
+            {copy("客户")}
             <input
-              aria-label="客户"
+              aria-label={copy("客户")}
               className="mt-1 w-full rounded-lg border p-2"
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
             />
           </label>
           <label className="text-sm">
-            币种
+            {copy("币种")}
             <input
-              aria-label="币种"
+              aria-label={copy("币种")}
               maxLength={3}
               className="mt-1 w-full rounded-lg border p-2 uppercase"
               value={currency}
@@ -738,9 +744,9 @@ function OrderEntry() {
             />
           </label>
           <label className="text-sm">
-            物料
+            {copy("物料")}
             <select
-              aria-label="物料"
+              aria-label={copy("物料")}
               className="mt-1 w-full rounded-lg border p-2"
               value={itemId}
               onChange={(e) => setItemId(e.target.value)}
@@ -753,9 +759,9 @@ function OrderEntry() {
             </select>
           </label>
           <label className="text-sm">
-            数量
+            {copy("数量")}
             <input
-              aria-label="数量"
+              aria-label={copy("数量")}
               className="mt-1 w-full rounded-lg border p-2"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
@@ -774,7 +780,7 @@ function OrderEntry() {
             className="rounded-lg bg-slate-100 px-3 py-2 text-sm"
             to="/app/sales/orders"
           >
-            取消
+            {copy("取消")}
           </Link>
         </div>
       </Section>
@@ -1009,7 +1015,7 @@ function OrderDetail({ id }: { id: string }) {
     return (
       <div className="p-10 text-center">
         <Loader2 className="mx-auto animate-spin" />
-        正在读取正式订单…
+        {copy("正在读取正式订单…")}
       </div>
     );
   if (!data)
@@ -1040,14 +1046,14 @@ function OrderDetail({ id }: { id: string }) {
           role="status"
           className="rounded-lg bg-amber-50 p-3 text-amber-800"
         >
-          当前页面仅显示您有权查看的仓库数据，部分库存或履约事实已隐藏。
+          {copy("当前页面仅显示您有权查看的仓库数据，部分库存或履约事实已隐藏。")}
         </div>
       )}
       {(a.blockingReasonCodes as string[] | undefined)?.includes(
         "MULTI_LINE_DRAFT_EDITOR_NOT_AVAILABLE",
       ) && (
         <div role="status" className="rounded-lg bg-amber-50 p-3 text-amber-800">
-          当前订单包含多条订单行。为避免不完整覆盖，窄版界面暂不支持编辑该草稿。
+          {copy("当前订单包含多条订单行。为避免不完整覆盖，窄版界面暂不支持编辑该草稿。")}
         </div>
       )}
       {((a.blockingReasonCodes as string[]) || []).includes(
@@ -1057,7 +1063,7 @@ function OrderDetail({ id }: { id: string }) {
           role="status"
           className="rounded-lg bg-slate-100 p-3 text-slate-700"
         >
-          当前销售订单写入能力未启用，页面保持只读。
+          {copy("当前销售订单写入能力未启用，页面保持只读。")}
         </div>
       )}
       <section className="rounded-xl border bg-white p-5">
@@ -1081,7 +1087,7 @@ function OrderDetail({ id }: { id: string }) {
                 disabled={saving}
                 onClick={() => start("edit")}
               >
-                编辑草稿
+                {copy("编辑草稿")}
               </Button>
             )}
             {a.canConfirm && (
@@ -1090,7 +1096,7 @@ function OrderDetail({ id }: { id: string }) {
                 testId="confirm-sales-order"
                 onClick={() => void lifecycle("confirm")}
               >
-                确认订单
+                {copy("确认订单")}
               </Button>
             )}
             {a.canHold && (
@@ -1099,7 +1105,7 @@ function OrderDetail({ id }: { id: string }) {
                 disabled={saving}
                 onClick={() => void lifecycle("hold")}
               >
-                暂停
+                {copy("暂停")}
               </Button>
             )}
             {a.canResume && (
@@ -1107,17 +1113,17 @@ function OrderDetail({ id }: { id: string }) {
                 disabled={saving}
                 onClick={() => void lifecycle("resume")}
               >
-                恢复
+                {copy("恢复")}
               </Button>
             )}
             {a.canReserve && (
               <Button testId="open-reserve" onClick={() => start("reserve")}>
-                预留库存
+                {copy("预留库存")}
               </Button>
             )}
             {a.canRelease && (
               <Button tone="secondary" onClick={() => start("release")}>
-                释放预留
+                {copy("释放预留")}
               </Button>
             )}
             {a.canCreateShipment && (
@@ -1125,7 +1131,7 @@ function OrderDetail({ id }: { id: string }) {
                 testId="open-shipment-draft"
                 onClick={() => start("shipment")}
               >
-                创建发货草稿
+                {copy("创建发货草稿")}
               </Button>
             )}
             <Button tone="secondary" onClick={() => void refresh()} ariaLabel="刷新销售订单">
@@ -1134,7 +1140,7 @@ function OrderDetail({ id }: { id: string }) {
           </div>
         </div>
       </section>
-      <Section title="关联记录">
+      <Section title={copy("关联记录")}>
         <div className="flex flex-wrap gap-2">
           {data.smartLinks.map((link) =>
             link.enabled ? (
@@ -1160,7 +1166,7 @@ function OrderDetail({ id }: { id: string }) {
           )}
         </div>
       </Section>
-      <Section title="订单行与库存可用性">
+      <Section title={copy("订单行与库存可用性")}>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] text-sm">
             <thead>
@@ -1234,7 +1240,7 @@ function OrderDetail({ id }: { id: string }) {
             </div>
           ))}
       </Section>
-      <Section id="reservations" title="预留记录">
+      <Section id="reservations" title={copy("预留记录")}>
         <Table
           rows={data.reservations.map((x) => [
             x.id,
@@ -1260,7 +1266,7 @@ function OrderDetail({ id }: { id: string }) {
           ]}
         />
       </Section>
-      <Section id="shipments" title="发货单">
+      <Section id="shipments" title={copy("发货单")}>
         <div className="space-y-2">
           {data.shipments.map((x) => (
             <Link
@@ -1276,11 +1282,11 @@ function OrderDetail({ id }: { id: string }) {
             </Link>
           ))}
           {!data.shipments.length && (
-            <p className="text-sm text-slate-500">暂无发货单。</p>
+            <p className="text-sm text-slate-500">{copy("暂无发货单。")}</p>
           )}
         </div>
       </Section>
-      <Section id="movements" title="库存流水">
+      <Section id="movements" title={copy("库存流水")}>
         <Table
           rows={data.movements.map((x) => [
             x.id,
@@ -1293,17 +1299,17 @@ function OrderDetail({ id }: { id: string }) {
           headers={["流水 ID", "SKU", "仓库", "入", "出", "类型"]}
         />
       </Section>
-      <Section id="evidence" title="订单证据与时间线">
+      <Section id="evidence" title={copy("订单证据与时间线")}>
         <Timeline rows={data.evidence} />
       </Section>
-      <Section id="reconciliation" title="履约一致性检查">
+      <Section id="reconciliation" title={copy("履约一致性检查")}>
         <div className="mb-2 flex items-center gap-2">
           <CheckCircle2 size={17} />
           <Badge value={data.reconciliation.status} />
         </div>
         {data.reconciliation.reasonCode === "PARTIAL_WAREHOUSE_SCOPE" && (
           <p className="mb-2 text-sm text-amber-700">
-            完整订单对账无法在当前权限范围内确认。
+            {copy("完整订单对账无法在当前权限范围内确认。")}
           </p>
         )}
         {data.reconciliation.checks.map((x) => (
@@ -1335,9 +1341,9 @@ function OrderDetail({ id }: { id: string }) {
           {intent === "edit" ? (
             <>
               <label className="text-sm">
-                客户
+                {copy("客户")}
                 <input
-                  aria-label="编辑客户"
+                  aria-label={copy("编辑客户")}
                   className="mt-1 w-full rounded-lg border p-2"
                   value={editCustomer}
                   onChange={(e) => {
@@ -1347,9 +1353,9 @@ function OrderDetail({ id }: { id: string }) {
                 />
               </label>
               <label className="mt-3 block text-sm">
-                订购数量
+                {copy("订购数量")}
                 <input
-                  aria-label="编辑数量"
+                  aria-label={copy("编辑数量")}
                   className="mt-1 w-full rounded-lg border p-2"
                   value={editQuantity}
                   onChange={(e) => {
@@ -1368,9 +1374,9 @@ function OrderDetail({ id }: { id: string }) {
             <>
               {(intent === "reserve" || intent === "shipment") && (
                 <label className="block text-sm">
-                  订单行
+                  {copy("订单行")}
                   <select
-                    aria-label="销售订单行"
+                    aria-label={copy("销售订单行")}
                     className="mt-1 w-full rounded-lg border p-2"
                     value={selectedLineId}
                     onChange={(e) => {
@@ -1381,7 +1387,7 @@ function OrderDetail({ id }: { id: string }) {
                       setIntentKey(key());
                     }}
                   >
-                    <option value="">请选择订单行</option>
+                    <option value="">{copy("请选择订单行")}</option>
                     {lineOptions.map((x) => (
                       <option value={x.id} key={x.id}>
                         {x.sku} · {x.itemName} · 订购 {x.orderedQuantity} / 预留{" "}
@@ -1394,9 +1400,9 @@ function OrderDetail({ id }: { id: string }) {
               )}
               {intent === "reserve" && (
                 <label className="mt-3 block text-sm">
-                  仓库 / 库位
+                  {copy("仓库 / 库位")}
                   <select
-                    aria-label="库存余额"
+                    aria-label={copy("库存余额")}
                     className="mt-1 w-full rounded-lg border p-2"
                     value={selectedBalanceId}
                     onChange={(e) => {
@@ -1405,7 +1411,7 @@ function OrderDetail({ id }: { id: string }) {
                       setIntentKey(key());
                     }}
                   >
-                    <option value="">请选择库存余额</option>
+                    <option value="">{copy("请选择库存余额")}</option>
                     {balanceOptions.map((x) => (
                       <option disabled={!x.selectable} value={x.id} key={x.id}>
                         {x.warehouseId} · {x.location || "默认库位"} · 现有{" "}
@@ -1419,9 +1425,9 @@ function OrderDetail({ id }: { id: string }) {
               )}
               {(intent === "release" || intent === "shipment") && (
                 <label className="mt-3 block text-sm">
-                  预留记录
+                  {copy("预留记录")}
                   <select
-                    aria-label="预留记录"
+                    aria-label={copy("预留记录")}
                     className="mt-1 w-full rounded-lg border p-2"
                     value={selectedReservationId}
                     onChange={(e) => {
@@ -1430,7 +1436,7 @@ function OrderDetail({ id }: { id: string }) {
                       setIntentKey(key());
                     }}
                   >
-                    <option value="">请选择预留记录</option>
+                    <option value="">{copy("请选择预留记录")}</option>
                     {reservationOptions.map((x) => (
                       <option value={x.id} key={x.id}>
                         {x.id} · {x.warehouseId} / {x.location || "默认库位"} ·
@@ -1443,9 +1449,9 @@ function OrderDetail({ id }: { id: string }) {
                 </label>
               )}
               <label className="mt-3 block text-sm">
-                数量
+                {copy("数量")}
                 <input
-                  aria-label="交易数量"
+                  aria-label={copy("交易数量")}
                   className="mt-1 w-full rounded-lg border p-2"
                   value={quantity}
                   onChange={(e) => {
@@ -1457,9 +1463,9 @@ function OrderDetail({ id }: { id: string }) {
               </label>
               {intent === "shipment" && (
                 <label className="mt-3 block text-sm">
-                  发货单号
+                  {copy("发货单号")}
                   <input
-                    aria-label="发货单号"
+                    aria-label={copy("发货单号")}
                     className="mt-1 w-full rounded-lg border p-2"
                     value={shipmentNumber}
                     onChange={(e) => {
@@ -1476,9 +1482,9 @@ function OrderDetail({ id }: { id: string }) {
               )}
               {intent === "release" && (
                 <label className="mt-3 block text-sm">
-                  原因
+                  {copy("原因")}
                   <input
-                    aria-label="释放原因"
+                    aria-label={copy("释放原因")}
                     className="mt-1 w-full rounded-lg border p-2"
                     value={reason}
                     onChange={(e) => {
@@ -1493,7 +1499,7 @@ function OrderDetail({ id }: { id: string }) {
                 <PreviewView preview={preview} />
               ) : (
                 <p className="mt-3 text-xs text-slate-500">
-                  必须先读取服务端预览，前端不计算权威库存。
+                  {copy("必须先读取服务端预览，前端不计算权威库存。")}
                 </p>
               )}
               <div className="mt-4 flex gap-2">
@@ -1502,7 +1508,7 @@ function OrderDetail({ id }: { id: string }) {
                   disabled={saving}
                   onClick={() => void loadPreview()}
                 >
-                  读取预览
+                  {copy("读取预览")}
                 </Button>
                 <Button
                   testId="confirm-outbound-action"
@@ -1599,7 +1605,7 @@ function ShipmentDetail({ id }: { id: string }) {
     return (
       <div className="p-10 text-center">
         <Loader2 className="mx-auto animate-spin" />
-        正在读取发货单…
+        {copy("正在读取发货单…")}
       </div>
     );
   if (!data) return <div role="alert">{error}</div>;
@@ -1618,7 +1624,7 @@ function ShipmentDetail({ id }: { id: string }) {
                 {data.shipment.shipmentNumber}
               </h1>
               <span className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700">
-                PostgreSQL 正式记录
+                {copy("PostgreSQL 正式记录")}
               </span>
             </div>
             <p className="text-sm text-slate-500">
@@ -1644,12 +1650,12 @@ function ShipmentDetail({ id }: { id: string }) {
           <div className="flex gap-2">
             {data.availableActions.canCancel && (
               <Button tone="secondary" onClick={() => start("cancel")}>
-                取消草稿
+                {copy("取消草稿")}
               </Button>
             )}
             {data.availableActions.canPost && (
               <Button testId="open-post" onClick={() => start("post")}>
-                过账发货
+                {copy("过账发货")}
               </Button>
             )}
             {data.availableActions.canReverse && (
@@ -1658,13 +1664,13 @@ function ShipmentDetail({ id }: { id: string }) {
                 tone="danger"
                 onClick={() => start("reverse")}
               >
-                冲销发货
+                {copy("冲销发货")}
               </Button>
             )}
           </div>
         </div>
       </section>
-      <Section title="发货行">
+      <Section title={copy("发货行")}>
         <Table
           headers={["SKU / 物料", "请求数量", "已过账", "单位"]}
           rows={data.lines.map((x) => [
@@ -1675,7 +1681,7 @@ function ShipmentDetail({ id }: { id: string }) {
           ])}
         />
       </Section>
-      <Section title="分配与库存流水">
+      <Section title={copy("分配与库存流水")}>
         <Table
           headers={[
             "预留",
@@ -1703,10 +1709,10 @@ function ShipmentDetail({ id }: { id: string }) {
           </div>
         ))}
       </Section>
-      <Section title="发货证据与时间线">
+      <Section title={copy("发货证据与时间线")}>
         <Timeline rows={data.evidence} />
       </Section>
-      <Section title="一致性检查与辅助说明">
+      <Section title={copy("一致性检查与辅助说明")}>
         <div className="flex items-center gap-2">
           <ShieldCheck size={18} />
           <Badge value={data.reconciliation.status} />
@@ -1729,9 +1735,9 @@ function ShipmentDetail({ id }: { id: string }) {
         >
           {intent !== "post" && (
             <label className="text-sm">
-              原因
+              {copy("原因")}
               <input
-                aria-label="操作原因"
+                aria-label={copy("操作原因")}
                 className="mt-1 w-full rounded-lg border p-2"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
@@ -1739,7 +1745,7 @@ function ShipmentDetail({ id }: { id: string }) {
             </label>
           )}
           <p className="mt-2 text-xs text-slate-500">
-            发货时在库量与预留量同时下降，因此可用量不会再次下降。冲销没有“强制绕过”选项。
+            {copy("发货时在库量与预留量同时下降，因此可用量不会再次下降。冲销没有“强制绕过”选项。")}
           </p>
           {preview && <PreviewView preview={preview} />}
           <div className="mt-4 flex gap-2">
@@ -1747,7 +1753,7 @@ function ShipmentDetail({ id }: { id: string }) {
               testId="shipment-preview"
               onClick={() => void loadPreview()}
             >
-              读取预览
+              {copy("读取预览")}
             </Button>
             <Button
               testId="confirm-shipment-action"
@@ -1794,7 +1800,7 @@ function Table({
           ))}
         </tbody>
       </table>
-      {!rows.length && <p className="p-4 text-sm text-slate-500">暂无记录。</p>}
+      {!rows.length && <p className="p-4 text-sm text-slate-500">{copy("暂无记录。")}</p>}
     </div>
   );
 }
@@ -1817,7 +1823,7 @@ function Timeline({ rows }: { rows: Workbench["evidence"] }) {
           )}
         </div>
       ))}
-      {!rows.length && <p className="text-sm text-slate-500">暂无证据事件。</p>}
+      {!rows.length && <p className="text-sm text-slate-500">{copy("暂无证据事件。")}</p>}
     </div>
   );
 }
@@ -1872,7 +1878,7 @@ function ActionDialog({
       <div className="max-h-[90vh] w-full max-w-xl overflow-auto rounded-xl bg-white p-5 shadow-xl">
         <div className="mb-4 flex justify-between">
           <h2 className="font-semibold">{title}</h2>
-          <button aria-label="关闭" onClick={onClose}>
+          <button aria-label={copy("关闭")} onClick={onClose}>
             ×
           </button>
         </div>
