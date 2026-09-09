@@ -31,7 +31,7 @@ the product fallback.
 
 The primary navigation, every registered route/breadcrumb label, item workspace,
 purchasing workbench, and sales-order workbench now use the active UI language.
-Stored demo and business values remain unchanged. Run `npm run audit:i18n` to rank
+Stored seeded and business values remain unchanged. Run `npm run audit:i18n` to rank
 remaining potential display literals; the report is deliberately heuristic because
 Chinese business values and API status enums must not be rewritten as UI copy.
 
