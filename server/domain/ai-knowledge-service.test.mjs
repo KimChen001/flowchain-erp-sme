@@ -48,3 +48,38 @@ test('configured generation accepts only references retrieved for this request',
   assert.equal(result.citations[0].documentId, 'doc-a')
   assert.match(result.answer, /18 months/)
 })
+
+test('knowledge list reports semantic, partial, and keyword index coverage', async () => {
+  const rows = [
+    { id: 'semantic', chunks: [{ embeddingModel: 'embed-v1', embeddingDimensions: 3 }], _count: { chunks: 1 } },
+    { id: 'partial', chunks: [{ embeddingModel: 'embed-v1', embeddingDimensions: 3 }, { embeddingModel: null, embeddingDimensions: null }], _count: { chunks: 2 } },
+    { id: 'keyword', chunks: [{ embeddingModel: null, embeddingDimensions: null }], _count: { chunks: 1 } },
+  ]
+  const service = createKnowledgeService({ aiKnowledgeDocument: { findMany: async () => rows } })
+  const result = await service.list({ tenantId: 't1', permissionCodes: new Set() })
+  assert.deepEqual(result.items.map(item => item.indexStatus), ['semantic', 'partial', 'keyword'])
+  assert.equal(result.items[0].embeddingModel, 'embed-v1')
+  assert.equal(result.items[2].embeddingModel, null)
+})
+
+test('reindex replaces all chunk vectors atomically and preserves existing data on provider failure', async () => {
+  const chunks = [{ id: 'c1', content: 'first passage' }, { id: 'c2', content: 'second passage' }]
+  const updates = []
+  const prisma = {
+    aiKnowledgeDocument: { findFirst: async () => ({ id: 'doc-1', chunks }) },
+    aiKnowledgeChunk: { update: args => { updates.push(args); return Promise.resolve(args) } },
+    $transaction: async operations => Promise.all(operations),
+  }
+  const actor = { tenantId: 't1', permissionCodes: new Set(['settings.workspace.manage']) }
+  const service = createKnowledgeService(prisma, { embeddingProvider: async () => ({ ok: true, model: 'embed-v2', dimensions: 2, vectors: [[1, 0], [0, 1]] }) })
+  const result = await service.reindex(actor, 'doc-1')
+  assert.equal(result.indexStatus, 'semantic')
+  assert.equal(updates.length, 2)
+  assert.equal(updates[0].data.embeddingModel, 'embed-v2')
+  assert.match(updates[0].data.contentHash, /^[a-f0-9]{64}$/)
+
+  updates.length = 0
+  const unavailable = createKnowledgeService(prisma, { embeddingProvider: async () => ({ ok: false, reason: 'timeout' }) })
+  await assert.rejects(unavailable.reindex(actor, 'doc-1'), { code: 'KNOWLEDGE_EMBEDDING_UNAVAILABLE', status: 503 })
+  assert.equal(updates.length, 0)
+})
