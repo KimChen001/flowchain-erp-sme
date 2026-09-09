@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
+import { useI18n } from "../../i18n/I18n";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
 
 type Supplier = {
   id: string;
@@ -120,6 +122,8 @@ export default function SupplierMasterPage({
   onNavigate?: (moduleId: string, focus?: unknown) => void;
   onActiveContextChange?: (context: any) => void;
 }) {
+  const { language } = useI18n();
+  const copy = (label: string) => workspaceCopy(label, language);
   const [rows, setRows] = useState<Supplier[]>([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
@@ -570,9 +574,9 @@ export default function SupplierMasterPage({
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-lg font-semibold">供应商</h1>
+        <h1 className="text-lg font-semibold">{copy("供应商")}</h1>
         <p className="text-xs" style={{ color: A.sub }}>
-          维护供应商基本资料、商业条款和可供应物料关系。
+          {copy("维护供应商基本资料、商业条款和可供应物料关系。")}
         </p>
       </div>
       <Card className="p-4">
@@ -580,31 +584,31 @@ export default function SupplierMasterPage({
           <label className="flex min-w-64 items-center gap-2 rounded border px-3">
             <Search size={14} />
             <input
-              aria-label="搜索供应商"
+              aria-label={copy("搜索供应商")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="编号、名称或联系人"
+              placeholder={copy("编号、名称或联系人")}
               className="h-9 flex-1 outline-none"
             />
           </label>
           <select
-            aria-label="状态筛选"
+            aria-label={copy("状态筛选")}
             value={status}
             onChange={(e) => setStatus(e.target.value)}
             style={inputStyle}
           >
-            <option value="">全部状态</option>
-            <option value="active">启用</option>
-            <option value="inactive">停用</option>
-            <option value="draft">草稿</option>
+            <option value="">{copy("全部状态")}</option>
+            <option value="active">{copy("启用")}</option>
+            <option value="inactive">{copy("停用")}</option>
+            <option value="draft">{copy("草稿")}</option>
           </select>
           <select
-            aria-label="经营品类筛选"
+            aria-label={copy("经营品类筛选")}
             value={category}
             onChange={(e) => setCategory(e.target.value)}
             style={inputStyle}
           >
-            <option value="">全部品类</option>
+            <option value="">{copy("全部品类")}</option>
             {categories.map((c) => (
               <option key={c}>{c}</option>
             ))}
@@ -614,31 +618,31 @@ export default function SupplierMasterPage({
             className="inline-flex items-center gap-1 rounded border px-3 text-xs"
           >
             <RefreshCw size={14} />
-            刷新
+            {copy("刷新")}
           </button>
           <button
             onClick={startCreate}
             className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 text-xs text-white"
           >
             <Plus size={14} />
-            新增供应商
+            {copy("新增供应商")}
           </button>
         </div>
       </Card>
       {error ? (
         <Card className="p-8 text-center">
-          <div className="text-sm text-red-700">供应商数据加载失败</div>
+          <div className="text-sm text-red-700">{copy("供应商数据加载失败")}</div>
           <button onClick={load} className="mt-3 text-xs text-blue-600">
-            重试
+            {copy("重试")}
           </button>
         </Card>
       ) : loading ? (
-        <Card className="p-8 text-center text-xs">加载中</Card>
+        <Card className="p-8 text-center text-xs">{copy("加载中")}</Card>
       ) : rows.length === 0 ? (
         <Card className="py-14 text-center text-sm" style={{ color: A.sub }}>
-          暂无供应商
+          {copy("暂无供应商")}
           <br />
-          <span className="text-xs">点击“新增供应商”开始维护供应商资料。</span>
+          <span className="text-xs">{copy("点击“新增供应商”开始维护供应商资料。")}</span>
         </Card>
       ) : (
         <Card className="overflow-x-auto">
@@ -659,7 +663,7 @@ export default function SupplierMasterPage({
                   "操作",
                 ].map((h) => (
                   <th key={h} className="p-3 text-left">
-                    {h}
+                    {copy(h)}
                   </th>
                 ))}
               </tr>
@@ -681,12 +685,12 @@ export default function SupplierMasterPage({
                   <td className="p-3">{row.defaultCurrency}</td>
                   <td className="p-3">{row.paymentTermsId}</td>
                   <td className="p-3">{row.deliveryCycleDays || "-"}</td>
-                  <td className="p-3">{statusLabel[row.status]}</td>
+                  <td className="p-3">{copy(statusLabel[row.status])}</td>
                   <td className="p-3">{row.updatedAt?.slice(0, 10)}</td>
                   <td className="p-3 space-x-2">
-                    <button onClick={() => startEdit(row)}>编辑</button>
+                    <button onClick={() => startEdit(row)}>{copy("编辑")}</button>
                     <button onClick={() => toggle(row)}>
-                      {row.status === "active" ? "停用" : "启用"}
+                      {copy(row.status === "active" ? "停用" : "启用")}
                     </button>
                   </td>
                 </tr>

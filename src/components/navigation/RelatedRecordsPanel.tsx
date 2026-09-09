@@ -1,6 +1,9 @@
 import { Link2 } from "lucide-react";
 import { A, Card, Chip } from "../ui";
 import { groupBusinessLinkedRecords, type BusinessLinkedRecord } from "../../lib/businessLinks";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
+
+const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 const entityLabels: Record<string, string> = {
   sales_order: "客户订单",
@@ -30,12 +33,12 @@ export function RelatedRecordsPanel({
     <Card className="p-4" data-testid="related-records-panel">
       <div className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: A.label }}>
         <Link2 size={13} />
-        相关记录
+        {copy("相关记录")}
       </div>
       <div className="mt-3 space-y-3">
         {groupEntries.length ? groupEntries.map(([label, rows]) => (
           <div key={label}>
-            <div className="mb-1.5 text-[11px] font-semibold" style={{ color: A.gray1 }}>{label}</div>
+            <div className="mb-1.5 text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy(label)}</div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {rows.map((record) => {
                 const clickable = record.routeAvailable && record.focusTarget && onNavigate;
@@ -48,10 +51,10 @@ export function RelatedRecordsPanel({
                       {record.status ? <Chip label={record.status} color={A.gray1} bg={A.gray6} /> : null}
                     </div>
                     <div className="mt-0.5 truncate fc-caption" style={{ color: A.gray2 }}>
-                      {entityLabels[record.entityType] || "业务记录"}
+                      {copy(entityLabels[record.entityType] || "业务记录")}
                     </div>
                     <div className="mt-1 fc-caption leading-4" style={{ color: record.disabledReason ? A.orange : A.sub }}>
-                      {record.disabledReason || record.relationshipReason || "已找到关联依据。"}
+                      {record.disabledReason || (record.relationshipReason ? copy(record.relationshipReason) : copy("已找到关联依据。"))}
                     </div>
                   </>
                 );
@@ -79,7 +82,7 @@ export function RelatedRecordsPanel({
           </div>
         )) : (
           <div className="rounded-lg px-2.5 py-2 text-[11px]" style={{ background: A.gray6, color: A.sub }}>
-            暂无可追溯的相关记录。
+            {copy("暂无可追溯的相关记录。")}
           </div>
         )}
       </div>

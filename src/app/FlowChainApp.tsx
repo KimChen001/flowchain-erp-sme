@@ -29,6 +29,7 @@ import {
 } from "./routeRegistry";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../lib/constants";
 import {
+  ApiError,
   apiJson,
   AUTH_TOKEN_KEY,
   CURRENT_USER_KEY,
@@ -799,7 +800,14 @@ export default function FlowChainApp() {
         setEffectivePermissionCodes(new Set(result.effectivePermissions));
         setAuthorizationLoadState("ready");
       })
-      .catch(() => {
+      .catch((error) => {
+        if (error instanceof ApiError && error.status === 401) {
+          localStorage.removeItem(AUTH_TOKEN_KEY);
+          localStorage.removeItem(CURRENT_USER_KEY);
+          setAuthToken("");
+          setUser(null);
+          return;
+        }
         setAuthorizationVisibility({});
         setEffectivePermissionCodes(new Set());
         setAuthorizationLoadState("failed");

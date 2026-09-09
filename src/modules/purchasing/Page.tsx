@@ -61,6 +61,9 @@ import {
   tdNumericClass,
   thClass,
 } from "../../components/ui/workbenchTable";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
+
+const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 type PurchaseOrderViewMode = "list" | "detail";
 type NavigateFn = (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null, options?: { returnTo?: string; entityLabel?: string; returnContext?: WorkflowContext | null; source?: string }) => void;
@@ -160,12 +163,12 @@ type MatchEvidenceRow = {
 };
 
 function statusChip(status: string) {
-  return <Chip label={status} color={statusTone(status) === "danger" ? A.red : statusTone(status) === "warning" ? A.orange : statusTone(status) === "success" ? A.green : A.blue} bg={statusTone(status) === "danger" ? "#fff1f0" : statusTone(status) === "warning" ? "#fff8f0" : statusTone(status) === "success" ? "#f0faf4" : "#f0f6ff"} />;
+  return <Chip label={copy(status)} color={statusTone(status) === "danger" ? A.red : statusTone(status) === "warning" ? A.orange : statusTone(status) === "success" ? A.green : A.blue} bg={statusTone(status) === "danger" ? "#fff1f0" : statusTone(status) === "warning" ? "#fff8f0" : statusTone(status) === "success" ? "#f0faf4" : "#f0f6ff"} />;
 }
 
 function PurchaseOrderLineCards({ rows }: { rows: PoEvidenceRow[] }) {
   if (!rows.length) {
-    return <Card className="p-8 text-center text-xs" style={{ color: A.gray2 }}>当前采购订单没有明细行。</Card>;
+    return <Card className="p-8 text-center text-xs" style={{ color: A.gray2 }}>{copy("当前采购订单没有明细行。")}</Card>;
   }
   return (
     <div className="space-y-3" data-testid="po-line-cards">
@@ -217,11 +220,11 @@ function PurchaseOrderLineCards({ rows }: { rows: PoEvidenceRow[] }) {
             <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {groups.map((group) => (
                 <div key={group.title} className="rounded-lg bg-slate-50 p-3">
-                  <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: A.gray2 }}>{group.title}</div>
+                  <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: A.gray2 }}>{copy(group.title)}</div>
                   <dl className="mt-2 space-y-2">
                     {group.facts.map(([label, value]) => (
                       <div key={label} className="flex items-start justify-between gap-3 text-xs">
-                        <dt className="shrink-0" style={{ color: A.sub }}>{label}</dt>
+                        <dt className="shrink-0" style={{ color: A.sub }}>{copy(label)}</dt>
                         <dd className="min-w-0 break-words text-right font-medium tabular-nums" style={{ color: A.label }}>{value}</dd>
                       </div>
                     ))}
@@ -712,7 +715,7 @@ export default function PurchasingOrdersPage({
 
     return (
       <DocumentShell
-        title="采购订单 / PO"
+        title={copy("采购订单 / PO")}
         documentNo={selectedPO.po}
         moduleLabel="采购订单证据"
         status={selectedPO.status}
@@ -744,7 +747,7 @@ export default function PurchasingOrdersPage({
         />
 
         <div>
-          <SectionTitle title="概览" />
+          <SectionTitle title={copy("概览")} />
           <DocumentHeader
             fields={[
               { label: "PO 编号", value: selectedPO.po, tone: "info" },
@@ -769,7 +772,7 @@ export default function PurchasingOrdersPage({
         <DocumentStatusTimeline steps={poTimeline(selectedPO, facts)} />
 
         <div>
-          <SectionTitle title="PO 明细行" right={<Chip label={`${poLines.length} 行`} color={A.blue} bg="#f0f6ff" />} />
+          <SectionTitle title={copy("PO 明细行")} right={<Chip label={`${poLines.length} 行`} color={A.blue} bg="#f0f6ff" />} />
           <PurchaseOrderLineCards rows={poLines} />
         </div>
 
@@ -782,14 +785,14 @@ export default function PurchasingOrdersPage({
         >
           {highlightedArea && highlightedArea !== "evidence" ? (
             <Card className="p-3" style={{ background: "#fffaf0", borderColor: `${A.orange}55` }}>
-              <div className="text-xs font-semibold" style={{ color: A.orange }}>AI 已定位：收货、发票差异与建议下一步</div>
+              <div className="text-xs font-semibold" style={{ color: A.orange }}>{copy("AI 已定位：收货、发票差异与建议下一步")}</div>
               <div className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>
                 {receivedStatus(selectedPO, facts)} · {invoiceStatus(selectedPO, facts)} · 建议：{nextStepForPo(selectedPO, facts)}
               </div>
             </Card>
           ) : null}
         <div>
-          <SectionTitle title="收货 / GRN 明细行" />
+          <SectionTitle title={copy("收货 / GRN 明细行")} />
           <DocumentLinesTable
             rows={grnRows}
             emptyText="当前 PO 暂无收货记录。"
@@ -814,12 +817,12 @@ export default function PurchasingOrdersPage({
             ]}
           />
           <Card className="p-3 mt-3 text-[11px] leading-5" style={{ color: A.sub, background: "#f8fafc" }}>
-            对照采购订单查看实收、质检和差异记录。
+            {copy("对照采购订单查看实收、质检和差异记录。")}
           </Card>
         </div>
 
         <div>
-          <SectionTitle title="发票 / Invoice Line" />
+          <SectionTitle title={copy("发票 / Invoice Line")} />
           <DocumentLinesTable
             rows={invoiceRows}
             emptyText="当前 PO 尚未读取到 Invoice Line。"
@@ -847,7 +850,7 @@ export default function PurchasingOrdersPage({
           />
         </div>
         <div>
-          <SectionTitle title="三单匹配" right={<Chip label="行级解释" color={A.orange} bg="#fff8f0" />} />
+          <SectionTitle title={copy("三单匹配")} right={<Chip label="行级解释" color={A.orange} bg="#fff8f0" />} />
           <DocumentLinesTable
             rows={matchRows}
             columns={[
@@ -887,11 +890,11 @@ export default function PurchasingOrdersPage({
 
 
         <div>
-          <SectionTitle title="历史记录" />
+          <SectionTitle title={copy("历史记录")} />
           <DocumentHistoryPanel
             entityType="purchaseOrder"
             entityId={selectedPO.po}
-            title="采购订单历史"
+            title={copy("采购订单历史")}
             refreshKey={selectedPO.lastAuditId || selectedPO.auditTrailIds?.join(",") || selectedPO.status}
           />
         </div>
@@ -901,15 +904,15 @@ export default function PurchasingOrdersPage({
   })();
 
   if (loading) {
-    return <Card className="p-12 text-center text-sm" data-testid="po-loading-state">正在读取 PostgreSQL 采购订单与履约证据…</Card>;
+    return <Card className="p-12 text-center text-sm" data-testid="po-loading-state">{copy("正在读取 PostgreSQL 采购订单与履约证据…")}</Card>;
   }
 
   if (loadError) {
     return (
       <Card className="p-12 text-center" data-testid="po-error-state">
-        <div className="text-sm font-semibold">采购订单加载失败</div>
+        <div className="text-sm font-semibold">{copy("采购订单加载失败")}</div>
         <div className="mt-2 text-xs" style={{ color: A.sub }}>{loadError}</div>
-        <button type="button" onClick={() => loadWorkbench()} className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white">重试</button>
+        <button type="button" onClick={() => loadWorkbench()} className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white">{copy("重试")}</button>
       </Card>
     );
   }
@@ -919,8 +922,8 @@ export default function PurchasingOrdersPage({
       <div className="space-y-5">
         {selectedPO ? detailContent : (
           <Card className="p-8 text-center text-xs" style={{ color: A.gray2 }}>
-            未找到采购订单。
-            <button onClick={returnToList} className="ml-3 px-3 py-1.5 rounded-lg font-medium" style={{ background: A.gray6, color: A.blue }}>返回 PO 列表</button>
+            {copy("未找到采购订单。")}
+            <button onClick={returnToList} className="ml-3 px-3 py-1.5 rounded-lg font-medium" style={{ background: A.gray6, color: A.blue }}>{copy("返回 PO 列表")}</button>
           </Card>
         )}
       </div>
@@ -930,7 +933,7 @@ export default function PurchasingOrdersPage({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-4 gap-3">
-        <ActionableMetricCard label="PO 总额" value={fmt(totalAmount)} description={loading ? "加载中" : `${orders.length} 张订单`} to="/app/procurement/orders" icon={FileText} color={A.blue} />
+        <ActionableMetricCard label="PO 总额" value={fmt(totalAmount)} description={loading ? "加载中" : `${orders.length} ${copy("张订单")}`} to="/app/procurement/orders" icon={FileText} color={A.blue} />
         <ActionableMetricCard label="待收货 / 未收齐" value={String(waitingReceipt)} description="跟进未完成采购订单" to="/app/procurement/orders?status=open" icon={Truck} color={A.orange} />
         <ActionableMetricCard label="发票差异" value={String(invoiceExceptions)} description="采购与财务共同复核" to="/app/finance/invoices?matchStatus=variance" icon={AlertCircle} color={A.red} />
         <ActionableMetricCard label="匹配复核" value={String(matchExceptions)} description="查看三单匹配异常" to="/app/finance/three-way-match" icon={ShieldCheck} color={A.purple} />
@@ -939,21 +942,21 @@ export default function PurchasingOrdersPage({
       <Card className="p-5">
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
-            <SectionHeader title="采购订单查询" />
+            <SectionHeader title={copy("采购订单查询")} />
             <div className="text-xs mt-1" style={{ color: A.sub }}>
-              查询 PO、来源 PR / RFQ、供应商、收货、发票和三单匹配状态
+              {copy("查询 PO、来源 PR / RFQ、供应商、收货、发票和三单匹配状态")}
             </div>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={resetFilters}
               className="h-8 px-3 rounded-lg text-xs font-medium"
               style={{ background: A.gray6, color: A.label }}>
-              重置
+              {copy("重置")}
             </button>
             <button onClick={exportCsv}
               className="h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5"
               style={{ background: "#f0f6ff", color: A.blue }}>
-              <FileSpreadsheet size={13} /> 导出当前结果
+              <FileSpreadsheet size={13} /> {copy("导出当前结果")}
             </button>
           </div>
         </div>
@@ -964,30 +967,30 @@ export default function PurchasingOrdersPage({
           </Field>
           <Field label="供应商">
             <input value={filters.supplier} onChange={(event) => updateFilter("supplier", event.target.value)}
-              placeholder="供应商名称" style={inputStyle} />
+              placeholder={copy("供应商名称")} style={inputStyle} />
           </Field>
           <Field label="物料 / SKU">
             <input value={filters.skuOrItem} onChange={(event) => updateFilter("skuOrItem", event.target.value)}
-              placeholder="SKU 或品名" style={inputStyle} />
+              placeholder={copy("SKU 或品名")} style={inputStyle} />
           </Field>
           <Field label="状态">
             <select value={filters.status} onChange={(event) => updateFilter("status", event.target.value as PurchaseOrderWorkbenchFilters["status"])}
               style={inputStyle}>
-              {statusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
+              {statusOptions.map((status) => <option key={status} value={status}>{copy(status)}</option>)}
             </select>
           </Field>
           <Field label="来源">
             <select value={filters.source} onChange={(event) => updateFilter("source", event.target.value)}
               style={inputStyle}>
-              <option value="全部">全部</option>
+              <option value="全部">{copy("全部")}</option>
               {sourceOptions.map((source) => (
-                <option key={source} value={source}>{source === "forecast" ? "预测" : source === "manual" ? "手工" : source}</option>
+                <option key={source} value={source}>{copy(source === "forecast" ? "预测" : source === "manual" ? "手工" : source)}</option>
               ))}
             </select>
           </Field>
           <Field label="负责人">
             <input value={filters.owner} onChange={(event) => updateFilter("owner", event.target.value)}
-              placeholder="采购负责人" style={inputStyle} />
+              placeholder={copy("采购负责人")} style={inputStyle} />
           </Field>
           <Field label="ETA 起始">
             <input value={filters.etaFrom} onChange={(event) => updateFilter("etaFrom", event.target.value)}
@@ -1003,11 +1006,11 @@ export default function PurchasingOrdersPage({
       <Card>
         <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div>
-            <div className="text-sm font-semibold" style={{ color: A.label }}>采购订单列表</div>
-            <div className="text-[11px] mt-0.5" style={{ color: A.sub }}>共 {orders.length} 条，当前筛选 {filtered.length} 条</div>
+            <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("采购订单列表")}</div>
+            <div className="text-[11px] mt-0.5" style={{ color: A.sub }}>{copy("共")} {orders.length} {copy("条，当前筛选")} {filtered.length}</div>
           </div>
           <span className="text-xs ml-auto flex items-center gap-1.5" style={{ color: A.gray2 }}>
-            <Filter size={13} /> PO / GRN / Invoice 证据
+            <Filter size={13} /> {copy("PO / GRN / Invoice 证据")}
           </span>
           <Chip label="只读复核" color={A.blue} bg="#f0f6ff" />
         </div>
@@ -1015,16 +1018,16 @@ export default function PurchasingOrdersPage({
           <table className="w-full min-w-[1200px] table-fixed text-left [&_tbody_td]:!py-0">
             <thead>
               <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
-                <th className={`${thClass} sticky left-0 z-20 w-[150px] bg-slate-50`} style={{ color: A.gray1 }}>PO 编号</th>
-                {["供应商", "状态", "采购负责人", "订单金额", "预计到货", "收货状态", "发票 / 匹配"].map((header) => <th key={header} className={thClass} style={{ color: A.gray1 }}>{header}</th>)}
-                <th className={`${thClass} sticky right-0 z-20 w-[150px] bg-slate-50`} style={{ color: A.gray1 }}>操作</th>
+                <th className={`${thClass} sticky left-0 z-20 w-[150px] bg-slate-50`} style={{ color: A.gray1 }}>{copy("PO 编号")}</th>
+                {["供应商", "状态", "采购负责人", "订单金额", "预计到货", "收货状态", "发票 / 匹配"].map((header) => <th key={header} className={thClass} style={{ color: A.gray1 }}>{copy(header)}</th>)}
+                <th className={`${thClass} sticky right-0 z-20 w-[150px] bg-slate-50`} style={{ color: A.gray1 }}>{copy("操作")}</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="p-12 text-center text-sm" style={{ color: A.sub }}>
-                    当前工作区没有符合条件的采购订单。
+                    {copy("当前工作区没有符合条件的采购订单。")}
                   </td>
                 </tr>
               ) : null}
@@ -1045,17 +1048,17 @@ export default function PurchasingOrdersPage({
                     <td className={`${tdNumericClass} font-semibold`} style={{ color: A.label }}>{fmt(poAmount(order))}</td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{order.eta}</td>
                     <td className={tdNowrapClass}>{statusChip(receivedStatus(order, facts))}</td>
-                    <td className={tdNowrapClass}><div>{statusChip(invoiceStatus(order, facts))}</div><div className="mt-1 text-[11px] text-slate-500">{matchStatus(order, facts)}</div></td>
+                    <td className={tdNowrapClass}><div>{statusChip(invoiceStatus(order, facts))}</div><div className="mt-1 text-[11px] text-slate-500">{copy(matchStatus(order, facts))}</div></td>
                     <td className={`${tdActionClass} sticky right-0 z-10 bg-white`}>
                       <div className="flex items-center justify-end gap-1.5">
-                        <button onClick={() => openDetail(order.po)} className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600">查看</button>
-                        <details className="relative"><summary className="cursor-pointer list-none rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">更多</summary><div className="absolute right-0 top-7 z-30 w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
-                          <button onClick={() => openDetail(order.po)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">查看订单行与证据</button>
-                          {firstGrn && <button onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, firstGrn.grn)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">打开收货记录</button>}
-                          {firstInvoice && <button onClick={() => navigateOrderWithReturn(order, "finance:invoices", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">打开发票记录</button>}
-                          <button onClick={() => navigateOrderWithReturn(order, "finance:three-way-match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">打开三单匹配</button>
-                          {order.sourceRequest && <button onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, order.sourceRequest)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">打开来源 PR</button>}
-                          {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, order.sourceRfq)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">打开来源 RFQ</button>}
+                        <button onClick={() => openDetail(order.po)} className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600">{copy("查看")}</button>
+                        <details className="relative"><summary className="cursor-pointer list-none rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">{copy("更多")}</summary><div className="absolute right-0 top-7 z-30 w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                          <button onClick={() => openDetail(order.po)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看订单行与证据")}</button>
+                          {firstGrn && <button onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, firstGrn.grn)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开收货记录")}</button>}
+                          {firstInvoice && <button onClick={() => navigateOrderWithReturn(order, "finance:invoices", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开发票记录")}</button>}
+                          <button onClick={() => navigateOrderWithReturn(order, "finance:three-way-match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开三单匹配")}</button>
+                          {order.sourceRequest && <button onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, order.sourceRequest)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开来源 PR")}</button>}
+                          {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, order.sourceRfq)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开来源 RFQ")}</button>}
                         </div></details>
                       </div>
                     </td>
@@ -1065,7 +1068,7 @@ export default function PurchasingOrdersPage({
               {filtered.length === 0 && (
                 <tr>
                   <td colSpan={9} className="px-4 py-12 text-center text-xs" style={{ color: A.gray2 }}>
-                    当前条件下暂无采购订单
+                    {copy("当前条件下暂无采购订单")}
                   </td>
                 </tr>
               )}

@@ -5,14 +5,17 @@ import { apiJson } from "../../lib/api-client";
 import type { AuditEntry } from "../../types/scm";
 import { A } from "./tokens";
 import { typography } from "./typography";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
 
 export { A } from "./tokens";
+
+const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 export function Chip({ label, color, bg }: { label: string; color: string; bg: string }) {
   return (
     <span className="fc-status-chip inline-flex w-fit items-center whitespace-nowrap break-keep"
       style={{ color, background: bg }}>
-      {label}
+      {copy(label)}
     </span>
   );
 }
@@ -59,7 +62,7 @@ export function RecoveryActions({
           style={recoveryActionStyle(action.tone)}
         >
           <RecoveryIcon kind={action.kind} />
-          {action.label}
+          {copy(action.label)}
         </button>
       ))}
     </div>
@@ -152,13 +155,13 @@ export function DocumentHistoryPanel({
     <div className="rounded-xl p-3 mb-4" style={{ background: A.gray6, border: "1px solid rgba(0,0,0,0.05)" }}>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: A.label }}>
-          <History size={12} /> {title}
+          <History size={12} /> {copy(title)}
         </div>
-        <span className="fc-caption" style={{ color: A.gray2 }}>{loading ? "加载中" : `${entries.length} 条`}</span>
+        <span className="fc-caption" style={{ color: A.gray2 }}>{loading ? copy("加载中") : `${entries.length} ${copy("条记录")}`}</span>
       </div>
       {entries.length === 0 ? (
         <div className="fc-caption leading-4" style={{ color: A.sub }}>
-          暂无历史记录。当前单据暂无操作记录，后续状态变更会自动记录。
+          {copy("暂无历史记录。当前单据暂无操作记录，后续状态变更会自动记录。")}
         </div>
       ) : (
         <div className="space-y-2">
@@ -252,8 +255,8 @@ export function KpiCard({ label, value, sub, delta, positive, icon: Icon, color 
       </div>
       <div>
         <div className="fc-kpi-value" style={{ color: A.label }}>{value}</div>
-        <div className="fc-label mt-0.5" style={{ color: A.sub }}>{label}</div>
-        {sub && <div className="fc-caption mt-0.5" style={{ color: A.gray2 }}>{sub}</div>}
+        <div className="fc-label mt-0.5" style={{ color: A.sub }}>{copy(label)}</div>
+        {sub && <div className="fc-caption mt-0.5" style={{ color: A.gray2 }}>{copy(sub)}</div>}
       </div>
     </Card>
   );
@@ -270,7 +273,7 @@ export function SegmentedControl({ options, value, onChange }: {
           style={value === opt.value
             ? { background: A.white, color: A.label, boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }
             : { background: "transparent", color: A.sub }}>
-          {opt.label}
+          {copy(opt.label)}
         </button>
       ))}
     </div>
@@ -309,7 +312,7 @@ export function SubTabs<T extends string>({ tabs, value, onChange }: {
             className="px-4 py-2.5 fc-body font-medium flex items-center gap-1.5 shrink-0 transition-colors relative"
             style={{ color: isActive ? A.blue : A.gray1, background: "transparent" }}>
             {Icon && <Icon size={12} strokeWidth={isActive ? 2 : 1.8} />}
-            {t.label}
+            {copy(t.label)}
             {t.count !== undefined && (
               <span className="fc-caption px-1.5 py-px rounded-full font-semibold tabular-nums"
                 style={{ background: isActive ? "#f0f6ff" : A.gray6, color: isActive ? A.blue : A.gray1 }}>
@@ -327,7 +330,7 @@ export function SubTabs<T extends string>({ tabs, value, onChange }: {
 export function SectionHeader({ title, right }: { title: string; right?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between mb-4">
-      <h2 className="fc-section-title" style={{ color: A.label }}>{title}</h2>
+      <h2 className="fc-section-title" style={{ color: A.label }}>{copy(title)}</h2>
       {right}
     </div>
   );
@@ -353,10 +356,10 @@ export function Modal({ open, onClose, title, subtitle, width = 560, children, f
         style={{ width: `min(${width}px, calc(100vw - 32px))`, boxShadow: "0 24px 60px rgba(0,0,0,0.24), 0 0 0 0.5px rgba(0,0,0,0.08)" }}>
         <div className="px-6 pt-5 pb-4 flex items-start justify-between" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
           <div>
-            <h3 className="fc-modal-title" style={{ color: A.label }}>{title}</h3>
+            <h3 className="fc-modal-title" style={{ color: A.label }}>{copy(title)}</h3>
             {subtitle && <p className="fc-page-subtitle mt-0.5" style={{ color: A.sub }}>{subtitle}</p>}
           </div>
-          <button aria-label="关闭" onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors"
+          <button aria-label={copy("关闭")} onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors"
             style={{ color: A.gray1 }}>
             <X size={15} />
           </button>
@@ -372,9 +375,9 @@ export function Modal({ open, onClose, title, subtitle, width = 560, children, f
 export function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-[13px] leading-5 font-semibold" style={{ color: A.sub }}>{label}</label>
+      <label className="text-[13px] leading-5 font-semibold" style={{ color: A.sub }}>{copy(label)}</label>
       {children}
-      {hint && <p className="text-[12px] leading-[18px]" style={{ color: A.gray2 }}>{hint}</p>}
+      {hint && <p className="text-[12px] leading-[18px]" style={{ color: A.gray2 }}>{copy(hint)}</p>}
     </div>
   );
 }

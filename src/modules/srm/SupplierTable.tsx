@@ -8,6 +8,9 @@ import {
   tdNumericClass,
   thClass,
 } from "../../components/ui/workbenchTable";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
+
+const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 export type SupplierTableMode = "master" | "performance" | "certification";
 
@@ -34,7 +37,7 @@ export default function SupplierTable({ rows, onDetail, mode }: { rows: Supplier
           <thead>
             <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
               {headers.map((header) => (
-                <th key={header} className={thClass} style={{ color: A.gray1 }}>{header}</th>
+                <th key={header} className={thClass} style={{ color: A.gray1 }}>{copy(header)}</th>
               ))}
             </tr>
           </thead>
@@ -52,7 +55,7 @@ export default function SupplierTable({ rows, onDetail, mode }: { rows: Supplier
                   <tr key={row.supplier.code} style={{ borderBottom: index < visible.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
                     <td className={tdNowrapClass} style={{ color: A.blue }}>{row.supplier.code}</td>
                     <td className={`${tdNameClass} max-w-[220px] font-semibold`} style={{ color: A.label }}>{row.supplier.name}</td>
-                    <td className={`${tdNameClass} max-w-[180px]`} style={{ color: A.sub }}>{supplierType} / {row.category}</td>
+                    <td className={`${tdNameClass} max-w-[180px]`} style={{ color: A.sub }}>{copy(supplierType)} / {row.category}</td>
                     <td className={tdNowrapClass}><Chip label={row.operationalStatus} color={recordStyle.color} bg={recordStyle.bg} /></td>
                     <td className={tdNowrapClass} style={{ color: A.label }}>{row.supplier.contact}</td>
                     <td className={tdNowrapClass} style={{ color: A.label }}>{row.supplier.currency}</td>
@@ -65,9 +68,9 @@ export default function SupplierTable({ rows, onDetail, mode }: { rows: Supplier
                     <td className={tdNumericClass} style={{ color: row.p2pSummary.receivedNotInvoicedAmount ? A.orange : A.green }}>{fmt(row.p2pSummary.receivedNotInvoicedAmount)}</td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{row.p2pSummary.latestTransactionDate}</td>
                     <td className={tdNowrapClass}><Chip label={row.supplier.riskStatus} color={riskStyle.color} bg={riskStyle.bg} /></td>
-                    <td className={`${tdNameClass} max-w-[180px] truncate`} style={{ color: A.blue }}>{row.nextAction}</td>
+                    <td className={`${tdNameClass} max-w-[180px] truncate`} style={{ color: A.blue }}>{copy(row.nextAction)}</td>
                     <td className={tdActionClass}>
-                      <button onClick={() => onDetail(row)} className="px-2.5 py-1 rounded-md font-medium" style={{ background: A.gray6, color: A.blue }}>查看运营档案</button>
+                      <button onClick={() => onDetail(row)} className="px-2.5 py-1 rounded-md font-medium" style={{ background: A.gray6, color: A.blue }}>{copy("查看运营档案")}</button>
                     </td>
                   </tr>
                 );
@@ -81,14 +84,14 @@ export default function SupplierTable({ rows, onDetail, mode }: { rows: Supplier
                     </td>
                     <td className={tdNowrapClass}><Chip label={row.supplier.certificationStatus} color={certStyle.color} bg={certStyle.bg} /></td>
                     <td className={tdNowrapClass}><Chip label={row.supplier.status} color={recordStyle.color} bg={recordStyle.bg} /></td>
-                    <td className={`${tdNameClass} max-w-[180px] truncate`} style={{ color: missingDocs === "无" ? A.green : A.orange }}>{missingDocs}</td>
-                    <td className={tdNowrapClass} style={{ color: expiryRisk === "低" ? A.green : A.orange }}>{expiryRisk}</td>
+                    <td className={`${tdNameClass} max-w-[180px] truncate`} style={{ color: missingDocs === "无" ? A.green : A.orange }}>{copy(missingDocs)}</td>
+                    <td className={tdNowrapClass} style={{ color: expiryRisk === "低" ? A.green : A.orange }}>{copy(expiryRisk)}</td>
                     <td className={`${tdNameClass} max-w-[180px] truncate`} style={{ color: A.blue }}>{remediation}</td>
-                    <td className={`${tdNameClass} max-w-[180px] truncate`} style={{ color: A.sub }}>资质文件 / 税务资料 / 联系信息</td>
+                    <td className={`${tdNameClass} max-w-[180px] truncate`} style={{ color: A.sub }}>{copy("资质文件 / 税务资料 / 联系信息")}</td>
                     <td className={tdNowrapClass} style={{ color: A.label }}>{row.supplier.contact}</td>
                     <td className={`${tdNameClass} max-w-[180px] truncate`} style={{ color: A.blue }}>{row.nextAction}</td>
                     <td className={tdActionClass}>
-                      <button onClick={() => onDetail(row)} className="px-2.5 py-1 rounded-md font-medium" style={{ background: A.gray6, color: A.blue }}>查看详情</button>
+                      <button onClick={() => onDetail(row)} className="px-2.5 py-1 rounded-md font-medium" style={{ background: A.gray6, color: A.blue }}>{copy("查看详情")}</button>
                     </td>
                   </tr>
                 );
@@ -106,10 +109,10 @@ export default function SupplierTable({ rows, onDetail, mode }: { rows: Supplier
                   <td className={tdNowrapClass}><Chip label={row.supplier.riskStatus} color={riskStyle.color} bg={riskStyle.bg} /></td>
                   <td className={`${tdNumericClass} font-semibold`} style={{ color: row.openPoCount ? A.blue : A.gray2 }}>{row.openPoCount}</td>
                   <td className={`${tdNumericClass} font-semibold`} style={{ color: row.invoiceVarianceCount ? A.orange : A.green }}>{row.invoiceVarianceCount}</td>
-                  <td className={tdNowrapClass} style={{ color: row.reconciliationException ? A.red : A.green }}>{row.reconciliationException ? "需复核" : "稳定"}</td>
+                  <td className={tdNowrapClass} style={{ color: row.reconciliationException ? A.red : A.green }}>{copy(row.reconciliationException ? "需复核" : "稳定")}</td>
                   <td className={`${tdNameClass} max-w-[180px] truncate`} style={{ color: A.blue }}>{row.nextAction}</td>
                   <td className={tdActionClass}>
-                    <button onClick={() => onDetail(row)} className="px-2.5 py-1 rounded-md font-medium" style={{ background: A.gray6, color: A.blue }}>查看详情</button>
+                    <button onClick={() => onDetail(row)} className="px-2.5 py-1 rounded-md font-medium" style={{ background: A.gray6, color: A.blue }}>{copy("查看详情")}</button>
                   </td>
                 </tr>
               );

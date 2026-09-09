@@ -44,6 +44,9 @@ import {
 } from "../../components/ui/workbenchTable";
 import PrintLayoutEditor from "../print-layout/PrintLayoutEditor";
 import { adaptReceiveSheet } from "../print-layout/printDataAdapters";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
+
+const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 const recvStatusMeta: Record<RecvStatus, { color: string; bg: string }> = {
   "待收货": { color: A.gray1, bg: A.gray6 },
@@ -58,7 +61,7 @@ function RecvStatusPill({ status }: { status: string }) {
   const m = recvStatusMeta[displayStatus as RecvStatus] ?? { color: A.gray1, bg: A.gray6 };
   return (
     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium"
-      style={{ color: m.color, background: m.bg }}>{displayStatus}</span>
+      style={{ color: m.color, background: m.bg }}>{copy(displayStatus)}</span>
   );
 }
 
@@ -182,14 +185,14 @@ function ReceivingASN() {
 
       <Card>
         <div className="px-5 py-4" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
-          <h2 className="text-sm font-semibold" style={{ color: A.label }}>ASN 预到货通知</h2>
+          <h2 className="text-sm font-semibold" style={{ color: A.label }}>{copy("ASN 预到货通知")}</h2>
         </div>
         <div className={tableScrollClass}>
         <table className={tableMinMdClass}>
           <thead>
             <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
               {["ASN 编号", "PO", "供应商", "预计到达", "承运", "运单号", "件数", "重量(kg)", "状态", "操作"].map(h => (
-                <th key={h} className={thWideClass} style={{ color: A.gray1 }}>{h}</th>
+                <th key={h} className={thWideClass} style={{ color: A.gray1 }}>{copy(h)}</th>
               ))}
             </tr>
           </thead>
@@ -211,7 +214,7 @@ function ReceivingASN() {
                 </td>
                 <td className="px-5 py-3">
                   {(a.status === "已抵港" || a.status === "清关中") &&
-                    <button onClick={() => checkin(a.id)} className="px-2 py-1 text-[11px] font-medium rounded-md text-white" style={{ background: A.blue }}>签收</button>}
+                    <button onClick={() => checkin(a.id)} className="px-2 py-1 text-[11px] font-medium rounded-md text-white" style={{ background: A.blue }}>{copy("签收")}</button>}
                 </td>
               </tr>
             ))}
@@ -235,14 +238,14 @@ function ReceivingQC() {
 
       <Card>
         <div className="px-5 py-4" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
-          <h2 className="text-sm font-semibold" style={{ color: A.label }}>AQL 抽样计划 (GB/T 2828.1)</h2>
+          <h2 className="text-sm font-semibold" style={{ color: A.label }}>{copy("AQL 抽样计划 (GB/T 2828.1)")}</h2>
         </div>
         <div className={tableScrollClass}>
         <table className={tableMinLgClass}>
           <thead>
             <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
               {["计划编号", "名称", "AQL 等级", "抽样方案", "Critical", "Major", "Minor", "适用范围", "检验方法"].map(h => (
-                <th key={h} className="text-left px-5 py-3 font-medium" style={{ color: A.gray1 }}>{h}</th>
+                <th key={h} className="text-left px-5 py-3 font-medium" style={{ color: A.gray1 }}>{copy(h)}</th>
               ))}
             </tr>
           </thead>
@@ -266,7 +269,7 @@ function ReceivingQC() {
       </Card>
 
       <Card className="p-5">
-        <SectionHeader title="AQL 接收 / 拒收判定示意" />
+        <SectionHeader title={copy("AQL 接收 / 拒收判定示意")} />
         <div className="grid grid-cols-3 gap-4 mt-2 text-xs">
           {[
             { label: "Critical (致命缺陷)", value: "AQL = 0",      desc: "零容忍, 发现即拒收整批", color: A.red },
@@ -307,14 +310,14 @@ function ReceivingExceptions() {
 
       <Card>
         <div className="px-5 py-4" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
-          <h2 className="text-sm font-semibold" style={{ color: A.label }}>收货异常工单</h2>
+          <h2 className="text-sm font-semibold" style={{ color: A.label }}>{copy("收货异常工单")}</h2>
         </div>
         <div className={tableScrollClass}>
         <table className={tableMinMdClass}>
           <thead>
             <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
               {["工单编号", "GRN", "异常类型", "详情", "严重度", "责任人", "创建", "状态", "操作"].map(h => (
-                <th key={h} className={thWideClass} style={{ color: A.gray1 }}>{h}</th>
+                <th key={h} className={thWideClass} style={{ color: A.gray1 }}>{copy(h)}</th>
               ))}
             </tr>
           </thead>
@@ -376,14 +379,14 @@ function ReceivingReturns() {
 
       <Card>
         <div className="px-5 py-4" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
-          <h2 className="text-sm font-semibold" style={{ color: A.label }}>退货供应商 (SRN)</h2>
+          <h2 className="text-sm font-semibold" style={{ color: A.label }}>{copy("退货供应商 (SRN)")}</h2>
         </div>
         <div className={tableScrollClass}>
         <table className={tableMinMdClass}>
           <thead>
             <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
               {["SRN 编号", "原 PO", "供应商", "原因", "数量", "金额", "创建", "状态", "操作"].map(h => (
-                <th key={h} className={thWideClass} style={{ color: A.gray1 }}>{h}</th>
+                <th key={h} className={thWideClass} style={{ color: A.gray1 }}>{copy(h)}</th>
               ))}
             </tr>
           </thead>
@@ -403,7 +406,7 @@ function ReceivingReturns() {
                     bg={r.status === "已结案" ? "rgba(52,199,89,0.1)" : r.status === "已确认" ? "rgba(175,82,222,0.1)" : r.status === "已发出" ? "rgba(0,113,227,0.1)" : "rgba(255,149,0,0.1)"} />
                 </td>
                 <td className="px-5 py-3">
-                  {r.status !== "已结案" && <button onClick={() => advance(r.id)} className="px-2 py-1 text-[11px] font-medium rounded-md text-white" style={{ background: A.blue }}>推进</button>}
+                  {r.status !== "已结案" && <button onClick={() => advance(r.id)} className="px-2 py-1 text-[11px] font-medium rounded-md text-white" style={{ background: A.blue }}>{copy("推进")}</button>}
                 </td>
               </tr>
             ))}
@@ -553,7 +556,7 @@ function ReceivingOps({
   return (
     <div className="space-y-5">
       <div className="flex justify-end">
-        <button onClick={() => onNavigate?.("procurement:receiving:new")} className="h-9 px-4 rounded-lg text-xs font-semibold text-white flex items-center gap-1" style={{ background: A.blue }}><Plus size={12} />新建收货单</button>
+        <button onClick={() => onNavigate?.("procurement:receiving:new")} className="h-9 px-4 rounded-lg text-xs font-semibold text-white flex items-center gap-1" style={{ background: A.blue }}><Plus size={12} />{copy("新建收货单")}</button>
       </div>
       <div className="grid grid-cols-4 gap-3">
         <KpiCard label="今日已入库" value={String(todayReceived)} sub={`${fmt(4820000)} 入库价值`} delta="+18%" positive icon={PackageCheck} color={A.green}  />
@@ -567,18 +570,18 @@ function ReceivingOps({
       {/* GRN list */}
       <Card>
         <div className="flex items-center px-5 py-3.5 gap-3" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
-          <h2 className="text-sm font-semibold" style={{ color: A.label }}>收货单 (GRN)</h2>
+          <h2 className="text-sm font-semibold" style={{ color: A.label }}>{copy("收货单 (GRN)")}</h2>
           <span className="text-xs" style={{ color: A.gray2 }}>{loading ? "加载中" : `${docs.length} 条`}</span>
           <div className="ml-auto flex gap-2">
             <button onClick={() => setScanOpen(true)}
               className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md font-medium hover:bg-gray-200 transition-colors"
               style={{ background: A.gray6, color: A.label }}>
-              <ScanLine size={11} /> 扫码收货
+              <ScanLine size={11} /> {copy("扫码收货")}
             </button>
             <button onClick={() => onNavigate?.("procurement:receiving:new")}
               className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md font-medium text-white hover:opacity-90 transition-opacity"
               style={{ background: A.blue }}>
-              <Plus size={11} /> 新建收货单
+              <Plus size={11} /> {copy("新建收货单")}
             </button>
           </div>
         </div>
@@ -587,7 +590,7 @@ function ReceivingOps({
           <thead>
             <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
               {["GRN", "关联 PO", "供应商", "到货时间", "月台", "收货人", "质检", "入库", "状态", "操作"].map((h) => (
-                <th key={h} className={thClass} style={{ color: A.gray1 }}>{h}</th>
+                <th key={h} className={thClass} style={{ color: A.gray1 }}>{copy(h)}</th>
               ))}
             </tr>
           </thead>
@@ -630,34 +633,34 @@ function ReceivingOps({
                   <button onClick={(event) => { event.stopPropagation(); setSelectedGrnId(r.grn); setShowGrnDetail(true); }}
                     className="text-[11px] px-2 py-1 rounded-md font-medium hover:bg-gray-200 transition-colors mr-2"
                     style={{ background: A.gray6, color: A.label }}>
-                    查看详情
+                    {copy("查看详情")}
                   </button>
                   <button aria-label={`打印入库单 ${r.grn}`} onClick={(event) => { event.stopPropagation(); setPrintGrn(r); }}
                     className="text-[11px] px-2 py-1 rounded-md font-medium hover:bg-blue-100 transition-colors mr-2"
                     style={{ background: "#f0f6ff", color: A.blue }}>
-                    打印
+                    {copy("打印")}
                   </button>
                   {r.status === "待收货" && (
                     <button onClick={(event) => { event.stopPropagation(); signIn(r); }}
                       className="text-[11px] px-2 py-1 rounded-md font-medium text-white hover:opacity-90 transition-opacity"
-                      style={{ background: A.blue }}>签收</button>
+                      style={{ background: A.blue }}>{copy("签收")}</button>
                   )}
                   {r.status === "质检中" && (
                     <button onClick={(event) => { event.stopPropagation(); openQC(r); }}
                       className="text-[11px] px-2 py-1 rounded-md font-medium text-white hover:opacity-90 transition-opacity flex items-center gap-1"
                       style={{ background: A.orange }}>
-                      <ScanLine size={10} /> 开始质检
+                      <ScanLine size={10} /> {copy("开始质检")}
                     </button>
                   )}
                   {r.status === "异常处理" && (
                     <button onClick={(event) => { event.stopPropagation(); openQC(r); }}
                       className="text-[11px] px-2 py-1 rounded-md font-medium hover:bg-red-100 transition-colors"
-                      style={{ background: "#fff1f0", color: A.red }}>查看异常</button>
+                      style={{ background: "#fff1f0", color: A.red }}>{copy("查看异常")}</button>
                   )}
                   {r.status === "已入库" && (
                     <button onClick={(event) => { event.stopPropagation(); openQC(r); }}
                       className="text-[11px] px-2 py-1 rounded-md font-medium hover:bg-gray-200 transition-colors"
-                      style={{ background: A.gray6, color: A.label }}>查看</button>
+                      style={{ background: A.gray6, color: A.label }}>{copy("查看")}</button>
                   )}
                 </td>
               </tr>
@@ -702,16 +705,16 @@ function ReceivingOps({
               </div>
               <div className="flex items-center gap-2">
                 {selectedGrn.status === "待收货" && (
-                  <button onClick={() => signIn(selectedGrn)} className="text-xs px-3 py-1.5 rounded-lg font-medium text-white" style={{ background: A.blue }}>签收</button>
+                  <button onClick={() => signIn(selectedGrn)} className="text-xs px-3 py-1.5 rounded-lg font-medium text-white" style={{ background: A.blue }}>{copy("签收")}</button>
                 )}
                 {(selectedGrn.status === "质检中" || selectedGrn.status === "异常处理" || selectedGrn.status === "已入库") && (
                   <button onClick={() => openQC(selectedGrn)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: selectedGrn.status === "异常处理" ? "#fff1f0" : "#fff8f0", color: selectedGrn.status === "异常处理" ? A.red : A.orange }}>
                     {selectedGrn.status === "质检中" ? "开始质检" : selectedGrn.status === "异常处理" ? "查看异常" : "查看质检"}
                   </button>
                 )}
-                <button onClick={() => setErpDocOpen(true)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#f0f6ff", color: A.blue }}>查看 ERP 单据</button>
-                <button onClick={() => setPrintGrn(selectedGrn)} className="text-xs px-3 py-1.5 rounded-lg font-medium flex items-center gap-1" style={{ background: "#f0f6ff", color: A.blue }}><Printer size={12} />打印入库单</button>
-                <button onClick={() => exportReceivingDetail(selectedGrn)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: A.white, color: A.blue, boxShadow: "0 0 0 0.5px rgba(0,0,0,0.08)" }}>导出详情</button>
+                <button onClick={() => setErpDocOpen(true)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#f0f6ff", color: A.blue }}>{copy("查看 ERP 单据")}</button>
+                <button onClick={() => setPrintGrn(selectedGrn)} className="text-xs px-3 py-1.5 rounded-lg font-medium flex items-center gap-1" style={{ background: "#f0f6ff", color: A.blue }}><Printer size={12} />{copy("打印入库单")}</button>
+                <button onClick={() => exportReceivingDetail(selectedGrn)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: A.white, color: A.blue, boxShadow: "0 0 0 0.5px rgba(0,0,0,0.08)" }}>{copy("导出详情")}</button>
               </div>
             </div>
 
@@ -723,15 +726,15 @@ function ReceivingOps({
                 ["行项目", lines.length],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-lg px-3 py-2" style={{ background: A.gray6 }}>
-                  <div className="fc-caption" style={{ color: A.gray2 }}>{label}</div>
+                  <div className="fc-caption" style={{ color: A.gray2 }}>{copy(String(label))}</div>
                   <div className="text-base font-semibold tabular-nums mt-0.5" style={{ color: label === "拒收数量" && Number(value) > 0 ? A.red : A.label }}>{Number(value).toLocaleString()}</div>
                 </div>
               ))}
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <button onClick={() => openGrnInsight(selectedGrn, "解释收货异常")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#f0f6ff", color: A.blue }}>解释收货异常</button>
-              <button onClick={() => openGrnInsight(selectedGrn, "检查发票影响")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#faf3ff", color: A.purple }}>检查发票影响</button>
-              <button onClick={() => openGrnInsight(selectedGrn, "追踪 PO/GRN 关系")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: A.gray6, color: A.label }}>追踪 PO/GRN 关系</button>
+              <button onClick={() => openGrnInsight(selectedGrn, "解释收货异常")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#f0f6ff", color: A.blue }}>{copy("解释收货异常")}</button>
+              <button onClick={() => openGrnInsight(selectedGrn, "检查发票影响")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#faf3ff", color: A.purple }}>{copy("检查发票影响")}</button>
+              <button onClick={() => openGrnInsight(selectedGrn, "追踪 PO/GRN 关系")} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: A.gray6, color: A.label }}>{copy("追踪 PO/GRN 关系")}</button>
               <button onClick={() => handleGrnInsightAction({
                 id: `preview_exception_note:receiving_doc:${selectedGrn.grn}`,
                 label: `预览 ${selectedGrn.grn} 异常处理备注`,
@@ -744,7 +747,7 @@ function ReceivingOps({
                 allowedOutputType: "draft_preview",
                 requiresReview: true,
                 mutationAllowed: false,
-              })} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#fff8f0", color: A.orange }}>预览异常处理备注</button>
+              })} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#fff8f0", color: A.orange }}>{copy("预览异常处理备注")}</button>
             </div>
             <div className="mt-4">
               <ContextualAIInsightPanel insight={grnInsight} onClose={() => setGrnInsight(null)} onAction={handleGrnInsightAction} returnContext={grnReturnContext} onNavigateRecord={onNavigate} />
@@ -752,7 +755,7 @@ function ReceivingOps({
 
             <div className="grid grid-cols-5 gap-4 mt-4">
               <div className="col-span-2 rounded-xl p-4" style={{ background: A.gray6 }}>
-                <SectionHeader title="基础信息" />
+                <SectionHeader title={copy("基础信息")} />
                 <div className="space-y-2 text-xs mt-3">
                   {[
                     ["关联 PO", selectedGrn.po],
@@ -764,8 +767,8 @@ function ReceivingOps({
                     ["库存应用", selectedGrn.inventoryApplied ? "已应用" : "未应用"],
                   ].map(([label, value]) => (
                     <div key={label} className="flex justify-between gap-3">
-                      <span style={{ color: A.gray1 }}>{label}</span>
-                      <span className="font-medium text-right truncate" style={{ color: A.label }}>{value}</span>
+                      <span style={{ color: A.gray1 }}>{copy(String(label))}</span>
+                      <span className="font-medium text-right truncate" style={{ color: A.label }}>{typeof value === "string" ? copy(value) : value}</span>
                     </div>
                   ))}
                 </div>
@@ -774,7 +777,7 @@ function ReceivingOps({
                 <DocumentHistoryPanel
                   entityType="receivingDoc"
                   entityId={selectedGrn.grn}
-                  title="收货单历史"
+                  title={copy("收货单历史")}
                   refreshKey={selectedGrn.lastAuditId || selectedGrn.auditTrailIds?.join(",") || selectedGrn.status}
                 />
               </div>
@@ -785,7 +788,7 @@ function ReceivingOps({
                 <thead>
                   <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
                     {["SKU", "品名", "订单数量", "收货数量", "合格数量", "拒收数量", "单位", "仓库", "状态"].map((header) => (
-                      <th key={header} className={thWideClass} style={{ color: A.gray1 }}>{header}</th>
+                      <th key={header} className={thWideClass} style={{ color: A.gray1 }}>{copy(header)}</th>
                     ))}
                   </tr>
                 </thead>
@@ -823,7 +826,7 @@ function ReceivingOps({
 
       {/* QC exceptions */}
       <Card className="p-5">
-        <SectionHeader title="质检异常处理"
+        <SectionHeader title={copy("质检异常处理")}
           right={<span className="text-[11px] px-2 py-0.5 rounded-full font-medium"
             style={{ background: "#fff1f0", color: A.red }}>{qcExceptions.length} 项待跟进</span>} />
         <div className="space-y-2.5">
@@ -862,7 +865,7 @@ function ReceivingOps({
         candidates={orders.filter((p) => ["已发出", "部分到货"].includes(p.status) && poLinesOf(p).some((line) => lineRemaining(line) > 0))}
         onReceive={startReceive} />
       <Modal open={erpDocOpen && Boolean(selectedGrn)} onClose={() => setErpDocOpen(false)} width={980}
-        title="收货单" subtitle="GRN · ERP document form">
+        title={copy("收货单")} subtitle="GRN · ERP document form">
         {selectedGrn && (() => {
           const lines = grnLinesOf(selectedGrn);
           const receivedQty = lines.reduce((sum, line) => sum + toNumber(line.receivedQty), 0);
@@ -880,7 +883,7 @@ function ReceivingOps({
           };
           return (
             <DocumentShell
-              title="收货单"
+              title={copy("收货单")}
               documentNo={selectedGrn.grn}
               moduleLabel="收货 / GRN"
               status={selectedGrn.status}
@@ -953,11 +956,11 @@ function ReceivingOps({
                 ]}
               />
               <DocumentActionBar>
-                <button onClick={() => toast("发票协同位于采购管理", { description: "可在发票协同视图查看 GRN 关联发票。" })} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#faf3ff", color: A.purple }}>打开发票</button>
-                <button onClick={() => toast("三单匹配位于采购管理", { description: "可在三单匹配视图查看 PO / GRN / 发票对比。" })} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#f0f6ff", color: A.blue }}>打开三单匹配</button>
-                <button onClick={() => exportReceivingDetail(selectedGrn)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: A.white, color: A.blue, boxShadow: "0 0 0 0.5px rgba(0,0,0,0.08)" }}>导出详情</button>
-                <button onClick={() => setPrintGrn(selectedGrn)} className="text-xs px-3 py-1.5 rounded-lg font-medium flex items-center gap-1" style={{ background: "#f0f6ff", color: A.blue }}><Printer size={12} />打印入库单</button>
-                <button onClick={() => setErpDocOpen(false)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: A.white, color: A.label, boxShadow: "0 0 0 0.5px rgba(0,0,0,0.08)" }}>关闭</button>
+                <button onClick={() => toast("发票协同位于采购管理", { description: "可在发票协同视图查看 GRN 关联发票。" })} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#faf3ff", color: A.purple }}>{copy("打开发票")}</button>
+                <button onClick={() => toast("三单匹配位于采购管理", { description: "可在三单匹配视图查看 PO / GRN / 发票对比。" })} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#f0f6ff", color: A.blue }}>{copy("打开三单匹配")}</button>
+                <button onClick={() => exportReceivingDetail(selectedGrn)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: A.white, color: A.blue, boxShadow: "0 0 0 0.5px rgba(0,0,0,0.08)" }}>{copy("导出详情")}</button>
+                <button onClick={() => setPrintGrn(selectedGrn)} className="text-xs px-3 py-1.5 rounded-lg font-medium flex items-center gap-1" style={{ background: "#f0f6ff", color: A.blue }}><Printer size={12} />{copy("打印入库单")}</button>
+                <button onClick={() => setErpDocOpen(false)} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: A.white, color: A.label, boxShadow: "0 0 0 0.5px rgba(0,0,0,0.08)" }}>{copy("关闭")}</button>
               </DocumentActionBar>
             </DocumentShell>
           );
