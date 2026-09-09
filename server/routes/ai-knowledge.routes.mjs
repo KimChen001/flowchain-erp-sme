@@ -5,7 +5,7 @@ import { createKnowledgeService, answerKnowledgeQuery, knowledgeResponse, Knowle
 async function context(ctx) {
   const prisma = ctx.aiKnowledgePrisma || await getPrismaClient(ctx.env || process.env)
   const actor = await resolveProvisionedActor(prisma, ctx.identity)
-  return { actor, service: createKnowledgeService(prisma) }
+  return { actor, service: createKnowledgeService(prisma, { env: ctx.env || process.env }) }
 }
 
 export async function handleKnowledgeRoute(ctx) {
@@ -13,13 +13,16 @@ export async function handleKnowledgeRoute(ctx) {
   if (ctx.url.pathname !== prefix && !ctx.url.pathname.startsWith(`${prefix}/`)) return false
   try {
     const { actor, service } = await context(ctx)
-    const id = ctx.url.pathname.startsWith(`${prefix}/`) ? decodeURIComponent(ctx.url.pathname.slice(prefix.length + 1)) : null
+    const suffix = ctx.url.pathname.startsWith(`${prefix}/`) ? ctx.url.pathname.slice(prefix.length + 1) : ''
+    const reindex = suffix.endsWith('/reindex')
+    const id = suffix ? decodeURIComponent(reindex ? suffix.slice(0, -8) : suffix) : null
     let result
     if (ctx.req.method === 'GET') result = id ? await service.get(actor, id) : await service.list(actor)
+    else if (ctx.req.method === 'POST' && reindex && id) result = await service.reindex(actor, id)
     else if (ctx.req.method === 'POST' && !id) result = await service.add(actor, await ctx.readBody(ctx.req))
     else if (ctx.req.method === 'DELETE' && id) result = await service.archive(actor, id)
     else { ctx.send(ctx.res, 405, { error: 'Method not allowed.' }); return true }
-    ctx.send(ctx.res, ctx.req.method === 'POST' ? 201 : 200, result)
+    ctx.send(ctx.res, ctx.req.method === 'POST' && !id ? 201 : 200, result)
   } catch (error) {
     ctx.send(ctx.res, error.status || 500, { code: error.code || 'KNOWLEDGE_UNAVAILABLE', error: error.status ? error.message : 'Knowledge service unavailable.' })
   }

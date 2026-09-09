@@ -18,7 +18,8 @@ const docSelect = { id: true, title: true, language: true, requiredPermission: t
 export function createKnowledgeService(prisma, { env = process.env, embeddingProvider = callConfiguredEmbeddingProvider } = {}) {
   return {
     async list(actor) {
-      return { canManage: manageable(actor), items: await prisma.aiKnowledgeDocument.findMany({ where: readable(actor), select: docSelect, orderBy: { createdAt: 'desc' }, take: 100 }) }
+      const rows = await prisma.aiKnowledgeDocument.findMany({ where: readable(actor), select: { ...docSelect, chunks: { select: { embeddingModel: true, embeddingDimensions: true } } }, orderBy: { createdAt: 'desc' }, take: 100 })
+      return { canManage: manageable(actor), items: rows.map(({ chunks, ...document }) => { const indexed = chunks.filter(chunk => chunk.embeddingModel); return { ...document, indexStatus: indexed.length === 0 ? 'keyword' : indexed.length === chunks.length ? 'semantic' : 'partial', embeddingModel: indexed[0]?.embeddingModel || null, embeddingDimensions: indexed[0]?.embeddingDimensions || null } }) }
     },
     async add(actor, body) {
       if (!manageable(actor)) fail('KNOWLEDGE_MANAGE_DENIED', 'Workspace administrator access is required.', 403)
@@ -44,6 +45,16 @@ export function createKnowledgeService(prisma, { env = process.env, embeddingPro
       const result = await prisma.aiKnowledgeDocument.updateMany({ where: { ...readable(actor), id }, data: { status: 'archived' } })
       if (!result.count) fail('KNOWLEDGE_NOT_FOUND', 'Document not found or no longer accessible.', 404)
       return { archived: true }
+    },
+    async reindex(actor, id) {
+      if (!manageable(actor)) fail('KNOWLEDGE_MANAGE_DENIED', 'Workspace administrator access is required.', 403)
+      const document = await prisma.aiKnowledgeDocument.findFirst({ where: { ...readable(actor), id }, include: { chunks: { orderBy: { position: 'asc' } } } })
+      if (!document) fail('KNOWLEDGE_NOT_FOUND', 'Document not found or no longer accessible.', 404)
+      const embedded = await embeddingProvider(document.chunks.map(chunk => chunk.content), env)
+      if (!embedded.ok) fail('KNOWLEDGE_EMBEDDING_UNAVAILABLE', 'Embedding service is unavailable. The existing index was kept.', 503)
+      const indexedAt = new Date()
+      await prisma.$transaction(document.chunks.map((chunk, position) => prisma.aiKnowledgeChunk.update({ where: { id: chunk.id }, data: { contentHash: createHash('sha256').update(chunk.content).digest('hex'), embedding: embedded.vectors[position], embeddingModel: embedded.model, embeddingDimensions: embedded.dimensions, embeddedAt: indexedAt } })))
+      return { id: document.id, indexStatus: 'semantic', embeddingModel: embedded.model, embeddingDimensions: embedded.dimensions, chunkCount: document.chunks.length, indexedAt }
     },
     async documents(actor) {
       const chunks = await prisma.aiKnowledgeChunk.findMany({ where: { document: readable(actor) }, include: { document: { select: { id: true, title: true, language: true, createdAt: true } } }, orderBy: [{ documentId: 'asc' }, { position: 'asc' }], take: 2001 })
