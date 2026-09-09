@@ -2,7 +2,7 @@ name: Receiving PostgreSQL Workbench
 
 on:
   push:
-    branches: [main, 'codex/**', 'release/**']
+    branches: [main, 'release/**']
   pull_request:
 
 jobs:

@@ -14,7 +14,7 @@ test('sales order list exposes the canonical order number as a business link', (
 
   assert.match(source, /BusinessEntityLink entityType="sales_order" entityId=\{row\.id\}/)
   assert.match(source, /\{row\.orderNumber\}/)
-  assert.match(source, />\s*查看\s*<\/Link>/)
+  assert.match(source, />\s*\{copy\("查看"\)\}\s*<\/Link>/)
   assert.match(source, /销售订单查询/)
 })
 

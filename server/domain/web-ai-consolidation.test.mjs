@@ -37,7 +37,7 @@ test('settings, PO, master data and reports expose consolidated product surfaces
   assert.match(masterRoutes, /url\.pathname === '\/api\/master-data'/)
   for (const type of ['warehouse', 'bin', 'payment_term', 'tax_code']) assert.match(entityRoutes, new RegExp(`${type}:`))
   assert.match(reports, /调整当前视图/)
-  assert.match(reports, /aria-label="比较方式"/)
+  assert.match(reports, /aria-label=\{copy\("比较方式"\)\}/)
   assert.doesNotMatch(reports, /<Card className="flex flex-wrap items-end gap-3 p-3" data-testid="dashboard-configuration"/)
   assert.match(purchasing, /data-testid="po-fulfillment-focus"/)
   assert.match(purchasing, /AI 已定位：收货、发票差异与建议下一步/)
