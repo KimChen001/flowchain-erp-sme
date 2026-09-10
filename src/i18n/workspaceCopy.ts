@@ -1,6 +1,6 @@
 // Display labels only. Never apply this mapping to stored business values.
 const english: Record<string, string> = {
-  '工作区管理员': 'Workspace administrator', '正在加载基础资料…': 'Loading master data…', '基础资料加载失败': 'Could not load master data', '重新加载': 'Reload',
+  '工作区管理员': 'Workspace administrator', '供应链经理': 'Supply Chain Manager', '只读用户': 'Read-only User', '业务专员': 'Business Specialist', '采购员': 'Buyer', '未知角色': 'Unknown role', '正在加载基础资料…': 'Loading master data…', '基础资料加载失败': 'Could not load master data', '重新加载': 'Reload',
   '今日': 'Today', '采购': 'Purchasing', '采购履约': 'Purchase fulfillment', '库存': 'Inventory', '销售': 'Sales', '供应商': 'Suppliers', '物料': 'Items', '报表': 'Reports', '数据接入': 'Data intake', '复核队列': 'Review queue',
   '商品资料 / 物料资料': 'Item master', '商品資料 / 物料資料': 'Item master', '物料资料': 'Items', '供应商资料': 'Suppliers', '仓库 / 库位': 'Warehouses / locations', '客户资料': 'Customers',
   '搜索基础资料': 'Search master data', '导出当前结果': 'Export results', '旧导入已停用': 'Legacy import retired',

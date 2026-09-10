@@ -61,7 +61,7 @@ test('Pilot workspace APIs provision users, protect admin actions, and enforce w
       const setupScript = resolve('scripts/setup-pilot-workspace.mjs')
       await execFileAsync(process.execPath, [setupScript, `--tenant-id=${setupTenantId}`, '--workspace-name=First Pilot'], { env: process.env })
       const setupKim = await prisma.user.findFirst({ where: { tenantId: setupTenantId, email: 'kim@example.com' }, include: { warehouseScopes: true } })
-      assert.equal(setupKim.role, 'manager'); assert.equal(setupKim.jobTitle, '供应链经理'); assert.equal(setupKim.warehouseScopes[0].accessLevel, 'operate')
+      assert.equal(setupKim.role, 'manager'); assert.equal(setupKim.jobTitle, 'Supply Chain Manager'); assert.equal(setupKim.warehouseScopes[0].accessLevel, 'operate')
       assert.equal(await prisma.user.count({ where: { tenantId: setupTenantId, role: 'admin' } }), 1)
       await prisma.tenant.update({ where: { id: setupTenantId }, data: { name: 'Preserved Workspace' } })
       await execFileAsync(process.execPath, [setupScript, `--tenant-id=${setupTenantId}`, '--workspace-name=Must Not Overwrite'], { env: process.env })

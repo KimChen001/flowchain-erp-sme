@@ -83,7 +83,7 @@ test("planned Supplier progresses draft to submitted revisions with one idempote
   await expect(page.getByTestId("rfq-response-notice")).toContainText("服务器权威结果");
   await page.unroute(`**${initialPath}`);
 
-  const supplierBRevision1 = await quotationFor(page, "本地演示供应商 B");
+  const supplierBRevision1 = await quotationFor(page, "Summit Packaging");
   await expect(supplierBRevision1).toContainText("Revision 1 · 当前版本");
   await expect(page.getByTestId(`rfq-participant-${SUPPLIER_B}`)).toContainText("计划参与");
   const initialCommands = commands.filter((command) => command.path === initialPath);
@@ -97,7 +97,7 @@ test("planned Supplier progresses draft to submitted revisions with one idempote
   await selectLine(page, LINE_2, "25.0000", "39.5000");
   await page.getByTestId("rfq-response-submit").click();
   await expect(page.getByTestId("rfq-response-notice")).toBeVisible();
-  const supplierBRevision2 = await quotationFor(page, "本地演示供应商 B");
+  const supplierBRevision2 = await quotationFor(page, "Summit Packaging");
   await expect(supplierBRevision2).toContainText("Revision 2 · 当前版本");
   await expect(supplierBRevision2).toContainText("Revision 1 · 历史版本");
   await expect(page.getByTestId(`rfq-participant-${SUPPLIER_B}`)).toContainText("已记录响应");
@@ -119,7 +119,7 @@ test("submitted quotation preserves date-only values and surfaces a real stale-v
   await selectLine(page, LINE_2, "25.0000", "41.0000");
   await page.getByLabel(`行交期 ${LINE_2}`).fill("2030-02-18");
   await page.getByTestId("rfq-response-submit").click();
-  const supplierARevision3 = await quotationFor(page, "本地演示供应商 A");
+  const supplierARevision3 = await quotationFor(page, "Acme Components");
   await expect(supplierARevision3).toContainText("Revision 3 · 当前版本");
   await expect(supplierARevision3).toContainText("Revision 2 · 历史版本");
   const detailAfterAppend = await request.get(detailPath(), { headers: { Authorization: `Bearer ${session.token}` } });
@@ -160,7 +160,7 @@ test("submitted quotation preserves date-only values and surfaces a real stale-v
   await page.getByTestId("rfq-response-submit").click();
   await expect(page.getByTestId("rfq-response-error")).toContainText("报价已被其他操作更新，请重新加载最新版本后再继续。");
   await page.getByRole("button", { name: "重新加载" }).click();
-  await expect(await quotationFor(page, "本地演示供应商 A")).toContainText("Revision 4 · 当前版本");
+  await expect(await quotationFor(page, "Acme Components")).toContainText("Revision 4 · 当前版本");
 
   await page.goto("/app/procurement/rfq/LOCAL-DEMO-RFQ-CLOSED");
   await expect(page.getByTestId("canonical-rfq-detail")).toContainText("当前 RFQ 状态不允许录入新的供应商响应");
