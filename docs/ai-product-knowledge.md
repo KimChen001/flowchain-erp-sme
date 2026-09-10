@@ -1,7 +1,7 @@
 # Product and company knowledge
 
 Open the floating AI assistant, then **Knowledge library**. Workspace administrators
-can paste text or import UTF-8 `.txt` / `.md` product guides and company handbooks.
+can paste text or import UTF-8 `.txt` / `.md`, PDF, and DOCX product guides and company handbooks.
 Choose a readership before importing. Members can search and open only accessible
 documents in their authenticated workspace. Archive removes a document from search.
 
@@ -34,8 +34,10 @@ failure, or missing provider configuration return explicitly labelled excerpts.
 No matching passages return a no-results message. No business mutations run here.
 Citation validation checks source identity; it does not prove every generated claim.
 
-Current limits: 100,000 characters per document, 2,000 accessible chunks per query,
-and 100 documents in the library list. PDF/DOCX extraction, document versions,
+File imports are limited to 5 MB; PDFs are limited to 100 pages and scanned PDFs
+need OCR before import. Current retrieval limits are 100,000 extracted characters per
+document, 2,000 accessible chunks per query, and 100 documents in the library list.
+Document versions,
 restore UI, and automated factuality evaluation remain future work.
 
 Run `npm test`, `npm run test:db:ai-knowledge`, `npm run typecheck`, and `npm run build`.

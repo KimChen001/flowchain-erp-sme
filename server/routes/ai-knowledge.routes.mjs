@@ -1,6 +1,7 @@
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { createKnowledgeService, answerKnowledgeQuery, knowledgeResponse, KnowledgeError } from '../domain/ai-knowledge-service.mjs'
+import { parseKnowledgeFile } from '../domain/ai-knowledge-file-parser.mjs'
 
 async function context(ctx) {
   const prisma = ctx.aiKnowledgePrisma || await getPrismaClient(ctx.env || process.env)
@@ -15,14 +16,20 @@ export async function handleKnowledgeRoute(ctx) {
     const { actor, service } = await context(ctx)
     const suffix = ctx.url.pathname.startsWith(`${prefix}/`) ? ctx.url.pathname.slice(prefix.length + 1) : ''
     const reindex = suffix.endsWith('/reindex')
-    const id = suffix ? decodeURIComponent(reindex ? suffix.slice(0, -8) : suffix) : null
+    const importing = suffix === 'import'
+    const id = suffix && !importing ? decodeURIComponent(reindex ? suffix.slice(0, -8) : suffix) : null
     let result
-    if (ctx.req.method === 'GET') result = id ? await service.get(actor, id) : await service.list(actor)
+    if (ctx.req.method === 'GET' && !importing) result = id ? await service.get(actor, id) : await service.list(actor)
     else if (ctx.req.method === 'POST' && reindex && id) result = await service.reindex(actor, id)
+    else if (ctx.req.method === 'POST' && importing) {
+      const body = await ctx.readBody(ctx.req)
+      const extracted = await parseKnowledgeFile(body)
+      result = await service.add(actor, { ...body, title: extracted.title, content: extracted.content })
+    }
     else if (ctx.req.method === 'POST' && !id) result = await service.add(actor, await ctx.readBody(ctx.req))
     else if (ctx.req.method === 'DELETE' && id) result = await service.archive(actor, id)
     else { ctx.send(ctx.res, 405, { error: 'Method not allowed.' }); return true }
-    ctx.send(ctx.res, ctx.req.method === 'POST' && !id ? 201 : 200, result)
+    ctx.send(ctx.res, ctx.req.method === 'POST' && (!id || importing) ? 201 : 200, result)
   } catch (error) {
     ctx.send(ctx.res, error.status || 500, { code: error.code || 'KNOWLEDGE_UNAVAILABLE', error: error.status ? error.message : 'Knowledge service unavailable.' })
   }
