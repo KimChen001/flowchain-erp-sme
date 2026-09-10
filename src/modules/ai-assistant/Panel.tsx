@@ -94,48 +94,55 @@ const aiActionLinkClass = `${aiActionPillClass} hover:underline`;
 const aiBoundaryNoticeClass = `${typography.metadata} text-slate-600`;
 
 export const AI_EMPTY_STATE_PROMPT_CHIPS = [
-  { label: "今天先处理什么？", prompt: "今天先处理什么？" },
-  { label: "哪些事项风险最高？", prompt: "哪些事项风险最高？" },
-  { label: "哪些数据需要补齐？", prompt: "哪些数据需要补齐？" },
-  { label: "帮我准备一个处理草稿", prompt: "帮我准备一个处理草稿" },
+  { label: "What should I handle first today?", prompt: "What should I handle first today?", zhLabel: "今天先处理什么？", zhPrompt: "今天先处理什么？" },
+  { label: "Which items have the highest risk?", prompt: "Which items have the highest risk?", zhLabel: "哪些事项风险最高？", zhPrompt: "哪些事项风险最高？" },
+  { label: "Which records need more data?", prompt: "Which records need more data?", zhLabel: "哪些数据需要补齐？", zhPrompt: "哪些数据需要补齐？" },
+  { label: "Prepare an action draft", prompt: "Prepare an action draft", zhLabel: "帮我准备一个处理草稿", zhPrompt: "帮我准备一个处理草稿" },
 ];
 
-const PO_EMPTY_PROMPTS = ["这个 PO 为什么需要关注？", "还差哪些收货或发票证据？", "延误会影响什么？", "建议下一步是什么？"];
-const SKU_EMPTY_PROMPTS = ["这个 SKU 需要补货吗？", "当前可用库存是多少？", "哪些订单会受影响？", "建议如何处理？"];
-
-function requestScopeLabel(message: string) {
-  if (/PO|采购订单|收货|GRN|发票|匹配/i.test(message)) return "正在查询业务数据：采购订单、收货和发票记录";
-  if (/库存|SKU|补货|可用量/i.test(message)) return "正在查询业务数据：库存余额和关联订单";
-  if (/供应商|RFQ|报价/i.test(message)) return "正在查询业务数据：供应商和询报价记录";
-  if (/今天|重点|风险|待办/i.test(message)) return "正在查询业务数据：当前工作区重点事项";
-  return "正在查询业务数据：当前页面相关记录";
-}
-
-const CONTEXT_ENTITY_LABELS: Record<string, string> = {
-  purchase_order: "采购单",
-  item: "库存 SKU",
-  rfq: "询价单",
-  supplier: "供应商",
-  purchase_request: "采购申请",
-  sales_order: "客户订单",
+const PO_EMPTY_PROMPTS = {
+  "en-US": ["Why does this PO need attention?", "Which receipt or invoice evidence is missing?", "What will a delay affect?", "What should happen next?"],
+  "zh-CN": ["这个 PO 为什么需要关注？", "还差哪些收货或发票证据？", "延误会影响什么？", "建议下一步是什么？"],
+};
+const SKU_EMPTY_PROMPTS = {
+  "en-US": ["Does this SKU need replenishment?", "What is the available inventory?", "Which orders will be affected?", "What action is recommended?"],
+  "zh-CN": ["这个 SKU 需要补货吗？", "当前可用库存是多少？", "哪些订单会受影响？", "建议如何处理？"],
 };
 
-export function getAiContextLabel(moduleId: string, activeContext?: ActiveContext | null) {
-  if (activeContext?.entityId) {
-    const label = CONTEXT_ENTITY_LABELS[activeContext.entityType || ""] || "业务对象";
-    return `${label} ${activeContext.entityLabel || activeContext.entityId}`;
-  }
-  return routeById(moduleId)?.moduleLabel || "当前页面";
+function requestScopeLabel(message: string, language: "en-US" | "zh-CN") {
+  if (/PO|采购订单|收货|GRN|发票|匹配/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：采购订单、收货和发票记录" : "Checking purchase orders, receipts, and invoice records";
+  if (/库存|SKU|补货|可用量|inventory|replenish/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：库存余额和关联订单" : "Checking inventory balances and related orders";
+  if (/供应商|RFQ|报价|supplier|quote/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：供应商和询报价记录" : "Checking supplier and sourcing records";
+  if (/今天|重点|风险|待办|today|risk|priority/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：当前工作区重点事项" : "Checking current workspace priorities";
+  return language === "zh-CN" ? "正在查询业务数据：当前页面相关记录" : "Checking records related to the current page";
 }
 
-export function getAiInputPlaceholder(moduleId: string, activeContext?: ActiveContext | null) {
-  if (activeContext?.entityType === "purchase_order") return "问我：这个 PO 为什么优先？未到货风险在哪里？";
-  if (activeContext?.entityType === "sales_order") return "问我：这个客户订单的交付风险在哪里？需要先看哪些证据？";
-  if (activeContext?.entityType === "item") return "问我：这个 SKU 需要补货吗？库存覆盖够不够？";
-  if (activeContext?.entityType === "rfq") return "问我：这个 RFQ 有几家回复？要不要提醒供应商？";
-  if (activeContext?.entityType === "supplier") return "问我：这个供应商有哪些风险？需要怎么跟进？";
-  if (moduleId === "overview") return "问我：今天先看什么？哪些风险最高？";
-  return "问我：当前有什么问题？哪些数据不完整？";
+const CONTEXT_ENTITY_LABELS: Record<string, { "en-US": string; "zh-CN": string }> = {
+  purchase_order: { "en-US": "Purchase order", "zh-CN": "采购单" },
+  item: { "en-US": "Inventory SKU", "zh-CN": "库存 SKU" },
+  rfq: { "en-US": "RFQ", "zh-CN": "询价单" },
+  supplier: { "en-US": "Supplier", "zh-CN": "供应商" },
+  purchase_request: { "en-US": "Purchase request", "zh-CN": "采购申请" },
+  sales_order: { "en-US": "Sales order", "zh-CN": "客户订单" },
+};
+
+export function getAiContextLabel(moduleId: string, activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
+  if (activeContext?.entityId) {
+    const label = CONTEXT_ENTITY_LABELS[activeContext.entityType || ""]?.[language] || (language === "zh-CN" ? "业务对象" : "Business record");
+    return `${label} ${activeContext.entityLabel || activeContext.entityId}`;
+  }
+  return routeById(moduleId)?.moduleLabel || (language === "zh-CN" ? "当前页面" : "Current page");
+}
+
+export function getAiInputPlaceholder(moduleId: string, activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
+  const zh = language === "zh-CN";
+  if (activeContext?.entityType === "purchase_order") return zh ? "问我：这个 PO 为什么优先？未到货风险在哪里？" : "Ask why this PO is a priority or where receipt risk exists";
+  if (activeContext?.entityType === "sales_order") return zh ? "问我：这个客户订单的交付风险在哪里？需要先看哪些证据？" : "Ask about delivery risk and evidence for this sales order";
+  if (activeContext?.entityType === "item") return zh ? "问我：这个 SKU 需要补货吗？库存覆盖够不够？" : "Ask whether this SKU needs replenishment or has enough coverage";
+  if (activeContext?.entityType === "rfq") return zh ? "问我：这个 RFQ 有几家回复？要不要提醒供应商？" : "Ask about RFQ responses or supplier follow-up";
+  if (activeContext?.entityType === "supplier") return zh ? "问我：这个供应商有哪些风险？需要怎么跟进？" : "Ask about this supplier's risks and follow-up";
+  if (moduleId === "overview") return zh ? "问我：今天先看什么？哪些风险最高？" : "Ask what to review today or which risks are highest";
+  return zh ? "问我：当前有什么问题？哪些数据不完整？" : "Ask about current issues or incomplete data";
 }
 
 function hasValue(value: unknown) {
@@ -1626,12 +1633,12 @@ export default function FloatingAiAssistant({
 
   const currentContext = cleanActiveContext(activeContext);
   const sessionGrounding = useMemo(() => buildSessionGrounding(messages, currentContext), [messages, currentContext]);
-  const contextLabel = getAiContextLabel(moduleId, currentContext);
-  const inputPlaceholder = getAiInputPlaceholder(moduleId, currentContext);
-  const emptyPrompts = currentContext?.entityType === "purchase_order" ? PO_EMPTY_PROMPTS
-    : currentContext?.entityType === "item" ? SKU_EMPTY_PROMPTS
-      : AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => item.prompt);
-  const currentRequestLabel = requestScopeLabel(messages.filter((message) => message.role === "user").at(-1)?.content || input);
+  const contextLabel = getAiContextLabel(moduleId, currentContext, language);
+  const inputPlaceholder = getAiInputPlaceholder(moduleId, currentContext, language);
+  const emptyPrompts = currentContext?.entityType === "purchase_order" ? PO_EMPTY_PROMPTS[language]
+    : currentContext?.entityType === "item" ? SKU_EMPTY_PROMPTS[language]
+      : AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => language === "zh-CN" ? item.zhPrompt : item.prompt);
+  const currentRequestLabel = requestScopeLabel(messages.filter((message) => message.role === "user").at(-1)?.content || input, language);
 
   function startNewConversation() {
     abortReasonRef.current = "superseded";
@@ -1755,7 +1762,7 @@ export default function FloatingAiAssistant({
             </div>
             <div className="flex items-center gap-1">
               <button type="button" onClick={startNewConversation} className="flex h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={language === "zh-CN" ? "新对话" : "New conversation"}><Plus size={13} />{language === "zh-CN" ? "新对话" : "New conversation"}</button>
-              <button type="button" onClick={() => setExpanded((value) => !value)} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={expanded ? "收起 AI 工作区" : "展开 AI 工作区"}>{expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
+              <button type="button" onClick={() => setExpanded((value) => !value)} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={expanded ? (language === "zh-CN" ? "收起 AI 工作区" : "Collapse AI workspace") : (language === "zh-CN" ? "展开 AI 工作区" : "Expand AI workspace")}>{expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
               <button type="button" onClick={minimizeAssistant} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={language === "zh-CN" ? "最小化 AI 助手" : "Minimize AI assistant"}><X size={15} /></button>
             </div>
           </div>
@@ -1820,7 +1827,7 @@ export default function FloatingAiAssistant({
                       style={{ background: A.white, color: asking ? A.gray3 : A.blue, border: `1px solid ${A.border}` }}
                     >
                       <RotateCcw size={12} />
-                      重试
+                      {language === "zh-CN" ? "重试" : "Retry"}
                     </button>
                   ) : null}
                 </div>
