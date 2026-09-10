@@ -15,9 +15,12 @@ LangChain `RecursiveCharacterTextSplitter` produces overlapping 1,000-character
 chunks stored in PostgreSQL. A `BaseRetriever` implementation ranks authorized
 chunks using hybrid reciprocal-rank fusion over lexical BM25 (including Chinese
 bigrams) and optional embedding cosine similarity. `RunnableSequence` connects
-retrieval to the existing bounded provider adapter. This is not database-indexed vector retrieval yet:
-embeddings are currently stored as versioned JSONB vectors and scored inside the
-bounded 2,000-chunk corpus. A pgvector database index is the next scale step.
+retrieval to the existing bounded provider adapter. Embeddings are stored as
+versioned JSONB vectors for portable fallback. When the
+database has pgvector, FlowChain also writes the native vector column, provisions
+a model-and-dimension-specific HNSW cosine index, and retrieves a tenant- and
+permission-scoped database Top-K. PostgreSQL without the extension continues to
+score the bounded 2,000-chunk corpus in the application.
 
 Configure embeddings independently from answer generation with
 `FLOWCHAIN_AI_EMBEDDING_ENDPOINT`, `FLOWCHAIN_AI_EMBEDDING_API_KEY`, and
@@ -32,8 +35,8 @@ No matching passages return a no-results message. No business mutations run here
 Citation validation checks source identity; it does not prove every generated claim.
 
 Current limits: 100,000 characters per document, 2,000 accessible chunks per query,
-and 100 documents in the library list. PDF/DOCX extraction, pgvector indexing,
-document versions, restore UI, and automated factuality evaluation remain future work.
+and 100 documents in the library list. PDF/DOCX extraction, document versions,
+restore UI, and automated factuality evaluation remain future work.
 
 Run `npm test`, `npm run test:db:ai-knowledge`, `npm run typecheck`, and `npm run build`.
 Database tests cover persistence, tenant/readership isolation and archive behavior;

@@ -20,6 +20,7 @@
     "test:browser:english": "playwright test --config playwright.english.config.ts",
     "test:db:english": "node scripts/run-postgres-test-files.mjs tests/postgres/english-default-language.test.mjs",
     "test:db:ai-knowledge": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-knowledge.test.mjs",
+    "test:db:ai-pgvector": "node --test tests/postgres/ai-pgvector-service.test.mjs",
     "test:browser:ai": "playwright test tests/browser/ai-copilot.spec.ts",
     "test:browser:receiving": "node scripts/run-receiving-playwright.mjs",
     "test:browser:reports": "node scripts/run-reports-playwright.mjs",
