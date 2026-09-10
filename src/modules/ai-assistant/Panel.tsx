@@ -125,13 +125,22 @@ const CONTEXT_ENTITY_LABELS: Record<string, { "en-US": string; "zh-CN": string }
   purchase_request: { "en-US": "Purchase request", "zh-CN": "采购申请" },
   sales_order: { "en-US": "Sales order", "zh-CN": "客户订单" },
 };
+const MODULE_LABELS_EN: Record<string, string> = {
+  "首页": "Home", "基础资料": "Master data", "采购管理": "Purchasing", "销售管理": "Sales", "库存管理": "Inventory",
+  "结算管理": "Finance", "报表中心": "Reports", "预测与 MRP": "Forecasting & MRP", "异常处理工单": "Exception cases",
+  "行动草稿与人工复核": "Action drafts & review", "财务协同": "Finance collaboration", "系统管理": "System settings",
+  "业务审计与历史": "Business audit & history", "数据接入与质量": "Data intake & quality", "移动作业": "Mobile operations",
+  "协同通知草稿": "Collaboration drafts", "试点准备度": "Pilot readiness",
+};
 
 export function getAiContextLabel(moduleId: string, activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
   if (activeContext?.entityId) {
     const label = CONTEXT_ENTITY_LABELS[activeContext.entityType || ""]?.[language] || (language === "zh-CN" ? "业务对象" : "Business record");
     return `${label} ${activeContext.entityLabel || activeContext.entityId}`;
   }
-  return routeById(moduleId)?.moduleLabel || (language === "zh-CN" ? "当前页面" : "Current page");
+  const routeLabel = routeById(moduleId)?.moduleLabel;
+  if (!routeLabel) return language === "zh-CN" ? "当前页面" : "Current page";
+  return language === "zh-CN" ? routeLabel : MODULE_LABELS_EN[routeLabel] || routeLabel;
 }
 
 export function getAiInputPlaceholder(moduleId: string, activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
