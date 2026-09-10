@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:0.8.6-pg16
         env:
           POSTGRES_USER: flowchain_ci
           POSTGRES_PASSWORD: flowchain_ci_password
@@ -56,6 +56,10 @@ jobs:
       - run: npm run test:api:settings
       - run: npm run test:db:english
       - run: npm run test:db:ai-knowledge
+      - run: npm run test:db:ai-pgvector
+        env:
+          DATABASE_URL: postgresql://flowchain_ci:flowchain_ci_password@127.0.0.1:55432/flowchain_ci_diagnostics?schema=public
+          FLOWCHAIN_PERSISTENCE_MODE: database
       - run: npm run test:db:authorization
       - run: npm run test:api:authorization
       - run: npm run test:db:intake
