@@ -2,9 +2,10 @@ import { getPrismaClient, disconnectPrismaClient } from '../server/persistence/p
 import { assertLocalDevelopment } from '../server/domain/local-development-contract.mjs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
+import { createHash } from 'node:crypto'
 
-export const LOCAL_DEMO_VERSION = 2
-export const LOCAL_DEMO_COUNTS = Object.freeze({ suppliers: 4, items: 6, customers: 3, warehouses: 1, locations: 3, paymentTerms: 2, taxCodes: 2 })
+export const LOCAL_DEMO_VERSION = 3
+export const LOCAL_DEMO_COUNTS = Object.freeze({ suppliers: 4, items: 6, customers: 3, warehouses: 1, locations: 3, paymentTerms: 2, taxCodes: 2, knowledgeDocuments: 2 })
 const tenantId = process.env.FLOWCHAIN_DEFAULT_TENANT_ID || 'tenant-flowchain-local'
 const marker = { localDemo: true, localDemoVersion: LOCAL_DEMO_VERSION }
 const suppliers = [
@@ -25,6 +26,34 @@ const customers = [
   ['LOCAL-DEMO-CUS-001', 'LDC-001', 'Redwood Retail'],
   ['LOCAL-DEMO-CUS-002', 'LDC-002', 'Bluebird Distribution'],
   ['LOCAL-DEMO-CUS-003', 'LDC-003', 'Metro Service Group'],
+]
+const knowledgeDocuments = [
+  {
+    id: 'LOCAL-DEMO-KNOWLEDGE-PRODUCTS',
+    title: 'US Demo Product Catalog',
+    content: `FlowChain US demo product catalog.
+
+LDM-001 Flow Controller is supplied by Acme Components. It is an electronic component ordered and counted in pieces. The demo inventory policy uses a safety stock of 10 pieces and a reorder point of 20 pieces. Inspect the model, quantity, connector condition, and visible shipping damage during receiving. Accepted stock is stored in location A-01.
+
+LDM-002 Temperature Sensor is supplied by Acme Components. It is an electronic component counted in pieces. Verify the model and calibration label during receiving, and quarantine damaged or unidentified units in QC-01.
+
+LDM-003 Shipping Carton is supplied by Summit Packaging and ordered by the box. LDM-004 Stainless Steel Fastener is supplied by Atlas Industrial Supply and counted in pieces. LDM-005 Shielded Control Cable is supplied by Acme Components and measured in feet. LDM-006 Product Label Roll is supplied by Summit Packaging and ordered by the roll.
+
+These records are fictional demonstration data for FlowChain and must not be treated as manufacturer specifications.`,
+  },
+  {
+    id: 'LOCAL-DEMO-KNOWLEDGE-POLICY',
+    title: 'Procurement and Inventory Operating Policy',
+    content: `FlowChain US demo procurement and inventory policy.
+
+Purchase requests require human review before a purchase order is issued. Buyers should confirm the supplier, item, quantity, price, currency, required date, and approval evidence. Supplier selection should consider price, lead time, quality, delivery performance, and risk rather than price alone.
+
+Receiving staff must match the delivery to the purchase order, record accepted and rejected quantities, and preserve evidence for discrepancies. Damaged, unidentified, or nonconforming goods must be placed in QC-01 and must not be posted as available inventory until reviewed.
+
+Invoice review uses purchase order, receipt, and invoice evidence. Quantity, price, tax, or currency differences require human review. Payment, bank execution, tax filing, and general-ledger posting are outside the local demo boundary.
+
+The AI assistant may retrieve evidence, explain risks, and prepare drafts. It must not approve orders, send supplier communications, post inventory, change master data, or execute financial transactions without an authorized human action.`,
+  },
 ]
 
 export async function seedLocalDemo(prisma, env = process.env) {
@@ -53,6 +82,7 @@ export async function seedLocalDemo(prisma, env = process.env) {
     }
     await tx.warehouse.upsert({ where: { id: 'LOCAL-DEMO-WH-001' }, create: { id: 'LOCAL-DEMO-WH-001', tenantId, code: 'US-DEMO', name: 'US Demo Warehouse', metadata: marker }, update: { code: 'US-DEMO', name: 'US Demo Warehouse', metadata: marker } })
     const localUsers = await tx.user.findMany({ where: { tenantId, status: 'active' }, select: { id: true } })
+    if (!localUsers.length) throw new Error('The local demo requires at least one active user.')
     for (const user of localUsers) {
       await tx.userWarehouseScope.upsert({
         where: { tenantId_userId_warehouseId: { tenantId, userId: user.id, warehouseId: 'LOCAL-DEMO-WH-001' } },
@@ -70,6 +100,15 @@ export async function seedLocalDemo(prisma, env = process.env) {
     }
     for (const [id, code, name, rate] of [['LOCAL-DEMO-TAX13', 'SALES825', 'Sales tax 8.25%', 0.0825], ['LOCAL-DEMO-TAX0', 'TAXEXEMPT', 'Tax exempt', 0]]) {
       await tx.taxCode.upsert({ where: { id }, create: { id, tenantId, code, name, rate, taxType: 'sales_tax', region: 'US', metadata: marker }, update: { code, name, rate, taxType: 'sales_tax', region: 'US', metadata: marker } })
+    }
+    for (const document of knowledgeDocuments) {
+      await tx.aiKnowledgeDocument.upsert({
+        where: { id: document.id },
+        create: { id: document.id, tenantId, title: document.title, language: 'en-US', createdById: localUsers[0].id },
+        update: { title: document.title, language: 'en-US', status: 'active', createdById: localUsers[0].id },
+      })
+      await tx.aiKnowledgeChunk.deleteMany({ where: { documentId: document.id } })
+      await tx.aiKnowledgeChunk.create({ data: { id: `${document.id}-CHUNK-001`, documentId: document.id, position: 0, content: document.content, contentHash: createHash('sha256').update(document.content).digest('hex') } })
     }
     return LOCAL_DEMO_COUNTS
   })

@@ -1488,9 +1488,15 @@ function hasRuntimeFollowUpSuggestions(message: AiChatMessage) {
   ));
 }
 
-export function getAiFollowUpChips(message: AiChatMessage) {
+export function getAiFollowUpChips(message: AiChatMessage, language: "en-US" | "zh-CN" = "zh-CN") {
   if (message.role !== "assistant" || !message.cards?.length) return [];
   if (hasRuntimeFollowUpSuggestions(message)) return [];
+  if (message.cards.some((card) => card.type === "ai_response_v2" && (card.data as AiResponseV2 | undefined)?.rag?.mode === "no_results")) return [];
+  const zh = language === "zh-CN";
+  const localizedChip = (zhLabel: string, enLabel: string, zhPrompt: string, enPrompt: string) => ({
+    label: zh ? zhLabel : enLabel,
+    prompt: zh ? zhPrompt : enPrompt,
+  });
   const ids = collectBusinessIdsFromCards(message.cards);
   const firstPo = ids.po?.[0] || "";
   const firstSku = ids.sku?.[0] || "";
@@ -1499,25 +1505,25 @@ export function getAiFollowUpChips(message: AiChatMessage) {
   const chips: { label: string; prompt: string }[] = [];
 
   if (cardTypes.has("procurement_followup_summary") || cardTypes.has("priority_explanation")) {
-    if (firstPo) chips.push({ label: "为什么这个 PO 优先？", prompt: "这个 PO 为什么优先？" });
-    if (firstSku) chips.push({ label: "查看关联 SKU", prompt: "它和哪个 SKU 有关系？" });
-    chips.push({ label: "哪些数据不完整？", prompt: "哪些数据依据不够完整？" });
-    if (firstPo || firstRfq) chips.push({ label: "预览跟进草稿", prompt: "预览供应商跟进草稿" });
+    if (firstPo) chips.push(localizedChip("为什么这个 PO 优先？", "Why is this PO a priority?", "这个 PO 为什么优先？", "Why is this PO a priority?"));
+    if (firstSku) chips.push(localizedChip("查看关联 SKU", "View related SKU", "它和哪个 SKU 有关系？", "Which SKU is related to this?"));
+    chips.push(localizedChip("哪些数据不完整？", "Which data is incomplete?", "哪些数据依据不够完整？", "Which supporting data is incomplete?"));
+    if (firstPo || firstRfq) chips.push(localizedChip("预览跟进草稿", "Preview follow-up draft", "预览供应商跟进草稿", "Preview the supplier follow-up draft"));
   }
   if (cardTypes.has("ai_response_v2")) {
-    if (firstPo) chips.push({ label: "为什么这个 PO 优先？", prompt: "这个 PO 为什么优先？" });
-    if (firstSku) chips.push({ label: "查看关联 SKU", prompt: "这个 SKU 和哪些单据有关？" });
-    chips.push({ label: "哪些数据不完整？", prompt: "哪些数据依据不完整？" });
+    if (firstPo) chips.push(localizedChip("为什么这个 PO 优先？", "Why is this PO a priority?", "这个 PO 为什么优先？", "Why is this PO a priority?"));
+    if (firstSku) chips.push(localizedChip("查看关联 SKU", "View related SKU", "这个 SKU 和哪些单据有关？", "Which records are related to this SKU?"));
+    chips.push(localizedChip("哪些数据不完整？", "Which data is incomplete?", "哪些数据依据不完整？", "Which supporting data is incomplete?"));
   }
   if (cardTypes.has("inventory_status") || firstSku) {
-    chips.push({ label: "需要补货吗？", prompt: "这个 SKU 需要补货吗？" });
-    chips.push({ label: "关联哪些采购单？", prompt: "这个 SKU 关联哪些采购单？" });
-    chips.push({ label: "预览补货 PR 草稿", prompt: "预览补货 PR 草稿" });
+    chips.push(localizedChip("需要补货吗？", "Does it need replenishment?", "这个 SKU 需要补货吗？", "Does this SKU need replenishment?"));
+    chips.push(localizedChip("关联哪些采购单？", "Which purchase orders?", "这个 SKU 关联哪些采购单？", "Which purchase orders are related to this SKU?"));
+    chips.push(localizedChip("预览补货 PR 草稿", "Preview replenishment PR", "预览补货 PR 草稿", "Preview a replenishment purchase request draft"));
   }
   if (cardTypes.has("rfq_status") || cardTypes.has("rfq_followup") || firstRfq) {
-    chips.push({ label: "有几家回复了？", prompt: "刚才那个 RFQ 有几家回复了？" });
-    chips.push({ label: "谁还没回复？", prompt: "谁还没回复这个 RFQ？" });
-    chips.push({ label: "预览供应商提醒草稿", prompt: "预览供应商提醒草稿" });
+    chips.push(localizedChip("有几家回复了？", "How many suppliers replied?", "刚才那个 RFQ 有几家回复了？", "How many suppliers replied to that RFQ?"));
+    chips.push(localizedChip("谁还没回复？", "Who has not replied?", "谁还没回复这个 RFQ？", "Who has not replied to this RFQ?"));
+    chips.push(localizedChip("预览供应商提醒草稿", "Preview supplier reminder", "预览供应商提醒草稿", "Preview a supplier reminder draft"));
   }
 
   return uniqueFollowUpChips(chips);
@@ -1810,9 +1816,9 @@ export default function FloatingAiAssistant({
                 >
                   {message.content ? <div className="whitespace-pre-wrap">{message.content}</div> : null}
                   {message.role === "assistant" && <AiResponseCards cards={message.cards} onNavigate={minimizeAfterNavigate} onReviewActionDraft={onReviewActionDraft} onFollowUp={askAi} />}
-                  {message.role === "assistant" && getAiFollowUpChips(message).length ? (
+                  {message.role === "assistant" && getAiFollowUpChips(message, language).length ? (
                     <div className="mt-2 flex flex-wrap gap-1.5">
-                      {getAiFollowUpChips(message).map((chip) => (
+                      {getAiFollowUpChips(message, language).map((chip) => (
                         <button
                           key={`${chip.label}-${chip.prompt}`}
                           type="button"
