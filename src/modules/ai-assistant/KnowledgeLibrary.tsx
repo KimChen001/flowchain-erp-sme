@@ -4,6 +4,7 @@ import { useI18n } from '../../i18n/I18n';
 
 const endpoint = '/api/ai-runtime/knowledge';
 type Source = { id: string; title: string; language: string; indexStatus: 'semantic' | 'partial' | 'keyword'; embeddingModel: string | null; embeddingDimensions: number | null; _count: { chunks: number } };
+type PendingFile = { fileName: string; contentBase64: string };
 export type RagAnswer = { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string }> };
 
 function KnowledgeDocument({ id, onClose }: { id: string; onClose: () => void }) {
@@ -39,6 +40,7 @@ export function KnowledgeLibrary({ onClose }: { onClose: () => void }) {
   const [canManage, setCanManage] = useState(false);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [pendingFile, setPendingFile] = useState<PendingFile | null>(null);
   const [audience, setAudience] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -47,7 +49,11 @@ export function KnowledgeLibrary({ onClose }: { onClose: () => void }) {
   useEffect(() => { refresh().catch(e => setError(e.message)); }, []);
   async function save() {
     setBusy(true); setError('');
-    try { await apiJson(endpoint, { method: 'POST', body: JSON.stringify({ title, content, language, requiredPermission: audience || null }) }); setTitle(''); setContent(''); await refresh(); }
+    try {
+      const body = { title, language, requiredPermission: audience || null, ...(pendingFile || { content }) };
+      await apiJson(pendingFile ? `${endpoint}/import` : endpoint, { method: 'POST', body: JSON.stringify(body) });
+      setTitle(''); setContent(''); setPendingFile(null); await refresh();
+    }
     catch (e) { setError(e instanceof Error ? e.message : 'Import failed'); }
     finally { setBusy(false); }
   }
@@ -58,10 +64,10 @@ export function KnowledgeLibrary({ onClose }: { onClose: () => void }) {
     {error && <p role="alert" className="my-3 text-sm text-red-700">{error}</p>}
     {canManage && <div className="my-4 space-y-3 rounded-xl border p-4">
       <label className="block text-sm">{zh ? '标题' : 'Title'}<input data-testid="knowledge-title" value={title} maxLength={160} onChange={e => setTitle(e.target.value)} className="mt-1 block w-full rounded border p-2" /></label>
-      <label className="block text-sm">{zh ? '文本或 Markdown 文件' : 'Text or Markdown file'}<input type="file" accept=".txt,.md,text/plain,text/markdown" className="mt-1 block text-sm" onChange={async e => { const file = e.target.files?.[0]; if (!file) return; if (file.size > 300000) { setError(zh ? '文件过大，请分成较小的文档。' : 'File too large. Split it into smaller documents.'); return; } setContent(await file.text()); if (!title) setTitle(file.name); }} /></label>
-      <label className="block text-sm">{zh ? '资料内容' : 'Document content'}<textarea data-testid="knowledge-content" value={content} maxLength={100000} onChange={e => setContent(e.target.value)} rows={7} className="mt-1 block w-full rounded border p-2" /></label>
+      <label className="block text-sm">{zh ? '资料文件' : 'Document file'}<input type="file" accept=".txt,.md,.markdown,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="mt-1 block text-sm" onChange={e => { const file = e.target.files?.[0]; if (!file) return; setError(''); if (file.size > 5 * 1024 * 1024) { setPendingFile(null); setError(zh ? '文件不能超过 5 MB，请拆分后再导入。' : 'Files are limited to 5 MB. Split the document before importing.'); return; } const reader = new FileReader(); reader.onload = () => { const value = String(reader.result || ''); setPendingFile({ fileName: file.name, contentBase64: value.slice(value.indexOf(',') + 1) }); setContent(''); if (!title) setTitle(file.name.replace(/\.[^.]+$/, '')); }; reader.onerror = () => setError(zh ? '无法读取文件。' : 'The file could not be read.'); reader.readAsDataURL(file); }} />{pendingFile && <span className="mt-1 block text-xs text-slate-500">{zh ? '已选择：' : 'Selected: '}{pendingFile.fileName}</span>}</label>
+      <label className="block text-sm">{zh ? '资料内容' : 'Document content'}<textarea data-testid="knowledge-content" value={content} maxLength={100000} onChange={e => { setContent(e.target.value); setPendingFile(null); }} rows={7} placeholder={pendingFile ? (zh ? '将从所选文件中提取文字' : 'Text will be extracted from the selected file') : undefined} className="mt-1 block w-full rounded border p-2" /></label>
       <label className="block text-sm">{zh ? '阅读范围' : 'Readers'}<select value={audience} onChange={e => setAudience(e.target.value)} className="ml-2 rounded border p-2"><option value="">{zh ? '工作区成员' : 'Workspace members'}</option><option value="finance.payable.read">{zh ? '应付账款阅读者' : 'Payables readers'}</option><option value="procurement.purchase_order.read">{zh ? '采购订单阅读者' : 'Purchase order readers'}</option></select></label>
-      <button type="button" data-testid="knowledge-import" disabled={busy || !title.trim() || content.trim().length < 20} onClick={save} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">{busy ? (zh ? '正在导入…' : 'Importing…') : (zh ? '导入并建立索引' : 'Import & index')}</button>
+      <button type="button" data-testid="knowledge-import" disabled={busy || !title.trim() || (!pendingFile && content.trim().length < 20)} onClick={save} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">{busy ? (zh ? '正在导入…' : 'Importing…') : (zh ? '导入并建立索引' : 'Import & index')}</button>
     </div>}
     <div className="space-y-2">{items.map(item => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"><button type="button" className="text-sm font-medium text-blue-700" onClick={() => setSource(item.id)}>{item.title}</button><span className="text-xs text-slate-500">{item._count.chunks} {zh ? '个段落' : 'passages'}</span><span title={item.embeddingModel ? `${item.embeddingModel} · ${item.embeddingDimensions}` : undefined} className={`rounded-full px-2 py-1 text-xs ${item.indexStatus === 'semantic' ? 'bg-emerald-50 text-emerald-700' : item.indexStatus === 'partial' ? 'bg-amber-50 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>{item.indexStatus === 'semantic' ? (zh ? '语义索引' : 'Semantic') : item.indexStatus === 'partial' ? (zh ? '部分索引' : 'Partial') : (zh ? '关键词索引' : 'Keyword')}</span>{canManage && <div className="flex gap-2"><button type="button" disabled={busy} className="text-xs text-blue-700 disabled:opacity-50" onClick={async () => { setBusy(true); setError(''); try { await apiJson(`${endpoint}/${encodeURIComponent(item.id)}/reindex`, { method: 'POST' }); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : 'Reindex failed'); } finally { setBusy(false); } }}>{zh ? '重建索引' : 'Reindex'}</button><button type="button" className="text-xs text-slate-600" onClick={async () => { try { await apiJson(`${endpoint}/${encodeURIComponent(item.id)}`, { method: 'DELETE' }); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : 'Archive failed'); } }}>{zh ? '归档' : 'Archive'}</button></div>}</div>)}</div>
     {!items.length && <p className="text-sm text-slate-500">{zh ? '尚无可访问的资料。' : 'No accessible documents yet.'}</p>}
