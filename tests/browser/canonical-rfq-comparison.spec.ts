@@ -42,8 +42,8 @@ test("RFQ detail opens authoritative comparison and preserves history without wr
   await expect(page).toHaveURL(new RegExp(`/app/procurement/rfq/${RFQ_ID}/comparison$`));
   await expect(page.getByTestId("canonical-rfq-comparison")).toBeVisible();
   await expect(page.getByTestId("rfq-comparison-availability")).toContainText("可进行并列比价");
-  await expect(page.getByTestId("rfq-comparison-response-LOCAL-DEMO-SUP-001")).toContainText("本地演示供应商 A");
-  await expect(page.getByTestId("rfq-comparison-response-LOCAL-DEMO-SUP-002")).toContainText("本地演示供应商 B");
+  await expect(page.getByTestId("rfq-comparison-response-LOCAL-DEMO-SUP-001")).toContainText("Acme Components");
+  await expect(page.getByTestId("rfq-comparison-response-LOCAL-DEMO-SUP-002")).toContainText("Summit Packaging");
   await expect(page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001")).toContainText("98.0000 CNY");
   await expect(page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001")).toContainText("97.5000 CNY");
   await expect(page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001")).toContainText("2030-02-18");
@@ -54,10 +54,10 @@ test("RFQ detail opens authoritative comparison and preserves history without wr
   await expect(page.getByTestId("canonical-rfq-comparison")).not.toContainText("2030-02-17");
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-003")).toContainText("已拒绝");
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-004")).toContainText("已撤回");
-  await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-005")).toContainText("本地演示供应商 E");
+  await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-005")).toContainText("Northstar Manufacturing");
   const responseRows = await page.getByTestId("rfq-comparison-responses").locator("tbody > tr").allTextContents();
-  expect(responseRows[0]).toContain("本地演示供应商 A");
-  expect(responseRows[1]).toContain("本地演示供应商 B");
+  expect(responseRows[0]).toContain("Acme Components");
+  expect(responseRows[1]).toContain("Summit Packaging");
   await expect(page.getByRole("button", { name: /Award|授标|PO|采购订单/i })).toHaveCount(0);
   await expect(page.getByRole("link", { name: /Award|授标|PO Conversion|转为 PO/i })).toHaveCount(0);
   expect(comparisonRequests).toEqual([exactComparisonPath(RFQ_ID)]);
@@ -105,7 +105,7 @@ test("comparison renders empty, draft-only, single, and historical-only states",
     ["LOCAL-DEMO-RFQ EMPTY", "暂无可比较的有效报价", "尚无供应商参与记录"],
     ["LOCAL-DEMO-RFQ-COMPARISON-NO-QUOTE", "暂无可比较的有效报价", "已参与但尚无报价"],
     ["LOCAL-DEMO-RFQ-COMPARISON-DRAFT", "暂无可比较的有效报价", "现有报价均为草稿"],
-    ["LOCAL-DEMO-RFQ-COMPARISON-SINGLE", "当前只有 1 个有效报价", "本地演示供应商 A"],
+    ["LOCAL-DEMO-RFQ-COMPARISON-SINGLE", "当前只有 1 个有效报价", "Acme Components"],
     ["LOCAL-DEMO-RFQ-COMPARISON-HISTORICAL", "暂无可比较的有效报价", "历史报价"],
   ] as const) {
     await page.goto(`/app/procurement/rfq/${encodeURIComponent(id)}/comparison`);

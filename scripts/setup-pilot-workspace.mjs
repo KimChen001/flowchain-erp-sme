@@ -18,20 +18,20 @@ const config = {
   adminEmail: value('admin-email', 'admin@flowchain.local').toLowerCase(),
   adminName: value('admin-name', 'Initial Admin'),
   warehouseCode: value('warehouse-code', 'MAIN'),
-  warehouseName: value('warehouse-name', 'Local 主仓'),
+  warehouseName: value('warehouse-name', 'Main Warehouse'),
 }
 
 const prisma = await getPrismaClient(process.env)
 try {
   const result = await prisma.$transaction(async tx => {
     let tenant = await tx.tenant.findUnique({ where: { id: config.tenantId } })
-    if (!tenant) tenant = await tx.tenant.create({ data: { id: config.tenantId, name: config.workspaceName } })
+    if (!tenant) tenant = await tx.tenant.create({ data: { id: config.tenantId, name: config.workspaceName, countryCode: 'US', locale: 'en-US', currency: 'USD', timezone: 'America/New_York', defaultLanguage: 'en-US' } })
     let warehouse = await tx.warehouse.findFirst({ where: { tenantId: tenant.id, code: config.warehouseCode } })
     if (!warehouse) warehouse = await tx.warehouse.create({ data: { id: `WH-${randomUUID()}`, tenantId: tenant.id, code: config.warehouseCode, name: config.warehouseName, status: 'active' } })
     let admin = await tx.user.findFirst({ where: { tenantId: tenant.id, email: config.adminEmail } })
     if (!admin) admin = await tx.user.create({ data: { id: `USR-${randomUUID()}`, tenantId: tenant.id, email: config.adminEmail, name: config.adminName, role: 'admin', status: 'active', defaultWarehouseId: warehouse.id } })
     let kim = await tx.user.findFirst({ where: { tenantId: tenant.id, email: 'kim@example.com' } })
-    if (!kim) kim = await tx.user.create({ data: { id: `USR-${randomUUID()}`, tenantId: tenant.id, email: 'kim@example.com', name: 'Kim', role: 'manager', jobTitle: '供应链经理', status: 'active', defaultWarehouseId: warehouse.id } })
+    if (!kim) kim = await tx.user.create({ data: { id: `USR-${randomUUID()}`, tenantId: tenant.id, email: 'kim@example.com', name: 'Kim', role: 'manager', jobTitle: 'Supply Chain Manager', status: 'active', defaultWarehouseId: warehouse.id } })
     // Warehouse scope is deliberately limited to the schema's read/operate
     // boundary. Administrative authority comes from formal role assignments.
     for (const [userId, accessLevel] of [[admin.id, 'operate'], [kim.id, 'operate']]) {

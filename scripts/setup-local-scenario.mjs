@@ -6,7 +6,10 @@ import { resolve } from 'node:path'
 
 export const LOCAL_SCENARIO_COUNTS = Object.freeze({ purchaseRequests: 1, purchaseOrders: 2, receivingDocuments: 1, supplierInvoices: 1, inventoryBalances: 2, salesOrders: 1 })
 const tenantId = process.env.FLOWCHAIN_DEFAULT_TENANT_ID || 'tenant-flowchain-local'
-const metadata = { localDemo: true, localDemoScenarioVersion: 1 }
+const metadata = { localDemo: true, localDemoScenarioVersion: 2 }
+const supplierName = 'Acme Components'
+const customerName = 'Redwood Retail'
+const itemNames = Object.freeze({ 'LDM-001': 'Flow Controller', 'LDM-002': 'Temperature Sensor' })
 
 export async function seedLocalScenario(prisma, env = process.env) {
   assertLocalDevelopment(env, 'pilot:setup:scenario')
@@ -14,9 +17,10 @@ export async function seedLocalScenario(prisma, env = process.env) {
   return prisma.$transaction(async tx => {
     await tx.purchaseRequest.upsert({
       where: { id: 'LOCAL-DEMO-PR-001' },
-      create: { id: 'LOCAL-DEMO-PR-001', tenantId, status: PURCHASE_REQUEST_STATUS.SUBMITTED, requester: 'Local Demo', priority: 'high', requiredDate: new Date('2030-01-15T00:00:00Z'), amount: 5000, source: 'local_demo_scenario', metadata, lines: { create: [{ id: 'LOCAL-DEMO-PRL-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: '本地演示控制器', quantity: 50, unit: 'pcs', unitPrice: 100, amount: 5000, metadata }] } },
-      update: {},
+      create: { id: 'LOCAL-DEMO-PR-001', tenantId, status: PURCHASE_REQUEST_STATUS.SUBMITTED, requester: 'US Demo', priority: 'high', requiredDate: new Date('2030-01-15T00:00:00Z'), amount: 5000, source: 'local_demo_scenario', metadata, lines: { create: [{ id: 'LOCAL-DEMO-PRL-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: itemNames['LDM-001'], quantity: 50, unit: 'pcs', unitPrice: 100, amount: 5000, metadata }] } },
+      update: { requester: 'US Demo', metadata },
     })
+    await tx.purchaseRequestLine.updateMany({ where: { id: 'LOCAL-DEMO-PRL-001' }, data: { itemName: itemNames['LDM-001'], metadata } })
       for (const [id, status, itemId, sku, quantity, receivedQuantity, expectedDate] of [
         ['LOCAL-DEMO-PO-001', PURCHASE_ORDER_STATUS.PARTIALLY_RECEIVED, 'LOCAL-DEMO-ITEM-001', 'LDM-001', 50, 20, '2030-01-12T00:00:00Z'],
         ['LOCAL-DEMO-PO-002', PURCHASE_ORDER_STATUS.ISSUED, 'LOCAL-DEMO-ITEM-002', 'LDM-002', 40, 0, '2030-01-18T00:00:00Z'],
@@ -24,28 +28,30 @@ export async function seedLocalScenario(prisma, env = process.env) {
         const poMetadata = { ...metadata, transmissionStatus: 'sent', targetWarehouseId: 'LOCAL-DEMO-WH-001' }
         await tx.purchaseOrder.upsert({
           where: { id },
-          create: { id, tenantId, status, supplierId: 'LOCAL-DEMO-SUP-001', supplierName: '本地演示供应商 A', sourceRequestId: 'LOCAL-DEMO-PR-001', expectedDate: new Date(expectedDate), amount: quantity * 100, currency: 'CNY', owner: 'Local Demo', priority: id.endsWith('002') ? 'high' : 'medium', metadata: poMetadata, lines: { create: [{ id: `${id}-LINE-001`, itemId, sku, itemName: sku === 'LDM-001' ? '本地演示控制器' : '本地演示传感器', orderedQuantity: quantity, receivedQuantity, unit: 'pcs', unitPrice: 100, amount: quantity * 100, metadata: { ...metadata, targetWarehouseId: 'LOCAL-DEMO-WH-001', requestedDate: '2030-01-15', promisedDate: expectedDate.slice(0, 10) } }] } },
-          update: { status, expectedDate: new Date(expectedDate), metadata: poMetadata },
+          create: { id, tenantId, status, supplierId: 'LOCAL-DEMO-SUP-001', supplierName, sourceRequestId: 'LOCAL-DEMO-PR-001', expectedDate: new Date(expectedDate), amount: quantity * 100, currency: 'USD', owner: 'US Demo', priority: id.endsWith('002') ? 'high' : 'medium', metadata: poMetadata, lines: { create: [{ id: `${id}-LINE-001`, itemId, sku, itemName: itemNames[sku], orderedQuantity: quantity, receivedQuantity, unit: 'pcs', unitPrice: 100, amount: quantity * 100, metadata: { ...metadata, targetWarehouseId: 'LOCAL-DEMO-WH-001', requestedDate: '2030-01-15', promisedDate: expectedDate.slice(0, 10) } }] } },
+          update: { status, supplierName, expectedDate: new Date(expectedDate), currency: 'USD', owner: 'US Demo', metadata: poMetadata },
         })
+        await tx.purchaseOrderLine.updateMany({ where: { id: `${id}-LINE-001` }, data: { itemName: itemNames[sku], metadata: { ...metadata, targetWarehouseId: 'LOCAL-DEMO-WH-001', requestedDate: '2030-01-15', promisedDate: expectedDate.slice(0, 10) } } })
       }
     await tx.receivingDocument.upsert({
       where: { id: 'LOCAL-DEMO-GRN-001' },
-      create: { id: 'LOCAL-DEMO-GRN-001', tenantId, documentNumber: 'LOCAL-DEMO-GRN-001', poId: 'LOCAL-DEMO-PO-001', supplierId: 'LOCAL-DEMO-SUP-001', supplierName: '本地演示供应商 A', status: 'partial', workflowStatus: 'received', postingStatus: 'unposted', warehouseId: 'LOCAL-DEMO-WH-001', receiver: 'Local Demo', metadata, lines: { create: [{ id: 'LOCAL-DEMO-GRNL-001', purchaseOrderLineId: 'LOCAL-DEMO-PO-001-LINE-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: '本地演示控制器', acceptedQty: 20, rejectedQty: 0, unit: 'pcs', warehouseId: 'LOCAL-DEMO-WH-001', location: 'A-01', locationKey: 'a-01', metadata }] } },
-      update: {},
+      create: { id: 'LOCAL-DEMO-GRN-001', tenantId, documentNumber: 'LOCAL-DEMO-GRN-001', poId: 'LOCAL-DEMO-PO-001', supplierId: 'LOCAL-DEMO-SUP-001', supplierName, status: 'partial', workflowStatus: 'received', postingStatus: 'unposted', warehouseId: 'LOCAL-DEMO-WH-001', receiver: 'US Demo', metadata, lines: { create: [{ id: 'LOCAL-DEMO-GRNL-001', purchaseOrderLineId: 'LOCAL-DEMO-PO-001-LINE-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: itemNames['LDM-001'], acceptedQty: 20, rejectedQty: 0, unit: 'pcs', warehouseId: 'LOCAL-DEMO-WH-001', location: 'A-01', locationKey: 'a-01', metadata }] } },
+      update: { supplierName, receiver: 'US Demo', metadata },
     })
+    await tx.receivingLine.updateMany({ where: { id: 'LOCAL-DEMO-GRNL-001' }, data: { itemName: itemNames['LDM-001'], metadata } })
     await tx.supplierInvoice.upsert({
       where: { id: 'LOCAL-DEMO-INV-001' },
-      create: { id: 'LOCAL-DEMO-INV-001', tenantId, invoiceNumber: 'LOCAL-DEMO-INV-001', supplierId: 'LOCAL-DEMO-SUP-001', supplierName: '本地演示供应商 A', relatedPoId: 'LOCAL-DEMO-PO-001', relatedGrnId: 'LOCAL-DEMO-GRN-001', subtotalAmount: 2200, enteredTaxAmount: 286, totalAmount: 2486, amount: 2486, currency: 'CNY', status: 'review', matchStatus: 'variance', varianceAmount: 486, metadata: { ...metadata, varianceType: '金额差异' } },
-      update: { matchStatus: 'variance', varianceAmount: 486, metadata: { ...metadata, varianceType: '金额差异' } },
+      create: { id: 'LOCAL-DEMO-INV-001', tenantId, invoiceNumber: 'LOCAL-DEMO-INV-001', supplierId: 'LOCAL-DEMO-SUP-001', supplierName, relatedPoId: 'LOCAL-DEMO-PO-001', relatedGrnId: 'LOCAL-DEMO-GRN-001', subtotalAmount: 2200, enteredTaxAmount: 181.5, totalAmount: 2381.5, amount: 2381.5, currency: 'USD', status: 'review', matchStatus: 'variance', varianceAmount: 381.5, metadata: { ...metadata, varianceType: '金额差异' } },
+      update: { supplierName, enteredTaxAmount: 181.5, totalAmount: 2381.5, amount: 2381.5, currency: 'USD', matchStatus: 'variance', varianceAmount: 381.5, metadata: { ...metadata, varianceType: '金额差异' } },
     })
     await tx.supplierInvoiceLine.upsert({
       where: { id: 'LOCAL-DEMO-INVL-001' },
-      create: { id: 'LOCAL-DEMO-INVL-001', supplierInvoiceId: 'LOCAL-DEMO-INV-001', lineNumber: 1, purchaseOrderLineId: 'LOCAL-DEMO-PO-001-LINE-001', receivingLineId: 'LOCAL-DEMO-GRNL-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: '本地演示控制器', quantity: 20, unit: 'pcs', unitPrice: 110, lineAmount: 2200, enteredTaxAmount: 286, amount: 2486, metadata: { ...metadata, varianceType: '价格差异', varianceAmount: 486 } },
-      update: {},
+      create: { id: 'LOCAL-DEMO-INVL-001', supplierInvoiceId: 'LOCAL-DEMO-INV-001', lineNumber: 1, purchaseOrderLineId: 'LOCAL-DEMO-PO-001-LINE-001', receivingLineId: 'LOCAL-DEMO-GRNL-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: itemNames['LDM-001'], quantity: 20, unit: 'pcs', unitPrice: 110, lineAmount: 2200, enteredTaxAmount: 181.5, amount: 2381.5, metadata: { ...metadata, varianceType: '价格差异', varianceAmount: 381.5 } },
+      update: { itemName: itemNames['LDM-001'], enteredTaxAmount: 181.5, amount: 2381.5, metadata: { ...metadata, varianceType: '价格差异', varianceAmount: 381.5 } },
     })
     for (const [id, itemId, sku, itemName, onHandQuantity, safetyStock, riskLevel] of [
-      ['LOCAL-DEMO-BAL-001', 'LOCAL-DEMO-ITEM-001', 'LDM-001', '本地演示控制器', 8, 20, 'shortage'],
-      ['LOCAL-DEMO-BAL-002', 'LOCAL-DEMO-ITEM-002', 'LDM-002', '本地演示传感器', 60, 15, 'normal'],
+      ['LOCAL-DEMO-BAL-001', 'LOCAL-DEMO-ITEM-001', 'LDM-001', itemNames['LDM-001'], 8, 20, 'shortage'],
+      ['LOCAL-DEMO-BAL-002', 'LOCAL-DEMO-ITEM-002', 'LDM-002', itemNames['LDM-002'], 60, 15, 'normal'],
     ]) {
       await tx.inventoryBalance.upsert({
         where: { id },
@@ -56,14 +62,15 @@ export async function seedLocalScenario(prisma, env = process.env) {
           safetyStock, reorderPoint: safetyStock, unit: 'pcs', status: 'active',
           riskLevel, metadata,
         },
-        update: {},
+        update: { itemName, metadata },
       })
     }
     await tx.salesOrder.upsert({
       where: { id: 'LOCAL-DEMO-SO-001' },
-      create: { id: 'LOCAL-DEMO-SO-001', tenantId, orderNumber: 'LOCAL-DEMO-SO-001', customerId: 'LOCAL-DEMO-CUS-001', customerName: '本地演示客户 A', workflowStatus: 'confirmed', reservationStatus: 'not_reserved', fulfillmentStatus: 'not_fulfilled', promisedDate: new Date('2030-01-20T00:00:00Z'), currency: 'CNY', metadata, lines: { create: [{ id: 'LOCAL-DEMO-SOL-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: '本地演示控制器', orderedQuantity: 35, unit: 'pcs', unitPrice: 180, amount: 6300, metadata }] } },
-      update: {},
+      create: { id: 'LOCAL-DEMO-SO-001', tenantId, orderNumber: 'LOCAL-DEMO-SO-001', customerId: 'LOCAL-DEMO-CUS-001', customerName, workflowStatus: 'confirmed', reservationStatus: 'not_reserved', fulfillmentStatus: 'not_fulfilled', promisedDate: new Date('2030-01-20T00:00:00Z'), currency: 'USD', metadata, lines: { create: [{ id: 'LOCAL-DEMO-SOL-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: itemNames['LDM-001'], orderedQuantity: 35, unit: 'pcs', unitPrice: 180, amount: 6300, metadata }] } },
+      update: { customerName, currency: 'USD', metadata },
     })
+    await tx.salesOrderLine.updateMany({ where: { id: 'LOCAL-DEMO-SOL-001' }, data: { itemName: itemNames['LDM-001'], metadata } })
     return LOCAL_SCENARIO_COUNTS
   })
 }
@@ -73,7 +80,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   const prisma = await getPrismaClient(process.env)
   try {
     const counts = await seedLocalScenario(prisma)
-    console.log(`Local demo scenario v1 ready: ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(' ')}`)
+    console.log(`Local demo scenario v2 ready: ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(' ')}`)
   } finally {
     await disconnectPrismaClient()
   }

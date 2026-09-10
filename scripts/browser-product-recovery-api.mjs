@@ -82,7 +82,7 @@ async function seedComparisonQuotation(client, quote) {
           rfqLineId: quote.lineId,
           itemId: "LOCAL-DEMO-ITEM-001",
           skuSnapshot: "LDM-001",
-          itemNameSnapshot: "本地演示控制器",
+          itemNameSnapshot: "Flow Controller",
           quantity: 50,
           unit: "pcs",
           unitPrice: quote.unitPrice,
@@ -102,8 +102,8 @@ async function seedCanonicalRfqBrowserScenario(client) {
     data: {
       id: "LOCAL-DEMO-RFQ-001",
       tenantId,
-      title: "本地演示控制器询价",
-      category: "控制器",
+      title: "Flow Controller RFQ",
+      category: "Controllers",
       status: "collecting_quotes",
       supplierCount: comparisonAcceptance ? 5 : 4,
       respondedSupplierCount: comparisonAcceptance ? 2 : 1,
@@ -113,14 +113,14 @@ async function seedCanonicalRfqBrowserScenario(client) {
       currency: "CNY",
       metadata: {
         browserAcceptance: true,
-        description: "用于验证 RFQ 权威详情读取的 PostgreSQL 场景记录。",
+        description: "Scenario record for verifying authoritative RFQ detail retrieval.",
       },
       lines: {
         create: [{
           id: "LOCAL-DEMO-RFQL-001",
           itemId: "LOCAL-DEMO-ITEM-001",
           sku: "LDM-001",
-          itemName: "本地演示控制器",
+          itemName: "Flow Controller",
           quantity: 50,
           unit: "pcs",
           metadata: {
@@ -133,7 +133,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
           id: "LOCAL-DEMO-RFQL-002",
           itemId: "LOCAL-DEMO-ITEM-002",
           sku: "LDM-002",
-          itemName: "本地演示传感器",
+          itemName: "Temperature Sensor",
           quantity: 25,
           unit: "pcs",
           metadata: {
@@ -152,7 +152,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
       tenantId,
       rfqId: "LOCAL-DEMO-RFQ-001",
       supplierId: "LOCAL-DEMO-SUP-001",
-      supplierName: "本地演示供应商 A",
+      supplierName: "Acme Components",
       status: "submitted",
       quotedAmount: 4900,
       currency: "CNY",
@@ -168,7 +168,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
           id: "LOCAL-DEMO-QUOTEL-001",
           itemId: "LOCAL-DEMO-ITEM-001",
           sku: "LDM-001",
-          itemName: "本地演示控制器",
+          itemName: "Flow Controller",
           quantity: 50,
           unit: "pcs",
           unitPrice: 98,
@@ -199,7 +199,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
           rfqLineId: "LOCAL-DEMO-RFQL-001",
           itemId: "LOCAL-DEMO-ITEM-001",
           skuSnapshot: "LDM-001",
-          itemNameSnapshot: "本地演示控制器",
+          itemNameSnapshot: "Flow Controller",
           quantity: 50,
           unit: "pcs",
           unitPrice: 100,
@@ -231,7 +231,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
           rfqLineId: "LOCAL-DEMO-RFQL-001",
           itemId: "LOCAL-DEMO-ITEM-001",
           skuSnapshot: "LDM-001",
-          itemNameSnapshot: "本地演示控制器",
+          itemNameSnapshot: "Flow Controller",
           quantity: supplierResponseAcceptance ? unsafeScaledDecimal : 50,
           unit: "pcs",
           unitPrice: supplierResponseAcceptance ? "1.0000" : 98,
@@ -242,35 +242,35 @@ async function seedCanonicalRfqBrowserScenario(client) {
     },
   });
   if (comparisonAcceptance) {
-    await seedComparisonQuotation(client, { id: "LOCAL-DEMO-QUOTE-002", rfqId: "LOCAL-DEMO-RFQ-001", lineId: "LOCAL-DEMO-RFQL-001", supplierId: "LOCAL-DEMO-SUP-002", supplierName: "本地演示供应商 B", status: "submitted", currency: "CNY", amount: 4875, unitPrice: 97.5, revisionId: "LOCAL-DEMO-REV-003", paymentTerms: "NET45", deliveryDate: "2030-02-20" });
+    await seedComparisonQuotation(client, { id: "LOCAL-DEMO-QUOTE-002", rfqId: "LOCAL-DEMO-RFQ-001", lineId: "LOCAL-DEMO-RFQL-001", supplierId: "LOCAL-DEMO-SUP-002", supplierName: "Summit Packaging", status: "submitted", currency: "CNY", amount: 4875, unitPrice: 97.5, revisionId: "LOCAL-DEMO-REV-003", paymentTerms: "NET45", deliveryDate: "2030-02-20" });
     for (const supplier of [
-      { id: "LOCAL-DEMO-SUP-005", code: "LDS-005", name: "本地演示供应商 E" },
-      { id: "LOCAL-DEMO-SUP-006", code: "LDS-006", name: "本地演示供应商 F" },
-    ]) await client.supplier.create({ data: { ...supplier, tenantId, category: "服务", status: "active", metadata: { browserAcceptance: true } } }).catch((error) => {
+      { id: "LOCAL-DEMO-SUP-005", code: "LDS-005", name: "Northstar Manufacturing" },
+      { id: "LOCAL-DEMO-SUP-006", code: "LDS-006", name: "Pacific Sourcing" },
+    ]) await client.supplier.create({ data: { ...supplier, tenantId, category: "Services", status: "active", metadata: { browserAcceptance: true } } }).catch((error) => {
       if (error?.code !== "P2002") throw error;
     });
 
     for (const scenario of [
-      { id: "LOCAL-DEMO-RFQ-COMPARISON-SAME", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SAME", title: "同币种供应商并列比价" },
-      { id: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: "LOCAL-DEMO-RFQL-COMPARISON-MIXED", title: "多币种与历史状态比价" },
-      { id: "LOCAL-DEMO-RFQ-COMPARISON-NO-QUOTE", lineId: "LOCAL-DEMO-RFQL-COMPARISON-NO-QUOTE", title: "已有参与但尚无报价" },
-      { id: "LOCAL-DEMO-RFQ-COMPARISON-DRAFT", lineId: "LOCAL-DEMO-RFQL-COMPARISON-DRAFT", title: "仅有草稿报价" },
-      { id: "LOCAL-DEMO-RFQ-COMPARISON-SINGLE", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SINGLE", title: "仅有一个有效报价" },
-      { id: "LOCAL-DEMO-RFQ-COMPARISON-HISTORICAL", lineId: "LOCAL-DEMO-RFQL-COMPARISON-HISTORICAL", title: "仅有历史与撤回报价" },
-    ]) await client.rfq.create({ data: { id: scenario.id, tenantId, title: scenario.title, status: "collecting_quotes", supplierCount: 6, respondedSupplierCount: 2, currency: "CNY", metadata: { browserAcceptance: true }, lines: { create: [{ id: scenario.lineId, itemId: "LOCAL-DEMO-ITEM-001", sku: "LDM-001", itemName: "本地演示控制器", quantity: 50, unit: "pcs", metadata: { browserAcceptance: true } }] } } });
+      { id: "LOCAL-DEMO-RFQ-COMPARISON-SAME", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SAME", title: "Same-currency supplier tie" },
+      { id: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: "LOCAL-DEMO-RFQL-COMPARISON-MIXED", title: "Multi-currency quote history" },
+      { id: "LOCAL-DEMO-RFQ-COMPARISON-NO-QUOTE", lineId: "LOCAL-DEMO-RFQL-COMPARISON-NO-QUOTE", title: "Participants without quotations" },
+      { id: "LOCAL-DEMO-RFQ-COMPARISON-DRAFT", lineId: "LOCAL-DEMO-RFQL-COMPARISON-DRAFT", title: "Draft quotations only" },
+      { id: "LOCAL-DEMO-RFQ-COMPARISON-SINGLE", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SINGLE", title: "One valid quotation" },
+      { id: "LOCAL-DEMO-RFQ-COMPARISON-HISTORICAL", lineId: "LOCAL-DEMO-RFQL-COMPARISON-HISTORICAL", title: "Historical and withdrawn quotations" },
+    ]) await client.rfq.create({ data: { id: scenario.id, tenantId, title: scenario.title, status: "collecting_quotes", supplierCount: 6, respondedSupplierCount: 2, currency: "CNY", metadata: { browserAcceptance: true }, lines: { create: [{ id: scenario.lineId, itemId: "LOCAL-DEMO-ITEM-001", sku: "LDM-001", itemName: "Flow Controller", quantity: 50, unit: "pcs", metadata: { browserAcceptance: true } }] } } });
 
     for (const quote of [
-      { id: "LOCAL-DEMO-QUOTE-SAME-A", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-SAME", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SAME", supplierId: "LOCAL-DEMO-SUP-001", supplierName: "本地演示供应商 A", status: "submitted", currency: "CNY", amount: 4900, unitPrice: 98, revisionId: "LOCAL-DEMO-REV-SAME-A", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
-      { id: "LOCAL-DEMO-QUOTE-SAME-B", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-SAME", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SAME", supplierId: "LOCAL-DEMO-SUP-002", supplierName: "本地演示供应商 B", status: "submitted", currency: "CNY", amount: 4875, unitPrice: 97.5, revisionId: "LOCAL-DEMO-REV-SAME-B", paymentTerms: "NET45", deliveryDate: "2030-02-20" },
-      { id: "LOCAL-DEMO-QUOTE-MIXED-A", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: "LOCAL-DEMO-RFQL-COMPARISON-MIXED", supplierId: "LOCAL-DEMO-SUP-001", supplierName: "本地演示供应商 A", status: "submitted", currency: "CNY", amount: 4900, unitPrice: 98, revisionId: "LOCAL-DEMO-REV-MIXED-A", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
-      { id: "LOCAL-DEMO-QUOTE-MIXED-B", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: "LOCAL-DEMO-RFQL-COMPARISON-MIXED", supplierId: "LOCAL-DEMO-SUP-002", supplierName: "本地演示供应商 B", status: "shortlisted", currency: "USD", amount: 1200, unitPrice: 24, revisionId: "LOCAL-DEMO-REV-MIXED-B", paymentTerms: "NET45", deliveryDate: "2030-02-20" },
-      { id: "LOCAL-DEMO-QUOTE-MIXED-C", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: "LOCAL-DEMO-RFQL-COMPARISON-MIXED", supplierId: "LOCAL-DEMO-SUP-003", supplierName: "本地演示供应商 C", status: "draft", currency: "CNY", amount: 4700, unitPrice: 94, revisionId: "LOCAL-DEMO-REV-MIXED-C", paymentTerms: "未提供", deliveryDate: "2030-02-20" },
-      { id: "LOCAL-DEMO-QUOTE-MIXED-D", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: "LOCAL-DEMO-RFQL-COMPARISON-MIXED", supplierId: "LOCAL-DEMO-SUP-004", supplierName: "本地演示供应商 D", status: "not_selected", currency: "CNY", amount: 4800, unitPrice: 96, revisionId: "LOCAL-DEMO-REV-MIXED-D", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
-      { id: "LOCAL-DEMO-QUOTE-MIXED-E", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: null, supplierId: "LOCAL-DEMO-SUP-005", supplierName: "本地演示供应商 E", status: "withdrawn", currency: "CNY", amount: 4850, unitPrice: 97, revisionId: "LOCAL-DEMO-REV-MIXED-E", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
-      { id: "LOCAL-DEMO-QUOTE-DRAFT-C", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-DRAFT", lineId: "LOCAL-DEMO-RFQL-COMPARISON-DRAFT", supplierId: "LOCAL-DEMO-SUP-003", supplierName: "本地演示供应商 C", status: "draft", currency: "CNY", amount: 4700, unitPrice: 94, revisionId: "LOCAL-DEMO-REV-DRAFT-C", paymentTerms: "未提供", deliveryDate: "2030-02-20" },
-      { id: "LOCAL-DEMO-QUOTE-SINGLE-A", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-SINGLE", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SINGLE", supplierId: "LOCAL-DEMO-SUP-001", supplierName: "本地演示供应商 A", status: "submitted", currency: "CNY", amount: 4900, unitPrice: 98, revisionId: "LOCAL-DEMO-REV-SINGLE-A", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
-      { id: "LOCAL-DEMO-QUOTE-HISTORICAL-D", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-HISTORICAL", lineId: "LOCAL-DEMO-RFQL-COMPARISON-HISTORICAL", supplierId: "LOCAL-DEMO-SUP-004", supplierName: "本地演示供应商 D", status: "not_selected", currency: "CNY", amount: 4800, unitPrice: 96, revisionId: "LOCAL-DEMO-REV-HISTORICAL-D", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
-      { id: "LOCAL-DEMO-QUOTE-HISTORICAL-E", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-HISTORICAL", lineId: "LOCAL-DEMO-RFQL-COMPARISON-HISTORICAL", supplierId: "LOCAL-DEMO-SUP-005", supplierName: "本地演示供应商 E", status: "withdrawn", currency: "CNY", amount: 4850, unitPrice: 97, revisionId: "LOCAL-DEMO-REV-HISTORICAL-E", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
+      { id: "LOCAL-DEMO-QUOTE-SAME-A", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-SAME", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SAME", supplierId: "LOCAL-DEMO-SUP-001", supplierName: "Acme Components", status: "submitted", currency: "CNY", amount: 4900, unitPrice: 98, revisionId: "LOCAL-DEMO-REV-SAME-A", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
+      { id: "LOCAL-DEMO-QUOTE-SAME-B", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-SAME", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SAME", supplierId: "LOCAL-DEMO-SUP-002", supplierName: "Summit Packaging", status: "submitted", currency: "CNY", amount: 4875, unitPrice: 97.5, revisionId: "LOCAL-DEMO-REV-SAME-B", paymentTerms: "NET45", deliveryDate: "2030-02-20" },
+      { id: "LOCAL-DEMO-QUOTE-MIXED-A", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: "LOCAL-DEMO-RFQL-COMPARISON-MIXED", supplierId: "LOCAL-DEMO-SUP-001", supplierName: "Acme Components", status: "submitted", currency: "CNY", amount: 4900, unitPrice: 98, revisionId: "LOCAL-DEMO-REV-MIXED-A", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
+      { id: "LOCAL-DEMO-QUOTE-MIXED-B", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: "LOCAL-DEMO-RFQL-COMPARISON-MIXED", supplierId: "LOCAL-DEMO-SUP-002", supplierName: "Summit Packaging", status: "shortlisted", currency: "USD", amount: 1200, unitPrice: 24, revisionId: "LOCAL-DEMO-REV-MIXED-B", paymentTerms: "NET45", deliveryDate: "2030-02-20" },
+      { id: "LOCAL-DEMO-QUOTE-MIXED-C", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: "LOCAL-DEMO-RFQL-COMPARISON-MIXED", supplierId: "LOCAL-DEMO-SUP-003", supplierName: "Atlas Industrial Supply", status: "draft", currency: "CNY", amount: 4700, unitPrice: 94, revisionId: "LOCAL-DEMO-REV-MIXED-C", paymentTerms: "Not provided", deliveryDate: "2030-02-20" },
+      { id: "LOCAL-DEMO-QUOTE-MIXED-D", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: "LOCAL-DEMO-RFQL-COMPARISON-MIXED", supplierId: "LOCAL-DEMO-SUP-004", supplierName: "Horizon Logistics", status: "not_selected", currency: "CNY", amount: 4800, unitPrice: 96, revisionId: "LOCAL-DEMO-REV-MIXED-D", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
+      { id: "LOCAL-DEMO-QUOTE-MIXED-E", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-MIXED", lineId: null, supplierId: "LOCAL-DEMO-SUP-005", supplierName: "Northstar Manufacturing", status: "withdrawn", currency: "CNY", amount: 4850, unitPrice: 97, revisionId: "LOCAL-DEMO-REV-MIXED-E", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
+      { id: "LOCAL-DEMO-QUOTE-DRAFT-C", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-DRAFT", lineId: "LOCAL-DEMO-RFQL-COMPARISON-DRAFT", supplierId: "LOCAL-DEMO-SUP-003", supplierName: "Atlas Industrial Supply", status: "draft", currency: "CNY", amount: 4700, unitPrice: 94, revisionId: "LOCAL-DEMO-REV-DRAFT-C", paymentTerms: "Not provided", deliveryDate: "2030-02-20" },
+      { id: "LOCAL-DEMO-QUOTE-SINGLE-A", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-SINGLE", lineId: "LOCAL-DEMO-RFQL-COMPARISON-SINGLE", supplierId: "LOCAL-DEMO-SUP-001", supplierName: "Acme Components", status: "submitted", currency: "CNY", amount: 4900, unitPrice: 98, revisionId: "LOCAL-DEMO-REV-SINGLE-A", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
+      { id: "LOCAL-DEMO-QUOTE-HISTORICAL-D", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-HISTORICAL", lineId: "LOCAL-DEMO-RFQL-COMPARISON-HISTORICAL", supplierId: "LOCAL-DEMO-SUP-004", supplierName: "Horizon Logistics", status: "not_selected", currency: "CNY", amount: 4800, unitPrice: 96, revisionId: "LOCAL-DEMO-REV-HISTORICAL-D", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
+      { id: "LOCAL-DEMO-QUOTE-HISTORICAL-E", rfqId: "LOCAL-DEMO-RFQ-COMPARISON-HISTORICAL", lineId: "LOCAL-DEMO-RFQL-COMPARISON-HISTORICAL", supplierId: "LOCAL-DEMO-SUP-005", supplierName: "Northstar Manufacturing", status: "withdrawn", currency: "CNY", amount: 4850, unitPrice: 97, revisionId: "LOCAL-DEMO-REV-HISTORICAL-E", paymentTerms: "NET30", deliveryDate: "2030-02-20" },
     ]) await seedComparisonQuotation(client, quote);
 
     await client.rfqSupplierParticipation.createMany({ data: [
@@ -298,7 +298,7 @@ async function seedCanonicalRfqBrowserScenario(client) {
     data: {
       id: "LOCAL-DEMO-RFQ EMPTY",
       tenantId,
-      title: "无行项目与报价的合法询价",
+      title: "Valid RFQ without lines or quotations",
       status: "draft",
       dueDate: new Date("2030-02-01T00:00:00.000Z"),
       currency: "CNY",
@@ -310,11 +310,11 @@ async function seedCanonicalRfqBrowserScenario(client) {
       data: {
         id: "LOCAL-DEMO-RFQ-CLOSED",
         tenantId,
-        title: "已关闭的供应商响应询价",
+        title: "Closed supplier response RFQ",
         status: "closed",
         currency: "CNY",
         metadata: { browserAcceptance: true },
-        lines: { create: [{ id: "LOCAL-DEMO-RFQL-CLOSED", itemId: "LOCAL-DEMO-ITEM-001", sku: "LDM-001", itemName: "本地演示控制器", quantity: 1, unit: "pcs", metadata: { browserAcceptance: true } }] },
+        lines: { create: [{ id: "LOCAL-DEMO-RFQL-CLOSED", itemId: "LOCAL-DEMO-ITEM-001", sku: "LDM-001", itemName: "Flow Controller", quantity: 1, unit: "pcs", metadata: { browserAcceptance: true } }] },
       },
     });
     await client.rfqSupplierParticipation.create({
@@ -361,7 +361,7 @@ try {
       email: adminEmail,
       name: "Initial Admin",
       role: "admin",
-      jobTitle: "工作区管理员",
+      jobTitle: "Workspace Administrator",
     },
   });
   if (process.env.PLAYWRIGHT_CANONICAL_RFQ_COMPARISON === "true") await prisma.user.create({
@@ -371,7 +371,7 @@ try {
       email: comparisonViewerEmail,
       name: "Comparison Viewer",
       role: "viewer",
-      jobTitle: "只读查看者",
+      jobTitle: "Read-only Viewer",
     },
   });
   await prisma.user.create({
@@ -381,7 +381,7 @@ try {
       email,
       name: "Kim",
       role: "manager",
-      jobTitle: "供应链经理",
+      jobTitle: "Supply Chain Manager",
     },
   });
   await seedLocalDemo(prisma, process.env);

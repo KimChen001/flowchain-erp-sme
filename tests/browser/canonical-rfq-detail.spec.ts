@@ -57,7 +57,7 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(page).toHaveURL(new RegExp(`/app/procurement/rfq/${RFQ_ID}$`));
   const detail = page.getByTestId("canonical-rfq-detail");
   await expect(detail).toBeVisible();
-  await expect(detail).toContainText("本地演示控制器询价");
+  await expect(detail).toContainText("Flow Controller RFQ");
   await expect(detail.getByText("收集报价", { exact: true })).toBeVisible();
   await expect(detail).toContainText("2030-01-10");
   await expect(detail).toContainText("CNY");
@@ -71,7 +71,7 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(line).toContainText("LOCAL-DEMO-WH-001");
 
   const quotation = page.getByTestId("rfq-quotation-LOCAL-DEMO-QUOTE-001");
-  await expect(quotation).toContainText("本地演示供应商 A");
+  await expect(quotation).toContainText("Acme Components");
   await expect(quotation).toContainText("已提交");
   await expect(quotation).toContainText("4,900");
   await expect(quotation).toContainText("2030-01-05 08:30:00.000 UTC");
@@ -107,7 +107,7 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(page.getByTestId(`rfq-id-link-${RFQ_ID}`)).toBeVisible();
   await page.goForward();
   await expect(page).toHaveURL(new RegExp(`/app/procurement/rfq/${RFQ_ID}$`));
-  await expect(page.getByTestId("canonical-rfq-detail")).toContainText("本地演示控制器询价");
+  await expect(page.getByTestId("canonical-rfq-detail")).toContainText("Flow Controller RFQ");
   expect(runtimeIssues).toEqual([]);
 });
 
@@ -150,12 +150,12 @@ test("encoded empty RFQ remains a valid authoritative record with subsection emp
 
   await page.goto(`/app/procurement/rfq/${encodeURIComponent(EMPTY_RFQ_ID)}`);
   const detail = page.getByTestId("canonical-rfq-detail");
-  await expect(detail).toContainText("无行项目与报价的合法询价");
+  await expect(detail).toContainText("Valid RFQ without lines or quotations");
   await expect(page.getByTestId("rfq-lines")).toContainText("当前 RFQ 没有权威行项目");
   await expect(page.getByTestId("rfq-quotations")).toContainText("当前 RFQ 没有权威报价记录");
   await expect(page.getByTestId("rfq-suppliers")).toContainText("当前 RFQ 没有权威供应商参与记录");
   await expect(detail).not.toContainText("LOCAL-DEMO-QUOTE-001");
-  await expect(detail).not.toContainText("本地演示供应商 A");
+  await expect(detail).not.toContainText("Acme Components");
   await expectNoWriteActions(page);
 
   expect(documentRequests).toEqual([exactRfqPath(EMPTY_RFQ_ID)]);
@@ -177,7 +177,7 @@ test("RFQ detail distinguishes 404 401 403 500 and network failures without fall
 
   await page.goto("/app/procurement/rfq/RFQ-MISSING-404");
   await expect(page.getByTestId("canonical-rfq-detail-state")).toContainText("找不到该 RFQ，或该记录不可见");
-  await expect(page.getByText("本地演示控制器询价", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Flow Controller RFQ", { exact: true })).toHaveCount(0);
 
   for (const [id, status, expected] of [
     ["RFQ-ERROR-401", 401, "登录状态已失效"],
@@ -194,7 +194,7 @@ test("RFQ detail distinguishes 404 401 403 500 and network failures without fall
     const state = page.getByTestId("canonical-rfq-detail-state");
     await expect(state).toContainText(expected);
     await expect(state.getByRole("button", { name: "重试" })).toBeVisible();
-    await expect(page.getByText("本地演示控制器询价", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Flow Controller RFQ", { exact: true })).toHaveCount(0);
     await page.unroute(routePattern);
   }
 
@@ -204,7 +204,7 @@ test("RFQ detail distinguishes 404 401 403 500 and network failures without fall
   const networkState = page.getByTestId("canonical-rfq-detail-state");
   await expect(networkState).toContainText("无法连接到 RFQ 服务");
   await expect(networkState.getByRole("button", { name: "重试" })).toBeVisible();
-  await expect(page.getByText("本地演示控制器询价", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Flow Controller RFQ", { exact: true })).toHaveCount(0);
 
   expect(documentRequests.some((path) => path === "/api/procurement/documents?type=rfq")).toBeFalsy();
   expect(allRequests.some((path) => /snapshot|fixture/i.test(path))).toBeFalsy();

@@ -62,7 +62,7 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await page.goto("/app/procurement/orders");
   await expect(page.getByText("LOCAL-DEMO-PO-001", { exact: true })).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-PO-002", { exact: true })).toBeVisible();
-  await expect(page.getByText("本地演示供应商 A").first()).toBeVisible();
+  await expect(page.getByText("Acme Components").first()).toBeVisible();
   await expect(page.getByText("部分收货").first()).toBeVisible();
   await expect(page.getByText("发票差异").first()).toBeVisible();
   await capture(page, "01-procurement-orders");
@@ -78,7 +78,7 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
 
   await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-001");
   await expect(page.getByRole("heading", { name: "采购订单 / PO" })).toBeVisible();
-  await expect(page.getByText(/LOCAL-DEMO-PO-001 · 本地演示供应商 A/)).toBeVisible();
+  await expect(page.getByText(/LOCAL-DEMO-PO-001 · Acme Components/)).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-PO-001-LINE-001", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-GRN-001", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-INV-001", { exact: true }).first()).toBeVisible();
@@ -165,14 +165,14 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await page.goto("/app/sales/orders");
   await expect(page.getByTestId("outbound-order-list")).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-SO-001", { exact: true })).toBeVisible();
-  await expect(page.getByText("本地演示客户 A", { exact: true })).toBeVisible();
+  await expect(page.getByText("Redwood Retail", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "新建销售订单" })).toHaveCount(0);
   await capture(page, "05-sales-orders-readonly");
 
   await page.goto("/app/sales/orders/LOCAL-DEMO-SO-001");
   await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();
   const salesLine = page.getByRole("row").filter({ hasText: "LDM-001" });
-  await expect(salesLine).toContainText("本地演示控制器");
+  await expect(salesLine).toContainText("Flow Controller");
   await expect(salesLine).toContainText("35.0000");
   await capture(page, "06-sales-order-detail");
 
