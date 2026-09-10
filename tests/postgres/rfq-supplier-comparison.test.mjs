@@ -217,7 +217,7 @@ test("real PostgreSQL RFQ Supplier Comparison read authority", async (t) => {
       assert.equal(comparison.commercialAuthority, "supplier_quotation_revision_max_revision_number");
       assert.equal(comparison.rankingAuthority, "unavailable");
       assert.equal(comparison.recommendationAuthority, "unavailable");
-      assert.equal(comparison.awardAuthority, "unavailable");
+      assert.equal(comparison.awardAuthority, "human_reviewed_exact_quotation_revision");
       assert.equal(comparison.poConversionAuthority, "unavailable");
       assert.equal(comparison.participationAuthority, "authoritative");
       assert.equal(comparison.invitationDeliveryAuthority, "unavailable");

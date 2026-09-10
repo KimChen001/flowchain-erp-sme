@@ -203,7 +203,7 @@ export type RfqSupplierComparison = {
   displayOrderAuthority: "supplier_id_ascending";
   rankingAuthority: "unavailable";
   recommendationAuthority: "unavailable";
-  awardAuthority: "unavailable";
+  awardAuthority: "human_reviewed_exact_quotation_revision";
   poConversionAuthority: "unavailable";
   participationAuthority: "authoritative";
   invitationDeliveryAuthority: "unavailable";
@@ -257,6 +257,30 @@ export type RfqSupplierResponseCommandResult = {
   participationVersion: number;
   serverTime: string;
   idempotentReplay: boolean;
+};
+export type RfqAwardDecision = {
+  entityType: "RfqAwardDecision";
+  entityId: string;
+  rfqId: string;
+  supplierId: string;
+  quotationId: string;
+  quotationRevisionId: string;
+  quotationRevisionNumber: number;
+  currency: string;
+  quotedAmount: string;
+  decisionReason: string;
+  decidedByActorId: string;
+  decidedAt: string;
+  createdAt: string;
+  idempotentReplay?: boolean;
+};
+export type RfqAwardDecisionInput = {
+  supplierId: string;
+  quotationId: string;
+  quotationRevisionId: string;
+  expectedQuotationRevisionNumber: number;
+  decisionReason: string;
+  idempotencyKey: string;
 };
 export type PurchaseRequestSummary = { id: string; status: string; totalAmount: number };
 export type PurchaseOrderLine = { sourcePurchaseRequestLineId: string; itemNameSnapshot: string; estimatedAmount: number };

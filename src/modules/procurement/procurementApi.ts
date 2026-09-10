@@ -1,5 +1,5 @@
 import { apiJson } from "../../lib/api-client";
-import type { ProcurementDocument, ProcurementDocumentType, ProcurementRfqDocument, PurchaseOrder, PurchaseRequestSummary, RfqSupplierComparison, RfqSupplierResponseCommandInput, RfqSupplierResponseCommandResult } from "./procurementTypes";
+import type { ProcurementDocument, ProcurementDocumentType, ProcurementRfqDocument, PurchaseOrder, PurchaseRequestSummary, RfqAwardDecision, RfqAwardDecisionInput, RfqSupplierComparison, RfqSupplierResponseCommandInput, RfqSupplierResponseCommandResult } from "./procurementTypes";
 
 export const procurementApi = {
   listRequests: () => apiJson<PurchaseRequestSummary[]>("/api/procurement/requests"),
@@ -16,6 +16,19 @@ export const procurementApi = {
   getRfqSupplierComparison: (id: string) =>
     apiJson<RfqSupplierComparison>(
       `/api/procurement/rfqs/${encodeURIComponent(id)}/comparison`,
+    ),
+  getRfqAwardDecision: (id: string) =>
+    apiJson<{ awardDecision: RfqAwardDecision | null }>(
+      `/api/procurement/rfqs/${encodeURIComponent(id)}/award-decision`,
+    ).then((payload) => payload.awardDecision),
+  createRfqAwardDecision: (rfqId: string, input: RfqAwardDecisionInput) =>
+    apiJson<RfqAwardDecision>(
+      `/api/procurement/rfqs/${encodeURIComponent(rfqId)}/award-decisions`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": input.idempotencyKey },
+        body: JSON.stringify(input),
+      },
     ),
   recordRfqSupplierResponse: (rfqId: string, input: RfqSupplierResponseCommandInput) =>
     apiJson<RfqSupplierResponseCommandResult>(

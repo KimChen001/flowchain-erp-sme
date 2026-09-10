@@ -60,4 +60,6 @@ AuditLog records the command type, Award/RFQ/Supplier/Quotation/Revision identit
 
 ## Future governed capabilities
 
-Split Award, Re-award, Reversal, and Supersede require separate future authorities. The next product phase may add the human Award UI. Exactly-once PO Draft Conversion remains a later independent command scope.
+The RFQ comparison page exposes this authority only to users with `procurement.rfq_award.create`. The user selects one eligible latest revision, enters a decision reason, confirms the exact supplier, amount, and revision, and accepts a final immutable-record confirmation before the command is sent. Existing decisions are displayed as read-only facts.
+
+Split Award, Re-award, Reversal, and Supersede require separate future authorities. Exactly-once PO Draft Conversion remains a later independent command scope.

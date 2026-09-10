@@ -136,7 +136,7 @@ function participationSummary(participants, nonResponseParticipants) {
 
 function limitationsFor(responses, comparisonAvailability) {
   const limitations = [
-    "Comparison is read-only and does not rank, score, recommend, award, approve, or create a purchase order.",
+    "Comparison does not rank, score, recommend, approve, or create a purchase order. A separate reviewed command records the formal Award Decision.",
     "Commercial authority comes only from the maximum revisionNumber for each SupplierQuotation.",
   ];
   if (responses.some((response) => response.authorityState === "revision_missing")) {
@@ -214,7 +214,7 @@ export function createRfqSupplierComparisonService({ prisma, env = process.env, 
         displayOrderAuthority: "supplier_id_ascending",
         rankingAuthority: "unavailable",
         recommendationAuthority: "unavailable",
-        awardAuthority: "unavailable",
+        awardAuthority: "human_reviewed_exact_quotation_revision",
         poConversionAuthority: "unavailable",
         participationAuthority: "authoritative",
         invitationDeliveryAuthority: "unavailable",
