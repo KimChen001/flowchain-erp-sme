@@ -11,7 +11,7 @@ test('knowledge file parser accepts UTF-8 text and derives a title', async () =>
 })
 
 test('knowledge file parser validates signatures and normalizes extracted documents', async () => {
-  await assert.rejects(parseKnowledgeFile({ fileName: 'fake.pdf', contentBase64: encoded('not a pdf document with enough text') }), { code: 'KNOWLEDGE_FILE_INVALID' })
+  await assert.rejects(parseKnowledgeFile({ fileName: 'invalid.pdf', contentBase64: encoded('invalid PDF document with enough text') }), { code: 'KNOWLEDGE_FILE_INVALID' })
   const pdf = await parseKnowledgeFile({ fileName: 'guide.pdf', title: 'Product guide', contentBase64: encoded('%PDF-placeholder') }, { parsePdf: async () => 'First line\r\nSecond product specification line.' })
   assert.equal(pdf.title, 'Product guide')
   assert.equal(pdf.content, 'First line\nSecond product specification line.')
