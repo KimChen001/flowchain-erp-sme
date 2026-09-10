@@ -26,7 +26,8 @@ const REPORT_ENGLISH: Record<string, string> = {
   "暂无业务记录": "No business records", "暂无金额数据": "No monetary data", "请选择币种": "Select a currency", "数据不足": "Insufficient data", "多币种，未折算": "Multiple currencies, not converted", "请选择币种查看金额汇总；当前未接入汇率，不会跨币种相加。": "Select a currency to view monetary totals. FX rates are not connected, so values are not added across currencies.", "当前范围暂无金额记录": "No monetary records in this range", "库存数据不完整": "Inventory data is incomplete", "未启用比较": "Comparison is off", "个百分点": "percentage points", "暂无基期": "No baseline", "点击下钻": "Select to drill down",
   "报表加载中": "Loading report", "加载指标": "Loading metric", "报表加载失败": "Could not load report", "加载失败": "Could not load", "重试": "Retry", "当前报表存在数据范围限制": "This report has data-scope limitations",
   "仓库数据尚未接入当前报表": "Warehouse data is not connected to this report", "库位数据尚未接入当前报表": "Location data is not connected to this report", "当前范围暂无收货记录": "No receiving records in this range", "当前范围暂无发票记录": "No invoice records in this range", "部分库存数量尚未接入，相关指标可能不完整": "Some inventory quantities are not connected, so related metrics may be incomplete", "当前包含多个币种，未进行汇率折算": "This range includes multiple currencies without FX conversion",
-  "采购订单金额": "Purchase order amount", "库存风险 SKU": "Inventory risk SKUs", "销售订单数量": "Sales order count", "当前范围真实记录": "Records in current range", "业务编号": "Business ID", "业务日期": "Business date", "人民币（CNY）": "Chinese yuan (CNY)",
+  "采购订单金额": "Purchase order amount", "库存风险 SKU": "Inventory risk SKUs", "销售订单数量": "Sales order count", "当前范围真实记录": "Records in current range", "业务编号": "Business ID", "业务日期": "Business date",
+  "人民币（CNY）": "Chinese yuan (CNY)", "美元（USD）": "US dollar (USD)", "欧元（EUR）": "Euro (EUR)", "无币种数据": "No currency data",
 };
 
 const reportCopy = (label: string, language = typeof document === "undefined" ? "en-US" : document.documentElement.lang) => {
