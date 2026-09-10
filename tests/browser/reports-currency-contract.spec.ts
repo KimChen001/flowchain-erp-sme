@@ -66,6 +66,32 @@ test('reports overview renders an unfiltered single-currency scope safely', asyn
   expect(errors.join('\n')).not.toContain('Invalid currency code')
 })
 
+test('reports overview localizes a USD scope for the English workspace', async ({ page }) => {
+  await authenticate(page)
+  const errors = collectRuntimeErrors(page)
+  await page.route('**/api/reports/query', async route => {
+    const response = await route.fetch()
+    const payload = await response.json()
+    payload.dataScope = {
+      ...payload.dataScope,
+      currencyCode: 'USD',
+      currencyLabel: '美元（USD）',
+      currencies: ['USD'],
+      currencyAggregationStatus: 'single_currency',
+      currencyAmounts: [{ currencyCode: 'USD', currencyLabel: '美元（USD）', amount: 100 }],
+      fxConverted: false,
+    }
+    payload.kpis = payload.kpis.map((item: { unit: string }) => item.unit === 'currency' ? { ...item, value: 100, currentValue: 100, dataStatus: 'complete', limitations: [] } : item)
+    await route.fulfill({ response, json: payload })
+  })
+  await page.goto('/app/reports/overview')
+  await expect(page.getByTestId('bi-dashboard')).toHaveAttribute('data-view', 'overview')
+  await expect(page.getByText('Currency: US dollar (USD)')).toBeVisible()
+  await expect(page.getByRole('button', { name: /Purchase order amount/ })).toContainText(/\$100/)
+  await expect(page.locator('body')).not.toContainText('美元')
+  expect(errors.join('\n')).not.toContain('Invalid currency code')
+})
+
 test('reports overview presents an unconverted multi-currency scope without crashing', async ({ page }) => {
   await authenticate(page)
   const errors = collectRuntimeErrors(page)
