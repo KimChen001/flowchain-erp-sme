@@ -12,7 +12,7 @@ test('receiving workbench posts and reverses through real PostgreSQL APIs', asyn
   await page.goto('/app/procurement/receiving/browser-grn')
   await expect(page.getByTestId('receiving-workbench')).toBeVisible()
   await expect(page.getByText('Kim', { exact: true })).toBeVisible()
-  await expect(page.getByText('供应链经理', { exact: true })).toBeVisible()
+  await expect(page.getByText('Supply Chain Manager', { exact: true })).toBeVisible()
   await expect(page.getByText('Workflow').first()).toBeVisible()
   await expect(page.getByText('Approved', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Posting', { exact: true }).first()).toBeVisible()

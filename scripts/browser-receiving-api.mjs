@@ -44,7 +44,7 @@ try {
   await execFileAsync(node, [prismaCli, 'migrate', 'deploy'], { cwd: root, env: process.env, maxBuffer: 10 * 1024 * 1024 })
   prisma = await createPrismaClient(process.env)
   await prisma.tenant.create({ data: { id: tenantId, name: 'Receiving Browser Tenant' } })
-  await prisma.user.create({ data: { id: actorId, tenantId, email, name: 'Kim', role: 'manager', jobTitle: '供应链经理' } })
+  await prisma.user.create({ data: { id: actorId, tenantId, email, name: 'Kim', role: 'manager', jobTitle: 'Supply Chain Manager' } })
   await prisma.warehouse.create({ data: { id: 'browser-warehouse', tenantId, code: 'BROWSER-WH', name: 'Browser Warehouse', status: 'active' } })
   await prisma.userWarehouseScope.create({ data: { id: randomUUID(), tenantId, userId: actorId, warehouseId: 'browser-warehouse', accessLevel: 'operate' } })
   await prisma.item.create({ data: { id: 'browser-item', tenantId, sku: 'BROWSER-SKU', name: 'Browser Item', unit: 'EA' } })
