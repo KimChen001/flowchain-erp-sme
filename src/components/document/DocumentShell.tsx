@@ -1,12 +1,11 @@
+import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import React from "react";
 import { X } from "lucide-react";
 import { A, Card, Chip } from "../ui";
 import { RelatedRecordsPanel } from "../navigation/RelatedRecordsPanel";
 import { resolveBusinessLinkedRecord, type BusinessLinkedRecord, type BusinessLinkedRecordInput } from "../../lib/businessLinks";
 import type { WorkflowContext } from "../../lib/workflowContext";
-import { workspaceCopy } from "../../i18n/workspaceCopy";
 
-const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 export type DocumentTone = "neutral" | "info" | "success" | "warning" | "danger" | "purple";
 export type DocumentField = {
@@ -87,6 +86,7 @@ export function DocumentShell({
   children: React.ReactNode;
   onClose?: () => void;
 }) {
+  const copy = useWorkspaceCopy();
   const style = documentToneStyle(tone || statusTone(status));
   return (
     <div className="space-y-4">
@@ -118,6 +118,7 @@ export function DocumentShell({
 }
 
 export function DocumentHeader({ fields, columns = 4 }: { fields: DocumentField[]; columns?: 2 | 3 | 4 }) {
+  const copy = useWorkspaceCopy();
   const gridClass = columns === 2
     ? "grid-cols-1 sm:grid-cols-2"
     : columns === 3
@@ -132,7 +133,7 @@ export function DocumentHeader({ fields, columns = 4 }: { fields: DocumentField[
             <div key={field.label} className="min-w-0">
               <div className="fc-caption font-medium" style={{ color: A.gray2 }}>{copy(field.label)}</div>
               <div className="text-xs font-semibold mt-1 truncate" style={{ color: field.tone ? style.color : A.label }}>{typeof field.value === "string" ? copy(field.value) : field.value || "—"}</div>
-              {field.helper && <div className="fc-caption leading-4 mt-0.5 truncate" style={{ color: A.sub }}>{field.helper}</div>}
+              {field.helper && <div className="fc-caption leading-4 mt-0.5 truncate" style={{ color: A.sub }}>{typeof field.helper === "string" ? copy(field.helper) : field.helper}</div>}
             </div>
           );
         })}
@@ -152,6 +153,7 @@ export function DocumentLinesTable<T extends Record<string, unknown>>({
   emptyText?: string;
   compact?: boolean;
 }) {
+  const copy = useWorkspaceCopy();
   return (
     <Card>
       <div className="overflow-x-auto">
@@ -187,6 +189,7 @@ export function DocumentLinesTable<T extends Record<string, unknown>>({
 }
 
 export function DocumentTotals({ totals, columns = 4 }: { totals: DocumentTotal[]; columns?: 3 | 4 | 5 }) {
+  const copy = useWorkspaceCopy();
   const gridClass = columns === 3
     ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
     : columns === 5
@@ -210,6 +213,7 @@ export function DocumentTotals({ totals, columns = 4 }: { totals: DocumentTotal[
 }
 
 export function DocumentStatusTimeline({ steps }: { steps: TimelineStep[] }) {
+  const copy = useWorkspaceCopy();
   const colorFor = (status: TimelineStep["status"]) => {
     if (status === "done") return A.green;
     if (status === "current") return A.blue;
@@ -230,7 +234,7 @@ export function DocumentStatusTimeline({ steps }: { steps: TimelineStep[] }) {
               </div>
               <div className="ml-2 -mt-0.5">
                 <div className="text-xs font-semibold" style={{ color: step.status === "pending" ? A.gray1 : A.label }}>{copy(step.label)}</div>
-                {step.helper && <div className="fc-caption mt-0.5" style={{ color: A.gray2 }}>{step.helper}</div>}
+                {step.helper && <div className="fc-caption mt-0.5" style={{ color: A.gray2 }}>{typeof step.helper === "string" ? copy(step.helper) : step.helper}</div>}
               </div>
             </div>
           );
@@ -259,6 +263,7 @@ export function DocumentEvidencePanel({
   provenance?: React.ReactNode;
   onNavigate?: (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null, options?: { returnTo?: string; entityLabel?: string; returnContext?: WorkflowContext | null; source?: string }) => void;
 }) {
+  const copy = useWorkspaceCopy();
   const resolvedRecords: BusinessLinkedRecord[] = (relatedRecords?.length ? relatedRecords : linkedDocuments.map((doc) => ({
     entityType: doc.entityType,
     entityId: doc.value,
