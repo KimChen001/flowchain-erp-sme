@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, CircleAlert, RefreshCw, Scale, ShieldCheck, TriangleAlert } from "lucide-react";
+import { ArrowLeft, CheckCircle2, CircleAlert, RefreshCw, Scale, ShieldCheck, TriangleAlert } from "lucide-react";
 import { Link } from "react-router";
 import { A, Card, Chip } from "../../components/ui";
 import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
+import { useI18n } from "../../i18n/I18n";
 import type {
+  RfqAwardDecision,
   RfqComparisonEligibility,
   RfqComparisonResponse,
   RfqSupplierComparison,
@@ -157,7 +159,52 @@ function LineMatrix({ comparison }: { comparison: RfqSupplierComparison }) {
   );
 }
 
-function LoadedComparison({ comparison }: { comparison: RfqSupplierComparison }) {
+function AwardDecisionPanel({ comparison, award, canAward, onAward }: { comparison: RfqSupplierComparison; award: RfqAwardDecision | null; canAward: boolean; onAward: (award: RfqAwardDecision) => void }) {
+  const { language } = useI18n();
+  const tr = (zh: string, en: string) => language === "en-US" ? en : zh;
+  const eligible = comparison.responses.filter((response) => response.comparisonEligibility === "eligible" && response.latestRevision);
+  const [supplierId, setSupplierId] = useState("");
+  const [reason, setReason] = useState("");
+  const [reviewed, setReviewed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const selected = eligible.find((response) => response.supplierId === supplierId);
+  const awardSupplier = comparison.responses.find((response) => response.supplierId === award?.supplierId);
+
+  if (award) return <Card className="border-emerald-200 bg-emerald-50 p-4" data-testid="rfq-award-decision"><div className="flex items-start gap-3"><CheckCircle2 className="mt-0.5 text-emerald-700" size={18} /><div><h2 className="text-sm font-semibold">{tr("正式授标决定已记录", "Formal award decision recorded")}</h2><p className="mt-1 text-xs text-slate-700">{awardSupplier?.supplierName || award.supplierId} · Revision {award.quotationRevisionNumber} · {award.quotedAmount} {award.currency}</p><p className="mt-2 text-xs text-slate-600">{award.decisionReason}</p><p className="mt-2 text-[11px] text-slate-500">{tr("不可修改的人工决定", "Immutable human decision")} · {date(award.decidedAt)}</p></div></div></Card>;
+
+  const unavailable = comparison.rfqStatus !== "collecting_quotes" || eligible.length === 0;
+  const submit = async () => {
+    if (!selected?.latestRevision || !reviewed || !reason.trim()) return;
+    if (!window.confirm(tr("确认记录这项不可修改的正式授标决定？", "Record this immutable formal award decision?"))) return;
+    setBusy(true); setError("");
+    try {
+      const result = await procurementApi.createRfqAwardDecision(comparison.rfqId, {
+        supplierId: selected.supplierId,
+        quotationId: selected.quotationId,
+        quotationRevisionId: selected.latestRevision.revisionId,
+        expectedQuotationRevisionNumber: selected.latestRevision.revisionNumber,
+        decisionReason: reason.trim(),
+        idempotencyKey: globalThis.crypto.randomUUID(),
+      });
+      onAward(result);
+    } catch (next) {
+      setError(next instanceof Error ? next.message : tr("授标决定无法记录。", "The award decision could not be recorded."));
+    } finally { setBusy(false); }
+  };
+
+  return <Card className="p-4" data-testid="rfq-award-decision"><div className="flex items-start gap-3"><ShieldCheck className="mt-0.5 text-blue-600" size={18} /><div className="min-w-0 flex-1"><h2 className="text-sm font-semibold">{tr("人工复核授标", "Reviewed award decision")}</h2><p className="mt-1 text-xs text-slate-500">{tr("选择一份符合资格的最新报价 Revision。系统不会排名、推荐供应商或自动创建采购订单。", "Select one eligible latest quotation revision. The system does not rank or recommend suppliers, and it does not create a purchase order automatically.")}</p>
+    {!canAward ? <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{tr("当前角色可以查看比价，但没有记录正式授标决定的权限。", "Your role can review the comparison but cannot record a formal award decision.")}</p> : unavailable ? <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{comparison.rfqStatus !== "collecting_quotes" ? tr("只有处于收集报价状态的 RFQ 可以授标。", "An award can be recorded only while the RFQ is collecting quotes.") : tr("当前没有符合授标要求的完整报价。", "No complete eligible quotation is available for award.")}</p> : <div className="mt-4 space-y-3">
+      <fieldset className="space-y-2"><legend className="text-xs font-semibold">{tr("选择供应商报价", "Select supplier quotation")}</legend>{eligible.map((response) => <label key={response.supplierId} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-xs ${supplierId === response.supplierId ? "border-blue-500 bg-blue-50" : "border-slate-200"}`}><input className="mt-0.5" type="radio" name="rfq-award-supplier" value={response.supplierId} checked={supplierId === response.supplierId} onChange={() => { setSupplierId(response.supplierId); setReviewed(false); }} /><span><strong>{response.supplierName || response.supplierId}</strong><span className="mt-1 block text-slate-600">Revision {response.latestRevision?.revisionNumber} · {exactAmount(response.latestRevision?.quotedAmount, response.latestRevision?.currency)}</span></span></label>)}</fieldset>
+      <label className="block text-xs font-semibold">{tr("决定理由", "Decision reason")}<textarea rows={3} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2 font-normal" placeholder={tr("说明价格、交期、质量或业务判断依据", "Describe the price, lead time, quality, or business basis")}/></label>
+      <label className="flex items-start gap-2 text-xs"><input className="mt-0.5" type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} /><span>{tr("我已复核所选供应商、报价金额及确切 Revision，并理解授标记录不可修改。", "I reviewed the supplier, quoted amount, and exact revision, and understand that the award record is immutable.")}</span></label>
+      {error && <p className="rounded-lg bg-rose-50 p-2 text-xs text-rose-700" role="alert">{error}</p>}
+      <button type="button" data-testid="record-rfq-award" disabled={busy || !selected || !reviewed || !reason.trim()} onClick={() => void submit()} className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? tr("正在记录…", "Recording…") : tr("记录正式授标决定", "Record formal award decision")}</button>
+    </div>}
+  </div></div></Card>;
+}
+
+function LoadedComparison({ comparison, award, canAward, onAward }: { comparison: RfqSupplierComparison; award: RfqAwardDecision | null; canAward: boolean; onAward: (award: RfqAwardDecision) => void }) {
   const noParticipants = comparison.participationSummary.participantCount === 0;
   const noQuotations = comparison.summary.quotationCount === 0;
   return (
@@ -173,6 +220,7 @@ function LoadedComparison({ comparison }: { comparison: RfqSupplierComparison })
       </Card>
 
       <Availability comparison={comparison} />
+      <AwardDecisionPanel comparison={comparison} award={award} canAward={canAward} onAward={onAward} />
 
       {(noParticipants || noQuotations || comparison.comparisonAvailability === "no_eligible_responses") && <Card className="p-4" data-testid="rfq-comparison-empty-context"><div className="flex items-start gap-2"><CircleAlert className="mt-0.5 text-slate-500" size={16} /><p className="text-xs" style={{ color: A.sub }}>{noParticipants ? "当前 RFQ 尚无供应商参与记录。" : noQuotations ? "已有参与记录，但尚无报价。" : "现有报价均为草稿、不完整、已撤回、历史记录或缺少完整行项目覆盖。"}</p></div></Card>}
 
@@ -197,7 +245,7 @@ function LoadedComparison({ comparison }: { comparison: RfqSupplierComparison })
 
       <Card className="p-4" data-testid="rfq-comparison-limitations">
         <div className="flex items-center gap-2"><ShieldCheck size={16} className="text-blue-600" /><h2 className="text-sm font-semibold">权限与数据边界</h2></div>
-        <ul className="mt-3 space-y-2 text-xs" style={{ color: A.sub }}><li>· 商业事实仅来自每个 SupplierQuotation 最大 revisionNumber。</li><li>· 非有效响应继续展示，但不计入 comparisonAvailability。</li><li>· Participation 只证明内部记录；不证明邮件送达、供应商登录或线上提交。</li><li>· 排名、推荐、Award 与 PO Conversion 权威均为 unavailable。</li>{comparison.limitations.map((limitation) => <li key={limitation}>· {limitation}</li>)}</ul>
+        <ul className="mt-3 space-y-2 text-xs" style={{ color: A.sub }}><li>· 商业事实仅来自每个 SupplierQuotation 最大 revisionNumber。</li><li>· 非有效响应继续展示，但不计入 comparisonAvailability。</li><li>· Participation 只证明内部记录；不证明邮件送达、供应商登录或线上提交。</li><li>· 排名、推荐与 PO Conversion 权威仍为 unavailable；Award 必须由有权限的用户明确确认。</li>{comparison.limitations.map((limitation) => <li key={limitation}>· {limitation}</li>)}</ul>
       </Card>
 
       <Link className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600" to={`/app/procurement/rfq/${encodeURIComponent(comparison.rfqId)}`}><ArrowLeft size={16} />返回 RFQ 详情</Link>
@@ -205,16 +253,20 @@ function LoadedComparison({ comparison }: { comparison: RfqSupplierComparison })
   );
 }
 
-export function CanonicalRfqComparisonPage({ documentId }: { documentId: string }) {
+export function CanonicalRfqComparisonPage({ documentId, effectivePermissionCodes, authorizationLoadState }: { documentId: string; effectivePermissionCodes: Set<string>; authorizationLoadState: "loading" | "ready" | "failed" }) {
   const [comparison, setComparison] = useState<RfqSupplierComparison | null>(null);
+  const [award, setAward] = useState<RfqAwardDecision | null>(null);
   const [state, setState] = useState<ReadState>(documentId.trim() ? "loading" : "malformed");
 
   const load = useCallback(async () => {
     if (!documentId.trim()) { setState("malformed"); return; }
     setState("loading");
     setComparison(null);
+    setAward(null);
     try {
-      setComparison(await procurementApi.getRfqSupplierComparison(documentId));
+      const nextComparison = await procurementApi.getRfqSupplierComparison(documentId);
+      setComparison(nextComparison);
+      try { setAward(await procurementApi.getRfqAwardDecision(documentId)); } catch { setAward(null); }
       setState("loaded");
     } catch (error) {
       setState(failureState(error));
@@ -223,7 +275,7 @@ export function CanonicalRfqComparisonPage({ documentId }: { documentId: string 
 
   useEffect(() => { void load(); }, [load]);
 
-  if (state === "loaded" && comparison) return <LoadedComparison comparison={comparison} />;
+  if (state === "loaded" && comparison) return <LoadedComparison comparison={comparison} award={award} canAward={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_award.create")} onAward={setAward} />;
 
   const messages: Record<Exclude<ReadState, "loading" | "loaded">, string> = {
     malformed: "RFQ 比较链接缺少有效编号。",

@@ -58,8 +58,9 @@ test("RFQ detail opens authoritative comparison and preserves history without wr
   const responseRows = await page.getByTestId("rfq-comparison-responses").locator("tbody > tr").allTextContents();
   expect(responseRows[0]).toContain("Acme Components");
   expect(responseRows[1]).toContain("Summit Packaging");
-  await expect(page.getByRole("button", { name: /Award|授标|PO|采购订单/i })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: /Award|授标|PO Conversion|转为 PO/i })).toHaveCount(0);
+  await expect(page.getByTestId("rfq-award-decision")).toBeVisible();
+  await expect(page.getByTestId("record-rfq-award")).toBeDisabled();
+  await expect(page.getByRole("link", { name: /PO Conversion|转为 PO/i })).toHaveCount(0);
   expect(comparisonRequests).toEqual([exactComparisonPath(RFQ_ID)]);
   expect(allRequests.some((path) => path === "/api/procurement/documents?type=rfq")).toBeFalsy();
   expect(writes).toEqual([]);
@@ -93,7 +94,8 @@ test("multi-currency comparison keeps every response visible without FX or ranki
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-006")).toContainText("计划参与");
   await expect(page.getByTestId("rfq-comparison-cell-LOCAL-DEMO-RFQL-COMPARISON-MIXED-LOCAL-DEMO-SUP-005")).toContainText("未覆盖");
   await expect(page.getByTestId("rfq-comparison-line-matrix")).toContainText("未能与 RFQ 行建立权威对应");
-  await expect(page.getByRole("button", { name: /Award|授标|推荐|创建采购订单|转为 PO/i })).toHaveCount(0);
+  await expect(page.getByTestId("rfq-award-decision")).toBeVisible();
+  await expect(page.getByRole("button", { name: /推荐|创建采购订单|转为 PO/i })).toHaveCount(0);
   expect(businessRequests.filter((request) => request.path.endsWith("/comparison"))).toEqual([{ method: "GET", path: exactComparisonPath("LOCAL-DEMO-RFQ-COMPARISON-MIXED") }]);
   expect(businessRequests.some((request) => /fx|exchange|currency-conversion/i.test(request.path))).toBeFalsy();
   expect(businessRequests.some((request) => ["POST", "PUT", "PATCH", "DELETE"].includes(request.method))).toBeFalsy();
@@ -145,4 +147,19 @@ test("RFQ detail hides comparison navigation without price permission", async ({
   await page.goto(`/app/procurement/rfq/${RFQ_ID}`);
   await expect(page.getByTestId("canonical-rfq-detail")).toBeVisible();
   await expect(page.getByTestId("rfq-comparison-link")).toHaveCount(0);
+});
+
+test("authorized user records an explicit reviewed award from the exact quotation revision", async ({ page, request }) => {
+  await login(page, request);
+  await page.goto(`/app/procurement/rfq/${encodeURIComponent(RFQ_ID)}/comparison`);
+  const panel = page.getByTestId("rfq-award-decision");
+  await expect(panel).toBeVisible();
+  await panel.getByText("Acme Components").click();
+  await panel.getByLabel(/Decision reason|决定理由/).fill("Best reviewed balance of price, lead time, and delivery risk.");
+  await panel.getByText(/I reviewed the supplier|我已复核所选供应商/).click();
+  page.once("dialog", dialog => dialog.accept());
+  await panel.getByTestId("record-rfq-award").click();
+  await expect(panel).toContainText(/Formal award decision recorded|正式授标决定已记录/);
+  await expect(panel).toContainText("Acme Components");
+  await expect(panel).toContainText("4900.0000 CNY");
 });

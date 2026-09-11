@@ -158,6 +158,7 @@ const definitions = [
   ["procurement.purchase_order.revise", "procurement", "purchase_order", "revise", "medium"],
   ["procurement.rfq_response.create", "procurement", "rfq_response", "create", "high"],
   ["procurement.rfq_response.revise", "procurement", "rfq_response", "revise", "high"],
+  ["procurement.rfq_award.create", "procurement", "rfq_award", "create", "high"],
   ["mobile.sync.use", "mobile", "sync", "use", "high"],
   ["mobile.tasks.read", "mobile", "tasks", "read", "low"],
   ["mobile.procurement.approval.read", "mobile", "procurement_approval", "read", "low"],
@@ -214,7 +215,9 @@ export const defaultRoleTemplates = Object.freeze([
   { roleKey: "procurement-specialist", name: "Procurement Specialist", permissions: ["returns.request.read", "returns.request.create", "returns.request.revise", "returns.request.submit", "returns.request.cancel", "returns.authorization.read", "returns.posting.read", "returns.quarantine.read", "receiving.read", "inventory.balance.read", "procurement.prices.read", "procurement.purchase_order.read", "procurement.purchase_order.revise", "procurement.rfq_response.create", "procurement.rfq_response.revise", "mobile.sync.use", "mobile.tasks.read", "mobile.procurement.approval.read", "mobile.receiving.read", "mobile.receiving.prepare"] },
   { roleKey: "finance-specialist", name: "Finance Specialist", permissions: [...byPrefix("finance."), "mobile.sync.use", "mobile.tasks.read", "audit.read"] },
   { roleKey: "read-only-viewer", name: "Read-only Viewer", permissions: reads.filter((code) => !["audit.read_sensitive", "finance.amounts.read", "finance.partner_snapshot.read", "finance.bank_statement.read", "finance.bank_mapping.read", "finance.bank_reconciliation.read", "procurement.prices.read", "settings.diagnostics.read", "settings.export.read"].includes(code)) },
-])
+].map((template) => template.roleKey === "operations-manager"
+  ? { ...template, permissions: [...template.permissions, "procurement.rfq_award.create"] }
+  : template))
 
 export const legacyRoleTemplateMap = Object.freeze({
   admin: "workspace-administrator",

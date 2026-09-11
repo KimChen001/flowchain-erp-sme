@@ -3,6 +3,7 @@ import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { normalizeProcurementAuthorityStatus } from "./procurement-status-authority.mjs";
 import { exactRfqDecimalString } from "./rfq-commercial-decimal.mjs";
+import { rfqComparisonEligibility, rfqRevisionCoverage } from "./rfq-comparison-eligibility.mjs";
 
 export class RfqSupplierComparisonError extends Error {
   constructor(code, message, status = 400, details) {
@@ -50,30 +51,6 @@ function lineAuthority(line, targetLineIds) {
   return targetLineIds.has(line.rfqLineId) ? "exact_target_rfq_line" : "different_rfq_line";
 }
 
-function comparisonEligibility(latest, status, coverageState) {
-  if (!latest) {
-    return { state: "authority_missing", reasons: ["authoritative_revision_missing"] };
-  }
-  if (!status) {
-    return { state: "unknown_status", reasons: ["revision_status_unknown"] };
-  }
-  if (["draft", "incomplete"].includes(status)) {
-    return { state: "not_ready", reasons: [`revision_status_${status}`] };
-  }
-  if (status === "not_selected") {
-    return { state: "historical_only", reasons: ["revision_status_not_selected"] };
-  }
-  if (status === "withdrawn") {
-    return { state: "withdrawn", reasons: ["revision_status_withdrawn"] };
-  }
-  if (["submitted", "shortlisted"].includes(status)) {
-    return coverageState === "complete"
-      ? { state: "eligible", reasons: [] }
-      : { state: "incomplete_coverage", reasons: [`rfq_line_coverage_${coverageState}`] };
-  }
-  return { state: "unknown_status", reasons: ["revision_status_unknown"] };
-}
-
 function mapResponse(quotation, targetLines) {
   const latest = quotation.revisions?.[0] || null;
   const targetLineIds = new Set(targetLines.map((line) => line.id));
@@ -92,27 +69,9 @@ function mapResponse(quotation, targetLines) {
       deliveryDate: isoDateTime(line.deliveryDate),
     }))
     .sort((left, right) => compareText(left.rfqLineId || "", right.rfqLineId || "") || compareText(left.revisionLineId, right.revisionLineId));
-  const matchedIds = new Set(revisionLines
-    .filter((line) => line.lineAuthorityState === "exact_target_rfq_line")
-    .map((line) => line.rfqLineId));
-  const missingRfqLineIds = targetLines.map((line) => line.id).filter((id) => !matchedIds.has(id));
-  const unmappedLineCount = revisionLines.filter((line) => line.lineAuthorityState !== "exact_target_rfq_line").length;
-  const coverageState = targetLines.length === 0
-    ? "not_applicable"
-    : matchedIds.size === targetLines.length && unmappedLineCount === 0
-      ? "complete"
-      : matchedIds.size === 0
-        ? "none"
-        : "partial";
+  const coverage = rfqRevisionCoverage(targetLines, revisionLines);
   const status = latest ? canonicalStatus("supplierQuotationRevision", latest.status) : null;
-  const coverage = {
-    state: coverageState,
-    requiredLineCount: targetLines.length,
-    matchedLineCount: matchedIds.size,
-    missingRfqLineIds,
-    unmappedLineCount,
-  };
-  const eligibility = comparisonEligibility(latest, status, coverageState);
+  const eligibility = rfqComparisonEligibility({ revision: latest, status, coverageState: coverage.state });
   return {
     quotationId: quotation.id,
     supplierId: quotation.supplierId,
@@ -177,7 +136,7 @@ function participationSummary(participants, nonResponseParticipants) {
 
 function limitationsFor(responses, comparisonAvailability) {
   const limitations = [
-    "Comparison is read-only and does not rank, score, recommend, award, approve, or create a purchase order.",
+    "Comparison does not rank, score, recommend, approve, or create a purchase order. A separate reviewed command records the formal Award Decision.",
     "Commercial authority comes only from the maximum revisionNumber for each SupplierQuotation.",
   ];
   if (responses.some((response) => response.authorityState === "revision_missing")) {
@@ -255,7 +214,7 @@ export function createRfqSupplierComparisonService({ prisma, env = process.env, 
         displayOrderAuthority: "supplier_id_ascending",
         rankingAuthority: "unavailable",
         recommendationAuthority: "unavailable",
-        awardAuthority: "unavailable",
+        awardAuthority: "human_reviewed_exact_quotation_revision",
         poConversionAuthority: "unavailable",
         participationAuthority: "authoritative",
         invitationDeliveryAuthority: "unavailable",

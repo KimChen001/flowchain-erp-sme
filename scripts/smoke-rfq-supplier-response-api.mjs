@@ -218,7 +218,7 @@ try {
   check(comparison.payload.summary.eligibleResponseCount, 1, "eligible response summary excludes draft revision");
   check(comparison.payload.participationSummary.responseRecordedCount, 2, "submitted participation evidence remains authoritative after later draft");
   check(comparison.payload.rankingAuthority, "unavailable", "comparison does not rank");
-  check(comparison.payload.awardAuthority, "unavailable", "comparison does not award");
+  check(comparison.payload.awardAuthority, "human_reviewed_exact_quotation_revision", "comparison exposes separate reviewed award authority");
 
   const comparisonDenied = await request(comparisonPath, { userId: "rfq-response-api-viewer", role: "viewer" });
   check(comparisonDenied.status, 403, "comparison requires procurement price permission");

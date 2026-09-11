@@ -159,6 +159,13 @@ function replayExecution(row, requestHash) {
   return { ...row.resultPayload, idempotentReplay: true };
 }
 
+function isPostgresConcurrencyError(error) {
+  if (error?.code === "P2034") return true;
+  if (error?.code !== "P2010") return false;
+  const metadata = JSON.stringify(error?.meta || {});
+  return /40001|40P01|serializ|deadlock/i.test(metadata);
+}
+
 export function createRfqSupplierResponseCommandService({
   prisma,
   env = process.env,
@@ -221,6 +228,18 @@ export function createRfqSupplierResponseCommandService({
         const rfqStatus = canonicalRfqStatus(rfq.status);
         if (![RFQ_STATUS.OPEN, RFQ_STATUS.COLLECTING_QUOTES].includes(rfqStatus)) {
           fail("RFQ_RESPONSE_WORKFLOW_CONFLICT", "Supplier responses may be recorded only while the RFQ is open for responses.", 409, { rfqId: rfq.id, currentStatus: rfqStatus, availableActions: ["reload"] });
+        }
+        const awardDecision = await tx.rfqAwardDecision.findUnique({
+          where: { tenantId_rfqId: { tenantId: actor.tenantId, rfqId: payload.rfqId } },
+          select: { id: true },
+        });
+        if (awardDecision) {
+          fail(
+            "RFQ_RESPONSE_AWARD_EXISTS",
+            "Supplier responses cannot be changed after a reviewed Award Decision exists.",
+            409,
+            { rfqId: payload.rfqId, awardDecisionId: awardDecision.id, availableActions: ["reload"] },
+          );
         }
 
         await tx.$queryRawUnsafe('SELECT "id" FROM "Supplier" WHERE "tenantId"=$1 AND "id"=$2 FOR UPDATE', actor.tenantId, payload.supplierId);
@@ -464,9 +483,31 @@ export function createRfqSupplierResponseCommandService({
       if (error?.code === "P2002") {
         const committed = replayExecution(await client.businessCommandExecution.findUnique({ where: executionWhere }), requestHash);
         if (committed) return committed;
+        const awardDecision = await client.rfqAwardDecision.findUnique({
+          where: { tenantId_rfqId: { tenantId: initialActor.tenantId, rfqId: payload.rfqId } },
+          select: { id: true },
+        });
+        if (awardDecision) {
+          fail("RFQ_RESPONSE_AWARD_EXISTS", "Supplier responses cannot be changed after a reviewed Award Decision exists.", 409, {
+            rfqId: payload.rfqId,
+            awardDecisionId: awardDecision.id,
+            availableActions: ["reload"],
+          });
+        }
         fail("RFQ_RESPONSE_CONCURRENCY_CONFLICT", "Supplier response facts changed concurrently. Reload and retry.", 409, { expectedVersion: payload.expectedVersion, availableActions: ["reload"] });
       }
-      if (error?.code === "P2034") {
+      if (isPostgresConcurrencyError(error)) {
+        const awardDecision = await client.rfqAwardDecision.findUnique({
+          where: { tenantId_rfqId: { tenantId: initialActor.tenantId, rfqId: payload.rfqId } },
+          select: { id: true },
+        });
+        if (awardDecision) {
+          fail("RFQ_RESPONSE_AWARD_EXISTS", "Supplier responses cannot be changed after a reviewed Award Decision exists.", 409, {
+            rfqId: payload.rfqId,
+            awardDecisionId: awardDecision.id,
+            availableActions: ["reload"],
+          });
+        }
         fail("RFQ_RESPONSE_CONCURRENCY_CONFLICT", "Supplier response facts changed concurrently. Reload and retry.", 409, { expectedVersion: payload.expectedVersion, availableActions: ["reload"] });
       }
       throw error;
