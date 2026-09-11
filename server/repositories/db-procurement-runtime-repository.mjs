@@ -18,6 +18,7 @@ const mapLine = (line = {}) => ({
   unit: line.unit,
   unitPrice: decimal(line.unitPrice),
   amount: decimal(line.amount),
+  promisedDate: line.metadata?.promisedDate || null,
 });
 
 const mapPo = (row = {}) => ({
@@ -31,6 +32,8 @@ const mapPo = (row = {}) => ({
   sourcePrId: row.sourceRequestId,
   sourceRfqId: row.sourceRfqId,
   expectedDate: row.expectedDate?.toISOString?.() || row.expectedDate || null,
+  owner: row.owner || '',
+  createdAt: row.createdAt?.toISOString?.() || row.createdAt || null,
   version: row.version,
   lines: (row.lines || []).map(mapLine),
   auditTrailIds: Array.isArray(row.metadata?.approvalTimeline) ? row.metadata.approvalTimeline : [],
@@ -48,6 +51,12 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
     adapter: "durable-procurement-runtime-v2",
     authorityAdapter: "db-procurement-authority-v1",
     authority,
+    async listForReport({ tenantId } = {}) {
+      if (!text(tenantId)) throw Object.assign(new Error('Workspace identity is required.'), { status: 403 });
+      const dbClient = await client();
+      const rows = await dbClient.purchaseOrder.findMany({ where: { tenantId: text(tenantId) }, include: { lines: true }, orderBy: [{ id: 'asc' }] });
+      return rows.map(mapPo);
+    },
     async get(type, id, options = {}) {
       if (type !== "po") return null;
       return authority.readPurchaseOrder(id, options.context || options, options);

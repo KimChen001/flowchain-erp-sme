@@ -5,7 +5,7 @@ const root = resolve(import.meta.dirname, "..");
 const cli = join(root, "node_modules", "playwright", "cli.js");
 const child = spawn(
   process.execPath,
-  [cli, "test", "tests/browser/reports-currency-contract.spec.ts"],
+  [cli, "test", "tests/browser/reports-currency-contract.spec.ts", "tests/browser/open-purchase-orders-report.spec.ts"],
   {
     stdio: "inherit",
     env: {
