@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { SupplierForm } from "./SupplierForm";
+import { supplierCopy } from "./supplierCopy";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -54,7 +56,7 @@ const request = <T,>(url: string, method = "GET", body?: unknown) =>
     method,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-const empty = () => ({
+const empty = (currency = "") => ({
   supplierCode: "",
   supplierName: "",
   shortName: "",
@@ -67,7 +69,7 @@ const empty = () => ({
   address: "",
   postalCode: "",
   deliveryCycleDays: "",
-  defaultCurrency: "CNY",
+  defaultCurrency: currency,
   paymentTermsId: "NET30",
   settlementMethod: "",
   creditCode: "",
@@ -123,7 +125,10 @@ export default function SupplierMasterPage({
   onActiveContextChange?: (context: any) => void;
 }) {
   const { language } = useI18n();
-  const copy = (label: string) => workspaceCopy(label, language);
+  const copy = (label: string) => supplierCopy(workspaceCopy(label, language), language);
+  const [saving, setSaving] = useState(false);
+  const [currencyWarning, setCurrencyWarning] = useState(false);
+  const savingRef = useRef(false);
   const [rows, setRows] = useState<Supplier[]>([]),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
@@ -208,20 +213,33 @@ export default function SupplierMasterPage({
       toast.error(e.message);
     }
   };
-  const startCreate = () => {
+  const startCreate = async () => {
+    let currency = '';
+    try { currency = (await request<{ company: { currency: string } }>('/api/settings-runtime')).company.currency; } catch { /* Let the user choose explicitly. */ }
+    setCurrencyWarning(!currency);
     setEditing(null);
-    setForm(empty());
+    setForm(empty(currency));
     setFieldErrors([]);
     setShowForm(true);
   };
   const startEdit = (supplier: Supplier) => {
     setEditing(supplier);
+    setCurrencyWarning(false);
     setForm({ ...supplier, categories: (supplier.categories || []).join(",") });
     setFieldErrors([]);
     setShowForm(true);
   };
   const save = async () => {
-    setFieldErrors([]);
+    if (savingRef.current) return;
+    const issues = [];
+    if (!String(form.supplierCode).trim()) issues.push({ field: 'supplierCode', message: 'Enter a supplier code.' });
+    if (!String(form.supplierName).trim()) issues.push({ field: 'supplierName', message: 'Enter a supplier name.' });
+    if (!form.defaultCurrency) issues.push({ field: 'defaultCurrency', message: 'Choose a valid currency.' });
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) issues.push({ field: 'email', message: 'Enter a valid email address.' });
+    if (form.deliveryCycleDays && (!Number.isInteger(Number(form.deliveryCycleDays)) || Number(form.deliveryCycleDays) < 0)) issues.push({ field: 'deliveryCycleDays', message: 'Lead time must be a whole number of days, zero or greater.' });
+    setFieldErrors(issues);
+    if (issues.length) { document.getElementById('supplier-' + issues[0].field)?.focus(); return; }
+    savingRef.current = true; setSaving(true);
     try {
       const body: any = {
         ...form,
@@ -246,15 +264,16 @@ export default function SupplierMasterPage({
             body,
           );
       setShowForm(false);
+      toast.success(copy("Supplier saved"));
       await load();
       await openDetail(result.supplier.id);
     } catch (e: unknown) {
       setFieldErrors(
         e instanceof ApiError && e.details.length
           ? e.details
-          : [{ message: e instanceof Error ? e.message : "保存失败" }],
+          : [{ message: e instanceof Error ? copy(e.message) : copy("Could not save supplier. Please try again.") }],
       );
-    }
+    } finally { savingRef.current = false; setSaving(false); }
   };
   const toggle = async (supplier: Supplier) => {
     await request(`/api/master-data/suppliers/${supplier.id}`, "PATCH", {
@@ -299,84 +318,7 @@ export default function SupplierMasterPage({
       toast.error(e.message);
     }
   };
-  if (showForm)
-    return (
-      <Card className="p-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold">
-              {editing ? "编辑供应商" : "新增供应商"}
-            </h1>
-            <p className="text-xs" style={{ color: A.sub }}>
-              维护基本资料、联系信息、财税与商业条款。
-            </p>
-          </div>
-          <button onClick={() => setShowForm(false)}>取消</button>
-        </div>
-        {fieldErrors.length > 0 && (
-          <div
-            role="alert"
-            className="mt-3 rounded bg-red-50 p-3 text-xs text-red-700"
-          >
-            {fieldErrors.map((e, i) => (
-              <div key={i}>{e.message || e.field}</div>
-            ))}
-          </div>
-        )}
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          {[
-            ["supplierCode", "供应商编号"],
-            ["supplierName", "供应商名称"],
-            ["shortName", "简称"],
-            ["businessType", "经营类型"],
-            ["categories", "经营品类（逗号分隔）"],
-            ["contactName", "联系人"],
-            ["telephone", "联系电话"],
-            ["email", "邮箱"],
-            ["address", "地址"],
-            ["postalCode", "邮编"],
-            ["deliveryCycleDays", "送货周期（天）"],
-            ["defaultCurrency", "默认币种"],
-            ["paymentTermsId", "付款条款"],
-            ["settlementMethod", "结算方式"],
-            ["creditCode", "统一社会信用代码"],
-            ["taxIdentificationNumber", "税号"],
-            ["bankName", "银行"],
-            ["bankAccountName", "户名"],
-            ["bankAccountNumber", "银行账号"],
-            ["internalComment", "内部备注"],
-          ].map(([key, label]) => (
-            <Field key={key} label={label}>
-              <input
-                aria-label={label}
-                value={form[key] ?? ""}
-                onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-                style={inputStyle}
-              />
-            </Field>
-          ))}
-          <Field label="状态">
-            <select
-              value={form.status}
-              onChange={(e) => setForm({ ...form, status: e.target.value })}
-              style={inputStyle}
-            >
-              <option value="draft">草稿</option>
-              <option value="active">启用</option>
-              <option value="inactive">停用</option>
-            </select>
-          </Field>
-        </div>
-        <div className="mt-5 flex justify-end">
-          <button
-            onClick={save}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm text-white"
-          >
-            保存供应商
-          </button>
-        </div>
-      </Card>
-    );
+  if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
   if (selected)
     return (
       <div className="space-y-4">
@@ -387,28 +329,26 @@ export default function SupplierMasterPage({
               onActiveContextChange?.(null);
             }}
           >
-            返回供应商列表
-          </button>
+            {copy("返回供应商列表")}</button>
           <div className="flex gap-2">
             <button
               onClick={() => startEdit(selected)}
               className="inline-flex items-center gap-1 rounded border px-3 py-2 text-xs"
             >
               <Pencil size={14} />
-              编辑
-            </button>
+              {copy("编辑")}</button>
             <button
               onClick={() => toggle(selected)}
               className="rounded border px-3 py-2 text-xs"
             >
-              {selected.status === "active" ? "停用" : "启用"}
+              {copy(selected.status === "active" ? "停用" : "启用")}
             </button>
           </div>
         </div>
         <Card className="p-5">
           <h1 className="text-lg font-semibold">{selected.supplierName}</h1>
           <div className="mt-1 text-xs" style={{ color: A.sub }}>
-            {selected.supplierCode} · {statusLabel[selected.status]}
+            {selected.supplierCode} · {copy(statusLabel[selected.status])}
           </div>
           <div className="mt-5 grid gap-4 md:grid-cols-3">
             {[
@@ -429,8 +369,8 @@ export default function SupplierMasterPage({
                 `${selected.creditCode || "-"} · ${selected.taxIdentificationNumber || "-"} · ${selected.bankName || "-"} · ${selected.bankAccountNumber || "-"}`,
               ],
             ].map(([title, value]) => (
-              <section key={title}>
-                <h2 className="text-xs font-semibold">{title}</h2>
+              <section key={copy(title)}>
+                <h2 className="text-xs font-semibold">{copy(title)}</h2>
                 <p className="mt-2 text-xs leading-5" style={{ color: A.sub }}>
                   {value}
                 </p>
@@ -439,18 +379,18 @@ export default function SupplierMasterPage({
           </div>
         </Card>
         <Card className="p-5">
-          <h2 className="text-sm font-semibold">可供应物料</h2>
-          {relationshipLimitation && <p role="alert" className="mt-2 text-xs text-amber-700">{relationshipLimitation}</p>}
+          <h2 className="text-sm font-semibold">{copy("可供应物料")}</h2>
+          {relationshipLimitation && <p role="alert" className="mt-2 text-xs text-amber-700">{copy("Supplied-item links are currently unavailable.")}</p>}
           <div className="mt-3 grid gap-2 md:grid-cols-4">
             <select
-              aria-label="选择 SKU"
+              aria-label={copy("选择 SKU")}
               value={relationForm.itemId}
               onChange={(e) =>
                 setRelationForm({ ...relationForm, itemId: e.target.value })
               }
               style={inputStyle}
             >
-              <option value="">选择 SKU</option>
+              <option value="">{copy("选择 SKU")}</option>
               {items
                 .filter(
                   (i) => !relationships.some((r) => r.itemId === i.itemId),
@@ -475,8 +415,8 @@ export default function SupplierMasterPage({
               Preferred
             </label>
             <input
-              aria-label="参考价格"
-              placeholder="参考价格"
+              aria-label={copy("参考价格")}
+              placeholder={copy("参考价格")}
               value={relationForm.referencePrice}
               onChange={(e) =>
                 setRelationForm({
@@ -490,13 +430,11 @@ export default function SupplierMasterPage({
               onClick={addRelationship}
               className="rounded bg-blue-600 px-3 py-2 text-xs text-white"
             >
-              新增供应商关系
-            </button>
+              {copy("新增供应商关系")}</button>
           </div>
           {relationships.length === 0 ? (
             <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
-              暂无可供应物料
-            </div>
+              {copy("暂无可供应物料")}</div>
           ) : (
             <table className="mt-3 w-full text-xs">
               <thead>
@@ -511,8 +449,8 @@ export default function SupplierMasterPage({
                     "状态",
                     "操作",
                   ].map((h) => (
-                    <th key={h} className="p-2 text-left">
-                      {h}
+                    <th key={copy(h)} className="p-2 text-left">
+                      {copy(h)}
                     </th>
                   ))}
                 </tr>
@@ -525,14 +463,14 @@ export default function SupplierMasterPage({
                         {r.item?.sku || r.itemId} · {r.item?.itemName || ""}
                       </EntityLink>
                     </td>
-                    <td className="p-2">{r.preferred ? "是" : "否"}</td>
-                    <td className="p-2">{r.approved ? "是" : "否"}</td>
+                    <td className="p-2">{copy(r.preferred ? "是" : "否")}</td>
+                    <td className="p-2">{copy(r.approved ? "是" : "否")}</td>
                     <td className="p-2">{r.leadTimeDays}</td>
                     <td className="p-2">{r.minimumOrderQuantity}</td>
                     <td className="p-2">
                       {r.currency} {r.referencePrice}
                     </td>
-                    <td className="p-2">{r.active ? "启用" : "停用"}</td>
+                    <td className="p-2">{copy(r.active ? "启用" : "停用")}</td>
                     <td className="p-2 space-x-2">
                       {!r.preferred && (
                         <button
@@ -540,15 +478,14 @@ export default function SupplierMasterPage({
                             updateRelationship(r, { preferred: true })
                           }
                         >
-                          设为首选
-                        </button>
+                          {copy("设为首选")}</button>
                       )}
                       <button
                         onClick={() =>
                           updateRelationship(r, { active: !r.active })
                         }
                       >
-                        {r.active ? "停用" : "启用"}
+                        {copy(r.active ? "停用" : "启用")}
                       </button>
                     </td>
                   </tr>
@@ -558,16 +495,14 @@ export default function SupplierMasterPage({
           )}
         </Card>
         <Card className="p-5">
-          <h2 className="text-sm font-semibold">采购记录</h2>
+          <h2 className="text-sm font-semibold">{copy("采购记录")}</h2>
           <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
-            暂无采购交易记录
-          </div>
+            {copy("暂无采购交易记录")}</div>
         </Card>
         <Card className="p-5">
-          <h2 className="text-sm font-semibold">风险与异常</h2>
+          <h2 className="text-sm font-semibold">{copy("风险与异常")}</h2>
           <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
-            暂无风险或异常
-          </div>
+            {copy("暂无风险或异常")}</div>
         </Card>
       </div>
     );
@@ -662,7 +597,7 @@ export default function SupplierMasterPage({
                   "更新时间",
                   "操作",
                 ].map((h) => (
-                  <th key={h} className="p-3 text-left">
+                  <th key={copy(h)} className="p-3 text-left">
                     {copy(h)}
                   </th>
                 ))}
