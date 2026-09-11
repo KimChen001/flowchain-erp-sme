@@ -22,7 +22,7 @@ names, or supplier names in place. Translate their presentation where appropriat
 - Locale, currency, timezone, and operational data remain unchanged.
 - The RFQ list, authoritative detail, supplier-response editor, quotation
   comparison, error states, and reviewed award decision use the active language.
-- The local US demo includes one USD RFQ with two authoritative supplier
+- The local US development workspace includes one USD RFQ with two authoritative supplier
   quotation revisions so the complete comparison and award path is reviewable.
 
 Deploy this migration once through the normal release process before serving the
