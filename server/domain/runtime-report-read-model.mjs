@@ -38,7 +38,7 @@ const dashboardMetrics = {
 function runtimeRows(context, inventory) {
   return {
     purchase_orders: array(context.purchaseOrders).map(row => ({ id: text(row.id || row.po), date: date(row), supplier: text(row.supplierSnapshot?.supplierName || row.supplierName || row.supplierId), amount: number(row.totalAmount ?? row.amount), quantity: array(row.lines).reduce((total, line) => total + number(line.quantity ?? line.orderedQty), 0), status: text(row.status), currency: currencyCode(row.currency || row.lines?.[0]?.currency || 'CNY') })),
-    sales_orders: array(context.salesOrders).map(row => ({ id: text(row.salesOrderId || row.id), date: date(row), customer: text(row.customerName || row.customerId), sku: text(row.sku || row.itemId), quantity: number(row.orderedQty), fulfilled: number(row.fulfilledQty), status: text(row.statusLabel || row.status), amount: number(row.totalAmount ?? row.amount), currency: currencyCode(row.currency || 'CNY') })),
+    sales_orders: array(context.salesOrders).map(row => ({ id: text(row.salesOrderId || row.id), date: date(row), customer: text(row.customerName || row.customerId), sku: text(row.sku || row.itemId), quantity: number(row.orderedQty), fulfilled: number(row.fulfilledQty), status: text(['draft', 'cancelled', 'canceled'].includes(row.workflowStatus) ? row.workflowStatus : row.status || row.statusLabel), amount: number(row.totalAmount ?? row.amount), currency: currencyCode(row.currency || 'CNY') })),
     inventory_balances: inventory.availability.map(row => ({ id: row.sku, sku: row.sku, quantity: row.onHand, reserved: row.reserved, available: row.available, shortage: row.shortage, availableToPromise: row.availableToPromise, status: row.riskLevel })),
     supplier_invoices: array(context.supplierInvoices).map(row => ({ id: text(row.id || row.invoiceNumber), date: date(row), supplier: text(row.supplierName || row.supplierId), amount: number(row.totalAmount ?? row.amount), status: text(row.status), currency: currencyCode(row.currency || 'CNY') })),
     suppliers: array(context.suppliers).map(row => ({ id: text(row.id || row.supplierCode), supplier: text(row.supplierName || row.name), status: text(row.status) })),
@@ -51,10 +51,11 @@ function filtered(rows, query, applyCurrency = true) {
 
 function value(id, all, inventory) {
   if (id === 'sales_order_count') return all.sales_orders.length
-  if (id === 'open_sales_demand') return all.sales_orders.reduce((total, row) => total + Math.max(0, row.quantity - row.fulfilled), 0)
+  if (id === 'open_sales_demand') return all.sales_orders.filter(row => !['draft', 'cancelled', 'canceled'].includes(row.status)).reduce((total, row) => total + Math.max(0, row.quantity - row.fulfilled), 0)
   if (id === 'purchase_order_amount') return sum(all.purchase_orders, 'amount')
-  if (id === 'open_po_count') return all.purchase_orders.filter(row => !['closed', 'cancelled', 'completed'].includes(row.status)).length
+  if (id === 'open_po_count') return all.purchase_orders.filter(row => !['closed', 'cancelled', 'canceled', 'completed', 'fully_received', 'rejected'].includes(row.status)).length
   if (id === 'inventory_on_hand') {
+    if (inventory.units?.length > 1) return null
     if (!inventory.availability.length) return 0
     if (inventory.availability.some(row => row.onHand === null)) return null
     return inventory.availability.reduce((total, row) => total + row.onHand, 0)
@@ -71,12 +72,14 @@ function metric(id, all, inventory, aggregationStatus) {
   const currentValue = unconverted ? null : value(id, all, inventory)
   const incomplete = unconverted || (id === 'inventory_on_hand' && currentValue === null)
   const dataStatus = incomplete ? 'incomplete' : id === 'inventory_on_hand' && !inventory.availability.length ? 'empty' : 'complete'
-  const limitations = unconverted ? ['multi_currency_unconverted'] : incomplete ? ['inventory_on_hand_incomplete'] : []
+  const limitations = unconverted ? ['multi_currency_unconverted'] : id === 'inventory_on_hand' && inventory.units?.length > 1 ? ['inventory_units_mixed'] : incomplete ? ['inventory_on_hand_incomplete'] : []
   return { id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: ['from', 'to', 'supplier', 'customer', 'currency'], drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, generatedAt: new Date().toISOString() }
 }
 
 export function buildRuntimeGovernedReport(context, input = {}) {
   const inventory = buildRuntimeInventoryAllocation(context)
+  inventory.units = [...new Set(array(context.inventoryItems).map(row => text(row.unit)).filter(Boolean))]
+  if (inventory.units.length > 1) inventory.dataLimitations.push('inventory_units_mixed')
   const query = { subject: dashboardMetrics[input.subject] ? input.subject : 'overview', from: text(input.filters?.from || ''), to: text(input.filters?.to || ''), supplier: text(input.filters?.supplier || ''), customer: text(input.filters?.customer || ''), currency: currencyCode(input.filters?.currency), status: text(input.filters?.status || ''), limit: Math.max(1, Math.min(200, number(input.limit || 50))) }
   const source = runtimeRows(context, inventory)
   const all = Object.fromEntries(Object.entries(source).map(([key, value]) => [key, filtered(value, query)]))

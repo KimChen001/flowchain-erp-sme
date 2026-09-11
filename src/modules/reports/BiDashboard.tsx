@@ -52,7 +52,7 @@ const VIEW_COPY: Record<DashboardView, { label: string; subtitle: string; detail
   finance: { label: "结算分析", subtitle: "跟踪应付、发票差异、三单匹配与结算状态", detailTitle: "待处理发票" },
   suppliers: { label: "供应商分析", subtitle: "比较采购集中度、OTIF、质量与发票差异风险", detailTitle: "供应商绩效" },
 };
-const COLORS = ["#2563eb", "#10b981", "#f59e0b", "#8b5cf6"];
+const COLORS = ["#2563eb", "#10b981", "#f59e0b", "#8b5cf6", "#64748b", "#ec4899", "#06b6d4", "#ef4444"];
 const FILTER_LABELS: Record<string, string> = { from: "开始", to: "结束", company: "公司", warehouse: "仓库", supplier: "供应商", customer: "客户", category: "品类", currency: "币种", matchStatus: "匹配状态", status: "状态", risk: "风险", aging: "账龄", varianceType: "差异类型" };
 const FILTER_VALUE_LABELS: Record<string, string> = { matched: "已匹配", variance: "存在差异", pending: "待匹配", blocked: "阻断", delivered: "已交付", partial: "部分交付", open: "进行中", "below-safety": "低于安全库存" };
 const LIMITATION_LABELS: Record<string, string> = {
@@ -61,10 +61,12 @@ const LIMITATION_LABELS: Record<string, string> = {
   receipt_runtime_has_no_records: "当前范围暂无收货记录",
   invoice_runtime_has_no_records: "当前范围暂无发票记录",
   inventory_on_hand_incomplete: "部分库存数量尚未接入，相关指标可能不完整",
+  inventory_units_mixed: "Inventory uses different units; quantities are shown by SKU without a combined stock total.",
   multi_currency_unconverted: "当前包含多个币种，未进行汇率折算",
 };
 
 function metricDisplayValue(item: MetricDefinition, dataScope: GovernedReport["dataScope"]) {
+  if (item.limitations?.includes('inventory_units_mixed')) return 'Mixed units';
   if (item.dataStatus === "no_records") return "暂无业务记录";
   if (item.unit === "currency" && dataScope.currencyAggregationStatus === "no_currency_data") return "暂无金额数据";
   if (item.unit === "currency" && dataScope.currencyAggregationStatus === "multi_currency_unconverted") return "请选择币种";
@@ -102,9 +104,9 @@ function ChartPanel({ chart, currencyCode, onDrill, onCrossFilter }: { chart: Re
   else if (chart.type === "pie" || chart.type === "donut") visual = <PieChart><Tooltip cursor={{ fill: "#f1f5f9" }} formatter={tooltipFormatter} /><Legend /><Pie data={rows} dataKey="value" nameKey="name" cx="50%" cy="48%" outerRadius={82} innerRadius={chart.type === "donut" ? 48 : 0} paddingAngle={2} onClick={select}>{rows.map((row, index) => <Cell key={String(row.name)} fill={colors[index % colors.length]} />)}</Pie></PieChart>;
   else {
     const vertical = chart.type === "horizontal_bar";
-    visual = <BarChart data={rows} layout={vertical ? "vertical" : "horizontal"} onClick={select} margin={vertical ? { left: 28 } : undefined}><CartesianGrid strokeDasharray="3 3" /><XAxis type={vertical ? "number" : "category"} allowDecimals={!chart.id.startsWith("overview_")} dataKey={vertical ? undefined : "name"} tick={{ fontSize: 11 }} /><YAxis type={vertical ? "category" : "number"} dataKey={vertical ? "name" : undefined} width={vertical ? 92 : undefined} tick={{ fontSize: 11 }} allowDecimals={!chart.id.startsWith("overview_")} /><Tooltip cursor={{ fill: "#f1f5f9" }} formatter={tooltipFormatter} /><Legend />{keys.map((key, index) => <Bar maxBarSize={36} key={key} name={key === "value" ? reportCopy(chart.title) : reportCopy(key)} dataKey={key} stackId={chart.type === "stacked_bar" ? "total" : undefined} fill={colors[index % colors.length]} radius={chart.type === "stacked_bar" ? 0 : 3} />)}</BarChart>;
+    visual = <BarChart data={rows} layout={vertical ? "vertical" : "horizontal"} onClick={select} margin={vertical ? { left: 28 } : undefined}><CartesianGrid strokeDasharray="3 3" /><XAxis type={vertical ? "number" : "category"} allowDecimals={!chart.id.startsWith("overview_")} dataKey={vertical ? undefined : "name"} tick={{ fontSize: 11 }} /><YAxis type={vertical ? "category" : "number"} dataKey={vertical ? "name" : undefined} width={vertical ? 170 : undefined} interval={vertical ? 0 : undefined} tick={{ fontSize: 11 }} allowDecimals={!chart.id.startsWith("overview_")} /><Tooltip cursor={{ fill: "#f1f5f9" }} formatter={tooltipFormatter} /><Legend />{keys.map((key, index) => <Bar maxBarSize={36} key={key} name={key === "value" ? reportCopy(chart.title) : reportCopy(key)} dataKey={key} stackId={chart.type === "stacked_bar" ? "total" : undefined} fill={colors[index % colors.length]} radius={chart.type === "stacked_bar" ? 0 : 3} />)}</BarChart>;
   }
-  return <Card className="min-w-0 p-4" data-chart-title={reportCopy(chart.title)} data-chart-type={chart.type}><div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold" style={{ color: A.label }}>{reportCopy(chart.title)}</h2><div className="mt-0.5 text-[11px]" style={{ color: A.gray2 }}>{reportCopy(chart.id === "overview_activity" ? "Activity uses the latest recorded update date, falling back to creation date. Counts are orders, not revenue." : chart.crossFilter ? "点击图形可筛选当前看板" : "受控业务数据")}</div></div><button onClick={() => onDrill(chart.drilldownPath)} className="shrink-0 text-[11px] font-medium" style={{ color: A.blue }}>{reportCopy("查看业务明细")}</button></div><div className="mt-3 h-64" tabIndex={0} aria-label={`${reportCopy(chart.title)}, ${reportCopy("查看业务明细")}`}><ResponsiveContainer width="100%" height="100%">{visual}</ResponsiveContainer></div></Card>;
+  return <Card className="min-w-0 p-4" data-chart-title={reportCopy(chart.title)} data-chart-type={chart.type}><div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold" style={{ color: A.label }}>{reportCopy(chart.title)}</h2><div className="mt-0.5 text-[11px]" style={{ color: A.gray2 }}>{reportCopy(chart.id === "overview_activity" ? "Activity uses the latest recorded update date, falling back to creation date. Counts are orders, not revenue." : chart.crossFilter ? "点击图形可筛选当前看板" : "受控业务数据")}</div></div><button onClick={() => onDrill(chart.drilldownPath)} className="shrink-0 text-[11px] font-medium" style={{ color: A.blue }}>{reportCopy("查看业务明细")}</button></div><div className="mt-3" style={{ height: chart.type === "horizontal_bar" ? Math.max(288, rows.length * 40 + 48) : 256 }} tabIndex={0} aria-label={`${reportCopy(chart.title)}, ${reportCopy("查看业务明细")}`}><ResponsiveContainer width="100%" height="100%">{visual}</ResponsiveContainer></div></Card>;
 }
 
 export function BiDashboard({ view, onNavigate: _onNavigate }: { view: DashboardView; onNavigate?: NavigateFn }) {

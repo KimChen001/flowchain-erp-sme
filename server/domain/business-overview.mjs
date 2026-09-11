@@ -2,7 +2,7 @@
 export function buildBusinessOverview(all) {
   const purchases = all.purchase_orders;
   const sales = all.sales_orders;
-  const active = row => !['closed', 'cancelled', 'completed'].includes(row.status);
+  const active = row => !['closed', 'cancelled', 'canceled', 'completed', 'fully_received', 'rejected'].includes(row.status);
   const months = new Map();
   for (const [rows, key] of [[purchases, 'Purchase orders'], [sales, 'Sales orders']]) {
     for (const row of rows) {
@@ -26,7 +26,7 @@ export function buildBusinessOverview(all) {
     attention: [
       { id: 'open_orders', label: 'Open purchase orders', count: purchases.filter(active).length, path: '/app/reports/procurement?status=open', action: 'Review orders' },
       { id: 'inventory_shortages', label: 'Inventory shortages', count: all.inventory_balances.filter(row => row.shortage !== null && row.shortage > 0).length, path: '/app/inventory?risk=high', action: 'Review inventory' },
-      { id: 'unfulfilled_sales', label: 'Unfulfilled sales orders', count: sales.filter(row => active(row) && row.quantity > row.fulfilled).length, path: '/app/sales/orders', action: 'Review orders' },
+      { id: 'unfulfilled_sales', label: 'Unfulfilled sales orders', count: sales.filter(row => active(row) && row.status !== 'draft' && row.quantity > row.fulfilled).length, path: '/app/sales/orders', action: 'Review orders' },
     ],
   };
 }

@@ -1,5 +1,7 @@
 // Presentation labels only. Do not translate record names or identifiers.
 const chinese: Record<string, string> = {
+  'Mixed units': '混合计量单位',
+  'Inventory uses different units; quantities are shown by SKU without a combined stock total.': '库存使用不同计量单位，数量按 SKU 展示，不合计在手总量。',
   'Undated': '无日期', 'Unspecified': '未指定', 'Status': '状态', 'Quantity': '数量', 'Amount': '金额', 'Available': '可用量', 'Shortage': '缺口',
   'Supplier count': '供应商数量', 'Supplier invoice amount': '供应商发票金额', 'Open POs': '开放 PO',
   'On-hand inventory': '在手库存', 'Unfulfilled sales demand': '未履约销售需求',
@@ -46,6 +48,9 @@ export function analyticsCopy(value: string, language: string) {
 
 export function reportStatusCopy(value: string, language: string) {
   const states: Record<string, [string, string]> = {
+    fully_received: ['Fully received', '全部收货'], pending_approval: ['Pending approval', '待审批'], rejected: ['Rejected', '已拒绝'],
+    shortage_risk: ['Shortage risk', '缺货风险'], partially_fulfilled: ['Partially fulfilled', '部分履约'], fulfilled: ['Fulfilled', '已履约'],
+    ready_to_ship: ['Ready to ship', '可发货'], partially_allocated: ['Partially allocated', '部分分配'], on_hold: ['On hold', '已暂停'],
     issued: ['Issued', '已下达'], partially_received: ['Partially received', '部分收货'], received: ['Received', '已收货'],
     open: ['Open', '进行中'], closed: ['Closed', '已关闭'], cancelled: ['Cancelled', '已取消'], completed: ['Completed', '已完成'],
     draft: ['Draft', '草稿'], approved: ['Approved', '已批准'], active: ['Active', '启用'], inactive: ['Inactive', '停用'],

@@ -19,7 +19,7 @@ export function buildRuntimeInventoryAllocation(context) {
 
   const availability = [...keys].map(sku => {
     const inventoryRows = rows(context.inventoryItems).filter(row => itemKey(row) === sku)
-    const salesOrders = rows(context.salesOrders).filter(row => itemKey(row) === sku)
+    const salesOrders = rows(context.salesOrders).filter(row => itemKey(row) === sku && !['draft', 'cancelled', 'canceled'].includes(text(row.workflowStatus || row.status)))
     const approvedPos = rows(context.purchaseOrders).filter(po => statusIsIncoming(po.status))
     const poLines = approvedPos.flatMap(po => rows(po.lines).filter(line => lineKey(line) === sku).map(line => ({ po, line })))
     const dataLimitations = []
