@@ -13,49 +13,55 @@ import type {
 } from "./procurementTypes";
 
 type ReadState = "loading" | "loaded" | "notFound" | "unauthenticated" | "forbidden" | "invalid" | "error" | "network" | "malformed";
+type Tr = (zh: string, en: string) => string;
 
-const RFQ_STATUS_LABELS: Record<string, string> = {
-  draft: "草稿",
-  open: "开放",
-  collecting_quotes: "收集报价",
-  closed: "已关闭",
-  cancelled: "已取消",
+const RFQ_STATUS_LABELS: Record<string, readonly [string, string]> = {
+  draft: ["草稿", "Draft"],
+  open: ["开放", "Open"],
+  collecting_quotes: ["收集报价", "Collecting quotes"],
+  closed: ["已关闭", "Closed"],
+  cancelled: ["已取消", "Cancelled"],
 };
 
-const REVISION_STATUS_LABELS: Record<string, string> = {
-  draft: "草稿",
-  incomplete: "信息不完整",
-  submitted: "已提交",
-  shortlisted: "已入围",
-  not_selected: "历史未中选",
-  withdrawn: "已撤回",
+const REVISION_STATUS_LABELS: Record<string, readonly [string, string]> = {
+  draft: ["草稿", "Draft"],
+  incomplete: ["信息不完整", "Incomplete"],
+  submitted: ["已提交", "Submitted"],
+  shortlisted: ["已入围", "Shortlisted"],
+  not_selected: ["历史未中选", "Previously not selected"],
+  withdrawn: ["已撤回", "Withdrawn"],
 };
 
-const PARTICIPATION_STATUS_LABELS: Record<string, string> = {
-  planned: "计划参与",
-  invited_internal: "已内部邀请",
-  response_recorded: "已记录响应",
-  declined: "已拒绝",
-  withdrawn: "已撤回",
-  closed: "已关闭",
+const PARTICIPATION_STATUS_LABELS: Record<string, readonly [string, string]> = {
+  planned: ["计划参与", "Planned"],
+  invited_internal: ["已内部邀请", "Invited internally"],
+  response_recorded: ["已记录响应", "Response recorded"],
+  declined: ["已拒绝", "Declined"],
+  withdrawn: ["已撤回", "Withdrawn"],
+  closed: ["已关闭", "Closed"],
 };
 
-const ELIGIBILITY_LABELS: Record<RfqComparisonEligibility, string> = {
-  eligible: "可比较",
-  not_ready: "尚未形成有效提交",
-  historical_only: "历史报价",
-  withdrawn: "已撤回",
-  incomplete_coverage: "行项目覆盖不完整",
-  authority_missing: "缺少权威 Revision",
-  unknown_status: "状态无法确认",
+const ELIGIBILITY_LABELS: Record<RfqComparisonEligibility, readonly [string, string]> = {
+  eligible: ["可比较", "Eligible"],
+  not_ready: ["尚未形成有效提交", "Not ready"],
+  historical_only: ["历史报价", "Historical quotation"],
+  withdrawn: ["已撤回", "Withdrawn"],
+  incomplete_coverage: ["行项目覆盖不完整", "Incomplete line coverage"],
+  authority_missing: ["缺少权威 Revision", "Authoritative revision missing"],
+  unknown_status: ["状态无法确认", "Unknown status"],
 };
 
 const AVAILABILITY_COPY = {
-  no_eligible_responses: ["暂无可比较的有效报价", "当前没有满足完整提交与行项目覆盖要求的报价。"],
-  single_eligible_response: ["当前只有 1 个有效报价，无法进行横向比较", "仍可查看该供应商的权威商业事实。"],
-  side_by_side_available: ["可进行并列比价", "已有多份同币种有效报价，页面仅作事实并列展示。"],
-  multi_currency_unconverted: ["多币种，未折算", "报价币种不同，当前未进行汇率换算，因此总金额不能直接横向比较。"],
+  no_eligible_responses: [["暂无可比较的有效报价", "No eligible quotations to compare"], ["当前没有满足完整提交与行项目覆盖要求的报价。", "No quotation currently meets the complete submission and line coverage requirements."]],
+  single_eligible_response: [["当前只有 1 个有效报价，无法进行横向比较", "Only one eligible quotation is available"], ["仍可查看该供应商的权威商业事实。", "You can still review the supplier's authoritative commercial facts."]],
+  side_by_side_available: [["可进行并列比价", "Side-by-side comparison available"], ["已有多份同币种有效报价，页面仅作事实并列展示。", "Multiple eligible quotations share one currency. This page presents facts without ranking them."]],
+  multi_currency_unconverted: [["多币种，未折算", "Multiple currencies, not converted"], ["报价币种不同，当前未进行汇率换算，因此总金额不能直接横向比较。", "Quotation currencies differ. Totals cannot be compared directly because no exchange-rate conversion is applied."]],
 } as const;
+
+function localLabel(labels: Record<string, readonly [string, string]>, key: string, language: string, fallback: string) {
+  const label = labels[key];
+  return label ? label[language === "en-US" ? 1 : 0] : fallback;
+}
 
 function failureState(error: unknown): Exclude<ReadState, "loading" | "loaded" | "malformed"> {
   if (error instanceof ApiError) {
@@ -85,13 +91,16 @@ function exactAmount(value: string | null | undefined, currency?: string | null)
   return value == null ? "—" : `${value}${currency ? ` ${currency}` : ""}`;
 }
 
-function eligibilityChip(eligibility: RfqComparisonEligibility) {
+function eligibilityChip(eligibility: RfqComparisonEligibility, language: string) {
   const eligible = eligibility === "eligible";
-  return <Chip label={ELIGIBILITY_LABELS[eligibility]} color={eligible ? A.blue : A.sub} bg={eligible ? "#eff6ff" : "#f1f5f9"} />;
+  return <Chip label={localLabel(ELIGIBILITY_LABELS, eligibility, language, eligibility)} color={eligible ? A.blue : A.sub} bg={eligible ? "#eff6ff" : "#f1f5f9"} />;
 }
 
 function Availability({ comparison }: { comparison: RfqSupplierComparison }) {
-  const [title, description] = AVAILABILITY_COPY[comparison.comparisonAvailability];
+  const { language } = useI18n();
+  const [[titleZh, titleEn], [descriptionZh, descriptionEn]] = AVAILABILITY_COPY[comparison.comparisonAvailability];
+  const title = language === "en-US" ? titleEn : titleZh;
+  const description = language === "en-US" ? descriptionEn : descriptionZh;
   const multiCurrency = comparison.comparisonAvailability === "multi_currency_unconverted";
   return (
     <Card className={`p-4 ${multiCurrency ? "border-amber-300 bg-amber-50" : ""}`} data-testid="rfq-comparison-availability">
@@ -107,26 +116,28 @@ function Availability({ comparison }: { comparison: RfqSupplierComparison }) {
 }
 
 function ResponseSummary({ responses }: { responses: RfqComparisonResponse[] }) {
+  const { language } = useI18n();
+  const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
   return (
     <Card className="overflow-hidden" data-testid="rfq-comparison-responses">
       <div className="border-b p-4">
-        <h2 className="text-sm font-semibold">供应商响应摘要</h2>
-        <p className="mt-1 text-xs" style={{ color: A.sub }}>顺序来自后端 supplier ID 升序权威；未按价格排序。</p>
+        <h2 className="text-sm font-semibold">{tr("供应商响应摘要", "Supplier response summary")}</h2>
+        <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("顺序来自后端 supplier ID 升序权威；未按价格排序。", "The server orders suppliers by ID. Prices do not determine display order.")}</p>
       </div>
-      {responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>当前 RFQ 尚无报价记录。</div> : (
+      {responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 尚无报价记录。", "This RFQ has no quotation records.")}</div> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1100px] text-left text-xs">
-            <thead className="bg-slate-50" style={{ color: A.sub }}><tr>{["供应商", "报价 / Revision", "状态", "比较资格", "原币总额", "提交时间", "行项目覆盖"].map((label) => <th className="p-3 font-medium" key={label}>{label}</th>)}</tr></thead>
+            <thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("供应商", "Supplier"), tr("报价 / Revision", "Quotation / revision"), tr("状态", "Status"), tr("比较资格", "Eligibility"), tr("原币总额", "Original-currency total"), tr("提交时间", "Submitted"), tr("行项目覆盖", "Line coverage")].map((label) => <th className="p-3 font-medium" key={label}>{label}</th>)}</tr></thead>
             <tbody>{responses.map((response) => {
               const revision = response.latestRevision;
               return <tr className="border-t align-top" data-testid={`rfq-comparison-response-${response.supplierId}`} key={`${response.supplierId}:${response.quotationId}`}>
-                <td className="p-3"><div className="font-medium">{response.supplierName || "未提供名称"}</div><div className="mt-1" style={{ color: A.sub }}>{response.supplierId}</div></td>
-                <td className="p-3"><div>{response.quotationId}</div><div className="mt-1" style={{ color: A.sub }}>{revision ? `Revision ${revision.revisionNumber}` : "权威 Revision 缺失"}</div></td>
-                <td className="p-3">{revision?.status ? REVISION_STATUS_LABELS[revision.status] || revision.statusRaw || "未知" : "不可用"}</td>
-                <td className={`p-3 ${response.comparisonEligibility === "eligible" ? "" : "bg-slate-50/70 text-slate-500"}`}>{eligibilityChip(response.comparisonEligibility)}{response.eligibilityReasons.length > 0 && <div className="mt-2 text-[11px]" style={{ color: A.sub }}>{response.eligibilityReasons.join(" · ")}</div>}</td>
+                <td className="p-3"><div className="font-medium">{response.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{response.supplierId}</div></td>
+                <td className="p-3"><div>{response.quotationId}</div><div className="mt-1" style={{ color: A.sub }}>{revision ? `Revision ${revision.revisionNumber}` : tr("权威 Revision 缺失", "Authoritative revision missing")}</div></td>
+                <td className="p-3">{revision?.status ? localLabel(REVISION_STATUS_LABELS, revision.status, language, revision.statusRaw || tr("未知", "Unknown")) : tr("不可用", "Unavailable")}</td>
+                <td className={`p-3 ${response.comparisonEligibility === "eligible" ? "" : "bg-slate-50/70 text-slate-500"}`}>{eligibilityChip(response.comparisonEligibility, language)}{response.eligibilityReasons.length > 0 && <div className="mt-2 text-[11px]" style={{ color: A.sub }}>{response.eligibilityReasons.join(" · ")}</div>}</td>
                 <td className="p-3 font-medium tabular-nums">{exactAmount(revision?.quotedAmount, revision?.currency)}</td>
                 <td className="p-3">{date(revision?.submittedAt)}</td>
-                <td className="p-3"><div>{response.coverage.matchedLineCount} / {response.coverage.requiredLineCount}</div><div className="mt-1" style={{ color: A.sub }}>{response.coverage.state === "complete" ? "完整覆盖" : response.coverage.state === "not_applicable" ? "无目标行项目" : "覆盖不完整"}</div></td>
+                <td className="p-3"><div>{response.coverage.matchedLineCount} / {response.coverage.requiredLineCount}</div><div className="mt-1" style={{ color: A.sub }}>{response.coverage.state === "complete" ? tr("完整覆盖", "Complete") : response.coverage.state === "not_applicable" ? tr("无目标行项目", "No target lines") : tr("覆盖不完整", "Incomplete")}</div></td>
               </tr>;
             })}</tbody>
           </table>
@@ -137,24 +148,26 @@ function ResponseSummary({ responses }: { responses: RfqComparisonResponse[] }) 
 }
 
 function LineMatrix({ comparison }: { comparison: RfqSupplierComparison }) {
+  const { language } = useI18n();
+  const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
   return (
     <Card className="overflow-hidden" data-testid="rfq-comparison-line-matrix">
-      <div className="border-b p-4"><h2 className="text-sm font-semibold">行项目并列展示</h2><p className="mt-1 text-xs" style={{ color: A.sub }}>金额直接显示 API Decimal 字符串，不在浏览器重算。</p></div>
-      {comparison.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>当前 RFQ 没有权威行项目。</div> : (
+      <div className="border-b p-4"><h2 className="text-sm font-semibold">{tr("行项目并列展示", "Line-by-line comparison")}</h2><p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("金额直接显示 API Decimal 字符串，不在浏览器重算。", "Amounts use the exact decimal values returned by the API and are not recalculated in the browser.")}</p></div>
+      {comparison.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有权威行项目。", "This RFQ has no authoritative line items.")}</div> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-left text-xs">
-            <thead className="bg-slate-50" style={{ color: A.sub }}><tr><th className="sticky left-0 z-10 min-w-[260px] bg-slate-50 p-3 font-medium">RFQ 行项目</th>{comparison.responses.map((response) => <th className="min-w-[230px] p-3 font-medium" key={response.supplierId}><div>{response.supplierName || response.supplierId}</div><div className="mt-1 font-normal">{response.supplierId}</div></th>)}</tr></thead>
+            <thead className="bg-slate-50" style={{ color: A.sub }}><tr><th className="sticky left-0 z-10 min-w-[260px] bg-slate-50 p-3 font-medium">{tr("RFQ 行项目", "RFQ line item")}</th>{comparison.responses.map((response) => <th className="min-w-[230px] p-3 font-medium" key={response.supplierId}><div>{response.supplierName || response.supplierId}</div><div className="mt-1 font-normal">{response.supplierId}</div></th>)}</tr></thead>
             <tbody>{comparison.lines.map((line) => <tr className="border-t align-top" data-testid={`rfq-comparison-line-${line.rfqLineId}`} key={line.rfqLineId}>
-              <td className="sticky left-0 z-10 bg-white p-3"><div className="font-medium">{line.itemName || line.sku || line.itemId || line.rfqLineId}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || "—"} · {line.rfqLineId}</div><div className="mt-2 tabular-nums">需求：{line.requestedQuantity || "—"} {line.unit || ""}</div></td>
+              <td className="sticky left-0 z-10 bg-white p-3"><div className="font-medium">{line.itemName || line.sku || line.itemId || line.rfqLineId}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || "—"} · {line.rfqLineId}</div><div className="mt-2 tabular-nums">{tr("需求", "Required")}: {line.requestedQuantity || "—"} {line.unit || ""}</div></td>
               {comparison.responses.map((response) => {
                 const quotedLine = response.latestRevision?.lines.find((candidate) => candidate.rfqLineId === line.rfqLineId && candidate.lineAuthorityState === "exact_target_rfq_line");
-                return <td className="p-3" data-testid={`rfq-comparison-cell-${line.rfqLineId}-${response.supplierId}`} key={response.supplierId}>{quotedLine ? <div className="space-y-1"><div>数量：<span className="tabular-nums">{quotedLine.quantity || "—"}</span> {quotedLine.unit || ""}</div><div>单价：<span className="tabular-nums">{exactAmount(quotedLine.unitPrice, response.latestRevision?.currency)}</span></div><div>行金额：<span className="tabular-nums">{exactAmount(quotedLine.amount, response.latestRevision?.currency)}</span></div><div style={{ color: A.sub }}>交期：{dateOnly(quotedLine.deliveryDate || response.latestRevision?.deliveryDate)}</div></div> : <span style={{ color: A.sub }}>未覆盖</span>}</td>;
+                return <td className="p-3" data-testid={`rfq-comparison-cell-${line.rfqLineId}-${response.supplierId}`} key={response.supplierId}>{quotedLine ? <div className="space-y-1"><div>{tr("数量", "Quantity")}: <span className="tabular-nums">{quotedLine.quantity || "—"}</span> {quotedLine.unit || ""}</div><div>{tr("单价", "Unit price")}: <span className="tabular-nums">{exactAmount(quotedLine.unitPrice, response.latestRevision?.currency)}</span></div><div>{tr("行金额", "Line total")}: <span className="tabular-nums">{exactAmount(quotedLine.amount, response.latestRevision?.currency)}</span></div><div style={{ color: A.sub }}>{tr("交期", "Delivery")}: {dateOnly(quotedLine.deliveryDate || response.latestRevision?.deliveryDate)}</div></div> : <span style={{ color: A.sub }}>{tr("未覆盖", "Not covered")}</span>}</td>;
               })}
             </tr>)}</tbody>
           </table>
         </div>
       )}
-      {comparison.responses.some((response) => response.latestRevision?.lines.some((line) => line.lineAuthorityState !== "exact_target_rfq_line")) && <div className="border-t p-4 text-xs" style={{ color: A.sub }}><div className="font-semibold text-slate-700">无法与 RFQ 行建立权威对应</div>{comparison.responses.flatMap((response) => (response.latestRevision?.lines || []).filter((line) => line.lineAuthorityState !== "exact_target_rfq_line").map((line) => <div key={`${response.supplierId}:${line.revisionLineId}`} className="mt-1">{response.supplierName || response.supplierId} · {line.revisionLineId} · 未能与 RFQ 行建立权威对应</div>))}</div>}
+      {comparison.responses.some((response) => response.latestRevision?.lines.some((line) => line.lineAuthorityState !== "exact_target_rfq_line")) && <div className="border-t p-4 text-xs" style={{ color: A.sub }}><div className="font-semibold text-slate-700">{tr("无法与 RFQ 行建立权威对应", "Lines without an authoritative RFQ match")}</div>{comparison.responses.flatMap((response) => (response.latestRevision?.lines || []).filter((line) => line.lineAuthorityState !== "exact_target_rfq_line").map((line) => <div key={`${response.supplierId}:${line.revisionLineId}`} className="mt-1">{response.supplierName || response.supplierId} · {line.revisionLineId} · {tr("未能与 RFQ 行建立权威对应", "No authoritative RFQ line match")}</div>))}</div>}
     </Card>
   );
 }
@@ -205,55 +218,59 @@ function AwardDecisionPanel({ comparison, award, canAward, onAward }: { comparis
 }
 
 function LoadedComparison({ comparison, award, canAward, onAward }: { comparison: RfqSupplierComparison; award: RfqAwardDecision | null; canAward: boolean; onAward: (award: RfqAwardDecision) => void }) {
+  const { language } = useI18n();
+  const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
   const noParticipants = comparison.participationSummary.participantCount === 0;
   const noQuotations = comparison.summary.quotationCount === 0;
   return (
     <div className="space-y-4" data-testid="canonical-rfq-comparison">
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0"><div className="text-xs font-semibold uppercase tracking-wide" style={{ color: A.sub }}>只读供应商报价比较 · {comparison.rfqId}</div><h1 className="mt-1 text-xl font-semibold">{comparison.rfqTitle || comparison.rfqId}</h1><p className="mt-2 text-xs" style={{ color: A.sub }}>本页不排名、不推荐、不授标，也不创建采购订单。</p></div>
-          <div className="flex flex-wrap gap-2"><Chip label="只读比较" color={A.blue} bg="#eff6ff" /><Chip label={RFQ_STATUS_LABELS[comparison.rfqStatus || ""] || comparison.rfqStatusRaw || "状态未知"} color={A.sub} bg="#f1f5f9" /></div>
+          <div className="min-w-0"><div className="text-xs font-semibold uppercase tracking-wide" style={{ color: A.sub }}>{tr("只读供应商报价比较", "Supplier quotation comparison")} · {comparison.rfqId}</div><h1 className="mt-1 text-xl font-semibold">{comparison.rfqTitle || comparison.rfqId}</h1><p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("本页不排名、不推荐、不授标，也不创建采购订单。", "This page does not rank or recommend suppliers. A formal award requires a separate authorized human decision and does not create a purchase order.")}</p></div>
+          <div className="flex flex-wrap gap-2"><Chip label={tr("只读比较", "Read-only comparison")} color={A.blue} bg="#eff6ff" /><Chip label={localLabel(RFQ_STATUS_LABELS, comparison.rfqStatus || "", language, comparison.rfqStatusRaw || tr("状态未知", "Unknown status"))} color={A.sub} bg="#f1f5f9" /></div>
         </div>
         <dl className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[["RFQ 编号", comparison.rfqId], ["RFQ 币种", comparison.rfqCurrency || "—"], ["有效报价", String(comparison.summary.eligibleResponseCount)], ["权威响应", String(comparison.summary.authoritativeResponseCount)], ["参与供应商", String(comparison.participationSummary.participantCount)], ["全部报价记录", String(comparison.summary.quotationCount)], ["显示顺序", "供应商 ID 升序"], ["生成时间", date(comparison.generatedAt)]].map(([label, value]) => <div className="rounded-lg bg-slate-50 p-3" key={label}><dt className="text-xs" style={{ color: A.sub }}>{label}</dt><dd className="mt-1 break-words text-sm font-medium">{value}</dd></div>)}
+          {[[tr("RFQ 编号", "RFQ ID"), comparison.rfqId], [tr("RFQ 币种", "RFQ currency"), comparison.rfqCurrency || "—"], [tr("有效报价", "Eligible quotations"), String(comparison.summary.eligibleResponseCount)], [tr("权威响应", "Authoritative responses"), String(comparison.summary.authoritativeResponseCount)], [tr("参与供应商", "Participating suppliers"), String(comparison.participationSummary.participantCount)], [tr("全部报价记录", "All quotation records"), String(comparison.summary.quotationCount)], [tr("显示顺序", "Display order"), tr("供应商 ID 升序", "Supplier ID ascending")], [tr("生成时间", "Generated at"), date(comparison.generatedAt)]].map(([label, value]) => <div className="rounded-lg bg-slate-50 p-3" key={label}><dt className="text-xs" style={{ color: A.sub }}>{label}</dt><dd className="mt-1 break-words text-sm font-medium">{value}</dd></div>)}
         </dl>
       </Card>
 
       <Availability comparison={comparison} />
       <AwardDecisionPanel comparison={comparison} award={award} canAward={canAward} onAward={onAward} />
 
-      {(noParticipants || noQuotations || comparison.comparisonAvailability === "no_eligible_responses") && <Card className="p-4" data-testid="rfq-comparison-empty-context"><div className="flex items-start gap-2"><CircleAlert className="mt-0.5 text-slate-500" size={16} /><p className="text-xs" style={{ color: A.sub }}>{noParticipants ? "当前 RFQ 尚无供应商参与记录。" : noQuotations ? "已有参与记录，但尚无报价。" : "现有报价均为草稿、不完整、已撤回、历史记录或缺少完整行项目覆盖。"}</p></div></Card>}
+      {(noParticipants || noQuotations || comparison.comparisonAvailability === "no_eligible_responses") && <Card className="p-4" data-testid="rfq-comparison-empty-context"><div className="flex items-start gap-2"><CircleAlert className="mt-0.5 text-slate-500" size={16} /><p className="text-xs" style={{ color: A.sub }}>{noParticipants ? tr("当前 RFQ 尚无供应商参与记录。", "This RFQ has no supplier participation records.") : noQuotations ? tr("已有参与记录，但尚无报价。", "Suppliers are participating, but no quotations have been recorded.") : tr("现有报价均为草稿、不完整、已撤回、历史记录或缺少完整行项目覆盖。", "All current quotations are drafts, incomplete, withdrawn, historical, or missing complete line coverage.")}</p></div></Card>}
 
       <Card className="p-4" data-testid="rfq-comparison-participation-summary">
-        <h2 className="text-sm font-semibold">Participation 摘要</h2>
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">{[["参与总数", comparison.participationSummary.participantCount], ["计划参与", comparison.participationSummary.plannedCount], ["内部邀请", comparison.participationSummary.invitedInternalCount], ["已记录响应", comparison.participationSummary.responseRecordedCount], ["尚无报价", comparison.participationSummary.noResponseCount], ["已拒绝", comparison.participationSummary.declinedCount], ["已撤回", comparison.participationSummary.withdrawnCount], ["已关闭", comparison.participationSummary.closedCount]].map(([label, value]) => <div className="rounded-lg bg-slate-50 p-3" key={label}><div className="text-[11px]" style={{ color: A.sub }}>{label}</div><div className="mt-1 text-lg font-semibold tabular-nums">{value}</div></div>)}</div>
+        <h2 className="text-sm font-semibold">{tr("Participation 摘要", "Participation summary")}</h2>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">{[[tr("参与总数", "Total"), comparison.participationSummary.participantCount], [tr("计划参与", "Planned"), comparison.participationSummary.plannedCount], [tr("内部邀请", "Invited"), comparison.participationSummary.invitedInternalCount], [tr("已记录响应", "Responses"), comparison.participationSummary.responseRecordedCount], [tr("尚无报价", "No quotation"), comparison.participationSummary.noResponseCount], [tr("已拒绝", "Declined"), comparison.participationSummary.declinedCount], [tr("已撤回", "Withdrawn"), comparison.participationSummary.withdrawnCount], [tr("已关闭", "Closed"), comparison.participationSummary.closedCount]].map(([label, value]) => <div className="rounded-lg bg-slate-50 p-3" key={label}><div className="text-[11px]" style={{ color: A.sub }}>{label}</div><div className="mt-1 text-lg font-semibold tabular-nums">{value}</div></div>)}</div>
       </Card>
 
       <ResponseSummary responses={comparison.responses} />
       <LineMatrix comparison={comparison} />
 
       <Card className="overflow-hidden" data-testid="rfq-comparison-commercial-terms">
-        <div className="border-b p-4"><h2 className="text-sm font-semibold">商业条款</h2></div>
-        {comparison.responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>当前没有可展示的供应商商业条款。</div> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="bg-slate-50" style={{ color: A.sub }}><tr>{["供应商", "付款条款", "有效期", "交付日期", "原币报价", "资格"].map((label) => <th className="p-3 font-medium" key={label}>{label}</th>)}</tr></thead><tbody>{comparison.responses.map((response) => <tr className="border-t" key={response.supplierId}><td className="p-3 font-medium">{response.supplierName || response.supplierId}</td><td className="p-3">{response.latestRevision?.paymentTerms || "—"}</td><td className="p-3">{dateOnly(response.latestRevision?.validUntil)}</td><td className="p-3">{dateOnly(response.latestRevision?.deliveryDate)}</td><td className="p-3 tabular-nums">{exactAmount(response.latestRevision?.quotedAmount, response.latestRevision?.currency)}</td><td className="p-3">{ELIGIBILITY_LABELS[response.comparisonEligibility]}</td></tr>)}</tbody></table></div>}
+        <div className="border-b p-4"><h2 className="text-sm font-semibold">{tr("商业条款", "Commercial terms")}</h2></div>
+        {comparison.responses.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前没有可展示的供应商商业条款。", "No supplier commercial terms are available.")}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("供应商", "Supplier"), tr("付款条款", "Payment terms"), tr("有效期", "Valid until"), tr("交付日期", "Delivery date"), tr("原币报价", "Original-currency quote"), tr("资格", "Eligibility")].map((label) => <th className="p-3 font-medium" key={label}>{label}</th>)}</tr></thead><tbody>{comparison.responses.map((response) => <tr className="border-t" key={response.supplierId}><td className="p-3 font-medium">{response.supplierName || response.supplierId}</td><td className="p-3">{response.latestRevision?.paymentTerms || "—"}</td><td className="p-3">{dateOnly(response.latestRevision?.validUntil)}</td><td className="p-3">{dateOnly(response.latestRevision?.deliveryDate)}</td><td className="p-3 tabular-nums">{exactAmount(response.latestRevision?.quotedAmount, response.latestRevision?.currency)}</td><td className="p-3">{localLabel(ELIGIBILITY_LABELS, response.comparisonEligibility, language, response.comparisonEligibility)}</td></tr>)}</tbody></table></div>}
       </Card>
 
       <Card className="p-4" data-testid="rfq-comparison-non-response">
-        <h2 className="text-sm font-semibold">已参与但尚无报价</h2>
-        <p className="mt-1 text-xs" style={{ color: A.sub }}>这里展示已有 Participation、但尚不存在 SupplierQuotation 报价记录的供应商。</p>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{comparison.nonResponseParticipants.map((participant) => <div className="rounded-lg border p-3 text-xs" data-testid={`rfq-comparison-non-response-${participant.supplierId}`} key={participant.supplierId}><div className="font-medium">{participant.supplierName || "未提供名称"}</div><div className="mt-1" style={{ color: A.sub }}>{participant.supplierId}</div><div className="mt-2">{PARTICIPATION_STATUS_LABELS[participant.status || ""] || participant.statusRaw || "状态不可识别"}</div><div className="mt-1" style={{ color: A.sub }}>内部邀请时间：{date(participant.invitedAt)}</div><div className="mt-1" style={{ color: A.sub }}>响应状态：尚无报价记录</div></div>)}{comparison.nonResponseParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>当前没有仅有 Participation、尚无报价的供应商。</div>}</div>
+        <h2 className="text-sm font-semibold">{tr("已参与但尚无报价", "Participating without a quotation")}</h2>
+        <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("这里展示已有 Participation、但尚不存在 SupplierQuotation 报价记录的供应商。", "These suppliers have participation records but no supplier quotation record.")}</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{comparison.nonResponseParticipants.map((participant) => <div className="rounded-lg border p-3 text-xs" data-testid={`rfq-comparison-non-response-${participant.supplierId}`} key={participant.supplierId}><div className="font-medium">{participant.supplierName || tr("未提供名称", "Name not provided")}</div><div className="mt-1" style={{ color: A.sub }}>{participant.supplierId}</div><div className="mt-2">{localLabel(PARTICIPATION_STATUS_LABELS, participant.status || "", language, participant.statusRaw || tr("状态不可识别", "Unrecognized status"))}</div><div className="mt-1" style={{ color: A.sub }}>{tr("内部邀请时间", "Internal invitation")}: {date(participant.invitedAt)}</div><div className="mt-1" style={{ color: A.sub }}>{tr("响应状态：尚无报价记录", "Response status: no quotation recorded")}</div></div>)}{comparison.nonResponseParticipants.length === 0 && <div className="rounded-lg bg-slate-50 p-4 text-xs" style={{ color: A.sub }}>{tr("当前没有仅有 Participation、尚无报价的供应商。", "Every participating supplier has a quotation record.")}</div>}</div>
       </Card>
 
       <Card className="p-4" data-testid="rfq-comparison-limitations">
-        <div className="flex items-center gap-2"><ShieldCheck size={16} className="text-blue-600" /><h2 className="text-sm font-semibold">权限与数据边界</h2></div>
-        <ul className="mt-3 space-y-2 text-xs" style={{ color: A.sub }}><li>· 商业事实仅来自每个 SupplierQuotation 最大 revisionNumber。</li><li>· 非有效响应继续展示，但不计入 comparisonAvailability。</li><li>· Participation 只证明内部记录；不证明邮件送达、供应商登录或线上提交。</li><li>· 排名、推荐与 PO Conversion 权威仍为 unavailable；Award 必须由有权限的用户明确确认。</li>{comparison.limitations.map((limitation) => <li key={limitation}>· {limitation}</li>)}</ul>
+        <div className="flex items-center gap-2"><ShieldCheck size={16} className="text-blue-600" /><h2 className="text-sm font-semibold">{tr("权限与数据边界", "Authority and data boundaries")}</h2></div>
+        <ul className="mt-3 space-y-2 text-xs" style={{ color: A.sub }}><li>· {tr("商业事实仅来自每个 SupplierQuotation 最大 revisionNumber。", "Commercial facts come only from the highest revision number for each supplier quotation.")}</li><li>· {tr("非有效响应继续展示，但不计入 comparisonAvailability。", "Ineligible responses remain visible but do not affect comparison availability.")}</li><li>· {tr("Participation 只证明内部记录；不证明邮件送达、供应商登录或线上提交。", "Participation proves only an internal record; it does not prove email delivery, supplier login, or online submission.")}</li><li>· {tr("排名、推荐与 PO Conversion 权威仍为 unavailable；Award 必须由有权限的用户明确确认。", "Ranking, recommendations, and purchase-order conversion remain unavailable. An authorized user must explicitly confirm an award.")}</li>{comparison.limitations.map((limitation) => <li key={limitation}>· {limitation}</li>)}</ul>
       </Card>
 
-      <Link className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600" to={`/app/procurement/rfq/${encodeURIComponent(comparison.rfqId)}`}><ArrowLeft size={16} />返回 RFQ 详情</Link>
+      <Link className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600" to={`/app/procurement/rfq/${encodeURIComponent(comparison.rfqId)}`}><ArrowLeft size={16} />{tr("返回 RFQ 详情", "Back to RFQ details")}</Link>
     </div>
   );
 }
 
 export function CanonicalRfqComparisonPage({ documentId, effectivePermissionCodes, authorizationLoadState }: { documentId: string; effectivePermissionCodes: Set<string>; authorizationLoadState: "loading" | "ready" | "failed" }) {
+  const { language } = useI18n();
+  const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
   const [comparison, setComparison] = useState<RfqSupplierComparison | null>(null);
   const [award, setAward] = useState<RfqAwardDecision | null>(null);
   const [state, setState] = useState<ReadState>(documentId.trim() ? "loading" : "malformed");
@@ -278,13 +295,13 @@ export function CanonicalRfqComparisonPage({ documentId, effectivePermissionCode
   if (state === "loaded" && comparison) return <LoadedComparison comparison={comparison} award={award} canAward={authorizationLoadState === "ready" && effectivePermissionCodes.has("procurement.rfq_award.create")} onAward={setAward} />;
 
   const messages: Record<Exclude<ReadState, "loading" | "loaded">, string> = {
-    malformed: "RFQ 比较链接缺少有效编号。",
-    notFound: "当前租户下找不到该 RFQ，或该记录不可见。",
-    unauthenticated: "登录状态已失效，无法读取供应商报价比较。",
-    forbidden: "当前用户没有查看供应商价格比较的权限。",
-    invalid: "RFQ 编号格式无效，无法读取供应商报价比较。",
-    error: "供应商报价比较暂时无法读取，请稍后重试。",
-    network: "无法连接到供应商报价比较服务，请检查网络后重试。",
+    malformed: tr("RFQ 比较链接缺少有效编号。", "The RFQ comparison link has no valid ID."),
+    notFound: tr("当前租户下找不到该 RFQ，或该记录不可见。", "This RFQ was not found in the current workspace or is not visible to you."),
+    unauthenticated: tr("登录状态已失效，无法读取供应商报价比较。", "Your session has expired. Sign in to view the supplier quotation comparison."),
+    forbidden: tr("当前用户没有查看供应商价格比较的权限。", "You do not have permission to view supplier price comparisons."),
+    invalid: tr("RFQ 编号格式无效，无法读取供应商报价比较。", "The RFQ ID is invalid."),
+    error: tr("供应商报价比较暂时无法读取，请稍后重试。", "The supplier quotation comparison is temporarily unavailable. Try again later."),
+    network: tr("无法连接到供应商报价比较服务，请检查网络后重试。", "The supplier quotation comparison service could not be reached. Check your connection and try again."),
   };
-  return <div className="space-y-4" data-testid="canonical-rfq-comparison-state"><Card className="p-8 text-center">{state === "loading" ? <div className="text-sm" style={{ color: A.sub }}>正在读取供应商报价比较…</div> : <><TriangleAlert className="mx-auto text-amber-600" size={30} /><div className="mt-3 text-sm font-semibold">{messages[state]}</div>{state !== "malformed" && <button className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-blue-600" onClick={() => void load()} type="button"><RefreshCw size={15} />重试</button>}</>}</Card><Link className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600" to={documentId ? `/app/procurement/rfq/${encodeURIComponent(documentId)}` : "/app/procurement/rfq"}><ArrowLeft size={16} />返回 RFQ</Link></div>;
+  return <div className="space-y-4" data-testid="canonical-rfq-comparison-state"><Card className="p-8 text-center">{state === "loading" ? <div className="text-sm" style={{ color: A.sub }}>{tr("正在读取供应商报价比较…", "Loading supplier quotation comparison…")}</div> : <><TriangleAlert className="mx-auto text-amber-600" size={30} /><div className="mt-3 text-sm font-semibold">{messages[state]}</div>{state !== "malformed" && <button className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-blue-600" onClick={() => void load()} type="button"><RefreshCw size={15} />{tr("重试", "Retry")}</button>}</>}</Card><Link className="inline-flex items-center gap-2 text-sm font-semibold text-blue-600" to={documentId ? `/app/procurement/rfq/${encodeURIComponent(documentId)}` : "/app/procurement/rfq"}><ArrowLeft size={16} />{tr("返回 RFQ", "Back to RFQ")}</Link></div>;
 }

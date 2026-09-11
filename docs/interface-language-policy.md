@@ -20,6 +20,10 @@ names, or supplier names in place. Translate their presentation where appropriat
 - The migration increments affected row versions to reject stale settings saves.
 - Users can select Chinese again after migration; startup never resets preferences.
 - Locale, currency, timezone, and operational data remain unchanged.
+- The RFQ list, authoritative detail, supplier-response editor, quotation
+  comparison, error states, and reviewed award decision use the active language.
+- The local US development workspace includes one USD RFQ with two authoritative supplier
+  quotation revisions so the complete comparison and award path is reviewable.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.
@@ -35,8 +39,8 @@ Stored seeded and business values remain unchanged. Run `npm run audit:i18n` to 
 remaining potential display literals; the report is deliberately heuristic because
 Chinese business values and API status enums must not be rewritten as UI copy.
 
-This is not yet a claim of complete English coverage. Supplier details, purchasing
-detail views, receiving, returns/quarantine, and some AI response surfaces are the
+This is not yet a claim of complete English coverage. Supplier details, other
+purchasing detail views, receiving, returns/quarantine, and some AI response surfaces are the
 largest remaining areas. Translate them at their presentation boundary with both
 English and Chinese acceptance scenarios. A regression test requires every Chinese
 route, module, breadcrumb, and primary-navigation label to have an English mapping.

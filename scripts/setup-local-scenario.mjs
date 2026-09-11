@@ -4,9 +4,9 @@ import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../server/domain
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
-export const LOCAL_SCENARIO_COUNTS = Object.freeze({ purchaseRequests: 1, purchaseOrders: 2, receivingDocuments: 1, supplierInvoices: 1, inventoryBalances: 2, salesOrders: 1 })
+export const LOCAL_SCENARIO_COUNTS = Object.freeze({ purchaseRequests: 1, rfqs: 1, supplierQuotations: 2, purchaseOrders: 2, receivingDocuments: 1, supplierInvoices: 1, inventoryBalances: 2, salesOrders: 1 })
 const tenantId = process.env.FLOWCHAIN_DEFAULT_TENANT_ID || 'tenant-flowchain-local'
-const metadata = { localDemo: true, localDemoScenarioVersion: 2 }
+const metadata = { localDemo: true, localDemoScenarioVersion: 3 }
 const supplierName = 'Acme Components'
 const customerName = 'Redwood Retail'
 const itemNames = Object.freeze({ 'LDM-001': 'Flow Controller', 'LDM-002': 'Temperature Sensor' })
@@ -21,6 +21,53 @@ export async function seedLocalScenario(prisma, env = process.env) {
       update: { requester: 'US Demo', metadata },
     })
     await tx.purchaseRequestLine.updateMany({ where: { id: 'LOCAL-DEMO-PRL-001' }, data: { itemName: itemNames['LDM-001'], metadata } })
+    await tx.rfq.upsert({
+      where: { id: 'LOCAL-DEMO-RFQ-AWARD-001' },
+      create: {
+        id: 'LOCAL-DEMO-RFQ-AWARD-001', tenantId, title: 'Flow Controller RFQ', category: 'Electronic components',
+        status: 'collecting_quotes', supplierCount: 2, respondedSupplierCount: 2,
+        dueDate: new Date('2030-01-10T00:00:00Z'), sourceRequestId: 'LOCAL-DEMO-PR-001', currency: 'USD', metadata,
+      },
+      update: { title: 'Flow Controller RFQ', category: 'Electronic components', status: 'collecting_quotes', supplierCount: 2, respondedSupplierCount: 2, dueDate: new Date('2030-01-10T00:00:00Z'), sourceRequestId: 'LOCAL-DEMO-PR-001', currency: 'USD', metadata },
+    })
+    await tx.rfqLine.upsert({
+      where: { id: 'LOCAL-DEMO-RFQL-AWARD-001' },
+      create: { id: 'LOCAL-DEMO-RFQL-AWARD-001', tenantId, rfqId: 'LOCAL-DEMO-RFQ-AWARD-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: itemNames['LDM-001'], quantity: 50, unit: 'pcs', metadata: { ...metadata, requiredDate: '2030-01-15', deliveryLocation: 'LOCAL-DEMO-WH-001' } },
+      update: { itemName: itemNames['LDM-001'], quantity: 50, unit: 'pcs', metadata: { ...metadata, requiredDate: '2030-01-15', deliveryLocation: 'LOCAL-DEMO-WH-001' } },
+    })
+    for (const [suffix, supplierId, supplierName, amount, unitPrice, submittedAt, deliveryDate, paymentTerms] of [
+      ['001', 'LOCAL-DEMO-SUP-001', 'Acme Components', 4900, 98, '2030-01-05T08:30:00Z', '2030-01-14T00:00:00Z', 'NET30'],
+      ['002', 'LOCAL-DEMO-SUP-002', 'Summit Packaging', 4875, 97.5, '2030-01-06T08:30:00Z', '2030-01-16T00:00:00Z', 'NET45'],
+    ]) {
+      const quotationId = `LOCAL-DEMO-AWARD-QUOTE-${suffix}`
+      const quotationLineId = `LOCAL-DEMO-AWARD-QUOTEL-${suffix}`
+      const revisionId = `LOCAL-DEMO-AWARD-REV-${suffix}`
+      await tx.rfqSupplierParticipation.upsert({
+        where: { tenantId_rfqId_supplierId: { tenantId, rfqId: 'LOCAL-DEMO-RFQ-AWARD-001', supplierId } },
+        create: { id: `LOCAL-DEMO-RFQSP-AWARD-${suffix}`, tenantId, rfqId: 'LOCAL-DEMO-RFQ-AWARD-001', supplierId, status: 'response_recorded', invitedAt: new Date('2030-01-02T00:00:00Z'), respondedAt: new Date(submittedAt), metadata },
+        update: { status: 'response_recorded', invitedAt: new Date('2030-01-02T00:00:00Z'), respondedAt: new Date(submittedAt), metadata },
+      })
+      await tx.supplierQuotation.upsert({
+        where: { id: quotationId },
+        create: { id: quotationId, tenantId, rfqId: 'LOCAL-DEMO-RFQ-AWARD-001', supplierId, supplierName, status: 'submitted', quotedAmount: amount, currency: 'USD', submittedAt: new Date(submittedAt), metadata },
+        update: { supplierName, status: 'submitted', quotedAmount: amount, currency: 'USD', submittedAt: new Date(submittedAt), metadata },
+      })
+      await tx.supplierQuotationLine.upsert({
+        where: { id: quotationLineId },
+        create: { id: quotationLineId, supplierQuotationId: quotationId, itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: itemNames['LDM-001'], quantity: 50, unit: 'pcs', unitPrice, amount, metadata },
+        update: { itemName: itemNames['LDM-001'], quantity: 50, unit: 'pcs', unitPrice, amount, metadata },
+      })
+      if (!await tx.supplierQuotationRevision.findUnique({ where: { id: revisionId } })) {
+        await tx.supplierQuotationRevision.create({
+          data: {
+            id: revisionId, tenantId, quotationId, revisionNumber: 1, status: 'submitted', currency: 'USD', quotedAmount: amount,
+            submittedAt: new Date(submittedAt), validUntil: new Date('2030-03-31T00:00:00Z'), deliveryDate: new Date(deliveryDate), paymentTerms,
+            source: 'local_demo_scenario', metadata,
+            lines: { create: [{ id: `${revisionId}-LINE-001`, rfqLineId: 'LOCAL-DEMO-RFQL-AWARD-001', sourceQuotationLineId: quotationLineId, itemId: 'LOCAL-DEMO-ITEM-001', skuSnapshot: 'LDM-001', itemNameSnapshot: itemNames['LDM-001'], quantity: 50, unit: 'pcs', unitPrice, amount, deliveryDate: new Date(deliveryDate), metadata }] },
+          },
+        })
+      }
+    }
       for (const [id, status, itemId, sku, quantity, receivedQuantity, expectedDate] of [
         ['LOCAL-DEMO-PO-001', PURCHASE_ORDER_STATUS.PARTIALLY_RECEIVED, 'LOCAL-DEMO-ITEM-001', 'LDM-001', 50, 20, '2030-01-12T00:00:00Z'],
         ['LOCAL-DEMO-PO-002', PURCHASE_ORDER_STATUS.ISSUED, 'LOCAL-DEMO-ITEM-002', 'LDM-002', 40, 0, '2030-01-18T00:00:00Z'],
@@ -80,7 +127,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   const prisma = await getPrismaClient(process.env)
   try {
     const counts = await seedLocalScenario(prisma)
-    console.log(`Local demo scenario v2 ready: ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(' ')}`)
+    console.log(`Local demo scenario v3 ready: ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(' ')}`)
   } finally {
     await disconnectPrismaClient()
   }

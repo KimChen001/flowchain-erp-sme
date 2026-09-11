@@ -13,6 +13,7 @@ async function login(page: Page, request: APIRequestContext, email = "kim@exampl
     localStorage.setItem("flowchain:auth-token", token);
     localStorage.setItem("flowchain:current-user", JSON.stringify(user));
   }, session);
+  return session;
 }
 
 function collectRuntimeIssues(page: Page) {
@@ -162,4 +163,39 @@ test("authorized user records an explicit reviewed award from the exact quotatio
   await expect(panel).toContainText(/Formal award decision recorded|正式授标决定已记录/);
   await expect(panel).toContainText("Acme Components");
   await expect(panel).toContainText("4900.0000 CNY");
+});
+
+test("RFQ list and comparison use English when the user selects English", async ({ page, request }) => {
+  const session = await login(page, request);
+  const headers = { Authorization: `Bearer ${session.token}` };
+  const profileResponse = await request.get("/api/me/profile", { headers });
+  const profile = await profileResponse.json();
+  const update = await request.patch("/api/me/profile", { headers, data: { ...profile, languagePreference: "en-US" } });
+  expect(update.ok(), await update.text()).toBeTruthy();
+
+  await page.goto(`/app/procurement/rfq/${encodeURIComponent(RFQ_ID)}`);
+  const detail = page.getByTestId("canonical-rfq-detail");
+  await expect(detail).toContainText("Compare supplier quotations");
+  await expect(detail).toContainText("RFQ line items");
+  await expect(detail).toContainText("Internal participation records");
+  await expect(detail).toContainText("Supplier quotations");
+  await expect(detail).toContainText("Data boundaries");
+  await expect(detail).not.toContainText(/比较供应商报价|内部参与记录|供应商报价|数据边界/);
+  await detail.getByRole("button", { name: "Add revision" }).first().click();
+  const editor = page.getByTestId("rfq-supplier-response-editor");
+  await expect(page.getByText(/Internal procurement record/)).toBeVisible();
+  await expect(editor).toContainText("Quoted quantity");
+  await expect(page.getByRole("button", { name: "Record and submit quotation" })).toBeVisible();
+  await expect(editor).not.toContainText(/新增报价|报价数量|记录并提交报价/);
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  await page.goto("/app/procurement/rfq");
+  await expect(page.getByTestId("procurement-rfq-list")).toContainText("Request for quotation records");
+  await expect(page.getByTestId("procurement-rfq-list")).toContainText("Collecting quotes");
+  await page.goto(`/app/procurement/rfq/${encodeURIComponent(RFQ_ID)}/comparison`);
+  const comparison = page.getByTestId("canonical-rfq-comparison");
+  await expect(comparison).toContainText("Side-by-side comparison available");
+  await expect(comparison).toContainText("Supplier response summary");
+  await expect(comparison).toContainText("Authority and data boundaries");
+  await expect(comparison).not.toContainText(/供应商响应摘要|行项目并列展示|商业条款|权限与数据边界/);
 });
