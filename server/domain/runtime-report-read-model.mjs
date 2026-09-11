@@ -1,4 +1,5 @@
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
+import { buildBusinessOverview } from './business-overview.mjs'
 
 const array = value => Array.isArray(value) ? value : []
 const text = value => String(value ?? '').trim()
@@ -100,7 +101,8 @@ export function buildRuntimeGovernedReport(context, input = {}) {
   const limitations = [...new Set([...array(context.dataLimitations), ...inventory.dataLimitations, ...(inventory.availability.length && inventory.availability.some(row => row.onHand === null) ? ['inventory_on_hand_incomplete'] : []), ...(aggregationStatus === 'multi_currency_unconverted' ? ['multi_currency_unconverted'] : [])])]
   const distinct = values => [...new Set(values.map(text).filter(Boolean))]
   const dataScope = { label: '当前工作区 runtime 数据', company: '—', currencyCode: selectedCurrencyCode, currencyLabel: selectedCurrencyLabel, currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts, fxConverted: false, from: query.from || '—', to: query.to || '—', activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => query[key]).length, sourceLabel: 'BusinessReadContext', completenessLabel: details.length ? `已读取 ${details.length} 条真实记录` : '当前范围无真实业务记录', filterOptions: { companies: [], suppliers: distinct(array(context.suppliers).map(row => row.supplierName || row.name)), customers: distinct(array(context.customers).map(row => row.name || row.customerName)), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_orders, ...source.supplier_invoices].map(row => row.currency)) } }
-  return { query, generatedAt: new Date().toISOString(), dataScope, kpis: metricIds.map(id => metric(id, all, inventory, aggregationStatus)), charts, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: metricDefinitions[id][4] })), exportRows: details, metricDefinitions: metricIds.map(id => metric(id, all, inventory, aggregationStatus)) }
+  const overview = query.subject === 'overview' ? buildBusinessOverview(all) : null
+  return { query, generatedAt: new Date().toISOString(), dataScope, kpis: metricIds.map(id => metric(id, all, inventory, aggregationStatus)), charts: overview?.charts || charts, attention: overview?.attention || [], totalRecords: all[primaryKey].length, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: metricDefinitions[id][4] })), exportRows: all[primaryKey], metricDefinitions: metricIds.map(id => metric(id, all, inventory, aggregationStatus)) }
 }
 
 export function getRuntimeReportCatalog() {
