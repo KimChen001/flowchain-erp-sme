@@ -1,4 +1,4 @@
-// Presentation-only translations. Persisted statuses and business values stay unchanged.
+// Interface translations. Persisted statuses and business values stay unchanged.
 export const operationsEnglish: Record<string, string> = {
   '发票记录': 'Invoice records',
   'PostgreSQL 中的正式供应商发票及其采购订单、收货和匹配状态。': 'Review supplier invoices, linked purchase orders, receipts, and matching status.',

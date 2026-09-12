@@ -2,6 +2,7 @@ import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { createKnowledgeService, answerKnowledgeQuery, knowledgeResponse, KnowledgeError } from '../domain/ai-knowledge-service.mjs'
 import { parseKnowledgeFile } from '../domain/ai-knowledge-file-parser.mjs'
+import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
 
 async function context(ctx) {
   const prisma = ctx.aiKnowledgePrisma || await getPrismaClient(ctx.env || process.env)
@@ -37,11 +38,11 @@ export async function handleKnowledgeRoute(ctx) {
 }
 
 export function isKnowledgeQuestion(body = {}) {
-  return body.queryMode === 'knowledge' || /knowledge base|product (?:spec|manual|information|guide)|company (?:policy|handbook)|according to.*(?:document|manual)|cite.*source|procedure.*follow|知识库|产品资料|产品规格|公司制度|操作手册|引用.*来源|根据.*资料/i.test(body.message || '')
+  return classifyQueryScope(body) === 'knowledge'
 }
 
-export async function runKnowledgeQuery(ctx, body = {}) {
-  if (!isKnowledgeQuestion(body)) return null
+export async function runKnowledgeQuery(ctx, body = {}, { force = false } = {}) {
+  if (!force && !isKnowledgeQuestion(body)) return null
   if (ctx.repositories?.mode !== 'database' && (ctx.env || process.env).FLOWCHAIN_PERSISTENCE_MODE !== 'database') throw new KnowledgeError('KNOWLEDGE_UNAVAILABLE', 'Knowledge requires database storage.', 503)
   if (typeof body.message !== 'string' || !body.message.trim() || body.message.length > 1200) throw new KnowledgeError('KNOWLEDGE_QUERY_INVALID', 'Enter a question of 1–1200 characters.', 400)
   const { actor, service } = await context(ctx)

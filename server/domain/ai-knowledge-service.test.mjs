@@ -1,10 +1,25 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Document } from '@langchain/core/documents'
-import { WorkspaceKnowledgeRetriever, answerKnowledgeQuery, createKnowledgeService } from './ai-knowledge-service.mjs'
+import { WorkspaceKnowledgeRetriever, answerKnowledgeQuery, createKnowledgeService, knowledgeIndexSummary } from './ai-knowledge-service.mjs'
 import { buildBoundedProviderRequestCore } from './ai-runtime-provider-specific-adapters-v2.mjs'
 
 const documents = [new Document({ pageContent: 'The Zephyr controller uses a 24 volt power supply. Its warranty is 18 months.', metadata: { id: 'chunk-a', documentId: 'doc-a', title: 'Zephyr product guide', position: 0 } }), new Document({ pageContent: 'Staff submit travel receipts to the office administrator.', metadata: { id: 'chunk-b', documentId: 'doc-b', title: 'Travel expenses', position: 0 } })]
+test('an exact SKU cannot be answered with a similar SKU document', async () => {
+  const retriever = new WorkspaceKnowledgeRetriever({ loadDocuments: async () => [new Document({ pageContent: 'LDM-002 warranty is 18 months.', metadata: { id: 'b', title: 'Product guide', embeddingModel: 'v1', embedding: [1, 0] } })], queryEmbedding: [1, 0], embeddingModel: 'v1' })
+  assert.deepEqual(await retriever.invoke('LDM-001 warranty'), [])
+})
+test('readiness checks vectors and model compatibility, not just metadata', () => {
+  assert.equal(knowledgeIndexSummary([{ embeddingModel: 'v1', embeddingDimensions: 2 }]).indexStatus, 'keyword')
+  assert.equal(knowledgeIndexSummary([{ embeddingModel: 'v1', embeddingDimensions: 2, embedding: [0, 0] }]).indexStatus, 'keyword')
+  assert.equal(knowledgeIndexSummary([{ embeddingModel: 'v1', embeddingDimensions: 2, embedding: [1, 0] }], { model: 'v2', dimensions: 2 }).indexStatus, 'outdated')
+})
+test('citations do not expose vector payloads', async () => {
+  const result = await answerKnowledgeQuery({ question: 'Zephyr warranty', actor: {}, service: { documents: async () => documents.map(doc => new Document({ ...doc, metadata: { ...doc.metadata, embedding: [1, 0], embeddingModel: 'private-model' } })) } })
+  assert.equal(result.citations[0].sourceNumber, 1)
+  assert.equal(result.citations[0].embedding, undefined)
+  assert.equal(result.citations[0].embeddingModel, undefined)
+})
 test('LangChain retriever returns relevant passages and no unrelated fallback', async () => {
   const retriever = new WorkspaceKnowledgeRetriever({ loadDocuments: async () => documents })
   assert.deepEqual((await retriever.invoke('Zephyr warranty')).map(d => d.metadata.id), ['chunk-a'])
@@ -51,8 +66,8 @@ test('configured generation accepts only references retrieved for this request',
 
 test('knowledge list reports semantic, partial, and keyword index coverage', async () => {
   const rows = [
-    { id: 'semantic', chunks: [{ embeddingModel: 'embed-v1', embeddingDimensions: 3 }], _count: { chunks: 1 } },
-    { id: 'partial', chunks: [{ embeddingModel: 'embed-v1', embeddingDimensions: 3 }, { embeddingModel: null, embeddingDimensions: null }], _count: { chunks: 2 } },
+    { id: 'semantic', chunks: [{ embedding: [1, 0, 0], embeddingModel: 'embed-v1', embeddingDimensions: 3 }], _count: { chunks: 1 } },
+    { id: 'partial', chunks: [{ embedding: [1, 0, 0], embeddingModel: 'embed-v1', embeddingDimensions: 3 }, { embeddingModel: null, embeddingDimensions: null }], _count: { chunks: 2 } },
     { id: 'keyword', chunks: [{ embeddingModel: null, embeddingDimensions: null }], _count: { chunks: 1 } },
   ]
   const service = createKnowledgeService({ aiKnowledgeDocument: { findMany: async () => rows } })
@@ -66,9 +81,9 @@ test('reindex replaces all chunk vectors atomically and preserves existing data 
   const chunks = [{ id: 'c1', content: 'first passage' }, { id: 'c2', content: 'second passage' }]
   const updates = []
   const prisma = {
-    aiKnowledgeDocument: { findFirst: async () => ({ id: 'doc-1', chunks }) },
+    aiKnowledgeDocument: { findFirst: async () => ({ id: 'doc-1', chunks }), updateMany: async () => ({ count: 1 }) },
     aiKnowledgeChunk: { update: args => { updates.push(args); return Promise.resolve(args) } },
-    $transaction: async operations => Promise.all(operations),
+    $transaction: async callback => callback(prisma),
   }
   const actor = { tenantId: 't1', permissionCodes: new Set(['settings.workspace.manage']) }
   const service = createKnowledgeService(prisma, { embeddingProvider: async () => ({ ok: true, model: 'embed-v2', dimensions: 2, vectors: [[1, 0], [0, 1]] }) })

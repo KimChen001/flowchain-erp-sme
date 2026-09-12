@@ -1,4 +1,4 @@
-const MAX_INPUTS = 128
+const MAX_INPUTS = 2048
 const MAX_DIMENSIONS = 4096
 
 const text = value => String(value ?? '').trim()
@@ -24,7 +24,32 @@ export const canCallEmbeddingProvider = env => {
 
 export async function callConfiguredEmbeddingProvider(inputs, env = {}, fetchImpl = globalThis.fetch) {
   const config = embeddingConfig(env)
-  const values = Array.isArray(inputs) ? inputs.map(value => text(value).slice(0, 12000)) : []
+  if (!fetchImpl || !canCallEmbeddingProvider(env)) return { ok: false, reason: 'not_configured' }
+  if (!Array.isArray(inputs) || !inputs.length || inputs.length > MAX_INPUTS || inputs.some(value => typeof value !== 'string' || !value.trim() || value.length > 12000)) return { ok: false, reason: 'invalid_input' }
+  const vectors = []
+  let dimensions = config.dimensions
+  for (let offset = 0; offset < inputs.length; offset += 32) {
+    let result
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      result = await embeddingBatch(inputs.slice(offset, offset + 32), env, fetchImpl)
+      if (result.ok || !['rate_limited', 'service_unavailable', 'timeout', 'network_error'].includes(result.reason)) break
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 150 * 2 ** attempt))
+    }
+    if (!result.ok) return result
+    if (dimensions && result.dimensions !== dimensions) return { ok: false, reason: 'dimension_mismatch' }
+    dimensions = result.dimensions
+    vectors.push(...result.vectors)
+  }
+  return { ok: true, vectors, model: config.model, dimensions }
+}
+
+export function validEmbedding(vector, dimensions) {
+  return Array.isArray(vector) && Number.isInteger(dimensions) && dimensions > 0 && dimensions <= MAX_DIMENSIONS && vector.length === dimensions && vector.every(Number.isFinite) && vector.some(value => value !== 0)
+}
+
+async function embeddingBatch(inputs, env, fetchImpl) {
+  const config = embeddingConfig(env)
+  const values = inputs.map(text)
   if (!fetchImpl || !canCallEmbeddingProvider(env)) return { ok: false, reason: 'not_configured' }
   if (!values.length || values.length > MAX_INPUTS || values.some(value => !value)) return { ok: false, reason: 'invalid_input' }
   const controller = new AbortController()
@@ -36,11 +61,14 @@ export async function callConfiguredEmbeddingProvider(inputs, env = {}, fetchImp
       method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
       body: JSON.stringify(body), signal: controller.signal,
     })
-    if (!response.ok) return { ok: false, reason: 'non_success_status' }
+    if (!response.ok) return { ok: false, reason: response.status === 429 ? 'rate_limited' : response.status >= 500 ? 'service_unavailable' : 'non_success_status' }
     const payload = await response.json()
-    const vectors = Array.isArray(payload?.data) ? [...payload.data].sort((a, b) => a.index - b.index).map(item => item.embedding) : []
+    const ordered = Array.isArray(payload?.data) ? [...payload.data].sort((a, b) => a.index - b.index) : []
+    if (ordered.some((item, index) => item.index !== index)) return { ok: false, reason: 'malformed_output' }
+    const vectors = ordered.map(item => item.embedding)
     const dimensions = vectors[0]?.length || 0
-    if (vectors.length !== values.length || !dimensions || dimensions > MAX_DIMENSIONS || vectors.some(vector => !Array.isArray(vector) || vector.length !== dimensions || vector.some(value => !Number.isFinite(value)))) return { ok: false, reason: 'malformed_output' }
+    if (vectors.length !== values.length || vectors.some(vector => !validEmbedding(vector, dimensions))) return { ok: false, reason: 'malformed_output' }
+    if (config.dimensions && dimensions !== config.dimensions) return { ok: false, reason: 'dimension_mismatch' }
     return { ok: true, vectors, model: config.model, dimensions }
   } catch (error) {
     return { ok: false, reason: error?.name === 'AbortError' ? 'timeout' : 'network_error' }
