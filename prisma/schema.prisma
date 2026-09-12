@@ -3251,6 +3251,11 @@ model AiKnowledgeDocument {
   status String @default("active")
   createdById String
   createdAt DateTime @default(now())
+  indexAttemptStatus String @default("idle")
+  indexAttemptId String?
+  indexAttemptError String?
+  indexAttemptStartedAt DateTime?
+  indexAttemptFinishedAt DateTime?
   chunks AiKnowledgeChunk[]
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   @@index([tenantId, status])

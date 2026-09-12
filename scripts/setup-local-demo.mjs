@@ -4,15 +4,21 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 
-export const LOCAL_DEMO_VERSION = 3
-export const LOCAL_DEMO_COUNTS = Object.freeze({ suppliers: 4, items: 6, customers: 3, warehouses: 1, locations: 3, paymentTerms: 2, taxCodes: 2, knowledgeDocuments: 2 })
+export const LOCAL_DEMO_VERSION = 4
+export const LOCAL_DEMO_COUNTS = Object.freeze({ suppliers: 10, items: 6, customers: 3, warehouses: 1, locations: 3, paymentTerms: 2, taxCodes: 2, knowledgeDocuments: 2 })
 const tenantId = process.env.FLOWCHAIN_DEFAULT_TENANT_ID || 'tenant-flowchain-local'
 const marker = { localDemo: true, localDemoVersion: LOCAL_DEMO_VERSION }
-const suppliers = [
+export const LOCAL_DEMO_SUPPLIERS = [
   ['LOCAL-DEMO-SUP-001', 'LDS-001', 'Acme Components', 'Electronic components'],
   ['LOCAL-DEMO-SUP-002', 'LDS-002', 'Summit Packaging', 'Packaging materials'],
   ['LOCAL-DEMO-SUP-003', 'LDS-003', 'Atlas Industrial Supply', 'Industrial supplies'],
   ['LOCAL-DEMO-SUP-004', 'LDS-004', 'Horizon Logistics', 'Logistics services'],
+  ['LOCAL-DEMO-SUP-005', 'LDS-005', 'Northstar Electronics', 'Electronic components', { contactName: 'Alex Morgan', email: 'sales@northstar.example.com', address: 'Austin, TX, USA', deliveryCycleDays: 7, businessType: 'Distributor' }],
+  ['LOCAL-DEMO-SUP-006', 'LDS-006', 'Evergreen Packaging', 'Packaging materials', { contactName: 'Jordan Lee', email: 'sales@evergreen.example.com', address: 'Portland, OR, USA', deliveryCycleDays: 5, businessType: 'Manufacturer' }],
+  ['LOCAL-DEMO-SUP-007', 'LDS-007', 'Precision Fastener Works', 'Industrial supplies', { contactName: 'Taylor Brooks', email: 'sales@precision.example.com', address: 'Cleveland, OH, USA', deliveryCycleDays: 10, businessType: 'Manufacturer' }],
+  ['LOCAL-DEMO-SUP-008', 'LDS-008', 'Meridian Freight Services', 'Logistics services', { contactName: 'Casey Reed', email: 'sales@meridian.example.com', address: 'Chicago, IL, USA', deliveryCycleDays: 3, businessType: 'Service provider' }],
+  ['LOCAL-DEMO-SUP-009', 'LDS-009', 'BluePeak Cable & Wire', 'Electronic components', { contactName: 'Sam Parker', email: 'sales@bluepeak.example.com', address: 'Raleigh, NC, USA', deliveryCycleDays: 14, businessType: 'Manufacturer' }],
+  ['LOCAL-DEMO-SUP-010', 'LDS-010', 'ClearMark Labels', 'Packaging materials', { contactName: 'Robin Hayes', email: 'sales@clearmark.example.com', address: 'Denver, CO, USA', deliveryCycleDays: 4, businessType: 'Manufacturer' }],
 ]
 const items = [
   ['LOCAL-DEMO-ITEM-001', 'LDM-001', 'Flow Controller', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001'],
@@ -61,10 +67,10 @@ export async function seedLocalDemo(prisma, env = process.env) {
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } })
   if (!tenant) throw new Error('Run pilot:setup before pilot:setup:demo.')
   return prisma.$transaction(async tx => {
-    for (const [id, code, name, category] of suppliers) {
+    for (const [id, code, name, category, profile = {}] of LOCAL_DEMO_SUPPLIERS) {
       const collision = await tx.supplier.findFirst({ where: { tenantId, code } })
       if (collision && collision.id !== id) throw new Error(`Refusing to overwrite non-demo supplier code ${code}.`)
-      const data = { name, category, riskLevel: 'low', metadata: { ...marker, defaultCurrency: 'USD', paymentTermsId: 'LOCAL-DEMO-NET30' } }
+      const data = { name, category, riskLevel: 'low', metadata: { ...marker, defaultCurrency: 'USD', paymentTermsId: 'LOCAL-DEMO-NET30', ...profile } }
       await tx.supplier.upsert({ where: { id }, create: { id, tenantId, code, ...data }, update: data })
     }
     for (const [id, sku, name, category, unit, preferredSupplierId] of items) {

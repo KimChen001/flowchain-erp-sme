@@ -22,6 +22,7 @@ const row = {
     reservedQuantity: 8,
     fulfilledQuantity: 0,
     unit: 'pcs',
+    amount: '245.50',
   }],
 }
 
@@ -42,6 +43,8 @@ test('PostgreSQL sales demand repository is tenant scoped and derives risk from 
   const orders = await repository.listOrders({ tenantId: 'tenant-a' })
   assert.equal(calls[0].where.tenantId, 'tenant-a')
   assert.equal(orders[0].salesOrderId, 'SO-DB-1')
+  assert.equal(orders[0].currency, 'CNY')
+  assert.equal(orders[0].totalAmount, 245.5)
   assert.equal(orders[0].shortageQty, 27)
   assert.equal(orders[0].deliveryRiskLevel, 'high')
   assert.equal(orders[0].linkedPurchaseOrders.length, 0)

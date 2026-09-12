@@ -7,10 +7,11 @@ export function formatNumberAmount(value: number | null | undefined, options: In
   }).format(safeAmount);
 }
 
-export function formatCurrencyAmount(value: number | null | undefined) {
-  return `¥${formatNumberAmount(value)}`;
+export function formatCurrencyAmount(value: number | null | undefined, currency?: string) {
+  if (!currency) return formatNumberAmount(value);
+  return formatNumberAmount(value, { style: "currency", currency });
 }
 
 export function fmt(n: number | null | undefined) {
-  return formatCurrencyAmount(n);
+  return `¥${formatNumberAmount(n)}`;
 }

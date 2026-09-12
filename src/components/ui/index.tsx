@@ -1,3 +1,4 @@
+import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import React, { useEffect, useState } from "react";
 import { ArrowDownRight, ArrowLeft, ArrowUpRight, ChevronDown, History, Home, List, X } from "lucide-react";
 import { toast } from "sonner";
@@ -12,6 +13,7 @@ export { A } from "./tokens";
 const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 export function Chip({ label, color, bg }: { label: string; color: string; bg: string }) {
+  const copy = useWorkspaceCopy();
   return (
     <span className="fc-status-chip inline-flex w-fit items-center whitespace-nowrap break-keep"
       style={{ color, background: bg }}>

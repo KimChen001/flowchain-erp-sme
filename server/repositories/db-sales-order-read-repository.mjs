@@ -73,6 +73,8 @@ function mapOrder(row = {}) {
     orderNumber: text(row.orderNumber, salesOrderId),
     customerId: text(row.customerId),
     customerName: text(row.customerName, '未命名客户'),
+    currency: text(row.currency),
+    totalAmount: sum(lines, 'amount'),
     customerTier: '常规客户',
     itemId: text(firstLine.itemId),
     sku,

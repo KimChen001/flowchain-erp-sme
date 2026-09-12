@@ -1,3 +1,4 @@
+import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
@@ -88,7 +89,7 @@ const makeLine = (date = today()): Line => ({
   quantity: "",
   estimatedUnitPrice: "",
   estimatedAmount: "",
-  currency: "CNY",
+  currency: "",
   targetWarehouseId: "",
   needByDate: date,
   serviceStartDate: "",
@@ -108,6 +109,7 @@ export default function CanonicalProcurementPanel({
   onNavigate?: (id: string, focus?: unknown) => void;
   focus?: { entityType: string; entityId: string; at: number } | null;
 }) {
+  const copy = useWorkspaceCopy();
   const [searchParams] = useSearchParams();
   const prefilled = useRef(false);
   const [items, setItems] = useState<Item[]>([]),
@@ -122,20 +124,21 @@ export default function CanonicalProcurementPanel({
     Record<string, SupplierOption[]>
   >({});
   const [departmentId, setDepartmentId] = useState("operations"),
-    [currency, setCurrency] = useState("CNY"),
+    [currency, setCurrency] = useState(""),
     [defaultDate, setDefaultDate] = useState(today()),
     [lines, setLines] = useState<Line[]>([makeLine()]),
     [loadError, setLoadError] = useState("");
   const [editing, setEditing] = useState<PR | null>(null),
     [errors, setErrors] = useState<FieldError[]>([]),
     [saving, setSaving] = useState(false);
+  const currencyInitialized = useRef(false);
   const selected =
     focus?.entityType === "purchase_request"
       ? rows.find((row) => row.id === focus.entityId)
       : null;
   const load = async () => {
     try {
-      const [prs, catalog, selector, departmentSelector, currencySelector, unitSelector, commoditySelector, warehouseSelector] = await Promise.all([
+      const [prs, catalog, selector, departmentSelector, currencySelector, unitSelector, commoditySelector, warehouseSelector, settings] = await Promise.all([
         request<PR[]>("/api/procurement/requests"),
         request<{ items: Item[] }>("/api/master-data/items?purchasable=true"),
         request<{ suppliers: SupplierOption[] }>(
@@ -146,6 +149,7 @@ export default function CanonicalProcurementPanel({
         request<{ options: SelectorOption[] }>("/api/master-data/units/select"),
         request<{ options: SelectorOption[] }>("/api/master-data/commodities/select"),
         request<{ options: SelectorOption[] }>("/api/master-data/warehouses/select"),
+        request<{ company: { currency: string } }>("/api/settings-runtime").catch(() => null),
       ]);
       setRows(prs);
       setItems(catalog.items);
@@ -157,6 +161,10 @@ export default function CanonicalProcurementPanel({
       );
       setDepartments(departmentSelector.options);
       setCurrencies(currencySelector.options);
+      if (!currencyInitialized.current) {
+        currencyInitialized.current = true;
+        setCurrency(settings?.company.currency || "");
+      }
       setUnits(unitSelector.options);
       setCommodities(commoditySelector.options);
       setWarehouses(warehouseSelector.options);
@@ -167,7 +175,7 @@ export default function CanonicalProcurementPanel({
     }
   };
   useEffect(() => {
-    load().catch((e) => toast.error(e.message));
+    load().catch((e) => toast.error(copy(e.message)));
   }, []);
   useEffect(() => {
     if (prefilled.current || !items.length) return;
@@ -214,7 +222,7 @@ export default function CanonicalProcurementPanel({
           },
         ]);
       })
-      .catch((error) => toast.error(error.message || "供应商关系读取失败"));
+      .catch((error) => toast.error(copy(error.message || "供应商关系读取失败")));
   }, [items, searchParams]);
   const patchLine = (index: number, patch: Partial<Line>) =>
     setLines((current) =>
@@ -314,7 +322,7 @@ export default function CanonicalProcurementPanel({
         });
       reset();
       await load();
-      toast.success(submit ? "采购申请已提交" : "采购申请草稿已保存");
+      toast.success(copy(submit ? "采购申请已提交" : "采购申请草稿已保存"));
     } catch (error: unknown) {
       const details = error instanceof ApiError ? error.details : [];
       setErrors(
@@ -322,7 +330,7 @@ export default function CanonicalProcurementPanel({
           ? details
           : [{ message: error instanceof Error ? error.message : "保存失败" }],
       );
-      toast.error(error instanceof Error ? error.message : "保存失败");
+      toast.error(copy(error instanceof Error ? error.message : "保存失败"));
     } finally {
       setSaving(false);
     }
@@ -330,7 +338,7 @@ export default function CanonicalProcurementPanel({
   const act = async (pr: PR, action: string) => {
     try {
       const reason =
-        action === "reject" ? window.prompt("请输入拒绝原因") || "" : "";
+        action === "reject" ? window.prompt(copy("请输入拒绝原因")) || "" : "";
       if (action === "reject" && !reason) return;
       const result: any = await request(
         `/api/procurement/requests/${pr.id}/${action}`,
@@ -344,7 +352,7 @@ export default function CanonicalProcurementPanel({
         });
       await load();
     } catch (e: any) {
-      toast.error(e.message);
+      toast.error(copy(e.message));
     }
   };
   const edit = async (pr: PR) => {
@@ -370,7 +378,7 @@ export default function CanonicalProcurementPanel({
     }));
     setEditing(pr);
     setDepartmentId(pr.departmentId);
-    setCurrency(pr.defaultCurrency || "CNY");
+    setCurrency(pr.defaultCurrency || "");
     setDefaultDate(pr.defaultNeedByDate || today());
     setLines(
       pr.lines.map((l) => ({
@@ -385,37 +393,33 @@ export default function CanonicalProcurementPanel({
   if (loadError)
     return (
       <Card className="p-12 text-center">
-        <h1 className="text-base font-semibold">采购申请数据加载失败</h1>
+        <h1 className="text-base font-semibold">{copy("采购申请数据加载失败")}</h1>
         <p className="mt-2 text-xs" style={{ color: A.sub }}>
-          {loadError}
+          {copy(loadError)}
         </p>
         <button
-          onClick={() => load().catch((error) => toast.error(error.message))}
+          onClick={() => load().catch((error) => toast.error(copy(error.message)))}
           className="mt-3 text-sm text-blue-600"
-        >
-          重试
-        </button>
+        >{copy("重试")}</button>
       </Card>
     );
   if (selected)
     return (
       <div className="space-y-4 pb-16">
-        <button onClick={() => onNavigate?.("procurement:requests")}>
-          返回采购申请列表
-        </button>
+        <button onClick={() => onNavigate?.("procurement:requests")}>{copy("返回采购申请列表")}</button>
         <Card className="p-5">
           <div className="flex items-start justify-between">
             <div>
               <h1 className="text-lg font-semibold">{selected.id}</h1>
               <p className="mt-1 text-xs" style={{ color: A.sub }}>
-                {selected.status} · v{selected.version} · {selected.requesterId}
+                {copy(selected.status)} · v{selected.version} · {selected.requesterId}
               </p>
             </div>
             <strong>
               {selected.defaultCurrency} {selected.totalAmount}
             </strong>
           </div>
-          <h2 className="mt-5 text-sm font-semibold">采购行</h2>
+          <h2 className="mt-5 text-sm font-semibold">{copy("采购行")}</h2>
           <div className="mt-2 divide-y">
             {selected.lines.map((line) => (
               <div
@@ -439,11 +443,9 @@ export default function CanonicalProcurementPanel({
           </div>
         </Card>
         <Card className="p-5">
-          <h2 className="text-sm font-semibold">关联采购订单</h2>
+          <h2 className="text-sm font-semibold">{copy("关联采购订单")}</h2>
           {!selected.linkedPurchaseOrderIds?.length ? (
-            <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
-              暂无关联采购订单
-            </div>
+            <div className="py-8 text-center text-xs" style={{ color: A.sub }}>{copy("暂无关联采购订单")}</div>
           ) : (
             <div className="mt-3 flex flex-wrap gap-2">
               {selected.linkedPurchaseOrderIds.map((id) => (
@@ -462,16 +464,14 @@ export default function CanonicalProcurementPanel({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold">
-              {editing ? `编辑采购申请 ${editing.id}` : "新建采购申请"}
+              {editing ? `${copy("编辑采购申请")} ${editing.id}` : copy("新建采购申请")}
             </h2>
-            <p className="mt-1 text-xs" style={{ color: A.sub }}>
-              每一行均需明确物料或服务、供应商、金额、交付地点和需求日期。
-            </p>
+            <p className="mt-1 text-xs" style={{ color: A.sub }}>{copy("每一行均需明确物料或服务、供应商、金额、交付地点和需求日期。")}</p>
           </div>
           <div className="flex gap-2">
             <button
-              aria-label="刷新主数据"
-              title="刷新主数据"
+              aria-label={copy("刷新主数据")}
+              title={copy("刷新主数据")}
               onClick={() => load()}
               className="rounded-md border p-2"
             >
@@ -481,50 +481,47 @@ export default function CanonicalProcurementPanel({
               disabled={saving}
               onClick={() => save(false)}
               className="rounded-md bg-slate-100 px-3 py-2 text-xs"
-            >
-              保存草稿
-            </button>
+            >{copy("保存草稿")}</button>
             <button
               disabled={saving}
               onClick={() => save(true)}
               className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
-            >
-              保存并提交
-            </button>
+            >{copy("保存并提交")}</button>
           </div>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-4">
-          <Field label="申请人">
+          <Field label={copy("申请人")}>
             <input
-              aria-label="申请人"
+              aria-label={copy("申请人")}
               readOnly
-              value="由服务端当前用户确定"
+              value={copy("由服务端当前用户确定")}
               style={{ ...inputStyle, background: A.gray6 }}
             />
           </Field>
-          <Field label="部门">
+          <Field label={copy("部门")}>
             <select
-              aria-label="部门"
+              aria-label={copy("部门")}
               value={departmentId}
               onChange={(e) => setDepartmentId(e.target.value)}
               style={inputStyle}
             >
-              {departments.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              {departments.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}
             </select>
           </Field>
-          <Field label="默认币种">
+          <Field label={copy("默认币种")}>
             <select
-              aria-label="默认币种"
+              aria-label={copy("默认币种")}
               value={currency}
               onChange={(e) => setCurrency(e.target.value)}
               style={inputStyle}
             >
-              {currencies.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              <option value="">{copy("选择币种")}</option>
+              {currencies.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}
             </select>
           </Field>
-          <Field label="默认需求日期">
+          <Field label={copy("默认需求日期")}>
             <input
-              aria-label="默认需求日期"
+              aria-label={copy("默认需求日期")}
               type="date"
               value={defaultDate}
               onChange={(e) => setDefaultDate(e.target.value)}
@@ -538,7 +535,7 @@ export default function CanonicalProcurementPanel({
             className="mt-3 rounded-md bg-red-50 p-3 text-xs text-red-700"
           >
             {errors.map((e, i) => (
-              <div key={i}>{e.message || e.field}</div>
+              <div key={i}>{copy(e.message || e.field)}</div>
             ))}
           </div>
         )}
@@ -546,14 +543,14 @@ export default function CanonicalProcurementPanel({
           {lines.map((line, index) => (
             <div key={line.lineId} className="rounded-md border p-3">
               <div className="mb-3 flex items-center justify-between">
-                <strong className="text-xs">采购行 {index + 1}</strong>
+                <strong className="text-xs">{copy("采购行")} {index + 1}</strong>
                 <button
-                  aria-label={`删除采购行 ${index + 1}`}
-                  title="删除采购行"
+                  aria-label={`${copy("删除采购行")} ${index + 1}`}
+                  title={copy("删除采购行")}
                   onClick={() => {
                     if (
                       lines.length > 1 &&
-                      window.confirm("确认删除该采购行？")
+                      window.confirm(copy("确认删除该采购行？"))
                     )
                       setLines(lines.filter((_, i) => i !== index));
                   }}
@@ -563,7 +560,7 @@ export default function CanonicalProcurementPanel({
                 </button>
               </div>
               <div className="grid gap-2 md:grid-cols-6">
-                <Field label="采购类型">
+                <Field label={copy("采购类型")}>
                   <select
                     value={line.sourceType}
                     onChange={(e) => {
@@ -577,11 +574,11 @@ export default function CanonicalProcurementPanel({
                     }}
                     style={inputStyle}
                   >
-                    <option value="catalog_item">目录物料</option>
-                    <option value="non_catalog_item">Other / 非目录</option>
+                    <option value="catalog_item">{copy("目录物料")}</option>
+                    <option value="non_catalog_item">{copy("Other / 非目录")}</option>
                   </select>
                 </Field>
-                <Field label="计价方式">
+                <Field label={copy("计价方式")}>
                   <select
                     value={line.lineBasis}
                     onChange={(e) =>
@@ -594,8 +591,8 @@ export default function CanonicalProcurementPanel({
                     }
                     style={inputStyle}
                   >
-                    <option value="quantity">数量型</option>
-                    <option value="amount">金额 / 服务型</option>
+                    <option value="quantity">{copy("数量型")}</option>
+                    <option value="amount">{copy("金额 / 服务型")}</option>
                   </select>
                 </Field>
                 <Field label="SKU / Other">
@@ -606,7 +603,7 @@ export default function CanonicalProcurementPanel({
                       onChange={(e) => selectItem(index, e.target.value)}
                       style={inputStyle}
                     >
-                      <option value="">搜索或选择 SKU</option>
+                      <option value="">{copy("搜索或选择 SKU")}</option>
                       {items.map((i) => (
                         <option key={i.itemId || i.id} value={i.itemId || i.id}>
                           {i.sku} · {i.itemName || i.name}
@@ -614,19 +611,19 @@ export default function CanonicalProcurementPanel({
                       ))}
                     </select>
                   ) : (
-                    <span className="block py-2 text-xs">非目录</span>
+                    <span className="block py-2 text-xs">{copy("非目录")}</span>
                   )}
                 </Field>
-                <Field label="供应商">
+                <Field label={copy("供应商")}>
                   <select
-                    aria-label={`供应商 ${index + 1}`}
+                    aria-label={`${copy("供应商")} ${index + 1}`}
                     value={line.supplierId}
                     onChange={(e) =>
                       patchLine(index, { supplierId: e.target.value })
                     }
                     style={inputStyle}
                   >
-                    <option value="">选择供应商</option>
+                    <option value="">{copy("选择供应商")}</option>
                     {supplierOptions(line).map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name}
@@ -645,12 +642,10 @@ export default function CanonicalProcurementPanel({
                           })
                         }
                         className="mt-1 text-xs text-blue-600"
-                      >
-                        维护 SKU 供应商
-                      </button>
+                      >{copy("维护 SKU 供应商")}</button>
                     )}
                 </Field>
-                <Field label="物料名称 / 描述">
+                <Field label={copy("物料名称 / 描述")}>
                   <input
                     readOnly={line.sourceType === "catalog_item"}
                     value={line.itemNameSnapshot}
@@ -660,17 +655,17 @@ export default function CanonicalProcurementPanel({
                     style={inputStyle}
                   />
                 </Field>
-                <Field label="品类">
-                  {line.sourceType === "catalog_item" ? <input readOnly value={line.commodityId} style={inputStyle} /> : <select value={line.commodityId} onChange={(e) => patchLine(index, { commodityId: e.target.value })} style={inputStyle}><option value="">选择品类</option>{commodities.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select>}
+                <Field label={copy("品类")}>
+                  {line.sourceType === "catalog_item" ? <input readOnly value={line.commodityId} style={inputStyle} /> : <select value={line.commodityId} onChange={(e) => patchLine(index, { commodityId: e.target.value })} style={inputStyle}><option value="">{copy("选择品类")}</option>{commodities.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
                 </Field>
               </div>
               <div className="mt-2 grid gap-2 md:grid-cols-6">
                 {line.lineBasis === "quantity" && (
                   <>
-                    <Field label="单位">
-                      {line.sourceType === "catalog_item" ? <input readOnly value={line.unitSnapshot || ""} style={inputStyle} /> : <select value={line.unitSnapshot || ""} onChange={(e) => patchLine(index, { unitSnapshot: e.target.value })} style={inputStyle}><option value="">选择单位</option>{units.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select>}
+                    <Field label={copy("单位")}>
+                      {line.sourceType === "catalog_item" ? <input readOnly value={line.unitSnapshot || ""} style={inputStyle} /> : <select value={line.unitSnapshot || ""} onChange={(e) => patchLine(index, { unitSnapshot: e.target.value })} style={inputStyle}><option value="">{copy("选择单位")}</option>{units.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}</select>}
                     </Field>
-                    <Field label="数量">
+                    <Field label={copy("数量")}>
                       <input
                         type="number"
                         min="0"
@@ -681,12 +676,12 @@ export default function CanonicalProcurementPanel({
                         style={inputStyle}
                       />
                     </Field>
-                    <Field label="预计单价">
+                    <Field label={copy("预计单价")}>
                       <input
-                        aria-label={`预计单价 ${index + 1}`}
+                        aria-label={`${copy("预计单价")} ${index + 1}`}
                         type="number"
                         min="0"
-                        placeholder="请输入"
+                        placeholder={copy("请输入")}
                         value={line.estimatedUnitPrice}
                         onChange={(e) =>
                           patchLine(index, {
@@ -699,7 +694,7 @@ export default function CanonicalProcurementPanel({
                   </>
                 )}
                 {line.lineBasis === "amount" && (
-                  <Field label="预计总金额">
+                  <Field label={copy("预计总金额")}>
                     <input
                       type="number"
                       min="0"
@@ -711,7 +706,7 @@ export default function CanonicalProcurementPanel({
                     />
                   </Field>
                 )}
-                <Field label="规格">
+                <Field label={copy("规格")}>
                   <input
                     readOnly={line.sourceType === "catalog_item"}
                     value={line.specificationSnapshot}
@@ -723,7 +718,7 @@ export default function CanonicalProcurementPanel({
                     style={inputStyle}
                   />
                 </Field>
-                <Field label="目标仓库或服务地点">
+                <Field label={copy("目标仓库或服务地点")}>
                   <select
                     value={line.targetWarehouseId}
                     onChange={(e) =>
@@ -731,7 +726,7 @@ export default function CanonicalProcurementPanel({
                     }
                     style={inputStyle}
                   >
-                    <option value="">选择地点</option>
+                    <option value="">{copy("选择地点")}</option>
                     {warehouses.map((w) => (
                       <option key={w.id} value={w.id}>
                         {w.label}
@@ -739,7 +734,7 @@ export default function CanonicalProcurementPanel({
                     ))}
                   </select>
                 </Field>
-                <Field label="需求日期">
+                <Field label={copy("需求日期")}>
                   <input
                     type="date"
                     value={line.needByDate}
@@ -750,9 +745,9 @@ export default function CanonicalProcurementPanel({
                   />
                 </Field>
               </div>
-              <Field label="行级内部备注">
+              <Field label={copy("行级内部备注")}>
                 <textarea
-                  aria-label={`行级内部备注 ${index + 1}`}
+                  aria-label={`${copy("行级内部备注")} ${index + 1}`}
                   value={line.internalLineComment}
                   onChange={(e) =>
                     patchLine(index, { internalLineComment: e.target.value })
@@ -768,26 +763,20 @@ export default function CanonicalProcurementPanel({
             onClick={() => setLines([...lines, makeLine(defaultDate)])}
             className="inline-flex items-center gap-1 rounded-md border px-3 py-2 text-xs"
           >
-            <Plus size={14} />
-            新增采购行
-          </button>
-          <strong className="text-sm">
-            预计总额 {currency} {total.toFixed(2)}
+            <Plus size={14} />{copy("新增采购行")}</button>
+          <strong className="text-sm">{copy("预计总额")} {currency} {total.toFixed(2)}
           </strong>
         </div>
       </Card>
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between border-b p-4">
-          <h2 className="text-sm font-semibold">采购申请</h2>
+          <h2 className="text-sm font-semibold">{copy("采购申请")}</h2>
           <span className="text-xs" style={{ color: A.sub }}>
-            {rows.length} 张
-          </span>
+            {rows.length} {copy("张")}</span>
         </div>
         {rows.length === 0 ? (
-          <div className="py-12 text-center text-sm" style={{ color: A.sub }}>
-            暂无采购申请
-            <br />
-            <span className="text-xs">点击“新建采购申请”开始录入。</span>
+          <div className="py-12 text-center text-sm" style={{ color: A.sub }}>{copy("暂无采购申请")}<br />
+            <span className="text-xs">{copy("点击“新建采购申请”开始录入。")}</span>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -796,7 +785,7 @@ export default function CanonicalProcurementPanel({
                 <tr>
                   {["申请编号", "申请人", "状态", "金额", "操作"].map((h) => (
                     <th key={h} className="p-3 text-left">
-                      {h}
+                      {copy(h)}
                     </th>
                   ))}
                 </tr>
@@ -810,36 +799,26 @@ export default function CanonicalProcurementPanel({
                       </EntityLink>
                     </td>
                     <td className="p-3">{pr.requesterId}</td>
-                    <td className="p-3">{pr.status}</td>
+                    <td className="p-3">{copy(pr.status)}</td>
                     <td className="p-3">{pr.totalAmount}</td>
                     <td className="p-3 space-x-2">
                       {pr.status === "draft" && (
                         <>
-                          <button onClick={() => edit(pr)}>编辑</button>
-                          <button onClick={() => act(pr, "submit")}>
-                            提交
-                          </button>
+                          <button onClick={() => edit(pr)}>{copy("编辑")}</button>
+                          <button onClick={() => act(pr, "submit")}>{copy("提交")}</button>
                         </>
                       )}
                       {pr.status === "submitted" && (
                         <>
-                          <button onClick={() => act(pr, "approve")}>
-                            批准
-                          </button>
-                          <button onClick={() => act(pr, "reject")}>
-                            拒绝
-                          </button>
-                          <button onClick={() => act(pr, "withdraw")}>
-                            撤回
-                          </button>
+                          <button onClick={() => act(pr, "approve")}>{copy("批准")}</button>
+                          <button onClick={() => act(pr, "reject")}>{copy("拒绝")}</button>
+                          <button onClick={() => act(pr, "withdraw")}>{copy("撤回")}</button>
                         </>
                       )}
                       {pr.status === "approved" && (
                         <button
                           onClick={() => act(pr, "generate-purchase-orders")}
-                        >
-                          生成 Draft PO
-                        </button>
+                        >{copy("生成 Draft PO")}</button>
                       )}
                     </td>
                   </tr>
