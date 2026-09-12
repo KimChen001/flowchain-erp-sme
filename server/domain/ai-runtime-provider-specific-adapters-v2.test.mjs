@@ -22,7 +22,7 @@ import {
 import { buildAiRuntimeResponseV2, buildAiRuntimeResponseV2Async } from './ai-runtime-gateway-v2.mjs'
 import { buildAiRuntimeEvaluationV2 } from './ai-runtime-observability-v2.mjs'
 
-const providerKinds = ['openai_responses', 'deepseek_chat', 'doubao_chat']
+const providerKinds = ['openai_responses', 'deepseek_chat', 'doubao_chat', 'qwen_chat']
 import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {

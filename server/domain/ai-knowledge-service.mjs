@@ -30,7 +30,7 @@ export function createKnowledgeService(prisma, { env = process.env, embeddingPro
     async list(actor) {
       const rows = await prisma.aiKnowledgeDocument.findMany({ where: readable(actor), select: { ...docSelect, chunks: { select: { embedding: true, embeddingModel: true, embeddingDimensions: true } } }, orderBy: { createdAt: 'desc' }, take: 100 })
       const pgvector = await hasPgvectorKnowledgeStore(prisma)
-      return { canManage: manageable(actor), capabilities: { embeddingConfigured: canCallEmbeddingProvider(env), vectorStorage: pgvector ? 'pgvector' : 'local_vectors', model: embeddingConfig(env).model || null, dimensions: embeddingConfig(env).dimensions || null }, items: rows.map(({ chunks, ...document }) => {
+      return { canManage: manageable(actor), capabilities: { embeddingConfigured: canCallEmbeddingProvider(env), generationConfigured: canCallConfiguredProvider(env), generationModel: env.FLOWCHAIN_AI_PROVIDER_MODEL || null, vectorStorage: pgvector ? 'pgvector' : 'local_vectors', model: embeddingConfig(env).model || null, dimensions: embeddingConfig(env).dimensions || null }, items: rows.map(({ chunks, ...document }) => {
         const interrupted = document.indexAttemptStatus === 'processing' && new Date(document.indexAttemptStartedAt) < leaseCutoff()
         return { ...document, ...knowledgeIndexSummary(chunks, embeddingConfig(env)), ...(interrupted ? { indexAttemptStatus: 'failed', indexAttemptError: 'interrupted' } : {}) }
       }) }
@@ -78,7 +78,11 @@ export function createKnowledgeService(prisma, { env = process.env, embeddingPro
         const cached = new Map(document.chunks.filter(chunk => config.model && config.dimensions && chunk.embeddingModel === config.model && chunk.contentHash === hash(chunk.content) && validEmbedding(chunk.embedding, config.dimensions)).map(chunk => [chunk.contentHash, chunk.embedding]))
         const missing = [...new Map(document.chunks.filter(chunk => !cached.has(hash(chunk.content))).map(chunk => [hash(chunk.content), chunk.content])).entries()]
         const generated = missing.length ? await embeddingProvider(missing.map(([, content]) => content), env) : { ok: true, model: config.model, dimensions: config.dimensions, vectors: [] }
-        if (!generated.ok) fail(generated.reason === 'not_configured' ? 'KNOWLEDGE_EMBEDDING_NOT_CONFIGURED' : 'KNOWLEDGE_EMBEDDING_UNAVAILABLE', generated.reason === 'not_configured' ? 'Embedding is not configured. Documents remain available for keyword search.' : 'Embedding service is unavailable. The existing index was kept.', 503)
+        if (!generated.ok) {
+          if (generated.reason === 'quota_exceeded') fail('KNOWLEDGE_QUOTA_EXCEEDED', 'The embedding provider has no available API quota. Check project billing, then retry. The existing index was kept.', 503)
+          if (generated.reason === 'authentication_error') fail('KNOWLEDGE_CREDENTIALS_INVALID', 'The embedding credential was rejected. Ask an administrator to update the server configuration.', 503)
+          fail(generated.reason === 'not_configured' ? 'KNOWLEDGE_EMBEDDING_NOT_CONFIGURED' : 'KNOWLEDGE_EMBEDDING_UNAVAILABLE', generated.reason === 'not_configured' ? 'Embedding is not configured. Documents remain available for keyword search.' : 'Embedding service is unavailable. The existing index was kept.', 503)
+        }
         if (!generated.model || (config.model && generated.model !== config.model) || (config.dimensions && generated.dimensions !== config.dimensions) || !Array.isArray(generated.vectors) || generated.vectors.length !== missing.length || generated.vectors.some(vector => !validEmbedding(vector, generated.dimensions))) fail('KNOWLEDGE_EMBEDDING_INVALID', 'The embedding response failed validation. The existing index was kept.', 503)
         missing.forEach(([key], index) => cached.set(key, generated.vectors[index]))
         const embedded = { ...generated, vectors: document.chunks.map(chunk => cached.get(hash(chunk.content))) }
@@ -152,9 +156,9 @@ export class WorkspaceKnowledgeRetriever extends BaseRetriever {
   }
 }
 
-export async function answerKnowledgeQuery({ question, language = 'en-US', actor, service, env = {}, provider = callConfiguredProvider }) {
+export async function answerKnowledgeQuery({ question, language = 'en-US', actor, service, env = {}, provider = callConfiguredProvider, embeddingProvider = callConfiguredEmbeddingProvider }) {
   const zh = language === 'zh-CN'
-  const queryVector = await callConfiguredEmbeddingProvider([question], env)
+  const queryVector = await embeddingProvider([question], env)
   const databaseSemanticRanks = queryVector.ok && service.semanticRanks ? await service.semanticRanks(actor, queryVector.vectors[0], queryVector.model) : null
   const retriever = new WorkspaceKnowledgeRetriever({ loadDocuments: () => service.documents(actor), queryEmbedding: queryVector.ok ? queryVector.vectors[0] : null, embeddingModel: queryVector.ok ? queryVector.model : null, databaseSemanticRanks })
   const chain = RunnableSequence.from([

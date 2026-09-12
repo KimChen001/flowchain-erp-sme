@@ -4,7 +4,7 @@ import { useI18n } from '../../i18n/I18n';
 
 const endpoint = '/api/ai-runtime/knowledge';
 type Source = { id: string; title: string; language: string; indexStatus: 'semantic' | 'partial' | 'keyword' | 'outdated'; indexAttemptStatus?: string; indexAttemptError?: string; indexAttemptFinishedAt?: string; indexedChunks?: number; embeddingModel: string | null; embeddingDimensions: number | null; _count: { chunks: number } };
-type Capabilities = { embeddingConfigured: boolean; vectorStorage: string; model: string | null; dimensions: number | null };
+type Capabilities = { embeddingConfigured: boolean; generationConfigured?: boolean; generationModel?: string | null; vectorStorage: string; model: string | null; dimensions: number | null };
 type PendingFile = { fileName: string; contentBase64: string };
 export type RagAnswer = { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> };
 
@@ -60,6 +60,8 @@ export function KnowledgeLibrary({ onClose }: { onClose: () => void }) {
     return () => window.clearInterval(timer);
   }, [items, busy, refresh]);
   function failureText(code?: string) {
+    if (code === 'KNOWLEDGE_QUOTA_EXCEEDED') return zh ? 'Embedding 服务的 API 额度不足。请管理员检查额度后重试，原索引已保留。' : 'Embedding API quota is exhausted. Ask an administrator to check billing, then retry. The previous index was kept.';
+    if (code === 'KNOWLEDGE_CREDENTIALS_INVALID') return zh ? 'Embedding 凭据被拒绝，请管理员更新服务端配置。' : 'The embedding credential was rejected. Ask an administrator to update the server configuration.';
     if (code === 'KNOWLEDGE_EMBEDDING_NOT_CONFIGURED') return zh ? '未配置 embedding；资料仍可用于关键词检索。' : 'Embedding is not configured. Keyword search remains available.';
     if (code === 'interrupted') return zh ? '上次索引任务被中断，可以重试。' : 'The previous indexing attempt was interrupted. Retry to continue.';
     return zh ? '上次索引未完成。原有索引已保留，可以重试。' : 'The last indexing attempt failed. The previous index was kept. You can retry.';
@@ -79,6 +81,7 @@ export function KnowledgeLibrary({ onClose }: { onClose: () => void }) {
     <h2 className="text-xl font-semibold">{zh ? '产品资料与公司知识库' : 'Product information & company knowledge'}</h2>
     <p className="my-3 text-sm text-slate-600">{zh ? '导入产品说明、术语表或公司手册。回答会引用当前工作区中你有权限阅读的资料。' : 'Import product guides, glossaries, or company handbooks. Answers cite documents you can read in this workspace.'}</p>
     {capabilities && <div data-testid="knowledge-readiness" className="mb-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><strong>{zh ? '检索状态' : 'Search readiness'}</strong><p className="mt-1">{capabilities.embeddingConfigured ? (zh ? 'Embedding 服务已配置，完成索引后可使用语义检索。' : 'Embedding is configured. Semantic search is available after successful indexing.') : (zh ? '当前使用关键词检索。配置 embedding 服务后可建立语义索引。' : 'Keyword search is active. Configure an embedding provider to build semantic indexes.')}</p>{canManage && <p className="mt-1 text-xs text-slate-500">{capabilities.model || (zh ? '未选择模型' : 'No embedding model selected')} · {capabilities.vectorStorage === 'pgvector' ? 'PostgreSQL / pgvector' : (zh ? '本地向量检索（未启用 pgvector）' : 'Local vector search (pgvector not enabled)')}</p>}</div>}
+    {capabilities && <p data-testid="knowledge-generation-status" className="mb-3 text-sm text-slate-600">{capabilities.generationConfigured ? (zh ? `回答模型已配置：${capabilities.generationModel}。服务可用性以实际请求结果为准。` : `Answer model configured: ${capabilities.generationModel}. Availability depends on a successful request.`) : (zh ? '未配置回答模型，目前显示带引用的资料摘录。' : 'No answer model configured. Answers show cited document excerpts.')}</p>}
     <button type="button" onClick={() => refresh().catch(e => setError(e.message))} className="mb-3 text-sm text-blue-700">{zh ? '刷新状态' : 'Refresh status'}</button>
     {error && <p role="alert" className="my-3 text-sm text-red-700">{error}</p>}
     {canManage && <div className="my-4 space-y-3 rounded-xl border p-4">

@@ -23,11 +23,17 @@ test('zero vectors, duplicate indexes, wrong dimensions, and oversized input fai
 })
 test('transient provider failures retry; authentication failures do not', async () => {
   let calls = 0
-  const result = await callConfiguredEmbeddingProvider(['guide'], env, async () => ++calls < 3 ? { ok: false, status: 429 } : { ok: true, json: async () => ({ data: [{ index: 0, embedding: [1, 0] }] }) })
+  const result = await callConfiguredEmbeddingProvider(['guide'], env, async () => ++calls < 3 ? { ok: false, status: 429, json: async () => ({ error: { code: 'rate_limit_exceeded' } }) } : { ok: true, json: async () => ({ data: [{ index: 0, embedding: [1, 0] }] }) })
   assert.equal(result.ok, true); assert.equal(calls, 3)
   calls = 0
   assert.equal((await callConfiguredEmbeddingProvider(['guide'], env, async () => { calls++; return { ok: false, status: 401 } })).ok, false)
   assert.equal(calls, 1)
+})
+test('exhausted quota is not retried and upstream messages are not exposed', async () => {
+  let calls = 0
+  const result = await callConfiguredEmbeddingProvider(['guide'], env, async () => { calls++; return { ok: false, status: 429, json: async () => ({ error: { code: 'insufficient_quota', message: 'sensitive upstream details' } }) } })
+  assert.equal(calls, 1)
+  assert.deepEqual(result, { ok: false, reason: 'quota_exceeded' })
 })
 
 test('embedding provider batches inputs and validates configured dimensions', async () => {

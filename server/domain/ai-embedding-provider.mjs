@@ -14,6 +14,7 @@ export function embeddingConfig(env = {}) {
     model: text(env.FLOWCHAIN_AI_EMBEDDING_MODEL),
     dimensions: positiveInteger(env.FLOWCHAIN_AI_EMBEDDING_DIMENSIONS, 0, MAX_DIMENSIONS),
     timeoutMs: positiveInteger(env.FLOWCHAIN_AI_EMBEDDING_TIMEOUT_MS, 10000, 30000),
+    batchSize: positiveInteger(env.FLOWCHAIN_AI_EMBEDDING_BATCH_SIZE, 32, 32),
   }
 }
 
@@ -28,10 +29,10 @@ export async function callConfiguredEmbeddingProvider(inputs, env = {}, fetchImp
   if (!Array.isArray(inputs) || !inputs.length || inputs.length > MAX_INPUTS || inputs.some(value => typeof value !== 'string' || !value.trim() || value.length > 12000)) return { ok: false, reason: 'invalid_input' }
   const vectors = []
   let dimensions = config.dimensions
-  for (let offset = 0; offset < inputs.length; offset += 32) {
+  for (let offset = 0; offset < inputs.length; offset += config.batchSize) {
     let result
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      result = await embeddingBatch(inputs.slice(offset, offset + 32), env, fetchImpl)
+      result = await embeddingBatch(inputs.slice(offset, offset + config.batchSize), env, fetchImpl)
       if (result.ok || !['rate_limited', 'service_unavailable', 'timeout', 'network_error'].includes(result.reason)) break
       if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 150 * 2 ** attempt))
     }
@@ -61,7 +62,13 @@ async function embeddingBatch(inputs, env, fetchImpl) {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
       body: JSON.stringify(body), signal: controller.signal,
     })
-    if (!response.ok) return { ok: false, reason: response.status === 429 ? 'rate_limited' : response.status >= 500 ? 'service_unavailable' : 'non_success_status' }
+    if (!response.ok) {
+      if (response.status === 429) {
+        const error = await response.json().catch(() => ({}))
+        return { ok: false, reason: error?.error?.code === 'insufficient_quota' || error?.error?.type === 'insufficient_quota' ? 'quota_exceeded' : 'rate_limited' }
+      }
+      return { ok: false, reason: response.status === 401 ? 'authentication_error' : response.status === 403 ? 'access_denied' : response.status === 404 ? 'model_not_found' : response.status >= 500 ? 'service_unavailable' : 'non_success_status' }
+    }
     const payload = await response.json()
     const ordered = Array.isArray(payload?.data) ? [...payload.data].sort((a, b) => a.index - b.index) : []
     if (ordered.some((item, index) => item.index !== index)) return { ok: false, reason: 'malformed_output' }
