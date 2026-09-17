@@ -155,7 +155,8 @@ export type AiBusinessQueryPresentation = {
 };
 
 export type AiResponseV2 = {
-  rag?: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string }> };
+  supplementalKnowledge?: { title: string; summary: string; rag: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> } };
+  rag?: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> };
   version: "v2";
   query: string;
   intent: string;

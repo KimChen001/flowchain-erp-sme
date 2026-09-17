@@ -1578,7 +1578,7 @@ export default function FloatingAiAssistant({
 }) {
   const { language } = useI18n();
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
-  const [queryMode, setQueryMode] = useState<"business" | "knowledge">("business");
+  const [queryMode, setQueryMode] = useState<"auto" | "business" | "knowledge">("auto");
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState("");
@@ -1860,7 +1860,7 @@ export default function FloatingAiAssistant({
 
           <div className="px-4 pb-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
-              <label>{language === 'zh-CN' ? '查询范围' : 'Search'} <select data-testid="ai-query-mode" value={queryMode} onChange={e => setQueryMode(e.target.value as 'business' | 'knowledge')} className="rounded border p-1"><option value="business">{language === 'zh-CN' ? '业务记录' : 'Business records'}</option><option value="knowledge">{language === 'zh-CN' ? '产品／公司知识库' : 'Product & company knowledge'}</option></select></label>
+              <label>{language === 'zh-CN' ? '查询范围' : 'Search'} <select data-testid="ai-query-mode" value={queryMode} onChange={e => setQueryMode(e.target.value as 'auto' | 'business' | 'knowledge')} className="rounded border p-1"><option value="auto">{language === 'zh-CN' ? '自动选择' : 'Auto-detect'}</option><option value="business">{language === 'zh-CN' ? '业务记录' : 'Business records'}</option><option value="knowledge">{language === 'zh-CN' ? '产品／公司知识库' : 'Product & company knowledge'}</option></select></label>
               <button type="button" data-testid="ai-knowledge-library" className="text-blue-700 underline" onClick={() => setKnowledgeOpen(true)}>{language === 'zh-CN' ? '管理资料' : 'Knowledge library'}</button>
             </div>
             <div className="flex items-end gap-2">

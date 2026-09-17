@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { reportFieldCatalog, reportMetricCatalog, reportSubjectCatalog } from '../domain/report-semantic-layer.mjs'
+import { getRuntimeReportCatalog } from '../domain/runtime-report-read-model.mjs'
 
 const views = new Map()
 const auditEvents = []
@@ -12,10 +13,11 @@ function validate(input = {}) {
   const subject = text(input.subject)
   if (!text(input.name)) errors.push('name is required')
   if (!reportSubjectCatalog[subject]) errors.push('unknown report subject')
-  const allowedFields = new Set((reportFieldCatalog[subject] || []).map((field) => field.key))
+  const runtimeCatalog = getRuntimeReportCatalog()
+  const allowedFields = new Set([...(reportFieldCatalog[subject] || []), ...(runtimeCatalog.fields[subject] || [])].map((field) => field.key))
   ;(input.columns || []).filter((key) => !allowedFields.has(key)).forEach((key) => errors.push(`field ${key} is not governed for ${subject}`))
   const isGovernedDashboard = String(input.sourceRoute || '').startsWith('/app/reports/')
-  const allowedMetrics = new Set(reportMetricCatalog.filter((metric) => isGovernedDashboard || metric.subject === subject).map((metric) => metric.id))
+  const allowedMetrics = new Set([...reportMetricCatalog, ...runtimeCatalog.metrics].filter((metric) => isGovernedDashboard || metric.subject === subject).map((metric) => metric.id))
   ;(input.measures || []).filter((key) => !allowedMetrics.has(key)).forEach((key) => errors.push(`metric ${key} is not governed for ${subject}`))
   if (!['private', 'team'].includes(input.visibility || 'private')) errors.push('visibility must be private or team')
   return errors

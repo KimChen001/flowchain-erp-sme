@@ -4,8 +4,8 @@ import { BaseRetriever } from '@langchain/core/retrievers'
 import { RunnableLambda, RunnableSequence } from '@langchain/core/runnables'
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters'
 import { canCallConfiguredProvider, callConfiguredProvider } from './ai-runtime-provider-adapter-v2.mjs'
-import { callConfiguredEmbeddingProvider, cosineSimilarity } from './ai-embedding-provider.mjs'
-import { persistPgvectorEmbeddings, pgvectorKnowledgeRanks } from './ai-pgvector-store.mjs'
+import { callConfiguredEmbeddingProvider, cosineSimilarity, embeddingConfig, canCallEmbeddingProvider, validEmbedding } from './ai-embedding-provider.mjs'
+import { hasPgvectorKnowledgeStore, persistPgvectorEmbeddings, pgvectorKnowledgeRanks } from './ai-pgvector-store.mjs'
 
 export const KNOWLEDGE_AUDIENCES = Object.freeze([null, 'finance.payable.read', 'procurement.purchase_order.read'])
 export class KnowledgeError extends Error {
@@ -14,13 +14,26 @@ export class KnowledgeError extends Error {
 const fail = (code, message, status) => { throw new KnowledgeError(code, message, status) }
 const readable = actor => ({ tenantId: actor.tenantId, status: 'active', OR: [{ requiredPermission: null }, { requiredPermission: { in: [...(actor.permissionCodes || [])] } }] })
 const manageable = actor => Boolean(actor.permissionCodes?.has('settings.workspace.manage'))
-const docSelect = { id: true, title: true, language: true, requiredPermission: true, createdAt: true, _count: { select: { chunks: true } } }
+const docSelect = { id: true, title: true, language: true, requiredPermission: true, createdAt: true, indexAttemptStatus: true, indexAttemptError: true, indexAttemptStartedAt: true, indexAttemptFinishedAt: true, _count: { select: { chunks: true } } }
+const hash = value => createHash('sha256').update(value).digest('hex')
+const leaseCutoff = () => new Date(Date.now() - 15 * 60 * 1000)
+
+export function knowledgeIndexSummary(chunks, config = {}) {
+  const valid = chunks.filter(chunk => chunk.embeddingModel && validEmbedding(chunk.embedding, chunk.embeddingDimensions))
+  const compatible = valid.filter(chunk => (!config.model || chunk.embeddingModel === config.model) && (!config.dimensions || chunk.embeddingDimensions === config.dimensions))
+  const uniform = new Set(compatible.map(chunk => `${chunk.embeddingModel}:${chunk.embeddingDimensions}`)).size <= 1
+  return { indexStatus: !valid.length ? 'keyword' : compatible.length === chunks.length && uniform ? 'semantic' : compatible.length ? 'partial' : 'outdated', indexedChunks: compatible.length, embeddingModel: valid[0]?.embeddingModel || null, embeddingDimensions: valid[0]?.embeddingDimensions || null }
+}
 
 export function createKnowledgeService(prisma, { env = process.env, embeddingProvider = callConfiguredEmbeddingProvider } = {}) {
-  return {
+  const service = {
     async list(actor) {
-      const rows = await prisma.aiKnowledgeDocument.findMany({ where: readable(actor), select: { ...docSelect, chunks: { select: { embeddingModel: true, embeddingDimensions: true } } }, orderBy: { createdAt: 'desc' }, take: 100 })
-      return { canManage: manageable(actor), items: rows.map(({ chunks, ...document }) => { const indexed = chunks.filter(chunk => chunk.embeddingModel); return { ...document, indexStatus: indexed.length === 0 ? 'keyword' : indexed.length === chunks.length ? 'semantic' : 'partial', embeddingModel: indexed[0]?.embeddingModel || null, embeddingDimensions: indexed[0]?.embeddingDimensions || null } }) }
+      const rows = await prisma.aiKnowledgeDocument.findMany({ where: readable(actor), select: { ...docSelect, chunks: { select: { embedding: true, embeddingModel: true, embeddingDimensions: true } } }, orderBy: { createdAt: 'desc' }, take: 100 })
+      const pgvector = await hasPgvectorKnowledgeStore(prisma)
+      return { canManage: manageable(actor), capabilities: { embeddingConfigured: canCallEmbeddingProvider(env), generationConfigured: canCallConfiguredProvider(env), generationModel: env.FLOWCHAIN_AI_PROVIDER_MODEL || null, vectorStorage: pgvector ? 'pgvector' : 'local_vectors', model: embeddingConfig(env).model || null, dimensions: embeddingConfig(env).dimensions || null }, items: rows.map(({ chunks, ...document }) => {
+        const interrupted = document.indexAttemptStatus === 'processing' && new Date(document.indexAttemptStartedAt) < leaseCutoff()
+        return { ...document, ...knowledgeIndexSummary(chunks, embeddingConfig(env)), ...(interrupted ? { indexAttemptStatus: 'failed', indexAttemptError: 'interrupted' } : {}) }
+      }) }
     },
     async add(actor, body) {
       if (!manageable(actor)) fail('KNOWLEDGE_MANAGE_DENIED', 'Workspace administrator access is required.', 403)
@@ -32,12 +45,12 @@ export function createKnowledgeService(prisma, { env = process.env, embeddingPro
       if (requiredPermission && !actor.permissionCodes?.has(requiredPermission)) fail('KNOWLEDGE_AUDIENCE_DENIED', 'You must belong to the selected reader group.', 403)
       const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 120, separators: ['\n\n', '\n', '。', '. ', ' ', ''] })
       const chunks = await splitter.splitText(content)
-      const embedded = await embeddingProvider(chunks, env)
       const documentId = randomUUID()
-      const chunkRows = chunks.map((content, position) => ({ id: randomUUID(), position, content, contentHash: createHash('sha256').update(content).digest('hex'), ...(embedded.ok ? { embedding: embedded.vectors[position], embeddingModel: embedded.model, embeddingDimensions: embedded.dimensions, embeddedAt: new Date() } : {}) }))
+      const chunkRows = chunks.map((content, position) => ({ id: randomUUID(), position, content, contentHash: hash(content) }))
       const document = await prisma.aiKnowledgeDocument.create({ data: { id: documentId, tenantId: actor.tenantId, title, language: body.language === 'zh-CN' ? 'zh-CN' : 'en-US', requiredPermission, createdById: actor.user?.id || actor.userId, chunks: { create: chunkRows } }, select: docSelect })
-      await persistPgvectorEmbeddings(prisma, chunkRows, embedded)
-      return document
+      // Save readable text first. An unavailable provider must not lose the imported document.
+      try { return { ...document, ...await service.reindex(actor, documentId) } }
+      catch (error) { if (error instanceof KnowledgeError) return { ...document, indexStatus: 'keyword', indexAttemptStatus: 'failed', indexAttemptError: error.code }; throw error }
     },
     async get(actor, id) {
       const document = await prisma.aiKnowledgeDocument.findFirst({ where: { ...readable(actor), id }, include: { chunks: { orderBy: { position: 'asc' } } } })
@@ -52,14 +65,43 @@ export function createKnowledgeService(prisma, { env = process.env, embeddingPro
     },
     async reindex(actor, id) {
       if (!manageable(actor)) fail('KNOWLEDGE_MANAGE_DENIED', 'Workspace administrator access is required.', 403)
-      const document = await prisma.aiKnowledgeDocument.findFirst({ where: { ...readable(actor), id }, include: { chunks: { orderBy: { position: 'asc' } } } })
-      if (!document) fail('KNOWLEDGE_NOT_FOUND', 'Document not found or no longer accessible.', 404)
-      const embedded = await embeddingProvider(document.chunks.map(chunk => chunk.content), env)
-      if (!embedded.ok) fail('KNOWLEDGE_EMBEDDING_UNAVAILABLE', 'Embedding service is unavailable. The existing index was kept.', 503)
-      const indexedAt = new Date()
-      await prisma.$transaction(document.chunks.map((chunk, position) => prisma.aiKnowledgeChunk.update({ where: { id: chunk.id }, data: { contentHash: createHash('sha256').update(chunk.content).digest('hex'), embedding: embedded.vectors[position], embeddingModel: embedded.model, embeddingDimensions: embedded.dimensions, embeddedAt: indexedAt } })))
-      await persistPgvectorEmbeddings(prisma, document.chunks, embedded)
-      return { id: document.id, indexStatus: 'semantic', embeddingModel: embedded.model, embeddingDimensions: embedded.dimensions, chunkCount: document.chunks.length, indexedAt }
+      const attemptId = randomUUID()
+      const claim = await prisma.aiKnowledgeDocument.updateMany({ where: { AND: [{ ...readable(actor), id }, { OR: [{ indexAttemptStatus: { not: 'processing' } }, { indexAttemptStartedAt: { lt: leaseCutoff() } }] }] }, data: { indexAttemptStatus: 'processing', indexAttemptId: attemptId, indexAttemptError: null, indexAttemptStartedAt: new Date(), indexAttemptFinishedAt: null } })
+      if (!claim.count) {
+        if (!await prisma.aiKnowledgeDocument.findFirst({ where: { ...readable(actor), id }, select: { id: true } })) fail('KNOWLEDGE_NOT_FOUND', 'Document not found or no longer accessible.', 404)
+        fail('KNOWLEDGE_INDEX_BUSY', 'This document is already being indexed. Refresh to check progress.', 409)
+      }
+      try {
+        const document = await prisma.aiKnowledgeDocument.findFirst({ where: { ...readable(actor), id }, include: { chunks: { orderBy: { position: 'asc' } } } })
+        if (!document) fail('KNOWLEDGE_NOT_FOUND', 'Document not found or no longer accessible.', 404)
+        const config = embeddingConfig(env)
+        const cached = new Map(document.chunks.filter(chunk => config.model && config.dimensions && chunk.embeddingModel === config.model && chunk.contentHash === hash(chunk.content) && validEmbedding(chunk.embedding, config.dimensions)).map(chunk => [chunk.contentHash, chunk.embedding]))
+        const missing = [...new Map(document.chunks.filter(chunk => !cached.has(hash(chunk.content))).map(chunk => [hash(chunk.content), chunk.content])).entries()]
+        const generated = missing.length ? await embeddingProvider(missing.map(([, content]) => content), env) : { ok: true, model: config.model, dimensions: config.dimensions, vectors: [] }
+        if (!generated.ok) {
+          if (generated.reason === 'quota_exceeded') fail('KNOWLEDGE_QUOTA_EXCEEDED', 'The embedding provider has no available API quota. Check project billing, then retry. The existing index was kept.', 503)
+          if (generated.reason === 'authentication_error') fail('KNOWLEDGE_CREDENTIALS_INVALID', 'The embedding credential was rejected. Ask an administrator to update the server configuration.', 503)
+          fail(generated.reason === 'not_configured' ? 'KNOWLEDGE_EMBEDDING_NOT_CONFIGURED' : 'KNOWLEDGE_EMBEDDING_UNAVAILABLE', generated.reason === 'not_configured' ? 'Embedding is not configured. Documents remain available for keyword search.' : 'Embedding service is unavailable. The existing index was kept.', 503)
+        }
+        if (!generated.model || (config.model && generated.model !== config.model) || (config.dimensions && generated.dimensions !== config.dimensions) || !Array.isArray(generated.vectors) || generated.vectors.length !== missing.length || generated.vectors.some(vector => !validEmbedding(vector, generated.dimensions))) fail('KNOWLEDGE_EMBEDDING_INVALID', 'The embedding response failed validation. The existing index was kept.', 503)
+        missing.forEach(([key], index) => cached.set(key, generated.vectors[index]))
+        const embedded = { ...generated, vectors: document.chunks.map(chunk => cached.get(hash(chunk.content))) }
+        const indexedAt = new Date()
+        await prisma.$transaction(async tx => {
+          const owned = await tx.aiKnowledgeDocument.updateMany({ where: { ...readable(actor), id, indexAttemptId: attemptId }, data: { indexAttemptStatus: 'ready', indexAttemptError: null, indexAttemptFinishedAt: indexedAt } })
+          if (!owned.count) fail('KNOWLEDGE_INDEX_SUPERSEDED', 'Indexing was cancelled or replaced. Refresh the library.', 409)
+          for (let position = 0; position < document.chunks.length; position += 1) {
+            const chunk = document.chunks[position]
+            await tx.aiKnowledgeChunk.update({ where: { id: chunk.id }, data: { contentHash: hash(chunk.content), embedding: embedded.vectors[position], embeddingModel: embedded.model, embeddingDimensions: embedded.dimensions, embeddedAt: indexedAt } })
+          }
+          await persistPgvectorEmbeddings(tx, document.chunks, embedded, { strict: true })
+        }, { timeout: 30000 })
+        return { id, indexStatus: 'semantic', indexAttemptStatus: 'ready', embeddingModel: embedded.model, embeddingDimensions: embedded.dimensions, chunkCount: document.chunks.length, reusedChunks: document.chunks.length - missing.length, indexedAt }
+      } catch (error) {
+        await prisma.aiKnowledgeDocument.updateMany({ where: { id, tenantId: actor.tenantId, indexAttemptId: attemptId }, data: { indexAttemptStatus: 'failed', indexAttemptError: error instanceof KnowledgeError ? error.code : 'KNOWLEDGE_INDEX_WRITE_FAILED', indexAttemptFinishedAt: new Date() } })
+        if (error instanceof KnowledgeError) throw error
+        fail('KNOWLEDGE_INDEX_WRITE_FAILED', 'The index could not be saved. The previous index was kept. Retry indexing.', 503)
+      }
     },
     async documents(actor) {
       const chunks = await prisma.aiKnowledgeChunk.findMany({ where: { document: readable(actor) }, include: { document: { select: { id: true, title: true, language: true, createdAt: true } } }, orderBy: [{ documentId: 'asc' }, { position: 'asc' }], take: 2001 })
@@ -68,6 +110,7 @@ export function createKnowledgeService(prisma, { env = process.env, embeddingPro
     },
     semanticRanks(actor, queryVector, model) { return pgvectorKnowledgeRanks(prisma, actor, queryVector, model) },
   }
+  return service
 }
 
 const stopWords = new Set('a an the of to for in on and or is are was be with what which how should i we you it its this that please cite source sources according document documents tell me about do does can'.split(' '))
@@ -82,7 +125,13 @@ export class WorkspaceKnowledgeRetriever extends BaseRetriever {
   lc_namespace = ['flowchain', 'retrievers']
   constructor({ loadDocuments, limit = 5, queryEmbedding = null, embeddingModel = null, databaseSemanticRanks = null }) { super(); this.loadDocuments = loadDocuments; this.limit = limit; this.queryEmbedding = queryEmbedding; this.embeddingModel = embeddingModel; this.databaseSemanticRanks = databaseSemanticRanks }
   async _getRelevantDocuments(query) {
-    const documents = await this.loadDocuments()
+    const allDocuments = await this.loadDocuments()
+    // Model codes are exact constraints: a near-neighbor SKU is not an answer for the requested SKU.
+    const identifiers = String(query).toLowerCase().match(/\b[a-z]{2,}[a-z0-9]*-\d{3,}[a-z0-9-]*\b/g) || []
+    const documents = allDocuments.filter(document => {
+      const tokens = knowledgeTokens(`${document.metadata.title} ${document.pageContent}`)
+      return identifiers.every(identifier => tokens.includes(identifier))
+    })
     const tokens = documents.map(doc => knowledgeTokens(`${doc.metadata.title} ${doc.pageContent}`))
     const queryTokens = [...new Set(knowledgeTokens(query))]
     const average = tokens.reduce((n, words) => n + words.length, 0) / (tokens.length || 1)
@@ -107,22 +156,26 @@ export class WorkspaceKnowledgeRetriever extends BaseRetriever {
   }
 }
 
-export async function answerKnowledgeQuery({ question, language = 'en-US', actor, service, env = {}, provider = callConfiguredProvider }) {
+export async function answerKnowledgeQuery({ question, language = 'en-US', actor, service, env = {}, provider = callConfiguredProvider, embeddingProvider = callConfiguredEmbeddingProvider }) {
   const zh = language === 'zh-CN'
-  const queryVector = await callConfiguredEmbeddingProvider([question], env)
+  const queryVector = await embeddingProvider([question], env)
   const databaseSemanticRanks = queryVector.ok && service.semanticRanks ? await service.semanticRanks(actor, queryVector.vectors[0], queryVector.model) : null
   const retriever = new WorkspaceKnowledgeRetriever({ loadDocuments: () => service.documents(actor), queryEmbedding: queryVector.ok ? queryVector.vectors[0] : null, embeddingModel: queryVector.ok ? queryVector.model : null, databaseSemanticRanks })
   const chain = RunnableSequence.from([
     RunnableLambda.from(async input => ({ question: input, documents: await retriever.invoke(input) })),
     RunnableLambda.from(async ({ question, documents }) => {
-      const citations = documents.map(doc => ({ ...doc.metadata, excerpt: doc.pageContent }))
+      const citations = documents.map((doc, index) => ({ id: doc.metadata.id, documentId: doc.metadata.documentId, title: doc.metadata.title, position: doc.metadata.position, sourceNumber: index + 1, language: doc.metadata.language, contentHash: doc.metadata.contentHash, excerpt: doc.pageContent }))
       if (!citations.length) return { answer: zh ? '没有找到有权限访问的相关资料。请先导入产品资料或补充具体型号、术语。' : 'No relevant accessible documents were found. Import product information or add a specific model or term to your question.', citations, mode: 'no_results' }
       if (canCallConfiguredProvider(env)) {
         try {
           const result = await provider({ task: { type: 'knowledge_rag', question, answerLanguage: language }, evidencePackage: { citations }, safetyPolicy: { readOnly: true } }, env)
           const raw = result?.rawOutput?.conclusion?.summary || result?.rawOutput
           const output = typeof raw === 'string' ? JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, '')) : raw
-          if (result.ok && typeof output?.answer === 'string' && output.answer.length <= 2400 && Array.isArray(output.citationIds) && output.citationIds.length && output.citationIds.every(id => citations.some(c => c.id === id))) return { answer: output.answer, citations: citations.filter(c => output.citationIds.includes(c.id)), mode: 'generated' }
+          if (result.ok && typeof output?.answer === 'string' && output.answer.trim() && output.answer.length <= 2400 && Array.isArray(output.citationIds) && output.citationIds.length && output.citationIds.every(id => citations.some(c => c.id === id))) {
+            const selected = citations.filter(c => output.citationIds.includes(c.id))
+            const numbers = [...output.answer.matchAll(/\[(\d+)\]/g)].map(match => Number(match[1]))
+            if (numbers.every(number => selected.some(c => c.sourceNumber === number))) return { answer: output.answer, citations: selected, mode: 'generated' }
+          }
         } catch { /* Retrieval remains available when model output cannot be used. */ }
       }
       return { answer: citations.slice(0, 3).map((source, index) => `[${index + 1}] ${source.excerpt.slice(0, 550)}`).join('\n\n'), citations, mode: canCallConfiguredProvider(env) ? 'model_unavailable' : 'retrieved_excerpts' }

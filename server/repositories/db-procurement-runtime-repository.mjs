@@ -18,6 +18,7 @@ const mapLine = (line = {}) => ({
   unit: line.unit,
   unitPrice: decimal(line.unitPrice),
   amount: decimal(line.amount),
+  promisedDate: line.metadata?.promisedDate || null,
 });
 
 const mapPo = (row = {}) => ({
@@ -31,6 +32,9 @@ const mapPo = (row = {}) => ({
   sourcePrId: row.sourceRequestId,
   sourceRfqId: row.sourceRfqId,
   expectedDate: row.expectedDate?.toISOString?.() || row.expectedDate || null,
+  owner: row.owner || '',
+  createdAt: row.createdAt?.toISOString?.() || row.createdAt || null,
+  updatedAt: row.updatedAt?.toISOString?.() || row.updatedAt || null,
   version: row.version,
   lines: (row.lines || []).map(mapLine),
   auditTrailIds: Array.isArray(row.metadata?.approvalTimeline) ? row.metadata.approvalTimeline : [],
@@ -48,6 +52,12 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
     adapter: "durable-procurement-runtime-v2",
     authorityAdapter: "db-procurement-authority-v1",
     authority,
+    async listForReport({ tenantId } = {}) {
+      if (!text(tenantId)) throw Object.assign(new Error('Workspace identity is required.'), { status: 403 });
+      const dbClient = await client();
+      const rows = await dbClient.purchaseOrder.findMany({ where: { tenantId: text(tenantId) }, include: { lines: true }, orderBy: [{ id: 'asc' }] });
+      return rows.map(mapPo);
+    },
     async get(type, id, options = {}) {
       if (type !== "po") return null;
       return authority.readPurchaseOrder(id, options.context || options, options);
@@ -59,8 +69,14 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
     async snapshot(filters = {}) {
       const dbClient = await client();
       const tenantId = text(filters.tenantId || env.FLOWCHAIN_DEFAULT_TENANT_ID || "tenant-flowchain-sme");
-      const rows = await dbClient.purchaseOrder.findMany({ where: { tenantId }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }], take: Math.min(500, Math.max(1, Number(filters.limit || 500))) });
-      return { purchaseRequests: [], rfqs: [], supplierQuotations: [], purchaseOrders: rows.map(mapPo), receivingDocs: [], supplierInvoices: [], documentLinks: [], procurementFollowups: [] };
+      const query = { where: { tenantId }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }], take: Math.min(500, Math.max(1, Number(filters.limit || 500))) };
+      const [rows, receivingRows, invoiceRows] = await Promise.all([
+        dbClient.purchaseOrder.findMany(query), dbClient.receivingDocument.findMany(query), dbClient.supplierInvoice.findMany(query),
+      ]);
+      const iso = value => value?.toISOString?.() || value || null;
+      const receipts = receivingRows.map(row => ({ id: row.id, documentNumber: row.documentNumber, poId: row.poId, supplierId: row.supplierId, supplierName: row.supplierName, status: row.status, workflowStatus: row.workflowStatus, postingStatus: row.postingStatus, warehouseId: row.warehouseId, currency: row.currency, arrivedAt: iso(row.arrivedAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, acceptedQty: decimal(line.acceptedQty), rejectedQty: decimal(line.rejectedQty), unit: line.unit })) }));
+      const supplierInvoices = invoiceRows.map(row => ({ id: row.id, invoiceNumber: row.invoiceNumber, supplierId: row.supplierId, supplierName: row.supplierName, poId: row.relatedPoId, receiptId: row.relatedGrnId, relatedPo: row.relatedPoId, relatedGrn: row.relatedGrnId, amount: decimal(row.amount), totalAmount: decimal(row.totalAmount), currency: row.currency, status: row.status, matchStatus: row.matchStatus, varianceAmount: decimal(row.varianceAmount), invoiceDate: iso(row.invoiceDate), dueDate: iso(row.dueDate), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, quantity: decimal(line.quantity), unitPrice: decimal(line.unitPrice), amount: decimal(line.amount), unit: line.unit })) }));
+      return { purchaseRequests: [], rfqs: [], supplierQuotations: [], purchaseOrders: rows.map(mapPo), receipts, receivingDocs: receipts, supplierInvoices, documentLinks: [], procurementFollowups: [] };
     },
     async transact() {
       throw Object.assign(new Error("Database Mode procurementRuntime is read-only; use the PostgreSQL command service."), { code: "PROCUREMENT_DATABASE_COMMAND_REQUIRED", status: 409 });

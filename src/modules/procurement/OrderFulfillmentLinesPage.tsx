@@ -1,3 +1,4 @@
+import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
@@ -199,6 +200,7 @@ function EvidenceLinks({ row, type }: { row: OrderFulfillmentLine; type: "receiv
 }
 
 export function OrderFulfillmentLinesPage() {
+  const copy = useWorkspaceCopy();
   const [payload, setPayload] = useState<PurchaseOrderWorkbenchPayload>({});
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   const [error, setError] = useState("");
@@ -226,7 +228,7 @@ export function OrderFulfillmentLinesPage() {
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return rows.filter((row) => {
-      if (view === "open" && row.status === "已完成") return false;
+      if (view === "open" && (row.status === "已完成" || ["cancelled", "closed", "已取消", "已关闭"].includes(row.poStatus))) return false;
       if (view === "exceptions" && row.varianceAmount === 0 && row.status !== "数量待复核") return false;
       if (!normalized) return true;
       return [row.poId, row.id, row.supplier, row.sku, row.itemName]
@@ -234,7 +236,7 @@ export function OrderFulfillmentLinesPage() {
     });
   }, [query, rows, view]);
 
-  const openCount = rows.filter((row) => row.status !== "已完成").length;
+  const openCount = rows.filter((row) => row.status !== "已完成" && !["cancelled", "closed", "已取消", "已关闭"].includes(row.poStatus)).length;
   const partialCount = rows.filter((row) => row.status === "部分收货").length;
   const receivedNotInvoicedCount = rows.filter((row) => row.receivedNotInvoiced > 0).length;
   const exceptionCount = rows.filter((row) => row.varianceAmount !== 0 || row.status === "数量待复核").length;
@@ -251,7 +253,7 @@ export function OrderFulfillmentLinesPage() {
               ["需要复核", exceptionCount],
             ].map(([label, value]) => (
               <div key={label} className="flex items-baseline gap-2">
-                <span style={{ color: A.sub }}>{label}</span>
+                <span style={{ color: A.sub }}>{copy(String(label))}</span>
                 <strong className="text-sm tabular-nums">{value}</strong>
               </div>
             ))}
@@ -261,9 +263,7 @@ export function OrderFulfillmentLinesPage() {
             onClick={() => void load()}
             className="inline-flex items-center gap-1 rounded border px-3 py-2 text-xs"
           >
-            <RefreshCw size={14} />
-            刷新
-          </button>
+            <RefreshCw size={14} />{copy("刷新")}</button>
         </div>
         <div className="flex flex-wrap gap-3">
           <label className="relative min-w-[240px] flex-1">
@@ -271,68 +271,68 @@ export function OrderFulfillmentLinesPage() {
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索 PO、供应商、SKU 或物料"
+              placeholder={copy("搜索 PO、供应商、SKU 或物料")}
               className="w-full rounded-lg border py-2 pl-9 pr-3 text-sm"
             />
           </label>
           <select
-            aria-label="履约视图"
+            aria-label={copy("履约视图")}
             value={view}
             onChange={(event) => setView(event.target.value as typeof view)}
             className="rounded-lg border bg-white px-3 py-2 text-sm"
           >
-            <option value="open">未完成履约</option>
-            <option value="all">全部订单行</option>
-            <option value="exceptions">需要复核</option>
+            <option value="open">{copy("未完成履约")}</option>
+            <option value="all">{copy("全部订单行")}</option>
+            <option value="exceptions">{copy("需要复核")}</option>
           </select>
         </div>
       </Card>
 
       <Card className="overflow-hidden" data-testid="order-fulfillment-line-list">
         {state === "loading" ? (
-          <div className="py-16 text-center text-sm" style={{ color: A.sub }}>正在读取订单履约明细…</div>
+          <div className="py-16 text-center text-sm" style={{ color: A.sub }}>{copy("正在读取订单履约明细…")}</div>
         ) : state === "error" ? (
           <div className="py-16 text-center">
-            <div className="text-sm font-semibold">订单履约明细加载失败</div>
-            <div className="mt-2 text-xs" style={{ color: A.sub }}>{error}</div>
-            <button type="button" onClick={() => void load()} className="mt-3 text-sm font-semibold text-blue-600">重试</button>
+            <div className="text-sm font-semibold">{copy("订单履约明细加载失败")}</div>
+            <div className="mt-2 text-xs" style={{ color: A.sub }}>{copy(error)}</div>
+            <button type="button" onClick={() => void load()} className="mt-3 text-sm font-semibold text-blue-600">{copy("重试")}</button>
           </div>
         ) : rows.length === 0 ? (
           <div className="py-16 text-center">
-            <div className="text-sm font-semibold">当前工作区暂无采购订单行</div>
-            <div className="mt-2 text-xs" style={{ color: A.sub }}>不会使用固定 PO、收货或发票记录补足空数据。</div>
+            <div className="text-sm font-semibold">{copy("当前工作区暂无采购订单行")}</div>
+            <div className="mt-2 text-xs" style={{ color: A.sub }}>{copy("不会使用固定 PO、收货或发票记录补足空数据。")}</div>
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-16 text-center">
-            <div className="text-sm font-semibold">当前筛选条件下没有订单行</div>
-            <div className="mt-2 text-xs" style={{ color: A.sub }}>可以切换到“全部订单行”或清除搜索条件。</div>
+            <div className="text-sm font-semibold">{copy("当前筛选条件下没有订单行")}</div>
+            <div className="mt-2 text-xs" style={{ color: A.sub }}>{copy("可以切换到“全部订单行”或清除搜索条件。")}</div>
           </div>
         ) : (
           <>
             <div className="hidden border-b border-slate-100 px-4 py-3 text-xs md:flex md:items-center md:justify-between">
               <div>
-                <strong className="text-sm">采购订单行</strong>
-                <span className="ml-2" style={{ color: A.sub }}>当前显示 {filtered.length} / {rows.length} 行</span>
+                <strong className="text-sm">{copy("采购订单行")}</strong>
+                <span className="ml-2" style={{ color: A.sub }}>{copy("当前显示")} {filtered.length} / {rows.length} {copy("行")}</span>
               </div>
             </div>
             <div className="hidden overflow-x-auto md:block">
               <table className="min-w-[1500px] w-full text-left text-xs">
                 <thead className="sticky top-0 z-10 bg-slate-50" style={{ color: A.sub }}>
                   <tr className="border-b border-slate-200">
-                    <th className="w-[190px] whitespace-nowrap px-3 py-3 font-semibold">采购订单</th>
-                    <th className="w-[60px] whitespace-nowrap px-3 py-3 font-semibold">行</th>
-                    <th className="w-[150px] px-3 py-3 font-semibold">供应商</th>
-                    <th className="w-[190px] px-3 py-3 font-semibold">物料 / SKU</th>
-                    <th className="w-[95px] whitespace-nowrap px-3 py-3 font-semibold">PO 状态</th>
-                    <th className="w-[120px] whitespace-nowrap px-3 py-3 text-right font-semibold">PO 行金额</th>
-                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">订购</th>
-                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">已收</th>
-                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">已开票</th>
-                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">待收</th>
-                    <th className="w-[105px] whitespace-nowrap px-3 py-3 text-right font-semibold">已收未票</th>
-                    <th className="w-[110px] whitespace-nowrap px-3 py-3 text-right font-semibold">金额差异</th>
-                    <th className="w-[105px] whitespace-nowrap px-3 py-3 font-semibold">履约状态</th>
-                    <th className="w-[170px] px-3 py-3 font-semibold">关联 GRN / Invoice</th>
+                    <th className="w-[190px] whitespace-nowrap px-3 py-3 font-semibold">{copy("采购订单")}</th>
+                    <th className="w-[60px] whitespace-nowrap px-3 py-3 font-semibold">{copy("行")}</th>
+                    <th className="w-[150px] px-3 py-3 font-semibold">{copy("供应商")}</th>
+                    <th className="w-[190px] px-3 py-3 font-semibold">{copy("物料 / SKU")}</th>
+                    <th className="w-[95px] whitespace-nowrap px-3 py-3 font-semibold">{copy("PO 状态")}</th>
+                    <th className="w-[120px] whitespace-nowrap px-3 py-3 text-right font-semibold">{copy("PO 行金额")}</th>
+                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">{copy("订购")}</th>
+                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">{copy("已收")}</th>
+                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">{copy("已开票")}</th>
+                    <th className="w-[95px] whitespace-nowrap px-3 py-3 text-right font-semibold">{copy("待收")}</th>
+                    <th className="w-[105px] whitespace-nowrap px-3 py-3 text-right font-semibold">{copy("已收未票")}</th>
+                    <th className="w-[110px] whitespace-nowrap px-3 py-3 text-right font-semibold">{copy("金额差异")}</th>
+                    <th className="w-[105px] whitespace-nowrap px-3 py-3 font-semibold">{copy("履约状态")}</th>
+                    <th className="w-[170px] px-3 py-3 font-semibold">{copy("关联 GRN / Invoice")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -351,7 +351,7 @@ export function OrderFulfillmentLinesPage() {
                         <div className="font-medium">{row.itemName || "—"}</div>
                         <div className="mt-1 font-mono text-xs" style={{ color: A.sub }}>{row.sku || "—"}</div>
                       </td>
-                      <td className="whitespace-nowrap px-3 py-3">{poStatusLabel(row.poStatus)}</td>
+                      <td className="whitespace-nowrap px-3 py-3">{copy(poStatusLabel(row.poStatus))}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{money(row.lineAmount, row.currency)}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{quantity(row.orderedQuantity, row.unit)}</td>
                       <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{quantity(row.receivedQuantity, row.unit)}</td>
@@ -362,7 +362,7 @@ export function OrderFulfillmentLinesPage() {
                         {money(row.varianceAmount, row.currency)}
                       </td>
                       <td className="whitespace-nowrap px-3 py-3">
-                        <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${statusTone(row.status)}`}>{row.status}</span>
+                        <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${statusTone(row.status)}`}>{copy(row.status)}</span>
                       </td>
                       <td className="px-3 py-3">
                         <div className="grid grid-cols-[42px_1fr] gap-x-2 gap-y-1">
@@ -384,27 +384,27 @@ export function OrderFulfillmentLinesPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <BusinessEntityLink entityType="purchase_order" entityId={row.poId}>{row.poId}</BusinessEntityLink>
-                      <div className="mt-1 text-xs font-medium">行 {row.lineNumber} · {row.itemName || row.sku}</div>
+                      <div className="mt-1 text-xs font-medium">{copy("行")} {row.lineNumber} · {row.itemName || row.sku}</div>
                       <div className="mt-1 break-words text-xs" style={{ color: A.sub }}>
-                        <SupplierDisplay row={row} /> · {row.sku || "SKU 待补齐"} · {row.id}
+                        <SupplierDisplay row={row} /> · {row.sku || copy("SKU 待补齐")} · {row.id}
                       </div>
                     </div>
-                    <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusTone(row.status)}`}>{row.status}</span>
+                    <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusTone(row.status)}`}>{copy(row.status)}</span>
                   </div>
                   <div className="mt-4 grid grid-cols-2 gap-4 text-xs sm:grid-cols-4">
-                    <div><div style={{ color: A.sub }}>订购</div><div className="mt-1 font-semibold">{quantity(row.orderedQuantity, row.unit)}</div></div>
-                    <div><div style={{ color: A.sub }}>已收</div><div className="mt-1 font-semibold">{quantity(row.receivedQuantity, row.unit)}</div></div>
-                    <div><div style={{ color: A.sub }}>已开票</div><div className="mt-1 font-semibold">{quantity(row.invoicedQuantity, row.unit)}</div></div>
-                    <div><div style={{ color: A.sub }}>PO 行金额</div><div className="mt-1 font-semibold">{money(row.lineAmount, row.currency)}</div></div>
+                    <div><div style={{ color: A.sub }}>{copy("订购")}</div><div className="mt-1 font-semibold">{quantity(row.orderedQuantity, row.unit)}</div></div>
+                    <div><div style={{ color: A.sub }}>{copy("已收")}</div><div className="mt-1 font-semibold">{quantity(row.receivedQuantity, row.unit)}</div></div>
+                    <div><div style={{ color: A.sub }}>{copy("已开票")}</div><div className="mt-1 font-semibold">{quantity(row.invoicedQuantity, row.unit)}</div></div>
+                    <div><div style={{ color: A.sub }}>{copy("PO 行金额")}</div><div className="mt-1 font-semibold">{money(row.lineAmount, row.currency)}</div></div>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
-                    <span>待收 <strong>{quantity(row.remainingToReceive, row.unit)}</strong></span>
-                    <span>已收未票 <strong>{quantity(row.receivedNotInvoiced, row.unit)}</strong></span>
-                    <span>金额差异 <strong className={row.varianceAmount !== 0 ? "text-rose-700" : ""}>{money(row.varianceAmount, row.currency)}</strong></span>
+                    <span>{copy("待收")}<strong>{quantity(row.remainingToReceive, row.unit)}</strong></span>
+                    <span>{copy("已收未票")}<strong>{quantity(row.receivedNotInvoiced, row.unit)}</strong></span>
+                    <span>{copy("金额差异")}<strong className={row.varianceAmount !== 0 ? "text-rose-700" : ""}>{money(row.varianceAmount, row.currency)}</strong></span>
                   </div>
                   <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
-                    <div><div style={{ color: A.sub }}>收货证据</div><EvidenceLinks row={row} type="receiving" /></div>
-                    <div><div style={{ color: A.sub }}>发票证据</div><EvidenceLinks row={row} type="invoice" /></div>
+                    <div><div style={{ color: A.sub }}>{copy("收货证据")}</div><EvidenceLinks row={row} type="receiving" /></div>
+                    <div><div style={{ color: A.sub }}>{copy("发票证据")}</div><EvidenceLinks row={row} type="invoice" /></div>
                   </div>
                 </article>
               ))}

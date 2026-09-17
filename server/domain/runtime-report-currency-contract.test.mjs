@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { reportWorkbook } from '../../src/modules/reports/reportWorkbook.ts'
+import { analyticsCopy } from '../../src/modules/reports/analyticsCopy.ts'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
 import { formatMetric } from '../../src/modules/reports/currencyFormatting.mjs'
 
@@ -58,8 +59,15 @@ test('currency labels never reach Intl.NumberFormat', () => {
   assert.equal(formatMetric(100, 'currency', null), '请选择币种')
 })
 
-test('report exports declare currency governance and FX metadata', async () => {
-  const dashboard = await readFile(new URL('../../src/modules/reports/BiDashboard.tsx', import.meta.url), 'utf8')
-  for (const label of ['币种代码', '币种显示名称', '币种汇总状态', '是否已汇率折算']) assert.match(dashboard, new RegExp(label))
-  assert.match(dashboard, /fxConverted \? "是" : "否"/)
+test('report exports retain currency and FX metadata in both languages', () => {
+  const report = buildRuntimeGovernedReport(context([po('PO-USD', 200, 'USD')]), { subject: 'overview' })
+  for (const language of ['en-US', 'zh-CN']) {
+    const copy = text => analyticsCopy(text, language)
+    const sheets = reportWorkbook(report, {}, copy, [])
+    const first = sheets[0].rows[0]
+    assert.equal(first[copy('Currency code')], 'USD')
+    assert.equal(first[copy('FX converted')], copy('No'))
+    assert.equal(first[copy('Currency aggregation')], copy('Single currency'))
+    assert.equal(sheets[2].rows[0][copy('Currency code')], 'USD')
+  }
 })

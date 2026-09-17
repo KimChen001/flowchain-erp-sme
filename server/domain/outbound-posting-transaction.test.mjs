@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import { createPrismaClient } from "../persistence/prisma-client.mjs";
+import { realPostgresSuiteGate } from "../persistence/test-db-harness.mjs";
 import {
   createOutboundPostingCommandService,
   outboundRequestHash,
@@ -20,9 +21,8 @@ import {
 import { createOutboundWorkbenchReadService } from "./outbound-workbench-read-service.mjs";
 import { createInventoryAuthoritativeReadService } from "./inventory-authoritative-read-service.mjs";
 
-const realPostgres =
-  Boolean(process.env.DATABASE_URL) &&
-  process.env.FLOWCHAIN_REQUIRE_REAL_POSTGRES_TESTS === "true";
+const gate = realPostgresSuiteGate("npm run test:db:outbound");
+const realPostgres = gate.enabled;
 const env = {
   ...process.env,
   FLOWCHAIN_PERSISTENCE_MODE: "database",
@@ -30,8 +30,16 @@ const env = {
 };
 let prisma;
 if (!realPostgres) {
-  test("outbound PostgreSQL transactions are routed to the required isolated test:db:outbound gate", () =>
-    assert.equal(realPostgres, false));
+  // Must report SKIP, not a pass. This suite is the outbound quantity,
+  // reservation and concurrency coverage; a green line for a suite that never
+  // executed is worse than no line at all.
+  if (gate.failure) {
+    test("outbound PostgreSQL transaction suite is misconfigured", () => {
+      throw new Error(gate.failure);
+    });
+  } else {
+    test("outbound PostgreSQL transactions run in the isolated test:db:outbound gate", { skip: gate.skipReason }, () => {});
+  }
 } else {
   before(async () => {
     prisma = await createPrismaClient(env);

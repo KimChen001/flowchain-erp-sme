@@ -11,6 +11,8 @@ const SCAN_EXTENSIONS = new Set(['.md', '.js', '.mjs', '.ts', '.tsx', '.json'])
 const FORBIDDEN_PRODUCT_POSITIONING = /\b(demo|uat|mock|fake)\b|sample data|demo data|mock data|fake data|演示|样例|示例|测试数据|演示数据|样例数据|示例数据|presentation-only|prototype-only/iu
 
 const HISTORICAL_TECHNICAL_DOCS = new Set([
+  'docs/ai-product-knowledge.md',
+  'docs/reporting-demo.md',
   'docs/action-draft-audit-db-adapter-v1.md',
   'docs/action-draft-audit-repository-adapter-v1.md',
   'docs/ai-provider-adapter-v1-plan.md',
@@ -59,6 +61,8 @@ const HISTORICAL_TECHNICAL_DOCS = new Set([
 ])
 
 const TECHNICAL_FILE_PATTERNS = [
+  // These browser tests deliberately exercise supplied names and fictional records.
+  /^tests\/browser\/(ai-knowledge-readiness|analytics-english|home-overview-language|operations-language|supplier-form)\.spec\.ts$/,
   /^package\.json$/,
   /^server\/domain\/product-terminology-governance\.test\.mjs$/,
   /^server\/domain\/authoritative-runtime-initialization\.test\.mjs$/,

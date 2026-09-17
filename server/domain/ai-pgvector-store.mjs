@@ -12,16 +12,16 @@ export async function hasPgvectorKnowledgeStore(prisma) {
   } catch { return false }
 }
 
-export async function persistPgvectorEmbeddings(prisma, chunks, embedded) {
+export async function persistPgvectorEmbeddings(prisma, chunks, embedded, { strict = false } = {}) {
   const size = dimensions(embedded?.dimensions)
   if (!size || !embedded?.ok || !(await hasPgvectorKnowledgeStore(prisma))) return { enabled: false }
   try {
     for (let index = 0; index < chunks.length; index += 1) await prisma.$executeRawUnsafe(`UPDATE "AiKnowledgeChunk" SET "embeddingVector" = $1::vector WHERE id = $2`, vectorLiteral(embedded.vectors[index]), chunks[index].id)
     const suffix = createHash('sha256').update(`${embedded.model}:${size}`).digest('hex').slice(0, 12)
     const indexName = `AiKnowledgeChunk_embedding_hnsw_${suffix}`
-    await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "${indexName}" ON "AiKnowledgeChunk" USING hnsw (("embeddingVector"::vector(${size})) vector_cosine_ops) WHERE "embeddingModel" = ${sqlLiteral(embedded.model)} AND "embeddingDimensions" = ${size}`)
+    if (size <= 2000) await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "${indexName}" ON "AiKnowledgeChunk" USING hnsw (("embeddingVector"::vector(${size})) vector_cosine_ops) WHERE "embeddingModel" = ${sqlLiteral(embedded.model)} AND "embeddingDimensions" = ${size}`)
     return { enabled: true, indexName }
-  } catch { return { enabled: false } }
+  } catch (error) { if (strict) throw error; return { enabled: false } }
 }
 
 export async function pgvectorKnowledgeRanks(prisma, actor, queryVector, model, limit = 50) {

@@ -36,9 +36,12 @@ test.after(async () => {
 test('currency amounts render as full comma-formatted values', async () => {
   const { mod } = await loadFormatModule()
   assert.equal(mod.fmt(140000), '¥140,000')
-  assert.equal(mod.formatCurrencyAmount(1280000), '¥1,280,000')
-  assert.equal(mod.formatCurrencyAmount(12345.67), '¥12,345.67')
-  assert.equal(mod.formatCurrencyAmount(null), '¥0')
+  // Missing currency must not invent CNY; explicit document currencies remain authoritative.
+  assert.equal(mod.formatCurrencyAmount(1280000), '1,280,000')
+  assert.equal(mod.formatCurrencyAmount(12345.67, 'USD'), '$12,345.67')
+  assert.equal(mod.formatCurrencyAmount(12345.67, 'CNY'), 'CN¥12,345.67')
+  assert.equal(mod.formatCurrencyAmount(12345.67, 'EUR'), '€12,345.67')
+  assert.equal(mod.formatCurrencyAmount(null), '0')
 })
 
 test('number amount formatter handles invalid values safely', async () => {

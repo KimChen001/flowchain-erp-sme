@@ -1,3 +1,4 @@
+import { operationsEnglish } from "./operationsCopy";
 // Display labels only. Never apply this mapping to stored business values.
 const english: Record<string, string> = {
   '工作区管理员': 'Workspace administrator', '供应链经理': 'Supply Chain Manager', '只读用户': 'Read-only User', '业务专员': 'Business Specialist', '采购员': 'Buyer', '未知角色': 'Unknown role', '正在加载基础资料…': 'Loading master data…', '基础资料加载失败': 'Could not load master data', '重新加载': 'Reload',
@@ -134,5 +135,5 @@ const operationalEnglish: Record<string, string> = {
   '批次': 'Lot', '数量': 'Quantity', '序列号': 'Serial number', '移动单号': 'Movement number', '入库': 'Inbound', '出库': 'Outbound', '日期': 'Date', '异常单号': 'Exception number', '数量影响': 'Quantity impact',
 };
 export function workspaceCopy(label: string, language: string): string {
-  return language === 'en-US' ? english[label] || operationalEnglish[label] || label : label;
+  return language === 'en-US' ? english[label] || operationalEnglish[label] || operationsEnglish[label] || label : label;
 }
