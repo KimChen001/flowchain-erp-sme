@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
+import { isPrismaConcurrencyError } from "./prisma-concurrency-error.mjs";
 import { RFQ_STATUS, normalizeProcurementAuthorityStatus } from "./procurement-status-authority.mjs";
 import { rfqComparisonEligibility, rfqRevisionCoverage } from "./rfq-comparison-eligibility.mjs";
 import { exactRfqDecimalString } from "./rfq-commercial-decimal.mjs";
@@ -105,6 +106,24 @@ export function createRfqAwardDecisionService({
       fail("RFQ_AWARD_FAULT_INJECTED", "The Award command failed.", 500);
     }
   };
+  // Reproduces the raw-statement serialization failure a losing concurrent Award
+  // receives under Serializable isolation, so the conflict mapping below is
+  // covered deterministically instead of only when a real race happens to lose
+  // this way. Shape matches what real PostgreSQL 16 produces via $queryRawUnsafe.
+  const injectConcurrencyConflict = (stage) => {
+    if (text(faultInjection || env.FLOWCHAIN_TEST_FAULT_INJECTION) !== stage) return;
+    const error = new Error(
+      "\nInvalid `prisma.$queryRawUnsafe()` invocation:\n\n\nRaw query failed. " +
+        "Code: `40001`. Message: `could not serialize access due to read/write dependencies among transactions`",
+    );
+    error.name = "PrismaClientKnownRequestError";
+    error.code = "P2010";
+    error.meta = {
+      code: "40001",
+      message: "could not serialize access due to read/write dependencies among transactions",
+    };
+    throw error;
+  };
 
   async function createAwardDecision(rfqId, input, context) {
     const client = await db();
@@ -172,6 +191,7 @@ export function createRfqAwardDecisionService({
           fail("RFQ_AWARD_RESPONSE_NOT_ELIGIBLE", "The selected latest response is not eligible for Award.", 409, { eligibility: eligibility.state, reasons: eligibility.reasons, coverageState: coverage.state });
         }
 
+        injectConcurrencyConflict("concurrency_before_award_create");
         const decidedAt = now();
         const award = await tx.rfqAwardDecision.create({ data: {
           id: idFactory(), tenantId: actor.tenantId, rfqId: payload.rfqId, supplierId: payload.supplierId,
@@ -209,7 +229,13 @@ export function createRfqAwardDecisionService({
         return { ...result, idempotentReplay: false };
       }, { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 });
     } catch (error) {
-      if (error?.code === "P2002" || error?.code === "P2034") {
+      // A losing concurrent Award reaches here as either a unique-constraint
+      // violation (P2002) or a PostgreSQL serialization failure / deadlock,
+      // which Prisma may report as P2034 or as P2010 wrapping SQLSTATE 40001
+      // when the conflict is raised by one of the FOR UPDATE statements above.
+      // All of them are resolved below by re-reading committed state, so the
+      // returned code always reflects what the database actually holds.
+      if (error?.code === "P2002" || isPrismaConcurrencyError(error)) {
         const committed = replayExecution(await client.businessCommandExecution.findUnique({ where: executionWhere }), requestHash);
         if (committed) return committed;
         const existingAward = await client.rfqAwardDecision.findUnique({
