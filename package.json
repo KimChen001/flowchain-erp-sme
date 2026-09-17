@@ -59,6 +59,7 @@
     "test:legacy-import-authority": "node scripts/verify-legacy-import-authority.mjs",
     "test:db": "node --test server/domain/db-test-harness.test.mjs",
     "test:db:master-data": "node --test server/domain/master-data-db-parity.test.mjs",
+    "verify:strict": "node scripts/run-strict-verification.mjs",
     "test:db:receiving": "node scripts/verify-receiving-postgres.mjs",
     "test:db:outbound": "node scripts/verify-outbound-postgres.mjs",
     "test:api:receiving": "node scripts/smoke-receiving-api.mjs",
