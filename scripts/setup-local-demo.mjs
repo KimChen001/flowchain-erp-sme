@@ -20,6 +20,23 @@ export const LOCAL_DEMO_SUPPLIERS = [
   ['LOCAL-DEMO-SUP-009', 'LDS-009', 'BluePeak Cable & Wire', 'Electronic components', { contactName: 'Sam Parker', email: 'sales@bluepeak.example.com', address: 'Raleigh, NC, USA', deliveryCycleDays: 14, businessType: 'Manufacturer' }],
   ['LOCAL-DEMO-SUP-010', 'LDS-010', 'ClearMark Labels', 'Packaging materials', { contactName: 'Robin Hayes', email: 'sales@clearmark.example.com', address: 'Denver, CO, USA', deliveryCycleDays: 4, businessType: 'Manufacturer' }],
 ]
+
+// LOCAL_DEMO_SUPPLIERS is the single authority for shared demo supplier master
+// data. Other seeders and browser harnesses must resolve names and codes through
+// localDemoSupplier() rather than repeating literals, because a second seeder
+// that re-creates an existing LOCAL-DEMO-SUP-* id with a different name has its
+// unique-constraint violation swallowed and leaves the two out of step.
+const localDemoSupplierIndex = new Map(
+  LOCAL_DEMO_SUPPLIERS.map(([id, code, name, category]) => [id, Object.freeze({ id, code, name, category })]),
+)
+
+export function localDemoSupplier(id) {
+  const supplier = localDemoSupplierIndex.get(id)
+  if (!supplier) {
+    throw new Error(`Unknown local demo supplier id "${id}". Add it to LOCAL_DEMO_SUPPLIERS instead of hardcoding demo master data.`)
+  }
+  return supplier
+}
 const items = [
   ['LOCAL-DEMO-ITEM-001', 'LDM-001', 'Flow Controller', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001'],
   ['LOCAL-DEMO-ITEM-002', 'LDM-002', 'Temperature Sensor', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001'],
