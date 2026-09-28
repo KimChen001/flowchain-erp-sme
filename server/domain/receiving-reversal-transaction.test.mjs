@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createReceivingPostingCommandService } from './receiving-posting-command-service.mjs'
+import { createInventoryOperationsCommandService } from './inventory-operations-command-service.mjs'
 import { cleanupReceivingScenario, expectCommandError, seedReceivingScenario, withLiveReceivingDatabase } from './receiving-posting-live-test-helpers.mjs'
 
 test('database receiving reversal preserves history, restores state, and fails closed on unsafe use', async (t) => {
@@ -60,6 +61,94 @@ test('database receiving reversal preserves history, restores state, and fails c
         assert.equal(await prisma.auditLog.count({ where: { tenantId: scenario.tenantId, entityType: 'ReceivingDocument' } }), 1)
         assert.equal(await prisma.businessCommandExecution.count({ where: { tenantId: scenario.tenantId, commandType: 'receiving.reverse' } }), 0)
       } finally {
+        await cleanupReceivingScenario(prisma, scenario)
+      }
+    })
+
+    // KNOWN DEFECT REPRODUCTION, driven entirely through production services.
+    //
+    // Business rule under test. In this model an outbound movement records no
+    // link to the receipt whose units it consumed: InventoryMovement has
+    // relatedGrnId only on the receipt side, and no FIFO or allocation layer
+    // ties a shipment or transfer back to a GRN. For pooled stock, "this
+    // receipt was consumed" is therefore not directly observable. What is
+    // observable is the per-location ledger. Reversing receipt R of quantity Q
+    // is historically sound only if, replaying every posted movement at that
+    // location after R with R removed, the running on-hand never drops below
+    // zero. If it would, some later outbound drew on R's units and the reversal
+    // would rewrite history into an impossible state.
+    //
+    // Why the current guards miss it. The downstream check in
+    // buildReceivingReversalPlan matches a hardcoded list of movement types that
+    // production never writes (the real outbound types are shipment_posting and
+    // stock_transfer_out, not outbound_posting or transfer_out), so it never
+    // fires. The remaining check compares only the CURRENT balance, which a
+    // later receipt can replenish.
+    //
+    // Scenario, all real services:
+    //   GRN-1 posts 4 into A-01                      A-01 on-hand 4
+    //   a real stock transfer moves 3 out of A-01    A-01 on-hand 1
+    //   GRN-2 posts 4 into A-01                      A-01 on-hand 5
+    //   reverse GRN-1: current balance 5 >= 4, so it is allowed today.
+    // Replaying A-01 without GRN-1, the transfer would leave -3, so the transfer
+    // could only have been supplied by GRN-1. The reversal must be refused.
+    await t.test('a later receipt must not mask consumption of an earlier receipt', { todo: 'Known defect: reversal is currently allowed. Fixed by the ledger replay guard.' }, async () => {
+      const scenario = await seedReceivingScenario(prisma, { ordered: ['10'], accepted: ['4'] })
+      const suffix = randomUUID()
+      const managerId = `manager-${suffix}`
+      const destinationWarehouseId = `warehouse-dest-${suffix}`
+      const secondReceivingDocumentId = `grn-2-${suffix}`
+      try {
+        const receiving = createReceivingPostingCommandService({ prisma })
+        const sku = scenario.items[0].sku
+        const itemId = scenario.items[0].itemId
+
+        // Provision a real manager so the inventory operations service can
+        // authorise the transfer through its normal warehouse-scope checks.
+        await prisma.warehouse.create({ data: { id: destinationWarehouseId, tenantId: scenario.tenantId, code: `DEST-${suffix}`, name: 'Destination Warehouse', status: 'active' } })
+        await prisma.user.create({ data: { id: managerId, tenantId: scenario.tenantId, email: `${managerId}@example.com`, name: 'Manager', role: 'manager' } })
+        await prisma.userWarehouseScope.createMany({ data: [scenario.warehouseId, destinationWarehouseId].map((warehouseId) => ({ id: randomUUID(), tenantId: scenario.tenantId, userId: managerId, warehouseId, accessLevel: 'operate' })) })
+        await prisma.inventoryBalance.create({ data: { id: `balance-dest-${suffix}`, tenantId: scenario.tenantId, itemId, sku, itemName: 'Item 0', warehouseId: destinationWarehouseId, warehouseKey: destinationWarehouseId, location: 'B-01', locationKey: 'b-01', onHandQuantity: '0', reservedQuantity: '0', availableQuantity: '0', unit: 'EA', status: 'available' } })
+
+        // 1. GRN-1 posts 4 into A-01.
+        const firstPosting = await receiving.postReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: 'mask-post-grn-1' }, { identity: scenario.actor })
+
+        // 2. A real stock transfer moves 3 out of A-01, written by the production
+        //    inventory operations service as stock_transfer_out.
+        const inventoryOperations = createInventoryOperationsCommandService({ prisma, env: { ...process.env, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: 'true' } })
+        const manager = { identity: { authenticated: true, tenantId: scenario.tenantId, userId: managerId, role: 'manager', source: 'signed-session' } }
+        const created = await inventoryOperations.createTransfer({
+          transferNumber: `TR-${suffix}`,
+          idempotencyKey: 'mask-transfer-create',
+          lines: [{ itemId, quantity: '3', source: { warehouseId: scenario.warehouseId, location: 'A-01' }, destination: { warehouseId: destinationWarehouseId, location: 'B-01' } }],
+        }, manager)
+        const ready = await inventoryOperations.readyTransfer(created.transfer.id, { expectedTransferVersion: 0, idempotencyKey: 'mask-transfer-ready' }, manager)
+        await inventoryOperations.postTransfer(created.transfer.id, { expectedTransferVersion: ready.transfer.version, idempotencyKey: 'mask-transfer-post' }, manager)
+        const transferOut = await prisma.inventoryMovement.findFirst({ where: { tenantId: scenario.tenantId, sku, warehouseId: scenario.warehouseId, movementType: 'stock_transfer_out' } })
+        assert.ok(transferOut, 'the production service must have written a stock_transfer_out movement')
+
+        // 3. GRN-2 on the same PO line posts another 4 into A-01.
+        await prisma.receivingDocument.create({
+          data: {
+            id: secondReceivingDocumentId, tenantId: scenario.tenantId, documentNumber: `GRN-2-${suffix}`, poId: scenario.poId,
+            status: 'receiving', workflowStatus: 'approved', postingStatus: 'unposted', warehouseId: scenario.warehouseId, currency: 'CNY',
+            lines: { create: [{ id: `grn-2-line-${suffix}`, purchaseOrderLineId: scenario.poLines[0].id, itemId, sku, itemName: 'Item 0', acceptedQty: '4', rejectedQty: '0', unit: 'EA', warehouseId: scenario.warehouseId, location: 'A-01', locationKey: 'a-01' }] },
+          },
+        })
+        await receiving.postReceiving({ receivingDocumentId: secondReceivingDocumentId, idempotencyKey: 'mask-post-grn-2' }, { identity: scenario.actor })
+        const sourceBalance = await prisma.inventoryBalance.findFirst({ where: { tenantId: scenario.tenantId, sku, warehouseId: scenario.warehouseId, locationKey: 'a-01' } })
+        assert.equal(sourceBalance.onHandQuantity.toString(), '5', 'A-01 holds 4 - 3 + 4')
+
+        // 4. Reversing GRN-1 must be refused: the transfer drew on its units.
+        await expectCommandError(receiving.reverseReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: 'mask-reverse-grn-1', reason: 'Masked consumption' }, { identity: scenario.actor }), 'RECEIVING_REVERSAL_NOT_SAFE')
+        assert.equal(await prisma.inventoryMovement.count({ where: { tenantId: scenario.tenantId, movementType: 'receipt_reversal' } }), 0)
+        assert.equal((await prisma.receivingDocument.findUnique({ where: { id: scenario.receivingDocumentId } })).postingStatus, 'posted')
+        assert.equal((await prisma.inventoryMovement.findUnique({ where: { id: firstPosting.movements[0].id } })).reversedByMovementId, null)
+      } finally {
+        // Lines cascade from the document and legs cascade from lines.
+        await prisma.stockTransferDocument.deleteMany({ where: { tenantId: scenario.tenantId } })
+        await prisma.receivingLine.deleteMany({ where: { receivingDocumentId: secondReceivingDocumentId } })
+        await prisma.receivingDocument.deleteMany({ where: { id: secondReceivingDocumentId } })
         await cleanupReceivingScenario(prisma, scenario)
       }
     })
