@@ -163,8 +163,16 @@ export async function buildReceivingReversalPlan({ prisma, tenantId, receivingDo
   // receipt, and an approved one has already produced a payable. Undoing the
   // receipt underneath it would leave money owed for goods the system then
   // records as never received. Checked before the inventory guards because the
-  // invoice must be resolved first regardless of stock. Invoice lines carry no
-  // tenantId, so the tenant is enforced through the owning invoice.
+  // invoice position decides the outcome regardless of stock. Invoice lines
+  // carry no tenantId, so the tenant is enforced through the owning invoice.
+  //
+  // This refusal is permanent for that receipt, by design. Supplier invoices
+  // have no cancel or void operation, and a supplier credit memo is sourced
+  // from a supplier return, not from the invoice, so neither releases the hold.
+  // Receipt reversal corrects a mistaken posting before anything is committed
+  // against it; once an invoice claims the goods, the correction is a supplier
+  // return. The message says so rather than pointing at an action that does
+  // not exist.
   const receivingLineIds = receivingDocument.lines.map((line) => line.id)
   const holdingInvoiceLine = receivingLineIds.length
     ? await prisma.supplierInvoiceLine.findFirst({
@@ -177,7 +185,7 @@ export async function buildReceivingReversalPlan({ prisma, tenantId, receivingDo
       })
     : null
   if (holdingInvoiceLine) {
-    blockingIssues.push(issue('RECEIVING_REVERSAL_BLOCKED_BY_INVOICE', 'A supplier invoice still holds this receipt. Cancel or credit the invoice before reversing the receipt.', 409, {
+    blockingIssues.push(issue('RECEIVING_REVERSAL_BLOCKED_BY_INVOICE', 'A supplier invoice already claims this receipt, so it can no longer be reversed. To send these goods back, use a supplier return.', 409, {
       supplierInvoiceId: holdingInvoiceLine.supplierInvoiceId,
       invoiceNumber: holdingInvoiceLine.supplierInvoice?.invoiceNumber || null,
       invoiceStatus: holdingInvoiceLine.supplierInvoice?.status || null,
