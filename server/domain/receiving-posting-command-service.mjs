@@ -4,19 +4,19 @@ import { resolveProvisionedActor } from './pilot-identity.mjs'
 import {
   buildReceivingPostingPlan,
   buildReceivingReversalPlan,
-  DOWNSTREAM_MOVEMENT_TYPES,
   RECEIVABLE_PO_STATUSES,
   RECEIVABLE_WORKFLOW_STATUSES,
   receivingDecimalString as decimalString,
   receivingDecimalUnits as decimalUnits,
   receivingFulfillmentStatus,
   receivingLocationKey as normalizeLocation,
+  receivingMovementNetUnits,
   receivingWorkflowStatus,
 } from './receiving-transaction-policy.mjs'
 
 const POST_COMMAND = 'receiving.post'
 const REVERSE_COMMAND = 'receiving.reverse'
-export { DOWNSTREAM_MOVEMENT_TYPES, RECEIVABLE_PO_STATUSES, RECEIVABLE_WORKFLOW_STATUSES }
+export { RECEIVABLE_PO_STATUSES, RECEIVABLE_WORKFLOW_STATUSES }
 
 export class ReceivingCommandError extends Error {
   constructor(code, message, status = 400, details = undefined) {
@@ -270,10 +270,10 @@ function auditMetadata({ action, before, after, purchaseOrder, receivingDocument
   }
 }
 
+// Reconciliation and the reversal ledger replay share one net-movement formula,
+// receivingMovementNetUnits, so they cannot disagree about a location's on-hand.
 export function calculateMovementBalance(movements = []) {
-  return decimalString(movements.reduce((sum, movement) => (
-    sum + decimalUnits(movement.quantityIn) - decimalUnits(movement.quantityOut) + decimalUnits(movement.adjustmentQty)
-  ), 0n))
+  return decimalString(movements.reduce((sum, movement) => sum + receivingMovementNetUnits(movement), 0n))
 }
 
 export { decimalUnits as receivingDecimalUnits, decimalString as receivingDecimalString }
