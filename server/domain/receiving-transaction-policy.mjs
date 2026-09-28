@@ -1,4 +1,5 @@
 import {
+  RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES,
   RECEIVABLE_PURCHASE_ORDER_INPUTS,
   RECEIVING_POSTABLE_WORKFLOW_INPUTS,
   isPurchaseOrderReceivable,
@@ -158,6 +159,31 @@ export async function buildReceivingReversalPlan({ prisma, tenantId, receivingDo
   else if (receivingDocument.postingStatus !== 'posted') blockingIssues.push(issue('RECEIVING_REVERSAL_NOT_SAFE', 'Only a posted receiving document can be reversed.'))
   const originalMovements = await prisma.inventoryMovement.findMany({ where: { tenantId, relatedGrnId: receivingDocument.id, movementType: 'receipt_posting' }, orderBy: { createdAt: 'asc' } })
   if (!originalMovements.length || originalMovements.some((movement) => movement.reversedByMovementId)) blockingIssues.push(issue('RECEIVING_REVERSAL_NOT_SAFE', 'Original receipt movements are missing or already reversed.'))
+  // A submitted, matched or approved supplier invoice is a claim against this
+  // receipt, and an approved one has already produced a payable. Undoing the
+  // receipt underneath it would leave money owed for goods the system then
+  // records as never received. Checked before the inventory guards because the
+  // invoice must be resolved first regardless of stock. Invoice lines carry no
+  // tenantId, so the tenant is enforced through the owning invoice.
+  const receivingLineIds = receivingDocument.lines.map((line) => line.id)
+  const holdingInvoiceLine = receivingLineIds.length
+    ? await prisma.supplierInvoiceLine.findFirst({
+        where: {
+          receivingLineId: { in: receivingLineIds },
+          supplierInvoice: { tenantId, status: { in: [...RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES] } },
+        },
+        select: { receivingLineId: true, supplierInvoiceId: true, supplierInvoice: { select: { invoiceNumber: true, status: true } } },
+        orderBy: [{ supplierInvoiceId: 'asc' }, { id: 'asc' }],
+      })
+    : null
+  if (holdingInvoiceLine) {
+    blockingIssues.push(issue('RECEIVING_REVERSAL_BLOCKED_BY_INVOICE', 'A supplier invoice still holds this receipt. Cancel or credit the invoice before reversing the receipt.', 409, {
+      supplierInvoiceId: holdingInvoiceLine.supplierInvoiceId,
+      invoiceNumber: holdingInvoiceLine.supplierInvoice?.invoiceNumber || null,
+      invoiceStatus: holdingInvoiceLine.supplierInvoice?.status || null,
+      receivingLineId: holdingInvoiceLine.receivingLineId,
+    }))
+  }
   const receivingLines = new Map(receivingDocument.lines.map((line) => [line.id, line]))
   const poLines = new Map(purchaseOrder.lines.map((line) => [line.id, line]))
   const poDeltas = new Map()

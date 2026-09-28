@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createReceivingPostingCommandService } from './receiving-posting-command-service.mjs'
 import { createInventoryOperationsCommandService } from './inventory-operations-command-service.mjs'
+import { createOperationalFinanceCommandService } from './operational-finance-command-service.mjs'
 import { cleanupReceivingScenario, expectCommandError, seedReceivingScenario, withLiveReceivingDatabase } from './receiving-posting-live-test-helpers.mjs'
 
 test('database receiving reversal preserves history, restores state, and fails closed on unsafe use', async (t) => {
@@ -170,6 +171,89 @@ test('database receiving reversal preserves history, restores state, and fails c
         assert.equal(await ledger.sourceOnHand(), '1', 'A-01 holds 5 - 4 after the reversal')
       } finally {
         await ledger.cleanup()
+      }
+    })
+
+    // A receipt that a supplier invoice still holds must not be reversed.
+    // Driven through the production receiving and operational finance services:
+    // the receipt is really posted, and the invoice is really created and
+    // submitted, so this also proves production records receivingLineId on the
+    // invoice line, which the guard depends on.
+    async function invoicedScenario() {
+      const scenario = await seedReceivingScenario(prisma, { ordered: ['10'], accepted: ['4'] })
+      const suffix = randomUUID()
+      const supplierId = `supplier-${suffix}`
+      const specialistId = `specialist-${suffix}`
+      await prisma.supplier.create({ data: { id: supplierId, tenantId: scenario.tenantId, code: `SUP-${suffix}`, name: 'Invoice Supplier' } })
+      await prisma.purchaseOrder.update({ where: { id: scenario.poId }, data: { supplierId, supplierName: 'Invoice Supplier' } })
+      await prisma.purchaseOrderLine.update({ where: { id: scenario.poLines[0].id }, data: { unitPrice: '10.0000' } })
+      await prisma.receivingDocument.update({ where: { id: scenario.receivingDocumentId }, data: { supplierId, supplierName: 'Invoice Supplier' } })
+      await prisma.user.create({ data: { id: specialistId, tenantId: scenario.tenantId, email: `${specialistId}@example.com`, name: 'Finance Specialist', role: 'business-specialist' } })
+
+      const receiving = createReceivingPostingCommandService({ prisma })
+      const finance = createOperationalFinanceCommandService({ prisma, env: { ...process.env, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: 'true' } })
+      const specialist = { identity: { authenticated: true, tenantId: scenario.tenantId, userId: specialistId, role: 'business-specialist', source: 'test' } }
+
+      return {
+        scenario,
+        post: () => receiving.postReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: `invoiced-post-${suffix}` }, { identity: scenario.actor }),
+        createInvoice: () => finance.createSupplierInvoice({
+          invoiceNumber: `SUP-INV-${suffix}`,
+          supplierId,
+          currency: 'CNY',
+          invoiceDate: '2026-07-17T00:00:00.000Z',
+          dueDate: '2026-08-16T00:00:00.000Z',
+          totalAmount: '42.0000',
+          idempotencyKey: `invoiced-create-${suffix}`,
+          lines: [{ purchaseOrderLineId: scenario.poLines[0].id, receivingLineId: scenario.receivingLines[0].id, quantity: '4.0000', unitPrice: '10.0000', lineAmount: '40.0000', enteredTaxAmount: '2.0000' }],
+        }, specialist),
+        submitInvoice: (invoiceId) => finance.submitSupplierInvoice(invoiceId, { expectedVersion: 0, idempotencyKey: `invoiced-submit-${suffix}` }, specialist),
+        reverse: () => receiving.reverseReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: `invoiced-reverse-${suffix}`, reason: 'Invoice guard regression' }, { identity: scenario.actor }),
+        cleanup: async () => {
+          await prisma.supplierInvoice.deleteMany({ where: { tenantId: scenario.tenantId } })
+          await cleanupReceivingScenario(prisma, scenario)
+        },
+      }
+    }
+
+    await t.test('a receipt held by a submitted supplier invoice cannot be reversed', async () => {
+      const invoiced = await invoicedScenario()
+      try {
+        const posting = await invoiced.post()
+        const created = await invoiced.createInvoice()
+        const submitted = await invoiced.submitInvoice(created.entityId)
+        assert.equal(submitted.invoice.status, 'submitted')
+        const invoiceLine = await prisma.supplierInvoiceLine.findFirst({ where: { supplierInvoiceId: created.entityId } })
+        assert.equal(invoiceLine.receivingLineId, invoiced.scenario.receivingLines[0].id, 'production must link the invoice line to the receiving line')
+
+        await expectCommandError(invoiced.reverse(), 'RECEIVING_REVERSAL_BLOCKED_BY_INVOICE')
+        assert.equal(await prisma.inventoryMovement.count({ where: { tenantId: invoiced.scenario.tenantId, movementType: 'receipt_reversal' } }), 0)
+        assert.equal((await prisma.receivingDocument.findUnique({ where: { id: invoiced.scenario.receivingDocumentId } })).postingStatus, 'posted')
+        assert.equal((await prisma.inventoryMovement.findUnique({ where: { id: posting.movements[0].id } })).reversedByMovementId, null)
+        assert.equal((await prisma.purchaseOrderLine.findUnique({ where: { id: invoiced.scenario.poLines[0].id } })).receivedQuantity.toString(), '4')
+        assert.equal(await prisma.businessCommandExecution.count({ where: { tenantId: invoiced.scenario.tenantId, commandType: 'receiving.reverse' } }), 0)
+      } finally {
+        await invoiced.cleanup()
+      }
+    })
+
+    await t.test('a draft supplier invoice does not hold the receipt', async () => {
+      // A draft is not yet a claim against the receipt, so the reversal is
+      // allowed. That is only safe because submission re-validates that the
+      // receipt is still posted and not reversed. Both halves are asserted here
+      // so the draft exemption cannot silently become a hole.
+      const invoiced = await invoicedScenario()
+      try {
+        await invoiced.post()
+        const created = await invoiced.createInvoice()
+        const reversed = await invoiced.reverse()
+        assert.equal(reversed.receivingDocument.postingStatus, 'reversed')
+
+        await assert.rejects(invoiced.submitInvoice(created.entityId), (error) => error?.code === 'SUPPLIER_INVOICE_SOURCE_INVALID')
+        const draft = await prisma.supplierInvoice.findUnique({ where: { id: created.entityId } })
+        assert.equal(draft.status, 'draft', 'the draft stays a draft once its receipt is reversed')
+      } finally {
+        await invoiced.cleanup()
       }
     })
 
