@@ -13,6 +13,7 @@ import { handleRuntimeCapabilityRoute } from "../routes/runtime-capability.route
 import { send } from "../utils/http.mjs";
 import { dispatchApiRoute } from "./route-dispatcher.mjs";
 import { createRouteContext } from "./request-context.mjs";
+import { noteRequestActor } from "./request-logging.mjs";
 import { handleRuntimeRoutes } from "./runtime-routes.mjs";
 import { handleSessionRoutes } from "./session-routes.mjs";
 import { sendStaticAsset } from "./static-assets.mjs";
@@ -52,12 +53,13 @@ export function createHttpRequestHandler({
       localSessionSecret,
       env,
     );
+    noteRequestActor(req, identity);
 
     if (handleRuntimeCapabilityRoute({ req, res, url, send })) return;
 
     if (isDatabaseModeWriteBlocked({ persistenceMode, method: req.method, pathname: url.pathname })) {
       await recordDatabaseAuditBestEffort(
-        { repositories },
+        { repositories, identity },
         legacyMutationBlockedAuditEntry({ method: req.method, pathname: url.pathname }),
       );
       return sendDatabaseModeMutationBlocked(res, send);

@@ -1,5 +1,6 @@
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
+import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
 
 function requireDatabaseConfig(env = process.env) {
   return validateDatabasePersistenceConfig(env)
@@ -192,6 +193,8 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
   return {
     mode: 'database',
     adapter: 'db-master-data-v1',
+    createSupplier: async (input, actorId, scope) => mapSupplier(await saveSupplierMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope)),
+    updateSupplier: async (id, input, actorId, scope) => mapSupplier(await saveSupplierMaster(await resolvePrisma({ env, prisma }), id, input, actorId, scope)),
     listItems: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const records = await client.item.findMany({

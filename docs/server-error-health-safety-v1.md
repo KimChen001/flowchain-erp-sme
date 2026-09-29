@@ -7,8 +7,10 @@ Round 23 sanitizes server-level error responses and removes provider diagnostics
 Unexpected server errors now return a generic user-facing response:
 
 ```json
-{ "error": "Internal server error" }
+{ "error": "Internal server error", "requestId": "3f0c2c8e-..." }
 ```
+
+`requestId` matches the `X-Request-Id` response header and the server's log lines (see "Request IDs and Logs" below). It is present whenever the request passed through the composed server.
 
 The response must not include:
 
@@ -19,7 +21,7 @@ The response must not include:
 - database connection strings;
 - filesystem paths from future database or ORM errors.
 
-Internal warning logs may include a short sanitized summary through `sanitizeErrorSummary`, with known credential-like patterns redacted.
+Internal error logs may include a short sanitized summary through `sanitizeErrorSummary`, with credential-like patterns redacted.
 
 ## Safe Error Helper
 
@@ -36,6 +38,32 @@ Exports:
 `server/routes/scm-legacy.routes.mjs` now uses this helper in the global catch block.
 
 Route-level validation errors remain unchanged where they are intentional business or workflow feedback. Future rounds can review individual route messages separately if they become database or provider-backed.
+
+## Request IDs and Logs
+
+Every response carries an `X-Request-Id` header. A forwarded `X-Request-Id` is kept when it is 8–128 characters of letters, digits, `.`, `_`, `:` or `-`. Otherwise the server generates a UUID.
+
+`startScmServer`, the production and local entry point, writes one JSON line per API request once the response ends:
+
+```json
+{"time":"2026-09-28T10:15:02.114Z","level":"info","event":"http_request","requestId":"3f0c2c8e-...","method":"GET","path":"/api/home/overview","status":200,"durationMs":41.7,"tenantId":"tenant-a","userId":"user-1"}
+```
+
+- `path` never includes the query string. Headers, cookies, tokens and bodies are never logged.
+- `tenantId` and `userId` appear only for signed-in requests, and only as ids. Names and emails are never logged.
+- `/api/health` and `/api/ready` probes are not logged. Static assets and the SPA shell are logged only when they fail with 5xx.
+- Requests with status 5xx are logged at `level: "error"`. A request the client abandoned carries `"aborted": true`.
+- Set `FLOWCHAIN_REQUEST_LOG=off` to disable the access log. In-process servers from `createScmServer()`, used by tests and browser runners, do not write it unless a `requestLogger` is passed.
+
+Unhandled errors are always logged as one JSON line:
+
+```json
+{"time":"...","level":"error","event":"server_error","requestId":"3f0c2c8e-...","error":"P1001: connect failed [redacted]"}
+```
+
+This includes errors thrown after the response has started streaming. The caller cannot be told about those, and they used to go unrecorded. The `error` summary passes through `sanitizeErrorSummary`, which redacts bearer tokens, `sk-` keys, database URLs, and any `NAME=value` or `NAME: value` whose name ends in `API_KEY`, `SECRET`, `TOKEN` or `PASSWORD`.
+
+To trace a report, take the `requestId` from the 500 response or the response header and search the logs for it.
 
 ## Health Endpoint
 

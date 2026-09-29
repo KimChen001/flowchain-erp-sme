@@ -22,6 +22,21 @@ function databaseAuditRepository(ctx = {}) {
     : null
 }
 
+// Attribute the entry to the signed-in session. Without a tenant the audit
+// foundation files it under a fallback tenant, the foreign key rejects it, and
+// the failure is swallowed below, so the entry is silently lost.
+function sessionAttribution(identity) {
+  if (!identity?.authenticated) return {}
+  const tenantId = String(identity.tenantId || '').trim()
+  const userId = String(identity.userId || '').trim()
+  return {
+    ...(tenantId ? { tenantId } : {}),
+    ...(userId
+      ? { actorId: userId, actor: { type: 'user', id: userId, role: String(identity.role || '') } }
+      : {}),
+  }
+}
+
 export async function recordDatabaseAuditBestEffort(ctx = {}, entry = {}, options = {}) {
   const repository = databaseAuditRepository(ctx)
   if (typeof repository?.recordAuditEntry !== 'function') return { ok: false, skipped: true }
@@ -31,6 +46,7 @@ export async function recordDatabaseAuditBestEffort(ctx = {}, entry = {}, option
       source: 'system',
       module: 'system',
       ...entry,
+      ...sessionAttribution(ctx.identity),
       summary: safeText(entry.summary || entry.reason || ''),
     }, options)
     return { ok: true, entry: record }

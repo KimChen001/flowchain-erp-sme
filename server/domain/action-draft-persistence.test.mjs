@@ -20,7 +20,34 @@ function createDb() {
   }
 }
 
-function createRouteContext({ method = 'POST', pathname = '/api/action-drafts', body = {}, db = createDb(), repositories } = {}) {
+const signedIn = { authenticated: true, tenantId: 'tenant-draft-owner', userId: 'user-draft-owner', role: 'manager', source: 'test' }
+const anonymous = { authenticated: false, tenantId: '', userId: '', role: 'viewer', source: 'anonymous' }
+
+function databaseRepositories(writes, db = createDb()) {
+  return createDatabaseRepositoryRegistry({
+    db,
+    env: {
+      FLOWCHAIN_PERSISTENCE_MODE: 'database',
+      DATABASE_URL: 'postgresql://user:pass@localhost:5432/flowchain',
+    },
+    prisma: {
+      actionDraft: {
+        create: async ({ data, include }) => {
+          writes.push({ data, include })
+          return {
+            ...data,
+            createdAt: new Date('2026-06-30T00:00:00.000Z'),
+            updatedAt: new Date('2026-06-30T00:00:00.000Z'),
+            validations: [],
+            auditTrail: [],
+          }
+        },
+      },
+    },
+  })
+}
+
+function createRouteContext({ method = 'POST', pathname = '/api/action-drafts', body = {}, db = createDb(), repositories, identity = signedIn } = {}) {
   let response = null
   let wrote = false
   return {
@@ -30,6 +57,7 @@ function createRouteContext({ method = 'POST', pathname = '/api/action-drafts', 
       url: new URL(pathname, 'http://localhost'),
       db,
       repositories,
+      identity,
       send(_res, status, payload) {
         response = { status, payload }
       },
@@ -136,6 +164,67 @@ test('database mode save route persists only the action draft shell', async () =
   assert.deepEqual(db, before)
 })
 
+test('saving an action draft requires a signed-in user and writes nothing otherwise', async () => {
+  const writes = []
+  for (const identity of [anonymous, { ...signedIn, tenantId: '' }, null]) {
+    const route = createRouteContext({ repositories: databaseRepositories(writes), body: { draft: draft() }, identity })
+    assert.equal(await handleActionDraftsRoute(route.ctx), true)
+    assert.equal(route.response.status, 401)
+    assert.equal(route.response.payload.code, 'AUTHENTICATION_REQUIRED')
+  }
+  assert.equal(writes.length, 0)
+})
+
+test('a saved action draft belongs to the signed-in tenant and user, whatever the body says', async () => {
+  const writes = []
+  const route = createRouteContext({
+    repositories: databaseRepositories(writes),
+    body: { draft: { ...draft(), tenantId: 'tenant-someone-else', createdById: 'user-someone-else' } },
+  })
+
+  assert.equal(await handleActionDraftsRoute(route.ctx), true)
+  assert.equal(route.response.status, 201)
+  assert.equal(writes.length, 1)
+  assert.equal(writes[0].data.tenantId, 'tenant-draft-owner')
+  assert.equal(writes[0].data.createdById, 'user-draft-owner')
+  assert.equal(route.response.payload.draft.tenantId, 'tenant-draft-owner')
+})
+
+test('the draft repository refuses to write or read without a tenant instead of guessing one', async () => {
+  const writes = []
+  const repository = databaseRepositories(writes).actionDrafts
+  await assert.rejects(
+    () => repository.persistDraft({ ...draft(), tenantId: '' }),
+    (error) => error.status === 400 && error.code === 'FLOWCHAIN_ACTION_DRAFT_TENANT_REQUIRED',
+  )
+  await assert.rejects(
+    () => repository.getDraft('DRAFT-SAVE-1'),
+    (error) => error.code === 'FLOWCHAIN_ACTION_DRAFT_TENANT_REQUIRED',
+  )
+  assert.equal(writes.length, 0)
+})
+
+test('an unexpected persistence error is left to the sanitizing error boundary, not echoed', async () => {
+  const repositories = createDatabaseRepositoryRegistry({
+    db: createDb(),
+    env: {
+      FLOWCHAIN_PERSISTENCE_MODE: 'database',
+      DATABASE_URL: 'postgresql://user:pass@localhost:5432/flowchain',
+    },
+    prisma: {
+      actionDraft: {
+        create: async () => {
+          throw Object.assign(new Error('\nInvalid `prisma.actionDraft.create()` invocation:\n\nUnique constraint failed on the fields: (`id`)'), { code: 'P2002' })
+        },
+      },
+    },
+  })
+  const route = createRouteContext({ repositories, body: { draft: draft() } })
+
+  await assert.rejects(() => handleActionDraftsRoute(route.ctx), (error) => error.code === 'P2002')
+  assert.equal(route.response, null)
+})
+
 test('database mode save route returns clean config error without DATABASE_URL', async () => {
   const db = createDb()
   const route = createRouteContext({
@@ -213,7 +302,7 @@ test('database action draft repository can read saved draft shell and keeps conf
     },
   })
 
-  const saved = await repository.getDraft('DRAFT-SAVE-1')
+  const saved = await repository.getDraft('DRAFT-SAVE-1', { tenantId: 'tenant-flowchain-sme' })
   assert.equal(saved.id, 'DRAFT-SAVE-1')
   assert.equal(saved.type, 'purchase_request_draft')
   assert.equal(saved.previewOnly, true)

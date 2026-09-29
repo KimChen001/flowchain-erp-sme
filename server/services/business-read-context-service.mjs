@@ -74,7 +74,7 @@ export function buildHomeOverview(context) {
       canonicalRoute: `/app/procurement/requests/${encodeURIComponent(row.id)}`, entityType: 'purchase_request', updatedAt: updatedAt(row),
     })),
     ...context.purchaseOrders.filter(row => row.status === 'draft').map(row => ({
-      priority: '中', title: 'Draft PO 待复核', id: row.id, description: `供应商 ${row.supplierId || '—'} · ${row.transmissionStatus || '—'}`,
+      priority: '中', title: 'Draft PO 待复核', id: row.id, description: `供应商 ${row.supplierSnapshot?.supplierName || row.supplierName || row.supplierId || '—'} · ${row.transmissionStatus || row.metadata?.transmissionStatus || '—'}`,
       canonicalRoute: `/app/procurement/orders/${encodeURIComponent(row.id)}`, entityType: 'purchase_order', updatedAt: updatedAt(row),
     })),
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10)

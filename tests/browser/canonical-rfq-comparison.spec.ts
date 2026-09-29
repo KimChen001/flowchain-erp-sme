@@ -55,7 +55,9 @@ test("RFQ detail opens authoritative comparison and preserves history without wr
   await expect(page.getByTestId("canonical-rfq-comparison")).not.toContainText("2030-02-17");
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-003")).toContainText("已拒绝");
   await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-004")).toContainText("已撤回");
-  await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-005")).toContainText("Northstar Manufacturing");
+  // Name comes from LOCAL_DEMO_SUPPLIERS in scripts/setup-local-demo.mjs, the
+  // single authority for shared LOCAL-DEMO supplier master data.
+  await expect(page.getByTestId("rfq-comparison-non-response-LOCAL-DEMO-SUP-005")).toContainText("Northstar Electronics");
   const responseRows = await page.getByTestId("rfq-comparison-responses").locator("tbody > tr").allTextContents();
   expect(responseRows[0]).toContain("Acme Components");
   expect(responseRows[1]).toContain("Summit Packaging");

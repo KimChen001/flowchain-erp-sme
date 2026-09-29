@@ -1,6 +1,18 @@
 import { handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
 import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, buildAiRuntimeSafeFallbackV2 } from '../domain/ai-runtime-gateway-v2.mjs'
 import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs'
+import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
+
+async function addKnowledgeContext(ctx, body, response) {
+  if (classifyQueryScope(body) !== 'mixed') return response
+  try {
+    const knowledge = await runKnowledgeQuery(ctx, body, { force: true })
+    return { ...response, supplementalKnowledge: { title: knowledge.conclusion.title, summary: knowledge.conclusion.summary, rag: knowledge.rag } }
+  } catch {
+    const zh = body.answerLanguage === 'zh-CN'
+    return { ...response, supplementalKnowledge: { title: zh ? '知识库暂时不可用' : 'Knowledge temporarily unavailable', summary: zh ? '业务查询已完成，但本次未能读取相关政策或产品资料。请稍后重试。' : 'The business query completed, but supporting policy or product documents could not be retrieved. Try again later.', rag: { mode: 'unavailable', citations: [] } } }
+  }
+}
 
 export async function loadAiRuntimeFacts(repositories = {}, tenantId = '') {
   if (!tenantId) return {}
@@ -43,14 +55,14 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
       if (knowledge) { send(res, 200, knowledge); return true }
       const businessQuery = await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
       if (businessQuery) {
-        send(res, 200, businessQuery)
+        send(res, 200, await addKnowledgeContext(ctx, body, businessQuery))
         return true
       }
       const facts = identity?.authenticated && identity.tenantId
         ? await loadAiRuntimeFacts(repositories, identity.tenantId)
         : {}
       const result = await buildAiRuntimeResponseV2Async({ ...db, ...facts }, body, { env: process.env })
-      send(res, result.status, result.body)
+      send(res, result.status, await addKnowledgeContext(ctx, body, result.body))
     } catch (error) {
       if (isKnowledgeQuestion(body)) {
         send(res, error.status || 503, { code: error.code || 'KNOWLEDGE_UNAVAILABLE', error: error.status ? error.message : (body.answerLanguage === 'zh-CN' ? '知识库暂时不可用，请稍后重试。' : 'Knowledge is temporarily unavailable. Please try again.') })

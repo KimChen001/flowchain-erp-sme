@@ -2,7 +2,9 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 export async function loadEnv(root) {
-  for (const name of ['.env.local', '.env']) {
+  const names = ['.env.local', '.env']
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index]
     try {
       const raw = await readFile(path.join(root, name), 'utf8')
       for (const line of raw.split(/\r?\n/)) {
@@ -17,5 +19,6 @@ export async function loadEnv(root) {
     } catch {
       // Local env files are optional.
     }
+    if (index === 1 && process.env.FLOWCHAIN_DEV_LOCAL === 'true') names.push('.local/ai-provider.env', '.local/openai.env')
   }
 }
