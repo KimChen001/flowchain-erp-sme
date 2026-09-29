@@ -58,10 +58,19 @@ function auditTrailData(draft = {}) {
   }))
 }
 
+function requiredTenantId(value) {
+  const tenantId = text(value)
+  if (tenantId) return tenantId
+  const error = new Error('An action draft needs the signed-in tenant.')
+  error.code = 'FLOWCHAIN_ACTION_DRAFT_TENANT_REQUIRED'
+  error.status = 400
+  throw error
+}
+
 function toActionDraftCreateData(draft = {}) {
   return {
     id: text(draft.id),
-    tenantId: text(draft.tenantId, 'tenant-flowchain-sme'),
+    tenantId: requiredTenantId(draft.tenantId),
     type: text(draft.type),
     title: text(draft.title, 'Action Draft'),
     status: text(draft.status, 'preview'),
@@ -136,11 +145,12 @@ export function createDbActionDraftRepository({ db = {}, env = process.env, pris
       return mapActionDraftRecord(record)
     },
     getDraft: async (id = '', options = {}) => {
+      const tenantId = requiredTenantId(options.tenantId)
       const client = await resolvePrisma({ env, prisma })
       const record = await client.actionDraft.findFirst({
         where: {
           id: text(id),
-          tenantId: text(options.tenantId, 'tenant-flowchain-sme'),
+          tenantId,
         },
         include: { validations: true, auditTrail: true },
       })

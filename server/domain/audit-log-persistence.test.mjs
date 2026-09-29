@@ -45,7 +45,9 @@ function draft() {
   }
 }
 
-function createActionDraftRoute({ body, repositories, db = createDb(), pathname = '/api/action-drafts' } = {}) {
+const draftAuthor = { authenticated: true, tenantId: 'tenant-audit-draft', userId: 'user-audit-draft', role: 'manager', source: 'test' }
+
+function createActionDraftRoute({ body, repositories, db = createDb(), pathname = '/api/action-drafts', identity = draftAuthor } = {}) {
   let response = null
   return {
     ctx: {
@@ -54,6 +56,7 @@ function createActionDraftRoute({ body, repositories, db = createDb(), pathname 
       url: new URL(pathname, 'http://localhost'),
       db,
       repositories,
+      identity,
       send(_res, status, payload) {
         response = { status, payload }
       },

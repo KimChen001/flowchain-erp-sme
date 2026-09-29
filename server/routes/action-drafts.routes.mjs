@@ -31,6 +31,11 @@ export async function handleActionDraftsRoute(ctx) {
   }
 
   if (req.method === 'POST' && (url.pathname === '/api/action-drafts' || url.pathname === '/api/action-drafts/save')) {
+    const identity = ctx.identity
+    if (!identity?.authenticated || !String(identity.tenantId || '').trim()) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', error: 'Sign in to save a draft.' })
+      return true
+    }
     const body = await readBody(req)
     const draft = body?.draft || body
     if (typeof repository.persistDraft !== 'function') {
@@ -38,7 +43,13 @@ export async function handleActionDraftsRoute(ctx) {
       return true
     }
     try {
-      const saved = await repository.persistDraft(draft)
+      // The session decides where the draft lives and who created it; any
+      // tenant or creator in the posted draft is ignored.
+      const saved = await repository.persistDraft({
+        ...draft,
+        tenantId: identity.tenantId,
+        createdById: identity.userId,
+      })
       await recordDatabaseAuditBestEffort(ctx, actionDraftSavedAuditEntry(saved))
       send(res, 201, {
         draft: saved,
