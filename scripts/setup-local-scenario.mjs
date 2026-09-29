@@ -18,8 +18,8 @@ export async function seedLocalScenario(prisma, env = process.env) {
   return prisma.$transaction(async tx => {
     await tx.purchaseRequest.upsert({
       where: { id: 'LOCAL-DEMO-PR-001' },
-      create: { id: 'LOCAL-DEMO-PR-001', tenantId, status: PURCHASE_REQUEST_STATUS.SUBMITTED, requester: 'US Demo', priority: 'high', requiredDate: new Date('2030-01-15T00:00:00Z'), amount: 5000, source: 'local_demo_scenario', metadata, lines: { create: [{ id: 'LOCAL-DEMO-PRL-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: itemNames['LDM-001'], quantity: 50, unit: 'pcs', unitPrice: 100, amount: 5000, metadata }] } },
-      update: { requester: 'US Demo', metadata },
+      create: { id: 'LOCAL-DEMO-PR-001', tenantId, status: PURCHASE_REQUEST_STATUS.SUBMITTED, requester: 'US Demo', priority: 'high', requiredDate: new Date('2030-01-15T00:00:00Z'), amount: 5000, currency: 'USD', source: 'local_demo_scenario', metadata, lines: { create: [{ id: 'LOCAL-DEMO-PRL-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: itemNames['LDM-001'], quantity: 50, unit: 'pcs', unitPrice: 100, amount: 5000, metadata }] } },
+      update: { requester: 'US Demo', currency: 'USD', metadata },
     })
     await tx.purchaseRequestLine.updateMany({ where: { id: 'LOCAL-DEMO-PRL-001' }, data: { itemName: itemNames['LDM-001'], metadata } })
     await tx.rfq.upsert({
@@ -83,8 +83,8 @@ export async function seedLocalScenario(prisma, env = process.env) {
       }
     await tx.receivingDocument.upsert({
       where: { id: 'LOCAL-DEMO-GRN-001' },
-      create: { id: 'LOCAL-DEMO-GRN-001', tenantId, documentNumber: 'LOCAL-DEMO-GRN-001', poId: 'LOCAL-DEMO-PO-001', supplierId: 'LOCAL-DEMO-SUP-001', supplierName, status: 'partial', workflowStatus: 'received', postingStatus: 'unposted', warehouseId: 'LOCAL-DEMO-WH-001', receiver: 'US Demo', metadata, lines: { create: [{ id: 'LOCAL-DEMO-GRNL-001', purchaseOrderLineId: 'LOCAL-DEMO-PO-001-LINE-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: itemNames['LDM-001'], acceptedQty: 20, rejectedQty: 0, unit: 'pcs', warehouseId: 'LOCAL-DEMO-WH-001', location: 'A-01', locationKey: 'a-01', metadata }] } },
-      update: { supplierName, receiver: 'US Demo', metadata },
+      create: { id: 'LOCAL-DEMO-GRN-001', tenantId, documentNumber: 'LOCAL-DEMO-GRN-001', poId: 'LOCAL-DEMO-PO-001', supplierId: 'LOCAL-DEMO-SUP-001', supplierName, status: 'partial', workflowStatus: 'received', postingStatus: 'unposted', warehouseId: 'LOCAL-DEMO-WH-001', receiver: 'US Demo', currency: 'USD', metadata, lines: { create: [{ id: 'LOCAL-DEMO-GRNL-001', purchaseOrderLineId: 'LOCAL-DEMO-PO-001-LINE-001', itemId: 'LOCAL-DEMO-ITEM-001', sku: 'LDM-001', itemName: itemNames['LDM-001'], acceptedQty: 20, rejectedQty: 0, unit: 'pcs', warehouseId: 'LOCAL-DEMO-WH-001', location: 'A-01', locationKey: 'a-01', metadata }] } },
+      update: { supplierName, receiver: 'US Demo', currency: 'USD', metadata },
     })
     await tx.receivingLine.updateMany({ where: { id: 'LOCAL-DEMO-GRNL-001' }, data: { itemName: itemNames['LDM-001'], metadata } })
     await tx.supplierInvoice.upsert({

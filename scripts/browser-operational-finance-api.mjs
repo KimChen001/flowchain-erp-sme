@@ -223,6 +223,11 @@ async function seed() {
       id: tenantId,
       name: "Operational Finance Browser",
       defaultLanguage: process.env.PLAYWRIGHT_AI_QUERY === "true" ? "en-US" : "zh-CN",
+      // A deliberate Chinese-workspace scenario: pinned so the US schema
+      // defaults do not change what these browser specs exercise.
+      countryCode: "CN",
+      locale: "zh-CN",
+      currency: "CNY",
       timezone: "America/New_York",
       operationalSettings: {
         settlementPolicy: {

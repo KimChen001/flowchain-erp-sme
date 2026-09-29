@@ -13,12 +13,12 @@ function countRows(rows = {}) {
   }
 }
 
-async function upsertMany(model, rows = [], toWhere = (row) => ({ id: row.id })) {
+async function upsertMany(model, rows = [], toWhere = (row) => ({ id: row.id }), toUpdate = (row) => row) {
   let upserted = 0
   for (const row of rows) {
     await model.upsert({
       where: toWhere(row),
-      update: row,
+      update: toUpdate(row),
       create: row,
     })
     upserted += 1
@@ -47,7 +47,9 @@ export async function seedMasterData(db = {}, options = {}) {
   const rows = preview.rows
 
   const counts = {
-    tenants: await upsertMany(prisma.tenant, [rows.tenant]),
+    // Tenant business settings (countryCode, locale, currency, timezone) are create-only:
+    // a re-seed must never rewrite an existing tenant's stored settings.
+    tenants: await upsertMany(prisma.tenant, [rows.tenant], undefined, (row) => ({ name: row.name })),
     paymentTerms: await upsertMany(prisma.paymentTerm, rows.paymentTerms),
     taxCodes: await upsertMany(prisma.taxCode, rows.taxCodes),
     suppliers: await upsertMany(prisma.supplier, rows.suppliers),
