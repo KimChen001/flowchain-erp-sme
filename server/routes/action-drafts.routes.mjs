@@ -58,7 +58,12 @@ export async function handleActionDraftsRoute(ctx) {
         requiresConfirmation: true,
       })
     } catch (error) {
-      send(res, error?.status || 500, {
+      // Only errors raised on purpose carry a status and a caller-safe
+      // message. Anything else (a Prisma or driver error) goes to the server
+      // error boundary, which logs a sanitized summary and returns a generic
+      // 500 instead of the raw database message.
+      if (!Number.isInteger(error?.status)) throw error
+      send(res, error.status, {
         error: error?.message || 'Action draft persistence failed.',
         code: error?.code || 'ACTION_DRAFT_PERSISTENCE_FAILED',
       })

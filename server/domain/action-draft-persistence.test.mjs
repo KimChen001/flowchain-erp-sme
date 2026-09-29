@@ -204,6 +204,27 @@ test('the draft repository refuses to write or read without a tenant instead of 
   assert.equal(writes.length, 0)
 })
 
+test('an unexpected persistence error is left to the sanitizing error boundary, not echoed', async () => {
+  const repositories = createDatabaseRepositoryRegistry({
+    db: createDb(),
+    env: {
+      FLOWCHAIN_PERSISTENCE_MODE: 'database',
+      DATABASE_URL: 'postgresql://user:pass@localhost:5432/flowchain',
+    },
+    prisma: {
+      actionDraft: {
+        create: async () => {
+          throw Object.assign(new Error('\nInvalid `prisma.actionDraft.create()` invocation:\n\nUnique constraint failed on the fields: (`id`)'), { code: 'P2002' })
+        },
+      },
+    },
+  })
+  const route = createRouteContext({ repositories, body: { draft: draft() } })
+
+  await assert.rejects(() => handleActionDraftsRoute(route.ctx), (error) => error.code === 'P2002')
+  assert.equal(route.response, null)
+})
+
 test('database mode save route returns clean config error without DATABASE_URL', async () => {
   const db = createDb()
   const route = createRouteContext({
