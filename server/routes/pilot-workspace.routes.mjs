@@ -150,7 +150,7 @@ export async function handlePilotWorkspaceRoute(ctx) {
         const defaultLanguage = assertSupportedLanguage(body.defaultLanguage || current.defaultLanguage)
         const locked = await hasPostedTransactions(tx, actor.tenantId, current)
         if (locked && baseCurrency !== current.currency) fail('BASE_CURRENCY_LOCKED', 'Base currency cannot change after posted transactions exist.', 409)
-        const updated = await tx.tenant.updateMany({ where: { id: actor.tenantId, version: Number(body.version) }, data: { name: workspaceName, legalName: companyName || null, countryCode: text(body.countryCode) || current.countryCode || 'CN', currency: baseCurrency, timezone, locale, defaultLanguage, workspaceCompletedAt: workspaceName && companyName && baseCurrency && timezone ? new Date() : null, version: { increment: 1 } } })
+        const updated = await tx.tenant.updateMany({ where: { id: actor.tenantId, version: Number(body.version) }, data: { name: workspaceName, legalName: companyName || null, countryCode: text(body.countryCode) || current.countryCode || 'US', currency: baseCurrency, timezone, locale, defaultLanguage, workspaceCompletedAt: workspaceName && companyName && baseCurrency && timezone ? new Date() : null, version: { increment: 1 } } })
         if (updated.count !== 1) fail('VERSION_CONFLICT', 'Workspace changed concurrently.', 409)
         const next = await tx.tenant.findUnique({ where: { id: actor.tenantId } })
         await tx.auditLog.create({ data: auditData({ actor, action: 'workspace_settings_updated', entityType: 'Tenant', entityId: actor.tenantId, summary: 'Company, workspace, locale, language, timezone, or base currency settings updated.', before: publicWorkspace(current, locked), after: publicWorkspace(next, locked) }) })

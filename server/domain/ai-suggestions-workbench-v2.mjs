@@ -27,8 +27,12 @@ function number(value, fallback = 0) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
 }
-function money(value = 0, currency = 'CNY') {
-  return `${currency === 'CNY' ? '¥' : `${currency} `}${number(value).toLocaleString()}`
+// Unknown currency shows a plain number; a document's own currency is never guessed.
+function money(value = 0, currency = '') {
+  const code = text(currency)
+  const amount = number(value).toLocaleString('en-US')
+  if (!code) return amount
+  return code === 'CNY' ? `¥${amount}` : `${code} ${amount}`
 }
 function compact(value = '') {
   return text(value).toLowerCase().replace(/[^\w\u4e00-\u9fa5-]+/g, '')
@@ -252,7 +256,7 @@ function fromFinanceReport(row) {
     sourceObjectLabel: row.invoiceId || row.relatedPo,
     conclusion: `${row.varianceType} 需要采购、收货与财务共同复核。`,
     whyNow: '差异说明缺失会延长发票处理周期并影响对账可信度。',
-    keyEvidence: [`相关 PO ${row.relatedPo || '待复核'}`, `相关 GRN ${row.relatedGrn || '待关联'}`, `差异类型 ${row.varianceType}`, `差异金额 ${money(row.varianceAmount)}`],
+    keyEvidence: [`相关 PO ${row.relatedPo || '待复核'}`, `相关 GRN ${row.relatedGrn || '待关联'}`, `差异类型 ${row.varianceType}`, `差异金额 ${money(row.varianceAmount, row.currency)}`],
     businessImpact: '差异未解释会影响财务协同、对账节奏和后续内部处理。',
     suggestedAction: row.suggestedReview || '整理 PO、GRN、发票差异点，生成内部复核说明草稿。',
     navigationLinks: row.navigationLinks,

@@ -212,6 +212,10 @@ function createRepository(resolveClient) {
       orderBy: [{ entityType: "asc" }, { fieldKey: "asc" }],
       take: 500,
     }),
+    getTenantBusinessDefaults: async tenantId => (await client()).tenant.findUnique({
+      where: { id: requireTenantId(tenantId) },
+      select: { currency: true, countryCode: true },
+    }),
     listPublishedCustomFields: async (tenantId, entityType) => (await client()).customFieldDefinition.findMany({
       where: { tenantId: requireTenantId(tenantId), entityType, status: "published" },
       include: { revisions: { include: { options: { orderBy: [{ position: "asc" }, { id: "asc" }] } }, orderBy: { version: "desc" } } },

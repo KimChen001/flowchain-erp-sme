@@ -312,7 +312,7 @@ export function createOperationalFinanceO2cReadService({
       where: { id: current.tenantId },
       select: { timezone: true },
     });
-    const timezone = workspace?.timezone || "Asia/Shanghai";
+    const timezone = workspace?.timezone || "America/New_York";
     const asOf = text(query.asOf) ? new Date(text(query.asOf)) : now();
     if (Number.isNaN(asOf.getTime()))
       fail("AGING_AS_OF_INVALID", "asOf must be a valid date.", 422);

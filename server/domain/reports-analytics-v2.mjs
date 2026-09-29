@@ -228,6 +228,7 @@ function buildFinanceAnalytics({ purchaseOrders, receivingDocs, invoices, dataQu
       relatedGrn: text(grn?.grn, '待关联'),
       varianceType: issue.category === 'missing_invoice_line' ? 'Invoice Line 缺口' : 'GRN Line 缺口',
       varianceAmount: number(po?.amount || po?.totalAmount, 0),
+      currency: text(po?.currency),
       receivedNotInvoicedAmount: number(grn?.items || grn?.totalReceivedQty, 0),
       matchStatus: '需复核',
       suggestedReview: issue.suggestedFix,

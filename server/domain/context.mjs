@@ -3,7 +3,7 @@ export const currentTenantContext = Object.freeze({
   name: 'FlowChain SME Workspace',
   industry: 'Manufacturing / Distribution',
   currency: 'USD',
-  timezone: 'America/Los_Angeles',
+  timezone: 'America/New_York',
   defaultWarehouseId: 'WH-MAIN',
   settings: {
     allowAiDraftPreparation: true,
@@ -18,7 +18,7 @@ const defaultUser = Object.freeze({
   email: 'buyer@flowchain.local',
   role: 'buyer',
   department: 'Procurement',
-  locale: 'zh-CN',
+  locale: 'en-US',
 })
 
 const roleLabels = {

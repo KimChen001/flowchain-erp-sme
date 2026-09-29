@@ -34,11 +34,23 @@ export function customRevisionToSchemaField(definition) {
   };
 }
 
+const tenantText = value => String(value ?? "").trim();
+
+// The core schema carries US fallbacks; the tenant's own base currency and country win when known.
+function withTenantBusinessDefaults(field, entityType, tenant) {
+  const currency = tenantText(tenant?.currency).toUpperCase();
+  const countryCode = tenantText(tenant?.countryCode).toUpperCase();
+  if (field.fieldPath === `${entityType}.currency` && currency) return { ...field, defaultValue: currency };
+  if (field.fieldPath === `${entityType}.countryCode` && countryCode) return { ...field, defaultValue: countryCode };
+  return { ...field };
+}
+
 export async function resolveTenantEntitySchema({ repository, tenantId, recordType, clock = () => new Date() }) {
   const core = canonicalSchemaFor(recordType);
   const definitions = await repository.listPublishedCustomFields(tenantId, recordType);
+  const tenant = typeof repository.getTenantBusinessDefaults === "function" ? await repository.getTenantBusinessDefaults(tenantId) : null;
   const customFields = definitions.map(customRevisionToSchemaField).filter(Boolean).sort((a, b) => a.fieldPath.localeCompare(b.fieldPath));
-  const fields = [...core.fields.map(value => ({ ...value })), ...customFields];
+  const fields = [...core.fields.map(value => withTenantBusinessDefaults(value, core.entityType, tenant)), ...customFields];
   if (new Set(fields.map(value => value.fieldPath)).size !== fields.length) failIntake("INTAKE_SCHEMA_FIELD_DUPLICATE", "Resolved schema contains duplicate field paths.", 500);
   const hashInput = { coreSchemaId: core.schemaId, coreSchemaVersion: core.version, fields };
   const tenantSchemaHash = createHash("sha256").update(JSON.stringify(stable(hashInput))).digest("hex");

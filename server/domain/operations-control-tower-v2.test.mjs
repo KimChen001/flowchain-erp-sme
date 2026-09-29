@@ -90,3 +90,21 @@ test('top operation items align with AI response contract v2 today evidence', ()
   assert.ok(tower.items.slice(0, 6).some((item) => item.alignsWithAiToday))
   assert.ok(tower.items.slice(0, 6).some((item) => item.keyEvidence.some((ev) => aiEvidence.has(`${ev.moduleId}:${ev.entityId}`))))
 })
+
+test('operations control tower v2 amounts use the document currency and never guess CNY', () => {
+  const withCurrency = (value, currency) => {
+    if (Array.isArray(value)) value.forEach((item) => withCurrency(item, currency))
+    else if (value && typeof value === 'object') {
+      for (const key of Object.keys(value)) {
+        if (key === 'currency') { if (currency === undefined) delete value[key]; else value[key] = currency } else withCurrency(value[key], currency)
+      }
+    }
+    return value
+  }
+  const unknown = JSON.stringify(buildOperationsControlTowerV2(withCurrency(createAiUserScenarioDb(), undefined)))
+  assert.equal(unknown.includes('¥'), false)
+  assert.equal(unknown.includes('CNY'), false)
+  assert.match(unknown, /金额差异 3,200/)
+  assert.match(JSON.stringify(buildOperationsControlTowerV2(withCurrency(createAiUserScenarioDb(), 'USD'))), /金额差异 USD 3,200/)
+  assert.match(JSON.stringify(buildOperationsControlTowerV2(withCurrency(createAiUserScenarioDb(), 'CNY'))), /金额差异 ¥3,200/)
+})

@@ -76,6 +76,17 @@ test('current week is interpreted in workspace timezone', () => {
   assert.equal(result.endAt, '2026-07-26T15:59:59.999Z')
 })
 
+test('time windows fall back to America/New_York when the workspace timezone is missing or invalid', () => {
+  const now = new Date('2026-07-24T08:00:00.000Z')
+  const missing = resolveBusinessTimeWindow('today', { now })
+  assert.equal(missing.timezone, 'America/New_York')
+  assert.equal(missing.startAt, '2026-07-24T04:00:00.000Z')
+  assert.deepEqual(missing.limitations, [])
+  const invalid = resolveBusinessTimeWindow('today', { now, timezone: 'Not/AZone' })
+  assert.equal(invalid.timezone, 'America/New_York')
+  assert.ok(invalid.limitations.some((item) => item.includes('America/New_York')))
+})
+
 test('domain words after supplier or vendor are not unresolved supplier names', () => {
   for (const message of [
     'Apart from payment, what supplier work remains?',
