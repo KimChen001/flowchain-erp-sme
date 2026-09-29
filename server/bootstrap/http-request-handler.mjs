@@ -59,7 +59,7 @@ export function createHttpRequestHandler({
 
     if (isDatabaseModeWriteBlocked({ persistenceMode, method: req.method, pathname: url.pathname })) {
       await recordDatabaseAuditBestEffort(
-        { repositories },
+        { repositories, identity },
         legacyMutationBlockedAuditEntry({ method: req.method, pathname: url.pathname }),
       );
       return sendDatabaseModeMutationBlocked(res, send);

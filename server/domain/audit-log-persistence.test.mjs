@@ -45,7 +45,9 @@ function draft() {
   }
 }
 
-function createActionDraftRoute({ body, repositories, db = createDb(), pathname = '/api/action-drafts' } = {}) {
+const draftAuthor = { authenticated: true, tenantId: 'tenant-audit-draft', userId: 'user-audit-draft', role: 'manager', source: 'test' }
+
+function createActionDraftRoute({ body, repositories, db = createDb(), pathname = '/api/action-drafts', identity = draftAuthor } = {}) {
   let response = null
   return {
     ctx: {
@@ -54,6 +56,7 @@ function createActionDraftRoute({ body, repositories, db = createDb(), pathname 
       url: new URL(pathname, 'http://localhost'),
       db,
       repositories,
+      identity,
       send(_res, status, payload) {
         response = { status, payload }
       },
@@ -187,6 +190,8 @@ test('action draft save records best-effort DB audit without creating business d
   assert.equal(auditWrites[0].action, 'draft_saved')
   assert.equal(auditWrites[0].entityType, 'actionDraft')
   assert.equal(auditWrites[0].entityId, 'DRAFT-AUDIT-1')
+  assert.equal(auditWrites[0].tenantId, 'tenant-audit-draft')
+  assert.equal(auditWrites[0].actorId, 'user-audit-draft')
   assert.doesNotMatch(JSON.stringify(auditWrites), /itemIdOrSku|quantity|Bearer|DATABASE_URL|postgresql:\/\/user:pass/)
 })
 
@@ -237,6 +242,30 @@ test('legacy mutation blocked audit omits request body and redacts secrets', asy
   assert.equal(writes[0].action, 'legacy_mutation_blocked')
   assert.equal(writes[0].entity.id, 'POST /api/purchase-requests')
   assert.doesNotMatch(JSON.stringify(writes), /sourceSku|quantity|authorization|Bearer|DATABASE_URL/)
+})
+
+test('best-effort audit entries are attributed to the signed-in tenant and user', async () => {
+  const writes = []
+  const repositories = {
+    auditLog: {
+      mode: 'database',
+      recordAuditEntry: async (entry) => {
+        writes.push(entry)
+        return entry
+      },
+    },
+  }
+  const identity = { authenticated: true, tenantId: 'tenant-audit', userId: 'user-audit', role: 'manager', email: 'buyer@example.com' }
+
+  await recordDatabaseAuditBestEffort({ repositories, identity }, { module: 'action-drafts', action: 'draft_saved', tenantId: 'tenant-other' })
+  await recordDatabaseAuditBestEffort({ repositories, identity: { authenticated: false, tenantId: '', userId: '' } }, { module: 'action-drafts', action: 'draft_previewed' })
+
+  assert.equal(writes[0].tenantId, 'tenant-audit')
+  assert.equal(writes[0].actorId, 'user-audit')
+  assert.deepEqual(writes[0].actor, { type: 'user', id: 'user-audit', role: 'manager' })
+  assert.doesNotMatch(JSON.stringify(writes[0]), /buyer@example\.com/)
+  assert.equal('tenantId' in writes[1], false)
+  assert.equal('actorId' in writes[1], false)
 })
 
 test('read-only AI answer survives DB audit adapter failure', async () => {
