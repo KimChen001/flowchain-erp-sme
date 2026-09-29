@@ -1,3 +1,4 @@
+import { apiJson } from "../../lib/api-client";
 export type DataAccessNavigationLink = {
   label: string;
   moduleId: string;
@@ -132,7 +133,5 @@ export type DataAccessQualityV2 = {
 };
 
 export async function fetchDataAccessQualityV2(): Promise<DataAccessQualityV2> {
-  const response = await fetch("/api/data-access-quality");
-  if (!response.ok) throw new Error("数据接入质量读取失败");
-  return response.json();
+  return apiJson<DataAccessQualityV2>("/api/data-access-quality");
 }
