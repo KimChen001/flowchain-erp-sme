@@ -86,6 +86,7 @@
     "test:db:phase-5-2c1-controls": "node scripts/run-postgres-test-files.mjs tests/postgres/mobile-sync-controls.test.mjs tests/postgres/advance-dispute-eligibility.test.mjs",
     "test:api:mobile-sync-controls": "node --test server/domain/mobile-sync-permission-controls.test.mjs server/routes/mobile-sync.routes.test.mjs",
     "test:db:po-command-atomicity": "node scripts/run-postgres-test-files.mjs tests/postgres/procurement-db-atomicity.test.mjs",
+    "test:db:procurement-flow": "node scripts/run-postgres-test-files.mjs tests/postgres/procurement-db-flow.test.mjs",
     "test:db:rfq-response-revisions": "node scripts/verify-rfq-response-revision-upgrade.mjs && node scripts/run-postgres-test-files.mjs tests/postgres/rfq-participation-revision-authority.test.mjs",
     "test:db:rfq-supplier-response-command": "node scripts/run-postgres-test-files.mjs tests/postgres/rfq-supplier-response-command.test.mjs",
     "test:db:rfq-supplier-comparison": "node scripts/run-postgres-test-files.mjs tests/postgres/rfq-supplier-comparison.test.mjs",
