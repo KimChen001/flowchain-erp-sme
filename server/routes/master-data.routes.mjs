@@ -212,7 +212,7 @@ export async function handleMasterDataRoute(ctx) {
   if (req.method === 'POST' && url.pathname === '/api/master-data/suppliers') {
     if (authorizeWrite('supplier-master').blocked) return true
     if (!repository.createSupplier) { send(res,501,{code:'ADAPTER_WRITE_UNSUPPORTED',message:'当前数据适配器不支持供应商写入'}); return true }
-    try { send(res,201,{supplier:await repository.createSupplier(await readBody(req),actor())}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
+    try { send(res,201,{supplier:await repository.createSupplier(await readBody(req),actor(),tenantScope())}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
     return true
   }
 
@@ -231,7 +231,7 @@ export async function handleMasterDataRoute(ctx) {
 
   if (req.method === 'PATCH' && supplierMatch) {
     if (authorizeWrite('supplier-master').blocked) return true
-    try { send(res,200,{supplier:await repository.updateSupplier(supplierMatch[1],await readBody(req),actor())}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
+    try { send(res,200,{supplier:await repository.updateSupplier(decodeURIComponent(supplierMatch[1]),await readBody(req),actor(),tenantScope())}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
     return true
   }
 

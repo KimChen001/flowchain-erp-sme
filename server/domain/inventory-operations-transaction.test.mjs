@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import { createPrismaClient } from "../persistence/prisma-client.mjs";
+import { realPostgresSuiteGate } from "../persistence/test-db-harness.mjs";
 import { createInventoryOperationsCommandService } from "./inventory-operations-command-service.mjs";
 import { createInventoryOperationsReadService } from "./inventory-operations-read-service.mjs";
 import {
@@ -10,9 +11,8 @@ import {
   inventoryOperationDecimalUnits as units,
 } from "./inventory-operations-policy.mjs";
 
-const realPostgres =
-  Boolean(process.env.DATABASE_URL) &&
-  process.env.FLOWCHAIN_REQUIRE_REAL_POSTGRES_TESTS === "true";
+const gate = realPostgresSuiteGate("npm run test:db:inventory-operations");
+const realPostgres = gate.enabled;
 const env = {
   ...process.env,
   FLOWCHAIN_PERSISTENCE_MODE: "database",
@@ -20,8 +20,15 @@ const env = {
 };
 let prisma;
 if (!realPostgres) {
-  test("inventory operations PostgreSQL transactions are routed to test:db:inventory-operations", () =>
-    assert.equal(realPostgres, false));
+  // Must report SKIP, not a pass. See the same guard in
+  // outbound-posting-transaction.test.mjs.
+  if (gate.failure) {
+    test("inventory operations PostgreSQL transaction suite is misconfigured", () => {
+      throw new Error(gate.failure);
+    });
+  } else {
+    test("inventory operations PostgreSQL transactions run in the isolated test:db:inventory-operations gate", { skip: gate.skipReason }, () => {});
+  }
 } else {
   before(async () => {
     prisma = await createPrismaClient(env);

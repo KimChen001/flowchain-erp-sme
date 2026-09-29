@@ -175,6 +175,45 @@ test("real PostgreSQL reviewed RFQ Award Decision authority", async (t) => {
       assert.equal(await prisma.businessCommandExecution.count({ where: { tenantId, commandType: "procurement.rfq_award.create", idempotencyKey: { in: ["award-concurrent-a", "award-concurrent-b"] }, status: "completed" } }), 1);
     });
 
+    await t.test("a raw serialization failure is mapped from committed state and writes nothing", async () => {
+      // Regression: a losing concurrent Award does not always arrive as P2002 or
+      // P2034. When one of the FOR UPDATE statements raises SQLSTATE 40001,
+      // Prisma reports P2010 and the error previously escaped the conflict
+      // mapping entirely, reaching the caller with status undefined. Verified
+      // empirically against real PostgreSQL 16 under six-way award contention.
+      const source = await facts("serialization-conflict");
+      const conflicted = createRfqAwardDecisionService({
+        prisma,
+        now: () => new Date("2026-08-12T08:00:00.000Z"),
+        faultInjection: "concurrency_before_award_create",
+      });
+
+      let raised;
+      await assert.rejects(
+        conflicted.createAwardDecision(source.rfqId, input(source, "award-serialization-conflict"), context),
+        (error) => { raised = error; return true; },
+      );
+
+      // Mapped to a governed conflict, not surfaced as a raw driver error.
+      assert.equal(raised instanceof RfqAwardDecisionError, true);
+      assert.equal(raised.status, 409);
+      assert.equal(raised.code, "RFQ_AWARD_ALREADY_EXISTS");
+      assert.equal(raised.code === "P2010", false);
+      assert.notEqual(raised.name, "PrismaClientKnownRequestError");
+
+      // Business result, not just the status code: the aborted command left no
+      // award, no audit entry, no change-feed row and no execution record.
+      assert.equal(await prisma.rfqAwardDecision.count({ where: { tenantId, rfqId: source.rfqId } }), 0);
+      assert.equal(await prisma.auditLog.count({ where: { tenantId, source: "rfq_award_decision_service", metadata: { path: ["rfqId"], equals: source.rfqId } } }), 0);
+      assert.equal(await prisma.domainChangeFeed.count({ where: { tenantId, source: "rfq_award_decision_service", requestId: "award-serialization-conflict" } }), 0);
+      assert.equal(await prisma.businessCommandExecution.count({ where: { tenantId, commandType: "procurement.rfq_award.create", idempotencyKey: "award-serialization-conflict" } }), 0);
+
+      // The RFQ remains awardable, so a retry after the conflict still works.
+      const retried = await service.createAwardDecision(source.rfqId, input(source, "award-serialization-retry"), context);
+      assert.equal(retried.idempotentReplay, false);
+      assert.equal(await prisma.rfqAwardDecision.count({ where: { tenantId, rfqId: source.rfqId } }), 1);
+    });
+
     await t.test("Award freezes initial and appended Supplier Response writes", async () => {
       const awarded = await facts("freeze");
       await service.createAwardDecision(awarded.rfqId, input(awarded, "award-freeze"), context);

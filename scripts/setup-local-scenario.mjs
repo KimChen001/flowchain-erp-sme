@@ -1,5 +1,6 @@
 import { getPrismaClient, disconnectPrismaClient } from '../server/persistence/prisma-client.mjs'
 import { assertLocalDevelopment } from '../server/domain/local-development-contract.mjs'
+import { localDemoSupplier } from './setup-local-demo.mjs'
 import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../server/domain/procurement-status-authority.mjs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
@@ -7,7 +8,7 @@ import { resolve } from 'node:path'
 export const LOCAL_SCENARIO_COUNTS = Object.freeze({ purchaseRequests: 1, rfqs: 1, supplierQuotations: 2, purchaseOrders: 2, receivingDocuments: 1, supplierInvoices: 1, inventoryBalances: 2, salesOrders: 1 })
 const tenantId = process.env.FLOWCHAIN_DEFAULT_TENANT_ID || 'tenant-flowchain-local'
 const metadata = { localDemo: true, localDemoScenarioVersion: 3 }
-const supplierName = 'Acme Components'
+const supplierName = localDemoSupplier('LOCAL-DEMO-SUP-001').name
 const customerName = 'Redwood Retail'
 const itemNames = Object.freeze({ 'LDM-001': 'Flow Controller', 'LDM-002': 'Temperature Sensor' })
 
@@ -36,8 +37,8 @@ export async function seedLocalScenario(prisma, env = process.env) {
       update: { itemName: itemNames['LDM-001'], quantity: 50, unit: 'pcs', metadata: { ...metadata, requiredDate: '2030-01-15', deliveryLocation: 'LOCAL-DEMO-WH-001' } },
     })
     for (const [suffix, supplierId, supplierName, amount, unitPrice, submittedAt, deliveryDate, paymentTerms] of [
-      ['001', 'LOCAL-DEMO-SUP-001', 'Acme Components', 4900, 98, '2030-01-05T08:30:00Z', '2030-01-14T00:00:00Z', 'NET30'],
-      ['002', 'LOCAL-DEMO-SUP-002', 'Summit Packaging', 4875, 97.5, '2030-01-06T08:30:00Z', '2030-01-16T00:00:00Z', 'NET45'],
+      ['001', 'LOCAL-DEMO-SUP-001', localDemoSupplier('LOCAL-DEMO-SUP-001').name, 4900, 98, '2030-01-05T08:30:00Z', '2030-01-14T00:00:00Z', 'NET30'],
+      ['002', 'LOCAL-DEMO-SUP-002', localDemoSupplier('LOCAL-DEMO-SUP-002').name, 4875, 97.5, '2030-01-06T08:30:00Z', '2030-01-16T00:00:00Z', 'NET45'],
     ]) {
       const quotationId = `LOCAL-DEMO-AWARD-QUOTE-${suffix}`
       const quotationLineId = `LOCAL-DEMO-AWARD-QUOTEL-${suffix}`

@@ -115,6 +115,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
         {focused.limitations.length ? <Detail title="查看数据限制" testId="ai-limitations-details">{focused.limitations.map((item) => <div key={item.label} className="text-[11px] leading-5"><div className="font-semibold" style={{ color: A.label }}>{item.label}</div><div style={{ color: A.gray1 }}>{item.description}</div>{item.consequence ? <div style={{ color: A.gray2 }}>{item.consequence}</div> : null}</div>)}</Detail> : null}
       </section> : null}
 
+      {response.supplementalKnowledge && <RagAnswerCard rag={response.supplementalKnowledge.rag} title={response.supplementalKnowledge.title} summary={response.supplementalKnowledge.summary} />}
       {focused.followUps.length ? <section data-testid="ai-focused-follow-ups" className="flex flex-wrap gap-2">{focused.followUps.map((item) => <button key={item.prompt} type="button" onClick={() => onFollowUp?.(item.prompt)} disabled={!onFollowUp} className="rounded-full px-2.5 py-1 text-[11px] font-medium disabled:opacity-50" style={{ background: A.gray6, color: A.blue }}>{item.label}</button>)}</section> : null}
     </div>
   );
