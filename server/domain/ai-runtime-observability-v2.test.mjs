@@ -316,31 +316,40 @@ test('provider-specific local-vs-assisted evaluation stays business visible', as
 })
 
 test('main route dispatcher exposes observability endpoints', async () => {
-  const previousDatabaseUrl = process.env.DATABASE_URL
-  process.env.DATABASE_URL = 'postgresql://user:pass@127.0.0.1:5432/flowchain_observability_test'
+  const patch = {
+    DATABASE_URL: 'postgresql://user:pass@127.0.0.1:5432/flowchain_observability_test',
+    FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS: 'true',
+    FLOWCHAIN_DEFAULT_TENANT_ID: 'tenant-ai-observability-route',
+  }
+  const previous = Object.fromEntries(Object.keys(patch).map((key) => [key, process.env[key]]))
+  Object.assign(process.env, patch)
   const server = createScmServer()
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   const base = `http://127.0.0.1:${address.port}`
+  const signedIn = { 'x-flowchain-user': 'ai-observability-route', 'x-flowchain-role': 'manager' }
   try {
-    const observability = await fetch(`${base}/api/ai-runtime/observability`)
+    assert.equal((await fetch(`${base}/api/ai-runtime/observability`)).status, 401)
+    const observability = await fetch(`${base}/api/ai-runtime/observability`, { headers: signedIn })
     assert.equal(observability.status, 200)
     const evaluate = await fetch(`${base}/api/ai-runtime/evaluate`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...signedIn },
       body: JSON.stringify({ scenarioId: 'today_attention' }),
     })
     assert.equal(evaluate.status, 200)
     const invalid = await fetch(`${base}/api/ai-runtime/evaluate`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...signedIn },
       body: JSON.stringify({ scenarioId: 'missing' }),
     })
     assert.equal(invalid.status, 400)
   } finally {
     await new Promise((resolve) => server.close(resolve))
-    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL
-    else process.env.DATABASE_URL = previousDatabaseUrl
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
   }
 })
 

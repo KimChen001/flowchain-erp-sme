@@ -65,8 +65,9 @@ test("server bootstrap preserves health, preflight, session, API 404, and SPA bo
       error: "invalid or expired workspace session token",
     });
     assert.equal(session.status, 401);
-    assert.equal(missingApi.status, 404);
-    assert.deepEqual(JSON.parse(missingApi.body), { error: "Not found" });
+    // Unknown API paths are not revealed before sign-in.
+    assert.equal(missingApi.status, 401);
+    assert.equal(JSON.parse(missingApi.body).code, "AUTHENTICATION_REQUIRED");
     assert.equal(spa.status, 200);
     assert.match(spa.headers["content-type"], /^text\/html/);
     assert.equal(spa.headers["cache-control"], "no-cache");

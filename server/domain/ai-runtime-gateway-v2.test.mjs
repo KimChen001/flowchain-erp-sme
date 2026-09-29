@@ -592,23 +592,35 @@ test('route handler serves provider-assisted success and failure as business-saf
 })
 
 test('main route dispatcher serves AI runtime endpoints', async () => {
-  await withProcessEnv({ DATABASE_URL: 'postgresql://flowchain:flowchain@127.0.0.1:5432/flowchain_test' }, async () => {
+  await withProcessEnv({
+    DATABASE_URL: 'postgresql://flowchain:flowchain@127.0.0.1:5432/flowchain_test',
+    FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS: 'true',
+    FLOWCHAIN_DEFAULT_TENANT_ID: 'tenant-ai-runtime-route',
+  }, async () => {
     const server = createScmServer()
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
     const base = `http://127.0.0.1:${address.port}`
+    const signedIn = { 'x-flowchain-user': 'ai-runtime-route', 'x-flowchain-role': 'manager' }
     try {
-      const readiness = await fetch(`${base}/api/ai-runtime/readiness`)
+      assert.equal((await fetch(`${base}/api/ai-runtime/readiness`)).status, 401)
+      const anonymous = await fetch(`${base}/api/ai-runtime/respond`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: '今天有什么需要我处理？' }),
+      })
+      assert.equal(anonymous.status, 401)
+      const readiness = await fetch(`${base}/api/ai-runtime/readiness`, { headers: signedIn })
       assert.equal(readiness.status, 200)
       const response = await fetch(`${base}/api/ai-runtime/respond`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...signedIn },
         body: JSON.stringify({ message: '今天有什么需要我处理？' }),
       })
       assert.equal(response.status, 200)
       const empty = await fetch(`${base}/api/ai-runtime/respond`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...signedIn },
         body: JSON.stringify({ message: '' }),
       })
       assert.equal(empty.status, 400)

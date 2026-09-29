@@ -174,12 +174,12 @@ test("the composed server tags responses with an id and logs only when asked", a
     const quietResponse = await request(quietPort, "GET", "/api/not-a-route");
     const loggedResponse = await request(loggedPort, "GET", "/api/not-a-route?email=buyer@example.com", { Authorization: "Bearer not-a-real-token" });
     await settle();
-    assert.equal(quietResponse.status, 404);
+    assert.equal(quietResponse.status, 401);
     assert.match(quietResponse.headers["x-request-id"], /^[0-9a-f-]{36}$/);
-    assert.equal(loggedResponse.status, 404);
+    assert.equal(loggedResponse.status, 401);
     assert.deepEqual(
       requestLogger.lines.map(({ entry }) => [entry.method, entry.path, entry.status, entry.requestId]),
-      [["GET", "/api/not-a-route", 404, loggedResponse.headers["x-request-id"]]],
+      [["GET", "/api/not-a-route", 401, loggedResponse.headers["x-request-id"]]],
     );
     assert.doesNotMatch(JSON.stringify(requestLogger.lines), /buyer@example\.com|not-a-real-token/);
   } finally {
