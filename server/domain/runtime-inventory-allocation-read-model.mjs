@@ -35,6 +35,39 @@ function salesDemandLines(order) {
 
 function limitation(code, sku) { return sku ? `${code}:${sku}` : code }
 
+export const STOCK_STATUSES = Object.freeze(['out_of_stock', 'below_safety_stock', 'below_reorder_point', 'ok', 'unknown'])
+
+// The item master holds the planning thresholds. A zero or missing master value
+// means none is set there, so the inventory balance rows' values are used.
+function stockThreshold(masterValue, inventoryRows, field) {
+  const fromMaster = quantity(masterValue)
+  if (fromMaster !== null && fromMaster > 0) return fromMaster
+  const fromBalances = inventoryRows.map(row => quantity(row[field])).filter(value => value !== null && value > 0)
+  return fromBalances.length ? fromBalances.reduce((sum, value) => sum + value, 0) : null
+}
+
+// Stable status codes; the client translates them. Stock on hand now is
+// compared with the safety stock. The reorder point is compared with the
+// inventory position (available + in transit - open demand, i.e. ATP), so an
+// SKU already covered by open purchase orders is not flagged for reorder
+// again. When ATP is unknown the available quantity is used.
+function stockStatusFor({ available, availableToPromise, safetyStock, reorderPoint }) {
+  if (available === null) return 'unknown'
+  if (available <= 0) return 'out_of_stock'
+  if (safetyStock !== null && available < safetyStock) return 'below_safety_stock'
+  if (reorderPoint !== null && (availableToPromise ?? available) <= reorderPoint) return 'below_reorder_point'
+  return 'ok'
+}
+
+// High means open sales demand the available stock cannot cover. Stock at or
+// below the safety stock without unmet demand is medium, never low.
+function riskLevelFor({ shortage, availableToPromise, stockStatus }) {
+  if (shortage === null) return 'unknown'
+  if (shortage > 0) return 'high'
+  if (availableToPromise < 0 || ['out_of_stock', 'below_safety_stock'].includes(stockStatus)) return 'medium'
+  return 'low'
+}
+
 export function buildRuntimeInventoryAllocation(context) {
   const demandLines = rows(context.salesOrders).flatMap(salesDemandLines)
   const keys = new Set([
@@ -86,6 +119,9 @@ export function buildRuntimeInventoryAllocation(context) {
       ? null
       : available + incomingApprovedPo - openSalesDemand
     const master = rows(context.items).find(row => itemKey(row) === sku)
+    const safetyStock = stockThreshold(master?.safetyStock, inventoryRows, 'safetyStock')
+    const reorderPoint = stockThreshold(master?.reorderPoint, inventoryRows, 'reorderPoint')
+    const stockStatus = stockStatusFor({ available, availableToPromise, safetyStock, reorderPoint })
     return {
       sku,
       itemId: text(master?.itemId || inventoryRows[0]?.itemId || sku),
@@ -97,7 +133,10 @@ export function buildRuntimeInventoryAllocation(context) {
       incomingApprovedPo,
       shortage,
       availableToPromise,
-      riskLevel: shortage === null ? 'unknown' : shortage > 0 ? 'high' : availableToPromise < 0 ? 'medium' : 'low',
+      safetyStock,
+      reorderPoint,
+      stockStatus,
+      riskLevel: riskLevelFor({ shortage, availableToPromise, stockStatus }),
       salesOrderIds: salesOrders.map(row => text(row.salesOrderId || row.id)).filter(Boolean),
       purchaseOrderIds: poLines.map(({ po }) => text(po.id || po.po)).filter(Boolean),
       evidence: [
@@ -119,6 +158,7 @@ export function buildRuntimeInventoryAllocation(context) {
       reservedQty: availability.every(row => row.reserved !== null) ? availability.reduce((sum, row) => sum + row.reserved, 0) : null,
       incomingPurchaseQty: availability.every(row => row.incomingApprovedPo !== null) ? availability.reduce((sum, row) => sum + row.incomingApprovedPo, 0) : null,
       atpInsufficientSkuCount: availability.filter(row => row.availableToPromise !== null && row.availableToPromise < 0).length,
+      stockStatusCounts: Object.fromEntries(STOCK_STATUSES.map(code => [code, availability.filter(row => row.stockStatus === code).length])),
     },
     risks: availability.filter(row => ['high', 'medium'].includes(row.riskLevel)),
     evidenceLinks: availability.flatMap(row => row.evidence),

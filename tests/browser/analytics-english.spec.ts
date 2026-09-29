@@ -71,3 +71,49 @@ test('populated overview uses readable status labels and filters by the original
   await expect(start).toHaveJSProperty('validationMessage', 'Dates must use YYYY-MM-DD.');
   expect(new URL(page.url()).searchParams.has('from')).toBeFalsy();
 });
+
+// Walkthrough-shaped inventory: LDM-001 has 8 on hand against an item master
+// safety stock of 10, a 35 unit sales order and a partially received PO with
+// 30 still in transit (ATP +3). LDM-003 is in the item master with no stock.
+const walkthroughInventory = {
+  items: [
+    { id: 'ITEM-1', itemId: 'ITEM-1', sku: 'LDM-001', itemName: 'Flow Controller', safetyStock: 10, reorderPoint: 20 },
+    { id: 'ITEM-3', itemId: 'ITEM-3', sku: 'LDM-003', itemName: 'Shipping Carton', safetyStock: 10, reorderPoint: 20 },
+  ],
+  inventoryItems: [
+    { sku: 'LDM-001', itemId: 'ITEM-1', onHandQuantity: 8, reservedQuantity: 0, unit: 'pcs' },
+    { sku: 'LDM-003', itemId: 'ITEM-3', onHandQuantity: 0, reservedQuantity: 0, unit: 'pcs' },
+  ],
+  salesOrders: [{ id: 'SO-1', salesOrderId: 'SO-1', workflowStatus: 'confirmed', sku: 'LDM-001', orderedQty: 35, fulfilledQty: 0, reservedQty: 0, lines: [{ sku: 'LDM-001', orderedQuantity: 35, reservedQuantity: 0, fulfilledQuantity: 0 }] }],
+  purchaseOrders: [{ id: 'PO-1', status: 'partially_received', lines: [{ sku: 'LDM-001', orderedQuantity: 50, receivedQuantity: 20 }] }],
+  suppliers: [], supplierInvoices: [], receipts: [], dataLimitations: [],
+};
+
+test('inventory report shows translated stock status codes in English and Chinese', async ({ page }) => {
+  for (const [language, labels] of [
+    ['en-US', { header: 'Stock status', belowSafety: 'Below safety stock', outOfStock: 'Out of stock', high: 'High', medium: 'Medium' }],
+    ['zh-CN', { header: '库存状态', belowSafety: '低于安全库存', outOfStock: '缺货', high: '高', medium: '中' }],
+  ] as const) {
+    await page.unrouteAll();
+    await login(page, language);
+    await page.route('**/api/reports/query', route => route.fulfill({ json: buildRuntimeGovernedReport(walkthroughInventory, route.request().postDataJSON()) }));
+    await page.goto('/app/reports/inventory');
+    const dashboard = page.getByTestId('bi-dashboard');
+    await expect(dashboard.getByRole('columnheader', { name: labels.header, exact: true })).toBeVisible();
+    const ldm1 = dashboard.locator('tr', { hasText: 'LDM-001' });
+    await expect(ldm1.locator('td').nth(6)).toHaveText('3');
+    await expect(ldm1.locator('td').nth(7)).toHaveText(labels.belowSafety);
+    await expect(ldm1.locator('td').nth(8)).toHaveText(labels.high);
+    const ldm3 = dashboard.locator('tr', { hasText: 'LDM-003' });
+    await expect(ldm3.locator('td').nth(7)).toHaveText(labels.outOfStock);
+    await expect(ldm3.locator('td').nth(8)).toHaveText(labels.medium);
+    await expect(dashboard).not.toContainText(/below_safety_stock|out_of_stock|below_reorder_point/);
+    if (language === 'en-US') {
+      const pending = page.waitForEvent('download');
+      await dashboard.getByRole('button', { name: 'Export', exact: true }).click();
+      const workbook = XLSX.read(await readFile((await (await pending).path())!), { type: 'buffer' });
+      const details = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets['Detail data']);
+      expect(details.map(row => [row.SKU, row['Stock status'], row.Status])).toEqual([['LDM-001', 'Below safety stock', 'High'], ['LDM-003', 'Out of stock', 'Medium']]);
+    }
+  }
+});

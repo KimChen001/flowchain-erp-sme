@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildRuntimeInventoryAllocation, getRuntimeSkuAvailability } from './runtime-inventory-allocation-read-model.mjs'
+import { createDbMasterDataRepository } from '../repositories/db-master-data-repository.mjs'
 
 // Sales orders as the PostgreSQL sales order read repository returns them: the
 // order-level sku, itemId and quantities summarise the first line and the order
@@ -129,4 +130,72 @@ test('an open purchase order line with an unknown received quantity leaves in tr
   assert.equal(row.incomingApprovedPo, null)
   assert.equal(row.availableToPromise, null)
   assert.ok(row.dataLimitations.includes('open_po_remaining_quantity_missing:SKU'))
+})
+
+const master = (sku, safetyStock, reorderPoint) => ({ id: `ITEM-${sku}`, itemId: `ITEM-${sku}`, sku, itemName: sku, safetyStock, reorderPoint })
+
+test('stock status uses the item master safety stock and reorder point', () => {
+  const model = buildRuntimeInventoryAllocation(context({
+    items: [master('OUT', 10, 20), master('SAFETY', 10, 20), master('REORDER', 10, 20), master('OK', 10, 20), master('RESERVED', 10, 20)],
+    inventoryItems: [balance('OUT', 0), balance('SAFETY', 8), balance('REORDER', 20), balance('OK', 21), balance('RESERVED', 12, { reservedQuantity: 12 })],
+  }))
+  const status = sku => getRuntimeSkuAvailability(model, sku)
+  assert.equal(status('OUT').stockStatus, 'out_of_stock')
+  assert.equal(status('SAFETY').stockStatus, 'below_safety_stock')
+  assert.equal(status('REORDER').stockStatus, 'below_reorder_point')
+  assert.equal(status('OK').stockStatus, 'ok')
+  assert.equal(status('RESERVED').stockStatus, 'out_of_stock', 'fully reserved stock has nothing available')
+  assert.equal(status('SAFETY').safetyStock, 10)
+  assert.equal(status('SAFETY').reorderPoint, 20)
+  assert.deepEqual(model.summary.stockStatusCounts, { out_of_stock: 2, below_safety_stock: 1, below_reorder_point: 1, ok: 1, unknown: 0 })
+})
+
+test('an out-of-stock or below-safety-stock SKU without open demand is medium risk, not low', () => {
+  const model = buildRuntimeInventoryAllocation(context({
+    items: [master('OUT', 5, 5), master('SAFETY', 10, 10), master('REORDER', 10, 20)],
+    inventoryItems: [balance('OUT', 0), balance('SAFETY', 8), balance('REORDER', 15)],
+  }))
+  assert.equal(getRuntimeSkuAvailability(model, 'OUT').shortage, 0)
+  assert.equal(getRuntimeSkuAvailability(model, 'OUT').riskLevel, 'medium')
+  assert.equal(getRuntimeSkuAvailability(model, 'SAFETY').riskLevel, 'medium')
+  assert.equal(getRuntimeSkuAvailability(model, 'REORDER').riskLevel, 'low')
+  assert.deepEqual(model.risks.map(row => row.sku), ['OUT', 'SAFETY'])
+  assert.equal(model.summary.highRiskSkuCount, 0, 'high stays reserved for unmet sales demand')
+})
+
+test('the reorder point is compared with the inventory position, so open supply already covers it', () => {
+  const model = buildRuntimeInventoryAllocation(context({
+    items: [master('SKU', 10, 20)],
+    inventoryItems: [balance('SKU', 15)],
+    purchaseOrders: [po('PO-1', 'issued', [poLine('SKU', 30, 0)])],
+    salesOrders: [salesOrder('SO-1', [soLine('SKU', 5)])],
+  }))
+  const row = getRuntimeSkuAvailability(model, 'SKU')
+  assert.equal(row.availableToPromise, 40)
+  assert.equal(row.stockStatus, 'ok', '15 available + 30 in transit - 5 demand = 40, above the reorder point of 20')
+})
+
+test('without master thresholds the inventory balance values are used; unknown stock stays unknown', () => {
+  const model = buildRuntimeInventoryAllocation(context({
+    items: [master('BAL', 0, 0)],
+    inventoryItems: [balance('BAL', 3, { safetyStock: 4, reorderPoint: 6 }), balance('NONE', 50), { sku: 'UNKNOWN' }],
+  }))
+  assert.equal(getRuntimeSkuAvailability(model, 'BAL').stockStatus, 'below_safety_stock')
+  assert.equal(getRuntimeSkuAvailability(model, 'BAL').safetyStock, 4)
+  assert.equal(getRuntimeSkuAvailability(model, 'NONE').stockStatus, 'ok')
+  assert.equal(getRuntimeSkuAvailability(model, 'NONE').safetyStock, null)
+  assert.equal(getRuntimeSkuAvailability(model, 'UNKNOWN').stockStatus, 'unknown')
+})
+
+test('item master safety stock and reorder point columns reach the allocation', async () => {
+  // Item.safetyStock and Item.reorderPoint are columns; the walkthrough seed and
+  // the master data import write them there, not into metadata.
+  const decimal = value => ({ toNumber: () => value })
+  const prisma = { item: { findMany: async () => [{ id: 'ITEM-LDM', tenantId: 't', sku: 'LDM', name: 'Flow Controller', unit: 'pcs', safetyStock: decimal(10), reorderPoint: decimal(20), metadata: {} }] } }
+  const repository = createDbMasterDataRepository({ env: { FLOWCHAIN_PERSISTENCE_MODE: 'database', DATABASE_URL: 'postgresql://127.0.0.1:1/unused' }, prisma })
+  const items = await repository.listItems({ tenantId: 't' })
+  assert.equal(items[0].safetyStock, 10)
+  assert.equal(items[0].reorderPoint, 20)
+  const model = buildRuntimeInventoryAllocation(context({ items, inventoryItems: [balance('LDM', 8, { safetyStock: 0, reorderPoint: 0 })] }))
+  assert.equal(getRuntimeSkuAvailability(model, 'LDM').stockStatus, 'below_safety_stock')
 })

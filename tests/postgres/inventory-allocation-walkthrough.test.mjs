@@ -4,6 +4,7 @@ import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 import { createDatabaseRepositoryRegistry } from '../../server/repositories/adapter-registry.mjs'
 import { readBusinessContext } from '../../server/services/runtime-business-read-service.mjs'
 import { buildRuntimeInventoryAllocation, getRuntimeSkuAvailability } from '../../server/domain/runtime-inventory-allocation-read-model.mjs'
+import { buildRuntimeGovernedReport } from '../../server/domain/runtime-report-read-model.mjs'
 import { seedLocalDemo } from '../../scripts/setup-local-demo.mjs'
 import { seedLocalScenario } from '../../scripts/setup-local-scenario.mjs'
 
@@ -16,7 +17,7 @@ async function allocationFor(prisma) {
   return buildRuntimeInventoryAllocation(context)
 }
 
-test('walkthrough scenario allocation is read per order line and counts partially received POs at their remainder', async () => {
+test('walkthrough scenario allocation: per-line demand, partially received POs at their remainder, and item master stock status', async () => {
   // Run only with scripts/run-postgres-test-files.mjs against its disposable server.
   assert.ok(process.env.DATABASE_URL_TEST, 'An isolated test database is required')
   const prisma = await createPrismaClient(process.env)
@@ -40,6 +41,22 @@ test('walkthrough scenario allocation is read per order line and counts partiall
     const ldm2 = getRuntimeSkuAvailability(scenario, 'LDM-002')
     assert.equal(ldm2.incomingApprovedPo, 40)
     assert.equal(ldm2.availableToPromise, 100)
+
+    // Item master thresholds (safety stock 10, reorder point 20) are read from
+    // the Item columns: 8 available is below the safety stock.
+    assert.equal(ldm1.safetyStock, 10)
+    assert.equal(ldm1.reorderPoint, 20)
+    assert.equal(ldm1.stockStatus, 'below_safety_stock')
+    assert.equal(ldm1.riskLevel, 'high')
+    assert.equal(ldm2.stockStatus, 'ok')
+    const report = buildRuntimeGovernedReport(await readBusinessContext({ repositories: createDatabaseRepositoryRegistry({ env: process.env, prisma }), identity: { tenantId } }), { subject: 'inventory' })
+    // LDM-003 to LDM-006 are in the item master with no stock: out of stock,
+    // medium risk (no open demand), where they previously showed as low.
+    assert.deepEqual(report.details.filter(row => row.sku.startsWith('LDM-00')).map(row => [row.sku, row.availableToPromise, row.stockStatus, row.status]).sort(), [
+      ['LDM-001', 3, 'below_safety_stock', 'high'],
+      ['LDM-002', 100, 'ok', 'low'],
+      ...['LDM-003', 'LDM-004', 'LDM-005', 'LDM-006'].map(sku => [sku, 0, 'out_of_stock', 'medium']),
+    ])
 
     // A two-line order: its first line is LDM-002, so the order-level summary
     // carries LDM-002 and the 55 unit order total. Each line must be booked on
