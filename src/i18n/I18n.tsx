@@ -503,16 +503,24 @@ type I18nValue = {
   setGuestLanguage: (language: SupportedLanguage) => void;
 };
 
+// Before a workspace's settings load (or when they cannot), format with the
+// product default locale and the browser's own timezone rather than
+// assuming China; a loaded workspace always supplies its own values.
+const FALLBACK_LOCALE = "en-US";
+const FALLBACK_TIMEZONE = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; }
+})();
+
 const fallback: I18nValue = {
   language: "en-US",
-  locale: "zh-CN",
-  timezone: "Asia/Shanghai",
+  locale: FALLBACK_LOCALE,
+  timezone: FALLBACK_TIMEZONE,
   workspaceName: "",
   defaultLanguage: "en-US",
   t: key => en[key],
   routeLabel: route => route.label,
-  formatDateTime: value => new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Shanghai" }).format(new Date(value)),
-  formatNumber: value => new Intl.NumberFormat("zh-CN").format(value),
+  formatDateTime: value => new Intl.DateTimeFormat(FALLBACK_LOCALE, { dateStyle: "medium", timeStyle: "short", timeZone: FALLBACK_TIMEZONE }).format(new Date(value)),
+  formatNumber: value => new Intl.NumberFormat(FALLBACK_LOCALE).format(value),
   refresh: async () => {},
   setGuestLanguage: () => {},
 };
@@ -524,14 +532,14 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     languagePreference: null,
     defaultLanguage: "en-US",
     effectiveLanguage: "en-US",
-    locale: "zh-CN",
-    timezone: "Asia/Shanghai",
+    locale: FALLBACK_LOCALE,
+    timezone: FALLBACK_TIMEZONE,
     workspaceName: "",
   });
   const refresh = useCallback(async () => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
       const guestLanguage = localStorage.getItem("flowchain:guest-language") === "zh-CN" ? "zh-CN" : "en-US";
-      setState({ languagePreference: null, defaultLanguage: "en-US", effectiveLanguage: guestLanguage, locale: "zh-CN", timezone: "Asia/Shanghai", workspaceName: "" });
+      setState({ languagePreference: null, defaultLanguage: "en-US", effectiveLanguage: guestLanguage, locale: FALLBACK_LOCALE, timezone: FALLBACK_TIMEZONE, workspaceName: "" });
       return;
     }
     try {
