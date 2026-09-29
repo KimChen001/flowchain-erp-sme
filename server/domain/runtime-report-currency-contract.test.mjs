@@ -55,8 +55,15 @@ test('legacy currency=全部币种 is normalized to an empty filter', () => {
 
 test('currency labels never reach Intl.NumberFormat', () => {
   assert.doesNotThrow(() => formatMetric(100, 'currency', '全部币种'))
-  assert.equal(formatMetric(100, 'currency', '全部币种'), '请选择币种')
-  assert.equal(formatMetric(100, 'currency', null), '请选择币种')
+  assert.equal(formatMetric(100, 'currency', '全部币种'), 'Choose a currency')
+  assert.equal(formatMetric(100, 'currency', null, { language: 'zh-CN' }), '请选择币种')
+})
+
+test('metrics follow the workspace locale and the interface language, not a fixed zh-CN', () => {
+  assert.equal(formatMetric(1234, 'currency', 'USD', { locale: 'en-US' }), '$1,234')
+  assert.equal(formatMetric(12.5, 'days', null, { locale: 'en-US', language: 'en-US' }), '12.5 days')
+  assert.equal(formatMetric(12.5, 'days', null, { locale: 'zh-CN', language: 'zh-CN' }), '12.5 天')
+  assert.equal(formatMetric(1234.56, 'number', null, { locale: 'de-DE' }), '1.234,6')
 })
 
 test('report exports retain currency and FX metadata in both languages', () => {
