@@ -86,3 +86,30 @@ test('report route uses authenticated tenant identity and forwards export filter
   assert.equal(response.status, 200)
   assert.equal(response.payload.exportRows.length, 1)
 })
+
+test('only committed orders with quantity still to receive are open, and only they count toward totals', () => {
+  // Regression for the open definition. The report used to treat anything not
+  // on a list of closed words as open, so drafts and orders pending approval
+  // were counted, their amounts were added to the open total, and a draft past
+  // its date produced a phantom overdue supplier. Measured on the seeded
+  // reporting workspace this was 18 open orders, of which 8 were drafts or
+  // pending approval.
+  const rows = [
+    po('ISSUED', { supplierName: 'Committed Supplier', totalAmount: 100 }),
+    po('DRAFT', { status: 'draft', supplierName: 'Draft Supplier', totalAmount: 1000 }),
+    po('PENDING', { status: 'pending_approval', supplierName: 'Pending Supplier', totalAmount: 2000 }),
+    po('STALE', { status: 'issued', supplierName: 'Stale Supplier', totalAmount: 4000, lines: [{ quantity: 10, receivedQuantity: 10, unit: 'pcs' }] }),
+    po('CANCELLED', { status: 'cancelled', supplierName: 'Cancelled Supplier', totalAmount: 8000 }),
+  ]
+  const result = report(rows)
+
+  assert.equal(result.summary.open, 1)
+  assert.deepEqual(result.rows.map((row) => row.id), ['ISSUED'])
+  assert.deepEqual(result.summary.totals, [{ currency: 'USD', amount: 100 }], 'uncommitted and finished amounts are excluded')
+  assert.deepEqual(result.overdueSuppliers.map((row) => row.supplier), ['Committed Supplier'], 'a draft past its date is not overdue')
+
+  // Excluded orders are still reachable, just not counted as open.
+  const all = report(rows, { scope: 'all' })
+  assert.equal(all.total, 5)
+  assert.deepEqual(Object.fromEntries(all.rows.map((row) => [row.id, row.isOpen])), { ISSUED: true, DRAFT: false, PENDING: false, STALE: false, CANCELLED: false })
+})

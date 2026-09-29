@@ -8,7 +8,7 @@ const chinese: Record<string, string> = {
   'Count of sales orders in the current range.': '当前范围内真实销售订单记录数。',
   'Ordered quantity less fulfilled quantity, before inventory reservations.': '订单数量扣除已履约数量，不扣减库存预留。',
   'Total recorded purchase order amount in the current range.': '当前范围内真实采购订单金额合计。',
-  'Purchase orders that are not closed, cancelled, or completed.': '未关闭且未取消的真实采购订单数。',
+  'Purchase orders that are committed (approved, issued, or partially received) and still have quantity to receive.': '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。',
   'On-hand quantity recorded in inventory.': 'Inventory Runtime 已记录的在手数量。',
   'SKUs with a shortage under the shared availability calculation.': '按统一 availability 口径存在 shortage 的 SKU 数。',
   'Total amount of connected supplier invoice records.': '当前已接通发票记录金额合计。',

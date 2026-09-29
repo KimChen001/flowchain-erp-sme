@@ -1,5 +1,6 @@
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
 import { buildBusinessOverview } from './business-overview.mjs'
+import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
 
 const array = value => Array.isArray(value) ? value : []
 const text = value => String(value ?? '').trim()
@@ -19,7 +20,7 @@ const metricDefinitions = {
   sales_order_count: ['销售订单数量', 'sales_orders', 'number', '当前范围内真实销售订单记录数。', '/app/sales/orders'],
   open_sales_demand: ['未履约销售需求', 'sales_orders', 'number', '订单数量扣除已履约数量，不扣减库存预留。', '/app/sales/orders'],
   purchase_order_amount: ['采购订单金额', 'purchase_orders', 'currency', '当前范围内真实采购订单金额合计。', '/app/procurement/orders'],
-  open_po_count: ['开放 PO', 'purchase_orders', 'number', '未关闭且未取消的真实采购订单数。', '/app/procurement/orders'],
+  open_po_count: ['开放 PO', 'purchase_orders', 'number', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/procurement/orders'],
   inventory_on_hand: ['在手库存', 'inventory_balances', 'number', 'Inventory Runtime 已记录的在手数量。', '/app/inventory'],
   inventory_risk_sku: ['库存风险 SKU', 'inventory_balances', 'number', '按统一 availability 口径存在 shortage 的 SKU 数。', '/app/inventory?risk=high'],
   invoice_amount: ['供应商发票金额', 'supplier_invoices', 'currency', '当前已接通发票记录金额合计。', '/app/finance/invoices'],
@@ -37,7 +38,7 @@ const dashboardMetrics = {
 
 function runtimeRows(context, inventory) {
   return {
-    purchase_orders: array(context.purchaseOrders).map(row => ({ id: text(row.id || row.po), date: date(row), supplier: text(row.supplierSnapshot?.supplierName || row.supplierName || row.supplierId), amount: number(row.totalAmount ?? row.amount), quantity: array(row.lines).reduce((total, line) => total + number(line.quantity ?? line.orderedQty), 0), status: text(row.status), currency: currencyCode(row.currency || row.lines?.[0]?.currency || 'CNY') })),
+    purchase_orders: array(context.purchaseOrders).map(row => ({ id: text(row.id || row.po), date: date(row), supplier: text(row.supplierSnapshot?.supplierName || row.supplierName || row.supplierId), amount: number(row.totalAmount ?? row.amount), quantity: array(row.lines).reduce((total, line) => total + number(line.quantity ?? line.orderedQty), 0), status: text(row.status), isOpen: isOpenPurchaseOrder(row), currency: currencyCode(row.currency || row.lines?.[0]?.currency || 'CNY') })),
     sales_orders: array(context.salesOrders).map(row => ({ id: text(row.salesOrderId || row.id), date: date(row), customer: text(row.customerName || row.customerId), sku: text(row.sku || row.itemId), quantity: number(row.orderedQty), fulfilled: number(row.fulfilledQty), status: text(['draft', 'cancelled', 'canceled'].includes(row.workflowStatus) ? row.workflowStatus : row.status || row.statusLabel), amount: number(row.totalAmount ?? row.amount), currency: currencyCode(row.currency || 'CNY') })),
     inventory_balances: inventory.availability.map(row => ({ id: row.sku, sku: row.sku, quantity: row.onHand, reserved: row.reserved, available: row.available, shortage: row.shortage, availableToPromise: row.availableToPromise, status: row.riskLevel })),
     supplier_invoices: array(context.supplierInvoices).map(row => ({ id: text(row.id || row.invoiceNumber), date: date(row), supplier: text(row.supplierName || row.supplierId), amount: number(row.totalAmount ?? row.amount), status: text(row.status), currency: currencyCode(row.currency || 'CNY') })),
@@ -45,15 +46,23 @@ function runtimeRows(context, inventory) {
   }
 }
 
+// "open" is not a stored purchase order status, so an exact match returned no
+// rows. For purchase orders, which carry isOpen, it means the shared open
+// definition. Every other status, and every other subject, still matches exactly.
+function statusMatches(row, status) {
+  if (status === 'open' && Object.hasOwn(row, 'isOpen')) return row.isOpen === true
+  return row.status === status
+}
+
 function filtered(rows, query, applyCurrency = true) {
-  return rows.filter(row => (!query.from || !row.date || row.date >= query.from) && (!query.to || !row.date || row.date <= query.to) && (!query.supplier || row.supplier === query.supplier) && (!query.customer || row.customer === query.customer) && (!applyCurrency || !query.currency || !Object.hasOwn(row, 'currency') || row.currency === query.currency) && (!query.status || row.status === query.status))
+  return rows.filter(row => (!query.from || !row.date || row.date >= query.from) && (!query.to || !row.date || row.date <= query.to) && (!query.supplier || row.supplier === query.supplier) && (!query.customer || row.customer === query.customer) && (!applyCurrency || !query.currency || !Object.hasOwn(row, 'currency') || row.currency === query.currency) && (!query.status || statusMatches(row, query.status)))
 }
 
 function value(id, all, inventory) {
   if (id === 'sales_order_count') return all.sales_orders.length
   if (id === 'open_sales_demand') return all.sales_orders.filter(row => !['draft', 'cancelled', 'canceled'].includes(row.status)).reduce((total, row) => total + Math.max(0, row.quantity - row.fulfilled), 0)
   if (id === 'purchase_order_amount') return sum(all.purchase_orders, 'amount')
-  if (id === 'open_po_count') return all.purchase_orders.filter(row => !['closed', 'cancelled', 'canceled', 'completed', 'fully_received', 'rejected'].includes(row.status)).length
+  if (id === 'open_po_count') return all.purchase_orders.filter(row => row.isOpen).length
   if (id === 'inventory_on_hand') {
     if (inventory.units?.length > 1) return null
     if (!inventory.availability.length) return 0

@@ -1,3 +1,5 @@
+import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
+
 const SUBJECTS = Object.freeze({
   purchase_orders: { label: '采购订单', defaultDateField: 'date', detailRoute: '/app/procurement/orders', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   purchase_requests: { label: '采购申请', defaultDateField: 'date', detailRoute: '/app/procurement/requests', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
@@ -76,7 +78,7 @@ export const reportMetricCatalog = Object.freeze([
   metric('delivery_completion_rate', '发货完成率', 'deliveries', 'percentage', 'delivered / ordered', '已完成发货订单数占应发货订单数。', '/app/sales/deliveries', { numerator: 'delivered orders', denominator: 'orders due for delivery' }),
   metric('on_time_delivery_rate', '准时交付率', 'deliveries', 'percentage', 'on_time / due', '按承诺日期完成交付的订单占比。', '/app/sales/deliveries?timeliness=on-time', { numerator: 'on-time deliveries', denominator: 'deliveries due' }),
   metric('purchase_order_amount', '采购订单金额', 'purchase_orders', 'currency', 'sum(amount)', '筛选范围内采购订单金额合计。', '/app/procurement/orders'),
-  metric('open_po_count', '开放 PO', 'purchase_orders', 'number', 'count(open)', '未关闭、未取消采购订单数。', '/app/procurement/orders?status=open'),
+  metric('open_po_count', '开放 PO', 'purchase_orders', 'number', 'count(open)', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/procurement/orders?status=open'),
   metric('overdue_po_amount', '逾期 PO 金额', 'purchase_orders', 'currency', 'sum(overdue amount)', '承诺日期早于范围结束且未完成的采购订单金额。', '/app/procurement/orders?overdue=true'),
   metric('rfq_response_rate', 'RFQ 响应率', 'rfqs', 'percentage', 'quoted / invited', '已报价供应商数占邀请供应商数。', '/app/procurement/rfq', { numerator: 'quoted suppliers', denominator: 'invited suppliers' }),
   metric('supplier_otif', '供应商 OTIF', 'receiving', 'percentage', 'on_time_in_full / due', '按承诺日期足量收货的订单占比。', '/app/reports/suppliers', { numerator: 'on-time in-full receipts', denominator: 'receipts due' }),
@@ -137,7 +139,7 @@ function mergeByKey(primary = [], secondary = [], key) {
   return [...primary, ...secondary.filter((row) => !seen.has(String(row[key] || '')))]
 }
 function sourceRows(data = {}) {
-  const purchaseOrders = (data.purchaseOrders || []).map((row) => ({ id: row.po || row.id, date: isoDate(row.created || row.createdAt, ''), supplier: row.supplier || row.supplierName, amount: number(row.amount || row.totalAmount), quantity: number(row.items || row.totalOrderedQty), status: row.status, owner: row.owner, currency: row.currency || row.lines?.[0]?.currency || '', company: row.company || '', category: row.category || '', sku: row.sourceSku || '' }))
+  const purchaseOrders = (data.purchaseOrders || []).map((row) => ({ id: row.po || row.id, date: isoDate(row.created || row.createdAt, ''), supplier: row.supplier || row.supplierName, amount: number(row.amount || row.totalAmount), quantity: number(row.items || row.totalOrderedQty), status: row.status, isOpen: isOpenPurchaseOrder(row), owner: row.owner, currency: row.currency || row.lines?.[0]?.currency || '', company: row.company || '', category: row.category || '', sku: row.sourceSku || '' }))
   const purchaseRequests = (data.purchaseRequests || []).map((row) => ({ id: row.pr || row.id, date: isoDate(row.created || row.requiredDate, ''), supplier: row.supplier, amount: number(row.amount), quantity: number(row.quantity), status: row.status, owner: row.buyer || row.requester, currency: row.currency || '', company: row.company || '', category: row.category || '', sku: row.sourceSku }))
   const rfqs = (data.rfqs || []).map((row) => ({ id: row.id, date: isoDate(row.createdAt || row.due, ''), supplier: row.bestSupplier, amount: number(row.bestPrice) * number(row.quantity), quantity: number(row.quantity), status: row.status, currency: row.currency || '', company: row.company || '', category: row.category, invited: number(row.suppliers || row.invitedSuppliers?.length), quoted: number(row.quoted) }))
   const receiving = (data.receivingDocs || []).map((row) => ({ id: row.grn || row.id, date: isoDate(row.arrived || row.createdAt, ''), supplier: row.supplier, warehouse: row.warehouse, amount: number(row.amount), quantity: number(row.items), status: row.status, currency: row.currency || '', company: row.company || '', accepted: number(row.passed), rejected: number(row.failed) }))
@@ -166,8 +168,8 @@ function calculate(metricId, rows, query) {
     unshipped_amount: () => sum(sales.filter((row) => row.status !== 'delivered'), 'amount'),
     delivery_completion_rate: () => rate(sales.filter((row) => row.status === 'delivered').length, sales.length),
     on_time_delivery_rate: () => rate(sales.filter((row) => row.onTime).length, sales.length),
-    purchase_order_amount: () => sum(po, 'amount'), open_po_count: () => po.filter((row) => !/完成|取消|closed|cancelled/i.test(row.status || '')).length,
-    overdue_po_amount: () => sum(po.filter((row) => row.date < today && !/完成|取消|closed|cancelled/i.test(row.status || '')), 'amount'),
+    purchase_order_amount: () => sum(po, 'amount'), open_po_count: () => po.filter((row) => row.isOpen).length,
+    overdue_po_amount: () => sum(po.filter((row) => row.date < today && row.isOpen), 'amount'),
     rfq_response_rate: () => rate(sum(rfqs, 'quoted'), sum(rfqs, 'invited')),
     supplier_otif: () => rate(receiving.filter((row) => row.rejected === 0).length, receiving.length),
     inventory_value: () => sum(balances, 'amount'), inventory_turnover: () => 0,
