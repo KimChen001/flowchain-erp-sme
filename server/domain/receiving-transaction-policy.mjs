@@ -1,4 +1,5 @@
 import {
+  RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES,
   RECEIVABLE_PURCHASE_ORDER_INPUTS,
   RECEIVING_POSTABLE_WORKFLOW_INPUTS,
   isPurchaseOrderReceivable,
@@ -10,13 +11,6 @@ const ZERO = 0n
 
 export const RECEIVABLE_WORKFLOW_STATUSES = new Set(RECEIVING_POSTABLE_WORKFLOW_INPUTS)
 export const RECEIVABLE_PO_STATUSES = new Set(RECEIVABLE_PURCHASE_ORDER_INPUTS)
-export const DOWNSTREAM_MOVEMENT_TYPES = [
-  'outbound_posting',
-  'sales_outbound',
-  'transfer_out',
-  'reservation_consumption',
-  'sales_allocation_consumption',
-]
 
 export const receivingText = (value = '') => String(value ?? '').trim()
 export const receivingLocationKey = (value = '') => receivingText(value).toLowerCase()
@@ -36,6 +30,45 @@ export function receivingDecimalString(units) {
   const negative = units < ZERO
   const absolute = negative ? -units : units
   return `${negative ? '-' : ''}${absolute / SCALE}.${String(absolute % SCALE).padStart(4, '0')}`
+}
+
+// Net on-hand effect of one posted movement: in minus out plus adjustment.
+// This is the single ledger formula. calculateMovementBalance, which backs
+// reconcileInventoryBalance, is built on it, so the reversal replay and the
+// reconciliation report cannot describe different on-hand quantities.
+export function receivingMovementNetUnits(movement) {
+  return receivingDecimalUnits(movement?.quantityIn ?? 0)
+    - receivingDecimalUnits(movement?.quantityOut ?? 0)
+    + receivingDecimalUnits(movement?.adjustmentQty ?? 0)
+}
+
+// Replays a location ledger with one movement removed.
+//
+// `ledger` must hold every posted movement for a single tenant, SKU, warehouse
+// and location, in business order. Returns the lowest running on-hand reached
+// from the removed movement's position onward. A negative `lowest` means some
+// later movement drew on units that only the removed movement supplied, so
+// removing it would rewrite history into a state that never could have existed.
+//
+// This deliberately does not look at movement types. Pooled stock records no
+// link from an outbound movement back to the receipt it consumed, so the ledger
+// balance is the only sound signal, and it cannot be bypassed by a new outbound
+// movement type the way a hand-maintained list of type names can.
+export function replayLedgerWithoutMovement(ledger = [], excludedMovementId) {
+  const position = ledger.findIndex((movement) => movement.id === excludedMovementId)
+  if (position < 0) return { found: false }
+  let running = ZERO
+  for (let index = 0; index < position; index += 1) running += receivingMovementNetUnits(ledger[index])
+  let lowest = running
+  let lowestAtMovementId = null
+  for (let index = position + 1; index < ledger.length; index += 1) {
+    running += receivingMovementNetUnits(ledger[index])
+    if (running < lowest) {
+      lowest = running
+      lowestAtMovementId = ledger[index].id
+    }
+  }
+  return { found: true, lowest, lowestAtMovementId, finalAfterRemoval: running }
 }
 
 export function receivingFulfillmentStatus(lines = []) {
@@ -126,22 +159,69 @@ export async function buildReceivingReversalPlan({ prisma, tenantId, receivingDo
   else if (receivingDocument.postingStatus !== 'posted') blockingIssues.push(issue('RECEIVING_REVERSAL_NOT_SAFE', 'Only a posted receiving document can be reversed.'))
   const originalMovements = await prisma.inventoryMovement.findMany({ where: { tenantId, relatedGrnId: receivingDocument.id, movementType: 'receipt_posting' }, orderBy: { createdAt: 'asc' } })
   if (!originalMovements.length || originalMovements.some((movement) => movement.reversedByMovementId)) blockingIssues.push(issue('RECEIVING_REVERSAL_NOT_SAFE', 'Original receipt movements are missing or already reversed.'))
+  // A submitted, matched or approved supplier invoice is a claim against this
+  // receipt, and an approved one has already produced a payable. Undoing the
+  // receipt underneath it would leave money owed for goods the system then
+  // records as never received. Checked before the inventory guards because the
+  // invoice position decides the outcome regardless of stock. Invoice lines
+  // carry no tenantId, so the tenant is enforced through the owning invoice.
+  //
+  // This refusal is permanent for that receipt, by design. Supplier invoices
+  // have no cancel or void operation, and a supplier credit memo is sourced
+  // from a supplier return, not from the invoice, so neither releases the hold.
+  // Receipt reversal corrects a mistaken posting before anything is committed
+  // against it; once an invoice claims the goods, the correction is a supplier
+  // return. The message says so rather than pointing at an action that does
+  // not exist.
+  const receivingLineIds = receivingDocument.lines.map((line) => line.id)
+  const holdingInvoiceLine = receivingLineIds.length
+    ? await prisma.supplierInvoiceLine.findFirst({
+        where: {
+          receivingLineId: { in: receivingLineIds },
+          supplierInvoice: { tenantId, status: { in: [...RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES] } },
+        },
+        select: { receivingLineId: true, supplierInvoiceId: true, supplierInvoice: { select: { invoiceNumber: true, status: true } } },
+        orderBy: [{ supplierInvoiceId: 'asc' }, { id: 'asc' }],
+      })
+    : null
+  if (holdingInvoiceLine) {
+    blockingIssues.push(issue('RECEIVING_REVERSAL_BLOCKED_BY_INVOICE', 'A supplier invoice already claims this receipt, so it can no longer be reversed. To send these goods back, use a supplier return.', 409, {
+      supplierInvoiceId: holdingInvoiceLine.supplierInvoiceId,
+      invoiceNumber: holdingInvoiceLine.supplierInvoice?.invoiceNumber || null,
+      invoiceStatus: holdingInvoiceLine.supplierInvoice?.status || null,
+      receivingLineId: holdingInvoiceLine.receivingLineId,
+    }))
+  }
   const receivingLines = new Map(receivingDocument.lines.map((line) => [line.id, line]))
   const poLines = new Map(purchaseOrder.lines.map((line) => [line.id, line]))
   const poDeltas = new Map()
   const inventoryImpacts = []
 
   for (const movement of originalMovements) {
-    const downstream = await prisma.inventoryMovement.findFirst({ where: { tenantId, sku: movement.sku, warehouseId: movement.warehouseId, occurredAt: { gt: movement.occurredAt }, movementType: { in: DOWNSTREAM_MOVEMENT_TYPES } }, select: { id: true, movementType: true } })
+    const locationKey = movement.locationKey || receivingLocationKey(movement.location)
+    // Same scope and filter as reconcileInventoryBalance, so the replay agrees
+    // with the system's own ledger reconciliation.
+    const ledger = await prisma.inventoryMovement.findMany({
+      where: { tenantId, sku: movement.sku, warehouseId: movement.warehouseId, locationKey, status: 'posted' },
+      select: { id: true, quantityIn: true, quantityOut: true, adjustmentQty: true },
+      orderBy: [{ occurredAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    })
+    const replay = replayLedgerWithoutMovement(ledger, movement.id)
     const downstreamSources = [movement.id, receivingDocument.id]
     const [consumedSerial, consumedLot] = await Promise.all([
       prisma.inventorySerial.findFirst({ where: { tenantId, sku: movement.sku, warehouseId: movement.warehouseId, sourceDocument: { in: downstreamSources }, status: { not: 'in_stock' } }, select: { id: true } }),
       prisma.inventoryLot.findFirst({ where: { tenantId, sku: movement.sku, warehouseId: movement.warehouseId, sourceDocument: { in: downstreamSources }, status: { not: 'available' } }, select: { id: true } }),
     ])
-    if (downstream || consumedSerial || consumedLot) blockingIssues.push(issue('RECEIVING_REVERSAL_NOT_SAFE', 'Downstream inventory consumption makes this receiving reversal unsafe.', 409, { movementId: movement.id, downstreamMovementId: downstream?.id, consumedSerialId: consumedSerial?.id, consumedLotId: consumedLot?.id }))
+    if (!replay.found) {
+      // The receipt movement is absent from its own location ledger, so the
+      // history cannot be checked. Refuse rather than guess.
+      blockingIssues.push(issue('RECEIVING_REVERSAL_NOT_SAFE', 'The receipt movement could not be located in its inventory ledger.', 409, { movementId: movement.id, reason: 'receipt_missing_from_location_ledger' }))
+    } else if (replay.lowest < ZERO) {
+      blockingIssues.push(issue('RECEIVING_REVERSAL_NOT_SAFE', 'Later inventory movements depend on this receipt, so reversing it would leave the location ledger negative.', 409, { movementId: movement.id, reason: 'later_consumption_depends_on_receipt', firstShortfallMovementId: replay.lowestAtMovementId, lowestOnHandWithoutReceipt: receivingDecimalString(replay.lowest) }))
+    }
+    if (consumedSerial || consumedLot) blockingIssues.push(issue('RECEIVING_REVERSAL_NOT_SAFE', 'Downstream inventory consumption makes this receiving reversal unsafe.', 409, { movementId: movement.id, consumedSerialId: consumedSerial?.id, consumedLotId: consumedLot?.id }))
     const quantity = safeUnits(movement.quantityIn, blockingIssues, `Movement ${movement.id} quantityIn`)
     if (quantity === null) continue
-    const locationKey = movement.locationKey || receivingLocationKey(movement.location)
     const balance = await prisma.inventoryBalance.findUnique({ where: balanceWhere({ tenantId, sku: movement.sku, warehouseId: movement.warehouseId, locationKey }) })
     const onHandBefore = receivingDecimalUnits(balance?.onHandQuantity || 0)
     const availableBefore = receivingDecimalUnits(balance?.availableQuantity || 0)

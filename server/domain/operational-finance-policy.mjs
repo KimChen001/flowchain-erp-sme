@@ -3,6 +3,7 @@ import {
   outboundDecimalUnits as decimalUnits,
 } from "./outbound-transaction-policy.mjs";
 import { mergeOperationalSettings } from "./workspace-settings-contract.mjs";
+import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
 
 const SCALE = 10_000n;
 const ZERO = 0n;
@@ -175,7 +176,7 @@ export async function buildSupplierInvoicePlan({
     );
   const consumingStatuses = countCommittedOnly
     ? []
-    : ["submitted", "matching", "exception", "matched", "approved", "held"];
+    : [...RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES];
   const previousRows = receivingIds.length && consumingStatuses.length
     ? await prisma.supplierInvoiceLine.findMany({
         where: {

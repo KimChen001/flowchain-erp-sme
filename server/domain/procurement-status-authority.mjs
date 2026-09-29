@@ -337,6 +337,20 @@ export const RECEIVABLE_PURCHASE_ORDER_INPUTS = Object.freeze([
   'ready_for_receiving',
 ])
 
+// Supplier invoice statuses in which an invoice holds the receiving lines it
+// references. Operational finance counts these when preventing a receipt from
+// being invoiced twice, and receiving reversal refuses to undo a receipt that
+// any of them still holds. One definition, so the two rules cannot disagree.
+// A draft does not hold the receipt: submitting it re-validates the receipt.
+export const RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES = Object.freeze([
+  'submitted',
+  'matching',
+  'exception',
+  'matched',
+  'approved',
+  'held',
+])
+
 const text = (value) => String(value ?? '').trim()
 
 function statusError(code, message, domain, value, status) {

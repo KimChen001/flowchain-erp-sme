@@ -7,6 +7,7 @@ import {
   PURCHASE_ORDER_STATUS,
   PURCHASE_REQUEST_STATUS,
   RFQ_SUPPLIER_PARTICIPATION_STATUS,
+  RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES,
   RECEIVABLE_PURCHASE_ORDER_INPUTS,
   RECEIVING_POSTABLE_WORKFLOW_INPUTS,
   RFQ_STATUS,
@@ -153,4 +154,18 @@ test('legacy status facades delegate to the new authority without changing previ
     () => assertSafeProcurementTransition('purchaseRequest', 'draft', 'converted_to_rfq'),
     (error) => error.code === 'unsafe_status_transition',
   )
+})
+
+test('supplier invoice statuses that hold a receipt are one frozen definition', () => {
+  // Shared by the operational finance over-invoicing check and the receiving
+  // reversal guard. A draft is not yet a claim on the receipt; every status
+  // from submission through approval is, including approved, which has
+  // already produced a payable.
+  assert.equal(Object.isFrozen(RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES), true)
+  for (const status of ['submitted', 'exception', 'matched', 'approved', 'held']) {
+    assert.equal(RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES.includes(status), true, status)
+  }
+  for (const status of ['draft', 'cancelled', 'rejected']) {
+    assert.equal(RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES.includes(status), false, status)
+  }
 })
