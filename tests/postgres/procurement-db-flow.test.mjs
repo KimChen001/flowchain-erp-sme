@@ -51,6 +51,7 @@ const needBy = '2026-10-15'
 let prisma
 let server
 let base
+const serverErrors = []
 const tokens = {}
 const key = (label) => `${label}-${randomUUID()}`
 const dec = (value) => value === null || value === undefined ? null : value.toString()
@@ -134,7 +135,7 @@ test.before(async () => {
   await prisma.item.create({ data: { id: itemA.id, tenantId: tenantA, sku: itemA.sku, name: itemA.name, unit: 'EA', preferredSupplierId: supplierA, metadata: { defaultWarehouseId: warehouseA, purchasable: true } } })
 
   const { createScmServer } = await import('../../server/scm-api.mjs')
-  server = createScmServer()
+  server = createScmServer({ errorLogger: { error: (line) => serverErrors.push(String(line)) } })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${server.address().port}`
   tokens.managerA = await login(managerA, tenantA)
@@ -362,4 +363,17 @@ test('a second tenant cannot see or change the first tenant\'s purchase orders a
   assert.equal(foreignDraft.status, 404, describe(foreignDraft))
   assert.equal(await prisma.receivingDocument.count({ where: { tenantId: tenantB } }), 0)
   assert.equal(await prisma.businessCommandExecution.count({ where: { tenantId: tenantB } }), 0)
+})
+
+test('the PO, PR and RFQ list endpoints answer once instead of falling through to later routes', async () => {
+  // A route that sends a response but does not report the request as handled
+  // lets the dispatcher run later routes, which write a second response and
+  // log ERR_HTTP_HEADERS_SENT as a server error on every page load.
+  for (const path of ['/api/purchase-orders-workbench', '/api/purchase-orders', '/api/purchase-requests', '/api/rfqs']) {
+    const before = serverErrors.length
+    const result = await api(tokens.managerA, 'GET', path)
+    assert.equal(result.status, 200, `${path}: ${describe(result)}`)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.deepEqual(serverErrors.slice(before), [], `${path} logged a server error`)
+  }
 })
