@@ -12,6 +12,7 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import {
   tableMinSmClass,
@@ -241,8 +242,12 @@ const reconciliationRuleLabel = (value: string) => ({
   "available = onHand - reserved": "可用量 = 在库量 - 预留量",
   "reserved + fulfilled <= ordered": "预留量 + 已履约量不超过订购量",
 }[value] || value);
-const stamp = (value?: string | null) =>
-  value ? new Date(value).toLocaleString("zh-CN") : "—";
+// Timestamps follow the workspace locale and timezone.
+function useStamp() {
+  const { formatDateTime } = useI18n();
+  return (value?: string | null) =>
+    value && !Number.isNaN(new Date(value).getTime()) ? formatDateTime(value) : value || "—";
+}
 function message(error: unknown) {
   if (!(error instanceof ApiError)) return "网络连接失败，请检查连接后重试。";
   if (error.status === 401) return "登录已失效，请重新登录后读取销售订单。";
@@ -347,6 +352,7 @@ export default function OutboundWorkbench() {
 }
 
 function OrderList() {
+  const stamp = useStamp();
   const [params, setParams] = useSearchParams(),
     [data, setData] = useState<{
       orders: Order[];
@@ -465,7 +471,7 @@ function OrderList() {
               onChange={(e) => update({ currency: e.target.value, page: 1 })}
             >
               <option value="">{copy("全部")}</option>
-              {["CNY", "USD", "EUR"].map((x) => (
+              {["USD", "EUR", "CNY"].map((x) => (
                 <option key={x}>{x}</option>
               ))}
             </select>
@@ -625,7 +631,7 @@ function OrderEntry() {
     >([]),
     [orderNumber, setOrderNumber] = useState(`SO-${Date.now()}`),
     [customerName, setCustomerName] = useState(""),
-    [currency, setCurrency] = useState("CNY"),
+    [currency, setCurrency] = useState(""),
     [itemId, setItemId] = useState(""),
     [quantity, setQuantity] = useState("1.0000"),
     [capability, setCapability] = useState<LifecycleCapability | null>(null),
@@ -633,6 +639,11 @@ function OrderEntry() {
     [error, setError] = useState("");
   const intent = useRef({ fingerprint: "", idempotencyKey: "" }),
     inFlight = useRef(false);
+  const workspace = useWorkspaceCurrency();
+  // Prefill the workspace currency; the user can still type another ISO code.
+  useEffect(() => {
+    if (workspace.currency) setCurrency((current) => current || workspace.currency);
+  }, [workspace.currency]);
   useEffect(() => {
     apiJson<{
       items: typeof items;
@@ -742,6 +753,11 @@ function OrderEntry() {
               value={currency}
               onChange={(e) => setCurrency(e.target.value.toUpperCase())}
             />
+            {workspace.status === "unavailable" && !currency && (
+              <span className="mt-1 block text-xs text-amber-700">
+                {copy("无法读取工作区币种，请输入币种。")}
+              </span>
+            )}
           </label>
           <label className="text-sm">
             {copy("物料")}
@@ -771,7 +787,7 @@ function OrderEntry() {
         <div className="mt-4 flex gap-2">
           <Button
             testId="create-sales-order"
-            disabled={saving || !itemId || !customerName}
+            disabled={saving || !itemId || !customerName || !currency.trim()}
             onClick={() => void save()}
           >
             {saving ? "保存中…" : "保存草稿"}
@@ -789,6 +805,7 @@ function OrderEntry() {
 }
 
 function OrderDetail({ id }: { id: string }) {
+  const stamp = useStamp();
   const [data, setData] = useState<Workbench | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
@@ -1527,6 +1544,7 @@ function OrderDetail({ id }: { id: string }) {
 }
 
 function ShipmentDetail({ id }: { id: string }) {
+  const stamp = useStamp();
   const [data, setData] = useState<ShipmentWorkbench | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
@@ -1805,6 +1823,7 @@ function Table({
   );
 }
 function Timeline({ rows }: { rows: Workbench["evidence"] }) {
+  const stamp = useStamp();
   return (
     <div className="space-y-2">
       {rows.map((x, i) => (

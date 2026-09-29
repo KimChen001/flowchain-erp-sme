@@ -5,7 +5,7 @@ const zh: Record<string, string> = {
   'Optional': '选填', 'Required fields': '必填字段', 'Supplier code': '供应商编号', 'Supplier name': '供应商名称', 'Short name': '简称',
   'Business type': '经营类型', 'Categories': '经营品类', 'Contact name': '联系人', 'Phone': '联系电话', 'Email': '邮箱', 'Address': '地址',
   'Postal / ZIP code': '邮编', 'Delivery lead time (days)': '送货周期（天）', 'Default currency': '默认币种', 'Payment terms': '付款条款',
-  'Settlement method': '结算方式', 'Business registration ID': '统一社会信用代码', 'Tax ID': '税号', 'Bank name': '银行', 'Account holder': '户名',
+  'Settlement method': '结算方式', 'Business registration ID': '企业登记号', 'Tax ID': '税号', 'Bank name': '银行', 'Account holder': '户名',
   'Account number': '银行账号', 'Internal notes': '内部备注', 'Status': '状态', 'Active': '启用', 'Inactive': '停用', 'Draft': '草稿',
   'Use a unique code, such as SUP-001.': '使用唯一编号，例如 SUP-001。', 'Separate categories with commas.': '多个品类请用逗号分隔。',
   'Tax identifiers depend on the supplier’s country.': '税务登记信息取决于供应商所在国家。', 'Supplier saved': '供应商已保存',

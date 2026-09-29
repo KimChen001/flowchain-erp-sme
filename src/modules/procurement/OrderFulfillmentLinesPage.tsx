@@ -4,6 +4,8 @@ import { RefreshCw, Search } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Card } from "../../components/ui";
 import { apiJson } from "../../lib/api-client";
+import { useI18n } from "../../i18n/I18n";
+import { formatLocaleAmount } from "../../lib/format";
 import type {
   PurchaseOrder,
   PurchaseOrderLine,
@@ -123,7 +125,7 @@ export function buildOrderFulfillmentLines(
         remainingToReceive: Math.max(ordered - received, 0),
         receivedNotInvoiced: Math.max(received - invoiced, 0),
         lineAmount: number(line.unitPrice) * ordered,
-        currency: line.currency || order.currency || "CNY",
+        currency: line.currency || order.currency || "",
         receivingEvidence: receivingByPoLine.get(line.poLineId) || [],
         invoiceEvidence,
         varianceAmount: variance,
@@ -133,16 +135,12 @@ export function buildOrderFulfillmentLines(
   );
 }
 
-function quantity(value: number, unit: string) {
-  return `${value.toLocaleString("zh-CN")} ${unit || ""}`.trim();
+function quantity(value: number, unit: string, locale: string) {
+  return `${value.toLocaleString(locale)} ${unit || ""}`.trim();
 }
 
-function money(value: number, currency: string) {
-  return new Intl.NumberFormat("zh-CN", {
-    style: "currency",
-    currency: currency || "CNY",
-    maximumFractionDigits: 2,
-  }).format(value);
+function money(value: number, currency: string, locale: string) {
+  return formatLocaleAmount(value, currency, locale, { maximumFractionDigits: 2 });
 }
 
 function statusTone(status: OrderFulfillmentLine["status"]) {
@@ -201,6 +199,7 @@ function EvidenceLinks({ row, type }: { row: OrderFulfillmentLine; type: "receiv
 
 export function OrderFulfillmentLinesPage() {
   const copy = useWorkspaceCopy();
+  const { locale } = useI18n();
   const [payload, setPayload] = useState<PurchaseOrderWorkbenchPayload>({});
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   const [error, setError] = useState("");
@@ -352,14 +351,14 @@ export function OrderFulfillmentLinesPage() {
                         <div className="mt-1 font-mono text-xs" style={{ color: A.sub }}>{row.sku || "—"}</div>
                       </td>
                       <td className="whitespace-nowrap px-3 py-3">{copy(poStatusLabel(row.poStatus))}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{money(row.lineAmount, row.currency)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{quantity(row.orderedQuantity, row.unit)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{quantity(row.receivedQuantity, row.unit)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{quantity(row.invoicedQuantity, row.unit)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{quantity(row.remainingToReceive, row.unit)}</td>
-                      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{quantity(row.receivedNotInvoiced, row.unit)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{money(row.lineAmount, row.currency, locale)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{quantity(row.orderedQuantity, row.unit, locale)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{quantity(row.receivedQuantity, row.unit, locale)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums">{quantity(row.invoicedQuantity, row.unit, locale)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{quantity(row.remainingToReceive, row.unit, locale)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{quantity(row.receivedNotInvoiced, row.unit, locale)}</td>
                       <td className={`whitespace-nowrap px-3 py-3 text-right font-semibold tabular-nums ${row.varianceAmount !== 0 ? "text-rose-700" : ""}`}>
-                        {money(row.varianceAmount, row.currency)}
+                        {money(row.varianceAmount, row.currency, locale)}
                       </td>
                       <td className="whitespace-nowrap px-3 py-3">
                         <span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${statusTone(row.status)}`}>{copy(row.status)}</span>
@@ -392,15 +391,15 @@ export function OrderFulfillmentLinesPage() {
                     <span className={`rounded-full px-2 py-1 text-xs font-semibold ${statusTone(row.status)}`}>{copy(row.status)}</span>
                   </div>
                   <div className="mt-4 grid grid-cols-2 gap-4 text-xs sm:grid-cols-4">
-                    <div><div style={{ color: A.sub }}>{copy("订购")}</div><div className="mt-1 font-semibold">{quantity(row.orderedQuantity, row.unit)}</div></div>
-                    <div><div style={{ color: A.sub }}>{copy("已收")}</div><div className="mt-1 font-semibold">{quantity(row.receivedQuantity, row.unit)}</div></div>
-                    <div><div style={{ color: A.sub }}>{copy("已开票")}</div><div className="mt-1 font-semibold">{quantity(row.invoicedQuantity, row.unit)}</div></div>
-                    <div><div style={{ color: A.sub }}>{copy("PO 行金额")}</div><div className="mt-1 font-semibold">{money(row.lineAmount, row.currency)}</div></div>
+                    <div><div style={{ color: A.sub }}>{copy("订购")}</div><div className="mt-1 font-semibold">{quantity(row.orderedQuantity, row.unit, locale)}</div></div>
+                    <div><div style={{ color: A.sub }}>{copy("已收")}</div><div className="mt-1 font-semibold">{quantity(row.receivedQuantity, row.unit, locale)}</div></div>
+                    <div><div style={{ color: A.sub }}>{copy("已开票")}</div><div className="mt-1 font-semibold">{quantity(row.invoicedQuantity, row.unit, locale)}</div></div>
+                    <div><div style={{ color: A.sub }}>{copy("PO 行金额")}</div><div className="mt-1 font-semibold">{money(row.lineAmount, row.currency, locale)}</div></div>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 rounded-lg bg-slate-50 px-3 py-2 text-xs">
-                    <span>{copy("待收")}<strong>{quantity(row.remainingToReceive, row.unit)}</strong></span>
-                    <span>{copy("已收未票")}<strong>{quantity(row.receivedNotInvoiced, row.unit)}</strong></span>
-                    <span>{copy("金额差异")}<strong className={row.varianceAmount !== 0 ? "text-rose-700" : ""}>{money(row.varianceAmount, row.currency)}</strong></span>
+                    <span>{copy("待收")}<strong>{quantity(row.remainingToReceive, row.unit, locale)}</strong></span>
+                    <span>{copy("已收未票")}<strong>{quantity(row.receivedNotInvoiced, row.unit, locale)}</strong></span>
+                    <span>{copy("金额差异")}<strong className={row.varianceAmount !== 0 ? "text-rose-700" : ""}>{money(row.varianceAmount, row.currency, locale)}</strong></span>
                   </div>
                   <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
                     <div><div style={{ color: A.sub }}>{copy("收货证据")}</div><EvidenceLinks row={row} type="receiving" /></div>

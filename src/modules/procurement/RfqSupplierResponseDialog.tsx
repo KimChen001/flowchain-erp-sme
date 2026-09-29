@@ -1,9 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, RefreshCw, Save, Send, X } from "lucide-react";
 import { A, Card, Chip, Modal } from "../../components/ui";
 import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
 import { useI18n } from "../../i18n/I18n";
+import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 import type {
   ProcurementRfqDocument,
   ProcurementRfqParticipant,
@@ -123,7 +124,12 @@ export function RfqSupplierResponseDialog({
     () => participant ? latestQuotation(record, participant.supplierId) : null,
     [participant, record],
   );
-  const [currency, setCurrency] = useState(quotation?.latestRevision?.currency || record.currency || "CNY");
+  const [currency, setCurrency] = useState(quotation?.latestRevision?.currency || record.currency || "");
+  const workspace = useWorkspaceCurrency();
+  // Only when neither the revision nor the RFQ carries a currency, prefill the workspace currency.
+  useEffect(() => {
+    if (workspace.currency) setCurrency((current) => current || workspace.currency);
+  }, [workspace.currency]);
   const [paymentTerms, setPaymentTerms] = useState(quotation?.latestRevision?.paymentTerms || "");
   const [validUntil, setValidUntil] = useState(dateInput(quotation?.latestRevision?.validity));
   const [deliveryDate, setDeliveryDate] = useState(dateInput(quotation?.latestRevision?.deliveryDate));

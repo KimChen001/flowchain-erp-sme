@@ -115,7 +115,7 @@ function ChartPanel({ chart, currencyCode, onDrill, onCrossFilter }: { chart: Re
 }
 
 export function BiDashboard({ view, onNavigate: _onNavigate }: { view: DashboardView; onNavigate?: NavigateFn }) {
-  const { language, locale } = useI18n();
+  const { language, locale, timezone } = useI18n();
   const copy = (label: string) => reportCopy(label, language);
   const navigate = useNavigate(); const [params, setParams] = useSearchParams();
   const [report, setReport] = useState<GovernedReport | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
@@ -176,7 +176,7 @@ export function BiDashboard({ view, onNavigate: _onNavigate }: { view: Dashboard
   const exportCurrent = async () => {
     if (!report) return;
     try {
-      const filename = await exportWorkbookSheets(copy(VIEW_COPY[view].label), reportWorkbook(report, filters, copy, limitationLabels, { locale, language }));
+      const filename = await exportWorkbookSheets(copy(VIEW_COPY[view].label), reportWorkbook(report, filters, copy, limitationLabels, { locale, language }), timezone);
       toast.success(copy("Workbook exported"), { description: filename });
     } catch { toast.error(copy("Could not export workbook")); }
   };

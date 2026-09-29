@@ -4,6 +4,7 @@ import { Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 
 type Account = { id: string; accountCode: string; name: string; accountType: string; currency: string };
 type Mapping = { id: string; templateCode: string; name: string; version: number; cashbookAccountId: string };
@@ -17,6 +18,8 @@ const body = (value: unknown) => ({ method: "POST", body: JSON.stringify(value) 
 
 export default function BankReconciliationWorkbench({ initialView }: { initialView: "bank-statements" | "bank-reconciliation" }) {
   const { language } = useI18n(); const en = language === "en-US"; const tr = (zh: string, english: string) => en ? english : zh;
+  // New mapping templates record the workspace timezone (America/New_York when none is known).
+  const { timezone: workspaceTimezone } = useWorkspaceCurrency();
   const [accounts, setAccounts] = useState<Account[]>([]), [mappings, setMappings] = useState<Mapping[]>([]), [batches, setBatches] = useState<Batch[]>([]), [lines, setLines] = useState<Line[]>([]), [groups, setGroups] = useState<Group[]>([]), [exceptions, setExceptions] = useState<Exception[]>([]);
   const [accountId, setAccountId] = useState(""), [mappingId, setMappingId] = useState(""), [selectedLineIds, setSelectedLineIds] = useState<string[]>([]), [candidateEntryIds, setCandidateEntryIds] = useState<string[]>([]), [allocationAmount, setAllocationAmount] = useState(""), [candidates, setCandidates] = useState<Record<string, Candidate[]>>({});
   const [file, setFile] = useState<File | null>(null), [busy, setBusy] = useState(false), [notice, setNotice] = useState(""), [error, setError] = useState("");
@@ -34,7 +37,7 @@ export default function BankReconciliationWorkbench({ initialView }: { initialVi
 
   async function createDefaultMapping() {
     if (!selectedAccount) return;
-    await apiJson("/api/finance/bank-mappings", body({ templateCode: `BANK-${selectedAccount.accountCode}`, name: tr("标准银行流水映射", "Standard bank statement mapping"), bankName: tr("用户选择的银行", "User-selected bank"), formatType: "csv", cashbookAccountId: selectedAccount.id, fileEncoding: "auto_detect", headerRowNumber: 1, firstDataRowNumber: 2, dateFormat: "YYYY-MM-DD", decimalSeparator: ".", thousandsSeparator: ",", debitCreditMode: "signed_amount", signConvention: "positive_credit", timezone: "Asia/Shanghai", columnMapping: { transactionId: "transaction_id", transactionDate: "transaction_date", postingDate: "posting_date", valueDate: "value_date", signedAmount: "signed_amount", currency: "currency", counterpartyName: "counterparty_name", counterpartyAccount: "counterparty_account", description: "description", bankReference: "bank_reference", customerReference: "customer_reference", runningBalance: "running_balance", bankAccountIdentifier: "bank_account_identifier" } })); setNotice(tr("Mapping Template 已创建", "Mapping template created"));
+    await apiJson("/api/finance/bank-mappings", body({ templateCode: `BANK-${selectedAccount.accountCode}`, name: tr("标准银行流水映射", "Standard bank statement mapping"), bankName: tr("用户选择的银行", "User-selected bank"), formatType: "csv", cashbookAccountId: selectedAccount.id, fileEncoding: "auto_detect", headerRowNumber: 1, firstDataRowNumber: 2, dateFormat: "YYYY-MM-DD", decimalSeparator: ".", thousandsSeparator: ",", debitCreditMode: "signed_amount", signConvention: "positive_credit", timezone: workspaceTimezone, columnMapping: { transactionId: "transaction_id", transactionDate: "transaction_date", postingDate: "posting_date", valueDate: "value_date", signedAmount: "signed_amount", currency: "currency", counterpartyName: "counterparty_name", counterpartyAccount: "counterparty_account", description: "description", bankReference: "bank_reference", customerReference: "customer_reference", runningBalance: "running_balance", bankAccountIdentifier: "bank_account_identifier" } })); setNotice(tr("Mapping Template 已创建", "Mapping template created"));
   }
   async function importFile() {
     if (!file || !selectedAccount || !mappingId) throw new Error(tr("请选择账户、Mapping 和文件", "Select an account, mapping, and file"));

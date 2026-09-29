@@ -1,11 +1,13 @@
 const JSON_LIKE_START = /^[\s\r\n]*[\[{]/;
 const DEBUG_LINE = /^(intent|cards|evidence|provider|model|tool|schema)\s*[:=]/i;
 const AMOUNT_LABEL = /(金额|余额|应付|贷项|差异|订单金额|发票金额|合同金额|采购额)/;
-const WAN_AMOUNT = /^¥?\s*(-?\d+(?:\.\d+)?)\s*万$/;
-const AMOUNT_CONTEXT_WAN = /(订单金额|发票金额|合同金额|差异金额|采购额|应付|余额|贷项|报价金额|金额)\s*¥?\s*(-?\d+(?:\.\d+)?)\s*万/g;
+const WAN_AMOUNT = /^(¥?)\s*(-?\d+(?:\.\d+)?)\s*万$/;
+const AMOUNT_CONTEXT_WAN = /(订单金额|发票金额|合同金额|差异金额|采购额|应付|余额|贷项|报价金额|金额)\s*(¥?)\s*(-?\d+(?:\.\d+)?)\s*万/g;
 
-function currency(value: number) {
-  return `¥${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)}`;
+// The AI answer's currency is not known here, so only keep a ¥ symbol that the
+// source text already carried; otherwise expand 万 into a plain number.
+function amountText(value: number, symbol = "") {
+  return `${symbol}${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)}`;
 }
 
 export function looksLikeRawJson(value: unknown) {
@@ -39,10 +41,10 @@ export function stripInlineMarkdownEmphasis(value: string) {
 }
 
 export function normalizeAiMessageAmounts(value: string) {
-  return value.replace(AMOUNT_CONTEXT_WAN, (_match, label: string, numeric: string) => {
+  return value.replace(AMOUNT_CONTEXT_WAN, (_match, label: string, symbol: string, numeric: string) => {
     const amount = Number(numeric) * 10000;
     if (!Number.isFinite(amount)) return _match;
-    return `${label} ${currency(amount)}`;
+    return `${label} ${amountText(amount, symbol)}`;
   });
 }
 
@@ -84,7 +86,7 @@ export function normalizeAiCardValue(label: string, value: unknown) {
   if (typeof value !== "string" || !AMOUNT_LABEL.test(label)) return value;
   const match = value.trim().match(WAN_AMOUNT);
   if (!match) return value;
-  const amount = Number(match[1]) * 10000;
+  const amount = Number(match[2]) * 10000;
   if (!Number.isFinite(amount)) return value;
-  return currency(amount);
+  return amountText(amount, match[1]);
 }

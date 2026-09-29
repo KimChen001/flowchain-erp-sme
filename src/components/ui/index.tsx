@@ -1,4 +1,5 @@
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
+import { useI18n } from "../../i18n/I18n";
 import React, { useEffect, useState } from "react";
 import { ArrowDownRight, ArrowLeft, ArrowUpRight, ChevronDown, History, Home, List, X } from "lucide-react";
 import { toast } from "sonner";
@@ -134,6 +135,7 @@ export function DocumentHistoryPanel({
   title?: string;
   refreshKey?: string;
 }) {
+  const { formatDateTime } = useI18n();
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [openDetailId, setOpenDetailId] = useState<string | null>(null);
@@ -181,7 +183,7 @@ export function DocumentHistoryPanel({
                       {auditActionLabel(entry.action)}
                     </div>
                     <div className="fc-caption mt-0.5" style={{ color: A.gray2 }}>
-                      {entry.timestamp ? new Date(entry.timestamp).toLocaleString("zh-CN") : "—"} · {entry.actor || "system"}
+                      {entry.timestamp && !Number.isNaN(new Date(entry.timestamp).getTime()) ? formatDateTime(entry.timestamp) : entry.timestamp || "—"} · {entry.actor || "system"}
                     </div>
                   </div>
                   <span className="fc-caption shrink-0" style={{ color: A.blue }}>{statusChange}</span>

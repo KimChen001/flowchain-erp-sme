@@ -6,6 +6,7 @@ import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
 import { RfqSupplierResponseDialog } from "./RfqSupplierResponseDialog";
 import { useI18n } from "../../i18n/I18n";
+import { formatLocaleAmount } from "../../lib/format";
 import type { ProcurementQuotationRevision, ProcurementRfqDocument, ProcurementRfqQuotation } from "./procurementTypes";
 
 type ReadState = "loading" | "loaded" | "notFound" | "unauthenticated" | "forbidden" | "error" | "network" | "malformed";
@@ -75,24 +76,22 @@ function exactDisplay(value: string, minimumFractionDigits = 0) {
   return fraction ? `${grouped}.${fraction}` : grouped;
 }
 
-function number(value: number | string | null | undefined) {
+function number(value: number | string | null | undefined, locale: string) {
   if (typeof value === "string") return exactDisplay(value) || "—";
-  return value == null || !Number.isFinite(value) ? "—" : value.toLocaleString("zh-CN", { maximumFractionDigits: 4 });
+  return value == null || !Number.isFinite(value) ? "—" : value.toLocaleString(locale, { maximumFractionDigits: 4 });
 }
 
-function money(value: number | string | null | undefined, currency = "CNY") {
+// No currency is assumed: an unknown currency shows the plain amount.
+function money(value: number | string | null | undefined, currency: string | null | undefined, locale: string) {
+  const code = String(currency || "").trim().toUpperCase();
   if (typeof value === "string") {
+    // Exact decimal strings keep every digit; the ISO code stands in for a symbol.
     const formatted = exactDisplay(value, 2);
     if (!formatted) return "—";
-    const symbols: Record<string, string> = { CNY: "¥", USD: "US$", EUR: "€", GBP: "£", JPY: "JP¥" };
-    return symbols[currency] ? `${symbols[currency]}${formatted}` : `${formatted} ${currency}`;
+    return code ? `${formatted} ${code}` : formatted;
   }
   if (value == null || !Number.isFinite(value)) return "—";
-  try {
-    return new Intl.NumberFormat("zh-CN", { style: "currency", currency, maximumFractionDigits: 2 }).format(value);
-  } catch {
-    return `${number(value)} ${currency}`;
-  }
+  return formatLocaleAmount(value, code, locale, { maximumFractionDigits: 2 });
 }
 
 function date(value?: string | null) {
@@ -141,20 +140,20 @@ function RelatedEvidence({ record }: { record: ProcurementRfqDocument }) {
 }
 
 function RevisionSummary({ revision, currency }: { revision: ProcurementQuotationRevision; currency: string }) {
-  const { language } = useI18n();
+  const { language, locale } = useI18n();
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
   return (
     <div className="border-t py-2 first:border-t-0" data-testid={`rfq-revision-${revision.id}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="font-medium">Revision {revision.revisionNumber} · {revision.isLatest ? tr("当前版本", "Current") : tr("历史版本", "Historical")}</span>
-        <span>{statusLabel(revision.status, QUOTATION_STATUS_LABELS, language)} · {money(revision.quotedAmount, revision.currency || currency)}</span>
+        <span>{statusLabel(revision.status, QUOTATION_STATUS_LABELS, language)} · {money(revision.quotedAmount, revision.currency || currency, locale)}</span>
       </div>
       <div className="mt-1 text-[11px]" style={{ color: A.sub }}>
         {date(revision.submittedAt || revision.createdAt)} · {revision.source || tr("未提供来源", "Source not provided")}
       </div>
       {revision.lines.map((line) => (
         <div key={line.id} className="mt-1 text-[11px]" style={{ color: A.sub }} data-testid={`rfq-revision-line-${line.id}`}>
-          {line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity)} {line.unit || ""} · {money(line.unitPrice, revision.currency || currency)}
+          {line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity, locale)} {line.unit || ""} · {money(line.unitPrice, revision.currency || currency, locale)}
         </div>
       ))}
     </div>
@@ -162,15 +161,15 @@ function RevisionSummary({ revision, currency }: { revision: ProcurementQuotatio
 }
 
 function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotation; currency: string }) {
-  const { language } = useI18n();
+  const { language, locale } = useI18n();
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
   const hasAuthority = quotation.authorityState === "revision_authoritative";
   return (
     <tr className="border-t align-top" data-testid={`rfq-quotation-${quotation.id}`}>
       <td className="p-3 font-medium">{quotation.id}</td>
-      <td className="p-3"><div>{quotation.supplierName || quotation.supplierId || tr("未提供", "Not provided")}</div>{quotation.lines.length > 0 && <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: A.sub }}>{quotation.lines.map((line) => <div key={line.id} data-testid={`rfq-quotation-line-${line.id}`}>{line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity)} {line.unit || ""} · {money(line.unitPrice, quotation.currency || currency)}</div>)}</div>}</td>
+      <td className="p-3"><div>{quotation.supplierName || quotation.supplierId || tr("未提供", "Not provided")}</div>{quotation.lines.length > 0 && <div className="mt-1 space-y-0.5 text-[11px]" style={{ color: A.sub }}>{quotation.lines.map((line) => <div key={line.id} data-testid={`rfq-quotation-line-${line.id}`}>{line.sku || line.itemName || line.itemId || line.id} · {number(line.quantity, locale)} {line.unit || ""} · {money(line.unitPrice, quotation.currency || currency, locale)}</div>)}</div>}</td>
       <td className="p-3">{hasAuthority ? statusLabel(quotation.status, QUOTATION_STATUS_LABELS, language) : tr("Revision 缺失", "Revision missing")}</td>
-      <td className="p-3 tabular-nums">{hasAuthority ? money(quotation.quotedAmount, quotation.currency || currency) : tr("不可用", "Unavailable")}</td>
+      <td className="p-3 tabular-nums">{hasAuthority ? money(quotation.quotedAmount, quotation.currency || currency, locale) : tr("不可用", "Unavailable")}</td>
       <td className="p-3">{hasAuthority ? <><div>{date(quotation.submittedAt)}</div><div className="mt-1 text-[11px]" style={{ color: A.sub }}>{tr("交期", "Delivery")}: {quotation.deliveryDate || tr("未提供", "Not provided")}</div><div className="text-[11px]" style={{ color: A.sub }}>{tr("付款", "Payment")}: {quotation.paymentTerms || tr("未提供", "Not provided")} · {tr("有效期", "Valid until")}: {quotation.validity || tr("未提供", "Not provided")}</div></> : <div style={{ color: A.sub }}>{tr("无权威商业字段", "No authoritative commercial fields")}</div>}</td>
       <td className="p-3">
         {quotation.revisions.length === 0
@@ -182,7 +181,7 @@ function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotat
 }
 
 function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload, onSuccessReload }: { record: ProcurementRfqDocument; canCompare: boolean; canCreate: boolean; canRevise: boolean; notice: string | null; onReload: () => Promise<void>; onSuccessReload: () => Promise<void> }) {
-  const { language } = useI18n();
+  const { language, locale } = useI18n();
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
   const [editor, setEditor] = useState<{ supplier: typeof record.suppliers.knownParticipants[number]; mode: "initial" | "append" } | null>(null);
   const quotationFor = (supplierId: string) => record.quotations.find((quotation) => quotation.supplierId === supplierId) || null;
@@ -246,9 +245,9 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
             <tbody>{record.lines.map((line) => <tr key={line.id} className="border-t" data-testid={`rfq-line-${line.id}`}>
               <td className="p-3 font-medium">{line.id}</td>
               <td className="p-3"><div>{line.itemName || "—"}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || line.itemId || "—"}</div></td>
-              <td className="p-3 tabular-nums">{number(line.quantity)}</td>
+              <td className="p-3 tabular-nums">{number(line.quantity, locale)}</td>
               <td className="p-3">{line.unit || "—"}</td>
-              <td className="p-3 tabular-nums">{money(line.targetUnitPrice, record.currency)}</td>
+              <td className="p-3 tabular-nums">{money(line.targetUnitPrice, record.currency, locale)}</td>
               <td className="p-3">{line.requiredDate || "—"}</td>
               <td className="p-3">{line.deliveryLocation || "—"}</td>
             </tr>)}</tbody>
@@ -273,7 +272,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
 
       <Card className="overflow-hidden" data-testid="rfq-quotations">
         <div className="flex items-center justify-between gap-3 border-b p-4"><h2 className="text-sm font-semibold">{tr("供应商报价", "Supplier quotations")}</h2><span className="text-xs" style={{ color: A.sub }}>{tr(`${record.quotations.length} 条报价 · latest 取最大 revisionNumber`, `${record.quotations.length} quotations · latest uses the highest revision number`)}</span></div>
-        {record.quotations.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有权威报价记录。", "This RFQ has no authoritative quotation records.")}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("报价 ID", "Quotation ID"), tr("供应商", "Supplier"), tr("状态", "Status"), tr("报价总额", "Quoted total"), tr("提交时间", "Submitted at"), "Revision"].map((label) => <th key={label} className="p-3 font-medium">{label}</th>)}</tr></thead><tbody>{record.quotations.map((quotation) => <QuotationRow key={quotation.id} quotation={quotation} currency={record.currency || "CNY"} />)}</tbody></table></div>}
+        {record.quotations.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有权威报价记录。", "This RFQ has no authoritative quotation records.")}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("报价 ID", "Quotation ID"), tr("供应商", "Supplier"), tr("状态", "Status"), tr("报价总额", "Quoted total"), tr("提交时间", "Submitted at"), "Revision"].map((label) => <th key={label} className="p-3 font-medium">{label}</th>)}</tr></thead><tbody>{record.quotations.map((quotation) => <QuotationRow key={quotation.id} quotation={quotation} currency={record.currency || ""} />)}</tbody></table></div>}
       </Card>
 
       <Card className="p-4" data-testid="rfq-data-limitations">

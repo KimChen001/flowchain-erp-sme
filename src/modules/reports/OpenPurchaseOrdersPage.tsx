@@ -44,7 +44,7 @@ const fieldClass = 'mt-1 w-full rounded-lg border border-slate-200 bg-white px-3
 const buttonClass = 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-40';
 
 export function OpenPurchaseOrdersPage() {
-  const { language, locale } = useI18n();
+  const { language, locale, timezone } = useI18n();
   const t = (value: string) => language === 'zh-CN' ? zh[value] || value : value;
   const [params, setParams] = useSearchParams();
   const [report, setReport] = useState<Report | null>(null);
@@ -98,7 +98,7 @@ export function OpenPurchaseOrdersPage() {
         { name: t('Purchase orders'), rows: rows.length ? rows : [{ [t('Scope')]: t('No orders match these filters.') }] },
         { name: t('Report scope'), rows: [{ [t('Generated at')]: result.generatedAt, [t('As of (UTC)')]: result.asOf, [t('Matching orders')]: result.total, [t('Scope')]: t(({ open: 'Open orders', all: 'All orders', overdue: 'Overdue', incomplete: 'Missing data' } as Record<string, string>)[scope]), [t('Order date from')]: params.get('from') || '', [t('Order date to')]: params.get('to') || '', [t('Supplier')]: params.get('supplier') || t('All suppliers'), [t('Currency')]: params.get('currency') || t('All currencies'), [t('Search PO, supplier or owner')]: params.get('search') || '', [t('FX converted')]: t('No') }] },
         { name: t('Metric definitions'), rows: definitions.map(value => ({ [t('Definition')]: t(value) })) },
-      ]);
+      ], timezone);
     } catch { setError('Could not export report. Please retry.'); } finally { setExporting(false); }
   };
   return <section className="space-y-4" data-testid="open-purchase-orders-report">
