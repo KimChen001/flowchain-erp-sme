@@ -72,7 +72,10 @@ test('master data navigation does not retain stale item detail state and hides u
     read('src/modules/master-data/ItemMasterWorkbench.tsx'),
   ])
   assert.match(app, /current\?\.source === "detailUrl" \? null : current/)
-  assert.match(masterData, /initialView !== "overview" && initialView !== "items"/)
+  // Item focus is handled by ItemMasterWorkbench; the page must not pull the
+  // user from another master data view onto the items tab.
+  assert.doesNotMatch(masterData, /setTab\("items"\)/)
+  assert.match(masterData, /if \(initialView !== "warehouses"\) return;/)
   assert.doesNotMatch(items, /可采购供应商/)
   assert.doesNotMatch(items, /SKU–供应商关系/)
   assert.doesNotMatch(items, /\/api\/master-data\/items\/.*\/suppliers/)

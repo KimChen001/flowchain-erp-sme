@@ -52,6 +52,14 @@ type ApiTaxCode = {
   id?: string;
   label?: string;
   rate?: number;
+  taxType?: string;
+  region?: string;
+  isDefault?: boolean;
+  status?: string;
+};
+
+type ApiCustomer = Partial<Omit<CustomerMaster, "creditStatus" | "status">> & {
+  creditStatus?: string;
   status?: string;
 };
 
@@ -61,7 +69,7 @@ type MasterDataApiSnapshot = {
   warehouses?: ApiMasterWarehouse[];
   paymentTerms?: ApiPaymentTerm[];
   taxCodes?: ApiTaxCode[];
-  customers?: CustomerMaster[];
+  customers?: ApiCustomer[];
 };
 
 export type MasterDataSnapshot = {
@@ -152,9 +160,9 @@ export function normalizeItemRows(
     return {
       sku: text(apiItem.sku || apiItem.itemId || apiItem.id, fallback?.sku || `ITEM-${index + 1}`),
       name: text(apiItem.itemName || apiItem.name, fallback?.name || text(apiItem.sku || apiItem.itemId || apiItem.id, `物料 ${index + 1}`)),
-      category: text(apiItem.category, fallback?.category || "未分类"),
+      category: text(apiItem.category, fallback?.category || ""),
       specification: fallback?.specification || "",
-      unit: text(apiItem.baseUnit || apiItem.baseUom, fallback?.unit || "件"),
+      unit: text(apiItem.baseUnit || apiItem.baseUom, fallback?.unit || ""),
       defaultWarehouse: text(apiItem.defaultWarehouseId, fallback?.defaultWarehouse || ""),
       defaultBin: fallback?.defaultBin || "",
       safetyStock: numberValue(fallback?.safetyStock, 0),
@@ -178,7 +186,7 @@ export function normalizeSupplierRows(
   if (!apiSuppliers) return fallbackSuppliers;
   return apiSuppliers.map((apiSupplier, index) => {
     const fallback = fallbackSupplier(fallbackSuppliers, apiSupplier, index);
-    const category = text(apiSupplier.categories?.[0], fallback?.category || "未分类");
+    const category = text(apiSupplier.categories?.[0], fallback?.category || "");
     return {
       code: text(apiSupplier.supplierCode || apiSupplier.id, fallback?.code || `SUP-${index + 1}`),
       name: text(apiSupplier.supplierName || apiSupplier.name, fallback?.name || `供应商 ${index + 1}`),
@@ -187,14 +195,15 @@ export function normalizeSupplierRows(
       email: fallback?.email || "",
       phone: fallback?.phone || "",
       paymentTerms: text(apiSupplier.paymentTermsId, fallback?.paymentTerms || ""),
-      currency: text(apiSupplier.defaultCurrency, fallback?.currency || "CNY"),
+      currency: text(apiSupplier.defaultCurrency, fallback?.currency || ""),
       taxId: fallback?.taxId || "",
       defaultTaxCode: fallback?.defaultTaxCode || "",
       rating: numberValue(apiSupplier.score, fallback?.rating || 0),
       onTimeRate: fallback?.onTimeRate || 0,
       qualityRate: fallback?.qualityRate || 0,
       riskStatus: riskStatus(apiSupplier.risk || fallback?.riskStatus),
-      certificationStatus: fallback?.certificationStatus || (apiSupplier.preferred ? "已认证" : "待复核"),
+      // Being a preferred supplier says nothing about certification.
+      certificationStatus: fallback?.certificationStatus || "",
       status: statusValue(backendStatus(apiSupplier.status || fallback?.status), ["启用", "待完善", "停用"] as const, "启用"),
     };
   });
@@ -212,11 +221,11 @@ export function normalizeWarehouseRows(
     return {
       warehouseCode: text(apiWarehouse.id, fallback?.warehouseCode || `WH-${index + 1}`),
       warehouseName: text(apiWarehouse.name, fallback?.warehouseName || text(apiWarehouse.id, `仓库 ${index + 1}`)),
-      zone: fallback?.zone || text(apiWarehouse.type, "默认库区"),
-      bin: fallback?.bin || text(apiWarehouse.id, `BIN-${index + 1}`),
+      zone: fallback?.zone || "",
+      bin: fallback?.bin || "",
       capacity: numberValue(fallback?.capacity, 0),
       utilization: numberValue(fallback?.utilization, 0),
-      temperatureRequirement: fallback?.temperatureRequirement || "常温",
+      temperatureRequirement: fallback?.temperatureRequirement || "",
       qaStatus: blocked ? "冻结" : fallback?.qaStatus || "可用",
       available: blocked ? false : fallback?.available ?? true,
       owner: fallback?.owner || "",
@@ -235,8 +244,10 @@ export function normalizePaymentTermRows(
       code: text(apiTerm.id, fallback?.code || `TERM-${index + 1}`),
       name: text(apiTerm.label, fallback?.name || text(apiTerm.id, `付款条款 ${index + 1}`)),
       netDays: numberValue(apiTerm.days, fallback?.netDays || 0),
-      discountRule: fallback?.discountRule || "无现金折扣",
-      dueDateRule: fallback?.dueDateRule || `发票日期后 ${numberValue(apiTerm.days, fallback?.netDays || 0)} 天到期`,
+      discountRule: fallback?.discountRule || "",
+      // Empty means the table derives the rule from netDays in the active
+      // language instead of storing one language here.
+      dueDateRule: fallback?.dueDateRule || "",
       status: reviewStatus(apiTerm.status || fallback?.status),
       description: fallback?.description || "",
     };
@@ -254,13 +265,35 @@ export function normalizeTaxCodeRows(
       code: text(apiCode.id, fallback?.code || `TAX-${index + 1}`),
       name: text(apiCode.label, fallback?.name || text(apiCode.id, `税码 ${index + 1}`)),
       rate: numberValue(apiCode.rate, fallback?.rate || 0),
-      type: fallback?.type || (numberValue(apiCode.rate, 0) > 0 ? "进项税" : "免税"),
-      region: fallback?.region || "中国大陆",
-      isDefault: fallback?.isDefault ?? index === 0,
+      // Only what the workspace recorded: no country or tax regime is assumed.
+      type: fallback?.type || text(apiCode.taxType),
+      region: fallback?.region || text(apiCode.region),
+      isDefault: fallback?.isDefault ?? apiCode.isDefault === true,
       status: reviewStatus(apiCode.status || fallback?.status),
       description: fallback?.description || "",
     };
   });
+}
+
+function creditStatus(value: unknown): CustomerMaster["creditStatus"] {
+  const raw = text(value).toLowerCase();
+  if (["normal", "good", "正常"].includes(raw)) return "正常";
+  if (["restricted", "blocked", "hold", "受限"].includes(raw)) return "受限";
+  if (["pending", "review", "待评估"].includes(raw)) return "待评估";
+  return "";
+}
+
+export function normalizeCustomerRows(apiCustomers: ApiCustomer[] | undefined): CustomerMaster[] {
+  return (apiCustomers || []).map((customer, index) => ({
+    code: text(customer.code, `CUS-${index + 1}`),
+    name: text(customer.name, text(customer.code)),
+    contact: text(customer.contact),
+    phone: text(customer.phone),
+    address: text(customer.address),
+    creditStatus: creditStatus(customer.creditStatus),
+    paymentTerms: text(customer.paymentTerms),
+    status: ["inactive", "disabled", "停用"].includes(text(customer.status).toLowerCase()) ? "停用" : "启用",
+  }));
 }
 
 export type AsyncDataStatus = "loading" | "ready_with_data" | "ready_empty" | "unauthenticated" | "forbidden" | "not_found" | "server_error" | "network_error";
@@ -282,7 +315,7 @@ export async function fetchMasterDataSnapshot(fallback: MasterDataSnapshot): Pro
   const warehouses = arrayField<ApiMasterWarehouse>(payload, "warehouses");
   const paymentTerms = arrayField<ApiPaymentTerm>(payload, "paymentTerms");
   const taxCodes = arrayField<ApiTaxCode>(payload, "taxCodes");
-  const customers = arrayField<CustomerMaster>(payload, "customers");
+  const customers = arrayField<ApiCustomer>(payload, "customers");
   const apiSnapshot: MasterDataApiSnapshot = { items, suppliers, customers, warehouses, paymentTerms, taxCodes };
   const normalizedSuppliers = normalizeSupplierRows(apiSnapshot.suppliers, fallback.suppliers);
   return {
@@ -291,6 +324,6 @@ export async function fetchMasterDataSnapshot(fallback: MasterDataSnapshot): Pro
     warehouses: normalizeWarehouseRows(apiSnapshot.warehouses, fallback.warehouses),
     paymentTerms: normalizePaymentTermRows(apiSnapshot.paymentTerms, fallback.paymentTerms),
     taxCodes: normalizeTaxCodeRows(apiSnapshot.taxCodes, fallback.taxCodes),
-    customers: apiSnapshot.customers,
+    customers: normalizeCustomerRows(apiSnapshot.customers),
   };
 }

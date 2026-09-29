@@ -121,8 +121,8 @@ export async function seedLocalDemo(prisma, env = process.env) {
     for (const [id, code, name, days] of [['LOCAL-DEMO-NET30', 'NET30', 'Net 30', 30], ['LOCAL-DEMO-COD', 'DUE', 'Due on receipt', 0]]) {
       await tx.paymentTerm.upsert({ where: { id }, create: { id, tenantId, code, name, days, metadata: marker }, update: { code, name, days, metadata: marker } })
     }
-    for (const [id, code, name, rate] of [['LOCAL-DEMO-TAX13', 'SALES825', 'Sales tax 8.25%', 0.0825], ['LOCAL-DEMO-TAX0', 'TAXEXEMPT', 'Tax exempt', 0]]) {
-      await tx.taxCode.upsert({ where: { id }, create: { id, tenantId, code, name, rate, taxType: 'sales_tax', region: 'US', metadata: marker }, update: { code, name, rate, taxType: 'sales_tax', region: 'US', metadata: marker } })
+    for (const [id, code, name, rate, taxType] of [['LOCAL-DEMO-TAX13', 'SALES825', 'Sales tax 8.25%', 0.0825, 'sales_tax'], ['LOCAL-DEMO-TAX0', 'TAXEXEMPT', 'Tax exempt', 0, 'exempt']]) {
+      await tx.taxCode.upsert({ where: { id }, create: { id, tenantId, code, name, rate, taxType, region: 'US', metadata: marker }, update: { code, name, rate, taxType, region: 'US', metadata: marker } })
     }
     for (const document of knowledgeDocuments) {
       await tx.aiKnowledgeDocument.upsert({

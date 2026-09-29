@@ -156,6 +156,9 @@ function mapTaxCode(record = {}) {
     id: record.code || record.id,
     label: record.name || record.code || record.id,
     rate: numberFrom(record.rate, 0),
+    taxType: text(record.taxType || meta.taxType),
+    region: text(record.region || meta.region),
+    isDefault: meta.isDefault === true,
     status: meta.status || 'active',
     sourceType: meta.sourceType || 'database',
   }
@@ -168,13 +171,14 @@ function mapCustomer(record = {}) {
     code: text(payload.code, record.recordKey),
     name: text(payload.name, record.recordKey),
     status: text(payload.status, 'active'),
-    currency: text(payload.currency, 'CNY'),
+    // Only recorded values: no currency or credit standing is assumed.
+    currency: text(payload.currency),
     contact: text(payload.contact),
     phone: text(payload.phone),
     email: text(payload.email),
     address: text(payload.address),
     paymentTerms: text(payload.paymentTerms),
-    creditStatus: text(payload.creditStatus, '正常'),
+    creditStatus: text(payload.creditStatus),
     sourceType: 'database',
   }
 }
