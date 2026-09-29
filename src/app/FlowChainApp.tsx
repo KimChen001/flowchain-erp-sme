@@ -111,11 +111,21 @@ const ReportsPanel = React.lazy(() => import("../modules/reports/Page"));
 const ImportsPanel = React.lazy(() => import("../modules/imports/Page"));
 const UniversalIntakePanel = React.lazy(() => import("../modules/intake/Page"));
 
-function actionDraftErrorMessage(error: unknown) {
+const DRAFT_MESSAGES = {
+  unavailable: { en: "A draft preview is not available yet. Add more context and try again.", zh: "草稿预览暂不可用，请补充上下文后重试。" },
+  unsupported: { en: "This action needs human review and has no draft preview yet.", zh: "当前动作需要人工复核，尚未接入草稿预览。" },
+  previewBoundary: { en: "Draft preview problem: the service did not confirm the draft is preview-only.", zh: "草稿预览边界异常：接口未返回 previewOnly。" },
+  saved: { en: "Draft saved", zh: "草稿已保存" },
+  savedDetail: { en: "Only a draft for review was kept. No business document was created.", zh: "仅保存待复核草稿，不会创建业务单据。" },
+  createsDocument: { en: "Draft problem: the service said saving would create a business document, so nothing was kept.", zh: "留存边界异常：接口声明会创建业务单据。" },
+};
+const draftMessage = (key: keyof typeof DRAFT_MESSAGES, language: string) => DRAFT_MESSAGES[key][language === "en-US" ? "en" : "zh"];
+
+function actionDraftErrorMessage(error: unknown, language: string) {
   const message = error instanceof Error ? error.message.trim() : "";
-  if (!message) return "草稿预览暂不可用，请补充上下文后重试。";
+  if (!message) return draftMessage("unavailable", language);
   if (/^\s*[{[]/.test(message) || /<html|stack|trace| at /i.test(message)) {
-    return "当前动作需要人工复核，尚未接入草稿预览。";
+    return draftMessage("unsupported", language);
   }
   return message;
 }
@@ -1133,9 +1143,9 @@ export default function FlowChainApp() {
       });
       setDraftPreview(response.draft);
       if (!response.previewOnly)
-        setDraftError("草稿预览边界异常：接口未返回 previewOnly。");
+        setDraftError(draftMessage("previewBoundary", language));
     } catch (error) {
-      setDraftError(actionDraftErrorMessage(error));
+      setDraftError(actionDraftErrorMessage(error, language));
     } finally {
       setDraftLoading(false);
     }
@@ -1152,11 +1162,11 @@ export default function FlowChainApp() {
       body: JSON.stringify({ draft }),
     });
     if (response.createsBusinessDocument) {
-      throw new Error("留存边界异常：接口声明会创建业务单据。");
+      throw new Error(draftMessage("createsDocument", language));
     }
     setDraftPreview(response.draft);
-    toast.success("草稿已保存", {
-      description: "仅保存待复核草稿，不会创建业务单据。",
+    toast.success(draftMessage("saved", language), {
+      description: draftMessage("savedDetail", language),
     });
   }
 
@@ -1676,7 +1686,7 @@ export default function FlowChainApp() {
                               const activeResult =
                                 rowIndex === activeSearchIndex;
                               const hint = result.evidence?.[0]
-                                ? `${result.evidence[0].label}: ${result.evidence[0].value}`
+                                ? `${workspaceCopy(result.evidence[0].label, language)}: ${result.evidence[0].value}`
                                 : result.matchedFields.slice(0, 2).join(" / ");
                               return (
                                 <button

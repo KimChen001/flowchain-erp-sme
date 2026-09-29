@@ -351,7 +351,7 @@ const en: Record<keyof typeof zh, string> = {
   "settings.visibleRoles": "Roles that can see {module}",
   "settings.level.allow": "Allowed",
   "settings.level.review_required": "Allowed after review",
-  "settings.level.draft_only": "Drafts only, confirmed by a person",
+  "settings.level.draft_only": "Drafts, confirmed by a person",
   "settings.level.deny": "Not allowed",
   "settings.capability.answer": "Business questions and explanations",
   "settings.capability.draft": "Prepare business drafts",
