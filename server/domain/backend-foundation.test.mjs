@@ -134,7 +134,7 @@ test('server health response omits provider keys models and proxy diagnostics by
   assert.ok(handlerSource.indexOf('handleRuntimeRoutes({') < handlerSource.indexOf('resolveRequestIdentity('))
   assert.doesNotMatch(healthBlock, /OPENAI_API_KEY|ARK_API_KEY|DOUBAO_API_KEY|OPENAI_MODEL|ARK_MODEL|DOUBAO_MODEL/)
   assert.doesNotMatch(healthBlock, /DATABASE_URL|POSTGRES_URL|OPENAI|ARK|DOUBAO|openai:|doubao:|(?<![A-Za-z])(?:provider|model|proxy|secret|token|password)\s*:/i)
-  assert.match(errorBoundary, /sendInternalServerError\(res, send, error\)/)
+  assert.match(errorBoundary, /sendInternalServerError\(res, send, error[,)]/)
 })
 
 test('database mode guard is before legacy auth and capability gate is registered', () => {
@@ -242,6 +242,19 @@ test('safe error summaries redact secrets and stay bounded for logs', () => {
   assert.ok(summary.length <= 240)
   assert.doesNotMatch(summary, /abc\.def\.ghi|sk-realish|postgres:\/\/user:pass/)
   assert.match(summary, /\[redacted\]/)
+})
+
+test('safe error summaries redact every credential-shaped name, not only the first providers', () => {
+  const summary = sanitizeErrorSummary(new Error([
+    'DASHSCOPE_API_KEY=dash-secret',
+    'FLOWCHAIN_AI_PROVIDER_API_KEY: provider-secret',
+    'FLOWCHAIN_AI_EMBEDDING_API_KEY=embedding-secret',
+    'FLOWCHAIN_LOCAL_SESSION_SECRET=session-secret',
+    'password=hunter2',
+  ].join(' ')))
+
+  assert.doesNotMatch(summary, /dash-secret|provider-secret|embedding-secret|session-secret|hunter2/)
+  assert.equal(summary.match(/\[redacted\]/g)?.length, 5)
 })
 
 test('GET /api/me returns current user, tenant, and permissions context', async () => {

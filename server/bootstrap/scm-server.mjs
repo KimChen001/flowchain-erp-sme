@@ -7,6 +7,7 @@ import { loadEnv } from "../config/env.mjs";
 import { validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import { validateDatabasePersistenceConfig } from "../persistence/persistence-config.mjs";
 import { createHttpRequestHandler } from "./http-request-handler.mjs";
+import { requestLogEnabled, withRequestLogging } from "./request-logging.mjs";
 import { withServerErrorBoundary } from "./server-error-boundary.mjs";
 import {
   createLocalSessionSecret,
@@ -738,7 +739,14 @@ function supplierPerformance(db) {
 function supplierRecommendations() {
   return null;
 }
-export function createScmServer({ readinessCheck = checkRuntimeReadiness } = {}) {
+// requestLogger enables the one-line-per-request access log. It is off unless
+// supplied, so in-process test servers stay quiet; startScmServer supplies it.
+// Unhandled errors are always logged, to errorLogger or the console.
+export function createScmServer({
+  readinessCheck = checkRuntimeReadiness,
+  requestLogger = null,
+  errorLogger,
+} = {}) {
   validateProductionRuntimeConfig(process.env);
   validateDatabasePersistenceConfig(process.env);
   const localSessions = new Map();
@@ -791,13 +799,18 @@ export function createScmServer({ readinessCheck = checkRuntimeReadiness } = {})
     },
     env: process.env,
   });
-  return http.createServer(withServerErrorBoundary(handleRequest));
+  return http.createServer(withRequestLogging(
+    withServerErrorBoundary(handleRequest, { logger: errorLogger }),
+    { logger: requestLogger },
+  ));
 }
 
 export function startScmServer(listenPort = port, options = {}) {
   const logger = options.logger || console;
   const server = createScmServer({
     readinessCheck: options.readinessCheck || checkRuntimeReadiness,
+    requestLogger: requestLogEnabled(process.env) ? logger : null,
+    errorLogger: logger,
   });
   const lifecycle = createServerLifecycle({
     server,
