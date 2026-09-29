@@ -1012,7 +1012,7 @@ model RfqLine {
   quotationRevisionLines SupplierQuotationRevisionLine[]
 
   @@unique([tenantId, id])
-  @@index([rfqId])
+  @@index([tenantId, rfqId])
 }
 
 model SupplierQuotation {
@@ -2350,8 +2350,6 @@ model BankReconciliationBankLineAllocation {
   bankStatementLine BankStatementLine       @relation(fields: [tenantId, bankStatementLineId], references: [tenantId, id], onDelete: Restrict, map: "BankReconciliationBankLineAllocation_tenantId_bankStatementLine")
 
   @@unique([reconciliationGroupId, bankStatementLineId], map: "BankReconciliationBankLineAllocation_reconciliationGroupId_bank")
-  // PostgreSQL truncated this index and the bankStatementLine FK to the same name, which Prisma
-  // cannot declare twice. The rename Prisma wants is allowed in scripts/check-prisma-schema-drift.mjs.
   @@index([tenantId, bankStatementLineId])
 }
 

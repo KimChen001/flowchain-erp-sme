@@ -21,14 +21,10 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 // Statements `prisma migrate diff` emits for objects the schema cannot
-// express. Each entry is the exact statement (whitespace collapsed) and why
-// Prisma cannot express it. Do not add entries for drift the schema can fix.
-export const ALLOWED_DRIFT = [
-  {
-    statement: 'ALTER INDEX "BankReconciliationBankLineAllocation_tenantId_bankStatementLine" RENAME TO "BankReconciliationBankLineAllocation_tenantId_bankStatement_idx";',
-    reason: 'PostgreSQL truncated both the (tenantId, bankStatementLineId) index and the (tenantId, bankStatementLineId) foreign key to the same 63-character name. PostgreSQL keeps index and constraint names in separate namespaces, but Prisma requires them to be unique per model, so the schema maps the foreign key and leaves the index on its default name.',
-  },
-]
+// express, as { statement, reason }: the exact statement (whitespace
+// collapsed) and why Prisma cannot express it. Do not add entries for drift
+// the schema or a migration can fix.
+export const ALLOWED_DRIFT = []
 
 const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, '..')

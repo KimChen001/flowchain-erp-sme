@@ -41,13 +41,11 @@ When the check fails, fix it in one of two ways:
   `map:` with the truncated name.
 - Add a migration if the database itself is wrong.
 
-Add an `ALLOWED_DRIFT` entry, with its reason, only for something Prisma
-cannot express. Current entries:
-
-- `BankReconciliationBankLineAllocation`: PostgreSQL truncated both the
-  `(tenantId, bankStatementLineId)` index and the foreign key on the same
-  columns to the same name. Prisma requires names to be unique per model, so
-  the schema maps the foreign key, and Prisma would rename the index.
+Add an `ALLOWED_DRIFT` entry, with its reason, only when Prisma cannot express
+an object and a migration should not change it. The list is currently empty.
+One such case came up: PostgreSQL had truncated an index and a foreign key to
+the same name, which Prisma cannot declare. It was fixed by renaming the index
+in `20260929020000_bank_line_allocation_index_name`.
 
 The diff does not cover these objects, which Prisma leaves alone:
 
