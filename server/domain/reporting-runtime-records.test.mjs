@@ -17,7 +17,7 @@ test('report runtime loads tenant-scoped receipts and invoice amounts instead of
   const prisma = Object.fromEntries(Object.entries({
     purchaseOrder: [{ id: 'PO', status: 'fully_received', currency: 'USD', amount: 120, lines: [] }],
     receivingDocument: [{ id: 'GRN', poId: 'PO', status: 'received', postingStatus: 'unposted', lines: [] }],
-    supplierInvoice: [{ id: 'INV', relatedPoId: 'PO', relatedGrnId: 'GRN', totalAmount: '120.50', currency: 'USD', status: 'draft', lines: [] }],
+    supplierInvoice: [{ id: 'INV', relatedPoId: 'PO', relatedGrnId: 'GRN', totalAmount: '120.50', currency: 'USD', status: 'submitted', lines: [] }],
   }).map(([key, rows]) => [key, { findMany: async query => { queries.push(query); return rows; } }]));
   const procurementRuntime = createDbProcurementRuntimeRepository({ prisma });
   const context = await createBusinessReadContextService({ repositories: { procurementRuntime } }).read({ tenantId: 'tenant-a' });

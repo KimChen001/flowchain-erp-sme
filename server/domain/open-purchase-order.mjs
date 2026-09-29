@@ -1,4 +1,4 @@
-import { isPurchaseOrderReceivable } from './procurement-status-authority.mjs'
+import { PURCHASE_ORDER_STATUS, isPurchaseOrderReceivable, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 
 // The single definition of an open purchase order in FlowChain reporting:
 // a purchase order that has been committed to the supplier and still has
@@ -32,6 +32,20 @@ export function purchaseOrderLineRemaining(line) {
   const received = quantity(line?.receivedQuantity)
   if (ordered === null || received === null) return null
   return Math.round(Math.max(0, ordered - received) * 10000) / 10000
+}
+
+// A committed purchase order is spend the business has agreed with the
+// supplier: approved, issued, partially received or fully received after alias
+// normalisation. Drafts and pending approvals are not agreed yet; rejected and
+// cancelled orders never will be. Committed spend totals use this, so they do
+// not count 130000 of drafts and cancellations next to 1000 of real orders.
+export function isCommittedPurchaseOrder(purchaseOrder) {
+  if (isPurchaseOrderReceivable(purchaseOrder?.status)) return true
+  try {
+    return normalizeProcurementAuthorityStatus('purchaseOrder', purchaseOrder?.status) === PURCHASE_ORDER_STATUS.FULLY_RECEIVED
+  } catch {
+    return false
+  }
 }
 
 export function isOpenPurchaseOrder(purchaseOrder) {
