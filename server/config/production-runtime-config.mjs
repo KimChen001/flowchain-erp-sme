@@ -9,6 +9,29 @@ function issue(key, code, message) {
   return { key, code, message };
 }
 
+// Values shipped in the example env files, or shaped like them, are not
+// secrets. A signing secret anyone can read would let them forge sessions.
+const PLACEHOLDER_SECRET_PATTERN = /^(replace[-_ ]?with|replace[-_ ]?me|change[-_ ]?me|your[-_ ]|placeholder|example[-_ ])/i;
+
+function validateIdentityConfiguration(env, issues) {
+  // The API gate trusts x-flowchain-user / x-flowchain-role headers when
+  // either switch is on (local-signed-session.mjs), so production refuses both.
+  const nodeEnv = text(env.NODE_ENV).toLowerCase();
+  if (nodeEnv === "test") {
+    issues.push(issue("NODE_ENV", "test_mode_forbidden", "NODE_ENV=test trusts test identity headers and must not be used in production."));
+  } else if (nodeEnv !== "production") {
+    issues.push(issue("NODE_ENV", "production_required", "The production deployment profile requires NODE_ENV=production."));
+  }
+  if (enabled(env.FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS)) {
+    issues.push(issue("FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS", "test_identity_forbidden", "Test identity headers must be disabled in production."));
+  }
+
+  const sessionSecret = text(env.FLOWCHAIN_LOCAL_SESSION_SECRET);
+  if (!sessionSecret) issues.push(issue("FLOWCHAIN_LOCAL_SESSION_SECRET", "required", "The local session signing secret is required."));
+  else if (PLACEHOLDER_SECRET_PATTERN.test(sessionSecret)) issues.push(issue("FLOWCHAIN_LOCAL_SESSION_SECRET", "placeholder", "The local session signing secret is still a placeholder; generate a random value."));
+  else if (sessionSecret.length < 32) issues.push(issue("FLOWCHAIN_LOCAL_SESSION_SECRET", "too_short", "The local session signing secret must contain at least 32 characters."));
+}
+
 function validateMobileSyncSecrets(env, issues) {
   if (!enabled(env.FLOWCHAIN_ENABLE_DB_MOBILE_SYNC)) return;
 
@@ -65,7 +88,10 @@ export class ProductionRuntimeConfigError extends Error {
 }
 
 export function validateProductionRuntimeConfig(env = process.env) {
-  const production = text(env.NODE_ENV).toLowerCase() === "production";
+  // The release image sets FLOWCHAIN_DEPLOYMENT_PROFILE=production, so
+  // overriding NODE_ENV there is caught instead of skipping validation.
+  const production = text(env.NODE_ENV).toLowerCase() === "production"
+    || text(env.FLOWCHAIN_DEPLOYMENT_PROFILE).toLowerCase() === "production";
   if (!production) return { production: false, validated: true };
 
   const issues = [];
@@ -75,9 +101,7 @@ export function validateProductionRuntimeConfig(env = process.env) {
   }
   if (!text(env.FLOWCHAIN_DEFAULT_TENANT_ID)) issues.push(issue("FLOWCHAIN_DEFAULT_TENANT_ID", "required", "The default tenant id is required."));
 
-  const sessionSecret = text(env.FLOWCHAIN_LOCAL_SESSION_SECRET);
-  if (!sessionSecret) issues.push(issue("FLOWCHAIN_LOCAL_SESSION_SECRET", "required", "The local session signing secret is required."));
-  else if (sessionSecret.length < 32) issues.push(issue("FLOWCHAIN_LOCAL_SESSION_SECRET", "too_short", "The local session signing secret must contain at least 32 characters."));
+  validateIdentityConfiguration(env, issues);
 
   if (!text(env.FLOWCHAIN_COMMIT_SHA)) issues.push(issue("FLOWCHAIN_COMMIT_SHA", "required", "The immutable build commit SHA is required."));
   validateAttachmentConfiguration(env, issues);
