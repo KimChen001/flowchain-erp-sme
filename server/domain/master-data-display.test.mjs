@@ -13,7 +13,7 @@ async function loadCopyModule() {
   const dir = await mkdtemp(path.join(tmpdir(), 'master-data-copy-'))
   const outfile = path.join(dir, 'copy.mjs')
   await build({
-    entryPoints: ['src/modules/master-data/masterDataCopy.ts'],
+    entryPoints: ['src/modules/master-data/masterDataFormat.ts'],
     outfile, bundle: true, platform: 'node', format: 'esm',
     external: ['react', 'react-dom'], logLevel: 'silent', jsx: 'automatic',
   })
@@ -50,7 +50,7 @@ test('tax types, due rules and statuses render in the active language', async ()
 })
 
 test('every English master data label has a Chinese translation', async () => {
-  const source = await import('node:fs/promises').then(({ readFile }) => readFile('src/modules/master-data/masterDataCopy.ts', 'utf8'))
+  const source = await import('node:fs/promises').then(({ readFile }) => readFile('src/modules/master-data/masterDataFormat.ts', 'utf8'))
   const tables = await Promise.all(['MasterDataTables.tsx', 'StandardMasterTables.tsx', 'export.ts', 'Page.tsx'].map((file) =>
     import('node:fs/promises').then(({ readFile }) => readFile(`src/modules/master-data/${file}`, 'utf8'))))
   const { masterDataCopy } = await loadCopyModule()
