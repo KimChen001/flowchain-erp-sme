@@ -118,7 +118,6 @@
     "pilot:setup:demo": "node scripts/setup-local-demo.mjs",
     "pilot:setup:scenario": "node scripts/setup-local-scenario.mjs",
     "pilot:check": "node scripts/check-pilot-readiness.mjs",
-    "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio"

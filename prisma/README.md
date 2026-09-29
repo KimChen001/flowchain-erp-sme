@@ -7,13 +7,19 @@ database-only and requires `FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING=true`.
 ## Commands
 
 - `npm run db:generate`: generate Prisma Client.
-- `npm run db:push`: push schema to an explicitly configured database.
+- `npm run db:migrate:deploy`: apply the committed migrations.
 - `npm run db:migrate`: create/apply a development migration.
 - `npm run db:studio`: open Prisma Studio.
 - `npm run db:check-drift`: fail if `schema.prisma` no longer describes what
   `migrations/` creates. Needs no `DATABASE_URL`; see below.
 
 All commands require an explicit `DATABASE_URL` through `prisma.config.ts`, except `db:check-drift`. Normal `npm test`, `npm run typecheck`, and `npm run build` do not require a database.
+
+There is deliberately no `db:push` script. `prisma db push` skips the
+migration history and shapes the database from `schema.prisma` alone. On a new
+database it leaves out what only the migrations create: check constraints,
+triggers, partial and expression indexes, and the optional pgvector column. On a
+migrated pgvector database it drops that column. Use `npm run db:migrate:deploy`.
 
 ## Schema drift check
 
@@ -58,8 +64,9 @@ The diff does not cover these objects, which Prisma leaves alone:
 pgvector extension is installed (`20260910100000_optional_pgvector_knowledge`
 and `server/domain/ai-pgvector-store.mjs`). They are intentionally absent from
 `schema.prisma`. The embedded check database has no pgvector, so it cannot see
-them. `prisma db push` against a pgvector database would still drop that
-column.
+them. When the development database server has pgvector, `npm run db:migrate`
+puts `ALTER TABLE "AiKnowledgeChunk" DROP COLUMN "embeddingVector"` into every
+new migration. Delete that statement before committing the migration.
 
 ## Migration rollout
 
