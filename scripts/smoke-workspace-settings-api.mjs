@@ -104,13 +104,17 @@ try {
 
   let workspace = await request(base, "/api/workspace", { token });
   assert.equal(workspace.defaultLanguage, "en-US");
-  assert.equal(workspace.locale, "zh-CN");
-  workspace = await request(base, "/api/workspace", {
-    token, method: "PATCH", body: { ...workspace, companyName: "FlowChain Operations", workspaceName: "Operations Workspace", defaultLanguage: "en-US", locale: "en-US", timezone: "America/New_York", baseCurrency: "CNY" },
-  });
-  assert.equal(workspace.defaultLanguage, "en-US");
   assert.equal(workspace.locale, "en-US");
   assert.equal(workspace.timezone, "America/New_York");
+  assert.equal(workspace.baseCurrency, "USD");
+  assert.equal(workspace.countryCode, "US");
+  workspace = await request(base, "/api/workspace", {
+    token, method: "PATCH", body: { ...workspace, companyName: "FlowChain Operations", workspaceName: "Operations Workspace", defaultLanguage: "en-US", locale: "zh-CN", timezone: "America/Chicago", baseCurrency: "CNY" },
+  });
+  assert.equal(workspace.defaultLanguage, "en-US");
+  assert.equal(workspace.locale, "zh-CN");
+  assert.equal(workspace.timezone, "America/Chicago");
+  assert.equal(workspace.baseCurrency, "CNY");
   assert.equal((await request(base, "/api/me/localization", { token })).effectiveLanguage, "en-US");
 
   let profile = await request(base, "/api/me/profile", { token });
@@ -121,8 +125,8 @@ try {
   assert.equal(profile.languagePreference, null);
   const followed = await request(base, "/api/me/localization", { token });
   assert.equal(followed.effectiveLanguage, "en-US");
-  assert.equal(followed.locale, "en-US");
-  assert.equal(followed.timezone, "America/New_York");
+  assert.equal(followed.locale, "zh-CN");
+  assert.equal(followed.timezone, "America/Chicago");
 
   const settings = await request(base, "/api/settings-runtime", { token });
   for (const name of ["Return Request", "Return Authorization", "Return Posting", "Supplier Invoice", "Customer Invoice", "Credit Memo / Credit Note"]) {
@@ -152,8 +156,9 @@ try {
   const persistedWorkspace = await request(base, "/api/workspace", { token });
   const persistedSettings = await request(base, "/api/settings-runtime", { token });
   assert.equal(persistedWorkspace.defaultLanguage, "en-US");
-  assert.equal(persistedWorkspace.locale, "en-US");
-  assert.equal(persistedWorkspace.timezone, "America/New_York");
+  assert.equal(persistedWorkspace.locale, "zh-CN");
+  assert.equal(persistedWorkspace.timezone, "America/Chicago");
+  assert.equal(persistedWorkspace.baseCurrency, "CNY");
   assert.equal(persistedSettings.numbering.rules.find(rule => rule.id === "NUM-RR").prefix, "RTR");
   console.log("Workspace settings API acceptance: 1 passed, 0 failed, 0 skipped");
 } finally {

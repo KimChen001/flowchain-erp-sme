@@ -11,7 +11,7 @@ test('English rollout resets existing UI preferences and allows later Chinese se
   await client.connect()
   const id = `language-${randomUUID()}`
   try {
-    await client.query(`INSERT INTO "Tenant" (id, name, "defaultLanguage", locale, timezone, currency, "updatedAt") VALUES ($1, 'Language test', 'zh-CN', 'zh-CN', 'Asia/Shanghai', 'CNY', NOW())`, [id])
+    await client.query(`INSERT INTO "Tenant" (id, name, "defaultLanguage", "countryCode", locale, timezone, currency, "updatedAt") VALUES ($1, 'Language test', 'zh-CN', 'CN', 'zh-CN', 'Asia/Shanghai', 'CNY', NOW())`, [id])
     await client.query(`INSERT INTO "User" (id, "tenantId", email, name, "languagePreference", "updatedAt") VALUES ($1, $2, 'language@example.com', '中文姓名', 'zh-CN', NOW())`, [`${id}-user`, id])
     const migration = readFileSync(new URL('../../prisma/migrations/20260908120000_english_default_interface/migration.sql', import.meta.url), 'utf8')
     await client.query(migration)
@@ -21,7 +21,7 @@ test('English rollout resets existing UI preferences and allows later Chinese se
     assert.equal(user.languagePreference, 'en-US')
     assert.equal(tenant.version, 1)
     assert.equal(user.version, 1)
-    assert.deepEqual([tenant.locale, tenant.timezone, tenant.currency, user.name], ['zh-CN', 'Asia/Shanghai', 'CNY', '中文姓名'])
+    assert.deepEqual([tenant.countryCode, tenant.locale, tenant.timezone, tenant.currency, user.name], ['CN', 'zh-CN', 'Asia/Shanghai', 'CNY', '中文姓名'])
     await client.query(`UPDATE "User" SET "languagePreference" = 'zh-CN' WHERE id = $1`, [`${id}-user`])
     assert.equal((await client.query('SELECT "languagePreference" FROM "User" WHERE id = $1', [`${id}-user`])).rows[0].languagePreference, 'zh-CN')
     await client.query(`INSERT INTO "Tenant" (id, name, "updatedAt") VALUES ($1, 'New workspace', NOW())`, [`${id}-new`])
