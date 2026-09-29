@@ -122,7 +122,7 @@ export async function executeBusinessQueryPlan(planCandidate, context = {}) {
     clarification: { needed: true, question: unsupported ? "当前查询尚不支持该状态或分组条件。请按供应商查询未结清事项，或使用本周时间范围。" : plan.clarificationQuestion, questionEn: unsupported ? "This status or grouping filter is not supported yet. Ask for outstanding supplier items, or use a current-week time window." : null },
     executedTools: [],
   }
-  const timeWindow = resolveBusinessTimeWindow(plan.filters.timeWindow, { now: context.now || new Date(), timezone: context.timezone || 'UTC', expression: context.message || '' })
+  const timeWindow = resolveBusinessTimeWindow(plan.filters.timeWindow, { now: context.now || new Date(), timezone: context.timezone || 'America/New_York', expression: context.message || '' })
   if (!context.summaryService || typeof context.summaryService.read !== 'function') throw new Error('summaryService.read is required')
   const summary = await context.summaryService.read({ timeWindow, filters: plan.filters }, context)
   let rows = scopeRows(summary.items || [], plan.scope)

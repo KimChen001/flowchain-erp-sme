@@ -65,7 +65,15 @@ function parseCsvMatrix(source, delimiter) {
   return rows.filter((cells) => cells.some((cellValue) => text(cellValue)));
 }
 
-function decodeCsv(bytes, requested) {
+// Auto-detect falls back to a single-byte legacy encoding when the bytes are not UTF-8.
+// Chinese-locale tenants keep GB18030; a known non-Chinese tenant locale uses Windows-1252
+// (US bank and Excel CSV exports). Without a tenant locale the historical GB18030 fallback stays.
+function legacyFallbackEncoding(tenantLocale) {
+  const locale = text(tenantLocale);
+  return !locale || /^zh(?:-|$)/i.test(locale) ? "gb18030" : "windows-1252";
+}
+
+function decodeCsv(bytes, requested, tenantLocale) {
   if (!ENCODINGS.has(requested)) fail("BANK_STATEMENT_ENCODING_UNSUPPORTED", "CSV encoding is not supported.");
   const bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
   const decode = (encoding, source = bytes) => new TextDecoder(encoding, { fatal: true }).decode(source);
@@ -78,7 +86,10 @@ function decodeCsv(bytes, requested) {
     if (requested === "utf8") return { encoding: bom ? "utf8_bom" : "utf8", source: decode("utf-8", bom ? bytes.subarray(3) : bytes) };
     if (bom) return { encoding: "utf8_bom", source: decode("utf-8", bytes.subarray(3)) };
     try { return { encoding: "utf8", source: decode("utf-8") }; }
-    catch { return { encoding: "gb18030", source: decode("gb18030") }; }
+    catch {
+      const fallback = legacyFallbackEncoding(tenantLocale);
+      return { encoding: fallback === "gb18030" ? "gb18030" : "windows_1252", source: decode(fallback) };
+    }
   } catch (error) {
     if (error instanceof BankStatementParserError) throw error;
     fail("BANK_STATEMENT_ENCODING_INVALID", "The CSV bytes cannot be decoded with the selected encoding.");
@@ -99,7 +110,9 @@ function parseDate(value, mapping) {
   if (!match && !year) {
     match = raw.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
     if (match) {
-      const order = text(mapping.dateFormat).toUpperCase().startsWith("MM") ? "mdy" : "dmy";
+      const format = text(mapping.dateFormat).toUpperCase();
+      // With no mapping date format, an en-US tenant reads NN/NN/YYYY as month/day/year.
+      const order = format ? (format.startsWith("MM") ? "mdy" : "dmy") : /^en-US$/i.test(text(mapping.tenantLocale)) ? "mdy" : "dmy";
       year = match[3]; month = order === "mdy" ? match[1] : match[2]; day = order === "mdy" ? match[2] : match[1];
     }
   }
@@ -219,9 +232,9 @@ function xlsxMatrices(bytes, mapping, limits) {
   });
 }
 
-export function parseBankStatement({ bytes, fileName, mimeType, mapping: inputMapping, limits: inputLimits = {} }) {
+export function parseBankStatement({ bytes, fileName, mimeType, mapping: inputMapping, limits: inputLimits = {}, tenantLocale = "" }) {
   const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
-  const mapping = safeMapping(inputMapping || {});
+  const mapping = { ...safeMapping(inputMapping || {}), tenantLocale: text(tenantLocale) };
   const limits = {
     maxFileBytes: Math.max(1, Number(inputLimits.maxFileBytes || DEFAULT_LIMITS.maxFileBytes)),
     maxRows: Math.max(1, Number(inputLimits.maxRows || DEFAULT_LIMITS.maxRows)),
@@ -234,7 +247,7 @@ export function parseBankStatement({ bytes, fileName, mimeType, mapping: inputMa
   if (extension === "csv" && !/csv|text\/plain|octet-stream/i.test(text(mimeType))) fail("BANK_STATEMENT_MIME_INVALID", "CSV MIME type is invalid.");
   let matrices, detectedEncoding = null;
   if (extension === "csv") {
-    const decoded = decodeCsv(buffer, mapping.fileEncoding); detectedEncoding = decoded.encoding;
+    const decoded = decodeCsv(buffer, mapping.fileEncoding, mapping.tenantLocale); detectedEncoding = decoded.encoding;
     const delimiter = text(mapping.delimiter || (decoded.source.includes("\t") && !decoded.source.includes(",") ? "\t" : ","));
     if (delimiter.length !== 1) fail("BANK_STATEMENT_DELIMITER_INVALID", "CSV delimiter must be one character.");
     matrices = [{ sheetName: null, matrix: parseCsvMatrix(decoded.source, delimiter) }];

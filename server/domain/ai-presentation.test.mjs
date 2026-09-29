@@ -58,8 +58,13 @@ test('AI message sanitization normalizes amount shorthand with amount context', 
   const { mod } = await loadPresentationModule()
   assert.equal(
     mod.sanitizeAiMessage('金额14.2万，发票金额1.4万，差异金额0.86万。'),
-    '金额 ¥142,000，发票金额 ¥14,000，差异金额 ¥8,600。'
+    '金额 142,000，发票金额 14,000，差异金额 8,600。'
   )
+})
+
+test('AI message amount shorthand keeps only a currency symbol the source text carried', async () => {
+  const { mod } = await loadPresentationModule()
+  assert.equal(mod.sanitizeAiMessage('金额¥14.2万，发票金额1.4万。'), '金额 ¥142,000，发票金额 14,000。')
 })
 
 test('AI message sanitization does not convert non-amount wan words', async () => {
@@ -116,9 +121,10 @@ test('sanitization preserves document and item ids', async () => {
 
 test('amount-like strings convert when label is amount-related', async () => {
   const { mod } = await loadPresentationModule()
-  assert.equal(mod.normalizeAiCardValue('订单金额', '14万'), '¥140,000')
+  // The card's currency is unknown here, so no symbol is invented; an explicit ¥ in the source is kept.
+  assert.equal(mod.normalizeAiCardValue('订单金额', '14万'), '140,000')
   assert.equal(mod.normalizeAiCardValue('发票金额', '¥14万'), '¥140,000')
-  assert.equal(mod.normalizeAiCardValue('差异金额', '1.4万'), '¥14,000')
+  assert.equal(mod.normalizeAiCardValue('差异金额', '1.4万'), '14,000')
 })
 
 test('non-amount labels do not convert Chinese text containing wan', async () => {

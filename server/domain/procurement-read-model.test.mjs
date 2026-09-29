@@ -205,8 +205,37 @@ test('procurement summary is deterministic and aligns with document lists', () =
   assert.equal(summary.threeWayMatchCount, 1)
   assert.equal(summary.invoiceExceptionCount, 1)
   assert.equal(summary.threeWayMatchExceptionCount, 1)
+  // The fixture's open documents are all explicitly CNY, so the derived currency is CNY.
   assert.equal(summary.currency, 'CNY')
+  assert.equal(summary.currencyAggregationStatus, 'single_currency')
   assert.equal(summary.totalOpenAmount, 426000)
+})
+
+test('procurement summary currency comes from the documents, never a hard-coded CNY', () => {
+  const withCurrency = (currency) => {
+    const db = clone(fixture)
+    for (const key of ['purchaseRequests', 'purchaseOrders', 'supplierInvoices']) for (const row of db[key]) row.currency = currency
+    return db
+  }
+
+  const usd = buildProcurementSummary(withCurrency('USD'))
+  assert.equal(usd.currency, 'USD')
+  assert.deepEqual(usd.currencies, ['USD'])
+  assert.equal(usd.currencyAggregationStatus, 'single_currency')
+
+  const mixed = withCurrency('USD')
+  mixed.supplierInvoices[0].currency = 'CNY'
+  const multi = buildProcurementSummary(mixed)
+  assert.equal(multi.currency, null)
+  assert.deepEqual(multi.currencies, ['CNY', 'USD'])
+  assert.equal(multi.currencyAggregationStatus, 'multi_currency_unconverted')
+  assert.equal(multi.totalOpenAmount, 426000)
+
+  const unknown = buildProcurementSummary(withCurrency(undefined))
+  assert.equal(unknown.currency, null)
+  assert.deepEqual(unknown.currencies, [])
+  assert.equal(unknown.currencyAggregationStatus, 'no_currency_data')
+  assert.equal(buildProcurementDocuments(withCurrency(undefined)).find((item) => item.documentType === 'po').currency, '')
 })
 
 test('procurement evidence boundary returns compact non-secret evidence items', () => {
@@ -255,7 +284,9 @@ test('missing and partial data does not crash or invent unsupported values', () 
   assert.equal(match.invoiceAmount, 0)
   assert.equal(match.varianceAmount, 0)
   assert.equal(match.varianceRate, null)
-  assert.equal(match.currency, 'CNY')
+  // No document carries a currency, so it stays unknown instead of defaulting to CNY.
+  assert.equal(match.currency, '')
+  assert.equal(documents.every((item) => item.currency === ''), true)
 })
 
 test('GET /api/procurement/documents contract returns stable fields and does not mutate', async () => {

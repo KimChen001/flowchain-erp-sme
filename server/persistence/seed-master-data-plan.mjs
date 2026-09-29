@@ -118,7 +118,7 @@ export function buildMasterDataSeedRows(db = {}, options = {}) {
     riskLevel: text(supplier.riskLevel || supplier.risk),
     score: supplier.score ?? supplier.onTimeRate ?? null,
     metadata: {
-      defaultCurrency: text(supplier.defaultCurrency || supplier.currency, 'CNY'),
+      defaultCurrency: text(supplier.defaultCurrency || supplier.currency, text(options.currency, 'USD')),
       paymentTermsId: text(supplier.paymentTermsId || supplier.paymentTerms, 'NET30'),
       preferred: Boolean(supplier.preferred),
       sourceKey: supplierKey(supplier, index),
@@ -177,8 +177,10 @@ export function buildMasterDataSeedRows(db = {}, options = {}) {
     tenant: {
       id: tenantId,
       name: text(options.tenantName, 'FlowChain SME Workspace Tenant'),
-      locale: text(options.locale, 'zh-CN'),
-      currency: text(options.currency, 'CNY'),
+      countryCode: text(options.countryCode, 'US'),
+      locale: text(options.locale, 'en-US'),
+      currency: text(options.currency, 'USD'),
+      timezone: text(options.timezone, 'America/New_York'),
     },
     paymentTerms,
     taxCodes,

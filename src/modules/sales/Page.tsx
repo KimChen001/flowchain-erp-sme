@@ -1,4 +1,5 @@
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
+import { useI18n } from "../../i18n/I18n";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Boxes, ClipboardList, FileText, PackageSearch, ShoppingCart, Truck, Users } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
@@ -112,8 +113,10 @@ function limitationLabel(code: string) {
   } as Record<string, string>)[code] || code;
 }
 
-function qty(value: number) {
-  return Number(value || 0).toLocaleString("zh-CN");
+// Quantities follow the workspace number locale.
+function useQty() {
+  const { formatNumber } = useI18n();
+  return (value: number) => formatNumber(Number(value || 0));
 }
 
 function viewFromInitial(initialView?: string): SalesView {
@@ -138,6 +141,7 @@ export default function SalesDemandPage(props: SalesDemandPageProps) {
 
 function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDemandPageProps) {
   const copy = useWorkspaceCopy();
+  const qty = useQty();
   const [searchParams, setSearchParams] = useSearchParams();
   const view = viewFromInitial(initialView);
   const [orders, setOrders] = useState<SalesOrder[]>([]);
@@ -378,6 +382,7 @@ function OrderDetailModal({
   onOpenAi?: () => void;
 }) {
   const copy = useWorkspaceCopy();
+  const qty = useQty();
   if (!order) return null;
   const allocationRiskColor = allocation?.riskLevel === "low" ? A.green : allocation?.riskLevel === "medium" ? A.orange : A.red;
   return (
@@ -478,6 +483,7 @@ function EvidenceChainView({
   onNavigate?: EvidenceNavigate;
 }) {
   const copy = useWorkspaceCopy();
+  const qty = useQty();
   const hasSelectedOrder = Boolean(selectedOrderId);
   const selectedOrder = allOrders.find((order) => order.salesOrderId === selectedOrderId) || null;
   const [graph, setGraph] = useState<EvidenceGraphResponse | null>(null);

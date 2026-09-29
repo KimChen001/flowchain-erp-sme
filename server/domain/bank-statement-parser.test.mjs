@@ -63,3 +63,25 @@ test("security limits, secret mapping fields, and canonical fingerprints are sta
   const input = { cashbookAccountId: "BANK-1", currency: "CNY", direction: "credit", amount: "10.0000", transactionDate: "2026-07-01", valueDate: "2026-07-02", bankReference: " ref 1 ", counterpartyAccountHash: "hash", description: " invoice 1 " };
   assert.equal(canonicalBankStatementFingerprint(input), canonicalBankStatementFingerprint({ ...input, bankReference: "REF 1", description: "INVOICE 1" }));
 });
+
+test("auto-detect legacy fallback follows the tenant locale: zh-CN keeps GB18030, en-US reads Windows-1252", () => {
+  const latin1 = Buffer.concat([Buffer.from("transaction_id,transaction_date,signed_amount,currency,description\nUS-1,2026-07-01,12.50,USD,Caf"), Buffer.from([0xe9]), Buffer.from("x deposit\n")]);
+  const us = parseBankStatement({ bytes: latin1, fileName: "us.csv", mimeType: "text/csv", mapping: { ...common, fileEncoding: "auto_detect" }, tenantLocale: "en-US" });
+  assert.equal(us.detectedEncoding, "windows_1252"); assert.equal(us.rows[0].normalizedDescription, "Caféx deposit");
+  const gbBytes = Buffer.from("vbvS17HgusUsvbvS18jVxtost73P8iy98LbuLLHS1tYsttS3vcP7s8YsttS3vdXLusUs1arSqgpHQi0xMDAxLDIwMjYtMDctMDUsytXI6ywxMDAuMDAwMSxDTlks0Om5ub/Nu6ex+ywxMjM0NTY3ODkwMTIzNDU2LNDpubnW0M7EwffLrgo=", "base64");
+  const gbMapping = { ...common, fileEncoding: "auto_detect", debitCreditMode: "direction_and_amount", signConvention: "explicit_direction", columnMapping: { transactionId: "交易编号", transactionDate: "交易日期", direction: "方向", signedAmount: "金额", currency: "币种", counterpartyName: "对方名称", counterpartyAccount: "对方账号", description: "摘要" } };
+  const cn = parseBankStatement({ bytes: gbBytes, fileName: "gb.csv", mimeType: "text/csv", mapping: gbMapping, tenantLocale: "zh-CN" });
+  assert.equal(cn.detectedEncoding, "gb18030"); assert.equal(cn.rows[0].normalizedDirection, "credit");
+  // Without a tenant locale the historical GB18030 fallback is unchanged.
+  assert.equal(parseBankStatement({ bytes: gbBytes, fileName: "gb.csv", mimeType: "text/csv", mapping: gbMapping }).detectedEncoding, "gb18030");
+});
+
+test("ambiguous NN/NN/YYYY dates follow the mapping format, then an en-US tenant locale", () => {
+  const bytes = Buffer.from("transaction_id,transaction_date,signed_amount,currency\nD-1,03/04/2026,1.00,USD\n");
+  const date = (mapping, tenantLocale) => parseBankStatement({ bytes, fileName: "d.csv", mimeType: "text/csv", mapping: { ...common, ...mapping }, tenantLocale }).rows[0].normalizedTransactionDate.toISOString().slice(0, 10);
+  assert.equal(date({ dateFormat: "" }, "en-US"), "2026-03-04");
+  assert.equal(date({ dateFormat: "" }, "zh-CN"), "2026-04-03");
+  assert.equal(date({ dateFormat: "" }), "2026-04-03");
+  assert.equal(date({ dateFormat: "DD/MM/YYYY" }, "en-US"), "2026-04-03");
+  assert.equal(date({ dateFormat: "MM/DD/YYYY" }, "zh-CN"), "2026-03-04");
+});

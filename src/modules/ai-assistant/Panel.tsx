@@ -166,8 +166,9 @@ function textValue(value: unknown) {
   return String(value ?? "");
 }
 
-function businessValue(label: string, value: unknown) {
-  if (/金额|余额|应付|贷项|差异/.test(label) && typeof value === "number") return fmt(value);
+// Amounts carry a currency symbol only when the card states its currency.
+function businessValue(label: string, value: unknown, currency?: string) {
+  if (/金额|余额|应付|贷项|差异/.test(label) && typeof value === "number") return fmt(value, currency);
   return textValue(normalizeAiCardValue(label, value));
 }
 
@@ -255,12 +256,14 @@ function CardShell({ title, children }: { title: string; children: React.ReactNo
 function KeyValueGrid({ fields }: { fields: [string, unknown][] }) {
   const entries = fieldEntries(fields);
   if (!entries.length) return null;
+  const currencyField = entries.find(([label, value]) => /币种|currency/i.test(label) && typeof value === "string" && /^[A-Za-z]{3}$/.test(value.trim()));
+  const currency = currencyField ? String(currencyField[1]).trim().toUpperCase() : undefined;
   return (
     <div className="grid grid-cols-2 gap-1.5">
       {entries.map(([label, value]) => (
         <div key={label} className="rounded-lg px-2 py-1.5" style={{ background: A.gray6 }}>
           <div className="fc-caption" style={{ color: A.gray2 }}>{label}</div>
-          <div className="text-[11px] font-medium truncate" style={{ color: A.label }}>{businessValue(label, value)}</div>
+          <div className="text-[11px] font-medium truncate" style={{ color: A.label }}>{businessValue(label, value, currency)}</div>
         </div>
       ))}
     </div>

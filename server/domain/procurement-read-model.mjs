@@ -63,7 +63,7 @@ export function buildProcurementEvidenceItem(document = {}, overrides = {}) {
     status: text(overrides.status ?? document.status ?? document.invoiceStatus ?? document.matchStatus),
     supplierName: text(overrides.supplierName ?? document.supplierName ?? document.supplier),
     amount: overrides.amount ?? document.amount ?? document.invoiceAmount ?? document.poAmount ?? null,
-    currency: text(overrides.currency ?? document.currency, 'CNY'),
+    currency: text(overrides.currency ?? document.currency),
     source: text(overrides.source ?? document.source),
     route: id && type ? `/api/procurement/documents/${type}/${encodeURIComponent(id)}` : '',
   }
@@ -155,7 +155,7 @@ export function buildProcurementPurchaseRequests(data = {}) {
       unit: text(request.unit),
       unitPrice: toNumber(request.unitPrice, 0),
       amount: toNumber(request.amount, 0),
-      currency: text(request.currency, 'CNY'),
+      currency: text(request.currency),
       priority: text(request.priority),
       requiredDate: text(request.requiredDate || request.eta),
       dueDate: text(request.requiredDate || request.eta),
@@ -204,7 +204,7 @@ export function buildProcurementRfqs(data = {}) {
       itemName: text(rfq.sourceName || rfq.itemName),
       quantity: toNumber(rfq.quantity, 0),
       unit: text(rfq.unit),
-      currency: text(rfq.currency, 'CNY'),
+      currency: text(rfq.currency),
       supplierName: text(rfq.bestSupplier || rfq.awardedSupplier),
       supplierId: text(rfq.supplierId),
       createdAt: text(rfq.createdAt || rfq.created),
@@ -244,7 +244,7 @@ export function buildProcurementPurchaseOrders(data = {}) {
       expectedDate: text(po.eta || po.expectedDate || po.requiredDate),
       dueDate: text(po.eta || po.expectedDate || po.requiredDate),
       amount: toNumber(po.amount ?? po.totalAmount, 0),
-      currency: text(po.currency, 'CNY'),
+      currency: text(po.currency),
       orderedQuantity,
       receivedQuantity,
       receivingStatus: receivedQuantity <= 0 ? '未收货' : receivedQuantity < orderedQuantity ? '部分收货' : '已收货',
@@ -310,7 +310,7 @@ export function buildProcurementReceivingDocs(data = {}) {
         related('po', grn.po || grn.poId),
         ...asArray(invoicesByGrn.get(id)).map((invoice, invoiceIndex) => related('invoice', invoiceId(invoice, invoiceIndex))),
       ]),
-      currency: text(grn.currency, 'CNY'),
+      currency: text(grn.currency),
       evidence: evidence('grn', id, `${text(grn.po)} ${text(grn.status)}`, { status: grn.status, supplierName: grn.supplier, currency: grn.currency }),
     }
   })
@@ -339,7 +339,7 @@ export function buildProcurementSupplierInvoices(data = {}) {
       updatedAt: text(invoice.updatedAt),
       dueDate: text(invoice.dueDate),
       amount,
-      currency: text(invoice.currency, 'CNY'),
+      currency: text(invoice.currency),
       matchStatus: text(invoice.matchStatus, varianceAmount ? '存在差异' : '待匹配'),
       invoiceStatus: text(invoice.status || invoice.invoiceStatus, '待处理'),
       varianceAmount,
@@ -387,7 +387,7 @@ export function buildProcurementThreeWayMatches(data = {}) {
       invoiceAmount,
       varianceAmount,
       varianceRate,
-      currency: text(invoice.currency || po?.currency || grn?.currency, 'CNY'),
+      currency: text(invoice.currency || po?.currency || grn?.currency),
       matchStatus: status,
       status,
       blockingReason: varianceAmount ? 'PO 金额与发票金额存在差异，需复核后处理。' : '',
@@ -514,9 +514,19 @@ export function buildProcurementFollowups(data = {}, options = {}) {
   return items
 }
 
+// Open amounts are summed without FX conversion, so the summary only carries a currency code
+// when every contributing document shares one; otherwise the code is null and the status says why.
+function summarizeOpenAmountCurrency(openDocuments = []) {
+  const currencies = [...new Set(openDocuments.map((item) => text(item.currency).toUpperCase()).filter(Boolean))].sort()
+  const currencyAggregationStatus = currencies.length === 0 ? 'no_currency_data' : currencies.length === 1 ? 'single_currency' : 'multi_currency_unconverted'
+  return { currency: currencies.length === 1 ? currencies[0] : null, currencies, currencyAggregationStatus }
+}
+
 export function buildProcurementSummary(data = {}) {
   const documents = buildProcurementDocuments(data)
   const followups = buildProcurementFollowups(data)
+  const openAmountDocuments = documents.filter((item) => ['pr', 'po', 'invoice'].includes(item.documentType) && isOpenStatus(item.status || item.invoiceStatus))
+  const openAmountCurrency = summarizeOpenAmountCurrency(openAmountDocuments)
   return {
     documentCount: documents.length,
     purchaseRequestCount: documents.filter((item) => item.documentType === 'pr').length,
@@ -533,8 +543,10 @@ export function buildProcurementSummary(data = {}) {
     pendingReceivingCount: documents.filter((item) => item.documentType === 'grn' && isOpenStatus(item.status)).length,
     invoiceExceptionCount: documents.filter((item) => item.documentType === 'invoice' && (toNumber(item.varianceAmount) !== 0 || /差异|异常|待复核/.test(item.matchStatus))).length,
     threeWayMatchExceptionCount: documents.filter((item) => item.documentType === 'threeWayMatch' && toNumber(item.varianceAmount) !== 0).length,
-    totalOpenAmount: documents.filter((item) => ['pr', 'po', 'invoice'].includes(item.documentType) && isOpenStatus(item.status || item.invoiceStatus)).reduce((sum, item) => sum + toNumber(item.amount, 0), 0),
-    currency: 'CNY',
+    totalOpenAmount: openAmountDocuments.reduce((sum, item) => sum + toNumber(item.amount, 0), 0),
+    currency: openAmountCurrency.currency,
+    currencies: openAmountCurrency.currencies,
+    currencyAggregationStatus: openAmountCurrency.currencyAggregationStatus,
     urgentFollowupCount: followups.filter((item) => item.severity === 'high').length,
   }
 }

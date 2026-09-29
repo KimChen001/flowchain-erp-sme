@@ -1,4 +1,6 @@
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
+import { useI18n } from "../../i18n/I18n";
+import { todayInTimeZone } from "../../lib/format";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
@@ -74,7 +76,8 @@ type PR = {
   linkedPurchaseOrderIds?: string[];
 };
 type FieldError = { field?: string; message?: string };
-const today = () => new Date().toISOString().slice(0, 10);
+// Today in the workspace timezone (America/New_York when unknown), not UTC.
+const today = (timeZone?: string) => todayInTimeZone(timeZone);
 const makeLine = (date = today()): Line => ({
   lineId: createClientTemporaryId("pr-line"),
   sourceType: "catalog_item",
@@ -110,6 +113,7 @@ export default function CanonicalProcurementPanel({
   focus?: { entityType: string; entityId: string; at: number } | null;
 }) {
   const copy = useWorkspaceCopy();
+  const { timezone } = useI18n();
   const [searchParams] = useSearchParams();
   const prefilled = useRef(false);
   const [items, setItems] = useState<Item[]>([]),
@@ -125,8 +129,8 @@ export default function CanonicalProcurementPanel({
   >({});
   const [departmentId, setDepartmentId] = useState("operations"),
     [currency, setCurrency] = useState(""),
-    [defaultDate, setDefaultDate] = useState(today()),
-    [lines, setLines] = useState<Line[]>([makeLine()]),
+    [defaultDate, setDefaultDate] = useState(() => today(timezone)),
+    [lines, setLines] = useState<Line[]>(() => [makeLine(today(timezone))]),
     [loadError, setLoadError] = useState("");
   const [editing, setEditing] = useState<PR | null>(null),
     [errors, setErrors] = useState<FieldError[]>([]),
@@ -379,7 +383,7 @@ export default function CanonicalProcurementPanel({
     setEditing(pr);
     setDepartmentId(pr.departmentId);
     setCurrency(pr.defaultCurrency || "");
-    setDefaultDate(pr.defaultNeedByDate || today());
+    setDefaultDate(pr.defaultNeedByDate || today(timezone));
     setLines(
       pr.lines.map((l) => ({
         ...l,

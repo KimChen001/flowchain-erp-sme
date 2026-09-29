@@ -5,18 +5,17 @@ import { BusinessEntityLink } from "../../components/business/BusinessEntityLink
 import { A, Card } from "../../components/ui";
 import { procurementApi } from "./procurementApi";
 import type { ProcurementDocument } from "./procurementTypes";
+import { useI18n } from "../../i18n/I18n";
+import { formatLocaleAmount } from "../../lib/format";
 
-function money(value?: number, currency = "CNY") {
+function money(value: number | undefined, currency: string | undefined, locale: string) {
   if (!Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat("zh-CN", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 2,
-  }).format(Number(value));
+  return formatLocaleAmount(Number(value), currency, locale, { maximumFractionDigits: 2 });
 }
 
 export function SupplierInvoiceListPage() {
   const copy = useWorkspaceCopy();
+  const { locale } = useI18n();
   const [rows, setRows] = useState<ProcurementDocument[]>([]);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
 
@@ -73,8 +72,8 @@ export function SupplierInvoiceListPage() {
                 <dl className="mt-4 grid gap-x-6 gap-y-4 text-xs sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                   <div><dt style={{ color: A.sub }}>{copy("采购订单")}</dt><dd className="mt-1"><BusinessEntityLink entityType="purchase_order" entityId={row.relatedPo || row.poId}>{row.relatedPo || row.poId || "—"}</BusinessEntityLink></dd></div>
                   <div><dt style={{ color: A.sub }}>{copy("收货单")}</dt><dd className="mt-1"><BusinessEntityLink entityType="receiving_doc" entityId={row.relatedGrn || row.grnId}>{row.relatedGrn || row.grnId || "—"}</BusinessEntityLink></dd></div>
-                  <div><dt style={{ color: A.sub }}>{copy("发票金额")}</dt><dd className="mt-1 font-medium tabular-nums">{money(row.amount, row.currency)}</dd></div>
-                  <div><dt style={{ color: A.sub }}>{copy("差异金额")}</dt><dd className="mt-1 font-medium tabular-nums">{money(row.varianceAmount, row.currency)}</dd></div>
+                  <div><dt style={{ color: A.sub }}>{copy("发票金额")}</dt><dd className="mt-1 font-medium tabular-nums">{money(row.amount, row.currency, locale)}</dd></div>
+                  <div><dt style={{ color: A.sub }}>{copy("差异金额")}</dt><dd className="mt-1 font-medium tabular-nums">{money(row.varianceAmount, row.currency, locale)}</dd></div>
                   <div><dt style={{ color: A.sub }}>{copy("发票日期")}</dt><dd className="mt-1 font-medium">{row.invoiceDate || "—"}</dd></div>
                   <div><dt style={{ color: A.sub }}>{copy("到期日")}</dt><dd className="mt-1 font-medium">{row.dueDate || "—"}</dd></div>
                 </dl>

@@ -206,7 +206,7 @@ function providerInput(input) {
       currentContext: input.currentContext || null,
       previousResult: safeReferences(input.previousResult),
       now: (input.now instanceof Date ? input.now : new Date(input.now || Date.now())).toISOString(),
-      timezone: text(input.timezone || 'UTC'),
+      timezone: text(input.timezone || 'America/New_York'),
       allowedGoals: BUSINESS_QUERY_GOALS,
       planningVersion: 'business-query-plan-v1',
     },

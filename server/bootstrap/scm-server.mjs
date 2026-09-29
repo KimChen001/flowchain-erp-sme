@@ -228,7 +228,7 @@ function normalizePoLine(line, po, index = 0) {
     quantityRejected,
     unit: line.unit || po.unit || "",
     unitPrice: toNumber(line.unitPrice ?? po.unitPrice ?? 0),
-    currency: line.currency || po.currency || "CNY",
+    currency: line.currency || po.currency || "",
     supplierId: line.supplierId || po.supplierId || supplierIdFor(po.supplier),
     warehouseId:
       line.warehouseId || po.warehouseId || warehouseIdFor(po.warehouse),
@@ -260,7 +260,7 @@ function ensurePoLines(po) {
                   ? toNumber(po.amount) / toNumber(po.recommendedQty)
                   : 0),
             ),
-            currency: po.currency || "CNY",
+            currency: po.currency || "",
           },
         ];
   po.lines = rawLines.map((line, index) => normalizePoLine(line, po, index));
@@ -354,7 +354,7 @@ function createPoLineFromRequest(request, poId, index = 0) {
       quantityRejected: 0,
       unit: request.unit || "",
       unitPrice: toNumber(request.unitPrice || 0),
-      currency: request.currency || "CNY",
+      currency: request.currency || "",
       supplierId: request.supplierId || supplierIdFor(request.supplier),
       warehouseId: request.warehouseId || "",
       requiredDate: request.requiredDate || request.eta || "",
@@ -382,7 +382,7 @@ function createPoLineFromRfq(rfq, request, poId, index = 0) {
       quantityRejected: 0,
       unit: rfq.unit || request?.unit || "",
       unitPrice,
-      currency: rfq.currency || request?.currency || "CNY",
+      currency: rfq.currency || request?.currency || "",
       supplierId: supplierIdFor(rfq.bestSupplier || request?.supplier || ""),
       warehouseId: rfq.warehouseId || request?.warehouseId || "",
       requiredDate: request?.requiredDate || rfq.due || "",

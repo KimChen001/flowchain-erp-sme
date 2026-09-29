@@ -3,6 +3,8 @@ import { ArrowLeft, Clock3, FileText } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import type { AppRouteDefinition } from "../../app/routeRegistry";
 import { apiJson } from "../../lib/api-client";
+import { formatLocaleAmount } from "../../lib/format";
+import { useI18n } from "../../i18n/I18n";
 import { DELIVERY_NOTES } from "../../modules/sales/deliveryData";
 import { SIGN_RECEIPTS } from "../../modules/sales/receiptData";
 import { INVENTORY_ADJUSTMENTS } from "../../modules/inventory/adjustmentData";
@@ -28,13 +30,19 @@ const LABELS: Record<string, string> = {
 };
 
 const MONEY_KEYS = /amount|subtotal|tax|total|balance|price|spend/i;
+// Whole words only: "count" must not match discountAmount or accountBalance.
+const NON_MONEY_WORDS = new Set(["rate", "percent", "percentage", "ratio", "quantity", "qty", "count"]);
+const keyWords = (key: string) => key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[\s_-]+/).map((word) => word.toLowerCase());
+const NON_MONEY_KEYS = { test: (key: string) => keyWords(key).some((word) => NON_MONEY_WORDS.has(word)) };
+type FormatContext = { locale: string; currency: string };
 
-function formatValue(key: string, value: unknown) {
+function formatValue(key: string, value: unknown, { locale, currency }: FormatContext) {
   if (value == null || value === "") return "—";
   if (typeof value === "boolean") return value ? "是" : "否";
-  if (typeof value === "number") return MONEY_KEYS.test(key)
-    ? `¥${value.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`
-    : value.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+  // Money shows a symbol only when the record carries its own currency.
+  if (typeof value === "number") return MONEY_KEYS.test(key) && !NON_MONEY_KEYS.test(key)
+    ? formatLocaleAmount(value, currency, locale, { maximumFractionDigits: 2 })
+    : value.toLocaleString(locale, { maximumFractionDigits: 2 });
   if (Array.isArray(value)) return value.join("、") || "—";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
@@ -71,6 +79,7 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
   const id = decodeURIComponent(location.pathname.split("/").filter(Boolean).at(-1) || "");
   const entityType = route.entityType as BusinessEntityType;
   const [params] = useSearchParams();
+  const { locale } = useI18n();
   const [record, setRecord] = useState<RecordValue | null>(() => syncRecord(entityType, id));
   const masterDetailEndpoints: Partial<Record<BusinessEntityType, { url: string; key: string }>> = {
     item: { url: `/api/master-data/items/${encodeURIComponent(id)}`, key: "item" },
@@ -113,6 +122,7 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
   const history = useMemo(() => Array.isArray(record?.history) ? record?.history as RecordValue[] : [], [record]);
   const fields = useMemo(() => record ? Object.entries(record).filter(([key, value]) => !["lines", "history", "invoices"].includes(key) && typeof value !== "object") : [], [record]);
   const links = useMemo(() => record ? relatedLinks(entityType, record) : [], [entityType, record]);
+  const recordCurrency = String(record?.currency || record?.defaultCurrency || "");
 
   if (loading) return <Card className="p-8" data-testid="business-entity-detail"><div className="animate-pulse text-sm" style={{ color: A.gray1 }}>正在读取 {routeInfo.label}…</div></Card>;
   if (!record) return <Card className="p-8" data-testid="business-entity-detail"><Link to={returnTo} className="text-sm text-blue-600 hover:underline">← {returnLabel}</Link><h2 className="mt-5 text-lg font-semibold">未找到 {routeInfo.label} {id}</h2><p className="mt-2 text-sm" style={{ color: A.gray1 }}>该编号不存在，已按缺失对象处理，没有伪装为可用链接。</p></Card>;
@@ -129,9 +139,9 @@ export function BusinessEntityDetailPage({ route }: { route: AppRouteDefinition 
 
       {links.length > 0 && <Card className="p-5"><SectionHeader title="关联业务对象" /><div className="flex flex-wrap gap-2">{links.map((link) => <BusinessEntityLink key={`${link.type}-${link.id}`} entityType={link.type} entityId={link.id} returnLabel={`返回 ${routeInfo.label} ${id}`} className="inline-flex rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs">{link.label} · {link.id}</BusinessEntityLink>)}</div></Card>}
 
-      <Card className="p-5"><SectionHeader title="业务信息" /><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{fields.map(([key, value]) => <div key={key} className="rounded-lg p-3" style={{ background: A.gray6 }}><div className="fc-caption" style={{ color: A.gray2 }}>{LABELS[key] || key}</div><div className="mt-1 break-words text-sm font-medium" style={{ color: A.label }}>{formatValue(key, value)}</div></div>)}</div></Card>
+      <Card className="p-5"><SectionHeader title="业务信息" /><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{fields.map(([key, value]) => <div key={key} className="rounded-lg p-3" style={{ background: A.gray6 }}><div className="fc-caption" style={{ color: A.gray2 }}>{LABELS[key] || key}</div><div className="mt-1 break-words text-sm font-medium" style={{ color: A.label }}>{formatValue(key, value, { locale, currency: recordCurrency })}</div></div>)}</div></Card>
 
-      {lines.length > 0 && <Card><div className="px-5 pt-5"><SectionHeader title="行级明细" /></div><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-xs"><thead><tr style={{ borderBottom: `1px solid ${A.border}` }}>{Object.keys(lines[0]).slice(0, 10).map((key) => <th key={key} className="px-4 py-3 text-left font-semibold whitespace-nowrap" style={{ color: A.gray1 }}>{LABELS[key] || key}</th>)}</tr></thead><tbody>{lines.map((line, index) => <tr key={String(line.lineId || index)} style={{ borderBottom: `1px solid ${A.border}` }}>{Object.keys(lines[0]).slice(0, 10).map((key) => <td key={key} className="px-4 py-3 whitespace-nowrap" style={{ color: A.label }}>{formatValue(key, line[key])}</td>)}</tr>)}</tbody></table></div></Card>}
+      {lines.length > 0 && <Card><div className="px-5 pt-5"><SectionHeader title="行级明细" /></div><div className="overflow-x-auto"><table className="w-full min-w-[900px] text-xs"><thead><tr style={{ borderBottom: `1px solid ${A.border}` }}>{Object.keys(lines[0]).slice(0, 10).map((key) => <th key={key} className="px-4 py-3 text-left font-semibold whitespace-nowrap" style={{ color: A.gray1 }}>{LABELS[key] || key}</th>)}</tr></thead><tbody>{lines.map((line, index) => <tr key={String(line.lineId || index)} style={{ borderBottom: `1px solid ${A.border}` }}>{Object.keys(lines[0]).slice(0, 10).map((key) => <td key={key} className="px-4 py-3 whitespace-nowrap" style={{ color: A.label }}>{formatValue(key, line[key], { locale, currency: String(line.currency || recordCurrency) })}</td>)}</tr>)}</tbody></table></div></Card>}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card className="p-5"><SectionHeader title="Comments" /><p className="text-sm leading-6" style={{ color: A.sub }}>{String(record.comments || record.notes || "业务数据已核对，暂无补充备注。")}</p></Card>

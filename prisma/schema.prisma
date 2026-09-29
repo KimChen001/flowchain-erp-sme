@@ -10,10 +10,10 @@ model Tenant {
   id                     String    @id
   name                   String
   legalName              String?
-  countryCode            String    @default("CN")
-  locale                 String    @default("zh-CN")
-  currency               String    @default("CNY")
-  timezone               String    @default("Asia/Shanghai")
+  countryCode            String    @default("US")
+  locale                 String    @default("en-US")
+  currency               String    @default("USD")
+  timezone               String    @default("America/New_York")
   defaultLanguage        String    @default("en-US")
   operationalSettings    Json      @default("{}")
   workspaceCompletedAt   DateTime?
@@ -933,7 +933,7 @@ model PurchaseRequest {
   priority     String?
   requiredDate DateTime?
   amount       Decimal?  @db.Decimal(18, 4)
-  currency     String    @default("CNY")
+  currency     String    @default("USD")
   reason       String?
   source       String?
   linkedRfqId  String?
@@ -980,7 +980,7 @@ model Rfq {
   supplierId             String?
   sourceRequestId        String?
   linkedPoId             String?
-  currency               String    @default("CNY")
+  currency               String    @default("USD")
   metadata               Json?
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
@@ -1023,7 +1023,7 @@ model SupplierQuotation {
   supplierName String?
   status       String    @default("submitted")
   quotedAmount Decimal?  @db.Decimal(18, 4)
-  currency     String    @default("CNY")
+  currency     String    @default("USD")
   submittedAt  DateTime?
   metadata     Json?
   createdAt    DateTime  @default(now())
@@ -1182,7 +1182,7 @@ model PurchaseOrder {
   sourceRfqId         String?
   expectedDate        DateTime?
   amount              Decimal?  @db.Decimal(18, 4)
-  currency            String    @default("CNY")
+  currency            String    @default("USD")
   owner               String?
   priority            String?
   receivingBaseStatus String?
@@ -1236,7 +1236,7 @@ model ReceivingDocument {
   arrivedAt      DateTime?
   receiver       String?
   warehouseId    String?
-  currency       String    @default("CNY")
+  currency       String    @default("USD")
   metadata       Json?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -1291,7 +1291,7 @@ model SupplierInvoice {
   enteredTaxAmount   Decimal?  @db.Decimal(18, 4)
   totalAmount        Decimal?  @db.Decimal(18, 4)
   amount             Decimal?  @db.Decimal(18, 4)
-  currency           String    @default("CNY")
+  currency           String    @default("USD")
   status             String    @default("draft")
   matchStatus        String?
   varianceAmount     Decimal?  @db.Decimal(18, 4)
@@ -1361,7 +1361,7 @@ model ThreeWayMatch {
   poAmount       Decimal?  @db.Decimal(18, 4)
   invoiceAmount  Decimal?  @db.Decimal(18, 4)
   varianceAmount Decimal?  @db.Decimal(18, 4)
-  currency       String    @default("CNY")
+  currency       String    @default("USD")
   status         String    @default("pending")
   blockingReason String?
   matchedAt      DateTime?

@@ -109,7 +109,7 @@ function buildSummaryCards(summary, procurementDocuments, followups, inventoryRi
     card('match-exceptions', '三单匹配异常', summary.invoiceExceptionCount + summary.threeWayMatchExceptionCount, '发票与三单匹配差异', summary.invoiceExceptionCount || summary.threeWayMatchExceptionCount ? 'high' : 'low', 'finance', { ...evidenceTarget('procurement:invoices', 'procurement_document', matchException?.id), documentType: matchException?.documentType }, matchException?.evidence),
     card('inventory-risk', '库存风险', summary.lowStockCount + summary.inventoryExceptionCount, '低库存、缺货或库存异常', summary.highRiskInventoryCount ? 'high' : summary.lowStockCount ? 'medium' : 'low', 'inventory', evidenceTarget('inventory', 'inventory_item', inventoryRisk?.sku), inventoryRisk?.evidence, { route: inventoryRisk?.route || inventoryRoute('item', inventoryRisk?.sku) }),
     card('urgent-followups', '紧急跟进事项', summary.urgentFollowupCount, '高优先级采购跟进', summary.urgentFollowupCount ? 'high' : 'low', 'procurement', { ...evidenceTarget('procurement', 'followup', urgent?.id), documentType: urgent?.documentType, entityId: urgent?.documentId }, urgent?.evidence),
-    card('total-open-amount', '未结业务金额', summary.totalOpenAmount, 'PR、PO、发票开放金额', summary.totalOpenAmount ? 'medium' : 'low', 'finance', evidenceTarget('finance', 'amount', 'total-open-amount'), [], { valueKind: 'currency', currency: summary.currency || 'CNY' }),
+    card('total-open-amount', '未结业务金额', summary.totalOpenAmount, 'PR、PO、发票开放金额', summary.totalOpenAmount ? 'medium' : 'low', 'finance', evidenceTarget('finance', 'amount', 'total-open-amount'), [], { valueKind: 'currency', currency: summary.currency || null, currencyAggregationStatus: summary.currencyAggregationStatus || 'no_currency_data' }),
   ]
 }
 
@@ -175,7 +175,7 @@ function buildRecentDocuments(documents) {
         status: document.status || document.invoiceStatus || document.matchStatus || '',
         supplier: document.supplierName || document.supplier || '',
         amount: toNumber(document.amount ?? document.invoiceAmount ?? document.poAmount, 0),
-        currency: document.currency || 'CNY',
+        currency: document.currency || '',
         date,
         route: procurementRoute(document.documentType, document.id),
         target: { ...evidenceTarget('procurement', 'procurement_document', document.id), documentType: document.documentType },

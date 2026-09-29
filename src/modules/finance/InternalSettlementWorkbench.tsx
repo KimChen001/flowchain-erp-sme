@@ -4,6 +4,8 @@ import { Card } from "../../components/ui";
 import { apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { todayInTimeZone } from "../../lib/format";
+import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 
 type Page<T> = { items: T[]; total: number; capability?: { enabled?: boolean } };
 type Account = { id: string; accountCode: string; name: string; accountType: string; currency: string; openingBalance: string | null; currentBalance: string | null; status: string; version: number };
@@ -15,6 +17,8 @@ type Reconciliation = { status: "matched" | "mismatch"; checks: Array<{ rule: st
 const post = <T,>(url: string, body: unknown) => apiJson<T>(url, { method: "POST", body: JSON.stringify(body) });
 const key = () => createSecureClientMutationId("settlement");
 const show = (value: unknown) => value === null || value === undefined ? "No permission" : String(value);
+const emptyAccountDraft = (currency: string) => ({ accountCode: "", name: "", accountType: "bank", currency, openingBalance: "0.0000" });
+const accountCurrencyOptions = (current: string) => [...new Set([current, "USD", "EUR", "GBP", "CAD", "CNY", ...Intl.supportedValuesOf("currency")].filter(Boolean))];
 const statusClass = (value: string) => value === "matched" || value === "posted" || value === "settled" ? "bg-emerald-100 text-emerald-700" : value === "mismatch" ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-700";
 
 function Notice({ children }: { children: React.ReactNode }) {
@@ -22,7 +26,8 @@ function Notice({ children }: { children: React.ReactNode }) {
 }
 
 export default function InternalSettlementWorkbench({ view }: { view: "cashbook" | "settlement" | "settlement-detail" }) {
-  const { language, formatDateTime } = useI18n();
+  const { language, formatDateTime, timezone } = useI18n();
+  const workspace = useWorkspaceCurrency();
   const zh = language !== "en-US";
   const tr = (cn: string, en: string) => zh ? cn : en;
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -35,13 +40,15 @@ export default function InternalSettlementWorkbench({ view }: { view: "cashbook"
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<any>(null);
-  const [accountDraft, setAccountDraft] = useState({ accountCode: "", name: "", accountType: "bank", currency: "CNY", openingBalance: "0.0000" });
-  const [draft, setDraft] = useState({ settlementNumber: "", direction: "disbursement", cashbookAccountId: "", obligationId: "", amount: "", cashAppliedAmount: "", discountAmount: "0.0000", discountReason: "", settlementDate: new Date().toISOString().slice(0, 10), externalReference: "", memo: "" });
+  const [accountDraft, setAccountDraft] = useState(() => emptyAccountDraft(""));
+  const [draft, setDraft] = useState({ settlementNumber: "", direction: "disbursement", cashbookAccountId: "", obligationId: "", amount: "", cashAppliedAmount: "", discountAmount: "0.0000", discountReason: "", settlementDate: todayInTimeZone(timezone), externalReference: "", memo: "" });
+  // New cashbook accounts default to the workspace currency once it loads; the user can still pick another.
+  useEffect(() => { if (workspace.currency) setAccountDraft((current) => current.currency ? current : { ...current, currency: workspace.currency }); }, [workspace.currency]);
 
   const detailId = view === "settlement-detail" ? decodeURIComponent(location.pathname.split("/").pop() || "") : "";
   const obligations = draft.direction === "disbursement" ? payables : receivables;
   const selectedObligation = obligations.find((row) => row.id === draft.obligationId);
-  const settlementPayload = useMemo(() => { const total = (Number(draft.cashAppliedAmount || 0) + Number(draft.discountAmount || 0)).toFixed(4); return { settlementNumber: draft.settlementNumber, direction: draft.direction, counterpartyType: draft.direction === "disbursement" ? "supplier" : "customer", cashbookAccountId: draft.cashbookAccountId, currency: accounts.find((row) => row.id === draft.cashbookAccountId)?.currency || selectedObligation?.currency || "CNY", amount: draft.amount, settlementDate: draft.settlementDate, externalReference: draft.externalReference, memo: draft.memo, allocations: draft.obligationId ? [{ obligationType: draft.direction === "disbursement" ? "payable" : "receivable", obligationId: draft.obligationId, cashAppliedAmount: draft.cashAppliedAmount || draft.amount, discountAmount: draft.discountAmount, totalSettlementAmount: total, discountReason: draft.discountReason }] : [] }; }, [draft, accounts, selectedObligation]);
+  const settlementPayload = useMemo(() => { const total = (Number(draft.cashAppliedAmount || 0) + Number(draft.discountAmount || 0)).toFixed(4); return { settlementNumber: draft.settlementNumber, direction: draft.direction, counterpartyType: draft.direction === "disbursement" ? "supplier" : "customer", cashbookAccountId: draft.cashbookAccountId, currency: accounts.find((row) => row.id === draft.cashbookAccountId)?.currency || selectedObligation?.currency || "", amount: draft.amount, settlementDate: draft.settlementDate, externalReference: draft.externalReference, memo: draft.memo, allocations: draft.obligationId ? [{ obligationType: draft.direction === "disbursement" ? "payable" : "receivable", obligationId: draft.obligationId, cashAppliedAmount: draft.cashAppliedAmount || draft.amount, discountAmount: draft.discountAmount, totalSettlementAmount: total, discountReason: draft.discountReason }] : [] }; }, [draft, accounts, selectedObligation]);
 
   async function uploadAttachment(file: File) {
     const contentBase64 = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1] || ""); reader.onerror = reject; reader.readAsDataURL(file); });
@@ -76,13 +83,14 @@ export default function InternalSettlementWorkbench({ view }: { view: "cashbook"
   if (view === "cashbook") return <div className="space-y-4" data-testid="cashbook-workbench">
     <Notice>{tr("这是内部现金簿事实，不代表已连接银行；银行流水导入与匹配将在 Phase 5.3 提供。", "This is an internal cashbook fact, not a bank connection. Statement import and matching belong to Phase 5.3.")}</Notice>
     {error && <Notice>{error}</Notice>}
-    <Card className="p-4"><div className="flex items-center gap-2 font-semibold"><Landmark size={17}/>{tr("新增 Cashbook 账户", "Add cashbook account")}</div><div className="mt-3 grid gap-3 md:grid-cols-5">
+    <Card className="p-4"><div className="flex items-center gap-2 font-semibold"><Landmark size={17}/>{tr("新增 Cashbook 账户", "Add cashbook account")}</div><div className="mt-3 grid gap-3 md:grid-cols-6">
       <input aria-label={tr("账户代码", "Account code")} className="rounded-lg border px-3 py-2 text-sm" placeholder={tr("账户代码", "Account code")} value={accountDraft.accountCode} onChange={e => setAccountDraft({ ...accountDraft, accountCode: e.target.value })}/>
       <input aria-label={tr("账户名称", "Account name")} className="rounded-lg border px-3 py-2 text-sm" placeholder={tr("账户名称", "Account name")} value={accountDraft.name} onChange={e => setAccountDraft({ ...accountDraft, name: e.target.value })}/>
       <select aria-label={tr("账户类型", "Account type")} className="rounded-lg border px-3 py-2 text-sm" value={accountDraft.accountType} onChange={e => setAccountDraft({ ...accountDraft, accountType: e.target.value })}><option value="bank">Bank book</option><option value="cash">Cash</option><option value="clearing">Clearing</option></select>
+      <select aria-label={tr("币种", "Currency")} data-testid="cashbook-account-currency" required className="rounded-lg border px-3 py-2 text-sm" value={accountDraft.currency} onChange={e => setAccountDraft({ ...accountDraft, currency: e.target.value })}><option value="">{tr("选择币种", "Select currency")}</option>{accountCurrencyOptions(accountDraft.currency).map(code => <option key={code} value={code}>{code}</option>)}</select>
       <input aria-label={tr("期初余额", "Opening balance")} className="rounded-lg border px-3 py-2 text-sm" value={accountDraft.openingBalance} onChange={e => setAccountDraft({ ...accountDraft, openingBalance: e.target.value })}/>
-      <button data-testid="create-cashbook-account" disabled={busy} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50" onClick={() => void act(async () => { await post("/api/finance/cashbook/accounts", { ...accountDraft, idempotencyKey: key() }); setAccountDraft({ accountCode: "", name: "", accountType: "bank", currency: "CNY", openingBalance: "0.0000" }); })}><Plus className="mr-1 inline" size={14}/>{tr("创建", "Create")}</button>
-    </div></Card>
+      <button data-testid="create-cashbook-account" disabled={busy || !accountDraft.currency} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50" onClick={() => void act(async () => { await post("/api/finance/cashbook/accounts", { ...accountDraft, idempotencyKey: key() }); setAccountDraft(emptyAccountDraft(workspace.currency)); })}><Plus className="mr-1 inline" size={14}/>{tr("创建", "Create")}</button>
+    </div>{workspace.status === "unavailable" && !accountDraft.currency && <p className="mt-2 text-xs text-amber-700">{tr("无法读取工作区币种，请为该账户选择币种。", "The workspace currency could not be loaded. Choose a currency for this account.")}</p>}</Card>
     <div className="grid gap-3 md:grid-cols-3">{accounts.map(row => <Card key={row.id} className="p-4" data-testid="cashbook-account"><div className="text-xs text-slate-500">{row.accountCode} · {row.accountType}</div><div className="mt-1 font-semibold">{row.name}</div><div className="mt-3 text-2xl font-semibold">{show(row.currentBalance)} <span className="text-sm">{row.currency}</span></div><div className="mt-1 text-xs text-slate-500">{tr("期初", "Opening")} {show(row.openingBalance)} · {row.status}</div></Card>)}</div>
     <Card className="overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead><tr className="border-b bg-slate-50 text-left text-xs text-slate-500">{[tr("流水号", "Entry"),tr("日期", "Date"),tr("方向", "Direction"),tr("金额", "Amount"),tr("余额前", "Before"),tr("余额后", "After"),tr("结算单", "Settlement")].map(x => <th key={x} className="px-4 py-3">{x}</th>)}</tr></thead><tbody>{entries.map(row => <tr key={row.id} className="border-b last:border-0" data-testid="cashbook-entry"><td className="px-4 py-3 font-medium">{row.entryNumber}</td><td className="px-4 py-3">{formatDateTime(row.occurredAt)}</td><td className="px-4 py-3">{row.direction}</td><td className="px-4 py-3">{show(row.amount)} {row.currency}</td><td className="px-4 py-3">{show(row.balanceBefore)}</td><td className="px-4 py-3">{show(row.balanceAfter)}</td><td className="px-4 py-3">{row.settlementNumber}</td></tr>)}</tbody></table></Card>
   </div>;

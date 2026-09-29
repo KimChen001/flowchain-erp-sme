@@ -32,7 +32,7 @@ export async function runBusinessQueryRuntime(ctx, db, body, { responseMode = 'r
   const message = text(body.message || body.question)
   if (message.length > 1200 || !message || isTechnicalProviderDiagnosticPrompt(message) || !shouldUseSemanticBusinessQuery(message, body)) return null
   const env = ctx.env || process.env
-  let timezone = text(env.FLOWCHAIN_WORKSPACE_TIMEZONE || env.TZ || 'UTC')
+  let timezone = text(env.FLOWCHAIN_WORKSPACE_TIMEZONE || env.TZ || 'America/New_York')
   let actor
   let suppliers
   let summaryService

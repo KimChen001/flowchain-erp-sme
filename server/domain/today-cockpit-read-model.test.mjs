@@ -184,6 +184,20 @@ test('today cockpit returns stable top-level fields and cards', () => {
   assert.equal(/Open PRs|Active RFQs|Open POs|Pending Receiving|Match Exceptions|Inventory Risks|Urgent Followups|Total Open Amount/.test(JSON.stringify(cockpit.cards)), false)
 })
 
+test('today cockpit open-amount currency is derived from documents and stays unknown without one', () => {
+  const cnyCard = buildTodayCockpit(clone(fixture), { now: '2026-06-29T00:00:00Z' }).cards.find((item) => item.id === 'total-open-amount')
+  assert.equal(cnyCard.currency, 'CNY')
+  assert.equal(cnyCard.currencyAggregationStatus, 'single_currency')
+
+  const unknown = clone(fixture)
+  for (const rows of Object.values(unknown)) if (Array.isArray(rows)) for (const row of rows) delete row.currency
+  const cockpit = buildTodayCockpit(unknown, { now: '2026-06-29T00:00:00Z' })
+  const card = cockpit.cards.find((item) => item.id === 'total-open-amount')
+  assert.equal(card.currency, null)
+  assert.equal(card.currencyAggregationStatus, 'no_currency_data')
+  assert.equal(JSON.stringify(cockpit).includes('CNY'), false)
+})
+
 test('today cockpit followups come from procurement read model', () => {
   const cockpit = buildTodayCockpit(clone(fixture), { now: '2026-06-29T00:00:00Z' })
   const followups = buildProcurementFollowups(clone(fixture), { now: '2026-06-29T00:00:00Z' })

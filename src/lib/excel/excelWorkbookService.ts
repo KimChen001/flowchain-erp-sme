@@ -1,4 +1,5 @@
 import type { ExcelBusinessSchema } from "./excelSchemas";
+import { todayInTimeZone } from "../format";
 type XlsxModule = typeof import("xlsx");
 const loadXlsx = () => import("xlsx");
 
@@ -56,7 +57,8 @@ export async function downloadExcelTemplate(schema: ExcelBusinessSchema) {
   return downloadWorkbook(XLSX, workbook, schema.filename);
 }
 
-export async function exportRowsToWorkbook(businessObject: string, rows: Record<string, unknown>[], sheetName = "当前结果") {
+// timeZone: the workspace timezone for the filename date (America/New_York when not given).
+export async function exportRowsToWorkbook(businessObject: string, rows: Record<string, unknown>[], sheetName = "当前结果", timeZone?: string) {
   const XLSX = await loadXlsx();
   const headers = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
   const sheet = XLSX.utils.json_to_sheet(rows, { header: headers, cellDates: true });
@@ -65,11 +67,11 @@ export async function exportRowsToWorkbook(businessObject: string, rows: Record<
   (sheet as Record<string, unknown>)["!freeze"] = { xSplit: 0, ySplit: 1 };
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, sheetName.slice(0, 31));
-  const date = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
+  const date = todayInTimeZone(timeZone);
   return downloadWorkbook(XLSX, workbook, `${businessObject}-${date}.xlsx`);
 }
 
-export async function exportWorkbookSheets(businessObject: string, sheets: Array<{ name: string; rows: Record<string, unknown>[] }>) {
+export async function exportWorkbookSheets(businessObject: string, sheets: Array<{ name: string; rows: Record<string, unknown>[] }>, timeZone?: string) {
   const XLSX = await loadXlsx();
   const workbook = XLSX.utils.book_new();
   sheets.forEach(({ name, rows }) => {
@@ -81,6 +83,6 @@ export async function exportWorkbookSheets(businessObject: string, sheets: Array
     (sheet as Record<string, unknown>)["!freeze"] = { xSplit: 0, ySplit: 1 };
     XLSX.utils.book_append_sheet(workbook, sheet, name.slice(0, 31));
   });
-  const date = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
+  const date = todayInTimeZone(timeZone);
   return downloadWorkbook(XLSX, workbook, `${businessObject}-${date}.xlsx`);
 }

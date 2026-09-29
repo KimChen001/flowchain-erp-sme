@@ -21,9 +21,9 @@ export function csvEscape(value: ExportCellValue): string {
   return text;
 }
 
-export async function exportRowsToCsv(filename: string, rows: Record<string, unknown>[]) {
+export async function exportRowsToCsv(filename: string, rows: Record<string, unknown>[], timeZone?: string) {
   const businessObject = filename.replace(/\.(csv|xlsx)$/i, "").replace(/-export$/i, "");
-  return exportRowsToWorkbook(businessObject, rows);
+  return exportRowsToWorkbook(businessObject, rows, undefined, timeZone);
 }
 
 export function downloadTextFile(filename: string, content: string, mimeType = "text/plain;charset=utf-8") {

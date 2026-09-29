@@ -35,7 +35,11 @@ test.after(async () => {
 
 test('currency amounts render as full comma-formatted values', async () => {
   const { mod } = await loadFormatModule()
-  assert.equal(mod.fmt(140000), '¥140,000')
+  // fmt() never invents a currency symbol; it uses the currency the caller knows.
+  assert.equal(mod.fmt(140000), '140,000')
+  assert.equal(mod.fmt(140000, ''), '140,000')
+  assert.equal(mod.fmt(140000, 'USD'), '$140,000.00')
+  assert.equal(mod.fmt(140000, 'CNY'), 'CN¥140,000.00')
   // Missing currency must not invent CNY; explicit document currencies remain authoritative.
   assert.equal(mod.formatCurrencyAmount(1280000), '1,280,000')
   assert.equal(mod.formatCurrencyAmount(12345.67, 'USD'), '$12,345.67')

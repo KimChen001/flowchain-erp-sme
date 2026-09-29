@@ -34,9 +34,12 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-function money(value = 0, currency = 'CNY') {
-  const prefix = currency === 'CNY' ? '¥' : `${currency} `
-  return `${prefix}${toNumber(value, 0).toLocaleString()}`
+// Unknown currency shows a plain number; a document's own currency is never guessed.
+function money(value = 0, currency = '') {
+  const code = text(currency)
+  const amount = toNumber(value, 0).toLocaleString('en-US')
+  if (!code) return amount
+  return code === 'CNY' ? `¥${amount}` : `${code} ${amount}`
 }
 
 function uniqueBy(items = [], keyOf = (item) => item) {
@@ -210,7 +213,7 @@ function primaryPoLine(po = {}) {
     invoicedQty: lineQuantity(line, ['quantityInvoiced', 'invoicedQty', 'approvedInvoicedQty', 'invoiced']) || toNumber(po.totalInvoicedQty ?? po.invoiced, 0),
     unit: text(line.unit || po.unit),
     unitPrice: toNumber(line.unitPrice ?? po.unitPrice, 0),
-    currency: text(line.currency || po.currency, 'CNY'),
+    currency: text(line.currency || po.currency),
   }
 }
 
@@ -541,7 +544,7 @@ function receivedNotInvoicedRows(db = {}, models = {}) {
         invoicedQty: line.invoicedQty || invoiceQty,
         uninvoicedQty,
         exposure: uninvoicedQty * unitPrice,
-        currency: line.currency || po.currency || 'CNY',
+        currency: line.currency || po.currency || '',
       }
     })
     .filter((row) => row.uninvoicedQty > 0)
@@ -805,7 +808,7 @@ function buildThreeWayMatchContract(query, db, models) {
     scope: { module: 'procurement:match' },
     conclusion: {
       title: '三单匹配失败原因',
-      summary: rows.length ? `匹配失败主要来自 PO Line、GRN / Receipt Line 与 Invoice Line 的数量差异、单价差异或金额差异；首要差异为数量差异 ${quantityDiff.toLocaleString()}，单价差异 ${priceDiffText}，金额差异 ${money(first?.match?.varianceAmount || 0, first?.match?.currency || 'CNY')}。` : '当前没有读取到三单匹配差异记录。',
+      summary: rows.length ? `匹配失败主要来自 PO Line、GRN / Receipt Line 与 Invoice Line 的数量差异、单价差异或金额差异；首要差异为数量差异 ${quantityDiff.toLocaleString()}，单价差异 ${priceDiffText}，金额差异 ${money(first?.match?.varianceAmount || 0, first?.match?.currency || '')}。` : '当前没有读取到三单匹配差异记录。',
       severity: rows.length ? 'risk' : 'info',
       confidence: supplierInvoicesFor(db).length ? 'high' : 'medium',
     },

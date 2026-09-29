@@ -20,8 +20,12 @@ function toNumber(value, fallback = 0) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
 }
-function money(value = 0, currency = 'CNY') {
-  return `${currency === 'CNY' ? '¥' : `${currency} `}${toNumber(value, 0).toLocaleString()}`
+// Unknown currency shows a plain number; a document's own currency is never guessed.
+function money(value = 0, currency = '') {
+  const code = text(currency)
+  const amount = toNumber(value, 0).toLocaleString('en-US')
+  if (!code) return amount
+  return code === 'CNY' ? `¥${amount}` : `${code} ${amount}`
 }
 function compact(value = '') {
   return text(value).toLowerCase().replace(/[^\w\u4e00-\u9fa5-]+/g, '')
@@ -198,7 +202,7 @@ function rawPoLine(po = {}) {
     receivedQty: toNumber(line.quantityReceived ?? line.receivedQty ?? line.received ?? po.totalReceivedQty ?? po.received, 0),
     invoicedQty: toNumber(line.quantityInvoiced ?? line.invoicedQty ?? line.approvedInvoicedQty ?? po.totalInvoicedQty ?? po.invoiced, 0),
     unitPrice: toNumber(line.unitPrice ?? po.unitPrice, 0),
-    currency: text(line.currency || po.currency, 'CNY'),
+    currency: text(line.currency || po.currency),
     unit: text(line.unit || po.unit),
   }
 }

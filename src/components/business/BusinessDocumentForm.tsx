@@ -4,6 +4,8 @@ import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { useUnsavedChanges } from "../navigation/UnsavedChangesProvider";
 import { A, Card } from "../ui";
+import { useI18n } from "../../i18n/I18n";
+import { todayInTimeZone } from "../../lib/format";
 
 export function BusinessDocumentForm({ documentLabel, documentId, listPath, mode = "new" }: {
   documentLabel: string;
@@ -12,8 +14,9 @@ export function BusinessDocumentForm({ documentLabel, documentId, listPath, mode
   mode?: "new" | "edit";
 }) {
   const navigate = useNavigate();
+  const { timezone } = useI18n();
   const [reference, setReference] = useState(documentId || "");
-  const [businessDate, setBusinessDate] = useState(new Date().toISOString().slice(0, 10));
+  const [businessDate, setBusinessDate] = useState(() => todayInTimeZone(timezone));
   const [party, setParty] = useState("");
   const [remarks, setRemarks] = useState("");
   const [dirty, setDirty] = useState(false);

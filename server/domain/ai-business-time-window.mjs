@@ -61,9 +61,9 @@ export function detectBusinessTimeWindow(message = '') {
   return 'all'
 }
 
-export function resolveBusinessTimeWindow(kind = 'all', { now = new Date(), timezone = 'UTC', expression = '' } = {}) {
+export function resolveBusinessTimeWindow(kind = 'all', { now = new Date(), timezone = 'America/New_York', expression = '' } = {}) {
   const normalizedKind = SUPPORTED_WINDOWS.has(kind) ? kind : 'all'
-  const resolvedTimezone = validTimezone(timezone) ? timezone : 'UTC'
+  const resolvedTimezone = validTimezone(timezone) ? timezone : 'America/New_York'
   const current = now instanceof Date ? now : new Date(now)
   const local = localDate(current, resolvedTimezone)
   const todayStart = startOfLocalDay(local, resolvedTimezone)
@@ -95,7 +95,7 @@ export function resolveBusinessTimeWindow(kind = 'all', { now = new Date(), time
 
   if (/最近|近期|recent(?:ly)?/i.test(expression)) limitations.push('“最近”按产品默认的未来 7 天窗口解释。')
   if (/很快|soon/i.test(expression)) limitations.push('“很快”按产品默认的未来 7 天窗口解释；可指定更精确日期。')
-  if (resolvedTimezone !== timezone) limitations.push(`无效工作区时区 ${timezone}，已按 UTC 解释。`)
+  if (resolvedTimezone !== timezone) limitations.push(`无效工作区时区 ${timezone}，已按 ${resolvedTimezone} 解释。`)
   return {
     type: normalizedKind,
     startAt: startAt?.toISOString() || null,
