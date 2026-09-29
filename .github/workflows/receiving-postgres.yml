@@ -40,6 +40,7 @@ jobs:
       - run: npx prisma migrate deploy
         env:
           DATABASE_URL: postgresql://flowchain_ci:flowchain_ci_password@127.0.0.1:55432/flowchain_ci_diagnostics?schema=public
+      - run: npm run db:check-drift
       - run: npm run typecheck
       - run: npm run build
       - run: npm test

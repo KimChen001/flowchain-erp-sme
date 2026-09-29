@@ -113,6 +113,7 @@
     "test:api:authorization": "node scripts/smoke-authorization-api.mjs",
     "test:browser:authorization": "node scripts/run-authorization-playwright.mjs",
     "db:generate": "prisma generate",
+    "db:check-drift": "node scripts/check-prisma-schema-drift.mjs",
     "pilot:setup": "node scripts/setup-pilot-workspace.mjs",
     "pilot:setup:demo": "node scripts/setup-local-demo.mjs",
     "pilot:setup:scenario": "node scripts/setup-local-scenario.mjs",

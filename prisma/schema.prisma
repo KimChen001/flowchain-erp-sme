@@ -282,10 +282,10 @@ model IntakeRecord {
   recordType            String
   status                IntakeRecordStatus @default(parsed)
   fingerprint           String
-  sourceFormat          String
+  sourceFormat          String @default("legacy_preview")
   sheetName             String?
   headerRowNumber       Int?
-  sourceLocator         Json
+  sourceLocator         Json @default("{}")
   normalizationEvidence Json?
   excludedByUserId      String?
   excludedAt            DateTime?
@@ -295,6 +295,7 @@ model IntakeRecord {
   tenant Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   batch  IntakeBatch       @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Cascade)
   issues ValidationIssue[]
+  tenantGuardedIssues ValidationIssue[] @relation("ValidationIssueRecordTenantGuard")
 
   @@unique([tenantId, id])
   @@unique([tenantId, batchId, rowNumber])
@@ -446,6 +447,7 @@ model ValidationIssue {
   tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   batch  IntakeBatch   @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Cascade)
   record IntakeRecord? @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  recordTenantGuard IntakeRecord? @relation("ValidationIssueRecordTenantGuard", fields: [tenantId, recordId], references: [tenantId, id], onDelete: Cascade, map: "ValidationIssue_tenant_record_guard_fkey")
 
   @@unique([tenantId, id])
   @@index([tenantId, batchId, severity, resolved])
@@ -566,6 +568,7 @@ model User {
   @@unique([tenantId, email])
   @@unique([tenantId, id])
   @@index([tenantId])
+  @@index([defaultWarehouseId])
 }
 
 model TenantRole {
@@ -580,7 +583,7 @@ model TenantRole {
   createdById       String?
   updatedById       String?
   createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  updatedAt         DateTime @default(now()) @updatedAt
 
   tenant      Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   createdBy   User?                  @relation("RoleCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -1009,7 +1012,7 @@ model RfqLine {
   quotationRevisionLines SupplierQuotationRevisionLine[]
 
   @@unique([tenantId, id])
-  @@index([tenantId, rfqId])
+  @@index([rfqId])
 }
 
 model SupplierQuotation {
@@ -1105,9 +1108,9 @@ model SupplierQuotationRevision {
   awardDecisions RfqAwardDecision[]
 
   @@unique([tenantId, id])
-  @@unique([tenantId, quotationId, revisionNumber])
-  @@unique([tenantId, id, quotationId, revisionNumber])
-  @@index([tenantId, quotationId, revisionNumber])
+  @@unique([tenantId, quotationId, revisionNumber], map: "SupplierQuotationRevision_tenantId_quotationId_revisionNumber_k")
+  @@unique([tenantId, id, quotationId, revisionNumber], map: "SupplierQuotationRevision_tenantId_id_quotationId_revisionNumbe")
+  @@index([tenantId, quotationId, revisionNumber], map: "SupplierQuotationRevision_tenantId_quotationId_revisionNumber_i")
   @@index([tenantId, createdAt])
 }
 
@@ -1136,7 +1139,7 @@ model SupplierQuotationRevisionLine {
   @@unique([tenantId, revisionId, rfqLineId])
   @@index([tenantId, revisionId])
   @@index([tenantId, rfqLineId])
-  @@index([tenantId, sourceQuotationLineId])
+  @@index([tenantId, sourceQuotationLineId], map: "SupplierQuotationRevisionLine_tenantId_sourceQuotationLineId_id")
 }
 
 model RfqAwardDecision {
@@ -1159,7 +1162,7 @@ model RfqAwardDecision {
   rfq               Rfq                       @relation(fields: [tenantId, rfqId], references: [tenantId, id], onDelete: Restrict)
   supplier          Supplier                  @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: Restrict)
   quotation         SupplierQuotation         @relation(fields: [tenantId, quotationId, rfqId, supplierId], references: [tenantId, id, rfqId, supplierId], onDelete: Restrict)
-  quotationRevision SupplierQuotationRevision @relation(fields: [tenantId, quotationRevisionId, quotationId, quotationRevisionNumber], references: [tenantId, id, quotationId, revisionNumber], onDelete: Restrict)
+  quotationRevision SupplierQuotationRevision @relation(fields: [tenantId, quotationRevisionId, quotationId, quotationRevisionNumber], references: [tenantId, id, quotationId, revisionNumber], onDelete: Restrict, map: "RfqAwardDecision_tenantId_quotationRevisionId_quotationId_quota")
   decidedByActor    User                      @relation("RfqAwardDecisionActor", fields: [tenantId, decidedByActorId], references: [tenantId, id], onDelete: Restrict)
 
   @@unique([tenantId, id])
@@ -1531,7 +1534,7 @@ model SupplierCreditMemoLine {
   supplierInvoiceLine SupplierInvoiceLine @relation(fields: [supplierInvoiceLineId], references: [id], onDelete: Restrict)
   returnPostingLine   ReturnPostingLine   @relation(fields: [returnPostingLineId], references: [id], onDelete: Restrict)
 
-  @@unique([supplierCreditMemoId, supplierInvoiceLineId, returnPostingLineId])
+  @@unique([supplierCreditMemoId, supplierInvoiceLineId, returnPostingLineId], map: "SupplierCreditMemoLine_memo_invoice_return_key")
   @@index([supplierInvoiceLineId])
   @@index([returnPostingLineId])
 }
@@ -1605,7 +1608,7 @@ model CustomerInvoiceLine {
   item            Item                     @relation(fields: [itemId], references: [id], onDelete: Restrict)
   creditNoteLines CustomerCreditNoteLine[]
 
-  @@unique([customerInvoiceId, shipmentLineId])
+  @@unique([customerInvoiceId, shipmentLineId], map: "CustomerInvoiceLine_invoice_shipment_key")
   @@index([shipmentLineId])
   @@index([salesOrderLineId])
 }
@@ -1656,7 +1659,7 @@ model CashbookAccount {
   version        Int      @default(0)
   metadata       Json?
   createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  updatedAt      DateTime @default(now()) @updatedAt
 
   tenant                     Tenant                         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   settlements                SettlementDocument[]
@@ -1717,7 +1720,7 @@ model SettlementDocument {
   version                  Int       @default(0)
   metadata                 Json?
   createdAt                DateTime  @default(now())
-  updatedAt                DateTime  @updatedAt
+  updatedAt                DateTime  @default(now()) @updatedAt
 
   tenant                                Tenant                                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   cashbookAccount                       CashbookAccount                        @relation(fields: [tenantId, cashbookAccountId], references: [tenantId, id], onDelete: Restrict)
@@ -1727,12 +1730,16 @@ model SettlementDocument {
   attachments                           SettlementAttachment[]
   bankReconciliationCandidates          BankReconciliationCandidate[]
   bankReconciliationCashbookAllocations BankReconciliationCashbookAllocation[]
+  // Id-only FKs the bank reconciliation migrations create next to the tenant-scoped relations above.
+  bankReconciliationCandidatesUnscoped          BankReconciliationCandidate[]          @relation("BankReconciliationCandidateSettlementUnscoped")
+  bankReconciliationCashbookAllocationsUnscoped BankReconciliationCashbookAllocation[] @relation("BankReconciliationCashbookAllocationSettlementUnscoped")
 
   @@unique([tenantId, settlementNumber])
   @@unique([tenantId, id])
   @@index([tenantId, status])
   @@index([tenantId, direction, settlementDate])
   @@index([tenantId, counterpartyType, counterpartyId])
+  @@index([tenantId, workflowStatus, postingStatus])
 }
 
 model SettlementAllocation {
@@ -1757,7 +1764,7 @@ model SettlementAllocation {
   payableObligation    PayableObligation?    @relation(fields: [tenantId, payableObligationId], references: [tenantId, id], onDelete: Restrict)
   receivableObligation ReceivableObligation? @relation(fields: [tenantId, receivableObligationId], references: [tenantId, id], onDelete: Restrict)
 
-  @@unique([settlementId, obligationType, payableObligationId, receivableObligationId])
+  @@unique([settlementId, obligationType, payableObligationId, receivableObligationId], map: "SettlementAllocation_settlementId_obligationType_payableObligat")
   @@index([tenantId, settlementId])
   @@index([payableObligationId])
   @@index([receivableObligationId])
@@ -1781,7 +1788,7 @@ model PartnerAdvance {
   reversedAt         DateTime?
   metadata           Json?
   createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  updatedAt          DateTime  @default(now()) @updatedAt
 
   tenant           Tenant                       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   sourceSettlement SettlementDocument           @relation(fields: [tenantId, sourceSettlementId], references: [tenantId, id], onDelete: Restrict)
@@ -1818,7 +1825,7 @@ model AdvanceApplicationDocument {
   sourceDeviceId         String?
   metadata               Json?
   createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
+  updatedAt              DateTime  @default(now()) @updatedAt
 
   tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   advance              PartnerAdvance        @relation(fields: [tenantId, advanceId], references: [tenantId, id], onDelete: Restrict)
@@ -1863,7 +1870,7 @@ model InternalTransferDocument {
   sourceDeviceId        String?
   metadata              Json?
   createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  updatedAt             DateTime  @default(now()) @updatedAt
 
   tenant                                Tenant                                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   fromAccount                           CashbookAccount                        @relation("InternalTransferFrom", fields: [tenantId, fromCashbookAccountId], references: [tenantId, id], onDelete: Restrict)
@@ -1873,7 +1880,7 @@ model InternalTransferDocument {
 
   @@unique([tenantId, transferNumber])
   @@unique([tenantId, id])
-  @@index([tenantId, workflowStatus, postingStatus])
+  @@index([tenantId, workflowStatus, postingStatus], map: "InternalTransferDocument_tenantId_workflowStatus_postingStatus_")
 }
 
 model SettlementAttachment {
@@ -1981,6 +1988,7 @@ model DomainChangeFeed {
 
   @@index([tenantId, sequence])
   @@index([tenantId, entityType, entityId])
+  @@index([tenantId, moduleKey, sequence])
 }
 
 model SyncClient {
@@ -1996,7 +2004,7 @@ model SyncClient {
   lastAcknowledgedSequence BigInt    @default(0)
   authorizationFingerprint String
   createdAt                DateTime  @default(now())
-  updatedAt                DateTime  @updatedAt
+  updatedAt                DateTime  @default(now()) @updatedAt
   revokedAt                DateTime?
 
   tenant           Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -2056,9 +2064,17 @@ model CashbookEntry {
   cashbookAccount               CashbookAccount                        @relation(fields: [tenantId, cashbookAccountId], references: [tenantId, id], onDelete: Restrict)
   settlement                    SettlementDocument?                    @relation(fields: [tenantId, settlementId], references: [tenantId, id], onDelete: Restrict)
   internalTransfer              InternalTransferDocument?              @relation(fields: [tenantId, internalTransferId], references: [tenantId, id], onDelete: Restrict)
+  reversalOfEntry               CashbookEntry?                         @relation("CashbookEntryReversalOf", fields: [reversalOfEntryId], references: [id], onDelete: Restrict)
+  reversingEntry                CashbookEntry?                         @relation("CashbookEntryReversalOf")
+  reversedByEntry               CashbookEntry?                         @relation("CashbookEntryReversedBy", fields: [reversedByEntryId], references: [id], onDelete: Restrict)
+  reversedEntry                 CashbookEntry?                         @relation("CashbookEntryReversedBy")
   bankReconciliationCandidates  BankReconciliationCandidate[]
   bankReconciliationAllocations BankReconciliationCashbookAllocation[]
   bankReconciliationExceptions  BankReconciliationException[]
+  // Id-only FKs the bank reconciliation migrations create next to the tenant-scoped relations above.
+  bankReconciliationCandidatesUnscoped  BankReconciliationCandidate[]          @relation("BankReconciliationCandidateCashbookEntryUnscoped")
+  bankReconciliationAllocationsUnscoped BankReconciliationCashbookAllocation[] @relation("BankReconciliationCashbookAllocationCashbookEntryUnscoped")
+  bankReconciliationExceptionsUnscoped  BankReconciliationException[]          @relation("BankReconciliationExceptionCashbookEntryUnscoped")
 
   @@unique([tenantId, entryNumber])
   @@unique([tenantId, id])
@@ -2066,6 +2082,7 @@ model CashbookEntry {
   @@unique([internalTransferId, entryType])
   @@index([tenantId, cashbookAccountId, occurredAt])
   @@index([tenantId, settlementId])
+  @@index([tenantId, internalTransferId])
 }
 
 model BankStatementMappingTemplate {
@@ -2092,7 +2109,7 @@ model BankStatementMappingTemplate {
   createdById        String
   updatedById        String
   createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  updatedAt          DateTime @default(now()) @updatedAt
   metadata           Json?
 
   tenant          Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
@@ -2154,8 +2171,8 @@ model BankStatementImportBatch {
 
   @@unique([tenantId, batchNumber])
   @@unique([tenantId, id])
-  @@index([tenantId, cashbookAccountId, workflowStatus])
-  @@index([tenantId, cashbookAccountId, fileSha256])
+  @@index([tenantId, cashbookAccountId, workflowStatus], map: "BankStatementImportBatch_tenantId_cashbookAccountId_workflowSta")
+  @@index([tenantId, cashbookAccountId, fileSha256], map: "BankStatementImportBatch_tenantId_cashbookAccountId_fileSha256_")
 }
 
 model BankStatementImportRow {
@@ -2188,15 +2205,15 @@ model BankStatementImportRow {
   overriddenById                      String?
   version                             Int       @default(0)
   createdAt                           DateTime  @default(now())
-  updatedAt                           DateTime  @updatedAt
+  updatedAt                           DateTime  @default(now()) @updatedAt
 
   tenant Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   batch  BankStatementImportBatch @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Restrict)
   line   BankStatementLine?
 
-  @@unique([tenantId, batchId, sourceSheet, sourceRowNumber])
+  @@unique([tenantId, batchId, sourceSheet, sourceRowNumber], map: "BankStatementImportRow_tenantId_batchId_sourceSheet_sourceRowNu")
   @@unique([tenantId, id])
-  @@index([tenantId, batchId, validationStatus, duplicateStatus])
+  @@index([tenantId, batchId, validationStatus, duplicateStatus], map: "BankStatementImportRow_tenantId_batchId_validationStatus_duplic")
 }
 
 model BankStatementLine {
@@ -2237,12 +2254,14 @@ model BankStatementLine {
   candidates      BankReconciliationCandidate[]
   allocations     BankReconciliationBankLineAllocation[]
   exceptions      BankReconciliationException[]
+  // Id-only FK the bank reconciliation migrations create next to the tenant-scoped relation above.
+  exceptionsUnscoped BankReconciliationException[] @relation("BankReconciliationExceptionBankStatementLineUnscoped")
 
   @@unique([tenantId, batchId, lineNumber])
   @@unique([tenantId, id])
-  @@index([tenantId, cashbookAccountId, reconciliationStatus, status])
-  @@index([tenantId, cashbookAccountId, bankTransactionId])
-  @@index([tenantId, cashbookAccountId, canonicalFingerprint])
+  @@index([tenantId, cashbookAccountId, reconciliationStatus, status], map: "BankStatementLine_tenantId_cashbookAccountId_reconciliationStat")
+  @@index([tenantId, cashbookAccountId, bankTransactionId], map: "BankStatementLine_tenantId_cashbookAccountId_bankTransactionId_")
+  @@index([tenantId, cashbookAccountId, canonicalFingerprint], map: "BankStatementLine_tenantId_cashbookAccountId_canonicalFingerpri")
 }
 
 model BankReconciliationCandidate {
@@ -2273,9 +2292,13 @@ model BankReconciliationCandidate {
   bankStatementLine BankStatementLine   @relation(fields: [tenantId, bankStatementLineId], references: [tenantId, id], onDelete: Restrict)
   cashbookEntry     CashbookEntry       @relation(fields: [tenantId, cashbookEntryId], references: [tenantId, id], onDelete: Restrict)
   settlement        SettlementDocument? @relation(fields: [tenantId, settlementDocumentId], references: [tenantId, id], onDelete: Restrict)
+  // Id-only FKs the migrations create next to the tenant-scoped relations above.
+  cashbookEntryUnscoped CashbookEntry       @relation("BankReconciliationCandidateCashbookEntryUnscoped", fields: [cashbookEntryId], references: [id], onDelete: Restrict)
+  settlementUnscoped    SettlementDocument? @relation("BankReconciliationCandidateSettlementUnscoped", fields: [settlementDocumentId], references: [id], onDelete: Restrict)
 
-  @@unique([tenantId, bankStatementLineId, cashbookEntryId, algorithmVersion])
-  @@index([tenantId, bankStatementLineId, status, score])
+  @@unique([tenantId, bankStatementLineId, cashbookEntryId, algorithmVersion], map: "BankReconciliationCandidate_tenantId_bankStatementLineId_cashbo")
+  @@index([tenantId, bankStatementLineId, status, score], map: "BankReconciliationCandidate_tenantId_bankStatementLineId_status")
+  @@index([tenantId, cashbookEntryId, status])
 }
 
 model BankReconciliationGroup {
@@ -2300,7 +2323,7 @@ model BankReconciliationGroup {
   version              Int       @default(0)
   createdById          String
   createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  updatedAt            DateTime  @default(now()) @updatedAt
   metadata             Json?
 
   tenant              Tenant                                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
@@ -2311,7 +2334,7 @@ model BankReconciliationGroup {
 
   @@unique([tenantId, reconciliationNumber])
   @@unique([tenantId, id])
-  @@index([tenantId, cashbookAccountId, workflowStatus])
+  @@index([tenantId, cashbookAccountId, workflowStatus], map: "BankReconciliationGroup_tenantId_cashbookAccountId_workflowStat")
 }
 
 model BankReconciliationBankLineAllocation {
@@ -2323,10 +2346,12 @@ model BankReconciliationBankLineAllocation {
   createdAt             DateTime @default(now())
 
   tenant            Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  group             BankReconciliationGroup @relation(fields: [tenantId, reconciliationGroupId], references: [tenantId, id], onDelete: Restrict)
-  bankStatementLine BankStatementLine       @relation(fields: [tenantId, bankStatementLineId], references: [tenantId, id], onDelete: Restrict)
+  group             BankReconciliationGroup @relation(fields: [tenantId, reconciliationGroupId], references: [tenantId, id], onDelete: Restrict, map: "BankReconciliationBankLineAllocation_tenantId_reconciliationGro")
+  bankStatementLine BankStatementLine       @relation(fields: [tenantId, bankStatementLineId], references: [tenantId, id], onDelete: Restrict, map: "BankReconciliationBankLineAllocation_tenantId_bankStatementLine")
 
-  @@unique([reconciliationGroupId, bankStatementLineId])
+  @@unique([reconciliationGroupId, bankStatementLineId], map: "BankReconciliationBankLineAllocation_reconciliationGroupId_bank")
+  // PostgreSQL truncated this index and the bankStatementLine FK to the same name, which Prisma
+  // cannot declare twice. The rename Prisma wants is allowed in scripts/check-prisma-schema-drift.mjs.
   @@index([tenantId, bankStatementLineId])
 }
 
@@ -2341,13 +2366,17 @@ model BankReconciliationCashbookAllocation {
   createdAt             DateTime @default(now())
 
   tenant           Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  group            BankReconciliationGroup   @relation(fields: [tenantId, reconciliationGroupId], references: [tenantId, id], onDelete: Restrict)
-  cashbookEntry    CashbookEntry             @relation(fields: [tenantId, cashbookEntryId], references: [tenantId, id], onDelete: Restrict)
-  settlement       SettlementDocument?       @relation(fields: [tenantId, settlementDocumentId], references: [tenantId, id], onDelete: Restrict)
-  internalTransfer InternalTransferDocument? @relation(fields: [tenantId, internalTransferId], references: [tenantId, id], onDelete: Restrict)
+  group            BankReconciliationGroup   @relation(fields: [tenantId, reconciliationGroupId], references: [tenantId, id], onDelete: Restrict, map: "BankReconciliationCashbookAllocation_tenantId_reconciliationGro")
+  cashbookEntry    CashbookEntry             @relation(fields: [tenantId, cashbookEntryId], references: [tenantId, id], onDelete: Restrict, map: "BankReconciliationCashbookAllocation_tenantId_cashbookEntryId_f")
+  settlement       SettlementDocument?       @relation(fields: [tenantId, settlementDocumentId], references: [tenantId, id], onDelete: Restrict, map: "BankReconciliationCashbookAllocation_tenantId_settlementDocumen")
+  internalTransfer InternalTransferDocument? @relation(fields: [tenantId, internalTransferId], references: [tenantId, id], onDelete: Restrict, map: "BankReconciliationCashbookAllocation_tenantId_internalTransferI")
+  // Id-only FKs the migrations create next to the tenant-scoped relations above.
+  cashbookEntryUnscoped CashbookEntry       @relation("BankReconciliationCashbookAllocationCashbookEntryUnscoped", fields: [cashbookEntryId], references: [id], onDelete: Restrict)
+  settlementUnscoped    SettlementDocument? @relation("BankReconciliationCashbookAllocationSettlementUnscoped", fields: [settlementDocumentId], references: [id], onDelete: Restrict)
 
-  @@unique([reconciliationGroupId, cashbookEntryId])
-  @@index([tenantId, cashbookEntryId])
+  @@unique([reconciliationGroupId, cashbookEntryId], map: "BankReconciliationCashbookAllocation_reconciliationGroupId_cash")
+  @@index([tenantId, cashbookEntryId], map: "BankReconciliationCashbookAllocation_tenantId_cashbookEntryId_i")
+  @@index([tenantId, cashbookEntryId, reconciliationGroupId], map: "BankReconciliationCashbookAllocation_tenantId_cashbookEntryId_g")
 }
 
 model BankReconciliationException {
@@ -2369,6 +2398,9 @@ model BankReconciliationException {
   group             BankReconciliationGroup @relation(fields: [tenantId, reconciliationGroupId], references: [tenantId, id], onDelete: Restrict)
   bankStatementLine BankStatementLine?      @relation(fields: [tenantId, bankStatementLineId], references: [tenantId, id], onDelete: Restrict)
   cashbookEntry     CashbookEntry?          @relation(fields: [tenantId, cashbookEntryId], references: [tenantId, id], onDelete: Restrict)
+  // Id-only FKs the migrations create next to the tenant-scoped relations above.
+  bankStatementLineUnscoped BankStatementLine? @relation("BankReconciliationExceptionBankStatementLineUnscoped", fields: [bankStatementLineId], references: [id], onDelete: Restrict)
+  cashbookEntryUnscoped     CashbookEntry?     @relation("BankReconciliationExceptionCashbookEntryUnscoped", fields: [cashbookEntryId], references: [id], onDelete: Restrict)
 
   @@index([tenantId, status, severity])
   @@index([tenantId, reconciliationGroupId])
@@ -2425,7 +2457,7 @@ model CustomerCreditNoteLine {
   customerInvoiceLine CustomerInvoiceLine @relation(fields: [customerInvoiceLineId], references: [id], onDelete: Restrict)
   returnPostingLine   ReturnPostingLine   @relation(fields: [returnPostingLineId], references: [id], onDelete: Restrict)
 
-  @@unique([customerCreditNoteId, customerInvoiceLineId, returnPostingLineId])
+  @@unique([customerCreditNoteId, customerInvoiceLineId, returnPostingLineId], map: "CustomerCreditNoteLine_note_invoice_return_key")
   @@index([customerInvoiceLineId])
   @@index([returnPostingLineId])
 }
@@ -2528,7 +2560,7 @@ model QuarantineInventoryBalance {
   returnPostingLines               ReturnPostingLine[]
   quarantineDispositionAllocations QuarantineDispositionAllocation[]
 
-  @@unique([tenantId, sku, warehouseKey, locationKey])
+  @@unique([tenantId, sku, warehouseKey, locationKey], map: "QuarantineInventoryBalance_tenantId_sku_warehouseKey_locationKe")
   @@index([tenantId, sku])
   @@index([tenantId, warehouseId, locationKey])
   @@index([tenantId, status])
@@ -2857,6 +2889,7 @@ model ReturnRequestLine {
   @@unique([returnRequestId, sourceDocumentLineId])
   @@index([returnRequestId])
   @@index([itemId, sku])
+  @@index([sourceDocumentType, sourceDocumentId, sourceDocumentLineId], map: "ReturnRequestLine_sourceDocumentType_sourceDocumentId_sourceDoc")
 }
 
 model ReturnAuthorization {
@@ -2905,7 +2938,7 @@ model ReturnAuthorizationLine {
   returnRequestLine   ReturnRequestLine   @relation(fields: [returnRequestLineId], references: [id], onDelete: Restrict)
   postingLines        ReturnPostingLine[]
 
-  @@unique([returnAuthorizationId, returnRequestLineId])
+  @@unique([returnAuthorizationId, returnRequestLineId], map: "ReturnAuthorizationLine_returnAuthorizationId_returnRequestLine")
   @@index([returnAuthorizationId])
   @@index([returnRequestLineId])
 }
@@ -2945,6 +2978,7 @@ model ReturnPostingDocument {
   @@index([tenantId, postingType, postingStatus])
   @@index([tenantId, warehouseId])
   @@index([tenantId, createdAt])
+  @@index([tenantId, workflowStatus, postingStatus])
 }
 
 model ReturnPostingLine {
@@ -3002,8 +3036,8 @@ model QuarantineDispositionAllocation {
   consumerMovement   InventoryMovement          @relation("QuarantineDispositionConsumer", fields: [consumerMovementId], references: [id], onDelete: Restrict)
   reversedByMovement InventoryMovement?         @relation("QuarantineDispositionReversal", fields: [reversedByMovementId], references: [id], onDelete: Restrict)
 
-  @@unique([sourceMovementId, consumerMovementId])
-  @@index([tenantId, quarantineBalanceId, status])
+  @@unique([sourceMovementId, consumerMovementId], map: "QuarantineDispositionAllocation_sourceMovementId_consumerMoveme")
+  @@index([tenantId, quarantineBalanceId, status], map: "QuarantineDispositionAllocation_tenantId_quarantineBalanceId_st")
   @@index([sourceMovementId, status])
   @@index([consumerMovementId, status])
 }
@@ -3252,7 +3286,7 @@ model AiKnowledgeDocument {
   createdById String
   createdAt DateTime @default(now())
   chunks AiKnowledgeChunk[]
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   @@index([tenantId, status])
 }
 
@@ -3266,6 +3300,7 @@ model AiKnowledgeChunk {
   embeddingModel String?
   embeddingDimensions Int?
   embeddedAt DateTime?
-  document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   @@unique([documentId, position])
+  @@index([embeddingModel, embeddingDimensions])
 }

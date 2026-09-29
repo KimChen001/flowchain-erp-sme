@@ -10,8 +10,58 @@ database-only and requires `FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING=true`.
 - `npm run db:push`: push schema to an explicitly configured database.
 - `npm run db:migrate`: create/apply a development migration.
 - `npm run db:studio`: open Prisma Studio.
+- `npm run db:check-drift`: fail if `schema.prisma` no longer describes what
+  `migrations/` creates. Needs no `DATABASE_URL`; see below.
 
-All commands require an explicit `DATABASE_URL` through `prisma.config.ts`. Normal `npm test`, `npm run typecheck`, and `npm run build` do not require a database.
+All commands require an explicit `DATABASE_URL` through `prisma.config.ts`, except `db:check-drift`. Normal `npm test`, `npm run typecheck`, and `npm run build` do not require a database.
+
+## Schema drift check
+
+The migrations are hand-written SQL, and they are the source of truth.
+`schema.prisma` must describe the database they produce. Otherwise
+`prisma db push` changes that database to match the schema, and
+`prisma migrate dev` adds the same changes to its next migration. Those
+changes can include dropping foreign keys, indexes, and column defaults.
+
+`npm run db:check-drift` runs `prisma migrate deploy` against a throwaway
+embedded PostgreSQL on a random port. It then runs
+`prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`.
+The check fails if the diff has any statement not listed in `ALLOWED_DRIFT` in
+`scripts/check-prisma-schema-drift.mjs`. It also fails if an allowed statement
+no longer appears. It never reads `.env` files or connects to a configured
+database. Pass `--print` to see the whole diff.
+
+When the check fails, fix it in one of two ways:
+
+- Update `schema.prisma` if the migrations are right. Declare the relation,
+  `@@index`, default, or `map:` name that the migration SQL creates. That
+  includes `onDelete`/`onUpdate`: a `REFERENCES` clause without `ON UPDATE`
+  is `onUpdate: NoAction`, not Prisma's default `Cascade`. PostgreSQL
+  truncates identifiers to 63 bytes, so a long constraint or index name needs
+  `map:` with the truncated name.
+- Add a migration if the database itself is wrong.
+
+Add an `ALLOWED_DRIFT` entry, with its reason, only for something Prisma
+cannot express. Current entries:
+
+- `BankReconciliationBankLineAllocation`: PostgreSQL truncated both the
+  `(tenantId, bankStatementLineId)` index and the foreign key on the same
+  columns to the same name. Prisma requires names to be unique per model, so
+  the schema maps the foreign key, and Prisma would rename the index.
+
+The diff does not cover these objects, which Prisma leaves alone:
+
+- Check constraints, triggers, and functions.
+- Partial unique indexes, such as `SupplierInvoice_tenant_supplier_number_key`
+  (the `partialIndexes` preview feature is not enabled).
+- The expression index `WorkspaceInvitation_active_email_key`.
+
+`AiKnowledgeChunk.embeddingVector` and its HNSW indexes exist only where the
+pgvector extension is installed (`20260910100000_optional_pgvector_knowledge`
+and `server/domain/ai-pgvector-store.mjs`). They are intentionally absent from
+`schema.prisma`. The embedded check database has no pgvector, so it cannot see
+them. `prisma db push` against a pgvector database would still drop that
+column.
 
 ## Migration rollout
 
