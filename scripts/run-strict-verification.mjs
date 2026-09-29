@@ -73,6 +73,11 @@ function runNode(args) {
       output += textChunk;
       process.stdout.write(textChunk);
     };
+    // Decode as streams: converting each Buffer chunk on its own garbles a
+    // multi-byte character split across chunks (node:test's "ℹ fail N"
+    // summary), and the tally then silently misses it.
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", capture);
     child.stderr.on("data", capture);
     child.once("error", (error) => resolvePromise({ code: 1, output: `${output}\n${error.message}` }));

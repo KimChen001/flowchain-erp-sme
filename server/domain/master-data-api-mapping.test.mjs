@@ -263,7 +263,36 @@ test('normalizeTaxCodeRows maps API tax codes and preserves fallback classificat
   assert.equal(rows[0].isDefault, true)
   assert.equal(rows[0].status, '停用')
   assert.equal(rows[0].description, 'Fallback tax code')
-  assert.equal(rows[1].type, '免税')
+  assert.equal(rows[1].type, '')
   assert.equal(rows[1].isDefault, false)
   assert.equal(mod.normalizeTaxCodeRows(undefined, fallbackTaxCodes), fallbackTaxCodes)
+})
+
+test('normalizers show only recorded facts and never assume a country, currency or tax regime', async () => {
+  const { mod } = await loadMappingModule()
+  const [tax] = mod.normalizeTaxCodeRows([{ id: 'SALES825', label: 'Sales tax 8.25%', rate: 0.0825, taxType: 'sales_tax', region: 'US', status: 'active' }], [])
+  assert.deepEqual({ type: tax.type, region: tax.region, rate: tax.rate, isDefault: tax.isDefault }, { type: 'sales_tax', region: 'US', rate: 0.0825, isDefault: false })
+  const [unknownTax] = mod.normalizeTaxCodeRows([{ id: 'NEW', label: 'New code', rate: 0.05 }], [])
+  assert.deepEqual({ type: unknownTax.type, region: unknownTax.region }, { type: '', region: '' })
+
+  const [term] = mod.normalizePaymentTermRows([{ id: 'NET30', label: 'Net 30', days: 30 }], [])
+  assert.deepEqual({ discountRule: term.discountRule, dueDateRule: term.dueDateRule, netDays: term.netDays }, { discountRule: '', dueDateRule: '', netDays: 30 })
+
+  const [warehouse] = mod.normalizeWarehouseRows([{ id: 'WH-1', name: 'Main Warehouse', type: 'warehouse', status: 'active' }], [])
+  assert.deepEqual({ zone: warehouse.zone, bin: warehouse.bin, temperature: warehouse.temperatureRequirement }, { zone: '', bin: '', temperature: '' })
+
+  const [supplier] = mod.normalizeSupplierRows([{ id: 'SUP-1', name: 'Northstar', preferred: true }], [])
+  assert.deepEqual({ currency: supplier.currency, certification: supplier.certificationStatus, category: supplier.category }, { currency: '', certification: '', category: '' })
+
+  const [item] = mod.normalizeItemRows([{ id: 'ITEM-1', sku: 'SKU-1', name: 'Widget' }], [], [])
+  assert.deepEqual({ unit: item.unit, category: item.category }, { unit: '', category: '' })
+
+  const customers = mod.normalizeCustomerRows([
+    { code: 'LDC-001', name: 'Redwood Retail', status: 'active' },
+    { code: 'LDC-002', name: 'Bluebird', status: 'inactive', creditStatus: 'restricted' },
+  ])
+  assert.deepEqual(customers.map((row) => [row.status, row.creditStatus]), [['启用', ''], ['停用', '受限']])
+
+  const shown = JSON.stringify([tax, unknownTax, term, warehouse, supplier, item, customers])
+  assert.doesNotMatch(shown, /中国大陆|进项税|常温|无现金折扣|CNY|未分类|件|已认证/)
 })

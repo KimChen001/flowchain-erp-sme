@@ -19,6 +19,9 @@ function run(spec, extraEnv = {}) {
 
 const acceptance = await run("tests/browser/product-recovery-acceptance.spec.ts");
 if (acceptance !== 0) process.exit(acceptance);
+// The US walkthrough must stay free of Chinese in the English interface.
+const englishWalkthrough = await run("tests/browser/english-walkthrough.spec.ts");
+if (englishWalkthrough !== 0) process.exit(englishWalkthrough);
 process.exit(await run("tests/browser/outbound-read-states.spec.ts", {
   PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY: "true",
 }));

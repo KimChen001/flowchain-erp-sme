@@ -100,7 +100,7 @@ function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): 
     address: text(value.address),
     postalCode: text(value.postalCode),
     deliveryCycleDays: Number(value.deliveryCycleDays || 0),
-    defaultCurrency: text(value.defaultCurrency, "CNY"),
+    defaultCurrency: text(value.defaultCurrency),
     paymentTermsId: text(value.paymentTermsId),
     settlementMethod: text(value.settlementMethod),
     creditCode: text(value.creditCode),
@@ -126,6 +126,7 @@ export default function SupplierMasterPage({
 }) {
   const { language } = useI18n();
   const copy = (label: string) => supplierCopy(workspaceCopy(label, language), language);
+  const listSeparator = language === "en-US" ? ", " : "、";
   const [saving, setSaving] = useState(false);
   const [currencyWarning, setCurrencyWarning] = useState(false);
   const savingRef = useRef(false);
@@ -151,7 +152,8 @@ export default function SupplierMasterPage({
       leadTimeDays: "",
       minimumOrderQuantity: "1",
       referencePrice: "",
-      currency: "CNY",
+      // Empty means "use the supplier's default currency" when saving.
+      currency: "",
     });
   const load = async () => {
     setLoading(true);
@@ -295,6 +297,7 @@ export default function SupplierMasterPage({
           leadTimeDays: Number(relationForm.leadTimeDays || 0),
           minimumOrderQuantity: Number(relationForm.minimumOrderQuantity || 1),
           referencePrice: Number(relationForm.referencePrice || 0),
+          currency: relationForm.currency || selected.defaultCurrency || undefined,
         },
       );
       await openDetail(selected.id);
@@ -354,7 +357,7 @@ export default function SupplierMasterPage({
             {[
               [
                 "基本信息",
-                `${selected.shortName || "-"} · ${selected.businessType || "-"} · ${(selected.categories || []).join("、") || "-"}`,
+                `${selected.shortName || "-"} · ${selected.businessType || "-"} · ${(selected.categories || []).join(listSeparator) || "-"}`,
               ],
               [
                 "联系与地址",
@@ -445,7 +448,7 @@ export default function SupplierMasterPage({
                     "Approved",
                     "Lead Time",
                     "MOQ",
-                    "参考价",
+                    "参考价格",
                     "状态",
                     "操作",
                   ].map((h) => (
@@ -615,7 +618,7 @@ export default function SupplierMasterPage({
                   <td className="p-3">{row.contactName || "-"}</td>
                   <td className="p-3">{row.telephone || "-"}</td>
                   <td className="p-3">
-                    {(row.categories || []).join("、") || "-"}
+                    {(row.categories || []).join(listSeparator) || "-"}
                   </td>
                   <td className="p-3">{row.defaultCurrency}</td>
                   <td className="p-3">{row.paymentTermsId}</td>

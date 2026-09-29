@@ -211,7 +211,7 @@ export type SupplierMaster = {
   onTimeRate: number;
   qualityRate: number;
   riskStatus: "低" | "中" | "高";
-  certificationStatus: "已认证" | "待复核" | "整改中";
+  certificationStatus: "已认证" | "待复核" | "整改中" | "";
   status: "启用" | "待完善" | "停用";
 };
 
@@ -232,7 +232,8 @@ export type TaxCode = {
   code: string;
   name: string;
   rate: number;
-  type: "进项税" | "免税" | "零税率";
+  // Tax type code as stored (TaxCode.taxType, e.g. "sales_tax"); "" when not recorded.
+  type: string;
   region: string;
   isDefault: boolean;
   status: "启用" | "待复核" | "停用";

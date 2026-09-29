@@ -130,6 +130,25 @@ const zh = {
   "settings.after": "变更后",
   "settings.openEntity": "打开关联实体",
   "settings.noAudit": "没有符合条件的日志",
+  "settings.moveUp": "上移",
+  "settings.moveDown": "下移",
+  "settings.visibleRoles": "{module} 可见角色",
+  "settings.level.allow": "允许",
+  "settings.level.review_required": "复核后允许",
+  "settings.level.draft_only": "仅生成待确认动作",
+  "settings.level.deny": "禁止",
+  "settings.capability.answer": "业务问答与解释",
+  "settings.capability.draft": "生成业务草稿",
+  "settings.capability.write": "业务数据变更",
+  "settings.capability.external": "对外发送",
+  "settings.module.overview": "今日工作台",
+  "settings.module.procurement": "采购执行",
+  "settings.module.inventory": "库存管理",
+  "settings.module.sales": "销售与需求",
+  "settings.module.finance": "结算管理",
+  "settings.module.reports": "报表中心",
+  "settings.module.master-data": "主数据",
+  "settings.module.settings": "系统管理",
   "top.search": "搜索业务记录",
   "top.profile": "我的资料",
   "top.settings": "设置",
@@ -327,6 +346,25 @@ const en: Record<keyof typeof zh, string> = {
   "settings.after": "After",
   "settings.openEntity": "Open related entity",
   "settings.noAudit": "No matching audit entries",
+  "settings.moveUp": "Move up",
+  "settings.moveDown": "Move down",
+  "settings.visibleRoles": "Roles that can see {module}",
+  "settings.level.allow": "Allowed",
+  "settings.level.review_required": "Allowed after review",
+  "settings.level.draft_only": "Drafts, confirmed by a person",
+  "settings.level.deny": "Not allowed",
+  "settings.capability.answer": "Business questions and explanations",
+  "settings.capability.draft": "Prepare business drafts",
+  "settings.capability.write": "Change business data",
+  "settings.capability.external": "Send outside the workspace",
+  "settings.module.overview": "Today",
+  "settings.module.procurement": "Purchasing",
+  "settings.module.inventory": "Inventory",
+  "settings.module.sales": "Sales and demand",
+  "settings.module.finance": "Finance",
+  "settings.module.reports": "Reports",
+  "settings.module.master-data": "Master data",
+  "settings.module.settings": "Settings",
   "top.search": "Search business records",
   "top.profile": "My Profile",
   "top.settings": "Settings",
@@ -465,16 +503,24 @@ type I18nValue = {
   setGuestLanguage: (language: SupportedLanguage) => void;
 };
 
+// Before a workspace's settings load (or when they cannot), format with the
+// product default locale and the browser's own timezone rather than
+// assuming China; a loaded workspace always supplies its own values.
+const FALLBACK_LOCALE = "en-US";
+const FALLBACK_TIMEZONE = (() => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; }
+})();
+
 const fallback: I18nValue = {
   language: "en-US",
-  locale: "zh-CN",
-  timezone: "Asia/Shanghai",
+  locale: FALLBACK_LOCALE,
+  timezone: FALLBACK_TIMEZONE,
   workspaceName: "",
   defaultLanguage: "en-US",
   t: key => en[key],
   routeLabel: route => route.label,
-  formatDateTime: value => new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Shanghai" }).format(new Date(value)),
-  formatNumber: value => new Intl.NumberFormat("zh-CN").format(value),
+  formatDateTime: value => new Intl.DateTimeFormat(FALLBACK_LOCALE, { dateStyle: "medium", timeStyle: "short", timeZone: FALLBACK_TIMEZONE }).format(new Date(value)),
+  formatNumber: value => new Intl.NumberFormat(FALLBACK_LOCALE).format(value),
   refresh: async () => {},
   setGuestLanguage: () => {},
 };
@@ -486,14 +532,14 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     languagePreference: null,
     defaultLanguage: "en-US",
     effectiveLanguage: "en-US",
-    locale: "zh-CN",
-    timezone: "Asia/Shanghai",
+    locale: FALLBACK_LOCALE,
+    timezone: FALLBACK_TIMEZONE,
     workspaceName: "",
   });
   const refresh = useCallback(async () => {
     if (!localStorage.getItem(AUTH_TOKEN_KEY)) {
       const guestLanguage = localStorage.getItem("flowchain:guest-language") === "zh-CN" ? "zh-CN" : "en-US";
-      setState({ languagePreference: null, defaultLanguage: "en-US", effectiveLanguage: guestLanguage, locale: "zh-CN", timezone: "Asia/Shanghai", workspaceName: "" });
+      setState({ languagePreference: null, defaultLanguage: "en-US", effectiveLanguage: guestLanguage, locale: FALLBACK_LOCALE, timezone: FALLBACK_TIMEZONE, workspaceName: "" });
       return;
     }
     try {

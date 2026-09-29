@@ -38,15 +38,27 @@ export type MasterItem = {
   updatedBy: string;
   updatedAt: string;
 };
+// Stored defaults are language-neutral: no category until one is chosen, and
+// the unit code "pcs" (shown translated), so an English user never stores 件.
 const empty: Partial<MasterItem> = {
   itemType: "material",
-  category: "未分类",
-  baseUnit: "件",
-  purchaseUnit: "件",
+  category: "",
+  baseUnit: "pcs",
+  purchaseUnit: "pcs",
   status: "active",
   purchasable: true,
   inventoryItem: true,
 };
+const FLAG_LABELS: Record<string, { en: string; zh: string }> = {
+  purchasable: { en: "Purchasable", zh: "可采购" },
+  inventoryItem: { en: "Inventory item", zh: "库存物料" },
+  batchManaged: { en: "Batch managed", zh: "批次管理" },
+  serialManaged: { en: "Serial managed", zh: "序列号管理" },
+  shelfLifeManaged: { en: "Shelf-life managed", zh: "保质期管理" },
+};
+const flagLabel = (key: string, language: string) => FLAG_LABELS[key]?.[language === "en-US" ? "en" : "zh"] || key;
+const UNCATEGORIZED = { en: "Uncategorized", zh: "未分类" };
+
 const fields: Array<[keyof MasterItem, string, string]> = [
   ["itemId", "物料 ID", "text"],
   ["sku", "SKU 编码", "text"],
@@ -85,7 +97,7 @@ function normalizeMasterItem(item: Partial<MasterItem> & Record<string, unknown>
     itemName,
     shortName: text(item.shortName),
     itemType: text(item.itemType, "material"),
-    category: text(item.category, "未分类"),
+    category: text(item.category),
     brand: text(item.brand),
     specification: text(item.specification),
     baseUnit,
@@ -182,7 +194,7 @@ export default function ItemMasterWorkbench({
       setError("");
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "保存失败");
+      setError(cause instanceof Error ? cause.message : copy("保存失败"));
     }
   };
   if (editing)
@@ -258,7 +270,7 @@ export default function ItemMasterWorkbench({
                   setEditing({ ...editing, [key]: e.target.checked })
                 }
               />
-              {key}
+              {flagLabel(key, language)}
             </label>
           ))}
         </div>
@@ -379,7 +391,7 @@ export default function ItemMasterWorkbench({
                 </td>
                 <td>{item.itemName}</td>
                 <td>{item.itemType}</td>
-                <td>{item.category}</td>
+                <td>{item.category || UNCATEGORIZED[language === "en-US" ? "en" : "zh"]}</td>
                 <td>{item.baseUnit}</td>
                 <td>{item.specification}</td>
                 <td>{item.status}</td>
