@@ -7,36 +7,51 @@ const statusIsIncoming = status => ['approved', 'issued'].includes(text(status).
 const itemKey = row => text(row.sku || row.itemId || row.id)
 const lineKey = line => text(line.sku || line.itemId || line.id)
 const lineQty = line => quantity(line.quantityOrdered ?? line.orderedQty ?? line.quantity ?? line.qty)
+const salesOrderIsOpen = row => !['draft', 'cancelled', 'canceled'].includes(text(row.workflowStatus || row.status))
+
+// Sales demand is booked per order line on that line's SKU. The order-level sku
+// and quantities only summarise the first line and the order total, so a
+// multi-line order must never be booked on its first SKU. Orders read without
+// lines fall back to the order-level fields.
+function salesDemandLines(order) {
+  const lines = rows(order.lines)
+  if (!lines.length) return [{ order, sku: itemKey(order), ordered: quantity(order.orderedQty ?? order.quantity ?? order.demandQty), fulfilled: quantity(order.fulfilledQty ?? order.shippedQty), reserved: quantity(order.reservedQty ?? order.reservedQuantity) }]
+  return lines.map(line => ({
+    order,
+    sku: text(line.sku || line.itemId),
+    ordered: quantity(line.orderedQuantity ?? line.orderedQty ?? line.quantity),
+    fulfilled: quantity(line.fulfilledQuantity ?? line.fulfilledQty ?? line.shippedQty),
+    reserved: quantity(line.reservedQuantity ?? line.reservedQty),
+  }))
+}
 
 function limitation(code, sku) { return sku ? `${code}:${sku}` : code }
 
 export function buildRuntimeInventoryAllocation(context) {
+  const demandLines = rows(context.salesOrders).flatMap(salesDemandLines)
   const keys = new Set([
     ...rows(context.inventoryItems).map(itemKey),
-    ...rows(context.salesOrders).map(itemKey),
+    ...demandLines.map(line => line.sku),
     ...rows(context.purchaseOrders).flatMap(po => rows(po.lines).map(lineKey)),
   ].filter(Boolean))
 
   const availability = [...keys].map(sku => {
     const inventoryRows = rows(context.inventoryItems).filter(row => itemKey(row) === sku)
-    const salesOrders = rows(context.salesOrders).filter(row => itemKey(row) === sku && !['draft', 'cancelled', 'canceled'].includes(text(row.workflowStatus || row.status)))
+    const skuDemand = demandLines.filter(line => line.sku === sku && salesOrderIsOpen(line.order))
+    const salesOrders = [...new Set(skuDemand.map(line => line.order))]
     const approvedPos = rows(context.purchaseOrders).filter(po => statusIsIncoming(po.status))
     const poLines = approvedPos.flatMap(po => rows(po.lines).filter(line => lineKey(line) === sku).map(line => ({ po, line })))
     const dataLimitations = []
 
     const onHandParts = inventoryRows.map(row => quantity(row.onHandQuantity ?? row.onHand ?? row.currentStock))
     const explicitReserved = inventoryRows.map(row => quantity(row.reservedQuantity ?? row.reservedQty))
-    const salesReserved = salesOrders.map(row => quantity(row.reservedQty ?? row.reservedQuantity))
-    const openDemandParts = salesOrders.map(row => {
-      const ordered = quantity(row.orderedQty ?? row.quantity ?? row.demandQty)
-      const fulfilled = quantity(row.fulfilledQty ?? row.shippedQty)
-      return ordered === null || fulfilled === null ? null : Math.max(0, ordered - fulfilled)
-    })
+    const salesReserved = skuDemand.map(line => line.reserved)
+    const openDemandParts = skuDemand.map(({ ordered, fulfilled }) => ordered === null || fulfilled === null ? null : Math.max(0, ordered - fulfilled))
     const incomingParts = poLines.map(({ line }) => lineQty(line))
 
     if (!inventoryRows.length) dataLimitations.push(limitation('inventory_balance_missing', sku))
     if (inventoryRows.length && onHandParts.includes(null)) dataLimitations.push(limitation('on_hand_quantity_missing', sku))
-    if (salesOrders.some((_, index) => openDemandParts[index] === null)) dataLimitations.push(limitation('sales_demand_quantity_missing', sku))
+    if (openDemandParts.includes(null)) dataLimitations.push(limitation('sales_demand_quantity_missing', sku))
     if (poLines.some((_, index) => incomingParts[index] === null)) dataLimitations.push(limitation('approved_po_quantity_missing', sku))
 
     const onHand = inventoryRows.length ? sumKnown(onHandParts) : null
