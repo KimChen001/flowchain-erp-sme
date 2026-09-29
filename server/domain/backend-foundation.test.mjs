@@ -134,7 +134,7 @@ test('server health response omits provider keys models and proxy diagnostics by
   assert.ok(handlerSource.indexOf('handleRuntimeRoutes({') < handlerSource.indexOf('resolveRequestIdentity('))
   assert.doesNotMatch(healthBlock, /OPENAI_API_KEY|ARK_API_KEY|DOUBAO_API_KEY|OPENAI_MODEL|ARK_MODEL|DOUBAO_MODEL/)
   assert.doesNotMatch(healthBlock, /DATABASE_URL|POSTGRES_URL|OPENAI|ARK|DOUBAO|openai:|doubao:|(?<![A-Za-z])(?:provider|model|proxy|secret|token|password)\s*:/i)
-  assert.match(errorBoundary, /sendInternalServerError\(res, send, error\)/)
+  assert.match(errorBoundary, /sendInternalServerError\(res, send, error[,)]/)
 })
 
 test('database mode guard is before legacy auth and capability gate is registered', () => {

@@ -24,16 +24,30 @@ export function sanitizeErrorSummary(error) {
   return `${code}: ${sanitized}`.slice(0, 240)
 }
 
-export function sendInternalServerError(res, send, error, options = {}) {
+// One JSON line per unhandled error, carrying the request id so it can be
+// matched to the access log line and to what the caller was shown.
+export function logServerError(error, options = {}) {
   const logger = options.logger || console
-  if (typeof logger.warn === 'function') {
-    logger.warn(`[server-error] ${sanitizeErrorSummary(error)}`)
-  }
+  const write = typeof logger.error === 'function' ? logger.error : logger.warn
+  if (typeof write !== 'function') return
+  write.call(logger, JSON.stringify({
+    time: new Date().toISOString(),
+    level: 'error',
+    event: 'server_error',
+    ...(options.requestId ? { requestId: options.requestId } : {}),
+    error: sanitizeErrorSummary(error),
+  }))
+}
+
+export function sendInternalServerError(res, send, error, options = {}) {
+  logServerError(error, options)
+  const reference = options.requestId ? { requestId: options.requestId } : {}
   if (SAFE_OPERATIONAL_ERROR_CODES.has(error?.code)) {
     return send(res, error.status || 500, {
       error: error.message,
       code: error.code,
+      ...reference,
     })
   }
-  return send(res, 500, { error: GENERIC_INTERNAL_ERROR })
+  return send(res, 500, { error: GENERIC_INTERNAL_ERROR, ...reference })
 }
