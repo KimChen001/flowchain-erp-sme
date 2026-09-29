@@ -288,6 +288,22 @@ const isConcurrency = (error) =>
   error?.code === "P2034" ||
   /serialization|deadlock|write conflict/i.test(text(error?.message));
 
+// Supplier invoice numbers are unique per tenant and supplier through the
+// hand-written partial index SupplierInvoice_tenant_supplier_number_key, which
+// schema.prisma cannot declare, so read the violated fields from the driver.
+function isSupplierInvoiceNumberConflict(error) {
+  const fields =
+    error?.meta?.driverAdapterError?.cause?.constraint?.fields ??
+    error?.meta?.target ??
+    [];
+  return (
+    error?.meta?.modelName === "SupplierInvoice" &&
+    (Array.isArray(fields) ? fields : [fields]).some(
+      (field) => text(field).replaceAll('"', "") === "invoiceNumber",
+    )
+  );
+}
+
 export function createOperationalFinanceCommandService({
   prisma,
   env = process.env,
@@ -355,6 +371,13 @@ export function createOperationalFinanceCommandService({
       );
     } catch (error) {
       if (error instanceof OperationalFinanceError) throw error;
+      if (error?.code === "P2002" && isSupplierInvoiceNumberConflict(error))
+        fail(
+          "SUPPLIER_INVOICE_NUMBER_DUPLICATE",
+          `Invoice number ${payload.invoiceNumber} is already recorded for this supplier.`,
+          409,
+          { invoiceNumber: payload.invoiceNumber },
+        );
       if (error?.code === "P2002")
         fail(
           "FINANCE_UNIQUE_CONFLICT",

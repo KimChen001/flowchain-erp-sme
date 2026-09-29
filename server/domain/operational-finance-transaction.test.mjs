@@ -50,6 +50,9 @@ async function source(prisma, suffix, {
   quantity = "10.0000",
   price = "10.0000",
   currency = "CNY",
+  tenant = tenantId,
+  supplierId = "supplier-finance-p2p",
+  supplierName = "Finance Supplier",
 } = {}) {
   const poId = `PO-FIN-${suffix}`;
   const poLineId = `POL-FIN-${suffix}`;
@@ -58,10 +61,10 @@ async function source(prisma, suffix, {
   await prisma.purchaseOrder.create({
     data: {
       id: poId,
-      tenantId,
+      tenantId: tenant,
       status: "approved",
-      supplierId: "supplier-finance-p2p",
-      supplierName: "Finance Supplier",
+      supplierId,
+      supplierName,
       currency,
       lines: {
         create: {
@@ -80,11 +83,11 @@ async function source(prisma, suffix, {
   await prisma.receivingDocument.create({
     data: {
       id: grnId,
-      tenantId,
+      tenantId: tenant,
       documentNumber: `GRN-${suffix}`,
       poId,
-      supplierId: "supplier-finance-p2p",
-      supplierName: "Finance Supplier",
+      supplierId,
+      supplierName,
       status: "received",
       workflowStatus: "posted",
       postingStatus: "posted",
@@ -109,7 +112,7 @@ async function source(prisma, suffix, {
       },
     },
   });
-  return { poId, poLineId, grnId, receivingLineId, quantity, price, currency };
+  return { poId, poLineId, grnId, receivingLineId, quantity, price, currency, supplierId };
 }
 
 function invoicePayload(sourceFacts, suffix, {
@@ -119,10 +122,11 @@ function invoicePayload(sourceFacts, suffix, {
   tax = "2.0000",
   total = "42.0000",
   currency = sourceFacts.currency,
+  invoiceNumber = `SUP-INV-${suffix}`,
 } = {}) {
   return {
-    invoiceNumber: `SUP-INV-${suffix}`,
-    supplierId: "supplier-finance-p2p",
+    invoiceNumber,
+    supplierId: sourceFacts.supplierId,
     currency,
     invoiceDate: "2026-07-17T00:00:00.000Z",
     dueDate: "2026-08-16T00:00:00.000Z",
@@ -688,6 +692,118 @@ test(
           where: { tenantId, status: "completed" },
         }) > 0,
         true,
+      );
+    } finally {
+      await prisma.$disconnect();
+    }
+  },
+);
+
+test(
+  "a supplier invoice number is recorded once per supplier and a repeat names the number",
+  { skip: !enabled },
+  async () => {
+    const prisma = await createPrismaClient(env);
+    try {
+      const numberTenantId = "tenant-operational-finance-invoice-number";
+      const clerkId = "clerk-operational-finance-invoice-number";
+      const clerk = {
+        identity: identity(clerkId, "business-specialist", numberTenantId),
+      };
+      await prisma.tenant.create({
+        data: { id: numberTenantId, name: "Invoice Number Uniqueness" },
+      });
+      await prisma.user.create({
+        data: {
+          id: clerkId,
+          tenantId: numberTenantId,
+          email: "clerk-invoice-number@flowchain.invalid",
+          name: "Invoice Clerk",
+          role: "business-specialist",
+        },
+      });
+      await prisma.supplier.createMany({
+        data: [
+          { id: "supplier-invoice-number-a", tenantId: numberTenantId, code: "SUP-NUM-A", name: "Numbering Supplier A" },
+          { id: "supplier-invoice-number-b", tenantId: numberTenantId, code: "SUP-NUM-B", name: "Numbering Supplier B" },
+        ],
+      });
+      const fromA = await source(prisma, "NUMBER-A", {
+        tenant: numberTenantId,
+        supplierId: "supplier-invoice-number-a",
+        supplierName: "Numbering Supplier A",
+      });
+      const fromB = await source(prisma, "NUMBER-B", {
+        tenant: numberTenantId,
+        supplierId: "supplier-invoice-number-b",
+        supplierName: "Numbering Supplier B",
+      });
+      const command = createOperationalFinanceCommandService({ prisma, env });
+      const create = (facts, invoiceNumber, idempotencyKey) =>
+        command.createSupplierInvoice(
+          { ...invoicePayload(facts, idempotencyKey, { invoiceNumber }), idempotencyKey },
+          clerk,
+        );
+      const repeatedNumber = (invoiceNumber) => (error) =>
+        error instanceof OperationalFinanceError &&
+        error.status === 409 &&
+        error.code === "SUPPLIER_INVOICE_NUMBER_DUPLICATE" &&
+        error.message.includes(invoiceNumber);
+      const recorded = (supplierId, invoiceNumber) =>
+        prisma.supplierInvoice.count({
+          where: { tenantId: numberTenantId, supplierId, invoiceNumber },
+        });
+
+      const first = await create(fromA, "INV-7001", "number-first");
+      await assert.rejects(create(fromA, "INV-7001", "number-again"), repeatedNumber("INV-7001"));
+      await assert.rejects(create(fromA, "  INV-7001 ", "number-padded"), repeatedNumber("INV-7001"));
+      const replay = await create(fromA, "INV-7001", "number-first");
+      assert.equal(replay.entityId, first.entityId);
+      assert.equal(replay.idempotentReplay, true);
+      await create(fromB, "INV-7001", "number-other-supplier");
+      assert.equal(await recorded("supplier-invoice-number-a", "INV-7001"), 1);
+      assert.equal(await recorded("supplier-invoice-number-b", "INV-7001"), 1);
+
+      const second = await create(fromA, "INV-7002", "number-second");
+      const revise = (invoiceNumber, idempotencyKey) =>
+        command.reviseSupplierInvoice(
+          second.entityId,
+          {
+            ...invoicePayload(fromA, idempotencyKey, { invoiceNumber }),
+            expectedVersion: 0,
+            idempotencyKey,
+          },
+          clerk,
+        );
+      await assert.rejects(revise("INV-7001", "number-revise-onto-recorded"), repeatedNumber("INV-7001"));
+      const kept = await revise("INV-7002", "number-revise-keep");
+      assert.equal(kept.invoice.invoiceNumber, "INV-7002");
+      assert.equal(kept.invoice.version, 1);
+
+      for (let round = 0; round < 4; round += 1) {
+        const invoiceNumber = `INV-RACE-${round}`;
+        const settled = await Promise.allSettled(
+          [0, 1].map((index) => create(fromA, invoiceNumber, `number-race-${round}-${index}`)),
+        );
+        assert.equal(settled.filter((entry) => entry.status === "fulfilled").length, 1);
+        const loser = settled.find((entry) => entry.status === "rejected").reason;
+        assert.ok(
+          loser instanceof OperationalFinanceError &&
+            loser.status === 409 &&
+            ["SUPPLIER_INVOICE_NUMBER_DUPLICATE", "FINANCE_CONCURRENCY_CONFLICT"].includes(loser.code),
+          `unexpected concurrent create outcome: ${loser?.status} ${loser?.code}`,
+        );
+        assert.equal(await recorded("supplier-invoice-number-a", invoiceNumber), 1);
+      }
+
+      // The guarantee is a hand-written partial unique index that
+      // schema.prisma cannot declare, so check it survives every migration.
+      const [index] = await prisma.$queryRawUnsafe(
+        `SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'SupplierInvoice_tenant_supplier_number_key'`,
+      );
+      assert.match(
+        index?.indexdef || "",
+        /UNIQUE INDEX .*\("tenantId", "supplierId", "invoiceNumber"\) WHERE \("invoiceNumber" IS NOT NULL\)/,
       );
     } finally {
       await prisma.$disconnect();
