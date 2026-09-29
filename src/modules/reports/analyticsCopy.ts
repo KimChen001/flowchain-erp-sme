@@ -14,6 +14,8 @@ const chinese: Record<string, string> = {
   'Total of submitted supplier invoices (submitted, matching, exception, matched, approved or held). Drafts and rejected or cancelled invoices are excluded. No total is shown while an invoice has no amount.': '已提交供应商发票（已提交、匹配中、有差异、已匹配、已批准或暂挂）的金额合计，不含草稿、驳回和取消的发票；有发票缺少金额时不显示合计。',
   'Some committed documents have no amount, so their total is not shown.': '部分已承诺单据缺少金额，因此不显示合计。',
   'Amount missing on some records': '部分记录缺少金额',
+  'Missing or invalid currency': '币种缺失或无效',
+  'Some records have a missing or invalid currency code, so their amounts are not totaled.': '部分记录的币种缺失或无效，因此不合计这些金额。',
   'Count of supplier master records.': '当前供应商主数据记录数。',
   'No business records in this range': '当前范围无真实业务记录',
   'No records in the selected range.': '当前筛选范围暂无真实 runtime 记录。',

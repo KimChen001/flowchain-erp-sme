@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
 import { isCommittedPurchaseOrder } from './open-purchase-order.mjs'
 import { analyticsCopy } from '../../src/modules/reports/analyticsCopy.ts'
+import { reportWorkbook } from '../../src/modules/reports/reportWorkbook.ts'
 
 const context = (extra = {}) => ({
   purchaseOrders: [], salesOrders: [], supplierInvoices: [], suppliers: [], customers: [], items: [],
@@ -89,4 +90,75 @@ test('a missing committed amount is reported as a data-scope limitation', () => 
   const report = buildRuntimeGovernedReport(context({ purchaseOrders: [po('PO-A', 'issued', null)] }), { subject: 'overview' })
   assert.ok(report.limitations.includes('amount_missing'))
   assert.ok(!buildRuntimeGovernedReport(context({ purchaseOrders: [po('PO-A', 'issued', 5)] }), { subject: 'overview' }).limitations.includes('amount_missing'))
+})
+
+test('different currencies are never added together', () => {
+  const purchaseOrders = [po('PO-USD-1', 'issued', 600), po('PO-USD-2', 'approved', 400), po('PO-EUR', 'issued', 500, { currency: 'EUR' })]
+  const report = buildRuntimeGovernedReport(context({ purchaseOrders }), { subject: 'overview' })
+  const amount = kpi(report, 'purchase_order_amount')
+  assert.equal(amount.currentValue, null)
+  assert.equal(amount.currencyAggregationStatus, 'multi_currency_unconverted')
+  assert.deepEqual(amount.currencyAmounts.map(item => [item.currencyCode, item.amount]), [['EUR', 500], ['USD', 1000]])
+  assert.ok(report.limitations.includes('multi_currency_unconverted'))
+  const usd = kpi(buildRuntimeGovernedReport(context({ purchaseOrders }), { subject: 'overview', filters: { currency: 'USD' } }), 'purchase_order_amount')
+  assert.equal(usd.currentValue, 1000)
+  assert.equal(usd.currencyCode, 'USD')
+})
+
+test('each money metric takes its currency from its own rows, not from the dashboard subject', () => {
+  // A sales dashboard in USD showing a purchase order amount that is all EUR.
+  const sales = buildRuntimeGovernedReport(context({
+    salesOrders: [{ id: 'SO-1', orderedQty: 1, fulfilledQty: 0, currency: 'USD', totalAmount: 90, status: 'confirmed' }],
+    purchaseOrders: [po('PO-EUR', 'issued', 300, { currency: 'EUR' })],
+  }), { subject: 'sales', measures: ['sales_order_count', 'purchase_order_amount'] })
+  assert.equal(sales.dataScope.currencyCode, 'USD')
+  const eur = kpi(sales, 'purchase_order_amount')
+  assert.equal(eur.currencyCode, 'EUR')
+  assert.equal(eur.currencyAggregationStatus, 'single_currency')
+  assert.equal(eur.currentValue, 300)
+
+  // An overview whose purchase orders are all USD must not label a USD + EUR
+  // invoice total as USD.
+  const overview = buildRuntimeGovernedReport(context({
+    purchaseOrders: [po('PO-USD', 'issued', 1000)],
+    supplierInvoices: [invoice('INV-USD', 'approved', 100), invoice('INV-EUR', 'approved', 200, { currency: 'EUR' })],
+  }), { subject: 'overview', measures: ['purchase_order_amount', 'invoice_amount'] })
+  assert.equal(overview.dataScope.currencyCode, 'USD')
+  assert.equal(kpi(overview, 'purchase_order_amount').currentValue, 1000)
+  const invoices = kpi(overview, 'invoice_amount')
+  assert.equal(invoices.currentValue, null)
+  assert.equal(invoices.currencyCode, null)
+  assert.equal(invoices.currencyAggregationStatus, 'multi_currency_unconverted')
+  assert.ok(overview.limitations.includes('multi_currency_unconverted'))
+})
+
+test('missing and invalid currency codes form their own group and block the total', () => {
+  const purchaseOrders = [po('PO-USD', 'issued', 100), po('PO-BLANK', 'issued', 50, { currency: '' }), po('PO-BAD', 'approved', 25, { currency: 'US$' })]
+  const report = buildRuntimeGovernedReport(context({ purchaseOrders }), { subject: 'procurement' })
+  const amount = kpi(report, 'purchase_order_amount')
+  assert.equal(amount.currentValue, null)
+  assert.equal(amount.dataStatus, 'incomplete')
+  assert.equal(amount.currencyCode, null)
+  assert.equal(amount.currencyAggregationStatus, 'currency_unknown')
+  assert.deepEqual(amount.currencyAmounts.map(item => [item.currencyCode, item.amount]), [['USD', 100], [null, 75]])
+  assert.ok(amount.limitations.includes('currency_missing_or_invalid'))
+  assert.ok(report.limitations.includes('currency_missing_or_invalid'))
+  assert.equal(report.dataScope.currencyAggregationStatus, 'currency_unknown')
+  // Only unknown codes: still no total, and no guessed currency.
+  const blank = buildRuntimeGovernedReport(context({ purchaseOrders: [po('PO-BLANK', 'issued', 50, { currency: '' })] }), { subject: 'procurement' })
+  assert.equal(kpi(blank, 'purchase_order_amount').currentValue, null)
+  assert.equal(blank.dataScope.currencyCode, null)
+  assert.doesNotMatch(JSON.stringify(blank.dataScope), /CNY|人民币/)
+})
+
+test('workbook metric summary formats each money metric in its own currency', () => {
+  const report = buildRuntimeGovernedReport(context({
+    salesOrders: [{ id: 'SO-1', orderedQty: 1, fulfilledQty: 0, currency: 'USD', totalAmount: 90, status: 'confirmed' }],
+    purchaseOrders: [po('PO-EUR', 'issued', 300, { currency: 'EUR' })],
+  }), { subject: 'sales', measures: ['sales_order_count', 'purchase_order_amount'] })
+  const copy = value => analyticsCopy(value, 'en-US')
+  const summary = reportWorkbook(report, {}, copy, [], { locale: 'en-US', language: 'en-US' })[0].rows
+  const row = summary.find(item => item.Metric === 'Purchase order amount' || item.Metric === '采购订单金额')
+  assert.match(String(row['Current value']), /€300/)
+  assert.equal(row['Currency code'], 'EUR')
 })
