@@ -1,3 +1,4 @@
+import { isOpenPurchaseOrder, purchaseOrderLineRemaining } from './open-purchase-order.mjs'
 const text = value => String(value ?? '').trim()
 const numeric = value => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
 const day = value => {
@@ -5,7 +6,6 @@ const day = value => {
   const parsed = new Date(`${candidate}T00:00:00Z`)
   return /^\d{4}-\d{2}-\d{2}$/.test(candidate) && Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === candidate ? candidate : ''
 }
-const closed = new Set(['closed', 'cancelled', 'canceled', 'completed', 'fully_received', 'rejected'])
 const round = value => Math.round(value * 10000) / 10000
 const sumKnown = values => values.length && values.every(value => value !== null) ? round(values.reduce((a, b) => a + b, 0)) : null
 const daysLate = (due, today) => due && Number.isFinite(Date.parse(due)) ? Math.max(0, Math.floor((Date.parse(today) - Date.parse(due)) / 86400000)) : null
@@ -19,10 +19,12 @@ export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {},
     const lines = (po.lines || []).map(line => {
       const ordered = numeric(line.orderedQuantity ?? line.quantity)
       const received = numeric(line.receivedQuantity)
-      return { ordered, received, remaining: ordered === null || received === null ? null : round(Math.max(0, ordered - received)), unit: text(line.unit || line.unitSnapshot), due: day(line.promisedDate || line.metadata?.promisedDate || po.expectedDate) }
+      return { ordered, received, remaining: purchaseOrderLineRemaining(line), unit: text(line.unit || line.unitSnapshot), due: day(line.promisedDate || line.metadata?.promisedDate || po.expectedDate) }
     })
     const openLines = lines.filter(line => line.remaining === null || line.remaining > 0)
-    const isOpen = !closed.has(text(po.status)) && (!lines.length || openLines.length > 0)
+    // One definition shared with the overview card, the analytics KPI, the
+    // supplier risk table and saved views: committed and still to receive.
+    const isOpen = isOpenPurchaseOrder(po)
     const units = [...new Set(lines.map(line => line.unit))]
     const sameUnit = units.length === 1 && Boolean(units[0])
     const dates = openLines.map(line => line.due).filter(Boolean).sort()

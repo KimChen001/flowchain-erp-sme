@@ -4,6 +4,7 @@ import {
   buildProcurementThreeWayMatches,
 } from './procurement-read-model.mjs'
 import { buildInventoryItems } from './inventory-read.mjs'
+import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
 import { buildSupplierEntityIndex } from './ai-supplier-operational-query.mjs'
 import { buildOperationsControlTowerV2 } from './operations-control-tower-v2.mjs'
 import { buildDataAccessQualityV2 } from './data-access-quality-v2.mjs'
@@ -171,7 +172,7 @@ function buildSupplierAnalytics({ suppliers, purchaseOrders, rfqs, receivingDocs
       supplierName: name,
       category: text(supplier.category, '未分类'),
       poCount: pos.length,
-      openPoCount: pos.filter((po) => !/完成|关闭|cancel|closed|completed/i.test(text(po.status))).length,
+      openPoCount: pos.filter((po) => isOpenPurchaseOrder(po)).length,
       rfqCount: supplierRfqs.length,
       grnExceptionCount,
       invoiceVarianceCount,

@@ -24,7 +24,10 @@ export function buildBusinessOverview(all) {
       { ...common, id: 'overview_suppliers', title: 'Purchasing by supplier', type: 'horizontal_bar', data: groups(purchases, 'supplier').slice(0, 8), drilldownPath: '/app/reports/procurement', crossFilter: 'supplier' },
     ],
     attention: [
-      { id: 'open_orders', label: 'Open purchase orders', count: purchases.filter(active).length, path: '/app/reports/procurement?status=open', action: 'Review orders' },
+      // isOpen is set once per purchase order by the report read model from the
+      // full record, using the shared definition, so this card and the open
+      // purchase orders report it links to always count the same orders.
+      { id: 'open_orders', label: 'Open purchase orders', count: purchases.filter(row => row.isOpen).length, path: '/app/reports/procurement?status=open', action: 'Review orders' },
       { id: 'inventory_shortages', label: 'Inventory shortages', count: all.inventory_balances.filter(row => row.shortage !== null && row.shortage > 0).length, path: '/app/inventory?risk=high', action: 'Review inventory' },
       { id: 'unfulfilled_sales', label: 'Unfulfilled sales orders', count: sales.filter(row => active(row) && row.status !== 'draft' && row.quantity > row.fulfilled).length, path: '/app/sales/orders', action: 'Review orders' },
     ],
