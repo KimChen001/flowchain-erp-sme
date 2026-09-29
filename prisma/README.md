@@ -7,11 +7,66 @@ database-only and requires `FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING=true`.
 ## Commands
 
 - `npm run db:generate`: generate Prisma Client.
-- `npm run db:push`: push schema to an explicitly configured database.
+- `npm run db:migrate:deploy`: apply the committed migrations.
 - `npm run db:migrate`: create/apply a development migration.
 - `npm run db:studio`: open Prisma Studio.
+- `npm run db:check-drift`: fail if `schema.prisma` no longer describes what
+  `migrations/` creates. Needs no `DATABASE_URL`; see below.
 
-All commands require an explicit `DATABASE_URL` through `prisma.config.ts`. Normal `npm test`, `npm run typecheck`, and `npm run build` do not require a database.
+All commands require an explicit `DATABASE_URL` through `prisma.config.ts`, except `db:check-drift`. Normal `npm test`, `npm run typecheck`, and `npm run build` do not require a database.
+
+There is deliberately no `db:push` script. `prisma db push` skips the
+migration history and shapes the database from `schema.prisma` alone. On a new
+database it leaves out what only the migrations create: check constraints,
+triggers, partial and expression indexes, and the optional pgvector column. On a
+migrated pgvector database it drops that column. Use `npm run db:migrate:deploy`.
+
+## Schema drift check
+
+The migrations are hand-written SQL, and they are the source of truth.
+`schema.prisma` must describe the database they produce. Otherwise
+`prisma db push` changes that database to match the schema, and
+`prisma migrate dev` adds the same changes to its next migration. Those
+changes can include dropping foreign keys, indexes, and column defaults.
+
+`npm run db:check-drift` runs `prisma migrate deploy` against a throwaway
+embedded PostgreSQL on a random port. It then runs
+`prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`.
+The check fails if the diff has any statement not listed in `ALLOWED_DRIFT` in
+`scripts/check-prisma-schema-drift.mjs`. It also fails if an allowed statement
+no longer appears. It never reads `.env` files or connects to a configured
+database. Pass `--print` to see the whole diff.
+
+When the check fails, fix it in one of two ways:
+
+- Update `schema.prisma` if the migrations are right. Declare the relation,
+  `@@index`, default, or `map:` name that the migration SQL creates. That
+  includes `onDelete`/`onUpdate`: a `REFERENCES` clause without `ON UPDATE`
+  is `onUpdate: NoAction`, not Prisma's default `Cascade`. PostgreSQL
+  truncates identifiers to 63 bytes, so a long constraint or index name needs
+  `map:` with the truncated name.
+- Add a migration if the database itself is wrong.
+
+Add an `ALLOWED_DRIFT` entry, with its reason, only when Prisma cannot express
+an object and a migration should not change it. The list is currently empty.
+One such case came up: PostgreSQL had truncated an index and a foreign key to
+the same name, which Prisma cannot declare. It was fixed by renaming the index
+in `20260929020000_bank_line_allocation_index_name`.
+
+The diff does not cover these objects, which Prisma leaves alone:
+
+- Check constraints, triggers, and functions.
+- Partial unique indexes, such as `SupplierInvoice_tenant_supplier_number_key`
+  (the `partialIndexes` preview feature is not enabled).
+- The expression index `WorkspaceInvitation_active_email_key`.
+
+`AiKnowledgeChunk.embeddingVector` and its HNSW indexes exist only where the
+pgvector extension is installed (`20260910100000_optional_pgvector_knowledge`
+and `server/domain/ai-pgvector-store.mjs`). They are intentionally absent from
+`schema.prisma`. The embedded check database has no pgvector, so it cannot see
+them. When the development database server has pgvector, `npm run db:migrate`
+puts `ALTER TABLE "AiKnowledgeChunk" DROP COLUMN "embeddingVector"` into every
+new migration. Delete that statement before committing the migration.
 
 ## Migration rollout
 
