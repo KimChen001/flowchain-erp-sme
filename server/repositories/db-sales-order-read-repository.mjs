@@ -1,5 +1,6 @@
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
+import { requireTenantId } from './repository-read-scope.mjs'
 
 const text = (value, fallback = '') => String(value ?? '').trim() || fallback
 const number = (value) => {
@@ -135,11 +136,10 @@ export function createDbSalesOrderReadRepository({ env = process.env, prisma } =
     validateDatabasePersistenceConfig(env)
     return prisma || getPrismaClient(env)
   }
-  const tenantIdFor = (filters = {}) => text(filters.tenantId || env.FLOWCHAIN_DEFAULT_TENANT_ID, 'tenant-flowchain-sme')
 
   async function listOrders(filters = {}) {
+    const where = { tenantId: requireTenantId(filters) }
     const db = await client()
-    const where = { tenantId: tenantIdFor(filters) }
     const search = text(filters.q || filters.search)
     if (search) where.OR = [
       { id: { contains: search, mode: 'insensitive' } },

@@ -1,6 +1,7 @@
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
+import { requireTenantId } from './repository-read-scope.mjs'
 
 function requireDatabaseConfig(env = process.env) {
   return validateDatabasePersistenceConfig(env)
@@ -34,7 +35,7 @@ function metadata(record = {}) {
 }
 
 function tenantWhere(filters = {}) {
-  return { tenantId: text(filters.tenantId, 'tenant-flowchain-sme') }
+  return { tenantId: requireTenantId(filters) }
 }
 
 function safeLimit(value, fallback = 200) {

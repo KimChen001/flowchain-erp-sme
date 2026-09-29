@@ -1,6 +1,7 @@
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { createDbProcurementCommandService } from "../domain/procurement-db-command-service.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "../domain/receiving-transaction-policy.mjs";
+import { requireTenantId } from "./repository-read-scope.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const decimal = (value) => value === null || value === undefined ? null : receivingDecimalString(receivingDecimalUnits(value));
@@ -53,9 +54,9 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
     authorityAdapter: "db-procurement-authority-v1",
     authority,
     async listForReport({ tenantId } = {}) {
-      if (!text(tenantId)) throw Object.assign(new Error('Workspace identity is required.'), { status: 403 });
+      const scopedTenantId = requireTenantId({ tenantId });
       const dbClient = await client();
-      const rows = await dbClient.purchaseOrder.findMany({ where: { tenantId: text(tenantId) }, include: { lines: true }, orderBy: [{ id: 'asc' }] });
+      const rows = await dbClient.purchaseOrder.findMany({ where: { tenantId: scopedTenantId }, include: { lines: true }, orderBy: [{ id: 'asc' }] });
       return rows.map(mapPo);
     },
     async get(type, id, options = {}) {
@@ -67,8 +68,8 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
       return authority.listPurchaseOrdersForApproval(options.context || options, options);
     },
     async snapshot(filters = {}) {
+      const tenantId = requireTenantId(filters);
       const dbClient = await client();
-      const tenantId = text(filters.tenantId || env.FLOWCHAIN_DEFAULT_TENANT_ID || "tenant-flowchain-sme");
       const query = { where: { tenantId }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }], take: Math.min(500, Math.max(1, Number(filters.limit || 500))) };
       const [rows, receivingRows, invoiceRows] = await Promise.all([
         dbClient.purchaseOrder.findMany(query), dbClient.receivingDocument.findMany(query), dbClient.supplierInvoice.findMany(query),
