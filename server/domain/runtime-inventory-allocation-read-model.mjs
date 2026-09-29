@@ -1,12 +1,20 @@
+import { purchaseOrderLineRemaining } from './open-purchase-order.mjs'
+import { isPurchaseOrderReceivable } from './procurement-status-authority.mjs'
+
 const rows = value => Array.isArray(value) ? value : []
 const text = value => String(value ?? '').trim()
 const finite = value => value !== '' && value != null && Number.isFinite(Number(value))
 const quantity = value => finite(value) ? Number(value) : null
 const sumKnown = values => values.some(value => value === null) ? null : values.reduce((sum, value) => sum + value, 0)
-const statusIsIncoming = status => ['approved', 'issued'].includes(text(status).toLowerCase())
 const itemKey = row => text(row.sku || row.itemId || row.id)
 const lineKey = line => text(line.sku || line.itemId || line.id)
-const lineQty = line => quantity(line.quantityOrdered ?? line.orderedQty ?? line.quantity ?? line.qty)
+// In transit is the unreceived remainder of a committed purchase order line
+// (approved, issued or partially received), not the ordered quantity. Legacy
+// ordered-quantity field names are read before the shared remaining helper.
+const lineInTransit = line => purchaseOrderLineRemaining({
+  orderedQuantity: line.orderedQuantity ?? line.quantityOrdered ?? line.orderedQty ?? line.quantity ?? line.qty,
+  receivedQuantity: line.receivedQuantity ?? line.receivedQty,
+})
 const salesOrderIsOpen = row => !['draft', 'cancelled', 'canceled'].includes(text(row.workflowStatus || row.status))
 
 // Sales demand is booked per order line on that line's SKU. The order-level sku
@@ -39,20 +47,21 @@ export function buildRuntimeInventoryAllocation(context) {
     const inventoryRows = rows(context.inventoryItems).filter(row => itemKey(row) === sku)
     const skuDemand = demandLines.filter(line => line.sku === sku && salesOrderIsOpen(line.order))
     const salesOrders = [...new Set(skuDemand.map(line => line.order))]
-    const approvedPos = rows(context.purchaseOrders).filter(po => statusIsIncoming(po.status))
-    const poLines = approvedPos.flatMap(po => rows(po.lines).filter(line => lineKey(line) === sku).map(line => ({ po, line })))
+    const committedPos = rows(context.purchaseOrders).filter(po => isPurchaseOrderReceivable(po.status))
+    // A fully received line is no longer supply; an unknown remainder stays so it is reported.
+    const poLines = committedPos.flatMap(po => rows(po.lines).filter(line => lineKey(line) === sku && lineInTransit(line) !== 0).map(line => ({ po, line })))
     const dataLimitations = []
 
     const onHandParts = inventoryRows.map(row => quantity(row.onHandQuantity ?? row.onHand ?? row.currentStock))
     const explicitReserved = inventoryRows.map(row => quantity(row.reservedQuantity ?? row.reservedQty))
     const salesReserved = skuDemand.map(line => line.reserved)
     const openDemandParts = skuDemand.map(({ ordered, fulfilled }) => ordered === null || fulfilled === null ? null : Math.max(0, ordered - fulfilled))
-    const incomingParts = poLines.map(({ line }) => lineQty(line))
+    const incomingParts = poLines.map(({ line }) => lineInTransit(line))
 
     if (!inventoryRows.length) dataLimitations.push(limitation('inventory_balance_missing', sku))
     if (inventoryRows.length && onHandParts.includes(null)) dataLimitations.push(limitation('on_hand_quantity_missing', sku))
     if (openDemandParts.includes(null)) dataLimitations.push(limitation('sales_demand_quantity_missing', sku))
-    if (poLines.some((_, index) => incomingParts[index] === null)) dataLimitations.push(limitation('approved_po_quantity_missing', sku))
+    if (poLines.some((_, index) => incomingParts[index] === null)) dataLimitations.push(limitation('open_po_remaining_quantity_missing', sku))
 
     const onHand = inventoryRows.length ? sumKnown(onHandParts) : null
     // Inventory Runtime is authoritative for reserved when it exposes the field.

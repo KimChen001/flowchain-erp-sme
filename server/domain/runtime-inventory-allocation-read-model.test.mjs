@@ -78,3 +78,55 @@ test('sales orders without lines keep using the order-level SKU and quantities',
   assert.equal(getRuntimeSkuAvailability(model, 'SKU').openSalesDemand, 10)
   assert.equal(getRuntimeSkuAvailability(model, 'SKU').shortage, 5)
 })
+
+const po = (id, status, lines) => ({ id, status, lines })
+const poLine = (sku, orderedQuantity, receivedQuantity) => ({ id: `${sku}-po-line`, sku, itemId: `ITEM-${sku}`, quantity: orderedQuantity, orderedQuantity, receivedQuantity })
+
+test('walkthrough scenario: LDM-001 ATP is +3 with the partially received PO counted at its remaining quantity', () => {
+  // scripts/setup-local-scenario.mjs: 8 on hand, a 35 unit sales order, and
+  // LOCAL-DEMO-PO-001 partially received (20 of 50), so 30 are still in transit.
+  const model = buildRuntimeInventoryAllocation(context({
+    inventoryItems: [balance('LDM-001', 8), balance('LDM-002', 60)],
+    salesOrders: [salesOrder('LOCAL-DEMO-SO-001', [soLine('LDM-001', 35)])],
+    purchaseOrders: [
+      po('LOCAL-DEMO-PO-001', 'partially_received', [poLine('LDM-001', 50, 20)]),
+      po('LOCAL-DEMO-PO-002', 'issued', [poLine('LDM-002', 40, 0)]),
+    ],
+  }))
+  const ldm1 = getRuntimeSkuAvailability(model, 'LDM-001')
+  assert.equal(ldm1.incomingApprovedPo, 30)
+  assert.equal(ldm1.shortage, 27)
+  assert.equal(ldm1.availableToPromise, 3)
+  assert.deepEqual(ldm1.purchaseOrderIds, ['LOCAL-DEMO-PO-001'])
+  assert.equal(getRuntimeSkuAvailability(model, 'LDM-002').incomingApprovedPo, 40)
+  assert.equal(model.summary.incomingPurchaseQty, 70)
+  assert.equal(model.summary.atpInsufficientSkuCount, 0)
+})
+
+test('in transit counts the unreceived remainder of open committed purchase orders only', () => {
+  const model = buildRuntimeInventoryAllocation(context({
+    inventoryItems: [balance('SKU', 0)],
+    purchaseOrders: [
+      po('PO-APPROVED', 'approved', [poLine('SKU', 5, 0)]),
+      po('PO-ISSUED', 'issued', [poLine('SKU', 10, 4)]),
+      po('PO-PARTIAL', 'partially_received', [poLine('SKU', 50, 20)]),
+      po('PO-ALIAS', '部分收货', [poLine('SKU', 7, 6)]),
+      po('PO-OVER', 'partially_received', [poLine('SKU', 3, 5)]),
+      ...['draft', 'pending_approval', 'rejected', 'fully_received', 'cancelled', 'unknown_status'].map(status => po(`PO-${status}`, status, [poLine('SKU', 100, 0)])),
+    ],
+  }))
+  const row = getRuntimeSkuAvailability(model, 'SKU')
+  assert.equal(row.incomingApprovedPo, 5 + 6 + 30 + 1 + 0)
+  assert.deepEqual(row.purchaseOrderIds, ['PO-APPROVED', 'PO-ISSUED', 'PO-PARTIAL', 'PO-ALIAS'], 'a fully received line is not linked as supply')
+})
+
+test('an open purchase order line with an unknown received quantity leaves in transit and ATP unknown', () => {
+  const model = buildRuntimeInventoryAllocation(context({
+    inventoryItems: [balance('SKU', 10)],
+    purchaseOrders: [po('PO-1', 'issued', [{ sku: 'SKU', orderedQuantity: 10 }])],
+  }))
+  const row = getRuntimeSkuAvailability(model, 'SKU')
+  assert.equal(row.incomingApprovedPo, null)
+  assert.equal(row.availableToPromise, null)
+  assert.ok(row.dataLimitations.includes('open_po_remaining_quantity_missing:SKU'))
+})
