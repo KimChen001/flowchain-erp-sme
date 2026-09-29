@@ -18,6 +18,7 @@ const zh: Record<string, string> = {
   'Add supplied item': '新增供应商关系', 'No supplied items yet': '暂无可供应物料', 'Set as preferred': '设为首选', 'Yes': '是', 'No': '否',
   'Purchase records': '采购记录', 'No purchase records available': '暂无采购交易记录', 'Risks and exceptions': '风险与异常', 'No risks or exceptions available': '暂无风险或异常',
   'Supplied-item links are currently unavailable.': '可供应物料关联暂不可用。',
+  'Preferred': '首选', 'Approved': '已批准', 'Lead Time': '交期', 'MOQ': '最小起订量',
 };
 const en = Object.fromEntries(Object.entries(zh).map(([key, value]) => [value, key]));
 export const supplierCopy = (value: string, language: string) => language === 'en-US' ? en[value] || value : zh[value] || value;
