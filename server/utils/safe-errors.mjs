@@ -6,7 +6,10 @@ export const SAFE_OPERATIONAL_ERROR_CODES = new Set([
 const SECRET_PATTERNS = [
   /Bearer\s+[A-Za-z0-9._~+/=-]+/gi,
   /sk-[A-Za-z0-9._-]+/gi,
-  /(OPENAI_API_KEY|ARK_API_KEY|DOUBAO_API_KEY|DATABASE_URL)\s*[:=]\s*[^,\s;]+/gi,
+  // Any NAME=value or NAME: value whose name ends like a credential, so new
+  // provider keys (DASHSCOPE_API_KEY, FLOWCHAIN_AI_PROVIDER_API_KEY, ...) and
+  // session secrets are covered without listing each one.
+  /\b(?:[A-Z0-9]+_)*(?:API_KEY|SECRET|TOKEN|PASSWORD|DATABASE_URL)\s*[:=]\s*[^,\s;]+/gi,
   /postgres(?:ql)?:\/\/[^,\s;]+/gi,
   /mysql:\/\/[^,\s;]+/gi,
 ]

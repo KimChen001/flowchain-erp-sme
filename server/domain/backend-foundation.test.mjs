@@ -244,6 +244,19 @@ test('safe error summaries redact secrets and stay bounded for logs', () => {
   assert.match(summary, /\[redacted\]/)
 })
 
+test('safe error summaries redact every credential-shaped name, not only the first providers', () => {
+  const summary = sanitizeErrorSummary(new Error([
+    'DASHSCOPE_API_KEY=dash-secret',
+    'FLOWCHAIN_AI_PROVIDER_API_KEY: provider-secret',
+    'FLOWCHAIN_AI_EMBEDDING_API_KEY=embedding-secret',
+    'FLOWCHAIN_LOCAL_SESSION_SECRET=session-secret',
+    'password=hunter2',
+  ].join(' ')))
+
+  assert.doesNotMatch(summary, /dash-secret|provider-secret|embedding-secret|session-secret|hunter2/)
+  assert.equal(summary.match(/\[redacted\]/g)?.length, 5)
+})
+
 test('GET /api/me returns current user, tenant, and permissions context', async () => {
   const route = createRouteContext('GET', '/api/me')
   const handled = await handleContextRoute(route.ctx)
