@@ -1,3 +1,4 @@
+import { apiJson } from "../../lib/api-client";
 export type ReportNavigationLink = {
   label: string;
   moduleId: string;
@@ -59,7 +60,5 @@ export type ReportsAnalyticsV2 = {
 };
 
 export async function fetchReportsAnalyticsV2(): Promise<ReportsAnalyticsV2> {
-  const response = await fetch("/api/reports-analytics");
-  if (!response.ok) throw new Error("报表运营分析读取失败");
-  return response.json();
+  return apiJson<ReportsAnalyticsV2>("/api/reports-analytics");
 }

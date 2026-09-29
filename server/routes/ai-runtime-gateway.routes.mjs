@@ -1,5 +1,5 @@
 import { handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
-import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, buildAiRuntimeSafeFallbackV2 } from '../domain/ai-runtime-gateway-v2.mjs'
+import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, buildAiRuntimeSafeFallbackV2, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
 import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs'
 import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
 
@@ -53,6 +53,12 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
     try {
       const knowledge = await runKnowledgeQuery(ctx, body)
       if (knowledge) { send(res, 200, knowledge); return true }
+      // Reject empty or oversized questions before any tenant data is read.
+      const validation = validateAiRuntimeRequest(body)
+      if (!validation.ok) {
+        send(res, validation.status, { error: validation.error, dataScopeLabel: '当前工作区数据' })
+        return true
+      }
       const businessQuery = await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
       if (businessQuery) {
         send(res, 200, await addKnowledgeContext(ctx, body, businessQuery))

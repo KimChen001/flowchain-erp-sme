@@ -5,6 +5,7 @@ import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftRevi
 import AiSuggestionsPage from "./AiSuggestionsPage";
 import { EntityLink, type EntityKind } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
+import { apiJson } from "../../lib/api-client";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { homeLabel, homeDescription } from './homeCopy';
 
@@ -12,7 +13,7 @@ type Navigate=(moduleId:string,focus?:{entityType:string;entityId:string}|null,o
 type Work={priority:"高"|"中"|"低";title:string;id:string;description:string;canonicalRoute:string;entityType:EntityKind;updatedAt:string};
 type DocumentRow={type:string;id:string;status:string;supplier:string;amount:number|null;updatedAt:string;canonicalRoute:string;entityType:EntityKind};
 type HomeOverview={workItems:Work[];unresolvedRisks:number|null;todayChanges:number;recentDocuments:DocumentRow[];limitations:string[];generatedAt:string};
-const request=async<T,>(url:string)=>{const response=await fetch(url);if(!response.ok)throw new Error(`${response.status} ${response.statusText}`);return response.json() as Promise<T>};
+const request=<T,>(url:string)=>apiJson<T>(url);
 
 export default function OverviewPanel({initialView="",onNavigate,onOpenAi,onReviewActionDraft}:{initialView?:string;onNavigate:Navigate;onOpenAi:()=>void;onReviewActionDraft?:(request:ActionDraftPreviewRequest)=>void}){
   if(initialView==="ai")return <AiSuggestionsPage onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} onOpenAi={onOpenAi}/>;

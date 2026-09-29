@@ -184,7 +184,9 @@ test('database mode blocks legacy writes while allowing health and preview route
     assert.equal(sopCycle.payload.code, 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED')
     assert.equal(blocked.status, 501)
     assert.deepEqual(blocked.payload, databaseModeMutationBlockedPayload())
-    assert.equal(preview.status, 400)
+    // The write guard lets preview through; the sign-in gate then answers.
+    assert.equal(preview.status, 401)
+    assert.equal(preview.payload.code, 'AUTHENTICATION_REQUIRED')
     assert.notDeepEqual(preview.payload, databaseModeMutationBlockedPayload())
   } finally {
     if (previous === undefined) {

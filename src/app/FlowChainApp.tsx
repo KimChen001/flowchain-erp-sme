@@ -751,6 +751,7 @@ export default function FlowChainApp() {
 
   useEffect(() => {
     setCapabilityLoadState("loading");
+    if (!authToken) return;
     apiJson<{ capabilities: ModuleCapability[] }>("/api/capabilities")
       .then(({ capabilities: rows }) => {
         const byId = Object.fromEntries(rows.map((row) => [row.id, row]));

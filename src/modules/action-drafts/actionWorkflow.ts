@@ -1,3 +1,4 @@
+import { apiJson } from "../../lib/api-client";
 export type ReviewActionNavigationLink = {
   label: string;
   moduleId: string;
@@ -78,7 +79,5 @@ export type ReviewFirstActionWorkflowV2 = {
 };
 
 export async function fetchReviewFirstActionWorkflowV2(): Promise<ReviewFirstActionWorkflowV2> {
-  const response = await fetch("/api/review-first-action-workflow");
-  if (!response.ok) throw new Error("行动草稿与人工复核读取失败");
-  return response.json();
+  return apiJson<ReviewFirstActionWorkflowV2>("/api/review-first-action-workflow");
 }

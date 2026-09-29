@@ -11,6 +11,7 @@ import {
 import { createRepositoryRegistry, getPersistenceMode } from "../repositories/adapter-registry.mjs";
 import { handleRuntimeCapabilityRoute } from "../routes/runtime-capability.routes.mjs";
 import { send } from "../utils/http.mjs";
+import { apiAccessDenial } from "./api-access-gate.mjs";
 import { dispatchApiRoute } from "./route-dispatcher.mjs";
 import { createRouteContext } from "./request-context.mjs";
 import { noteRequestActor } from "./request-logging.mjs";
@@ -75,11 +76,8 @@ export function createHttpRequestHandler({
       env,
     })) return;
 
-    if (url.pathname.startsWith("/api/master-data") && !identity.authenticated)
-      return send(res, 401, {
-        code: "AUTHENTICATION_REQUIRED",
-        message: "Sign in to access tenant master data.",
-      });
+    const denial = apiAccessDenial({ method: req.method, pathname: url.pathname, identity });
+    if (denial) return send(res, denial.status, denial.body);
 
     const routeContext = createRouteContext({
       req,
