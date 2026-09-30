@@ -64,7 +64,7 @@ test('the supplier scorecard is measured against the original promise, per tenan
 
     // Six lines due in September. Two were revised later and delivered on the
     // revised date: late against the original promise, on time against the
-    // current date. One lost 2 of its 10 units to rejection.
+    // current date. One lost 2 of its 10 units to rejection and is still open.
     await deliveredLine(prisma, service, { id: 'SC-PO-1', promised: '2026-09-02', receipts: [['2026-09-02', 10]] })
     await deliveredLine(prisma, service, { id: 'SC-PO-2', promised: '2026-09-05', receipts: [['2026-09-01', 10]] })
     await deliveredLine(prisma, service, { id: 'SC-PO-3', promised: '2026-09-08', revisedTo: '2026-09-12', receipts: [['2026-09-12', 10]] })
@@ -91,7 +91,9 @@ test('the supplier scorecard is measured against the original promise, per tenan
       assert.deepEqual([supplier.metrics.onTimeCurrent.count, Math.round(supplier.metrics.onTimeCurrent.rate * 1000) / 10], [6, 100])
       assert.deepEqual(supplier.lines.filter((line) => line.revised).map((line) => [line.purchaseOrderId, line.originalPromisedDate, line.currentPromisedDate, line.daysLate]), [['SC-PO-3', '2026-09-08', '2026-09-12', 4], ['SC-PO-4', '2026-09-10', '2026-09-16', 5]])
       assert.equal(supplier.metrics.averageDelayDays.value, 4.5)
-      assert.deepEqual([supplier.metrics.early.count, supplier.metrics.inFull.count, supplier.metrics.otif.count], [1, 3, 3])
+      // SC-PO-5 is still open 2 short: pending, outside the in-full rate.
+      assert.deepEqual([supplier.metrics.early.count, supplier.metrics.inFull.count, supplier.metrics.inFull.of, supplier.inFullPendingCount], [1, 5, 5, 1])
+      assert.deepEqual([supplier.metrics.otif.count, supplier.metrics.otifCurrent.count], [3, 5])
       assert.deepEqual([supplier.metrics.rejection.rejectedQuantity, supplier.metrics.rejection.receivedQuantity, supplier.metrics.rejection.unit], [2, 60, 'pcs'])
       assert.deepEqual([supplier.metrics.priceVariances.count, supplier.metrics.priceVariances.amounts], [1, [{ currency: 'USD', amount: 15 }]])
       assert.deepEqual(supplier.orderedValue, [{ currency: 'USD', amount: 3000 }])

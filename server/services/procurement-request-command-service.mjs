@@ -12,6 +12,7 @@ import {
   tenantScopedProcurementMasterData,
 } from "../domain/procurement-workflow.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "../domain/receiving-transaction-policy.mjs";
+import { applyPromisedDateChanges } from "../domain/purchase-order-promise-dates.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { mapPurchaseOrder, mapPurchaseRequest, mapRfq } from "../repositories/db-procurement-read-repository.mjs";
 
@@ -433,6 +434,14 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
             metadata: { orderNumber: poId, targetWarehouseId: group.warehouseId, procurementPath: "direct_po", transmissionStatus: "not_sent", createdBy: actor.user.id, sourcePurchaseRequestVersion: versionOf(row) },
             lines: { create: lines },
           } });
+          // Each line's date from its PR line (a promised date, or else the need-by
+          // date) goes through the promise-date helper, like every later change.
+          // On a draft it only sets the date; the original promise is recorded
+          // when the PO is issued.
+          const lineDates = lines.map((line, index) => ({ purchaseOrderLineId: line.id, promisedDate: group.lines[index].metadata?.promisedDate || group.lines[index].metadata?.needByDate || null })).filter((change) => change.promisedDate);
+          if (lineDates.length) {
+            await applyPromisedDateChanges(tx, { tenantId: actor.tenantId, purchaseOrder: await tx.purchaseOrder.findFirst({ where: { id: poId, tenantId: actor.tenantId }, include: { lines: true } }), changes: lineDates, actorId: actor.user.id, source: "procurement_request_command_service", at: now(), idFactory, bumpVersions: false });
+          }
           await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "PurchaseOrder", entityId: poId, operation: "upsert", entityVersion: 0, actorId: actor.user.id, source: "procurement_request_command_service", requestId: idempotencyKey, payloadHash: hash({ id: poId, version: 0, status: PURCHASE_ORDER_STATUS.DRAFT }), sensitivityGroups: ["procurement_prices", "finance_partner_snapshot"], moduleKey: "procurement", authorizationClass: "procurement.purchase_order.read", resourceTenantId: actor.tenantId } });
         }
         await tx.purchaseRequest.update({ where: { id: row.id }, data: sourcedRequest(row, actor, "create_purchase_orders", { status: PURCHASE_REQUEST_STATUS.CONVERTED, linkedPoId: purchaseOrderIds[0], metadata: { procurementPath: "direct_po", linkedPurchaseOrderIds: purchaseOrderIds } }) });

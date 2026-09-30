@@ -79,7 +79,9 @@ export async function recordOriginalPromises(tx, { purchaseOrder, lines = purcha
 // revision that needs a reason, and a first date also becomes the original
 // promise. A change to the date a line already has is skipped. The header
 // expected date follows the earliest line date. Returns the revisions written
-// and the lines changed.
+// and the lines changed. A command creating a draft PO passes
+// bumpVersions: false, so the new PO and its lines stay at version 0; an issued
+// PO always moves its versions.
 export async function applyPromisedDateChanges(tx, {
   tenantId,
   purchaseOrder,
@@ -89,6 +91,7 @@ export async function applyPromisedDateChanges(tx, {
   source,
   at = new Date(),
   idFactory = randomUUID,
+  bumpVersions = true,
 }) {
   if (!tenantId || purchaseOrder?.tenantId !== tenantId) fail("PURCHASE_ORDER_NOT_FOUND", "Purchase order was not found.", 404);
   if (!Array.isArray(changes) || !changes.length) fail("PROMISED_DATE_CHANGES_REQUIRED", "Choose at least one line and a new promised date.", 422, [{ field: "lines" }]);
@@ -96,6 +99,7 @@ export async function applyPromisedDateChanges(tx, {
     fail("PURCHASE_ORDER_PROMISE_CLOSED", `A ${purchaseOrder.status} purchase order has no delivery to promise.`, 409, { currentStatus: purchaseOrder.status });
   }
   const issued = isIssuedPurchaseOrder(purchaseOrder);
+  const increment = issued || bumpVersions !== false ? { version: { increment: 1 } } : {};
   const why = text(reason);
   const lines = new Map((purchaseOrder.lines || []).map((line) => [line.id, line]));
   const planned = [];
@@ -109,7 +113,9 @@ export async function applyPromisedDateChanges(tx, {
     const day = promiseDay(change?.promisedDate);
     if (!day) fail("PROMISED_DATE_INVALID", "Enter the promised date as a calendar date.", 422, [{ field: `lines.${index}.promisedDate` }]);
     const previous = currentPromisedDay(line, purchaseOrder);
-    if (previous === day) continue;
+    // Unchanged. Before issue a line that only reads the header date still gets
+    // its own date, so a later header move cannot shift it.
+    if (previous === day && (issued || promiseDay(line.metadata?.promisedDate) === day)) continue;
     if (issued && receivingDecimalUnits(line.receivedQuantity || 0) >= receivingDecimalUnits(line.orderedQuantity || 0) && receivingDecimalUnits(line.orderedQuantity || 0) > 0n) {
       fail("PURCHASE_ORDER_LINE_ALREADY_RECEIVED", "This line is fully received; its promised date can no longer change.", 409, [{ field: `lines.${index}.purchaseOrderLineId` }]);
     }
@@ -128,7 +134,7 @@ export async function applyPromisedDateChanges(tx, {
       data: {
         metadata: { ...(line.metadata || {}), promisedDate: day },
         ...(recordOriginal ? { originalPromisedDate: promiseDateValue(day) } : {}),
-        version: { increment: 1 },
+        ...increment,
       },
     });
     if (updated.count !== 1) fail("SYNC_VERSION_CONFLICT", "A purchase order line changed concurrently.", 409, { entityId: line.id });
@@ -160,13 +166,13 @@ export async function applyPromisedDateChanges(tx, {
     const changed = new Set(planned.map(({ line }) => line.id));
     for (const line of purchaseOrder.lines || []) {
       if (changed.has(line.id) || promiseDay(line.metadata?.promisedDate)) continue;
-      const pinned = await tx.purchaseOrderLine.updateMany({ where: { id: line.id, purchaseOrderId: purchaseOrder.id, version: line.version }, data: { metadata: { ...(line.metadata || {}), promisedDate: headerDay }, version: { increment: 1 } } });
+      const pinned = await tx.purchaseOrderLine.updateMany({ where: { id: line.id, purchaseOrderId: purchaseOrder.id, version: line.version }, data: { metadata: { ...(line.metadata || {}), promisedDate: headerDay }, ...increment } });
       if (pinned.count !== 1) fail("SYNC_VERSION_CONFLICT", "A purchase order line changed concurrently.", 409, { entityId: line.id });
     }
   }
   const updatedHeader = await tx.purchaseOrder.updateMany({
     where: { id: purchaseOrder.id, tenantId, version: purchaseOrder.version },
-    data: { expectedDate: earliest ? promiseDateValue(earliest) : purchaseOrder.expectedDate, version: { increment: 1 } },
+    data: { expectedDate: earliest ? promiseDateValue(earliest) : purchaseOrder.expectedDate, ...increment },
   });
   if (updatedHeader.count !== 1) fail("SYNC_VERSION_CONFLICT", "Purchase order changed concurrently.", 409, { entityId: purchaseOrder.id });
   return { revisions, changedLineIds: planned.map(({ line }) => line.id), originalPromisesRecorded };

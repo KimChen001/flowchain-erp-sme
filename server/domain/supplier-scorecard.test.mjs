@@ -7,47 +7,47 @@ import {
   summarizeScorecardLines,
   wilsonInterval,
 } from './supplier-scorecard.mjs'
+import { WORKED_EXAMPLE_AS_OF, workedExampleRows } from './test-fixtures/supplier-scorecard-worked-example.mjs'
 
 const pct = (value) => value === null ? null : Math.round(value * 1000) / 10
-const po = (lines, extra = {}) => ({ id: 'PO-1', supplierId: 'SUP-1', supplierName: 'Summit Supply', currency: 'USD', status: 'issued', expectedDate: null, lines, ...extra })
-const line = (id, original, extra = {}) => ({ id, sku: 'SKU-1', itemName: 'Sensor', unit: 'pcs', orderedQuantity: 100, receivedQuantity: 0, amount: 1000, originalPromisedDate: original ? new Date(`${original}T12:00:00Z`) : null, metadata: { promisedDate: extra.current || original }, ...extra })
+const po = (lines, extra = {}) => ({ id: 'PO-1', supplierId: 'SUP-1', supplierName: 'Summit Supply', currency: 'USD', status: 'partially_received', expectedDate: null, lines, ...extra })
+const line = (id, original, extra = {}) => ({ id, sku: 'SKU-1', itemName: 'Sensor', unit: 'pcs', orderedQuantity: 100, amount: 1000, originalPromisedDate: original ? new Date(`${original}T12:00:00Z`) : null, ...extra, metadata: { promisedDate: extra.current || original, ...(extra.metadata || {}) } })
 const receipt = (day, accepted, rejected = 0, id = `GRN-${day}`) => ({ receivingDocumentId: id, day, accepted, rejected })
-const evaluate = (lineRow, receipts, options = {}) => evaluatePromiseLine({ line: lineRow, purchaseOrder: po([lineRow]), receipts, asOfDay: '2026-09-30', ...options })
+const evaluate = (lineRow, receipts, options = {}) => evaluatePromiseLine({ line: lineRow, purchaseOrder: po([lineRow], options.purchaseOrder), receipts, asOfDay: '2026-09-30', ...options })
 
-test('the business rules example: 12 lines give 75.0% on time, 83.3% in full, 66.7% OTIF, 2.5% rejected, 5 days average delay', () => {
-  // Business rules section 8: 12 received lines with an original promise; 9 on
-  // time and 3 late by 2, 5 and 8 days; 10 in full; 8 on time and in full;
-  // 1,200 units received and 30 rejected.
-  const flags = [
-    ...Array.from({ length: 8 }, () => ({ onTime: true, inFull: true, daysLate: 0 })),
-    { onTime: true, inFull: false, daysLate: 0 },
-    { onTime: false, inFull: true, daysLate: 2 },
-    { onTime: false, inFull: true, daysLate: 5 },
-    { onTime: false, inFull: false, daysLate: 8 },
-  ]
-  const lines = flags.map((flag, index) => ({ purchaseOrderLineId: `L${String(index + 1).padStart(2, '0')}`, originalPromisedDate: '2026-08-01', unit: 'pcs', receivedQuantity: 100, rejectedQuantity: index < 3 ? 10 : 0, onTimeCurrent: true, early: false, otif: flag.onTime && flag.inFull, ...flag }))
-  const summary = summarizeScorecardLines({ lines, invoices: [] })
-  assert.equal(summary.sampleStatus, 'ok')
-  assert.equal(summary.sampleSize, 12)
-  assert.deepEqual([summary.metrics.onTime.count, pct(summary.metrics.onTime.rate)], [9, 75.0])
-  assert.deepEqual([summary.metrics.inFull.count, pct(summary.metrics.inFull.rate)], [10, 83.3])
-  assert.deepEqual([summary.metrics.otif.count, pct(summary.metrics.otif.rate)], [8, 66.7])
-  assert.deepEqual([summary.metrics.rejection.rejectedQuantity, summary.metrics.rejection.receivedQuantity, pct(summary.metrics.rejection.rate)], [30, 1200, 2.5])
-  assert.deepEqual(summary.metrics.averageDelayDays, { value: 5, lateCount: 3 })
+test('the business rules worked example, built from PO lines and receipts: 75.0%, 83.3%, 66.7%, 2.5%, 5 days', () => {
+  const result = buildSupplierScorecard({ ...workedExampleRows(), invoices: [], period: { from: '2026-07-01', to: '2026-09-30' }, asOfDay: WORKED_EXAMPLE_AS_OF, timeZone: 'America/New_York' })
+  const [supplier] = result.suppliers
+  assert.equal(supplier.sampleStatus, 'ok')
+  assert.equal(supplier.sampleSize, 12)
+  assert.deepEqual([supplier.metrics.onTime.count, supplier.metrics.onTime.of, pct(supplier.metrics.onTime.rate)], [9, 12, 75.0])
+  assert.deepEqual([supplier.metrics.inFull.count, supplier.metrics.inFull.of, pct(supplier.metrics.inFull.rate)], [10, 12, 83.3])
+  assert.deepEqual([supplier.metrics.otif.count, supplier.metrics.otif.of, pct(supplier.metrics.otif.rate)], [8, 12, 66.7])
+  assert.deepEqual([supplier.metrics.rejection.rejectedQuantity, supplier.metrics.rejection.receivedQuantity, pct(supplier.metrics.rejection.rate)], [30, 1200, 2.5])
+  assert.deepEqual(supplier.metrics.averageDelayDays, { value: 5, lateCount: 3 })
+  assert.deepEqual(supplier.lines.filter((row) => !row.onTime).map((row) => [row.purchaseOrderLineId, row.daysLate]), [['EXAMPLE-L10', 2], ['EXAMPLE-L11', 5], ['EXAMPLE-L12', 8]])
+  // The three measures are distinct: L9 is on time and in full but not OTIF,
+  // L10 is in full but neither on time nor OTIF.
+  const l9 = supplier.lines.find((row) => row.purchaseOrderLineId === 'EXAMPLE-L09')
+  const l10 = supplier.lines.find((row) => row.purchaseOrderLineId === 'EXAMPLE-L10')
+  assert.deepEqual([l9.onTime, l9.inFull, l9.otif], [true, true, false])
+  assert.deepEqual([l10.onTime, l10.inFull, l10.otif], [false, true, false])
+  // Nothing was revised, so the current-date figures equal the original ones.
+  assert.equal(supplier.metrics.onTimeCurrent.count, 9)
+  assert.equal(supplier.metrics.otifCurrent.count, 8)
 })
 
 test('fewer than 5 lines is an insufficient sample with counts but no percentages', () => {
-  const lines = Array.from({ length: 4 }, (_, index) => ({ purchaseOrderLineId: `L${index}`, originalPromisedDate: '2026-08-01', unit: 'pcs', receivedQuantity: 10, rejectedQuantity: 1, onTime: index > 0, onTimeCurrent: true, inFull: true, otif: index > 0, early: false, daysLate: index ? 0 : 3 }))
+  const lines = Array.from({ length: 4 }, (_, index) => ({ purchaseOrderLineId: `L${index}`, originalPromisedDate: '2026-08-01', unit: 'pcs', receivedQuantity: 10, rejectedQuantity: 1, onTime: index > 0, onTimeCurrent: true, inFull: true, inFullPending: false, otif: index > 0, otifCurrent: true, early: false, daysLate: index ? 0 : 3 }))
   const summary = summarizeScorecardLines({ lines, invoices: [] })
   assert.equal(summary.sampleStatus, 'insufficient_sample')
-  for (const key of ['onTime', 'onTimeCurrent', 'early', 'inFull', 'otif']) {
+  for (const key of ['onTime', 'onTimeCurrent', 'early', 'inFull', 'otif', 'otifCurrent']) {
     assert.equal(summary.metrics[key].rate, null, key)
     assert.equal(summary.metrics[key].interval, null, key)
   }
   assert.equal(summary.metrics.onTime.count, 3)
   assert.equal(summary.metrics.rejection.rate, null)
   assert.equal(summarizeScorecardLines({ lines: [], invoices: [] }).sampleStatus, 'no_lines')
-  // Five lines are enough.
   assert.equal(summarizeScorecardLines({ lines: [...lines, { ...lines[1], purchaseOrderLineId: 'L5' }], invoices: [] }).sampleStatus, 'ok')
 })
 
@@ -61,58 +61,57 @@ test('Wilson 95% interval: 9 of 12 is 46.8% to 91.1%; the edges stay inside 0 an
   assert.equal(wilsonInterval(0, 0), null)
 })
 
-test('on time: the receipt that covers the ordered quantity arrives by the original promise plus grace days', () => {
-  // Covered on the promise day.
+test('on time: the first receipt arrives by the original promise plus grace days', () => {
   assert.equal(evaluate(line('A', '2026-08-10'), [receipt('2026-08-10', 100)]).onTime, true)
-  // Covered by the second receipt, two days late: 2 days late, not on time.
-  const late = evaluate(line('B', '2026-08-10'), [receipt('2026-08-08', 60), receipt('2026-08-12', 40)])
-  assert.deepEqual([late.onTime, late.daysLate, late.coverDay, late.firstReceiptDay], [false, 2, '2026-08-12', '2026-08-08'])
-  // With 2 grace days the same delivery is on time; the delay counts from the promise.
-  assert.equal(evaluate(line('C', '2026-08-10'), [receipt('2026-08-08', 60), receipt('2026-08-12', 40)], { graceDays: 2 }).onTime, true)
-  // Rejected units still arrived: coverage counts accepted plus rejected.
-  assert.equal(evaluate(line('D', '2026-08-10'), [receipt('2026-08-09', 90, 10)]).onTime, true)
+  // A partial first receipt on time makes the line on time, whatever follows.
+  const partial = evaluate(line('B', '2026-08-10'), [receipt('2026-08-08', 60), receipt('2026-08-12', 40)])
+  assert.deepEqual([partial.onTime, partial.daysLate, partial.firstReceiptDay], [true, 0, '2026-08-08'])
+  const late = evaluate(line('C', '2026-08-10'), [receipt('2026-08-12', 100)])
+  assert.deepEqual([late.onTime, late.daysLate], [false, 2])
+  // 2 grace days make the same arrival on time; delay still counts from the promise.
+  assert.equal(evaluate(line('D', '2026-08-10'), [receipt('2026-08-12', 100)], { graceDays: 2 }).onTime, true)
 })
 
-test('early: covered more than 3 days before the promise is on time and reported as early', () => {
+test('early: a first receipt more than 3 days ahead is on time and reported as early', () => {
   const fourEarly = evaluate(line('A', '2026-08-10'), [receipt('2026-08-06', 100)])
   assert.deepEqual([fourEarly.onTime, fourEarly.early], [true, true])
   const threeEarly = evaluate(line('B', '2026-08-10'), [receipt('2026-08-07', 100)])
   assert.deepEqual([threeEarly.onTime, threeEarly.early], [true, false])
 })
 
-test('a partly received line is late once its promise has passed and undecided before', () => {
-  const overdue = evaluate(line('A', '2026-09-20'), [receipt('2026-09-18', 40)])
-  assert.deepEqual([overdue.status, overdue.onTime, overdue.stillOpen, overdue.daysLate], ['evaluated', false, true, 10])
-  const notDue = evaluate(line('B', '2026-10-05'), [receipt('2026-09-28', 40)])
-  assert.equal(notDue.status, 'pending')
-  assert.equal(evaluate(line('C', '2026-08-10'), []).status, 'not_received')
+test('in full: accepted quantity eventually reaches the ordered quantity; an open shortfall is pending', () => {
+  // Replaced after the promise: in full, not OTIF.
+  const replaced = evaluate(line('A', '2026-08-10'), [receipt('2026-08-10', 90, 10), receipt('2026-08-14', 10)])
+  assert.deepEqual([replaced.inFull, replaced.inFullPending, replaced.otif, replaced.fullDay], [true, false, false, '2026-08-14'])
+  // Still open with a shortfall: not in full yet, left out of the in-full rate.
+  const open = evaluate(line('B', '2026-08-10'), [receipt('2026-08-10', 90, 10)])
+  assert.deepEqual([open.inFull, open.inFullPending, open.otif], [null, true, false])
+  // Closed short by the buyer, or on a cancelled PO: not in full.
+  assert.deepEqual([evaluate(line('C', '2026-08-10', { metadata: { closedAt: '2026-08-20' } }), [receipt('2026-08-10', 90, 10)]).inFull], [false])
+  assert.equal(evaluate(line('D', '2026-08-10'), [receipt('2026-08-10', 90)], { purchaseOrder: { status: 'cancelled' } }).inFull, false)
+  const summary = summarizeScorecardLines({ lines: [replaced, open, ...['E', 'F', 'G', 'H', 'I'].map((id) => evaluate(line(id, '2026-08-10'), [receipt('2026-08-10', 100)]))], invoices: [] })
+  assert.deepEqual([summary.metrics.inFull.count, summary.metrics.inFull.of, summary.inFullPendingCount, summary.sampleSize], [6, 6, 1, 7])
+  assert.deepEqual(summary.pendingLines.map((row) => row.purchaseOrderLineId), ['B'])
 })
 
-test('in full: accepted quantity by the original promise reaches the ordered quantity', () => {
-  assert.equal(evaluate(line('A', '2026-08-10'), [receipt('2026-08-10', 100)]).inFull, true)
-  // 10 rejected: on time but not in full, so not OTIF.
-  const rejected = evaluate(line('B', '2026-08-10'), [receipt('2026-08-10', 90, 10)])
-  assert.deepEqual([rejected.onTime, rejected.inFull, rejected.otif, rejected.rejectedQuantity, rejected.receivedQuantity], [true, false, false, 10, 100])
-  // A replacement after the promise does not make it in full.
-  assert.equal(evaluate(line('C', '2026-08-10'), [receipt('2026-08-10', 90, 10), receipt('2026-08-14', 10)]).inFull, false)
-  // Under these rules a line in full by its promise was also covered by it, so
-  // in full lines are always on time (see the report to the product owner).
-  const full = evaluate(line('D', '2026-08-10'), [receipt('2026-08-05', 50), receipt('2026-08-10', 50)])
-  assert.deepEqual([full.onTime, full.inFull, full.otif], [true, true, true])
+test('OTIF: accepted quantity reached the ordered quantity by the original promise plus grace days', () => {
+  assert.equal(evaluate(line('A', '2026-08-10'), [receipt('2026-08-05', 50), receipt('2026-08-10', 50)]).otif, true)
+  assert.equal(evaluate(line('B', '2026-08-10'), [receipt('2026-08-10', 90, 10)]).otif, false)
+  assert.equal(evaluate(line('C', '2026-08-10'), [receipt('2026-08-10', 90, 10), receipt('2026-08-11', 10)], { graceDays: 1 }).otif, true)
 })
 
 test('a revised date is visible: late against the original promise, on time against the current date', () => {
   const revised = evaluate(line('A', '2026-08-10', { current: '2026-08-15' }), [receipt('2026-08-14', 100)])
-  assert.deepEqual([revised.revised, revised.onTime, revised.daysLate, revised.onTimeCurrent, revised.currentPromisedDate], [true, false, 4, true, '2026-08-15'])
-  // Not yet due against a later current date counts as not late against it.
+  assert.deepEqual([revised.revised, revised.onTime, revised.daysLate, revised.onTimeCurrent, revised.otif, revised.otifCurrent, revised.currentPromisedDate], [true, false, 4, true, false, true, '2026-08-15'])
+  // Not yet due against a later current date: OTIF so far against it.
   const moved = evaluate(line('B', '2026-09-20', { current: '2026-10-15' }), [receipt('2026-09-18', 40)])
-  assert.deepEqual([moved.onTime, moved.onTimeCurrent], [false, true])
+  assert.deepEqual([moved.onTime, moved.otif, moved.otifCurrent], [true, false, true])
   // No original promise recorded: never in the sample.
   assert.equal(evaluate(line('C', null, { metadata: { promisedDate: '2026-08-10' } }), [receipt('2026-08-10', 100)]).status, 'original_not_recorded')
 })
 
 test('mixed units give no single rejection rate; price variances and amounts stay per currency', () => {
-  const lines = ['pcs', 'pcs', 'ft', 'pcs', 'pcs'].map((unit, index) => ({ purchaseOrderLineId: `L${index}`, originalPromisedDate: '2026-08-01', unit, receivedQuantity: 10, rejectedQuantity: 1, onTime: true, onTimeCurrent: true, inFull: false, otif: false, early: false, daysLate: 0, currency: index % 2 ? 'CAD' : 'USD', amount: 100 }))
+  const lines = ['pcs', 'pcs', 'ft', 'pcs', 'pcs'].map((unit, index) => ({ purchaseOrderLineId: `L${index}`, originalPromisedDate: '2026-08-01', unit, receivedQuantity: 10, rejectedQuantity: 1, onTime: true, onTimeCurrent: true, inFull: false, inFullPending: false, otif: false, otifCurrent: false, early: false, daysLate: 0, currency: index % 2 ? 'CAD' : 'USD', amount: 100 }))
   const invoices = [
     { supplierInvoiceId: 'INV-1', invoiceDate: '2026-08-02', currency: 'USD', varianceAmount: 20 },
     { supplierInvoiceId: 'INV-2', invoiceDate: '2026-08-03', currency: 'CAD', varianceAmount: 5 },
@@ -123,7 +122,6 @@ test('mixed units give no single rejection rate; price variances and amounts sta
   assert.equal(summary.metrics.priceVariances.count, 3)
   assert.deepEqual(summary.metrics.priceVariances.amounts, [{ currency: 'CAD', amount: 5 }, { currency: 'USD', amount: 27.5 }])
   assert.deepEqual(summary.orderedValue, [{ currency: 'CAD', amount: 200 }, { currency: 'USD', amount: 300 }])
-  // Hidden invoices are unknown, not zero.
   assert.deepEqual(summarizeScorecardLines({ lines, invoices: null }).metrics.priceVariances, { count: null, visible: false, amounts: [] })
 })
 
@@ -156,10 +154,12 @@ test('the scorecard counts lines by original promise in the period, dates receip
   const [supplier] = result.suppliers
   assert.equal(supplier.supplierName, 'Summit Supply')
   assert.deepEqual(supplier.lines.map((row) => row.purchaseOrderLineId), ['L1', 'L2', 'L3', 'L4', 'L5'])
-  assert.equal(supplier.lines[0].coverDay, '2026-08-03', 'arrival is the New York calendar day')
-  // L2 revised 08-05 -> 08-09 and arrived 08-08; L5 six days late.
+  assert.equal(supplier.lines[0].firstReceiptDay, '2026-08-03', 'arrival is the New York calendar day')
+  // L2 revised 08-05 -> 08-09 and arrived 08-08; L5 six days late; L3 is an open shortfall.
   assert.deepEqual([supplier.metrics.onTime.count, pct(supplier.metrics.onTime.rate)], [3, 60])
   assert.deepEqual([supplier.metrics.onTimeCurrent.count, pct(supplier.metrics.onTimeCurrent.rate)], [4, 80])
+  assert.deepEqual([supplier.metrics.inFull.count, supplier.metrics.inFull.of, supplier.inFullPendingCount], [4, 4, 1])
+  assert.deepEqual([supplier.metrics.otif.count, supplier.metrics.otifCurrent.count], [2, 3])
   assert.deepEqual(supplier.lines.filter((row) => !row.onTime).map((row) => [row.purchaseOrderLineId, row.daysLate]), [['L2', 3], ['L5', 6]])
   assert.equal(supplier.metrics.averageDelayDays.value, 4.5)
   assert.equal(supplier.revisedCount, 1)
