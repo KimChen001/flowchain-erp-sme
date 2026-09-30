@@ -58,6 +58,7 @@ jobs:
       - run: npm run test:db:english
       - run: npm run test:db:us-defaults
       - run: npm run test:db:walkthrough-scenario
+      - run: npm run test:db:inventory-allocation
       - run: npm run test:db:ai-knowledge
       - run: npm run test:db:ai-pgvector
         env:
@@ -82,6 +83,7 @@ jobs:
       - run: npm run test:db:phase-5-2c1-controls
       - run: npm run test:api:mobile-sync-controls
       - run: npm run test:db:po-command-atomicity
+      - run: npm run test:db:procurement-flow
       - run: npm run test:db:rfq-response-revisions
       - run: npm run test:db:rfq-supplier-response-command
       - run: npm run test:db:rfq-supplier-comparison
