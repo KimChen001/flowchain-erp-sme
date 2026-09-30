@@ -194,13 +194,15 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await capture(page, "09-inventory-warnings");
 
   await page.goto("/app/procurement/workbench");
-  await expect(page.getByRole("heading", { name: "今日采购待办：3" })).toBeVisible();
-  await expect(page.getByText("LOCAL-DEMO-PO-001", { exact: true })).toBeVisible();
-  await expect(page.getByText("LOCAL-DEMO-PO-002", { exact: true })).toBeVisible();
-  await expect(page.getByText("partially_received", { exact: false })).toBeVisible();
-  await expect(page.getByText("issued", { exact: false })).toBeVisible();
-  await expect(page.getByText("发票差异", { exact: true })).toBeVisible();
-  await expect(page.getByText("三单匹配异常", { exact: true })).toBeVisible();
+  // The walkthrough scenario has one submitted purchase request and 29 purchase
+  // orders that are not cancelled.
+  await expect(page.getByRole("heading", { name: "今日采购待办：30", exact: true })).toBeVisible();
+  const workbenchRow = (id: string) => page.getByRole("row").filter({ has: page.getByText(id, { exact: true }) });
+  await expect(workbenchRow("LOCAL-DEMO-PO-001")).toContainText("partially_received");
+  await expect(workbenchRow("LOCAL-DEMO-PO-002")).toContainText("issued");
+  await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("发票差异", { exact: true })).toBeVisible();
+  await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("三单匹配异常", { exact: true })).toBeVisible();
+  await expect(workbenchRow("LOCAL-DEMO-PO-002").getByText("发票差异", { exact: true })).toHaveCount(0);
   await capture(page, "10-procurement-workbench");
 
   for (const route of ["movements", "lots", "serials", "exceptions"]) {
