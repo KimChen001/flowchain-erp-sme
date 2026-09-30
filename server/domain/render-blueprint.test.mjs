@@ -238,3 +238,14 @@ test("staging and production differ only in names, plans, sizes and deploy trigg
   assert.equal(staging.services[0].autoDeployTrigger, "checksPass");
   assert.equal(production.services[0].autoDeployTrigger, "off", "production deploys only by hand");
 });
+
+test("the release image ships the tenant:provision command for the Render shell", () => {
+  const packageJson = JSON.parse(repoFile("package.json"));
+  assert.equal(packageJson.scripts["tenant:provision"], "node scripts/tenant-provision.mjs");
+  // scripts/ is excluded from the build context except for this one file.
+  const dockerignore = repoFile(".dockerignore").split(/\r?\n/);
+  assert.ok(dockerignore.indexOf("!scripts/tenant-provision.mjs") > dockerignore.indexOf("scripts"));
+  const runtimeStage = repoFile("Dockerfile").slice(repoFile("Dockerfile").indexOf("AS runtime"));
+  assert.match(runtimeStage, /COPY --from=build --chown=node:node \/app\/scripts\/tenant-provision\.mjs \.\/scripts\/tenant-provision\.mjs/);
+  assert.match(runtimeStage, /COPY --from=build --chown=node:node \/app\/package\.json/);
+});
