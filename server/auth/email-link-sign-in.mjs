@@ -184,9 +184,7 @@ export function createEmailLinkService({
   const usableLink = (at) => ({ consumedAt: null, invalidatedAt: null, expiresAt: { gt: at } });
 
   function assertLinkUser(link) {
-    const serverTenantId = resolveServerTenantId(env);
     if (!link?.user || link.user.status !== "active" || link.user.tenantId !== link.tenantId) throw new SignInLinkInvalidError();
-    if (serverTenantId && link.tenantId !== serverTenantId) throw new SignInLinkInvalidError();
   }
 
   // For the confirm page: the workspace name, without using the link.

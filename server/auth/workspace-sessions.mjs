@@ -1,12 +1,12 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { isIP } from "node:net";
-import { normalizedRole, resolveServerTenantId } from "../domain/local-signed-session.mjs";
+import { normalizedRole } from "../domain/local-signed-session.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 
 // Signed-in sessions live in PostgreSQL (WorkspaceSession), so a deploy or a
 // restart keeps people signed in. The bearer token names a random session
 // id; the database stores only its SHA-256 hash. Every request checks the
-// row: not revoked, not expired, user still active, tenant unchanged.
+// row: not revoked, not expired, user still active in the session's tenant.
 export const SESSION_TTL_SECONDS = 8 * 60 * 60;
 // A verified session is reused for at most this long before the row is read
 // again. Revoking through this process drops the entry at once; another
@@ -149,9 +149,9 @@ export function createWorkspaceSessionStore({
       include: { user: { select: { id: true, tenantId: true, email: true, name: true, role: true, status: true } } },
     });
     if (!row || row.revokedAt || row.expiresAt.getTime() <= current) return null;
+    // The session keeps its own tenant, whatever FLOWCHAIN_DEFAULT_TENANT_ID
+    // says now; the user must still be active in that tenant.
     if (!row.user || row.user.status !== "active" || row.user.tenantId !== row.tenantId) return null;
-    const serverTenantId = resolveServerTenantId(env);
-    if (serverTenantId && row.tenantId !== serverTenantId) return null;
 
     if (current - row.lastSeenAt.getTime() > LAST_SEEN_INTERVAL_MS) {
       await client.workspaceSession

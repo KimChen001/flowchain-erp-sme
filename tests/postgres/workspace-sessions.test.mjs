@@ -171,13 +171,21 @@ test('disabling a user or changing their role ends their sessions at once', asyn
   }
 })
 
-test('a stored session is refused once it expires, its user is disabled, or the tenant no longer matches', async () => {
+test('a stored session is refused once it expires, its user is disabled, or its tenant no longer matches the user', async () => {
   const store = createWorkspaceSessionStore({ env: process.env, prismaFactory: async () => prisma })
   const created = await store.create({ tenantId, userId: users.buyer.id })
   const fresh = (env = process.env) => createWorkspaceSessionStore({ env, prismaFactory: async () => prisma })
   assert.equal((await fresh().resolve(created.sessionId)).userId, users.buyer.id)
   assert.equal(await fresh().resolve('not-a-session'), null)
-  assert.equal(await fresh({ ...process.env, FLOWCHAIN_DEFAULT_TENANT_ID: 'another-tenant' }).resolve(created.sessionId), null)
+  // The session keeps its tenant when the server default changes, but a row
+  // whose tenant no longer matches its user is refused.
+  assert.equal((await fresh({ ...process.env, FLOWCHAIN_DEFAULT_TENANT_ID: 'another-tenant' }).resolve(created.sessionId)).tenantId, tenantId)
+  const otherTenant = `${tenantId}-other`
+  await prisma.tenant.create({ data: { id: otherTenant, name: 'Other Workspace' } })
+  const moved = await store.create({ tenantId, userId: users.buyer.id })
+  await prisma.workspaceSession.update({ where: { id: moved.row.id }, data: { tenantId: otherTenant } })
+  assert.equal(await fresh().resolve(moved.sessionId), null)
+  await prisma.tenant.delete({ where: { id: otherTenant } })
 
   await prisma.user.update({ where: { id: users.buyer.id }, data: { status: 'disabled' } })
   assert.equal(await fresh().resolve(created.sessionId), null)
