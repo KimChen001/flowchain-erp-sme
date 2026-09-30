@@ -1,4 +1,5 @@
 import { createProcurementWorkflowService } from "../services/procurement-workflow-service.mjs";
+import { createProcurementRequestCommandService } from "../services/procurement-request-command-service.mjs";
 import { authorizeMutation } from "../domain/mutation-authorization.mjs";
 const repositoryFor = (ctx) => {
   if (!ctx.repositories?.procurementRuntime) throw new Error("PostgreSQL procurement repository is not configured.");
@@ -22,6 +23,10 @@ const workflowService = (ctx) => createProcurementWorkflowService({
     allowManagerOverride: true,
   }),
 });
+// Purchase request commands write PostgreSQL directly. Permissions come from
+// the signed-in actor's role grants inside the service, not from role names.
+const requestCommands = (ctx) => ctx.repositories?.procurementRequests
+  || createProcurementRequestCommandService({ masterData: ctx.repositories?.masterData, env: ctx.env || process.env });
 const actor = (ctx) => ctx.identity.userId;
 const allowed = (ctx, action) => {
   const r = ctx.identity.role;
@@ -59,9 +64,14 @@ const authorizeAction = (ctx, action) => {
   deny(ctx.send, ctx.res);
   return false;
 };
-const failure = (send, res, e) =>
-  send(res, e.status || 500, {
-    code: e.code || "PERSISTENCE_ERROR",
+const failure = (send, res, e) => {
+  // Serializable transactions that lose a race are safe to retry.
+  if (e?.code === "P2034") return send(res, 409, { code: "TRANSACTION_CONFLICT", message: "Another change landed at the same time. Reload and try again.", details: [] });
+  // Errors without a status are unexpected; the server error boundary logs
+  // them and answers without leaking internals.
+  if (!e?.status) throw e;
+  return send(res, e.status, {
+    code: e.code || "PROCUREMENT_COMMAND_FAILED",
     message: e.message,
     details: e.details || [],
     entityId: e.entityId,
@@ -69,8 +79,23 @@ const failure = (send, res, e) =>
     currentVersion: e.currentVersion,
     expectedVersion: e.expectedVersion,
   });
+};
+const respond = async (ctx, status, run) => {
+  try {
+    ctx.send(ctx.res, status, await run());
+  } catch (e) {
+    failure(ctx.send, ctx.res, e);
+  }
+  return true;
+};
+const commandBody = async (ctx) => {
+  const body = (await ctx.readBody(ctx.req)) || {};
+  const header = String(ctx.req.headers?.["idempotency-key"] || "").trim();
+  return header && !body.idempotencyKey ? { ...body, idempotencyKey: header } : body;
+};
 export async function handleProcurementWorkflowRoute(ctx) {
   const { req, res, url, send, readBody } = ctx;
+  if (!url.pathname.startsWith("/api/procurement/")) return false;
   const runtimeRepository = repositoryFor(ctx);
   const service = workflowService(ctx);
   if (req.method === "GET" && url.pathname === "/api/procurement/requests") {
@@ -79,77 +104,17 @@ export async function handleProcurementWorkflowRoute(ctx) {
     return send(res, 200, snapshot.purchaseRequests) || true;
   }
   const requestDetail = url.pathname.match(/^\/api\/procurement\/requests\/([^/]+)$/);
-  if (req.method === "GET" && requestDetail) {
-    const request = await runtimeRepository.get("pr", decodeURIComponent(requestDetail[1]));
-    return send(res, request ? 200 : 404, request || { code: "ENTITY_NOT_FOUND", message: "采购申请不存在" }) || true;
-  }
-  if (req.method === "POST" && url.pathname === "/api/procurement/requests") {
-    if (!authorizeAction(ctx, "pr.create")) return true;
-    try {
-      return (
-        send(
-          res,
-          201,
-          await service.createPurchaseRequest(await readBody(req), actor(ctx)),
-        ) || true
-      );
-    } catch (e) {
-      failure(send, res, e);
-      return true;
-    }
-  }
-  const draftUpdate = url.pathname.match(
-    /^\/api\/procurement\/requests\/([^/]+)$/,
-  );
-  if (req.method === "PATCH" && draftUpdate) {
-    if (!authorizeAction(ctx, "pr.update")) return true;
-    try {
-      send(
-        res,
-        200,
-        await service.updatePurchaseRequestDraft(
-          decodeURIComponent(draftUpdate[1]),
-          await readBody(req),
-          actor(ctx),
-        ),
-      );
-    } catch (e) {
-      failure(send, res, e);
-    }
-    return true;
-  }
+  if (req.method === "GET" && requestDetail)
+    return respond(ctx, 200, () => requestCommands(ctx).readPurchaseRequest(decodeURIComponent(requestDetail[1]), ctx));
+  if (req.method === "POST" && url.pathname === "/api/procurement/requests")
+    return respond(ctx, 201, async () => requestCommands(ctx).createPurchaseRequest(await commandBody(ctx), ctx));
+  if (req.method === "PATCH" && requestDetail)
+    return respond(ctx, 200, async () => requestCommands(ctx).updatePurchaseRequestDraft(decodeURIComponent(requestDetail[1]), await commandBody(ctx), ctx));
   const action = url.pathname.match(
     /^\/api\/procurement\/requests\/([^/]+)\/(submit|approve|reject|withdraw|cancel)$/,
   );
-  if (req.method === "POST" && action) {
-    const permissionAction = ["approve", "reject"].includes(action[2])
-      ? "pr.approve"
-      : `pr.${action[2]}`;
-    if (!authorizeAction(ctx, permissionAction)) return true;
-    try {
-      const b = await readBody(req);
-      if (action[2] === "reject" && !String(b.reason || "").trim()) throw Object.assign(new Error("拒绝必须填写原因"), { code: "REJECT_REASON_REQUIRED", status: 400, details: [{ field: "reason" }] });
-      const next = {
-        submit: "submitted",
-        approve: "approved",
-        reject: "rejected",
-        withdraw: "draft",
-        cancel: "cancelled",
-      }[action[2]];
-      send(
-        res,
-        200,
-        await service.transitionPurchaseRequest(
-          decodeURIComponent(action[1]),
-          next,
-          { ...b, actor: actor(ctx) },
-        ),
-      );
-    } catch (e) {
-      failure(send, res, e);
-    }
-    return true;
-  }
+  if (req.method === "POST" && action)
+    return respond(ctx, 200, async () => requestCommands(ctx).transitionPurchaseRequest(decodeURIComponent(action[1]), action[2], await commandBody(ctx), ctx));
   const recommendation = url.pathname.match(
     /^\/api\/procurement\/requests\/([^/]+)\/path-recommendation$/,
   );

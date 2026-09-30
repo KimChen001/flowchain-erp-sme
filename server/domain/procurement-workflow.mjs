@@ -55,3 +55,135 @@ export function validateDirectPo(pr, policy = {}, permission = true) {
   if (details.length) throw procurementError('DIRECT_PO_NOT_ALLOWED','当前采购申请不能直接创建采购订单',details)
   return true
 }
+
+// Validates and snapshots purchase request lines against master data. The
+// itemRepository must already be scoped to the signed-in workspace; see
+// tenantScopedProcurementMasterData.
+export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) =>
+  Promise.all(
+    lines.map(async (line, index) => {
+      const lineType = line.sourceType || line.lineType ||
+        (line.itemId || line.sku ? "catalog_item" : "non_catalog_item");
+      const lineBasis = line.lineBasis || "quantity";
+      const supplierId = String(line.supplierId || "").trim();
+      if (!supplierId) throw procurementError("SUPPLIER_REQUIRED", "每一条采购行必须选择供应商", [{ field: `lines.${index}.supplierId` }], 400);
+      const supplier = itemRepository?.getSupplier ? await itemRepository.getSupplier(supplierId) : { id: supplierId };
+      if (!supplier) throw procurementError("SUPPLIER_NOT_FOUND", "供应商不存在", [{ field: `lines.${index}.supplierId` }], 400);
+      if (["inactive", "disabled", "停用"].includes(String(supplier.status || "").toLowerCase())) throw procurementError("SUPPLIER_INACTIVE", "供应商已停用", [{ field: `lines.${index}.supplierId` }], 400);
+      const supplierSnapshot = {
+        id: supplier.id || supplierId,
+        supplierCode: supplier.supplierCode || supplier.code || supplierId,
+        supplierName: supplier.supplierName || supplier.name || supplierId,
+      };
+      const estimatedUnitPrice = line.estimatedUnitPrice ?? line.unitPrice;
+      const quantity = line.quantity == null || line.quantity === "" ? null : Number(line.quantity);
+      const estimatedAmount = lineBasis === "amount" ? Number(line.estimatedAmount) : Number(quantity) * Number(estimatedUnitPrice);
+      if (lineBasis === "amount" ? !(estimatedAmount > 0) : !(quantity > 0 && Number(estimatedUnitPrice) >= 0 && estimatedUnitPrice !== "" && estimatedUnitPrice != null))
+        throw procurementError("LINE_VALUE_REQUIRED", lineBasis === "amount" ? "预计总金额必须大于 0" : "数量和预计单价必须明确填写", [{ field: `lines.${index}.${lineBasis === "amount" ? "estimatedAmount" : "estimatedUnitPrice"}` }], 400);
+      if (!line.needByDate) throw procurementError("NEED_BY_DATE_REQUIRED", "需求日期必填", [{ field: `lines.${index}.needByDate` }], 400);
+      if (line.serviceStartDate && line.serviceEndDate && line.serviceStartDate > line.serviceEndDate) throw procurementError("INVALID_SERVICE_DATE_RANGE", "服务开始日期不得晚于结束日期", [{ field: `lines.${index}.serviceEndDate` }], 400);
+      if (lineType === "non_catalog_item") {
+        if (!String(line.itemNameSnapshot || line.itemName || "").trim())
+          throw procurementError(
+            "NON_CATALOG_ITEM_NAME_REQUIRED",
+            "非目录物料名称必填",
+            [{ field: `lines.${index}.itemNameSnapshot` }],
+            400,
+          );
+        if (lineBasis === "quantity" && !String(line.unitSnapshot || line.unit || "").trim())
+          throw procurementError(
+            "NON_CATALOG_ITEM_UNIT_REQUIRED",
+            "非目录物料单位必填",
+            [{ field: `lines.${index}.unitSnapshot` }],
+            400,
+          );
+        return {
+          ...structuredClone(line),
+          lineType, sourceType: lineType, lineBasis, supplierId, supplierSnapshot, quantity: lineBasis === "quantity" ? quantity : null,
+          estimatedUnitPrice: lineBasis === "quantity" ? Number(estimatedUnitPrice) : null,
+          estimatedAmount,
+          itemId: null,
+          sku: null,
+          itemNameSnapshot: line.itemNameSnapshot || line.itemName,
+          unitSnapshot: line.unitSnapshot || line.unit,
+          specificationSnapshot:
+            line.specificationSnapshot || line.specification || "",
+        };
+      }
+  if (!itemRepository)
+    return {
+      ...structuredClone(line),
+          itemNameSnapshot: line.itemNameSnapshot || line.itemName || "",
+          unitSnapshot: line.unitSnapshot || line.unit || "",
+          specificationSnapshot:
+            line.specificationSnapshot || line.specification || "",
+        };
+  const item = await (itemRepository.getManagedItem || itemRepository.getItem)(line.itemId || line.sku);
+      if (!item)
+        throw procurementError(
+          "ITEM_NOT_FOUND",
+          "物料不存在",
+          [{ field: `lines.${index}.itemId` }],
+          400,
+        );
+      if (item.status !== "active")
+        throw procurementError(
+          "ITEM_INACTIVE",
+          "物料已停用",
+          [{ field: `lines.${index}.itemId` }],
+          400,
+        );
+      if (!item.purchasable)
+        throw procurementError(
+          "ITEM_NOT_PURCHASABLE",
+          "物料不允许采购",
+          [{ field: `lines.${index}.itemId` }],
+          400,
+        );
+      if (
+        (line.itemId && line.itemId !== item.itemId) ||
+        (line.sku && line.sku !== item.sku)
+      )
+        throw procurementError(
+          "ITEM_MAPPING_MISMATCH",
+          "itemId 与 SKU 不匹配",
+          [{ field: `lines.${index}.sku` }],
+          400,
+        );
+      if (itemRepository?.approvedSuppliersForItem) {
+        const approved = await itemRepository.approvedSuppliersForItem(item.itemId);
+        if (!approved.length) throw procurementError("ITEM_HAS_NO_APPROVED_SUPPLIER", "该 SKU 尚未维护可采购供应商，请先维护 SKU–供应商关系。", [{ field: `lines.${index}.supplierId` }], 400);
+        if (!approved.some(row => row.id === supplierId)) throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "所选供应商不是该 SKU 的已批准供应商", [{ field: `lines.${index}.supplierId` }], 400);
+      } else if (item.defaultSupplierId && supplierId !== item.defaultSupplierId) {
+        throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "所选供应商不是该 SKU 的已批准供应商", [{ field: `lines.${index}.supplierId` }], 400);
+      }
+      return {
+        ...structuredClone(line),
+        lineType, sourceType: lineType, lineBasis, supplierId, supplierSnapshot, quantity: lineBasis === "quantity" ? quantity : null,
+        estimatedUnitPrice: lineBasis === "quantity" ? Number(estimatedUnitPrice) : null,
+        estimatedAmount,
+        itemId: item.itemId,
+        sku: item.sku,
+        itemNameSnapshot: item.itemName,
+        unitSnapshot: item.purchaseUnit || item.baseUnit,
+        specificationSnapshot: item.specification || "",
+        warehouseId: line.warehouseId || item.defaultWarehouseId || "",
+      };
+    }),
+  );
+
+// Master data lookups for procurement commands, pinned to one workspace. The
+// repository methods fall back to a default tenant when no scope is passed, so
+// commands must never call them unscoped.
+export function tenantScopedProcurementMasterData(repository, tenantId) {
+  const scope = () => {
+    const id = String(tenantId ?? '').trim()
+    if (!id) throw procurementError('TENANT_CONTEXT_REQUIRED', 'A server-resolved tenant context is required.', [], 403)
+    return { tenantId: id }
+  }
+  return {
+    getSupplier: (id) => repository.getSupplier(id, scope()),
+    getItem: (id) => repository.getItem(id, scope()),
+    ...(typeof repository.approvedSuppliersForItem === 'function' ? { approvedSuppliersForItem: (itemId) => repository.approvedSuppliersForItem(itemId, scope()) } : {}),
+  }
+}

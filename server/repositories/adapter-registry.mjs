@@ -10,6 +10,7 @@ import { createDbProcurementCommandService } from '../domain/procurement-db-comm
 import { createDbProcurementRuntimeRepository } from './db-procurement-runtime-repository.mjs'
 import { createDbIntakeRepository } from './db-intake-repository.mjs'
 import { createDbSalesOrderReadRepository } from './db-sales-order-read-repository.mjs'
+import { createProcurementRequestCommandService } from '../services/procurement-request-command-service.mjs'
 
 export const PERSISTENCE_MODES = Object.freeze({ database: 'database' })
 export const JSON_PERSISTENCE_REMOVED_ERROR = 'FLOWCHAIN_JSON_PERSISTENCE_REMOVED'
@@ -46,14 +47,16 @@ function createTransientAiConversationRepository() {
 export function createDatabaseRepositoryRegistry({ db = {}, env = process.env, prisma } = {}) {
   getPersistenceMode(env)
   const inventoryRead = createDbInventoryReadRepository({ env, prisma })
+  const masterData = createDbMasterDataRepository({ env, prisma })
   return {
     mode: PERSISTENCE_MODES.database,
-    masterData: createDbMasterDataRepository({ env, prisma }),
+    masterData,
     inventoryRead,
     inventoryRuntime: inventoryRead,
     procurementRead: createDbProcurementReadRepository({ env, prisma }),
     procurementRuntime: createDbProcurementRuntimeRepository({ env, prisma }),
     procurementAuthority: createDbProcurementCommandService({ env, prisma }),
+    procurementRequests: createProcurementRequestCommandService({ env, prisma, masterData }),
     salesOrders: createDbSalesOrderReadRepository({ env, prisma }),
     actionDrafts: createDbActionDraftRepository({ db, env, prisma }),
     exceptionCases: createDbExceptionCaseRepository({ env, prisma }),
