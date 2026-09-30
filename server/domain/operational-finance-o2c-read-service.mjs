@@ -17,6 +17,37 @@ const page = (query = {}) => {
   return { page: number, pageSize: size, skip: (number - 1) * size };
 };
 const validCurrency = (value) => /^[A-Z]{3}$/.test(text(value).toUpperCase());
+const CLOSED_DOCUMENT_STATUSES = ["cancelled", "void", "voided", "rejected"];
+
+// The currencies the finance landing reports on: every live supplier and
+// customer invoice as well as every open payable and receivable. Invoices
+// that have not yet become obligations still carry money, so a workspace with
+// only USD supplier invoices is a single-currency workspace, not one with no
+// currency data. Amounts are never converted between currencies.
+export function financeCurrencyLimitations(...currencyRows) {
+  const currencies = [
+    ...new Set(
+      currencyRows
+        .flat()
+        .map((row) => text(row?.currency).toUpperCase())
+        .filter(validCurrency),
+    ),
+  ].sort();
+  return {
+    currencies,
+    aggregationStatus:
+      currencies.length > 1
+        ? "multi_currency_unconverted"
+        : currencies.length === 1
+          ? "single_currency"
+          : "no_currency_data",
+    fxConverted: false,
+    message:
+      currencies.length > 1
+        ? "Amounts remain grouped by original currency; no FX conversion is applied."
+        : "No FX conversion is applied.",
+  };
+}
 
 function invoiceActions(actor, capability, row) {
   if (!capability?.enabled) return [];
@@ -501,6 +532,8 @@ export function createOperationalFinanceO2cReadService({
       customerCreditNotes,
       payableCurrencies,
       receivableCurrencies,
+      supplierInvoiceCurrencies,
+      customerInvoiceCurrencies,
     ] = await Promise.all([
       prisma.supplierInvoice.count({
         where: { tenantId: current.tenantId, status: "submitted" },
@@ -558,14 +591,17 @@ export function createOperationalFinanceO2cReadService({
         distinct: ["currency"],
         select: { currency: true },
       }),
+      prisma.supplierInvoice.findMany({
+        where: { tenantId: current.tenantId, status: { notIn: CLOSED_DOCUMENT_STATUSES } },
+        distinct: ["currency"],
+        select: { currency: true },
+      }),
+      prisma.customerInvoice.findMany({
+        where: { tenantId: current.tenantId, status: { notIn: CLOSED_DOCUMENT_STATUSES } },
+        distinct: ["currency"],
+        select: { currency: true },
+      }),
     ]);
-    const currencies = [
-      ...new Set(
-        [...payableCurrencies, ...receivableCurrencies]
-          .map((row) => text(row.currency).toUpperCase())
-          .filter(validCurrency),
-      ),
-    ].sort();
     return {
       dataSource: "Authoritative PostgreSQL",
       generatedAt: asOf.toISOString(),
@@ -579,20 +615,12 @@ export function createOperationalFinanceO2cReadService({
         supplierCreditMemos,
         customerCreditNotes,
       },
-      currencyLimitations: {
-        currencies,
-        aggregationStatus:
-          currencies.length > 1
-            ? "multi_currency_unconverted"
-            : currencies.length === 1
-              ? "single_currency"
-              : "no_currency_data",
-        fxConverted: false,
-        message:
-          currencies.length > 1
-            ? "Amounts remain grouped by original currency; no FX conversion is applied."
-            : "No FX conversion is applied.",
-      },
+      currencyLimitations: financeCurrencyLimitations(
+        payableCurrencies,
+        receivableCurrencies,
+        supplierInvoiceCurrencies,
+        customerInvoiceCurrencies,
+      ),
       settlementClaims: {
         payableMeansPaid: false,
         receivableMeansCollected: false,
