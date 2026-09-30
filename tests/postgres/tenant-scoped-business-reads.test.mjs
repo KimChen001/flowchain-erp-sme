@@ -24,6 +24,11 @@ async function seedTenant(prisma, tenantId, tag) {
     id: `SO-${tag}`, tenantId, orderNumber: `SO-${tag}`, customerName: `Customer ${tag}`, workflowStatus: 'confirmed', currency: 'USD',
     lines: { create: [{ id: `SO-${tag}-L1`, itemId: `ITEM-${tag}`, sku: `SKU-${tag}`, itemName: `Item ${tag}`, orderedQuantity: '3.0000', unit: 'EA' }] },
   } })
+  await prisma.purchaseRequest.create({ data: {
+    id: `PR-${tag}`, tenantId, status: 'submitted', supplierId: `SUP-${tag}`, supplierName: `Supplier ${tag}`, currency: 'USD', amount: '40.0000',
+    lines: { create: [{ id: `PR-${tag}-L1`, sku: `SKU-${tag}`, itemName: `Item ${tag}`, quantity: '4.0000', unit: 'EA' }] },
+  } })
+  await prisma.rfq.create({ data: { id: `RFQ-${tag}`, tenantId, title: `RFQ ${tag}`, supplierId: `SUP-${tag}`, status: 'active', currency: 'USD', sourceRequestId: `PR-${tag}` } })
   await prisma.inventoryBalance.create({ data: { id: `BAL-${tag}`, tenantId, itemId: `ITEM-${tag}`, sku: `SKU-${tag}`, itemName: `Item ${tag}`, onHandQuantity: '5.0000', availableQuantity: '5.0000', unit: 'EA' } })
 }
 
@@ -55,6 +60,8 @@ function assertOnlyTenant(context, tag) {
   assert.deepEqual(ids(context.suppliers), [`SUP-${tag}`])
   assert.deepEqual(ids(context.items), [`ITEM-${tag}`])
   assert.deepEqual(context.inventoryItems.map((row) => row.sku), [`SKU-${tag}`])
+  assert.deepEqual(ids(context.purchaseRequests), [`PR-${tag}`])
+  assert.deepEqual(ids(context.rfqs), [`RFQ-${tag}`])
 }
 
 test('reports and the business read context return only the signed-in workspace rows', async () => {
@@ -106,6 +113,13 @@ test('reports and the business read context return only the signed-in workspace 
     assertOnlyTenant(contextB.payload, 'B')
     const procurementB = await request(port, 'POST', '/api/reports/query', { headers: headersB, body: { subject: 'procurement', filters: {} } })
     assert.deepEqual(procurementB.payload.exportRows.map((row) => row.id), ['PO-B'])
+
+    // The home overview is built from the same context, so it now lists the
+    // workspace's purchase request and RFQ next to its purchase order.
+    const home = await request(port, 'GET', '/api/home/overview', { headers: signedInA })
+    assert.equal(home.status, 200)
+    assert.deepEqual(home.payload.recentDocuments.map((row) => row.id).sort(), ['PO-A', 'PR-A', 'RFQ-A'])
+    assert.ok(home.payload.workItems.some((row) => row.id === 'PR-A'))
 
     const anonymous = await request(port, 'GET', '/api/business/read-context')
     assert.equal(anonymous.status, 401)

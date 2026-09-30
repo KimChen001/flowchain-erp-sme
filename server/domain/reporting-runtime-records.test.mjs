@@ -12,17 +12,23 @@ test('reporting inventory does not combine pieces, boxes and rolls into one stoc
   assert.deepEqual(report.details.map(row => row.quantity), [20, 3]);
 });
 
-test('report runtime loads tenant-scoped receipts and invoice amounts instead of empty placeholders', async () => {
+test('report runtime loads tenant-scoped requests, RFQs, receipts and invoice amounts instead of empty placeholders', async () => {
   const queries = [];
   const prisma = Object.fromEntries(Object.entries({
+    purchaseRequest: [{ id: 'PR', status: 'submitted', currency: 'USD', amount: 40, lines: [] }],
+    rfq: [{ id: 'RFQ', title: 'Widgets', status: 'active', sourceRequestId: 'PR', lines: [] }],
+    supplierQuotation: [{ rfqId: 'RFQ' }, { rfqId: 'RFQ' }],
     purchaseOrder: [{ id: 'PO', status: 'fully_received', currency: 'USD', amount: 120, lines: [] }],
     receivingDocument: [{ id: 'GRN', poId: 'PO', status: 'received', postingStatus: 'unposted', lines: [] }],
     supplierInvoice: [{ id: 'INV', relatedPoId: 'PO', relatedGrnId: 'GRN', totalAmount: '120.50', currency: 'USD', status: 'draft', lines: [] }],
   }).map(([key, rows]) => [key, { findMany: async query => { queries.push(query); return rows; } }]));
   const procurementRuntime = createDbProcurementRuntimeRepository({ prisma });
   const context = await createBusinessReadContextService({ repositories: { procurementRuntime } }).read({ tenantId: 'tenant-a' });
-  assert.equal(queries.length, 3);
-  for (const query of queries) assert.deepEqual(query.where, { tenantId: 'tenant-a' });
+  assert.equal(queries.length, 6);
+  for (const query of queries) assert.equal(query.where.tenantId, 'tenant-a');
+  assert.equal(context.purchaseRequests[0].id, 'PR');
+  assert.equal(context.rfqs[0].id, 'RFQ');
+  assert.equal(context.rfqs[0].quoted, 2);
   assert.equal(context.receipts[0].poId, 'PO');
   assert.equal(context.supplierInvoices[0].receiptId, 'GRN');
   assert.ok(!context.dataLimitations.includes('invoice_runtime_has_no_records'));

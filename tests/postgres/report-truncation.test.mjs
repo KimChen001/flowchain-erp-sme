@@ -18,6 +18,8 @@ async function seedTenant(prisma, tenantId, { documents, masterData }) {
   await prisma.purchaseOrder.createMany({ data: range(documents).map((n) => ({ id: `${tenantId}-PO-${n}`, tenantId, status: 'issued', currency: 'USD', amount: '10.0000' })) })
   await prisma.receivingDocument.createMany({ data: range(documents).map((n) => ({ id: `${tenantId}-GRN-${n}`, tenantId, documentNumber: `GRN-${n}`, currency: 'USD' })) })
   await prisma.supplierInvoice.createMany({ data: range(documents).map((n) => ({ id: `${tenantId}-INV-${n}`, tenantId, invoiceNumber: `INV-${n}`, amount: '10.0000', totalAmount: '10.0000', currency: 'USD' })) })
+  await prisma.purchaseRequest.createMany({ data: range(documents).map((n) => ({ id: `${tenantId}-PR-${n}`, tenantId, status: 'submitted', currency: 'USD' })) })
+  await prisma.rfq.createMany({ data: range(documents).map((n) => ({ id: `${tenantId}-RFQ-${n}`, tenantId, title: `RFQ ${n}`, currency: 'USD' })) })
   await prisma.salesOrder.createMany({ data: range(documents).map((n) => ({ id: `${tenantId}-SO-${n}`, tenantId, orderNumber: `SO-${n}`, customerName: 'Customer', workflowStatus: 'confirmed', currency: 'USD' })) })
   await prisma.salesOrderLine.createMany({ data: range(documents).map((n) => ({ id: `${tenantId}-SO-${n}-L1`, salesOrderId: `${tenantId}-SO-${n}`, itemId: `${tenantId}-ITEM-0001`, sku: 'SKU-0001', itemName: 'Item 0001', orderedQuantity: '1.0000', unit: 'EA' })) })
 }
@@ -67,6 +69,8 @@ test('reports say which subjects were cut off at the read limit', async () => {
     await seedTenant(prisma, exactTenant, { documents: 500, masterData: 200 })
     const expected = bySubject([
       { subject: 'purchase_orders', limit: 500 },
+      { subject: 'purchase_requests', limit: 500 },
+      { subject: 'rfqs', limit: 500 },
       { subject: 'receipts', limit: 500 },
       { subject: 'supplier_invoices', limit: 500 },
       { subject: 'sales_orders', limit: 500 },
@@ -80,6 +84,8 @@ test('reports say which subjects were cut off at the read limit', async () => {
       assert.deepEqual(bySubject(context.payload.truncatedSubjects), expected)
       // The limits themselves are unchanged: the extra row is not returned.
       assert.equal(context.payload.purchaseOrders.length, 500)
+      assert.equal(context.payload.purchaseRequests.length, 500)
+      assert.equal(context.payload.rfqs.length, 500)
       assert.equal(context.payload.receipts.length, 500)
       assert.equal(context.payload.supplierInvoices.length, 500)
       assert.equal(context.payload.salesOrders.length, 500)
@@ -97,6 +103,8 @@ test('reports say which subjects were cut off at the read limit', async () => {
       const exactContext = await asTenant(exactTenant, 'GET', '/api/business/read-context')
       assert.deepEqual(exactContext.payload.truncatedSubjects, [])
       assert.equal(exactContext.payload.purchaseOrders.length, 500)
+      assert.equal(exactContext.payload.purchaseRequests.length, 500)
+      assert.equal(exactContext.payload.rfqs.length, 500)
       assert.equal(exactContext.payload.suppliers.length, 200)
       const exactReport = await asTenant(exactTenant, 'POST', '/api/reports/query', { subject: 'overview', filters: {} })
       assert.deepEqual(exactReport.payload.truncatedSubjects, [])

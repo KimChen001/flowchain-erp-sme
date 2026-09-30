@@ -116,7 +116,7 @@ function documentWhere(tenantId, id) {
   }
 }
 
-function mapPurchaseRequest(record = {}) {
+export function mapPurchaseRequest(record = {}) {
   const line = firstLine(record)
   const meta = metadata(record)
   const lines = asArray(record.lines).map((entry) => ({
@@ -170,7 +170,7 @@ function mapPurchaseRequest(record = {}) {
   }
 }
 
-function mapRfq(record = {}, quotations = []) {
+export function mapRfq(record = {}, quotations = []) {
   const line = firstLine(record)
   const meta = metadata(record)
   const quoteCount = quotations.filter((quote) => quote.rfqId === record.id).length
