@@ -31,8 +31,12 @@ function staleJsonDb() {
   }
 }
 
+const tenantId = 'tenant-ai-db-smoke'
+const identity = { authenticated: true, source: 'local_signed_session', tenantId, userId: 'ai-db-smoke-user', role: 'manager' }
+
+// Rows belong to the signed-in tenant; a read for any other tenant finds nothing.
 function model(records = []) {
-  return { findMany: async () => records }
+  return { findMany: async ({ where } = {}) => where?.tenantId === tenantId ? records : [] }
 }
 
 function createPrisma({ auditWrites = [] } = {}) {
@@ -69,7 +73,7 @@ function createPrisma({ auditWrites = [] } = {}) {
   }
 }
 
-function createRoute({ message, db = staleJsonDb(), repositories }) {
+function createRoute({ message, db = staleJsonDb(), repositories, identity: routeIdentity = identity }) {
   let response = null
   return {
     ctx: {
@@ -78,6 +82,7 @@ function createRoute({ message, db = staleJsonDb(), repositories }) {
       url: new URL('/api/ai/chat', 'http://localhost'),
       db,
       repositories,
+      identity: routeIdentity,
       send(_res, status, payload) {
         response = { status, payload }
       },
@@ -116,7 +121,10 @@ test('DB mode AI procurement and supplier evidence reads repository data instead
 
   const procurement = createRoute({ message: '哪些采购单据有风险？', db, repositories })
   await handleAiRoute(procurement.ctx)
-  const supplier = createRoute({ message: '哪些供应商需要跟进？', db, repositories })
+  // A signed-in supplier question goes to the semantic business-query planner,
+  // which needs a live database. Keep this smoke on the evidence handler; the
+  // tenant still scopes every repository read.
+  const supplier = createRoute({ message: '哪些供应商需要跟进？', db, repositories, identity: { ...identity, authenticated: false } })
   await handleAiRoute(supplier.ctx)
   await flushBestEffortAudit()
 
@@ -151,7 +159,7 @@ test('DB mode AI inventory evidence reads inventory repository data instead of s
 test('DB mode AI read context exposes master data repository while route evidence uses read-model cache', async () => {
   const db = staleJsonDb()
   const repositories = createDatabaseRepositoryRegistry({ db, env, prisma: createPrisma() })
-  const context = await buildAiReadContext(db, { repositories })
+  const context = await buildAiReadContext(db, { repositories, identity })
 
   assert.equal(repositories.masterData.adapter, 'db-master-data-v1')
   assert.equal(context.repositoryBacked.masterData, true)

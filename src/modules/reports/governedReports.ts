@@ -12,6 +12,8 @@ export type ReportChart = { id: string; title: string; type: ReportChartType; da
 export type ReportColumnDefinition = { key: string; label: string; type: string; subject: string; valueMap?: Record<string, string> };
 export type GovernedReport = {
   totalRecords?: number;
+  /** Subjects the server read only up to a row limit; totals over them may be low. */
+  truncatedSubjects?: Array<{ subject: string; limit: number }>;
   attention?: Array<{ id: string; label: string; count: number; path: string; action: string }>;
   query: Record<string, unknown>; generatedAt: string; dataScope: { label: string; company: string; currencyCode: string | null; currencyLabel: string; currencies: string[]; currencyAggregationStatus: CurrencyAggregationStatus; currencyAmounts: CurrencyAmount[]; fxConverted: boolean; from: string; to: string; activeFilterCount: number; sourceLabel: string; completenessLabel: string; filterOptions: { companies: string[]; warehouses: string[]; suppliers: string[]; customers: string[]; categories: string[]; currencies: string[] } };
   kpis: MetricDefinition[]; charts: ReportChart[]; rankings: ReportChart[]; details: Record<string, unknown>[]; columnDefinitions: ReportColumnDefinition[]; warnings: string[]; limitations: string[];

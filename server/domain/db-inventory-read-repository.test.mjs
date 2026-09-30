@@ -109,16 +109,18 @@ function createPrisma() {
   }
 }
 
+const scope = { tenantId: 'tenant-inventory-read' }
+
 test('database inventory repository maps mocked Prisma rows to read contract shapes', async () => {
   const repository = createDbInventoryReadRepository({ env, prisma: createPrisma() })
 
-  const items = await repository.listItems()
-  const item = await repository.getItem('A100')
-  const lots = await repository.listLots()
-  const serials = await repository.listSerials()
-  const movements = await repository.listMovements()
-  const exceptions = await repository.listExceptions()
-  const summary = await repository.getSummary()
+  const items = await repository.listItems(scope)
+  const item = await repository.getItem('A100', scope)
+  const lots = await repository.listLots(scope)
+  const serials = await repository.listSerials(scope)
+  const movements = await repository.listMovements(scope)
+  const exceptions = await repository.listExceptions(scope)
+  const summary = await repository.getSummary(scope)
 
   assert.equal(items.length, 2)
   assert.equal(item.sku, 'A100')
@@ -136,11 +138,11 @@ test('database inventory repository aliases and missing DB config stay clean', a
   const repository = createDbInventoryReadRepository({ env: { FLOWCHAIN_PERSISTENCE_MODE: 'database' } })
 
   await assert.rejects(
-    () => repository.listItems(),
+    () => repository.listItems(scope),
     (error) => error.message === DATABASE_CONFIG_ERROR && error.code === DATABASE_CONFIG_ERROR
   )
 
   const working = createDbInventoryReadRepository({ env, prisma: createPrisma() })
-  assert.equal((await working.listInventoryItems())[0].sku, 'A100')
-  assert.equal((await working.getInventoryItem('A100')).sku, 'A100')
+  assert.equal((await working.listInventoryItems(scope))[0].sku, 'A100')
+  assert.equal((await working.getInventoryItem('A100', scope)).sku, 'A100')
 })
