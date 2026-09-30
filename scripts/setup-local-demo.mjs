@@ -38,7 +38,8 @@ export function localDemoSupplier(id) {
   return supplier
 }
 const items = [
-  ['LOCAL-DEMO-ITEM-001', 'LDM-001', 'Flow Controller', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001'],
+  // The walkthrough keeps Flow Controller short: its planning thresholds are higher.
+  ['LOCAL-DEMO-ITEM-001', 'LDM-001', 'Flow Controller', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001', { safetyStock: 30, reorderPoint: 40 }],
   ['LOCAL-DEMO-ITEM-002', 'LDM-002', 'Temperature Sensor', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001'],
   ['LOCAL-DEMO-ITEM-003', 'LDM-003', 'Shipping Carton', 'Packaging materials', 'box', 'LOCAL-DEMO-SUP-002'],
   ['LOCAL-DEMO-ITEM-004', 'LDM-004', 'Stainless Steel Fastener', 'Industrial supplies', 'pcs', 'LOCAL-DEMO-SUP-003'],
@@ -56,7 +57,7 @@ const knowledgeDocuments = [
     title: 'US Demo Product Catalog',
     content: `FlowChain US demo product catalog.
 
-LDM-001 Flow Controller is supplied by Acme Components. It is an electronic component ordered and counted in pieces. The demo inventory policy uses a safety stock of 10 pieces and a reorder point of 20 pieces. Inspect the model, quantity, connector condition, and visible shipping damage during receiving. Accepted stock is stored in location A-01.
+LDM-001 Flow Controller is supplied by Acme Components. It is an electronic component ordered and counted in pieces. The demo inventory policy uses a safety stock of 30 pieces and a reorder point of 40 pieces. Inspect the model, quantity, connector condition, and visible shipping damage during receiving. Accepted stock is stored in location A-01.
 
 LDM-002 Temperature Sensor is supplied by Acme Components. It is an electronic component counted in pieces. Verify the model and calibration label during receiving, and quarantine damaged or unidentified units in QC-01.
 
@@ -90,10 +91,10 @@ export async function seedLocalDemo(prisma, env = process.env) {
       const data = { name, category, riskLevel: 'low', metadata: { ...marker, defaultCurrency: 'USD', paymentTermsId: 'LOCAL-DEMO-NET30', ...profile } }
       await tx.supplier.upsert({ where: { id }, create: { id, tenantId, code, ...data }, update: data })
     }
-    for (const [id, sku, name, category, unit, preferredSupplierId] of items) {
+    for (const [id, sku, name, category, unit, preferredSupplierId, thresholds = { safetyStock: 10, reorderPoint: 20 }] of items) {
       const collision = await tx.item.findFirst({ where: { tenantId, sku } })
       if (collision && collision.id !== id) throw new Error(`Refusing to overwrite non-demo item SKU ${sku}.`)
-      const data = { name, category, unit, preferredSupplierId, safetyStock: 10, reorderPoint: 20, metadata: { ...marker, defaultWarehouseId: 'LOCAL-DEMO-WH-001' } }
+      const data = { name, category, unit, preferredSupplierId, ...thresholds, metadata: { ...marker, defaultWarehouseId: 'LOCAL-DEMO-WH-001' } }
       await tx.item.upsert({ where: { id }, create: { id, tenantId, sku, ...data }, update: data })
     }
     for (const [id, recordKey, name] of customers) {
