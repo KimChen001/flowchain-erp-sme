@@ -11,3 +11,12 @@ export function requireTenantId(filters = {}) {
     status: 403,
   })
 }
+
+// Reads at most `limit` rows. One extra row is requested so the caller can be
+// told, through `onTruncated`, that more rows exist than were returned.
+export async function findManyWithinLimit(delegate, args, { limit, subject, onTruncated } = {}) {
+  const rows = await delegate.findMany({ ...args, take: limit + 1 })
+  if (rows.length <= limit) return rows
+  if (typeof onTruncated === 'function') onTruncated({ subject, limit })
+  return rows.slice(0, limit)
+}

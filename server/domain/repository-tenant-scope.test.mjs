@@ -6,6 +6,7 @@ import { createDbMasterDataRepository } from '../repositories/db-master-data-rep
 import { createDbProcurementReadRepository } from '../repositories/db-procurement-read-repository.mjs'
 import { createDbProcurementRuntimeRepository } from '../repositories/db-procurement-runtime-repository.mjs'
 import { createDbSalesOrderReadRepository } from '../repositories/db-sales-order-read-repository.mjs'
+import { findManyWithinLimit } from '../repositories/repository-read-scope.mjs'
 import { handleProcurementWorkflowRoute } from '../routes/procurement-workflow.routes.mjs'
 import { sendInternalServerError } from '../utils/safe-errors.mjs'
 
@@ -117,4 +118,14 @@ test('purchase request item and supplier checks read the signed-in workspace mas
   assert.ok(response, 'the route answered')
   assert.ok(lookups.some(([kind]) => kind === 'supplier'))
   assert.ok(lookups.every(([, , tenantId]) => tenantId === 'tenant-signed-in'), JSON.stringify(lookups))
+})
+
+test('bounded reads ask for one extra row and report the subject only when it exists', async () => {
+  const reported = []
+  const onTruncated = (entry) => reported.push(entry)
+  const table = (count) => ({ findMany: async ({ take }) => Array.from({ length: Math.min(count, take) }, (_, index) => ({ id: index })) })
+  assert.equal((await findManyWithinLimit(table(3), {}, { limit: 3, subject: 'suppliers', onTruncated })).length, 3)
+  assert.deepEqual(reported, [])
+  assert.equal((await findManyWithinLimit(table(10), {}, { limit: 3, subject: 'suppliers', onTruncated })).length, 3)
+  assert.deepEqual(reported, [{ subject: 'suppliers', limit: 3 }])
 })

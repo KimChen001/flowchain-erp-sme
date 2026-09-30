@@ -1,7 +1,7 @@
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { createDbProcurementCommandService } from "../domain/procurement-db-command-service.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "../domain/receiving-transaction-policy.mjs";
-import { requireTenantId } from "./repository-read-scope.mjs";
+import { findManyWithinLimit, requireTenantId } from "./repository-read-scope.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const decimal = (value) => value === null || value === undefined ? null : receivingDecimalString(receivingDecimalUnits(value));
@@ -70,9 +70,13 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
     async snapshot(filters = {}) {
       const tenantId = requireTenantId(filters);
       const dbClient = await client();
-      const query = { where: { tenantId }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }], take: Math.min(500, Math.max(1, Number(filters.limit || 500))) };
+      const query = { where: { tenantId }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }] };
+      const limit = Math.min(500, Math.max(1, Number(filters.limit || 500)));
+      const bounded = (subject) => ({ limit, subject, onTruncated: filters.onTruncated });
       const [rows, receivingRows, invoiceRows] = await Promise.all([
-        dbClient.purchaseOrder.findMany(query), dbClient.receivingDocument.findMany(query), dbClient.supplierInvoice.findMany(query),
+        findManyWithinLimit(dbClient.purchaseOrder, query, bounded("purchase_orders")),
+        findManyWithinLimit(dbClient.receivingDocument, query, bounded("receipts")),
+        findManyWithinLimit(dbClient.supplierInvoice, query, bounded("supplier_invoices")),
       ]);
       const iso = value => value?.toISOString?.() || value || null;
       const receipts = receivingRows.map(row => ({ id: row.id, documentNumber: row.documentNumber, poId: row.poId, supplierId: row.supplierId, supplierName: row.supplierName, status: row.status, workflowStatus: row.workflowStatus, postingStatus: row.postingStatus, warehouseId: row.warehouseId, currency: row.currency, arrivedAt: iso(row.arrivedAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, acceptedQty: decimal(line.acceptedQty), rejectedQty: decimal(line.rejectedQty), unit: line.unit })) }));

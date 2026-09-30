@@ -53,3 +53,17 @@ test('home overview is server-derived, uses canonical routes and does not manufa
   assert.ok(overview.recentDocuments.every(row => row.canonicalRoute.startsWith('/app/')))
   assert.ok(overview.limitations.includes('unresolved_risk_metric_not_connected'))
 })
+
+test('BusinessReadContext carries each subject a repository cut off at its read limit', async () => {
+  const repos = repositories()
+  repos.salesOrders.listOrders = async ({ onTruncated }) => { onTruncated({ subject: 'sales_orders', limit: 500 }); return [] }
+  repos.procurementRuntime.snapshot = async ({ onTruncated }) => {
+    onTruncated({ subject: 'purchase_orders', limit: 500 })
+    onTruncated({ subject: 'purchase_orders', limit: 500 })
+    return { purchaseOrders: [], receipts: [], supplierInvoices: [] }
+  }
+  const context = await createBusinessReadContextService({ repositories: repos }).read({ tenantId: 'tenant-a' })
+  assert.deepEqual(context.truncatedSubjects, [{ subject: 'sales_orders', limit: 500 }, { subject: 'purchase_orders', limit: 500 }])
+  const complete = await createBusinessReadContextService({ repositories: repositories() }).read({ tenantId: 'tenant-a' })
+  assert.deepEqual(complete.truncatedSubjects, [])
+})

@@ -10,7 +10,7 @@ import {
 } from '../domain/inventory-read.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
-import { requireTenantId } from './repository-read-scope.mjs'
+import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
 
 function requireDatabaseConfig(env = process.env) {
   return validateDatabasePersistenceConfig(env)
@@ -188,9 +188,10 @@ function mapException(record = {}) {
 async function loadInventorySnapshot(client, filters = {}) {
   const where = tenantWhere(filters)
   const take = safeLimit(filters.limit)
+  const bounded = { limit: take, subject: 'inventory_items', onTruncated: filters.onTruncated }
   const [items, balances, lots, serials, movements, exceptions] = await Promise.all([
-    client.item.findMany({ where, orderBy: [{ sku: 'asc' }], take }),
-    client.inventoryBalance.findMany({ where, orderBy: [{ sku: 'asc' }], take }),
+    findManyWithinLimit(client.item, { where, orderBy: [{ sku: 'asc' }] }, bounded),
+    findManyWithinLimit(client.inventoryBalance, { where, orderBy: [{ sku: 'asc' }] }, bounded),
     client.inventoryLot.findMany({ where, orderBy: [{ updatedAt: 'desc' }], take }),
     client.inventorySerial.findMany({ where, orderBy: [{ updatedAt: 'desc' }], take }),
     client.inventoryMovement.findMany({ where, orderBy: [{ movementDate: 'desc' }, { createdAt: 'desc' }], take }),

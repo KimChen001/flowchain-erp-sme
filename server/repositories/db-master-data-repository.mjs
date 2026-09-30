@@ -1,7 +1,7 @@
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
-import { requireTenantId } from './repository-read-scope.mjs'
+import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
 
 function requireDatabaseConfig(env = process.env) {
   return validateDatabasePersistenceConfig(env)
@@ -202,14 +202,13 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
     updateSupplier: async (id, input, actorId, scope) => mapSupplier(await saveSupplierMaster(await resolvePrisma({ env, prisma }), id, input, actorId, scope)),
     listItems: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
-      const records = await client.item.findMany({
+      const records = await findManyWithinLimit(client.item, {
         where: {
           ...tenantWhere(filters),
           ...(text(filters.status) ? { status: text(filters.status) } : {}),
         },
         orderBy: [{ sku: 'asc' }],
-        take: safeLimit(filters.limit),
-      })
+      }, { limit: safeLimit(filters.limit), subject: 'items', onTruncated: filters.onTruncated })
       return records.map(mapItem)
     },
     getItem: async (idOrSku = '', options = {}) => {
@@ -225,14 +224,13 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
     },
     listSuppliers: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
-      const records = await client.supplier.findMany({
+      const records = await findManyWithinLimit(client.supplier, {
         where: {
           ...tenantWhere(filters),
           ...(text(filters.status) ? { status: text(filters.status) } : {}),
         },
         orderBy: [{ name: 'asc' }],
-        take: safeLimit(filters.limit),
-      })
+      }, { limit: safeLimit(filters.limit), subject: 'suppliers', onTruncated: filters.onTruncated })
       return records.map(mapSupplier)
     },
     listCustomers: async (filters = {}) => {
