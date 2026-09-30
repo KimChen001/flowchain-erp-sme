@@ -16,7 +16,7 @@ const entries = {
   'scope.label': ['Your workspace data', '当前工作区数据'],
   'answer.source': ['Answered from your workspace data', '基于当前工作区数据回答'],
   'answer.checked': ['Checked: {sources}', '已检查：{sources}'],
-  'answer.review_boundary': ['Nothing was sent, approved or changed.', '未发送、未批准，也未修改任何记录。'],
+  'answer.review_boundary': ['This answer does not send, approve or change anything.', '本回答不会发送、批准或修改任何内容。'],
 
   // Skill titles and descriptions
   'skill.today_priorities.title': ["Today's priorities", '今日优先事项'],
@@ -40,7 +40,7 @@ const entries = {
 
   // Report figures, shared by several skills
   'metrics.open_pos': ['{open} open purchase orders, {overdue} overdue.', '未结采购订单 {open} 张，其中逾期 {overdue} 张。'],
-  'metrics.no_overdue': ['No purchase orders are overdue.', '当前没有逾期采购订单。'],
+  'metrics.no_overdue': ['{open} open purchase orders; none are overdue.', '未结采购订单 {open} 张，没有逾期。'],
   'metrics.committed_spend': ['Committed PO spend: {amounts}.', '已承诺采购金额：{amounts}。'],
   'metrics.committed_invoices': ['Committed supplier invoices: {amounts}.', '已提交供应商发票金额：{amounts}。'],
   'metrics.at_risk': ['{count} SKUs are short against open sales orders: {skus}.', '{count} 个 SKU 无法满足未结销售订单：{skus}。'],
@@ -58,6 +58,7 @@ const entries = {
 
   // highest_risk_items
   'risk.title': ['Highest risk: {first}', '风险最高：{first}'],
+  'risk.first': ['{label} ({status})', '{label}（{status}）'],
   'risk.title_none': ['No high-risk items found (as of {date})', '未发现高风险事项（截至 {date}）'],
   'risk.summary': ['{count} items carry risk exposure, ordered by severity and amount.', '共 {count} 项存在风险敞口，按严重程度和金额排序。'],
 
@@ -72,8 +73,9 @@ const entries = {
   // prepare_action_draft
   'draft.title': ['{count} drafts ready for your review', '已准备 {count} 份草稿，等待你复核'],
   'draft.title_one': ['1 draft ready for your review', '已准备 1 份草稿，等待你复核'],
+  'draft.title_blocked': ['Drafts need purchasing edit access', '准备草稿需要采购编辑权限'],
   'draft.title_none': ['No draft is needed right now', '当前不需要准备草稿'],
-  'draft.summary': ['Review each draft before sending. Nothing has been sent or changed.', '发送前请逐一复核。尚未发送或修改任何内容。'],
+  'draft.summary': ['Review each draft before you send it. This answer does not send or change anything.', '发送前请逐一复核。本回答不会发送或修改任何内容。'],
   'draft.none_summary': ['No open issue calls for a follow-up draft. Open the records below to review them.', '当前没有需要跟进草稿的问题。可打开下面的记录查看。'],
   'draft.no_permission': ['Your role cannot prepare procurement drafts, so only links are shown.', '你的角色无法准备采购草稿，因此只显示链接。'],
   'draft.po_followup.title': ['Follow up with {supplier} on {po}', '就 {po} 跟进 {supplier}'],
@@ -81,6 +83,7 @@ const entries = {
   'draft.po_followup.message_generic': ['Please confirm a delivery date for the remaining quantity on {po}.', '请确认 {po} 剩余数量的交货日期。'],
   'draft.invoice.title': ['Ask {supplier} about the variance on {invoice}', '就 {invoice} 的差异联系 {supplier}'],
   'draft.invoice.message': ['Invoice {invoice} differs from the purchase order by {amount}. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单相差 {amount}。请提供更正后的发票或差异原因。'],
+  'draft.invoice.message_hidden': ['Invoice {invoice} differs from the purchase order. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单存在差异。请提供更正后的发票或差异原因。'],
   'draft.pr.title': ['Request {quantity} {unit} of {sku}', '申请采购 {sku} {quantity} {unit}'],
   'draft.pr.reason': ['{available} available against a target of {target}; nothing incoming covers it.', '可用 {available}，目标 {target}；没有在途订单覆盖。'],
   'draft.review': ['Review draft', '复核草稿'],
@@ -107,11 +110,14 @@ const entries = {
   'signal.stock_below_safety.reason': ['{available} available against a safety stock of {safety}; {incoming} incoming on open POs.', '可用 {available}，安全库存 {safety}；在途采购 {incoming}。'],
   'signal.stock_below_reorder.reason': ['Available to promise {atp} is at or below the reorder point of {reorder}.', '可承诺量 {atp} 已达到或低于再订货点 {reorder}。'],
   'signal.invoice_variance.reason': ['Invoice variance of {amount} from {supplier}.', '{supplier} 的发票差异为 {amount}。'],
+  'signal.invoice_variance.reason_hidden': ['Invoice variance from {supplier}; the amount is hidden for your role.', '{supplier} 的发票存在差异；你的角色无法查看金额。'],
   'signal.pr_awaiting_approval.reason': ['{priority} purchase request awaiting approval.', '{priority}采购申请待审批。'],
   'signal.rfq_ready_to_award.reason': ['{responses} quotes received, no award yet.', '已收到 {responses} 份报价，尚未授标。'],
   'signal.grn_rejected_qty.reason': ['{rejected} rejected on receipt from {supplier}.', '收货时拒收 {rejected}（{supplier}）。'],
   'signal.grn_received_unposted.reason': ['Received but not yet posted to inventory.', '已收货，尚未过账到库存。'],
   'signal.covered': ['Covered by open purchase orders.', '已有在途采购订单覆盖。'],
+  'signal.supplier_exposure.status': ['Supplier exposure', '供应商风险'],
+  'signal.supplier_exposure.reason': ['{count} open issues with {supplier}: {issues}.', '{supplier} 有 {count} 个待处理问题：{issues}。'],
 
   // Business impact, aligned by position with the evidence
   'impact.po_overdue': ['Late supply can delay receiving and the customer orders that depend on it.', '供货延误会影响收货以及依赖它的客户订单。'],
@@ -125,6 +131,17 @@ const entries = {
   'impact.rfq_ready_to_award': ['Quotes are in; a supplier can be selected.', '报价已齐，可以选择供应商。'],
   'impact.grn_rejected_qty': ['Rejected goods need a return or replacement from the supplier.', '拒收货物需要供应商退换。'],
   'impact.grn_received_unposted': ['Stock is not available until the receipt is posted.', '收货过账前库存不可用。'],
+  'impact.supplier_exposure': ['Several open issues with one supplier add up to delivery and payment risk.', '同一供应商的多个待处理问题会叠加交付和付款风险。'],
+
+  // Evidence values
+  'value.days_late': ['{days} days late', '逾期 {days} 天'],
+  'value.due_in': ['Due in {days} days', '{days} 天后到期'],
+  'value.received_of': ['{received} of {ordered}', '{received} / {ordered}'],
+  'value.short': ['Short {shortage}', '缺口 {shortage}'],
+  'value.of': ['{value} of {target}', '{value} / {target}'],
+  'value.quotes': ['{responses} quotes', '{responses} 份报价'],
+  'value.issues': ['{count} issues', '{count} 个问题'],
+  'value.unknown': ['unknown', '未知'],
 
   // Areas
   'area.purchasing': ['Purchasing', '采购'],
@@ -144,6 +161,7 @@ const entries = {
   'source.items': ['items', '物料'],
   'source.suppliers': ['suppliers', '供应商'],
   'source.sales_orders': ['sales orders', '销售订单'],
+  'source.workspace': ['workspace skills', '工作区技能'],
 
   // Fields checked by records_needing_data
   'field.unit': ['unit', '单位'],
@@ -161,6 +179,8 @@ const entries = {
   'field.supplier': ['supplier', '供应商'],
   'field.name': ['name', '名称'],
   'field.invoice_date': ['invoice date', '发票日期'],
+  'field.status': ['status', '状态'],
+  'field.purchase_order': ['purchase order', '采购订单'],
 
   // Priority
   'priority.high': ['High-priority', '高优先级'],
@@ -172,7 +192,7 @@ const entries = {
   'limitation.hidden_by_permission.label': ['Some records are hidden', '部分记录已隐藏'],
   'limitation.hidden_by_permission.description': ['Your role cannot view {sources}, so they were left out of this answer.', '你的角色无法查看{sources}，因此本次回答未包含这些内容。'],
   'limitation.amounts_hidden.label': ['Amounts hidden', '金额已隐藏'],
-  'limitation.amounts_hidden.description': ['Your role cannot view {what} amounts, so they are not shown.', '你的角色无法查看{what}金额，因此未显示。'],
+  'limitation.amounts_hidden.description': ['Your role cannot view amounts on {what}, so they are not shown.', '你的角色无法查看{what}的金额，因此未显示。'],
   'limitation.truncated.label': ['Not every record was read', '未读取全部记录'],
   'limitation.truncated.description': ['Only the first {limit} {source} were read, so counts may be low.', '只读取了前 {limit} 条{source}，数量可能偏低。'],
   'limitation.currency_missing.label': ['Currency missing', '币种缺失'],
@@ -181,6 +201,7 @@ const entries = {
   'limitation.multi_currency.description': ['Amounts are shown per currency and not converted.', '金额按币种分别显示，未折算。'],
   'limitation.amount_missing.label': ['Amount missing', '金额缺失'],
   'limitation.amount_missing.description': ['Some records have no amount, so their total is not shown.', '部分记录缺少金额，因此未显示合计。'],
+  'limitation.draft_permission.label': ['Drafts not available', '无法准备草稿'],
   'limitation.report_day.label': ['Report day', '报表日期'],
   'limitation.report_day.description': ['Overdue days are counted to {date}, the day the open purchase orders report uses.', '逾期天数按 {date} 计算，与未结采购订单报表一致。'],
 
@@ -219,6 +240,11 @@ export function aiSkillText(key, language, values) {
 export function aiSkillCountText(key, count, language, values = {}) {
   const variant = count === 0 && AI_SKILL_COPY[`${key}_none`] ? `${key}_none` : count === 1 && AI_SKILL_COPY[`${key}_one`] ? `${key}_one` : key
   return aiSkillText(variant, language, { count, ...values })
+}
+
+// Sentences of one answer: separated by a space in English, run together in Chinese.
+export function aiSkillSentences(parts, language) {
+  return parts.filter(Boolean).join(aiSkillLanguage(language) === 'zh-CN' ? '' : ' ')
 }
 
 // A list of already localized parts: "a, b and c" / "a、b 和 c".
