@@ -168,10 +168,15 @@ def main(argv: list[str] | None = None) -> int:
           f"{r.sum_of_weekly_p50_coverage:.1%} |")
     a("")
     a("Here the independent-normal P90 is ΣP50 + 1.2816·√Σσ², with σ = (P90 − P50)/1.2816 for each week. Summing "
-      "weekly P90s assumes perfectly correlated errors, and the normal version assumes independent errors. The truth "
-      "lies between them, because forecast errors of one SKU are positively correlated across weeks. The decision model "
-      "should therefore simulate the lead-time total. Draw each SKU's lead time from part 2 and add weekly demand "
-      "draws, or scale the weekly spread with a correlation checked against these windows.")
+      "weekly P90s is right when a SKU's errors are perfectly correlated across weeks; the normal version is right "
+      f"when they are independent. On the test, the sum of weekly P90s covers "
+      f"{agg.sum_of_weekly_p90_coverage.min():.0%}–{agg.sum_of_weekly_p90_coverage.max():.0%} of 4-week totals, "
+      f"close to its target, although single weeks are covered only {cov90:.0%} of the time. The independence version "
+      f"covers only {agg.independent_normal_p90_coverage.min():.0%}–{agg.independent_normal_p90_coverage.max():.0%}. "
+      "Errors of one SKU are therefore strongly positively correlated across weeks: a SKU that is under-forecast in "
+      "one week tends to be under-forecast in the next. The decision model must not treat weeks as independent. "
+      "It should simulate the lead-time total with correlated weekly draws (for example, one shared SKU-level "
+      "quantile per path), with the lead time drawn from part 2, and check the result against these windows.")
     a("")
     a("## `sku-parameters.csv`")
     a("")
