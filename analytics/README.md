@@ -86,8 +86,9 @@ python -m unittest              # 2a. parser tests (plain unittest, pytest-compa
 python -m scms.clean            # 2b. derived/scms_clean.csv + outputs/cleaning-log.{md,csv}
 python -m scms.quality_report   # 3. outputs/data-quality.md + figures (rubric sections 2 and 3)
 python -m scms.supplier_scorecard   # 4. outputs/supplier-scorecard.md + aggregate CSVs (--grace-days N)
-python -m scms.delay_model      # 5. outputs/delay-model.md + metrics CSV + figures (~2 min; --bootstrap N)
-python -m scms.decision_proposal    # 6. outputs/decision-proposal.md (allocation MILP proposal, not solved)
+python -m scms.delay_model      # 5. outputs/delay-model.md + metrics CSV + figures (~5-10 min; --bootstrap N)
+python -m scms.decision_proposal    # 6a. outputs/decision-proposal.md (the decision problem and its data)
+python -m scms.decision_results     # 6b. outputs/decision-results.md: MILP, four policies, sensitivity
 ```
 
 Or run steps 1 (verify only) to 6 in one go with `python -m scms.run_all`.
@@ -100,6 +101,7 @@ Every step takes `--data-dir DIR`. Outputs:
 | `supplier-scorecard.md`, `supplier-scorecard-{vendor,mode,country,product-group}.csv`, `figures/vendor-on-time.png` | direct-drop scorecard (aggregates only) |
 | `delay-model.md`, `delay-model-metrics.csv`, `figures/delay-model-*.png` | leakage audit, models, test metrics with CIs, interpretation |
 | `decision-proposal.md` | the allocation decision problem and backtest design |
+| `decision-results.md`, `decision-sensitivity.csv`, `figures/decision-frontier.png` | allocation MILP, four-policy comparison, sensitivity, implications |
 
 Before sharing any output, check it contains aggregates only. Never copy
 `derived/` or `raw/` into the repository.

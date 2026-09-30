@@ -23,6 +23,7 @@ STEPS = [
     ["-m", "scms.supplier_scorecard"],
     ["-m", "scms.delay_model"],
     ["-m", "scms.decision_proposal"],
+    ["-m", "scms.decision_results"],
 ]
 
 
