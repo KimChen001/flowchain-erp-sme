@@ -10,7 +10,11 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
   return {
     async read(options = {}) {
       const masterData = repositories.masterData
-      const scope = { tenantId: options.tenantId }
+      // Repositories read a bounded number of rows and report each subject
+      // that had more, so reports can say their totals may be incomplete.
+      const truncated = new Map()
+      const onTruncated = ({ subject, limit }) => { if (subject) truncated.set(subject, { subject, limit }) }
+      const scope = { tenantId: options.tenantId, onTruncated }
       const itemMethod = typeof masterData?.listManagedItems === 'function' ? 'listManagedItems' : 'listItems'
       const [items, suppliers, customers, itemSupplierRelationships, inventoryItems, salesOrders, procurement] = await Promise.all([
         call(masterData, itemMethod, [], scope),
@@ -45,6 +49,7 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
         supplierInvoices: array(procurement.supplierInvoices),
         itemSupplierRelationships: array(itemSupplierRelationships),
         dataLimitations: [...new Set(dataLimitations)],
+        truncatedSubjects: [...truncated.values()],
         runtimeAdapters: {
           items: masterData?.itemRuntime?.adapter || 'unavailable',
           suppliers: masterData?.supplierRuntime?.adapter || 'unavailable',

@@ -17,6 +17,7 @@ import { normalizeProcurementAuthorityStatus } from '../domain/procurement-statu
 import { exactRfqDecimalString } from '../domain/rfq-commercial-decimal.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
+import { requireTenantId } from './repository-read-scope.mjs'
 
 function requireDatabaseConfig(env = process.env) {
   return validateDatabasePersistenceConfig(env)
@@ -88,7 +89,7 @@ function lineQuantity(lines = [], key, fallback = 0) {
 }
 
 function tenantWhere(filters = {}) {
-  return { tenantId: text(filters.tenantId, 'tenant-flowchain-sme') }
+  return { tenantId: requireTenantId(filters) }
 }
 
 function safeLimit(value, fallback = 500) {
@@ -115,7 +116,7 @@ function documentWhere(tenantId, id) {
   }
 }
 
-function mapPurchaseRequest(record = {}) {
+export function mapPurchaseRequest(record = {}) {
   const line = firstLine(record)
   const meta = metadata(record)
   const lines = asArray(record.lines).map((entry) => ({
@@ -169,7 +170,7 @@ function mapPurchaseRequest(record = {}) {
   }
 }
 
-function mapRfq(record = {}, quotations = []) {
+export function mapRfq(record = {}, quotations = []) {
   const line = firstLine(record)
   const meta = metadata(record)
   const quoteCount = quotations.filter((quote) => quote.rfqId === record.id).length

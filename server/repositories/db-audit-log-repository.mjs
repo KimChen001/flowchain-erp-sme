@@ -1,6 +1,7 @@
 import { normalizeAuditEvent } from '../domain/audit-foundation.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
+import { requireTenantId } from './repository-read-scope.mjs'
 
 const SECRET_KEY_PATTERN = /(api[_-]?key|token|secret|password|authorization|database_url|databaseurl|connectionstring)/i
 const SECRET_VALUE_PATTERNS = [
@@ -109,7 +110,7 @@ function mapAuditRecord(record = {}) {
 
 function whereFromFilters(filters = {}) {
   return {
-    ...(text(filters.tenantId) ? { tenantId: text(filters.tenantId) } : { tenantId: 'tenant-flowchain-sme' }),
+    tenantId: requireTenantId(filters),
     ...(text(filters.entityType) ? { entityType: text(filters.entityType) } : {}),
     ...(text(filters.entityId) ? { entityId: text(filters.entityId) } : {}),
     ...(text(filters.action) ? { action: text(filters.action) } : {}),

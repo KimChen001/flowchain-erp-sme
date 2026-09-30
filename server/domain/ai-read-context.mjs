@@ -5,31 +5,31 @@ function isRepositoryAvailable(repository, methods = []) {
   return repository && methods.every((method) => typeof repository[method] === 'function')
 }
 
-async function readProcurement(repository) {
+async function readProcurement(repository, scope) {
   if (!isRepositoryAvailable(repository, ['listDocuments', 'listFollowups', 'getSummary'])) return null
   const [procurementDocuments, procurementFollowups, procurementSummary] = await Promise.all([
-    repository.listDocuments(),
-    repository.listFollowups(),
-    repository.getSummary(),
+    repository.listDocuments(scope),
+    repository.listFollowups(scope),
+    repository.getSummary(scope),
   ])
   return { procurementDocuments, procurementFollowups, procurementSummary }
 }
 
-async function readInventory(repository) {
+async function readInventory(repository, scope) {
   if (!isRepositoryAvailable(repository, ['listItems', 'listExceptions', 'getSummary'])) return null
   const [inventoryItems, inventoryExceptions, inventorySummary] = await Promise.all([
-    repository.listItems(),
-    repository.listExceptions(),
-    repository.getSummary(),
+    repository.listItems(scope),
+    repository.listExceptions(scope),
+    repository.getSummary(scope),
   ])
   return { inventoryItems, inventoryExceptions, inventorySummary }
 }
 
-async function readMasterData(repository) {
+async function readMasterData(repository, scope) {
   if (!isRepositoryAvailable(repository, ['listItems', 'listSuppliers'])) return null
   const [items, suppliers] = await Promise.all([
-    repository.listItems(),
-    repository.listSuppliers(),
+    repository.listItems(scope),
+    repository.listSuppliers(scope),
   ])
   return { items, suppliers }
 }
@@ -60,10 +60,12 @@ export async function buildAiReadContext(db = {}, ctx = {}) {
     if (userContext?.db) contextDb = userContext.db
   }
 
+  // Read only the signed-in workspace. The repositories reject a missing tenant.
+  const tenantScope = { tenantId: ctx.identity?.tenantId }
   const [procurement, inventory, masterData] = await Promise.all([
-    readProcurement(repositories.procurementRead),
-    readInventory(repositories.inventoryRead),
-    readMasterData(repositories.masterData),
+    readProcurement(repositories.procurementRead, tenantScope),
+    readInventory(repositories.inventoryRead, tenantScope),
+    readMasterData(repositories.masterData, tenantScope),
   ])
 
   const repositoryBacked = {
