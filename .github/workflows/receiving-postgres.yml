@@ -127,6 +127,7 @@ jobs:
       - run: npm run test:db:ai-cross-domain-read
       - run: npm run test:db:ai-report-agreement
       - run: npm run test:api:ai-business-query
+      - run: npm run test:ai:eval
       - run: npm run bank:mapping-security-scan
         env:
           DATABASE_URL: postgresql://flowchain_ci:flowchain_ci_password@127.0.0.1:55432/flowchain_ci_diagnostics?schema=public
