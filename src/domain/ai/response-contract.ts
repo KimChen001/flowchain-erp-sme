@@ -37,6 +37,9 @@ export type AiResponseV2EvidenceItem = {
   severity?: AiResponseV2Severity;
   sourceLabel?: string;
   linkTarget?: AiResponseV2LinkTarget;
+  // Workspace skill answers: the server's order and the raw status code.
+  rank?: number | null;
+  statusCode?: string;
 };
 
 export type AiResponseV2BusinessImpactItem = {
@@ -128,6 +131,7 @@ export type AiRuntimeFollowUpSuggestion = {
   label: string;
   prompt: string;
   intentHint?: string;
+  skillHint?: string;
   requiresReview?: boolean;
 };
 
@@ -177,4 +181,20 @@ export type AiResponseV2 = {
   followUpSuggestions?: AiRuntimeFollowUpSuggestion[];
   resolvedContext?: AiRuntimeResolvedContext;
   businessQuery?: AiBusinessQueryPresentation;
+  // Workspace skill answers say where the answer came from and what was read.
+  language?: "en-US" | "zh-CN";
+  answerSource?: "workspace_rules" | string;
+  answerSourceLabel?: string;
+  checked?: string[];
+  checkedLabel?: string;
+  skill?: { id: string; version: string; asOf?: string | null; timezone?: string | null; signalVersion?: string };
+  metrics?: {
+    asOf?: string;
+    openPurchaseOrders: number | null;
+    overduePurchaseOrders: number | null;
+    committedSpend: Array<{ currency: string | null; amount: number | null }> | null;
+    committedInvoices: Array<{ currency: string | null; amount: number | null }> | null;
+    atRiskSkus: string[] | null;
+    atRiskSkuCount?: number | null;
+  };
 };
