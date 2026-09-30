@@ -74,4 +74,5 @@ python -m scms.fetch --verify-only   #    or verify an existing copy without net
 python -m unittest              # 2a. parser tests (plain unittest, pytest-compatible)
 python -m scms.clean            # 2b. derived/scms_clean.csv + outputs/cleaning-log.{md,csv}
 python -m scms.quality_report   # 3. outputs/data-quality.md + figures (rubric sections 2 and 3)
+python -m scms.supplier_scorecard   # 4. outputs/supplier-scorecard.md + aggregate CSVs (--grace-days N)
 ```
