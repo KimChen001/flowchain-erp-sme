@@ -165,3 +165,15 @@ test("the new purchase request defaults to the workspace currency and lists it f
   expect(codes[0]).toBe("USD");
   expect(codes.indexOf("CNY")).toBeGreaterThan(codes.indexOf("EUR"));
 });
+
+test("purchase request amounts use the document currency", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/app/procurement/requests");
+  await expect(page.getByRole("row", { name: /LOCAL-DEMO-PR-001/ })).toContainText("$5,000.00");
+  await page.goto("/app/procurement/requests/LOCAL-DEMO-PR-001");
+  await expect(page.getByText("$5,000.00").first()).toBeVisible();
+  await page.goto("/app/overview/risks");
+  await expect(page.getByText("Request amount $5,000.00")).toBeVisible();
+  await expect(page.getByRole("row", { name: /LOCAL-DEMO-PO-013/ })).toContainText("$2,460.00");
+  await expect(page.locator("main").first()).not.toContainText(/Request amount 5000|\b2460\.0000\b/);
+});

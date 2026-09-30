@@ -19,7 +19,7 @@ function repositories() {
     procurementRuntime: {
       adapter: 'durable-procurement-runtime-v2',
       snapshot: async () => ({
-        purchaseRequests: [{ id: 'PR-1', status: 'submitted', totalAmount: 120, updatedAt: '2026-07-14T01:00:00.000Z', lines: [{ supplierId: 'SUP-1' }] }],
+        purchaseRequests: [{ id: 'PR-1', status: 'submitted', totalAmount: 120, defaultCurrency: 'USD', updatedAt: '2026-07-14T01:00:00.000Z', lines: [{ supplierId: 'SUP-1' }] }],
         rfqs: [],
         purchaseOrders: [{ id: 'PO-1', status: 'draft', transmissionStatus: 'not_sent', supplierId: 'SUP-1', totalAmount: 120, updatedAt: '2026-07-14T02:00:00.000Z' }],
         receipts: [], supplierInvoices: [],
@@ -52,6 +52,13 @@ test('home overview is server-derived, uses canonical routes and does not manufa
   assert.equal(overview.recentDocuments.length, 2)
   assert.ok(overview.recentDocuments.every(row => row.canonicalRoute.startsWith('/app/')))
   assert.ok(overview.limitations.includes('unresolved_risk_metric_not_connected'))
+  // Amounts carry the document currency so the page can format them; a document
+  // without a stored currency carries none rather than a guess.
+  const request = overview.workItems.find(row => row.id === 'PR-1')
+  assert.equal(request.amount, 120)
+  assert.equal(request.currency, 'USD')
+  assert.equal(overview.recentDocuments.find(row => row.id === 'PR-1').currency, 'USD')
+  assert.equal(overview.recentDocuments.find(row => row.id === 'PO-1').currency, '')
 })
 
 test('BusinessReadContext carries each subject a repository cut off at its read limit', async () => {

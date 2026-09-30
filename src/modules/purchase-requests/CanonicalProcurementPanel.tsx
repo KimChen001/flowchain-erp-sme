@@ -1,6 +1,6 @@
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useI18n } from "../../i18n/I18n";
-import { todayInTimeZone } from "../../lib/format";
+import { formatLocaleAmount, todayInTimeZone } from "../../lib/format";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -115,8 +115,13 @@ export default function CanonicalProcurementPanel({
   focus?: { entityType: string; entityId: string; at: number } | null;
 }) {
   const copy = useWorkspaceCopy();
-  const { timezone } = useI18n();
+  const { timezone, locale } = useI18n();
   const warehouseName = useWarehouseNames();
+  // Amounts use the document currency; without one they stay a plain number.
+  const amount = (value: unknown, currencyCode?: string | null) =>
+    value === null || value === undefined || value === "" || !Number.isFinite(Number(value))
+      ? "—"
+      : formatLocaleAmount(Number(value), currencyCode, locale, { maximumFractionDigits: 2 });
   const [searchParams] = useSearchParams();
   const prefilled = useRef(false);
   const [items, setItems] = useState<Item[]>([]),
@@ -425,7 +430,7 @@ export default function CanonicalProcurementPanel({
               </p>
             </div>
             <strong>
-              {selected.defaultCurrency} {selected.totalAmount}
+              {amount(selected.totalAmount, selected.defaultCurrency)}
             </strong>
           </div>
           <h2 className="mt-5 text-sm font-semibold">{copy("采购行")}</h2>
@@ -442,8 +447,8 @@ export default function CanonicalProcurementPanel({
                 </span>
                 <span>
                   {line.lineBasis === "quantity"
-                    ? `${line.quantity} × ${line.estimatedUnitPrice}`
-                    : line.estimatedAmount}
+                    ? `${line.quantity} × ${amount(line.estimatedUnitPrice, line.currency || selected.defaultCurrency)}`
+                    : amount(line.estimatedAmount, line.currency || selected.defaultCurrency)}
                 </span>
                 <span>{warehouseName(line.targetWarehouseId) || "-"}</span>
                 <span>{line.internalLineComment || "-"}</span>
@@ -773,7 +778,7 @@ export default function CanonicalProcurementPanel({
             className="inline-flex items-center gap-1 rounded-md border px-3 py-2 text-xs"
           >
             <Plus size={14} />{copy("新增采购行")}</button>
-          <strong className="text-sm">{copy("预计总额")} {currency} {total.toFixed(2)}
+          <strong className="text-sm">{copy("预计总额")} {amount(total, currency)}
           </strong>
         </div>
       </Card>
@@ -809,7 +814,7 @@ export default function CanonicalProcurementPanel({
                     </td>
                     <td className="p-3">{pr.requesterId}</td>
                     <td className="p-3">{copy(pr.status)}</td>
-                    <td className="p-3">{pr.totalAmount}</td>
+                    <td className="p-3">{amount(pr.totalAmount, pr.defaultCurrency)}</td>
                     <td className="p-3 space-x-2">
                       {pr.status === "draft" && (
                         <>

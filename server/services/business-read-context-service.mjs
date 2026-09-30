@@ -67,11 +67,14 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
 }
 
 const updatedAt = record => String(record.updatedAt || record.createdAt || '')
+// The currency the document records. Never a guess: '' when none is stored.
+const documentCurrency = record => String(record.defaultCurrency || record.currency || record.lines?.find(line => line?.currency)?.currency || '').trim().toUpperCase()
 
 export function buildHomeOverview(context) {
   const workItems = [
     ...context.purchaseRequests.filter(row => row.status === 'submitted').map(row => ({
       priority: '高', title: '采购申请待审批', id: row.id, description: `申请金额 ${row.totalAmount ?? '—'}`,
+      amount: row.totalAmount ?? null, currency: documentCurrency(row),
       canonicalRoute: `/app/procurement/requests/${encodeURIComponent(row.id)}`, entityType: 'purchase_request', updatedAt: updatedAt(row),
     })),
     ...context.purchaseRequests.filter(row => row.status === 'approved').map(row => ({
@@ -85,9 +88,9 @@ export function buildHomeOverview(context) {
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10)
 
   const documents = [
-    ...context.purchaseRequests.map(row => ({ type: '采购申请', entityType: 'purchase_request', id: row.id, status: row.status, supplier: row.lines?.[0]?.supplierSnapshot?.supplierName || row.lines?.[0]?.supplierId || '—', amount: row.totalAmount ?? null, updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/requests/${encodeURIComponent(row.id)}` })),
-    ...context.rfqs.map(row => ({ type: '询价', entityType: 'rfq', id: row.id, status: row.status, supplier: '—', amount: row.totalAmount ?? null, updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/rfqs/${encodeURIComponent(row.id)}` })),
-    ...context.purchaseOrders.map(row => ({ type: '采购订单', entityType: 'purchase_order', id: row.id, status: row.status, supplier: row.supplierSnapshot?.supplierName || row.supplierId || '—', amount: row.totalAmount ?? null, updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/orders/${encodeURIComponent(row.id)}` })),
+    ...context.purchaseRequests.map(row => ({ type: '采购申请', entityType: 'purchase_request', id: row.id, status: row.status, supplier: row.lines?.[0]?.supplierSnapshot?.supplierName || row.lines?.[0]?.supplierId || '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/requests/${encodeURIComponent(row.id)}` })),
+    ...context.rfqs.map(row => ({ type: '询价', entityType: 'rfq', id: row.id, status: row.status, supplier: '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/rfqs/${encodeURIComponent(row.id)}` })),
+    ...context.purchaseOrders.map(row => ({ type: '采购订单', entityType: 'purchase_order', id: row.id, status: row.status, supplier: row.supplierSnapshot?.supplierName || row.supplierId || '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/orders/${encodeURIComponent(row.id)}` })),
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10)
   const today = new Date().toISOString().slice(0, 10)
   const todayChanges = documents.filter(row => row.updatedAt.startsWith(today)).length
