@@ -1,0 +1,10 @@
+# The repository is public: data and generated outputs stay outside git.
+raw/
+derived/
+outputs/
+*.csv
+*.xlsx
+*.zip
+*.png
+__pycache__/
+*.pyc
