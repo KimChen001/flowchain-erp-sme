@@ -20,6 +20,7 @@
     "test:browser:english": "playwright test --config playwright.english.config.ts",
     "test:db:english": "node scripts/run-postgres-test-files.mjs tests/postgres/english-default-language.test.mjs",
     "test:db:us-defaults": "node scripts/run-postgres-test-files.mjs tests/postgres/us-business-defaults.test.mjs",
+    "test:db:email-link-sign-in": "node scripts/run-postgres-test-files.mjs tests/postgres/email-link-sign-in-migration.test.mjs",
     "test:db:walkthrough-scenario": "node scripts/run-postgres-test-files.mjs tests/postgres/walkthrough-scenario.test.mjs",
     "test:db:tenant-scoped-reads": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-scoped-business-reads.test.mjs",
     "test:db:report-truncation": "node scripts/run-postgres-test-files.mjs tests/postgres/report-truncation.test.mjs",
