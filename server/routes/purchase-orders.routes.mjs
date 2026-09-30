@@ -8,15 +8,15 @@ export async function handlePurchaseOrdersRoute(ctx) {
   } = ctx
 
   if (req.method === 'GET' && url.pathname === '/api/purchase-orders') {
-    if (!identity?.authenticated || !identity.tenantId) return send(res, 401, { code: 'TENANT_CONTEXT_REQUIRED', message: 'An authenticated tenant context is required.' })
-    if (!repositories?.procurementRead?.snapshot) return send(res, 503, { code: 'FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE', message: 'The PostgreSQL procurement read model is unavailable.' })
+    if (!identity?.authenticated || !identity.tenantId) return send(res, 401, { code: 'TENANT_CONTEXT_REQUIRED', message: 'An authenticated tenant context is required.' }) || true
+    if (!repositories?.procurementRead?.snapshot) return send(res, 503, { code: 'FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE', message: 'The PostgreSQL procurement read model is unavailable.' }) || true
     const snapshot = await repositories.procurementRead.snapshot({ tenantId: identity.tenantId })
-    return send(res, 200, snapshot.purchaseOrders)
+    return send(res, 200, snapshot.purchaseOrders) || true
   }
 
   if (req.method === 'GET' && url.pathname === '/api/purchase-orders-workbench') {
-    if (!identity?.authenticated || !identity.tenantId) return send(res, 401, { code: 'TENANT_CONTEXT_REQUIRED', message: 'An authenticated tenant context is required.' })
-    if (!repositories?.procurementRead?.snapshot) return send(res, 503, { code: 'FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE', message: 'The PostgreSQL procurement read model is unavailable.' })
+    if (!identity?.authenticated || !identity.tenantId) return send(res, 401, { code: 'TENANT_CONTEXT_REQUIRED', message: 'An authenticated tenant context is required.' }) || true
+    if (!repositories?.procurementRead?.snapshot) return send(res, 503, { code: 'FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE', message: 'The PostgreSQL procurement read model is unavailable.' }) || true
     const snapshot = await repositories.procurementRead.snapshot({ tenantId: identity.tenantId })
     return send(res, 200, {
       purchaseOrders: snapshot.purchaseOrders,
@@ -24,7 +24,7 @@ export async function handlePurchaseOrdersRoute(ctx) {
       supplierInvoices: snapshot.supplierInvoices,
       documentLinks: snapshot.documentLinks,
       procurementFollowups: snapshot.procurementFollowups,
-    })
+    }) || true
   }
 
   if (req.method === 'POST' && url.pathname === '/api/purchase-orders') {
