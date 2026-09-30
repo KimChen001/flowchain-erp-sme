@@ -186,12 +186,13 @@ export function mapPurchaseRequest(record = {}) {
   }
 }
 
-function mapRfq(record = {}, quotations = []) {
+export function mapRfq(record = {}, quotations = []) {
   const line = firstLine(record)
   const meta = metadata(record)
   const quoteCount = quotations.filter((quote) => quote.rfqId === record.id).length
   return {
     id: record.id,
+    version: numberFrom(meta.version, 0),
     title: text(record.title, record.id),
     category: text(record.category),
     status: canonicalStatus('rfq', record.status) || text(record.status, 'active'),
@@ -202,6 +203,7 @@ function mapRfq(record = {}, quotations = []) {
     bestSupplier: text(record.awardedSupplier),
     supplierId: text(record.supplierId),
     sourceRequest: text(record.sourceRequestId),
+    sourcePrId: text(record.sourceRequestId),
     linkedPo: text(record.linkedPoId),
     sourceSku: text(line.sku || meta.sku),
     sourceName: text(line.itemName || meta.itemName),
@@ -395,7 +397,7 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
   }
 }
 
-function mapPurchaseOrder(record = {}) {
+export function mapPurchaseOrder(record = {}) {
   const line = firstLine(record)
   const meta = metadata(record)
   const ordered = lineQuantity(record.lines, 'orderedQuantity', numberFrom(meta.orderedQuantity, 0))

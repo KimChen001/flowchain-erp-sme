@@ -1,6 +1,7 @@
 import { createProcurementWorkflowService } from "../services/procurement-workflow-service.mjs";
 import { createProcurementRequestCommandService } from "../services/procurement-request-command-service.mjs";
 import { authorizeMutation } from "../domain/mutation-authorization.mjs";
+import { recommendProcurementPath } from "../domain/procurement-workflow.mjs";
 const repositoryFor = (ctx) => {
   if (!ctx.repositories?.procurementRuntime) throw new Error("PostgreSQL procurement repository is not configured.");
   return ctx.repositories.procurementRuntime;
@@ -15,13 +16,14 @@ const itemRepositoryFor = (ctx) => {
     getSupplier: (idOrName) => masterData.getSupplier(idOrName, scope),
   };
 };
+const PROCUREMENT_PATH_POLICY = Object.freeze({
+  directPurchaseThreshold: 50000,
+  rfqRequiredAboveAmount: 100000,
+  allowManagerOverride: true,
+});
 const workflowService = (ctx) => createProcurementWorkflowService({
   repository: repositoryFor(ctx), itemRepository: itemRepositoryFor(ctx),
-  policyProvider: async () => ({
-    directPurchaseThreshold: 50000,
-    rfqRequiredAboveAmount: 100000,
-    allowManagerOverride: true,
-  }),
+  policyProvider: async () => PROCUREMENT_PATH_POLICY,
 });
 // Purchase request commands write PostgreSQL directly. Permissions come from
 // the signed-in actor's role grants inside the service, not from role names.
@@ -118,63 +120,23 @@ export async function handleProcurementWorkflowRoute(ctx) {
   const recommendation = url.pathname.match(
     /^\/api\/procurement\/requests\/([^/]+)\/path-recommendation$/,
   );
-  if (req.method === "GET" && recommendation) {
-    try {
-      send(
-        res,
-        200,
-        await service.recommendPath(
-          decodeURIComponent(recommendation[1]),
-          ctx.identity?.userId || "anonymous",
-        ),
-      );
-    } catch (e) {
-      failure(send, res, e);
-    }
-    return true;
-  }
+  if (req.method === "GET" && recommendation)
+    return respond(ctx, 200, async () => recommendProcurementPath(await requestCommands(ctx).readPurchaseRequest(decodeURIComponent(recommendation[1]), ctx), PROCUREMENT_PATH_POLICY, {}, {}));
   const rfq = url.pathname.match(
     /^\/api\/procurement\/requests\/([^/]+)\/rfqs$/,
   );
-  if (req.method === "POST" && rfq) {
-    if (!authorizeAction(ctx, "rfq.create")) return true;
-    try {
-      send(
-        res,
-        201,
-        await service.createRfqFromPurchaseRequest(
-          decodeURIComponent(rfq[1]),
-          await readBody(req),
-          actor(ctx),
-        ),
-      );
-    } catch (e) {
-      failure(send, res, e);
-    }
-    return true;
-  }
+  if (req.method === "POST" && rfq)
+    return respond(ctx, 201, async () => requestCommands(ctx).createRfqFromPurchaseRequest(decodeURIComponent(rfq[1]), await commandBody(ctx), ctx));
   const po = url.pathname.match(
     /^\/api\/procurement\/requests\/([^/]+)\/(direct-purchase-order|generate-purchase-orders)$/,
   );
-  if (req.method === "POST" && po) {
-    if (!authorizeAction(ctx, "direct-po")) return true;
-    try {
-      send(
-        res,
-        201,
-        await service.createDirectPoFromPurchaseRequest(
-          decodeURIComponent(po[1]),
-          await readBody(req),
-          actor(ctx),
-        ),
-      );
-    } catch (e) {
-      failure(send, res, e);
-    }
-    return true;
+  if (req.method === "POST" && po)
+    return respond(ctx, 201, async () => requestCommands(ctx).createPurchaseOrdersFromPurchaseRequest(decodeURIComponent(po[1]), await commandBody(ctx), ctx));
+  if (req.method === "GET" && url.pathname === "/api/procurement/rfqs") {
+    if (!ctx.identity?.authenticated || !ctx.identity.tenantId) return send(res, 401, { code: "TENANT_CONTEXT_REQUIRED", message: "An authenticated tenant context is required." }) || true;
+    const snapshot = await ctx.repositories.procurementRead.snapshot({ tenantId: ctx.identity.tenantId });
+    return send(res, 200, snapshot.rfqs) || true;
   }
-  if (req.method === "GET" && url.pathname === "/api/procurement/rfqs")
-    return send(res, 200, await runtimeRepository.list("rfq")) || true;
   if (req.method === "GET" && url.pathname === "/api/procurement/orders") {
     if (!ctx.identity?.authenticated || !ctx.identity.tenantId) return send(res, 401, { code: "TENANT_CONTEXT_REQUIRED", message: "An authenticated tenant context is required." }) || true;
     const snapshot = await ctx.repositories.procurementRead.snapshot({ tenantId: ctx.identity.tenantId });
@@ -217,23 +179,7 @@ export async function handleProcurementWorkflowRoute(ctx) {
   const rfqAction = url.pathname.match(
     /^\/api\/procurement\/rfqs\/([^/]+)\/(open|cancel)$/,
   );
-  if (req.method === "POST" && rfqAction) {
-    if (!authorizeAction(ctx, "rfq.create")) return true;
-    try {
-      const b = await readBody(req);
-      send(
-        res,
-        200,
-        await service.transitionRfq(
-          decodeURIComponent(rfqAction[1]),
-          rfqAction[2] === "open" ? "open" : "cancelled",
-          { ...b, actor: actor(ctx) },
-        ),
-      );
-    } catch (e) {
-      failure(send, res, e);
-    }
-    return true;
-  }
+  if (req.method === "POST" && rfqAction)
+    return respond(ctx, 200, async () => requestCommands(ctx).transitionRfq(decodeURIComponent(rfqAction[1]), rfqAction[2], await commandBody(ctx), ctx));
   return false;
 }
