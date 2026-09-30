@@ -1001,7 +1001,7 @@ def figures(paths, summary, s_base, checks, frontier, choice):
         ("o", P.SERIES[2], "(c) critical-ratio quantile"), ("s", P.SERIES[3], "(d) budgeted MILP, B/(c) = 0.6 / 0.8 / 1.0"),
         ("^", P.SERIES[4], "(e) P70 / P75 / P80, with or without a cap"),
         ("D", P.MUTED, "fixed-quantile references"))]
-    ax.legend(handles=handles, loc="lower right", fontsize=7)
+    ax.legend(handles=handles, loc="center right", fontsize=7)
     P.save(fig, figs / "replenishment-service-inventory.png")
 
     fig, axes = plt.subplots(1, len(TIER_PAIRS), figsize=(11, 3.8), sharey=True)
