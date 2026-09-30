@@ -15,7 +15,6 @@ const ZERO = 0n
 const text = (value = '') => String(value ?? '').trim()
 const decimal = (value) => receivingDecimalString(receivingDecimalUnits(value ?? '0'))
 const iso = (value) => value ? new Date(value).toISOString() : null
-const add = (a, b) => receivingDecimalUnits(a) + receivingDecimalUnits(b)
 // Timeline labels name statuses and movement types in words; the stored codes
 // stay in each event's data.
 const TIMELINE_STATUS_LABELS = {
@@ -189,7 +188,7 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
       prisma.businessCommandExecution.findMany({ where: { tenantId: scope.tenantId, entityType: 'ReceivingDocument', entityId: receivingDocumentId }, orderBy: { createdAt: 'asc' } }),
     ])
     const events = [{ id: `created-${receivingDocumentId}`, type: 'business_fact', event: 'receiving_created', occurredAt: iso(aggregate.receivingDocument.createdAt), label: `Receiving ${aggregate.receivingDocument.documentNumber || receivingDocumentId} created`, postedFact: true }]
-    for (const movement of movements) events.push({ id: movement.id, type: 'business_fact', event: 'inventory_movement_created', occurredAt: iso(movement.occurredAt), label: `${movementText(movement.movementType)} · ${movement.sku} · ${decimal(add(movement.quantityIn, -receivingDecimalUnits(movement.quantityOut)))}`, actorId: movement.actorId, postedFact: true, data: { movementId: movement.id, postingBatchId: movement.postingBatchId, quantityIn: decimal(movement.quantityIn), quantityOut: decimal(movement.quantityOut), reversalOfMovementId: movement.reversalOfMovementId } })
+    for (const movement of movements) events.push({ id: movement.id, type: 'business_fact', event: 'inventory_movement_created', occurredAt: iso(movement.occurredAt), label: `${movementText(movement.movementType)} · ${movement.sku} · ${receivingDecimalString(receivingDecimalUnits(movement.quantityIn) - receivingDecimalUnits(movement.quantityOut))}`, actorId: movement.actorId, postedFact: true, data: { movementId: movement.id, postingBatchId: movement.postingBatchId, quantityIn: decimal(movement.quantityIn), quantityOut: decimal(movement.quantityOut), reversalOfMovementId: movement.reversalOfMovementId } })
     for (const audit of audits) {
       const metadata = audit.metadata && typeof audit.metadata === 'object' ? audit.metadata : {}
       events.push({ id: audit.id, type: 'audit', event: audit.action, occurredAt: iso(audit.createdAt), label: audit.summary, actorId: audit.actorId, postedFact: false, data: metadata })
