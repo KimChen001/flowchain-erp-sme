@@ -76,4 +76,19 @@ python -m scms.clean            # 2b. derived/scms_clean.csv + outputs/cleaning-
 python -m scms.quality_report   # 3. outputs/data-quality.md + figures (rubric sections 2 and 3)
 python -m scms.supplier_scorecard   # 4. outputs/supplier-scorecard.md + aggregate CSVs (--grace-days N)
 python -m scms.delay_model      # 5. outputs/delay-model.md + metrics CSV + figures (~2 min; --bootstrap N)
+python -m scms.decision_proposal    # 6. outputs/decision-proposal.md (allocation MILP proposal, not solved)
 ```
+
+Or run steps 1 (verify only) to 6 in one go with `python -m scms.run_all`.
+Every step takes `--data-dir DIR`. Outputs:
+
+| file (in `<data dir>/outputs/`) | content |
+|---|---|
+| `cleaning-log.md`, `cleaning-log.csv` | every cleaning and outlier rule, rows affected, action and rationale |
+| `data-quality.md`, `figures/missing-by-column.png`, `figures/late-days-heaping.png`, `figures/exact-share-by-year.png` | data description, quality, scheduled-date revision test, limitations |
+| `supplier-scorecard.md`, `supplier-scorecard-{vendor,mode,country,product-group}.csv`, `figures/vendor-on-time.png` | direct-drop scorecard (aggregates only) |
+| `delay-model.md`, `delay-model-metrics.csv`, `figures/delay-model-*.png` | leakage audit, models, test metrics with CIs, interpretation |
+| `decision-proposal.md` | the allocation decision problem and backtest design |
+
+Before sharing any output, check it contains aggregates only. Never copy
+`derived/` or `raw/` into the repository.
