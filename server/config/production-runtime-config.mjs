@@ -5,6 +5,26 @@ export const PRODUCTION_CONFIG_ERROR = "FLOWCHAIN_PRODUCTION_CONFIG_INVALID";
 const text = (value) => String(value ?? "").trim();
 const enabled = (value) => text(value).toLowerCase() === "true";
 
+// The release image bakes "unknown" when it is built without the
+// FLOWCHAIN_COMMIT_SHA / FLOWCHAIN_BRANCH build arguments, so "unknown" counts
+// as unset. Render builds from the repository without those arguments but sets
+// RENDER=true, RENDER_GIT_COMMIT and RENDER_GIT_BRANCH on every deploy. The
+// Render values are a fallback only on Render; everywhere else the commit SHA
+// must still be supplied explicitly.
+const unsetBuildValue = (value) => !text(value) || text(value).toLowerCase() === "unknown";
+
+export function resolveBuildIdentity(env = process.env) {
+  const onRender = text(env.RENDER).toLowerCase() === "true";
+  const pick = (explicit, render) => {
+    if (!unsetBuildValue(explicit)) return text(explicit);
+    return onRender && !unsetBuildValue(render) ? text(render) : "";
+  };
+  return {
+    commitSha: pick(env.FLOWCHAIN_COMMIT_SHA, env.RENDER_GIT_COMMIT),
+    branch: pick(env.FLOWCHAIN_BRANCH, env.RENDER_GIT_BRANCH),
+  };
+}
+
 function issue(key, code, message) {
   return { key, code, message };
 }
@@ -103,7 +123,8 @@ export function validateProductionRuntimeConfig(env = process.env) {
 
   validateIdentityConfiguration(env, issues);
 
-  if (!text(env.FLOWCHAIN_COMMIT_SHA)) issues.push(issue("FLOWCHAIN_COMMIT_SHA", "required", "The immutable build commit SHA is required."));
+  const build = resolveBuildIdentity(env);
+  if (!build.commitSha) issues.push(issue("FLOWCHAIN_COMMIT_SHA", "required", "The immutable build commit SHA is required."));
   validateAttachmentConfiguration(env, issues);
   validateMobileSyncSecrets(env, issues);
 
@@ -113,7 +134,7 @@ export function validateProductionRuntimeConfig(env = process.env) {
     validated: true,
     persistenceMode: "database",
     attachmentProvider: text(env.FLOWCHAIN_ATTACHMENT_STORAGE_PROVIDER).toLowerCase(),
-    commitSha: text(env.FLOWCHAIN_COMMIT_SHA),
-    branch: text(env.FLOWCHAIN_BRANCH) || "unknown",
+    commitSha: build.commitSha,
+    branch: build.branch || "unknown",
   };
 }

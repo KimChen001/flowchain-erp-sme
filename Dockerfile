@@ -51,6 +51,8 @@ COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/server ./server
 COPY --from=build --chown=node:node /app/shared ./shared
 COPY --from=build --chown=node:node /app/prisma ./prisma
+# Operator command for the running service: npm run tenant:provision.
+COPY --from=build --chown=node:node /app/scripts/tenant-provision.mjs ./scripts/tenant-provision.mjs
 
 USER node
 EXPOSE 8787

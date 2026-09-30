@@ -1,5 +1,7 @@
 # Controlled single-instance Staging deployment
 
+Hosting on Render instead? Use the root `render.yaml` Blueprint and follow [`docs/deploy-render.md`](../docs/deploy-render.md).
+
 This reference keeps the current FlowChain monolith intact:
 
 ```text
