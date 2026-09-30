@@ -543,7 +543,8 @@ export function buildProcurementSummary(data = {}) {
     pendingReceivingCount: documents.filter((item) => item.documentType === 'grn' && isOpenStatus(item.status)).length,
     invoiceExceptionCount: documents.filter((item) => item.documentType === 'invoice' && (toNumber(item.varianceAmount) !== 0 || /差异|异常|待复核/.test(item.matchStatus))).length,
     threeWayMatchExceptionCount: documents.filter((item) => item.documentType === 'threeWayMatch' && toNumber(item.varianceAmount) !== 0).length,
-    totalOpenAmount: openAmountDocuments.reduce((sum, item) => sum + toNumber(item.amount, 0), 0),
+    // Never added across currencies: with several currencies there is no total.
+    totalOpenAmount: openAmountCurrency.currencies.length > 1 ? null : openAmountDocuments.reduce((sum, item) => sum + toNumber(item.amount, 0), 0),
     currency: openAmountCurrency.currency,
     currencies: openAmountCurrency.currencies,
     currencyAggregationStatus: openAmountCurrency.currencyAggregationStatus,

@@ -67,7 +67,7 @@ test('unavailable sources return null facts instead of fabricated zeroes', () =>
 })
 
 test('priority ranking is deterministic and independent of input order', () => {
-  const po = (id, supplierId) => ({ tenantId: 't1', id, supplierId, status: 'open', expectedDate: '2026-07-01T00:00:00.000Z', lines: [] })
+  const po = (id, supplierId) => ({ tenantId: 't1', id, supplierId, status: 'issued', expectedDate: '2026-07-01T00:00:00.000Z', lines: [] })
   const input = { actor, now: new Date('2026-07-24T00:00:00.000Z'), records: { suppliers: [supplier('a'), supplier('b')], payables: [], invoices: [], settlements: [], purchaseOrders: [po('PO-B', 'b')], receiving: [], rfqs: [], bankExceptions: [] } }
   const first = buildSupplierActionSummaries(input)
   const second = buildSupplierActionSummaries({ ...input, records: { ...input.records, suppliers: [...input.records.suppliers].reverse(), purchaseOrders: [...input.records.purchaseOrders].reverse() } })
@@ -96,4 +96,27 @@ test('currency and blocked-payment filters apply before computing facts', () => 
   assert.equal(filtered.payment.dueAmount, 25)
   assert.deepEqual(filtered.payment.blocks.map(block => block.payableId), ['usd'])
   assert.ok(!filtered.evidence.some(item => item.id === 'cny'))
+})
+
+
+test('only committed purchase orders with quantity to receive count as open and overdue', () => {
+  const line = (ordered, received, promisedDate) => ({ orderedQuantity: ordered, receivedQuantity: received, metadata: { promisedDate } })
+  const po = (id, status, lines) => ({ tenantId: 't1', id, supplierId: 'a', status, expectedDate: new Date('2026-07-10T12:00:00.000Z'), currency: 'USD', lines })
+  const result = buildSupplierActionSummaries({
+    actor,
+    now: new Date('2026-07-24T12:00:00.000Z'),
+    records: { suppliers: [supplier('a')], invoices: [], payables: [], settlements: [], receiving: [], rfqs: [], bankExceptions: [], purchaseOrders: [
+      po('PO-DRAFT', 'draft', [line(10, 0, '2026-07-10')]),
+      po('PO-REJECTED', 'rejected', [line(10, 0, '2026-07-10')]),
+      po('PO-RECEIVED', 'fully_received', [line(10, 10, '2026-07-10')]),
+      po('PO-ISSUED-DONE', 'issued', [line(10, 10, '2026-07-10')]),
+      po('PO-ISSUED', 'issued', [line(10, 4, '2026-07-10')]),
+      // Due by its header date, but its open line is promised later: not overdue, as in the report.
+      po('PO-LINE-LATER', 'approved', [line(5, 0, '2026-08-01')]),
+    ] },
+  })
+  const procurement = result.items[0].procurement
+  assert.equal(procurement.openPoCount, 2)
+  assert.equal(procurement.overduePoCount, 1)
+  assert.deepEqual(procurement.overduePoIds, ['PO-ISSUED'])
 })

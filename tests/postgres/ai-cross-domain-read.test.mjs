@@ -88,7 +88,8 @@ async function seed(prisma) {
   await prisma.purchaseOrder.create({ data: {
     id: 'PO-C-OVERDUE', tenantId, supplierId: 'supplier-c', supplierName: 'Supplier C', status: 'issued',
     expectedDate: new Date('2026-07-10T04:00:00.000Z'), currency: 'CNY', amount: '500.0000',
-    lines: { create: [{ id: 'PO-C-L1', orderedQuantity: '10.0000', receivedQuantity: '10.0000' }] },
+    // Still to receive: a fully received order is not open, so it is never overdue.
+    lines: { create: [{ id: 'PO-C-L1', orderedQuantity: '10.0000', receivedQuantity: '0.0000' }] },
   } })
   await prisma.purchaseOrder.create({ data: {
     id: 'PO-D-PARTIAL', tenantId, supplierId: 'supplier-d', supplierName: 'Supplier D', status: 'issued',

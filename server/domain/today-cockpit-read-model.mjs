@@ -11,7 +11,41 @@ import {
   buildInventorySummary,
 } from './inventory-read.mjs'
 import { buildSalesDemandReadModel } from './sales-demand-read-model.mjs'
-import { buildInventoryAllocationReadModel } from './inventory-allocation-read-model.mjs'
+import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
+
+// Allocation risk as the inventory page and the reports compute it: demand per
+// sales order line, in transit as the unreceived remainder of committed POs.
+// The shape is the one the cockpit cards and actions read.
+function buildCockpitAllocation(data = {}) {
+  const model = buildRuntimeInventoryAllocation({
+    items: data.items || data.products || [],
+    inventoryItems: data.inventoryItems || data.products || [],
+    salesOrders: data.salesOrders || [],
+    purchaseOrders: data.purchaseOrders || [],
+  })
+  const risks = model.risks.map((row) => ({
+    sku: row.sku,
+    itemName: row.itemName,
+    riskLevel: row.riskLevel,
+    riskReasonCode: row.riskLevel === 'high' ? 'open_demand_exceeds_available' : 'below_safety_stock_or_atp_short',
+    availableQty: row.available,
+    availableToPromiseQty: row.availableToPromise,
+    shortageQty: row.shortage ?? 0,
+    affectedSalesOrders: row.salesOrderIds.map((salesOrderId) => ({ salesOrderId })),
+    linkedPurchaseOrders: row.purchaseOrderIds.map((poId) => ({ poId })),
+    linkedSuppliers: [],
+    reservationConflictOrders: [],
+    // The cockpit is the legacy Chinese surface; its evidence keeps the
+    // availability line the retired allocation model wrote, now with the
+    // runtime numbers.
+    evidence: [
+      { type: 'inventory_availability', id: row.sku, label: row.sku, status: row.stockStatus, route: `/api/inventory/availability/${encodeURIComponent(row.sku)}`, summary: `可用量 ${row.available ?? '—'}，可承诺量 ${row.availableToPromise ?? '—'}，缺口 ${row.shortage ?? '—'}` },
+      ...row.evidence.map((item) => ({ type: item.entityType, id: item.entityId, label: item.entityId, route: item.canonicalRoute })),
+    ],
+    dataLimitations: row.dataLimitations,
+  })).sort((a, b) => (b.riskLevel === 'high') - (a.riskLevel === 'high') || b.shortageQty - a.shortageQty || a.sku.localeCompare(b.sku))
+  return { risks, summary: model.summary }
+}
 
 function asArray(value) {
   return Array.isArray(value) ? value : []
@@ -99,7 +133,7 @@ function buildSummaryCards(summary, procurementDocuments, followups, inventoryRi
 
   return [
     card('customer-delivery-risk', '客户交付风险', summary.customerDeliveryRiskCount || 0, '客户订单缺口与承诺交付风险', summary.highRiskSalesOrderCount ? 'high' : summary.customerDeliveryRiskCount ? 'medium' : 'low', 'sales', evidenceTarget('sales', 'sales_order', salesRisks[0]?.salesOrderId), salesRisks[0]?.evidence, { route: 'sales' }),
-    card('inventory-allocation-risk', '库存分配风险', summary.inventoryAllocationRiskCount || 0, '库存占用、可承诺量与预留冲突', allocationRisks[0]?.riskLevel === 'blocked' ? 'high' : summary.inventoryAllocationRiskCount ? 'medium' : 'low', 'inventory', evidenceTarget('inventory', 'inventory_item', allocationRisks[0]?.sku), allocationRisks[0]?.evidence, { route: inventoryRoute('item', allocationRisks[0]?.sku), riskType: 'inventory_allocation_risk' }),
+    card('inventory-allocation-risk', '库存分配风险', summary.inventoryAllocationRiskCount || 0, '库存占用、可承诺量与预留冲突', allocationRisks[0]?.riskLevel === 'high' ? 'high' : summary.inventoryAllocationRiskCount ? 'medium' : 'low', 'inventory', evidenceTarget('inventory', 'inventory_item', allocationRisks[0]?.sku), allocationRisks[0]?.evidence, { route: inventoryRoute('item', allocationRisks[0]?.sku), riskType: 'inventory_allocation_risk' }),
     card('available-to-promise-risk', '可承诺量风险', summary.atpInsufficientSkuCount || 0, '客户订单占用后的可承诺量不足', summary.atpInsufficientSkuCount ? 'high' : 'low', 'inventory', evidenceTarget('inventory', 'inventory_item', allocationRisks[0]?.sku), allocationRisks[0]?.evidence, { route: inventoryRoute('item', allocationRisks[0]?.sku), riskType: 'available_to_promise_risk' }),
     card('demand-supply-gap', '供需缺口', summary.totalInventoryShortageQty || 0, '销售需求、安全库存与在途采购缺口', summary.totalInventoryShortageQty ? 'high' : 'low', 'inventory', evidenceTarget('inventory', 'inventory_item', allocationRisks[0]?.sku), allocationRisks[0]?.evidence, { route: inventoryRoute('item', allocationRisks[0]?.sku), riskType: 'demand_supply_gap' }),
     card('open-prs', '待处理采购申请', summary.openPrCount, '等待采购审批或转单', summary.openPrCount ? 'medium' : 'low', 'procurement', { ...evidenceTarget('procurement:requests', 'procurement_document', openPr?.id), documentType: 'pr' }, openPr?.evidence),
@@ -248,15 +282,16 @@ function buildRecommendedActions({ followups, inventoryRisks, summary, recentDoc
   if (allocationRisk) {
     actions.push({
       id: `action-allocation-${allocationRisk.sku}`,
-      priority: allocationRisk.riskLevel === 'blocked' ? 'high' : allocationRisk.riskLevel,
+      priority: allocationRisk.riskLevel,
       title: `${allocationRisk.sku} 库存分配风险`,
-      reason: `${allocationRisk.riskReason} 可用量 ${allocationRisk.availableQty}，可承诺量 ${allocationRisk.availableToPromiseQty}，缺口 ${allocationRisk.shortageQty}。`,
+      reason: `可用量 ${allocationRisk.availableQty ?? '—'}，可承诺量 ${allocationRisk.availableToPromiseQty ?? '—'}，缺口 ${allocationRisk.shortageQty}。`,
+      reasonCode: allocationRisk.riskReasonCode,
       nextAction: '先复核客户订单、可承诺量、在途采购和预留冲突，再生成内部通知草稿预览',
       module: 'inventory',
       route: inventoryRoute('item', allocationRisk.sku),
       target: evidenceTarget('inventory', 'inventory_item', allocationRisk.sku),
       evidence: firstEvidence(allocationRisk.evidence),
-      category: allocationRisk.availableToPromiseQty <= 0 ? 'available_to_promise_risk' : 'inventory_allocation_risk',
+      category: allocationRisk.availableToPromiseQty !== null && allocationRisk.availableToPromiseQty <= 0 ? 'available_to_promise_risk' : 'inventory_allocation_risk',
       workItemType: allocationRisk.shortageQty > 0 ? 'demand_supply_gap' : 'reservation_conflict_risk',
       affectedSalesOrders: allocationRisk.affectedSalesOrders.map((order) => order.salesOrderId),
       linkedPurchaseOrders: allocationRisk.linkedPurchaseOrders.map((po) => po.poId),
@@ -341,7 +376,7 @@ export function buildTodayCockpit(data = {}, options = {}) {
   const inventoryRisks = buildInventoryRisks(inventoryItems, inventoryExceptions)
   const salesDemand = buildSalesDemandReadModel(data, options)
   const salesRisks = salesDemand.risks
-  const allocationModel = buildInventoryAllocationReadModel(data, options)
+  const allocationModel = buildCockpitAllocation(data)
   const allocationRisks = allocationModel.risks.slice(0, 5)
   const summary = {
     ...procurementSummary,
