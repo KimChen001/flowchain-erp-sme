@@ -14,7 +14,11 @@ Setup (every number the report uses is computed here; assumptions are marked):
   data up to the week before it. Lost sales, no backorders. An order placed at a review
   arrives at the start of week t + L, where L is drawn per order (common random numbers:
   the same draw for every policy and scenario).
-- Starting inventory of each SKU = that policy's order-up-to level at week 0 (no pipeline).
+- Starting inventory: the same for every policy. Base case = the rule-of-thumb (a) order-up-to
+  level at the test origin, standing for current practice; sensitivity 0.5x and 1.5x of it. The
+  SKU's historical weeks of cover cannot be estimated (the data has no stock levels). The old
+  start at each policy's own level is kept only as a secondary table, biased toward high-stock
+  policies.
 - Demand = actual gross shipped units in the test weeks (raw, bulk lines included).
 - Demand paths: GBM point forecasts (horizon 26, capped history, refitted at each review)
   plus scaled residual trajectories from three pre-test backtests, resampled as whole
@@ -52,7 +56,10 @@ CAL_ORIGINS = (38, 51, 64)             # pre-test backtests for residual traject
 QUANTILE_GRID = (0.50, 0.70, 0.80, 0.90, 0.95, 0.98)
 BUDGET_FACTORS = (0.6, 0.8, 1.0)
 EXTRA_BUDGET = 1.2                     # only for the monotonicity check
-BASE = dict(mean_L=4.0, cv="all", cost_ratio=0.50, holding=0.25, stockout_mult=1.0)
+BASE = dict(mean_L=4.0, cv="all", cost_ratio=0.50, holding=0.25, stockout_mult=1.0, start="a")
+START_LABELS = {"a": "common start = (a) level", "a0.5": "common start = 0.5 x (a) level",
+                "a1.5": "common start = 1.5 x (a) level",
+                "own": "own order-up-to level (BIASED toward high-stock policies)"}
 POLICY_LABELS = {
     "a": "(a) rule of thumb: (L+R) x 4-week mean",
     "b": "(b) FlowChain rule: ROP = dL + 1 week, target = ROP + dR",
@@ -318,14 +325,22 @@ def run_scenario(sc, ctx, extra_checks=False):
     demand = ctx["actual"]
     common = dict(demand=demand, L_orders=L_orders, pack=ctx["pack"], cost=cost, h_week=h_week, margin=margin,
                   stock_mult=sc["stockout_mult"])
-    res = {"a": simulate(lv["a"][:, 0], lv["a"], **common),
-           "b": simulate(lv["b_target"][:, 0], lv["b_target"], rop=lv["b_rop"], **common),
-           "c": simulate(lv["c"][:, 0], lv["c"], **common)}
+    s_a0 = lv["a"][:, 0]
+    mode = sc.get("start", "a")
+
+    def start(own):
+        if mode == "own":
+            return own
+        return {"a": 1.0, "a0.5": 0.5, "a1.5": 1.5}[mode] * s_a0
+
+    res = {"a": simulate(start(lv["a"][:, 0]), lv["a"], **common),
+           "b": simulate(start(lv["b_target"][:, 0]), lv["b_target"], rop=lv["b_rop"], **common),
+           "c": simulate(start(lv["c"][:, 0]), lv["c"], **common)}
     for f in BUDGET_FACTORS + ((EXTRA_BUDGET,) if extra_checks else ()):
-        res[f"d{f}"] = simulate(lv[f"d{f}"][:, 0], lv[f"d{f}"], **common)
+        res[f"d{f}"] = simulate(start(lv[f"d{f}"][:, 0]), lv[f"d{f}"], **common)
     if extra_checks:
-        res["c50"] = simulate(lv["c50"][:, 0], lv["c50"], **common)
-        res["p50"] = simulate(lv["p50"][:, 0], lv["p50"], **common)
+        res["c50"] = simulate(start(lv["c50"][:, 0]), lv["c50"], **common)
+        res["p50"] = simulate(start(lv["p50"][:, 0]), lv["p50"], **common)
     meta = {"cv": cv, "EL": EL, "median_L": float(np.median(EL_draws)), "median_cr": float(np.median(cr)), "safety_stock_value_c": float(np.mean(ss_value)),
             "milp": milp_info, "levels": lv}
     return res, meta
@@ -459,6 +474,8 @@ def main(argv=None) -> int:
         "holding 15%/yr": {**BASE, "holding": 0.15}, "holding 35%/yr": {**BASE, "holding": 0.35},
         "stockout = 0.5 x margin": {**BASE, "stockout_mult": 0.5},
         "stockout = 2 x margin": {**BASE, "stockout_mult": 2.0},
+        "start = 0.5 x (a)": {**BASE, "start": "a0.5"}, "start = 1.5 x (a)": {**BASE, "start": "a1.5"},
+        "start = own level (biased)": {**BASE, "start": "own"},
     }
     rows, metas, base_res = [], {}, None
     res_n, meta_n = run_scenario(dict(BASE), {**ctx, "paths": paths_n})
@@ -639,9 +656,12 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     a("## 3. Backtest set-up")
     a("")
     a(f"- **Window:** the 13 test weeks, {key['n_skus']} panel SKUs, with actual gross shipped demand (raw, bulk "
-      "lines included). **Starting inventory** of each SKU = that policy's order-up-to level at week 0, with an "
-      "empty pipeline. This is an assumption: every policy starts 'fully stocked' by its own standard, so the "
-      "first orders go out at week 4.")
+      "lines included). **Starting inventory is the same for every policy:** the rule-of-thumb (a) order-up-to "
+      "level at the test origin, standing for current practice, with an empty pipeline. Policies that want more "
+      "stock order it at week 0 and wait for the lead time. Sensitivity: 0.5x and 1.5x that level (section 8). "
+      "A start from the SKU's historical weeks of cover would be better, but the data has no stock levels, so it "
+      "cannot be estimated. The earlier set-up, where each policy starts at its own level, is kept only as a "
+      "secondary table because it is biased toward high-stock policies.")
     a("- **Lost sales, no backorders:** unmet demand in a week is lost. Holding is charged on end-of-week stock. "
       "L is drawn per order, with the same random numbers for every policy and scenario, so differences come from "
       "the policies, not from luck.")
@@ -773,6 +793,29 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
           f"{fmt_money(d.loc['b', 'total_cost'])} | {fmt_money(d.loc['c', 'total_cost'])} | "
           f"{fmt_money(d.loc['d0.8', 'total_cost'])} | {d.loc['c', 'fill_rate']:.1%} | {main.total_cost.idxmin()} |")
     a("")
+    a("### Starting inventory")
+    a("")
+    a("| Start (all policies alike) | (a) total | (b) total | (c) total | (d, 0.6) total | (d, 0.8) total | "
+      "(c) fill | cheapest policy |")
+    a("|---|---|---|---|---|---|---|---|")
+    for s, lab in (("start = 0.5 x (a)", "0.5 x (a) level"), ("base", "(a) level (base)"),
+                   ("start = 1.5 x (a)", "1.5 x (a) level")):
+        d = summary[summary.scenario == s].set_index("policy")
+        main = d.loc[["a", "b", "c", "d0.6", "d0.8", "d1.0"]]
+        a(f"| {lab} | {fmt_money(d.loc['a', 'total_cost'])} | {fmt_money(d.loc['b', 'total_cost'])} | "
+          f"{fmt_money(d.loc['c', 'total_cost'])} | {fmt_money(d.loc['d0.6', 'total_cost'])} | "
+          f"{fmt_money(d.loc['d0.8', 'total_cost'])} | {d.loc['c', 'fill_rate']:.1%} | {main.total_cost.idxmin()} |")
+    a("")
+    a("**Secondary table, BIASED toward high-stock policies:** each policy starts at its own order-up-to level "
+      "(the first version of this backtest). A policy with a higher level then gets that stock for free at week 0.")
+    a("")
+    a("| Policy | fill rate | avg inventory value | total cost |")
+    a("|---|---|---|---|")
+    d = summary[summary.scenario == "start = own level (biased)"].set_index("policy")
+    for p in ("a", "b", "c", "d0.6", "d0.8", "d1.0"):
+        a(f"| {POLICY_LABELS[p]} | {d.loc[p, 'fill_rate']:.1%} | {fmt_money(d.loc[p, 'avg_inv_value'])} | "
+          f"{fmt_money(d.loc[p, 'total_cost'])} |")
+    a("")
     write_discussion(a, lt, key, summary, s_base, metas, checks, tail)
     a("")
     a(f"_Runtime {seconds / 60:.1f} min._")
@@ -830,9 +873,9 @@ def write_discussion(a, lt, key, summary, s_base, metas, checks, tail):
       f"{bL.loc['base', 'fill_rate']:.1%} / {bL.loc['L=8', 'fill_rate']:.1%}; (c): {cL.loc['L=2', 'fill_rate']:.1%} / "
       f"{cL.loc['base', 'fill_rate']:.1%} / {cL.loc['L=8', 'fill_rate']:.1%}; (c) total cost "
       f"{fmt_money(cL.loc['L=2', 'total_cost'])} / {fmt_money(cL.loc['base', 'total_cost'])} / "
-      f"{fmt_money(cL.loc['L=8', 'total_cost'])}. Longer lead times raise the stock and cost of (c). For (b) the "
-      "fill even rises with L, which is an artefact of the set-up: the starting stock equals each policy's level, "
-      "which includes L weeks of demand, and in a 13-week window most demand is served from it.")
+      f"{fmt_money(cL.loc['L=8', 'total_cost'])}. All policies start from the same stock, so these differences "
+      "come from the ordering rules. With a long lead time, an order placed at week 0 arrives late in the window, "
+      "and the common starting stock carries more of the demand.")
     a("")
     a("## 10. Implications and limitations")
     a("")
@@ -844,7 +887,8 @@ def write_discussion(a, lt, key, summary, s_base, metas, checks, tail):
       f"{tail['tail_skus']:,} SKUs ({tail['tail_revenue_share']:.1%} of training revenue, "
       f"{tail['tail_units_share']:.1%} of units) are mostly intermittent or lumpy and are not in this backtest. "
       "They need Croston/SBA-type forecasts and a separate policy (for example, min–max or make-to-order).")
-    a("- **Other limits:** one test season; starting inventory at each policy's own level; a 13-week window with "
+    a("- **Other limits:** one test season; a common starting stock that stands in for unknown actual stock; "
+      "a 13-week window with "
       "no value on leftover stock; assumed costs and lead-time means (only the variability comes from SCMS); "
       "lognormal lead times; censored demand in the history. Treat the money figures as a comparison between "
       "policies, not as a forecast of profit.")
