@@ -121,10 +121,13 @@ def main(argv=None) -> int:
                f"{base.loc[best4, 'fill_rate']:.1%} (all GBP, including a terminal markdown).",
                "figures/replenishment-service-inventory.png",
                "Costs are assumptions (cost = 0.5 × price, holding 25%/yr, stockout = lost margin)."),
-        "1c": ("README (repo)",
-               "FlowChain, the team's ERP for small and medium manufacturers and distributors. The retail data is "
-               "public (UCI), from a UK online gift-ware wholesaler, not a partner's.", "–",
-               "Confirm the partner framing with the owner."),
+        "1c": ("README (repo); data-quality.md §1",
+               "**FlowChain**, the owner's startup, which builds supply-chain software for US small and medium "
+               "businesses (purchasing, inventory, receiving and supplier management). The analysis uses public data, "
+               "not a partner's: UCI Online Retail II (a real UK gift-ware wholesaler) for demand and replenishment, and "
+               "USAID SCMS shipment records for supplier lead-time variability.", "–",
+               "The UK wholesaler and SCMS stand in for FlowChain's future US customer data; external validity is "
+               "argued, not measured."),
         "2a": ("data-quality.md §1; retail README",
                f"{CITATION} Downloaded from the UCI repository; zip sha256 verified.", "–", "–"),
         "2b": ("data-quality.md §1; demand-forecast.md §3",
@@ -273,7 +276,8 @@ def main(argv=None) -> int:
           "- The combined decision story (retail demand paths + SCMS lead-time variability → order quantities → "
           "supplier allocation) is a placeholder: **[PLACEHOLDER: combined decision story, retail demand forecast → "
           "requirement quantities → supplier allocation]**.",
-          "- Section 1 prose (problem, importance, partner) is for the team to write.",
+          "- Section 1 prose (problem and importance) is for the team to write; the partner (1c) is FlowChain, the "
+          "owner's startup.",
           "- Costs (cost ratio, holding rate, stockout cost) and mean lead times are assumptions; confirm or replace "
           "them with FlowChain customer values.",
           f"- The panel excludes {tail['tail_skus']:,} intermittent/lumpy SKUs ({tail['tail_revenue_share']:.1%} of "
