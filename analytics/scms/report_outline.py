@@ -3,9 +3,9 @@
 Reads the aggregate ``key-numbers-*.json`` files written by the other steps and
 writes ``outputs/report-outline.md``. Every number comes from those files.
 
-The rubric's own wording was not available to us. The question labels 1a–6b
-below are our reading of the section structure in the brief (2 data, 3
-quality, 4 model, 5 decision) and must be checked against the real rubric.
+The rubric questions (1a–6b) are quoted verbatim. The retail
+demand-forecasting part, built on another branch, and the combined decision
+story are marked as placeholders.
 
 Usage (from ``analytics/``)::
 
@@ -51,90 +51,121 @@ def main() -> int:
     top = "; ".join(f"{v['vendor']} {pct(v['on_time'])} (n={v['n']}, exact {pct(v['exact'])})" for v in s["top"])
     bottom = "; ".join(f"{v['vendor']} {pct(v['on_time'])} (CI {pct(v['ci'][0])}–{pct(v['ci'][1])}, n={v['n']})" for v in s["bottom"])
 
-    rows = [
-        ("1a", "What business problem is addressed, and for whom?", "README; decision-results.md §6",
-         "FlowChain SME ERP: supplier scorecards, PO-time late risk, supplier allocation.", "–",
-         "No written problem statement or stakeholder framing yet. Team to write it; the analytics only supports it."),
-        ("1b", "What analytics questions follow, and why is analytics the right tool?", "data-quality.md §2.4",
-         "Three questions: how do suppliers perform, can lateness be predicted at PO time, which supplier should get a requirement.", "–",
-         "Motivation prose is thin; add FlowChain user evidence (interviews or usage) if the rubric asks."),
-        ("2a", "Where does the data come from (source, licence)?", "data-quality.md §2.1; README",
-         f"USAID SCMS dataset, CC BY-ND 4.0, {q['rows_total']:,} rows × {q['columns_raw']} columns, {q['countries']} countries.", "–", "–"),
-        ("2b", "What are the features and what do they mean?", "data-quality.md §2.2",
-         f"{q['columns_raw']} raw columns, with official portal descriptions quoted, plus derived fields.", "–", "–"),
-        ("2c", "How many data points, and how many are usable per analysis?", "data-quality.md §2.3",
-         f"direct drop {q['rows_direct_drop']:,}; scorecard {q['rows_scorecard']:,}; model {q['rows_model']:,} "
-         f"(train {m['counts']['train']['rows']:,}/{m['counts']['train']['late']} late, val {m['counts']['validation']['rows']:,}/{m['counts']['validation']['late']}, "
-         f"test {m['counts']['test']['rows']:,}/{m['counts']['test']['late']}); decision {d['requirements']:,} requirements.", "–", "–"),
-        ("2d", "Why does the data fit the problem?", "data-quality.md §2.4",
-         f"Real vendor names, promised vs actual dates, prices and freight at line level; {q['vendors_dd']} direct-drop vendors.", "–",
-         "External validity to US SMEs is argued, not measured."),
-        ("3a", "Missing values: how much, how handled, why?", "data-quality.md §3.1; cleaning-log.md",
-         f"{q['missing_columns']} columns with blanks or sentinel text, each with its handling; {q['cleaning_rules']} logged rules.", "figures/missing-by-column.png", "–"),
-        ("3b", "Outliers: detection and handling?", "data-quality.md §3.2; cleaning-log.md",
-         "Robust z on log scale (flag, don't cap); impossible date sequences dropped; the IQR rule for late_days is degenerate and documented.", "–", "–"),
-        ("3c", "Is the target trustworthy? (scheduled-date revision)", "data-quality.md §3.4",
-         f"Exact match {pct(rev['exact_share'])}; {rev['heap']['ratio']:.0f}× the neighbouring days; shuffle null {pct(rev['perm']['null_mean'], 1)} vs {pct(rev['perm']['observed'])} observed; "
-         f"by year {pct(rev['year_exact_min'])}–{pct(rev['year_exact_max'])}; dictionary: \"{q['dictionary_quote']}\".",
-         "figures/late-days-heaping.png; figures/exact-share-by-year.png", "Which rows were revised cannot be determined."),
-        ("3d", "Data limitations?", "data-quality.md §3.5",
-         "No received quantity or rejections (no in-full or quality); right-censoring in 2015; publisher's caution on lead times and costs; health commodities.", "–", "–"),
-        ("4a", "Target, prediction time and leakage audit?", "delay-model.md Problem, §1",
-         f"is_late at PO time; every column audited; slip leak ROC AUC {leak_slip['ROC AUC']:.3f} vs {leak_clean['ROC AUC']:.3f} clean.", "–", "–"),
-        ("4b", "Models chosen, with a baseline?", "delay-model.md §2",
-         "Vendor-rate baseline → logistic regression → CART → gradient boosting; strict PO-time features primary.", "–", "–"),
-        ("4c", "Evaluation: split, metrics, uncertainty?", "delay-model.md §3",
-         "; ".join([model_line("baseline", base), model_line("logistic", lr), model_line("CART", tree), model_line("HGB", hgb)])
-         + f". Rolling origin mean ROC AUC: logistic {roll['logistic ROC']:.3f} vs baseline {roll['baseline ROC']:.3f} (logistic wins {wins['logistic']} of {m['n_folds']}).",
-         "figures/delay-model-curves.png; figures/delay-model-calibration.png", f"Only {m['counts']['test']['late']} test positives; wide CIs."),
-        ("4d", "Interpretation: do the results make sense, and is complexity worth it?", "delay-model.md §4–5",
-         f"Vendor and country dominate. The as-specified sensitivity does not beat the primary (logistic ROC AUC {sens['(1) logistic regression']['ROC AUC']:.3f} vs {lr['ROC AUC']:.3f}).", "–", "–"),
-        ("5a", "Decision problem formulation?", "decision-proposal.md; decision-results.md §1–2",
-         f"MILP over {d['requirements']:,} requirements and {d['pairs']:,} pairs; share cap, capacity proxy, λ·lateness.", "–", "–"),
-        ("5b", "Parameters, and where they come from?", "decision-results.md §2",
-         f"All from ≤2013 data; risk = {d['risk_model']}; estimated price for actual choice = {d['estimated_vs_observed_price_actual']:.2f}× observed.", "–",
-         "Counterfactual prices are estimates, not quotes."),
-        ("5c", "Results against baselines?", "decision-results.md §3",
-         f"price+freight (USD M) actual {a['price + freight (USD M)']:.2f}, cheapest {b['price + freight (USD M)']:.2f}, incumbent {c['price + freight (USD M)']:.2f}, MILP {milp['price + freight (USD M)']:.2f}; "
-         f"expected late days {a['expected late days']:.0f}/{b['expected late days']:.0f}/{c['expected late days']:.0f}/{milp['expected late days']:.0f}.", "–",
-         "Realised lateness is only observable for the actual vendor."),
-        ("5d", "Sensitivity analysis?", "decision-results.md §4–5",
-         f"λ × share cap, capacity, days-late source, risk model; sanity checks (λ=0 equals cheapest: {'yes' if abs(d['sanity']['lam0_cost'] - d['sanity']['cheap_cost']) < 1 else 'no'}; monotone: {d['sanity']['monotone_late_days']}).",
-         "figures/decision-frontier.png", "–"),
-        ("6a", "Implications and recommendations?", "decision-results.md §6",
-         f"Keep an immutable original promised date (on-time {pct(s['overall']['on_time_rate'])} is an upper bound). MILP saves {pct(d['saving_vs_actual'])} estimated cost at higher expected lateness.", "–",
-         "No FlowChain product design or mock-up yet for the promised-date change."),
-        ("6b", "Limitations and next steps?", "data-quality.md §3.5; delay-model.md §5; decision-results.md §3, §6", "Listed per section.", "–",
-         "No consolidated limitations section and no validation against real RFQ quotes."),
+    fu = {(r["risk model"], r["scenario"]): r for r in d["followup"]}
+    risk_names = list(dict.fromkeys(r["risk model"] for r in d["followup"]))
+    scen_default = "defaults (cap 60%, capacity ×1.2)"
+    fu_def = fu[(risk_names[0], scen_default)]
+    fu_def_alt = fu[(risk_names[1], scen_default)]
+    n_dom = sum(1 for r in d["followup"] if r["_dominates"])
+    n_fu = len(d["followup"])
+
+    def lam_txt(r):
+        v = r["_revealed"]
+        return "none reaches actual" if v is None or v != v else f"{v * 100:.3g}%/day"
+
+    RETAIL = "**[PLACEHOLDER: retail demand forecasting, UCI Online Retail II, `analytics/retail/`, built on another branch]**"
+    COMBINED = "**[PLACEHOLDER: combined decision story, retail demand forecast → requirement quantities → supplier allocation]**"
+
+    sections = [
+        ("1. Problem description and its importance.", [
+            ("1a", "What is your problem?", "README; decision-results.md §7",
+             "For FlowChain's users: can a small or medium business trust its supplier on-time figures, predict late POs when they are sent, and decide which supplier gets each requirement?",
+             "–", f"Problem statement prose not written. {COMBINED}"),
+            ("1b", "Why is this problem important?", "data-quality.md §3.4; decision-results.md §6–7",
+             f"Recorded on-time {pct(s['overall']['on_time_rate'])} is an upper bound ({pct(rev['exact_share'])} exact matches, {rev['heap']['ratio']:.0f}× the neighbouring days). "
+             f"A plan with no more expected late days than the actual choice is {fu_def['saving vs actual']} cheaper on estimates.",
+             "figures/late-days-heaping.png", "Needs SME-context evidence (cost of late supply); none in this dataset."),
+            ("1c", "If you are partnering with a company, who is your company and what do they do?", "README (repo)",
+             "FlowChain, the team's ERP for small and medium manufacturers and distributors. The SCMS data is public (USAID), not a partner's.",
+             "–", "Confirm the partner framing with the owner."),
+        ]),
+        ("2. Description of the dataset.", [
+            ("2a", "Where did you acquire the data?", "data-quality.md §2.1; README",
+             f"USAID Development Data Library, SCMS Supply Chain Shipment Pricing Dataset (Internet Archive snapshot), CC BY-ND 4.0; sha256 verified.", "–", RETAIL),
+            ("2b", "What features did you have access to? How many features did you have access to?", "data-quality.md §2.2",
+             f"{q['columns_raw']} raw columns, with official portal descriptions quoted, plus derived fields (late_days, is_late, lead times, freight share).", "–", RETAIL),
+            ("2c", "How many data points did you have?", "data-quality.md §2.3",
+             f"{q['rows_total']:,} rows; direct drop {q['rows_direct_drop']:,}; scorecard {q['rows_scorecard']:,}; model {q['rows_model']:,} "
+             f"(train {m['counts']['train']['rows']:,}/{m['counts']['train']['late']} late, validation {m['counts']['validation']['rows']:,}/{m['counts']['validation']['late']}, "
+             f"test {m['counts']['test']['rows']:,}/{m['counts']['test']['late']}); decision {d['requirements']:,} requirements.", "–", RETAIL),
+            ("2d", "Why do you think this was a good dataset to address the problem of interest?", "data-quality.md §2.4",
+             f"Real vendor names, PO, scheduled and delivered dates, prices and freight at line level; {q['vendors_dd']} direct-drop vendors; {q['countries']} countries.", "–",
+             f"External validity to US SMEs is argued, not measured. {RETAIL}"),
+        ]),
+        ("3. Discussion on data quality, missing values, and outliers.", [
+            ("3a", "How was the quality of your data?", "data-quality.md §3.4–3.5",
+             f"The scheduled date is the \"{q['dictionary_quote']}\" (data dictionary). Exact match {pct(rev['exact_share'])}; {rev['heap']['ratio']:.0f}× neighbours; "
+             f"shuffle null {pct(rev['perm']['null_mean'], 1)} vs {pct(rev['perm']['observed'])}; by year {pct(rev['year_exact_min'])}–{pct(rev['year_exact_max'])}. No received quantity or rejections; 2015 censored.",
+             "figures/late-days-heaping.png; figures/exact-share-by-year.png", f"Which rows were revised cannot be determined. {RETAIL}"),
+            ("3b", "How did you deal with missing values?", "data-quality.md §3.1; cleaning-log.md",
+             f"{q['missing_columns']} columns with blanks or sentinel text, each with its handling and rationale. Shipment-level references resolved and split by value.",
+             "figures/missing-by-column.png", RETAIL),
+            ("3c", "How did you deal with outliers?", "data-quality.md §3.2; cleaning-log.md",
+             f"{q['cleaning_rules']} logged rules: robust z on the log scale (flag, don't cap); impossible date sequences dropped; the IQR rule for late_days is degenerate and documented.", "–", RETAIL),
+        ]),
+        ("4. Discussion on the predictive model and the analytics tools used.", [
+            ("4a", "What predictive model(s) did you use and implement?", "delay-model.md §1–2",
+             "Vendor-rate baseline, L2 logistic regression, depth-limited CART, histogram gradient boosting; strict PO-time features primary, after a leakage audit.", "–", RETAIL),
+            ("4b", "Why do you think the model(s) were the right tool to use?", "delay-model.md §2, §5",
+             "Binary PO-time risk with a rare positive class. The interpretable, calibratable models feed the allocation MILP; a baseline is always reported.", "–", RETAIL),
+            ("4c", "What results did you obtain? Present a discussion on your results.", "delay-model.md §3, §5",
+             "; ".join([model_line("baseline", base), model_line("logistic", lr), model_line("CART", tree), model_line("HGB", hgb)])
+             + f". Rolling origin mean ROC AUC: logistic {roll['logistic ROC']:.3f} vs baseline {roll['baseline ROC']:.3f} (logistic wins {wins['logistic']} of {m['n_folds']}).",
+             "figures/delay-model-curves.png; figures/delay-model-calibration.png", f"Only {m['counts']['test']['late']} test positives; wide CIs. {RETAIL}"),
+            ("4d", "Why do you believe the obtained model makes sense and is accurate?", "delay-model.md §1, §4–6",
+             f"Leakage demo (slip feature ROC AUC {leak_slip['ROC AUC']:.3f} vs {leak_clean['ROC AUC']:.3f} clean); effects match the scorecard; "
+             f"as-specified sensitivity no better ({sens['(1) logistic regression']['ROC AUC']:.3f}); calibrated risk chosen by out-of-fold Brier ({m['risk_model']}).",
+             "figures/delay-model-calibration.png", f"Not accurate enough to beat the baseline on ROC AUC; poor calibration-in-the-large. {RETAIL}"),
+        ]),
+        ("5. Discussion of the decision problem and the methods used.", [
+            ("5a", "What decision does your analysis actually drive? Who acts on it?", "decision-proposal.md; decision-results.md §1",
+             f"Which vendor gets each requirement ({d['requirements']:,} test-period lines). The buyer or category manager acts, in FlowChain's RFQ award step.", "–", COMBINED),
+            ("5b", "What formulation did you use?", "decision-results.md §2",
+             f"MILP (scipy milp / HiGHS): {d['pairs']:,} binary pairs; price + freight + λ·value·E[days late]; soft share cap per molecule and quarter; capacity proxy; ε-constraint variant.", "–", COMBINED),
+            ("5c", "Did the resulting decisions make sense? Why or why not?", "decision-results.md §3–6",
+             f"Defaults: price+freight (USD M) actual {a['price + freight (USD M)']:.2f}, cheapest {b['price + freight (USD M)']:.2f}, incumbent {c['price + freight (USD M)']:.2f}, MILP {milp['price + freight (USD M)']:.2f}; "
+             f"expected late days {a['expected late days']:.0f}/{b['expected late days']:.0f}/{c['expected late days']:.0f}/{milp['expected late days']:.0f}. "
+             f"Sanity: λ=0 equals cheapest ({'yes' if abs(d['sanity']['lam0_cost'] - d['sanity']['cheap_cost']) < 1 else 'no'}), monotone in λ ({d['sanity']['monotone_late_days']}), no vendor without history ({d['sanity']['no_history_pick']} picks). "
+             f"Dominating plan found in {n_dom} of {n_fu} scenario × risk-model runs; defaults: {fu_def['cheapest plan with late days ≤ actual']}.",
+             "figures/decision-frontier.png; figures/decision-frontiers-scenarios.png",
+             "Counterfactual: realised lateness is observable only for the actual vendor; prices for other vendors are estimates, not quotes."),
+            ("5d", "What are the implications of your results in the context of your problem?", "decision-results.md §6–7",
+             f"Revealed λ to match SCMS reliability: {lam_txt(fu_def)} (alternative risk model {lam_txt(fu_def_alt)}), implausibly high, so unmodelled constraints likely drove the choices. "
+             "Use the ε-constraint 'cheapest plan no later than today'. Keep an immutable original promised date.",
+             "figures/decision-frontiers-scenarios.png", COMBINED),
+        ]),
+        ("6. Conclusion.", [
+            ("6a", "How can companies use your results?", "decision-results.md §7; supplier-scorecard.md",
+             "FlowChain: an immutable original promised date plus change history; on-time against the original promise; an exact-match data-quality warning; an ε-constraint award suggestion in RFQ.", "–", COMBINED),
+            ("6b", "What future work/research could be done on this problem? What are the future directions?", "delay-model.md §5; decision-results.md §3, §7",
+             "Validate counterfactual prices against real quotes; model eligibility constraints; add in-full and quality once receipts record quantities; retrain on FlowChain data measured against original promises.", "–", COMBINED),
+        ]),
     ]
 
     lines = [
         "# Report outline: rubric to evidence map",
         "",
         "Generated by `analytics/scms/report_outline.py` from the `key-numbers-*.json` files. All numbers are computed.",
-        "",
-        "**Caveat: the rubric's exact wording was not available to us.** The labels 1a–6b are our reading of the section",
-        "structure (1 problem, 2 data, 3 data quality, 4 model, 5 decision, 6 implications). Check them against the real",
-        "rubric before writing.",
+        "Rubric questions are quoted verbatim. This file covers the SCMS supplier analysis. The retail demand-forecasting",
+        "part (`analytics/retail/`, another branch) and the combined decision story are marked as placeholders.",
         "",
         f"Headline numbers: scorecard on-time {pct(s['overall']['on_time_rate'])} (95% CI {pct(s['overall']['on_time_ci_low'])}–{pct(s['overall']['on_time_ci_high'])}), "
         f"grace {s['grace_days']} days. Top vendors: {top}. Bottom vendors: {bottom}.",
         "",
-        "| # | question (our reading) | where | key numbers | figure | gap |",
-        "|---|---|---|---|---|---|",
     ]
-    for row in rows:
-        lines.append("| " + " | ".join(str(x).replace("|", "\\|") for x in row) + " |")
+    for title, rows in sections:
+        lines += [f"## {title}", "", "| # | rubric question | where | key numbers (SCMS) | figure | gap / placeholder |", "|---|---|---|---|---|---|"]
+        for row in rows:
+            lines.append("| " + " | ".join(str(x).replace("|", "\\|") for x in row) + " |")
+        lines.append("")
     lines += [
-        "",
         "## Gaps to close before submission",
         "",
-        "- Rubric wording: confirm the question list above.",
-        "- Section 1 (problem and stakeholders) and the FlowChain product framing are not written. They are prose for the team.",
+        f"- Retail sections 2–4 and the combined decision story: {RETAIL}; {COMBINED}.",
+        "- Section 1 prose (problem, importance, partner) is for the team to write.",
         "- The decision's counterfactual prices should be spot-checked against real quotes. Lateness for reallocated lines is model-based only.",
         f"- The late-risk model does not reliably beat the vendor baseline on ROC AUC in the pre-registered test ({m['counts']['test']['late']} positives).",
         "- In-full and quality cannot be measured from this dataset (no received quantity or rejections).",
-        "- Branch history: the first commits of this branch contained a machine-specific path. Rewrite or squash before pushing.",
     ]
     write_text(paths.outputs_dir / "report-outline.md", "\n".join(lines) + "\n")
     print(f"Wrote {paths.outputs_dir / 'report-outline.md'}")
