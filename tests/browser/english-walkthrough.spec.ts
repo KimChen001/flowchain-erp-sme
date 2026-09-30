@@ -39,6 +39,8 @@ const ROUTES = [
   "/app/master-data/print-templates",
   "/app/reports/overview",
   "/app/reports/procurement",
+  "/app/settings/numbering",
+  "/app/settings/review",
   "/app/settings/modules",
   "/app/settings/ai",
   "/app/settings/audit",
