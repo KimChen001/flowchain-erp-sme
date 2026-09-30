@@ -8,6 +8,8 @@ import type { ProcurementNavigate, ProcurementWorkItem } from "./procurementType
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 
+const FINISHED_PURCHASE_ORDER_STATUSES = ["fully_received", "completed", "closed", "cancelled", "已完成", "已关闭", "已取消"];
+
 export function ProcurementWorkbench({ onNavigate }: { onNavigate?: ProcurementNavigate }) {
   const { language } = useI18n();
   const copy = (label: string) => workspaceCopy(label, language);
@@ -25,7 +27,8 @@ export function ProcurementWorkbench({ onNavigate }: { onNavigate?: ProcurementN
       setRows([
         ...requests.filter(row => ["submitted", "approved"].includes(row.status)).map(row => ({ id: row.id, type: "采购申请", status: row.status, amount: row.totalAmount, bucket: row.status === "submitted" ? "approval" as const : "tracking" as const, kind: "purchase_request" as const })),
         ...orders
-          .filter(row => !["completed", "closed", "cancelled", "已完成", "已关闭", "已取消"].includes(row.status))
+          // A fully received, closed or cancelled order needs no more purchasing work.
+          .filter(row => !FINISHED_PURCHASE_ORDER_STATUSES.includes(row.status))
           .map(row => {
             const relatedInvoices = invoices.filter(invoice => invoice.relatedPo === row.id);
             const hasInvoiceVariance = relatedInvoices.some(invoice => Number(invoice.varianceAmount || 0) !== 0 || (Boolean(invoice.varianceType) && !isNoInvoiceVariance(invoice.varianceType)) || /差异|variance/i.test(String(invoice.status || "")));
