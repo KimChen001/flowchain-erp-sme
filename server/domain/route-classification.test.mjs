@@ -80,6 +80,8 @@ test('database mode blocks legacy mutation routes but allows read and preview ro
     ['POST', '/api/action-drafts/preview'],
     ['POST', '/api/auth/login'],
     ['POST', '/api/auth/logout'],
+    ['POST', '/api/auth/email-link'],
+    ['POST', '/api/auth/email-link/confirm'],
     ['POST', '/api/procurement/receiving/GRN-1/post'],
     ['POST', '/api/procurement/receiving/GRN-1/reverse'],
     ['POST', '/api/ai/chat'],

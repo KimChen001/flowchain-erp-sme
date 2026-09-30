@@ -25,6 +25,7 @@ export function createHttpRequestHandler({
   buildIdentity,
   readinessCheck,
   sessionStore,
+  emailLinks,
   localSessionSecret,
   domain,
   runtime,
@@ -72,6 +73,7 @@ export function createHttpRequestHandler({
       url,
       identity,
       sessionStore,
+      emailLinks,
       localSessionSecret,
       env,
     })) return;

@@ -1,5 +1,6 @@
 import { issueLocalSessionToken } from "../domain/local-signed-session.mjs";
 import { publicSessionUser, requestClient, SESSION_TTL_SECONDS } from "../auth/workspace-sessions.mjs";
+import { EMAIL_LINK_ACCEPTED, SignInLinkInvalidError } from "../auth/email-link-sign-in.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { readBody, send } from "../utils/http.mjs";
 import { roleLabel } from "../../shared/roles.mjs";
@@ -32,9 +33,34 @@ export async function handleSessionRoutes({
   url,
   identity,
   sessionStore,
+  emailLinks,
   localSessionSecret,
   env = process.env,
 }) {
+  // Email sign-in links. The request answer never depends on the address.
+  if (req.method === "POST" && url.pathname === "/api/auth/email-link") {
+    const body = await readBody(req).catch(() => ({}));
+    await emailLinks.request({ email: body?.email, client: requestClient(req, env), req });
+    send(res, 202, EMAIL_LINK_ACCEPTED);
+    return true;
+  }
+
+  if (req.method === "POST" && ["/api/auth/email-link/inspect", "/api/auth/email-link/confirm"].includes(url.pathname)) {
+    const body = await readBody(req).catch(() => ({}));
+    try {
+      if (url.pathname.endsWith("/inspect")) {
+        send(res, 200, await emailLinks.inspect(body?.token));
+      } else {
+        const confirmed = await emailLinks.confirm({ token: body?.token, client: requestClient(req, env) });
+        send(res, 200, signedInPayload({ ...confirmed, localSessionSecret }));
+      }
+    } catch (error) {
+      if (!(error instanceof SignInLinkInvalidError)) throw error;
+      send(res, error.status, { code: error.code, message: error.message });
+    }
+    return true;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/auth/login") {
     const body = await readBody(req);
     let profile;
