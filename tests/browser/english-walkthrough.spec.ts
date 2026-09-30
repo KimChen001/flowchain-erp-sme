@@ -177,3 +177,15 @@ test("purchase request amounts use the document currency", async ({ page }) => {
   await expect(page.getByRole("row", { name: /LOCAL-DEMO-PO-013/ })).toContainText("$2,460.00");
   await expect(page.locator("main").first()).not.toContainText(/Request amount 5000|\b2460\.0000\b/);
 });
+
+test("the purchase orders header totals committed orders only, per currency", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/app/procurement/orders");
+  // 23 committed orders; the 32 loaded include drafts, pending approvals and cancellations.
+  const committed = page.getByRole("link", { name: /Committed PO value/ });
+  await expect(committed).toContainText("$75,536.50");
+  await expect(committed).toContainText("23 committed orders");
+  await expect(page.locator("main").first()).not.toContainText("$112,639.00");
+  // Open purchase orders match the open purchase orders report.
+  await expect(page.getByRole("link", { name: /Open purchase orders/ })).toContainText("15");
+});

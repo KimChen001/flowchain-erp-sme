@@ -78,6 +78,15 @@ type PurchaseOrderWorkbenchPayload = {
   supplierInvoices: SupplierInvoice[];
   documentLinks: Array<Record<string, unknown>>;
   procurementFollowups: Array<Record<string, unknown>>;
+  summary?: PurchaseOrderWorkbenchSummary;
+};
+// Header figures from the server, using the report definitions of committed
+// and open purchase orders. Committed value is one total per currency.
+type PurchaseOrderWorkbenchSummary = {
+  committedOrderCount: number;
+  committedValueByCurrency: Array<{ currency: string; amount: number; orderCount: number }>;
+  openOrderCount: number;
+  openPurchaseOrderIds: string[];
 };
 type ProcurementRuntimeFacts = {
   receivingDocs: ReceivingDoc[];
@@ -532,6 +541,7 @@ export default function PurchasingOrdersPage({
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [receivingRecords, setReceivingRecords] = useState<ReceivingDoc[]>([]);
   const [invoiceRecords, setInvoiceRecords] = useState<SupplierInvoice[]>([]);
+  const [summary, setSummary] = useState<PurchaseOrderWorkbenchSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [filters, setFilters] = useState<PurchaseOrderWorkbenchFilters>(() => ({
@@ -564,6 +574,7 @@ export default function PurchasingOrdersPage({
         setOrders(data.purchaseOrders || []);
         setReceivingRecords(data.receivingDocs || []);
         setInvoiceRecords(data.supplierInvoices || []);
+        setSummary(data.summary || null);
         setSelectedId(canonicalDetailId);
       })
       .catch((error) => {
@@ -571,6 +582,7 @@ export default function PurchasingOrdersPage({
         setOrders([]);
         setReceivingRecords([]);
         setInvoiceRecords([]);
+        setSummary(null);
         setLoadError(error instanceof Error ? error.message : "采购订单加载失败");
       })
       .finally(() => { if (alive) setLoading(false); });
@@ -602,7 +614,8 @@ export default function PurchasingOrdersPage({
     const overdue = searchParams.get("overdue") === "true";
     if (supplier && order.supplier !== supplier) return false;
     if (status && status !== "open" && order.status !== status) return false;
-    if (status === "open" && ["已完成", "已取消"].includes(order.status)) return false;
+    // "open" is the report definition: committed and still to receive.
+    if (status === "open" && !(summary?.openPurchaseOrderIds || []).includes(order.po)) return false;
     if (overdue && (["已完成", "已取消"].includes(order.status) || String(order.eta || "") >= "2026-07-11")) return false;
     return true;
   });
@@ -630,8 +643,7 @@ export default function PurchasingOrdersPage({
     return () => onActiveContextChange?.(null);
   }, [viewMode, selectedPO?.po, selectedPO?.supplier, onActiveContextChange]);
 
-  const totalAmount = orders.reduce((sum, order) => sum + poAmount(order), 0);
-  const waitingReceipt = orders.filter((order) => receivedStatus(order, facts) !== "已收货").length;
+  const committedValue = summary?.committedValueByCurrency || [];
   const invoiceExceptions = orders.filter((order) => invoiceStatus(order, facts) === "发票差异").length;
   const matchExceptions = orders.filter((order) => !["已匹配", "缺少发票"].includes(matchStatus(order, facts))).length;
 
@@ -954,8 +966,8 @@ export default function PurchasingOrdersPage({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-4 gap-3">
-        <ActionableMetricCard label={copy("PO 总额")} value={!orders.length ? "—" : new Set(orders.map(order => order.currency || "")).size === 1 ? formatCurrencyAmount(totalAmount, orders[0]?.currency) : copy("多币种")} description={loading ? "加载中" : `${orders.length} ${copy("张订单")}`} to="/app/procurement/orders" icon={FileText} color={A.blue} />
-        <ActionableMetricCard label={copy("待收货 / 未收齐")} value={String(waitingReceipt)} description={copy("跟进未完成采购订单")} to="/app/procurement/orders?status=open" icon={Truck} color={A.orange} />
+        <ActionableMetricCard label={copy("已承诺采购订单金额")} value={!summary ? "—" : committedValue.length === 0 ? formatCurrencyAmount(0, "") : committedValue.map((row) => formatCurrencyAmount(row.amount, row.currency)).join(" · ")} description={loading ? copy("加载中") : `${summary?.committedOrderCount ?? 0} ${copy("张已承诺订单（已批准、已下达或已收货）")}`} to="/app/procurement/orders" icon={FileText} color={A.blue} />
+        <ActionableMetricCard label={copy("未完成采购订单")} value={summary ? String(summary.openOrderCount) : "—"} description={copy("已承诺且仍有待收数量")} to="/app/procurement/orders?status=open" icon={Truck} color={A.orange} />
         <ActionableMetricCard label={copy("发票差异")} value={String(invoiceExceptions)} description={copy("采购与财务共同复核")} to="/app/finance/invoices?matchStatus=variance" icon={AlertCircle} color={A.red} />
         <ActionableMetricCard label={copy("匹配复核")} value={String(matchExceptions)} description={copy("查看三单匹配异常")} to="/app/finance/three-way-match" icon={ShieldCheck} color={A.purple} />
       </div>

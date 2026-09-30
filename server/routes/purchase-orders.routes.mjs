@@ -1,3 +1,5 @@
+import { purchaseOrderWorkbenchSummary } from '../domain/purchase-order-workbench-summary.mjs'
+
 export async function handlePurchaseOrdersRoute(ctx) {
   const {
     req, res, url, db, send, readBody, event, todayLabel, repositories, identity,
@@ -24,6 +26,7 @@ export async function handlePurchaseOrdersRoute(ctx) {
       supplierInvoices: snapshot.supplierInvoices,
       documentLinks: snapshot.documentLinks,
       procurementFollowups: snapshot.procurementFollowups,
+      summary: purchaseOrderWorkbenchSummary(snapshot.purchaseOrders),
     }) || true
   }
 

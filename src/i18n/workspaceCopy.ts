@@ -110,7 +110,7 @@ const operationalEnglish: Record<string, string> = {
   '附件占位：报价比较、收货异常说明、发票差异说明均以只读引用展示。': 'Quote comparisons, receiving exception notes, and invoice variance notes are shown as read-only references.',
   '协同边界：当前仅生成内部草稿或预览。': 'Collaboration boundary: internal drafts and previews only.', '内部草稿动作': 'Internal draft actions',
   '生成内部复核备注草稿': 'Draft internal review note', '生成供应商风险说明草稿': 'Draft supplier risk note', '生成供应商沟通草稿': 'Draft supplier communication', '标记需人工复核预览': 'Preview human-review flag',
-  '张订单': 'orders', '待收货 / 未收齐': 'Pending / partially received', '跟进未完成采购订单': 'Follow up open purchase orders',
+  '张订单': 'orders', '已承诺采购订单金额': 'Committed PO value', '张已承诺订单（已批准、已下达或已收货）': 'committed orders (approved, issued or received)', '未完成采购订单': 'Open purchase orders', '已承诺且仍有待收数量': 'Committed and still to receive', '待收货 / 未收齐': 'Pending / partially received', '跟进未完成采购订单': 'Follow up open purchase orders',
   '采购与财务共同复核': 'Purchasing and finance review', '查看三单匹配异常': 'Review three-way match exceptions', '预测': 'Forecast', '手工': 'Manual',
   'ETA 起始': 'ETA from', 'ETA 结束': 'ETA to', '共': 'Total', '条，当前筛选': 'records; filtered', '只读复核': 'Read-only review',
   '未收货': 'Not received', '部分收货': 'Partially received', '未开票': 'Not invoiced', '缺少发票': 'Missing invoice',
