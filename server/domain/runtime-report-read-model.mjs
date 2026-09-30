@@ -1,4 +1,4 @@
-import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
+import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-inventory-allocation-read-model.mjs'
 import { buildBusinessOverview } from './business-overview.mjs'
 import { isCommittedPurchaseOrder, isOpenPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
@@ -99,7 +99,7 @@ function value(id, all, inventory) {
     if (inventory.availability.some(row => row.onHand === null)) return null
     return inventory.availability.reduce((total, row) => total + row.onHand, 0)
   }
-  if (id === 'inventory_risk_sku') return inventory.availability.filter(row => row.shortage !== null && row.shortage > 0).length
+  if (id === 'inventory_risk_sku') return inventory.availability.filter(isInventoryRiskSku).length
   if (id === 'supplier_count') return all.suppliers.length
   return 0
 }

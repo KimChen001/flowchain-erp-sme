@@ -37,6 +37,10 @@ function limitation(code, sku) { return sku ? `${code}:${sku}` : code }
 
 export const STOCK_STATUSES = Object.freeze(['out_of_stock', 'below_safety_stock', 'below_reorder_point', 'ok', 'unknown'])
 
+// An SKU at risk in the reports: open sales demand the available stock cannot
+// cover. The inventory risk KPI counts these, and the assistant lists them.
+export const isInventoryRiskSku = row => row?.shortage !== null && row?.shortage !== undefined && row.shortage > 0
+
 // The item master holds the planning thresholds. A zero or missing master value
 // means none is set there, so the inventory balance rows' values are used.
 function stockThreshold(masterValue, inventoryRows, field) {
