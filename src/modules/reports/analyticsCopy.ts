@@ -40,6 +40,7 @@ const chinese: Record<string, string> = {
   'Showing': '显示', 'of': '共', 'records in the loaded scope': '条已加载范围内的记录',
   'Dates must use YYYY-MM-DD.': '日期必须使用 YYYY-MM-DD。', 'Start date must not be after end date.': '开始日期不得晚于结束日期。',
   'Record date': '记录日期', 'Current workspace records': '当前工作区 runtime 数据', 'Business records': 'BusinessReadContext',
+  'Stock status': '库存状态',
 };
 const english = Object.fromEntries(Object.entries(chinese).map(([en, zh]) => [zh, en]));
 export function analyticsCopy(value: string, language: string) {
@@ -56,6 +57,8 @@ export function reportStatusCopy(value: string, language: string) {
     draft: ['Draft', '草稿'], approved: ['Approved', '已批准'], active: ['Active', '启用'], inactive: ['Inactive', '停用'],
     high: ['High', '高'], medium: ['Medium', '中'], low: ['Low', '低'], unknown: ['Unknown', '未知'],
     partial: ['Partial', '部分履约'], delivered: ['Delivered', '已交付'], confirmed: ['Confirmed', '已确认'],
+    out_of_stock: ['Out of stock', '缺货'], below_safety_stock: ['Below safety stock', '低于安全库存'],
+    below_reorder_point: ['Below reorder point', '低于再订货点'], ok: ['In stock', '库存正常'],
   };
   const pair = states[value];
   return pair ? pair[language === 'en-US' ? 0 : 1] : analyticsCopy(value, language);

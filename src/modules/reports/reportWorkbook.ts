@@ -1,5 +1,6 @@
 import type { GovernedReport } from './governedReports';
 import { formatMetric } from './currencyFormatting.mjs';
+import { reportStatusCopy } from './analyticsCopy.ts';
 
 export function reportWorkbook(report: GovernedReport, filters: Record<string, string>, copy: (value: string) => string, limitations: string[], format: { locale?: string; language?: string } = {}) {
   const scope = report.dataScope;
@@ -11,7 +12,7 @@ export function reportWorkbook(report: GovernedReport, filters: Record<string, s
   const sheets: Array<{ name: string; rows: Record<string, unknown>[] }> = [
     { name: copy('Metric summary'), rows: report.kpis.map(item => ({ ...metadata, ...row({ Metric: copy(item.label), 'Current value': copy(item.unit === 'currency' && scope.currencyAggregationStatus === 'no_currency_data' ? '暂无金额数据' : formatMetric(item.currentValue, item.unit, scope.currencyCode, format)), 'Baseline value': item.comparisonValue === null ? copy('Not compared') : formatMetric(item.comparisonValue, item.unit, scope.currencyCode, format), Definition: copy(item.description), 'Data range': `${scope.from} — ${scope.to}` }) })) },
     { name: copy('Chart data'), rows: chartRows.map(item => ({ ...metadata, ...item })) },
-    { name: copy('Detail data'), rows: report.exportRows.map(item => ({ ...metadata, ...Object.fromEntries(report.columnDefinitions.map(column => [copy(column.label), column.key === 'status' ? copy(String(item[column.key] ?? '—')) : item[column.key] ?? '—'])) })) },
+    { name: copy('Detail data'), rows: report.exportRows.map(item => ({ ...metadata, ...Object.fromEntries(report.columnDefinitions.map(column => [copy(column.label), column.key === 'status' || column.key === 'stockStatus' ? copy(reportStatusCopy(String(item[column.key] ?? '—'), format.language || 'en-US')) : item[column.key] ?? '—'])) })) },
     { name: copy('Filters'), rows: [{ ...metadata, ...row({ '开始日期': scope.from, '结束日期': scope.to, '公司': scope.company, '供应商': filters.supplier || copy('全部供应商'), '客户': filters.customer || copy('全部客户'), '比较方式': copy(filters.comparison === 'year_over_year' ? '同比' : filters.comparison === 'previous_period' ? '上期' : '不比较') }) }] },
     { name: copy('指标口径'), rows: report.kpis.map(item => row({ Metric: copy(item.label), Definition: copy(item.description), Calculation: copy(item.calculationLabel), 'Date field': copy('Record date'), 'Metric version': item.version, 'Data limitations': limitations.map(copy).join('; ') || copy('None') })) },
   ];
