@@ -3,6 +3,7 @@ import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { PilotIdentityError, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { roleLabel } from '../../shared/roles.mjs'
 import { assertAuthorized } from '../auth/authorization-service.mjs'
+import { revokeUserSessions } from '../auth/workspace-sessions.mjs'
 import {
   assertSupportedCurrency,
   assertSupportedLanguage,
@@ -175,9 +176,15 @@ export async function handlePilotWorkspaceRoute(ctx) {
         const adminCount = await prisma.user.count({ where: { tenantId: actor.tenantId, role: 'admin', status: 'active' } })
         if (adminCount <= 1) fail('LAST_ADMIN_REQUIRED', 'The last active admin cannot be disabled or demoted.', 409)
       }
-      const result = await prisma.user.updateMany({ where: { id: target.id, tenantId: actor.tenantId, version: Number(body.version) }, data: { role, status, version: { increment: 1 } } })
-      if (result.count !== 1) fail('VERSION_CONFLICT', 'User changed concurrently.', 409)
-      for (const [sessionId, session] of ctx.localSessions || []) if (session.userId === target.id) ctx.localSessions.delete(sessionId)
+      // Disabling a user or changing their role ends their sessions in the
+      // same transaction, so no request runs on the old role afterwards.
+      const accessChanged = role !== text(target.role).toLowerCase() || status !== text(target.status).toLowerCase()
+      await prisma.$transaction(async tx => {
+        const result = await tx.user.updateMany({ where: { id: target.id, tenantId: actor.tenantId, version: Number(body.version) }, data: { role, status, version: { increment: 1 } } })
+        if (result.count !== 1) fail('VERSION_CONFLICT', 'User changed concurrently.', 409)
+        if (accessChanged) await revokeUserSessions(tx, { tenantId: actor.tenantId, userId: target.id, reason: status === 'disabled' ? 'user_disabled' : 'role_changed', actorId: actor.user.id })
+      })
+      if (accessChanged) ctx.sessionStore?.forgetUser(target.id)
       ctx.send(ctx.res, 200, publicUser(await prisma.user.findUnique({ where: { id: target.id } }))); return true
     }
     if (ctx.req.method === 'GET' && ctx.url.pathname === '/api/workspace/warehouses') {

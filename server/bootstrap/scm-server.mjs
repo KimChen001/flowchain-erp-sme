@@ -12,6 +12,7 @@ import { withServerErrorBoundary } from "./server-error-boundary.mjs";
 import {
   createLocalSessionSecret,
 } from "../domain/local-signed-session.mjs";
+import { createWorkspaceSessionStore } from "../auth/workspace-sessions.mjs";
 import { checkRuntimeReadiness } from "../domain/runtime-readiness.mjs";
 import { createServerLifecycle, registerShutdownSignals } from "./server-lifecycle.mjs";
 import {
@@ -749,14 +750,15 @@ export function createScmServer({
 } = {}) {
   validateProductionRuntimeConfig(process.env);
   validateDatabasePersistenceConfig(process.env);
-  const localSessions = new Map();
+  // Sessions are rows in PostgreSQL, so they outlive this process.
+  const sessionStore = createWorkspaceSessionStore({ env: process.env });
   const localSessionSecret = createLocalSessionSecret(process.env);
   const handleRequest = createHttpRequestHandler({
     port,
     distDir,
     buildIdentity,
     readinessCheck,
-    localSessions,
+    sessionStore,
     localSessionSecret,
     domain: {
       event,

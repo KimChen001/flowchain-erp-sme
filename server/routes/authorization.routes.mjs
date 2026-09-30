@@ -24,7 +24,12 @@ export async function handleAuthorizationRoute(ctx) {
     const roleMatch = url.pathname.match(/^\/api\/authorization\/roles\/([^/]+)$/)
     if (req.method === "PATCH" && roleMatch) { send(res, 200, await service.updateRole(actor, decodeURIComponent(roleMatch[1]), await readBody(req))); return true }
     const assignmentMatch = url.pathname.match(/^\/api\/authorization\/users\/([^/]+)\/roles$/)
-    if (req.method === "PUT" && assignmentMatch) { const body = await readBody(req); send(res, 200, await service.assignUserRoles(actor, decodeURIComponent(assignmentMatch[1]), body.roleIds)); return true }
+    if (req.method === "PUT" && assignmentMatch) {
+      const body = await readBody(req); const userId = decodeURIComponent(assignmentMatch[1])
+      const result = await service.assignUserRoles(actor, userId, body.roleIds)
+      ctx.sessionStore?.forgetUser(userId)
+      send(res, 200, result); return true
+    }
     send(res, 404, { code: "AUTHORIZATION_ROUTE_NOT_FOUND", message: "Authorization route was not found." })
     return true
   } catch (error) {

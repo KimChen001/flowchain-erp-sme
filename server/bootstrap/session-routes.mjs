@@ -1,7 +1,5 @@
-import {
-  createLocalSession,
-  issueLocalSessionToken,
-} from "../domain/local-signed-session.mjs";
+import { issueLocalSessionToken } from "../domain/local-signed-session.mjs";
+import { publicSessionUser, requestClient, SESSION_TTL_SECONDS } from "../auth/workspace-sessions.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { readBody, send } from "../utils/http.mjs";
 import { roleLabel } from "../../shared/roles.mjs";
@@ -10,12 +8,22 @@ export function normalizeLogin(body) {
   const email = String(body.email || "")
     .trim()
     .toLowerCase();
-  const name = String(body.name || "").trim();
-  const company = String(body.company || "").trim();
-  if (!email || !name || !company) {
-    throw new Error("company, name and email are required");
+  if (!email) {
+    throw new Error("email is required");
   }
-  return { email, name, company };
+  return { email };
+}
+
+// Issues the signed bearer token for a stored session and the payload every
+// sign-in route returns.
+export function signedInPayload({ created, user, tenant, localSessionSecret }) {
+  const token = issueLocalSessionToken({ sessionId: created.sessionId }, localSessionSecret, { ttlSeconds: SESSION_TTL_SECONDS });
+  const publicUser = publicSessionUser(user, tenant);
+  return {
+    token,
+    expiresAt: created.expiresAt.toISOString(),
+    user: { ...publicUser, roleLabel: roleLabel(publicUser.role) },
+  };
 }
 
 export async function handleSessionRoutes({
@@ -23,7 +31,7 @@ export async function handleSessionRoutes({
   res,
   url,
   identity,
-  localSessions,
+  sessionStore,
   localSessionSecret,
   env = process.env,
 }) {
@@ -46,12 +54,7 @@ export async function handleSessionRoutes({
     }
     const prisma = await getPrismaClient(env);
     const provisioned = await prisma.user.findFirst({
-      where: {
-        tenantId,
-        email: String(profile.email || "")
-          .trim()
-          .toLowerCase(),
-      },
+      where: { tenantId, email: profile.email },
       include: { tenant: true },
     });
     if (!provisioned) {
@@ -68,34 +71,22 @@ export async function handleSessionRoutes({
       });
       return true;
     }
-    profile = {
-      id: provisioned.id,
+    const client = requestClient(req, env);
+    const created = await sessionStore.create({
       tenantId,
-      name: provisioned.name,
-      email: provisioned.email,
-      company: provisioned.tenant.name,
-      role: provisioned.role,
-      version: provisioned.version,
-    };
-    const session = createLocalSession(profile, {
-      env,
-      authoritativeRole: true,
+      userId: provisioned.id,
+      userAgent: client.userAgent,
+      ipAddress: client.ipAddress,
     });
-    localSessions.set(session.sessionId, session);
-    const token = issueLocalSessionToken(session, localSessionSecret);
-    send(res, 200, {
-      token,
-      expiresAt: new Date(session.expiresAt).toISOString(),
-      user: {
-        id: session.userId,
-        name: session.name,
-        email: session.email,
-        company: session.company,
-        role: session.role,
-        roleLabel: roleLabel(session.role),
-        tenantId: session.tenantId,
-      },
-    });
+    send(res, 200, signedInPayload({ created, user: provisioned, tenant: provisioned.tenant, localSessionSecret }));
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/auth/logout") {
+    if (identity.authenticated && identity.source === "local_signed_session") {
+      await sessionStore.revoke(identity.sessionId, { reason: "logout", actorId: identity.userId });
+    }
+    send(res, 200, { status: "signed_out" });
     return true;
   }
 

@@ -23,10 +23,9 @@ test('Pilot workspace APIs provision users, protect admin actions, and enforce w
       { id: viewer.userId, tenantId: scenario.tenantId, email: viewer.email, name: viewer.name, role: 'viewer', status: 'active' },
     ] })
     await prisma.userWarehouseScope.create({ data: { id: randomUUID(), tenantId: scenario.tenantId, userId: manager.userId, warehouseId: scenario.warehouseId, accessLevel: 'operate' } })
-    const sessions = new Map([['manager-session', { userId: manager.userId }]])
     async function call(identity, method, path, body = {}) {
       let response
-      const handled = await handlePilotWorkspaceRoute({ req: { method }, res: {}, url: new URL(path, 'http://local'), env: process.env, identity, localSessions: sessions, readBody: async () => body, send(_res, status, payload) { response = { status, payload } } })
+      const handled = await handlePilotWorkspaceRoute({ req: { method }, res: {}, url: new URL(path, 'http://local'), env: process.env, identity, readBody: async () => body, send(_res, status, payload) { response = { status, payload } } })
       assert.equal(handled, true)
       return response
     }

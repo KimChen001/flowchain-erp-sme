@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
 const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url')
 const decode = value => JSON.parse(Buffer.from(value, 'base64url').toString('utf8'))
@@ -34,7 +34,7 @@ export function verifyLocalSessionToken(token, secret, { now = Date.now() } = {}
   } catch { return { valid: false, reason: 'malformed_token' } }
 }
 
-const normalizedRole = value => {
+export const normalizedRole = value => {
   const role = String(value || '').toLowerCase()
   if (['finance-specialist', 'business-specialist'].includes(role)) return role
   if (/admin|管理员/.test(role)) return 'admin'
@@ -48,21 +48,18 @@ export function resolveServerTenantId(env = process.env) {
   return String(env.FLOWCHAIN_DEFAULT_TENANT_ID || '').trim()
 }
 
-export function resolveRequestIdentity(req, sessions, secret, env = process.env) {
+// Resolves the caller from a signed bearer token. The signature and expiry
+// are checked here; the session itself must still be live in the database,
+// which the session store (server/auth/workspace-sessions.mjs) checks.
+export async function resolveRequestIdentity(req, sessionStore, secret, env = process.env) {
   const authorization = String(req.headers?.authorization || '')
   const token = authorization.replace(/^Bearer\s+/i, '').trim()
   const verified = verifyLocalSessionToken(token, secret)
   if (verified.valid) {
-    const session = sessions.get(verified.claims.sid)
-    if (session && session.expiresAt > Date.now()) return { authenticated: true, source: 'local_signed_session', userId: session.userId, name: session.name, email: session.email, role: session.role, tenantId: session.tenantId, sessionId: session.sessionId, expiresAt: new Date(session.expiresAt).toISOString() }
+    const session = await sessionStore.resolve(verified.claims.sid)
+    if (session) return { authenticated: true, source: 'local_signed_session', userId: session.userId, name: session.name, email: session.email, role: session.role, tenantId: session.tenantId, sessionId: session.sessionId, expiresAt: new Date(session.expiresAtMs).toISOString() }
   }
   const allowHeaders = env.NODE_ENV === 'test' || String(env.FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS).toLowerCase() === 'true'
   if (allowHeaders && (req.headers?.['x-flowchain-user'] || req.headers?.['x-flowchain-role'])) return { authenticated: true, source: 'explicit_test_headers', userId: String(req.headers['x-flowchain-user'] || 'test-user'), name: 'Test User', email: '', role: normalizedRole(req.headers['x-flowchain-role']), tenantId: resolveServerTenantId(env) }
   return { authenticated: false, source: token ? 'invalid_session' : 'anonymous', userId: 'anonymous', name: 'Anonymous', email: '', role: 'viewer', tenantId: '' }
-}
-
-export function createLocalSession(profile, { ttlSeconds = 8 * 60 * 60, now = Date.now(), env = process.env, authoritativeRole = false } = {}) {
-  const normalizedEmail = String(profile.email || '').trim().toLowerCase()
-  const userId = String(profile.id || `USR-${createHash('sha256').update(normalizedEmail || String(profile.name || '')).digest('hex').slice(0, 16)}`)
-  return { sessionId: randomBytes(18).toString('base64url'), userId, tenantId: String(profile.tenantId || resolveServerTenantId(env)), name: profile.name, email: normalizedEmail, company: profile.company, role: authoritativeRole ? normalizedRole(profile.role) : 'manager', userVersion: profile.version ?? null, createdAt: new Date(now).toISOString(), expiresAt: now + ttlSeconds * 1000 }
 }

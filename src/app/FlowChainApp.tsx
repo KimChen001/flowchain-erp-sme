@@ -1350,6 +1350,8 @@ export default function FlowChainApp() {
   }
 
   function logout() {
+    // End the server session too; the local sign-out happens either way.
+    apiJson("/api/auth/logout", { method: "POST" }).catch(() => {});
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(CURRENT_USER_KEY);
     setAuthToken("");
