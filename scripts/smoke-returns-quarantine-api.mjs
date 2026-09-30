@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
+import { productionHarnessMailEnv, signInThroughEmailLink } from "./test-support/production-harness.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -110,10 +111,7 @@ async function request(base, path, options = {}) {
 }
 
 async function login(base, email) {
-  const result = await request(base, "/api/auth/login", {
-    method: "POST",
-    body: { email, name: "Ignored", company: "Ignored" },
-  });
+  const result = await signInThroughEmailLink(base, prisma, { tenantId, email });
   assert.equal(result.user.id, userId(email));
   return result.token;
 }
@@ -505,6 +503,7 @@ const env = {
   FLOWCHAIN_BRANCH: "test/returns-api-smoke",
   FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: "false",
   SCM_API_PORT: String(apiPort),
+  ...productionHarnessMailEnv(),
   NODE_ENV: "production",
 };
 const base = `http://127.0.0.1:${apiPort}`;

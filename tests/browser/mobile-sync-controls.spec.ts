@@ -94,7 +94,13 @@ test("browser API acceptance proves CustomerInvoice read isolation, warehouse to
   expect(createInitial.changes.some((change) => change.entityType === "CustomerInvoice")).toBeFalsy();
 
   await api(request, admin.token, "put", `/api/authorization/users/${createUser.id}/roles`, { roleIds: [invoiceReader.id] });
-  const reset = await request.get(`/api/sync/changes?clientId=${encodeURIComponent(createInitial.registered.clientId)}&deviceId=sync-browser-create-only&cursor=${encodeURIComponent(createInitial.cursor)}`, { headers: { Authorization: `Bearer ${createSession.token}`, "X-Device-Id": "sync-browser-create-only" } });
+  const changesUrl = `/api/sync/changes?clientId=${encodeURIComponent(createInitial.registered.clientId)}&deviceId=sync-browser-create-only&cursor=${encodeURIComponent(createInitial.cursor)}`;
+  // A role change ends the user's sessions, so the old token is refused outright.
+  const ended = await request.get(changesUrl, { headers: { Authorization: `Bearer ${createSession.token}`, "X-Device-Id": "sync-browser-create-only" } });
+  expect(ended.status()).toBe(401);
+  // Signing in again does not revive the cursor issued under the old roles.
+  const createSessionAfterRoleChange = await login(request, "sync-create@example.com");
+  const reset = await request.get(changesUrl, { headers: { Authorization: `Bearer ${createSessionAfterRoleChange.token}`, "X-Device-Id": "sync-browser-create-only" } });
   expect(reset.status()).toBe(409);
   const resetBody = await reset.json();
   expect(resetBody.code).toBe("SYNC_AUTHORIZATION_CHANGED");

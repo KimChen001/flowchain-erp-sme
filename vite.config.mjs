@@ -19,8 +19,23 @@ function figmaAssetResolver() {
   }
 }
 
+// The sign-in confirm page carries a single-use token in its address; the
+// production static server sends the same header (server/bootstrap/static-assets.mjs).
+function signInConfirmReferrerPolicy() {
+  return {
+    name: 'sign-in-confirm-referrer-policy',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (String(req.url || '').split('?')[0] === '/sign-in/confirm') res.setHeader('Referrer-Policy', 'no-referrer')
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig({
   plugins: [
+    signInConfirmReferrerPolicy(),
     figmaAssetResolver(),
     react(),
     tailwindcss(),
