@@ -11,8 +11,18 @@ Writes remain compatible:
 - `POST /api/procurement/receiving/:id/post`
 - `POST /api/procurement/receiving/:id/reverse`
 
+Desktop receipts are drafted from a PO before posting. These commands share the draft core in `server/domain/receiving-draft-command-service.mjs` with the mobile receiving facade, need `receiving.prepare` and operate access to the warehouse, and are gated only by `FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING`. Each is idempotent, checks the expected version (409 `SYNC_VERSION_CONFLICT`), refuses accepted quantity above the PO's open quantity (409 `RECEIVING_OVER_RECEIPT`), requires a reason for rejected quantity, and writes one audit row:
+
+- `POST /api/procurement/receiving` (create a draft from an approved, issued or partially received PO)
+- `PATCH /api/procurement/receiving/:id` (revise a draft)
+- `POST /api/procurement/receiving/:id/submit` (draft → ready_for_receiving)
+
+The retired `POST /api/receiving-docs` and `PATCH /api/receiving-docs/:id` stay refused by the database-mode gate.
+
 Database-only reads are:
 
+- `GET /api/procurement/receiving` (receipts the user may read, optional `?poId=`)
+- `GET /api/procurement/purchase-orders/:id/receivable-lines` (open quantities and receiving warehouses for the receipt form)
 - `GET /api/procurement/receiving/:id`
 - `GET /api/procurement/receiving/:id/impact-preview?operation=post|reverse`
 - `GET /api/procurement/receiving/:id/evidence`

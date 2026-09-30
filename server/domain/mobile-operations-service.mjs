@@ -1,10 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { assertAuthorized, can } from "../auth/authorization-service.mjs";
-import { assertWarehouseAccess, resolveProvisionedActor } from "./pilot-identity.mjs";
+import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { createReceivingPostingCommandService, ReceivingCommandError } from "./receiving-posting-command-service.mjs";
 import { createReceivingWorkbenchQueryService } from "./receiving-workbench-query-service.mjs";
+import { createReceivingDraftCommandService, RECEIVING_DRAFT_CHANNELS } from "./receiving-draft-command-service.mjs";
 import { capabilityForEnvironment } from "./capability-registry.mjs";
-import { PURCHASE_ORDER_STATUS, RECEIVABLE_PURCHASE_ORDER_INPUTS, RECEIVING_POSTING_STATUS, RECEIVING_WORKFLOW_STATUS } from "./procurement-status-authority.mjs";
+import { PURCHASE_ORDER_STATUS } from "./procurement-status-authority.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "./receiving-transaction-policy.mjs";
 
 export class MobileOperationsError extends Error {
@@ -12,10 +13,8 @@ export class MobileOperationsError extends Error {
 }
 const fail = (code, message, status = 400, details) => { throw new MobileOperationsError(code, message, status, details); };
 const text = (value) => String(value ?? "").trim();
-const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const serial = (value) => value?.toISOString?.() || value || null;
 const decimal = (value) => receivingDecimalString(receivingDecimalUnits(value || 0));
-const quantityUnits = (value, label) => { try { return receivingDecimalUnits(value || 0); } catch (error) { fail("RECEIVING_VALIDATION_FAILED", `${label}: ${error.message}`, 422); } };
 
 export function createMobileOperationsService({ prisma, procurementAuthority, env = process.env, idFactory = randomUUID, now = () => new Date() } = {}) {
   if (!prisma) throw new Error("prisma is required");
@@ -24,6 +23,7 @@ export function createMobileOperationsService({ prisma, procurementAuthority, en
     if (!procurementAuthority) fail("PROCUREMENT_DATABASE_AUTHORITY_REQUIRED", "Mobile procurement requires the PostgreSQL command authority.", 409);
   };
   const receivingCommand = createReceivingPostingCommandService({ prisma, env });
+  const receivingDrafts = createReceivingDraftCommandService({ prisma, idFactory, now });
   const receivingRead = createReceivingWorkbenchQueryService({ prisma, capabilities: { posting: capabilityForEnvironment("receiving-posting", env), reversal: capabilityForEnvironment("receiving-reversal", env) } });
   const fieldVisibility = (actor) => ({ finance_amounts: { visible: actor.permissionCodes.has("finance.amounts.read") }, finance_partner_snapshot: { visible: actor.permissionCodes.has("finance.partner_snapshot.read") }, procurement_prices: { visible: actor.permissionCodes.has("procurement.prices.read") } });
   const task = (value, actor) => ({ priority: "normal", dueAt: null, status: "open", evidenceSummary: [], limitations: [], updatedAt: serial(now()), ...value, fieldVisibility: fieldVisibility(actor) });
@@ -72,79 +72,16 @@ export function createMobileOperationsService({ prisma, procurementAuthority, en
     fail("MOBILE_PO_NOT_AVAILABLE", "The PostgreSQL procurement command authority did not handle this action.", 409);
   }
 
+  // The draft commands are the shared receiving core; the facade adds the
+  // mobile permissions and keeps device fields on the document.
   async function searchReceivingPurchaseOrders(search, context) {
-    const actor = await actorFor(context); assertAuthorized({ actor, permission: "mobile.receiving.read", tenantId: actor.tenantId }); assertAuthorized({ actor, permission: "receiving.read", tenantId: actor.tenantId });
-    const value = text(search); const rows = await prisma.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, status: { in: [...RECEIVABLE_PURCHASE_ORDER_INPUTS] }, ...(value ? { id: { contains: value, mode: "insensitive" } } : {}) }, include: { lines: true }, take: 50, orderBy: { updatedAt: "desc" } });
-    const warehouseWhere = actor.allWarehouses ? { tenantId: actor.tenantId, status: "active" } : { tenantId: actor.tenantId, status: "active", id: { in: [...(actor.operateWarehouseIds || [])] } };
-    const warehouses = await prisma.warehouse.findMany({ where: warehouseWhere, orderBy: { code: "asc" }, select: { id: true, code: true, name: true } });
-    return { items: rows.map((po) => ({ id: po.id, status: po.status, supplierName: actor.permissionCodes.has("finance.partner_snapshot.read") ? po.supplierName : null, currency: po.currency, lines: po.lines.map((line) => ({ id: line.id, sku: line.sku, itemName: line.itemName, orderedQuantity: decimal(line.orderedQuantity), receivedQuantity: decimal(line.receivedQuantity), remainingQuantity: receivingDecimalString(quantityUnits(line.orderedQuantity, "orderedQuantity") - quantityUnits(line.receivedQuantity, "receivedQuantity")), unit: line.unit })) })), total: rows.length, warehouses };
+    const actor = await actorFor(context); assertAuthorized({ actor, permission: "mobile.receiving.read", tenantId: actor.tenantId });
+    const { items, total, warehouses } = await receivingDrafts.listReceivablePurchaseOrders({ search }, context, RECEIVING_DRAFT_CHANNELS.mobile);
+    return { items: items.map(({ id, status, supplierName, currency, lines }) => ({ id, status, supplierName, currency, lines: lines.map(({ id: lineId, sku, itemName, orderedQuantity, receivedQuantity, remainingQuantity, unit }) => ({ id: lineId, sku, itemName, orderedQuantity, receivedQuantity, remainingQuantity, unit })) })), total, warehouses };
   }
-  async function createReceivingDraft(input, context) {
-    const actor = await actorFor(context); assertAuthorized({ actor, permission: "mobile.receiving.prepare", tenantId: actor.tenantId }); assertAuthorized({ actor, permission: "receiving.prepare", tenantId: actor.tenantId });
-    const warehouseIds = [...new Set([text(input.warehouseId), ...(input.lines || []).map((line) => text(line.warehouseId || input.warehouseId))].filter(Boolean))]; assertWarehouseAccess(actor, warehouseIds, "operate");
-    const key = text(input.idempotencyKey); if (!key) fail("IDEMPOTENCY_KEY_REQUIRED", "idempotencyKey is required.", 422); const commandType = "mobile.receiving.create", requestHash = digest(input), where = { tenantId_commandType_idempotencyKey: { tenantId: actor.tenantId, commandType, idempotencyKey: key } };
-    const prior = await prisma.businessCommandExecution.findUnique({ where }); if (prior) { if (prior.requestHash !== requestHash) fail("IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD", "The idempotency key was reused with another payload.", 409); return { ...prior.resultPayload, idempotentReplay: true }; }
-    return prisma.$transaction(async (tx) => {
-      const po = await tx.purchaseOrder.findFirst({ where: { id: text(input.poId), tenantId: actor.tenantId }, include: { lines: true } }); if (!po) fail("PURCHASE_ORDER_NOT_FOUND", "Purchase order was not found.", 404);
-      const poLines = new Map(po.lines.map((line) => [line.id, line])), lines = [];
-      for (const value of input.lines || []) { const source = poLines.get(text(value.purchaseOrderLineId)); if (!source) fail("RECEIVING_LINE_INVALID", "Each receiving line must reference the selected PO.", 422); const accepted = quantityUnits(value.acceptedQuantity || value.acceptedQty || 0, "acceptedQuantity"), damaged = quantityUnits(value.damagedQuantity || 0, "damagedQuantity"), rejected = quantityUnits(value.rejectedQuantity || value.rejectedQty || 0, "rejectedQuantity"), remaining = quantityUnits(source.orderedQuantity, "orderedQuantity") - quantityUnits(source.receivedQuantity, "receivedQuantity"); if (accepted <= 0n || damaged < 0n || rejected < 0n || accepted > remaining) fail("RECEIVING_OVER_RECEIPT", "Accepted quantity exceeds the PO remaining quantity.", 409, { purchaseOrderLineId: source.id, remainingQuantity: receivingDecimalString(remaining) }); lines.push({ id: idFactory(), purchaseOrderLineId: source.id, itemId: source.itemId, sku: source.sku, itemName: source.itemName, acceptedQty: receivingDecimalString(accepted), rejectedQty: receivingDecimalString(rejected), unit: source.unit, warehouseId: text(value.warehouseId || input.warehouseId), location: text(value.location), locationKey: text(value.location).toLowerCase(), metadata: { damagedQuantity: receivingDecimalString(damaged), note: text(value.note) } }); }
-      if (!lines.length) fail("RECEIVING_LINES_REQUIRED", "At least one receiving line is required.", 422);
-      const document = await tx.receivingDocument.create({ data: { id: idFactory(), tenantId: actor.tenantId, documentNumber: text(input.documentNumber) || `GRN-${now().getTime()}`, poId: po.id, supplierId: po.supplierId, supplierName: po.supplierName, status: "receiving", workflowStatus: RECEIVING_WORKFLOW_STATUS.DRAFT, postingStatus: RECEIVING_POSTING_STATUS.UNPOSTED, warehouseId: text(input.warehouseId), receiver: actor.user.name, arrivedAt: input.arrivedAt ? new Date(input.arrivedAt) : now(), currency: po.currency, metadata: { note: text(input.note), clientMutationId: text(input.clientMutationId), sourceDeviceId: text(input.sourceDeviceId) }, lines: { create: lines } } });
-      const result = { entityId: document.id, receivingDocument: { id: document.id, documentNumber: document.documentNumber, workflowStatus: document.workflowStatus, postingStatus: document.postingStatus, version: document.version }, pendingSync: false };
-      await tx.businessCommandExecution.create({ data: { id: idFactory(), tenantId: actor.tenantId, commandType, idempotencyKey: key, requestHash, status: "completed", entityType: "ReceivingDocument", entityId: document.id, resultPayload: result, completedAt: now() } }); await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: "mobile_receiving_facade", module: "procurement_receiving", action: "receiving_draft_created", entityType: "ReceivingDocument", entityId: document.id, summary: `Created receiving draft ${document.documentNumber}.`, metadata: { poId: po.id } } }); await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "ReceivingDocument", entityId: document.id, operation: "upsert", entityVersion: document.version, actorId: actor.user.id, source: "mobile_receiving_facade", requestId: key, payloadHash: digest({ id: document.id, version: document.version }), sensitivityGroups: [], moduleKey: "receiving", authorizationClass: "receiving.read", scopeWarehouseIds: [document.warehouseId].filter(Boolean), resourceTenantId: actor.tenantId } });
-      return { ...result, idempotentReplay: false };
-    }, { isolationLevel: "Serializable" });
-  }
-  async function reviseReceivingDraft(id, input, context) {
-    const actor = await actorFor(context); assertAuthorized({ actor, permission: "mobile.receiving.prepare", tenantId: actor.tenantId }); assertAuthorized({ actor, permission: "receiving.prepare", tenantId: actor.tenantId }); const expected = Number(input.expectedVersion);
-    return prisma.$transaction(async (tx) => {
-      const row = await tx.receivingDocument.findFirst({ where: { id: text(id), tenantId: actor.tenantId }, include: { lines: true } });
-      if (!row) fail("RECEIVING_NOT_FOUND", "Receiving draft was not found.", 404);
-      if (row.version !== expected) fail("SYNC_VERSION_CONFLICT", "Receiving draft changed concurrently.", 409, { entityId: row.id, expectedVersion: expected, currentVersion: row.version });
-      if (row.workflowStatus !== RECEIVING_WORKFLOW_STATUS.DRAFT || row.postingStatus !== RECEIVING_POSTING_STATUS.UNPOSTED) fail("RECEIVING_IMMUTABLE", "Submitted or posted receiving documents cannot be revised.", 409);
-      const warehouseIds = [...new Set([row.warehouseId, ...(input.lines || []).map((line) => text(line.warehouseId || row.warehouseId))].filter(Boolean))];
-      assertWarehouseAccess(actor, warehouseIds, "operate");
-      await tx.receivingLine.deleteMany({ where: { receivingDocumentId: row.id } });
-      const po = await tx.purchaseOrder.findFirst({ where: { id: row.poId, tenantId: actor.tenantId }, include: { lines: true } });
-      const poLines = new Map(po.lines.map((line) => [line.id, line]));
-      const lines = (input.lines || []).map((value) => {
-        const source = poLines.get(text(value.purchaseOrderLineId));
-        if (!source) fail("RECEIVING_LINE_INVALID", "Receiving line is not on the selected PO.", 422);
-        const accepted = quantityUnits(value.acceptedQuantity || value.acceptedQty || 0, "acceptedQuantity");
-        const remaining = quantityUnits(source.orderedQuantity, "orderedQuantity") - quantityUnits(source.receivedQuantity, "receivedQuantity");
-        if (accepted <= 0n || accepted > remaining) fail("RECEIVING_OVER_RECEIPT", "Accepted quantity exceeds remaining quantity.", 409);
-        return { id: idFactory(), receivingDocumentId: row.id, purchaseOrderLineId: source.id, itemId: source.itemId, sku: source.sku, itemName: source.itemName, acceptedQty: receivingDecimalString(accepted), rejectedQty: decimal(value.rejectedQuantity || 0), unit: source.unit, warehouseId: text(value.warehouseId || row.warehouseId), location: text(value.location), locationKey: text(value.location).toLowerCase(), metadata: { damagedQuantity: decimal(value.damagedQuantity || 0), note: text(value.note) } };
-      });
-      if (!lines.length) fail("RECEIVING_LINES_REQUIRED", "At least one receiving line is required.", 422);
-      await tx.receivingLine.createMany({ data: lines });
-      const updated = await tx.receivingDocument.update({ where: { id: row.id }, data: { metadata: { ...row.metadata, note: text(input.note), clientMutationId: text(input.clientMutationId), sourceDeviceId: text(input.sourceDeviceId) }, version: { increment: 1 } } });
-      await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "ReceivingDocument", entityId: row.id, operation: "upsert", entityVersion: updated.version, actorId: actor.user.id, source: "mobile_receiving_facade", requestId: text(input.clientMutationId) || null, payloadHash: digest({ id: row.id, version: updated.version }), sensitivityGroups: [] } });
-      return { entityId: row.id, receivingDocument: { id: row.id, documentNumber: row.documentNumber, workflowStatus: updated.workflowStatus, postingStatus: updated.postingStatus, version: updated.version } };
-    }, { isolationLevel: "Serializable" });
-  }
-  async function submitReceivingDraft(id, input, context) {
-    const actor = await actorFor(context); assertAuthorized({ actor, permission: "mobile.receiving.prepare", tenantId: actor.tenantId }); assertAuthorized({ actor, permission: "receiving.prepare", tenantId: actor.tenantId });
-    const expected = Number(input.expectedVersion), key = text(input.idempotencyKey), commandType = "mobile.receiving.submit";
-    if (!key) fail("IDEMPOTENCY_KEY_REQUIRED", "idempotencyKey is required.", 422);
-    const requestHash = digest({ id: text(id), expectedVersion: expected }), where = { tenantId_commandType_idempotencyKey: { tenantId: actor.tenantId, commandType, idempotencyKey: key } };
-    const prior = await prisma.businessCommandExecution.findUnique({ where });
-    if (prior) { if (prior.requestHash !== requestHash) fail("IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD", "The idempotency key was reused with another payload.", 409); return { ...prior.resultPayload, idempotentReplay: true }; }
-    return prisma.$transaction(async (tx) => {
-      await tx.$queryRawUnsafe('SELECT "id" FROM "ReceivingDocument" WHERE "tenantId" = $1 AND "id" = $2 FOR UPDATE', actor.tenantId, text(id));
-      const row = await tx.receivingDocument.findFirst({ where: { id: text(id), tenantId: actor.tenantId }, include: { lines: true } });
-      if (!row) fail("RECEIVING_NOT_FOUND", "Receiving draft was not found.", 404);
-      assertWarehouseAccess(actor, [...new Set([row.warehouseId, ...row.lines.map((line) => line.warehouseId)].filter(Boolean))], "operate");
-      if (row.version !== expected) fail("SYNC_VERSION_CONFLICT", "Receiving draft changed concurrently.", 409, { entityId: row.id, expectedVersion: expected, currentVersion: row.version, conflictFields: ["workflowStatus"], availableActions: ["reload"], serverTime: serial(now()) });
-      if (row.workflowStatus !== RECEIVING_WORKFLOW_STATUS.DRAFT || row.postingStatus !== RECEIVING_POSTING_STATUS.UNPOSTED) fail("RECEIVING_WORKFLOW_CONFLICT", "Only a draft may be submitted.", 409);
-      const execution = await tx.businessCommandExecution.create({ data: { id: idFactory(), tenantId: actor.tenantId, commandType, idempotencyKey: key, requestHash, status: "pending", entityType: "ReceivingDocument", entityId: row.id } });
-      const updated = await tx.receivingDocument.update({ where: { id: row.id }, data: { workflowStatus: RECEIVING_WORKFLOW_STATUS.READY_FOR_RECEIVING, version: { increment: 1 } } });
-      const result = { entityId: row.id, receivingDocument: { id: row.id, documentNumber: row.documentNumber, workflowStatus: updated.workflowStatus, postingStatus: updated.postingStatus, version: updated.version }, pendingSync: false };
-      await tx.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: "mobile_receiving_facade", module: "procurement_receiving", action: "receiving_submitted", entityType: "ReceivingDocument", entityId: row.id, summary: `Submitted receiving ${row.documentNumber}.`, metadata: { commandExecutionId: execution.id, expectedVersion: expected, sourceDeviceId: text(input.sourceDeviceId) || null } } });
-      await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "ReceivingDocument", entityId: row.id, operation: "upsert", entityVersion: updated.version, actorId: actor.user.id, source: "mobile_receiving_facade", requestId: key, payloadHash: digest({ id: row.id, version: updated.version }), sensitivityGroups: [] } });
-      await tx.businessCommandExecution.update({ where: { id: execution.id }, data: { status: "completed", resultPayload: result, completedAt: now() } });
-      return { ...result, idempotentReplay: false };
-    }, { isolationLevel: "Serializable" });
-  }
+  const createReceivingDraft = (input, context) => receivingDrafts.createDraft(input, context, RECEIVING_DRAFT_CHANNELS.mobile);
+  const reviseReceivingDraft = (id, input, context) => receivingDrafts.reviseDraft(id, input, context, RECEIVING_DRAFT_CHANNELS.mobile);
+  const submitReceivingDraft = (id, input, context) => receivingDrafts.submitDraft(id, input, context, RECEIVING_DRAFT_CHANNELS.mobile);
   async function receivingDetail(id, context) {
     const actor = await actorFor(context);
     assertAuthorized({ actor, permission: "mobile.receiving.read", tenantId: actor.tenantId });

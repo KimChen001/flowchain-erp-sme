@@ -14,12 +14,15 @@ export const DATABASE_MODE_MUTATION_BLOCKED_ERROR = 'This mutation is not availa
 const routeDefinitions = [
   { method: 'GET', pattern: /^\/api\/health$/, group: 'health', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed' },
   { method: 'GET', pattern: /^\/api\/dev\/local-status$/, group: 'local-development', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed-local-only' },
+  { method: 'GET', pattern: /^\/api\/dev\/sign-in-links$/, group: 'local-development', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed-local-only' },
   { method: 'OPTIONS', pattern: /^\/.*$/, group: 'cors-preflight', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed' },
 
   { method: 'GET', pattern: /^\/api\/me$/, group: 'auth-context', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
   { method: 'GET', pattern: /^\/api\/tenants\/current$/, group: 'auth-context', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
   { method: 'POST', pattern: /^\/api\/auth\/login$/, group: 'auth', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-local-session' },
   { method: 'GET', pattern: /^\/api\/auth\/me$/, group: 'auth', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
+  { method: 'POST', pattern: /^\/api\/auth\/logout$/, group: 'auth', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
+  { method: 'POST', pattern: /^\/api\/auth\/email-link(?:\/(?:inspect|confirm))?$/, group: 'auth', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
 
   { method: 'GET', pattern: /^\/api\/ai\/tools$/, group: 'ai', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
   { method: 'POST', pattern: /^\/api\/ai\/chat$/, group: 'ai', classification: ROUTE_CLASSES.readOnly, writesJson: 'best-effort-audit', databaseMode: 'allowed-no-json-persist' },
@@ -70,7 +73,8 @@ const routeDefinitions = [
 
   { method: 'GET', pattern: /^\/api\/receiving-docs$/, group: 'receiving', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
   { method: 'GET', pattern: /^\/api\/procurement\/receiving\/[^/]+(?:\/(?:impact-preview|evidence|links|reconciliation))?$/, group: 'receiving-workbench', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
-  { method: 'GET', pattern: /^\/api\/procurement\/purchase-orders\/[^/]+\/receiving-summary$/, group: 'receiving-workbench', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
+  { method: 'GET', pattern: /^\/api\/procurement\/receiving$/, group: 'receiving-workbench', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
+  { method: 'GET', pattern: /^\/api\/procurement\/purchase-orders\/[^/]+\/(?:receiving-summary|receivable-lines)$/, group: 'receiving-workbench', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'GET', pattern: /^\/api\/(?:me\/profile|workspace(?:\/(?:users|warehouses|invitations))?)$/, group: 'pilot-workspace', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'PATCH', pattern: /^\/api\/(?:me\/profile|workspace|workspace\/users\/[^/]+)$/, group: 'pilot-workspace', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
   { method: 'PUT', pattern: /^\/api\/workspace\/users\/[^/]+\/warehouse-scopes$/, group: 'pilot-workspace', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
@@ -85,7 +89,9 @@ const routeDefinitions = [
   { method: 'POST', pattern: /^\/api\/import-batches\/[^/]+\/rollback$/, group: 'legacy-imports', classification: ROUTE_CLASSES.capabilityDisabled, writesJson: false, databaseMode: 'capability-disabled' },
   { method: 'GET', pattern: /^\/api\/pilot\/exports\/[^/]+$/, group: 'pilot-exports', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'GET', pattern: /^\/api\/admin\/pilot-diagnostics$/, group: 'pilot-diagnostics', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed-db-read' },
-  { method: 'POST', pattern: /^\/api\/procurement\/receiving\/[^/]+\/(?:post|reverse)$/, group: 'receiving-posting', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
+  { method: 'POST', pattern: /^\/api\/procurement\/receiving\/[^/]+\/(?:submit|post|reverse)$/, group: 'receiving-posting', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
+  { method: 'POST', pattern: /^\/api\/procurement\/receiving$/, group: 'receiving-posting', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
+  { method: 'PATCH', pattern: /^\/api\/procurement\/receiving\/[^/]+$/, group: 'receiving-posting', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
   { method: 'GET', pattern: /^\/api\/sync\/(?:initial|changes)$/, group: 'mobile-sync', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },
   { method: 'POST', pattern: /^\/api\/sync\/(?:clients\/register|acknowledge|clients\/[^/]+\/revoke)$/, group: 'mobile-sync', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
   { method: 'GET', pattern: /^\/api\/mobile\/.+$/, group: 'mobile-operations', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed-db-read' },

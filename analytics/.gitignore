@@ -1,10 +1,37 @@
-# The repository is public: data and generated outputs stay outside git.
+# The SCMS dataset is CC BY-ND 4.0 and this repository is public.
+# Raw data, cleaned data, row-level extracts and generated outputs must never be
+# committed. Data lives outside the repository (see analytics/README.md); these
+# rules are a second line of defence if someone copies a data folder in here.
+
+# Data folders, wherever they appear under analytics/
+data/
 raw/
 derived/
 outputs/
+flowchain-data/
+scms-data/
+
+# Tabular and binary data files of any kind
 *.csv
+*.tsv
+*.txt.gz
+*.parquet
+*.feather
+*.arrow
+*.pkl
+*.pickle
 *.xlsx
+*.xls
 *.zip
+*.gz
+*.json
+
+# Generated figures and reports belong in the external outputs/ folder
 *.png
+*.svg
+*.pdf
+
+# Python artefacts
 __pycache__/
 *.pyc
+.pytest_cache/

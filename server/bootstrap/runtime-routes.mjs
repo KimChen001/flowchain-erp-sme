@@ -5,6 +5,8 @@ import {
   checkRuntimeReadiness,
 } from "../domain/runtime-readiness.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { mailProviderName } from "../mail/mailer.mjs";
+import { defaultOutboxPath, readOutbox } from "../mail/outbox-mailer.mjs";
 import { send } from "../utils/http.mjs";
 
 export async function handleRuntimeRoutes({
@@ -55,6 +57,25 @@ export async function handleRuntimeRoutes({
       demoScenarioLoaded: demoScenarioCount > 0,
       universalIntakeEnabled: capabilityForEnvironment("universal-intake", env)?.enabled === true,
     });
+    return true;
+  }
+
+  // Local development only: the latest sign-in links in the local mail
+  // outbox, for the "View the sign-in link" helper on the sign-in page.
+  if (req.method === "GET" && url.pathname === "/api/dev/sign-in-links") {
+    if (!localDevelopmentEnabled(env)) {
+      send(res, 404, { error: "Not found" });
+      return true;
+    }
+    const email = String(url.searchParams.get("email") || "").trim().toLowerCase();
+    const messages = mailProviderName(env) === "outbox" ? await readOutbox(defaultOutboxPath(env)) : [];
+    const links = messages
+      .filter((message) => message.tag === "sign-in-link" && (!email || String(message.to).toLowerCase() === email))
+      .reverse()
+      .slice(0, 5)
+      .map((message) => ({ to: message.to, createdAt: message.createdAt, url: String(message.text || "").match(/https?:\/\/\S+\/sign-in\/confirm\?token=[A-Za-z0-9_%-]+/)?.[0] || "" }))
+      .filter((link) => link.url);
+    send(res, 200, { links });
     return true;
   }
 

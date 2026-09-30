@@ -76,6 +76,8 @@ model Tenant {
   rolePermissions                       TenantRolePermission[]
   userRoleAssignments                   UserRoleAssignment[]
   workspaceInvitations                  WorkspaceInvitation[]
+  workspaceSessions                     WorkspaceSession[]
+  signInLinks                           WorkspaceSignInLink[]
   warehouseLocations                    WarehouseLocation[]
   importBatches                         ImportBatch[]
   importIssues                          ImportIssue[]
@@ -555,6 +557,8 @@ model User {
   roleGrantsCreated    TenantRolePermission[]      @relation("RolePermissionCreator")
   invitationsSent      WorkspaceInvitation[]       @relation("InvitationInviter")
   invitationsAccepted  WorkspaceInvitation[]       @relation("InvitationAcceptor")
+  workspaceSessions    WorkspaceSession[]
+  signInLinks          WorkspaceSignInLink[]
   syncClients          SyncClient[]
   syncSnapshotSessions SyncSnapshotSession[]
   importBatches        ImportBatch[]
@@ -801,6 +805,62 @@ model WorkspaceInvitation {
   acceptedBy User?  @relation("InvitationAcceptor", fields: [acceptedById], references: [id], onDelete: Restrict)
 
   @@index([tenantId, email, status])
+}
+
+// A signed-in browser session. The bearer token carries a random session id;
+// only its SHA-256 hash is stored, so a database read cannot replay sessions.
+model WorkspaceSession {
+  id            String    @id
+  tenantId      String
+  userId        String
+  sessionIdHash String    @unique
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime
+  lastSeenAt    DateTime  @default(now())
+  revokedAt     DateTime?
+  revokedReason String?
+  userAgent     String?
+  ipAddress     String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId, revokedAt])
+  @@index([expiresAt])
+}
+
+// A single-use email sign-in link. Only the SHA-256 hash of the link token is
+// stored. A link is usable while consumedAt and invalidatedAt are both null
+// and expiresAt is in the future.
+model WorkspaceSignInLink {
+  id               String    @id
+  tenantId         String
+  userId           String
+  tokenHash        String    @unique
+  createdAt        DateTime  @default(now())
+  expiresAt        DateTime
+  consumedAt       DateTime?
+  invalidatedAt    DateTime?
+  requestIp        String?
+  requestUserAgent String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId, consumedAt])
+  @@index([expiresAt])
+}
+
+// One row per accepted sign-in link request, keyed by a hash of the email
+// address or client IP, so request limits survive restarts and deploys.
+model SignInRateLimitEvent {
+  id        String   @id
+  kind      String
+  keyHash   String
+  createdAt DateTime @default(now())
+
+  @@index([kind, keyHash, createdAt])
+  @@index([createdAt])
 }
 
 model PaymentTerm {

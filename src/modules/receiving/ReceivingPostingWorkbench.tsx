@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowRight, Link2, Loader2, ShieldCheck } from "lucide-r
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { useI18n } from "../../i18n/I18n";
 
 type Capability = { enabled?: boolean; maturity?: string };
 type Detail = {
@@ -11,7 +12,7 @@ type Detail = {
   lines: Array<{ id: string; poLineId: string; sku: string; itemName: string; orderedQuantity: string; previouslyReceivedQuantity: string; documentAcceptedQuantity: string; currentlyAppliedQuantity: string; acceptedQuantity: string; rejectedQuantity: string; remainingReceivableQuantity: string; unit?: string; warehouse?: { name?: string; code?: string } | null; location?: string; lotSerialCapability: { postingAvailable: boolean; message: string } }>;
   postingSummary: { acceptedQuantity: string; rejectedQuantity: string; lineCount: number };
   capabilities: { posting?: Capability; reversal?: Capability };
-  availableActions: { canPost: boolean; canReverse: boolean; canViewReversal: boolean; primaryAction: "post" | "reverse" | "view_reversal" | null; blockingReasonCodes: string[] };
+  availableActions: { canEditDraft?: boolean; canSubmit?: boolean; canPost: boolean; canReverse: boolean; canViewReversal: boolean; primaryAction: "post" | "reverse" | "view_reversal" | null; blockingReasonCodes: string[] };
   limitations: string[];
 };
 type Preview = { operation: "post" | "reverse"; allowed: boolean; blockingIssues: Array<{ code: string; message: string }>; warnings: Array<{ code: string; message: string }>; inventoryImpacts: Array<Record<string, string>>; purchaseOrderImpacts: Array<Record<string, string>>; statusImpact: Record<string, string>; factsToCreate: { inventoryMovementCount: number; auditEventCount: number; commandExecutionCount: number }; limitations: string[] };
@@ -21,12 +22,20 @@ type Reconciliation = { status: "matched" | "mismatch" | "unavailable"; reason?:
 type Navigate = (routeId: string, focus?: { entityType: string; entityId: string } | null, options?: { source?: string; entityLabel?: string }) => void;
 
 const label: Record<string, string> = {
-  draft: "Draft", approved: "Approved", issued: "Issued", unposted: "Unposted", posted: "Posted", reversed: "Reversed",
+  draft: "Draft", ready_for_receiving: "Ready for posting", approved: "Approved", issued: "Issued", unposted: "Unposted", posted: "Posted", reversed: "Reversed",
   not_received: "Not received", partially_received: "Partially received", fully_received: "Fully received",
 };
 const pretty = (value?: string | null) => label[value || ""] || value || "Unavailable";
 const stamp = (value?: string | null) => value ? new Date(value).toLocaleString() : "Unavailable";
 const newKey = () => createSecureClientMutationId("receiving");
+// English source copy with its Chinese translation, for the draft actions.
+const DRAFT_COPY: Record<string, [string, string]> = {
+  editDraft: ["Edit draft", "编辑草稿"],
+  submitDraft: ["Submit for posting", "提交过账"],
+  submitting: ["Submitting…", "正在提交…"],
+  submitFailed: ["The receipt could not be submitted.", "收货单提交失败。"],
+  draftNote: ["This receipt is a draft. Submit it to post it to inventory.", "该收货单为草稿，提交后方可过账入库。"],
+};
 
 function errorMessage(error: unknown) {
   if (!(error instanceof ApiError)) return "Receiving data could not be loaded.";
@@ -50,6 +59,8 @@ function errorMessage(error: unknown) {
 }
 
 export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavigate }: { receivingDocumentId: string; onNavigate?: Navigate }) {
+  const { language } = useI18n();
+  const draftCopy = (key: string) => DRAFT_COPY[key][language === "en-US" ? 0 : 1];
   const [detail, setDetail] = useState<Detail | null>(null);
   const [links, setLinks] = useState<Link[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
@@ -84,6 +95,18 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const canOfferAction = detail?.availableActions.primaryAction === "post" || detail?.availableActions.primaryAction === "reverse";
   const totals = useMemo(() => ({ movement: links.find((item) => item.label === "Movements")?.count, balances: links.find((item) => item.label === "Balances")?.count }), [links]);
 
+  async function submitDraft() {
+    if (!detail) return;
+    setSaving(true); setError("");
+    try {
+      await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/submit`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version }) });
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof ApiError ? `${draftCopy("submitFailed")} ${nextError.message}` : draftCopy("submitFailed"));
+      if (nextError instanceof ApiError && nextError.status === 409) await refresh();
+    } finally { setSaving(false); }
+  }
+
   async function openPreview(nextOperation: "post" | "reverse") {
     setError(""); setReason(""); setActionKey(newKey());
     try { setPreview(await apiJson<Preview>(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/impact-preview?operation=${nextOperation}`)); }
@@ -113,8 +136,9 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><div className="mb-2 flex items-center gap-2"><h1 className="text-xl font-semibold">{grn.documentNumber}</h1><span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">Beta · PostgreSQL</span></div><p className="text-sm text-gray-500">{grn.supplier?.name || "Unknown supplier"} · PO <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}>{detail.purchaseOrder.id}</a></p></div>
-        <div className="flex gap-2">{canOfferAction && <button data-testid="receiving-primary-action" onClick={() => void openPreview(operation)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">{operation === "post" ? "Post Receipt" : "Reverse Receipt"}</button>}{detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className="rounded-lg bg-gray-100 px-4 py-2 text-sm">View Reversal</button>}</div>
+        <div className="flex gap-2">{detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className="rounded-lg border px-4 py-2 text-sm font-semibold">{draftCopy("editDraft")}</a>}{detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}{canOfferAction && <button data-testid="receiving-primary-action" onClick={() => void openPreview(operation)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">{operation === "post" ? "Post Receipt" : "Reverse Receipt"}</button>}{detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className="rounded-lg bg-gray-100 px-4 py-2 text-sm">View Reversal</button>}</div>
       </div>
+      {detail.availableActions.canSubmit && <div className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{draftCopy("draftNote")}</div>}
       {!capability?.enabled && <div className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Read-only. Database receiving capability requires explicit administrator enablement.</div>}
       <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
         {[['Workflow', pretty(grn.workflowStatus)], ['Posting', pretty(grn.postingStatus)], ['PO Fulfillment', pretty(detail.purchaseOrder.fulfillmentStatus)], ['Quality', pretty(grn.qualityStatus)], ['Warehouse', grn.warehouse?.name || 'Unavailable'], ['Receiver', grn.receiver || 'Unavailable'], ['Arrived', stamp(grn.arrivedAt)], [grn.postingStatus === 'reversed' ? 'Reversed' : 'Posted', stamp(grn.reversedAt || grn.postedAt)]].map(([name, value]) => <div key={name} className="rounded-xl bg-gray-50 p-3"><div className="text-[11px] uppercase tracking-wide text-gray-500">{name}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>)}

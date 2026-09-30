@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import EmbeddedPostgres from 'embedded-postgres'
 import { createPrismaClient } from '../server/persistence/prisma-client.mjs'
+import { answerLegacySignInThroughEmailLink, productionHarnessMailEnv, productionHarnessMailer } from './test-support/production-harness.mjs'
 
 const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, '..')
@@ -40,7 +41,7 @@ async function cleanup() {
 
 try {
   await pg.initialise(); await pg.start(); await pg.createDatabase(database)
-  Object.assign(process.env, { DATABASE_URL: url, DATABASE_URL_TEST: url, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: 'true', FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: 'false', FLOWCHAIN_LOCAL_SESSION_SECRET: `browser-${randomUUID()}`, FLOWCHAIN_ATTACHMENT_STORAGE_PROVIDER: 'local', FLOWCHAIN_UPLOAD_STORAGE_DIR: join(directory, 'attachments'), FLOWCHAIN_ALLOW_TEST_TEMP_ATTACHMENT_STORAGE: 'true', FLOWCHAIN_COMMIT_SHA: 'receiving-browser-smoke', FLOWCHAIN_BRANCH: 'test/receiving-browser-smoke', FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: 'false', SCM_API_PORT: String(apiPort), NODE_ENV: 'production' })
+  Object.assign(process.env, { DATABASE_URL: url, DATABASE_URL_TEST: url, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: 'true', FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: 'false', FLOWCHAIN_LOCAL_SESSION_SECRET: `browser-${randomUUID()}`, FLOWCHAIN_ATTACHMENT_STORAGE_PROVIDER: 'local', FLOWCHAIN_UPLOAD_STORAGE_DIR: join(directory, 'attachments'), FLOWCHAIN_ALLOW_TEST_TEMP_ATTACHMENT_STORAGE: 'true', FLOWCHAIN_COMMIT_SHA: 'receiving-browser-smoke', FLOWCHAIN_BRANCH: 'test/receiving-browser-smoke', FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: 'false', SCM_API_PORT: String(apiPort), ...productionHarnessMailEnv(), NODE_ENV: 'production' })
   await execFileAsync(node, [prismaCli, 'migrate', 'deploy'], { cwd: root, env: process.env, maxBuffer: 10 * 1024 * 1024 })
   prisma = await createPrismaClient(process.env)
   await prisma.tenant.create({ data: { id: tenantId, name: 'Receiving Browser Tenant' } })
@@ -53,8 +54,12 @@ try {
   await prisma.item.create({ data: { id: 'browser-pr-item', tenantId, sku: 'BROWSER-PR-SKU', name: 'Browser Carton', unit: 'EA', preferredSupplierId: 'browser-supplier', metadata: { defaultWarehouseId: 'browser-warehouse', referencePrice: '4.25' } } })
   await prisma.purchaseOrder.create({ data: { id: 'browser-po', tenantId, status: 'issued', supplierName: 'Browser Supplier', currency: 'CNY', lines: { create: [{ id: 'browser-po-line', itemId: 'browser-item', sku: 'BROWSER-SKU', itemName: 'Browser Item', orderedQuantity: '10', receivedQuantity: '0', unit: 'EA' }] } } })
   await prisma.receivingDocument.create({ data: { id: 'browser-grn', tenantId, documentNumber: 'GRN-BROWSER-001', poId: 'browser-po', supplierName: 'Browser Supplier', status: 'receiving', workflowStatus: 'approved', postingStatus: 'unposted', warehouseId: 'browser-warehouse', receiver: 'Receiving Browser Manager', arrivedAt: new Date(), currency: 'CNY', lines: { create: [{ id: 'browser-grn-line', purchaseOrderLineId: 'browser-po-line', itemId: 'browser-item', sku: 'BROWSER-SKU', itemName: 'Browser Item', acceptedQty: '4', rejectedQty: '0', unit: 'EA', warehouseId: 'browser-warehouse', location: 'A-01', locationKey: 'a-01' }] } } })
+  // An issued PO for the desktop receive-and-post click-through.
+  await prisma.purchaseOrder.create({ data: { id: 'browser-receive-po', tenantId, status: 'issued', receivingBaseStatus: 'issued', supplierId: 'browser-supplier', supplierName: 'Browser Packaging Supply', currency: 'USD', amount: '34', lines: { create: [{ id: 'browser-receive-po-line', itemId: 'browser-item', sku: 'BROWSER-SKU', itemName: 'Browser Item', orderedQuantity: '8', receivedQuantity: '0', unit: 'EA', unitPrice: '4.25', amount: '34' }] } } })
   const { createScmServer } = await import('../server/scm-api.mjs')
-  server = createScmServer()
+  // Production mode refuses the email-only sign-in; the harness answers it
+  // through a real email-link confirm so the browser specs keep working.
+  server = answerLegacySignInThroughEmailLink(createScmServer({ mailer: productionHarnessMailer() }), { prisma, tenantId })
   server.listen(apiPort, '127.0.0.1', () => console.log(`Receiving browser API ready on ${apiPort}`))
 } catch (error) {
   console.error(String(error?.stack || error).replace(/postgres(?:ql)?:\/\/[^\s]+/gi, '[REDACTED_DATABASE_URL]'))

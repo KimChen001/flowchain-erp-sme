@@ -15,6 +15,10 @@ test("production readiness checks a real PostgreSQL connection and tenant", asyn
     FLOWCHAIN_LOCAL_SESSION_SECRET: "postgres-readiness-session-secret-at-least-32-characters",
     FLOWCHAIN_COMMIT_SHA: "0123456789abcdef0123456789abcdef01234567",
     FLOWCHAIN_BRANCH: "ci/production-readiness",
+    FLOWCHAIN_MAIL_PROVIDER: "postmark",
+    POSTMARK_SERVER_TOKEN: `readiness-never-sends-${randomUUID()}`,
+    FLOWCHAIN_MAIL_FROM: "FlowChain <sign-in@flowchain.test>",
+    FLOWCHAIN_PUBLIC_BASE_URL: "https://flowchain.test",
   };
 
   try {

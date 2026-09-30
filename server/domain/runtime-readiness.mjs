@@ -1,4 +1,4 @@
-import { validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
+import { resolveBuildIdentity, validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import { createLocalDurableAttachmentStorage } from "./attachment-storage-provider.mjs";
 import { getPersistenceMode } from "../repositories/adapter-registry.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
@@ -8,9 +8,10 @@ const service = "flowchain-scm-api";
 const text = (value) => String(value ?? "").trim();
 
 export function runtimeBuildIdentity(env = process.env, gitFallback = {}) {
+  const build = resolveBuildIdentity(env);
   return {
-    commitSha: text(env.FLOWCHAIN_COMMIT_SHA) || text(gitFallback.commitSha) || "unknown",
-    branch: text(env.FLOWCHAIN_BRANCH) || text(gitFallback.branch) || "unknown",
+    commitSha: build.commitSha || text(gitFallback.commitSha) || "unknown",
+    branch: build.branch || text(gitFallback.branch) || "unknown",
     runtimeMode: text(env.NODE_ENV).toLowerCase() === "production" ? "production" : "local-dev",
   };
 }

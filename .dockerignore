@@ -17,6 +17,7 @@ docs
 deploy
 tests
 scripts
+!scripts/tenant-provision.mjs
 server/**/*.test.mjs
 *.log
 *.sqlite

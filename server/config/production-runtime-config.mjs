@@ -5,6 +5,26 @@ export const PRODUCTION_CONFIG_ERROR = "FLOWCHAIN_PRODUCTION_CONFIG_INVALID";
 const text = (value) => String(value ?? "").trim();
 const enabled = (value) => text(value).toLowerCase() === "true";
 
+// The release image bakes "unknown" when it is built without the
+// FLOWCHAIN_COMMIT_SHA / FLOWCHAIN_BRANCH build arguments, so "unknown" counts
+// as unset. Render builds from the repository without those arguments but sets
+// RENDER=true, RENDER_GIT_COMMIT and RENDER_GIT_BRANCH on every deploy. The
+// Render values are a fallback only on Render; everywhere else the commit SHA
+// must still be supplied explicitly.
+const unsetBuildValue = (value) => !text(value) || text(value).toLowerCase() === "unknown";
+
+export function resolveBuildIdentity(env = process.env) {
+  const onRender = text(env.RENDER).toLowerCase() === "true";
+  const pick = (explicit, render) => {
+    if (!unsetBuildValue(explicit)) return text(explicit);
+    return onRender && !unsetBuildValue(render) ? text(render) : "";
+  };
+  return {
+    commitSha: pick(env.FLOWCHAIN_COMMIT_SHA, env.RENDER_GIT_COMMIT),
+    branch: pick(env.FLOWCHAIN_BRANCH, env.RENDER_GIT_BRANCH),
+  };
+}
+
 function issue(key, code, message) {
   return { key, code, message };
 }
@@ -22,6 +42,11 @@ function validateIdentityConfiguration(env, issues) {
   } else if (nodeEnv !== "production") {
     issues.push(issue("NODE_ENV", "production_required", "The production deployment profile requires NODE_ENV=production."));
   }
+  // Local development turns on the email-only sign-in and the local mail
+  // outbox helpers, so production refuses it.
+  if (enabled(env.FLOWCHAIN_DEV_LOCAL)) {
+    issues.push(issue("FLOWCHAIN_DEV_LOCAL", "local_development_forbidden", "Local development mode enables the email-only sign-in and must not be used in production."));
+  }
   if (enabled(env.FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS)) {
     issues.push(issue("FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS", "test_identity_forbidden", "Test identity headers must be disabled in production."));
   }
@@ -30,6 +55,42 @@ function validateIdentityConfiguration(env, issues) {
   if (!sessionSecret) issues.push(issue("FLOWCHAIN_LOCAL_SESSION_SECRET", "required", "The local session signing secret is required."));
   else if (PLACEHOLDER_SECRET_PATTERN.test(sessionSecret)) issues.push(issue("FLOWCHAIN_LOCAL_SESSION_SECRET", "placeholder", "The local session signing secret is still a placeholder; generate a random value."));
   else if (sessionSecret.length < 32) issues.push(issue("FLOWCHAIN_LOCAL_SESSION_SECRET", "too_short", "The local session signing secret must contain at least 32 characters."));
+}
+
+// Sign-in links are emailed, so production needs a real provider, its key, a
+// sender, and the public https origin the links point at.
+function validateMailConfiguration(env, issues) {
+  const provider = text(env.FLOWCHAIN_MAIL_PROVIDER).toLowerCase();
+  if (!provider) issues.push(issue("FLOWCHAIN_MAIL_PROVIDER", "required", "A mail provider (postmark or resend) is required to send sign-in links."));
+  else if (provider === "outbox") issues.push(issue("FLOWCHAIN_MAIL_PROVIDER", "outbox_forbidden", "The local mail outbox cannot be used in production."));
+  else if (!["postmark", "resend"].includes(provider)) issues.push(issue("FLOWCHAIN_MAIL_PROVIDER", "unsupported", "FLOWCHAIN_MAIL_PROVIDER must be postmark or resend."));
+  else {
+    const key = provider === "postmark" ? "POSTMARK_SERVER_TOKEN" : "RESEND_API_KEY";
+    const value = text(env[key]);
+    if (!value) issues.push(issue(key, "required", `The ${provider} API key is required.`));
+    else if (PLACEHOLDER_SECRET_PATTERN.test(value)) issues.push(issue(key, "placeholder", `The ${provider} API key is still a placeholder.`));
+  }
+
+  const from = text(env.FLOWCHAIN_MAIL_FROM);
+  if (!from) issues.push(issue("FLOWCHAIN_MAIL_FROM", "required", "The sender address for sign-in emails is required."));
+  else if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$|<[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+>$/.test(from)) issues.push(issue("FLOWCHAIN_MAIL_FROM", "invalid", "The sender must be an email address, optionally as \"Name <address>\"."));
+
+  const baseUrl = text(env.FLOWCHAIN_PUBLIC_BASE_URL);
+  if (!baseUrl) {
+    issues.push(issue("FLOWCHAIN_PUBLIC_BASE_URL", "required", "The public https origin is required to build sign-in links."));
+    return;
+  }
+  let parsed;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    issues.push(issue("FLOWCHAIN_PUBLIC_BASE_URL", "invalid", "The public base URL is not a valid URL."));
+    return;
+  }
+  if (parsed.protocol !== "https:") issues.push(issue("FLOWCHAIN_PUBLIC_BASE_URL", "https_required", "The public base URL must use https."));
+  else if (parsed.pathname.replace(/\/+$/, "") || parsed.search || parsed.hash || parsed.username || parsed.password) {
+    issues.push(issue("FLOWCHAIN_PUBLIC_BASE_URL", "invalid", "The public base URL must be an origin such as https://flowchain.example.com."));
+  }
 }
 
 function validateMobileSyncSecrets(env, issues) {
@@ -103,8 +164,10 @@ export function validateProductionRuntimeConfig(env = process.env) {
 
   validateIdentityConfiguration(env, issues);
 
-  if (!text(env.FLOWCHAIN_COMMIT_SHA)) issues.push(issue("FLOWCHAIN_COMMIT_SHA", "required", "The immutable build commit SHA is required."));
+  const build = resolveBuildIdentity(env);
+  if (!build.commitSha) issues.push(issue("FLOWCHAIN_COMMIT_SHA", "required", "The immutable build commit SHA is required."));
   validateAttachmentConfiguration(env, issues);
+  validateMailConfiguration(env, issues);
   validateMobileSyncSecrets(env, issues);
 
   if (issues.length) throw new ProductionRuntimeConfigError(issues);
@@ -113,7 +176,7 @@ export function validateProductionRuntimeConfig(env = process.env) {
     validated: true,
     persistenceMode: "database",
     attachmentProvider: text(env.FLOWCHAIN_ATTACHMENT_STORAGE_PROVIDER).toLowerCase(),
-    commitSha: text(env.FLOWCHAIN_COMMIT_SHA),
-    branch: text(env.FLOWCHAIN_BRANCH) || "unknown",
+    commitSha: build.commitSha,
+    branch: build.branch || "unknown",
   };
 }

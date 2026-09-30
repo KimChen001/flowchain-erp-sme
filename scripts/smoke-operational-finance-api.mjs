@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
+import { productionHarnessMailEnv, signInThroughEmailLink } from "./test-support/production-harness.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -306,6 +307,7 @@ try {
     FLOWCHAIN_BRANCH: "test/operational-finance-api-smoke",
     FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: "false",
     SCM_API_PORT: String(apiPort),
+    ...productionHarnessMailEnv(),
     NODE_ENV: "production",
   };
   await execFileAsync(node, [prismaCli, "migrate", "deploy"], {
@@ -322,14 +324,7 @@ try {
     FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "false",
   });
   await waitFor(`${base}/api/health`);
-  const disabledLogin = await request(base, "/api/auth/login", {
-    method: "POST",
-    body: {
-      email: "finance-api-specialist@flowchain.invalid",
-      name: "Ignored",
-      company: "Ignored",
-    },
-  });
+  const disabledLogin = await signInThroughEmailLink(base, prisma, { tenantId, email: "finance-api-specialist@flowchain.invalid" });
   const disabledRead = await request(base, "/api/finance/supplier-invoices", {
     token: disabledLogin.token,
   });
@@ -366,30 +361,9 @@ try {
     FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
   });
   await waitFor(`${base}/api/health`);
-  const specialistLogin = await request(base, "/api/auth/login", {
-    method: "POST",
-    body: {
-      email: "finance-api-specialist@flowchain.invalid",
-      name: "Ignored",
-      company: "Ignored",
-    },
-  });
-  const managerLogin = await request(base, "/api/auth/login", {
-    method: "POST",
-    body: {
-      email: "finance-api-manager@flowchain.invalid",
-      name: "Ignored",
-      company: "Ignored",
-    },
-  });
-  const viewerLogin = await request(base, "/api/auth/login", {
-    method: "POST",
-    body: {
-      email: "finance-api-viewer@flowchain.invalid",
-      name: "Ignored",
-      company: "Ignored",
-    },
-  });
+  const specialistLogin = await signInThroughEmailLink(base, prisma, { tenantId, email: "finance-api-specialist@flowchain.invalid" });
+  const managerLogin = await signInThroughEmailLink(base, prisma, { tenantId, email: "finance-api-manager@flowchain.invalid" });
+  const viewerLogin = await signInThroughEmailLink(base, prisma, { tenantId, email: "finance-api-viewer@flowchain.invalid" });
   const invoice = {
     tenantId: "forged-tenant",
     invoiceNumber: "SUP-INV-API-001",

@@ -1,0 +1,247 @@
+# FlowChain on Render: one project with a staging and a production environment.
+# Step-by-step instructions: docs/deploy-render.md. Field reference:
+# https://render.com/docs/blueprint-spec
+#
+# Each environment has one Docker web service built from the repository
+# Dockerfile, one persistent disk for attachments and one managed PostgreSQL 16
+# database, all in the US East (Virginia) region.
+#
+# Single instance only. Attachments are stored on the service's local
+# persistent disk, and a Render disk belongs to exactly one instance, so the
+# service cannot scale horizontally. Do not add `scaling` or raise
+# `numInstances`. A disk also turns off zero-downtime deploys: every deploy
+# stops the old instance before the new one starts (a few seconds of downtime).
+#
+# Liveness: Render polls /api/health (process up, no database access).
+# Readiness: /api/ready returns 200 only when configuration, database, the
+# default tenant and attachment storage are all ready. It stays 503 until
+# `npm run tenant:provision` has created the tenant named in
+# FLOWCHAIN_DEFAULT_TENANT_ID, so it is a smoke-test URL, not the health check.
+#
+# Migrations run in preDeployCommand (`prisma migrate deploy`) on separate
+# compute before the new build goes live; if they fail, the deploy stops and
+# the previous version keeps running. preDeployCommand and persistent disks
+# both need a paid web service plan, which is why neither service uses `free`.
+#
+# Environment variables marked `sync: false` are secrets or per-deployment
+# values: Render asks for them once, when the Blueprint is first created, and
+# never overwrites them afterwards. Nothing secret is stored in this file.
+#
+# FLOWCHAIN_COMMIT_SHA is deliberately not set. Render builds without Docker
+# build arguments, so the image carries FLOWCHAIN_COMMIT_SHA=unknown; the server
+# then uses RENDER_GIT_COMMIT and RENDER_GIT_BRANCH, which Render sets on every
+# deploy (see resolveBuildIdentity in server/config/production-runtime-config.mjs).
+#
+# server/domain/render-blueprint.test.mjs checks this file against the
+# production configuration guard and the US trial capability set.
+
+projects:
+  - name: flowchain
+    environments:
+      - name: staging
+        services:
+          - type: web
+            name: flowchain-staging
+            runtime: docker
+            dockerfilePath: ./Dockerfile
+            region: virginia
+            # 0.5 CPU / 512 MB, the smallest paid plan (legacy name: starter).
+            plan: 0.5c-512mb
+            numInstances: 1
+            branch: main
+            # Deploy each commit on main once its GitHub checks have passed.
+            autoDeployTrigger: checksPass
+            healthCheckPath: /api/health
+            preDeployCommand: npx prisma migrate deploy
+            disk:
+              name: flowchain-staging-attachments
+              # Must equal FLOWCHAIN_UPLOAD_STORAGE_DIR below.
+              mountPath: /var/lib/flowchain/uploads
+              sizeGB: 1
+            envVars:
+              - key: NODE_ENV
+                value: production
+              - key: FLOWCHAIN_DEPLOYMENT_PROFILE
+                value: production
+              # The image listens on 8787; PORT tells Render where to route.
+              - key: PORT
+                value: "8787"
+              - key: SCM_API_PORT
+                value: "8787"
+              - key: DATABASE_URL
+                fromDatabase:
+                  name: flowchain-staging-db
+                  property: connectionString
+              - key: FLOWCHAIN_PERSISTENCE_MODE
+                value: database
+              # The workspace id you will pass to `npm run tenant:provision
+              # -- --tenant-id=...`, for example `flowchain-staging`. Not secret.
+              - key: FLOWCHAIN_DEFAULT_TENANT_ID
+                sync: false
+              # Signs session cookies. Generated once by Render (random,
+              # base64, 256-bit); changing it signs everyone out.
+              - key: FLOWCHAIN_LOCAL_SESSION_SECRET
+                generateValue: true
+              - key: FLOWCHAIN_ATTACHMENT_STORAGE_PROVIDER
+                value: local
+              - key: FLOWCHAIN_UPLOAD_STORAGE_DIR
+                value: /var/lib/flowchain/uploads
+              - key: FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP
+                value: "false"
+              # Production refuses to start if this is true.
+              - key: FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS
+                value: "false"
+              - key: FLOWCHAIN_REQUEST_LOG
+                value: "on"
+              # US trial capability set (deploy/README.md).
+              - key: FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING
+                value: "true"
+              - key: FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING
+                value: "true"
+              - key: FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS
+                value: "true"
+              - key: FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE
+                value: "true"
+              - key: FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS
+                value: "true"
+              # Mobile Sync stays off; enabling it also needs cursor secrets.
+              - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC
+                value: "false"
+              # Render terminates HTTPS at its proxy, which appends the client
+              # address to X-Forwarded-For. The sign-in rate limit reads that
+              # last entry; see docs/deploy-render.md before putting another
+              # proxy (such as Cloudflare's orange cloud) in front.
+              - key: FLOWCHAIN_TRUST_PROXY
+                value: "true"
+              # Email sign-in. Provider is `postmark` or `resend`; fill in only
+              # that provider's key.
+              - key: FLOWCHAIN_MAIL_PROVIDER
+                sync: false
+              - key: POSTMARK_SERVER_TOKEN
+                sync: false
+              - key: RESEND_API_KEY
+                sync: false
+              # Sender address on a domain verified with the mail provider.
+              - key: FLOWCHAIN_MAIL_FROM
+                sync: false
+              # The URL users open, used in sign-in links: the onrender.com URL
+              # for now, https://app.getflowchain.com once the domain is added.
+              - key: FLOWCHAIN_PUBLIC_BASE_URL
+                sync: false
+              # Optional AI assistant key. Leave empty until AI is configured.
+              - key: OPENAI_API_KEY
+                sync: false
+        databases:
+          - name: flowchain-staging-db
+            region: virginia
+            postgresMajorVersion: "16"
+            # 0.1 CPU / 256 MB (legacy name: basic-256mb). Paid, so it has
+            # point-in-time recovery; the free plan has no backups.
+            plan: 0.1c-256mb
+            diskSizeGB: 5
+            databaseName: flowchain
+            user: flowchain
+
+      - name: production
+        services:
+          - type: web
+            name: flowchain-production
+            runtime: docker
+            dockerfilePath: ./Dockerfile
+            region: virginia
+            # 1 CPU / 2 GB (legacy name: standard).
+            plan: 1c-2g
+            numInstances: 1
+            branch: main
+            # Production never deploys on its own: deploy a commit that has
+            # passed staging from the dashboard (Manual Deploy).
+            autoDeployTrigger: "off"
+            healthCheckPath: /api/health
+            preDeployCommand: npx prisma migrate deploy
+            disk:
+              name: flowchain-production-attachments
+              # Must equal FLOWCHAIN_UPLOAD_STORAGE_DIR below.
+              mountPath: /var/lib/flowchain/uploads
+              sizeGB: 10
+            envVars:
+              - key: NODE_ENV
+                value: production
+              - key: FLOWCHAIN_DEPLOYMENT_PROFILE
+                value: production
+              # The image listens on 8787; PORT tells Render where to route.
+              - key: PORT
+                value: "8787"
+              - key: SCM_API_PORT
+                value: "8787"
+              - key: DATABASE_URL
+                fromDatabase:
+                  name: flowchain-production-db
+                  property: connectionString
+              - key: FLOWCHAIN_PERSISTENCE_MODE
+                value: database
+              # The workspace id you will pass to `npm run tenant:provision
+              # -- --tenant-id=...`, for example the customer's short name.
+              - key: FLOWCHAIN_DEFAULT_TENANT_ID
+                sync: false
+              # Signs session cookies. Generated once by Render (random,
+              # base64, 256-bit); changing it signs everyone out.
+              - key: FLOWCHAIN_LOCAL_SESSION_SECRET
+                generateValue: true
+              - key: FLOWCHAIN_ATTACHMENT_STORAGE_PROVIDER
+                value: local
+              - key: FLOWCHAIN_UPLOAD_STORAGE_DIR
+                value: /var/lib/flowchain/uploads
+              - key: FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP
+                value: "false"
+              # Production refuses to start if this is true.
+              - key: FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS
+                value: "false"
+              - key: FLOWCHAIN_REQUEST_LOG
+                value: "on"
+              # US trial capability set (deploy/README.md).
+              - key: FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING
+                value: "true"
+              - key: FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING
+                value: "true"
+              - key: FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS
+                value: "true"
+              - key: FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE
+                value: "true"
+              - key: FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS
+                value: "true"
+              # Mobile Sync stays off; enabling it also needs cursor secrets.
+              - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC
+                value: "false"
+              # Render terminates HTTPS at its proxy, which appends the client
+              # address to X-Forwarded-For. The sign-in rate limit reads that
+              # last entry; see docs/deploy-render.md before putting another
+              # proxy (such as Cloudflare's orange cloud) in front.
+              - key: FLOWCHAIN_TRUST_PROXY
+                value: "true"
+              # Email sign-in. Provider is `postmark` or `resend`; fill in only
+              # that provider's key.
+              - key: FLOWCHAIN_MAIL_PROVIDER
+                sync: false
+              - key: POSTMARK_SERVER_TOKEN
+                sync: false
+              - key: RESEND_API_KEY
+                sync: false
+              # Sender address on a domain verified with the mail provider.
+              - key: FLOWCHAIN_MAIL_FROM
+                sync: false
+              # The URL users open, used in sign-in links: the onrender.com URL
+              # for now, https://app.getflowchain.com once the domain is added.
+              - key: FLOWCHAIN_PUBLIC_BASE_URL
+                sync: false
+              # Optional AI assistant key. Leave empty until AI is configured.
+              - key: OPENAI_API_KEY
+                sync: false
+        databases:
+          - name: flowchain-production-db
+            region: virginia
+            postgresMajorVersion: "16"
+            # 0.5 CPU / 1 GB (legacy name: basic-1gb).
+            plan: 0.5c-1g
+            diskSizeGB: 10
+            databaseName: flowchain
+            user: flowchain

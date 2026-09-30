@@ -45,9 +45,14 @@ test("bank projections remain redacted after historical override and role change
   const amountRole = await createRole("Bank Amount Browser", [...bankRead, "finance.amounts.read"]);
   const partnerRole = await createRole("Bank Partner Browser", [...bankRead, "finance.partner_snapshot.read"]);
   const readRole = await createRole("Bank Read Browser", bankRead);
-  const viewerSession = await login(request, "viewer@example.com");
-  const viewerAuth = headers(viewerSession.token);
-  const assign = async (roleId: string) => json(await request.put(`/api/authorization/users/${viewer.id}/roles`, { headers: auth, data: { roleIds: [roleId] } }));
+  let viewerAuth = headers((await login(request, "viewer@example.com")).token);
+  // A role change ends the viewer's sessions, so each check signs in again.
+  const assign = async (roleId: string) => {
+    const previous = viewerAuth;
+    await json(await request.put(`/api/authorization/users/${viewer.id}/roles`, { headers: auth, data: { roleIds: [roleId] } }));
+    expect((await request.get(`/api/finance/bank-statements/batches/${batch.id}/rows`, { headers: previous })).status()).toBe(401);
+    viewerAuth = headers((await login(request, "viewer@example.com")).token);
+  };
   const readRows = async () => (await json(await request.get(`/api/finance/bank-statements/batches/${batch.id}/rows`, { headers: viewerAuth }))).items[0];
 
   await assign(amountRole.id);

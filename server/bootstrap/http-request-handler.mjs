@@ -24,7 +24,8 @@ export function createHttpRequestHandler({
   distDir,
   buildIdentity,
   readinessCheck,
-  localSessions,
+  sessionStore,
+  emailLinks,
   localSessionSecret,
   domain,
   runtime,
@@ -48,9 +49,9 @@ export function createHttpRequestHandler({
 
     const db = createEmptyDataset({ mode: "user" });
     const repositories = createRepositoryRegistry({ db, env });
-    const identity = resolveRequestIdentity(
+    const identity = await resolveRequestIdentity(
       req,
-      localSessions,
+      sessionStore,
       localSessionSecret,
       env,
     );
@@ -71,7 +72,8 @@ export function createHttpRequestHandler({
       res,
       url,
       identity,
-      localSessions,
+      sessionStore,
+      emailLinks,
       localSessionSecret,
       env,
     })) return;
@@ -86,7 +88,7 @@ export function createHttpRequestHandler({
       db,
       repositories,
       identity,
-      localSessions,
+      sessionStore,
       dataMode: dataMode.mode,
       runtime,
       domain,
