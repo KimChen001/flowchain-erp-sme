@@ -122,6 +122,15 @@ function guardRequiredKeys() {
   throw new Error("The production guard accepted an empty environment.");
 }
 
+// Values the operator types into the Render dashboard, in the shape the
+// production guard checks. Keys and tokens only need to be non-empty.
+const OPERATOR_STAND_INS = Object.freeze({
+  FLOWCHAIN_DEFAULT_TENANT_ID: "tenant-render-blueprint",
+  FLOWCHAIN_MAIL_PROVIDER: "postmark",
+  FLOWCHAIN_MAIL_FROM: "FlowChain <login@example.com>",
+  FLOWCHAIN_PUBLIC_BASE_URL: "https://app.example.com",
+});
+
 // The environment the running service would see, with a stand-in for each
 // value Render generates, links or prompts for.
 function simulatedRenderEnv(service, database) {
@@ -134,7 +143,7 @@ function simulatedRenderEnv(service, database) {
     } else if (variable.generateValue === true) {
       env[variable.key] = randomBytes(32).toString("base64");
     } else if (variable.sync === false) {
-      env[variable.key] = variable.key === "FLOWCHAIN_DEFAULT_TENANT_ID" ? "tenant-render-blueprint" : "operator-supplied";
+      env[variable.key] = OPERATOR_STAND_INS[variable.key] ?? "operator-supplied";
     } else {
       env[variable.key] = variable.value;
     }

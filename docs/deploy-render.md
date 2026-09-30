@@ -212,7 +212,7 @@ Do this after buying `getflowchain.com` and adding it to Cloudflare.
    - Add a record with **Type** `CNAME`, **Name** `app`, **Target** the service's onrender address (for example `flowchain-production.onrender.com`) and **Proxy status** **DNS only** (grey cloud). Render must see the requests directly to verify the domain and issue the certificate.
 3. Back in Render, click **Verify** next to the domain. DNS can take a few minutes. Once it is verified, Render issues and renews the HTTPS certificate automatically and redirects HTTP to HTTPS.
 4. Update `FLOWCHAIN_PUBLIC_BASE_URL` on `flowchain-production` to `https://app.getflowchain.com` on the **Environment** page and save. Saving redeploys the service.
-5. Optional: once the certificate shows as issued, you can switch the Cloudflare record to **Proxied**. Leaving it on **DNS only** is simpler.
+5. Keep the record on **DNS only**. With **Proxied** (orange cloud), every request reaches Render from a Cloudflare address, so the sign-in rate limit (20 link requests per IP per hour, read from the last `X-Forwarded-For` entry) would count all users as a handful of addresses. Proxying needs the app to trust Cloudflare's `CF-Connecting-IP` header first, which it does not do today.
 6. Optional: to make the service answer only on the custom domain, add `renderSubdomainPolicy: disabled` to the production service in `render.yaml`.
 
 For staging you can do the same with `staging.getflowchain.com` on `flowchain-staging`.

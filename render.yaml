@@ -107,8 +107,14 @@ projects:
               # Mobile Sync stays off; enabling it also needs cursor secrets.
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC
                 value: "false"
-              # Email sign-in (being added on a separate branch). Provider is
-              # `postmark` or `resend`; fill in only that provider's key.
+              # Render terminates HTTPS at its proxy, which appends the client
+              # address to X-Forwarded-For. The sign-in rate limit reads that
+              # last entry; see docs/deploy-render.md before putting another
+              # proxy (such as Cloudflare's orange cloud) in front.
+              - key: FLOWCHAIN_TRUST_PROXY
+                value: "true"
+              # Email sign-in. Provider is `postmark` or `resend`; fill in only
+              # that provider's key.
               - key: FLOWCHAIN_MAIL_PROVIDER
                 sync: false
               - key: POSTMARK_SERVER_TOKEN
@@ -206,8 +212,14 @@ projects:
               # Mobile Sync stays off; enabling it also needs cursor secrets.
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC
                 value: "false"
-              # Email sign-in (being added on a separate branch). Provider is
-              # `postmark` or `resend`; fill in only that provider's key.
+              # Render terminates HTTPS at its proxy, which appends the client
+              # address to X-Forwarded-For. The sign-in rate limit reads that
+              # last entry; see docs/deploy-render.md before putting another
+              # proxy (such as Cloudflare's orange cloud) in front.
+              - key: FLOWCHAIN_TRUST_PROXY
+                value: "true"
+              # Email sign-in. Provider is `postmark` or `resend`; fill in only
+              # that provider's key.
               - key: FLOWCHAIN_MAIL_PROVIDER
                 sync: false
               - key: POSTMARK_SERVER_TOKEN
