@@ -1,5 +1,6 @@
 import { SupplierForm } from "./SupplierForm";
 import { supplierCopy } from "./supplierCopy";
+import { SupplierPerformancePanel, supplierPerformanceTabLabel } from "./supplierPerformance";
 import { useEffect, useMemo, useState, useRef } from "react";
 import { Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -136,6 +137,7 @@ export default function SupplierMasterPage({
     [query, setQuery] = useState(""),
     [status, setStatus] = useState(""),
     [category, setCategory] = useState("");
+  const [detailTab, setDetailTab] = useState<"details" | "performance">("details");
   const [selected, setSelected] = useState<Supplier | null>(null),
     [editing, setEditing] = useState<Supplier | null>(null),
     [form, setForm] = useState<any>(empty()),
@@ -186,6 +188,7 @@ export default function SupplierMasterPage({
         `/api/master-data/suppliers/${encodeURIComponent(id)}`,
       );
       const normalizedSupplier = normalizeSupplier(supplier);
+      if (normalizedSupplier.id !== selected?.id) setDetailTab("details");
       setSelected(normalizedSupplier);
       const [rels, catalog] = await Promise.allSettled([
         request<{ relationships: Relationship[] }>(
@@ -348,6 +351,15 @@ export default function SupplierMasterPage({
             </button>
           </div>
         </div>
+        <div role="tablist" aria-label={selected.supplierName} className="flex gap-1 border-b" style={{ borderColor: A.border }}>
+          {(["details", "performance"] as const).map((tab) => (
+            <button key={tab} type="button" role="tab" aria-selected={detailTab === tab} data-testid={`supplier-tab-${tab}`} onClick={() => setDetailTab(tab)}
+              className="px-4 py-2 text-xs font-semibold" style={{ color: detailTab === tab ? A.blue : A.gray1, borderBottom: detailTab === tab ? `2px solid ${A.blue}` : "2px solid transparent" }}>
+              {supplierPerformanceTabLabel(language, tab)}
+            </button>
+          ))}
+        </div>
+        {detailTab === "performance" ? <SupplierPerformancePanel supplierId={selected.id} /> : <>
         <Card className="p-5">
           <h1 className="text-lg font-semibold">{selected.supplierName}</h1>
           <div className="mt-1 text-xs" style={{ color: A.sub }}>
@@ -507,6 +519,7 @@ export default function SupplierMasterPage({
           <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
             {copy("暂无风险或异常")}</div>
         </Card>
+        </>}
       </div>
     );
   return (

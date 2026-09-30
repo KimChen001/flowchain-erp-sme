@@ -24,6 +24,9 @@ if (acceptance !== 0) process.exit(acceptance);
 // The US walkthrough must stay free of Chinese in the English interface.
 const englishWalkthrough = await run("tests/browser/english-walkthrough.spec.ts");
 if (englishWalkthrough !== 0) process.exit(englishWalkthrough);
+// Supplier performance against the original promise, in English.
+const supplierPerformance = await run("tests/browser/supplier-performance-english.spec.ts");
+if (supplierPerformance !== 0) process.exit(supplierPerformance);
 // The assistant answers the walkthrough prompt chips in English from workspace data.
 const englishAssistant = await run("tests/browser/ai-assistant-english.spec.ts");
 if (englishAssistant !== 0) process.exit(englishAssistant);

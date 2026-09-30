@@ -72,14 +72,14 @@ test('walkthrough scenario allocation: per-line demand, partially received POs a
     //   LDM-003  950 (400 + 250 + 300 received) + 800 (PO-011 600 - 300, PO-019 300, PO-022 200)       = 1750
     //   LDM-004  19500 (5000 + 8000 + 4000 + 2500) + 20500 (PO-012 10000 - 4000, PO-013 6000 - 2500,
     //            PO-017 4000, PO-020 7000)                                                                = 40000
-    //   LDM-005  3500 (2000 + 1500) + 2100 (PO-018 1200, PO-023 900)                                     = 5600
+    //   LDM-005  5800 (2000 + 1500 + Northstar's 1000 + 500 + 800) + 2100 (PO-018 1200, PO-023 900)     = 7900
     //   LDM-006  120 (110 + 10; the 10 rejected on GRN-005 are not stock) + 80 (PO-016)                  = 200
     assert.deepEqual(report.details.filter(row => row.sku.startsWith('LDM-00')).map(row => [row.sku, row.availableToPromise, row.stockStatus, row.status]).sort(), [
       ['LDM-001', 63, 'below_safety_stock', 'high'],
       ['LDM-002', 265, 'ok', 'low'],
       ['LDM-003', 1750, 'ok', 'low'],
       ['LDM-004', 40000, 'ok', 'low'],
-      ['LDM-005', 5600, 'ok', 'low'],
+      ['LDM-005', 7900, 'ok', 'low'],
       ['LDM-006', 200, 'ok', 'low'],
     ])
 
