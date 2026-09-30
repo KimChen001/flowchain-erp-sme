@@ -1,5 +1,6 @@
 import { isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import {
   AlertCircle, AlertOctagon, AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck,
@@ -437,6 +438,7 @@ function ReceivingOps({
   const [erpDocOpen, setErpDocOpen] = useState(false);
   const [printGrn, setPrintGrn] = useState<ReceivingDoc | null>(null);
   const [grnInsight, setGrnInsight] = useState<ContextualAIInsight | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     let alive = true;
@@ -468,27 +470,16 @@ function ReceivingOps({
     setShowGrnDetail(true);
   }, [focus?.at, focus?.entityType, focus?.entityId, docs]);
 
-  async function startReceive(grnId: string, poId: string, lines: ReceivingDocLine[]) {
-    const po = orders.find((p) => p.po === poId);
-    const receivedQty = lines.reduce((sum, line) => sum + toNumber(line.receivedQty), 0);
-    const acceptedQty = lines.reduce((sum, line) => sum + toNumber(line.acceptedQty), 0);
-    const rejectedQty = lines.reduce((sum, line) => sum + toNumber(line.rejectedQty), 0);
-    const created = await apiJson<ReceivingDoc>("/api/receiving-docs", {
-      method: "POST",
-      body: JSON.stringify({
-        grn: grnId,
-        po: poId,
-        supplier: po?.supplier,
-        items: receivedQty,
-        passed: acceptedQty,
-        failed: rejectedQty,
-        lines,
-        status: "质检中",
-      }),
-    });
-    setDocs((arr) => [created, ...arr]);
-    setSelectedGrnId(created.grn);
-    setOrders((arr) => arr.map((o) => o.po === poId && o.status === "已发出" ? { ...o, status: "部分到货" } : o));
+  // Receipts are drafted, submitted and posted in PostgreSQL through
+  // /api/procurement/receiving: the receipt form starts from the PO and the
+  // receiving workbench posts. The retired /api/receiving-docs mutations are
+  // not called from here.
+  async function startReceive(_grnId: string, poId: string, _lines: ReceivingDocLine[]) {
+    navigate(`/app/procurement/receiving/new?po=${encodeURIComponent(poId)}`);
+  }
+
+  function openReceivingWorkbench(grn: ReceivingDoc) {
+    onNavigate?.("procurement:receiving-detail", { entityType: "receiving_doc", entityId: grn.grn });
   }
 
   function openQC(grn: ReceivingDoc) {
@@ -499,27 +490,12 @@ function ReceivingOps({
   }
 
   async function signIn(grn: ReceivingDoc) {
-    const updated = await apiJson<ReceivingDoc>(`/api/receiving-docs/${encodeURIComponent(grn.grn)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: "质检中", receiver: "刘建华" }),
-    });
-    setDocs((arr) => arr.map((d) => d.grn === grn.grn ? updated : d));
-    setSelectedGrnId(updated.grn);
-    toast.success(`${grn.grn} 已签收`, { description: "已转入质检流程" });
+    openReceivingWorkbench(grn);
   }
 
-  async function completeQC(grnId: string, lines: ReceivingDocLine[], warehouse: string) {
-    const passed = lines.reduce((sum, line) => sum + toNumber(line.acceptedQty), 0);
-    const failed = lines.reduce((sum, line) => sum + toNumber(line.rejectedQty), 0);
-    const items = lines.reduce((sum, line) => sum + toNumber(line.receivedQty), 0);
-    const updated = await apiJson<ReceivingDoc>(`/api/receiving-docs/${encodeURIComponent(grnId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ lines, passed, failed, items, warehouse, status: failed > 0 ? "异常处理" : "已入库" }),
-    });
-    setDocs((arr) => arr.map((d) => d.grn === grnId ? updated : d));
-    setSelectedGrnId(updated.grn);
-    const refreshedOrders = await apiJson<PurchaseOrder[]>("/api/purchase-orders");
-    setOrders(refreshedOrders);
+  async function completeQC(grnId: string, _lines: ReceivingDocLine[], _warehouse: string) {
+    const grn = docs.find((item) => item.grn === grnId);
+    if (grn) openReceivingWorkbench(grn);
   }
 
   async function resolveException(grnId: string, action: string) {

@@ -13,7 +13,8 @@ import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 //        /api/procurement/orders/:id/submit|approve|issue|cancel
 //        (PurchaseOrderWorkflowActions on the PO detail page),
 //        /api/mobile/purchase-orders/:id/approve (src/modules/mobile)
-//   GRN  /api/receiving-docs (src/modules/receiving/Page.tsx),
+//   GRN  /api/procurement/receiving, /api/procurement/receiving/:id(/submit)
+//        (src/modules/procurement/ReceivingForm.tsx, from the PO detail page),
 //        /api/mobile/receiving/drafts (src/modules/mobile),
 //        /api/procurement/receiving/:id/post (ReceivingPostingWorkbench.tsx)
 // Every step asserts the rows PostgreSQL holds afterwards.
@@ -23,10 +24,8 @@ import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 // steps start from rows seeded directly, standing in for the missing step.
 // Run with: node scripts/run-postgres-test-files.mjs tests/postgres/procurement-db-flow.test.mjs
 
-const LEGACY_RECEIVING_CREATE = 'The desktop receiving page still posts to the retired /api/receiving-docs route (501); only the mobile facade creates receiving drafts in PostgreSQL.'
-
-// Flags a US trial workspace turns on (reports-ranking item 12), plus mobile
-// operations, which hosts the only PostgreSQL receiving draft commands today.
+// Flags a US trial workspace turns on (reports-ranking item 12). Desktop
+// receiving needs only receiving posting; mobile operations stays available.
 const TRIAL_FLAGS = {
   FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: 'true',
   FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: 'true',
@@ -43,6 +42,8 @@ const managerB = { id: 'flow-manager-b', email: 'manager-b@procurement-flow.inva
 const warehouseA = 'flow-wh-a'
 const supplierA = 'flow-supplier-a'
 const itemA = { id: 'flow-item-a', sku: 'FLOW-SKU-A', name: 'Walkthrough Pallet Wrap' }
+// Received on the desktop in step 5a, so its stock stays apart from itemA's.
+const itemB = { id: 'flow-item-b', sku: 'FLOW-SKU-B', name: 'Walkthrough Corner Boards' }
 const needBy = '2026-10-15'
 
 let prisma
@@ -99,11 +100,11 @@ async function seedPurchaseRequest(id, { status, quantity = '10', unitPrice = '1
   } })
 }
 
-async function seedPurchaseOrder(id, { status, quantity = '10', unitPrice = '12.5', tenantId = tenantA } = {}) {
+async function seedPurchaseOrder(id, { status, quantity = '10', unitPrice = '12.5', tenantId = tenantA, item = itemA } = {}) {
   const amount = (Number(quantity) * Number(unitPrice)).toFixed(4)
   await prisma.purchaseOrder.create({ data: {
     id, tenantId, status, supplierId: supplierA, supplierName: 'Walkthrough Packaging Co.', amount, currency: 'USD', version: 0,
-    lines: { create: [{ id: `${id}-L1`, itemId: itemA.id, sku: itemA.sku, itemName: itemA.name, orderedQuantity: quantity, receivedQuantity: '0', unit: 'EA', unitPrice, amount }] },
+    lines: { create: [{ id: `${id}-L1`, itemId: item.id, sku: item.sku, itemName: item.name, orderedQuantity: quantity, receivedQuantity: '0', unit: 'EA', unitPrice, amount }] },
   } })
 }
 
@@ -131,6 +132,7 @@ test.before(async () => {
   await prisma.supplier.create({ data: { id: supplierA, tenantId: tenantA, code: 'SUP-FLOW-A', name: 'Walkthrough Packaging Co.', status: 'active' } })
   await prisma.supplier.create({ data: { id: 'flow-supplier-a2', tenantId: tenantA, code: 'SUP-FLOW-A2', name: 'Second Source Supply', status: 'active' } })
   await prisma.item.create({ data: { id: itemA.id, tenantId: tenantA, sku: itemA.sku, name: itemA.name, unit: 'EA', preferredSupplierId: supplierA, metadata: { defaultWarehouseId: warehouseA, purchasable: true } } })
+  await prisma.item.create({ data: { id: itemB.id, tenantId: tenantA, sku: itemB.sku, name: itemB.name, unit: 'EA', preferredSupplierId: supplierA, metadata: { defaultWarehouseId: warehouseA, purchasable: true } } })
 
   const { createScmServer } = await import('../../server/scm-api.mjs')
   server = createScmServer({ errorLogger: { error: (line) => serverErrors.push(String(line)) } })
@@ -155,7 +157,7 @@ test('the trial capability flags enable receiving posting and the mobile PO and 
   }
 })
 
-test('without mobile operations a trial still approves POs on the desktop but cannot draft a receipt', async () => {
+test('without mobile operations the mobile facade is closed and a trial still approves POs on the desktop', async () => {
   process.env.FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS = 'false'
   try {
     for (const [method, path] of [['GET', '/api/mobile/tasks'], ['POST', '/api/mobile/purchase-orders/any/approve'], ['POST', '/api/mobile/receiving/drafts']]) {
@@ -542,12 +544,159 @@ test('step 4d: a buyer cancels a draft PO; cancelling an approved PO needs a man
   assert.equal(await audits('PurchaseOrder', approvedId), 1, 'refused commands leave no audit row')
 })
 
-test('step 5a: the desktop receiving page creates a GRN (POST /api/receiving-docs)', { todo: LEGACY_RECEIVING_CREATE }, async () => {
-  const id = 'PO-FLOW-DESKTOP-GRN'
-  await seedPurchaseOrder(id, { status: 'approved' })
-  const created = await api(tokens.managerA, 'POST', '/api/receiving-docs', { po: id, items: 2, passed: 2, failed: 0, lines: [{ poLineId: `${id}-L1`, sku: itemA.sku, receivedQty: 2, acceptedQty: 2, rejectedQty: 0 }], status: '质检中' })
-  assert.equal(created.status, 201, describe(created))
-  assert.equal(await prisma.receivingDocument.count({ where: { tenantId: tenantA, poId: id } }), 1)
+test('step 5a: a desktop user receives an issued PO and posts it with mobile operations off (/api/procurement/receiving)', async () => {
+  process.env.FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS = 'false'
+  try {
+    const id = 'PO-FLOW-DESKTOP-GRN'
+    const lineId = `${id}-L1`
+    await seedPurchaseOrder(id, { status: 'issued', item: itemB })
+    const mobile = await api(tokens.managerA, 'POST', '/api/mobile/receiving/drafts', {})
+    assert.equal(mobile.body.code, 'MOBILE_OPERATIONS_CAPABILITY_NOT_AVAILABLE')
+    const receipts = () => prisma.receivingDocument.findMany({ where: { tenantId: tenantA, poId: id }, include: { lines: true }, orderBy: { createdAt: 'asc' } })
+
+    // The receipt form reads the open quantities and the warehouses the user may receive into.
+    const form = await api(tokens.managerA, 'GET', `/api/procurement/purchase-orders/${id}/receivable-lines`)
+    assert.equal(form.status, 200, describe(form))
+    assert.equal(form.body.purchaseOrder.receivable, true)
+    assert.equal(form.body.purchaseOrder.currency, 'USD')
+    assert.deepEqual(form.body.purchaseOrder.lines.map((line) => [line.id, line.remainingQuantity]), [[lineId, '10.0000']])
+    assert.deepEqual(form.body.warehouses.map((warehouse) => warehouse.id), [warehouseA])
+    assert.equal((await api(tokens.managerB, 'GET', `/api/procurement/purchase-orders/${id}/receivable-lines`)).status, 404)
+
+    const line = (overrides = {}) => ({ purchaseOrderLineId: lineId, acceptedQuantity: '3', rejectedQuantity: '1', rejectionReason: 'Crushed carton', location: 'D-01', ...overrides })
+    const createBody = { idempotencyKey: key('desk-create'), poId: id, warehouseId: warehouseA, arrivedAt: '2026-09-28T14:30:00.000Z', lines: [line()] }
+    const refused = [
+      [tokens.buyerA, { ...createBody, idempotencyKey: key('desk-buyer') }, 403, 'AUTHORIZATION_PERMISSION_DENIED'],
+      [tokens.managerA, { ...createBody, idempotencyKey: key('desk-over'), lines: [line({ acceptedQuantity: '11' })] }, 409, 'RECEIVING_OVER_RECEIPT'],
+      [tokens.managerA, { ...createBody, idempotencyKey: key('desk-reason'), lines: [line({ rejectionReason: '' })] }, 422, 'RECEIVING_REJECTION_REASON_REQUIRED'],
+      [tokens.managerA, { ...createBody, idempotencyKey: key('desk-warehouse'), warehouseId: '' }, 422, 'RECEIVING_WAREHOUSE_REQUIRED'],
+      [tokens.managerA, { ...createBody, idempotencyKey: '' }, 422, 'IDEMPOTENCY_KEY_REQUIRED'],
+      [tokens.managerB, { ...createBody, idempotencyKey: key('desk-foreign'), warehouseId: 'flow-wh-b' }, 404, 'PURCHASE_ORDER_NOT_FOUND'],
+    ]
+    for (const [token, body, status, code] of refused) {
+      const result = await api(token, 'POST', '/api/procurement/receiving', body)
+      assert.equal(result.status, status, describe(result))
+      assert.equal(result.body.code, code)
+    }
+    assert.equal((await receipts()).length, 0, 'refused commands write no receipt')
+
+    const created = await api(tokens.managerA, 'POST', '/api/procurement/receiving', createBody)
+    assert.equal(created.status, 201, describe(created))
+    const grnId = created.body.entityId
+    let [grn] = await receipts()
+    assert.equal(grn.id, grnId)
+    assert.equal(grn.workflowStatus, 'draft')
+    assert.equal(grn.postingStatus, 'unposted')
+    assert.equal(grn.version, 0)
+    assert.equal(grn.warehouseId, warehouseA)
+    assert.equal(grn.arrivedAt.toISOString(), '2026-09-28T14:30:00.000Z')
+    assert.equal(grn.currency, 'USD')
+    assert.equal(grn.receiver, managerA.name)
+    assert.deepEqual(grn.lines.map((row) => [row.purchaseOrderLineId, dec(row.acceptedQty), dec(row.rejectedQty), row.location, row.metadata.rejectionReason]), [[lineId, '3', '1', 'D-01', 'Crushed carton']])
+    assert.equal(await audits('ReceivingDocument', grnId), 1)
+    const replay = await api(tokens.managerA, 'POST', '/api/procurement/receiving', createBody)
+    assert.equal(replay.body.entityId, grnId)
+    assert.equal(replay.body.idempotentReplay, true)
+    assert.equal((await receipts()).length, 1)
+    const reused = await api(tokens.managerA, 'POST', '/api/procurement/receiving', { ...createBody, warehouseId: warehouseA, note: 'changed' })
+    assert.equal(reused.status, 409, describe(reused))
+    assert.equal(reused.body.code, 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD')
+
+    // The desktop receiving lists read PostgreSQL for the signed-in tenant.
+    const listed = await api(tokens.managerA, 'GET', '/api/procurement/receiving')
+    assert.equal(listed.status, 200, describe(listed))
+    const listedGrn = listed.body.items.find((row) => row.id === grnId)
+    assert.deepEqual([listedGrn?.poId, listedGrn?.workflowStatus, listedGrn?.acceptedQuantity, listedGrn?.rejectedQuantity, listedGrn?.warehouse?.code], [id, 'draft', '3.0000', '1.0000', 'FLOW-A'])
+    assert.ok((await api(tokens.managerA, 'GET', '/api/receiving-docs')).body.some((row) => row.grn === grnId))
+    assert.ok(!(await api(tokens.managerB, 'GET', '/api/procurement/receiving')).body.items.some((row) => row.id === grnId))
+    assert.ok(!(await api(tokens.managerB, 'GET', '/api/receiving-docs')).body.some((row) => row.grn === grnId))
+
+    // Revise the draft at the version it was loaded with.
+    const reviseBody = { idempotencyKey: key('desk-revise'), expectedVersion: 0, warehouseId: warehouseA, lines: [line({ acceptedQuantity: '4' })] }
+    assert.equal((await api(tokens.managerB, 'PATCH', `/api/procurement/receiving/${grnId}`, reviseBody)).status, 404)
+    const overRevise = await api(tokens.managerA, 'PATCH', `/api/procurement/receiving/${grnId}`, { ...reviseBody, idempotencyKey: key('desk-revise-over'), lines: [line({ acceptedQuantity: '10.0001' })] })
+    assert.equal(overRevise.status, 409, describe(overRevise))
+    assert.equal(overRevise.body.code, 'RECEIVING_OVER_RECEIPT')
+    const revised = await api(tokens.managerA, 'PATCH', `/api/procurement/receiving/${grnId}`, reviseBody)
+    assert.equal(revised.status, 200, describe(revised))
+    assert.equal(revised.body.receivingDocument.version, 1)
+    const revisedReplay = await api(tokens.managerA, 'PATCH', `/api/procurement/receiving/${grnId}`, reviseBody)
+    assert.equal(revisedReplay.body.idempotentReplay, true)
+    const staleRevise = await api(tokens.managerA, 'PATCH', `/api/procurement/receiving/${grnId}`, { ...reviseBody, idempotencyKey: key('desk-revise-stale'), lines: [line({ acceptedQuantity: '2' })] })
+    assert.equal(staleRevise.status, 409, describe(staleRevise))
+    assert.equal(staleRevise.body.code, 'SYNC_VERSION_CONFLICT')
+    ;[grn] = await receipts()
+    assert.equal(grn.version, 1)
+    assert.equal(dec(grn.lines[0].acceptedQty), '4')
+    assert.equal(await audits('ReceivingDocument', grnId), 2)
+
+    // Submit, then post.
+    const staleSubmit = await api(tokens.managerA, 'POST', `/api/procurement/receiving/${grnId}/submit`, { expectedVersion: 0 })
+    assert.equal(staleSubmit.status, 409, describe(staleSubmit))
+    assert.equal(staleSubmit.body.code, 'SYNC_VERSION_CONFLICT')
+    const submitted = await api(tokens.managerA, 'POST', `/api/procurement/receiving/${grnId}/submit`, { expectedVersion: 1 })
+    assert.equal(submitted.status, 200, describe(submitted))
+    assert.equal(submitted.body.receivingDocument.workflowStatus, 'ready_for_receiving')
+    assert.equal((await api(tokens.managerA, 'POST', `/api/procurement/receiving/${grnId}/submit`, { expectedVersion: 1 })).body.idempotentReplay, true)
+    const lateRevise = await api(tokens.managerA, 'PATCH', `/api/procurement/receiving/${grnId}`, { ...reviseBody, idempotencyKey: key('desk-revise-late'), expectedVersion: 2 })
+    assert.equal(lateRevise.status, 409, describe(lateRevise))
+    assert.equal(lateRevise.body.code, 'RECEIVING_IMMUTABLE')
+    assert.equal(await audits('ReceivingDocument', grnId), 3)
+
+    const detail = await api(tokens.managerA, 'GET', `/api/procurement/receiving/${grnId}`)
+    assert.equal(detail.body.availableActions.canPost, true, JSON.stringify(detail.body.availableActions))
+    const postKey = key('desk-post')
+    const stalePost = await api(tokens.managerA, 'POST', `/api/procurement/receiving/${grnId}/post`, { idempotencyKey: key('desk-post-stale'), expectedVersion: 1 })
+    assert.equal(stalePost.status, 409, describe(stalePost))
+    assert.equal((await api(tokens.managerB, 'POST', `/api/procurement/receiving/${grnId}/post`, { idempotencyKey: key('desk-post-foreign'), expectedVersion: 2 })).status, 404)
+    const posted = await api(tokens.managerA, 'POST', `/api/procurement/receiving/${grnId}/post`, { idempotencyKey: postKey, expectedVersion: 2 })
+    assert.equal(posted.status, 200, describe(posted))
+    assert.equal((await api(tokens.managerA, 'POST', `/api/procurement/receiving/${grnId}/post`, { idempotencyKey: postKey, expectedVersion: 2 })).body.idempotentReplay, true)
+    let po = await poRow(id)
+    assert.equal(dec(po.lines[0].receivedQuantity), '4')
+    assert.equal(po.status, 'partially_received')
+    const movements = await prisma.inventoryMovement.findMany({ where: { tenantId: tenantA, relatedGrnId: grnId } })
+    assert.deepEqual(movements.map((row) => [row.movementType, row.sku, row.warehouseId, row.locationKey, dec(row.quantityIn)]), [['receipt_posting', itemB.sku, warehouseA, 'd-01', '4']])
+    const balance = () => prisma.inventoryBalance.findFirst({ where: { tenantId: tenantA, sku: itemB.sku, warehouseId: warehouseA, locationKey: 'd-01' } })
+    assert.equal(dec((await balance()).onHandQuantity), '4', 'rejected quantity stays out of stock')
+    assert.equal(await audits('ReceivingDocument', grnId), 4, 'one audit row each for create, revise, submit and post')
+
+    // A second receipt against the partially received PO closes it.
+    const second = { idempotencyKey: key('desk-second'), poId: id, warehouseId: warehouseA, lines: [line({ acceptedQuantity: '6', rejectedQuantity: '0', rejectionReason: '' })] }
+    const overSecond = await api(tokens.managerA, 'POST', '/api/procurement/receiving', { ...second, idempotencyKey: key('desk-second-over'), lines: [line({ acceptedQuantity: '7', rejectedQuantity: '0' })] })
+    assert.equal(overSecond.status, 409, describe(overSecond))
+    assert.equal(overSecond.body.code, 'RECEIVING_OVER_RECEIPT')
+    assert.equal(overSecond.body.details.remainingQuantity, '6.0000')
+    const secondDraft = await api(tokens.managerA, 'POST', '/api/procurement/receiving', second)
+    assert.equal(secondDraft.status, 201, describe(secondDraft))
+    const secondId = secondDraft.body.entityId
+    const secondSubmit = await api(tokens.managerA, 'POST', `/api/procurement/receiving/${secondId}/submit`, { expectedVersion: 0, idempotencyKey: key('desk-second-submit') })
+    assert.equal(secondSubmit.status, 200, describe(secondSubmit))
+    const secondPost = await api(tokens.managerA, 'POST', `/api/procurement/receiving/${secondId}/post`, { expectedVersion: secondSubmit.body.receivingDocument.version, idempotencyKey: key('desk-second-post') })
+    assert.equal(secondPost.status, 200, describe(secondPost))
+    po = await poRow(id)
+    assert.equal(dec(po.lines[0].receivedQuantity), '10')
+    assert.equal(po.status, 'fully_received')
+    assert.equal(dec((await balance()).onHandQuantity), '10')
+    assert.equal(await audits('ReceivingDocument', secondId), 3)
+    const closed = await api(tokens.managerA, 'POST', '/api/procurement/receiving', { ...second, idempotencyKey: key('desk-closed'), lines: [line({ acceptedQuantity: '1', rejectedQuantity: '0' })] })
+    assert.equal(closed.status, 409, describe(closed))
+    assert.equal(closed.body.code, 'RECEIVING_PURCHASE_ORDER_NOT_RECEIVABLE')
+    assert.equal(await prisma.receivingDocument.count({ where: { tenantId: tenantB } }), 0)
+    assert.equal(await prisma.businessCommandExecution.count({ where: { tenantId: tenantB } }), 0)
+
+    // Receiving posting is the only switch the desktop path needs.
+    process.env.FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING = 'false'
+    try {
+      const off = await api(tokens.managerA, 'POST', '/api/procurement/receiving', { ...second, idempotencyKey: key('desk-off') })
+      assert.equal(off.status, 409, describe(off))
+      assert.equal(off.body.code, 'CAPABILITY_NOT_AVAILABLE')
+    } finally {
+      process.env.FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING = 'true'
+    }
+  } finally {
+    process.env.FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS = 'true'
+  }
 })
 
 let postedGrnId
@@ -596,7 +745,7 @@ test('step 5b: receiving drafts, submits and posts against the approved PO, then
   assert.equal(dec(po.lines[0].receivedQuantity), '10')
   assert.equal(po.status, 'fully_received')
   assert.equal(dec((await prisma.inventoryBalance.findFirst({ where: { tenantId: tenantA, sku: itemA.sku, warehouseId: warehouseA } })).onHandQuantity), '10')
-  assert.equal(await prisma.auditLog.count({ where: { tenantId: tenantA, entityType: 'ReceivingDocument', action: 'receiving_posted' } }), 2)
+  assert.equal(await prisma.auditLog.count({ where: { tenantId: tenantA, entityType: 'ReceivingDocument', entityId: { in: [postedGrnId, restId] }, action: 'receiving_posted' } }), 2)
 })
 
 test('a second tenant cannot see or change the first tenant\'s purchase orders and receipts', async () => {
