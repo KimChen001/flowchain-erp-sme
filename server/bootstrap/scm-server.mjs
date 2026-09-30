@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { ProxyAgent } from "undici";
 import { execFileSync } from "node:child_process";
 import { loadEnv } from "../config/env.mjs";
-import { validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
+import { resolveBuildIdentity, validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import { validateDatabasePersistenceConfig } from "../persistence/persistence-config.mjs";
 import { createHttpRequestHandler } from "./http-request-handler.mjs";
 import { requestLogEnabled, withRequestLogging } from "./request-logging.mjs";
@@ -48,11 +48,12 @@ function gitValue(args, fallback = "unknown") {
     return fallback;
   }
 }
+const resolvedBuild = resolveBuildIdentity(process.env);
 const buildIdentity = Object.freeze({
   commitSha:
-    process.env.FLOWCHAIN_COMMIT_SHA || gitValue(["rev-parse", "HEAD"]),
+    resolvedBuild.commitSha || gitValue(["rev-parse", "HEAD"]),
   branch:
-    process.env.FLOWCHAIN_BRANCH ||
+    resolvedBuild.branch ||
     gitValue(["branch", "--show-current"], "detached"),
   runtimeMode:
     process.env.NODE_ENV === "production" ? "production" : "local-dev",
