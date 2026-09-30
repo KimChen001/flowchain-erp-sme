@@ -114,6 +114,17 @@ export async function handleProcurementWorkflowRoute(ctx) {
       return purchaseOrderCommands(ctx)[command](id, { ...body, idempotencyKey }, ctx);
     });
   }
+  // Revising a promised date on an issued PO keeps the original promise and
+  // records the revision with its reason.
+  const promisedDates = url.pathname.match(/^\/api\/procurement\/orders\/([^/]+)\/promised-dates$/);
+  if (req.method === "POST" && promisedDates) {
+    const id = decodeURIComponent(promisedDates[1]);
+    return respond(ctx, 200, async () => {
+      const body = await commandBody(ctx);
+      const idempotencyKey = body.idempotencyKey || `desktop.promised-dates:${id}:v${body.expectedVersion}:${createHash("sha256").update(JSON.stringify([body.lines || [], String(body.reason || "")])).digest("hex").slice(0, 16)}`;
+      return purchaseOrderCommands(ctx).revisePromisedDates(id, { ...body, idempotencyKey }, ctx);
+    });
+  }
   const rfqAction = url.pathname.match(
     /^\/api\/procurement\/rfqs\/([^/]+)\/(open|cancel)$/,
   );

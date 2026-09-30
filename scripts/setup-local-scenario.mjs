@@ -3,6 +3,7 @@ import { assertLocalDevelopment } from '../server/domain/local-development-contr
 import { localDemoSupplier } from './setup-local-demo.mjs'
 import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../server/domain/procurement-status-authority.mjs'
 import { createReceivingPostingCommandService } from '../server/domain/receiving-posting-command-service.mjs'
+import { recordOriginalPromises } from '../server/domain/purchase-order-promise-dates.mjs'
 import { resolveProvisionedActor } from '../server/domain/pilot-identity.mjs'
 import { authorize } from '../server/auth/authorization-service.mjs'
 import { fileURLToPath } from 'node:url'
@@ -309,6 +310,11 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
           purchaseOrderId: id, itemId: item.id, sku: po.sku, itemName: item.name, orderedQuantity: po.qty, receivedQuantity: 0, unit: item.unit, unitPrice: po.price, amount,
           metadata: { ...metadata, targetWarehouseId: WAREHOUSE, requestedDate: promisedDate, promisedDate },
         })
+      }
+      // An order issued to the supplier keeps its first promised date, as the
+      // issue command records it. Recorded once; a later seed leaves it alone.
+      if (sentStatuses.has(po.status) || po.sent) {
+        await recordOriginalPromises(tx, { purchaseOrder: await tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { lines: true } }) })
       }
 
       let cumulative = 0

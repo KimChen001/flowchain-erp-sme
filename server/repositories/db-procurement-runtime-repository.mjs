@@ -21,6 +21,7 @@ const mapLine = (line = {}) => ({
   unitPrice: decimal(line.unitPrice),
   amount: decimal(line.amount),
   promisedDate: line.metadata?.promisedDate || null,
+  originalPromisedDate: line.originalPromisedDate?.toISOString?.().slice(0, 10) || null,
 });
 
 const mapPo = (row = {}) => ({
