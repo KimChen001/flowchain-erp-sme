@@ -46,13 +46,24 @@ Safeguards:
 
 ## Data directory
 
-Scripts take the data directory from `--data-dir DIR`, else the `SCMS_DATA_DIR`
-environment variable, else the default
-`~/flowchain-data/scms`.
-The layout is:
+Scripts find the SCMS data folder in this order:
+
+1. `--data-dir DIR` (the SCMS folder itself);
+2. `$FLOWCHAIN_DATA_DIR/scms` when `FLOWCHAIN_DATA_DIR` is set (it names the
+   shared `flowchain-data` folder);
+3. `~/flowchain-data/scms`.
+
+Set the variable once per shell, for example (placeholder path):
+
+```sh
+export FLOWCHAIN_DATA_DIR=/path/to/flowchain-data          # bash
+$env:FLOWCHAIN_DATA_DIR = "C:/path/to/flowchain-data"     # PowerShell
+```
+
+The layout under it is:
 
 ```
-<data dir>/
+flowchain-data/scms/
   raw/Supply_Chain_Shipment_Pricing_Dataset.csv   # downloaded, never edited
   derived/                                        # cleaned data (local only)
   outputs/                                        # reports, tables, figures

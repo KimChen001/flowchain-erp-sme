@@ -1,8 +1,12 @@
 """Shared locations for the SCMS analytics scripts.
 
-Data never lives in the repository. Every script resolves the data directory in
-this order: the ``--data-dir`` CLI flag, then the ``SCMS_DATA_DIR`` environment
-variable, then ``DEFAULT_DATA_DIR``.
+Data never lives in the repository. Every script resolves the SCMS data
+directory in this order:
+
+1. the ``--data-dir DIR`` CLI flag (the SCMS folder itself);
+2. ``$FLOWCHAIN_DATA_DIR/scms`` when the ``FLOWCHAIN_DATA_DIR`` environment
+   variable is set (it names the shared ``flowchain-data`` folder);
+3. ``~/flowchain-data/scms`` (``Path.home() / "flowchain-data" / "scms"``).
 """
 
 from __future__ import annotations
@@ -12,8 +16,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_DATA_DIR = Path.home() / "flowchain-data" / "scms"
-ENV_VAR = "SCMS_DATA_DIR"
+ENV_VAR = "FLOWCHAIN_DATA_DIR"
+SUBFOLDER = "scms"
+
+
+def default_data_dir() -> Path:
+    return Path.home() / "flowchain-data" / SUBFOLDER
 
 RAW_FILENAME = "Supply_Chain_Shipment_Pricing_Dataset.csv"
 RAW_SHA256 = "c9ca9530539e7dbf37b377f3fcd383e1faa81c8e41c707e280b20a485508a537"
@@ -69,8 +77,8 @@ def resolve_data_dir(cli_value: str | None = None) -> Path:
         return Path(cli_value).expanduser().resolve()
     env_value = os.environ.get(ENV_VAR)
     if env_value:
-        return Path(env_value).expanduser().resolve()
-    return DEFAULT_DATA_DIR
+        return (Path(env_value).expanduser() / SUBFOLDER).resolve()
+    return default_data_dir()
 
 
 def _refuse_repository_location(root: Path) -> None:
@@ -91,7 +99,7 @@ def parse_args(description: str, extra=None) -> tuple[argparse.Namespace, DataPa
     parser.add_argument(
         "--data-dir",
         default=None,
-        help=f"Data directory (default: ${ENV_VAR} or {DEFAULT_DATA_DIR})",
+        help=f"SCMS data directory (default: ${ENV_VAR}/{SUBFOLDER}, else ~/flowchain-data/{SUBFOLDER})",
     )
     if extra is not None:
         extra(parser)
