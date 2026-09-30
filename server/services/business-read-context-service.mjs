@@ -92,7 +92,7 @@ export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAUL
 
   const documents = [
     ...context.purchaseRequests.map(row => ({ type: '采购申请', entityType: 'purchase_request', id: row.id, status: row.status, supplier: row.lines?.[0]?.supplierSnapshot?.supplierName || row.lines?.[0]?.supplierId || '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/requests/${encodeURIComponent(row.id)}` })),
-    ...context.rfqs.map(row => ({ type: '询价', entityType: 'rfq', id: row.id, status: row.status, supplier: '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/rfqs/${encodeURIComponent(row.id)}` })),
+    ...context.rfqs.map(row => ({ type: '询价', entityType: 'rfq', id: row.id, status: row.status, supplier: '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/rfq/${encodeURIComponent(row.id)}` })),
     ...context.purchaseOrders.map(row => ({ type: '采购订单', entityType: 'purchase_order', id: row.id, status: row.status, supplier: row.supplierSnapshot?.supplierName || row.supplierId || '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/orders/${encodeURIComponent(row.id)}` })),
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10)
   const today = tenantCalendarDay(now, timeZone)

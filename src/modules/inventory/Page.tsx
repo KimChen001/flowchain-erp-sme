@@ -3,6 +3,9 @@ import { useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, RefreshCw } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
+import { formatDateTimeInTimeZone, formatQuantity } from "../../lib/format";
+import { movementTypeLabel } from "../../i18n/statusLabels";
+import { useI18n } from "../../i18n/I18n";
 import { A, Card, Chip } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -52,6 +55,9 @@ type Serial = {
 };
 type Movement = {
   movementId?: string;
+  movementType?: string;
+  sourceDocumentId?: string;
+  relatedGrnId?: string;
   sku?: string;
   itemName?: string;
   warehouseId?: string;
@@ -135,6 +141,7 @@ export default function InventoryPage({
 }) {
   const view = endpointFor[initialView] ? initialView : "empty";
   const warehouseName = useWarehouseNames();
+  const { language, locale, timezone } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState<any[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -347,20 +354,16 @@ export default function InventoryPage({
                       </div>
                     </td>
                     <td className="px-4 py-3 tabular-nums">
-                      {view === "overview"
-                        ? item.onHandQuantity || "0.0000"
-                        : Number(item.onHandQuantity || 0)}{" "}
+                      {formatQuantity(item.onHandQuantity ?? "0")}{" "}
                       {item.unit || ""}
                     </td>
                     <td className="px-4 py-3 tabular-nums">
-                      {view === "overview"
-                        ? item.reservedQuantity || "0.0000"
-                        : Number(item.reservedQuantity || 0)}
+                      {formatQuantity(item.reservedQuantity ?? "0")}
                     </td>
                     <td className="px-4 py-3 tabular-nums">
                       {view === "overview"
-                        ? item.availableQuantity || "0.0000"
-                        : quantity(item)}
+                        ? formatQuantity(item.availableQuantity ?? "0")
+                        : formatQuantity(quantity(item))}
                     </td>
                     <td className="px-4 py-3 tabular-nums">
                       {Number(item.safetyStock || 0)} / {reorder(item)}
@@ -424,7 +427,8 @@ export default function InventoryPage({
       {state === "ready" && visible.length > 0 && view === "movements" && (
         <SimpleTable
           headers={[
-            "移动单号",
+            "移动类型",
+            "来源单据",
             "SKU",
             "仓库 / 库位",
             "入库",
@@ -433,15 +437,17 @@ export default function InventoryPage({
             "状态",
           ]}
           rows={(visible as Movement[]).map((row) => [
-            row.movementId,
+            // The movement's own id is an internal UUID; show what moved it instead.
+            movementTypeLabel(row.movementType || "", language),
+            row.relatedGrnId || (row.sourceDocumentId && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(row.sourceDocumentId) ? row.sourceDocumentId : "—"),
             <EntityLink kind="item" id={row.sku}>
               {row.sku}
             </EntityLink>,
             `${warehouseName(row.warehouseId) || "—"} / ${row.location || "—"}`,
-            row.quantityIn,
-            row.quantityOut,
-            row.date,
-            row.status,
+            formatQuantity(row.quantityIn),
+            formatQuantity(row.quantityOut),
+            formatDateTimeInTimeZone(row.date, locale, timezone),
+            copy(row.status || "—"),
           ])}
         />
       )}
@@ -474,21 +480,17 @@ export default function InventoryPage({
           <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
             <span>
               {copy("在手")}:
-              {view === "overview"
-                ? selected.onHandQuantity || "0.0000"
-                : Number(selected.onHandQuantity || 0)}
+              {formatQuantity(selected.onHandQuantity ?? "0")}
             </span>
             <span>
               {copy("预留")}:
-              {view === "overview"
-                ? selected.reservedQuantity || "0.0000"
-                : Number(selected.reservedQuantity || 0)}
+              {formatQuantity(selected.reservedQuantity ?? "0")}
             </span>
             <span>
               {copy("可用")}:
               {view === "overview"
-                ? selected.availableQuantity || "0.0000"
-                : quantity(selected)}
+                ? formatQuantity(selected.availableQuantity ?? "0")
+                : formatQuantity(quantity(selected))}
             </span>
           </div>
         </Card>

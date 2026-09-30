@@ -134,7 +134,7 @@ const operationalEnglish: Record<string, string> = {
   '当前没有库存异常': 'No inventory exceptions', '当前可见库存记录未产生需要处理的异常。': 'Visible inventory records have no exceptions that require action.',
   '当前工作区暂无库存记录': 'No inventory records in this workspace', '页面不会用固定 SKU、批次、序列号或移动记录补足空数据。': 'The page does not fill empty results with fixed SKUs, lots, serials, or movements.',
   'SKU / 物料': 'SKU / item', '仓库 / 库位': 'Warehouse / location', '在手量': 'On hand', '预留量': 'Reserved', '可用量': 'Available', '安全库存 / 再订货点': 'Safety stock / reorder point', '库存详情': 'Inventory details', '在手': 'On hand', '预留': 'Reserved', '可用': 'Available',
-  '批次': 'Lot', '数量': 'Quantity', '序列号': 'Serial number', '移动单号': 'Movement number', '入库': 'Inbound', '出库': 'Outbound', '日期': 'Date', '异常单号': 'Exception number', '数量影响': 'Quantity impact',
+  '批次': 'Lot', '数量': 'Quantity', '序列号': 'Serial number', '移动单号': 'Movement number', '移动类型': 'Movement type', '来源单据': 'Source document', '入库': 'Inbound', '出库': 'Outbound', '日期': 'Date', '异常单号': 'Exception number', '数量影响': 'Quantity impact',
 };
 export function workspaceCopy(label: string, language: string): string {
   return language === 'en-US'

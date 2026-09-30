@@ -82,3 +82,8 @@ test('changes today count documents updated on the tenant day, not the UTC day',
   assert.equal(buildHomeOverview(context, { now: new Date('2026-07-14T05:00:00Z'), timeZone: 'America/New_York' }).todayChanges, 0)
   assert.equal(buildHomeOverview(context, { now: new Date('2026-07-14T05:00:00Z'), timeZone: 'UTC' }).todayChanges, 2)
 })
+
+test('recent RFQs link to the RFQ detail route, which is /app/procurement/rfq/:id', () => {
+  const overview = buildHomeOverview({ purchaseRequests: [], purchaseOrders: [], rfqs: [{ id: 'RFQ-1', status: 'open', updatedAt: '2026-07-14T02:00:00.000Z' }], dataLimitations: [] })
+  assert.equal(overview.recentDocuments[0].canonicalRoute, '/app/procurement/rfq/RFQ-1')
+})

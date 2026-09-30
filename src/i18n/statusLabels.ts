@@ -41,6 +41,36 @@ const statusCodes: Record<string, [string, string]> = {
   on_hold: ["On hold", "已暂停"],
 };
 
+// Inventory movement types, as the ledger records them.
+const movementTypes: Record<string, [string, string]> = {
+  receipt_posting: ["Goods receipt", "采购入库"],
+  receipt: ["Goods receipt", "采购入库"],
+  receipt_reversal: ["Receipt reversal", "收货冲销"],
+  shipment_posting: ["Shipment", "销售出库"],
+  outbound_posting: ["Shipment", "销售出库"],
+  shipment_reversal: ["Shipment reversal", "出库冲销"],
+  stock_transfer_in: ["Transfer in", "调拨入库"],
+  stock_transfer_out: ["Transfer out", "调拨出库"],
+  stock_transfer_reversal_in: ["Transfer reversal in", "调拨冲销入库"],
+  stock_transfer_reversal_out: ["Transfer reversal out", "调拨冲销出库"],
+  inventory_adjustment: ["Inventory adjustment", "库存调整"],
+  inventory_adjustment_reversal: ["Adjustment reversal", "调整冲销"],
+  adjustment: ["Inventory adjustment", "库存调整"],
+  cycle_count_adjustment: ["Cycle count adjustment", "盘点调整"],
+  opening_balance: ["Opening balance", "期初余额"],
+  supplier_return_out: ["Supplier return", "供应商退货"],
+  supplier_return_reversal: ["Supplier return reversal", "供应商退货冲销"],
+  customer_return_quarantine_in: ["Customer return to quarantine", "客户退货入隔离"],
+  customer_return_receipt_reversal: ["Customer return reversal", "客户退货冲销"],
+  quarantine_release_out: ["Quarantine release out", "隔离释放出"],
+  quarantine_release_available_in: ["Quarantine release in", "隔离释放入可用"],
+};
+
+export function movementTypeLabel(code: string, language: string): string {
+  const pair = movementTypes[String(code || "").trim()];
+  return pair ? pair[language === "en-US" ? 0 : 1] : language === "en-US" ? "Inventory movement" : "库存移动";
+}
+
 export function statusCodeLabel(code: string, language: string): string | undefined {
   const pair = statusCodes[String(code || "").trim()];
   return pair ? pair[language === "en-US" ? 0 : 1] : undefined;

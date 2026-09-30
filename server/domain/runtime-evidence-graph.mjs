@@ -22,7 +22,7 @@ function idOf(type, row) {
 
 function routeFor(type, id) {
   const key = encodeURIComponent(id)
-  return ({ item: '/app/master-data/items', supplier: '/app/master-data/suppliers', inventory_item: '/app/inventory/items', sales_order: '/app/sales/orders', purchase_request: '/app/procurement/requests', rfq: '/app/procurement/rfqs', purchase_order: '/app/procurement/orders', receiving_doc: '/app/procurement/receiving', supplier_invoice: '/app/finance/invoices' })[type] + `/${key}`
+  return ({ item: '/app/master-data/items', supplier: '/app/master-data/suppliers', inventory_item: '/app/inventory/items', sales_order: '/app/sales/orders', purchase_request: '/app/procurement/requests', rfq: '/app/procurement/rfq', purchase_order: '/app/procurement/orders', receiving_doc: '/app/procurement/receiving', supplier_invoice: '/app/finance/invoices' })[type] + `/${key}`
 }
 
 function labelOf(type, row, id) {

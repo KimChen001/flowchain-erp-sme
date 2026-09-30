@@ -202,3 +202,45 @@ test("frozen and unavailable modules have no entry point and show Capability una
   expect(links.filter((href) => /\/app\/(finance\/settlement|finance\/reconciliation|mobile\/settlements|forecast|imports)\b/.test(href))).toEqual([]);
   await expect(page.locator("aside, nav").first()).not.toContainText(/Settlement|Cashbook|Forecast|MRP|Imports/);
 });
+
+// The short English check of the walkthrough pages: no Chinese, no stored
+// status or type codes, no raw UUIDs and no unformatted money.
+const RAW_UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
+// A database decimal such as 2460.0000, or an amount label with a bare number.
+const UNFORMATTED_MONEY = /\b\d+\.\d{4}\b|\b(amount|total|price|value)\s+\d{3,}(\.\d+)?$/i;
+const RAW_FLAG = /^(true|false|null|undefined|NaN)$|\bisOpen\b/;
+
+for (const path of [
+  "/app/overview/risks",
+  "/app/procurement/requests",
+  "/app/procurement/orders",
+  "/app/procurement/orders/LOCAL-DEMO-PO-001",
+  "/app/procurement/receiving",
+  "/app/procurement/invoices",
+  "/app/procurement/three-way-match",
+  "/app/inventory/stock",
+  "/app/inventory/movements",
+  "/app/reports/overview",
+  "/app/finance/overview",
+]) {
+  test(`English check of ${path}: no raw codes, ids or unformatted money`, async ({ page }) => {
+    await signIn(page);
+    await page.goto(path);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByText(/^(Checking access|Loading\b.*)$/)).toHaveCount(0);
+    const cells = await page.locator("main").first().evaluate((root) => {
+      const texts: string[] = [];
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const value = (node.textContent || "").trim();
+        if (value && (node.parentElement?.offsetParent !== null)) texts.push(value);
+      }
+      return texts;
+    });
+    const lines = [...new Set([...(await page.locator("main").first().innerText()).split(/\n+/), ...cells].map((line) => line.trim()).filter(Boolean))];
+    const problems = lines.filter((line) =>
+      (CJK.test(line) && !ALLOWED.some((allowed) => allowed.test(line))) ||
+      RAW_CODE_LINE.test(line) || RAW_UUID.test(line) || UNFORMATTED_MONEY.test(line) || RAW_FLAG.test(line));
+    expect(problems).toEqual([]);
+  });
+}
