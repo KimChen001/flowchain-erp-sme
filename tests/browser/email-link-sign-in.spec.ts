@@ -83,7 +83,8 @@ test("a person signs in through the emailed link, and the link works only once",
   expect(await confirmPage.evaluate(() => localStorage.getItem("flowchain:auth-token"))).toBeNull();
 
   await button.click();
-  await expect(confirmPage).toHaveURL(/\/app\/overview$/);
+  // The app opens its home route (the overview, or its default view).
+  await expect(confirmPage).toHaveURL(/\/app\/overview(\/[a-z-]+)?$/);
   const stored = await confirmPage.evaluate(() => ({ token: localStorage.getItem("flowchain:auth-token"), user: JSON.parse(localStorage.getItem("flowchain:current-user") || "null") }));
   expect(stored.user.email).toBe(email);
   const me = await request.get("/api/auth/me", { headers: { Authorization: `Bearer ${stored.token}` } });
