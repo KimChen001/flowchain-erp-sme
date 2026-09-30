@@ -45,36 +45,37 @@ const PRECISION = 'LOCAL-DEMO-SUP-007'
 
 // Purchase orders. created and promised are day offsets from the seed day.
 // Receipts: [receipt number, arrival day, local arrival time, accepted, rejected, rejection reason].
-// Invoice: [invoice number, invoice day, unit price billed, entered sales tax], due 30 days later (Net 30).
+// Invoice: [invoice number, invoice day, unit price billed, entered sales tax, status], due 30 days later
+// (Net 30). Every status is a committed one; only INV-001 carries a variance.
 const S = PURCHASE_ORDER_STATUS
 const purchaseOrders = [
   { n: 1, supplier: ACME, sku: 'LDM-001', qty: 50, price: 100, status: S.PARTIALLY_RECEIVED, created: -21, promised: -4, priority: 'medium', request: true,
-    receipts: [[1, -6, '10:20', 20, 0]], invoice: [1, -5, 110, 181.5] },
+    receipts: [[1, -6, '10:20', 20, 0]], invoice: [1, -5, 110, 181.5, 'exception'] },
   { n: 2, supplier: ACME, sku: 'LDM-002', qty: 40, price: 100, status: S.ISSUED, created: -10, promised: 4, priority: 'high', request: true },
   { n: 3, supplier: SUMMIT, sku: 'LDM-003', qty: 400, price: 12.5, status: S.FULLY_RECEIVED, created: -150, promised: -136,
-    receipts: [[2, -136, '09:10', 400, 0]], invoice: [2, -135, 12.5] },
+    receipts: [[2, -136, '09:10', 400, 0]], invoice: [2, -135, 12.5, 0, 'approved'] },
   { n: 4, supplier: ATLAS, sku: 'LDM-004', qty: 5000, price: 0.4, status: S.FULLY_RECEIVED, created: -120, promised: -106,
-    receipts: [[3, -103, '14:45', 5000, 0]], invoice: [3, -102, 0.4] },
+    receipts: [[3, -103, '14:45', 5000, 0]], invoice: [3, -102, 0.4, 0, 'approved'] },
   { n: 5, supplier: NORTHSTAR, sku: 'LDM-002', qty: 60, price: 64, status: S.FULLY_RECEIVED, created: -95, promised: -80,
-    receipts: [[4, -82, '11:05', 60, 0]], invoice: [4, -80, 64] },
+    receipts: [[4, -82, '11:05', 60, 0]], invoice: [4, -80, 64, 0, 'approved'] },
   { n: 6, supplier: EVERGREEN, sku: 'LDM-006', qty: 120, price: 18, status: S.FULLY_RECEIVED, created: -70, promised: -55,
-    receipts: [[5, -51, '13:30', 110, 10, 'Damaged roll cores'], [6, -44, '10:00', 10, 0]], invoice: [5, -44, 18] },
+    receipts: [[5, -51, '13:30', 110, 10, 'Damaged roll cores'], [6, -44, '10:00', 10, 0]], invoice: [5, -44, 18, 0, 'matched'] },
   { n: 7, supplier: PRECISION, sku: 'LDM-004', qty: 8000, price: 0.38, status: S.FULLY_RECEIVED, created: -60, promised: -45,
-    receipts: [[7, -45, '08:40', 8000, 0]], invoice: [6, -43, 0.38] },
+    receipts: [[7, -45, '08:40', 8000, 0]], invoice: [6, -43, 0.38, 0, 'approved'] },
   { n: 8, supplier: ACME, sku: 'LDM-005', qty: 2000, price: 1.85, status: S.FULLY_RECEIVED, created: -40, promised: -25,
-    receipts: [[8, -25, '15:15', 2000, 0]], invoice: [7, -24, 1.85] },
+    receipts: [[8, -25, '15:15', 2000, 0]], invoice: [7, -24, 1.85, 0, 'matched'] },
   { n: 9, supplier: NORTHSTAR, sku: 'LDM-005', qty: 1500, price: 1.8, status: S.FULLY_RECEIVED, created: -35, promised: -20,
-    receipts: [[9, -22, '09:50', 1500, 0]], invoice: [8, -20, 1.92] },
+    receipts: [[9, -22, '09:50', 1500, 0]], invoice: [8, -20, 1.8, 0, 'submitted'] },
   { n: 10, supplier: SUMMIT, sku: 'LDM-003', qty: 250, price: 12.75, status: S.FULLY_RECEIVED, created: -30, promised: -16,
-    receipts: [[10, -14, '16:10', 250, 0]], invoice: [9, -13, 12.75] },
+    receipts: [[10, -14, '16:10', 250, 0]], invoice: [9, -13, 12.75, 0, 'submitted'] },
   { n: 11, supplier: EVERGREEN, sku: 'LDM-003', qty: 600, price: 12.2, status: S.PARTIALLY_RECEIVED, created: -25, promised: -8, priority: 'high',
-    receipts: [[11, -8, '11:40', 300, 0]], invoice: [10, -7, 12.2] },
+    receipts: [[11, -8, '11:40', 300, 0]], invoice: [10, -7, 12.2, 0, 'submitted'] },
   { n: 12, supplier: PRECISION, sku: 'LDM-004', qty: 10000, price: 0.39, status: S.PARTIALLY_RECEIVED, created: -18, promised: -3, priority: 'high',
     receipts: [[12, -2, '14:05', 4000, 500, 'Wrong thread pitch']] },
   { n: 13, supplier: ATLAS, sku: 'LDM-004', qty: 6000, price: 0.41, status: S.PARTIALLY_RECEIVED, created: -14, promised: 3,
     receipts: [[13, -1, '10:35', 2500, 0]] },
   { n: 14, supplier: NORTHSTAR, sku: 'LDM-002', qty: 80, price: 63.5, status: S.PARTIALLY_RECEIVED, created: -20, promised: -6, priority: 'high',
-    receipts: [[14, -10, '13:00', 30, 5, 'Missing calibration labels']], invoice: [11, -9, 63.5] },
+    receipts: [[14, -10, '13:00', 30, 5, 'Missing calibration labels']], invoice: [11, -9, 63.5, 0, 'submitted'] },
   { n: 15, supplier: ACME, sku: 'LDM-001', qty: 40, price: 98, status: S.ISSUED, created: -16, promised: -2, priority: 'high' },
   { n: 16, supplier: SUMMIT, sku: 'LDM-006', qty: 80, price: 17.5, status: S.ISSUED, created: -12, promised: -7 },
   { n: 17, supplier: ATLAS, sku: 'LDM-004', qty: 4000, price: 0.4, status: S.ISSUED, created: -6, promised: 8 },
@@ -155,6 +156,8 @@ export function scenarioCalendar(asOf, timeZone) {
     },
   }
 }
+
+const INVOICE_MATCH_STATUS = Object.freeze({ submitted: 'pending', matched: 'matched', approved: 'matched', exception: 'variance' })
 
 // The seed day. Before any receipt is posted it is the requested day (or today);
 // afterwards it is the day stored on the posted receipts, because their
@@ -340,14 +343,14 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
     await service.postReceiving({ receivingDocumentId: receipt.id, idempotencyKey: `local-walkthrough-scenario:post:${receipt.id}`, expectedVersion: 0 }, { identity: receiver })
   }
 
-  // 3. Supplier invoices for the posted receipts, submitted for matching.
+  // 3. Supplier invoices for the posted receipts, in committed statuses.
   await prisma.$transaction(async tx => {
     const put = putWith(tx)
     for (const po of purchaseOrders.filter((row) => row.invoice)) {
       const id = `LOCAL-DEMO-PO-${pad(po.n)}`
       const item = items[po.sku]
       const supplierName = localDemoSupplier(po.supplier).name
-      const [number, invoiced, billedPrice, tax = 0] = po.invoice
+      const [number, invoiced, billedPrice, tax = 0, status] = po.invoice
       const invoiceId = `LOCAL-DEMO-INV-${pad(number)}`
       // Each invoice line bills one receipt's accepted quantity. The variance is
       // what a three-way match run computes: the tax-exclusive line amount less
@@ -364,7 +367,8 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
       const written = await put('supplierInvoice', invoiceId, {
         tenantId, invoiceNumber: invoiceId, supplierId: po.supplier, supplierName, relatedPoId: id, relatedGrnId: lines[0].grnId,
         invoiceDate: day(invoiced), dueDate: day(invoiced + 30), subtotalAmount: subtotal, enteredTaxAmount: enteredTax, totalAmount: money(subtotal + enteredTax), amount: money(subtotal + enteredTax),
-        currency: 'USD', status: 'submitted', matchStatus: variance ? 'variance' : 'pending', varianceAmount: variance, metadata: invoiceMetadata, createdAt: at(invoiced, '15:00'),
+        currency: 'USD', status, matchStatus: INVOICE_MATCH_STATUS[status], varianceAmount: variance, submittedAt: at(invoiced, '15:00'),
+        approvedAt: status === 'approved' ? at(invoiced + 3, '11:00') : null, metadata: invoiceMetadata, createdAt: at(invoiced, '15:00'),
       })
       if (!written) continue
       for (const [index, line] of lines.entries()) {

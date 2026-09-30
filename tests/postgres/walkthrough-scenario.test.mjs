@@ -10,6 +10,9 @@ const timeZone = 'America/New_York'
 process.env.FLOWCHAIN_DEFAULT_TENANT_ID = tenantId
 const { createPrismaClient } = await import('../../server/persistence/prisma-client.mjs')
 const { backfillTenantAuthorization } = await import('../../server/auth/authorization-backfill.mjs')
+const { createDatabaseRepositoryRegistry } = await import('../../server/repositories/adapter-registry.mjs')
+const { readBusinessContext } = await import('../../server/services/runtime-business-read-service.mjs')
+const { buildRuntimeGovernedReport } = await import('../../server/domain/runtime-report-read-model.mjs')
 const { seedLocalDemo } = await import('../../scripts/setup-local-demo.mjs')
 const { seedLocalScenario } = await import('../../scripts/setup-local-scenario.mjs')
 const { buildOpenPurchaseOrdersReport } = await import('../../server/domain/open-purchase-orders-report.mjs')
@@ -190,6 +193,21 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
     assert.equal(Number(inv001.totalAmount), 2381.5)
     assert.equal(inv001.metadata.varianceType, 'price_variance')
     assert.deepEqual(inv001.lines.map((line) => [line.metadata.varianceType, line.metadata.varianceAmount]), [['price_variance', 200]])
+    // Invoices are committed ones, as the reports count them: a mix of submitted,
+    // matched and approved, with the price variance as the one exception.
+    const committed = ['submitted', 'matching', 'exception', 'matched', 'approved', 'held']
+    assert.ok(invoices.every((invoice) => committed.includes(invoice.status)), invoices.map((invoice) => invoice.status).join(', '))
+    assert.deepEqual([...new Set(invoices.map((invoice) => invoice.status))].sort(), ['approved', 'exception', 'matched', 'submitted'])
+    assert.deepEqual(invoices.filter((invoice) => invoice.status === 'exception').map((invoice) => invoice.id), ['LOCAL-DEMO-INV-001'])
+    assert.deepEqual(invoices.filter((invoice) => Number(invoice.varianceAmount) !== 0).map((invoice) => invoice.id), ['LOCAL-DEMO-INV-001'])
+
+    // The reports read non-zero USD purchase order spend and invoice totals.
+    const context = await readBusinessContext({ repositories: createDatabaseRepositoryRegistry({ env, prisma }), identity: { tenantId } })
+    for (const subject of ['overview', 'finance']) {
+      const { dataScope } = buildRuntimeGovernedReport(context, { subject })
+      assert.deepEqual(dataScope.currencies, ['USD'], `${subject} report currency`)
+      assert.ok(dataScope.currencyAmounts[0].amount > 0, `${subject} report amount is not zero`)
+    }
 
     // Stored business values are English codes and names, not Chinese values.
     const stored = JSON.stringify({ purchaseOrders, receipts, invoices, requests: await prisma.purchaseRequest.findMany({ where: { id: prefix }, include: { lines: true } }), salesOrders: await prisma.salesOrder.findMany({ where: { id: prefix }, include: { lines: true } }) })
