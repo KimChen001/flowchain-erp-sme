@@ -659,8 +659,9 @@ test("legacy root preserves URL semantics while retired children stay truthful",
 
   await page.goto("/app/imports/failed");
   await expect(page).toHaveURL(/\/app\/imports\/failed$/);
-  await expect(page.getByTestId("legacy-route-unavailable")).toBeVisible();
-  await expect(page.getByText("旧页面已停用", { exact: true })).toBeVisible();
+  // The retired imports pages are an unavailable module.
+  await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
+  await expect(page.getByText("能力暂不可用", { exact: true })).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(/\/app\/universal-intake\?source=old#batch$/);
 });

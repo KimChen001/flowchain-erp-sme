@@ -1,3 +1,4 @@
+import { FROZEN_PRODUCT_ROUTE_IDS } from "../../../shared/unavailable-product-routes.mjs";
 import type {
   AppRouteDefinition,
   GovernedAppRouteDefinition,
@@ -51,15 +52,15 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     inventory:transfer-detail
     finance finance:overview finance:invoices finance:payables
     finance:customer-invoices finance:receivables finance:aging
-    finance:customer-credit-notes finance:credits finance:reconciliation
-    finance:bank-statements finance:bank-reconciliation finance:settlement
+    finance:customer-credit-notes finance:credits
+    finance:bank-statements finance:bank-reconciliation
     finance:three-way-match finance:invoice-detail
     finance:customer-invoice-new finance:customer-invoice-detail
-    finance:match-detail finance:reconciliation-detail
-    finance:settlement-detail finance:credit-memo-detail
+    finance:match-detail
+    finance:credit-memo-detail
     mobile-operations mobile-operations:tasks mobile-operations:receiving
     mobile-operations:task mobile-operations:po-detail
-    mobile-operations:receiving-detail mobile-operations:settlement-detail
+    mobile-operations:receiving-detail
     settings:custom-fields
     universal-intake review-actions review-actions:waiting
     review-actions:data-limited
@@ -75,11 +76,16 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     pilot-readiness:ai pilot-readiness:governance
     pilot-readiness:checklist
   `),
-  FROZEN: ids(`
+  // Owner decision: internal settlement, cashbook and the settlement
+  // workflow are frozen (FROZEN_PRODUCT_ROUTE_IDS); forecast / MRP is unavailable.
+  FROZEN: new Set([
+    ...ids(`
     procurement:contracts
     forecast forecast:cockpit forecast:demand forecast:mrp
     forecast:replenishment forecast:parameters
   `),
+    ...FROZEN_PRODUCT_ROUTE_IDS,
+  ]),
   LEGACY: ids(`
     imports imports:pilot imports:templates imports:validation imports:failed
   `),
@@ -122,8 +128,6 @@ const primaryNavigation: Record<
 };
 
 const compatibilityRouteIds = ids(`
-  finance:reconciliation finance:reconciliation-detail
-  finance:settlement finance:settlement-detail
   finance:bank-statements finance:bank-reconciliation
 `);
 

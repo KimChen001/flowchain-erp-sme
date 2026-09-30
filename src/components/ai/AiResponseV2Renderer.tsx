@@ -1,4 +1,5 @@
 import { RagAnswerCard } from "../../modules/ai-assistant/KnowledgeLibrary";
+import { isUnavailableProductRoute } from "../../../shared/unavailable-product-routes.mjs";
 import { BusinessQueryPresentation } from "./BusinessQueryPresentation";
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
@@ -66,7 +67,7 @@ function entityType(value = ""): BusinessEntityType | null {
 function EvidenceLink({ item, children, onNavigate }: { item: AiResponseV2EvidenceItem; children?: ReactNode; onNavigate?: Navigate }) {
   const type = entityType(item.entityType);
   const route = type ? businessEntityRouteRegistry[type] : null;
-  if (!route || !item.entityId || !onNavigate) return <span style={{ color: A.label }}>{children || item.entityLabel || item.label}</span>;
+  if (!route || !item.entityId || !onNavigate || isUnavailableProductRoute(route.listRouteId)) return <span style={{ color: A.label }}>{children || item.entityLabel || item.label}</span>;
   const focusArea = type === "purchase_order" ? "evidence" : undefined;
   return <button type="button" data-action-kind="view_evidence" className="font-semibold text-blue-600 hover:underline" onClick={() => onNavigate(route.listRouteId, { entityType: type, entityId: item.entityId, focusArea }, { returnTo: "ai", entityLabel: item.entityLabel || item.entityId, source: "ai" })}>{children || item.entityLabel || item.label || item.entityId}</button>;
 }
@@ -79,7 +80,8 @@ function reviewRequest(card: AiResponseV2ReviewCard): ActionDraftPreviewRequest 
 function NavigationAction({ link, primary = false, onNavigate }: { link: AiResponseV2NavigationLink; primary?: boolean; onNavigate?: Navigate }) {
   const type = entityType(link.entityType);
   const className = primary ? "inline-flex min-h-9 items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "inline-flex min-h-9 items-center gap-1 rounded-lg px-3 py-2 text-xs font-semibold";
-  if (!onNavigate) return null;
+  // Frozen or unavailable surfaces are never offered as a destination.
+  if (!onNavigate || isUnavailableProductRoute(link.moduleId)) return null;
   const focusTarget = link.focusTarget || (type && link.entityId ? {
     entityType: type,
     entityId: link.entityId,

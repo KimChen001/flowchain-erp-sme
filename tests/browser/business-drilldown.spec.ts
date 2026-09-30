@@ -26,7 +26,12 @@ test("legacy three-way match detail is treated as missing", async ({ page }) => 
 });
 
 test("unconnected finance routes render real empty states without legacy identifiers", async ({ page }) => {
-  for (const [path, empty] of [["/app/finance/invoices", "暂无供应商发票"], ["/app/finance/reconciliation", "暂无对账单"], ["/app/finance/settlement", "暂无结算单"]] as const) {
+  // Reconciliation (cashbook) and settlement are frozen and show "Capability unavailable".
+  for (const path of ["/app/finance/reconciliation", "/app/finance/settlement"]) {
+    await page.goto(path);
+    await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
+  }
+  for (const [path, empty] of [["/app/finance/invoices", "暂无供应商发票"]] as const) {
     await page.goto(path);
     await expect(page.getByText(empty, { exact: true })).toBeVisible();
     await expect(page.locator("body")).not.toContainText(/INV-HD-260421|INV-SZ-260422|RTV-2026-0501|GRN-202605-0418|PO-2026-128[4-7]/);

@@ -189,3 +189,16 @@ test("the purchase orders header totals committed orders only, per currency", as
   // Open purchase orders match the open purchase orders report.
   await expect(page.getByRole("link", { name: /Open purchase orders/ })).toContainText("15");
 });
+
+test("frozen and unavailable modules have no entry point and show Capability unavailable", async ({ page }) => {
+  await signIn(page);
+  for (const path of ["/app/finance/settlement", "/app/finance/reconciliation", "/app/mobile/settlements/any", "/app/forecast/mrp", "/app/forecast/cockpit", "/app/imports/failed"]) {
+    await page.goto(path);
+    await expect(page.getByTestId("capability-route-blocked"), path).toBeVisible();
+    await expect(page.getByText("Capability unavailable", { exact: true })).toBeVisible();
+  }
+  await page.goto("/app/overview/risks");
+  const links = await page.locator("a[href], [href]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("href") || ""));
+  expect(links.filter((href) => /\/app\/(finance\/settlement|finance\/reconciliation|mobile\/settlements|forecast|imports)\b/.test(href))).toEqual([]);
+  await expect(page.locator("aside, nav").first()).not.toContainText(/Settlement|Cashbook|Forecast|MRP|Imports/);
+});

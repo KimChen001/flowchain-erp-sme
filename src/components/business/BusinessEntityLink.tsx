@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { isUnavailableProductRoute } from "../../../shared/unavailable-product-routes.mjs";
 import { Link, useLocation } from "react-router";
 import { businessEntityPath, businessEntityRouteRegistry, type BusinessEntityType } from "./businessEntityRoutes";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -20,6 +21,8 @@ export function BusinessEntityLink({ entityType, entityId, children, className =
   const value = entityId?.trim();
   if (!value || !exists) return <span className={className || undefined}>{children ?? value ?? "—"}</span>;
   const route = businessEntityRouteRegistry[entityType];
+  // A record of a frozen or unavailable surface is shown as text, not a link.
+  if (isUnavailableProductRoute(route.routeId)) return <span className={className || undefined}>{children ?? value}</span>;
   const params = new URLSearchParams();
   params.set("returnTo", `${location.pathname}${location.search}`);
   params.set("returnLabel", copy(returnLabel || route.returnLabel));

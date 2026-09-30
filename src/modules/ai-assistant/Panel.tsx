@@ -1,4 +1,5 @@
 import { KnowledgeLibrary } from "./KnowledgeLibrary";
+import { isUnavailableProductRoute } from "../../../shared/unavailable-product-routes.mjs";
 import { useI18n } from "../../i18n/I18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Maximize2, MessageCircle, Minimize2, Plus, RotateCcw, Send, Square, Sparkles, X } from "lucide-react";
@@ -339,7 +340,7 @@ function EvidenceList({
         const detail = bestText(raw.summary, raw.reason, link.status && link.status !== link.label ? link.status : "");
         return (
           <div key={`${title}-${index}`} className="rounded-lg px-2 py-1.5" style={{ background: A.gray6 }}>
-            {navigableLink.clickable && intent && onNavigate ? (
+            {navigableLink.clickable && intent && onNavigate && !isUnavailableProductRoute(intent.activeId) ? (
               <button
                 type="button"
                 onClick={() => onNavigate(intent.activeId, intent.focusTarget || null, { returnTo: "ai", entityLabel: label, source: "ai" })}
@@ -1095,7 +1096,7 @@ function AiResponseCard({
                 >
                   {action.label || "预览草稿"}
                 </button>
-              ) : intent && onNavigate ? (
+              ) : intent && onNavigate && !isUnavailableProductRoute(intent.activeId) ? (
                 <button
                   key={`${action.label}-${action.target}`}
                   type="button"

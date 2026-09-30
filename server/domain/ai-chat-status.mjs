@@ -1,3 +1,4 @@
+import { withoutUnavailableProductLinks } from '../../shared/unavailable-product-routes.mjs'
 import {
   listMasterItems,
   listMasterSuppliers,
@@ -710,11 +711,12 @@ export function buildAiChatStatusResponse(db = {}, body = {}, options = {}) {
       : intent === 'procurement_exception_query'
         ? buildProcurementExceptionResponse(db, message, contextOptions)
         : buildPlanningStatusResponse(db, message, contextOptions)
+  // Links into frozen or unavailable surfaces (forecast / MRP) are removed.
   return {
     provider: 'local_status_query',
     mode: 'read',
     content: response.message,
-    ...response,
+    ...withoutUnavailableProductLinks(response),
     capabilityCatalog: aiChatStatusCapabilityCatalog.map((item) => ({ ...item, examples: [...item.examples], requiredSlots: [...item.requiredSlots], optionalSlots: [...item.optionalSlots], responseCards: [...item.responseCards] })),
   }
 }

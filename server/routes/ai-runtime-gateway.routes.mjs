@@ -1,3 +1,4 @@
+import { withoutUnavailableProductLinks } from '../../shared/unavailable-product-routes.mjs'
 import { handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
 import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
 import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs'
@@ -90,7 +91,7 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
           ? await loadAiRuntimeFacts(repositories, identity.tenantId)
           : {}
         const result = await buildAiRuntimeResponseV2Async({ ...db, ...facts }, body, { env: identity?.authenticated ? process.env : {} })
-        send(res, result.status, await addKnowledgeContext(ctx, body, result.body))
+        send(res, result.status, await addKnowledgeContext(ctx, body, withoutUnavailableProductLinks(result.body)))
         return true
       }
       send(res, 200, await addKnowledgeContext(ctx, body, await runAiSkillRuntime(ctx, body)))

@@ -709,6 +709,17 @@ export default function FlowChainApp() {
     (routeId: string) => {
       const route = routeById(routeId);
       if (!route) return false;
+      // Frozen, retired and internal pages render a lock screen, not the page.
+      if (
+        [
+          "FROZEN_UNAVAILABLE",
+          "LEGACY_REDIRECT",
+          "LEGACY_UNAVAILABLE",
+          "INTERNAL_ONLY",
+          "NOT_IMPLEMENTED",
+        ].includes(route.directAccessBehavior)
+      )
+        return false;
       if (
         route.requiredPermission &&
         (authorizationLoadState !== "ready" ||
@@ -1719,19 +1730,12 @@ export default function FlowChainApp() {
                       </button>
                     </Card>
                   ) : activeRoute.directAccessBehavior === "LEGACY_UNAVAILABLE" ? (
-                    <Card className="p-10 text-center" data-testid="legacy-route-unavailable">
-                      <AlertTriangle className="mx-auto text-amber-600" size={34} />
-                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Legacy page retired" : "旧页面已停用"}</h2>
-                      <p className="mt-2 text-sm text-slate-500">
-                        {language === "en-US" ? "This legacy route has no direct replacement." : "该旧路径没有一对一替代页面，不会跳转到无关功能。"}
-                      </p>
-                      <button
-                        type="button"
-                        className="mt-5 text-sm font-semibold text-blue-600 hover:underline"
-                        onClick={() => routerNavigate("/app/universal-intake")}
-                      >
-                        {language === "en-US" ? "Open unified data intake" : "前往统一数据接入"}
-                      </button>
+                    // The retired imports pages are an unavailable module: the same
+                    // "Capability unavailable" page, with no link onward.
+                    <Card className="p-10 text-center" data-testid="capability-route-blocked" data-legacy-route="true">
+                      <Lock className="mx-auto text-slate-500" size={34} />
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability unavailable" : "能力暂不可用"}</h2>
+                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "This page is no longer part of the product." : "该页面已不再属于产品功能。"}</p>
                     </Card>
                   ) : activeRoute.directAccessBehavior === "INTERNAL_ONLY" ? (
                     <Card className="p-10 text-center" data-testid="internal-route-blocked">
