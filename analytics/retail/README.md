@@ -55,11 +55,16 @@ python -m retail.clean                 # cleaning rules, weekly panel, outputs/c
 python -m retail.quality_report        # outputs/data-quality.md and figures
 python -m retail.forecast              # outputs/demand-forecast.md, metrics and figures
 python -m retail.decision_inputs       # outputs/demand-distribution.csv, decision-inputs.md
+python -m retail.decision              # replenishment backtest: outputs/replenishment-results.md, demand paths
 ```
 
 `forecast.py` fits ETS and ARIMA per SKU in a process pool (`--workers`, default CPU count − 2)
 and takes about 20 minutes on 16 cores. `--limit N` runs on N SKUs for development, and
 `--reuse-stat` reuses the saved statsmodels forecasts.
+
+`decision.py` also reads the SCMS cleaned file (`$FLOWCHAIN_DATA_DIR/scms/derived/scms_clean.csv`, or
+`--scms-csv FILE`) for the lead-time coefficient of variation. It takes about 5 minutes; `--reuse-gbm` reuses
+its saved GBM forecasts.
 
 ## Outputs (in `<data dir>/outputs/`)
 
@@ -71,6 +76,8 @@ and takes about 20 minutes on 16 cores. `--limit N` runs on N SKUs for developme
 | `forecast-*.csv`, `arima-orders.csv` | the metric tables behind the report |
 | `demand-distribution.csv` | per SKU per week: point, P50, P90 (+ actual in the test); aggregates only |
 | `sku-parameters.csv`, `decision-inputs.md` | cost, holding, stockout and pack proxies; assumptions marked |
+| `replenishment-results.md`, `replenishment-*.csv` | policy backtest (rule of thumb, FlowChain rule, service level, budgeted MILP) |
+| `demand-paths-test.csv.gz`, `demand-paths-forward.csv.gz` | 500 simulated 26-week demand paths per SKU (GBM + block-bootstrapped residuals) |
 
 ## Key design decisions
 
