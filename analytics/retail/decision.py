@@ -27,8 +27,8 @@ Setup (every number the report uses is computed here; assumptions are marked):
   variation of SCMS direct-drop actual lead times; rounded to whole weeks, minimum 1.
 - Terminal inventory: the inventory position left after week 13 (on hand + on order, since
   orders placed at the last reviews are commitments that arrive into the post-season) is
-  charged a markdown/obsolescence loss of m x unit cost per unit (ASSUMED m = 0.3; sensitivity
-  0, 0.15, 0.5). An alternative with no cost assumption charges, at cost, only the stock beyond
+  charged a markdown/obsolescence loss of m x unit cost per unit (ASSUMED m = 0.15, the owner's
+  base case; sensitivity 0, 0.3, 0.5). An alternative with no cost assumption charges, at cost, only the stock beyond
   8 weeks of forward P50 demand.
 """
 
@@ -61,7 +61,13 @@ CAL_ORIGINS = (38, 51, 64)             # pre-test backtests for residual traject
 QUANTILE_GRID = (0.50, 0.70, 0.80, 0.90, 0.95, 0.98)
 BUDGET_FACTORS = (0.6, 0.8, 1.0)
 EXTRA_BUDGET = 1.2                     # only for the monotonicity check
-BASE = dict(mean_L=4.0, cv="all", cost_ratio=0.50, holding=0.25, stockout_mult=1.0, start="a", markdown=0.30)
+BASE = dict(mean_L=4.0, cv="all", cost_ratio=0.50, holding=0.25, stockout_mult=1.0, start="a", markdown=0.15)
+MARKDOWN_GRID = (0.0, 0.15, 0.3, 0.5)
+
+
+def markdown_scenarios():
+    """(scenario name, m) for the markdown grid; the base-case m is the 'base' scenario."""
+    return [("base" if m == BASE["markdown"] else f"markdown m = {m}", m) for m in MARKDOWN_GRID]
 T_WINDOW = 13                          # test weeks
 EXCESS_WEEKS = 8                       # "true excess" = stock beyond this many weeks of forward P50 demand
 START_LABELS = {"a": "common start = (a) level", "a0.5": "common start = 0.5 x (a) level",
@@ -537,9 +543,8 @@ def main(argv=None) -> int:
         "stockout = 2 x margin": {**BASE, "stockout_mult": 2.0},
         "start = 0.5 x (a)": {**BASE, "start": "a0.5"}, "start = 1.5 x (a)": {**BASE, "start": "a1.5"},
         "start = own level (biased)": {**BASE, "start": "own"},
-        "markdown m = 0": {**BASE, "markdown": 0.0}, "markdown m = 0.15": {**BASE, "markdown": 0.15},
-        "markdown m = 0.5": {**BASE, "markdown": 0.5},
     }
+    scenarios.update({n: {**BASE, "markdown": m} for n, m in markdown_scenarios() if n != "base"})
     rows, metas, base_res = [], {}, None
     res_n, meta_n = run_scenario(dict(BASE), {**ctx, "paths": paths_n})
     agg_n = aggregate(res_n["c"], n_boot_w)
@@ -599,6 +604,7 @@ def main(argv=None) -> int:
            "median_cr_base": planned_csl_c, "E_L_base": bm["EL"], "n_skus": n, "paths": args.paths,
            "review_weeks": [str(weeks[t0_idx + t].date()) for t in REVIEW_WEEKS], "variant": variant,
            "tail": tail_numbers(paths, skus), "narrow_pool": narrow,
+           "markdown_base": BASE["markdown"], "markdown_scenarios": markdown_scenarios(),
            "safety_stock_value_c": {k: v["safety_stock_value_c"] for k, v in metas.items()}}
     (paths.outputs_dir / "key-numbers-replenishment.json").write_text(json.dumps(key, indent=2, default=float),
                                                                        encoding="utf-8")
@@ -637,7 +643,7 @@ def figures(paths, summary, s_base, checks):
     ax.set_xlabel("total cost, GBP thousand (holding + lost margin + terminal markdown, 13 weeks)")
     ax.set_ylabel("fill rate (units served / demand)")
     ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1.0))
-    ax.set_title("Base case: service vs total cost by policy (common start, m = 0.3)")
+    ax.set_title(f"Base case: service vs total cost by policy (common start, m = {BASE['markdown']})")
     handles = [plt.Line2D([], [], marker=m, ls="", color=c, label=l) for m, c, l in (
         ("o", P.SERIES[0], "(a) rule of thumb"), ("o", P.SERIES[1], "(b) FlowChain rule"),
         ("o", P.SERIES[2], "(c) critical-ratio quantile"), ("s", P.SERIES[3], "(d) budgeted MILP, B/(c) = 0.6 / 0.8 / 1.0"),
@@ -679,7 +685,7 @@ def figures(paths, summary, s_base, checks):
     P.save(fig, figs / "replenishment-budget.png")
 
     fig, ax = plt.subplots(figsize=(6.8, 3.6))
-    ms = [("markdown m = 0", 0.0), ("markdown m = 0.15", 0.15), ("base", BASE["markdown"]), ("markdown m = 0.5", 0.5)]
+    ms = markdown_scenarios()
     for k, p in enumerate(["a", "b", "c", "d0.6"]):
         ys = [summary[(summary.scenario == sn) & (summary.policy == p)].total_cost.iloc[0] / 1e3 for sn, _ in ms]
         ax.plot([m for _, m in ms], ys, marker="o", color=P.SERIES[k], label=POLICY_LABELS[p][:48])
@@ -798,7 +804,7 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       "`demand-paths-forward.csv.gz` (origin = the last full week). Each has one row per SKU × path, weekly "
       "simulated units w01–w26.")
     a("")
-    a("## 5. Results, base case (mean L = 4 weeks, SCMS CV, common start, m = 0.3; money in GBP)")
+    a(f"## 5. Results, base case (mean L = 4 weeks, SCMS CV, common start, m = {BASE['markdown']}; money in GBP)")
     a("")
     a("| Policy | fill rate [95% CI] | cycle service [CI] | lost units | lost margin | avg inventory value [CI] | "
       "weeks of supply | holding | terminal markdown | **total cost [95% CI]** | Δ total vs (b) [paired CI] | orders | "
@@ -951,8 +957,7 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     a("")
     a("| m | (a) total | (b) total | (c) total [95% CI] | (d, 0.6) total | (d, 0.8) total | (c) fill | cheapest policy |")
     a("|---|---|---|---|---|---|---|---|")
-    for s_, m in (("markdown m = 0", 0.0), ("markdown m = 0.15", 0.15), ("base", BASE["markdown"]),
-                  ("markdown m = 0.5", 0.5)):
+    for s_, m in markdown_scenarios():
         d = summary[summary.scenario == s_].set_index("policy")
         main = d.loc[["a", "b", "c", "d0.6", "d0.8", "d1.0"]]
         a(f"| {m}{' (base)' if s_ == 'base' else ''} | {fmt_money(d.loc['a', 'total_cost'])} | "
@@ -1037,7 +1042,7 @@ def write_discussion(a, lt, key, summary, s_base, metas, checks, tail):
          "(c) over-protects. A working-capital cap is the better default for a small business."
          if dn[0.6].total_cost < c.total_cost else
          "The budget cap does not lower realised cost here, so (c)'s extra stock is worth its cost."))
-    m_of = {"markdown m = 0": 0.0, "markdown m = 0.15": 0.15, "base": BASE["markdown"], "markdown m = 0.5": 0.5}
+    m_of = dict(markdown_scenarios())
     parts = []
     for sname, m in sorted(m_of.items(), key=lambda kv: kv[1]):
         d = summary[(summary.scenario == sname) & summary.policy.isin(["a", "b", "c", "d0.6", "d0.8", "d1.0"])]

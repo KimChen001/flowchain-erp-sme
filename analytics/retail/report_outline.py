@@ -87,7 +87,8 @@ def main(argv=None) -> int:
     refs = base.loc[["p50", "p70", "p80", "p90"]]
     best_ref = refs.total_cost.idxmin()
     m_rows = {m: sc[(sc.scenario == n) & sc.policy.isin(main4.index)].set_index("policy").total_cost
-              for n, m in (("markdown m = 0", 0.0), ("markdown m = 0.15", 0.15), ("base", 0.3), ("markdown m = 0.5", 0.5))}
+              for n, m in rep["markdown_scenarios"]}
+    mb = rep["markdown_base"]
 
     def tc(p, d=base):
         r = d.loc[p]
@@ -192,7 +193,7 @@ def main(argv=None) -> int:
                f"stock, the (a) level at the test origin. L is lognormal (ASSUMED mean 2/4/8 weeks) with SCMS "
                f"direct-drop CV {lt['cv_all']:.3f} ({lt['rows']:,} lines; tiers {lt['cv_low_tier']:.3f} / "
                f"{lt['cv_high_tier']:.3f}). Total cost = holding + lost margin + terminal markdown m × cost × "
-               "(on hand + on order) after week 13 (ASSUMED m = 0.3). Policies: (a) (L+R) × 4-wk mean; (b) FlowChain ROP "
+               f"(on hand + on order) after week 13 (ASSUMED m = {mb}). Policies: (a) (L+R) × 4-wk mean; (b) FlowChain ROP "
                "rule; (c) critical-ratio quantile of simulated demand over L+R, where the final-cycle overage adds "
                "m × cost (multi-period newsvendor); (d) multiple-choice knapsack MILP (scipy/HiGHS) over {P50…P98} "
                "under a working-capital budget of 0.6/0.8/1.0 × (c).", "–", "–"),
@@ -246,7 +247,7 @@ def main(argv=None) -> int:
          "All money is in GBP (£), the currency of the data; nothing is converted.", "",
          f"Headline numbers: {pnl['n_skus']} SKUs × {wk['n_weeks']} weeks. Test WAPE GBM {ci('gbm', 'WAPE')} vs "
          f"4-week mean {ci('ma4', 'WAPE')}; P90 coverage {qm.coverage90:.1%}. Replenishment (13 test weeks, common "
-         f"start, markdown m = 0.3): FlowChain rule fill {base.loc['b', 'fill_rate']:.1%}, total {tc('b')}; cheapest "
+         f"start, markdown m = {mb}): FlowChain rule fill {base.loc['b', 'fill_rate']:.1%}, total {tc('b')}; cheapest "
          f"of the four policies {best4}: fill {base.loc[best4, 'fill_rate']:.1%}, total {tc(best4)}; fixed "
          f"{best_ref.upper()} reference {tc(best_ref)}.", ""]
     for num, title, qs in RUBRIC:
@@ -266,7 +267,7 @@ def main(argv=None) -> int:
           "them with FlowChain customer values.",
           f"- The panel excludes {tail['tail_skus']:,} intermittent/lumpy SKUs ({tail['tail_revenue_share']:.1%} of "
           "revenue); they need their own forecast and policy.",
-          "- The backtest covers one autumn. The terminal markdown rate (m = 0.3) is an assumption; m = 0–0.5 and "
+          f"- The backtest covers one autumn. The terminal markdown rate (m = {mb}) is an assumption; m = 0–0.5 and "
           "the no-assumption excess measure bracket it."]
     (out / "report-outline-retail.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     print(f"Wrote {out / 'report-outline-retail.md'}")
