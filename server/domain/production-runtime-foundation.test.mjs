@@ -212,6 +212,45 @@ test("the server refuses to start in production when test identity headers are e
   }
 });
 
+test("the commit SHA guard accepts Render's commit only on Render and never the image's unknown default", () => {
+  const dockerfile = readFileSync(resolve(import.meta.dirname, "../../Dockerfile"), "utf8");
+  assert.match(dockerfile, /ARG FLOWCHAIN_COMMIT_SHA=unknown/);
+  const renderSha = "fedcba9876543210fedcba9876543210fedcba98";
+  const issueKeys = (overrides) => {
+    try {
+      validateProductionRuntimeConfig(validProductionEnv(overrides));
+      return [];
+    } catch (error) {
+      return error.issues.map((entry) => entry.key);
+    }
+  };
+
+  // An image built without build arguments carries FLOWCHAIN_COMMIT_SHA=unknown.
+  assert.deepEqual(issueKeys({ FLOWCHAIN_COMMIT_SHA: "unknown" }), ["FLOWCHAIN_COMMIT_SHA"]);
+  assert.deepEqual(issueKeys({ FLOWCHAIN_COMMIT_SHA: " Unknown " }), ["FLOWCHAIN_COMMIT_SHA"]);
+  // RENDER_GIT_COMMIT alone, outside Render, does not satisfy the guard.
+  assert.deepEqual(issueKeys({ FLOWCHAIN_COMMIT_SHA: "unknown", RENDER_GIT_COMMIT: renderSha }), ["FLOWCHAIN_COMMIT_SHA"]);
+  assert.deepEqual(issueKeys({ FLOWCHAIN_COMMIT_SHA: "", RENDER: "true", RENDER_GIT_COMMIT: "" }), ["FLOWCHAIN_COMMIT_SHA"]);
+
+  const onRender = validProductionEnv({
+    FLOWCHAIN_COMMIT_SHA: "unknown",
+    FLOWCHAIN_BRANCH: "unknown",
+    RENDER: "true",
+    RENDER_GIT_COMMIT: renderSha,
+    RENDER_GIT_BRANCH: "main",
+  });
+  const valid = validateProductionRuntimeConfig(onRender);
+  assert.equal(valid.commitSha, renderSha);
+  assert.equal(valid.branch, "main");
+  const liveness = buildLivenessPayload({ env: onRender, gitFallback: { commitSha: "unknown", branch: "unknown" } });
+  assert.equal(liveness.commitSha, renderSha);
+  assert.equal(liveness.branch, "main");
+
+  // An explicit build argument still wins on Render.
+  const explicit = validateProductionRuntimeConfig({ ...onRender, FLOWCHAIN_COMMIT_SHA: validProductionEnv().FLOWCHAIN_COMMIT_SHA });
+  assert.equal(explicit.commitSha, validProductionEnv().FLOWCHAIN_COMMIT_SHA);
+});
+
 test("the release image and Compose file declare the production deployment profile", () => {
   const dockerfile = readFileSync(resolve(import.meta.dirname, "../../Dockerfile"), "utf8");
   const runtimeStage = dockerfile.slice(dockerfile.indexOf("AS runtime"));
