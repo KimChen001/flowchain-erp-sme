@@ -11,8 +11,10 @@ const SUBJECTS = Object.freeze({
   reconciliation: { label: '供应商对账', defaultDateField: 'date', detailRoute: '/app/finance/reconciliation', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   settlement: { label: '结算', defaultDateField: 'date', detailRoute: '/app/finance/settlement', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   sales_orders: { label: '销售订单', defaultDateField: 'date', detailRoute: '/app/sales/orders', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
-  deliveries: { label: '发货', defaultDateField: 'date', detailRoute: '/app/sales/deliveries', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
-  receipts: { label: '签收', defaultDateField: 'date', detailRoute: '/app/sales/receipts', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
+  // Shipments are listed on the sales order pages; the delivery and receipt pages are frozen.
+  // The receipts rows come from receiving documents, so they drill down to receiving.
+  deliveries: { label: '发货', defaultDateField: 'date', detailRoute: '/app/sales/orders', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
+  receipts: { label: '签收', defaultDateField: 'date', detailRoute: '/app/procurement/receiving', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   inventory_balances: { label: '库存余额', defaultDateField: 'date', detailRoute: '/app/inventory', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   inventory_movements: { label: '库存流水', defaultDateField: 'date', detailRoute: '/app/inventory/movements', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
   suppliers: { label: '供应商', defaultDateField: 'date', detailRoute: '/app/master-data/suppliers', permissions: ['viewer', 'analyst', 'manager', 'admin'] },
@@ -76,8 +78,8 @@ export const reportMetricCatalog = Object.freeze([
   metric('sales_order_amount', '销售订单金额', 'sales_orders', 'currency', 'sum(amount)', '筛选范围内销售订单含税金额合计。', '/app/sales/orders'),
   metric('sales_order_count', '销售订单数量', 'sales_orders', 'number', 'count(id)', '筛选范围内销售订单数。', '/app/sales/orders'),
   metric('unshipped_amount', '未发货金额', 'sales_orders', 'currency', 'sum(amount where status != delivered)', '未完成发货的销售订单金额。', '/app/sales/orders?status=unshipped'),
-  metric('delivery_completion_rate', '发货完成率', 'deliveries', 'percentage', 'delivered / ordered', '已完成发货订单数占应发货订单数。', '/app/sales/deliveries', { numerator: 'delivered orders', denominator: 'orders due for delivery' }),
-  metric('on_time_delivery_rate', '准时交付率', 'deliveries', 'percentage', 'on_time / due', '按承诺日期完成交付的订单占比。', '/app/sales/deliveries?timeliness=on-time', { numerator: 'on-time deliveries', denominator: 'deliveries due' }),
+  metric('delivery_completion_rate', '发货完成率', 'deliveries', 'percentage', 'delivered / ordered', '已完成发货订单数占应发货订单数。', '/app/sales/orders', { numerator: 'delivered orders', denominator: 'orders due for delivery' }),
+  metric('on_time_delivery_rate', '准时交付率', 'deliveries', 'percentage', 'on_time / due', '按承诺日期完成交付的订单占比。', '/app/sales/orders', { numerator: 'on-time deliveries', denominator: 'deliveries due' }),
   metric('purchase_order_amount', '采购订单金额', 'purchase_orders', 'currency', 'sum(amount)', '筛选范围内采购订单金额合计。', '/app/procurement/orders'),
   metric('open_po_count', '开放 PO', 'purchase_orders', 'number', 'count(open)', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/procurement/orders?status=open'),
   metric('overdue_po_amount', '逾期 PO 金额', 'purchase_orders', 'currency', 'sum(overdue amount)', '承诺日期早于范围结束且未完成的采购订单金额。', '/app/procurement/orders?overdue=true'),
@@ -228,7 +230,7 @@ function dashboardCharts(dashboard, filtered, query) {
     chart('sales_amount_trend', '销售金额趋势', 'area', trend(sales), '/app/sales/orders', { unit: 'currency', valueFormat: 'currency', crossFilter: 'period' }),
     chart('sales_customer_top', `客户销售金额 Top ${query.topN}`, 'horizontal_bar', top(sales, 'customer', query.topN), '/app/sales/orders', { unit: 'currency', valueFormat: 'currency', crossFilter: 'customer' }),
     chart('sales_fulfillment', '订单履约状态', 'donut', statusDistribution(sales), '/app/sales/orders', { crossFilter: 'status' }),
-    chart('sales_ontime', '准时交付趋势', 'line', trend(sales.map((row) => ({ ...row, amount: row.onTime ? 100 : 0 }))), '/app/sales/deliveries', { unit: 'percentage', crossFilter: 'period' }),
+    chart('sales_ontime', '准时交付趋势', 'line', trend(sales.map((row) => ({ ...row, amount: row.onTime ? 100 : 0 }))), '/app/sales/orders', { unit: 'percentage', crossFilter: 'period' }),
     chart('sales_unshipped', '未发货与部分发货', 'stacked_bar', [{ name: '履约状态', 未发货: sales.filter((row) => row.status === 'open').length, 部分发货: sales.filter((row) => row.status === 'partial').length }], '/app/sales/orders', { stack: true, seriesKeys: ['未发货', '部分发货'], crossFilter: 'status' }),
     chart('sales_returns', '销售退货趋势', 'line', [], '/app/sales/returns', { unit: 'currency', valueFormat: 'currency', crossFilter: 'period' }),
   ]
