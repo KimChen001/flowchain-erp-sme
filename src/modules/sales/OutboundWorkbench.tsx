@@ -259,10 +259,10 @@ function useStamp() {
   return (value?: string | null) =>
     value && !Number.isNaN(new Date(value).getTime()) ? formatDateTime(value) : value || "—";
 }
-// Error messages in the interface language; the server's own message is
-// shown through the shared copy when it has no known code.
+// The message for an error, kept in its source form and translated where it
+// is shown, so it follows a language change made after the error occurred.
 function message(error: unknown) {
-  return copy(errorMessage(error));
+  return errorMessage(error);
 }
 function errorMessage(error: unknown) {
   if (!(error instanceof ApiError)) return "网络连接失败，请检查连接后重试。";
@@ -434,7 +434,7 @@ function OrderList() {
       )}
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       <Section title={copy("销售订单查询")}>
@@ -739,7 +739,7 @@ function OrderEntry() {
       </div>
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       <Section title={copy("订单信息")}>
@@ -1057,7 +1057,7 @@ function OrderDetail({ id }: { id: string }) {
   if (!data)
     return (
       <div role="alert" className="rounded-lg bg-red-50 p-5 text-red-700">
-        {error}
+        {copy(error)}
       </div>
     );
   const a = data.availableActions;
@@ -1074,7 +1074,7 @@ function OrderDetail({ id }: { id: string }) {
     <div className="space-y-4" data-testid="outbound-order-workbench">
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       {data.scopeCoverage.status === "partial" && (
@@ -1648,12 +1648,12 @@ function ShipmentDetail({ id }: { id: string }) {
         {copy("正在读取发货单…")}
       </div>
     );
-  if (!data) return <div role="alert">{error}</div>;
+  if (!data) return <div role="alert">{copy(error)}</div>;
   return (
     <div className="space-y-4" data-testid="shipment-workbench">
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       <section className="rounded-xl border bg-white p-5">
