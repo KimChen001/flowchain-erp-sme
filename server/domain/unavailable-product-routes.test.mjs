@@ -10,10 +10,14 @@ const root = fileURLToPath(new URL('../../', import.meta.url))
 
 test('frozen and unavailable surfaces are recognised by route id and path', () => {
   for (const target of ['finance:settlement', 'finance:reconciliation-detail', 'mobile-operations:settlement-detail', 'forecast', 'forecast:mrp', 'imports', 'imports:failed',
-    '/app/finance/settlement', '/app/finance/settlement/SET-1', '/app/finance/reconciliation', '/app/mobile/settlements/SET-1', '/app/forecast/mrp', '/app/imports?source=x']) {
+    '/app/finance/settlement', '/app/finance/settlement/SET-1', '/app/finance/reconciliation', '/app/mobile/settlements/SET-1', '/app/forecast/mrp', '/app/imports?source=x',
+    'sales:delivery', 'sales:delivery:new', 'sales:delivery:edit', 'sales:delivery-detail', 'sales:receipts', 'sales:receipts:new', 'sales:receipt-detail',
+    '/app/sales/deliveries', '/app/sales/deliveries/new', '/app/sales/deliveries/DN-1/edit', '/app/sales/receipts', '/app/sales/receipts/SR-1']) {
     assert.equal(isUnavailableProductRoute(target), true, target)
   }
-  for (const target of ['finance:invoices', 'finance:bank-reconciliation', 'procurement:orders', 'forecasting', '/app/finance/invoices', '/app/finance/bank-reconciliation', '/app/reports/finance', '', null]) {
+  // Shipments are created and posted from the sales order and shipment pages, which stay available.
+  for (const target of ['finance:invoices', 'finance:bank-reconciliation', 'procurement:orders', 'forecasting', '/app/finance/invoices', '/app/finance/bank-reconciliation', '/app/reports/finance',
+    'sales:orders', 'sales:order-detail', 'sales:shipment-detail', '/app/sales/orders', '/app/sales/orders/SO-1', '/app/sales/shipments/SHIP-1', '', null]) {
     assert.equal(isUnavailableProductRoute(target), false, String(target))
   }
 })
@@ -36,6 +40,7 @@ test('no in-page link or search entry points into a frozen or unavailable surfac
     'src/app/routeRegistry.tsx', 'src/app/routes/route-manifest.ts', 'src/app/capabilityRouteGuard.ts',
     'src/components/business/businessEntityRoutes.ts', 'src/i18n/I18n.tsx',
     'src/modules/finance/InternalSettlementWorkbench.tsx', 'src/modules/finance/Page.tsx', 'src/modules/forecast/Page.tsx', 'src/modules/imports/Page.tsx',
+    'src/modules/sales/DeliveryPage.tsx', 'src/modules/sales/ReceiptPage.tsx',
     // Kept code whose output is filtered: evidence links are hidden at render,
     // the planning answer and the report catalog drop these targets, the
     // mobile settlement task loop is switched off, and the reconciliation
@@ -52,7 +57,7 @@ test('no in-page link or search entry points into a frozen or unavailable surfac
       const file = relative(root, path).split(sep).join('/')
       if (allowed.has(file)) continue
       const source = readFileSync(path, 'utf8')
-      for (const match of source.matchAll(/["'`](\/app\/(?:finance\/settlement|finance\/reconciliation|mobile\/settlements|forecast|imports)\b[^"'`]*|(?:finance:settlement|finance:reconciliation|forecast:[a-z-]+|imports:[a-z-]+))["'`]/g)) {
+      for (const match of source.matchAll(/["'`](\/app\/(?:finance\/settlement|finance\/reconciliation|mobile\/settlements|sales\/deliveries|sales\/receipts|forecast|imports)\b[^"'`]*|(?:finance:settlement|finance:reconciliation|sales:delivery(?::new|:edit|-detail)?|sales:receipts(?::new)?|sales:receipt-detail|forecast:[a-z-]+|imports:[a-z-]+))["'`]/g)) {
         offenders.push(`${file}: ${match[1]}`)
       }
     }

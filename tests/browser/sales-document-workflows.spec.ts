@@ -7,21 +7,8 @@ async function openLoggedInApp(page: Page) {
   await page.goto("/"); await expect(page.getByTestId("app-main")).toBeVisible();
 }
 
-test("sales documents have separate list and detail surfaces", async ({ page }) => {
+test("sales returns have a separate list surface", async ({ page }) => {
   await openLoggedInApp(page);
-  await page.goto("/app/sales/deliveries");
-  const delivery = page.getByTestId("module-export-scope");
-  await expect(page.getByRole("heading", { name: "销售出库单 / 发货单" })).toBeVisible();
-  await expect(delivery).toContainText("发货单号"); await expect(delivery).toContainText("物流状态"); await expect(delivery).toContainText("销售订单号");
-  await delivery.getByRole("button", { name: "查看详情" }).first().click();
-  await expect(page.getByRole("heading", { name: "发货单详情" })).toBeVisible();
-  await expect(page.getByText("客户和物流信息").or(page.getByText("物流公司", { exact: true })).first()).toBeVisible();
-  await page.getByRole("button", { name: "关闭" }).first().click();
-
-  await page.goto("/app/sales/receipts");
-  const receipts = page.getByTestId("receipt-page");
-  await expect(receipts).toContainText("签收人"); await expect(receipts).toContainText("签收日期"); await expect(receipts).toContainText("异常数量");
-
   await page.goto("/app/sales/returns");
   const returns = page.getByTestId("sales-return-page");
   await expect(returns).toContainText("退货原因"); await expect(returns).toContainText("处理状态");

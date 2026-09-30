@@ -11,11 +11,4 @@ test("primary module and page typography uses one computed semantic scale", asyn
     await expect(page.getByTestId("module-title")).toHaveCSS("font-size", "20px");
     await expect(page.getByTestId("module-title")).toHaveCSS("line-height", "28px");
   }
-  await page.goto("/app/sales/deliveries");
-  await expect(page.getByTestId("page-title")).toHaveCSS("font-size", "20px");
-  await expect(page.getByTestId("page-header").locator(".fc-page-subtitle")).toHaveCSS("font-size", "12px");
-  await expect(page.getByTestId("module-subnav").getByRole("link").first()).toHaveCSS("font-size", "13px");
-  await expect(page.getByLabel("搜索发货单")).toHaveCSS("font-size", "13px");
-  await expect(page.getByTestId("delivery-page").locator("tbody td").first()).toHaveCSS("font-size", "13px");
-  await expect(page.getByRole("button", { name: "新建发货单" })).toHaveCSS("font-size", "13px");
 });
