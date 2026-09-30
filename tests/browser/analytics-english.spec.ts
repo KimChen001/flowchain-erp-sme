@@ -57,7 +57,7 @@ test('overview stays available in Chinese', async ({ page }) => {
 test('populated overview uses readable status labels and filters by the original status value', async ({ page }) => {
   await login(page);
   await page.route('**/api/reports/query', async route => {
-    const context = { purchaseOrders: [{ id: 'PO-DEMO', supplierName: 'Acme Components', status: 'partially_received', currency: 'USD', totalAmount: 900, updatedAt: '2026-09-10', lines: [] }], salesOrders: [], suppliers: [], items: [], inventoryItems: [], supplierInvoices: [], receipts: [], dataLimitations: [] };
+    const context = { purchaseOrders: [{ id: 'PO-DEMO', supplierName: 'Acme Components', status: 'partially_received', currency: 'USD', totalAmount: 900, createdAt: '2026-09-10', lines: [] }], salesOrders: [], suppliers: [], items: [], inventoryItems: [], supplierInvoices: [], receipts: [], dataLimitations: [] };
     await route.fulfill({ json: buildRuntimeGovernedReport(context, route.request().postDataJSON()) });
   });
   await page.goto('/app/reports/overview');

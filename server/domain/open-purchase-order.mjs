@@ -25,6 +25,21 @@ const quantity = (value) => (
   value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
 )
 
+// A calendar day in YYYY-MM-DD form, or '' when the value is not a real date.
+export function reportCalendarDay(value) {
+  const candidate = String(value ?? '').trim().slice(0, 10)
+  const parsed = new Date(`${candidate}T00:00:00Z`)
+  return /^\d{4}-\d{2}-\d{2}$/.test(candidate) && Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === candidate ? candidate : ''
+}
+
+// The business date of a purchase order in every report: its order date, or
+// its creation date when no order date is recorded. Never the last update,
+// which moved an old order into the current month whenever it was edited.
+// '' when neither is known, so a date range leaves the order out.
+export function purchaseOrderBusinessDate(purchaseOrder) {
+  return reportCalendarDay(purchaseOrder?.orderDate || purchaseOrder?.createdAt)
+}
+
 // Remaining quantity on one purchase order line, rounded to four decimals as the
 // quantity columns are stored. null when either quantity is unknown.
 export function purchaseOrderLineRemaining(line) {

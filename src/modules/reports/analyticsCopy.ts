@@ -39,7 +39,7 @@ const chinese: Record<string, string> = {
   'Needs attention': '需要关注', 'Open purchase orders': '未完成采购订单', 'Inventory shortages': '库存短缺',
   'Unfulfilled sales orders': '未履约销售订单', 'Review orders': '查看订单', 'Review inventory': '查看库存',
   'Counts use the current filters. Select a card to review the source records.': '数量基于当前筛选，点击卡片查看来源记录。',
-  'Activity uses the latest recorded update date, falling back to creation date. Counts are orders, not revenue.': '活动按最近更新日期统计，缺失时使用创建日期。数量表示订单数，并非收入。',
+  "Activity uses each order's order date, falling back to its creation date. Counts are orders, not revenue.": '活动按订单日期统计，缺失时使用创建日期。数量表示订单数，并非收入。',
   'Purchase order details': '采购订单明细', 'Sales order details': '销售订单明细', 'Inventory details': '库存明细', 'Invoice details': '发票明细', 'Supplier details': '供应商明细',
   'Showing': '显示', 'of': '共', 'records in the loaded scope': '条已加载范围内的记录',
   'Dates must use YYYY-MM-DD.': '日期必须使用 YYYY-MM-DD。', 'Start date must not be after end date.': '开始日期不得晚于结束日期。',

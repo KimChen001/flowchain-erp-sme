@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
 import { isCommittedPurchaseOrder } from './open-purchase-order.mjs'
+import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs'
 import { analyticsCopy } from '../../src/modules/reports/analyticsCopy.ts'
 import { reportWorkbook } from '../../src/modules/reports/reportWorkbook.ts'
 
@@ -161,4 +162,99 @@ test('workbook metric summary formats each money metric in its own currency', ()
   const row = summary.find(item => item.Metric === 'Purchase order amount' || item.Metric === '采购订单金额')
   assert.match(String(row['Current value']), /€300/)
   assert.equal(row['Currency code'], 'EUR')
+})
+
+// Filters and business dates.
+const filterContext = () => context({
+  purchaseOrders: [
+    po('PO-ACME-1', 'issued', 100, { supplierName: 'Acme' }), po('PO-ACME-2', 'approved', 200, { supplierName: 'Acme' }),
+    po('PO-BETA', 'issued', 300, { supplierName: 'Beta' }),
+  ],
+  salesOrders: [
+    { id: 'SO-NORTH', customerName: 'Northwind', sku: 'SKU-1', orderedQty: 8, fulfilledQty: 0, currency: 'USD', totalAmount: 80, status: 'confirmed', createdAt: '2026-09-04' },
+    { id: 'SO-CONTOSO', customerName: 'Contoso', sku: 'SKU-1', orderedQty: 4, fulfilledQty: 0, currency: 'USD', totalAmount: 40, status: 'confirmed', createdAt: '2026-09-05' },
+  ],
+  inventoryItems: [{ sku: 'SKU-1', onHandQuantity: 5, reservedQuantity: 0 }],
+  supplierInvoices: [invoice('INV-ACME', 'approved', 70, { supplierName: 'Acme' }), invoice('INV-BETA', 'approved', 30, { supplierName: 'Beta' })],
+})
+
+test('a supplier filter narrows supplier subjects and leaves sales orders and inventory alone', () => {
+  const report = buildRuntimeGovernedReport(filterContext(), { subject: 'overview', filters: { supplier: 'Acme' } })
+  assert.equal(kpi(report, 'purchase_order_amount').currentValue, 300)
+  assert.equal(kpi(report, 'sales_order_count').currentValue, 2)
+  assert.equal(kpi(report, 'inventory_risk_sku').currentValue, 1)
+  assert.equal(report.attention.find(item => item.id === 'inventory_shortages').count, 1)
+  assert.equal(report.attention.find(item => item.id === 'unfulfilled_sales').count, 2)
+  const finance = buildRuntimeGovernedReport(filterContext(), { subject: 'finance', filters: { supplier: 'Acme' } })
+  assert.equal(kpi(finance, 'invoice_amount').currentValue, 70)
+})
+
+test('a customer filter narrows sales orders and leaves purchase order amount alone', () => {
+  const report = buildRuntimeGovernedReport(filterContext(), { subject: 'overview', filters: { customer: 'Northwind' } })
+  assert.equal(kpi(report, 'purchase_order_amount').currentValue, 600)
+  assert.equal(kpi(report, 'open_po_count').currentValue, 3)
+  assert.equal(kpi(report, 'sales_order_count').currentValue, 1)
+})
+
+test('a status filter from the purchase order status chart does not zero out sales orders', () => {
+  const report = buildRuntimeGovernedReport(filterContext(), { subject: 'overview', filters: { status: 'issued' } })
+  assert.equal(kpi(report, 'purchase_order_amount').currentValue, 400)
+  assert.equal(kpi(report, 'sales_order_count').currentValue, 2)
+  const sales = buildRuntimeGovernedReport(filterContext(), { subject: 'sales', filters: { status: 'confirmed' } })
+  assert.equal(kpi(sales, 'sales_order_count').currentValue, 2)
+})
+
+test('metrics list only the filters their subject can apply', () => {
+  const report = buildRuntimeGovernedReport(filterContext(), { subject: 'overview' })
+  assert.deepEqual(kpi(report, 'purchase_order_amount').applicableFilters, ['from', 'to', 'supplier', 'currency', 'status'])
+  assert.deepEqual(kpi(report, 'sales_order_count').applicableFilters, ['from', 'to', 'customer', 'currency'])
+  assert.deepEqual(kpi(report, 'inventory_risk_sku').applicableFilters, [])
+})
+
+test('purchase orders use the order date, then the creation date, never the last update', () => {
+  const purchaseOrders = [
+    po('PO-OLD-EDITED', 'issued', 100, { createdAt: '2026-08-15T09:00:00.000Z', updatedAt: '2026-09-20T09:00:00.000Z' }),
+    po('PO-ORDER-DATE', 'issued', 200, { orderDate: '2026-09-03', createdAt: '2026-08-30T09:00:00.000Z' }),
+    po('PO-SEPTEMBER', 'approved', 400, { createdAt: '2026-09-10T09:00:00.000Z' }),
+  ]
+  const september = buildRuntimeGovernedReport(context({ purchaseOrders }), { subject: 'overview', filters: { from: '2026-09-01', to: '2026-09-30' } })
+  assert.equal(kpi(september, 'purchase_order_amount').currentValue, 600)
+  assert.deepEqual(september.details.map(row => row.id).sort(), ['PO-ORDER-DATE', 'PO-SEPTEMBER'])
+  const all = buildRuntimeGovernedReport(context({ purchaseOrders }), { subject: 'overview' })
+  assert.deepEqual(all.charts[0].data.map(row => [row.name, row['Purchase orders']]), [['2026-08', 1], ['2026-09', 2]])
+})
+
+test('records without a business date are left out of date-filtered totals', () => {
+  const purchaseOrders = [po('PO-DATED', 'issued', 100), po('PO-UNDATED', 'issued', 900, { createdAt: null })]
+  const salesOrders = [{ id: 'SO-UNDATED', orderedQty: 1, fulfilledQty: 0, currency: 'USD', status: 'confirmed' }]
+  const supplierInvoices = [invoice('INV-UNDATED', 'approved', 50, { invoiceDate: null })]
+  const filters = { from: '2026-09-01', to: '2026-09-30' }
+  const overview = buildRuntimeGovernedReport(context({ purchaseOrders, salesOrders }), { subject: 'overview', filters })
+  assert.equal(kpi(overview, 'purchase_order_amount').currentValue, 100)
+  assert.equal(kpi(overview, 'sales_order_count').currentValue, 0)
+  assert.equal(overview.attention.find(item => item.id === 'open_orders').count, 1)
+  assert.equal(kpi(buildRuntimeGovernedReport(context({ supplierInvoices }), { subject: 'finance', filters }), 'invoice_amount').currentValue, 0)
+  // Without a date range the undated order still counts.
+  assert.equal(kpi(buildRuntimeGovernedReport(context({ purchaseOrders }), { subject: 'overview' }), 'purchase_order_amount').currentValue, 1000)
+})
+
+test('the overview and the open purchase orders report pick the same orders for a date range', () => {
+  const lines = [{ quantity: 5, receivedQuantity: 0, unit: 'pcs' }]
+  const purchaseOrders = [
+    po('PO-OLD-EDITED', 'issued', 100, { createdAt: '2026-08-15T09:00:00.000Z', updatedAt: '2026-09-20T09:00:00.000Z', lines }),
+    po('PO-ORDER-DATE', 'issued', 200, { orderDate: '2026-09-03', createdAt: '2026-08-30T09:00:00.000Z', lines }),
+    po('PO-UNDATED', 'issued', 300, { createdAt: null, lines }),
+  ]
+  const filters = { from: '2026-09-01', to: '2026-09-30' }
+  const overview = buildRuntimeGovernedReport(context({ purchaseOrders }), { subject: 'overview', filters })
+  const openReport = buildOpenPurchaseOrdersReport(purchaseOrders, filters, new Date('2026-09-29T12:00:00Z'))
+  assert.deepEqual(openReport.rows.map(row => row.id), ['PO-ORDER-DATE'])
+  assert.equal(openReport.rows[0].createdDate, '2026-09-03')
+  assert.equal(overview.attention.find(item => item.id === 'open_orders').count, openReport.summary.open)
+})
+
+test('the activity chart explains the business date in both languages', () => {
+  const english = "Activity uses each order's order date, falling back to its creation date. Counts are orders, not revenue."
+  assert.equal(analyticsCopy(english, 'zh-CN'), '活动按订单日期统计，缺失时使用创建日期。数量表示订单数，并非收入。')
+  assert.equal(analyticsCopy(analyticsCopy(english, 'zh-CN'), 'en-US'), english)
 })

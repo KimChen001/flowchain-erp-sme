@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs';
 
-const context = { purchaseOrders: Array.from({ length: 60 }, (_, i) => ({ id: `PO-${i}`, status: i % 2 ? 'fully_received' : 'issued', updatedAt: '2026-09-10', currency: i % 2 ? 'CNY' : 'USD', totalAmount: 100, supplierName: i % 2 ? 'Beta' : 'Alpha', lines: [] })), salesOrders: [{ id: 'SO-1', updatedAt: '2026-09-10', orderedQty: 4, fulfilledQty: 2, currency: 'USD', status: 'open' }], items: [], inventoryItems: [], suppliers: [], supplierInvoices: [], receipts: [], dataLimitations: [] };
+const context = { purchaseOrders: Array.from({ length: 60 }, (_, i) => ({ id: `PO-${i}`, status: i % 2 ? 'fully_received' : 'issued', createdAt: '2026-09-10', currency: i % 2 ? 'CNY' : 'USD', totalAmount: 100, supplierName: i % 2 ? 'Beta' : 'Alpha', lines: [] })), salesOrders: [{ id: 'SO-1', createdAt: '2026-09-10', orderedQty: 4, fulfilledQty: 2, currency: 'USD', status: 'open' }], items: [], inventoryItems: [], suppliers: [], supplierInvoices: [], receipts: [], dataLimitations: [] };
 test('overview charts aggregate the whole loaded scope before detail pagination, without adding currencies', () => {
   const report = buildRuntimeGovernedReport(context, { subject: 'overview', limit: 5 });
   assert.equal(report.details.length, 5);
