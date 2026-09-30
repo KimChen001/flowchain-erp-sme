@@ -7,8 +7,11 @@ import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 // End-to-end procurement in database persistence mode, driven through the real
 // HTTP server and the endpoints the browser calls:
 //   PR   src/modules/purchase-requests/CanonicalProcurementPanel.tsx
-//   RFQ  src/components/procurement/CanonicalDownstreamPanel.tsx (create mode)
+//   RFQ  src/components/procurement/CanonicalDownstreamPanel.tsx (create mode,
+//        open and cancel)
 //   PO   /api/procurement/requests/:id/generate-purchase-orders (PR panel),
+//        /api/procurement/orders/:id/submit|approve|issue|cancel
+//        (PurchaseOrderWorkflowActions on the PO detail page),
 //        /api/mobile/purchase-orders/:id/approve (src/modules/mobile)
 //   GRN  /api/receiving-docs (src/modules/receiving/Page.tsx),
 //        /api/mobile/receiving/drafts (src/modules/mobile),
@@ -23,8 +26,7 @@ import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 const LEGACY_RECEIVING_CREATE = 'The desktop receiving page still posts to the retired /api/receiving-docs route (501); only the mobile facade creates receiving drafts in PostgreSQL.'
 
 // Flags a US trial workspace turns on (reports-ranking item 12), plus mobile
-// operations, which hosts the only PostgreSQL PO approval and receiving draft
-// commands today.
+// operations, which hosts the only PostgreSQL receiving draft commands today.
 const TRIAL_FLAGS = {
   FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: 'true',
   FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: 'true',
@@ -153,7 +155,7 @@ test('the trial capability flags enable receiving posting and the mobile PO and 
   }
 })
 
-test('without mobile operations enabled a trial has no PostgreSQL path to approve a PO or draft a receipt', async () => {
+test('without mobile operations a trial still approves POs on the desktop but cannot draft a receipt', async () => {
   process.env.FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS = 'false'
   try {
     for (const [method, path] of [['GET', '/api/mobile/tasks'], ['POST', '/api/mobile/purchase-orders/any/approve'], ['POST', '/api/mobile/receiving/drafts']]) {
@@ -161,6 +163,11 @@ test('without mobile operations enabled a trial has no PostgreSQL path to approv
       assert.equal(result.status, 409, `${method} ${path}: ${describe(result)}`)
       assert.equal(result.body.code, 'MOBILE_OPERATIONS_CAPABILITY_NOT_AVAILABLE')
     }
+    const id = 'PO-FLOW-DESKTOP-ONLY'
+    await seedPurchaseOrder(id, { status: 'pending_approval' })
+    const approved = await api(tokens.managerA, 'POST', `/api/procurement/orders/${id}/approve`, { expectedVersion: 0 })
+    assert.equal(approved.status, 200, describe(approved))
+    assert.equal((await prisma.purchaseOrder.findUnique({ where: { id } })).status, 'approved')
   } finally {
     process.env.FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS = 'true'
   }
