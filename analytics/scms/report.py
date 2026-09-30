@@ -86,3 +86,24 @@ def save_figure(fig, path: Path) -> str:
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def write_json(path: Path, payload) -> None:
+    """Write aggregate key numbers (never row-level data) for report_outline.py."""
+    import json
+
+    import numpy as np
+
+    def default(value):
+        if isinstance(value, (np.integer,)):
+            return int(value)
+        if isinstance(value, (np.floating,)):
+            return float(value)
+        if isinstance(value, (np.ndarray,)):
+            return value.tolist()
+        if isinstance(value, (pd.Timestamp,)):
+            return value.isoformat()
+        return str(value)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, default=default, ensure_ascii=False), encoding="utf-8")

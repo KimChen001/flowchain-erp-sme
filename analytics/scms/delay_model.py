@@ -9,6 +9,11 @@ boosting.
 Writes ``outputs/delay-model.md``, ``outputs/delay-model-metrics.csv`` and
 figures. Every number in the report is computed here.
 
+The primary specification uses the strict PO-time features. The originally
+specified set (with planned lead time and weight) is a sensitivity result.
+Section 6 selects the calibrated late-risk predictor used by
+``decision_results.py``.
+
 Usage (from ``analytics/``)::
 
     python -m scms.delay_model [--data-dir DIR] [--bootstrap N]
@@ -28,6 +33,7 @@ from sklearn.base import clone as sk_clone
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 from sklearn.inspection import permutation_importance
+from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score,
@@ -37,13 +43,14 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
+from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, StandardScaler
 from sklearn.tree import DecisionTreeClassifier, export_text
 
 from .dataset import TEST_FIRST_YEAR, TRAIN_LAST_YEAR, VALIDATION_YEAR, load_clean, model_frame
 from .paths import GRACE_DAYS, SEED, parse_args
-from .report import AQUA, BLUE, INK_2, ORANGE, md_table, pct, save_figure, style_axes, write_text
+from .report import AQUA, BLUE, INK_2, ORANGE, md_table, pct, save_figure, style_axes, write_json, write_text
 
 YELLOW = "#eda100"
 CATEGORICAL = ["vendor", "shipment_mode", "country", "product_group"]
@@ -77,7 +84,8 @@ LEAKAGE_AUDIT = [
     ("delivered to client date", "**no**", "exclude", "The outcome."),
     ("delivery recorded date", "**no**", "exclude", "Recorded at or after delivery."),
     ("product group", "yes", "use", "Product is fixed on the PO."),
-    ("sub classification / item description / molecule / brand / dosage / dosage form / unit of measure / manufacturing site / first line designation", "yes", "not used", "Known at PO time. Left out to keep the specified, interpretable feature set."),
+    ("sub classification / item description / molecule / brand / dosage / dosage form / unit of measure / manufacturing site", "yes", "not used", "Known at PO time. Left out to keep the feature set small and interpretable."),
+    ("first line designation", "**no**", "exclude", "Per the data dictionary it marks the line that carries the ASN/DN's aggregated freight and weight, so it is a shipping-document artefact."),
     ("line item quantity, pack price, unit price", "yes", "not used", "Known at PO time. Line value summarises them."),
     ("line item value", "yes", "use (log)", "Quantity × agreed pack price is fixed on the PO."),
     ("weight (kilograms)", "partly", "**borderline**", "Recorded from shipping documents after dispatch. A buyer can estimate it from quantity at PO time. 'Captured separately' and 'See ASN' references depend on how lines were consolidated for shipping, which is post-PO. Models are run with and without it; only the value and a missing flag are used, never the reference flags."),
@@ -523,6 +531,110 @@ data-quality.md §3.5).
     return text, table
 
 
+# ---------------------------------------------------------------------------
+# Calibrated risk for the decision model
+
+
+class CalibratedRisk:
+    """A fitted base model plus an optional calibrator fitted on validation."""
+
+    def __init__(self, name: str, base, cols: list[str], method: str | None):
+        self.name, self.base, self.cols, self.method = name, base, cols, method
+        self.calibrator = None
+
+    @staticmethod
+    def _logit(p: np.ndarray) -> np.ndarray:
+        p = np.clip(p, 1e-4, 1 - 1e-4)
+        return np.log(p / (1 - p)).reshape(-1, 1)
+
+    def _fit_calibrator(self, p: np.ndarray, y: np.ndarray):
+        if self.method == "Platt":
+            return LogisticRegression(C=1e6, max_iter=1000).fit(self._logit(p), y)
+        if self.method == "isotonic":
+            return IsotonicRegression(out_of_bounds="clip", y_min=0.0, y_max=1.0).fit(p, y)
+        return None
+
+    def _apply(self, calibrator, p: np.ndarray) -> np.ndarray:
+        if calibrator is None:
+            return p
+        if self.method == "Platt":
+            return calibrator.predict_proba(self._logit(p))[:, 1]
+        return calibrator.predict(p)
+
+    def cv_brier(self, X_val: pd.DataFrame, y_val: np.ndarray, folds: int = 5) -> float:
+        """Brier on validation with the calibrator fitted out-of-fold (honest)."""
+        p = proba(self.base, X_val[self.cols])
+        if self.method is None:
+            return float(brier_score_loss(y_val, p))
+        out = np.empty_like(p)
+        for fit_idx, pred_idx in StratifiedKFold(folds, shuffle=True, random_state=SEED).split(p.reshape(-1, 1), y_val):
+            calibrator = self._fit_calibrator(p[fit_idx], y_val[fit_idx])
+            out[pred_idx] = self._apply(calibrator, p[pred_idx])
+        return float(brier_score_loss(y_val, out))
+
+    def fit_calibration(self, X_val: pd.DataFrame, y_val: np.ndarray) -> "CalibratedRisk":
+        self.calibrator = self._fit_calibrator(proba(self.base, X_val[self.cols]), y_val)
+        return self
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        return self._apply(self.calibrator, proba(self.base, X[self.cols]))
+
+
+def select_risk_model(X: pd.DataFrame, y: pd.Series, split: pd.Series, primary: dict) -> tuple[CalibratedRisk, pd.DataFrame]:
+    """Pick the best-calibrated late-risk predictor by out-of-fold validation Brier.
+
+    Candidates: the vendor-rate baseline and the primary (strict) logistic
+    regression, each raw, Platt-scaled or isotonic-calibrated on 2013. The base
+    models are the ones fitted on training years only.
+    """
+    val, test = split.eq("validation"), split.eq("test")
+    yv, yt = y[val].to_numpy(), y[test].to_numpy()
+    cols = primary["cols"]
+    candidates = []
+    for base_key, base_label in (("baseline", "vendor-rate baseline"), ("logistic", "strict logistic regression")):
+        for method in (None, "Platt", "isotonic"):
+            label = f"{base_label} ({method or 'raw'})"
+            candidates.append(CalibratedRisk(label, primary["models"][base_key], cols, method))
+    rows = []
+    for model in candidates:
+        cv = model.cv_brier(X[val], yv)
+        model.fit_calibration(X[val], yv)
+        p_test = model.predict(X[test])
+        cal = calibration_table(yt, p_test)
+        ece = float(np.sum(cal["rows"].astype(int) * (cal["mean_predicted"] - cal["observed_rate"]).abs()) / len(yt))
+        rows.append({
+            "candidate": model.name,
+            "validation Brier (out-of-fold)": cv,
+            "test Brier": brier_score_loss(yt, p_test),
+            "test ECE (deciles)": ece,
+            "test mean predicted": pct(p_test.mean()),
+            "test observed": pct(yt.mean()),
+            "test ROC AUC": roc_auc_score(yt, p_test),
+        })
+    table = pd.DataFrame(rows)
+    best = int(table["validation Brier (out-of-fold)"].idxmin())
+    table["chosen"] = ["✓" if i == best else "" for i in range(len(table))]
+    return candidates[best], table
+
+
+MIN_LATE_FOR_VENDOR_DAYS = 5
+
+
+def days_late_given_late(history: pd.DataFrame) -> tuple[dict, float, pd.DataFrame]:
+    """E[days late | late] per vendor from history; global mean for vendors with < 5 late shipments."""
+    late = history[history["is_late"].astype(bool)]
+    global_mean = float(late["late_days"].mean())
+    stats = late.groupby("vendor")["late_days"].agg(["mean", "size"])
+    per_vendor = stats.loc[stats["size"] >= MIN_LATE_FOR_VENDOR_DAYS, "mean"].to_dict()
+    table = stats.rename(columns={"mean": "mean days late", "size": "late shipments"}).sort_values("late shipments", ascending=False)
+    table["used"] = np.where(table["late shipments"] >= MIN_LATE_FOR_VENDOR_DAYS, "vendor mean", "global mean")
+    return per_vendor, global_mean, table
+
+
+PRIMARY_FS = "strict PO-time"
+SENSITIVITY_FS = "as specified"
+
+
 def main() -> int:
     def extra(parser):
         parser.add_argument("--bootstrap", type=int, default=2000, help="Bootstrap resamples for test CIs (default 2000)")
@@ -535,23 +647,22 @@ def main() -> int:
     y = data["is_late"].astype(int)
     split = data["split"]
     X = fill_weight(build_features(data), split.eq("train"))
+    train, val, test = split.eq("train"), split.eq("validation"), split.eq("test")
 
     counts = data.groupby("split").agg(rows=("is_late", "size"), late=("is_late", "sum")).reindex(["train", "validation", "test"])
     counts["late rate"] = (counts["late"] / counts["rows"]).map(pct)
 
-    results = {fs: run_feature_set(fs, X, y, split, args.bootstrap) for fs in FEATURE_SETS}
-    main_fs = "as specified"
-    strict_fs = "strict PO-time"
-    metrics = pd.concat([results[fs]["metrics"] for fs in FEATURE_SETS], ignore_index=True)
+    results = {fs: run_feature_set(fs, X, y, split, args.bootstrap) for fs in (PRIMARY_FS, SENSITIVITY_FS)}
+    metrics = pd.concat([results[fs]["metrics"] for fs in (PRIMARY_FS, SENSITIVITY_FS)], ignore_index=True)
     metrics.to_csv(paths.outputs_dir / "delay-model-metrics.csv", index=False, float_format="%.6g")
+    prim, sens = results[PRIMARY_FS], results[SENSITIVITY_FS]
 
-    # Leakage demonstration: add lead_days_actual, then post-shipment freight fields.
-    train, val, test = split.eq("train"), split.eq("validation"), split.eq("test")
+    # Leakage demonstration on top of the primary (strict) features.
     leak_rows = []
-    base_numeric = FEATURE_SETS[main_fs]["numeric"]
-    C_main = float(results[main_fs]["chosen"]["logistic"].split("=")[1])
+    base_numeric = FEATURE_SETS[PRIMARY_FS]["numeric"]
+    C_main = float(prim["chosen"]["logistic"].split("=")[1])
     for label, extra_cols in [
-        ("as specified (no leak)", []),
+        ("strict PO-time (no leak)", []),
         ("+ lead_days_actual (outcome leak)", ["lead_days_actual"]),
         ("+ freight amount and shipping-document flags (post-shipment)", ["log_freight", "freight_status_number", "resolved_from_reference"]),
         ("+ lead-time slip = actual − planned lead (a delivered-date derivative)", ["lead_slip_days"]),
@@ -559,10 +670,10 @@ def main() -> int:
         numeric = base_numeric + extra_cols
         model = logistic_pipeline(numeric, C_main).fit(X.loc[train, CATEGORICAL + numeric], y[train])
         p = proba(model, X.loc[test, CATEGORICAL + numeric])
-        leak_rows.append({"logistic regression features": label, "test ROC AUC": roc_auc_score(y[test], p), "test PR AUC": average_precision_score(y[test], p),
-                          "test Brier": brier_score_loss(y[test], p)})
-    hgb_params = dict(part.split("=") for part in results[main_fs]["chosen"]["hgb"].replace(" ", "").split(","))
-    for label, extra_cols in [("as specified (no leak)", []), ("+ lead_days_actual (outcome leak)", ["lead_days_actual"])]:
+        leak_rows.append({"model": "logistic regression", "features": label, "test ROC AUC": roc_auc_score(y[test], p),
+                          "test PR AUC": average_precision_score(y[test], p), "test Brier": brier_score_loss(y[test], p)})
+    hgb_params = dict(part.split("=") for part in prim["chosen"]["hgb"].replace(" ", "").split(","))
+    for label, extra_cols in [("strict PO-time (no leak)", []), ("+ lead_days_actual (outcome leak)", ["lead_days_actual"])]:
         numeric = base_numeric + extra_cols
         model = hgb_pipeline(numeric, float(hgb_params["lr"]), int(hgb_params["iter"]), int(hgb_params["depth"]))
         model.fit(X.loc[train, CATEGORICAL + numeric], y[train])
@@ -570,66 +681,60 @@ def main() -> int:
         leak_rows.append({"model": "gradient boosting", "features": label, "test ROC AUC": roc_auc_score(y[test], p),
                           "test PR AUC": average_precision_score(y[test], p), "test Brier": brier_score_loss(y[test], p)})
     leak = pd.DataFrame(leak_rows)
-    leak["model"] = leak["model"].fillna("logistic regression")
-    leak["features"] = leak["features"].fillna(leak["logistic regression features"])
-    leak = leak[["model", "features", "test ROC AUC", "test PR AUC", "test Brier"]]
     leak_lr_clean, leak_lr_leak, leak_lr_freight, leak_lr_slip, leak_hgb_clean, leak_hgb_leak = (leak.iloc[i] for i in range(6))
 
-    # Class weights versus threshold tuning (logistic, as specified).
+    # Class weights versus threshold tuning (logistic, primary features).
     cw_rows = []
     for cw in (None, "balanced"):
         model = logistic_pipeline(base_numeric, C_main, class_weight=cw).fit(X.loc[train, CATEGORICAL + base_numeric], y[train])
-        p_val = proba(model, X.loc[val, CATEGORICAL + base_numeric])
-        thr = f1_threshold(y[val].to_numpy(), p_val)
+        thr = f1_threshold(y[val].to_numpy(), proba(model, X.loc[val, CATEGORICAL + base_numeric]))
         p = proba(model, X.loc[test, CATEGORICAL + base_numeric])
         ev = evaluate(y[test].to_numpy(), p, thr, float(y[train].mean()))
         cw_rows.append({"class_weight": str(cw), "test ROC AUC": ev["ROC AUC"], "test PR AUC": ev["PR AUC"], "Brier": ev["Brier"],
                         "mean predicted (test)": pct(p.mean()), "observed (test)": pct(y[test].mean()), "precision": ev["precision"], "recall": ev["recall"]})
     class_weights = pd.DataFrame(cw_rows)
 
-    # Rolling origin.
-    rolling = {fs: rolling_origin(X, y, data["po_year"], fs, results[fs]["chosen"]) for fs in FEATURE_SETS}
+    rolling = {fs: rolling_origin(X, y, data["po_year"], fs, results[fs]["chosen"]) for fs in (PRIMARY_FS, SENSITIVITY_FS)}
 
-    # Interpretation.
-    main_res = results[main_fs]
-    strict_res = results[strict_fs]
-    lr_model = main_res["models"]["logistic"]
-    ors = odds_ratios(lr_model, X.loc[train, main_res["cols"]], y[train])
+    # Interpretation (primary).
+    lr_model = prim["models"]["logistic"]
+    ors = odds_ratios(lr_model, X.loc[train, prim["cols"]], y[train])
     ors["abs"] = ors["coef"].abs()
-    numeric_or = ors[ors["feature"].isin(main_res["numeric"])].drop(columns="abs")
-    sd = X.loc[train, main_res["numeric"]].std()
-    numeric_or["1 SD in natural units"] = numeric_or["feature"].map(
-        {
-            "log_value": f"{sd['log_value']:.2f} log-USD (×{np.exp(sd['log_value']):.1f} value)",
-            "log_weight": f"{sd['log_weight']:.2f} log-kg (×{np.exp(sd['log_weight']):.1f} weight)",
-            "weight_missing": f"{sd['weight_missing']:.2f}",
-            "lead_days_planned": f"{sd['lead_days_planned']:.0f} days",
-            "po_year": f"{sd['po_year']:.1f} years",
-        }
-    )
-    top_cat = ors[~ors["feature"].isin(main_res["numeric"])].sort_values("abs", ascending=False).head(12).drop(columns="abs")
+    sd = X.loc[train, sens["numeric"]].std()
+    units = {
+        "log_value": f"{sd['log_value']:.2f} log-USD (×{np.exp(sd['log_value']):.1f} value)",
+        "log_weight": f"{sd['log_weight']:.2f} log-kg (×{np.exp(sd['log_weight']):.1f} weight)",
+        "weight_missing": f"{sd['weight_missing']:.2f}",
+        "lead_days_planned": f"{sd['lead_days_planned']:.0f} days",
+        "po_year": f"{sd['po_year']:.1f} years",
+    }
+    numeric_or = ors[ors["feature"].isin(prim["numeric"])].drop(columns="abs")
+    numeric_or["1 SD in natural units"] = numeric_or["feature"].map(units)
+    top_cat = ors[~ors["feature"].isin(prim["numeric"])].sort_values("abs", ascending=False).head(12).drop(columns="abs")
     mode_pg_or = ors[ors["feature"].str.startswith(("shipment_mode_", "product_group_"))].drop(columns="abs")
     or_lookup = ors.set_index("feature")["odds ratio"]
-    strict_lr = strict_res["models"]["logistic"]
-    ors_strict = odds_ratios(strict_lr, X.loc[train, strict_res["cols"]], y[train], n_boot=100)
-    ors_strict["abs"] = ors_strict["coef"].abs()
-    top_strict = ors_strict.sort_values("abs", ascending=False).head(8).drop(columns="abs")
+    # Sensitivity model: the two borderline features.
+    ors_sens = odds_ratios(sens["models"]["logistic"], X.loc[train, sens["cols"]], y[train], n_boot=100)
+    sens_numeric_or = ors_sens[ors_sens["feature"].isin(sens["numeric"])].copy()
+    sens_numeric_or["1 SD in natural units"] = sens_numeric_or["feature"].map(units)
+    sens_or = ors_sens.set_index("feature")["odds ratio"]
 
-    tree = main_res["models"]["tree"]
+    tree = prim["models"]["tree"]
     tree_rules = export_text(tree.named_steps["model"], feature_names=list(tree.named_steps["pre"].get_feature_names_out()), show_weights=True, decimals=1)
-    tree_strict = strict_res["models"]["tree"]
-    tree_rules_strict = export_text(tree_strict.named_steps["model"], feature_names=list(tree_strict.named_steps["pre"].get_feature_names_out()), show_weights=True, decimals=1)
 
-    perm = permutation_importance(main_res["models"]["hgb"], X.loc[test, main_res["cols"]], y[test], scoring="roc_auc", n_repeats=20, random_state=SEED)
-    importance = pd.DataFrame({"feature": main_res["cols"], "mean ROC AUC drop": perm.importances_mean, "sd": perm.importances_std}).sort_values("mean ROC AUC drop", ascending=False)
-    perm_lr = permutation_importance(lr_model, X.loc[test, main_res["cols"]], y[test], scoring="roc_auc", n_repeats=20, random_state=SEED)
-    importance["logistic: mean ROC AUC drop"] = pd.Series(perm_lr.importances_mean, index=main_res["cols"]).reindex(importance["feature"]).values
+    perm = permutation_importance(prim["models"]["hgb"], X.loc[test, prim["cols"]], y[test], scoring="roc_auc", n_repeats=20, random_state=SEED)
+    importance = pd.DataFrame({"feature": prim["cols"], "HGB: mean ROC AUC drop": perm.importances_mean, "HGB sd": perm.importances_std})
+    perm_lr = permutation_importance(lr_model, X.loc[test, prim["cols"]], y[test], scoring="roc_auc", n_repeats=20, random_state=SEED)
+    importance["logistic: mean ROC AUC drop"] = perm_lr.importances_mean
+    importance = importance.sort_values("logistic: mean ROC AUC drop", ascending=False)
+    perm_sens = permutation_importance(sens["models"]["hgb"], X.loc[test, sens["cols"]], y[test], scoring="roc_auc", n_repeats=20, random_state=SEED)
+    sens_importance = pd.Series(perm_sens.importances_mean, index=sens["cols"])
 
-    # Calibration tables and failure analysis (logistic, as specified).
-    cal = {key: calibration_table(main_res["y_test"], p) for key, p in main_res["preds_test"].items()}
+    # Calibration tables and failure analysis (primary).
+    cal = {key: calibration_table(prim["y_test"], p) for key, p in prim["preds_test"].items()}
     test_frame = data[test].copy()
-    test_frame["p_lr"] = main_res["preds_test"]["logistic"]
-    thr_lr = main_res["thresholds"]["logistic"]
+    test_frame["p_lr"] = prim["preds_test"]["logistic"]
+    thr_lr = prim["thresholds"]["logistic"]
     test_frame["flag"] = test_frame["p_lr"] >= thr_lr
     missed = test_frame[test_frame["is_late"] & ~test_frame["flag"]]
     false_alarm = test_frame[~test_frame["is_late"] & test_frame["flag"]]
@@ -639,12 +744,17 @@ def main() -> int:
     train_vendors = set(data.loc[train, "vendor"])
     unseen_test = int((~test_frame["vendor"].isin(train_vendors)).sum())
     unseen_late = int((~test_frame["vendor"].isin(train_vendors) & test_frame["is_late"]).sum())
-
-    # Planned lead time: how different is it between late and not-late rows?
     lead_compare = data.groupby(["split", "is_late"])["lead_days_planned"].median().unstack()
 
-    fig_curves = curves_figure(main_res, paths.figures_dir / "delay-model-curves.png")
-    fig_cal = calibration_figure(main_res, paths.figures_dir / "delay-model-calibration.png")
+    # Calibrated risk for the decision model.
+    risk_model, risk_table = select_risk_model(X, y, split, prim)
+    history = data[data["po_year"] <= VALIDATION_YEAR]
+    vendor_days, global_days, days_table = days_late_given_late(history)
+    p_risk_test = risk_model.predict(X[test])
+    risk_cal = calibration_table(prim["y_test"], p_risk_test)
+
+    fig_curves = curves_figure(prim, paths.figures_dir / "delay-model-curves.png")
+    fig_cal = calibration_figure(prim, paths.figures_dir / "delay-model-calibration.png")
     quant_text, _ = quantile_section(data, X, split)
 
     def metric_view(frame: pd.DataFrame) -> pd.DataFrame:
@@ -664,125 +774,129 @@ def main() -> int:
             parts.append(t)
         return pd.concat(parts, ignore_index=True)
 
-    m_main = results[main_fs]["metrics"].set_index("model")
-    m_strict = results[strict_fs]["metrics"].set_index("model")
+    def fmt3(frame, columns):
+        return frame.assign(**{c: frame[c].map(lambda v: f"{v:.3f}" if pd.notna(v) else "–") for c in columns})
+
+    m_p = prim["metrics"].set_index("model")
+    m_s = sens["metrics"].set_index("model")
     lr_label, hgb_label, base_label, tree_label = MODEL_LABELS["logistic"], MODEL_LABELS["hgb"], MODEL_LABELS["baseline"], MODEL_LABELS["tree"]
+    challengers = (lr_label, tree_label, hgb_label)
+    beats_roc = {fs: [k for k in challengers if results[fs]["metrics"].set_index("model").loc[k, "droc_lo"] > 0] for fs in results}
+    beats_pr = {fs: [k for k in challengers if results[fs]["metrics"].set_index("model").loc[k, "dpr_lo"] > 0] for fs in results}
+    worse_roc = {fs: [k for k in challengers if results[fs]["metrics"].set_index("model").loc[k, "droc_hi"] < 0] for fs in results}
 
-    def ci_excludes_zero(row, prefix):
-        return row[f"{prefix}_lo"] > 0 or row[f"{prefix}_hi"] < 0
-
-    beats = {fs: [k for k in (lr_label, tree_label, hgb_label) if results[fs]["metrics"].set_index("model").loc[k, "droc_lo"] > 0] for fs in FEATURE_SETS}
-
-    roll_view = {}
+    roll_view, roll_mean, roll_wins = {}, {}, {}
     for fs, table in rolling.items():
         view = table.copy()
         for c in view.columns:
             if c.endswith("ROC") or c.endswith("PR"):
                 view[c] = view[c].map(lambda v: f"{v:.3f}")
         roll_view[fs] = view
-    roll_mean = {fs: rolling[fs][[c for c in rolling[fs].columns if c.endswith(" ROC")]].mean() for fs in FEATURE_SETS}
+        roll_mean[fs] = table[[c for c in table.columns if c.endswith(" ROC")]].mean()
+        roll_wins[fs] = {k: int((table[f"{k} ROC"] > table["baseline ROC"]).sum()) for k in ("logistic", "tree", "hgb")}
+    n_folds = len(rolling[PRIMARY_FS])
 
     report = f"""# Late-delivery model at PO time
 
-Generated by `analytics/scms/delay_model.py` (seed {SEED}, {results[main_fs]['n_boot']:,}+
+Generated by `analytics/scms/delay_model.py` (seed {SEED}, {prim['n_boot']:,}+
 bootstrap resamples). Rubric section 4.
+
+**Primary specification: the strict PO-time feature set.** Planned lead time
+(scheduled − PO) is contaminated by the scheduled-date revision finding
+(data-quality.md §3.4). The data dictionary calls the field the "current
+anticipated delivery date". Weight comes from shipping documents. Both are
+therefore dropped from the primary model. The originally specified set, with
+both features, is kept as a sensitivity result. The split and protocol are the
+pre-registered ones and were not changed after seeing results.
 
 ## Problem
 
 - **Target:** `is_late` = delivered > scheduled + {GRACE_DAYS} days, for
-  direct-drop shipments. This is the same rule as the scorecard.
-- **Prediction time:** the day the PO is sent to the vendor. Only information
-  available then may be used.
-- **Use:** flag risky POs for expediting, and feed an expected-lateness cost into
-  the allocation model (`decision-proposal.md`).
-- **Rows:** {len(data):,} direct-drop shipments with a PO date and valid
-  dates. **Split by PO year, not at random:** train ≤ {TRAIN_LAST_YEAR},
-  validation {VALIDATION_YEAR} (hyper-parameters and threshold), test ≥
-  {TEST_FIRST_YEAR} (the last ~20 months of POs, used once).
+  direct-drop shipments (the same rule as the scorecard).
+- **Prediction time:** the day the PO is sent to the vendor.
+- **Use:** flag risky POs, and supply calibrated late-risk to the allocation
+  model (`decision-results.md`).
+- **Rows:** {len(data):,} direct-drop shipments with a PO date and valid dates.
+  **Split by PO year:** train ≤ {TRAIN_LAST_YEAR}, validation {VALIDATION_YEAR}
+  (hyper-parameters, threshold, calibration), test ≥ {TEST_FIRST_YEAR} (the
+  last ~20 months of POs).
 
 {md_table(counts.reset_index())}
 
-The positive class is rare and gets rarer over time: {pct(counts.loc['train', 'late'] / counts.loc['train', 'rows'])} in train and
-{pct(counts.loc['test', 'late'] / counts.loc['test', 'rows'])} in test. With only {int(counts.loc['test', 'late'])} late test shipments, every
-test metric has a wide interval. Read the CIs, not the point estimates.
+Late shipments are rare and get rarer: {pct(counts.loc['train', 'late'] / counts.loc['train', 'rows'])} in train,
+{pct(counts.loc['test', 'late'] / counts.loc['test', 'rows'])} in test. With {int(counts.loc['test', 'late'])} late test shipments, every test metric has a
+wide interval. Read the CIs, not the point estimates.
 
 ## 1. Leakage audit (done before modelling)
 
 {md_table(pd.DataFrame(LEAKAGE_AUDIT, columns=['column', 'known when PO is sent?', 'decision', 'justification']))}
 
-Two feature sets follow from the audit:
+Feature sets:
 
-- **as specified**: vendor, shipment mode, country and product group
-  (one-hot), plus log line value, log weight with a missing flag, planned
-  lead time and PO year.
-- **strict PO-time**: the same without the two borderline features (planned
-  lead time and weight). Only this set is safe if the scheduled date was
-  revised after the PO (data-quality.md §3.4).
+- **strict PO-time (primary):** vendor, shipment mode, country and product
+  group (one-hot), log line value and PO year.
+- **as specified (sensitivity):** the same plus the two borderline features
+  (log weight with a missing flag, and planned lead time).
 
 ### What a leaky feature does
 
 Logistic regression (same split, C = {C_main:g}) and gradient boosting (same
 hyper-parameters), with extra columns that are not known at PO time:
 
-{md_table(leak.assign(**{c: leak[c].map(lambda v: f'{v:.3f}') for c in ['test ROC AUC', 'test PR AUC', 'test Brier']}))}
+{md_table(fmt3(leak, ['test ROC AUC', 'test PR AUC', 'test Brier']))}
 
-`lead_days_actual` and the planned lead time together determine the target
-exactly (late ⇔ actual > planned). Adding `lead_days_actual` raises test PR
-AUC from {leak_lr_clean['test PR AUC']:.3f} to **{leak_lr_leak['test PR AUC']:.3f}** for logistic regression and from
-{leak_hgb_clean['test PR AUC']:.3f} to **{leak_hgb_leak['test PR AUC']:.3f}** for gradient boosting. ROC AUC rises from
-{leak_lr_clean['test ROC AUC']:.3f} to {leak_lr_leak['test ROC AUC']:.3f} and from {leak_hgb_clean['test ROC AUC']:.3f} to {leak_hgb_leak['test ROC AUC']:.3f}. Neither model
-fully learns the diagonal rule from {int(y[train].sum())} training positives. Once
-the slip itself (actual − planned lead time, which is `late_days`) is
-engineered as a feature, logistic regression reaches ROC AUC
-**{leak_lr_slip['test ROC AUC']:.3f}** and PR AUC **{leak_lr_slip['test PR AUC']:.3f}**. Such a model looks excellent and
-is useless at PO time, because the delivery date does not exist yet.
-Post-shipment freight fields give logistic ROC AUC
-{leak_lr_freight['test ROC AUC']:.3f} against {leak_lr_clean['test ROC AUC']:.3f} without them. A leak does not always
+`lead_days_actual` exists only after delivery. On its own, without the planned
+lead time, it does not determine the target. Adding it changes logistic test
+PR AUC from {leak_lr_clean['test PR AUC']:.3f} to {leak_lr_leak['test PR AUC']:.3f} and ROC AUC from {leak_lr_clean['test ROC AUC']:.3f} to
+{leak_lr_leak['test ROC AUC']:.3f}. For gradient boosting the change is PR AUC {leak_hgb_clean['test PR AUC']:.3f} → {leak_hgb_leak['test PR AUC']:.3f} and ROC
+AUC {leak_hgb_clean['test ROC AUC']:.3f} → {leak_hgb_leak['test ROC AUC']:.3f}. The clear demonstration is the engineered slip
+(actual − planned lead time, i.e. `late_days`). It gives ROC AUC
+**{leak_lr_slip['test ROC AUC']:.3f}** and PR AUC **{leak_lr_slip['test PR AUC']:.3f}**, against {leak_lr_clean['test ROC AUC']:.3f} and
+{leak_lr_clean['test PR AUC']:.3f} without it. That model looks excellent and is useless at PO time. Post-shipment
+freight fields give ROC AUC {leak_lr_freight['test ROC AUC']:.3f} against {leak_lr_clean['test ROC AUC']:.3f}. A leak does not always
 inflate a metric, so the absence of inflation is not evidence that a feature is
-safe. The audit decides, not the metric.
+safe. The audit decides.
 
 ## 2. Models and selection
 
-Fitted in this order, all on the training years only:
+Fitted in this order, on the training years only:
 
-0. **Baseline:** the vendor's late rate in the training data. Vendors with
-   fewer than {MIN_VENDOR_HISTORY} training shipments get the global training
-   rate ({pct(y[train].mean())}).
+0. **Baseline:** vendor's training late rate. Vendors with fewer than
+   {MIN_VENDOR_HISTORY} training shipments get the global rate ({pct(y[train].mean())}).
 1. **Logistic regression** (L2). Categories with fewer than
-   {MIN_CATEGORY_FREQUENCY} training rows are pooled as "infrequent". Numeric
-   features are standardised.
-2. **CART** decision tree, depth-limited, min 20 rows per leaf.
-3. **HistGradientBoostingClassifier** with native categorical splits, fixed iterations (no early stopping).
+   {MIN_CATEGORY_FREQUENCY} training rows are pooled. Numeric features are standardised.
+2. **CART**, depth-limited, min 20 rows per leaf.
+3. **HistGradientBoostingClassifier**, native categorical splits, fixed iterations.
 
-**Class imbalance.** The models are fitted without class weights, and the
-alert threshold is tuned on validation (the F1-maximising threshold on 2013).
-We chose this because the allocation model needs *calibrated* probabilities.
-In the comparison below, `class_weight="balanced"` raised the mean predicted
-probability on test to {class_weights.iloc[1]['mean predicted (test)']} (observed
-{class_weights.iloc[1]['observed (test)']}). It also changed test ROC AUC from
-{class_weights.iloc[0]['test ROC AUC']:.3f} to {class_weights.iloc[1]['test ROC AUC']:.3f}.
-Hyper-parameters were chosen by validation log loss:
+**Class imbalance.** No class weights; the alert threshold is the
+F1-maximising threshold on validation. The decision model needs calibrated
+probabilities. `class_weight="balanced"` raised the mean predicted test
+probability to {class_weights.iloc[1]['mean predicted (test)']} (observed {class_weights.iloc[1]['observed (test)']}) and moved test ROC AUC from
+{class_weights.iloc[0]['test ROC AUC']:.3f} to {class_weights.iloc[1]['test ROC AUC']:.3f}. Hyper-parameters were chosen by validation log loss
+(primary set):
 
-{md_table(selection_view(main_res), digits=3)}
+{md_table(selection_view(prim), digits=3)}
 
 ## 3. Test results (PO 2014–2015), against the baseline
 
-**Feature set: as specified**
+**Primary: strict PO-time**
 
-{md_table(metric_view(results[main_fs]['metrics']))}
+{md_table(metric_view(prim['metrics']))}
 
-**Feature set: strict PO-time**
+**Sensitivity: as specified (with planned lead time and weight)**
 
-{md_table(metric_view(results[strict_fs]['metrics']))}
+{md_table(metric_view(sens['metrics']))}
 
 Δ columns are paired bootstrap differences against the baseline on the same
-resamples. An interval that excludes 0 means a reliable difference. Models
-whose ROC AUC reliably beats the baseline: as specified:
-{', '.join(beats[main_fs]) or 'none'}; strict: {', '.join(beats[strict_fs]) or 'none'}.
+resamples. An interval excluding 0 is a reliable difference.
+
+- Reliably better ROC AUC than the baseline: primary {', '.join(beats_roc[PRIMARY_FS]) or 'none'}; sensitivity {', '.join(beats_roc[SENSITIVITY_FS]) or 'none'}.
+- Reliably better PR AUC: primary {', '.join(beats_pr[PRIMARY_FS]) or 'none'}; sensitivity {', '.join(beats_pr[SENSITIVITY_FS]) or 'none'}.
+- Reliably *worse* ROC AUC: primary {', '.join(worse_roc[PRIMARY_FS]) or 'none'}; sensitivity {', '.join(worse_roc[SENSITIVITY_FS]) or 'none'}.
 
 ![ROC and PR curves]({'figures/' + fig_curves})
 
-### Calibration (decile reliability, test, as specified)
+### Calibration (decile reliability, test, primary)
 
 ![Calibration]({'figures/' + fig_cal})
 
@@ -798,34 +912,37 @@ Baseline:
 
 {md_table(cal['baseline'], digits=3)}
 
-### Class weights versus threshold tuning (logistic, as specified)
+### Class weights versus threshold tuning (logistic, primary)
 
-{md_table(class_weights.assign(**{c: class_weights[c].map(lambda v: f'{v:.3f}' if pd.notna(v) else '–') for c in ['test ROC AUC', 'test PR AUC', 'Brier', 'precision', 'recall']}))}
+{md_table(fmt3(class_weights, ['test ROC AUC', 'test PR AUC', 'Brier', 'precision', 'recall']))}
 
 ### Rolling-origin check (train on all earlier PO years, test on one year)
 
+Reported alongside the pre-registered split, not instead of it.
 Hyper-parameters are fixed at the values chosen above. Years with fewer than 5
 late shipments are skipped.
 
-As specified:
+Primary (strict PO-time):
 
-{md_table(roll_view[main_fs])}
+{md_table(roll_view[PRIMARY_FS])}
 
-Strict PO-time:
+Sensitivity (as specified):
 
-{md_table(roll_view[strict_fs])}
+{md_table(roll_view[SENSITIVITY_FS])}
 
-Mean ROC AUC across folds, as specified: {', '.join(f"{k.split()[0]} {v:.3f}" for k, v in roll_mean[main_fs].items())};
-strict: {', '.join(f"{k.split()[0]} {v:.3f}" for k, v in roll_mean[strict_fs].items())}.
+Mean ROC AUC across folds, primary: {', '.join(f"{k.split()[0]} {v:.3f}" for k, v in roll_mean[PRIMARY_FS].items())};
+sensitivity: {', '.join(f"{k.split()[0]} {v:.3f}" for k, v in roll_mean[SENSITIVITY_FS].items())}.
+Folds where each model beats the baseline's ROC AUC (primary, of {n_folds}):
+logistic {roll_wins[PRIMARY_FS]['logistic']}, tree {roll_wins[PRIMARY_FS]['tree']}, HGB {roll_wins[PRIMARY_FS]['hgb']}.
 
-## 4. Interpretation
+## 4. Interpretation (primary model)
 
-### Logistic regression odds ratios (as specified)
+### Logistic regression odds ratios
 
-Odds ratios are per 1 standard deviation for numeric features. Categories are
-one-hot without a reference level, so each category's OR is relative to the
-L2-shrunk average, not to a named reference. The 95% intervals come from 200
-bootstrap refits on the training data. Shrinkage pulls every OR towards 1.
+ORs are per 1 SD for numeric features. Categories are one-hot without a
+reference level, so each category's OR is relative to the L2-shrunk average.
+95% intervals come from 200 bootstrap refits on training data, and shrinkage
+pulls every OR towards 1.
 
 {md_table(numeric_or, digits=3)}
 
@@ -833,30 +950,24 @@ Shipment mode and product group (all levels):
 
 {md_table(mode_pg_or, digits=3)}
 
-Largest category effects overall:
+Largest category effects:
 
 {md_table(top_cat, digits=3)}
 
-Strict PO-time model, largest effects:
+Sensitivity model, the borderline numeric features (100 bootstrap refits):
 
-{md_table(top_strict, digits=3)}
+{md_table(sens_numeric_or, digits=3)}
 
-Median planned lead time (days) for late and not-late shipments, by split:
+Median planned lead time (days) of late and not-late shipments, by split:
 
 {md_table(lead_compare.rename(columns={False: 'not late', True: 'late'}).reset_index(), digits=0)}
 
-### Decision tree rules (as specified, {main_res['chosen']['tree']})
+### Decision tree rules ({prim['chosen']['tree']})
 
 `weights` are [not late, late] training counts in each leaf.
 
 ```
 {tree_rules}
-```
-
-Strict PO-time tree ({strict_res['chosen']['tree']}):
-
-```
-{tree_rules_strict}
 ```
 
 ### Permutation importance on test (drop in ROC AUC when a feature is shuffled, 20 repeats)
@@ -870,87 +981,100 @@ Strict PO-time tree ({strict_res['chosen']['tree']}):
 
 {md_table(by_vendor_test.reset_index())}
 
-- At the validation-chosen threshold ({thr_lr:.3f}), the logistic model misses
-  {len(missed)} of {int(test_frame['is_late'].sum())} late test shipments and
-  raises {len(false_alarm)} false alarms.
-- {unseen_test} test rows ({unseen_late} late) come from vendors never seen in
-  training. For those, the vendor effect falls back to "infrequent" or the
-  global rate.
+- At the validation threshold ({thr_lr:.3f}), logistic regression misses
+  {len(missed)} of {int(test_frame['is_late'].sum())} late test shipments and raises {len(false_alarm)} false alarms.
+- {unseen_test} test rows ({unseen_late} late) come from vendors with no training history.
 
 ## 5. Discussion
 
-- **Headline.** On the pre-registered test (trained on POs 2006–2012, tested
-  on POs 2014–2015), no model reliably beats the vendor baseline on ROC AUC.
-  The baseline scores {m_main.loc[base_label, 'ROC AUC']:.3f} (95% CI {m_main.loc[base_label, 'ROC AUC 95% CI']}),
-  logistic regression {m_main.loc[lr_label, 'ROC AUC']:.3f} (Δ {m_main.loc[lr_label, 'ΔROC vs baseline 95% CI']}) and HGB
-  {m_main.loc[hgb_label, 'ROC AUC']:.3f} (Δ {m_main.loc[hgb_label, 'ΔROC vs baseline 95% CI']}). PR AUC rewards
-  putting the few late shipments at the top of the ranking. On PR AUC,
-  {', '.join(k for k in (lr_label, tree_label, hgb_label) if m_main.loc[k, 'dpr_lo'] > 0) or 'no model'}
-  reliably beat the baseline's {m_main.loc[base_label, 'PR AUC']:.3f}. Models reliably *worse* than
-  the baseline on ROC AUC: {', '.join(k for k in (lr_label, tree_label, hgb_label) if m_main.loc[k, 'droc_hi'] < 0) or 'none'}. With only {int(counts.loc['test', 'late'])} late test
-  shipments, the models' ranking is not stable.
-- **Rolling origin is more favourable.** When each year is predicted from
-  *all* earlier years, logistic regression beats the baseline's ROC AUC in
-  {int((rolling[main_fs]['logistic ROC'] > rolling[main_fs]['baseline ROC']).sum())} of {len(rolling[main_fs])} folds, and HGB in
-  {int((rolling[main_fs]['hgb ROC'] > rolling[main_fs]['baseline ROC']).sum())} of {len(rolling[main_fs])}. The main test trains only up to
-  2012, so it loses the most relevant year (2013) and feels the drift in full.
-  Refitting on train + validation before testing is the usual deployment
-  choice. We did not switch the primary protocol after seeing test results.
-- **Which features matter.** Vendor and destination dominate. In permutation
-  importance, shuffling vendor costs the most ROC AUC. The largest training
-  odds ratios are for South Africa (OR
-  {or_lookup.get('country_South Africa', float('nan')):.1f}) and Nigeria ({or_lookup.get('country_Nigeria', float('nan')):.1f}),
-  and for Aurobindo ({or_lookup.get('vendor_Aurobindo Pharma Limited', float('nan')):.1f}), Cipla
-  ({or_lookup.get('vendor_CIPLA LIMITED', float('nan')):.1f}) and Orgenics ({or_lookup.get('vendor_Orgenics, Ltd', float('nan')):.1f}), the three
-  lowest-on-time vendors in the scorecard. Larger lines are late more often (OR
-  {or_lookup.get('log_value', float('nan')):.2f} per SD of log value). The mode ORs are in the table
-  above (ocean {or_lookup.get('shipment_mode_Ocean', float('nan')):.2f}), and they partly overlap with country.
-- **The borderline features did not help.** In training, planned lead time has
-  an OR of {or_lookup.get('lead_days_planned', float('nan')):.2f} per SD: longer plans are late less often, which
-  fits schedules that were padded or revised outward. On test, HGB's
-  permutation importance for it is
-  {importance.set_index('feature').loc['lead_days_planned', 'mean ROC AUC drop']:+.3f}, so a negative value means
-  shuffling it *improves* ROC AUC. The strict PO-time set, without planned lead
-  time and weight, performs about the same (logistic ROC AUC
-  {m_strict.loc[lr_label, 'ROC AUC']:.3f} against {m_main.loc[lr_label, 'ROC AUC']:.3f}). That is the set to use.
-- **Do the results make sense?** The vendor and country effects point the same
-  way as the scorecard. Calibration-in-the-large is poor: logistic regression
-  predicts {pct(main_res['preds_test']['logistic'].mean())} late on average in test, against
-  {pct(main_res['y_test'].mean())} observed. The late rate fell after 2013, and a model trained
-  earlier cannot know that. The fall coincides with more exact-on-schedule
-  matches (data-quality.md §3.4), so part of the "improvement" may be recording
-  practice.
-- **Where it fails.** One vendor accounts for most late test shipments
-  ({by_vendor_test.index[0]}: {int(by_vendor_test.iloc[0]['late'])} of {int(test_frame['is_late'].sum())}). The rest are
-  spread over vendors the models consider safe. {unseen_test} test rows come from
-  vendors with no training history ({unseen_late} of them late). They got the
-  global rate or the pooled "infrequent" vendor effect. 2015 POs are censored: only arrivals before the end of the file are
-  present.
-- **Is the complex model worth it?** The paired bootstrap difference HGB −
-  logistic is {m_main.loc[hgb_label, 'droc_lr_lo']:+.3f} to {m_main.loc[hgb_label, 'droc_lr_hi']:+.3f} for ROC AUC and
-  {m_main.loc[hgb_label, 'dpr_lr_lo']:+.3f} to {m_main.loc[hgb_label, 'dpr_lr_hi']:+.3f} for PR AUC, so the two cannot be
-  reliably separated. Logistic regression is interpretable, gives odds ratios,
-  and is cheap to recalibrate, for example by refitting the intercept on recent
-  months. We recommend it with the strict PO-time features and periodic
-  recalibration. The vendor baseline is a strong, honest fallback and should
-  always be reported alongside.
-- **Honesty about the target.** Because the schedule was probably revised,
-  `is_late` means "delivered after the last recorded schedule", not "delivered
-  after the original promise", and the model predicts the former. FlowChain
-  avoids this if it stores the original promised date on each PO line and never
-  overwrites it.
+- **Headline.** On the pre-registered test, no primary model reliably beats
+  the vendor baseline on ROC AUC. Baseline {m_p.loc[base_label, 'ROC AUC']:.3f} (95% CI {m_p.loc[base_label, 'ROC AUC 95% CI']}),
+  logistic {m_p.loc[lr_label, 'ROC AUC']:.3f} (Δ {m_p.loc[lr_label, 'ΔROC vs baseline 95% CI']}), HGB {m_p.loc[hgb_label, 'ROC AUC']:.3f} (Δ {m_p.loc[hgb_label, 'ΔROC vs baseline 95% CI']}).
+  On PR AUC, which rewards putting the few late shipments first,
+  {', '.join(beats_pr[PRIMARY_FS]) or 'no model'} reliably beat the baseline's {m_p.loc[base_label, 'PR AUC']:.3f}
+  (logistic {m_p.loc[lr_label, 'PR AUC']:.3f}, Δ {m_p.loc[lr_label, 'ΔPR vs baseline 95% CI']}; HGB {m_p.loc[hgb_label, 'PR AUC']:.3f}, Δ {m_p.loc[hgb_label, 'ΔPR vs baseline 95% CI']}).
+  With {int(counts.loc['test', 'late'])} late test shipments the ranking is not stable.
+- **Rolling origin (alongside, not instead).** Predicting each year from all
+  earlier years, logistic regression beats the baseline in
+  {roll_wins[PRIMARY_FS]['logistic']} of {n_folds} folds (mean ROC AUC {roll_mean[PRIMARY_FS]['logistic ROC']:.3f} vs {roll_mean[PRIMARY_FS]['baseline ROC']:.3f}). The pre-registered test trains only to
+  2012, so it misses the most recent year before the test window.
+- **Which features matter.** Vendor and destination dominate. Largest ORs:
+  South Africa {or_lookup.get('country_South Africa', float('nan')):.1f}, Nigeria {or_lookup.get('country_Nigeria', float('nan')):.1f}; vendors Aurobindo
+  {or_lookup.get('vendor_Aurobindo Pharma Limited', float('nan')):.1f}, Cipla {or_lookup.get('vendor_CIPLA LIMITED', float('nan')):.1f}, Orgenics {or_lookup.get('vendor_Orgenics, Ltd', float('nan')):.1f}, the three lowest
+  on-time vendors in the scorecard. Larger lines are late more often (OR
+  {or_lookup.get('log_value', float('nan')):.2f} per SD of log value). Ocean OR {or_lookup.get('shipment_mode_Ocean', float('nan')):.2f}.
+- **Why the borderline features were dropped.** In the sensitivity model,
+  planned lead time has OR {sens_or.get('lead_days_planned', float('nan')):.2f} per SD (longer plans late less often, consistent
+  with schedules revised outward), and its HGB permutation importance on test is
+  {sens_importance.get('lead_days_planned', float('nan')):+.3f}. The sensitivity set does not beat the primary:
+  logistic ROC AUC {m_s.loc[lr_label, 'ROC AUC']:.3f} vs {m_p.loc[lr_label, 'ROC AUC']:.3f}, HGB {m_s.loc[hgb_label, 'ROC AUC']:.3f} vs {m_p.loc[hgb_label, 'ROC AUC']:.3f}.
+- **Do the results make sense?** The directions match the scorecard. Raw
+  calibration is poor: logistic regression predicts {pct(prim['preds_test']['logistic'].mean())} late in test against
+  {pct(prim['y_test'].mean())} observed, because the late rate fell after 2013. That fall coincides
+  with more exact-on-schedule matches, so part of it may be recording practice.
+- **Where it fails.** {by_vendor_test.index[0]} accounts for {int(by_vendor_test.iloc[0]['late'])} of {int(test_frame['is_late'].sum())}
+  late test shipments; the rest are spread over vendors the models consider
+  safe. 2015 POs are censored (only arrivals before the end of the file).
+- **Is the complex model worth it?** Paired bootstrap HGB − logistic: ROC AUC
+  {m_p.loc[hgb_label, 'droc_lr_lo']:+.3f} to {m_p.loc[hgb_label, 'droc_lr_hi']:+.3f} ({'reliably different' if m_p.loc[hgb_label, 'droc_lr_lo'] > 0 or m_p.loc[hgb_label, 'droc_lr_hi'] < 0 else 'not reliably different'}), PR AUC
+  {m_p.loc[hgb_label, 'dpr_lr_lo']:+.3f} to {m_p.loc[hgb_label, 'dpr_lr_hi']:+.3f} ({'HGB reliably higher' if m_p.loc[hgb_label, 'dpr_lr_lo'] > 0 else ('HGB reliably lower' if m_p.loc[hgb_label, 'dpr_lr_hi'] < 0 else 'not reliably different')}). Brier: HGB
+  {m_p.loc[hgb_label, 'Brier']:.4f}, logistic {m_p.loc[lr_label, 'Brier']:.4f}. So HGB puts a few very risky POs at the top
+  of the list better than logistic regression does. It does not rank the
+  whole population better, and {int(counts.loc['test', 'late'])} positives make this fragile. For an
+  expediting shortlist, HGB is worth trialling. For scoring every candidate
+  vendor in the allocation model, and for explaining the result, logistic
+  regression (or the vendor baseline) is the simpler and more defensible choice.
+- **Honesty about the target.** `is_late` means "after the last recorded
+  (current anticipated) date", not "after the original promise".
+
+## 6. Calibrated risk for the decision model
+
+The allocation model needs P(late) for vendors that were *not* chosen, and the
+same predictor must score every policy. Candidates: the vendor-rate baseline
+and the primary logistic regression (both fitted on ≤{TRAIN_LAST_YEAR}), each
+raw, Platt-scaled or isotonic-calibrated on {VALIDATION_YEAR}. The choice is by
+**out-of-fold validation Brier** (5-fold within {VALIDATION_YEAR}, so the calibrator never
+scores the rows it was fitted on). Test columns are shown for information and
+were not used to choose.
+
+{md_table(fmt3(risk_table, ['validation Brier (out-of-fold)', 'test Brier', 'test ECE (deciles)', 'test ROC AUC']))}
+
+**Chosen: {risk_model.name}.** Test decile reliability of the chosen predictor:
+
+{md_table(risk_cal, digits=3)}
+
+**Expected days late given late** (ASSUMPTION: vendor mean of `late_days`
+among late POs sent ≤{VALIDATION_YEAR}, if the vendor has ≥{MIN_LATE_FOR_VENDOR_DAYS} late shipments; otherwise
+the global mean of {global_days:.1f} days). Expected days late = P(late) ×
+E[days late | late].
+
+{md_table(days_table.reset_index().head(15), digits=1)}
 
 {quant_text}
 """
     write_text(paths.outputs_dir / "delay-model.md", report)
+
+    key = {
+        "primary_feature_set": PRIMARY_FS,
+        "counts": {s: {"rows": int(counts.loc[s, "rows"]), "late": int(counts.loc[s, "late"])} for s in counts.index},
+        "test": {fs: {r["model"]: {k: r[k] for k in ("ROC AUC", "ROC AUC 95% CI", "ΔROC vs baseline 95% CI", "PR AUC", "PR AUC 95% CI",
+                                                  "ΔPR vs baseline 95% CI", "Brier", "precision", "recall")}
+                      for _, r in results[fs]["metrics"].iterrows()} for fs in results},
+        "rolling_mean_roc": {fs: {k: float(v) for k, v in roll_mean[fs].items()} for fs in results},
+        "rolling_wins": roll_wins,
+        "n_folds": n_folds,
+        "leak": {r["model"] + " | " + r["features"]: {"ROC AUC": r["test ROC AUC"], "PR AUC": r["test PR AUC"]} for _, r in leak.iterrows()},
+        "risk_model": risk_model.name,
+        "risk_table": risk_table.to_dict(orient="records"),
+        "global_days_late": global_days,
+    }
+    write_json(paths.outputs_dir / "key-numbers-delay.json", key)
     print(f"Wrote {paths.outputs_dir / 'delay-model.md'}")
-    cols = ["feature set", "model", "ROC AUC", "ROC AUC 95% CI", "ΔROC vs baseline 95% CI", "PR AUC", "PR AUC 95% CI", "ΔPR vs baseline 95% CI", "Brier", "precision", "recall", "hyper-parameters"]
+    cols = ["feature set", "model", "ROC AUC", "ROC AUC 95% CI", "ΔROC vs baseline 95% CI", "PR AUC", "PR AUC 95% CI", "ΔPR vs baseline 95% CI", "Brier"]
     with pd.option_context("display.width", 250, "display.max_columns", 20):
         print(metrics[cols].to_string(index=False))
         print(leak.to_string(index=False))
-        print(class_weights.to_string(index=False))
-        for fs in FEATURE_SETS:
-            print(fs); print(rolling[fs].round(3).to_string(index=False))
+        print(risk_table.to_string(index=False))
     return 0
 
 
