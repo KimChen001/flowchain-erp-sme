@@ -37,10 +37,16 @@ export type AiFocusedResponseModel = {
   businessImpact: AiResponseV2BusinessImpactItem[];
   limitations: AiResponseV2DataLimitation[];
   reviewDraft: AiResponseV2ReviewCard | null;
-  followUps: Array<{ label: string; prompt: string }>;
+  followUps: Array<{ label: string; prompt: string; skillHint?: string }>;
 };
 
 const severityScore: Record<AiResponseV2Severity, number> = { risk: 400, warning: 300, info: 200, success: 100 };
+
+type Language = "en-US" | "zh-CN";
+const focusedCopy = {
+  "en-US": { rfqDraft: "Create RFQ draft", taskDraft: "Create task draft", prDraft: "Create purchase request draft", textDraft: "Prepare text draft", reason: "Review it against the current business status.", headline: "Business review complete", summary: "Review the priorities and suggested next steps." },
+  "zh-CN": { rfqDraft: "创建正式 RFQ 草稿", taskDraft: "创建正式任务草稿", prDraft: "创建正式 PR 草稿", textDraft: "生成文本草稿", reason: "需要结合当前业务状态处理。", headline: "已完成业务分析", summary: "请查看重点事项和建议下一步。" },
+} as const;
 
 function priorityScore(item: AiResponseV2EvidenceItem) {
   const text = `${item.status || ""} ${item.summary || ""} ${item.value ?? ""}`;
@@ -60,15 +66,15 @@ function answerMode(response: AiResponseV2): AiFocusedAnswerMode {
   return "diagnosis";
 }
 
-function actions(response: AiResponseV2) {
+function actions(response: AiResponseV2, language: Language) {
   const navigation = (response.navigationLinks || []).filter((link) => Boolean(link.moduleId)).map<AiFocusedAction>((link) => ({ kind: "navigation", label: link.label, link }));
   const drafts = (response.reviewCards || []).map<AiFocusedAction>((card) => {
     const structured = ["purchase_request_draft", "rfq_draft", "task_draft"].includes(card.draftType || "");
     return {
       kind: structured ? "structured_draft" : "text_draft",
       label: structured
-        ? card.draftType === "rfq_draft" ? "创建正式 RFQ 草稿" : card.draftType === "task_draft" ? "创建正式任务草稿" : "创建正式 PR 草稿"
-        : card.allowedNextStep || "生成文本草稿",
+        ? card.draftType === "rfq_draft" ? focusedCopy[language].rfqDraft : card.draftType === "task_draft" ? focusedCopy[language].taskDraft : focusedCopy[language].prDraft
+        : card.allowedNextStep || focusedCopy[language].textDraft,
       card,
     };
   });
@@ -76,27 +82,30 @@ function actions(response: AiResponseV2) {
   return explicitDraftRequest ? [...drafts, ...navigation] : navigation;
 }
 
-export function toAiFocusedResponse(response: AiResponseV2): AiFocusedResponseModel {
+export function toAiFocusedResponse(response: AiResponseV2, language: Language = "en-US"): AiFocusedResponseModel {
+  const copy = focusedCopy[language];
   const impacts = (response.businessImpact || []).slice(0, 3);
-  const evidence = [...(response.keyEvidence || [])].sort((a, b) => priorityScore(b) - priorityScore(a));
+  // The server's rank, when it gives one, is the order; otherwise a heuristic.
+  const ranked = (response.keyEvidence || []).every((item) => typeof item.rank === "number");
+  const evidence = [...(response.keyEvidence || [])].sort((a, b) => ranked ? (a.rank as number) - (b.rank as number) : priorityScore(b) - priorityScore(a));
   const primaryItems = evidence.slice(0, 3).map((item, index) => ({
     id: item.id || `${item.entityType}-${item.entityId}-${index}`,
     title: item.entityLabel || item.label || item.entityId,
-    reason: item.summary || "需要结合当前业务状态处理。",
+    reason: item.summary || copy.reason,
     impact: impacts[index]?.explanation || impacts[index]?.impact || "",
     status: item.status || "",
     severity: item.severity || impacts[index]?.severity || "info",
     evidence: item,
   }));
-  const availableActions = actions(response);
+  const availableActions = actions(response, language);
   const followUps = (response.followUpSuggestions || [])
     .filter((item, index, rows) => Boolean(item.label && item.prompt) && rows.findIndex((row) => row.prompt === item.prompt) === index)
     .slice(0, 2)
-    .map((item) => ({ label: item.label, prompt: item.prompt }));
+    .map((item) => ({ label: item.label, prompt: item.prompt, ...(item.skillHint ? { skillHint: item.skillHint } : {}) }));
   return {
     answerMode: answerMode(response),
-    headline: response.conclusion?.title || "已完成业务分析",
-    summary: response.conclusion?.summary || "请查看重点事项和建议下一步。",
+    headline: response.conclusion?.title || copy.headline,
+    summary: response.conclusion?.summary || copy.summary,
     severity: response.conclusion?.severity || "info",
     primaryItems,
     primaryAction: availableActions[0] || null,

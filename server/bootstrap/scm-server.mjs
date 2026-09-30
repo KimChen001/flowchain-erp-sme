@@ -63,11 +63,12 @@ const buildIdentity = Object.freeze({
 
 await loadEnv(root);
 
+// A proxy only when one is configured; no built-in local proxy address.
 const openaiProxyUrl =
   process.env.OPENAI_PROXY_URL ||
   process.env.HTTPS_PROXY ||
   process.env.HTTP_PROXY ||
-  "http://127.0.0.1:15236";
+  "";
 const openaiDispatcher = openaiProxyUrl
   ? new ProxyAgent(openaiProxyUrl)
   : undefined;

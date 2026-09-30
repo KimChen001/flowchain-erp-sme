@@ -229,7 +229,8 @@ test('procurement summary currency comes from the documents, never a hard-coded 
   assert.equal(multi.currency, null)
   assert.deepEqual(multi.currencies, ['CNY', 'USD'])
   assert.equal(multi.currencyAggregationStatus, 'multi_currency_unconverted')
-  assert.equal(multi.totalOpenAmount, 426000)
+  // Amounts in different currencies are never added together.
+  assert.equal(multi.totalOpenAmount, null)
 
   const unknown = buildProcurementSummary(withCurrency(undefined))
   assert.equal(unknown.currency, null)

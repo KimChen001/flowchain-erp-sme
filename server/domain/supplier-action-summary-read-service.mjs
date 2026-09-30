@@ -1,3 +1,5 @@
+import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
+import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs'
 import { can } from '../auth/authorization-service.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
 import { createBankReconciliationService } from './bank-reconciliation-service.mjs'
@@ -43,6 +45,13 @@ function inWindow(value, window) {
   if (window?.startAt && candidate < new Date(window.startAt)) return false
   if (window?.endAt && candidate > new Date(window.endAt)) return false
   return true
+}
+
+// A purchase order as the open purchase orders report reads it: dates as ISO
+// strings and the promised date from each line's metadata.
+function reportRow(row) {
+  const iso = (value) => value instanceof Date ? value.toISOString() : value ?? null
+  return { ...row, id: text(row.id), expectedDate: iso(row.expectedDate), orderDate: iso(row.orderDate), createdAt: iso(row.createdAt), lines: array(row.lines).map((line) => ({ ...line, promisedDate: line.promisedDate || line.metadata?.promisedDate || null })) }
 }
 
 function isOverdue(value, now) {
@@ -171,8 +180,12 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
     const mismatchInvoices = invoices.filter((row) => /exception|mismatch|variance|差异/.test(text(row.matchStatus).toLowerCase()) || decimal(row.varianceAmount) !== null && decimal(row.varianceAmount) !== 0)
     const disputedInvoices = invoices.filter((row) => /disput|争议/.test(`${text(row.status)} ${text(row.matchStatus)}`.toLowerCase()))
     const missingEvidenceInvoices = invoices.filter((row) => !row.relatedPoId || row.relatedGrnId && !receiving.some((item) => item.id === row.relatedGrnId || item.documentNumber === row.relatedGrnId))
-    const openPos = purchaseOrders.filter((row) => !['closed', 'completed', 'cancelled', 'voided'].includes(text(row.status).toLowerCase()))
-    const overduePos = openPos.filter((row) => isOverdue(row.expectedDate, current))
+    // Open and overdue as the open purchase orders report counts them: committed
+    // with quantity still to receive, and an open line past its promised date.
+    // Drafts, pending approvals, rejections and fully received orders are not open.
+    const openPos = purchaseOrders.filter(isOpenPurchaseOrder)
+    const overdueIds = new Set(buildOpenPurchaseOrdersReport(openPos.map(reportRow), { export: 'true' }, current).exportRows.filter((row) => row.overdueDays > 0).map((row) => row.id))
+    const overduePos = openPos.filter((row) => overdueIds.has(text(row.id)))
     const unreceivedPos = openPos.filter((row) => {
       const ordered = array(row.lines).reduce((sum, line) => sum + (decimal(line.orderedQuantity) || 0), 0)
       const receivedQty = array(row.lines).reduce((sum, line) => sum + (decimal(line.receivedQuantity) || 0), 0)

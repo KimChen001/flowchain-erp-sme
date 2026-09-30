@@ -225,6 +225,7 @@ function searchGroupKey(type: string) {
 type PanelErrorBoundaryProps = {
   children: React.ReactNode;
   moduleLabel: string;
+  language?: "en-US" | "zh-CN";
 };
 
 type PanelErrorBoundaryState = {
@@ -239,7 +240,7 @@ class PanelErrorBoundary extends React.Component<
   state: PanelErrorBoundaryState = { hasError: false, errorMessage: "" };
 
   static getDerivedStateFromError(error: Error) {
-    return { hasError: true, errorMessage: error.message || "未知错误" };
+    return { hasError: true, errorMessage: error.message || "" };
   }
 
   componentDidCatch(error: Error) {
@@ -248,6 +249,7 @@ class PanelErrorBoundary extends React.Component<
 
   render() {
     if (!this.state.hasError) return this.props.children;
+    const english = this.props.language === "en-US";
 
     return (
       <Card className="p-8">
@@ -262,18 +264,20 @@ class PanelErrorBoundary extends React.Component<
             className="text-base font-semibold mb-2"
             style={{ color: A.label }}
           >
-            {this.props.moduleLabel}模块加载失败
+            {english ? `${this.props.moduleLabel} could not be displayed` : `${this.props.moduleLabel}模块加载失败`}
           </h2>
           <p className="text-sm leading-6 mb-5" style={{ color: A.gray1 }}>
-            页面数据已经保留，当前只是这个模块渲染时遇到异常，不会退出登录。错误信息：
-            {this.state.errorMessage}
+            {english
+              ? "Your data is kept and you are still signed in; only this part of the page failed to display. Details: "
+              : "页面数据已经保留，当前只是这个模块渲染时遇到异常，不会退出登录。错误信息："}
+            {this.state.errorMessage || (english ? "Unknown error" : "未知错误")}
           </p>
           <button
             onClick={() => this.setState({ hasError: false, errorMessage: "" })}
             className="h-9 px-4 rounded-lg text-sm font-semibold text-white"
             style={{ background: A.blue }}
           >
-            重新加载模块
+            {english ? "Reload" : "重新加载模块"}
           </button>
         </div>
       </Card>
@@ -1790,6 +1794,7 @@ export default function FlowChainApp() {
                     <PanelErrorBoundary
                       key={location.pathname}
                       moduleLabel={activeChildLabel || activeModuleLabel}
+                      language={language}
                     >
                       <React.Suspense
                         fallback={
@@ -1856,13 +1861,16 @@ export default function FlowChainApp() {
           </main>
         </div>
       </div>
-      <AiPanel
-        moduleId={activeModule}
-        activeContext={aiActiveContext}
-        openSignal={aiOpenSignal}
-        onNavigate={navigateTo}
-        onReviewActionDraft={openActionDraftReview}
-      />
+      {/* A rendering error in the assistant must not take the page down. */}
+      <PanelErrorBoundary moduleLabel={language === "zh-CN" ? "AI 助手" : "AI assistant"} language={language}>
+        <AiPanel
+          moduleId={activeModule}
+          activeContext={aiActiveContext}
+          openSignal={aiOpenSignal}
+          onNavigate={navigateTo}
+          onReviewActionDraft={openActionDraftReview}
+        />
+      </PanelErrorBoundary>
       <ActionDraftReviewShell
         open={draftShellOpen}
         loading={draftLoading}

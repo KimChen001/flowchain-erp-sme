@@ -17,6 +17,7 @@ import { AiResponseV2Renderer } from "../../components/ai/AiResponseV2Renderer";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import type { AiResponseV2 } from "../../domain/ai/response-contract";
 import { focusTargetFromActiveContext, postAiRuntimeResponse } from "./aiRuntimeGateway";
+import { ApiError } from "../../lib/api-client";
 import { aiDisplayMessage, looksLikeRawJson, normalizeAiCardValue, safeUnknownCardMessage, sanitizeAiMessage } from "./presentation";
 
 export type ActiveContext = {
@@ -100,6 +101,12 @@ export const AI_EMPTY_STATE_PROMPT_CHIPS = [
   { label: "Prepare an action draft", prompt: "Prepare an action draft", zhLabel: "帮我准备一个处理草稿", zhPrompt: "帮我准备一个处理草稿" },
 ];
 
+// The workspace skill each chip asks for, by chip position. The chip texts
+// above stay as they are; the hint only tells the server which skill to run.
+const EMPTY_STATE_SKILL_HINTS = ["today_priorities", "highest_risk_items", "records_needing_data", "prepare_action_draft"];
+const PO_SKILL_HINTS = ["today_priorities", "records_needing_data", "highest_risk_items", "prepare_action_draft"];
+const SKU_SKILL_HINTS = ["today_priorities", "today_priorities", "highest_risk_items", "prepare_action_draft"];
+
 const PO_EMPTY_PROMPTS = {
   "en-US": ["Why does this PO need attention?", "Which receipt or invoice evidence is missing?", "What will a delay affect?", "What should happen next?"],
   "zh-CN": ["这个 PO 为什么需要关注？", "还差哪些收货或发票证据？", "延误会影响什么？", "建议下一步是什么？"],
@@ -110,7 +117,7 @@ const SKU_EMPTY_PROMPTS = {
 };
 
 function requestScopeLabel(message: string, language: "en-US" | "zh-CN") {
-  if (/PO|采购订单|收货|GRN|发票|匹配/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：采购订单、收货和发票记录" : "Checking purchase orders, receipts, and invoice records";
+  if (/\bPOs?\b|PO-|采购订单|收货|GRN|发票|匹配/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：采购订单、收货和发票记录" : "Checking purchase orders, receipts, and invoice records";
   if (/库存|SKU|补货|可用量|inventory|replenish/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：库存余额和关联订单" : "Checking inventory balances and related orders";
   if (/供应商|RFQ|报价|supplier|quote/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：供应商和询报价记录" : "Checking supplier and sourcing records";
   if (/今天|重点|风险|待办|today|risk|priority/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：当前工作区重点事项" : "Checking current workspace priorities";
@@ -413,7 +420,7 @@ function AiResponseCard({
   card: AiChatCard;
   onNavigate?: AiNavigate;
   onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void;
-  onFollowUp?: (prompt: string) => void;
+  onFollowUp?: (prompt: string, skillHint?: string) => void;
 }) {
   const data = card.data || {};
   switch (card.type) {
@@ -1362,7 +1369,7 @@ function latestAiRuntimeResponse(messages: AiChatMessage[]): AiResponseV2 | null
   return card?.data ? card.data as unknown as AiResponseV2 : null;
 }
 
-function buildSafeConversationContext(messages: AiChatMessage[], activeContext: ActiveContext | null, sessionGrounding: AiSessionGrounding): SafeConversationContext {
+function buildSafeConversationContext(messages: AiChatMessage[], activeContext: ActiveContext | null, sessionGrounding: AiSessionGrounding, language: "en-US" | "zh-CN" = "en-US"): SafeConversationContext {
   const response = latestAiRuntimeResponse(messages);
   const refs: SafeConversationContext["previousEntityRefs"] = [];
   const pushRef = (input: { entityType?: unknown; entityId?: unknown; entityLabel?: unknown; source: string; confidence?: string }) => {
@@ -1441,7 +1448,7 @@ function buildSafeConversationContext(messages: AiChatMessage[], activeContext: 
     lastResponseId: (response as (AiResponseV2 & { responseId?: string }) | null)?.responseId,
     returnContext: {
       returnTo: "ai-assistant",
-      returnLabel: "返回 AI 助手",
+      returnLabel: language === "zh-CN" ? "返回 AI 助手" : "Back to AI assistant",
       sourceModuleId: activeContext?.module,
       sourceViewId: activeContext?.view,
     },
@@ -1458,28 +1465,83 @@ function uniqueFollowUpChips(chips: { label: string; prompt: string }[]) {
   }).slice(0, 4);
 }
 
-function displaySafeAssistantRecoveryMessage(prompt: string) {
-  const topic = /收货|GRN|到货/.test(prompt)
-    ? "收货异常、采购订单和发票匹配"
-    : /库存|SKU|补货|可用量|可承诺量/.test(prompt)
-      ? "库存项目、SKU 风险和补货建议"
-      : /PO|采购订单/.test(prompt)
-        ? "采购订单、收货和供应商证据"
-        : "首页、库存管理和来源证据";
+type AiRecoveryReason = "signed_out" | "invalid_question" | "unavailable" | "timeout" | "network";
+
+// Why a request failed, from the server's status and code. A 400 shows the
+// server's own message, which is already in the question's language.
+export function aiRecoveryReason(error: unknown, timedOut: boolean): { reason: AiRecoveryReason; serverMessage?: string } {
+  if (timedOut) return { reason: "timeout" };
+  if (error instanceof ApiError) {
+    if (error.status === 401) return { reason: "signed_out" };
+    if (error.status === 400) return { reason: "invalid_question", serverMessage: error.payload?.error || error.message };
+    return { reason: "unavailable" };
+  }
+  return { reason: "network" };
+}
+
+const RECOVERY_COPY = {
+  "en-US": {
+    heading: "Assistant · Your workspace data · Review first",
+    conclusion: "Conclusion",
+    evidence: "Where to look",
+    next: "Next step",
+    boundary: "Review boundary",
+    reasons: {
+      signed_out: "Your session has ended. Sign in again, then ask again.",
+      invalid_question: "The question could not be answered as asked.",
+      unavailable: "The assistant could not read your workspace data just now. Nothing was changed.",
+      timeout: "The assistant took too long to answer. Nothing was changed.",
+      network: "The assistant could not be reached. Check your connection. Nothing was changed.",
+    },
+    topics: { receiving: "Receiving exceptions, purchase orders and invoice matching", inventory: "Inventory items, SKU risk and replenishment", po: "Purchase orders, receipts and supplier evidence", other: "Home, inventory and source records" },
+    where: "{topic} can be reviewed from Home, Inventory, Receiving, Purchase orders and Finance.",
+    nextStep: "Retry, or open the related module to review the source records. Drafts always go to human review.",
+    boundaryLine: "Draft preview · Human review · Nothing is submitted, sent, posted or paid",
+  },
+  "zh-CN": {
+    heading: "证据辅助回答 · 当前工作区数据 · 复核优先",
+    conclusion: "结论",
+    evidence: "关键证据",
+    next: "建议动作",
+    boundary: "人工复核边界",
+    reasons: {
+      signed_out: "登录已失效，请重新登录后再提问。",
+      invalid_question: "当前问题无法按原样回答。",
+      unavailable: "当前工作区数据暂时未能完整读取，仍可先从相关模块查看来源证据并进入人工复核。",
+      timeout: "AI 助手响应超时，未修改任何数据。",
+      network: "暂时无法连接 AI 助手，请检查网络。未修改任何数据。",
+    },
+    topics: { receiving: "收货异常、采购订单和发票匹配", inventory: "库存项目、SKU 风险和补货建议", po: "采购订单、收货和供应商证据", other: "首页、库存管理和来源证据" },
+    where: "{topic} 可从首页、库存管理、收货记录、采购订单和结算管理继续查看。",
+    nextStep: "打开今日行动或相关模块查看来源证据，必要时预览草稿并交由人工复核。",
+    boundaryLine: "草稿预览 · 人工复核 · 不提交 · 不外发 · 不写库存 · 不写财务凭证 · 不处理资金 · 不改主数据",
+  },
+} as const;
+
+export function displaySafeAssistantRecoveryMessage(prompt: string, language: "en-US" | "zh-CN" = "en-US", failure: { reason: AiRecoveryReason; serverMessage?: string } = { reason: "unavailable" }) {
+  const copy = RECOVERY_COPY[language];
+  const topicKey = /收货|GRN|到货|receiv/i.test(prompt)
+    ? "receiving"
+    : /库存|SKU|补货|可用量|可承诺量|inventory|stock|replenish/i.test(prompt)
+      ? "inventory"
+      : /\bPOs?\b|PO-|采购订单|purchase order/i.test(prompt)
+        ? "po"
+        : "other";
+  const conclusion = failure.reason === "invalid_question" && failure.serverMessage ? failure.serverMessage : copy.reasons[failure.reason];
   return [
-    "证据辅助回答 · 当前工作区数据 · 复核优先",
+    copy.heading,
     "",
-    "结论",
-    "当前工作区数据暂时未能完整读取，仍可先从相关模块查看来源证据并进入人工复核。",
+    copy.conclusion,
+    conclusion,
     "",
-    "关键证据",
-    `${topic} 可从首页、库存管理、收货记录、采购订单和结算管理继续查看。`,
+    copy.evidence,
+    copy.where.replace("{topic}", copy.topics[topicKey]),
     "",
-    "建议动作",
-    "打开今日行动或相关模块查看来源证据，必要时预览草稿并交由人工复核。",
+    copy.next,
+    copy.nextStep,
     "",
-    "人工复核边界",
-    "草稿预览 · 人工复核 · 不提交 · 不外发 · 不写库存 · 不写财务凭证 · 不处理资金 · 不改主数据",
+    copy.boundary,
+    copy.boundaryLine,
   ].join("\n");
 }
 
@@ -1541,7 +1603,7 @@ function AiResponseCards({
   cards?: AiChatCard[];
   onNavigate?: AiNavigate;
   onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void;
-  onFollowUp?: (prompt: string) => void;
+  onFollowUp?: (prompt: string, skillHint?: string) => void;
 }) {
   const visibleCards = cards.filter((card) => card.type);
   if (!visibleCards.length) return null;
@@ -1656,6 +1718,9 @@ export default function FloatingAiAssistant({
   const emptyPrompts = currentContext?.entityType === "purchase_order" ? PO_EMPTY_PROMPTS[language]
     : currentContext?.entityType === "item" ? SKU_EMPTY_PROMPTS[language]
       : AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => language === "zh-CN" ? item.zhPrompt : item.prompt);
+  const emptyPromptSkillHints = currentContext?.entityType === "purchase_order" ? PO_SKILL_HINTS
+    : currentContext?.entityType === "item" ? SKU_SKILL_HINTS
+      : EMPTY_STATE_SKILL_HINTS;
   const currentRequestLabel = requestScopeLabel(messages.filter((message) => message.role === "user").at(-1)?.content || input, language);
 
   function startNewConversation() {
@@ -1673,7 +1738,7 @@ export default function FloatingAiAssistant({
     abortRef.current?.abort();
   }
 
-  async function askAi(text: string) {
+  async function askAi(text: string, skillHint?: string) {
     const message = text.trim();
     if (!message || requestInFlightRef.current) return;
 
@@ -1697,11 +1762,12 @@ export default function FloatingAiAssistant({
     }, 12000);
 
     try {
-      const safeConversationContext = buildSafeConversationContext(messages, context, sessionGrounding);
+      const safeConversationContext = buildSafeConversationContext(messages, context, sessionGrounding, language);
       const response = await postAiRuntimeResponse({
         answerLanguage: language,
         queryMode,
         message,
+        ...(skillHint ? { skillHint } : {}),
         activeModuleId: moduleId,
         activeViewId: context?.view,
         focusTarget: focusTargetFromActiveContext(context),
@@ -1743,7 +1809,7 @@ export default function FloatingAiAssistant({
         ...current,
         {
           role: "assistant",
-          content: displaySafeAssistantRecoveryMessage(message),
+          content: displaySafeAssistantRecoveryMessage(message, language, aiRecoveryReason(error, timeoutHit || abortReasonRef.current === "timeout")),
           retryPrompt: message,
         },
       ]);
@@ -1791,11 +1857,11 @@ export default function FloatingAiAssistant({
                 <p data-testid="ai-runtime-boundary" className="text-xs leading-5" style={{ color: A.gray1 }}>{language === 'zh-CN' ? '基于当前工作区数据 · 涉及业务变更时需要确认' : 'Based on workspace data · Business changes require confirmation'}</p>
                 <p className="text-xs leading-5" style={{ color: A.sub }}>{language === 'zh-CN' ? '询问业务情况，或从产品与公司知识库查找有来源的资料。' : 'Ask about business records, or search product and company knowledge with sources.'}</p>
                 <div className="flex flex-wrap gap-2">
-                  {emptyPrompts.slice(0, 4).map((prompt) => (
+                  {emptyPrompts.slice(0, 4).map((prompt, index) => (
                     <button
                       key={prompt}
                       type="button"
-                      onClick={() => askAi(prompt)}
+                      onClick={() => askAi(prompt, emptyPromptSkillHints[index])}
                       disabled={asking}
                       data-testid="ai-empty-prompt-chip"
                       className="rounded-full px-2.5 py-1 text-[11px] font-medium hover:bg-slate-100 disabled:cursor-not-allowed"

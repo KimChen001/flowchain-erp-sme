@@ -24,6 +24,9 @@ if (acceptance !== 0) process.exit(acceptance);
 // The US walkthrough must stay free of Chinese in the English interface.
 const englishWalkthrough = await run("tests/browser/english-walkthrough.spec.ts");
 if (englishWalkthrough !== 0) process.exit(englishWalkthrough);
+// The assistant answers the walkthrough prompt chips in English from workspace data.
+const englishAssistant = await run("tests/browser/ai-assistant-english.spec.ts");
+if (englishAssistant !== 0) process.exit(englishAssistant);
 // Email sign-in end to end, through the local mail outbox.
 const outboxPath = join(tmpdir(), `flowchain-mail-outbox-${process.pid}.json`);
 const emailLink = await run("tests/browser/email-link-sign-in.spec.ts", { FLOWCHAIN_MAIL_OUTBOX_PATH: outboxPath });

@@ -2,6 +2,7 @@ import { handleActionDraftsRoute } from "../routes/action-drafts.routes.mjs";
 import { handleAiRoute } from "../routes/ai.routes.mjs";
 import { handleAiRuntimeGatewayRoute } from "../routes/ai-runtime-gateway.routes.mjs";
 import { handleAiRuntimeObservabilityRoute } from "../routes/ai-runtime-observability.routes.mjs";
+import { isLegacyAiTemplateGatewayEnabled } from "../domain/ai-skill-runtime.mjs";
 import { handleAiSuggestionsWorkbenchRoute } from "../routes/ai-suggestions-workbench.routes.mjs";
 import { handleAttachmentRoute } from "../routes/attachments.routes.mjs";
 import { handleAuditIntegrationHistoryRoute } from "../routes/audit-integration-history.routes.mjs";
@@ -58,6 +59,17 @@ import { handleUserRolePermissionVisibilityRoute } from "../routes/user-role-per
 import { handleWorkspaceBoundaryVisibilityRoute } from "../routes/workspace-boundary-visibility.routes.mjs";
 import { handleWorkspaceSetupConfigRoute } from "../routes/workspace-setup-config.routes.mjs";
 
+// The retired Chinese template chat. The assistant uses
+// /api/ai-runtime/respond; /api/ai/chat answers only while the rollback flag
+// FLOWCHAIN_AI_LEGACY_TEMPLATE_GATEWAY is on.
+async function handleLegacyAiRoute(ctx) {
+  if (ctx.url.pathname === "/api/ai/chat" && !isLegacyAiTemplateGatewayEnabled(ctx.env || process.env)) {
+    ctx.send(ctx.res, 410, { code: "AI_LEGACY_CHAT_RETIRED", error: "This assistant endpoint was retired. Use /api/ai-runtime/respond." });
+    return true;
+  }
+  return handleAiRoute(ctx);
+}
+
 const orderedRouteHandlers = Object.freeze([
   handleMrpRoute,
   handleSopRoute,
@@ -107,7 +119,7 @@ const orderedRouteHandlers = Object.freeze([
   handleExceptionCasesRoute,
   handleUserDataRoute,
   handleMarketRoute,
-  handleAiRoute,
+  handleLegacyAiRoute,
   handleRfqsRoute,
   handlePurchaseRequestsRoute,
   handlePurchaseOrdersRoute,

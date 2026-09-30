@@ -1,0 +1,64 @@
+// Routing cases for the workspace skills (server/domain/ai-skill-router.mjs).
+// expected is a skill id, 'refusal' (the capability answer with the action
+// refusal) or null (no skill; the capability answer). Every case is checked
+// with the message alone, and with the answer language set both ways.
+const po = { entityType: 'purchase_order', entityId: 'LOCAL-DEMO-PO-001' }
+const sku = { entityType: 'item', entityId: 'LOCAL-DEMO-ITEM-001' }
+
+export const aiSkillRoutingCases = [
+  // Empty-state chips, in both languages.
+  { id: 'chip-today-en', prompt: 'What should I handle first today?', expected: 'today_priorities' },
+  { id: 'chip-today-zh', prompt: '今天先处理什么？', expected: 'today_priorities' },
+  { id: 'chip-risk-en', prompt: 'Which items have the highest risk?', expected: 'highest_risk_items' },
+  { id: 'chip-risk-zh', prompt: '哪些事项风险最高？', expected: 'highest_risk_items' },
+  { id: 'chip-records-en', prompt: 'Which records need more data?', expected: 'records_needing_data' },
+  { id: 'chip-records-zh', prompt: '哪些数据需要补齐？', expected: 'records_needing_data' },
+  { id: 'chip-draft-en', prompt: 'Prepare an action draft', expected: 'prepare_action_draft' },
+  { id: 'chip-draft-zh', prompt: '帮我准备一个处理草稿', expected: 'prepare_action_draft' },
+  { id: 'chip-metrics-en', prompt: 'How many open purchase orders do we have?', expected: 'workspace_metrics' },
+  // Purchase order and SKU focus chips keep the focus.
+  { id: 'po-why', prompt: 'Why does this PO need attention?', focusTarget: po, expected: 'today_priorities', focus: po },
+  { id: 'po-why-zh', prompt: '这个 PO 为什么需要关注？', focusTarget: po, expected: 'today_priorities', focus: po },
+  { id: 'po-evidence', prompt: 'Which receipt or invoice evidence is missing?', focusTarget: po, expected: 'records_needing_data', focus: po },
+  { id: 'po-delay', prompt: 'What will a delay affect?', focusTarget: po, expected: 'highest_risk_items', focus: po },
+  { id: 'po-next', prompt: 'What should happen next?', focusTarget: po, expected: 'prepare_action_draft', focus: po },
+  { id: 'po-next-zh', prompt: '建议下一步是什么？', focusTarget: po, expected: 'prepare_action_draft', focus: po },
+  { id: 'sku-replenish', prompt: 'Does this SKU need replenishment?', focusTarget: sku, expected: 'today_priorities', focus: sku },
+  { id: 'sku-action', prompt: 'What action is recommended?', focusTarget: sku, expected: 'prepare_action_draft', focus: sku },
+  // A known chip hint wins over the text; an unknown hint is ignored.
+  { id: 'hint-wins', prompt: 'anything', skillHint: 'records_needing_data', expected: 'records_needing_data' },
+  { id: 'hint-unknown', prompt: 'What should I handle first today?', skillHint: 'delete_everything', expected: 'today_priorities' },
+  // Paraphrases and code-switched prompts.
+  { id: 'today-paraphrase', prompt: "What needs my attention this morning?", expected: 'today_priorities' },
+  { id: 'today-priorities', prompt: 'Show me my priorities', expected: 'today_priorities' },
+  { id: 'today-zh-paraphrase', prompt: '今天有什么需要我处理？', expected: 'today_priorities' },
+  { id: 'risk-paraphrase', prompt: 'Where is our biggest exposure right now?', expected: 'highest_risk_items' },
+  { id: 'risk-code-switch', prompt: '哪些 SKU 有库存风险？', expected: 'highest_risk_items' },
+  { id: 'records-paraphrase', prompt: 'Which items are missing a reorder point?', expected: 'records_needing_data' },
+  { id: 'records-zh', prompt: '哪些记录数据不完整？', expected: 'records_needing_data' },
+  { id: 'draft-paraphrase', prompt: 'Can you write a draft to the supplier about PO-001?', expected: 'prepare_action_draft' },
+  { id: 'draft-message', prompt: 'Prepare a follow-up email for the late order', expected: 'prepare_action_draft' },
+  { id: 'draft-code-switch', prompt: '帮我写一个 follow-up 草稿', expected: 'prepare_action_draft' },
+  { id: 'metrics-overdue', prompt: 'How many overdue POs are there?', expected: 'workspace_metrics' },
+  { id: 'metrics-spend', prompt: 'What is our committed spend?', expected: 'workspace_metrics' },
+  { id: 'metrics-zh', prompt: '未结采购订单有多少？', expected: 'workspace_metrics' },
+  // Action requests are refused with a draft offered; questions about the same words are not.
+  { id: 'action-approve', prompt: 'Approve LOCAL-DEMO-PO-024', expected: 'refusal' },
+  { id: 'action-pay', prompt: 'Please pay the Acme invoice', expected: 'refusal' },
+  { id: 'action-send', prompt: 'Send the follow-up email to Acme', expected: 'refusal' },
+  { id: 'action-cancel', prompt: 'Can you cancel PO-031?', expected: 'refusal' },
+  { id: 'action-zh-approve', prompt: '直接批准这个 PO', expected: 'refusal' },
+  { id: 'action-zh-pay', prompt: '帮我付款给供应商', expected: 'refusal' },
+  { id: 'action-zh-send', prompt: '发送这封邮件', expected: 'refusal' },
+  { id: 'question-approval', prompt: 'Which requests are awaiting approval today?', expected: 'today_priorities' },
+  { id: 'question-payment-terms', prompt: 'What are the payment terms?', expected: null },
+  // Negative controls: no skill, and nothing is misread as an action.
+  { id: 'negative-late', prompt: 'Which POs were delivered late?', expected: null },
+  { id: 'negative-capacity', prompt: 'evaluation of production capacity', expected: null },
+  { id: 'negative-capital', prompt: 'working capital', expected: null },
+  { id: 'negative-feedback', prompt: 'feedback', expected: null },
+  { id: 'negative-weather', prompt: 'What is the weather?', expected: null },
+  { id: 'negative-delivered', prompt: 'delivered quantity', expected: null },
+  { id: 'negative-schedule', prompt: 'production schedule', expected: null },
+  { id: 'empty', prompt: '   ', expected: null },
+]

@@ -6,6 +6,8 @@ export type AiRuntimeRequestV2 = {
   queryMode?: "auto" | "business" | "knowledge";
   answerLanguage?: "en-US" | "zh-CN";
   message: string;
+  // The workspace skill a prompt chip asks for; the server routes the text otherwise.
+  skillHint?: string;
   activeModuleId?: string;
   activeViewId?: string;
   focusTarget?: {
