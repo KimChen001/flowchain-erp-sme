@@ -45,10 +45,14 @@ def md_table(frame: pd.DataFrame, digits: int = 1, index: bool = False) -> str:
         for c in data.columns
     ) + "|"
     rows = []
+    plain = {c for c in data.columns if "year" in str(c).lower()}
     for _, row in data.iterrows():
         cells = []
-        for value in row:
-            text = value if isinstance(value, str) else fmt(value, digits)
+        for column, value in row.items():
+            if column in plain and not isinstance(value, str) and pd.notna(value):
+                text = str(int(value))
+            else:
+                text = value if isinstance(value, str) else fmt(value, digits)
             cells.append(str(text).replace("|", "\\|").replace("\n", " "))
         rows.append("| " + " | ".join(cells) + " |")
     return "\n".join([header, align, *rows])

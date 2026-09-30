@@ -71,6 +71,7 @@ Run from the `analytics/` folder:
 ```sh
 python -m scms.fetch            # 1. download and verify the raw file (skips if already verified)
 python -m scms.fetch --verify-only   #    or verify an existing copy without network access
-```
-python -m unittest              # 2a. parser tests (plain unittest; pytest also works)
+python -m unittest              # 2a. parser tests (plain unittest, pytest-compatible)
 python -m scms.clean            # 2b. derived/scms_clean.csv + outputs/cleaning-log.{md,csv}
+python -m scms.quality_report   # 3. outputs/data-quality.md + figures (rubric sections 2 and 3)
+```

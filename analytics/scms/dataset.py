@@ -56,3 +56,28 @@ def load_clean(paths: DataPaths) -> pd.DataFrame:
 
 def direct_drop(frame: pd.DataFrame) -> pd.DataFrame:
     return frame[frame["direct_drop"].fillna(False).astype(bool)].copy()
+
+
+# Time split for the PO-time model, by the year the PO was sent to the vendor.
+# The last PO in the file is from August 2015, so the test window is the last
+# ~20 months of POs; 2013 is held out for threshold and hyper-parameter choices.
+TRAIN_LAST_YEAR = 2012
+VALIDATION_YEAR = 2013
+TEST_FIRST_YEAR = 2014
+
+
+def assign_split(year: pd.Series) -> pd.Series:
+    split = pd.Series(pd.NA, index=year.index, dtype="object")
+    split[year <= TRAIN_LAST_YEAR] = "train"
+    split[year == VALIDATION_YEAR] = "validation"
+    split[year >= TEST_FIRST_YEAR] = "test"
+    return split
+
+
+def model_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Direct-drop rows usable for the PO-time model, with the time split."""
+    usable = frame[frame["usable_model"].fillna(False).astype(bool)].copy()
+    usable["po_year"] = usable["po_sent_date"].dt.year
+    usable["split"] = assign_split(usable["po_year"])
+    usable["is_late"] = usable["is_late"].astype(bool)
+    return usable
