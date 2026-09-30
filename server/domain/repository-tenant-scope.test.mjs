@@ -7,7 +7,7 @@ import { createDbProcurementReadRepository } from '../repositories/db-procuremen
 import { createDbProcurementRuntimeRepository } from '../repositories/db-procurement-runtime-repository.mjs'
 import { createDbSalesOrderReadRepository } from '../repositories/db-sales-order-read-repository.mjs'
 import { findManyWithinLimit } from '../repositories/repository-read-scope.mjs'
-import { handleProcurementWorkflowRoute } from '../routes/procurement-workflow.routes.mjs'
+import { tenantScopedProcurementMasterData } from './procurement-workflow.mjs'
 import { sendInternalServerError } from '../utils/safe-errors.mjs'
 
 // A configured default tenant must not be used as a fallback.
@@ -97,27 +97,22 @@ test('a tenant-less repository read that escapes a route is answered as 403, not
 })
 
 test('purchase request item and supplier checks read the signed-in workspace master data', async () => {
+  // The purchase request command service validates lines through this wrapper;
+  // the PostgreSQL flow test covers the same scoping end to end.
   const lookups = []
   const masterData = {
-    getItem: async (id, options) => { lookups.push(['item', id, options?.tenantId]); return { itemId: id, sku: id, itemName: 'Widget', baseUom: 'EA', status: 'active', purchasable: true } },
-    getSupplier: async (id, options) => { lookups.push(['supplier', id, options?.tenantId]); return { id, supplierName: 'Acme Supply', status: 'active' } },
+    getItem: async (id, options) => { lookups.push(['item', id, options?.tenantId]); return { itemId: id } },
+    getSupplier: async (id, options) => { lookups.push(['supplier', id, options?.tenantId]); return { id } },
+    approvedSuppliersForItem: async (id, options) => { lookups.push(['approved', id, options?.tenantId]); return [] },
   }
-  let response = null
-  await handleProcurementWorkflowRoute({
-    req: { method: 'POST' },
-    res: {},
-    url: new URL('/api/procurement/requests', 'http://localhost'),
-    identity: { authenticated: true, tenantId: 'tenant-signed-in', userId: 'buyer-1', role: 'manager' },
-    repositories: {
-      masterData,
-      procurementRuntime: { transact: async () => { throw Object.assign(new Error('read-only'), { status: 409, code: 'PROCUREMENT_DATABASE_COMMAND_REQUIRED' }) } },
-    },
-    readBody: async () => ({ title: 'Widgets', lines: [{ itemId: 'ITEM-1', supplierId: 'SUP-1', quantity: 2, estimatedUnitPrice: 5 }] }),
-    send: (_res, status, payload) => { response = { status, payload } },
-  })
-  assert.ok(response, 'the route answered')
-  assert.ok(lookups.some(([kind]) => kind === 'supplier'))
-  assert.ok(lookups.every(([, , tenantId]) => tenantId === 'tenant-signed-in'), JSON.stringify(lookups))
+  const scoped = tenantScopedProcurementMasterData(masterData, 'tenant-signed-in')
+  await scoped.getItem('ITEM-1')
+  await scoped.getSupplier('SUP-1')
+  await scoped.approvedSuppliersForItem('ITEM-1')
+  assert.deepEqual(lookups, [['item', 'ITEM-1', 'tenant-signed-in'], ['supplier', 'SUP-1', 'tenant-signed-in'], ['approved', 'ITEM-1', 'tenant-signed-in']])
+  const unscoped = tenantScopedProcurementMasterData(masterData, ' ')
+  await assert.rejects(async () => unscoped.getSupplier('SUP-1'), { status: 403, code: 'TENANT_CONTEXT_REQUIRED' })
+  assert.equal(lookups.length, 3)
 })
 
 test('bounded reads ask for one extra row and report the subject only when it exists', async () => {

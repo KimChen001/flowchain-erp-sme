@@ -7,8 +7,11 @@ import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 // End-to-end procurement in database persistence mode, driven through the real
 // HTTP server and the endpoints the browser calls:
 //   PR   src/modules/purchase-requests/CanonicalProcurementPanel.tsx
-//   RFQ  src/components/procurement/CanonicalDownstreamPanel.tsx (create mode)
+//   RFQ  src/components/procurement/CanonicalDownstreamPanel.tsx (create mode,
+//        open and cancel)
 //   PO   /api/procurement/requests/:id/generate-purchase-orders (PR panel),
+//        /api/procurement/orders/:id/submit|approve|issue|cancel
+//        (PurchaseOrderWorkflowActions on the PO detail page),
 //        /api/mobile/purchase-orders/:id/approve (src/modules/mobile)
 //   GRN  /api/receiving-docs (src/modules/receiving/Page.tsx),
 //        /api/mobile/receiving/drafts (src/modules/mobile),
@@ -20,16 +23,10 @@ import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 // steps start from rows seeded directly, standing in for the missing step.
 // Run with: node scripts/run-postgres-test-files.mjs tests/postgres/procurement-db-flow.test.mjs
 
-const MISSING_PR_COMMANDS = 'No PostgreSQL command service for purchase requests: procurement-workflow-service writes through procurementRuntime.transact(), which always answers 409 PROCUREMENT_DATABASE_COMMAND_REQUIRED in database mode.'
-const PR_CREATE_BROKEN = `${MISSING_PR_COMMANDS} Before that, line validation looks suppliers and items up without a tenant, so db-master-data-repository falls back to tenant-flowchain-sme and answers SUPPLIER_NOT_FOUND for any other workspace.`
-const PR_CONVERSION_BROKEN = `${MISSING_PR_COMMANDS} RFQ and PO creation fail even earlier with 500: the database repository has no idempotency() method.`
-const MISSING_PO_COMMANDS = 'No PostgreSQL command creates, submits or issues a purchase order: procurement-db-command-service only approves, rejects and returns pending orders.'
 const LEGACY_RECEIVING_CREATE = 'The desktop receiving page still posts to the retired /api/receiving-docs route (501); only the mobile facade creates receiving drafts in PostgreSQL.'
-const BUYER_ROLE_GATE = 'procurement-workflow.routes.mjs gates on raw session roles and does not list "buyer", although the permission catalog maps buyer to procurement-specialist.'
 
 // Flags a US trial workspace turns on (reports-ranking item 12), plus mobile
-// operations, which hosts the only PostgreSQL PO approval and receiving draft
-// commands today.
+// operations, which hosts the only PostgreSQL receiving draft commands today.
 const TRIAL_FLAGS = {
   FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING: 'true',
   FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: 'true',
@@ -98,7 +95,7 @@ async function seedPurchaseRequest(id, { status, quantity = '10', unitPrice = '1
   await prisma.purchaseRequest.create({ data: {
     id, tenantId, status, requester: managerA.id, currency: 'USD', amount, requiredDate: new Date(`${needBy}T00:00:00Z`),
     metadata: { version: 1, requesterId: managerA.id, departmentId: 'operations' },
-    lines: { create: [{ id: `${id}-L1`, itemId: itemA.id, sku: itemA.sku, itemName: itemA.name, quantity, unit: 'EA', unitPrice, amount, metadata: { supplierId: supplierA, targetWarehouseId: warehouseA, currency: 'USD', needByDate: needBy } }] },
+    lines: { create: [{ id: `${id}-L1`, itemId: itemA.id, sku: itemA.sku, itemName: itemA.name, quantity, unit: 'EA', unitPrice, amount, metadata: { supplierId: supplierA, supplierSnapshot: { id: supplierA, supplierName: 'Walkthrough Packaging Co.' }, targetWarehouseId: warehouseA, currency: 'USD', needByDate: needBy } }] },
   } })
 }
 
@@ -132,6 +129,7 @@ test.before(async () => {
   await prisma.userWarehouseScope.create({ data: { id: randomUUID(), tenantId: tenantA, userId: managerA.id, warehouseId: warehouseA, accessLevel: 'operate' } })
   await prisma.userWarehouseScope.create({ data: { id: randomUUID(), tenantId: tenantB, userId: managerB.id, warehouseId: 'flow-wh-b', accessLevel: 'operate' } })
   await prisma.supplier.create({ data: { id: supplierA, tenantId: tenantA, code: 'SUP-FLOW-A', name: 'Walkthrough Packaging Co.', status: 'active' } })
+  await prisma.supplier.create({ data: { id: 'flow-supplier-a2', tenantId: tenantA, code: 'SUP-FLOW-A2', name: 'Second Source Supply', status: 'active' } })
   await prisma.item.create({ data: { id: itemA.id, tenantId: tenantA, sku: itemA.sku, name: itemA.name, unit: 'EA', preferredSupplierId: supplierA, metadata: { defaultWarehouseId: warehouseA, purchasable: true } } })
 
   const { createScmServer } = await import('../../server/scm-api.mjs')
@@ -157,7 +155,7 @@ test('the trial capability flags enable receiving posting and the mobile PO and 
   }
 })
 
-test('without mobile operations enabled a trial has no PostgreSQL path to approve a PO or draft a receipt', async () => {
+test('without mobile operations a trial still approves POs on the desktop but cannot draft a receipt', async () => {
   process.env.FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS = 'false'
   try {
     for (const [method, path] of [['GET', '/api/mobile/tasks'], ['POST', '/api/mobile/purchase-orders/any/approve'], ['POST', '/api/mobile/receiving/drafts']]) {
@@ -165,80 +163,307 @@ test('without mobile operations enabled a trial has no PostgreSQL path to approv
       assert.equal(result.status, 409, `${method} ${path}: ${describe(result)}`)
       assert.equal(result.body.code, 'MOBILE_OPERATIONS_CAPABILITY_NOT_AVAILABLE')
     }
+    const id = 'PO-FLOW-DESKTOP-ONLY'
+    await seedPurchaseOrder(id, { status: 'pending_approval' })
+    const approved = await api(tokens.managerA, 'POST', `/api/procurement/orders/${id}/approve`, { expectedVersion: 0 })
+    assert.equal(approved.status, 200, describe(approved))
+    assert.equal((await prisma.purchaseOrder.findUnique({ where: { id } })).status, 'approved')
   } finally {
     process.env.FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS = 'true'
   }
 })
 
-test('step 1: a signed-in manager saves a PR draft (POST /api/procurement/requests)', { todo: PR_CREATE_BROKEN }, async () => {
-  const body = { departmentId: 'operations', defaultCurrency: 'USD', defaultNeedByDate: needBy, lines: [uiPrLine()] }
+test('PR lines are validated against the suppliers and items of the signed-in workspace', async () => {
+  const ownSuppliers = await api(tokens.managerA, 'GET', `/api/master-data/items/${itemA.id}/suppliers`)
+  assert.equal(ownSuppliers.status, 200, describe(ownSuppliers))
+  assert.deepEqual(ownSuppliers.body.suppliers.map((supplier) => [supplier.id, supplier.preferred]), [[supplierA, true]])
+  const otherSuppliers = await api(tokens.managerB, 'GET', `/api/master-data/items/${itemA.id}/suppliers`)
+  assert.equal(otherSuppliers.status, 200, describe(otherSuppliers))
+  assert.deepEqual(otherSuppliers.body.suppliers, [])
+
+  const body = (line) => ({ departmentId: 'operations', defaultCurrency: 'USD', defaultNeedByDate: needBy, lines: [uiPrLine(line)] })
+  const foreign = await api(tokens.managerB, 'POST', '/api/procurement/requests', body())
+  assert.equal(foreign.status, 400, describe(foreign))
+  assert.equal(foreign.body.code, 'SUPPLIER_NOT_FOUND')
+  const unapproved = await api(tokens.managerA, 'POST', '/api/procurement/requests', body({ supplierId: 'flow-supplier-a2' }))
+  assert.equal(unapproved.status, 400, describe(unapproved))
+  assert.equal(unapproved.body.code, 'ITEM_SUPPLIER_RELATIONSHIP_INVALID')
+  assert.equal(await prisma.purchaseRequest.count(), 0)
+})
+
+const audits = (entityType, entityId) => prisma.auditLog.count({ where: { tenantId: tenantA, entityType, entityId } })
+const prVersion = async (id) => Number((await prisma.purchaseRequest.findUnique({ where: { id } })).metadata.version)
+
+test('step 1: a signed-in manager saves and edits a PR draft (POST, PATCH /api/procurement/requests)', async () => {
+  const idempotencyKey = key('pr-create')
+  const body = { idempotencyKey, departmentId: 'operations', defaultCurrency: 'USD', defaultNeedByDate: needBy, lines: [uiPrLine()] }
   const created = await api(tokens.managerA, 'POST', '/api/procurement/requests', body)
   assert.equal(created.status, 201, describe(created))
+  assert.equal(created.body.version, 1)
   const row = await prisma.purchaseRequest.findFirst({ where: { id: created.body.id, tenantId: tenantA }, include: { lines: true } })
   assert.ok(row, 'the PR is stored in PostgreSQL for the signed-in tenant')
   assert.equal(row.status, 'draft')
+  assert.equal(row.requester, managerA.id)
+  assert.equal(row.metadata.version, 1)
   assert.equal(row.currency, 'USD')
   assert.equal(dec(row.amount), '125')
+  assert.equal(row.supplierId, supplierA)
   assert.equal(row.lines.length, 1)
   assert.equal(dec(row.lines[0].quantity), '10')
   assert.equal(dec(row.lines[0].unitPrice), '12.5')
+  assert.equal(dec(row.lines[0].amount), '125')
+  assert.equal(row.lines[0].metadata.supplierId, supplierA)
+  assert.equal(row.lines[0].metadata.targetWarehouseId, warehouseA)
+  assert.equal(await audits('PurchaseRequest', row.id), 1)
+
+  const replay = await api(tokens.managerA, 'POST', '/api/procurement/requests', body)
+  assert.equal(replay.body.id, row.id)
+  assert.equal(replay.body.idempotentReplay, true)
+  assert.equal(await prisma.purchaseRequest.count({ where: { tenantId: tenantA, requester: managerA.id } }), 1)
+  assert.equal(await audits('PurchaseRequest', row.id), 1)
+  const reused = await api(tokens.managerA, 'POST', '/api/procurement/requests', { ...body, departmentId: 'finance' })
+  assert.equal(reused.status, 409, describe(reused))
+  assert.equal(reused.body.code, 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD')
+
   const listed = await api(tokens.managerA, 'GET', '/api/procurement/requests')
-  assert.ok(listed.body.some((pr) => pr.id === row.id), 'the PR list shows the new draft')
+  const listedPr = listed.body.find((pr) => pr.id === row.id)
+  assert.equal(listedPr?.status, 'draft')
+  assert.equal(listedPr?.lines[0].supplierId, supplierA, 'the list returns what the edit form needs')
   const other = await api(tokens.managerB, 'GET', '/api/procurement/requests')
   assert.ok(!other.body.some((pr) => pr.id === row.id), 'another tenant does not see it')
+  const otherDetail = await api(tokens.managerB, 'GET', `/api/procurement/requests/${row.id}`)
+  assert.equal(otherDetail.status, 404, describe(otherDetail))
+
+  // The edit form saves with PATCH and the version it loaded.
+  const { idempotencyKey: _unused, ...editBody } = body
+  const edited = await api(tokens.managerA, 'PATCH', `/api/procurement/requests/${row.id}`, { ...editBody, expectedVersion: 1, lines: [uiPrLine({ quantity: 8 })] })
+  assert.equal(edited.status, 200, describe(edited))
+  assert.equal(edited.body.version, 2)
+  const editedRow = await prisma.purchaseRequest.findUnique({ where: { id: row.id }, include: { lines: true } })
+  assert.equal(dec(editedRow.amount), '100')
+  assert.equal(dec(editedRow.lines[0].quantity), '8')
+  const stale = await api(tokens.managerA, 'PATCH', `/api/procurement/requests/${row.id}`, { ...editBody, expectedVersion: 1, lines: [uiPrLine({ quantity: 3 })] })
+  assert.equal(stale.status, 409, describe(stale))
+  assert.equal(stale.body.code, 'VERSION_CONFLICT')
+  assert.equal(stale.body.currentVersion, 2)
+  const foreignEdit = await api(tokens.managerB, 'PATCH', `/api/procurement/requests/${row.id}`, { expectedVersion: 2, departmentId: 'x' })
+  assert.equal(foreignEdit.status, 404, describe(foreignEdit))
+  assert.equal(await prVersion(row.id), 2)
+  assert.equal(await audits('PurchaseRequest', row.id), 2)
 })
 
-test('step 1b: a signed-in buyer saves a PR draft', { todo: BUYER_ROLE_GATE }, async () => {
-  const body = { departmentId: 'operations', defaultCurrency: 'USD', defaultNeedByDate: needBy, lines: [uiPrLine()] }
+test('step 1b: a signed-in buyer saves, submits and withdraws a PR but cannot approve or reject it', async () => {
+  const body = { departmentId: 'operations', defaultNeedByDate: needBy, lines: [uiPrLine({ currency: undefined })] }
   const created = await api(tokens.buyerA, 'POST', '/api/procurement/requests', body)
-  assert.notEqual(created.status, 403, describe(created))
+  assert.equal(created.status, 201, describe(created))
+  const row = await prisma.purchaseRequest.findUnique({ where: { id: created.body.id } })
+  assert.equal(row.requester, buyerA.id)
+  assert.equal(row.currency, 'USD', 'the workspace currency is the default')
+  const submitted = await api(tokens.buyerA, 'POST', `/api/procurement/requests/${row.id}/submit`, { expectedVersion: 1 })
+  assert.equal(submitted.status, 200, describe(submitted))
+  const approve = await api(tokens.buyerA, 'POST', `/api/procurement/requests/${row.id}/approve`, { expectedVersion: 2 })
+  assert.equal(approve.status, 403, describe(approve))
+  const reject = await api(tokens.buyerA, 'POST', `/api/procurement/requests/${row.id}/reject`, { expectedVersion: 2, reason: 'Not needed' })
+  assert.equal(reject.status, 403, describe(reject))
+  const withdrawn = await api(tokens.buyerA, 'POST', `/api/procurement/requests/${row.id}/withdraw`, { expectedVersion: 2 })
+  assert.equal(withdrawn.status, 200, describe(withdrawn))
+  const after = await prisma.purchaseRequest.findUnique({ where: { id: row.id } })
+  assert.equal(after.status, 'draft')
+  assert.equal(after.metadata.version, 3)
+  assert.equal(await audits('PurchaseRequest', row.id), 3, 'create, submit and withdraw; refused commands leave no audit row')
 })
 
-test('step 2: the manager submits and approves the PR (POST /api/procurement/requests/:id/submit|approve)', { todo: MISSING_PR_COMMANDS }, async () => {
+test('step 2: the manager submits and approves the PR (POST /api/procurement/requests/:id/submit|approve)', async () => {
   const id = 'PR-FLOW-SUBMIT'
   await seedPurchaseRequest(id, { status: 'draft' })
   const submitted = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/submit`, { expectedVersion: 1 })
   assert.equal(submitted.status, 200, describe(submitted))
+  assert.equal(submitted.body.version, 2)
   assert.equal((await prisma.purchaseRequest.findUnique({ where: { id } })).status, 'submitted')
-  const approved = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/approve`, { expectedVersion: submitted.body.version })
+
+  const foreign = await api(tokens.managerB, 'POST', `/api/procurement/requests/${id}/approve`, { expectedVersion: 2 })
+  assert.equal(foreign.status, 404, describe(foreign))
+  const stale = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/approve`, { expectedVersion: 1 })
+  assert.equal(stale.status, 409, describe(stale))
+  assert.equal(stale.body.code, 'VERSION_CONFLICT')
+  const rejectWithoutReason = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/reject`, { expectedVersion: 2 })
+  assert.equal(rejectWithoutReason.status, 400, describe(rejectWithoutReason))
+  assert.equal(await prVersion(id), 2)
+
+  const approved = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/approve`, { expectedVersion: 2 })
   assert.equal(approved.status, 200, describe(approved))
-  assert.equal((await prisma.purchaseRequest.findUnique({ where: { id } })).status, 'approved')
+  const row = await prisma.purchaseRequest.findUnique({ where: { id } })
+  assert.equal(row.status, 'approved')
+  assert.equal(row.metadata.version, 3)
+  assert.equal(row.metadata.lastActorId, managerA.id)
+  assert.equal(dec(row.amount), '125')
+  assert.equal(row.currency, 'USD')
+  const replay = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/approve`, { expectedVersion: 2 })
+  assert.equal(replay.status, 200, describe(replay))
+  assert.equal(replay.body.idempotentReplay, true)
+  assert.equal(await prVersion(id), 3)
+  assert.equal(await audits('PurchaseRequest', id), 2, 'one audit row each for submit and approve')
+  const again = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/submit`, { expectedVersion: 3 })
+  assert.equal(again.status, 409, describe(again))
+  assert.equal(again.body.code, 'INVALID_STATE_TRANSITION')
 })
 
-test('step 3a: an approved PR above the RFQ threshold opens an RFQ (POST /api/procurement/requests/:id/rfqs)', { todo: PR_CONVERSION_BROKEN }, async () => {
+test('step 3a: an approved PR above the RFQ threshold opens an RFQ (POST /api/procurement/requests/:id/rfqs, /api/procurement/rfqs/:id/open)', async () => {
   const id = 'PR-FLOW-RFQ'
   await seedPurchaseRequest(id, { status: 'approved', quantity: '1000', unitPrice: '150' })
-  const created = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/rfqs`, { expectedVersion: 1, title: 'Pallet wrap annual volume', dueDate: needBy, invitedSupplierIds: [supplierA] })
+  const body = { expectedVersion: 1, title: 'Pallet wrap annual volume', dueDate: needBy, invitedSupplierIds: [supplierA] }
+  const foreign = await api(tokens.managerB, 'POST', `/api/procurement/requests/${id}/rfqs`, body)
+  assert.equal(foreign.status, 404, describe(foreign))
+  const created = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/rfqs`, body)
   assert.equal(created.status, 201, describe(created))
-  const rfq = await prisma.rfq.findFirst({ where: { tenantId: tenantA, sourceRequestId: id }, include: { lines: true } })
+  const rfq = await prisma.rfq.findFirst({ where: { tenantId: tenantA, sourceRequestId: id }, include: { lines: true, supplierParticipations: true } })
   assert.ok(rfq, 'the RFQ is stored in PostgreSQL')
+  assert.equal(created.body.rfq.id, rfq.id)
   assert.equal(rfq.status, 'draft')
+  assert.equal(rfq.metadata.version, 1)
   assert.equal(rfq.currency, 'USD')
+  assert.equal(rfq.title, 'Pallet wrap annual volume')
   assert.equal(dec(rfq.lines[0].quantity), '1000')
+  assert.equal(rfq.lines[0].metadata.targetUnitPrice, '150.0000')
+  assert.deepEqual(rfq.supplierParticipations.map((row) => [row.supplierId, row.status]), [[supplierA, 'planned']])
+  const pr = await prisma.purchaseRequest.findUnique({ where: { id } })
+  assert.equal(pr.status, 'approved')
+  assert.equal(pr.linkedRfqId, rfq.id)
+  assert.equal(pr.metadata.version, 2)
+  assert.equal(pr.metadata.procurementPath, 'rfq')
+  assert.equal(await audits('Rfq', rfq.id), 1)
+
+  const replay = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/rfqs`, body)
+  assert.equal(replay.body.idempotentReplay, true)
+  assert.equal(replay.body.rfq.id, rfq.id)
+  assert.equal(await prisma.rfq.count({ where: { tenantId: tenantA, sourceRequestId: id } }), 1)
+  const stale = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/rfqs`, { ...body, title: 'Second try' })
+  assert.equal(stale.status, 409, describe(stale))
+  assert.equal(stale.body.code, 'VERSION_CONFLICT')
+  const directPo = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 2 })
+  assert.equal(directPo.status, 409, describe(directPo))
+  assert.equal(directPo.body.code, 'DOWNSTREAM_OBJECT_ALREADY_EXISTS')
+
+  const listed = await api(tokens.managerA, 'GET', '/api/procurement/rfqs')
+  const listedRfq = listed.body.find((row) => row.id === rfq.id)
+  assert.equal(listedRfq?.version, 1)
+  assert.equal(listedRfq?.sourcePrId, id)
+  const otherList = await api(tokens.managerB, 'GET', '/api/procurement/rfqs')
+  assert.ok(!otherList.body.some((row) => row.id === rfq.id))
+
+  const foreignOpen = await api(tokens.managerB, 'POST', `/api/procurement/rfqs/${rfq.id}/open`, { expectedVersion: 1 })
+  assert.equal(foreignOpen.status, 404, describe(foreignOpen))
+  const opened = await api(tokens.buyerA, 'POST', `/api/procurement/rfqs/${rfq.id}/open`, { expectedVersion: 1 })
+  assert.equal(opened.status, 200, describe(opened))
+  const openRow = await prisma.rfq.findUnique({ where: { id: rfq.id }, include: { supplierParticipations: true } })
+  assert.equal(openRow.status, 'open')
+  assert.equal(openRow.metadata.version, 2)
+  assert.equal(openRow.supplierParticipations[0].status, 'invited_internal')
+  assert.ok(openRow.supplierParticipations[0].invitedAt)
+  const staleOpen = await api(tokens.buyerA, 'POST', `/api/procurement/rfqs/${rfq.id}/cancel`, { expectedVersion: 1 })
+  assert.equal(staleOpen.status, 409, describe(staleOpen))
+  assert.equal(await audits('Rfq', rfq.id), 2)
 })
 
-test('step 3b: an approved PR becomes a draft PO (POST /api/procurement/requests/:id/generate-purchase-orders)', { todo: PR_CONVERSION_BROKEN }, async () => {
+test('step 3b: an approved PR becomes a draft PO (POST /api/procurement/requests/:id/generate-purchase-orders)', async () => {
   const id = 'PR-FLOW-DIRECT'
   await seedPurchaseRequest(id, { status: 'approved' })
+  const foreign = await api(tokens.managerB, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 1 })
+  assert.equal(foreign.status, 404, describe(foreign))
+  const stale = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 0 })
+  assert.equal(stale.status, 409, describe(stale))
+  assert.equal(stale.body.code, 'VERSION_CONFLICT')
   const created = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 1 })
   assert.equal(created.status, 201, describe(created))
+  assert.equal(created.body.createdPurchaseOrders.length, 1)
   const po = await prisma.purchaseOrder.findFirst({ where: { tenantId: tenantA, sourceRequestId: id }, include: { lines: true } })
   assert.ok(po, 'the PO is stored in PostgreSQL')
+  assert.equal(created.body.createdPurchaseOrders[0].id, po.id)
   assert.equal(po.status, 'draft')
+  assert.equal(po.version, 0)
   assert.equal(po.supplierId, supplierA)
   assert.equal(po.currency, 'USD')
   assert.equal(dec(po.amount), '125')
+  assert.equal(po.metadata.targetWarehouseId, warehouseA)
   assert.equal(dec(po.lines[0].orderedQuantity), '10')
   assert.equal(dec(po.lines[0].receivedQuantity), '0')
-  assert.equal((await prisma.purchaseRequest.findUnique({ where: { id } })).status, 'converted')
+  assert.equal(dec(po.lines[0].unitPrice), '12.5')
+  assert.equal(dec(po.lines[0].amount), '125')
+  const pr = await prisma.purchaseRequest.findUnique({ where: { id } })
+  assert.equal(pr.status, 'converted')
+  assert.equal(pr.linkedPoId, po.id)
+  assert.equal(pr.metadata.version, 2)
+  assert.equal(await audits('PurchaseRequest', id), 1)
+  assert.equal(await prisma.domainChangeFeed.count({ where: { tenantId: tenantA, entityType: 'PurchaseOrder', entityId: po.id } }), 1)
+
+  const replay = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 1 })
+  assert.equal(replay.status, 201, describe(replay))
+  assert.equal(replay.body.idempotentReplay, true)
+  assert.equal(await prisma.purchaseOrder.count({ where: { tenantId: tenantA, sourceRequestId: id } }), 1)
+  const again = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 2 })
+  assert.equal(again.status, 409, describe(again))
+  const orders = await api(tokens.managerA, 'GET', '/api/procurement/orders')
+  assert.equal(orders.body.find((row) => row.id === po.id)?.status, 'draft')
+  const otherOrders = await api(tokens.managerB, 'GET', '/api/procurement/orders')
+  assert.ok(!otherOrders.body.some((row) => row.id === po.id))
 })
 
-test('step 4a: a draft PO is submitted for approval (POST /api/procurement/orders/:id/submit)', { todo: MISSING_PO_COMMANDS }, async () => {
+test('step 3c: a buyer converts a two-supplier PR into one draft PO per supplier', async () => {
+  const id = 'PR-FLOW-SPLIT'
+  await prisma.purchaseRequest.create({ data: {
+    id, tenantId: tenantA, status: 'approved', requester: buyerA.id, currency: 'USD', amount: '185.0000',
+    metadata: { version: 1, requesterId: buyerA.id },
+    lines: { create: [
+      { id: `${id}-L1`, itemId: itemA.id, sku: itemA.sku, itemName: itemA.name, quantity: '10', unit: 'EA', unitPrice: '12.5', amount: '125', metadata: { supplierId: supplierA, supplierSnapshot: { supplierName: 'Walkthrough Packaging Co.' }, targetWarehouseId: warehouseA, currency: 'USD', needByDate: needBy } },
+      { id: `${id}-L2`, itemName: 'Stretch film dispenser', quantity: '2', unit: 'EA', unitPrice: '30', amount: '60', metadata: { sourceType: 'non_catalog_item', supplierId: 'flow-supplier-a2', supplierSnapshot: { supplierName: 'Second Source Supply' }, targetWarehouseId: warehouseA, currency: 'USD', needByDate: '2026-10-20' } },
+    ] },
+  } })
+  const created = await api(tokens.buyerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 1 })
+  assert.equal(created.status, 201, describe(created))
+  const pos = await prisma.purchaseOrder.findMany({ where: { tenantId: tenantA, sourceRequestId: id }, include: { lines: true }, orderBy: { amount: 'asc' } })
+  assert.deepEqual(pos.map((po) => [po.supplierId, po.supplierName, dec(po.amount), po.currency, po.lines.length]), [
+    ['flow-supplier-a2', 'Second Source Supply', '60', 'USD', 1],
+    [supplierA, 'Walkthrough Packaging Co.', '125', 'USD', 1],
+  ])
+  assert.deepEqual((await prisma.purchaseRequest.findUnique({ where: { id } })).metadata.linkedPurchaseOrderIds.sort(), pos.map((po) => po.id).sort())
+})
+
+const poRow = (id) => prisma.purchaseOrder.findUnique({ where: { id }, include: { lines: true } })
+
+test('step 4a: a buyer submits a draft PO and a manager approves it on the desktop (POST /api/procurement/orders/:id/submit|approve)', async () => {
   const id = 'PO-FLOW-SUBMIT'
   await seedPurchaseOrder(id, { status: 'draft' })
-  const submitted = await api(tokens.managerA, 'POST', `/api/procurement/orders/${id}/submit`, { expectedVersion: 0 })
+  const foreign = await api(tokens.managerB, 'POST', `/api/procurement/orders/${id}/submit`, { expectedVersion: 0 })
+  assert.equal(foreign.status, 404, describe(foreign))
+  const submitted = await api(tokens.buyerA, 'POST', `/api/procurement/orders/${id}/submit`, { expectedVersion: 0 })
   assert.equal(submitted.status, 200, describe(submitted))
-  assert.equal((await prisma.purchaseOrder.findUnique({ where: { id } })).status, 'pending_approval')
+  let row = await poRow(id)
+  assert.equal(row.status, 'pending_approval')
+  assert.equal(row.version, 1)
+  assert.equal(row.currency, 'USD')
+  assert.equal(dec(row.amount), '125')
+  const replay = await api(tokens.buyerA, 'POST', `/api/procurement/orders/${id}/submit`, { expectedVersion: 0 })
+  assert.equal(replay.status, 200, describe(replay))
+  assert.equal(replay.body.idempotentReplay, true)
+  assert.equal((await poRow(id)).version, 1)
+
+  const buyerApproval = await api(tokens.buyerA, 'POST', `/api/procurement/orders/${id}/approve`, { expectedVersion: 1 })
+  assert.equal(buyerApproval.status, 403, describe(buyerApproval))
+  const stale = await api(tokens.managerA, 'POST', `/api/procurement/orders/${id}/approve`, { expectedVersion: 0 })
+  assert.equal(stale.status, 409, describe(stale))
+  assert.equal(stale.body.code, 'SYNC_VERSION_CONFLICT')
+  const approved = await api(tokens.managerA, 'POST', `/api/procurement/orders/${id}/approve`, { expectedVersion: 1 })
+  assert.equal(approved.status, 200, describe(approved))
+  row = await poRow(id)
+  assert.equal(row.status, 'approved')
+  assert.equal(row.receivingBaseStatus, 'approved')
+  assert.equal(row.version, 2)
+  assert.equal(await audits('PurchaseOrder', id), 2, 'one audit row each for submit and approve')
+  const detail = await api(tokens.managerA, 'GET', `/api/procurement/orders/${id}`)
+  assert.equal(detail.status, 200, describe(detail))
+  assert.equal(detail.body.status, 'approved')
+  const foreignDetail = await api(tokens.managerB, 'GET', `/api/procurement/orders/${id}`)
+  assert.equal(foreignDetail.status, 404, describe(foreignDetail))
 })
 
 let approvedPoId
@@ -268,12 +493,53 @@ test('step 4b: the manager approves a pending PO (POST /api/mobile/purchase-orde
   assert.equal(listedPo?.currency, 'USD')
 })
 
-test('step 4c: an approved PO is issued to the supplier (POST /api/procurement/orders/:id/issue)', { todo: MISSING_PO_COMMANDS }, async () => {
+test('step 4c: an approved PO is issued to the supplier (POST /api/procurement/orders/:id/issue)', async () => {
   const id = 'PO-FLOW-ISSUE'
   await seedPurchaseOrder(id, { status: 'approved' })
-  const issued = await api(tokens.managerA, 'POST', `/api/procurement/orders/${id}/issue`, { expectedVersion: 0 })
+  const early = await api(tokens.buyerA, 'POST', `/api/procurement/orders/PO-FLOW-SUBMIT/submit`, { expectedVersion: 2 })
+  assert.equal(early.status, 409, describe(early))
+  assert.equal(early.body.code, 'PURCHASE_ORDER_WORKFLOW_CONFLICT')
+  const foreign = await api(tokens.managerB, 'POST', `/api/procurement/orders/${id}/issue`, { expectedVersion: 0 })
+  assert.equal(foreign.status, 404, describe(foreign))
+  const issued = await api(tokens.buyerA, 'POST', `/api/procurement/orders/${id}/issue`, { expectedVersion: 0 })
   assert.equal(issued.status, 200, describe(issued))
-  assert.equal((await prisma.purchaseOrder.findUnique({ where: { id } })).status, 'issued')
+  const row = await poRow(id)
+  assert.equal(row.status, 'issued')
+  assert.equal(row.receivingBaseStatus, 'issued')
+  assert.equal(row.version, 1)
+  assert.equal(row.metadata.transmissionStatus, 'issued_outside_flowchain')
+  assert.equal(await audits('PurchaseOrder', id), 1)
+  const cancelIssued = await api(tokens.managerA, 'POST', `/api/procurement/orders/${id}/cancel`, { expectedVersion: 1 })
+  assert.equal(cancelIssued.status, 409, describe(cancelIssued))
+
+  // Receiving still accepts an issued PO, and reversal would restore "issued".
+  const draft = await api(tokens.managerA, 'POST', '/api/mobile/receiving/drafts', { idempotencyKey: key('issued-draft'), poId: id, warehouseId: warehouseA, lines: [{ purchaseOrderLineId: `${id}-L1`, acceptedQuantity: '2', location: 'A-02' }] })
+  assert.equal(draft.status, 201, describe(draft))
+})
+
+test('step 4d: a buyer cancels a draft PO; cancelling an approved PO needs a manager and no open receipt', async () => {
+  const draftId = 'PO-FLOW-CANCEL-DRAFT'
+  await seedPurchaseOrder(draftId, { status: 'draft' })
+  const cancelled = await api(tokens.buyerA, 'POST', `/api/procurement/orders/${draftId}/cancel`, { expectedVersion: 0 })
+  assert.equal(cancelled.status, 200, describe(cancelled))
+  assert.equal((await poRow(draftId)).status, 'cancelled')
+
+  const approvedId = 'PO-FLOW-CANCEL-APPROVED'
+  await seedPurchaseOrder(approvedId, { status: 'approved' })
+  const buyerCancel = await api(tokens.buyerA, 'POST', `/api/procurement/orders/${approvedId}/cancel`, { expectedVersion: 0 })
+  assert.equal(buyerCancel.status, 403, describe(buyerCancel))
+  const draft = await api(tokens.managerA, 'POST', '/api/mobile/receiving/drafts', { idempotencyKey: key('cancel-draft'), poId: approvedId, warehouseId: warehouseA, lines: [{ purchaseOrderLineId: `${approvedId}-L1`, acceptedQuantity: '1' }] })
+  assert.equal(draft.status, 201, describe(draft))
+  const blocked = await api(tokens.managerA, 'POST', `/api/procurement/orders/${approvedId}/cancel`, { expectedVersion: 0 })
+  assert.equal(blocked.status, 409, describe(blocked))
+  assert.equal(blocked.body.code, 'PURCHASE_ORDER_HAS_OPEN_RECEIPTS')
+  await prisma.receivingDocument.update({ where: { id: draft.body.entityId }, data: { workflowStatus: 'cancelled' } })
+  const managerCancel = await api(tokens.managerA, 'POST', `/api/procurement/orders/${approvedId}/cancel`, { expectedVersion: 0 })
+  assert.equal(managerCancel.status, 200, describe(managerCancel))
+  const row = await poRow(approvedId)
+  assert.equal(row.status, 'cancelled')
+  assert.equal(row.version, 1)
+  assert.equal(await audits('PurchaseOrder', approvedId), 1, 'refused commands leave no audit row')
 })
 
 test('step 5a: the desktop receiving page creates a GRN (POST /api/receiving-docs)', { todo: LEGACY_RECEIVING_CREATE }, async () => {

@@ -119,23 +119,37 @@ function documentWhere(tenantId, id) {
 export function mapPurchaseRequest(record = {}) {
   const line = firstLine(record)
   const meta = metadata(record)
-  const lines = asArray(record.lines).map((entry) => ({
-    lineId: entry.id,
-    id: entry.id,
-    itemId: text(entry.itemId) || null,
-    sku: text(entry.sku) || null,
-    itemNameSnapshot: text(entry.itemName),
-    itemName: text(entry.itemName),
-    quantity: numberFrom(entry.quantity, 0),
-    unitSnapshot: text(entry.unit) || null,
-    unit: text(entry.unit),
-    estimatedUnitPrice: numberFrom(entry.unitPrice, 0),
-    unitPrice: numberFrom(entry.unitPrice, 0),
-    estimatedAmount: numberFrom(entry.amount, 0),
-    amount: numberFrom(entry.amount, 0),
-    currency: text(record.currency),
-    metadata: metadata(entry),
-  }))
+  const lines = asArray(record.lines).map((entry) => {
+    const lineMeta = metadata(entry)
+    return {
+      lineId: entry.id,
+      id: entry.id,
+      sourceType: text(lineMeta.sourceType, entry.itemId ? 'catalog_item' : 'non_catalog_item'),
+      lineBasis: text(lineMeta.lineBasis, 'quantity'),
+      itemId: text(entry.itemId) || null,
+      sku: text(entry.sku) || null,
+      itemNameSnapshot: text(entry.itemName),
+      itemName: text(entry.itemName),
+      specificationSnapshot: text(lineMeta.specificationSnapshot),
+      commodityId: text(lineMeta.commodityId),
+      quantity: numberFrom(entry.quantity, 0),
+      unitSnapshot: text(entry.unit) || null,
+      unit: text(entry.unit),
+      estimatedUnitPrice: numberFrom(entry.unitPrice, 0),
+      unitPrice: numberFrom(entry.unitPrice, 0),
+      estimatedAmount: numberFrom(entry.amount, 0),
+      amount: numberFrom(entry.amount, 0),
+      currency: text(lineMeta.currency, text(record.currency)),
+      supplierId: text(lineMeta.supplierId) || null,
+      supplierSnapshot: lineMeta.supplierSnapshot || null,
+      targetWarehouseId: text(lineMeta.targetWarehouseId || lineMeta.warehouseId),
+      needByDate: text(lineMeta.needByDate),
+      serviceStartDate: text(lineMeta.serviceStartDate),
+      serviceEndDate: text(lineMeta.serviceEndDate),
+      internalLineComment: text(lineMeta.internalLineComment),
+      metadata: lineMeta,
+    }
+  })
   return {
     id: record.id,
     pr: record.id,
@@ -144,7 +158,10 @@ export function mapPurchaseRequest(record = {}) {
     departmentId: text(meta.departmentId),
     defaultCurrency: text(record.currency),
     defaultNeedByDate: isoDate(record.requiredDate),
-    totalAmount: numberFrom(record.amount, 0),
+    // A PR whose lines use different currencies has no single total.
+    totalAmount: nullableNumber(record.amount),
+    procurementPath: text(meta.procurementPath, 'undecided'),
+    linkedPurchaseOrderIds: asArray(meta.linkedPurchaseOrderIds),
     lines,
     sourceSku: text(line.sku || meta.sku),
     sourceName: text(line.itemName || meta.itemName),
@@ -176,6 +193,7 @@ export function mapRfq(record = {}, quotations = []) {
   const quoteCount = quotations.filter((quote) => quote.rfqId === record.id).length
   return {
     id: record.id,
+    version: numberFrom(meta.version, 0),
     title: text(record.title, record.id),
     category: text(record.category),
     status: canonicalStatus('rfq', record.status) || text(record.status, 'active'),
@@ -186,6 +204,7 @@ export function mapRfq(record = {}, quotations = []) {
     bestSupplier: text(record.awardedSupplier),
     supplierId: text(record.supplierId),
     sourceRequest: text(record.sourceRequestId),
+    sourcePrId: text(record.sourceRequestId),
     linkedPo: text(record.linkedPoId),
     sourceSku: text(line.sku || meta.sku),
     sourceName: text(line.itemName || meta.itemName),
@@ -379,7 +398,7 @@ function mapRfqDetail(record = {}, quotations = [], participations = []) {
   }
 }
 
-function mapPurchaseOrder(record = {}) {
+export function mapPurchaseOrder(record = {}) {
   const line = firstLine(record)
   const meta = metadata(record)
   const ordered = lineQuantity(record.lines, 'orderedQuantity', numberFrom(meta.orderedQuantity, 0))
