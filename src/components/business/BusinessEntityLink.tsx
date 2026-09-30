@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 import { businessEntityPath, businessEntityRouteRegistry, type BusinessEntityType } from "./businessEntityRoutes";
-import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { businessEntityCopy } from "./businessEntityCopy";
 
 const copy = (label: string) =>
-  workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
+  businessEntityCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
 type Props = {
   entityType: BusinessEntityType;
