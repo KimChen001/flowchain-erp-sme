@@ -24,6 +24,7 @@ STEPS = [
     ["-m", "scms.delay_model"],
     ["-m", "scms.decision_proposal"],
     ["-m", "scms.decision_results"],
+    ["-m", "scms.report_outline"],
 ]
 
 

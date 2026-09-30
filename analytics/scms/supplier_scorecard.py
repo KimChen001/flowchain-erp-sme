@@ -35,7 +35,7 @@ from statsmodels.stats.proportion import proportion_confint
 
 from .dataset import load_clean
 from .paths import GRACE_DAYS, parse_args
-from .report import BLUE, INK_2, ORANGE, md_table, pct, save_figure, style_axes, write_text
+from .report import BLUE, INK_2, ORANGE, md_table, pct, save_figure, style_axes, write_json, write_text
 
 MIN_SHIPMENTS = 30
 
@@ -293,6 +293,18 @@ Vendors with an insufficient sample (shipments): {'; '.join(f"{name} ({int(n)})"
   be scored from it.
 """
     write_text(paths.outputs_dir / "supplier-scorecard.md", report)
+
+    def brief(frame):
+        return [{"vendor": name, "on_time": r.on_time_rate, "ci": [r.on_time_ci_low, r.on_time_ci_high], "n": int(r.shipments),
+                 "exact": r.exact_on_schedule_rate} for name, r in zip(frame.index, frame.itertuples())]
+
+    write_json(paths.outputs_dir / "key-numbers-scorecard.json", {
+        "grace_days": grace, "scope": len(sc), "vendors": int(sc["vendor"].nunique()), "vendors_ok": len(ok),
+        "overall": {k: overall[k] for k in ("on_time_rate", "on_time_ci_low", "on_time_ci_high", "early_rate", "late_shipments",
+                                            "mean_days_late_if_late", "p90_days_late_if_late", "median_lead_actual_days",
+                                            "median_lead_planned_days", "freight_share_total", "freight_share_median")},
+        "top": brief(top), "bottom": brief(bottom), "bottom_late_share": float(bottom["late_shipments"].sum() / overall["late_shipments"]),
+    })
     print(f"Wrote {paths.outputs_dir / 'supplier-scorecard.md'}")
     print("top:", names(top))
     print("bottom:", names(bottom))

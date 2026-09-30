@@ -21,7 +21,7 @@ from scipy import stats
 from .clean import RENAME, read_raw
 from .dataset import TEST_FIRST_YEAR, TRAIN_LAST_YEAR, VALIDATION_YEAR, load_clean, model_frame
 from .paths import GRACE_DAYS, RAW_SHA256, SEED, parse_args
-from .report import AQUA, BLUE, INK_2, ORANGE, md_table, pct, save_figure, style_axes, write_text
+from .report import AQUA, BLUE, INK_2, ORANGE, md_table, pct, save_figure, style_axes, write_json, write_text
 
 # Official column descriptions, copied from the column metadata embedded in the
 # archived USAID Development Data Library page (see DICTIONARY_SOURCE). The
@@ -342,6 +342,12 @@ def revision_analysis(clean: pd.DataFrame, figures) -> tuple[str, dict]:
         "late_obs": late_obs,
         "late_upper": late_upper,
         "late_mid": late_mid,
+        "year_exact_min": float(by_year["exact = scheduled"].min()),
+        "year_exact_max": float(by_year["exact = scheduled"].max()),
+        "vendor_exact_min": float(by_vendor["exact = scheduled"].min()),
+        "vendor_exact_max": float(by_vendor["exact = scheduled"].max()),
+        "rdc_month_end_sched": float(month_end.iloc[0]["scheduled on month-end"]),
+        "dd_exact_month_end_sched": float(month_end.iloc[1]["scheduled on month-end"]),
     }
 
     text = f"""### 3.4 Was the scheduled date revised after the fact?
@@ -659,6 +665,13 @@ Decisions:
 - **2006–2015 data.** Vendor performance may have changed since.
 """
     write_text(paths.outputs_dir / "data-quality.md", report)
+    write_json(paths.outputs_dir / "key-numbers-quality.json", {
+        "rows_total": len(clean), "rows_rdc": int(clean["fulfill_via"].eq("From RDC").sum()), "rows_direct_drop": len(dd),
+        "rows_scorecard": int(clean["usable_scorecard"].sum()), "rows_model": len(model), "rows_freight_share": len(freight_usable),
+        "columns_raw": raw_original.shape[1], "countries": int(clean["country"].nunique()), "vendors_dd": int(dd["vendor"].nunique()),
+        "missing_columns": len(missing), "cleaning_rules": len(log),
+        "revision": rev, "dictionary_quote": "Current anticipated delivery date", "dictionary_source": DICTIONARY_SOURCE,
+    })
     print(f"Wrote {paths.outputs_dir / 'data-quality.md'}")
     print(
         f"exact share {rev['exact_share']:.4f} heap ratio {rev['heap']['ratio']:.1f} "

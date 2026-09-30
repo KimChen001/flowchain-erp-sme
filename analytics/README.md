@@ -89,9 +89,10 @@ python -m scms.supplier_scorecard   # 4. outputs/supplier-scorecard.md + aggrega
 python -m scms.delay_model      # 5. outputs/delay-model.md + metrics CSV + figures (~5-10 min; --bootstrap N)
 python -m scms.decision_proposal    # 6a. outputs/decision-proposal.md (the decision problem and its data)
 python -m scms.decision_results     # 6b. outputs/decision-results.md: MILP, four policies, sensitivity
+python -m scms.report_outline       # 7. outputs/report-outline.md: rubric question -> section, numbers, figure, gaps
 ```
 
-Or run steps 1 (verify only) to 6 in one go with `python -m scms.run_all`.
+Or run steps 1 (verify only) to 7 in one go with `python -m scms.run_all`.
 Every step takes `--data-dir DIR`. Outputs:
 
 | file (in `<data dir>/outputs/`) | content |
@@ -102,6 +103,7 @@ Every step takes `--data-dir DIR`. Outputs:
 | `delay-model.md`, `delay-model-metrics.csv`, `figures/delay-model-*.png` | leakage audit, models, test metrics with CIs, interpretation |
 | `decision-proposal.md` | the allocation decision problem and backtest design |
 | `decision-results.md`, `decision-sensitivity.csv`, `figures/decision-frontier.png` | allocation MILP, four-policy comparison, sensitivity, implications |
+| `report-outline.md`, `key-numbers-*.json` | rubric-to-evidence map and the aggregate numbers it is built from |
 
 Before sharing any output, check it contains aggregates only. Never copy
 `derived/` or `raw/` into the repository.
