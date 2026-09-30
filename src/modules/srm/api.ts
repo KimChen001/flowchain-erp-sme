@@ -89,7 +89,7 @@ export function normalizeSrmSupplierProfiles(
       email: fallback?.email || "",
       phone: fallback?.phone || "",
       paymentTerms: text(apiSupplier.paymentTermsId, fallback?.paymentTerms || ""),
-      currency: text(apiSupplier.defaultCurrency, fallback?.currency || "CNY"),
+      currency: text(apiSupplier.defaultCurrency, fallback?.currency || ""),
       taxId: fallback?.taxId || "",
       defaultTaxCode: fallback?.defaultTaxCode || "",
       rating: numberValue(apiSupplier.score, fallback?.rating || 0),

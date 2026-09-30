@@ -155,3 +155,13 @@ for (const path of [
     await expect(page.locator("main").first()).not.toContainText("LOCAL-DEMO-WH-001");
   });
 }
+
+test("the new purchase request defaults to the workspace currency and lists it first", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/app/procurement/requests");
+  const currency = page.getByRole("combobox", { name: "Default currency" });
+  await expect(currency).toHaveValue("USD");
+  const codes = await currency.locator("option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value).filter(Boolean));
+  expect(codes[0]).toBe("USD");
+  expect(codes.indexOf("CNY")).toBeGreaterThan(codes.indexOf("EUR"));
+});

@@ -129,6 +129,7 @@ export default function SupplierMasterPage({
   const listSeparator = language === "en-US" ? ", " : "、";
   const [saving, setSaving] = useState(false);
   const [currencyWarning, setCurrencyWarning] = useState(false);
+  const [workspaceCurrency, setWorkspaceCurrency] = useState('');
   const savingRef = useRef(false);
   const [rows, setRows] = useState<Supplier[]>([]),
     [loading, setLoading] = useState(true),
@@ -219,6 +220,7 @@ export default function SupplierMasterPage({
     let currency = '';
     try { currency = (await request<{ company: { currency: string } }>('/api/settings-runtime')).company.currency; } catch { /* Let the user choose explicitly. */ }
     setCurrencyWarning(!currency);
+    setWorkspaceCurrency(currency);
     setEditing(null);
     setForm(empty(currency));
     setFieldErrors([]);
@@ -321,7 +323,7 @@ export default function SupplierMasterPage({
       toast.error(e.message);
     }
   };
-  if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
+  if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
   if (selected)
     return (
       <div className="space-y-4">

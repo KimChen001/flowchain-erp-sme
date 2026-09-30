@@ -2,6 +2,7 @@ import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useI18n } from "../../i18n/I18n";
 import { todayInTimeZone } from "../../lib/format";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
+import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
@@ -131,6 +132,7 @@ export default function CanonicalProcurementPanel({
   >({});
   const [departmentId, setDepartmentId] = useState("operations"),
     [currency, setCurrency] = useState(""),
+    [workspaceCurrency, setWorkspaceCurrency] = useState(""),
     [defaultDate, setDefaultDate] = useState(() => today(timezone)),
     [lines, setLines] = useState<Line[]>(() => [makeLine(today(timezone))]),
     [loadError, setLoadError] = useState("");
@@ -167,6 +169,7 @@ export default function CanonicalProcurementPanel({
       );
       setDepartments(departmentSelector.options);
       setCurrencies(currencySelector.options);
+      setWorkspaceCurrency(settings?.company.currency || "");
       if (!currencyInitialized.current) {
         currencyInitialized.current = true;
         setCurrency(settings?.company.currency || "");
@@ -522,7 +525,7 @@ export default function CanonicalProcurementPanel({
               style={inputStyle}
             >
               <option value="">{copy("选择币种")}</option>
-              {currencies.map((option) => <option key={option.id} value={option.id}>{copy(option.label)}</option>)}
+              {orderedCurrencyCodes(workspaceCurrency, currencies.map((option) => option.id), currency).map((code) => <option key={code} value={code}>{code}</option>)}
             </select>
           </Field>
           <Field label={copy("默认需求日期")}>
