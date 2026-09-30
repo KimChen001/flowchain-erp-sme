@@ -63,6 +63,7 @@ import {
   thClass,
 } from "../../components/ui/workbenchTable";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { PurchaseOrderWorkflowActions } from "./components/PurchaseOrderWorkflowActions";
 
 const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
@@ -756,6 +757,7 @@ export default function PurchasingOrdersPage({
             { key: "match", label: "查看三单匹配", onClick: focusFulfillmentEvidence, kind: "module", tone: "subtle" },
           ]}
         />
+        <PurchaseOrderWorkflowActions poId={selectedPO.po} status={selectedPO.status} version={selectedPO.version} onChanged={loadWorkbench} />
 
         <div>
           <SectionTitle title={copy("概览")} />

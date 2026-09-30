@@ -110,6 +110,7 @@ export type PurchaseOrder = {
   totalAmount?: number;
   itemsMeaning?: "lineCount" | "totalOrderedQty" | string;
   currency?: string;
+  version?: number;
   supplierId?: string;
   warehouseId?: string;
   erpStatus?: string;
