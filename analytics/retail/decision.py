@@ -61,6 +61,7 @@ CAL_ORIGINS = (38, 51, 64)             # pre-test backtests for residual traject
 QUANTILE_GRID = (0.50, 0.70, 0.80, 0.90, 0.95, 0.98)
 BUDGET_FACTORS = (0.6, 0.8, 1.0)
 EXTRA_BUDGET = 1.2                     # only for the monotonicity check
+FRONTIER = (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2)  # budget grid for the choice rule (base case)
 BASE = dict(mean_L=4.0, cv="all", cost_ratio=0.50, holding=0.25, stockout_mult=1.0, start="a", markdown=0.15)
 MARKDOWN_GRID = (0.0, 0.15, 0.3, 0.5)
 
@@ -204,14 +205,16 @@ def plan_levels(D, L_plan, cr, cost, h_week, cu, term):
     s_c = row_quantile(dlr, cr)
 
     def plan(S):
+        """(planned cost, inventory value, planned lost margin, planned holding, planned markdown) per SKU."""
         short = np.maximum(dlr - S[:, None], 0).mean(axis=1)
         over = np.maximum(S[:, None] - dlr, 0).mean(axis=1)
         onhand = over + d_r / 2
-        return cu * short + h_week * R * onhand + term * over, cost * onhand
+        lost, hold, mark = cu * short, h_week * R * onhand, term * over
+        return lost + hold + mark, cost * onhand, lost, hold, mark
 
     cand = {q: row_quantile(dlr, np.full(len(cr), q)) for q in QUANTILE_GRID}
     table = {q: (cand[q],) + plan(cand[q]) for q in QUANTILE_GRID}
-    c_cost, c_val = plan(s_c)
+    c_cost, c_val = plan(s_c)[:2]
     return s_c, c_val, table, dlr
 
 
@@ -231,13 +234,15 @@ def solve_budget(table, budget):
                    integrality=np.ones(n * k), bounds=Bounds(0, 1), options={"mip_rel_gap": 1e-9})
     x = np.rint(res.x).reshape(n, k)
     choice = x.argmax(axis=1)
+    planned = {nm: float(np.column_stack([table[q][i] for q in qs])[np.arange(n), choice].sum())
+               for nm, i in (("plan_lost", 3), ("plan_hold", 4), ("plan_mark", 5))}
     S = np.column_stack([table[q][0] for q in qs])[np.arange(n), choice]
     lp = milp(cost, constraints=[LinearConstraint(A_eq, 1, 1), LinearConstraint(val[None, :], -np.inf, b)],
               bounds=Bounds(0, 1))
     return S, {"status": int(res.status), "message": res.message, "mip_gap": float(getattr(res, "mip_gap", np.nan)),
                "objective": float(res.fun), "lp_bound": float(lp.fun), "budget": float(budget),
                "feasible_budget": bool(feasible), "choice_counts": {str(qs[j]): int((choice == j).sum()) for j in range(k)},
-               "value_used": float(val @ x.ravel())}
+               "value_used": float(val @ x.ravel()), **planned}
 
 
 def simulate(start, levels, demand, L_orders, pack, cost, h_week, margin, stock_mult, markdown, fwd_p50,
@@ -348,8 +353,8 @@ def run_scenario(sc, ctx, extra_checks=False):
     Yraw = ctx["Yraw"]
     cr_by_review, final_flags = [], []
     lv = {}
-    for pol in ("a", "b_rop", "b_target", "c", "c50", "p50", "p70", "p80", "p90",
-                *[f"d{f}" for f in BUDGET_FACTORS + (EXTRA_BUDGET,)]):
+    budgets = tuple(sorted(set(BUDGET_FACTORS + ((EXTRA_BUDGET,) + FRONTIER if extra_checks else ()))))
+    for pol in ("a", "b_rop", "b_target", "c", "c50", "p50", "p70", "p80", "p90", *[f"d{f}" for f in budgets]):
         lv[pol] = np.zeros((n, len(REVIEW_WEEKS)))
     milp_info, ss_value = [], []
     for r, t in enumerate(REVIEW_WEEKS):
@@ -377,7 +382,7 @@ def run_scenario(sc, ctx, extra_checks=False):
             lv["c50"][:, r] = row_quantile(dlr, np.full(n, 0.5))
             for qq in (0.5, 0.7, 0.8, 0.9):
                 lv[f"p{int(qq * 100)}"][:, r] = table[qq][0]
-        for f in BUDGET_FACTORS + ((EXTRA_BUDGET,) if extra_checks else ()):
+        for f in budgets:
             S, info = solve_budget(table, f * c_val.sum())
             lv[f"d{f}"][:, r] = S
             milp_info.append({"review": t, "factor": f, **info})
@@ -395,7 +400,7 @@ def run_scenario(sc, ctx, extra_checks=False):
     res = {"a": simulate(start(lv["a"][:, 0]), lv["a"], **common),
            "b": simulate(start(lv["b_target"][:, 0]), lv["b_target"], rop=lv["b_rop"], **common),
            "c": simulate(start(lv["c"][:, 0]), lv["c"], **common)}
-    for f in BUDGET_FACTORS + ((EXTRA_BUDGET,) if extra_checks else ()):
+    for f in budgets:
         res[f"d{f}"] = simulate(start(lv[f"d{f}"][:, 0]), lv[f"d{f}"], **common)
     if extra_checks:
         res["c50"] = simulate(start(lv["c50"][:, 0]), lv["c50"], **common)
@@ -589,6 +594,8 @@ def main(argv=None) -> int:
         "budget_factors": list(BUDGET_FACTORS + (EXTRA_BUDGET,)), "budget_fill": [float(x) for x in budget_fill],
         "budget_monotone": bool(np.all(np.diff(budget_fill) >= -1e-12)),
         "ss_value_base": ss_base, "ss_value_zero_cv": ss_zero, "ss_lower_without_variability": bool(ss_zero < ss_base),
+        "budget_fill_full_grid": [float(s_base.loc[f"d{f}", "fill_rate"]) for f in FRONTIER],
+        "budget_monotone_full_grid": bool(np.all(np.diff([s_base.loc[f"d{f}", "fill_rate"] for f in FRONTIER]) >= -1e-12)),
         "milp_all_optimal": bool(all(m["status"] == 0 for m in bm["milp"])),
         "milp_max_gap": float(np.nanmax([m["mip_gap"] for m in bm["milp"]])),
         "milp_max_lp_gap": float(max((m["objective"] - m["lp_bound"]) / abs(m["objective"]) for m in bm["milp"])),
@@ -596,6 +603,44 @@ def main(argv=None) -> int:
         "milp_infeasible_budgets": int(sum(not m["feasible_budget"] for m in bm["milp"])),
     }
     planned_csl_c = float(np.median(metas["base"]["median_cr"]))
+
+    # Budget frontier and the choice rule: raise B while the last step saves more lost margin than it adds in
+    # holding + markdown; stop where the ratio falls to 1 (equivalently the minimum of total cost on the grid).
+    mi = pd.DataFrame(bm["milp"])
+    plan_f = mi[mi.factor.isin(FRONTIER)].groupby("factor")[["plan_lost", "plan_hold", "plan_mark", "budget"]].sum()
+    fr = []
+    for fct in FRONTIER:
+        r = s_base.loc[f"d{fct}"]
+        fr.append({"factor": fct, "budget_week0": float(mi[(mi.factor == fct) & (mi.review == 0)].budget.iloc[0]),
+                   "avg_inv_value": r.avg_inv_value, "fill_rate": r.fill_rate,
+                   "lost": r.stockout_cost, "hold_mark": r.holding + r.terminal, "total": r.total_cost,
+                   "total_lo": r.total_cost_lo, "total_hi": r.total_cost_hi,
+                   "plan_lost": plan_f.loc[fct, "plan_lost"],
+                   "plan_hold_mark": plan_f.loc[fct, "plan_hold"] + plan_f.loc[fct, "plan_mark"]})
+    frontier = pd.DataFrame(fr)
+    for pre in ("", "plan_"):
+        lost, hm = frontier[f"{pre}lost"], frontier[f"{pre}hold_mark"]
+        frontier[f"{pre}ratio"] = (-lost.diff()) / hm.diff()
+    frontier["plan_total"] = frontier.plan_lost + frontier.plan_hold_mark
+    frontier.to_csv(paths.outputs_dir / "replenishment-budget-frontier.csv", index=False)
+
+    def rule(df, pre):
+        """Largest budget whose last step still had marginal lost margin saved >= marginal holding + markdown."""
+        ok = df[f"{pre}ratio"].fillna(np.inf) >= 1.0
+        stop = int(np.flatnonzero(~ok.to_numpy())[0]) - 1 if (~ok).any() else len(df) - 1
+        return float(df.factor.iloc[max(stop, 0)]), bool((~ok).any())
+
+    (rf_, rf_in), (pf_, pf_in) = rule(frontier, ""), rule(frontier, "plan_")
+    four = ["a", "b", "c", "d0.6", "d0.8", "d1.0"]
+    d_wins = [sn for sn in summary.scenario.unique()
+              if summary[(summary.scenario == sn) & summary.policy.isin(four)].set_index("policy").total_cost
+              .idxmin().startswith("d")]
+    near = frontier[frontier.total <= frontier.total.min() * 1.03].factor
+    choice = {"realised_factor": rf_, "realised_in_grid": rf_in, "planned_factor": pf_, "planned_in_grid": pf_in,
+              "d_cheapest_scenarios": len(d_wins), "n_scenarios": int(summary.scenario.nunique()),
+              "flat_lo": float(near.min()), "flat_hi": float(near.max()),
+              "realised_argmin": float(frontier.factor[frontier.total.idxmin()]),
+              "planned_argmin": float(frontier.factor[frontier.plan_total.idxmin()])}
 
     # planned vs realised service of (c): plan from the paths at each review
     key = {"lead_time": lt, "calibration": {"origins": {str(k): v for k, v in cal_windows.items()},
@@ -605,11 +650,13 @@ def main(argv=None) -> int:
            "review_weeks": [str(weeks[t0_idx + t].date()) for t in REVIEW_WEEKS], "variant": variant,
            "tail": tail_numbers(paths, skus), "narrow_pool": narrow,
            "markdown_base": BASE["markdown"], "markdown_scenarios": markdown_scenarios(),
+           "budget_choice": choice, "frontier": frontier.to_dict(orient="records"),
            "safety_stock_value_c": {k: v["safety_stock_value_c"] for k, v in metas.items()}}
     (paths.outputs_dir / "key-numbers-replenishment.json").write_text(json.dumps(key, indent=2, default=float),
                                                                        encoding="utf-8")
-    figures(paths, summary, s_base, checks)
-    write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_windows, time.time() - t0)
+    figures(paths, summary, s_base, checks, frontier, choice)
+    write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_windows, time.time() - t0,
+                 frontier, choice)
     print(f"Wrote replenishment-results.md in {time.time() - t0:.0f}s")
     print(s_base[["fill_rate", "csl", "avg_inv_value", "holding", "lost_margin", "total_cost", "orders"]].round(3))
     return 0
@@ -624,7 +671,7 @@ def tail_numbers(paths, skus) -> dict:
 
 
 # ----------------------------------------------------------------------------- output
-def figures(paths, summary, s_base, checks):
+def figures(paths, summary, s_base, checks, frontier, choice):
     import matplotlib.pyplot as plt
     figs = paths.figures_dir
     pols = ["a", "b", "c", "d0.6", "d0.8", "d1.0", "p50", "p70", "p90"]
@@ -684,6 +731,20 @@ def figures(paths, summary, s_base, checks):
     ax.set_title("Budgeted policy (d): fill rate vs budget")
     P.save(fig, figs / "replenishment-budget.png")
 
+    fig, ax = plt.subplots(figsize=(7.2, 3.8))
+    ax.plot(frontier.factor, frontier.total / 1e3, marker="o", color=P.SERIES[0], label="realised total (backtest)")
+    ax.plot(frontier.factor, frontier.lost / 1e3, marker="o", ms=3, lw=1.2, color=P.SERIES[1], label="realised lost margin")
+    ax.plot(frontier.factor, frontier.hold_mark / 1e3, marker="o", ms=3, lw=1.2, color=P.SERIES[2],
+            label="realised holding + markdown")
+    ax.axvline(choice["realised_factor"], color=P.TEXT2, lw=0.8, ls="--")
+    ax.annotate(f"rule stops at B = {choice['realised_factor']} x (c)", (choice["realised_factor"], ax.get_ylim()[1]),
+                textcoords="offset points", xytext=(4, -12), fontsize=8, color=P.TEXT2)
+    ax.set_xlabel("working-capital budget B, as a multiple of (c)'s planned inventory value")
+    ax.set_ylabel("GBP thousand (13 weeks)")
+    ax.set_title("Budget frontier of policy (d)")
+    ax.legend(fontsize=7, loc="upper right")
+    P.save(fig, figs / "replenishment-budget-frontier.png")
+
     fig, ax = plt.subplots(figsize=(6.8, 3.6))
     ms = markdown_scenarios()
     for k, p in enumerate(["a", "b", "c", "d0.6"]):
@@ -700,7 +761,7 @@ def fmt_money(v):
     return f"−£{abs(v):,.0f}" if v < 0 else f"£{v:,.0f}"
 
 
-def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_windows, seconds):
+def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_windows, seconds, frontier, choice):
     L = []
     a = L.append
     bm = metas["base"]
@@ -989,13 +1050,13 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
         a(f"| {POLICY_LABELS[p]} | {d.loc[p, 'fill_rate']:.1%} | {fmt_money(d.loc[p, 'avg_inv_value'])} | "
           f"{fmt_money(d.loc[p, 'total_cost'])} |")
     a("")
-    write_discussion(a, lt, key, summary, s_base, metas, checks, tail)
+    write_discussion(a, lt, key, summary, s_base, metas, checks, tail, frontier, choice)
     a("")
     a(f"_Runtime {seconds / 60:.1f} min._")
     (paths.outputs_dir / "replenishment-results.md").write_text("\n".join(L) + "\n", encoding="utf-8")
 
 
-def write_discussion(a, lt, key, summary, s_base, metas, checks, tail):
+def write_discussion(a, lt, key, summary, s_base, metas, checks, tail, frontier, choice):
     b, c, aa = s_base.loc["b"], s_base.loc["c"], s_base.loc["a"]
     main = s_base.loc[["a", "b", "c", "d0.6", "d0.8", "d1.0"]]
     best = main.total_cost.idxmin()
@@ -1071,12 +1132,61 @@ def write_discussion(a, lt, key, summary, s_base, metas, checks, tail):
       f"{fmt_money(cL.loc['L=8', 'total_cost'])}. All policies start from the same stock. With a long lead time, an "
       "order placed at week 0 arrives late in the window, so the common starting stock carries more of the demand.")
     a("")
-    a("## 10. Implications and limitations")
+    fb = frontier.set_index("factor")
+    rf, pf = choice["realised_factor"], choice["planned_factor"]
     a("")
-    a("- **For FlowChain:** replace the fixed '1 week of demand' safety stock with a service-level rule that uses "
-      "the forecast distribution, the supplier's measured lead-time variability (from an SCMS-style scorecard) and an "
-      "end-of-season markdown for seasonal items. Offer a working-capital cap, and show planned vs realised service "
-      "so users see when the forecast is too narrow.")
+    a("## 10. Recommendation and the budget choice rule")
+    a("")
+    a("**Recommendation: budgeted service-level optimisation, policy (d)**, rather than the unconstrained service "
+      "level (c). It uses the same forecast paths and lead-time distribution as (c). It then spends a working-capital "
+      f"budget B where it buys the most expected margin. A budgeted (d) is the cheapest of the four policies in "
+      f"{choice['d_cheapest_scenarios']} of {choice['n_scenarios']} scenarios (sections 5–8).")
+    a("")
+    a("**Budget choice rule for a manager:** raise B step by step and compare, for each step, the lost margin it "
+      "saves with the holding plus end-of-season markdown it adds. Keep raising while the saving is larger (ratio ≥ "
+      "1). Stop at the step where the ratio falls below 1, which is where marginal lost margin equals marginal "
+      "holding + markdown. On a grid this is the budget with the lowest total cost.")
+    a("")
+    a("| B / (c) planned value | budget at week 0 | realised fill | realised lost margin | realised holding + "
+      "markdown | realised total [95% CI] | realised ratio | planned lost margin | planned holding + markdown | "
+      "planned ratio |")
+    a("|---|---|---|---|---|---|---|---|---|---|")
+    for fct, r in fb.iterrows():
+        mark = " ← rule" if fct == rf else ""
+        a(f"| {fct}{mark} | {fmt_money(r.budget_week0)} | {r.fill_rate:.1%} | {fmt_money(r.lost)} | "
+          f"{fmt_money(r.hold_mark)} | {fmt_money(r.total)} [{fmt_money(r.total_lo)}, {fmt_money(r.total_hi)}] | "
+          + ("–" if pd.isna(r.ratio) else f"{r.ratio:.2f}") + f" | {fmt_money(r.plan_lost)} | "
+          f"{fmt_money(r.plan_hold_mark)} | " + ("–" if pd.isna(r.plan_ratio) else f"{r.plan_ratio:.2f}") + " |")
+    a("")
+    a("Ratio = lost margin saved ÷ extra holding + markdown, going from the previous row to this one. 'Planned' "
+      "values are the MILP's own expected costs, known when the decision is made. They are summed over the four "
+      "reviews, whose protection intervals (L + R) overlap, so they are not on the same scale as the realised "
+      "13-week figures; only their ratio is comparable. 'Realised' values come from the backtest.")
+    a("")
+    a(f"- **Where it lands.** On the realised backtest frontier the rule stops at **B = {rf} × (c)'s planned "
+      f"inventory value** ({fmt_money(fb.loc[rf, 'budget_week0'])} at the week-0 review): fill {fb.loc[rf, 'fill_rate']:.1%}, "
+      f"total {fmt_money(fb.loc[rf, 'total'])} [{fmt_money(fb.loc[rf, 'total_lo'])}, {fmt_money(fb.loc[rf, 'total_hi'])}]. "
+      f"The grid minimum of total cost is at {choice['realised_argmin']}. The frontier is flat near the optimum: "
+      f"budgets from {choice['flat_lo']} to {choice['flat_hi']} × (c) are within 3% of the minimum total, with "
+      "overlapping CIs, so any budget in that range is defensible. On the planned frontier the ratio "
+      + (f"falls below 1 after {pf} × (c)" if choice["planned_in_grid"] else
+         f"is still above 1 at the top of the grid ({pf} × (c)), so the planning model alone would not cap the budget")
+      + (". The planning model prices early-cycle leftovers at holding cost only and uses a wide demand "
+         "distribution, so it sees more value in stock than the season delivered." if pf > rf else ".")
+      + (" A manager should therefore set B from a backtest of a past season (the realised frontier), not from the "
+         "planning model alone, and re-check it each season." if pf != rf else ""))
+    a("- **Caveat:** the realised frontier is estimated on the same 13 weeks it is applied to. Choosing B this way "
+      "is in-sample, so its money figure is optimistic. The rule should be validated on another season before it is "
+      "relied on.")
+    a("")
+    a("![budget frontier](figures/replenishment-budget-frontier.png)")
+    a("")
+    a("## 11. Implications and limitations")
+    a("")
+    a("- **For FlowChain:** replace the fixed '1 week of demand' safety stock with budgeted service-level "
+      "optimisation. It should use the forecast distribution, the supplier's measured lead-time variability (from "
+      "an SCMS-style scorecard) and an end-of-season markdown for seasonal items, and set the working-capital "
+      "budget with the rule above. Show planned vs realised service so users see when the forecast is too narrow.")
     a(f"- **Excluded tail:** the panel covers {key['n_skus']} of {tail['product_skus']:,} product SKUs. The other "
       f"{tail['tail_skus']:,} SKUs ({tail['tail_revenue_share']:.1%} of training revenue, "
       f"{tail['tail_units_share']:.1%} of units) are mostly intermittent or lumpy and are not in this backtest. "

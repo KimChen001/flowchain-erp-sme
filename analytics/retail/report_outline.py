@@ -89,6 +89,9 @@ def main(argv=None) -> int:
     m_rows = {m: sc[(sc.scenario == n) & sc.policy.isin(main4.index)].set_index("policy").total_cost
               for n, m in rep["markdown_scenarios"]}
     mb = rep["markdown_base"]
+    bc = rep["budget_choice"]
+    frb = {r["factor"]: r for r in rep["frontier"]}
+    rb = frb[bc["realised_factor"]]
 
     def tc(p, d=base):
         r = d.loc[p]
@@ -221,15 +224,23 @@ def main(argv=None) -> int:
                f"{money(rep['safety_stock_value_c']['unreliable supplier, median = 4 wk'])}. At mean L = 4 wk (b) moves by "
                f"{money(unr.loc['b', 'total_cost'] - rel.loc['b', 'total_cost'])}, a shape artefact (median 2 vs 4 wk); "
                "at a fixed median (b) still gains because its targets scale with E[L]. "
-               f"A working-capital cap beats the unconstrained service level on realised cost. A narrow (non-autumn) "
+               f"**Recommendation: budgeted service-level optimisation (d)** rather than the unconstrained (c); a "
+               f"budgeted (d) is cheapest of the four policies in {bc['d_cheapest_scenarios']} of {bc['n_scenarios']} "
+               f"scenarios. Budget rule: raise B while the lost margin saved exceeds the added holding + markdown. On the "
+               f"backtest frontier it stops at B = {bc['realised_factor']} × (c) ({money(rb['budget_week0'])} at week 0; "
+               f"fill {rb['fill_rate']:.1%}, total {money(rb['total'])}); totals are flat within 3% for "
+               f"{bc['flat_lo']}–{bc['flat_hi']} × (c). A narrow (non-autumn) "
                f"residual pool gives weekly P90 coverage {nar['weekly_p90_coverage']:.1%} and (c) cycle service "
                f"{nar['c_csl']:.1%}, against a plan of about {nar['cr_by_review'][0]:.1%}.",
-               "figures/replenishment-supplier-reliability.png",
-               "Mean L is assumed; only its variability comes from SCMS. **[PLACEHOLDER: combined decision story]**"),
+               "figures/replenishment-supplier-reliability.png; figures/replenishment-budget-frontier.png",
+               "Mean L is assumed; only its variability comes from SCMS. The budget is chosen in-sample on one season; "
+               "validate on another. **[PLACEHOLDER: combined decision story]**"),
         "6a": ("replenishment-results.md §10; decision-inputs.md",
-               "FlowChain: replace '1 week of demand' safety stock with a service-level rule that uses the forecast "
-               "paths and the supplier's measured lead-time variability; offer a working-capital cap by default; show "
-               "planned vs realised service. The exported paths and SKU parameters feed the joint model.",
+               "FlowChain: replace '1 week of demand' safety stock with budgeted service-level optimisation (policy d). "
+               "It uses the forecast paths, the supplier's measured lead-time variability and an end-of-season markdown, "
+               "and sets the working-capital budget where the marginal lost margin equals the marginal holding + "
+               f"markdown (here B ≈ {bc['realised_factor']} × (c), {money(rb['budget_week0'])}). Show planned vs realised "
+               "service. The exported paths and SKU parameters feed the joint model.",
                "–", "**[PLACEHOLDER: combined decision story]**"),
         "6b": ("demand-forecast.md §9; replenishment-results.md §10",
                f"Re-estimate after a second autumn; model censored demand from stock records; forecast bulk orders "
