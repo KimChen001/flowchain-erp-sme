@@ -2,6 +2,8 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { contentTypeFor, send, sendText } from "../utils/http.mjs";
 
+export const SIGN_IN_CONFIRM_PATH = "/sign-in/confirm";
+
 const staticAssetPath = pathname =>
   pathname.startsWith("/assets/") ||
   /\.(?:js|css|map|json|png|jpe?g|svg|webp|ico|woff2?|ttf)$/i.test(pathname);
@@ -36,6 +38,8 @@ export async function sendStaticAsset({ req, res, url, distDir }) {
       "Cache-Control": filePath.endsWith("index.html")
         ? "no-cache"
         : "public, max-age=31536000, immutable",
+      // The sign-in confirm page carries a single-use token in its address.
+      ...(decodedPath === SIGN_IN_CONFIRM_PATH ? { "Referrer-Policy": "no-referrer" } : {}),
     });
     if (req.method === "HEAD") return res.end();
     return res.end(body);

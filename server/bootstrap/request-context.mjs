@@ -7,7 +7,7 @@ export function createRouteContext({
   db,
   repositories,
   identity,
-  localSessions,
+  sessionStore,
   dataMode,
   runtime,
   domain,
@@ -24,7 +24,7 @@ export function createRouteContext({
     dataMode,
     env,
     identity,
-    localSessions,
+    sessionStore,
     ...domain,
     ...runtime,
   };

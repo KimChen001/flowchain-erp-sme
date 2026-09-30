@@ -23,6 +23,10 @@ const validProductionEnv = (overrides = {}) => ({
   FLOWCHAIN_UPLOAD_STORAGE_DIR: resolve(".production-runtime-attachments"),
   FLOWCHAIN_COMMIT_SHA: "0123456789abcdef0123456789abcdef01234567",
   FLOWCHAIN_BRANCH: "chore/production-deployment-foundation",
+  FLOWCHAIN_MAIL_PROVIDER: "postmark",
+  POSTMARK_SERVER_TOKEN: "postmark-server-token-for-validation-only",
+  FLOWCHAIN_MAIL_FROM: "FlowChain <signin@flowchain.example>",
+  FLOWCHAIN_PUBLIC_BASE_URL: "https://flowchain.example",
   ...overrides,
 });
 
@@ -152,6 +156,48 @@ test("production refuses to start with test identity headers or a placeholder se
   }
 });
 
+test("production refuses the local outbox and requires a mail provider, its key, a sender and an https base URL", () => {
+  const issueFor = (overrides) => {
+    try {
+      validateProductionRuntimeConfig(validProductionEnv(overrides));
+    } catch (error) {
+      assert.equal(error.code, PRODUCTION_CONFIG_ERROR);
+      return error.issues.map((entry) => `${entry.key}:${entry.code}`);
+    }
+    return [];
+  };
+
+  assert.deepEqual(issueFor({}), []);
+  assert.deepEqual(issueFor({ FLOWCHAIN_MAIL_PROVIDER: "" }), ["FLOWCHAIN_MAIL_PROVIDER:required"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_MAIL_PROVIDER: "outbox" }), ["FLOWCHAIN_MAIL_PROVIDER:outbox_forbidden"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_MAIL_PROVIDER: "smtp" }), ["FLOWCHAIN_MAIL_PROVIDER:unsupported"]);
+  assert.deepEqual(issueFor({ POSTMARK_SERVER_TOKEN: "" }), ["POSTMARK_SERVER_TOKEN:required"]);
+  assert.deepEqual(issueFor({ POSTMARK_SERVER_TOKEN: "replace-with-postmark-server-token" }), ["POSTMARK_SERVER_TOKEN:placeholder"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_MAIL_PROVIDER: "resend" }), ["RESEND_API_KEY:required"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_MAIL_PROVIDER: "resend", POSTMARK_SERVER_TOKEN: "", RESEND_API_KEY: "re_validation_only_key" }), []);
+  assert.deepEqual(issueFor({ FLOWCHAIN_MAIL_FROM: "" }), ["FLOWCHAIN_MAIL_FROM:required"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_MAIL_FROM: "not-an-address" }), ["FLOWCHAIN_MAIL_FROM:invalid"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_PUBLIC_BASE_URL: "" }), ["FLOWCHAIN_PUBLIC_BASE_URL:required"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_PUBLIC_BASE_URL: "http://flowchain.example" }), ["FLOWCHAIN_PUBLIC_BASE_URL:https_required"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_PUBLIC_BASE_URL: "https://flowchain.example/app?x=1" }), ["FLOWCHAIN_PUBLIC_BASE_URL:invalid"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_PUBLIC_BASE_URL: "https://flowchain.example/" }), []);
+
+  // The mail placeholders shipped in the production example are rejected too.
+  const example = readFileSync(resolve(import.meta.dirname, "../../deploy/env.production.example"), "utf8");
+  for (const key of ["POSTMARK_SERVER_TOKEN", "RESEND_API_KEY"]) {
+    const value = example.match(new RegExp(`^#? ?${key}=(.*)$`, "m"))?.[1];
+    assert.ok(value, key);
+    const provider = key === "RESEND_API_KEY" ? "resend" : "postmark";
+    assert.deepEqual(issueFor({ FLOWCHAIN_MAIL_PROVIDER: provider, POSTMARK_SERVER_TOKEN: "", [key]: value }), [`${key}:placeholder`], key);
+  }
+  const secrets = ["postmark-server-token-for-validation-only"];
+  try {
+    validateProductionRuntimeConfig(validProductionEnv({ FLOWCHAIN_MAIL_FROM: "" }));
+  } catch (error) {
+    for (const secret of secrets) assert.doesNotMatch(`${error.message} ${JSON.stringify(error.issues)}`, new RegExp(secret));
+  }
+});
+
 test("the server refuses to start in production when test identity headers are enabled", () => {
   const previous = { ...process.env };
   Object.assign(process.env, validProductionEnv({ FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS: "true" }));
@@ -164,6 +210,45 @@ test("the server refuses to start in production when test identity headers are e
     for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
     Object.assign(process.env, previous);
   }
+});
+
+test("the commit SHA guard accepts Render's commit only on Render and never the image's unknown default", () => {
+  const dockerfile = readFileSync(resolve(import.meta.dirname, "../../Dockerfile"), "utf8");
+  assert.match(dockerfile, /ARG FLOWCHAIN_COMMIT_SHA=unknown/);
+  const renderSha = "fedcba9876543210fedcba9876543210fedcba98";
+  const issueKeys = (overrides) => {
+    try {
+      validateProductionRuntimeConfig(validProductionEnv(overrides));
+      return [];
+    } catch (error) {
+      return error.issues.map((entry) => entry.key);
+    }
+  };
+
+  // An image built without build arguments carries FLOWCHAIN_COMMIT_SHA=unknown.
+  assert.deepEqual(issueKeys({ FLOWCHAIN_COMMIT_SHA: "unknown" }), ["FLOWCHAIN_COMMIT_SHA"]);
+  assert.deepEqual(issueKeys({ FLOWCHAIN_COMMIT_SHA: " Unknown " }), ["FLOWCHAIN_COMMIT_SHA"]);
+  // RENDER_GIT_COMMIT alone, outside Render, does not satisfy the guard.
+  assert.deepEqual(issueKeys({ FLOWCHAIN_COMMIT_SHA: "unknown", RENDER_GIT_COMMIT: renderSha }), ["FLOWCHAIN_COMMIT_SHA"]);
+  assert.deepEqual(issueKeys({ FLOWCHAIN_COMMIT_SHA: "", RENDER: "true", RENDER_GIT_COMMIT: "" }), ["FLOWCHAIN_COMMIT_SHA"]);
+
+  const onRender = validProductionEnv({
+    FLOWCHAIN_COMMIT_SHA: "unknown",
+    FLOWCHAIN_BRANCH: "unknown",
+    RENDER: "true",
+    RENDER_GIT_COMMIT: renderSha,
+    RENDER_GIT_BRANCH: "main",
+  });
+  const valid = validateProductionRuntimeConfig(onRender);
+  assert.equal(valid.commitSha, renderSha);
+  assert.equal(valid.branch, "main");
+  const liveness = buildLivenessPayload({ env: onRender, gitFallback: { commitSha: "unknown", branch: "unknown" } });
+  assert.equal(liveness.commitSha, renderSha);
+  assert.equal(liveness.branch, "main");
+
+  // An explicit build argument still wins on Render.
+  const explicit = validateProductionRuntimeConfig({ ...onRender, FLOWCHAIN_COMMIT_SHA: validProductionEnv().FLOWCHAIN_COMMIT_SHA });
+  assert.equal(explicit.commitSha, validProductionEnv().FLOWCHAIN_COMMIT_SHA);
 });
 
 test("the release image and Compose file declare the production deployment profile", () => {

@@ -1,0 +1,109 @@
+# FlowChain supplier analytics (SCMS study)
+
+This folder holds the analysis code for the course final report. The study uses
+a public shipment dataset to measure supplier delivery performance, predict late
+deliveries at the time a purchase order is sent, and frame a supplier allocation
+decision. The code is here. The data and every generated output live outside the
+repository.
+
+## Source and licence
+
+- **Dataset:** *Supply Chain Shipment Pricing Dataset*, published by USAID on
+  data.usaid.gov (dataset id `a3rc-nmf6`). It holds PEPFAR-funded HIV/AIDS
+  commodity shipments (ARVs and HIV test kits, with a few malaria and
+  anti-malarial lines) handled by the Supply Chain Management System (SCMS)
+  project, to about 40 countries, 2006–2015.
+- **Copy used:** the Internet Archive snapshot of the portal's CSV download,
+  <http://web.archive.org/web/20250129185137id_/https://data.usaid.gov/api/views/a3rc-nmf6/rows.csv?accessType=DOWNLOAD>
+  (sha256 `c9ca9530539e7dbf37b377f3fcd383e1faa81c8e41c707e280b20a485508a537`,
+  10,324 rows, 33 columns).
+- **Licence:** Creative Commons Attribution-NoDerivatives 4.0 International
+  (CC BY-ND 4.0), <https://creativecommons.org/licenses/by-nd/4.0/>.
+
+Attribution text to use in the report and on any slide that shows results:
+
+> Data: "Supply Chain Shipment Pricing Dataset", United States Agency for
+> International Development (USAID), data.usaid.gov, dataset a3rc-nmf6,
+> accessed through the Internet Archive snapshot of 29 January 2025. Licensed
+> under CC BY-ND 4.0 (https://creativecommons.org/licenses/by-nd/4.0/). The
+> analysis, aggregates and figures are the authors' own work and are not
+> endorsed by USAID.
+
+## Why the data is not in git
+
+The repository `KimChen001/flowchain-erp-sme` is public. Under CC BY-ND 4.0 the
+dataset may be shared only unmodified and with attribution, and adapted
+material, such as a cleaned copy or a row-level extract, may not be shared. We
+therefore commit only code. The raw file, the cleaned file and any row-level
+extract stay in a local data folder. Reports and figures there contain
+aggregates only.
+
+Safeguards:
+
+- `analytics/.gitignore` ignores data folders (`raw/`, `derived/`, `outputs/`,
+  `data/`) and data file types (`*.csv`, `*.parquet`, `*.pkl`, `*.json`, figures).
+- Every script refuses to run if its data directory is inside this repository.
+
+## Data directory
+
+Scripts find the SCMS data folder in this order:
+
+1. `--data-dir DIR` (the SCMS folder itself);
+2. `$FLOWCHAIN_DATA_DIR/scms` when `FLOWCHAIN_DATA_DIR` is set (it names the
+   shared `flowchain-data` folder);
+3. `~/flowchain-data/scms`.
+
+Set the variable once per shell, for example (placeholder path):
+
+```sh
+export FLOWCHAIN_DATA_DIR=/path/to/flowchain-data          # bash
+$env:FLOWCHAIN_DATA_DIR = "C:/path/to/flowchain-data"     # PowerShell
+```
+
+The layout under it is:
+
+```
+flowchain-data/scms/
+  raw/Supply_Chain_Shipment_Pricing_Dataset.csv   # downloaded, never edited
+  derived/                                        # cleaned data (local only)
+  outputs/                                        # reports, tables, figures
+```
+
+## Requirements
+
+Python 3.13 with pandas 3.0, numpy, scikit-learn 1.9, scipy 1.18, statsmodels
+0.15 and matplotlib. There are no other dependencies and no network access,
+apart from `fetch.py`. Random seeds are fixed in `scms/paths.py`.
+
+## Reproducing every output, in order
+
+Run from the `analytics/` folder:
+
+```sh
+python -m scms.fetch            # 1. download and verify the raw file (skips if already verified)
+python -m scms.fetch --verify-only   #    or verify an existing copy without network access
+python -m unittest              # 2a. parser tests (plain unittest, pytest-compatible)
+python -m scms.clean            # 2b. derived/scms_clean.csv + outputs/cleaning-log.{md,csv}
+python -m scms.quality_report   # 3. outputs/data-quality.md + figures (rubric sections 2 and 3)
+python -m scms.supplier_scorecard   # 4. outputs/supplier-scorecard.md + aggregate CSVs (--grace-days N)
+python -m scms.delay_model      # 5. outputs/delay-model.md + metrics CSV + figures (~5-10 min; --bootstrap N)
+python -m scms.decision_proposal    # 6a. outputs/decision-proposal.md (the decision problem and its data)
+python -m scms.decision_results     # 6b. outputs/decision-results.md: MILP, four policies, sensitivity
+python -m scms.report_outline       # 7. outputs/report-outline.md: rubric question -> section, numbers, figure, gaps
+```
+
+Or run steps 1 (verify only) to 7 in one go with `python -m scms.run_all`.
+Every step takes `--data-dir DIR`. Outputs:
+
+| file (in `<data dir>/outputs/`) | content |
+|---|---|
+| `cleaning-log.md`, `cleaning-log.csv` | every cleaning and outlier rule, rows affected, action and rationale |
+| `data-quality.md`, `figures/missing-by-column.png`, `figures/late-days-heaping.png`, `figures/exact-share-by-year.png` | data description, quality, scheduled-date revision test, limitations |
+| `supplier-scorecard.md`, `supplier-scorecard-{vendor,mode,country,product-group}.csv`, `figures/vendor-on-time.png` | direct-drop scorecard (aggregates only) |
+| `delay-model.md`, `delay-model-metrics.csv`, `figures/delay-model-*.png` | leakage audit, models, test metrics with CIs, interpretation |
+| `decision-proposal.md` | the allocation decision problem and backtest design |
+| `decision-results.md`, `decision-sensitivity.csv`, `decision-frontiers.csv`, `figures/decision-frontier.png`, `figures/decision-frontiers-scenarios.png` | allocation MILP, four-policy comparison, sensitivity, revealed preference, dominance, robustness, implications |
+| `report-outline.md`, `key-numbers-*.json` | rubric-to-evidence map and the aggregate numbers it is built from |
+
+Before sharing any output, check it contains aggregates only. Never copy
+`derived/` or `raw/` into the repository.

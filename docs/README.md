@@ -4,6 +4,7 @@
 
 - [Production deployment foundation v1](production-deployment-foundation-v1.md)
 - [Controlled single-instance Staging deployment](../deploy/README.md)
+- [Deploying FlowChain on Render](deploy-render.md)
 - [Local development workflow v1](local-development-workflow-v1.md)
 
 ## Product

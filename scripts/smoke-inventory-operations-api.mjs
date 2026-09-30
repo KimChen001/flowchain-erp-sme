@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
+import { productionHarnessMailEnv, signInThroughEmailLink } from "./test-support/production-harness.mjs";
 
 const execFileAsync = promisify(execFile),
   root = resolve(import.meta.dirname, ".."),
@@ -102,6 +103,7 @@ const env = {
   FLOWCHAIN_BRANCH: "test/inventory-operations-api-smoke",
   FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: "false",
   SCM_API_PORT: String(apiPort),
+  ...productionHarnessMailEnv(),
   NODE_ENV: "production",
 };
 const base = `http://127.0.0.1:${apiPort}`;
@@ -188,10 +190,7 @@ try {
   });
   api = start(env);
   await waitFor(`${base}/api/health`);
-  const login = await request(base, "/api/auth/login", {
-      method: "POST",
-      body: { email, name: "Ignored", company: "Ignored" },
-    }),
+  const login = await signInThroughEmailLink(base, prisma, { tenantId, email }),
     token = login.token;
   const entry = await request(base, "/api/inventory/operations/entry-data", {
     token,
@@ -417,10 +416,7 @@ try {
   await stop(api);
   api = start(env);
   await waitFor(`${base}/api/health`);
-  const relogin = await request(base, "/api/auth/login", {
-    method: "POST",
-    body: { email, name: "Ignored", company: "Ignored" },
-  });
+  const relogin = await signInThroughEmailLink(base, prisma, { tenantId, email });
   assert.equal(
     (
       await request(
@@ -455,10 +451,7 @@ try {
   await stop(api);
   api = start({ ...env, FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: "false" });
   await waitFor(`${base}/api/health`);
-  const disabledLogin = await request(base, "/api/auth/login", {
-    method: "POST",
-    body: { email, name: "Ignored", company: "Ignored" },
-  });
+  const disabledLogin = await signInThroughEmailLink(base, prisma, { tenantId, email });
   const disabledRead = await request(
     base,
     `/api/inventory/transfers/${transferCreated.transfer.id}/workbench`,

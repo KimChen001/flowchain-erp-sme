@@ -107,6 +107,12 @@ import InventoryOperationsWorkbench from "../modules/inventory/InventoryOperatio
 import MobileOperationsPage from "../modules/mobile/MobileOperationsPage";
 import ReturnQuarantineWorkbench from "../modules/inventory/ReturnQuarantineWorkbench";
 import { useI18n } from "../i18n/I18n";
+import {
+  LoginScreen,
+  SIGN_IN_CONFIRM_PATH,
+  SignInConfirmScreen,
+  type LocalDevelopmentStatus,
+} from "./SignInScreens";
 
 const ReportsPanel = React.lazy(() => import("../modules/reports/Page"));
 const ImportsPanel = React.lazy(() => import("../modules/imports/Page"));
@@ -196,16 +202,6 @@ const SEARCH_GROUP_ORDER = [
 ];
 const SEARCH_GROUP_VISIBLE_LIMIT = 5;
 
-type LocalDevelopmentStatus = {
-  localDevelopment: true;
-  tenantId: string;
-  workspaceName: string;
-  availableLoginEmails: string[];
-  demoMasterDataLoaded: boolean;
-  demoScenarioLoaded: boolean;
-  universalIntakeEnabled: boolean;
-};
-
 const FOCUS_ENTITY_LABELS: Record<string, string> = {
   customer_order: "销售订单",
   sales_order: "销售订单",
@@ -224,219 +220,6 @@ const FOCUS_ENTITY_LABELS: Record<string, string> = {
 
 function searchGroupKey(type: string) {
   return type === "bin" ? "warehouse" : type;
-}
-
-function LoginScreen({
-  onLogin,
-  localStatus,
-}: {
-  onLogin: (user: WorkspaceUser, token: string) => void;
-  localStatus: LocalDevelopmentStatus | null;
-}) {
-  const { language, setGuestLanguage } = useI18n();
-  const tr = (en: string, zh: string) => language === "en-US" ? en : zh;
-  const [form, setForm] = useState({
-    company: "FlowChain Workspace",
-    name: "Kim",
-    email: "kim@example.com",
-  });
-  const [loading, setLoading] = useState(false);
-
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    setLoading(true);
-    try {
-      const result = await apiJson<{ token: string; user: WorkspaceUser }>(
-        "/api/auth/login",
-        {
-          method: "POST",
-          body: JSON.stringify(form),
-        },
-      );
-      localStorage.setItem(AUTH_TOKEN_KEY, result.token);
-      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(result.user));
-      onLogin(result.user, result.token);
-      toast.success(tr("Signed in. Your profile has been saved.", "登录成功，用户档案已保存"));
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : tr("Unable to sign in. Check the service connection.", "登录失败，请检查服务连接状态"),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const update =
-    (key: keyof typeof form) =>
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      setForm((prev) => ({ ...prev, [key]: event.target.value }));
-    };
-
-  return (
-    <div
-      className="min-h-screen flex items-center justify-center px-6"
-      style={{ background: A.bg, fontFamily: "var(--fc-font-family)" }}
-    >
-      <Toaster position="top-right" />
-      <div className="w-full max-w-5xl grid grid-cols-[1.05fr_0.95fr] gap-8 items-center">
-        <section className="space-y-8">
-          <div className="flex items-center gap-3">
-            <div
-              className="w-11 h-11 rounded-2xl flex items-center justify-center"
-              style={{
-                background: "linear-gradient(135deg, #0071e3 0%, #32ade6 100%)",
-              }}
-            >
-              <Activity size={20} className="text-white" strokeWidth={2.5} />
-            </div>
-            <div>
-              <div
-                className="text-2xl font-semibold"
-                style={{ color: A.label }}
-              >
-                {PRODUCT_NAME}
-              </div>
-              <div className="text-sm" style={{ color: A.sub }}>
-                {tr("AI-powered inventory and supply chain workspace", PRODUCT_TAGLINE)}
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h1
-              className="text-[38px] leading-tight font-semibold mb-4"
-              style={{ color: A.label }}
-            >
-              {tr("Connect purchasing, sales, inventory, and business insights in one workspace.", "把基础资料、采购、销售、库存和经营分析连接到同一个工作台。")}
-            </h1>
-            <p
-              className="text-base leading-7 max-w-xl"
-              style={{ color: A.sub }}
-            >
-              {tr("FlowChain brings master data, purchasing, sales, inventory, analytics, and operational finance together for small and medium businesses. Payment, collection, refund, tax, and general-ledger execution are not enabled.", "FlowChain 是面向中小企业的 ERP 进销存协同平台，当前连接基础资料、采购、销售、库存、经营分析和运营财务。付款、收款、退款、税务与总账执行尚未启用。")}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3 max-w-xl">
-            {[
-              [tr("Buy", "采"), tr("Purchasing", "采购协同")],
-              [tr("Stock", "库"), tr("Inventory", "库存管理")],
-              [tr("Plan", "析"), tr("Business insights", "经营洞察")],
-            ].map(([value, label]) => (
-              <div
-                key={label}
-                className="rounded-2xl px-4 py-3"
-                style={{
-                  background: A.white,
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-                }}
-              >
-                <div
-                  className="text-lg font-semibold"
-                  style={{ color: A.label }}
-                >
-                  {value}
-                </div>
-                <div className="text-xs" style={{ color: A.gray1 }}>
-                  {label}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <form
-          onSubmit={submit}
-          className="rounded-[20px] p-6 space-y-4"
-          style={{
-            background: A.white,
-            boxShadow:
-              "0 18px 60px rgba(0,0,0,0.10), 0 0 0 0.5px rgba(0,0,0,0.08)",
-          }}
-        >
-          <div className="flex items-center gap-3 pb-2">
-            <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ background: "#f0f6ff", color: A.blue }}
-            >
-              <Lock size={16} />
-            </div>
-            <div>
-              <div
-                className="text-base font-semibold"
-                style={{ color: A.label }}
-              >
-                {tr("Sign in to your workspace", "进入工作台")}
-              </div>
-              <div className="text-xs" style={{ color: A.gray1 }}>
-                {tr("Enter your details to open FlowChain", "输入用户信息，进入 FlowChain 工作台")}
-              </div>
-            </div>
-          </div>
-          <label className="block text-xs font-medium" style={{ color: A.gray1 }}>
-            {tr("Interface language", "界面语言")}
-            <select aria-label="Interface language / 界面语言" value={language} onChange={event => setGuestLanguage(event.target.value as "en-US" | "zh-CN")} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white p-2">
-              <option value="en-US">English</option>
-              <option value="zh-CN">中文</option>
-            </select>
-          </label>
-          {localStatus && (
-            <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900" data-testid="local-login-metadata">
-              <div className="font-semibold">Local Development · {localStatus.workspaceName}</div>
-              <div className="mt-1">{tr("Available local accounts: ", "本地可用账户：")}{localStatus.availableLoginEmails.join(", ")}</div>
-              <div className="mt-2 flex gap-2">
-                {localStatus.availableLoginEmails.map((email) => (
-                  <button key={email} type="button" className="rounded-md bg-white px-2 py-1" onClick={() => setForm((current) => ({ ...current, email }))}>
-                    {email === "admin@flowchain.local" ? tr("Use local administrator", "使用本地管理员") : tr("Use local manager", "使用本地经理")}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {(
-            [
-              ["company", tr("Company name", "公司名称")],
-              ["name", tr("Name", "姓名")],
-              ["email", tr("Email", "邮箱")],
-            ] as const
-          ).map(([key, label]) => (
-            <label key={key} className="block">
-              <span className="text-xs font-medium" style={{ color: A.gray1 }}>
-                {label}
-              </span>
-              <input
-                value={form[key]}
-                onChange={update(key)}
-                className="mt-1 w-full h-11 rounded-xl px-3 text-sm outline-none"
-                style={{
-                  background: A.gray6,
-                  color: A.label,
-                  border: "0.5px solid rgba(0,0,0,0.08)",
-                }}
-                type={key === "email" ? "email" : "text"}
-                required
-              />
-            </label>
-          ))}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full h-11 rounded-xl flex items-center justify-center gap-2 text-sm font-semibold text-white disabled:opacity-70"
-            style={{ background: A.blue }}
-          >
-            {loading ? (
-              <Loader2 size={15} className="animate-spin" />
-            ) : (
-              <ShieldCheck size={15} />
-            )}
-            {loading ? tr("Signing in", "正在进入") : tr(`Open ${PRODUCT_NAME}`, `进入 ${PRODUCT_NAME}`)}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
 }
 
 type PanelErrorBoundaryProps = {
@@ -1354,6 +1137,8 @@ export default function FlowChainApp() {
   }
 
   function logout() {
+    // End the server session too; the local sign-out happens either way.
+    apiJson("/api/auth/logout", { method: "POST" }).catch(() => {});
     localStorage.removeItem(AUTH_TOKEN_KEY);
     localStorage.removeItem(CURRENT_USER_KEY);
     setAuthToken("");
@@ -1361,8 +1146,20 @@ export default function FlowChainApp() {
     window.dispatchEvent(new Event("flowchain:localization-changed"));
   }
 
+  // An emailed sign-in link lands here, signed in or not.
+  if (location.pathname === SIGN_IN_CONFIRM_PATH) {
+    return (
+      <SignInConfirmScreen
+        onSignedIn={(nextUser, token) => {
+          handleLogin(nextUser, token);
+          routerNavigate("/", { replace: true });
+        }}
+      />
+    );
+  }
+
   if (!authToken || !user) {
-    return <LoginScreen onLogin={handleLogin} localStatus={localStatus} />;
+    return <LoginScreen localStatus={localStatus} />;
   }
 
   return (

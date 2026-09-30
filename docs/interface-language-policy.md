@@ -12,6 +12,13 @@ names, or supplier names in place. Translate their presentation where appropriat
 
 - English bootstrap and fallback in the interface language provider.
 - English login copy, with an English/Chinese selector before authentication.
+- Email sign-in: the email-only sign-in page, "Check your email", the
+  `/sign-in/confirm` page and its errors have English and Chinese copy
+  (`src/app/SignInScreens.tsx`, browser spec `email-link-sign-in.spec.ts`).
+  The sign-in email is server-generated: US English by default, Chinese when
+  the user's language preference, or else the workspace default, is zh-CN
+  (`server/mail/sign-in-email.mjs`). Before sign-in the page follows the
+  browser-local selector; the email follows the stored preference.
 - Existing signed-in profile language selection remains in Settings > Profile.
 - New tenants inherit English from the database default.
 - Migration `20260908120000_english_default_interface` changes existing workspace

@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
+import { productionHarnessMailEnv, signInThroughEmailLink } from "./test-support/production-harness.mjs";
 
 const execFileAsync = promisify(execFile),
   root = resolve(import.meta.dirname, ".."),
@@ -81,11 +82,8 @@ async function request(base, path, options) {
     );
   return result.payload;
 }
-async function login(base) {
-  const result = await request(base, "/api/auth/login", {
-    method: "POST",
-    body: { email, name: "Outbound Smoke Manager", company: "FlowChain Test" },
-  });
+async function login(base, prisma) {
+  const result = await signInThroughEmailLink(base, prisma, { tenantId, email });
   assert.equal(result.user.id, actorId);
   assert.equal(result.user.tenantId, tenantId);
   return result.token;
@@ -124,6 +122,7 @@ async function main() {
     FLOWCHAIN_BRANCH: "test/outbound-api-smoke",
     FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: "false",
     SCM_API_PORT: String(apiPort),
+    ...productionHarnessMailEnv(),
     NODE_ENV: "production",
   };
   const base = `http://127.0.0.1:${apiPort}`;
@@ -237,7 +236,7 @@ async function main() {
 
     api = startApi(env);
     await waitFor(`${base}/api/health`);
-    let token = await login(base);
+    let token = await login(base, prisma);
     const entryData = await request(base, "/api/sales/order-entry-data", {
       token,
     });
@@ -703,7 +702,7 @@ async function main() {
     await stop(api);
     api = startApi(env);
     await waitFor(`${base}/api/health`);
-    token = await login(base);
+    token = await login(base, prisma);
     assert.equal(
       (
         await request(
@@ -745,7 +744,7 @@ async function main() {
     await stop(api);
     api = startApi({ ...env, FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: "false" });
     await waitFor(`${base}/api/health`);
-    token = await login(base);
+    token = await login(base, prisma);
     const readOnlyWorkbench = await request(
       base,
       "/api/sales/orders/outbound-smoke-order/workbench",
@@ -799,7 +798,7 @@ async function main() {
     await stop(api);
     api = startApi(env);
     await waitFor(`${base}/api/health`);
-    token = await login(base);
+    token = await login(base, prisma);
     await prisma.userWarehouseScope.update({
       where: { id: scope.id },
       data: { accessLevel: "read" },

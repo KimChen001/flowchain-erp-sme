@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { ProxyAgent } from "undici";
 import { execFileSync } from "node:child_process";
 import { loadEnv } from "../config/env.mjs";
-import { validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
+import { resolveBuildIdentity, validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import { validateDatabasePersistenceConfig } from "../persistence/persistence-config.mjs";
 import { createHttpRequestHandler } from "./http-request-handler.mjs";
 import { requestLogEnabled, withRequestLogging } from "./request-logging.mjs";
@@ -12,6 +12,8 @@ import { withServerErrorBoundary } from "./server-error-boundary.mjs";
 import {
   createLocalSessionSecret,
 } from "../domain/local-signed-session.mjs";
+import { createWorkspaceSessionStore } from "../auth/workspace-sessions.mjs";
+import { createEmailLinkService } from "../auth/email-link-sign-in.mjs";
 import { checkRuntimeReadiness } from "../domain/runtime-readiness.mjs";
 import { createServerLifecycle, registerShutdownSignals } from "./server-lifecycle.mjs";
 import {
@@ -48,11 +50,12 @@ function gitValue(args, fallback = "unknown") {
     return fallback;
   }
 }
+const resolvedBuild = resolveBuildIdentity(process.env);
 const buildIdentity = Object.freeze({
   commitSha:
-    process.env.FLOWCHAIN_COMMIT_SHA || gitValue(["rev-parse", "HEAD"]),
+    resolvedBuild.commitSha || gitValue(["rev-parse", "HEAD"]),
   branch:
-    process.env.FLOWCHAIN_BRANCH ||
+    resolvedBuild.branch ||
     gitValue(["branch", "--show-current"], "detached"),
   runtimeMode:
     process.env.NODE_ENV === "production" ? "production" : "local-dev",
@@ -743,21 +746,27 @@ function supplierRecommendations() {
 // requestLogger enables the one-line-per-request access log. It is off unless
 // supplied, so in-process test servers stay quiet; startScmServer supplies it.
 // Unhandled errors are always logged, to errorLogger or the console.
+// mailer replaces the provider FLOWCHAIN_MAIL_PROVIDER selects; tests and
+// harnesses pass one so they never reach a real mail service.
 export function createScmServer({
   readinessCheck = checkRuntimeReadiness,
   requestLogger = null,
   errorLogger,
+  mailer = null,
 } = {}) {
   validateProductionRuntimeConfig(process.env);
   validateDatabasePersistenceConfig(process.env);
-  const localSessions = new Map();
+  // Sessions are rows in PostgreSQL, so they outlive this process.
+  const sessionStore = createWorkspaceSessionStore({ env: process.env });
+  const emailLinks = createEmailLinkService({ env: process.env, sessionStore, mailer, logger: errorLogger || console });
   const localSessionSecret = createLocalSessionSecret(process.env);
   const handleRequest = createHttpRequestHandler({
     port,
     distDir,
     buildIdentity,
     readinessCheck,
-    localSessions,
+    sessionStore,
+    emailLinks,
     localSessionSecret,
     domain: {
       event,

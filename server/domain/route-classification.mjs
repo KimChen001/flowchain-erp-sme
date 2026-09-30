@@ -14,12 +14,15 @@ export const DATABASE_MODE_MUTATION_BLOCKED_ERROR = 'This mutation is not availa
 const routeDefinitions = [
   { method: 'GET', pattern: /^\/api\/health$/, group: 'health', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed' },
   { method: 'GET', pattern: /^\/api\/dev\/local-status$/, group: 'local-development', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed-local-only' },
+  { method: 'GET', pattern: /^\/api\/dev\/sign-in-links$/, group: 'local-development', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed-local-only' },
   { method: 'OPTIONS', pattern: /^\/.*$/, group: 'cors-preflight', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed' },
 
   { method: 'GET', pattern: /^\/api\/me$/, group: 'auth-context', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
   { method: 'GET', pattern: /^\/api\/tenants\/current$/, group: 'auth-context', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
   { method: 'POST', pattern: /^\/api\/auth\/login$/, group: 'auth', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-local-session' },
   { method: 'GET', pattern: /^\/api\/auth\/me$/, group: 'auth', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
+  { method: 'POST', pattern: /^\/api\/auth\/logout$/, group: 'auth', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
+  { method: 'POST', pattern: /^\/api\/auth\/email-link(?:\/(?:inspect|confirm))?$/, group: 'auth', classification: ROUTE_CLASSES.controlledPersistence, writesJson: false, databaseMode: 'allowed-db-persistence' },
 
   { method: 'GET', pattern: /^\/api\/ai\/tools$/, group: 'ai', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
   { method: 'POST', pattern: /^\/api\/ai\/chat$/, group: 'ai', classification: ROUTE_CLASSES.readOnly, writesJson: 'best-effort-audit', databaseMode: 'allowed-no-json-persist' },
