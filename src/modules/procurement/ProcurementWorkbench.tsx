@@ -1,3 +1,4 @@
+import { isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { A, Card } from "../../components/ui";
@@ -27,7 +28,7 @@ export function ProcurementWorkbench({ onNavigate }: { onNavigate?: ProcurementN
           .filter(row => !["completed", "closed", "cancelled", "已完成", "已关闭", "已取消"].includes(row.status))
           .map(row => {
             const relatedInvoices = invoices.filter(invoice => invoice.relatedPo === row.id);
-            const hasInvoiceVariance = relatedInvoices.some(invoice => Number(invoice.varianceAmount || 0) !== 0 || /差异|variance/i.test(`${invoice.varianceType || ""} ${invoice.status || ""}`));
+            const hasInvoiceVariance = relatedInvoices.some(invoice => Number(invoice.varianceAmount || 0) !== 0 || (Boolean(invoice.varianceType) && !isNoInvoiceVariance(invoice.varianceType)) || /差异|variance/i.test(String(invoice.status || "")));
             const hasMatchException = relatedInvoices.some(invoice => /差异|异常|待处理|variance/i.test(String(invoice.matchStatus || "")));
             return {
               id: row.id,

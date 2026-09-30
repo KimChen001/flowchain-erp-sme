@@ -19,6 +19,9 @@ import { matchStatusStyle } from "./shared";
 import ContextualImportActions from "../../components/import/ContextualImportActions";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { useSearchParams } from "react-router";
+import { useI18n } from "../../i18n/I18n";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { INVOICE_VARIANCE_CODES, invoiceVarianceLabel, invoiceVarianceLabelKey, isInvoiceVarianceType, isNoInvoiceVariance, matchesInvoiceVarianceFilter } from "../../domain/procurement/variance-types";
 import type { ActiveContext } from "../ai-assistant/Panel";
 import {
   tableMinXlClass,
@@ -54,8 +57,8 @@ function invoiceSourceLabel(source: SupplierInvoice["source"]) {
 }
 
 function invoiceTimeline(invoice: SupplierInvoice): TimelineStep[] {
-  const blocked = invoice.status === "已驳回" || invoice.duplicateRisk || invoice.varianceType === "重复发票";
-  const hasVariance = invoice.status === "存在差异" || invoice.matchStatus === "差异待处理" || invoice.varianceType !== "无差异";
+  const blocked = invoice.status === "已驳回" || invoice.duplicateRisk || isInvoiceVarianceType(invoice.varianceType, "duplicate_invoice");
+  const hasVariance = invoice.status === "存在差异" || invoice.matchStatus === "差异待处理" || !isNoInvoiceVariance(invoice.varianceType);
   const isPaid = invoice.status === "已付款" || invoice.paid;
   const isPosted = invoice.status === "已过账应付" || invoice.postedToAp || isPaid;
   const isApproved = invoice.status === "已审批" || isPosted;
@@ -64,7 +67,7 @@ function invoiceTimeline(invoice: SupplierInvoice): TimelineStep[] {
   return [
     { label: "已接收", status: wasReceived ? "done" : "pending", helper: invoice.receivedDate },
     { label: "待匹配", status: blocked ? "blocked" : isMatched || hasVariance ? "done" : "current", helper: invoice.matchStatus },
-    { label: hasVariance ? "存在差异" : "已匹配", status: blocked ? "blocked" : hasVariance ? "warning" : isMatched ? "done" : "pending", helper: invoice.varianceType },
+    { label: hasVariance ? "存在差异" : "已匹配", status: blocked ? "blocked" : hasVariance ? "warning" : isMatched ? "done" : "pending", helper: invoiceVarianceLabelKey(invoice.varianceType) },
     { label: "已审批", status: isApproved ? "done" : blocked || hasVariance ? "pending" : "current", helper: invoice.approvalStatus || "等待 AP 审批" },
     { label: "应付可见性", status: isPosted ? "done" : "pending", helper: invoice.postedToAp ? "已进入 AP 可见性" : "待复核" },
     { label: "付款状态", status: isPaid ? "done" : "pending", helper: invoice.paid ? "外部付款完成" : "未付款" },
@@ -79,10 +82,11 @@ type SupplierInvoiceRegisterProps = {
 };
 
 export default function SupplierInvoiceRegister({ mode = "finance", focus, onNavigate, onActiveContextChange }: SupplierInvoiceRegisterProps) {
+  const { language } = useI18n();
   const [searchParams] = useSearchParams();
   const [invoices, setInvoices] = useState<SupplierInvoice[]>(SUPPLIER_INVOICES);
   const [statusFilter, setStatusFilter] = useState(() => searchParams.get("status") || "全部");
-  const [varianceFilter, setVarianceFilter] = useState(() => searchParams.get("variance") ? "价格差异" : "全部");
+  const [varianceFilter, setVarianceFilter] = useState(() => searchParams.get("variance") ? "price_variance" : "all");
   const [search, setSearch] = useState(() => searchParams.get("q") || "");
   const [selectedInvoice, setSelectedInvoice] = useState<SupplierInvoice | null>(null);
   const [openActionId, setOpenActionId] = useState<string | null>(null);
@@ -96,13 +100,13 @@ export default function SupplierInvoiceRegister({ mode = "finance", focus, onNav
     const overdue = searchParams.get("overdue") === "true";
     return invoices
       .filter((invoice) => statusFilter === "全部" || invoice.status === statusFilter)
-      .filter((invoice) => varianceFilter === "全部" || invoice.varianceType === varianceFilter)
+      .filter((invoice) => matchesInvoiceVarianceFilter(invoice.varianceType, varianceFilter))
       .filter((invoice) => !supplier || invoice.supplier === supplier || invoice.supplierCode === supplier)
       .filter((invoice) => !overdue || (!invoice.paid && invoice.dueDate < "2026-07-11"))
       .filter((invoice) => !matchStatus
         || (matchStatus === "pending" && (invoice.status === "待匹配" || invoice.matchStatus === "未匹配"))
         || (matchStatus === "matched" && ["自动匹配", "已解决"].includes(invoice.matchStatus))
-        || (matchStatus === "variance" && invoice.varianceType !== "无差异")
+        || (matchStatus === "variance" && !isNoInvoiceVariance(invoice.varianceType))
         || (matchStatus === "blocked" && (invoice.duplicateRisk || invoice.status === "已驳回")))
       .filter((invoice) => !q || [
         invoice.invoiceNumber,
@@ -114,12 +118,12 @@ export default function SupplierInvoiceRegister({ mode = "finance", focus, onNav
 
   useEffect(() => {
     setStatusFilter(searchParams.get("status") || "全部");
-    if (!searchParams.get("variance")) setVarianceFilter("全部");
+    if (!searchParams.get("variance")) setVarianceFilter("all");
     setSearch(searchParams.get("q") || "");
   }, [searchParams]);
 
   const pendingMatch = invoices.filter((invoice) => invoice.status === "待匹配" || invoice.matchStatus === "未匹配").length;
-  const varianceInvoices = invoices.filter((invoice) => invoice.varianceType !== "无差异" || invoice.status === "存在差异");
+  const varianceInvoices = invoices.filter((invoice) => !isNoInvoiceVariance(invoice.varianceType) || invoice.status === "存在差异");
   const pendingApproval = invoices.filter((invoice) => invoice.status === "已匹配" || invoice.status === "待审批").length;
   const dueSoonAmount = invoices
     .filter((invoice) => !invoice.paid && isInvoicePayableReady(invoice))
@@ -140,11 +144,11 @@ export default function SupplierInvoiceRegister({ mode = "finance", focus, onNav
       varianceAmount: snapshot.varianceAmount,
       notes: snapshot.suggestedAction,
     });
-    toast.success("匹配已刷新", { description: `${invoice.invoiceNumber} · ${snapshot.varianceType}` });
+    toast.success("匹配已刷新", { description: `${invoice.invoiceNumber} · ${invoiceVarianceLabel(snapshot.varianceType, language)}` });
   }
 
   function approve(invoice: SupplierInvoice) {
-    if (invoice.varianceType !== "无差异" && invoice.matchStatus !== "已解决") {
+    if (!isNoInvoiceVariance(invoice.varianceType) && invoice.matchStatus !== "已解决") {
       toast.warning("仍有差异待处理", { description: "请先解决三单匹配差异，再标记审批。" });
       return;
     }
@@ -313,7 +317,7 @@ export default function SupplierInvoiceRegister({ mode = "finance", focus, onNav
             </select>
             <select value={varianceFilter} onChange={(event) => setVarianceFilter(event.target.value)}
               className="h-8 rounded-lg px-2 text-xs outline-none" style={{ background: A.gray6, color: A.label }}>
-              {["全部", "无差异", "价格差异", "数量差异", "税额差异", "运费差异", "缺少收货", "缺少PO", "重复发票"].map((item) => <option key={item}>{item}</option>)}
+              {["all", ...INVOICE_VARIANCE_CODES].map((code) => <option key={code} value={code}>{code === "all" ? workspaceCopy("全部", language) : invoiceVarianceLabel(code, language)}</option>)}
             </select>
             <div className="h-8 px-2 rounded-lg flex items-center gap-1.5" style={{ background: A.gray6 }}>
               <Search size={12} style={{ color: A.gray2 }} />
@@ -359,7 +363,7 @@ export default function SupplierInvoiceRegister({ mode = "finance", focus, onNav
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{invoice.paymentTerms}</td>
                     <td className={tdNowrapClass}><Chip label={invoice.matchStatus} color={matchStyle.color} bg={matchStyle.bg} /></td>
                     <td className={tdNowrapClass}><Chip label={invoiceStatusLabel(invoice.status)} color={statusStyle.color} bg={statusStyle.bg} /></td>
-                    <td className={tdNowrapClass} style={{ color: invoice.varianceType === "无差异" ? A.green : A.red }}>{invoice.varianceType}</td>
+                    <td className={tdNowrapClass} style={{ color: isNoInvoiceVariance(invoice.varianceType) ? A.green : A.red }}>{invoiceVarianceLabel(invoice.varianceType, language)}</td>
                     <td className={tdActionClass}>
                       <div className="relative flex items-center gap-1">
                         <button onClick={() => setSelectedInvoice(invoice)} className="px-2 py-1 rounded-md font-medium" style={{ background: A.gray6, color: A.blue }}>详情</button>
@@ -426,7 +430,7 @@ export default function SupplierInvoiceRegister({ mode = "finance", focus, onNav
                 { label: "发票状态", value: invoiceStatusLabel(selectedInvoice.status), tone: statusTone(selectedInvoice.status) },
                 { label: "审批状态", value: selectedInvoice.approvalStatus || "—" },
                 { label: "重复风险", value: selectedInvoice.duplicateRisk ? "是" : "否", tone: selectedInvoice.duplicateRisk ? "danger" : "success" },
-                { label: "差异类型", value: selectedSnapshot.varianceType, tone: selectedSnapshot.varianceType === "无差异" ? "success" : "danger" },
+                { label: "差异类型", value: invoiceVarianceLabelKey(selectedSnapshot.varianceType), tone: isNoInvoiceVariance(selectedSnapshot.varianceType) ? "success" : "danger" },
                 { label: "税码", value: taxSummary.taxCodes.join(" / ") || "待维护" },
                 { label: "税率", value: taxSummary.taxRates.join(" / ") || "待维护" },
               ]}
@@ -448,7 +452,7 @@ export default function SupplierInvoiceRegister({ mode = "finance", focus, onNav
                 { key: "orderedQty", label: "订购数量", align: "right", render: (line) => line.orderedQty ?? "—" },
                 { key: "receivedQty", label: "收货数量", align: "right", render: (line) => line.receivedQty ?? "—" },
                 { key: "matchedQty", label: "匹配数量", align: "right", render: (line) => line.matchedQty ?? "—" },
-                { key: "varianceType", label: "差异类型", render: (line) => String(line.varianceType || selectedInvoice.varianceType) },
+                { key: "varianceType", label: "差异类型", render: (line) => invoiceVarianceLabel(line.varianceType || selectedInvoice.varianceType, language) },
                 { key: "varianceAmount", label: "差异金额", align: "right", render: (line) => fmt(Number(line.varianceAmount ?? selectedInvoice.varianceAmount ?? 0)) },
               ]}
             />
@@ -477,9 +481,9 @@ export default function SupplierInvoiceRegister({ mode = "finance", focus, onNav
                 { label: "GRN 金额", value: fmt(selectedSnapshot.grnAmount) },
                 { label: "发票金额", value: fmt(selectedSnapshot.invoiceAmount) },
                 { label: "税码 / 税率", value: `${taxSummary.taxCodes.join(" / ")} · ${taxSummary.taxRates.join(" / ")}` },
-                { label: "税额拆分", value: getTaxVarianceSummary(selectedInvoice), tone: selectedInvoice.varianceType === "税额差异" ? "warning" : "success" },
+                { label: "税额拆分", value: getTaxVarianceSummary(selectedInvoice), tone: isInvoiceVarianceType(selectedInvoice.varianceType, "tax_variance") ? "warning" : "success" },
                 { label: "匹配状态", value: selectedSnapshot.matchStatus, tone: statusTone(selectedSnapshot.matchStatus) },
-                { label: "差异类型", value: selectedSnapshot.varianceType, tone: selectedSnapshot.varianceType === "无差异" ? "success" : "danger" },
+                { label: "差异类型", value: invoiceVarianceLabelKey(selectedSnapshot.varianceType), tone: isNoInvoiceVariance(selectedSnapshot.varianceType) ? "success" : "danger" },
                 { label: "重复风险", value: selectedInvoice.duplicateRisk ? "是" : "否", tone: selectedInvoice.duplicateRisk ? "danger" : "success" },
               ]}
             />

@@ -1,3 +1,4 @@
+import { invoiceVarianceLabel, isNoInvoiceVariance } from "../procurement/variance-types";
 import type { ContextualAIInsight } from "../../components/ai/ContextualAIInsightPanel";
 import { buildContextualAiAction, type ContextualAiAction, type ContextualAiLinkedRecord } from "./actions";
 import type { EvidenceBundle } from "../relationships";
@@ -179,9 +180,9 @@ export function makeInvoiceInsight(input: {
     title: `Invoice matching insight · ${input.invoiceNumber}`,
     sourceContext: `Invoice Matching / ${input.invoiceNumber}`,
     trigger: "Explain matching failure",
-    conclusion: input.varianceAmount || input.varianceType !== "无差异" ? `${input.invoiceNumber} needs matching review before approval or posting.` : `${input.invoiceNumber} is currently aligned by available matching data.`,
+    conclusion: input.varianceAmount || !isNoInvoiceVariance(input.varianceType) ? `${input.invoiceNumber} needs matching review before approval or posting.` : `${input.invoiceNumber} is currently aligned by available matching data.`,
     riskLevel: input.varianceAmount ? "高" : "低",
-    reason: `Match status ${input.matchStatus}, variance ${input.varianceType}, amount ${input.varianceAmount}.`,
+    reason: `Match status ${input.matchStatus}, variance ${invoiceVarianceLabel(input.varianceType, "en-US")}, amount ${input.varianceAmount}.`,
     evidence: evidenceSummaries(evidenceBundle, [`Supplier ${input.supplier}`, `PO ${input.po || "missing"}`, `GRN ${input.grn || "missing"}`]),
     impact: input.varianceAmount ? ["Do not approve, pay, or post until PO/GRN/invoice variance is resolved."] : ["Keep standard AP review before posting or payment."],
     recommendedActions: [

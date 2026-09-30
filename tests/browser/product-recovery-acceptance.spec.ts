@@ -83,6 +83,9 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByText("LOCAL-DEMO-GRN-001", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-INV-001", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("金额差异", { exact: true }).first()).toBeVisible();
+  // LOCAL-DEMO-INV-001 stores the price_variance code; the page shows its label.
+  await expect(page.getByText("价格差异", { exact: true }).first()).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("price_variance");
   await capture(page, "02-po-001-detail");
 
   await page.getByRole("button", { name: "查看供应商发票" }).click();

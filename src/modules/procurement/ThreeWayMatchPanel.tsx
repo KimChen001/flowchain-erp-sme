@@ -1,3 +1,5 @@
+import { useI18n } from "../../i18n/I18n";
+import { invoiceVarianceLabel, isInvoiceVarianceType, isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { useState } from "react";
 import { AlertCircle, AlertOctagon, CheckCircle2, FileSpreadsheet, MoreHorizontal, Package, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -20,6 +22,7 @@ import {
 } from "../../components/ui/workbenchTable";
 
 export default function ThreeWayMatchPanel() {
+  const { language } = useI18n();
   const [queue, setQueue] = useState<InvoiceMatchQueueItem[]>(() =>
     SUPPLIER_INVOICES.map((invoice) => invoiceToMatchQueueItem(invoice, purchaseOrders, receivingDocs, SUPPLIER_INVOICES))
   );
@@ -64,8 +67,8 @@ export default function ThreeWayMatchPanel() {
 
   const varianceTotal = queue.reduce((sum, row) => sum + Number(row.varianceAmount || 0), 0);
   const autoMatched = queue.length ? Math.round((queue.filter((row) => row.matchStatus === "自动匹配").length / queue.length) * 100) : 0;
-  const missingGrn = queue.filter((row) => row.varianceType === "缺少收货").length;
-  const duplicateRisk = queue.filter((row) => row.duplicateRisk || row.varianceType === "重复发票").length;
+  const missingGrn = queue.filter((row) => isInvoiceVarianceType(row.varianceType, "missing_grn")).length;
+  const duplicateRisk = queue.filter((row) => row.duplicateRisk || isInvoiceVarianceType(row.varianceType, "duplicate_invoice")).length;
 
   return (
     <div className="space-y-4">
@@ -125,7 +128,7 @@ export default function ThreeWayMatchPanel() {
                   <td className={tdWideNumericClass} style={{ color: A.label }}>{fmt(q.poAmt)}</td>
                   <td className={tdWideNumericClass} style={{ color: A.label }}>{fmt(q.grnAmt)}</td>
                   <td className={tdWideNumericClass} style={{ color: A.label }}>{fmt(q.invAmt)}</td>
-                  <td className={`${tdWideNowrapClass} font-medium`} style={{ color: q.varianceType === "无差异" ? A.green : A.red }}>{q.varianceType}</td>
+                  <td className={`${tdWideNowrapClass} font-medium`} style={{ color: isNoInvoiceVariance(q.varianceType) ? A.green : A.red }}>{invoiceVarianceLabel(q.varianceType, language)}</td>
                   <td className={`${tdWideNumericClass} font-medium`} style={{ color: q.varianceAmount === 0 ? A.green : A.red }}>{q.varianceAmount === 0 ? "—" : fmt(q.varianceAmount)}</td>
                   <td className={tdWideNowrapClass}>
                     <Chip label={q.matchStatus} {...matchStatusStyle(q.matchStatus)} />
@@ -169,9 +172,9 @@ export default function ThreeWayMatchPanel() {
                 </div>
               ))}
             </div>
-            <div className="rounded-xl p-3" style={{ background: selected.varianceType === "无差异" ? "#f0faf4" : "#fff8f0" }}>
-              <div className="text-xs font-semibold" style={{ color: selected.varianceType === "无差异" ? A.green : A.orange }}>
-                {selected.varianceType} · {selected.matchStatus}
+            <div className="rounded-xl p-3" style={{ background: isNoInvoiceVariance(selected.varianceType) ? "#f0faf4" : "#fff8f0" }}>
+              <div className="text-xs font-semibold" style={{ color: isNoInvoiceVariance(selected.varianceType) ? A.green : A.orange }}>
+                {invoiceVarianceLabel(selected.varianceType, language)} · {selected.matchStatus}
               </div>
               <div className="text-[11px] leading-5 mt-1" style={{ color: A.sub }}>
                 当前差异金额 {fmt(selected.varianceAmount)}，请在发票协同或财务协同中查看行项目证据；本结果用于匹配预检和异常处理。

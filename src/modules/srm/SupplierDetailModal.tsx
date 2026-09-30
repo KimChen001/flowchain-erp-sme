@@ -1,3 +1,4 @@
+import { invoiceVarianceLabelKey, isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { useMemo, useState, type ReactNode } from "react";
 import { A, Card, Chip, RecoveryActions } from "../../components/ui";
 import {
@@ -354,11 +355,11 @@ export default function SupplierDetailModal({
                 { key: "tax", label: "税额", render: ({ line }) => fmt(line.taxAmount), align: "right" },
                 { key: "total", label: "总额", render: ({ line }) => fmt(line.lineTotal), align: "right" },
                 { key: "match", label: "匹配状态", render: ({ invoice }) => invoice.matchStatus },
-                { key: "varianceType", label: "差异类型", render: ({ line, invoice }) => line.varianceType || invoice.varianceType },
+                { key: "varianceType", label: "差异类型", render: ({ line, invoice }) => copy(invoiceVarianceLabelKey(line.varianceType || invoice.varianceType)) },
                 { key: "variance", label: "差异金额", render: ({ line, invoice }) => fmt(line.varianceAmount ?? invoice.varianceAmount), align: "right" },
                 { key: "due", label: "到期日", render: ({ invoice }) => invoice.dueDate },
-                { key: "risk", label: "当前风险", render: ({ line, invoice }) => (line.varianceType || invoice.varianceType) === "无差异" ? "低风险" : "需人工复核" },
-                { key: "action", label: "建议处理", render: ({ line, invoice }) => (line.varianceType || invoice.varianceType) === "无差异" ? "留存匹配证据" : "复核差异说明草稿" },
+                { key: "risk", label: "当前风险", render: ({ line, invoice }) => isNoInvoiceVariance(line.varianceType || invoice.varianceType) ? "低风险" : "需人工复核" },
+                { key: "action", label: "建议处理", render: ({ line, invoice }) => isNoInvoiceVariance(line.varianceType || invoice.varianceType) ? "留存匹配证据" : "复核差异说明草稿" },
               ]}
             />
           </div>

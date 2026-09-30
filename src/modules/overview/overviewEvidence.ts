@@ -1,3 +1,4 @@
+import { invoiceVarianceLabelKey, isInvoiceVarianceType, isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { fmt } from "../../lib/format";
 import {
   FORECAST_SKUS,
@@ -241,7 +242,7 @@ export function buildReceivingEvidence(item: ReceivingDoc): EvidenceDetail {
 }
 
 export function buildInvoiceEvidence(item: SupplierInvoice): EvidenceDetail {
-  const priority = item.varianceType === "重复发票" || item.varianceType === "缺少收货" ? "高" : item.varianceType === "无差异" ? "低" : "中";
+  const priority = isInvoiceVarianceType(item.varianceType, "duplicate_invoice") || isInvoiceVarianceType(item.varianceType, "missing_grn") ? "高" : isNoInvoiceVariance(item.varianceType) ? "低" : "中";
   return {
     id: `invoice-${item.id}`,
     title: "供应商发票匹配证据",
@@ -258,14 +259,14 @@ export function buildInvoiceEvidence(item: SupplierInvoice): EvidenceDetail {
       { label: "发票金额", value: fmt(item.total) },
       { label: "税额", value: fmt(item.tax) },
       { label: "运费", value: fmt(item.freight || 0) },
-      { label: "差异类型", value: item.varianceType },
+      { label: "差异类型", value: invoiceVarianceLabelKey(item.varianceType) },
       { label: "差异金额", value: fmt(item.varianceAmount || 0) },
       { label: "匹配状态", value: item.matchStatus },
       { label: "发票状态", value: item.status },
       { label: "来源", value: item.source },
     ],
     confidence: `${item.confidence || 76}% · ${item.matchStatus === "自动匹配" ? "高" : "需复核"}`,
-    suggestedAction: item.varianceType === "无差异" ? "打开发票协同，复核审批状态和 AP 可见性。" : "打开发票协同，复核 PO、GRN 和发票差异。",
+    suggestedAction: isNoInvoiceVariance(item.varianceType) ? "打开发票协同，复核审批状态和 AP 可见性。" : "打开发票协同，复核 PO、GRN 和发票差异。",
   };
 }
 
