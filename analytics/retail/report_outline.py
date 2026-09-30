@@ -234,7 +234,7 @@ def main(argv=None) -> int:
                f"{elabel(pe['best_overall'])}: {tc(pe['best_overall'])}. (c) ends with {base.loc['c', 'end_weeks_of_supply']:.0f} weeks of forward P50 "
                f"demand in stock and on order vs {base.loc['b', 'end_weeks_of_supply']:.0f} for (b), so it over-buys once "
                "the season end is priced. Cheapest of (a)–(d) by markdown m: "
-               + "; ".join(f"m = {m}: {v.idxmin()}" for m, v in m_rows.items())
+               + "; ".join(f"m = {m:g}: {v.idxmin()}" for m, v in m_rows.items())
                + f". Sanity: CR 0.5 = P50 (fill {chk['c_cr05_fill']:.1%} both); budget monotone {chk['budget_monotone']}; "
                f"CV 0 lowers safety stock ({money(chk['ss_value_zero_cv'])} vs {money(chk['ss_value_base'])}); MILP "
                f"optimal (gap {chk['milp_max_gap']:.0e}).",

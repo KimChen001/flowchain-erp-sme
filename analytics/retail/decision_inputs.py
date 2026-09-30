@@ -207,11 +207,16 @@ def main(argv: list[str] | None = None) -> int:
       "input to vary, for example 1 or 2 packs.")
     a("")
     a("**What the assumptions imply.** Under these assumptions a lost unit costs far more than holding it for a few "
-      f"weeks. The median newsvendor critical ratio is {cr4:.3f} for a 4-week review cycle and {cr13:.3f} for a "
-      "13-week one. So the cost-optimal service level is well above 90%, and a P90 alone is not enough: the "
+      f"weeks. The median single-cycle newsvendor critical ratio is {cr4:.3f} for a 4-week review cycle and "
+      f"{cr13:.3f} for a 13-week one. So the cost-optimal service level is well above 90%, and a P90 alone is not enough: the "
       "decision model needs the upper tail beyond P90, such as a distribution fitted through P50 and P90 or "
       "simulated demand. That conclusion depends on the cost ratio and the no-backorder assumption; with backorders "
       "the stockout cost would be much lower.")
+    a("")
+    a("*Definition of this critical ratio:* overage cost = holding over the cycle only (4 or 13 weeks), with no lead "
+      "time and no end-of-season markdown. `replenishment-results.md` uses a different critical ratio for policy (c): "
+      "overage = holding over E[L] + R weeks, plus the markdown in the final cycle, so its median ('median CR by "
+      "review') is lower. The two figures are not comparable.")
     a("")
     (paths.outputs_dir / "decision-inputs.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     print(f"Wrote demand-distribution.csv ({len(dist):,} rows), sku-parameters.csv ({len(par)}), decision-inputs.md")

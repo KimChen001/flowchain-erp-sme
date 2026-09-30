@@ -31,7 +31,7 @@ Setup (every number the report uses is computed here; assumptions are marked):
 - Terminal inventory: the inventory position left after week 13 (on hand + on order, since
   orders placed at the last reviews are commitments that arrive into the post-season) is
   charged a markdown/obsolescence loss of m x unit cost per unit (ASSUMED m = 0.15, the owner's
-  base case; sensitivity 0, 0.3, 0.5). An alternative with no cost assumption charges, at cost, only the stock beyond
+  base case; sensitivity m = 0, 0.3, 0.5, the MARKDOWN_GRID). An alternative with no cost assumption charges, at cost, only the stock beyond
   8 weeks of forward P50 demand.
 """
 
@@ -813,6 +813,8 @@ def main(argv=None) -> int:
         "milp_max_lp_gap": float(max((m["objective"] - m["lp_bound"]) / abs(m["objective"]) for m in bm["milp"])),
         "milp_count": len(bm["milp"]),
         "milp_infeasible_budgets": int(sum(not m["feasible_budget"] for m in bm["milp"])),
+        "milp_infeasible_detail": "; ".join(f"B = {m['factor']} × (c) at the week-{m['review']} review"
+                                            for m in bm["milp"] if not m["feasible_budget"]),
     }
     planned_csl_c = float(np.median(metas["base"]["median_cr"]))
 
@@ -843,13 +845,9 @@ def main(argv=None) -> int:
         return float(df.factor.iloc[max(stop, 0)]), bool((~ok).any())
 
     (rf_, rf_in), (pf_, pf_in) = rule(frontier, ""), rule(frontier, "plan_")
-    four = ["a", "b", "c", "d0.6", "d0.8", "d1.0"]
-    d_wins = [sn for sn in summary.scenario.unique()
-              if summary[(summary.scenario == sn) & summary.policy.isin(four)].set_index("policy").total_cost
-              .idxmin().startswith("d")]
     near = frontier[frontier.total <= frontier.total.min() * 1.03].factor
     choice = {"realised_factor": rf_, "realised_in_grid": rf_in, "planned_factor": pf_, "planned_in_grid": pf_in,
-              "d_cheapest_scenarios": len(d_wins), "n_scenarios": int(summary.scenario.nunique()),
+              "n_scenarios": int(summary.scenario.nunique()),
               "flat_lo": float(near.min()), "flat_hi": float(near.max()),
               "realised_argmin": float(frontier.factor[frontier.total.idxmin()]),
               "planned_argmin": float(frontier.factor[frontier.plan_total.idxmin()])}
@@ -1113,7 +1111,8 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       "stockout = lost margin (price − cost) per unit, with no backorders; **terminal markdown/obsolescence** "
       f"m = {BASE['markdown']} × unit cost per unit of inventory position (on hand + on order) left after week 13, "
       "i.e. gift-ware left after Christmas. "
-      "Sensitivity: cost ratio 0.35 and 0.65; holding 15% and 35%; stockout 0.5× and 2× margin; m = 0, 0.15, 0.5.")
+      "Sensitivity: cost ratio 0.35 and 0.65; holding 15% and 35%; stockout 0.5× and 2× margin; m = "
+      + ", ".join(f"{m:g}" for m in MARKDOWN_GRID if m != BASE["markdown"]) + f" (base {BASE['markdown']}).")
     a("- **Policies** (same information at each review):")
     for p in ("a", "b", "c"):
         a(f"  - {POLICY_LABELS[p]}")
@@ -1133,8 +1132,10 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       "carries to the next cycle, so its overage cost is holding over E[L] + R weeks. In the final cycle, where "
       "the protection interval t + E[L] + R runs past week 13, a leftover unit also takes the terminal markdown: "
       "c_o = holding + m × unit cost. In the base case the final-cycle reviews are weeks "
-      + ", ".join(str(t) for t in bm["final_reviews"]) + ". Median CR by review: "
-      + " / ".join(f"{x:.3f}" for x in bm["cr_by_review"]) + ".")
+      + ", ".join(str(t) for t in bm["final_reviews"]) + ". Median critical ratio of (c) by review: "
+      + " / ".join(f"{x:.3f}" for x in bm["cr_by_review"]) + ". This CR prices holding over E[L] + R (and the "
+      "markdown in the final cycle); it is not the single-cycle CR of `decision-inputs.md` (holding over the 4-week "
+      "cycle only), which is why the two medians differ.")
     a("  - (d) per review, choose one level per SKU from {P50, P70, P80, P90, P95, P98} of the same distribution. "
       "Minimise Σ c_u·E[shortage over L+R] + holding·R·E[on hand] (+ m·cost·E[leftover] in the final cycle), "
       "subject to Σ cost·E[on hand] ≤ B, "
@@ -1260,8 +1261,12 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     a(f"| MILP solved to proven optimality (HiGHS, relative gap tolerance 1e-9) | status 0, gap ≈ 0 | "
       f"{checks['milp_count']} solves, all optimal: {checks['milp_all_optimal']}; largest MIP gap "
       f"{checks['milp_max_gap']:.1e}; largest distance to the LP-relaxation bound {checks['milp_max_lp_gap']:.1e} "
-      f"(a multiple-choice knapsack has at most two fractional variables in its LP); infeasible budgets "
-      f"{checks['milp_infeasible_budgets']} | "
+      f"(a multiple-choice knapsack has at most two fractional variables in its LP). Infeasible budgets: "
+      f"{checks['milp_infeasible_budgets']} of {checks['milp_count']} solves"
+      + (f" ({checks['milp_infeasible_detail']}). There the budget is below the planned value of ordering every SKU "
+         "up to P50, the lowest level on the grid, so no plan fits; the MILP is then solved with the budget raised to "
+         "that minimum, which puts every SKU at P50. These solves are optimal for the raised budget"
+         if checks["milp_infeasible_budgets"] else "") + " | "
       f"{'yes' if checks['milp_all_optimal'] else 'no'} |")
     pe = key["policy_e"]
     et = pd.DataFrame(pe["table"])
@@ -1284,14 +1289,16 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     a("")
     a("## 8. Sensitivity (mean L = 4, SCMS CV, common start; totals in GBP)")
     a("")
-    a("| Scenario | median CR | (a) total | (b) total | (c) total | (d, 0.8) total | (c) fill | cheapest policy |")
-    a("|---|---|---|---|---|---|---|---|")
+    a("| Scenario | median CR of (c), week-0 review | (a) total | (b) total | (c) total | (d, 0.6) total | "
+      "(d, 0.8) total | (c) fill | cheapest of (a)–(d) |")
+    a("|---|---|---|---|---|---|---|---|---|")
     for s in ["base", "cost ratio 0.35", "cost ratio 0.65", "holding 15%/yr", "holding 35%/yr",
               "stockout = 0.5 x margin", "stockout = 2 x margin"]:
         d = summary[summary.scenario == s].set_index("policy")
         main = d.loc[["a", "b", "c", "d0.6", "d0.8", "d1.0"]]
         a(f"| {s} | {metas[s]['median_cr']:.3f} | {fmt_money(d.loc['a', 'total_cost'])} | "
           f"{fmt_money(d.loc['b', 'total_cost'])} | {fmt_money(d.loc['c', 'total_cost'])} | "
+          f"{fmt_money(d.loc['d0.6', 'total_cost'])} | "
           f"{fmt_money(d.loc['d0.8', 'total_cost'])} | {d.loc['c', 'fill_rate']:.1%} | {main.total_cost.idxmin()} |")
     a("")
     a("### Every scenario, policies (a)–(e)")
@@ -1317,12 +1324,12 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     a("")
     a("(c) and (d) re-plan for each m (the final-cycle overage cost changes); (a) and (b) do not use m.")
     a("")
-    a("| m | (a) total | (b) total | (c) total [95% CI] | (d, 0.6) total | (d, 0.8) total | (c) fill | cheapest policy |")
+    a("| m | (a) total | (b) total | (c) total [95% CI] | (d, 0.6) total | (d, 0.8) total | (c) fill | cheapest of (a)–(d) |")
     a("|---|---|---|---|---|---|---|---|")
     for s_, m in markdown_scenarios():
         d = summary[summary.scenario == s_].set_index("policy")
         main = d.loc[["a", "b", "c", "d0.6", "d0.8", "d1.0"]]
-        a(f"| {m}{' (base)' if s_ == 'base' else ''} | {fmt_money(d.loc['a', 'total_cost'])} | "
+        a(f"| {m:g}{' (base)' if s_ == 'base' else ''} | {fmt_money(d.loc['a', 'total_cost'])} | "
           f"{fmt_money(d.loc['b', 'total_cost'])} | {fmt_money(d.loc['c', 'total_cost'])} "
           f"[{fmt_money(d.loc['c', 'total_cost_lo'])}, {fmt_money(d.loc['c', 'total_cost_hi'])}] | "
           f"{fmt_money(d.loc['d0.6', 'total_cost'])} | {fmt_money(d.loc['d0.8', 'total_cost'])} | "
@@ -1331,7 +1338,7 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     a("### Starting inventory")
     a("")
     a("| Start (all policies alike) | (a) total | (b) total | (c) total | (d, 0.6) total | (d, 0.8) total | "
-      "(c) fill | cheapest policy |")
+      "(c) fill | cheapest of (a)–(d) |")
     a("|---|---|---|---|---|---|---|---|")
     for s, lab in (("start = 0.5 x (a)", "0.5 x (a) level"), ("base", "(a) level (base)"),
                    ("start = 1.5 x (a)", "1.5 x (a) level")):
@@ -1552,6 +1559,13 @@ def write_policy_e(a, key, s_base, fb, choice):
          if cmp_[(center, f"d{rf}")]["lo"] <= 0 else
          "(d) at its budget-rule B is reliably cheaper than uncapped P75, but that B was also chosen in-sample.")
       )
+    a(f"- **(d) among (a)–(d).** Of the budget variants run in every scenario (B = 0.6, 0.8, 1.0 × (c)), "
+      f"(d) with B = 0.6 × (c) is the cheapest of the six (a)–(d) policies in {cn['d06_cheapest_four']} of "
+      f"{cn['n_unbiased']} scenarios, not counting the biased own-level start"
+      + (" (where it is also the cheapest)" if cn["d06_cheapest_four_biased"] else " (where it is not the cheapest)")
+      + ". This compares (a)–(d) only: an (e) setting or a fixed-quantile reference is cheaper still in "
+      f"{cn['e_any_below_four']} of {cn['n_unbiased']}, and budgets below 0.6 × (c) are run only in the base case "
+      "(section 11). The per-scenario totals are in section 8.")
     a(f"- **Across scenarios** ({cn['n_unbiased']} scenarios; the biased own-level start is left out): (e) P75 "
       f"without a cap is cheaper than (d, 0.6) in {cn['e75_below_d06']} of {cn['n_unbiased']}; the best uncapped "
       f"(e) quantile beats every policy (a)–(d) in {cn['e_unc_below_four']} of {cn['n_unbiased']}; P75 capped at "
@@ -1604,7 +1618,7 @@ def write_discussion(a, lt, key, summary, s_base, metas, checks, tail, frontier,
     p50 = s_base.loc[best_ref]
     a("## 9. Do the decisions make sense?")
     a("")
-    a(f"- **Lowest total cost in the base case: {POLICY_LABELS[best]}**, {fmt_money(main.loc[best, 'total_cost'])} "
+    a(f"- **Lowest total cost of (a)–(d) in the base case: {POLICY_LABELS[best]}**, {fmt_money(main.loc[best, 'total_cost'])} "
       f"[{fmt_money(main.loc[best, 'total_cost_lo'])}, {fmt_money(main.loc[best, 'total_cost_hi'])}], including the "
       f"terminal markdown. Without a markdown assumption (true excess only) the cheapest is {POLICY_LABELS[best_alt]}. "
       f"Policy (c) against FlowChain's rule (b): fill {c.fill_rate:.1%} vs {b.fill_rate:.1%}; average inventory "
@@ -1644,7 +1658,7 @@ def write_discussion(a, lt, key, summary, s_base, metas, checks, tail, frontier,
     for sname, m in sorted(m_of.items(), key=lambda kv: kv[1]):
         d = summary[(summary.scenario == sname) & summary.policy.isin(["a", "b", "c", "d0.6", "d0.8", "d1.0"])]
         d = d.set_index("policy")
-        parts.append(f"m = {m}: {d.total_cost.idxmin()} ({fmt_money(d.total_cost.min())}; (c) "
+        parts.append(f"m = {m:g}: {d.total_cost.idxmin()} ({fmt_money(d.total_cost.min())}; (c) "
                      f"{fmt_money(d.loc['c', 'total_cost'])}, (b) {fmt_money(d.loc['b', 'total_cost'])})")
     a("- **Markdown sensitivity** (cheapest of (a)–(d)): " + "; ".join(parts) + ".")
     a(f"- **P90 under-coverage → realised service.** (c) plans a cycle service of about its critical ratio "
