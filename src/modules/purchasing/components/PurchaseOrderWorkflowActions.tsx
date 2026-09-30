@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { toast } from "sonner";
+import { useRouteAvailability } from "../../../app/routeAvailability";
 import { apiJson } from "../../../lib/api-client";
 import { useI18n } from "../../../i18n/I18n";
 
@@ -32,7 +34,23 @@ const COPY: Record<string, [string, string]> = {
   done: ["Purchase order updated", "采购订单已更新"],
   failed: ["The purchase order could not be updated", "采购订单更新失败"],
   issueNote: ["Issuing records that you sent the PO to the supplier; FlowChain does not send it.", "下达仅记录已将采购订单发送给供应商；FlowChain 不会代为发送。"],
+  receive: ["Receive", "收货"],
+  receiveNote: ["Record goods that arrived against this PO.", "登记该采购订单的到货。"],
 };
+
+// The effective permission codes of the signed-in user; empty when they
+// cannot be read, so no command is offered.
+function usePermissionSet() {
+  const [permissions, setPermissions] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    let alive = true;
+    apiJson<{ effectivePermissions?: string[] }>("/api/authorization/context")
+      .then((context) => { if (alive) setPermissions(new Set(context.effectivePermissions || [])); })
+      .catch(() => { if (alive) setPermissions(new Set()); });
+    return () => { alive = false; };
+  }, []);
+  return permissions;
+}
 
 export function PurchaseOrderWorkflowActions({
   poId,
@@ -47,17 +65,8 @@ export function PurchaseOrderWorkflowActions({
 }) {
   const { language } = useI18n();
   const tr = (key: string) => COPY[key][language === "en-US" ? 0 : 1];
-  const [permissions, setPermissions] = useState<Set<string> | null>(null);
+  const permissions = usePermissionSet();
   const [busy, setBusy] = useState<WorkflowAction | "">("");
-
-  useEffect(() => {
-    let alive = true;
-    apiJson<{ effectivePermissions?: string[] }>("/api/authorization/context")
-      .then((context) => { if (alive) setPermissions(new Set(context.effectivePermissions || [])); })
-      // Without a readable permission set no command is offered.
-      .catch(() => { if (alive) setPermissions(new Set()); });
-    return () => { alive = false; };
-  }, []);
 
   const actions = (ACTIONS_BY_STATUS[status] || []).filter((action) => permissions?.has(PERMISSION[action](status)));
   if (!Number.isInteger(version) || !actions.length) return null;
@@ -100,6 +109,33 @@ export function PurchaseOrderWorkflowActions({
         </button>
       ))}
       {actions.includes("issue") && <span className="text-[11px] text-slate-500">{tr("issueNote")}</span>}
+    </div>
+  );
+}
+
+// Receiving starts from an issued or partially received PO. The receipt form
+// is gated by the receiving posting capability; the server checks
+// receiving.prepare, warehouse scope and open quantities again.
+const RECEIVE_STATUSES = new Set(["issued", "partially_received"]);
+
+export function PurchaseOrderReceiveAction({ poId, status }: { poId: string; status: string }) {
+  const { language } = useI18n();
+  const tr = (key: string) => COPY[key][language === "en-US" ? 0 : 1];
+  const permissions = usePermissionSet();
+  const canOpenRoute = useRouteAvailability();
+  const navigate = useNavigate();
+  if (!RECEIVE_STATUSES.has(status) || !permissions?.has("receiving.prepare") || !canOpenRoute("procurement:receiving:new")) return null;
+  return (
+    <div data-testid="po-receive-action" className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        data-testid="po-action-receive"
+        onClick={() => navigate(`/app/procurement/receiving/new?po=${encodeURIComponent(poId)}`)}
+        className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white"
+      >
+        {tr("receive")}
+      </button>
+      <span className="text-[11px] text-slate-500">{tr("receiveNote")}</span>
     </div>
   );
 }
