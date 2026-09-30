@@ -120,6 +120,7 @@
     "test:ai:business-query-planning": "node scripts/run-ai-business-query-evals.mjs",
     "test:db:ai-cross-domain-read": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-cross-domain-read.test.mjs",
     "test:db:ai-report-agreement": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-report-agreement.test.mjs",
+    "test:ai:eval": "node tests/ai-eval/run-eval.mjs",
     "bank:mapping-security-scan": "node scripts/check-bank-mapping-secrets.mjs",
     "test:api:authorization": "node scripts/smoke-authorization-api.mjs",
     "test:browser:authorization": "node scripts/run-authorization-playwright.mjs",
