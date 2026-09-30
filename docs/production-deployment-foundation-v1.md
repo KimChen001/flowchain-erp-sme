@@ -40,18 +40,20 @@ No database migration runs during image build. No secret is accepted as a build 
 
 ## Production configuration contract
 
-With `NODE_ENV=production`, the server validates configuration before it starts listening. Required settings are:
+With `NODE_ENV=production`, or with `FLOWCHAIN_DEPLOYMENT_PROFILE=production` (set by the release image and the Compose reference), the server validates configuration before it starts listening. Required settings are:
 
 | Setting | Contract |
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL connection string, supplied at runtime only |
 | `FLOWCHAIN_PERSISTENCE_MODE` | Must explicitly equal `database` |
 | `FLOWCHAIN_DEFAULT_TENANT_ID` | Must identify the provisioned runtime tenant |
-| `FLOWCHAIN_LOCAL_SESSION_SECRET` | Runtime secret of at least 32 characters |
+| `FLOWCHAIN_LOCAL_SESSION_SECRET` | Runtime secret of at least 32 characters; example placeholders such as `replace-with-...` are refused |
 | `FLOWCHAIN_ATTACHMENT_STORAGE_PROVIDER` | Must explicitly select the supported `local` durable provider |
 | `FLOWCHAIN_UPLOAD_STORAGE_DIR` | Absolute, non-temporary durable volume path |
 | `FLOWCHAIN_COMMIT_SHA` | Immutable build commit identity |
 | `FLOWCHAIN_BRANCH` | Recommended release branch identity; health reports `unknown` only when omitted outside the reference release |
+
+The server also refuses to start when `NODE_ENV=test` is combined with the production deployment profile, or when `FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS=true`, because either one makes the API gate trust `x-flowchain-user` / `x-flowchain-role` headers.
 
 When Mobile Sync is explicitly enabled, its current cursor key id and a cursor secret of at least 32 characters are also required. Disabled capabilities do not force unrelated secrets. Configuration failures list setting names, never setting values, database URLs, or attachment paths.
 

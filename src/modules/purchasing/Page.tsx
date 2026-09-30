@@ -14,6 +14,7 @@ import {
   Truck,
 } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
+import { useRouteAvailability } from "../../app/routeAvailability";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { formatCurrencyAmount } from "../../lib/format";
@@ -518,6 +519,7 @@ export default function PurchasingOrdersPage({
   onActiveContextChange?: (context: ActiveContext | null) => void;
 }) {
   const copy = useWorkspaceCopy();
+  const canOpenRoute = useRouteAvailability();
   const location = useLocation();
   const routerNavigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1066,8 +1068,8 @@ export default function PurchasingOrdersPage({
                         <details className="relative"><summary className="cursor-pointer list-none rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">{copy("更多")}</summary><div className="absolute right-0 top-7 z-30 w-40 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
                           <button onClick={() => openDetail(order.po)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("查看订单行与证据")}</button>
                           {firstGrn && <button onClick={() => navigateOrderWithReturn(order, "procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, firstGrn.grn)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开收货记录")}</button>}
-                          {firstInvoice && <button onClick={() => navigateOrderWithReturn(order, "finance:invoices", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开发票记录")}</button>}
-                          <button onClick={() => navigateOrderWithReturn(order, "finance:three-way-match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开三单匹配")}</button>
+                          {firstInvoice && canOpenRoute("finance:invoices") && <button onClick={() => navigateOrderWithReturn(order, "finance:invoices", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开发票记录")}</button>}
+                          {canOpenRoute("finance:three-way-match") && <button onClick={() => navigateOrderWithReturn(order, "finance:three-way-match")} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开三单匹配")}</button>}
                           {order.sourceRequest && <button onClick={() => navigateOrderWithReturn(order, "procurement:requests", { entityType: "purchase_request", entityId: order.sourceRequest }, order.sourceRequest)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开来源 PR")}</button>}
                           {order.sourceRfq && <button onClick={() => navigateOrderWithReturn(order, "procurement:rfq", { entityType: "rfq", entityId: order.sourceRfq }, order.sourceRfq)} className="w-full rounded px-2 py-1.5 text-left text-xs hover:bg-slate-50">{copy("打开来源 RFQ")}</button>}
                         </div></details>
