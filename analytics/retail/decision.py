@@ -106,12 +106,17 @@ def scms_lead_time_cvs(csv_path: Path) -> dict:
     }
 
 
-def lead_weeks(u: np.ndarray, mean_L: float, cv: float) -> np.ndarray:
-    """Inverse-CDF lognormal lead time (weeks) with the given mean and CV; rounded, >= 1."""
+def lead_weeks(u: np.ndarray, mean_L: float, cv: float, match: str = "mean") -> np.ndarray:
+    """Inverse-CDF lognormal lead time (weeks) with the given CV; rounded, >= 1.
+
+    ``match="mean"`` sets the mean to ``mean_L``; ``match="median"`` sets the median to it instead
+    (then the mean grows with the CV). A lognormal cannot hold both fixed while the CV changes.
+    """
     if cv <= 0:
         return np.full(u.shape, max(1, int(round(mean_L))), dtype=int)
     s2 = np.log1p(cv ** 2)
-    x = lognorm.ppf(u, s=np.sqrt(s2), scale=np.exp(np.log(mean_L) - s2 / 2))
+    scale = mean_L if match == "median" else np.exp(np.log(mean_L) - s2 / 2)
+    x = lognorm.ppf(u, s=np.sqrt(s2), scale=scale)
     return np.maximum(1, np.rint(x)).astype(int)
 
 
@@ -323,9 +328,10 @@ def run_scenario(sc, ctx, extra_checks=False):
     n = ctx["n"]
     cv = {"all": ctx["lt"]["cv_all"], "low": ctx["lt"]["cv_low_tier"], "high": ctx["lt"]["cv_high_tier"],
           "zero": 0.0}[sc["cv"]]
-    L_plan = lead_weeks(ctx["U_plan"], sc["mean_L"], cv)
-    L_orders = lead_weeks(ctx["U_orders"], sc["mean_L"], cv)
-    EL_draws = lead_weeks(ctx["U_EL"], sc["mean_L"], cv)
+    match = sc.get("match", "mean")
+    L_plan = lead_weeks(ctx["U_plan"], sc["mean_L"], cv, match)
+    L_orders = lead_weeks(ctx["U_orders"], sc["mean_L"], cv, match)
+    EL_draws = lead_weeks(ctx["U_EL"], sc["mean_L"], cv, match)
     EL = float(EL_draws.mean())
     price = ctx["price"]
     cost = sc["cost_ratio"] * price
@@ -391,7 +397,10 @@ def run_scenario(sc, ctx, extra_checks=False):
             res[pq] = simulate(start(lv[pq][:, 0]), lv[pq], **common)
     meta = {"cv": cv, "EL": EL, "median_L": float(np.median(EL_draws)), "median_cr": cr_by_review[0],
             "cr_by_review": cr_by_review, "final_reviews": [t for t, fl in zip(REVIEW_WEEKS, final_flags) if fl],
-            "markdown": markdown, "safety_stock_value_c": float(np.mean(ss_value)), "milp": milp_info, "levels": lv}
+            "markdown": markdown,
+            # safety stock of (c) at the week-0 review (S - E[demand over L+R], at cost); later reviews are
+            # left out because the final-cycle markdown lowers their critical ratio
+            "safety_stock_value_c": float(ss_value[0]), "milp": milp_info, "levels": lv}
     return res, meta
 
 
@@ -519,6 +528,8 @@ def main(argv=None) -> int:
         "L=2": {**BASE, "mean_L": 2.0}, "L=8": {**BASE, "mean_L": 8.0},
         "reliable supplier (low-CV tier)": {**BASE, "cv": "low"},
         "unreliable supplier (high-CV tier)": {**BASE, "cv": "high"},
+        "reliable supplier, median = 4 wk": {**BASE, "cv": "low", "match": "median"},
+        "unreliable supplier, median = 4 wk": {**BASE, "cv": "high", "match": "median"},
         "no lead-time variability": {**BASE, "cv": "zero"},
         "cost ratio 0.35": {**BASE, "cost_ratio": 0.35}, "cost ratio 0.65": {**BASE, "cost_ratio": 0.65},
         "holding 15%/yr": {**BASE, "holding": 0.15}, "holding 35%/yr": {**BASE, "holding": 0.35},
@@ -650,7 +661,7 @@ def figures(paths, summary, s_base, checks):
 
 
 def fmt_money(v):
-    return f"£{v:,.0f}"
+    return f"−£{abs(v):,.0f}" if v < 0 else f"£{v:,.0f}"
 
 
 def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_windows, seconds):
@@ -813,8 +824,8 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       f"{'yes' if abs(checks['c_cr05_fill'] - checks['p50_fill']) < 0.005 else 'no'} |")
     a(f"| (d) budget 0.6 → 0.8 → 1.0 → 1.2 × (c) | fill rate rises monotonically | "
       + " → ".join(f"{x:.1%}" for x in checks["budget_fill"]) + f" | {'yes' if checks['budget_monotone'] else 'no'} |")
-    a(f"| Lead time without variability (CV 0) | lower safety stock | (c) safety stock value (S − E[D over L+R], "
-      f"at cost, mean over reviews) {fmt_money(checks['ss_value_zero_cv'])} vs {fmt_money(checks['ss_value_base'])} "
+    a(f"| Lead time without variability (CV 0) | lower safety stock | (c) safety stock (S − E[D over L+R], "
+      f"at cost, week-0 review) {fmt_money(checks['ss_value_zero_cv'])} vs {fmt_money(checks['ss_value_base'])} "
       f"| {'yes' if checks['ss_lower_without_variability'] else 'no'} |")
     a(f"| MILP solved to proven optimality (HiGHS, relative gap tolerance 1e-9) | status 0, gap ≈ 0 | "
       f"{checks['milp_count']} solves, all optimal: {checks['milp_all_optimal']}; largest MIP gap "
@@ -828,6 +839,7 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     a("## 7. Supplier reliability and lead time: the bridge to part 2")
     a("")
     sc_names = ["reliable supplier (low-CV tier)", "base", "unreliable supplier (high-CV tier)",
+                "reliable supplier, median = 4 wk", "unreliable supplier, median = 4 wk",
                 "no lead-time variability", "L=2", "L=8"]
     a("| Scenario | CV of L | E[L] | median L | policy | fill rate | avg inventory value | total cost |")
     a("|---|---|---|---|---|---|---|---|")
@@ -840,26 +852,45 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     a("")
     rel = summary[(summary.scenario == "reliable supplier (low-CV tier)")].set_index("policy")
     unr = summary[(summary.scenario == "unreliable supplier (high-CV tier)")].set_index("policy")
-    mr, mu = metas["reliable supplier (low-CV tier)"], metas["unreliable supplier (high-CV tier)"]
-    a(f"**In money:** with mean L = 4 weeks, moving from an unreliable (CV {lt['cv_high_tier']:.2f}) to a reliable "
-      f"(CV {lt['cv_low_tier']:.2f}) supplier changes the 13-week total cost of policy (c) from "
-      f"{fmt_money(unr.loc['c', 'total_cost'])} to {fmt_money(rel.loc['c', 'total_cost'])} "
-      f"({fmt_money(unr.loc['c', 'total_cost'] - rel.loc['c', 'total_cost'])} over {key['n_skus']} SKUs). Its "
-      f"safety stock value falls from {fmt_money(mu['safety_stock_value_c'])} to "
-      f"{fmt_money(mr['safety_stock_value_c'])} "
-      f"({fmt_money(mu['safety_stock_value_c'] - mr['safety_stock_value_c'])} less working capital), and average "
-      f"inventory falls from {fmt_money(unr.loc['c', 'avg_inv_value'])} to {fmt_money(rel.loc['c', 'avg_inv_value'])}. "
-      "This is the link to part 2: the variability that the SCMS lead-time scorecard measures sets safety stock and "
-      "cost here.")
+    a("Two versions of the contrast, because a lognormal cannot hold both the mean and the median fixed while "
+      "its dispersion changes: **mean-matched** (mean 4 weeks for both tiers; the high-CV tier then has a much lower "
+      "median) and **median-matched** (median 4 weeks for both; the high-CV tier then has a higher mean, i.e. a "
+      "long tail of late orders).")
     a("")
-    a(f"FlowChain's current rule (b) ignores variability and shows the opposite: total "
-      f"{fmt_money(unr.loc['b', 'total_cost'])} with the unreliable supplier against "
-      f"{fmt_money(rel.loc['b', 'total_cost'])} with the reliable one (fill {unr.loc['b', 'fill_rate']:.1%} vs "
-      f"{rel.loc['b', 'fill_rate']:.1%}). That is not a benefit of unreliability. At the same mean, a lognormal lead "
-      f"time with CV {lt['cv_high_tier']:.2f} has a median of {mu['median_L']:.0f} weeks, against "
-      f"{mr['median_L']:.0f} for CV {lt['cv_low_tier']:.2f}. Most orders arrive early and a few very late, and the "
-      "chronically under-stocked rule (b) gains from the early ones. A contrast at a fixed mean mixes spread with "
-      "shape. Policy (c), which prices the whole distribution, moves in the expected direction.")
+    a("| Version | tier | CV | E[L] | median L | (b) total | (c) total [95% CI] | (d, 0.8) total | (c) safety stock at week 0 |")
+    a("|---|---|---|---|---|---|---|---|---|")
+    for ver, rel_name, unr_name in (("mean-matched", "reliable supplier (low-CV tier)", "unreliable supplier (high-CV tier)"),
+                                    ("median-matched", "reliable supplier, median = 4 wk",
+                                     "unreliable supplier, median = 4 wk")):
+        for tier, nm in (("reliable", rel_name), ("unreliable", unr_name)):
+            d = summary[summary.scenario == nm].set_index("policy")
+            mt = metas[nm]
+            a(f"| {ver} | {tier} | {mt['cv']:.2f} | {mt['EL']:.2f} | {mt['median_L']:.0f} | "
+              f"{fmt_money(d.loc['b', 'total_cost'])} | {fmt_money(d.loc['c', 'total_cost'])} "
+              f"[{fmt_money(d.loc['c', 'total_cost_lo'])}, {fmt_money(d.loc['c', 'total_cost_hi'])}] | "
+              f"{fmt_money(d.loc['d0.8', 'total_cost'])} | {fmt_money(mt['safety_stock_value_c'])} |")
+    a("")
+    for ver, rel_name, unr_name in (("Mean-matched", "reliable supplier (low-CV tier)", "unreliable supplier (high-CV tier)"),
+                                    ("Median-matched", "reliable supplier, median = 4 wk",
+                                     "unreliable supplier, median = 4 wk")):
+        r_, u_ = (summary[summary.scenario == x].set_index("policy") for x in (rel_name, unr_name))
+        mr, mu = metas[rel_name], metas[unr_name]
+        parts = []
+        for p in ("b", "c", "d0.8"):
+            dlt = u_.loc[p, "total_cost"] - r_.loc[p, "total_cost"]
+            parts.append(f"{p} {'+' if dlt >= 0 else '−'}{fmt_money(abs(dlt))}")
+        a(f"**{ver}, in money (GBP, 13 weeks, {key['n_skus']} SKUs):** going from the reliable to the unreliable tier "
+          f"changes total cost by " + ", ".join(parts) + f". The safety stock of (c) at the week-0 review goes from "
+          f"{fmt_money(mr['safety_stock_value_c'])} to {fmt_money(mu['safety_stock_value_c'])} "
+          f"({fmt_money(mu['safety_stock_value_c'] - mr['safety_stock_value_c'])}). Median L is "
+          f"{mr['median_L']:.0f} vs {mu['median_L']:.0f} weeks, and E[L] {mr['EL']:.2f} vs {mu['EL']:.2f}.")
+        a("")
+    a("How to read it: in the mean-matched version the high-CV tier has a shorter median lead time, so most "
+      "orders arrive early. A rule that ignores variability can then look no worse, or even better, with the "
+      "unreliable supplier, which is an artefact of the shape rather than a benefit of unreliability. The "
+      "median-matched version removes that artefact: typical orders take the same 4 weeks, and the unreliable "
+      "tier only adds late orders. The difference between the tiers in that version is the cost of lead-time "
+      "unreliability that the SCMS scorecard measures (part 2).")
     a("")
     a("![supplier reliability](figures/replenishment-supplier-reliability.png)")
     a("")
