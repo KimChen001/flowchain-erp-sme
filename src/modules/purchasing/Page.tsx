@@ -19,6 +19,7 @@ import { useRouteAvailability } from "../../app/routeAvailability";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { formatCurrencyAmount } from "../../lib/format";
+import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import type { PurchaseOrder, ReceivingDoc, SupplierInvoice } from "../../types/scm";
 import {
   A,
@@ -521,6 +522,7 @@ export default function PurchasingOrdersPage({
   onActiveContextChange?: (context: ActiveContext | null) => void;
 }) {
   const copy = useWorkspaceCopy();
+  const warehouseName = useWarehouseNames();
   const canOpenRoute = useRouteAvailability();
   const location = useLocation();
   const routerNavigate = useNavigate();
@@ -713,7 +715,7 @@ export default function PurchasingOrdersPage({
 
   const detailContent = selectedPO && (() => {
     const fmt = (value: number) => formatCurrencyAmount(value, selectedPO.currency);
-    const poLines = buildPoLineRows(selectedPO, facts);
+    const poLines = buildPoLineRows(selectedPO, facts).map((row) => ({ ...row, warehouse: warehouseName(row.warehouse) }));
     const grnRows = buildGrnRows(selectedPO, facts);
     const invoiceRows = buildInvoiceRows(selectedPO, facts);
     const matchRows = buildMatchRows(selectedPO, facts);
@@ -777,7 +779,7 @@ export default function PurchasingOrdersPage({
               { label: "采购负责人", value: selectedPO.owner },
               { label: "创建日期", value: selectedPO.created },
               { label: "预计到货", value: selectedPO.eta },
-              { label: "目标仓库", value: poLines[0]?.warehouse || selectedPO.warehouseId || "目标仓库待补齐" },
+              { label: "目标仓库", value: poLines[0]?.warehouse || warehouseName(selectedPO.warehouseId) || "目标仓库待补齐" },
               { label: "订单金额", value: fmt(poAmount(selectedPO)), tone: "info" },
               { label: "收货状态", value: receivedStatus(selectedPO, facts), tone: statusTone(receivedStatus(selectedPO, facts)) },
               { label: "发票状态", value: invoiceStatus(selectedPO, facts), tone: statusTone(invoiceStatus(selectedPO, facts)) },

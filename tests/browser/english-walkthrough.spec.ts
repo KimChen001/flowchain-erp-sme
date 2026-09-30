@@ -61,6 +61,14 @@ async function signIn(page: Page) {
   }, session);
 }
 
+// The bearer token signIn stored, for API reads made from the test itself.
+async function authHeaders(page: Page) {
+  const response = await page.request.post("/api/auth/login", {
+    data: { email: "admin@flowchain.local", name: "English walkthrough", company: "FlowChain" },
+  });
+  return { authorization: `Bearer ${(await response.json()).token}` };
+}
+
 async function settledChineseLines(page: Page) {
   await page.waitForLoadState("networkidle");
   await expect(page.getByText(/^(Checking access|Loading\b.*)$/)).toHaveCount(0);
@@ -128,5 +136,22 @@ for (const path of [
     await page.goto(path);
     await expect(page.getByText(path.split("/").pop()!, { exact: true }).first()).toBeVisible();
     expect(await rawCodeLines(page)).toEqual([]);
+  });
+}
+
+for (const path of [
+  "/app/procurement/orders/LOCAL-DEMO-PO-002",
+  "/app/procurement/rfq/LOCAL-DEMO-RFQ-AWARD-001",
+  "/app/procurement/receiving/LOCAL-DEMO-GRN-001",
+  "/app/inventory/stock",
+  "/app/inventory/movements",
+]) {
+  test(`${path} names the warehouse instead of showing its id`, async ({ page }) => {
+    await signIn(page);
+    const { options } = await (await page.request.get("/api/master-data/warehouses/select", { headers: await authHeaders(page) })).json();
+    const warehouse = options.find((option: { id: string }) => option.id === "LOCAL-DEMO-WH-001").label;
+    await page.goto(path);
+    await expect(page.getByText(warehouse).first()).toBeVisible();
+    await expect(page.locator("main").first()).not.toContainText("LOCAL-DEMO-WH-001");
   });
 }

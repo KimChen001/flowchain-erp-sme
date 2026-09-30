@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, RefreshCw } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
+import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { A, Card, Chip } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -133,6 +134,7 @@ export default function InventoryPage({
   onReviewActionDraft?: (...args: any[]) => void;
 }) {
   const view = endpointFor[initialView] ? initialView : "empty";
+  const warehouseName = useWarehouseNames();
   const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState<any[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -339,7 +341,7 @@ export default function InventoryPage({
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      {item.warehouseId || item.defaultWarehouseId || "—"}
+                      {warehouseName(item.warehouseId || item.defaultWarehouseId) || "—"}
                       <div className="mt-1" style={{ color: A.sub }}>
                         {item.location || item.locationKey || "—"}
                       </div>
@@ -435,7 +437,7 @@ export default function InventoryPage({
             <EntityLink kind="item" id={row.sku}>
               {row.sku}
             </EntityLink>,
-            `${row.warehouseId || "—"} / ${row.location || "—"}`,
+            `${warehouseName(row.warehouseId) || "—"} / ${row.location || "—"}`,
             row.quantityIn,
             row.quantityOut,
             row.date,

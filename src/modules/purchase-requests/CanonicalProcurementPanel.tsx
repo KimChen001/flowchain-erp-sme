@@ -1,6 +1,7 @@
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useI18n } from "../../i18n/I18n";
 import { todayInTimeZone } from "../../lib/format";
+import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
@@ -114,6 +115,7 @@ export default function CanonicalProcurementPanel({
 }) {
   const copy = useWorkspaceCopy();
   const { timezone } = useI18n();
+  const warehouseName = useWarehouseNames();
   const [searchParams] = useSearchParams();
   const prefilled = useRef(false);
   const [items, setItems] = useState<Item[]>([]),
@@ -440,7 +442,7 @@ export default function CanonicalProcurementPanel({
                     ? `${line.quantity} × ${line.estimatedUnitPrice}`
                     : line.estimatedAmount}
                 </span>
-                <span>{line.targetWarehouseId}</span>
+                <span>{warehouseName(line.targetWarehouseId) || "-"}</span>
                 <span>{line.internalLineComment || "-"}</span>
               </div>
             ))}

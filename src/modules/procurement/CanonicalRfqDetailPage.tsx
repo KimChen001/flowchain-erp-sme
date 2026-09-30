@@ -7,6 +7,7 @@ import { procurementApi } from "./procurementApi";
 import { RfqSupplierResponseDialog } from "./RfqSupplierResponseDialog";
 import { useI18n } from "../../i18n/I18n";
 import { formatLocaleAmount } from "../../lib/format";
+import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import type { ProcurementQuotationRevision, ProcurementRfqDocument, ProcurementRfqQuotation } from "./procurementTypes";
 
 type ReadState = "loading" | "loaded" | "notFound" | "unauthenticated" | "forbidden" | "error" | "network" | "malformed";
@@ -197,6 +198,7 @@ function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotat
 function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload, onSuccessReload }: { record: ProcurementRfqDocument; canCompare: boolean; canCreate: boolean; canRevise: boolean; notice: string | null; onReload: () => Promise<void>; onSuccessReload: () => Promise<void> }) {
   const { language, locale } = useI18n();
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
+  const warehouseName = useWarehouseNames();
   const [editor, setEditor] = useState<{ supplier: typeof record.suppliers.knownParticipants[number]; mode: "initial" | "append" } | null>(null);
   const quotationFor = (supplierId: string) => record.quotations.find((quotation) => quotation.supplierId === supplierId) || null;
   const responseWorkflowOpen = ["open", "collecting_quotes"].includes(record.status || "");
@@ -263,7 +265,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
               <td className="p-3">{line.unit || "—"}</td>
               <td className="p-3 tabular-nums">{money(line.targetUnitPrice, record.currency, locale)}</td>
               <td className="p-3">{line.requiredDate || "—"}</td>
-              <td className="p-3">{line.deliveryLocation || "—"}</td>
+              <td className="p-3">{warehouseName(line.deliveryLocation) || "—"}</td>
             </tr>)}</tbody>
           </table></div>
         )}
