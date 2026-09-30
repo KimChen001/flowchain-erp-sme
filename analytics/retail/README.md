@@ -64,7 +64,7 @@ and takes about 20 minutes on 16 cores. `--limit N` runs on N SKUs for developme
 `--reuse-stat` reuses the saved statsmodels forecasts.
 
 `decision.py` also reads the SCMS cleaned file (`$FLOWCHAIN_DATA_DIR/scms/derived/scms_clean.csv`, or
-`--scms-csv FILE`) for the lead-time coefficient of variation. It takes about 5 minutes; `--reuse-gbm` reuses
+`--scms-csv FILE`) for the lead-time coefficient of variation and the supplier reliability tiers. It takes about 5 minutes; `--reuse-gbm` reuses
 its saved GBM forecasts.
 
 ## Outputs (in `<data dir>/outputs/`)

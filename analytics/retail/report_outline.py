@@ -78,10 +78,13 @@ def main(argv=None) -> int:
     w = sel["winner"]
     qm = q.loc[sel["quantile_method"]]
     base = sc[sc.scenario == "base"].set_index("policy")
-    rel = sc[sc.scenario == "reliable supplier (low-CV tier)"].set_index("policy")
-    unr = sc[sc.scenario == "unreliable supplier (high-CV tier)"].set_index("policy")
-    relm = sc[sc.scenario == "reliable supplier, median = 4 wk"].set_index("policy")
-    unrm = sc[sc.scenario == "unreliable supplier, median = 4 wk"].set_index("policy")
+    tier = pd.DataFrame(rep["tier_contrast"]).set_index(["pair", "policy"])
+    tiers = rep["lead_time"]["tiers"]
+    ts = rep["tier_scenarios"]
+
+    def tdelta(pair, pol):
+        r = tier.loc[(pair, pol)]
+        return f"{money(r.delta)} ({money(r.delta_lo)} to {money(r.delta_hi)})"
     main4 = base.loc[["a", "b", "c", "d0.6", "d0.8", "d1.0"]]
     best4 = main4.total_cost.idxmin()
     refs = base.loc[["p50", "p70", "p80", "p90"]]
@@ -197,8 +200,12 @@ def main(argv=None) -> int:
         "5b": ("replenishment-results.md §2–4",
                f"Lost-sales periodic review, R = 4 weeks, over the 13 test weeks. All policies start from the same "
                f"stock, the (a) level at the test origin. L is lognormal (ASSUMED mean 2/4/8 weeks) with SCMS "
-               f"direct-drop CV {lt['cv_all']:.3f} ({lt['rows']:,} lines; tiers {lt['cv_low_tier']:.3f} / "
-               f"{lt['cv_high_tier']:.3f}). Total cost = holding + lost margin + terminal markdown m × cost × "
+               f"direct-drop CV {lt['cv_all']:.3f} ({lt['rows']:,} lines). Supplier tiers follow delivery reliability: "
+               f"among {lt['vendors_n30']} vendors with ≥30 lines, reliable = Wilson upper bound of the late share below "
+               f"{lt['bench_late_share']:.1%} (and P90 days late ≤ {lt['bench_p90_days_late']:.1f}); unreliable = Wilson "
+               f"lower bound above it; each tier's lead time is its empirical actual ÷ planned ratio, median-matched at "
+               f"4 weeks. Reliable: {', '.join(tiers['promise_reliable']['vendors'])}. Unreliable: "
+               f"{', '.join(tiers['promise_unreliable']['vendors'])}. Total cost = holding + lost margin + terminal markdown m × cost × "
                f"(on hand + on order) after week 13 (ASSUMED m = {mb}). Policies: (a) (L+R) × 4-wk mean; (b) FlowChain ROP "
                "rule; (c) critical-ratio quantile of simulated demand over L+R, where the final-cycle overage adds "
                "m × cost (multi-period newsvendor); (d) multiple-choice knapsack MILP (scipy/HiGHS) over {P50…P98} "
@@ -219,14 +226,13 @@ def main(argv=None) -> int:
                "Common start stands in for unknown actual stock; markdown rate and costs are assumptions (bracketed "
                "by m = 0–0.5 and a no-assumption excess measure)."),
         "5d": ("replenishment-results.md §7, §9–10",
-               f"Supplier reliability → cost at median L = 4 wk (clean contrast): unreliable vs reliable tier changes total "
-               f"cost by (b) {money(unrm.loc['b', 'total_cost'] - relm.loc['b', 'total_cost'])}, (c) "
-               f"{money(unrm.loc['c', 'total_cost'] - relm.loc['c', 'total_cost'])}, (d 0.8) "
-               f"{money(unrm.loc['d0.8', 'total_cost'] - relm.loc['d0.8', 'total_cost'])}; (c) safety stock "
-               f"{money(rep['safety_stock_value_c']['reliable supplier, median = 4 wk'])} → "
-               f"{money(rep['safety_stock_value_c']['unreliable supplier, median = 4 wk'])}. At mean L = 4 wk (b) moves by "
-               f"{money(unr.loc['b', 'total_cost'] - rel.loc['b', 'total_cost'])}, a shape artefact (median 2 vs 4 wk); "
-               "at a fixed median (b) still gains because its targets scale with E[L]. "
+               f"Supplier reliability → cost (median L = 4 wk in every tier; unreliable − reliable, paired 95% CI): "
+               f"on-time tiers (c) {tdelta('on-time tiers (primary)', 'c')}, (d 0.8) "
+               f"{tdelta('on-time tiers (primary)', 'd0.8')}, (b) {tdelta('on-time tiers (primary)', 'b')}; slippage "
+               f"variant (c) {tdelta('slippage variant', 'c')}; superseded CV tiers (c) "
+               f"{tdelta('superseded CV tiers', 'c')}. (c) safety stock "
+               f"{money(rep['safety_stock_value_c'][ts['promise_reliable']])} → "
+               f"{money(rep['safety_stock_value_c'][ts['promise_unreliable']])} (on-time tiers). "
                f"**Recommendation: budgeted service-level optimisation (d)** rather than the unconstrained (c); a "
                f"budgeted (d) is cheapest of the four policies in {bc['d_cheapest_scenarios']} of {bc['n_scenarios']} "
                f"scenarios. Budget rule: raise B while the lost margin saved exceeds the added holding + markdown. On the "
@@ -236,7 +242,8 @@ def main(argv=None) -> int:
                f"residual pool gives weekly P90 coverage {nar['weekly_p90_coverage']:.1%} and (c) cycle service "
                f"{nar['c_csl']:.1%}, against a plan of about {nar['cr_by_review'][0]:.1%}.",
                "figures/replenishment-supplier-reliability.png; figures/replenishment-budget-frontier.png",
-               "Mean L is assumed; only its variability comes from SCMS. The budget is chosen in-sample on one season; "
+               "Mean L is assumed; only its variability comes from SCMS. The on-time tiers use the revised SCMS "
+               "scheduled date, so their late tails (and the cost of unreliability) are lower bounds. The budget is chosen in-sample on one season; "
                "validate on another. **[PLACEHOLDER: combined decision story]**"),
         "6a": ("replenishment-results.md §10; decision-inputs.md",
                "FlowChain: replace '1 week of demand' safety stock with budgeted service-level optimisation (policy d). "

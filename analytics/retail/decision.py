@@ -25,6 +25,9 @@ Setup (every number the report uses is computed here; assumptions are marked):
   26-week blocks within ABC class, which keeps each SKU's week-to-week error correlation.
 - Lead time: lognormal with an ASSUMED mean (2, 4 or 8 weeks) and the coefficient of
   variation of SCMS direct-drop actual lead times; rounded to whole weeks, minimum 1.
+- Supplier tiers: SCMS vendors ranked by delivery reliability (late share with a Wilson bound and
+  P90 days late), with a slippage-based robustness variant; each tier's lead time is its empirical
+  lead-time ratio, median-matched at 4 weeks (see ``scms_lead_time_inputs``).
 - Terminal inventory: the inventory position left after week 13 (on hand + on order, since
   orders placed at the last reviews are commitments that arrive into the post-season) is
   charged a markdown/obsolescence loss of m x unit cost per unit (ASSUMED m = 0.15, the owner's
@@ -71,6 +74,18 @@ def markdown_scenarios():
     return [("base" if m == BASE["markdown"] else f"markdown m = {m}", m) for m in MARKDOWN_GRID]
 T_WINDOW = 13                          # test weeks
 EXCESS_WEEKS = 8                       # "true excess" = stock beyond this many weeks of forward P50 demand
+TIER_SCENARIOS = {                      # lead-time source -> scenario name (all median-matched at 4 weeks)
+    "promise_reliable": "reliable tier (on time), median = 4 wk",
+    "promise_unreliable": "unreliable tier (on time), median = 4 wk",
+    "slip_reliable": "reliable tier (slippage variant), median = 4 wk",
+    "slip_unreliable": "unreliable tier (slippage variant), median = 4 wk",
+    "low": "superseded low-CV tier, median = 4 wk",
+    "high": "superseded high-CV tier, median = 4 wk",
+}
+TIER_POLICIES = ("b", "c", "d0.6", "d0.8")
+TIER_PAIRS = (("on-time tiers (primary)", "promise_reliable", "promise_unreliable"),
+              ("slippage variant", "slip_reliable", "slip_unreliable"),
+              ("superseded CV tiers", "low", "high"))
 START_LABELS = {"a": "common start = (a) level", "a0.5": "common start = 0.5 x (a) level",
                 "a1.5": "common start = 1.5 x (a) level",
                 "own": "own order-up-to level (BIASED toward high-stock policies)"}
@@ -89,36 +104,161 @@ POLICY_LABELS = {
 
 
 # ----------------------------------------------------------------------------- lead time
-def scms_lead_time_cvs(csv_path: Path) -> dict:
-    """CV of direct-drop actual lead times (SCMS 'usable for lead time' subset) and vendor tiers."""
+MIN_VENDOR_LINES = 30       # vendors eligible for a tier: at least this many usable direct-drop lines
+SEVERE_MIN_LATE = 5         # a vendor needs this many late lines before its P90 days late can mark it unreliable
+SLIP_FACTOR = 1.5           # robustness variant: a line "slips" when actual lead > 1.5 x the vendor's median
+SLIP_MIN_MEDIAN_DAYS = 7    # relative slippage is undefined for vendors whose median lead time is ~0 days
+
+
+def _wilson(k: int, n: int) -> tuple[float, float]:
+    from statsmodels.stats.proportion import proportion_confint
+    lo, hi = proportion_confint(k, n, alpha=0.05, method="wilson")
+    return float(lo), float(hi)
+
+
+def _wilson_tiers(share_ok: pd.Series, lo: pd.Series, hi: pd.Series, bench: float,
+                  good_extra: pd.Series, bad_extra: pd.Series) -> pd.Series:
+    """'reliable' when the Wilson upper bound of the bad-event share is below the benchmark (and ``good_extra``);
+    'unreliable' when the Wilson lower bound is above it (or ``bad_extra``); otherwise 'middle'."""
+    tier = pd.Series("middle", index=share_ok.index)
+    tier[(hi < bench) & good_extra] = "reliable"
+    tier[(lo > bench) | bad_extra] = "unreliable"
+    return tier
+
+
+def scms_lead_time_inputs(csv_path: Path) -> dict:
+    """SCMS lead-time inputs for the backtest: the overall CV (base case) and the supplier tiers.
+
+    Tiers (primary, delivery reliability): among direct-drop vendors with at least 30 lines usable for the
+    scorecard, a vendor is *reliable* when the Wilson 95% upper bound of its late share is below the overall
+    direct-drop late share and its P90 days late (among late lines) is no worse than the overall P90; it is
+    *unreliable* when the Wilson lower bound of its late share is above the overall late share, or when it has
+    at least 5 late lines with a P90 days late above the overall P90. The scheduled date was revised (see
+    ``scms/outputs/data-quality.md``), so late shares are lower bounds and these tiers understate lateness.
+
+    Robustness variant (no scheduled date): a line slips when its actual lead time exceeds 1.5 x the vendor's own
+    median actual lead time; the same Wilson rule is applied to the slip share. Vendors with a median actual lead
+    time under 7 days are left out of the variant, because relative slippage is undefined for them.
+
+    Tier lead-time distributions (median-matched): the primary tier's shape is the empirical distribution of
+    actual / planned lead time over its lines (1 when both are 0 days); the variant's is actual / the vendor's own
+    median. Each is divided by its median, so the backtest draws L = 4 weeks x that ratio: the median lead time
+    is 4 weeks in every tier and only the shape differs.
+
+    The superseded CV tiers (the lowest and highest third of vendors by lead-time CV) are kept for comparison.
+    """
     d = pd.read_csv(csv_path, low_memory=False,
-                    usecols=["fulfill_via", "usable_model", "lead_days_actual", "vendor"])
-    x = d[(d.fulfill_via == "Direct Drop") & d.usable_model.astype(bool) & d.lead_days_actual.notna()].copy()
+                    usecols=["fulfill_via", "usable_scorecard", "usable_model", "lead_days_actual",
+                             "lead_days_planned", "vendor", "is_late", "late_days"])
+    dd = d[d.fulfill_via == "Direct Drop"]
+    sc = dd[dd.usable_scorecard.fillna(False).astype(bool)].copy()
+    x = dd[dd.usable_model.fillna(False).astype(bool) & dd.lead_days_actual.notna()].copy()
     lt = x.lead_days_actual
-    g = x.groupby("vendor").lead_days_actual.agg(["size", "mean", "std"])
+    g = x.groupby("vendor").lead_days_actual.agg(["size", "mean", "std", "median"])
     g["cv"] = g["std"] / g["mean"]
-    v = g[g["size"] >= 30].sort_values("cv")
-    k = len(v) // 3
     x["ratio"] = x.lead_days_actual / x.vendor.map(g["mean"])
+
+    # --- primary: late share + Wilson bound + P90 days late (scorecard rows) -----------------
+    bench_late = float(sc.is_late.mean())
+    bench_p90 = float(sc.late_days[sc.late_days > 0].quantile(0.9))
+    counts = sc.vendor.value_counts()
+    elig = counts[counts >= MIN_VENDOR_LINES].index
+    rows = []
+    for v in elig:
+        s = sc[sc.vendor == v]
+        k, n = int(s.is_late.sum()), len(s)
+        lo, hi = _wilson(k, n)
+        late = s.late_days[s.late_days > 0]
+        xv = x[x.vendor == v]
+        med = float(xv.lead_days_actual.median()) if len(xv) else np.nan
+        slip_ok = len(xv) > 0 and med >= SLIP_MIN_MEDIAN_DAYS
+        ks = int((xv.lead_days_actual > SLIP_FACTOR * med).sum()) if slip_ok else 0
+        slo, shi = _wilson(ks, len(xv)) if slip_ok else (np.nan, np.nan)
+        rows.append({"vendor": v, "lines": n, "late": k, "late_share": k / n, "late_lo": lo, "late_hi": hi,
+                     "p90_days_late": float(late.quantile(0.9)) if len(late) else np.nan,
+                     "lead_lines": len(xv), "median_lead_actual": med,
+                     "median_lead_planned": float(xv.lead_days_planned.median()) if len(xv) else np.nan,
+                     "lead_cv": float(g.loc[v, "cv"]) if v in g.index else np.nan,
+                     "slip_eligible": bool(slip_ok), "slip": ks, "slip_share": ks / len(xv) if slip_ok else np.nan,
+                     "slip_lo": slo, "slip_hi": shi})
+    vt = pd.DataFrame(rows).set_index("vendor").sort_values(["late_share", "late_hi"])
+    p90 = vt.p90_days_late
+    vt["tier"] = _wilson_tiers(vt.late_share, vt.late_lo, vt.late_hi, bench_late,
+                               good_extra=p90.isna() | (p90 <= bench_p90),
+                               bad_extra=(vt.late >= SEVERE_MIN_LATE) & (p90 > bench_p90))
+    # the P90 conditions on their own (to report whether they changed any vendor's tier)
+    vt["tier_share_only"] = _wilson_tiers(vt.late_share, vt.late_lo, vt.late_hi, bench_late,
+                                          good_extra=pd.Series(True, index=vt.index),
+                                          bad_extra=pd.Series(False, index=vt.index))
+
+    # --- robustness: slippage relative to the vendor's own median actual lead time ----------
+    xs = x[x.vendor.isin(vt.index[vt.slip_eligible])].copy()
+    xs["med"] = xs.vendor.map(g["median"])
+    bench_slip = float((xs.lead_days_actual > SLIP_FACTOR * xs.med).mean())
+    ve = vt[vt.slip_eligible]
+    vt["tier_slip"] = "excluded"
+    vt.loc[ve.index, "tier_slip"] = _wilson_tiers(ve.slip_share, ve.slip_lo, ve.slip_hi, bench_slip,
+                                                  good_extra=pd.Series(True, index=ve.index),
+                                                  bad_extra=pd.Series(False, index=ve.index))
+
+    def shape(lines: pd.DataFrame, kind: str) -> np.ndarray:
+        if kind == "promise":
+            both0 = (lines.lead_days_planned == 0) & (lines.lead_days_actual == 0)
+            ok = both0 | (lines.lead_days_planned > 0)
+            r = np.where(both0, 1.0, lines.lead_days_actual / lines.lead_days_planned.where(lines.lead_days_planned > 0))
+            r = r[ok.to_numpy()]
+        else:
+            r = (lines.lead_days_actual / lines.vendor.map(g["median"])).to_numpy()
+        r = np.asarray(r, dtype=float)
+        r = r[np.isfinite(r)]
+        return np.sort(r / np.median(r))
+
+    def describe(r: np.ndarray) -> dict:
+        lw = np.maximum(1, np.rint(4 * r))            # L in weeks at a 4-week median, as the backtest rounds it
+        return {"lines": int(len(r)), "share_above_median": float((r > 1 + 1e-9).mean()),
+                "share_below_median": float((r < 1 - 1e-9).mean()), "p90_ratio": float(np.quantile(r, 0.9)),
+                "p95_ratio": float(np.quantile(r, 0.95)), "cv_weeks": float(lw.std() / lw.mean()),
+                "mean_weeks": float(lw.mean()), "p90_weeks": float(np.quantile(lw, 0.9))}
+
+    tiers = {}
+    for key, col, kind in (("promise", "tier", "promise"), ("slip", "tier_slip", "own_median")):
+        for t in ("reliable", "unreliable"):
+            names = list(vt.index[vt[col] == t])
+            r = shape(x[x.vendor.isin(names)], kind)
+            tiers[f"{key}_{t}"] = {"vendors": names, "ratios": r, **describe(r)}
+    # data-driven one-liner on how the P90 condition acted
+    p90_changed = sorted(vt.index[vt.tier != vt.tier_share_only])
+
+    # --- superseded: tiers by lead-time CV (lowest / highest third) ---------------------------
+    v = g[g["size"] >= MIN_VENDOR_LINES].sort_values("cv")
+    k = len(v) // 3
     low, high = v.index[:k], v.index[-k:]
     return {
         "file": str(csv_path), "rows": len(x), "median_days": float(lt.median()), "mean_days": float(lt.mean()),
         "cv_all": float(lt.std() / lt.mean()),
         "cv_within_vendor": float(x.ratio.std()),
-        "vendors_n30": len(v), "tier_size": k,
-        "cv_low_tier": float(x[x.vendor.isin(low)].ratio.std()),
+        "scorecard_rows": len(sc), "vendors_n30": len(vt), "bench_late_share": bench_late,
+        "bench_p90_days_late": bench_p90, "bench_slip_share": bench_slip, "slip_factor": SLIP_FACTOR,
+        "p90_condition_changed": p90_changed,
+        "vendor_table": vt.reset_index().to_dict(orient="records"),
+        "tiers": tiers,
+        "cv_tier_size": k, "cv_low_tier": float(x[x.vendor.isin(low)].ratio.std()),
         "cv_high_tier": float(x[x.vendor.isin(high)].ratio.std()),
         "low_tier_vendors": [f"{n} (CV {v.loc[n, 'cv']:.2f}, n={int(v.loc[n, 'size'])})" for n in low],
         "high_tier_vendors": [f"{n} (CV {v.loc[n, 'cv']:.2f}, n={int(v.loc[n, 'size'])})" for n in high],
     }
 
 
-def lead_weeks(u: np.ndarray, mean_L: float, cv: float, match: str = "mean") -> np.ndarray:
-    """Inverse-CDF lognormal lead time (weeks) with the given CV; rounded, >= 1.
+def lead_weeks(u: np.ndarray, mean_L: float, cv, match: str = "mean") -> np.ndarray:
+    """Lead time in weeks by inverse CDF; rounded, >= 1.
 
-    ``match="mean"`` sets the mean to ``mean_L``; ``match="median"`` sets the median to it instead
-    (then the mean grows with the CV). A lognormal cannot hold both fixed while the CV changes.
+    ``cv`` a number: lognormal with that CV. ``match="mean"`` sets the mean to ``mean_L``; ``match="median"``
+    sets the median to it instead (then the mean grows with the CV). A lognormal cannot hold both fixed while the
+    CV changes. ``cv`` an array: an empirical, median-normalised ratio distribution (a supplier tier), scaled so
+    that the median is ``mean_L`` (always median-matched).
     """
+    if isinstance(cv, np.ndarray):
+        return np.maximum(1, np.rint(mean_L * np.quantile(cv, u))).astype(int)
     if cv <= 0:
         return np.full(u.shape, max(1, int(round(mean_L))), dtype=int)
     s2 = np.log1p(cv ** 2)
@@ -337,13 +477,16 @@ def aggregate(df: pd.DataFrame, w: np.ndarray | None = None, ref: pd.DataFrame |
 # ----------------------------------------------------------------------------- scenario
 def run_scenario(sc, ctx, extra_checks=False):
     n = ctx["n"]
-    cv = {"all": ctx["lt"]["cv_all"], "low": ctx["lt"]["cv_low_tier"], "high": ctx["lt"]["cv_high_tier"],
-          "zero": 0.0}[sc["cv"]]
+    lt = ctx["lt"]
+    cvmap = {"all": lt["cv_all"], "low": lt["cv_low_tier"], "high": lt["cv_high_tier"], "zero": 0.0}
+    cv = cvmap[sc["cv"]] if sc["cv"] in cvmap else lt["tiers"][sc["cv"]]["ratios"]
     match = sc.get("match", "mean")
     L_plan = lead_weeks(ctx["U_plan"], sc["mean_L"], cv, match)
     L_orders = lead_weeks(ctx["U_orders"], sc["mean_L"], cv, match)
     EL_draws = lead_weeks(ctx["U_EL"], sc["mean_L"], cv, match)
     EL = float(EL_draws.mean())
+    if isinstance(cv, np.ndarray):          # empirical tier: report the CV of the lead time it produces
+        cv = float(EL_draws.std() / EL_draws.mean())
     price = ctx["price"]
     cost = sc["cost_ratio"] * price
     margin = price - cost
@@ -433,9 +576,9 @@ def main(argv=None) -> int:
     else:
         root = Path(os.environ[ENV_VAR]).expanduser() if os.environ.get(ENV_VAR) else Path.home() / "flowchain-data"
         scms_csv = root / "scms" / "derived" / "scms_clean.csv"
-    lt = scms_lead_time_cvs(scms_csv)
-    print(f"SCMS lead-time CVs from {scms_csv}: all {lt['cv_all']:.3f}, low tier {lt['cv_low_tier']:.3f}, "
-          f"high tier {lt['cv_high_tier']:.3f}")
+    lt = scms_lead_time_inputs(scms_csv)
+    print(f"SCMS lead-time CV from {scms_csv}: all {lt['cv_all']:.3f}; reliability tiers: "
+          + "; ".join(f"{k}: {', '.join(v['vendors'])}" for k, v in lt["tiers"].items()))
 
     sel = json.loads((paths.outputs_dir / "forecast-selection.json").read_text(encoding="utf-8"))
     variant = sel["history_variant"]
@@ -537,10 +680,7 @@ def main(argv=None) -> int:
     scenarios = {
         "base": dict(BASE),
         "L=2": {**BASE, "mean_L": 2.0}, "L=8": {**BASE, "mean_L": 8.0},
-        "reliable supplier (low-CV tier)": {**BASE, "cv": "low"},
-        "unreliable supplier (high-CV tier)": {**BASE, "cv": "high"},
-        "reliable supplier, median = 4 wk": {**BASE, "cv": "low", "match": "median"},
-        "unreliable supplier, median = 4 wk": {**BASE, "cv": "high", "match": "median"},
+        **{TIER_SCENARIOS[k]: {**BASE, "cv": k, "match": "median"} for k in TIER_SCENARIOS},
         "no lead-time variability": {**BASE, "cv": "zero"},
         "cost ratio 0.35": {**BASE, "cost_ratio": 0.35}, "cost ratio 0.65": {**BASE, "cost_ratio": 0.65},
         "holding 15%/yr": {**BASE, "holding": 0.15}, "holding 35%/yr": {**BASE, "holding": 0.35},
@@ -557,11 +697,14 @@ def main(argv=None) -> int:
                    "cr_by_review": meta_n["cr_by_review"],
                    "c_inv": agg_n["avg_inv_value"], "median_cr": meta_n["median_cr"],
                    "c_csl_lo": agg_n["csl_lo"], "c_csl_hi": agg_n["csl_hi"]})
+    tier_res = {}
     for name, sc in scenarios.items():
         res, meta = run_scenario(sc, ctx, extra_checks=(name == "base"))
         metas[name] = meta
         if name == "base":
             base_res = res
+        if name in TIER_SCENARIOS.values():
+            tier_res[name] = res
         for pol, df in res.items():
             agg = aggregate(df, n_boot_w, ref=res["b"])
             rows.append({"scenario": name, "policy": pol, "mean_L": sc["mean_L"], "cv": meta["cv"],
@@ -569,6 +712,19 @@ def main(argv=None) -> int:
         print(f"  scenario {name} done at {time.time() - t0:.0f}s", flush=True)
     summary = pd.DataFrame(rows)
     summary.to_csv(paths.outputs_dir / "replenishment-scenarios.csv", index=False)
+
+    # Supplier-tier contrast: unreliable minus reliable tier, per policy, with a paired SKU bootstrap (same SKUs,
+    # same demand, same random numbers; only the lead-time distribution differs).
+    tier_delta = []
+    for label, rk, uk in TIER_PAIRS:
+        rn, un = TIER_SCENARIOS[rk], TIER_SCENARIOS[uk]
+        for pol in TIER_POLICIES:
+            dlt, lo, hi = paired_delta(tier_res[un][pol], tier_res[rn][pol], n_boot_w)
+            tier_delta.append({"pair": label, "policy": pol, "reliable_total": float(sku_total(tier_res[rn][pol]).sum()),
+                               "unreliable_total": float(sku_total(tier_res[un][pol]).sum()),
+                               "delta": dlt, "delta_lo": lo, "delta_hi": hi})
+    tier_delta = pd.DataFrame(tier_delta)
+    tier_delta.to_csv(paths.outputs_dir / "replenishment-tier-contrast.csv", index=False)
 
     # ABC breakdown (base)
     abc_rows = []
@@ -643,7 +799,9 @@ def main(argv=None) -> int:
               "planned_argmin": float(frontier.factor[frontier.plan_total.idxmin()])}
 
     # planned vs realised service of (c): plan from the paths at each review
-    key = {"lead_time": lt, "calibration": {"origins": {str(k): v for k, v in cal_windows.items()},
+    lt_json = {**lt, "tiers": {k: {kk: vv for kk, vv in v.items() if kk != "ratios"} for k, v in lt["tiers"].items()}}
+    key = {"lead_time": lt_json, "tier_contrast": tier_delta.to_dict(orient="records"),
+           "tier_scenarios": TIER_SCENARIOS, "calibration": {"origins": {str(k): v for k, v in cal_windows.items()},
                                             "trajectories": {c: int(len(p)) for c, p in pools.items()}, **diag},
            "checks": checks, "base": s_base.drop(columns=["scenario"]).reset_index().to_dict(orient="records"),
            "median_cr_base": planned_csl_c, "E_L_base": bm["EL"], "n_skus": n, "paths": args.paths,
@@ -660,6 +818,18 @@ def main(argv=None) -> int:
     print(f"Wrote replenishment-results.md in {time.time() - t0:.0f}s")
     print(s_base[["fill_rate", "csl", "avg_inv_value", "holding", "lost_margin", "total_cost", "orders"]].round(3))
     return 0
+
+
+def sku_total(df: pd.DataFrame) -> np.ndarray:
+    """Per-SKU total cost (holding + stockout + terminal markdown)."""
+    return (df.holding + df.stockout_cost + df.terminal).to_numpy()
+
+
+def paired_delta(df_new: pd.DataFrame, df_ref: pd.DataFrame, w: np.ndarray) -> tuple[float, float, float]:
+    """Total-cost difference new - ref with a paired SKU-bootstrap 95% interval."""
+    d = sku_total(df_new) - sku_total(df_ref)
+    lo, hi = np.percentile(w @ d, [2.5, 97.5])
+    return float(d.sum()), float(lo), float(hi)
 
 
 def tail_numbers(paths, skus) -> dict:
@@ -698,23 +868,25 @@ def figures(paths, summary, s_base, checks, frontier, choice):
     ax.legend(handles=handles, loc="lower right", fontsize=7)
     P.save(fig, figs / "replenishment-service-inventory.png")
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 3.8), sharey=True)
-    versions = (("mean-matched (mean L = 4 wk)", "reliable supplier (low-CV tier)", "unreliable supplier (high-CV tier)"),
-                ("median-matched (median L = 4 wk)", "reliable supplier, median = 4 wk",
-                 "unreliable supplier, median = 4 wk"))
-    for ax, (title, rn, un) in zip(axes, versions):
+    fig, axes = plt.subplots(1, len(TIER_PAIRS), figsize=(11, 3.8), sharey=True)
+    pol_label = {"b": "(b) FlowChain rule", "c": "(c) critical-ratio quantile", "d0.6": "(d) budgeted MILP, B = 0.6 x (c)",
+                 "d0.8": "(d) budgeted MILP, B = 0.8 x (c)", "e0.75": "(e) P75 order-up-to"}
+    shown = [p for p in TIER_POLICIES if p in pol_label]
+    width = 0.8 / len(shown)
+    for ax, (title, rk, uk) in zip(axes, TIER_PAIRS):
         x = np.arange(2)
-        for k, p in enumerate(["b", "c", "d0.8"]):
-            vals = [summary[(summary.scenario == sn) & (summary.policy == p)].total_cost.iloc[0] / 1e3 for sn in (rn, un)]
-            ax.bar(x + (k - 1) * 0.26, vals, width=0.24, color=P.SERIES[k + 1],
-                   label={"b": "(b) FlowChain rule", "c": "(c) critical-ratio quantile",
-                          "d0.8": "(d) budgeted MILP, B = 0.8 x (c)"}[p])
-        ax.set_xticks(x, ["reliable (low CV)", "unreliable (high CV)"])
+        for k, p in enumerate(shown):
+            vals = [summary[(summary.scenario == TIER_SCENARIOS[t]) & (summary.policy == p)].total_cost.iloc[0] / 1e3
+                    for t in (rk, uk)]
+            ax.bar(x + (k - (len(shown) - 1) / 2) * width, vals, width=width * 0.92, color=P.SERIES[k + 1],
+                   label=pol_label[p])
+        ax.set_xticks(x, ["reliable", "unreliable"])
         ax.set_title(title, fontsize=10)
     axes[0].set_ylabel("total cost, GBP thousand (13 weeks)")
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=3, fontsize=8, frameon=False)
-    fig.suptitle("Supplier reliability and total cost", x=0.02, ha="left", fontsize=11, fontweight="bold")
+    fig.legend(handles, labels, loc="lower center", ncol=len(shown), fontsize=8, frameon=False)
+    fig.suptitle("Supplier tier and total cost (median lead time 4 weeks in every tier)", x=0.02, ha="left",
+                 fontsize=11, fontweight="bold")
     fig.tight_layout(rect=(0, 0.07, 1, 1))
     fig.savefig(figs / "replenishment-supplier-reliability.png", dpi=150)
     plt.close(fig)
@@ -788,10 +960,14 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       f"subset: {lt['rows']:,} lines, median {lt['median_days']:.0f} days, **CV {lt['cv_all']:.3f}**). L is rounded to "
       f"whole weeks with a minimum of 1 (assumption). At mean 4 the realised E[L] is {bm['EL']:.2f} weeks. SCMS absolute "
       "lead times (air/ocean to about 40 countries) do not fit a UK gift wholesaler, so only the variability is used.")
-    a(f"- **Supplier tiers:** among the {lt['vendors_n30']} SCMS vendors with at least 30 lines, the "
-      f"{lt['tier_size']} with the lowest CV form the *reliable* tier (pooled within-vendor CV "
-      f"{lt['cv_low_tier']:.3f}) and the {lt['tier_size']} with the highest CV the *unreliable* tier "
-      f"({lt['cv_high_tier']:.3f}). Within-vendor CV = SD of lead time ÷ that vendor's mean.")
+    a(f"- **Supplier tiers (delivery reliability):** among the {lt['vendors_n30']} SCMS direct-drop vendors with at "
+      f"least {MIN_VENDOR_LINES} scorecard lines, *reliable* = Wilson 95% upper bound of the late share below the overall "
+      f"late share ({lt['bench_late_share']:.1%}) and P90 days late no worse than the overall P90 "
+      f"({lt['bench_p90_days_late']:.1f} days); *unreliable* = Wilson lower bound above {lt['bench_late_share']:.1%}, or "
+      f"at least {SEVERE_MIN_LATE} late lines with a P90 days late above {lt['bench_p90_days_late']:.1f}. Each tier's lead "
+      "time is its empirical actual ÷ planned lead-time ratio, scaled to a median of 4 weeks, so only the shape differs "
+      "between tiers. Robustness variant without the (revised) scheduled date: slippage of actual lead time against the "
+      "vendor's own median. Details and the vendor list are in section 7.")
     a("- **Costs (ASSUMPTIONS, base case):** unit cost = 0.5 × median selling price; holding 25% of cost per year; "
       "stockout = lost margin (price − cost) per unit, with no backorders; **terminal markdown/obsolescence** "
       f"m = {BASE['markdown']} × unit cost per unit of inventory position (on hand + on order) left after week 13, "
@@ -939,68 +1115,7 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     a("")
     a("## 7. Supplier reliability and lead time: the bridge to part 2")
     a("")
-    sc_names = ["reliable supplier (low-CV tier)", "base", "unreliable supplier (high-CV tier)",
-                "reliable supplier, median = 4 wk", "unreliable supplier, median = 4 wk",
-                "no lead-time variability", "L=2", "L=8"]
-    a("| Scenario | CV of L | E[L] | median L | policy | fill rate | avg inventory value (GBP) | total cost (GBP) |")
-    a("|---|---|---|---|---|---|---|---|")
-    for s in sc_names:
-        for p in ("b", "c", "d0.8"):
-            r = summary[(summary.scenario == s) & (summary.policy == p)].iloc[0]
-            a(f"| {s} | {r.cv:.2f} | {r.E_L:.2f} | {r.median_L:.0f} | {p} | {r.fill_rate:.1%} | "
-              f"{fmt_money(r.avg_inv_value)} | "
-              f"{fmt_money(r.total_cost)} |")
-    a("")
-    a("Two versions of the contrast, because a lognormal cannot hold both the mean and the median fixed while "
-      "its dispersion changes: **mean-matched** (mean 4 weeks for both tiers; the high-CV tier then has a much lower "
-      "median) and **median-matched** (median 4 weeks for both; the high-CV tier then has a higher mean, i.e. a "
-      "long tail of late orders).")
-    a("")
-    a("| Version | tier | CV | E[L] | median L | (b) total | (c) total [95% CI] | (d, 0.8) total | (c) safety stock at week 0 |")
-    a("|---|---|---|---|---|---|---|---|---|")
-    for ver, rel_name, unr_name in (("mean-matched", "reliable supplier (low-CV tier)", "unreliable supplier (high-CV tier)"),
-                                    ("median-matched", "reliable supplier, median = 4 wk",
-                                     "unreliable supplier, median = 4 wk")):
-        for tier, nm in (("reliable", rel_name), ("unreliable", unr_name)):
-            d = summary[summary.scenario == nm].set_index("policy")
-            mt = metas[nm]
-            a(f"| {ver} | {tier} | {mt['cv']:.2f} | {mt['EL']:.2f} | {mt['median_L']:.0f} | "
-              f"{fmt_money(d.loc['b', 'total_cost'])} | {fmt_money(d.loc['c', 'total_cost'])} "
-              f"[{fmt_money(d.loc['c', 'total_cost_lo'])}, {fmt_money(d.loc['c', 'total_cost_hi'])}] | "
-              f"{fmt_money(d.loc['d0.8', 'total_cost'])} | {fmt_money(mt['safety_stock_value_c'])} |")
-    a("")
-    for ver, rel_name, unr_name in (("Mean-matched", "reliable supplier (low-CV tier)", "unreliable supplier (high-CV tier)"),
-                                    ("Median-matched", "reliable supplier, median = 4 wk",
-                                     "unreliable supplier, median = 4 wk")):
-        r_, u_ = (summary[summary.scenario == x].set_index("policy") for x in (rel_name, unr_name))
-        mr, mu = metas[rel_name], metas[unr_name]
-        parts = []
-        for p in ("b", "c", "d0.8"):
-            dlt = u_.loc[p, "total_cost"] - r_.loc[p, "total_cost"]
-            parts.append(f"{p} {'+' if dlt >= 0 else '−'}{fmt_money(abs(dlt))}")
-        a(f"**{ver}, in money (GBP, 13 weeks, {key['n_skus']} SKUs):** going from the reliable to the unreliable tier "
-          f"changes total cost by " + ", ".join(parts) + f". The safety stock of (c) at the week-0 review goes from "
-          f"{fmt_money(mr['safety_stock_value_c'])} to {fmt_money(mu['safety_stock_value_c'])} "
-          f"({fmt_money(mu['safety_stock_value_c'] - mr['safety_stock_value_c'])}). Median L is "
-          f"{mr['median_L']:.0f} vs {mu['median_L']:.0f} weeks, and E[L] {mr['EL']:.2f} vs {mu['EL']:.2f}.")
-        a("")
-    rm_, um_ = (summary[summary.scenario == x].set_index("policy")
-                for x in ("reliable supplier, median = 4 wk", "unreliable supplier, median = 4 wk"))
-    b_med = um_.loc["b", "total_cost"] - rm_.loc["b", "total_cost"]
-    c_med = um_.loc["c", "total_cost"] - rm_.loc["c", "total_cost"]
-    em_r, em_u = metas["reliable supplier, median = 4 wk"]["EL"], metas["unreliable supplier, median = 4 wk"]["EL"]
-    a("How to read it: in the mean-matched version the high-CV tier has a shorter median lead time, so most "
-      "orders arrive early, and a rule that ignores variability can look better with the unreliable supplier. "
-      "The median-matched version removes that shape effect: typical orders take the same 4 weeks and the "
-      f"unreliable tier only adds late orders. There, the policies that price variability cost more with the "
-      f"unreliable supplier ((c) {'+' if c_med >= 0 else '−'}{fmt_money(abs(c_med))}), which is the cost of "
-      "lead-time unreliability that the SCMS scorecard measures (part 2). "
-      + (f"Rule (b) still moves by {'−' if b_med < 0 else '+'}{fmt_money(abs(b_med))}. Its targets scale with E[L] "
-         f"({em_u:.1f} vs {em_r:.1f} weeks), so the unreliable tier makes this under-stocked rule hold more stock "
-         "and lose fewer sales. That comes from the rule's larger target, not from unreliability being useful."
-         if b_med < 0 else f"Rule (b) also costs more ({fmt_money(b_med)})."))
-    a("")
-    a("![supplier reliability](figures/replenishment-supplier-reliability.png)")
+    write_bridge(a, lt, key, summary, metas)
     a("")
     a("## 8. Sensitivity (mean L = 4, SCMS CV, common start; totals in GBP)")
     a("")
@@ -1058,6 +1173,123 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     a("")
     a(f"_Runtime {seconds / 60:.1f} min._")
     (paths.outputs_dir / "replenishment-results.md").write_text("\n".join(L) + "\n", encoding="utf-8")
+
+
+def write_bridge(a, lt, key, summary, metas):
+    """Section 7: how the supplier tiers are formed, their lead-time shapes and what they cost."""
+    vt = pd.DataFrame(lt["vendor_table"]).set_index("vendor")
+    tiers = lt["tiers"]
+    low_cv = {s.rsplit(" (CV", 1)[0] for s in lt["low_tier_vendors"]}
+    high_cv = {s.rsplit(" (CV", 1)[0] for s in lt["high_tier_vendors"]}
+    a("**How the tiers are formed.** The tiers follow delivery reliability, the quantity the part-2 scorecard "
+      "measures, instead of lead-time CV. The earlier CV ranking disagreed with the on-time ranking, partly because "
+      "short lead times inflate a CV. Eligible vendors are the "
+      f"{lt['vendors_n30']} direct-drop vendors with at least {MIN_VENDOR_LINES} scorecard lines "
+      f"(out of {lt['scorecard_rows']:,} usable lines).")
+    a("")
+    a(f"- **Primary rule (late share and days late).** *Reliable*: the Wilson 95% upper bound of the vendor's late "
+      f"share is below the overall direct-drop late share ({lt['bench_late_share']:.1%}), and its P90 days late among "
+      f"late lines is at most the overall P90 ({lt['bench_p90_days_late']:.1f} days), or it has no late line. "
+      f"*Unreliable*: the Wilson lower bound is above {lt['bench_late_share']:.1%}, or the vendor has at least "
+      f"{SEVERE_MIN_LATE} late lines and a P90 days late above {lt['bench_p90_days_late']:.1f} days. Everyone else is "
+      "*middle* and is not used. "
+      + ("On these data the P90 condition changes no vendor's tier; the late-share bounds decide it."
+         if not lt["p90_condition_changed"] else
+         "The P90 condition changes the tier of " + ", ".join(lt["p90_condition_changed"]) + "."))
+    a("- **Caveat: on-time is an upper bound.** The SCMS scheduled date was revised towards the delivery date "
+      "(part 2, `data-quality.md`), so late shares are lower bounds and the tiers' late tails are understated.")
+    a(f"- **Robustness variant (slippage, no scheduled date).** A line slips when its actual lead time exceeds "
+      f"{SLIP_FACTOR} × the vendor's own median actual lead time; the same Wilson rule is applied to the slip share "
+      f"(overall {lt['bench_slip_share']:.1%}). Vendors with a median lead time under {SLIP_MIN_MEDIAN_DAYS} days "
+      "are left out, because slippage relative to a median of about 0 days is undefined. This measure uses only PO "
+      "and delivery dates, but it also counts ordinary differences in route and destination within a vendor.")
+    a("")
+    a("| vendor | lines | late share [Wilson 95% CI] | P90 days late | median lead actual / planned (d) | "
+      "slip share [CI] | lead-time CV | tier (primary) | tier (slippage variant) | superseded CV tier |")
+    a("|---|---:|---|---:|---|---|---:|---|---|---|")
+    for v, r in vt.iterrows():
+        cvt = "low" if v in low_cv else ("high" if v in high_cv else "–")
+        slip = (f"{r.slip_share:.1%} [{r.slip_lo:.1%}, {r.slip_hi:.1%}]" if r.slip_eligible else "excluded")
+        a(f"| {v} | {int(r.lines):,} | {r.late_share:.1%} [{r.late_lo:.1%}, {r.late_hi:.1%}] | "
+          + ("–" if pd.isna(r.p90_days_late) else f"{r.p90_days_late:.1f}")
+          + f" | {r.median_lead_actual:.0f} / {r.median_lead_planned:.0f} | {slip} | {r.lead_cv:.2f} | "
+          f"**{r.tier}** | {r.tier_slip} | {cvt} |")
+    a("")
+    a("**Tier lead-time distributions used in the backtest.** Primary tiers: the empirical ratio actual ÷ planned "
+      "lead time over the tier's lines (1 when both are 0 days). Slippage variant: actual ÷ the vendor's own median. "
+      "Each ratio is divided by its median and multiplied by 4 weeks, then rounded to whole weeks (minimum 1), so every "
+      "tier has a median lead time of 4 weeks and only the shape differs. The superseded CV tiers use a lognormal "
+      f"with the tier CV ({lt['cv_low_tier']:.3f} / {lt['cv_high_tier']:.3f}), also median-matched.")
+    a("")
+    a("| tier | vendors | lead-time lines | share later than median | share earlier than median | P90 ratio | "
+      "L at median 4 wk: mean / P90 (weeks) | CV of L |")
+    a("|---|---|---:|---|---|---:|---|---:|")
+    for k, lab in (("promise_reliable", "reliable (primary)"), ("promise_unreliable", "unreliable (primary)"),
+                   ("slip_reliable", "reliable (slippage variant)"), ("slip_unreliable", "unreliable (slippage variant)")):
+        t = tiers[k]
+        a(f"| {lab} | {', '.join(t['vendors'])} | {t['lines']:,} | {t['share_above_median']:.1%} | "
+          f"{t['share_below_median']:.1%} | {t['p90_ratio']:.2f} | {t['mean_weeks']:.2f} / {t['p90_weeks']:.0f} | "
+          f"{t['cv_weeks']:.3f} |")
+    a("")
+    a("| Scenario | CV of L | E[L] | median L | (b) total | (c) total [95% CI] | (d, 0.6) total | (d, 0.8) total | "
+      "(c) safety stock at week 0 |")
+    a("|---|---|---|---|---|---|---|---|---|")
+    for nm in ["base", "no lead-time variability", *TIER_SCENARIOS.values()]:
+        d = summary[summary.scenario == nm].set_index("policy")
+        mt = metas[nm]
+        a(f"| {nm} | {mt['cv']:.2f} | {mt['EL']:.2f} | {mt['median_L']:.0f} | {fmt_money(d.loc['b', 'total_cost'])} | "
+          f"{fmt_money(d.loc['c', 'total_cost'])} [{fmt_money(d.loc['c', 'total_cost_lo'])}, "
+          f"{fmt_money(d.loc['c', 'total_cost_hi'])}] | {fmt_money(d.loc['d0.6', 'total_cost'])} | "
+          f"{fmt_money(d.loc['d0.8', 'total_cost'])} | {fmt_money(mt['safety_stock_value_c'])} |")
+    a("")
+    td = pd.DataFrame(key["tier_contrast"])
+    a("**What moving from the reliable to the unreliable tier costs** (GBP, 13 weeks, "
+      f"{key['n_skus']} SKUs; paired SKU bootstrap, same demand and random numbers):")
+    a("")
+    a("| tiers | policy | reliable total | unreliable total | Δ unreliable − reliable [paired 95% CI] |")
+    a("|---|---|---:|---:|---|")
+    for _, r in td.iterrows():
+        a(f"| {r.pair} | {POLICY_LABELS.get(r.policy, r.policy)} | {fmt_money(r.reliable_total)} | "
+          f"{fmt_money(r.unreliable_total)} | {signed_money(r.delta)} "
+          f"[{fmt_money(r.delta_lo)}, {fmt_money(r.delta_hi)}] |")
+    a("")
+    tdi = td.set_index(["pair", "policy"])
+    prim, var, old = (p[0] for p in TIER_PAIRS)
+
+    def verdict(pair, pol):
+        r = tdi.loc[(pair, pol)]
+        if r.delta_lo > 0:
+            return "costs more, and the paired interval excludes zero"
+        if r.delta_hi < 0:
+            return "costs less, and the paired interval excludes zero"
+        return "is not reliably different (the paired interval includes zero)"
+
+    pc, oc, sv = tdi.loc[(prim, "c")], tdi.loc[(old, "c")], tdi.loc[(var, "c")]
+    a(f"- **Does reliability cost money?** With the on-time tiers, the unreliable tier under (c) "
+      f"{verdict(prim, 'c')}: {signed_money(pc.delta)} [{fmt_money(pc.delta_lo)}, {fmt_money(pc.delta_hi)}], against "
+      f"{signed_money(oc.delta)} [{fmt_money(oc.delta_lo)}, {fmt_money(oc.delta_hi)}] under the superseded CV tiers"
+      + (f" ({pc.delta / oc.delta:.0%} of it)" if oc.delta > 0 and pc.delta > 0 else "")
+      + f". Under (d, 0.6) it {verdict(prim, 'd0.6')}; under (d, 0.8) it {verdict(prim, 'd0.8')}; under (b) it "
+      f"{verdict(prim, 'b')}.")
+    a(f"- **Slippage variant.** Under (c) the unreliable tier {verdict(var, 'c')}: {signed_money(sv.delta)} "
+      f"[{fmt_money(sv.delta_lo)}, {fmt_money(sv.delta_hi)}]. This measure ranks vendors mostly by how dispersed their "
+      "lead times are, so it mixes supplier behaviour with route and destination differences.")
+    a("- **Reading the on-time contrast.** Most lines of every tier arrived exactly on the (revised) schedule, so a "
+      "tier's lead time is 4 weeks for most orders and the tiers differ mainly in a thin late tail. Because the "
+      "scheduled date was revised, that tail is a lower bound, and so is the cost of the unreliable tier.")
+    moved = [(lab, tdi.loc[(lab, "b")]) for lab in (prim, var, old) if tdi.loc[(lab, "b")].delta_hi < 0]
+    if moved:
+        a("- **Rule (b) moves the other way** where the unreliable tier has the longer mean lead time ("
+          + "; ".join(f"{lab}: {signed_money(r.delta)} [{fmt_money(r.delta_lo)}, {fmt_money(r.delta_hi)}]"
+                      for lab, r in moved)
+          + "). Its targets scale with E[L], so a longer mean lead time makes this under-stocked rule hold more stock "
+          "and lose fewer sales. That comes from the rule, not from unreliability being useful.")
+    a("")
+    a("![supplier reliability](figures/replenishment-supplier-reliability.png)")
+
+
+def signed_money(v):
+    return f"+{fmt_money(v)}" if v >= 0 else fmt_money(v)
 
 
 def write_discussion(a, lt, key, summary, s_base, metas, checks, tail, frontier, choice):
