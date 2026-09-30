@@ -517,7 +517,8 @@ def main(argv=None) -> int:
            "checks": checks, "base": s_base.drop(columns=["scenario"]).reset_index().to_dict(orient="records"),
            "median_cr_base": planned_csl_c, "E_L_base": bm["EL"], "n_skus": n, "paths": args.paths,
            "review_weeks": [str(weeks[t0_idx + t].date()) for t in REVIEW_WEEKS], "variant": variant,
-           "tail": tail_numbers(paths, skus), "narrow_pool": narrow}
+           "tail": tail_numbers(paths, skus), "narrow_pool": narrow,
+           "safety_stock_value_c": {k: v["safety_stock_value_c"] for k, v in metas.items()}}
     (paths.outputs_dir / "key-numbers-replenishment.json").write_text(json.dumps(key, indent=2, default=float),
                                                                        encoding="utf-8")
     figures(paths, summary, s_base, checks)

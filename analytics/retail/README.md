@@ -56,6 +56,7 @@ python -m retail.quality_report        # outputs/data-quality.md and figures
 python -m retail.forecast              # outputs/demand-forecast.md, metrics and figures
 python -m retail.decision_inputs       # outputs/demand-distribution.csv, decision-inputs.md
 python -m retail.decision              # replenishment backtest: outputs/replenishment-results.md, demand paths
+python -m retail.report_outline        # outputs/report-outline-retail.md (rubric 1a-6b -> evidence)
 ```
 
 `forecast.py` fits ETS and ARIMA per SKU in a process pool (`--workers`, default CPU count − 2)
@@ -78,6 +79,7 @@ its saved GBM forecasts.
 | `sku-parameters.csv`, `decision-inputs.md` | cost, holding, stockout and pack proxies; assumptions marked |
 | `replenishment-results.md`, `replenishment-*.csv` | policy backtest (rule of thumb, FlowChain rule, service level, budgeted MILP) |
 | `demand-paths-test.csv.gz`, `demand-paths-forward.csv.gz` | 500 simulated 26-week demand paths per SKU (GBM + block-bootstrapped residuals) |
+| `report-outline-retail.md` | rubric questions 1a–6b mapped to the retail evidence (same format as the SCMS outline) |
 
 ## Key design decisions
 
