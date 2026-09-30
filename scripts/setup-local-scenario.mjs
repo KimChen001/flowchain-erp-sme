@@ -2,19 +2,24 @@ import { getPrismaClient, disconnectPrismaClient } from '../server/persistence/p
 import { assertLocalDevelopment } from '../server/domain/local-development-contract.mjs'
 import { localDemoSupplier } from './setup-local-demo.mjs'
 import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../server/domain/procurement-status-authority.mjs'
+import { createReceivingPostingCommandService } from '../server/domain/receiving-posting-command-service.mjs'
+import { resolveProvisionedActor } from '../server/domain/pilot-identity.mjs'
+import { authorize } from '../server/auth/authorization-service.mjs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
 // The US walkthrough scenario. Every date is an offset from the seed day in the
 // tenant's timezone, so overdue orders, receipt timeliness and invoice aging
-// have something to show whenever the scenario is loaded. The same seed day
-// always produces the same rows; pass { asOf: 'YYYY-MM-DD' } (or --as-of) to
-// pin it. Identifiers keep the LOCAL-DEMO- prefix that the local-status
-// endpoint counts.
+// have something to show. The same seed day always produces the same rows;
+// pass { asOf: 'YYYY-MM-DD' } (or --as-of) to pin it. Identifiers keep the
+// LOCAL-DEMO- prefix that the local-status endpoint counts.
 //
-// Receipts are recorded as received but unposted, like the rest of the local
-// scenario: no inventory movements, payables or payments are created.
-export const LOCAL_SCENARIO_VERSION = 4
+// Receipts are posted through the receiving posting command service, dated at
+// their arrival, so purchase order received quantities, receipt status and
+// inventory movements agree. Posted receipts are inventory history: once they
+// exist the scenario keeps its first seed day and refuses a different one.
+// No payables, payments or journal entries are created.
+export const LOCAL_SCENARIO_VERSION = 5
 const WAREHOUSE = 'LOCAL-DEMO-WH-001'
 const BUYERS = ['Kim', 'Dana Whitfield']
 const RECEIVER = 'Luis Ortega'
@@ -151,6 +156,39 @@ export function scenarioCalendar(asOf, timeZone) {
   }
 }
 
+// The seed day. Before any receipt is posted it is the requested day (or today);
+// afterwards it is the day stored on the posted receipts, because their
+// inventory movements are dated history that a re-seed cannot move.
+async function scenarioSeedDay(prisma, tenantId, requested, timeZone) {
+  const posted = await prisma.receivingDocument.findFirst({
+    where: { tenantId, id: { startsWith: 'LOCAL-DEMO-GRN-' }, postingStatus: { not: 'unposted' } },
+    select: { metadata: true },
+  })
+  const anchored = posted?.metadata?.scenarioAsOf
+  const hasRequest = requested !== undefined && requested !== null && requested !== ''
+  if (!anchored) return parseAsOf(hasRequest ? requested : new Date(), timeZone)
+  if (hasRequest && parseAsOf(requested, timeZone) !== anchored) {
+    throw new Error(`The walkthrough scenario was seeded for ${anchored} and its receipts are posted to inventory, so it cannot be re-dated to ${parseAsOf(requested, timeZone)}. Seed a fresh database to use another day.`)
+  }
+  return anchored
+}
+
+// The workspace user who posts the walkthrough receipts: the first active user,
+// by email, whose roles grant receiving.post. pilot:setup provisions the roles.
+async function receivingActor(prisma, tenantId) {
+  const users = await prisma.user.findMany({ where: { tenantId, status: 'active' }, orderBy: { email: 'asc' } })
+  for (const user of users) {
+    const identity = { authenticated: true, tenantId, userId: user.id, role: user.role, name: user.name, source: 'local_walkthrough_scenario' }
+    try {
+      const actor = await resolveProvisionedActor(prisma, identity)
+      if (authorize({ actor, permission: 'receiving.post', tenantId }).allowed) return identity
+    } catch {
+      // A user without a complete role assignment cannot post; try the next one.
+    }
+  }
+  throw new Error('No active workspace user may post receipts. Run pilot:setup before pilot:setup:scenario.')
+}
+
 export async function seedLocalScenario(prisma, env = process.env, options = {}) {
   assertLocalDevelopment(env, 'pilot:setup:scenario')
   const tenantId = String(env.FLOWCHAIN_DEFAULT_TENANT_ID || 'tenant-flowchain-local').trim()
@@ -159,26 +197,31 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
   if (tenant.currency !== 'USD') throw new Error(`The walkthrough scenario is USD business data; workspace ${tenantId} uses ${tenant.currency}.`)
   if (!await prisma.item.findUnique({ where: { id: 'LOCAL-DEMO-ITEM-001' } })) throw new Error('Run pilot:setup:demo before pilot:setup:scenario.')
   const timeZone = tenant.timezone || 'America/New_York'
-  const calendar = scenarioCalendar(options.asOf ?? env.FLOWCHAIN_SCENARIO_AS_OF ?? new Date(), timeZone)
+  const calendar = scenarioCalendar(await scenarioSeedDay(prisma, tenantId, options.asOf ?? env.FLOWCHAIN_SCENARIO_AS_OF, timeZone), timeZone)
   const { day, isoDay, at } = calendar
+  const receiver = await receivingActor(prisma, tenantId)
   const metadata = { localDemo: true, localDemoScenarioVersion: LOCAL_SCENARIO_VERSION, scenarioAsOf: calendar.seedDay }
 
-  return prisma.$transaction(async tx => {
-    // Upsert one scenario row. A row whose version has moved was changed by a
-    // business command during a walkthrough, so it is left exactly as it is.
-    async function put(model, id, data) {
-      const existing = await tx[model].findUnique({ where: { id } })
-      if (!existing) {
-        await tx[model].create({ data: { id, ...data } })
-        return true
-      }
-      if (existing.tenantId && existing.tenantId !== tenantId) throw new Error(`Refusing to overwrite ${model} ${id} in another workspace.`)
-      if (Number(existing.version || 0) > 0) return false
-      const { tenantId: _tenantId, ...update } = data
-      await tx[model].update({ where: { id }, data: update })
+  // Upsert one scenario row. A row whose version has moved was changed by a
+  // business command (a posting, or a change during a walkthrough), so it is
+  // left exactly as it is.
+  const putWith = (tx) => async (model, id, data) => {
+    const existing = await tx[model].findUnique({ where: { id } })
+    if (!existing) {
+      await tx[model].create({ data: { id, ...data } })
       return true
     }
+    if (existing.tenantId && existing.tenantId !== tenantId) throw new Error(`Refusing to overwrite ${model} ${id} in another workspace.`)
+    if (Number(existing.version || 0) > 0) return false
+    const { tenantId: _tenantId, ...update } = data
+    await tx[model].update({ where: { id }, data: update })
+    return true
+  }
 
+  // 1. Everything up to receipt: purchase orders at their pre-receipt status
+  // with nothing received, unposted receipts, opening stock and the rest.
+  const unpostedReceipts = await prisma.$transaction(async tx => {
+    const put = putWith(tx)
     await put('purchaseRequest', 'LOCAL-DEMO-PR-001', { tenantId, status: PURCHASE_REQUEST_STATUS.SUBMITTED, requester: 'Kim', priority: 'high', requiredDate: day(14), amount: 5000, currency: 'USD', source: 'local_demo_scenario', metadata, createdAt: at(-23, '09:15') })
     await put('purchaseRequestLine', 'LOCAL-DEMO-PRL-001', { purchaseRequestId: 'LOCAL-DEMO-PR-001', itemId: items['LDM-001'].id, sku: 'LDM-001', itemName: items['LDM-001'].name, quantity: 50, unit: 'pcs', unitPrice: 100, amount: 5000, metadata })
 
@@ -217,88 +260,12 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
       }
     }
 
-    for (const po of purchaseOrders) {
-      const id = `LOCAL-DEMO-PO-${pad(po.n)}`
-      const lineId = `${id}-LINE-001`
-      const item = items[po.sku]
-      const supplierName = localDemoSupplier(po.supplier).name
-      const amount = money(po.qty * po.price)
-      const receipts = po.receipts || []
-      const receivedQuantity = receipts.reduce((sum, receipt) => sum + receipt[3], 0)
-      const promisedDate = isoDay(po.promised)
-      const poMetadata = {
-        ...metadata,
-        targetWarehouseId: WAREHOUSE,
-        transmissionStatus: sentStatuses.has(po.status) || po.sent ? 'sent' : 'not_sent',
-        ...(po.cancellationReason ? { cancellationReason: po.cancellationReason } : {}),
-      }
-      const createdAt = at(po.created, '09:30')
-      const written = await put('purchaseOrder', id, {
-        tenantId, status: po.status, supplierId: po.supplier, supplierName, sourceRequestId: po.request ? 'LOCAL-DEMO-PR-001' : null,
-        expectedDate: day(po.promised), amount, currency: 'USD', owner: BUYERS[po.n % BUYERS.length], priority: po.priority || 'medium', metadata: poMetadata, createdAt,
-      })
-      if (!written) continue
-      await put('purchaseOrderLine', lineId, {
-        purchaseOrderId: id, itemId: item.id, sku: po.sku, itemName: item.name, orderedQuantity: po.qty, receivedQuantity, unit: item.unit, unitPrice: po.price, amount,
-        metadata: { ...metadata, targetWarehouseId: WAREHOUSE, requestedDate: promisedDate, promisedDate },
-      })
-
-      let cumulative = 0
-      const receivingLines = []
-      for (const [number, arrived, time, accepted, rejected, rejectionReason] of receipts) {
-        const grnId = `LOCAL-DEMO-GRN-${pad(number)}`
-        const grnLineId = `LOCAL-DEMO-GRNL-${pad(number)}`
-        cumulative += accepted
-        const arrivedAt = at(arrived, time)
-        const lineMetadata = { ...metadata, ...(rejected ? { rejectionReason } : {}) }
-        const receiptWritten = await put('receivingDocument', grnId, {
-          tenantId, documentNumber: grnId, poId: id, supplierId: po.supplier, supplierName, status: cumulative >= po.qty ? 'received' : 'partial',
-          workflowStatus: 'received', postingStatus: 'unposted', warehouseId: WAREHOUSE, receiver: RECEIVER, currency: 'USD', arrivedAt, metadata, createdAt: arrivedAt,
-        })
-        if (receiptWritten) {
-          await put('receivingLine', grnLineId, {
-            receivingDocumentId: grnId, purchaseOrderLineId: lineId, itemId: item.id, sku: po.sku, itemName: item.name, acceptedQty: accepted, rejectedQty: rejected,
-            unit: item.unit, warehouseId: WAREHOUSE, location: 'A-01', locationKey: 'a-01', metadata: lineMetadata,
-          })
-        }
-        receivingLines.push({ grnId, grnLineId, accepted })
-      }
-
-      if (!po.invoice) continue
-      const [number, invoiced, billedPrice, tax = 0] = po.invoice
-      const invoiceId = `LOCAL-DEMO-INV-${pad(number)}`
-      // Each invoice line bills one receipt's accepted quantity. The variance is
-      // what a three-way match run computes: the tax-exclusive line amount less
-      // the same quantity at the purchase order price.
-      const lines = receivingLines.map((receipt, index) => {
-        const lineAmount = money(receipt.accepted * billedPrice)
-        const lineTax = index === 0 ? tax : 0
-        return { ...receipt, lineAmount, lineTax, variance: money(lineAmount - receipt.accepted * po.price) }
-      })
-      const subtotal = money(lines.reduce((sum, line) => sum + line.lineAmount, 0))
-      const enteredTax = money(lines.reduce((sum, line) => sum + line.lineTax, 0))
-      const variance = money(lines.reduce((sum, line) => sum + line.variance, 0))
-      const invoiceMetadata = { ...metadata, paymentTerms: 'NET30', ...(variance ? { varianceType: 'price_variance' } : {}) }
-      const invoiceWritten = await put('supplierInvoice', invoiceId, {
-        tenantId, invoiceNumber: invoiceId, supplierId: po.supplier, supplierName, relatedPoId: id, relatedGrnId: lines[0].grnId,
-        invoiceDate: day(invoiced), dueDate: day(invoiced + 30), subtotalAmount: subtotal, enteredTaxAmount: enteredTax, totalAmount: money(subtotal + enteredTax), amount: money(subtotal + enteredTax),
-        currency: 'USD', status: 'submitted', matchStatus: variance ? 'variance' : 'pending', varianceAmount: variance, metadata: invoiceMetadata, createdAt: at(invoiced, '15:00'),
-      })
-      if (!invoiceWritten) continue
-      for (const [index, line] of lines.entries()) {
-        await put('supplierInvoiceLine', index === 0 ? `LOCAL-DEMO-INVL-${pad(number)}` : `LOCAL-DEMO-INVL-${pad(number)}-${index + 1}`, {
-          supplierInvoiceId: invoiceId, lineNumber: index + 1, purchaseOrderLineId: lineId, receivingLineId: line.grnLineId, itemId: item.id, sku: po.sku, itemName: item.name,
-          quantity: line.accepted, unit: item.unit, unitPrice: billedPrice, lineAmount: line.lineAmount, enteredTaxAmount: line.lineTax, amount: money(line.lineAmount + line.lineTax),
-          metadata: { ...metadata, ...(line.lineTax ? { taxRate: SALES_TAX_RATE } : {}), ...(line.variance ? { varianceType: 'price_variance', varianceAmount: line.variance } : {}) },
-        })
-      }
-    }
-
-    // Opening stock snapshots. Quantities are kept on re-seed: they belong to
-    // inventory, not to the scenario's documents.
-    for (const [id, sku, onHandQuantity, safetyStock, riskLevel] of [
-      ['LOCAL-DEMO-BAL-001', 'LDM-001', 8, 20, 'shortage'],
-      ['LOCAL-DEMO-BAL-002', 'LDM-002', 60, 15, 'normal'],
+    // Opening stock before the walkthrough receipts, which posting adds to.
+    // Quantities are created once and then belong to inventory; the planning
+    // thresholds keep LDM-001 short after its 20 received pieces.
+    for (const [id, sku, onHandQuantity, safetyStock, reorderPoint, riskLevel] of [
+      ['LOCAL-DEMO-BAL-001', 'LDM-001', 8, 30, 40, 'shortage'],
+      ['LOCAL-DEMO-BAL-002', 'LDM-002', 60, 15, 15, 'normal'],
     ]) {
       await tx.inventoryBalance.upsert({
         where: { id },
@@ -306,18 +273,110 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
           id, tenantId, itemId: items[sku].id, sku, itemName: items[sku].name, warehouseId: WAREHOUSE,
           warehouseKey: WAREHOUSE, location: 'A-01', locationKey: 'a-01',
           onHandQuantity, availableQuantity: onHandQuantity, reservedQuantity: 0,
-          safetyStock, reorderPoint: safetyStock, unit: 'pcs', status: 'active',
+          safetyStock, reorderPoint, unit: 'pcs', status: 'active',
           riskLevel, metadata,
         },
-        update: { itemName: items[sku].name, metadata },
+        update: { itemName: items[sku].name, safetyStock, reorderPoint, riskLevel, metadata },
       })
+    }
+
+    for (const po of purchaseOrders) {
+      const id = `LOCAL-DEMO-PO-${pad(po.n)}`
+      const lineId = `${id}-LINE-001`
+      const item = items[po.sku]
+      const supplierName = localDemoSupplier(po.supplier).name
+      const amount = money(po.qty * po.price)
+      const receipts = po.receipts || []
+      const promisedDate = isoDay(po.promised)
+      // An order with receipts is seeded as issued with nothing received;
+      // posting its receipts moves it to partially or fully received.
+      const status = receipts.length ? S.ISSUED : po.status
+      const poMetadata = {
+        ...metadata,
+        targetWarehouseId: WAREHOUSE,
+        transmissionStatus: sentStatuses.has(po.status) || po.sent ? 'sent' : 'not_sent',
+        ...(po.cancellationReason ? { cancellationReason: po.cancellationReason } : {}),
+      }
+      if (await put('purchaseOrder', id, {
+        tenantId, status, supplierId: po.supplier, supplierName, sourceRequestId: po.request ? 'LOCAL-DEMO-PR-001' : null,
+        expectedDate: day(po.promised), amount, currency: 'USD', owner: BUYERS[po.n % BUYERS.length], priority: po.priority || 'medium', metadata: poMetadata,
+        createdAt: at(po.created, '09:30'), receivingBaseStatus: null,
+      })) {
+        await put('purchaseOrderLine', lineId, {
+          purchaseOrderId: id, itemId: item.id, sku: po.sku, itemName: item.name, orderedQuantity: po.qty, receivedQuantity: 0, unit: item.unit, unitPrice: po.price, amount,
+          metadata: { ...metadata, targetWarehouseId: WAREHOUSE, requestedDate: promisedDate, promisedDate },
+        })
+      }
+
+      let cumulative = 0
+      for (const [number, arrived, time, accepted, rejected, rejectionReason] of receipts) {
+        const grnId = `LOCAL-DEMO-GRN-${pad(number)}`
+        cumulative += accepted
+        const arrivedAt = at(arrived, time)
+        if (await put('receivingDocument', grnId, {
+          tenantId, documentNumber: grnId, poId: id, supplierId: po.supplier, supplierName, status: cumulative >= po.qty ? 'received' : 'partial',
+          workflowStatus: 'received', postingStatus: 'unposted', warehouseId: WAREHOUSE, receiver: RECEIVER, currency: 'USD', arrivedAt, metadata, createdAt: arrivedAt,
+        })) {
+          await put('receivingLine', `LOCAL-DEMO-GRNL-${pad(number)}`, {
+            receivingDocumentId: grnId, purchaseOrderLineId: lineId, itemId: item.id, sku: po.sku, itemName: item.name, acceptedQty: accepted, rejectedQty: rejected,
+            unit: item.unit, warehouseId: WAREHOUSE, location: 'A-01', locationKey: 'a-01', metadata: { ...metadata, ...(rejected ? { rejectionReason } : {}) },
+          })
+        }
+      }
     }
 
     if (await put('salesOrder', 'LOCAL-DEMO-SO-001', { tenantId, orderNumber: 'LOCAL-DEMO-SO-001', customerId: 'LOCAL-DEMO-CUS-001', customerName, workflowStatus: 'confirmed', reservationStatus: 'not_reserved', fulfillmentStatus: 'not_fulfilled', promisedDate: day(5), currency: 'USD', metadata, createdAt: at(-4, '11:00') })) {
       await put('salesOrderLine', 'LOCAL-DEMO-SOL-001', { salesOrderId: 'LOCAL-DEMO-SO-001', itemId: items['LDM-001'].id, sku: 'LDM-001', itemName: items['LDM-001'].name, orderedQuantity: 35, unit: 'pcs', unitPrice: 180, amount: 6300, metadata })
     }
-    return { ...LOCAL_SCENARIO_COUNTS, asOf: calendar.seedDay, timeZone }
+    const unposted = await tx.receivingDocument.findMany({ where: { tenantId, id: { startsWith: 'LOCAL-DEMO-GRN-' }, postingStatus: 'unposted' }, select: { id: true, arrivedAt: true } })
+    return unposted.sort((a, b) => a.arrivedAt - b.arrivedAt || a.id.localeCompare(b.id))
   }, { timeout: 60000 })
+
+  // 2. Post each unposted receipt, oldest first, as of its arrival. Accepted
+  // quantities go to stock and to the purchase order; rejected quantities stay
+  // on the receipt. A posted receipt is never posted again.
+  for (const receipt of unpostedReceipts) {
+    const service = createReceivingPostingCommandService({ prisma, env, now: () => receipt.arrivedAt })
+    await service.postReceiving({ receivingDocumentId: receipt.id, idempotencyKey: `local-walkthrough-scenario:post:${receipt.id}`, expectedVersion: 0 }, { identity: receiver })
+  }
+
+  // 3. Supplier invoices for the posted receipts, submitted for matching.
+  await prisma.$transaction(async tx => {
+    const put = putWith(tx)
+    for (const po of purchaseOrders.filter((row) => row.invoice)) {
+      const id = `LOCAL-DEMO-PO-${pad(po.n)}`
+      const item = items[po.sku]
+      const supplierName = localDemoSupplier(po.supplier).name
+      const [number, invoiced, billedPrice, tax = 0] = po.invoice
+      const invoiceId = `LOCAL-DEMO-INV-${pad(number)}`
+      // Each invoice line bills one receipt's accepted quantity. The variance is
+      // what a three-way match run computes: the tax-exclusive line amount less
+      // the same quantity at the purchase order price.
+      const lines = po.receipts.map(([receiptNumber, , , accepted], index) => {
+        const lineAmount = money(accepted * billedPrice)
+        const lineTax = index === 0 ? tax : 0
+        return { grnId: `LOCAL-DEMO-GRN-${pad(receiptNumber)}`, grnLineId: `LOCAL-DEMO-GRNL-${pad(receiptNumber)}`, accepted, lineAmount, lineTax, variance: money(lineAmount - accepted * po.price) }
+      })
+      const subtotal = money(lines.reduce((sum, line) => sum + line.lineAmount, 0))
+      const enteredTax = money(lines.reduce((sum, line) => sum + line.lineTax, 0))
+      const variance = money(lines.reduce((sum, line) => sum + line.variance, 0))
+      const invoiceMetadata = { ...metadata, paymentTerms: 'NET30', ...(variance ? { varianceType: 'price_variance' } : {}) }
+      const written = await put('supplierInvoice', invoiceId, {
+        tenantId, invoiceNumber: invoiceId, supplierId: po.supplier, supplierName, relatedPoId: id, relatedGrnId: lines[0].grnId,
+        invoiceDate: day(invoiced), dueDate: day(invoiced + 30), subtotalAmount: subtotal, enteredTaxAmount: enteredTax, totalAmount: money(subtotal + enteredTax), amount: money(subtotal + enteredTax),
+        currency: 'USD', status: 'submitted', matchStatus: variance ? 'variance' : 'pending', varianceAmount: variance, metadata: invoiceMetadata, createdAt: at(invoiced, '15:00'),
+      })
+      if (!written) continue
+      for (const [index, line] of lines.entries()) {
+        await put('supplierInvoiceLine', index === 0 ? `LOCAL-DEMO-INVL-${pad(number)}` : `LOCAL-DEMO-INVL-${pad(number)}-${index + 1}`, {
+          supplierInvoiceId: invoiceId, lineNumber: index + 1, purchaseOrderLineId: `${id}-LINE-001`, receivingLineId: line.grnLineId, itemId: item.id, sku: po.sku, itemName: item.name,
+          quantity: line.accepted, unit: item.unit, unitPrice: billedPrice, lineAmount: line.lineAmount, enteredTaxAmount: line.lineTax, amount: money(line.lineAmount + line.lineTax),
+          metadata: { ...metadata, ...(line.lineTax ? { taxRate: SALES_TAX_RATE } : {}), ...(line.variance ? { varianceType: 'price_variance', varianceAmount: line.variance } : {}) },
+        })
+      }
+    }
+  }, { timeout: 60000 })
+  return { ...LOCAL_SCENARIO_COUNTS, postedReceipts: unpostedReceipts.length, asOf: calendar.seedDay, timeZone }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {

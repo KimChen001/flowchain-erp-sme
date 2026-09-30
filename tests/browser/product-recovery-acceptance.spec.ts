@@ -184,15 +184,18 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByTestId("create-sales-order")).toHaveCount(0);
   await capture(page, "07-sales-order-create-blocked");
 
+  // Walkthrough receipts are posted: LDM-001 is 8 opening pieces plus 20 received
+  // on LOCAL-DEMO-GRN-001, under a safety stock of 30 and reorder point of 40;
+  // LDM-002 is 60 plus 60 and 30 received.
   await page.goto("/app/inventory/stock");
-  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("8");
-  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("20 / 20");
-  await expect(page.getByTestId("inventory-item-LDM-002")).toContainText("60");
+  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("28");
+  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("30 / 40");
+  await expect(page.getByTestId("inventory-item-LDM-002")).toContainText("150");
   await capture(page, "08-inventory-stock");
 
   await page.goto("/app/inventory/warnings");
   await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("需补货");
-  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("20 / 20");
+  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("30 / 40");
   await expect(page.getByTestId("inventory-item-LDM-002")).toHaveCount(0);
   await capture(page, "09-inventory-warnings");
 
@@ -210,7 +213,13 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByText("LOCAL-DEMO-PO-030", { exact: true })).toHaveCount(0);
   await capture(page, "10-procurement-workbench");
 
-  for (const route of ["movements", "lots", "serials", "exceptions"]) {
+  // Each posted walkthrough receipt has a receipt movement.
+  await page.goto("/app/inventory/movements");
+  await expect(page.getByRole("row").filter({ hasText: "LDM-001" })).toContainText("20.0000");
+  await expect(page.getByRole("row").filter({ hasText: "LDM-004" })).toHaveCount(4);
+  await expect(page.getByText(/STATIC-|SKU-01100/)).toHaveCount(0);
+
+  for (const route of ["lots", "serials", "exceptions"]) {
     await page.goto(`/app/inventory/${route}`);
     await expect(page.getByText(/当前工作区暂无|当前没有库存异常/)).toBeVisible();
     await expect(page.getByText(/STATIC-|SKU-01100/)).toHaveCount(0);

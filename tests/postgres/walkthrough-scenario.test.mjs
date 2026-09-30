@@ -9,6 +9,7 @@ const tenantId = 'tenant-walkthrough-scenario'
 const timeZone = 'America/New_York'
 process.env.FLOWCHAIN_DEFAULT_TENANT_ID = tenantId
 const { createPrismaClient } = await import('../../server/persistence/prisma-client.mjs')
+const { backfillTenantAuthorization } = await import('../../server/auth/authorization-backfill.mjs')
 const { seedLocalDemo } = await import('../../scripts/setup-local-demo.mjs')
 const { seedLocalScenario } = await import('../../scripts/setup-local-scenario.mjs')
 const { buildOpenPurchaseOrdersReport } = await import('../../server/domain/open-purchase-orders-report.mjs')
@@ -36,6 +37,8 @@ const cents = (value) => Math.round(Number(value) * 100)
 async function rowCounts(prisma) {
   const counts = {}
   for (const model of countedModels) counts[model] = await prisma[model].count({ where: { id: prefix } })
+  counts.receiptPostingMovements = await prisma.inventoryMovement.count({ where: { tenantId, sourceDocumentId: { startsWith: 'LOCAL-DEMO-GRN-' } } })
+  counts.receiptPostingCommands = await prisma.businessCommandExecution.count({ where: { tenantId, commandType: 'receiving.post' } })
   return counts
 }
 
@@ -61,6 +64,8 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
   try {
     await prisma.tenant.create({ data: { id: tenantId, name: 'Walkthrough Scenario Tenant', countryCode: 'US', locale: 'en-US', currency: 'USD', timezone: timeZone, defaultLanguage: 'en-US' } })
     await prisma.user.create({ data: { id: `${tenantId}-admin`, tenantId, email: 'walkthrough-admin@example.com', name: 'Walkthrough Admin', role: 'admin' } })
+    // What pilot:setup does: provision the workspace roles.
+    await backfillTenantAuthorization(prisma, tenantId, { actorId: `${tenantId}-admin` })
     await seedLocalDemo(prisma, env)
     await seedLocalScenario(prisma, env, { asOf: AS_OF })
 
@@ -139,6 +144,30 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
       if (!['partially_received', 'fully_received'].includes(po.status)) assert.ok(po.lines.every((line) => Number(line.receivedQuantity) === 0), po.id)
     }
 
+    // Receipts are posted through the receiving command service as of their
+    // arrival: one receipt movement per receiving line, adding accepted
+    // quantities only, and PO received quantities equal to what was posted.
+    const movements = await prisma.inventoryMovement.findMany({ where: { tenantId, sourceDocumentId: { startsWith: 'LOCAL-DEMO-GRN-' } } })
+    const receivingLines = receipts.flatMap((receipt) => receipt.lines.map((line) => ({ receipt, line })))
+    assert.equal(movements.length, receivingLines.length)
+    for (const { receipt, line } of receivingLines) {
+      assert.equal(receipt.postingStatus, 'posted', `${receipt.id} is posted`)
+      assert.equal(receipt.postedAt.toISOString(), receipt.arrivedAt.toISOString(), `${receipt.id} is posted as of its arrival`)
+      const movement = movements.find((row) => row.sourceDocumentLineId === line.id)
+      assert.equal(movement?.movementType, 'receipt_posting', `${line.id} has a receipt movement`)
+      assert.equal(Number(movement.quantityIn), Number(line.acceptedQty), `${line.id} adds only the accepted quantity`)
+      assert.equal(movement.occurredAt.toISOString(), receipt.arrivedAt.toISOString())
+    }
+    for (const po of purchaseOrders) {
+      for (const line of po.lines) {
+        const posted = movements.filter((row) => row.evidence?.purchaseOrderLineId === line.id).reduce((sum, row) => sum + Number(row.quantityIn), 0)
+        assert.equal(Number(line.receivedQuantity), posted, `${line.id} received quantity equals posted movements`)
+      }
+    }
+    // LDM-001: 8 opening pieces plus the 20 accepted on LOCAL-DEMO-GRN-001, still under its reorder point.
+    const flowController = await prisma.inventoryBalance.findUnique({ where: { id: 'LOCAL-DEMO-BAL-001' } })
+    assert.deepEqual([Number(flowController.onHandQuantity), Number(flowController.reorderPoint)], [28, 40])
+
     // Supplier invoice due dates fall in at least four aging buckets.
     const buckets = new Set()
     for (const invoice of invoices) {
@@ -173,22 +202,18 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
     assert.deepEqual(await rowCounts(prisma), firstCounts)
     assert.deepEqual(snapshot(await scenarioRows(prisma)), first)
 
-    // A later seed day moves the dates with it and adds no rows.
-    await seedLocalScenario(prisma, env, { asOf: shiftDay(AS_OF, 7) })
+    // Posted receipts are dated inventory history, so later seeds keep the first
+    // seed day: without a day they reuse it, and another day is refused. No
+    // receipt is posted twice.
+    await seedLocalScenario(prisma, env)
     assert.deepEqual(await rowCounts(prisma), firstCounts)
-    const shifted = await scenarioRows(prisma)
-    for (const [index, po] of shifted.purchaseOrders.entries()) {
-      assert.equal(po.expectedDate.getTime() - purchaseOrders[index].expectedDate.getTime(), 7 * DAY, `${po.id} expected date follows the seed day`)
-    }
-    for (const [index, invoice] of shifted.invoices.entries()) {
-      assert.equal(invoice.dueDate.getTime() - invoices[index].dueDate.getTime(), 7 * DAY, `${invoice.id} due date follows the seed day`)
-    }
-    await seedLocalScenario(prisma, env, { asOf: AS_OF })
     assert.deepEqual(snapshot(await scenarioRows(prisma)), first)
+    await assert.rejects(seedLocalScenario(prisma, env, { asOf: shiftDay(AS_OF, 7) }), /cannot be re-dated/)
+    assert.deepEqual(await rowCounts(prisma), firstCounts)
 
     // A document changed by a business command (its version moved) is kept as it is.
     await prisma.purchaseOrder.update({ where: { id: 'LOCAL-DEMO-PO-029' }, data: { status: 'cancelled', version: { increment: 1 } } })
-    await seedLocalScenario(prisma, env, { asOf: shiftDay(AS_OF, 1) })
+    await seedLocalScenario(prisma, env)
     const kept = await prisma.purchaseOrder.findUnique({ where: { id: 'LOCAL-DEMO-PO-029' } })
     assert.equal(kept.status, 'cancelled')
     assert.equal(kept.expectedDate.toISOString(), first.purchaseOrders.find((po) => po.id === 'LOCAL-DEMO-PO-029').expectedDate)

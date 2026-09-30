@@ -389,6 +389,8 @@ try {
       jobTitle: "Supply Chain Manager",
     },
   });
+  // As pilot:setup does: provision roles before the scenario posts its receipts.
+  await backfillTenantAuthorization(prisma, tenantId, { actorId: adminActorId });
   await seedLocalDemo(prisma, process.env);
   if (process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY !== "true") {
     await seedLocalScenario(prisma, process.env);
