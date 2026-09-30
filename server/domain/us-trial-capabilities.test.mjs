@@ -4,9 +4,9 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { capabilityRegistry, capabilityRegistryForEnvironment } from "./capability-registry.mjs";
 
-// The documented US trial set: receiving posting, outbound posting, inventory
-// operations, operational finance and mobile operations (in database mode the
-// only path that approves a PO or creates a receipt). Everything else stays off.
+// The documented US trial set: receiving posting (desktop receiving), outbound
+// posting, inventory operations, operational finance and mobile operations,
+// which stays available but is not needed to receive. Everything else stays off.
 const US_TRIAL_FLAGS = [
   "FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING",
   "FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING",
