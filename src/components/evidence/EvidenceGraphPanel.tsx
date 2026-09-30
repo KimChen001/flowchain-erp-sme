@@ -1,6 +1,8 @@
 import { AlertTriangle, ArrowLeft, GitBranch, Link2, ListTree, RotateCcw } from "lucide-react";
 import { A, Card, Chip, SectionHeader } from "../ui";
 import type { CanonicalFocusTarget } from "../../lib/evidenceLinks";
+import { useI18n } from "../../i18n/I18n";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
 
 export type EvidenceGraphNode = {
   id: string;
@@ -96,6 +98,47 @@ const limitationLabels: Record<string, string> = {
   invoice_runtime_has_no_records: "当前工作区暂无可关联的发票记录",
 };
 
+// English display copy for this panel. Record labels and summaries from the API
+// go through the shared workspace copy; stored values are never rewritten.
+const english: Record<string, string> = {
+  "客户订单": "Customer order", "库存可用量": "Inventory availability", "采购申请": "Purchase request", "采购订单": "Purchase order",
+  "收货单": "Receiving document", "供应商": "Supplier", "供应商发票": "Supplier invoice", "异常工单": "Exception case",
+  "数据限制": "Data limitations", "今日风险事项": "Today's risk item", "物料资料": "Items", "库存余额": "Inventory balance",
+  "SKU / 库存": "SKU / inventory", "业务记录": "Business record",
+  "当前工作区缺少完整库存分配记录": "This workspace has incomplete inventory allocation records.",
+  "当前工作区缺少完整采购订单关联": "This workspace has incomplete purchase order links.",
+  "当前工作区缺少完整收货记录": "This workspace has incomplete receiving records.",
+  "当前工作区缺少完整供应商风险记录": "This workspace has incomplete supplier risk records.",
+  "当前工作区缺少完整供应商资料": "This workspace has incomplete supplier records.",
+  "当前工作区缺少完整日需求历史": "This workspace has incomplete daily demand history.",
+  "当前数据范围有限，需人工复核": "Data in this workspace is limited. Review manually.",
+  "未找到对应业务记录。": "No matching business record was found.",
+  "仓库运行时关系尚未接入证据图": "Warehouse relationships are not in the evidence graph yet.",
+  "库位运行时关系尚未接入证据图": "Location relationships are not in the evidence graph yet.",
+  "当前工作区暂无可关联的收货记录": "No receiving records in this workspace can be linked.",
+  "当前工作区暂无可关联的发票记录": "No invoice records in this workspace can be linked.",
+  "需复核": "Needs review", "查看": "View", "证据链锚点": "Evidence anchor", "请选择业务对象": "Select a business record",
+  "来源：": "Source: ", "返回上一级": "Back", "返回来源对象": "Back to source record", "返回列表": "Back to list",
+  "主证据链": "Primary evidence path", "{count} 个节点": "{count} nodes", "相关记录": "Related records", "可跳转": "Linked",
+  "当前仅显示工作区内可追溯的关联摘要，需人工复核。": "Only related records traceable in this workspace are shown. Review manually.",
+  "风险信号": "Risk signals", "{count} 条": "{count}", "高风险": "High risk", "需关注": "Watch",
+  "当前未读取到高风险信号，仍需结合业务记录人工复核。": "No high-risk signals were found. Still review the business records.",
+  "人工复核": "Manual review", "导航提示": "Navigation", "刷新": "Refresh",
+  "已找到 {count} 个可跳转业务记录。": "Found {count} linked business records.", "当前没有更多可跳转记录。": "No more linked records.",
+  "正在读取证据链...": "Loading evidence...", "低库存": "Low stock", "缺货": "Out of stock", "阻塞": "Blocked", "异常": "Exception",
+  "当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。": "The evidence path could not be loaded. Go back to customer orders or choose another record and try again.",
+};
+
+function useEvidenceCopy() {
+  const { language } = useI18n();
+  return (label: string, vars: Record<string, string | number> = {}) => {
+    // The evidence graph API phrases an unsummarised risk as "<record> 需要复核。".
+    const review = language === "en-US" ? /^(.+) 需要复核。$/.exec(label) : null;
+    const text = review ? `${review[1]} needs review.` : language === "en-US" ? english[label] || workspaceCopy(label, language) : label;
+    return Object.entries(vars).reduce((out, [name, value]) => out.replaceAll(`{${name}}`, String(value)), text);
+  };
+}
+
 function typeLabel(type = "") {
   return typeLabels[type] || "业务记录";
 }
@@ -139,6 +182,7 @@ function EvidenceNodeCard({
   returnContext?: EvidenceReturnContext | null;
   returnTo?: string;
 }) {
+  const t = useEvidenceCopy();
   const target = targetForNode(node);
   const risk = riskTone(`${node.riskLevel || ""} ${node.riskLabel || ""} ${node.status || ""}`);
   const clickable = Boolean(onNavigate && target.moduleId && node.id);
@@ -146,13 +190,13 @@ function EvidenceNodeCard({
     <>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="fc-caption font-semibold" style={{ color: A.gray2 }}>{typeLabel(node.type)}</div>
-          <div className="mt-0.5 truncate text-xs font-semibold tabular-nums" style={{ color: clickable ? A.blue : A.label }}>{node.label || node.id}</div>
+          <div className="fc-caption font-semibold" style={{ color: A.gray2 }}>{t(typeLabel(node.type))}</div>
+          <div className="mt-0.5 truncate text-xs font-semibold tabular-nums" style={{ color: clickable ? A.blue : A.label }}>{node.label ? t(node.label) : node.id}</div>
         </div>
-        {(node.riskLabel || node.status) && <Chip label={node.riskLabel || node.status || "需复核"} color={risk.color} bg={risk.bg} />}
+        {(node.riskLabel || node.status) && <Chip label={t(node.riskLabel || node.status || "需复核")} color={risk.color} bg={risk.bg} />}
       </div>
-      {node.summary && <div className="mt-2 line-clamp-2 text-[11px] leading-5" style={{ color: A.sub }}>{node.summary}</div>}
-      {clickable && <div className="mt-2 text-[11px] font-semibold" style={{ color: A.blue }}>查看</div>}
+      {node.summary && <div className="mt-2 line-clamp-2 text-[11px] leading-5" style={{ color: A.sub }}>{t(node.summary)}</div>}
+      {clickable && <div className="mt-2 text-[11px] font-semibold" style={{ color: A.blue }}>{t("查看")}</div>}
     </>
   );
   return clickable ? (
@@ -187,27 +231,28 @@ export function ReturnPathBar({
   onReturnSource?: () => void;
   onReturnList?: () => void;
 }) {
+  const t = useEvidenceCopy();
   return (
     <Card className="p-3" data-testid="return-path-bar">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold" style={{ color: A.blue }}>证据链锚点</div>
+          <div className="text-[11px] font-semibold" style={{ color: A.blue }}>{t("证据链锚点")}</div>
           <div className="mt-0.5 truncate text-sm font-semibold" style={{ color: A.label }}>
-            {anchor ? `${typeLabel(anchor.type)} / ${anchor.label || anchor.id}` : "请选择业务对象"}
+            {anchor ? `${t(typeLabel(anchor.type))} / ${anchor.label ? t(anchor.label) : anchor.id}` : t("请选择业务对象")}
           </div>
-          {sourceLabel && <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>来源：{sourceLabel}</div>}
+          {sourceLabel && <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{t("来源：")}{t(sourceLabel)}</div>}
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onBack} className="h-8 rounded-lg px-3 text-[12px] font-semibold inline-flex items-center gap-1.5" style={{ background: A.gray6, color: A.label }}>
-            <ArrowLeft size={13} /> 返回上一级
+            <ArrowLeft size={13} /> {t("返回上一级")}
           </button>
           {onReturnSource && (
             <button type="button" onClick={onReturnSource} className="h-8 rounded-lg px-3 text-[12px] font-semibold inline-flex items-center gap-1.5" style={{ background: "#f0f6ff", color: A.blue }}>
-              <ArrowLeft size={13} /> 返回来源对象
+              <ArrowLeft size={13} /> {t("返回来源对象")}
             </button>
           )}
           <button type="button" onClick={onReturnList} className="h-8 rounded-lg px-3 text-[12px] font-semibold inline-flex items-center gap-1.5" style={{ background: A.gray6, color: A.gray1 }}>
-            <ListTree size={13} /> 返回列表
+            <ListTree size={13} /> {t("返回列表")}
           </button>
         </div>
       </div>
@@ -226,6 +271,7 @@ export function EvidencePrimaryPath({
   returnContext?: EvidenceReturnContext | null;
   returnTo?: string;
 }) {
+  const t = useEvidenceCopy();
   const nodes = graph.nodes || [];
   const pathNodes = (graph.primaryPath || [])
     .map((item) => nodeById(nodes, item.nodeId) || nodes.find((node) => node.label === item.label))
@@ -233,7 +279,7 @@ export function EvidencePrimaryPath({
   const visible = pathNodes.length ? pathNodes : nodes.slice(0, 6);
   return (
     <Card className="p-4" data-testid="evidence-primary-path">
-      <SectionHeader title="主证据链" right={<Chip label={`${visible.length} 个节点`} color={A.blue} bg="#f0f6ff" />} />
+      <SectionHeader title={t("主证据链")} right={<Chip label={t("{count} 个节点", { count: visible.length })} color={A.blue} bg="#f0f6ff" />} />
       <div className="grid grid-cols-1 gap-2 lg:grid-cols-3">
         {visible.map((node, index) => (
           <div key={`${node.type}-${node.id}`} className="grid grid-cols-[1fr_20px] gap-2">
@@ -257,17 +303,18 @@ export function RelatedRecordsPanel({
   returnContext?: EvidenceReturnContext | null;
   returnTo?: string;
 }) {
+  const t = useEvidenceCopy();
   const groups = graph.relatedRecords || {};
   const entries = Object.entries(groups)
     .map(([key, rows]) => [relatedLabels[key] || key, rows] as const)
     .filter(([, rows]) => Array.isArray(rows) && rows.length);
   return (
     <Card className="p-4" data-testid="evidence-related-records">
-      <SectionHeader title="相关记录" right={<Chip label="可跳转" color={A.green} bg="#f0faf4" />} />
+      <SectionHeader title={t("相关记录")} right={<Chip label={t("可跳转")} color={A.green} bg="#f0faf4" />} />
       <div className="space-y-4">
         {entries.length ? entries.map(([label, rows]) => (
           <div key={label}>
-            <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: A.gray1 }}><Link2 size={12} /> {label}</div>
+            <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: A.gray1 }}><Link2 size={12} /> {t(label)}</div>
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
               {rows.map((row) => (
                 <EvidenceNodeCard
@@ -281,7 +328,7 @@ export function RelatedRecordsPanel({
             </div>
           </div>
         )) : (
-          <div className="rounded-lg px-3 py-2 text-[11px]" style={{ background: A.gray6, color: A.sub }}>当前仅显示工作区内可追溯的关联摘要，需人工复核。</div>
+          <div className="rounded-lg px-3 py-2 text-[11px]" style={{ background: A.gray6, color: A.sub }}>{t("当前仅显示工作区内可追溯的关联摘要，需人工复核。")}</div>
         )}
       </div>
     </Card>
@@ -302,24 +349,25 @@ function guessTypeFromGroup(label: string) {
 }
 
 export function RiskSignalsPanel({ graph }: { graph: EvidenceGraphResponse }) {
+  const t = useEvidenceCopy();
   const signals = graph.riskSignals || [];
   return (
     <Card className="p-4" data-testid="evidence-risk-signals">
-      <SectionHeader title="风险信号" right={<Chip label={`${signals.length} 条`} color={signals.length ? A.orange : A.green} bg={signals.length ? "#fff8f0" : "#f0faf4"} />} />
+      <SectionHeader title={t("风险信号")} right={<Chip label={t("{count} 条", { count: signals.length })} color={signals.length ? A.orange : A.green} bg={signals.length ? "#fff8f0" : "#f0faf4"} />} />
       <div className="space-y-2">
         {signals.length ? signals.map((signal, index) => {
           const tone = riskTone(`${signal.severity || ""} ${signal.label || ""}`);
           return (
             <div key={`${signal.label}-${index}`} className="rounded-lg p-3" style={{ background: A.gray6 }}>
               <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: tone.color }}><AlertTriangle size={13} /> {signal.label || "需复核"}</div>
-                <Chip label={signal.severity === "high" ? "高风险" : "需关注"} color={tone.color} bg={tone.bg} />
+                <div className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: tone.color }}><AlertTriangle size={13} /> {t(signal.label || "需复核")}</div>
+                <Chip label={t(signal.severity === "high" ? "高风险" : "需关注")} color={tone.color} bg={tone.bg} />
               </div>
-              {signal.summary && <div className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>{signal.summary}</div>}
+              {signal.summary && <div className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>{t(signal.summary)}</div>}
             </div>
           );
         }) : (
-          <div className="rounded-lg px-3 py-2 text-[11px]" style={{ background: A.gray6, color: A.sub }}>当前未读取到高风险信号，仍需结合业务记录人工复核。</div>
+          <div className="rounded-lg px-3 py-2 text-[11px]" style={{ background: A.gray6, color: A.sub }}>{t("当前未读取到高风险信号，仍需结合业务记录人工复核。")}</div>
         )}
       </div>
     </Card>
@@ -327,14 +375,15 @@ export function RiskSignalsPanel({ graph }: { graph: EvidenceGraphResponse }) {
 }
 
 export function DataLimitationsPanel({ items }: { items: string[] }) {
+  const t = useEvidenceCopy();
   const visible = items.length ? items : ["current_workspace_data_limited"];
   return (
     <Card className="p-4" data-testid="evidence-data-limitations">
-      <SectionHeader title="数据限制" right={<Chip label="人工复核" color={A.orange} bg="#fff8f0" />} />
+      <SectionHeader title={t("数据限制")} right={<Chip label={t("人工复核")} color={A.orange} bg="#fff8f0" />} />
       <div className="flex flex-wrap gap-2">
         {visible.map((item) => (
           <span key={item} className="rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: A.gray6, color: A.orange }}>
-            {limitationLabel(item)}
+            {t(limitationLabel(item))}
           </span>
         ))}
       </div>
@@ -343,12 +392,13 @@ export function DataLimitationsPanel({ items }: { items: string[] }) {
 }
 
 export function NavigationHintsPanel({ graph, onRetry }: { graph: EvidenceGraphResponse; onRetry?: () => void }) {
+  const t = useEvidenceCopy();
   const hints = graph.navigationHints || [];
   return (
     <Card className="p-4" data-testid="evidence-navigation-hints">
-      <SectionHeader title="导航提示" right={<button type="button" onClick={onRetry} className="inline-flex items-center gap-1 text-[11px] font-semibold" style={{ color: A.blue }}><RotateCcw size={12} /> 刷新</button>} />
+      <SectionHeader title={t("导航提示")} right={<button type="button" onClick={onRetry} className="inline-flex items-center gap-1 text-[11px] font-semibold" style={{ color: A.blue }}><RotateCcw size={12} /> {t("刷新")}</button>} />
       <div className="text-[11px] leading-5" style={{ color: A.sub }}>
-        {hints.length ? `已找到 ${hints.length} 个可跳转业务记录。` : "当前没有更多可跳转记录。"}
+        {hints.length ? t("已找到 {count} 个可跳转业务记录。", { count: hints.length }) : t("当前没有更多可跳转记录。")}
       </div>
     </Card>
   );
@@ -383,15 +433,16 @@ export default function EvidenceGraphPanel({
   showReturnPath?: boolean;
   showNavigationHints?: boolean;
 }) {
+  const t = useEvidenceCopy();
   if (loading) {
-    return <Card className="p-6 text-sm" style={{ color: A.sub }}>正在读取证据链...</Card>;
+    return <Card className="p-6 text-sm" style={{ color: A.sub }}>{t("正在读取证据链...")}</Card>;
   }
   if (error || !graph) {
     return (
       <div className="space-y-3">
         {showReturnPath && <ReturnPathBar anchor={null} sourceLabel={sourceLabel} onBack={onBack} onReturnSource={onReturnSource} onReturnList={onReturnList} />}
         <Card className="p-6 text-sm leading-6" style={{ color: A.orange }}>
-          {error || "当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。"}
+          {t(error || "当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。")}
         </Card>
       </div>
     );
