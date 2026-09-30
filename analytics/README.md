@@ -102,7 +102,7 @@ Every step takes `--data-dir DIR`. Outputs:
 | `supplier-scorecard.md`, `supplier-scorecard-{vendor,mode,country,product-group}.csv`, `figures/vendor-on-time.png` | direct-drop scorecard (aggregates only) |
 | `delay-model.md`, `delay-model-metrics.csv`, `figures/delay-model-*.png` | leakage audit, models, test metrics with CIs, interpretation |
 | `decision-proposal.md` | the allocation decision problem and backtest design |
-| `decision-results.md`, `decision-sensitivity.csv`, `figures/decision-frontier.png` | allocation MILP, four-policy comparison, sensitivity, implications |
+| `decision-results.md`, `decision-sensitivity.csv`, `decision-frontiers.csv`, `figures/decision-frontier.png`, `figures/decision-frontiers-scenarios.png` | allocation MILP, four-policy comparison, sensitivity, revealed preference, dominance, robustness, implications |
 | `report-outline.md`, `key-numbers-*.json` | rubric-to-evidence map and the aggregate numbers it is built from |
 
 Before sharing any output, check it contains aggregates only. Never copy

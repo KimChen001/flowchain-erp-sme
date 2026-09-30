@@ -192,54 +192,90 @@ def build_problem(data: pd.DataFrame, risk: CalibratedRisk, X: pd.DataFrame, day
     return Problem(reqs, pairs, history, other), info
 
 
-def solve(problem: Problem, lam: float, share_cap: float | None, capacity_mult: float | None, info: dict) -> tuple[np.ndarray, dict]:
-    pairs = problem.pairs
-    n = len(pairs)
-    c = problem.objective(lam)
-    rows_eq = sparse.csr_matrix((np.ones(n), (pairs["r"].to_numpy(), np.arange(n))), shape=(pairs["r"].max() + 1, n))
-    constraints = [LinearConstraint(rows_eq, 1, 1)]
-    ub_blocks, ub_rhs, slack_labels = [], [], []
+def constraint_limits(problem: Problem, share_cap: float | None, capacity_mult: float | None, info: dict, relax_actual: bool = False):
+    """Upper limits per (molecule, quarter, vendor) share group and per (vendor, quarter) capacity group.
 
+    ``relax_actual`` raises every limit to at least what the actual choice used,
+    so the historical allocation itself is feasible ("caps relaxed to observed levels").
+    """
+    pairs = problem.pairs
+    actual = pairs[pairs["is_actual"]]
+    share_limits, capacity_limits = {}, {}
     if share_cap is not None and share_cap < 1.0:
         group_size = problem.reqs.groupby(["molecule_test_type", "quarter"]).size()
-        for (mol, q, v), sub in pairs.groupby(["molecule_test_type", "quarter", "vendor"]):
-            limit = math.ceil(share_cap * group_size[(mol, q)])
-            if len(sub) <= limit:
-                continue
-            ub_blocks.append(sub.index.to_numpy())
-            ub_rhs.append(limit)
-            slack_labels.append(("share", mol, q, v))
+        used = actual.groupby(["molecule_test_type", "quarter", "vendor"]).size()
+        for key in pairs.groupby(["molecule_test_type", "quarter", "vendor"]).size().index:
+            limit = math.ceil(share_cap * group_size[key[:2]])
+            if relax_actual:
+                limit = max(limit, int(used.get(key, 0)))
+            share_limits[key] = limit
     if capacity_mult is not None:
         base = info["capacity_base"]
-        for (v, q), sub in pairs.groupby(["vendor", "quarter"]):
+        used = actual.groupby(["vendor", "quarter"]).size()
+        for key in pairs.groupby(["vendor", "quarter"]).size().index:
+            v, q = key
             limit = max(math.floor(capacity_mult * base.get(v, 0)) - info["other_lines"].get((v, q), 0), 0)
-            if len(sub) <= limit:
-                continue
+            if relax_actual:
+                limit = max(limit, int(used.get(key, 0)))
+            capacity_limits[key] = limit
+    return share_limits, capacity_limits
+
+
+def solve(problem: Problem, lam: float, share_cap: float | None, capacity_mult: float | None, info: dict,
+          relax_actual: bool = False, late_days_cap: float | None = None, lateness_only: bool = False) -> tuple[np.ndarray, dict]:
+    """Solve the allocation MILP.
+
+    Default objective: price + freight + lam * value * expected days late.
+    ``lateness_only`` minimises expected late days (cost only breaks ties).
+    ``late_days_cap`` adds the hard constraint sum(expected late days) <= cap
+    (epsilon-constraint), used to search for points that dominate a policy.
+    """
+    pairs = problem.pairs
+    n = len(pairs)
+    if lateness_only:
+        cost = (pairs["price_cost"] + pairs["freight_cost"]).to_numpy()
+        c = pairs["exp_days"].to_numpy() + 1e-9 * cost / max(cost.mean(), 1.0)
+    else:
+        c = problem.objective(lam)
+    rows_eq = sparse.csr_matrix((np.ones(n), (pairs["r"].to_numpy(), np.arange(n))), shape=(pairs["r"].max() + 1, n))
+    ub_blocks, ub_rhs, slack_labels = [], [], []
+    share_limits, capacity_limits = constraint_limits(problem, share_cap, capacity_mult, info, relax_actual)
+    for key, sub in pairs.groupby(["molecule_test_type", "quarter", "vendor"]):
+        if key in share_limits and len(sub) > share_limits[key]:
             ub_blocks.append(sub.index.to_numpy())
-            ub_rhs.append(limit)
-            slack_labels.append(("capacity", v, q))
+            ub_rhs.append(share_limits[key])
+            slack_labels.append(("share",) + key)
+    for key, sub in pairs.groupby(["vendor", "quarter"]):
+        if key in capacity_limits and len(sub) > capacity_limits[key]:
+            ub_blocks.append(sub.index.to_numpy())
+            ub_rhs.append(capacity_limits[key])
+            slack_labels.append(("capacity",) + key)
 
     m = len(ub_blocks)
     penalty = 1e3 * float(np.max(np.abs(c)) + 1.0)  # soft constraints: violations only if unavoidable
     c_full = np.concatenate([c, np.full(m, penalty)])
+    constraints = [LinearConstraint(sparse.hstack([rows_eq, sparse.csr_matrix((rows_eq.shape[0], m))], format="csr"), 1, 1)]
     if m:
         rows = np.concatenate([np.full(len(b), i) for i, b in enumerate(ub_blocks)])
         cols = np.concatenate(ub_blocks)
         A = sparse.csr_matrix((np.ones(len(cols)), (rows, cols)), shape=(m, n))
         A = sparse.hstack([A, -sparse.identity(m)], format="csr")
-        constraints = [LinearConstraint(sparse.hstack([rows_eq, sparse.csr_matrix((rows_eq.shape[0], m))], format="csr"), 1, 1),
-                       LinearConstraint(A, -np.inf, np.array(ub_rhs, dtype=float))]
+        constraints.append(LinearConstraint(A, -np.inf, np.array(ub_rhs, dtype=float)))
+    if late_days_cap is not None:
+        row = np.concatenate([pairs["exp_days"].to_numpy(), np.zeros(m)]).reshape(1, -1)
+        constraints.append(LinearConstraint(sparse.csr_matrix(row), -np.inf, late_days_cap))
     integrality = np.concatenate([np.ones(n), np.zeros(m)])
     bounds = Bounds(np.zeros(n + m), np.concatenate([np.ones(n), np.full(m, np.inf)]))
     start = time.perf_counter()
     res = milp(c_full, constraints=constraints, integrality=integrality, bounds=bounds, options={"time_limit": 120, "mip_rel_gap": 1e-6})
     elapsed = time.perf_counter() - start
     if res.x is None:
-        raise RuntimeError(f"MILP failed: {res.message}")
+        return None, {"status": res.message, "seconds": elapsed, "feasible": False}
     x = np.round(res.x[:n]).astype(bool)
     slack = res.x[n:]
     status = {
         "status": res.message,
+        "feasible": True,
         "seconds": elapsed,
         "constraints_share": sum(1 for s in slack_labels if s[0] == "share"),
         "constraints_capacity": sum(1 for s in slack_labels if s[0] == "capacity"),
@@ -250,20 +286,13 @@ def solve(problem: Problem, lam: float, share_cap: float | None, capacity_mult: 
     return x, status
 
 
-def violations(problem: Problem, x: np.ndarray, share_cap: float | None, capacity_mult: float | None, info: dict) -> tuple[int, int]:
+def violations(problem: Problem, x: np.ndarray, share_cap: float | None, capacity_mult: float | None, info: dict,
+               relax_actual: bool = False) -> tuple[int, int]:
     chosen = problem.pairs[x]
-    share_v = cap_v = 0
-    if share_cap is not None:
-        group_size = problem.reqs.groupby(["molecule_test_type", "quarter"]).size()
-        counts = chosen.groupby(["molecule_test_type", "quarter", "vendor"]).size()
-        for (mol, q, v), k in counts.items():
-            share_v += max(k - math.ceil(share_cap * group_size[(mol, q)]), 0)
-    if capacity_mult is not None:
-        counts = chosen.groupby(["vendor", "quarter"]).size()
-        for (v, q), k in counts.items():
-            limit = max(math.floor(capacity_mult * info["capacity_base"].get(v, 0)) - info["other_lines"].get((v, q), 0), 0)
-            cap_v += max(k - limit, 0)
-    return share_v, cap_v
+    share_limits, capacity_limits = constraint_limits(problem, share_cap, capacity_mult, info, relax_actual)
+    share_v = sum(max(k - share_limits.get(key, k), 0) for key, k in chosen.groupby(["molecule_test_type", "quarter", "vendor"]).size().items())
+    cap_v = sum(max(k - capacity_limits.get(key, k), 0) for key, k in chosen.groupby(["vendor", "quarter"]).size().items())
+    return int(share_v), int(cap_v)
 
 
 def evaluate_policy(name: str, problem: Problem, x: np.ndarray, lam: float, share_cap, capacity_mult, info: dict) -> dict:
@@ -328,6 +357,129 @@ def frontier_figure(sens: pd.DataFrame, baselines: pd.DataFrame, path) -> str:
     ax.set_title("Cost vs expected lateness; λ rises from right to left along each line", loc="left", fontsize=11)
     ax.legend(frameon=False, fontsize=8)
     style_axes(ax)
+    return save_figure(fig, path)
+
+
+SCENARIOS = [
+    ("defaults (cap 60%, capacity ×1.2)", SHARE_CAP_DEFAULT, CAPACITY_MULT_DEFAULT, False),
+    ("capacity ×1.5", SHARE_CAP_DEFAULT, 1.5, False),
+    ("capacity ×2", SHARE_CAP_DEFAULT, 2.0, False),
+    ("caps and capacity relaxed to observed levels", SHARE_CAP_DEFAULT, CAPACITY_MULT_DEFAULT, True),
+    ("no caps, no capacity", None, None, False),
+]
+LAMBDA_FRONTIER = [0.0, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+SLACK_TOL = 1e-6
+
+
+def point(problem: Problem, x: np.ndarray, st: dict) -> dict:
+    chosen = problem.pairs[x]
+    return {
+        "price + freight (USD M)": float((chosen["price_cost"] + chosen["freight_cost"]).sum() / 1e6),
+        "expected late days": float(chosen["exp_days"].sum()),
+        "expected late shipments": float(chosen["p_late"].sum()),
+        "lines changed vs actual": int((~chosen["is_actual"]).sum()),
+        "soft-constraint excess (lines)": float(st["share_violation_lines"] + st["capacity_violation_lines"]),
+    }
+
+
+def followup(problem: Problem, info: dict, risk_label: str):
+    """Frontiers per constraint scenario, the least-late plan, the cheapest plan no later than
+    the actual choice (epsilon-constraint), and the implied lateness cost (revealed preference)."""
+    pairs = problem.pairs
+    actual = pairs[pairs["is_actual"]]
+    cost_a = float((actual["price_cost"] + actual["freight_cost"]).sum() / 1e6)
+    late_a = float(actual["exp_days"].sum())
+    frontier_rows, summary_rows, dominating = [], [], {}
+    for name, cap, mult, relax in SCENARIOS:
+        xm, stm = solve(problem, 0.0, cap, mult, info, relax_actual=relax, lateness_only=True)
+        least = point(problem, xm, stm)
+        floor_excess = least["soft-constraint excess (lines)"]  # unavoidable: some groups cannot meet the caps at all
+
+        def within(pt):
+            return pt["soft-constraint excess (lines)"] <= floor_excess + SLACK_TOL
+
+        pts = []
+        for lam in LAMBDA_FRONTIER:
+            x, st = solve(problem, lam, cap, mult, info, relax_actual=relax)
+            pt = point(problem, x, st)
+            pts.append((lam, pt))
+            frontier_rows.append({"risk model": risk_label, "scenario": name, "λ": lam, **pt})
+        xd, std = solve(problem, 0.0, cap, mult, info, relax_actual=relax, late_days_cap=late_a)
+        dom = point(problem, xd, std) if xd is not None else None
+        dominates = bool(dom is not None and within(dom) and dom["price + freight (USD M)"] < cost_a)
+        if dominates:
+            dominating[name] = xd
+
+        # Revealed preference: smallest λ at which the cost-minimising plan is no later than the actual choice.
+        revealed = None
+        ok = [lam for lam, pt in pts if pt["expected late days"] <= late_a + 1e-6 and within(pt)]
+        if ok:
+            hi = min(ok)
+            lo = max([lam for lam, _ in pts if lam < hi], default=0.0)
+            if hi == 0.0:
+                revealed = 0.0
+            else:
+                lo = max(lo, hi / 1e4)
+                for _ in range(30):
+                    mid = math.sqrt(lo * hi)
+                    xb, stb = solve(problem, mid, cap, mult, info, relax_actual=relax)
+                    pb = point(problem, xb, stb)
+                    if pb["expected late days"] <= late_a + 1e-6 and within(pb):
+                        hi = mid
+                    else:
+                        lo = mid
+                    if hi / lo < 1.01:
+                        break
+                revealed = hi
+        summary_rows.append({
+            "risk model": risk_label,
+            "scenario": name,
+            "actual choice: cost (USD M) / late days": f"{cost_a:,.2f} / {late_a:,.0f}",
+            "unavoidable excess (lines)": f"{floor_excess:.0f}",
+            "actual choice excess (lines)": f"{sum(violations(problem, pairs['is_actual'].to_numpy(), cap, mult, info, relax)):,}",
+            "least-late plan: late days": f"{least['expected late days']:,.0f}",
+            "cheapest plan with late days ≤ actual": ("infeasible" if dom is None else
+                f"{dom['price + freight (USD M)']:,.2f} M, {dom['expected late days']:,.0f} d, {dom['lines changed vs actual']} lines changed, excess {dom['soft-constraint excess (lines)']:.0f}"),
+            "dominates actual?": "yes" if dominates else "no",
+            "saving vs actual": pct((cost_a - dom["price + freight (USD M)"]) / cost_a) if dominates else "–",
+            "revealed λ (per day, share of line value)": (f"{revealed * 100:.3g}%" if revealed is not None else "no λ ≤ 1000%/day reaches actual"),
+            "_revealed": revealed, "_dominates": dominates, "_least": least["expected late days"],
+            "_least_excess": least["soft-constraint excess (lines)"], "_dom": dom, "_cost_a": cost_a, "_late_a": late_a,
+        })
+    return pd.DataFrame(frontier_rows), pd.DataFrame(summary_rows), dominating
+
+
+def shift_table(problem: Problem, x: np.ndarray, top: int = 6) -> pd.DataFrame:
+    chosen = problem.pairs[x]
+    actual = problem.pairs[problem.pairs["is_actual"]]
+    delta = chosen["vendor"].value_counts().subtract(actual["vendor"].value_counts(), fill_value=0).astype(int)
+    delta = delta[delta != 0].sort_values()
+    view = pd.concat([delta.head(top), delta.tail(top)]).drop_duplicates()
+    risk = problem.pairs.groupby("vendor")["p_late"].mean()
+    return pd.DataFrame({"vendor": view.index, "lines gained (+) / lost (−)": view.values,
+                         "mean P(late) of vendor's candidate lines": [pct(risk.get(v, np.nan)) for v in view.index]})
+
+
+def followup_figure(frontiers: dict, policies: dict, dominating_points: dict, path) -> str:
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), sharey=False)
+    colors = [BLUE, ORANGE, AQUA, YELLOW, VIOLET]
+    markers = {"(a) actual choice": "s", "(b) cheapest vendor": "^", "(c) incumbent": "D", "(d) MILP (defaults)": "P"}
+    for ax, (label, frontier) in zip(axes, frontiers.items()):
+        for color, (name, *_rest) in zip(colors, SCENARIOS):
+            sub = frontier[frontier["scenario"] == name].sort_values("λ")
+            ax.plot(sub["expected late days"], sub["price + freight (USD M)"], "o-", color=color, linewidth=2, markersize=4, label=name)
+        for pname, row in policies[label].items():
+            ax.plot(row["expected late days"], row["price + freight (USD M)"], markers[pname], color=INK_2, markersize=9,
+                    markeredgecolor="white", label=pname)
+        for name, pt in dominating_points.get(label, {}).items():
+            ax.plot(pt["expected late days"], pt["price + freight (USD M)"], "*", color=INK_2, markersize=14, markeredgecolor="white")
+        ax.set_title(f"Risk model: {label}", loc="left", fontsize=10)
+        ax.set_xlabel("Expected late days (same risk model for all points)")
+        ax.set_ylabel("Estimated price + freight (USD M)")
+        style_axes(ax)
+    axes[0].legend(frameon=False, fontsize=7, loc="upper right")
+    fig.suptitle("Cost vs expected lateness frontiers by constraint scenario (λ rises right to left); ★ = cheapest plan no later than actual",
+                 x=0.01, ha="left", fontsize=10)
     return save_figure(fig, path)
 
 
@@ -411,6 +563,46 @@ def main() -> int:
         alt_rows.append({"variant": f"(a) actual choice under: {label}",
                          **{k: v for k, v in evaluate_policy("actual", prob, xa, LAMBDA_DEFAULT, SHARE_CAP_DEFAULT, CAPACITY_MULT_DEFAULT, inf).items() if k != "policy"}})
     alt = pd.DataFrame(alt_rows)
+
+    # --- Follow-up: revealed preference, constraint scenarios, dominance, robustness ---
+    fr_main, fu_main, dom_main = followup(problem, info, risk.name)
+    fr_alt, fu_alt, dom_alt = followup(problem_r, info_r, alt_risk.name)
+    frontier_all = pd.concat([fr_main, fr_alt], ignore_index=True)
+    frontier_all.to_csv(paths.outputs_dir / "decision-frontiers.csv", index=False, float_format="%.6g")
+    x_default_r, st_default_r = solve(problem_r, LAMBDA_DEFAULT, SHARE_CAP_DEFAULT, CAPACITY_MULT_DEFAULT, info_r)
+    policies_alt = {
+        "(a) actual choice": baseline_choice(problem_r, "actual"),
+        "(b) cheapest vendor": baseline_choice(problem_r, "cheapest"),
+        "(c) incumbent": baseline_choice(problem_r, "incumbent"),
+        "(d) MILP (defaults)": x_default_r,
+    }
+    policy_points = {
+        risk.name: {k: point(problem, v, {"share_violation_lines": 0, "capacity_violation_lines": 0}) for k, v in policies.items()},
+        alt_risk.name: {k: point(problem_r, v, {"share_violation_lines": 0, "capacity_violation_lines": 0}) for k, v in policies_alt.items()},
+    }
+    dom_points = {
+        risk.name: {r["scenario"]: r["_dom"] for _, r in fu_main.iterrows() if r["_dominates"]},
+        alt_risk.name: {r["scenario"]: r["_dom"] for _, r in fu_alt.iterrows() if r["_dominates"]},
+    }
+    fig_fu = followup_figure({risk.name: fr_main, alt_risk.name: fr_alt}, policy_points, dom_points, paths.figures_dir / "decision-frontiers-scenarios.png")
+    fu_all = pd.concat([fu_main, fu_alt], ignore_index=True)
+    fu_view = fu_all[[c for c in fu_all.columns if not c.startswith("_")]]
+    default_name = SCENARIOS[0][0]
+    observed_name = SCENARIOS[3][0]
+    pick_order = [default_name, observed_name, "capacity ×1.5", "capacity ×2", SCENARIOS[4][0]]
+    shift_name = next((n for n in pick_order if n in dom_main), None)
+    shift = shift_table(problem, dom_main[shift_name]) if shift_name else None
+    fm = fu_main.set_index("scenario")
+    fa = fu_alt.set_index("scenario")
+    median_value = float(reqs["ref_value"].median())
+
+    def revealed_text(row):
+        if row["_revealed"] is None or pd.isna(row["_revealed"]):
+            return "no λ in the searched range (up to 1000% of line value per day) makes the cost-minimising plan as reliable as the actual choice"
+        return (f"λ* ≈ {row['_revealed'] * 100:.3g}% of line value per day late "
+                f"(≈ USD {row['_revealed'] * median_value:,.0f} per expected late day for the median line of USD {median_value:,.0f})")
+
+    robust_dom = all(fm.loc[n, "_dominates"] == fa.loc[n, "_dominates"] for n in fm.index)
 
     # --- Implication evidence (recomputed here) -----------------------------------------
     sc = clean[clean["usable_scorecard"].fillna(False).astype(bool)]
@@ -585,7 +777,53 @@ Days-late and risk-model variants (defaults otherwise):
   E[days late] of weeks, the lateness term is small next to price differences
   between vendors, so price drives the allocation unless lateness is very costly.
 
-## 6. Implications
+## 6. Follow-up: revealed preference, constraints, dominance, robustness
+
+All points use the same price, freight and risk model within a panel. The
+counterfactual caveat from section 3 applies to every reallocated line.
+
+![Frontiers by scenario]({'figures/' + fig_fu})
+
+{md_table(fu_view)}
+
+How to read the columns:
+
+- **Unavoidable excess** is the smallest number of soft-constraint violations
+  any plan can reach in that scenario. Some molecule-quarter groups cannot meet
+  the caps with the vendors available. The actual choice's own excess is shown
+  for comparison.
+- **Least-late plan** minimises expected late days alone.
+- **Cheapest plan with late days ≤ actual** is an ε-constraint MILP: minimise
+  price + freight subject to Σ expected late days ≤ the actual choice's.
+- It **dominates** the actual choice when it is cheaper, no later, and no
+  worse on constraints than the unavoidable minimum.
+- **Revealed λ** is the smallest λ at which the λ-weighted MILP, with the same
+  constraint standard, is no later than the actual choice.
+
+**Revealed preference (chosen risk model).**
+
+- Defaults: {revealed_text(fm.loc[default_name])}.
+- Caps relaxed to observed levels: {revealed_text(fm.loc[observed_name])}.
+- No caps, no capacity: {revealed_text(fm.loc[SCENARIOS[4][0]])}.
+
+Read this as the lateness cost at which a cost-minimising planner would have
+matched SCMS's expected reliability. It holds only under this price and risk
+model, and only if SCMS's choices were in fact about reliability.
+
+**Dominance.** Scenarios where a plan dominates the actual choice (chosen risk
+model): {', '.join(n for n in fm.index if fm.loc[n, '_dominates']) or 'none'}.
+Under the alternative risk model: {', '.join(n for n in fa.index if fa.loc[n, '_dominates']) or 'none'}.
+{('Best dominating plan shown for "' + shift_name + '": ' + fm.loc[shift_name, 'cheapest plan with late days ≤ actual'] + ', saving ' + fm.loc[shift_name, 'saving vs actual'] + ' against the actual choice. Vendor shifts:') if shift_name else 'No plan is both cheaper and no later than the actual choice without violating the constraints.'}
+
+{md_table(shift) if shift is not None else ''}
+
+**Robustness to the risk model.** The dominance verdict is
+{'the same' if robust_dom else 'different'} in every scenario under the isotonic-calibrated vendor baseline (the
+predictor best calibrated on test). The frontiers shift: that model predicts
+lower lateness overall. So the absolute late-day numbers depend on the risk
+model, and they should be quoted with it.
+
+## 7. Implications
 
 **For FlowChain, the biggest lesson is a product one, not the MILP: a PO line
 must keep an immutable "original promised date", separate from the current
@@ -618,9 +856,26 @@ What FlowChain should do:
 
 For the decision itself:
 
-- At the agreed lateness costs, allocation is driven by price. The MILP mainly
-  enforces diversification (share caps) and capacity while buying cheaper.
-  Reliability only moves the choice at much higher λ.
+- At the agreed lateness costs (up to {max(LAMBDA_GRID) * 100:g}% of value per day), price drives
+  the allocation, and the λ-weighted MILP is cheaper but later than the actual
+  choice.
+- **But the actual choice is dominated.** Under the default constraints, the
+  cheapest plan with no more expected late days than the actual choice costs
+  {fm.loc[default_name, 'cheapest plan with late days ≤ actual']} ({fm.loc[default_name, 'saving vs actual']} saving). A plan exists in
+  {int(fm['_dominates'].sum())} of {len(fm)} scenarios under the chosen risk model and in
+  {int(fa['_dominates'].sum())} of {len(fa)} under the alternative. On these estimates, SCMS could have
+  paid less for the same expected reliability. More likely, its choices
+  reflect things the model does not see: eligibility, registration, framework
+  contracts, quoted rather than historical prices, and lead-time needs.
+- **Revealed preference.** To make the λ-weighted MILP as reliable as SCMS
+  under the default constraints, lateness would have to cost about
+  {(fm.loc[default_name, '_revealed'] * 100) if pd.notna(fm.loc[default_name, '_revealed']) else float('nan'):.3g}% of line value per day
+  ({(fa.loc[default_name, '_revealed'] * 100) if pd.notna(fa.loc[default_name, '_revealed']) else float('nan'):.3g}% under the alternative risk model). Such a value is implausibly
+  high for most goods, which supports the unmodelled-constraints reading over
+  "SCMS priced reliability rationally".
+- A manager should therefore use the ε-constraint form, "cheapest plan no
+  later than today", rather than guess a λ. It answers the question they
+  actually ask.
 - The price model is the weakest link: counterfactual prices come from other
   lines, not from quotes. Before acting on the estimated saving, validate it
   against actual RFQ quotes for a sample of requirements.
@@ -635,6 +890,8 @@ For the decision itself:
         "comparison": comparison.to_dict(orient="records"),
         "sanity": {"no_history_pick": no_history_pick, "lam0_cost": lam0_cost, "cheap_cost": cheap_cost, "lam0caps_cost": lam0caps_cost,
                    "monotone_late_days": monotone, "monotone_cost": cost_monotone},
+        "followup": [{k: v for k, v in r.items() if k not in ("_dom",)} for r in fu_all.to_dict(orient="records")],
+        "shift_scenario": shift_name, "robust_dominance": robust_dom, "median_ref_value": median_value,
         "saving_vs_actual": saving, "estimated_vs_observed_price_actual": est_vs_obs,
         "evidence": {"exact_share": exact_share, "heap_ratio": heap["ratio"], "perm_null_mean": perm["null_mean"], "perm_observed": perm["observed"]},
     })
