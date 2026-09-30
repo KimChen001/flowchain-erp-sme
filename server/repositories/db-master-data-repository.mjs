@@ -264,6 +264,34 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const record = records.find((supplier) => supplierMatches(supplier, key))
       return record ? mapSupplier(record) : null
     },
+    // PostgreSQL has no item-supplier relationship table yet. An item's
+    // approved purchasing source is its preferred supplier, when that supplier
+    // is an active supplier of the same workspace.
+    approvedSuppliersForItem: async (idOrSku = '', options = {}) => {
+      const client = await resolvePrisma({ env, prisma })
+      const key = text(decodeURIComponent(String(idOrSku || '')))
+      if (!key) return []
+      const where = tenantWhere(options)
+      const items = await client.item.findMany({ where, take: safeLimit(options.limit, 500) })
+      const item = items.find((row) => itemMatches(row, key))
+      if (!item?.preferredSupplierId) return []
+      const supplier = await client.supplier.findFirst({ where: { ...where, id: item.preferredSupplierId } })
+      if (!supplier || lower(supplier.status || 'active') !== 'active') return []
+      const itemMeta = metadata(item)
+      const supplierMeta = metadata(supplier)
+      const referencePrice = itemMeta.referencePrice ?? itemMeta.purchasePrice ?? null
+      return [{
+        ...mapSupplier(supplier),
+        preferred: true,
+        referencePrice: referencePrice === null || referencePrice === '' ? null : String(referencePrice),
+        // Only a currency someone recorded; never a guess.
+        currency: text(itemMeta.purchaseCurrency || supplierMeta.defaultCurrency || supplierMeta.currency) || null,
+      }]
+    },
+    listItemSuppliers: async (idOrSku = '', options = {}) => {
+      const suppliers = await createDbMasterDataRepository({ env, prisma }).approvedSuppliersForItem(idOrSku, options)
+      return suppliers.map((supplier) => ({ supplierId: supplier.id, supplierName: supplier.name, status: 'approved', preferred: true, source: 'item_preferred_supplier' }))
+    },
     listWarehouses: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const records = await client.warehouse.findMany({

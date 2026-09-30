@@ -4,8 +4,18 @@ const repositoryFor = (ctx) => {
   if (!ctx.repositories?.procurementRuntime) throw new Error("PostgreSQL procurement repository is not configured.");
   return ctx.repositories.procurementRuntime;
 };
+// Item and supplier lookups read the signed-in workspace's master data.
+const itemRepositoryFor = (ctx) => {
+  const masterData = ctx.repositories?.masterData;
+  if (!masterData) return undefined;
+  const scope = { tenantId: ctx.identity?.tenantId };
+  return {
+    getItem: (idOrSku) => masterData.getItem(idOrSku, scope),
+    getSupplier: (idOrName) => masterData.getSupplier(idOrName, scope),
+  };
+};
 const workflowService = (ctx) => createProcurementWorkflowService({
-  repository: repositoryFor(ctx), itemRepository: ctx.repositories?.masterData,
+  repository: repositoryFor(ctx), itemRepository: itemRepositoryFor(ctx),
   policyProvider: async () => ({
     directPurchaseThreshold: 50000,
     rfqRequiredAboveAmount: 100000,

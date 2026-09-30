@@ -132,6 +132,7 @@ test.before(async () => {
   await prisma.userWarehouseScope.create({ data: { id: randomUUID(), tenantId: tenantA, userId: managerA.id, warehouseId: warehouseA, accessLevel: 'operate' } })
   await prisma.userWarehouseScope.create({ data: { id: randomUUID(), tenantId: tenantB, userId: managerB.id, warehouseId: 'flow-wh-b', accessLevel: 'operate' } })
   await prisma.supplier.create({ data: { id: supplierA, tenantId: tenantA, code: 'SUP-FLOW-A', name: 'Walkthrough Packaging Co.', status: 'active' } })
+  await prisma.supplier.create({ data: { id: 'flow-supplier-a2', tenantId: tenantA, code: 'SUP-FLOW-A2', name: 'Second Source Supply', status: 'active' } })
   await prisma.item.create({ data: { id: itemA.id, tenantId: tenantA, sku: itemA.sku, name: itemA.name, unit: 'EA', preferredSupplierId: supplierA, metadata: { defaultWarehouseId: warehouseA, purchasable: true } } })
 
   const { createScmServer } = await import('../../server/scm-api.mjs')
@@ -168,6 +169,24 @@ test('without mobile operations enabled a trial has no PostgreSQL path to approv
   } finally {
     process.env.FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS = 'true'
   }
+})
+
+test('PR lines are validated against the suppliers and items of the signed-in workspace', async () => {
+  const ownSuppliers = await api(tokens.managerA, 'GET', `/api/master-data/items/${itemA.id}/suppliers`)
+  assert.equal(ownSuppliers.status, 200, describe(ownSuppliers))
+  assert.deepEqual(ownSuppliers.body.suppliers.map((supplier) => [supplier.id, supplier.preferred]), [[supplierA, true]])
+  const otherSuppliers = await api(tokens.managerB, 'GET', `/api/master-data/items/${itemA.id}/suppliers`)
+  assert.equal(otherSuppliers.status, 200, describe(otherSuppliers))
+  assert.deepEqual(otherSuppliers.body.suppliers, [])
+
+  const body = (line) => ({ departmentId: 'operations', defaultCurrency: 'USD', defaultNeedByDate: needBy, lines: [uiPrLine(line)] })
+  const foreign = await api(tokens.managerB, 'POST', '/api/procurement/requests', body())
+  assert.equal(foreign.status, 400, describe(foreign))
+  assert.equal(foreign.body.code, 'SUPPLIER_NOT_FOUND')
+  const unapproved = await api(tokens.managerA, 'POST', '/api/procurement/requests', body({ supplierId: 'flow-supplier-a2' }))
+  assert.equal(unapproved.status, 400, describe(unapproved))
+  assert.equal(unapproved.body.code, 'ITEM_SUPPLIER_RELATIONSHIP_INVALID')
+  assert.equal(await prisma.purchaseRequest.count(), 0)
 })
 
 test('step 1: a signed-in manager saves a PR draft (POST /api/procurement/requests)', { todo: PR_CREATE_BROKEN }, async () => {
