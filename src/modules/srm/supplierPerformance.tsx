@@ -241,7 +241,7 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
               <td className="p-2"><EntityLink kind="purchase_order" id={line.purchaseOrderId} /></td>
               <td className="p-2">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
               <td className="p-2">{format.day(line.originalPromisedDate)}</td>
-              <td className="p-2">{format.day(line.currentPromisedDate)}{line.revised && <span className="ml-1 rounded bg-amber-50 px-1 text-[10px] text-amber-700">{tr("revised")}</span>}</td>
+              <td className="p-2">{format.day(line.currentPromisedDate)}{line.revised && <span className="ml-1 rounded bg-amber-50 px-1 text-[11px] text-amber-700">{tr("revised")}</span>}</td>
               <td className="p-2">{format.day(line.coverDay)}</td>
               <td className="p-2 tabular-nums">{format.number(line.receivedQuantity)} / {format.number(line.orderedQuantity)} {line.unit}</td>
               <td className="p-2 tabular-nums">{format.number(line.rejectedQuantity)}</td>
