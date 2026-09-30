@@ -10,6 +10,7 @@
     "build": "vite build --configLoader runner",
     "dev": "vite --configLoader runner",
     "dev:local": "node scripts/dev-local.mjs",
+    "walkthrough:local": "node scripts/walkthrough-local.mjs",
     "dev:api": "node server/index.mjs",
     "api": "node server/index.mjs",
     "start": "node server/index.mjs",
