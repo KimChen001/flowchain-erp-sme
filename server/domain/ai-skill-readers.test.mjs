@@ -99,14 +99,15 @@ test('truncated reads become limitations and nulls stay null', async () => {
   assert.equal(ldm3.stockStatus, 'unknown')
 })
 
-test('a clock on a different UTC day than the tenant says which day overdue is counted to', async () => {
-  // 01:30 UTC on Sep 30 is still Sep 29 in New York.
+test('on a different UTC day the assistant still counts overdue to the tenant day', async () => {
+  // 01:30 UTC on Sep 30 is still Sep 29 in New York; the report and the
+  // assistant both count overdue days to Sep 29.
   const scenario = aiSkillScenario()
   scenario.ctx.aiSkillNow = new Date('2026-09-30T01:30:00Z')
   const facts = await readAiSkillFacts(await loadAiSkillContext(scenario.ctx))
   assert.equal(facts.today, '2026-09-29')
-  assert.equal(facts.asOf, '2026-09-30')
-  assert.deepEqual(facts.limitations.find((row) => row.code === 'report_day'), { code: 'report_day', date: '2026-09-30' })
+  assert.equal(facts.asOf, '2026-09-29')
+  assert.equal(facts.limitations.some((row) => row.code === 'report_day'), false)
 })
 
 test('the skill context requires a signed-in identity bound to the actor tenant', async () => {

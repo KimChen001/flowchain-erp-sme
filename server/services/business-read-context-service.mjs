@@ -1,3 +1,5 @@
+import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
+
 const clone = value => structuredClone(value)
 const array = value => Array.isArray(value) ? value : []
 
@@ -70,7 +72,8 @@ const updatedAt = record => String(record.updatedAt || record.createdAt || '')
 // The currency the document records. Never a guess: '' when none is stored.
 const documentCurrency = record => String(record.defaultCurrency || record.currency || record.lines?.find(line => line?.currency)?.currency || '').trim().toUpperCase()
 
-export function buildHomeOverview(context) {
+// "Changes today" counts documents updated on the tenant's calendar day.
+export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
   const workItems = [
     ...context.purchaseRequests.filter(row => row.status === 'submitted').map(row => ({
       priority: '高', title: '采购申请待审批', id: row.id, description: `申请金额 ${row.totalAmount ?? '—'}`,
@@ -92,8 +95,9 @@ export function buildHomeOverview(context) {
     ...context.rfqs.map(row => ({ type: '询价', entityType: 'rfq', id: row.id, status: row.status, supplier: '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/rfqs/${encodeURIComponent(row.id)}` })),
     ...context.purchaseOrders.map(row => ({ type: '采购订单', entityType: 'purchase_order', id: row.id, status: row.status, supplier: row.supplierSnapshot?.supplierName || row.supplierId || '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/orders/${encodeURIComponent(row.id)}` })),
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10)
-  const today = new Date().toISOString().slice(0, 10)
-  const todayChanges = documents.filter(row => row.updatedAt.startsWith(today)).length
+  const today = tenantCalendarDay(now, timeZone)
+  const dayOf = value => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : Number.isFinite(Date.parse(value)) ? tenantCalendarDay(new Date(value), timeZone) : ''
+  const todayChanges = documents.filter(row => dayOf(row.updatedAt) === today).length
   const limitations = [...context.dataLimitations, 'unresolved_risk_metric_not_connected']
   return {
     workItems,

@@ -74,3 +74,11 @@ test('BusinessReadContext carries each subject a repository cut off at its read 
   const complete = await createBusinessReadContextService({ repositories: repositories() }).read({ tenantId: 'tenant-a' })
   assert.deepEqual(complete.truncatedSubjects, [])
 })
+
+test('changes today count documents updated on the tenant day, not the UTC day', async () => {
+  const context = await createBusinessReadContextService({ repositories: repositories(), dataMode: 'user' }).read()
+  // Both documents were updated on Jul 14 UTC, which is still Jul 13 in New York.
+  assert.equal(buildHomeOverview(context, { now: new Date('2026-07-14T03:30:00Z'), timeZone: 'America/New_York' }).todayChanges, 2)
+  assert.equal(buildHomeOverview(context, { now: new Date('2026-07-14T05:00:00Z'), timeZone: 'America/New_York' }).todayChanges, 0)
+  assert.equal(buildHomeOverview(context, { now: new Date('2026-07-14T05:00:00Z'), timeZone: 'UTC' }).todayChanges, 2)
+})

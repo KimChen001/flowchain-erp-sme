@@ -18,7 +18,7 @@ import { apiJson } from "../../lib/api-client";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
-import { formatCurrencyAmount } from "../../lib/format";
+import { formatCurrencyAmount, todayInTimeZone } from "../../lib/format";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import type { PurchaseOrder, ReceivingDoc, SupplierInvoice } from "../../types/scm";
 import {
@@ -616,7 +616,8 @@ export default function PurchasingOrdersPage({
     if (status && status !== "open" && order.status !== status) return false;
     // "open" is the report definition: committed and still to receive.
     if (status === "open" && !(summary?.openPurchaseOrderIds || []).includes(order.po)) return false;
-    if (overdue && (["已完成", "已取消"].includes(order.status) || String(order.eta || "") >= "2026-07-11")) return false;
+    // Overdue: open, with an expected arrival before today in the workspace timezone.
+    if (overdue && (!(summary?.openPurchaseOrderIds || []).includes(order.po) || !order.eta || String(order.eta) >= todayInTimeZone())) return false;
     return true;
   });
   const selectedPO = orders.find((order) => order.po === selectedId) ?? null;

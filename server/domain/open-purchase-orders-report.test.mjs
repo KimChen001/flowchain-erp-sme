@@ -113,3 +113,29 @@ test('only committed orders with quantity still to receive are open, and only th
   assert.equal(all.total, 5)
   assert.deepEqual(Object.fromEntries(all.rows.map((row) => [row.id, row.isOpen])), { ISSUED: true, DRAFT: false, PENDING: false, STALE: false, CANCELLED: false })
 })
+
+test('overdue days count to the tenant calendar day, not the UTC day', () => {
+  const due = [po('PO-DUE', { expectedDate: '2026-09-29', lines: [{ quantity: 10, receivedQuantity: 0, unit: 'pcs', promisedDate: '2026-09-29' }] })]
+  // 21:30 on Sep 29 in New York is already Sep 30 in UTC: the order is due today, not late.
+  const evening = buildOpenPurchaseOrdersReport(due, {}, new Date('2026-09-30T01:30:00Z'), { timeZone: 'America/New_York' })
+  assert.equal(evening.asOf, '2026-09-29')
+  assert.equal(evening.rows[0].overdueDays, 0)
+  assert.equal(evening.summary.overdue, 0)
+  // One minute before and after midnight in New York (04:00 UTC during daylight time).
+  assert.equal(buildOpenPurchaseOrdersReport(due, {}, new Date('2026-09-30T03:59:00Z'), { timeZone: 'America/New_York' }).rows[0].overdueDays, 0)
+  const midnight = buildOpenPurchaseOrdersReport(due, {}, new Date('2026-09-30T04:00:00Z'), { timeZone: 'America/New_York' })
+  assert.equal(midnight.asOf, '2026-09-30')
+  assert.equal(midnight.rows[0].overdueDays, 1)
+  // A tenant on UTC is already a day late at 01:30 UTC.
+  assert.equal(buildOpenPurchaseOrdersReport(due, {}, new Date('2026-09-30T01:30:00Z'), { timeZone: 'UTC' }).rows[0].overdueDays, 1)
+  // Without a stored timezone the workspace default (America/New_York) applies.
+  assert.equal(buildOpenPurchaseOrdersReport(due, {}, new Date('2026-09-30T01:30:00Z')).asOf, '2026-09-29')
+})
+
+test('the open purchase orders route counts overdue to the tenant timezone', async () => {
+  let response
+  await handleReportsAnalyticsRoute({ req: { method: 'GET' }, res: {}, url: new URL('http://localhost/api/reports/open-purchase-orders'), identity: { tenantId: 'tenant-a' }, reportNow: new Date('2026-09-30T01:30:00Z'), tenantTimezone: 'Asia/Shanghai', repositories: { procurementRuntime: { listForReport: async () => [] } }, send: (_res, status, payload) => { response = { status, payload } } })
+  assert.equal(response.status, 200)
+  assert.equal(response.payload.asOf, '2026-09-30')
+  assert.equal(response.payload.timezone, 'Asia/Shanghai')
+})
