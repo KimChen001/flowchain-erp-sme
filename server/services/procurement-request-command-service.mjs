@@ -293,7 +293,6 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           where: { id: row.id },
           data: {
             status: next,
-            ...(action === "approve" ? { buyer: row.buyer || null } : {}),
             metadata: { ...(row.metadata || {}), version, lastAction: action, lastActorId: actor.user.id, lastReason: reason || null, timeline: [...(row.metadata?.timeline || []), timelineEntry(action, actor, reason)] },
           },
         });
