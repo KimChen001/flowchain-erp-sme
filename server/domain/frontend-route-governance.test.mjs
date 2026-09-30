@@ -79,10 +79,34 @@ test("normal SME navigation is deterministic and excludes non-product surfaces",
       "sales",
       "master-data:suppliers",
       "master-data:items",
+      "finance",
       "reports",
       "universal-intake",
       "review-actions",
     ],
+  );
+  const finance = first.find((route) => route.id === "finance");
+  assert.equal(finance.requiredCapability, "finance");
+  assert.equal(finance.requiredPermission, "finance.overview.read");
+  assert.equal(finance.defaultChildId, "finance:overview");
+  assert.equal(
+    invariants.isRouteVisibleInNavigation(finance, "PRIMARY", {
+      capabilityLoadState: "ready",
+      enabledCapabilityIds: new Set(),
+      authorizationLoadState: "ready",
+      effectivePermissionCodes: new Set(["finance.overview.read"]),
+    }),
+    false,
+    "Finance stays out of navigation while its capability is off",
+  );
+  assert.equal(
+    invariants.isRouteVisibleInNavigation(finance, "PRIMARY", {
+      capabilityLoadState: "ready",
+      enabledCapabilityIds: new Set(["finance"]),
+      authorizationLoadState: "ready",
+      effectivePermissionCodes: new Set(["finance.overview.read"]),
+    }),
+    true,
   );
   assert.deepEqual(
     second.map((route) => route.id),

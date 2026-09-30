@@ -111,6 +111,69 @@ test("Mobile Sync secrets are required only when the capability is enabled", () 
   })));
 });
 
+test("production refuses to start with test identity headers or a placeholder session secret", () => {
+  const issueFor = (overrides) => {
+    try {
+      validateProductionRuntimeConfig(validProductionEnv(overrides));
+    } catch (error) {
+      assert.equal(error.code, PRODUCTION_CONFIG_ERROR);
+      return error.issues.map((entry) => `${entry.key}:${entry.code}`);
+    }
+    return [];
+  };
+
+  assert.deepEqual(issueFor({ FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS: "true" }), ["FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS:test_identity_forbidden"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS: " TRUE " }), ["FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS:test_identity_forbidden"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS: "false" }), []);
+
+  // The release image declares itself production, so an operator override of
+  // NODE_ENV cannot silently switch off validation and trust test headers.
+  assert.deepEqual(issueFor({ FLOWCHAIN_DEPLOYMENT_PROFILE: "production", NODE_ENV: "test" }), ["NODE_ENV:test_mode_forbidden"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_DEPLOYMENT_PROFILE: "production", NODE_ENV: "development" }), ["NODE_ENV:production_required"]);
+  assert.deepEqual(issueFor({ FLOWCHAIN_DEPLOYMENT_PROFILE: "production" }), []);
+  assert.deepEqual(validateProductionRuntimeConfig({ NODE_ENV: "test", FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS: "true" }), { production: false, validated: true });
+
+  assert.deepEqual(issueFor({ FLOWCHAIN_LOCAL_SESSION_SECRET: "" }), ["FLOWCHAIN_LOCAL_SESSION_SECRET:required"]);
+  for (const placeholder of [
+    "replace-with-at-least-32-random-characters",
+    "REPLACE-WITH-a-long-random-secret-value-here",
+    "changeme-changeme-changeme-changeme",
+    "your-session-secret-at-least-32-characters",
+  ]) {
+    assert.deepEqual(issueFor({ FLOWCHAIN_LOCAL_SESSION_SECRET: placeholder }), ["FLOWCHAIN_LOCAL_SESSION_SECRET:placeholder"], placeholder);
+  }
+
+  // Every placeholder shipped in the example env files must be rejected.
+  for (const example of [".env.example", ".env.local.example", "deploy/env.production.example"]) {
+    const source = readFileSync(resolve(import.meta.dirname, "../..", example), "utf8");
+    const value = source.match(/^FLOWCHAIN_LOCAL_SESSION_SECRET=(.*)$/m)?.[1];
+    if (value === undefined) continue;
+    assert.ok(issueFor({ FLOWCHAIN_LOCAL_SESSION_SECRET: value }).some((entry) => entry.startsWith("FLOWCHAIN_LOCAL_SESSION_SECRET:")), example);
+  }
+});
+
+test("the server refuses to start in production when test identity headers are enabled", () => {
+  const previous = { ...process.env };
+  Object.assign(process.env, validProductionEnv({ FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS: "true" }));
+  try {
+    assert.throws(
+      () => createScmServer(),
+      (error) => error.code === PRODUCTION_CONFIG_ERROR && error.issues.some((entry) => entry.key === "FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS"),
+    );
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
+    Object.assign(process.env, previous);
+  }
+});
+
+test("the release image and Compose file declare the production deployment profile", () => {
+  const dockerfile = readFileSync(resolve(import.meta.dirname, "../../Dockerfile"), "utf8");
+  const runtimeStage = dockerfile.slice(dockerfile.indexOf("AS runtime"));
+  assert.match(runtimeStage, /FLOWCHAIN_DEPLOYMENT_PROFILE=production/);
+  const compose = readFileSync(resolve(import.meta.dirname, "../../deploy/docker-compose.staging.yml"), "utf8");
+  assert.equal(compose.match(/FLOWCHAIN_DEPLOYMENT_PROFILE: production/g)?.length, 2);
+});
+
 test("production local session secret never falls back to a random value", () => {
   assert.throws(
     () => createLocalSessionSecret({ NODE_ENV: "production" }),

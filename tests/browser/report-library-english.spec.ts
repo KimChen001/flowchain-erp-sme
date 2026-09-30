@@ -75,3 +75,18 @@ test('failed report-library loads show a localized retry state', async ({ page }
   await expect(page.getByRole('alert')).toContainText('Could not load the report library');
   await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
 });
+
+test('the overdue purchase orders card opens the overdue scope of the open purchase orders report', async ({ page }) => {
+  await login(page);
+  await page.goto('/app/reports/library');
+  const library = page.getByTestId('report-library-v2');
+  await expect(library.getByRole('heading', { name: 'Supplier overview', exact: true })).toBeVisible();
+  await expect(library).not.toContainText(/Supplier performance|Open invoices/);
+  await library.locator('.p-4').filter({ has: page.getByRole('heading', { name: 'Overdue purchase orders', exact: true }) }).getByRole('button', { name: 'Open report', exact: true }).click();
+  await expect(page).toHaveURL(/\/app\/reports\/procurement\?scope=overdue/);
+  const report = page.getByTestId('open-purchase-orders-report');
+  await expect(report.getByRole('button', { name: 'Overdue', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await report.getByText('Metric definitions', { exact: true }).click();
+  await expect(report).toContainText('Drafts, orders pending approval, and rejected, cancelled or fully received orders are excluded.');
+  await expect(report).not.toContainText('Drafts awaiting completion are included');
+});

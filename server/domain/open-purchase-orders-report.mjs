@@ -1,4 +1,4 @@
-import { isOpenPurchaseOrder, purchaseOrderLineRemaining } from './open-purchase-order.mjs'
+import { isOpenPurchaseOrder, purchaseOrderBusinessDate, purchaseOrderLineRemaining } from './open-purchase-order.mjs'
 const text = value => String(value ?? '').trim()
 const numeric = value => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
 const day = value => {
@@ -33,7 +33,7 @@ export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {},
     const dataIncomplete = !lines.length || lines.some(line => line.ordered === null || line.received === null) || (isOpen && (!dueDate || openLines.some(line => !line.due)))
     return {
       id: text(po.id), orderNumber: text(po.orderNumber || po.id), supplier: text(po.supplierSnapshot?.supplierName || po.supplierName || po.supplierId),
-      supplierId: text(po.supplierId), createdDate: day(po.createdAt), dueDate, overdueDays, owner: text(po.owner),
+      supplierId: text(po.supplierId), createdDate: purchaseOrderBusinessDate(po), dueDate, overdueDays, owner: text(po.owner),
       ordered: sameUnit ? sumKnown(lines.map(line => line.ordered)) : null,
       received: sameUnit ? sumKnown(lines.map(line => line.received)) : null,
       remaining: sameUnit ? sumKnown(lines.map(line => line.remaining)) : null,

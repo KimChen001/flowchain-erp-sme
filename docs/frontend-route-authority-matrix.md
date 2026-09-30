@@ -26,11 +26,13 @@ backend-authorized.
 ## Default SME navigation
 
 The deterministic default primary order is Today, Procurement, Procurement
-Fulfillment, Inventory, Sales, Suppliers, Items, and Reports. Universal Intake
-and Review Queue are conditional on their exact capability and authorization.
-Settings remains in the profile menu. Finance and Mobile Operations remain
-hidden Extensions; Frozen, Legacy, and Internal surfaces remain outside normal
-navigation.
+Fulfillment, Inventory, Sales, Suppliers, Items, and Reports. Finance (between
+Items and Reports), Universal Intake and Review Queue are conditional on their
+exact capability and authorization; Finance appears when
+`FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE=true` (part of the US trial capability
+set) and the user holds `finance.overview.read`. Settings remains in the
+profile menu. Mobile Operations remains a hidden Extension; Frozen, Legacy,
+and Internal surfaces remain outside normal navigation.
 
 The 163/163 frontend route stability audit verifies
 resolution, shell rendering, no route-level 404 recovery, no render crash, and
@@ -55,7 +57,7 @@ classification and navigation metadata.
 | `universal-intake` | CONDITIONAL_PRIMARY |
 | `review-actions` | CONDITIONAL_PRIMARY |
 | `settings` | PROFILE_MENU |
-| `finance` | EXTENSION_HIDDEN |
+| `finance` | CONDITIONAL_PRIMARY |
 | `mobile-operations` | EXTENSION_HIDDEN |
 | `forecast` | FROZEN |
 | `imports` | LEGACY |
@@ -150,7 +152,7 @@ classification and navigation metadata.
 | `inventory:serials` | `/app/inventory/serials` | 序列号 | `inventory` | CORE | SECONDARY | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | inventory.balance.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `inventory:bins` | `/app/inventory/bins` | 库位管理 | `inventory` | CORE | SECONDARY | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | inventory-bin-read | inventory.balance.read | CAPABILITY_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `inventory:exceptions` | `/app/inventory/exceptions` | 库存异常 | `inventory` | CORE | SECONDARY | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | inventory.balance.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
-| `finance` | `/app/finance` | 结算管理 | `finance` | EXTENSION | SECONDARY | no | finance | `src/modules/finance` | /api/operational-finance/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | finance | finance.overview.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
+| `finance` | `/app/finance` | 结算管理 | `finance` | EXTENSION | PRIMARY | no | finance | `src/modules/finance` | /api/operational-finance/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | finance | finance.overview.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `finance:overview` | `/app/finance/overview` | 运营财务总览 | `finance` | EXTENSION | SECONDARY | no | finance | `src/modules/finance` | /api/operational-finance/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | finance | finance.overview.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `finance:invoices` | `/app/finance/invoices` | 供应商发票 | `finance` | EXTENSION | SECONDARY | no | finance | `src/modules/finance` | /api/operational-finance/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | supplier-invoice | finance.supplier_invoice.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `finance:payables` | `/app/finance/payables` | 费用单 / 应付 | `finance` | EXTENSION | SECONDARY | no | finance | `src/modules/finance` | /api/operational-finance/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | payable-obligation | finance.payable.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
