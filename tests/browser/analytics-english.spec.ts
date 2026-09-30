@@ -57,7 +57,7 @@ test('overview stays available in Chinese', async ({ page }) => {
 test('populated overview uses readable status labels and filters by the original status value', async ({ page }) => {
   await login(page);
   await page.route('**/api/reports/query', async route => {
-    const context = { purchaseOrders: [{ id: 'PO-DEMO', supplierName: 'Acme Components', status: 'partially_received', currency: 'USD', totalAmount: 900, updatedAt: '2026-09-10', lines: [] }], salesOrders: [], suppliers: [], items: [], inventoryItems: [], supplierInvoices: [], receipts: [], dataLimitations: [] };
+    const context = { purchaseOrders: [{ id: 'PO-DEMO', supplierName: 'Acme Components', status: 'partially_received', currency: 'USD', totalAmount: 900, createdAt: '2026-09-10', lines: [] }], salesOrders: [], suppliers: [], items: [], inventoryItems: [], supplierInvoices: [], receipts: [], dataLimitations: [] };
     await route.fulfill({ json: buildRuntimeGovernedReport(context, route.request().postDataJSON()) });
   });
   await page.goto('/app/reports/overview');
@@ -70,6 +70,31 @@ test('populated overview uses readable status labels and filters by the original
   await start.fill('2026-02-30');
   await expect(start).toHaveJSProperty('validationMessage', 'Dates must use YYYY-MM-DD.');
   expect(new URL(page.url()).searchParams.has('from')).toBeFalsy();
+});
+
+test('analytics pages offer only filters the report applies and promise no missing metrics', async ({ page }) => {
+  await login(page);
+  await page.goto('/app/reports/overview?company=Acme&warehouse=Main&category=Bolts&comparison=year_over_year');
+  const filters = page.getByTestId('bi-global-filters');
+  await expect(filters.getByRole('textbox', { name: 'Start date' })).toBeVisible();
+  await expect(filters.getByLabel('Company', { exact: true })).toHaveCount(0);
+  await expect(filters.getByLabel('Comparison', { exact: true })).toHaveCount(0);
+  await expect(filters).not.toContainText(/Company:|Warehouse:|Category:/);
+  await filters.getByRole('button', { name: /More filters/ }).click();
+  for (const label of ['Supplier', 'Customer', 'Currency']) await expect(filters.getByLabel(label, { exact: true })).toBeVisible();
+  for (const label of ['Warehouse', 'Category']) await expect(filters.getByLabel(label, { exact: true })).toHaveCount(0);
+  for (const [view, subtitle] of [['procurement?view=analytics', 'Track committed purchasing spend and open purchase orders'], ['finance', 'Review submitted supplier invoice amounts'], ['suppliers', 'Review supplier records and committed purchasing spend']]) {
+    await page.goto(`/app/reports/${view}`);
+    await expect(page.getByTestId('bi-dashboard').getByText(subtitle, { exact: true })).toBeVisible();
+    await expect(page.getByTestId('bi-dashboard')).not.toContainText(/OTIF|quality|three-way|aging|year over year/i);
+  }
+});
+
+test('analytics subtitles stay accurate in Chinese', async ({ page }) => {
+  await login(page, 'zh-CN');
+  await page.goto('/app/reports/suppliers');
+  await expect(page.getByTestId('bi-dashboard').getByText('查看供应商记录与已承诺采购支出', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('bi-dashboard')).not.toContainText(/OTIF|质量|三单匹配|账龄/);
 });
 
 // Walkthrough-shaped inventory: LDM-001 has 8 on hand against an item master
