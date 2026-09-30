@@ -67,6 +67,14 @@ export const operationalSettingsSeed = {
   },
 }
 
+// The operational settings FlowChain reads today: three-way match applies the
+// four invoice matching tolerances (operational-finance-policy.mjs). Nothing
+// reads the other sections yet, so the settings UI shows them read-only as
+// "Not in effect yet" and keeps their stored values.
+export const REVIEW_TOLERANCE_FIELDS = ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance']
+export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: [], advanced: [] })
+const TOLERANCE_PATTERN = /^\d+(\.\d{1,4})?$/
+
 const clone = value => structuredClone(value)
 const text = value => String(value ?? '').trim()
 
@@ -125,6 +133,18 @@ export function validateOperationalSection(section, value) {
     if (!rules.length || new Set(signatures).size !== signatures.length) throw Object.assign(new Error('Numbering rules are empty or conflicting.'), { code: 'NUMBERING_RULE_CONFLICT', status: 409 })
   }
   if (section === 'review' && !Array.isArray(value.policies)) throw Object.assign(new Error('Review policies are required.'), { code: 'REVIEW_POLICY_VALIDATION_FAILED', status: 400 })
+  if (section === 'review') {
+    const next = clone(value)
+    for (const field of REVIEW_TOLERANCE_FIELDS) {
+      if (value[field] === undefined) continue
+      const raw = text(value[field])
+      if (!TOLERANCE_PATTERN.test(raw) || (field === 'pricePercentageTolerance' && Number(raw) > 100)) {
+        throw Object.assign(new Error(`${field} must be a number of 0 or more with up to four decimal places.`), { code: 'REVIEW_TOLERANCE_INVALID', status: 400, details: { field } })
+      }
+      next[field] = raw
+    }
+    return next
+  }
   if (section === 'modules') {
     const items = Array.isArray(value.items) ? value.items : []
     for (const protectedId of ['overview', 'settings']) if (!items.some(item => item.id === protectedId && item.enabled)) throw Object.assign(new Error('Overview and Settings cannot be disabled.'), { code: 'PROTECTED_MODULE_REQUIRED', status: 409 })

@@ -117,3 +117,35 @@ test('sales risk and evidence views translate system reasons and preserve custom
   await expect(page.locator('tbody')).toContainText('示例客户');
   await expect(page.locator('tbody')).toContainText('Shortage risk');
 });
+
+for (const financeEnabled of [false, true]) {
+  test(`Finance navigation and PO row finance links are ${financeEnabled ? 'shown' : 'hidden'} when operational finance is ${financeEnabled ? 'on' : 'off'}`, async ({ page }) => {
+    await signIn(page);
+    // Grant the read permissions so only the capability decides visibility.
+    await page.route('**/api/authorization/context', async route => {
+      const response = await route.fetch(); const data = await response.json();
+      await route.fulfill({ response, json: { ...data, effectivePermissions: [...new Set([...(data.effectivePermissions || []), 'procurement.purchase_order.read', 'finance.overview.read', 'finance.supplier_invoice.read', 'finance.three_way_match.read'])] } });
+    });
+    await page.route('**/api/capabilities', async route => {
+      const response = await route.fetch(); const data = await response.json();
+      await route.fulfill({ response, json: { capabilities: (data.capabilities || []).map((capability: { id: string }) =>
+        ['finance', 'supplier-invoice', 'three-way-match'].includes(capability.id) ? { ...capability, enabled: financeEnabled } : capability) } });
+    });
+    await page.route('**/api/purchase-orders-workbench', route => route.fulfill({ json: {
+      purchaseOrders: [order('PO-OPEN', 'issued')], receivingDocs: [],
+      supplierInvoices: [{ invoiceNumber: 'INV-OPEN', relatedPo: 'PO-OPEN', supplier: 'Acme Components', currency: 'USD', amount: 2400, status: 'submitted' }],
+    } }));
+    await page.goto('/app/procurement/orders');
+    const row = page.locator('tr').filter({ hasText: 'PO-OPEN' });
+    await row.locator('summary', { hasText: 'More' }).click();
+    await expect(row.getByRole('button', { name: 'View order lines and evidence', exact: true })).toBeVisible();
+    await expect(page.locator('aside').getByRole('button', { name: 'Purchasing', exact: true })).toBeVisible();
+    await expect(page.locator('aside').getByRole('button', { name: /^Finance( |$)/ })).toHaveCount(financeEnabled ? 1 : 0);
+    await expect(row.getByRole('button', { name: 'Open invoice record', exact: true })).toHaveCount(financeEnabled ? 1 : 0);
+    await expect(row.getByRole('button', { name: 'Open three-way match', exact: true })).toHaveCount(financeEnabled ? 1 : 0);
+    if (!financeEnabled) return;
+    await row.getByRole('button', { name: 'Open three-way match', exact: true }).click();
+    await expect(page).toHaveURL(/\/app\/finance\/three-way-match/);
+    await expect(page.getByTestId('capability-route-blocked')).toHaveCount(0);
+  });
+}

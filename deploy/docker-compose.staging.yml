@@ -6,6 +6,7 @@ services:
       - env.production
     environment:
       NODE_ENV: production
+      FLOWCHAIN_DEPLOYMENT_PROFILE: production
       SCM_API_PORT: 8787
     ports:
       - "127.0.0.1:${FLOWCHAIN_HTTP_PORT:-8787}:8787"
@@ -26,6 +27,7 @@ services:
       - env.production
     environment:
       NODE_ENV: production
+      FLOWCHAIN_DEPLOYMENT_PROFILE: production
     command: ["npx", "prisma", "migrate", "deploy"]
     restart: "no"
 

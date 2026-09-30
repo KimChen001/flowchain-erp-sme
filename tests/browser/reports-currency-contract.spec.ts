@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { buildRuntimeGovernedReport } from '../../server/domain/runtime-report-read-model.mjs'
 
 async function authenticate(page: Page) {
   const response = await page.request.post('/api/auth/login', { data: { email: 'manager@example.com', name: 'Ignored', company: 'Ignored' } })
@@ -55,7 +56,7 @@ test('reports overview renders an unfiltered single-currency scope safely', asyn
       currencyAmounts: [{ currencyCode: 'CNY', currencyLabel: '人民币（CNY）', amount: 100 }],
       fxConverted: false,
     }
-    payload.kpis = payload.kpis.map((item: { unit: string }) => item.unit === 'currency' ? { ...item, value: 100, currentValue: 100, dataStatus: 'complete', limitations: [] } : item)
+    payload.kpis = payload.kpis.map((item: { unit: string }) => item.unit === 'currency' ? { ...item, value: 100, currentValue: 100, dataStatus: 'complete', limitations: [], currencyCode: payload.dataScope.currencyCode, currencyLabel: payload.dataScope.currencyLabel, currencies: payload.dataScope.currencies, currencyAggregationStatus: 'single_currency', currencyAmounts: payload.dataScope.currencyAmounts } : item)
     await route.fulfill({ response, json: payload })
   })
   await page.goto('/app/reports/overview')
@@ -81,7 +82,7 @@ test('reports overview localizes a USD scope for the English workspace', async (
       currencyAmounts: [{ currencyCode: 'USD', currencyLabel: '美元（USD）', amount: 100 }],
       fxConverted: false,
     }
-    payload.kpis = payload.kpis.map((item: { unit: string }) => item.unit === 'currency' ? { ...item, value: 100, currentValue: 100, dataStatus: 'complete', limitations: [] } : item)
+    payload.kpis = payload.kpis.map((item: { unit: string }) => item.unit === 'currency' ? { ...item, value: 100, currentValue: 100, dataStatus: 'complete', limitations: [], currencyCode: payload.dataScope.currencyCode, currencyLabel: payload.dataScope.currencyLabel, currencies: payload.dataScope.currencies, currencyAggregationStatus: 'single_currency', currencyAmounts: payload.dataScope.currencyAmounts } : item)
     await route.fulfill({ response, json: payload })
   })
   await page.goto('/app/reports/overview')
@@ -110,7 +111,7 @@ test('reports overview presents an unconverted multi-currency scope without cras
       ],
       fxConverted: false,
     }
-    payload.kpis = payload.kpis.map((item: { unit: string }) => item.unit === 'currency' ? { ...item, value: null, currentValue: null, dataStatus: 'incomplete', limitations: ['multi_currency_unconverted'] } : item)
+    payload.kpis = payload.kpis.map((item: { unit: string }) => item.unit === 'currency' ? { ...item, value: null, currentValue: null, dataStatus: 'incomplete', limitations: ['multi_currency_unconverted'], currencyCode: null, currencyLabel: payload.dataScope.currencyLabel, currencies: payload.dataScope.currencies, currencyAggregationStatus: 'multi_currency_unconverted', currencyAmounts: payload.dataScope.currencyAmounts } : item)
     await route.fulfill({ response, json: payload })
   })
   await page.goto('/app/reports/overview')
@@ -118,5 +119,37 @@ test('reports overview presents an unconverted multi-currency scope without cras
   await expect(page.getByTestId('reports-multi-currency-status')).toContainText('Multiple currencies, not converted')
   await expect(page.getByTestId('reports-multi-currency-status')).toContainText('Select a currency')
   await expect(page.getByText('Business overview module failed')).toHaveCount(0)
+  expect(errors.join('\n')).not.toContain('Invalid currency code')
+})
+
+const reportContext = (extra: Record<string, unknown>) => ({ purchaseOrders: [], salesOrders: [], suppliers: [], items: [], inventoryItems: [], supplierInvoices: [], receipts: [], dataLimitations: [], ...extra })
+
+test('a money metric is shown in its own currency, not the dashboard currency', async ({ page }) => {
+  await authenticate(page)
+  const errors = collectRuntimeErrors(page)
+  const context = reportContext({
+    salesOrders: [{ id: 'SO-USD', orderedQty: 1, fulfilledQty: 0, currency: 'USD', totalAmount: 90, status: 'confirmed', createdAt: '2026-09-02' }],
+    purchaseOrders: [{ id: 'PO-EUR', status: 'issued', totalAmount: 300, currency: 'EUR', createdAt: '2026-09-02', lines: [] }],
+  })
+  await page.route('**/api/reports/query', route => route.fulfill({ json: buildRuntimeGovernedReport(context, { ...route.request().postDataJSON(), measures: ['sales_order_count', 'purchase_order_amount'] }) }))
+  await page.goto('/app/reports/sales')
+  await expect(page.getByText('Currency: US dollar (USD)')).toBeVisible()
+  await expect(page.getByRole('button', { name: /Purchase order amount/ })).toContainText(/€300/)
+  expect(errors.join('\n')).not.toContain('Invalid currency code')
+})
+
+test('a missing currency code blocks the total instead of borrowing a currency', async ({ page }) => {
+  await authenticate(page)
+  const errors = collectRuntimeErrors(page)
+  const context = reportContext({ purchaseOrders: [
+    { id: 'PO-USD', status: 'issued', totalAmount: 100, currency: 'USD', createdAt: '2026-09-02', lines: [] },
+    { id: 'PO-BLANK', status: 'issued', totalAmount: 50, currency: '', createdAt: '2026-09-02', lines: [] },
+  ] })
+  await page.route('**/api/reports/query', route => route.fulfill({ json: buildRuntimeGovernedReport(context, route.request().postDataJSON()) }))
+  await page.goto('/app/reports/overview')
+  const amount = page.getByRole('button', { name: /Purchase order amount/ })
+  await expect(amount).toContainText('Missing or invalid currency')
+  await expect(amount).not.toContainText(/\$|¥|150/)
+  await expect(page.getByTestId('reports-data-scope-limitations')).toContainText('missing or invalid currency code')
   expect(errors.join('\n')).not.toContain('Invalid currency code')
 })

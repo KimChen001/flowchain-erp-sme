@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, Plus, Save, Search, ShieldCheck } from 'lucide-react';
 import { A, Card, RecoveryActions } from '../../components/ui';
 import { BusinessEntityLink } from '../../components/business/BusinessEntityLink';
@@ -28,24 +28,54 @@ const sectionDescriptions: Record<View, { en: string; zh: string }> = {
   company: { en: 'Basic information for this workspace.', zh: '维护当前业务空间的基础信息。' },
   roles: { en: 'Manage members, roles and whether they are active.', zh: '管理访问成员、角色和启用状态。' },
   numbering: { en: 'Set document prefixes, date segments and sequence numbers.', zh: '设置单据前缀、日期段和流水号。' },
-  review: { en: 'Manage amount, risk and inventory tolerance thresholds in one place.', zh: '集中管理金额、风险和库存容差门槛。' },
+  review: { en: 'Invoice matching tolerances are in effect. The other review settings are not in effect yet.', zh: '发票匹配容差已生效；其他复核设置尚未生效。' },
   modules: { en: 'Choose enabled modules, their order, the default entry and which roles see them.', zh: '配置启用模块、顺序、默认入口和角色可见性。' },
   ai: { en: 'Set each AI capability to allowed, allowed after review, or not allowed.', zh: '按能力设置允许、复核或禁止等级。' },
   audit: { en: 'Search recorded settings and business audit entries.', zh: '检索真实设置与业务审计记录。' },
   advanced: { en: 'Controlled security, export and display parameters.', zh: '维护安全、导出和显示类受控参数。' },
 };
 
+// Sections that nothing reads yet (see OPERATIONAL_SETTINGS_IN_EFFECT in
+// server/domain/workspace-settings-contract.mjs). They are shown read-only so
+// saving never reports success for a setting that changes nothing.
+const NOT_IN_EFFECT_SECTIONS: View[] = ['numbering', 'modules', 'ai', 'advanced'];
+
+const TOLERANCE_FIELDS = [
+  { key: 'quantityTolerance', label: 'settings.tolerance.quantity', help: 'settings.tolerance.quantityHelp' },
+  { key: 'pricePercentageTolerance', label: 'settings.tolerance.pricePercentage', help: 'settings.tolerance.pricePercentageHelp' },
+  { key: 'priceAbsoluteTolerance', label: 'settings.tolerance.priceAbsolute', help: 'settings.tolerance.priceAbsoluteHelp' },
+  { key: 'amountTolerance', label: 'settings.tolerance.amount', help: 'settings.tolerance.amountHelp' },
+] as const;
+type ToleranceKey = (typeof TOLERANCE_FIELDS)[number]['key'];
+
+// Mirrors the server check: 0 or more, at most four decimal places, and the
+// percentage no higher than 100.
+function toleranceError(key: ToleranceKey, value: string | undefined): TranslationKey | null {
+  const raw = String(value ?? '').trim();
+  if (!/^\d+(\.\d{1,4})?$/.test(raw)) return key === 'pricePercentageTolerance' ? 'settings.tolerance.percentInvalid' : 'settings.tolerance.invalid';
+  if (key === 'pricePercentageTolerance' && Number(raw) > 100) return 'settings.tolerance.percentInvalid';
+  return null;
+}
+
+function NotInEffect({ children }: { children: React.ReactNode }) {
+  const { t } = useI18n();
+  return <div data-testid="settings-not-in-effect">
+    <div role="note" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span className="font-semibold">{t('settings.notInEffect')}</span> · {t('settings.notInEffectDetail')}</div>
+    <fieldset disabled className="opacity-70">{children}</fieldset>
+  </div>;
+}
+
 const fieldClass = 'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-400';
 const buttonClass = 'inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50';
 
-function Header({ view, dirty, saving, onSave, onCancel }: { view: View; dirty?: boolean; saving?: boolean; onSave?: () => void; onCancel?: () => void }) {
+function Header({ view, dirty, saving, invalid, onSave, onCancel }: { view: View; dirty?: boolean; saving?: boolean; invalid?: boolean; onSave?: () => void; onCancel?: () => void }) {
   const { t, language } = useI18n();
   const key = ({ company: 'settings.company', roles: 'settings.roles', numbering: 'settings.numbering', review: 'settings.review', modules: 'settings.modules', ai: 'settings.ai', audit: 'settings.audit', advanced: 'settings.advanced' } as const)[view];
   const title = t(key);
   const description = sectionDescriptions[view][language === 'en-US' ? 'en' : 'zh'];
   return <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
     <div><h2 className="fc-section-title" style={{ color: A.label }}>{title}</h2><p className="mt-1 text-sm" style={{ color: A.sub }}>{description}</p></div>
-    {onSave && <div className="flex gap-2">{dirty && <button onClick={onCancel} disabled={saving} className={`${buttonClass} border border-slate-200 bg-white`}>{t('settings.cancel')}</button>}<button data-testid="settings-save" disabled={!dirty || saving} onClick={onSave} className={`${buttonClass} text-white`} style={{ background: A.blue }}><Save size={15} />{saving ? t('settings.saving') : dirty ? t('settings.save') : t('settings.saved')}</button></div>}
+    {onSave && <div className="flex gap-2">{dirty && <button onClick={onCancel} disabled={saving} className={`${buttonClass} border border-slate-200 bg-white`}>{t('settings.cancel')}</button>}<button data-testid="settings-save" disabled={!dirty || saving || invalid} onClick={onSave} className={`${buttonClass} text-white`} style={{ background: A.blue }}><Save size={15} />{saving ? t('settings.saving') : dirty ? t('settings.save') : t('settings.saved')}</button></div>}
   </div>;
 }
 
@@ -71,14 +101,19 @@ function Numbering({ value, onChange }: { value: SettingsRuntime['numbering']; o
 function Review({ value, onChange }: { value: SettingsRuntime['review']; onChange: (v: SettingsRuntime['review']) => void }) {
   const { t } = useI18n();
   const [amount, setAmount] = useState(120000); const requires = value.enabled && amount >= value.amountThreshold;
-  return <div className="grid gap-5 lg:grid-cols-[1fr_320px]"><div className="grid gap-4 md:grid-cols-2">
+  return <div className="space-y-6"><section data-testid="settings-review-tolerances" className="rounded-xl border border-slate-200 p-4">
+    <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium" style={{ color: A.label }}>{t('settings.matchingTolerances')}</h3><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{t('settings.inEffect')}</span></div>
+    <p className="mt-1 text-sm" style={{ color: A.sub }}>{t('settings.matchingTolerancesHelp')}</p>
+    <div className="mt-4 grid gap-4 md:grid-cols-2">{TOLERANCE_FIELDS.map(field => { const error = toleranceError(field.key, value[field.key]); const inputId = `settings-${field.key}`; const helpId = `${inputId}-help`; return <div key={field.key} className="text-sm"><label htmlFor={inputId}>{t(field.label)}</label><input id={inputId} inputMode="decimal" aria-invalid={Boolean(error)} aria-describedby={helpId} className={`${fieldClass} mt-1 ${error ? 'border-red-400' : ''}`} value={value[field.key] ?? ''} onChange={e => onChange({ ...value, [field.key]: e.target.value })} /><span id={helpId} className={`mt-1 block text-xs ${error ? 'text-red-600' : 'text-slate-500'}`}>{error ? t(error) : t(field.help)}</span></div>; })}</div>
+  </section>
+  <section><h3 className="mb-3 font-medium" style={{ color: A.label }}>{t('settings.otherReviewSettings')}</h3><NotInEffect><div className="grid gap-5 lg:grid-cols-[1fr_320px]"><div className="grid gap-4 md:grid-cols-2">
     <label className="text-sm">{t('settings.amountThreshold')}<input type="number" className={`${fieldClass} mt-1`} value={value.amountThreshold} onChange={e => onChange({ ...value, amountThreshold: Number(e.target.value) })} /></label>
     <label className="text-sm">{t('settings.inventoryTolerance')}<input type="number" className={`${fieldClass} mt-1`} value={value.inventoryTolerancePercent} onChange={e => onChange({ ...value, inventoryTolerancePercent: Number(e.target.value) })} /></label>
     <label className="text-sm">{t('settings.riskLevels')}<input className={`${fieldClass} mt-1`} value={value.riskLevels.join(', ')} onChange={e => onChange({ ...value, riskLevels: e.target.value.split(/[、,]/).filter(Boolean) })} /></label>
     <label className="text-sm">{t('settings.reviewerRoles')}<input className={`${fieldClass} mt-1`} value={value.reviewerRoles.join(', ')} onChange={e => onChange({ ...value, reviewerRoles: e.target.value.split(/[、,]/).filter(Boolean) })} /></label>
     <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value.enabled} onChange={e => onChange({ ...value, enabled: e.target.checked })} />{t('settings.enableReview')}</label>
     <div className="md:col-span-2"><div className="mb-2 text-sm font-medium">{t('settings.reviewPolicyList')}</div><div className="grid gap-2">{(value.policies || []).map(policy => <label key={policy.id} className="flex items-center gap-2 rounded-lg border border-slate-200 p-3 text-sm"><input type="checkbox" checked={policy.enabled} onChange={e => onChange({ ...value, policies: value.policies.map(row => row.id === policy.id ? { ...row, enabled: e.target.checked } : row) })} />{policy.name}</label>)}</div></div>
-  </div><div className="rounded-xl bg-slate-50 p-4"><div className="font-medium">{t('settings.policySimulation')}</div><label className="mt-3 block text-xs">{t('settings.simulatedAmount')}<input type="number" className={`${fieldClass} mt-1`} value={amount} onChange={e => setAmount(Number(e.target.value))} /></label><div className={`mt-3 rounded-lg p-3 text-sm ${requires ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>{requires ? t('settings.reviewRequired', { roles: value.reviewerRoles.join(' / ') }) : t('settings.standardFlow')}</div></div></div>;
+  </div><div className="rounded-xl bg-slate-50 p-4"><div className="font-medium">{t('settings.policySimulation')}</div><label className="mt-3 block text-xs">{t('settings.simulatedAmount')}<input type="number" className={`${fieldClass} mt-1`} value={amount} onChange={e => setAmount(Number(e.target.value))} /></label><div className={`mt-3 rounded-lg p-3 text-sm ${requires ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-800'}`}>{requires ? t('settings.reviewRequired', { roles: value.reviewerRoles.join(' / ') }) : t('settings.standardFlow')}</div></div></div></NotInEffect></section></div>;
 }
 
 function Modules({ value, onChange }: { value: SettingsRuntime['modules']; onChange: (v: SettingsRuntime['modules']) => void }) {
@@ -124,9 +159,11 @@ export default function SettingsPage({ initialView }: { initialView?: string; on
   if (error || !data || !draft) return <Card className="p-6"><div className="text-sm text-red-600">{error || t('settings.loadFailed')}</div><RecoveryActions actions={[{ key: 'reload', label: t('settings.reload'), onClick: () => window.location.reload(), kind: 'list' }]} /></Card>;
   const section = view as keyof SettingsRuntime;
   const dirty = JSON.stringify(data[section]) !== JSON.stringify(draft[section]);
+  const readOnly = NOT_IN_EFFECT_SECTIONS.includes(view);
+  const invalid = view === 'review' && TOLERANCE_FIELDS.some(field => toleranceError(field.key, draft.review[field.key]) !== null);
   const change = <K extends keyof SettingsRuntime>(next: SettingsRuntime[K]) => { setDraft({ ...draft, [section]: next }); setNotice(''); };
   const save = async () => { setSaving(true); setNotice(''); try { const result = await saveSettingsSection(section, draft[section]); setData({ ...data, [section]: result.settings }); setDraft({ ...draft, [section]: result.settings }); setNotice(t('settings.savedAt', { time: new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date()) })); if (section === 'modules') { localStorage.setItem('flowchain:module-settings', JSON.stringify(result.settings)); window.dispatchEvent(new Event('flowchain:module-settings')); } } catch { setNotice(t('settings.saveFailed')); } finally { setSaving(false); } };
-  return <Card className="p-5" data-testid={`settings-${view}`}><Header view={view} dirty={dirty} saving={saving} onSave={save} onCancel={() => setDraft(data)} />{notice && <div role="status" className={`mb-4 rounded-lg p-3 text-sm ${notice.startsWith(t('settings.saved').slice(0, 3)) ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'}`}>{notice}</div>}
-    {view === 'numbering' && <Numbering value={draft.numbering} onChange={change} />}{view === 'review' && <Review value={draft.review} onChange={change} />}{view === 'modules' && <Modules value={draft.modules} onChange={change} />}{view === 'ai' && <AiGovernance value={draft.ai} onChange={change} />}{view === 'advanced' && <Advanced value={draft.advanced} onChange={change} />}
+  return <Card className="p-5" data-testid={`settings-${view}`}><Header view={view} dirty={dirty} saving={saving} invalid={invalid} onSave={readOnly ? undefined : save} onCancel={() => setDraft(data)} />{notice && <div role="status" className={`mb-4 rounded-lg p-3 text-sm ${notice.startsWith(t('settings.saved').slice(0, 3)) ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'}`}>{notice}</div>}
+    {view === 'numbering' && <NotInEffect><Numbering value={draft.numbering} onChange={change} /></NotInEffect>}{view === 'review' && <Review value={draft.review} onChange={change} />}{view === 'modules' && <NotInEffect><Modules value={draft.modules} onChange={change} /></NotInEffect>}{view === 'ai' && <NotInEffect><AiGovernance value={draft.ai} onChange={change} /></NotInEffect>}{view === 'advanced' && <NotInEffect><Advanced value={draft.advanced} onChange={change} /></NotInEffect>}
     <div className="mt-5 flex items-center gap-2 border-t border-slate-100 pt-4 text-xs text-slate-500"><ShieldCheck size={14} />{t('settings.auditHint')}</div></Card>;
 }

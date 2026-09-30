@@ -1,4 +1,4 @@
-import { isPurchaseOrderReceivable } from './procurement-status-authority.mjs'
+import { PURCHASE_ORDER_STATUS, isPurchaseOrderReceivable, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 
 // The single definition of an open purchase order in FlowChain reporting:
 // a purchase order that has been committed to the supplier and still has
@@ -25,6 +25,21 @@ const quantity = (value) => (
   value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
 )
 
+// A calendar day in YYYY-MM-DD form, or '' when the value is not a real date.
+export function reportCalendarDay(value) {
+  const candidate = String(value ?? '').trim().slice(0, 10)
+  const parsed = new Date(`${candidate}T00:00:00Z`)
+  return /^\d{4}-\d{2}-\d{2}$/.test(candidate) && Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === candidate ? candidate : ''
+}
+
+// The business date of a purchase order in every report: its order date, or
+// its creation date when no order date is recorded. Never the last update,
+// which moved an old order into the current month whenever it was edited.
+// '' when neither is known, so a date range leaves the order out.
+export function purchaseOrderBusinessDate(purchaseOrder) {
+  return reportCalendarDay(purchaseOrder?.orderDate || purchaseOrder?.createdAt)
+}
+
 // Remaining quantity on one purchase order line, rounded to four decimals as the
 // quantity columns are stored. null when either quantity is unknown.
 export function purchaseOrderLineRemaining(line) {
@@ -32,6 +47,20 @@ export function purchaseOrderLineRemaining(line) {
   const received = quantity(line?.receivedQuantity)
   if (ordered === null || received === null) return null
   return Math.round(Math.max(0, ordered - received) * 10000) / 10000
+}
+
+// A committed purchase order is spend the business has agreed with the
+// supplier: approved, issued, partially received or fully received after alias
+// normalisation. Drafts and pending approvals are not agreed yet; rejected and
+// cancelled orders never will be. Committed spend totals use this, so they do
+// not count 130000 of drafts and cancellations next to 1000 of real orders.
+export function isCommittedPurchaseOrder(purchaseOrder) {
+  if (isPurchaseOrderReceivable(purchaseOrder?.status)) return true
+  try {
+    return normalizeProcurementAuthorityStatus('purchaseOrder', purchaseOrder?.status) === PURCHASE_ORDER_STATUS.FULLY_RECEIVED
+  } catch {
+    return false
+  }
 }
 
 export function isOpenPurchaseOrder(purchaseOrder) {

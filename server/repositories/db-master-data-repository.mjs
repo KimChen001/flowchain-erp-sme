@@ -69,8 +69,9 @@ function mapItem(record = {}) {
     moq: numberFrom(meta.moq ?? meta.minimumOrderQuantity, 1),
     minimumOrderQuantity: numberFrom(meta.minimumOrderQuantity ?? meta.moq, 1),
     batchMultiple: numberFrom(meta.batchMultiple, 1),
-    safetyStock: numberFrom(meta.safetyStock, 0),
-    reorderPoint: numberFrom(meta.reorderPoint, 0),
+    // Item.safetyStock and Item.reorderPoint are columns; metadata is the legacy fallback.
+    safetyStock: numberFrom(record.safetyStock ?? meta.safetyStock, 0),
+    reorderPoint: numberFrom(record.reorderPoint ?? meta.reorderPoint, 0),
     taxCodeId: text(meta.taxCodeId),
     barcode: text(meta.barcode),
     manufacturerPartNumber: text(meta.manufacturerPartNumber),
