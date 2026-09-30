@@ -23,9 +23,49 @@ from .dataset import TEST_FIRST_YEAR, TRAIN_LAST_YEAR, VALIDATION_YEAR, load_cle
 from .paths import GRACE_DAYS, RAW_SHA256, SEED, parse_args
 from .report import AQUA, BLUE, INK_2, ORANGE, md_table, pct, save_figure, style_axes, write_text
 
-# Our reading of each raw column, from its name and values. The archived portal
-# page is not available offline, so this is not a quotation of an official
-# data dictionary.
+# Official column descriptions, copied from the column metadata embedded in the
+# archived USAID Development Data Library page (see DICTIONARY_SOURCE). The
+# portal lists no separate data-dictionary attachment for this dataset.
+DICTIONARY_SOURCE = (
+    "USAID Development Data Library, dataset a3rc-nmf6, column metadata on the archived page "
+    "http://web.archive.org/web/20250129091054/https://data.usaid.gov/HIV-AIDS/Supply-Chain-Shipment-Pricing-Dataset/a3rc-nmf6 "
+    "(Internet Archive snapshot of 29 January 2025)"
+)
+OFFICIAL = {
+    "project code": "Project code",
+    "pq #": "Price quote (PQ) number",
+    "asn/dn #": "Shipment number: Advanced Shipment Note (ASN) for Direct Drop deliveries, or Delivery Note (DN) for from RDC deliveries",
+    "country": "Destination country",
+    "managed by": "SCMS managing office: either the Program Management Office (PMO) in the U.S. or the relevant SCMS field office",
+    "fulfill via": "Method through which the shipment was fulfilled: via Direct Drop from vendor or from stock available in the RDCs",
+    "vendor inco term": "The vendor INCO term (also known as International Commercial Terms) for Direct Drop deliveries",
+    "shipment mode": "Method by which commodities are shipped",
+    "pq first sent to client date": "Date the PQ is first sent to the client",
+    "po sent to vendor date": "Date the PO is first sent to the vendor",
+    "scheduled delivery date": "Current anticipated delivery date",
+    "delivered to client date": "Date of delivery to client",
+    "delivery recorded date": "Date on which delivery to client was recorded in SCMS information systems",
+    "product group": "Product group for item, i.e. ARV, HRDT",
+    "sub classification": "Identifies relevant product sub classifications, such as whether ARVs are pediatric or adult, whether a malaria product is an artemisinin-based combination therapy (ACT), etc.",
+    "vendor": "Vendor name",
+    "item description": "Product name and formulation from Partnership for Supply Chain Management (PFSCM) Item Master",
+    "molecule/test type": "Active drug(s) or test kit type",
+    "brand": "Generic or branded name for the item",
+    "dosage": "Item dosage and unit",
+    "dosage form": "Dosage form for the item (tablet, oral solution, injection, etc.).",
+    "unit of measure (per pack)": "Pack quantity (pills or test kits) used to compute unit price",
+    "line item quantity": "Total quantity (packs) of commodity per line item",
+    "line item value": "Total value of commodity per line item",
+    "pack price": "Cost per pack (i.e. month s supply of ARVs, pack of 60 test kits)",
+    "unit price": "Cost per pill (for drugs) or per test (for test kits)",
+    "manufacturing site": "Identifies manufacturing site for the line item for direct drop and from RDC deliveries",
+    "first line designation": "Designates if the line in question shows the aggregated freight costs and weight associated with all items on the ASN DN",
+    "weight (kilograms)": "Weight for all lines on an ASN DN",
+    "freight cost (usd)": "Freight charges associated with all lines on the respective ASN DN",
+    "line item insurance (usd)": "Line item cost of insurance, created by applying an annual flat rate ( ) to commodity cost",
+}
+
+# Our notes on each column from its values.
 MEANINGS = {
     "id": "Row identifier, unique per line item; target of 'See ... (ID#:n)' references.",
     "project code": "SCMS project / funding code (country-specific).",
@@ -39,7 +79,7 @@ MEANINGS = {
     "shipment mode": "Air, Truck, Ocean or Air Charter.",
     "pq first sent to client date": "Date the price quote was first sent to the client.",
     "po sent to vendor date": "Date the PO was sent to the vendor (direct drop only).",
-    "scheduled delivery date": "Scheduled (promised) delivery date as recorded in the file.",
+    "scheduled delivery date": "Per the metadata, the *current* expected date, not the original promise.",
     "delivered to client date": "Actual delivery date to the client.",
     "delivery recorded date": "Date the delivery was recorded in the system.",
     "product group": "ARV, HRDT (HIV rapid test), ANTM (anti-malarial), ACT, MRDT (malaria test).",
@@ -56,7 +96,7 @@ MEANINGS = {
     "pack price": "Price per pack, USD.",
     "unit price": "Price per unit, USD (rounded to cents).",
     "manufacturing site": "Manufacturing plant.",
-    "first line designation": "Whether the product is a first-line treatment regimen.",
+    "first line designation": "True on the line that carries the shipment's freight and weight; the other lines of the ASN/DN refer to it.",
     "weight (kilograms)": "Shipment weight in kg, or text / a reference to the row holding it.",
     "freight cost (usd)": "Freight cost in USD, or text / a reference to the row holding it.",
     "line item insurance (usd)": "Insurance cost for the line, USD.",
@@ -129,7 +169,8 @@ def feature_table(raw: pd.DataFrame) -> pd.DataFrame:
         kind = "numeric" if numeric_share > 0.99 else ("mixed numeric/text" if numeric_share > 0.3 else "text / date")
         if "date" in column:
             kind = "date (text)"
-        rows.append({"column": column, "clean name": RENAME[column], "raw type": kind, "distinct": s.nunique(), "meaning": MEANINGS[column]})
+        rows.append({"column": column, "clean name": RENAME[column], "raw type": kind, "distinct": s.nunique(),
+                     "official description": OFFICIAL.get(column, "(none in the portal metadata)"), "our note": MEANINGS[column]})
     return pd.DataFrame(rows)
 
 
@@ -383,6 +424,12 @@ effect:
 
 {md_table(pq_table.reset_index().assign(**{c: pq_table[c].map(pct).values for c in pq_table.columns if 'share' in c}))}
 
+**Test 7: the data dictionary.** The dataset's column metadata describes
+`scheduled delivery date` as "Current anticipated delivery date" (source:
+{DICTIONARY_SOURCE}). "Current" indicates the field was designed to be updated as
+expectations change. So it need not be the promise made when the PO was sent,
+and no field in the file holds that original promise.
+
 **Conclusion.** The direct-drop scheduled date does not behave like a promise
 fixed when the PO was sent. The spike at exactly 0 days is about
 {heap['ratio']:.0f}× the level of the neighbouring days. It varies with year
@@ -390,8 +437,9 @@ and vendor far more than an independent plan would. It lacks the month-end
 fingerprint that the warehouse schedule and the unmatched direct-drop rows
 show. The evidence strongly suggests that for most direct-drop rows the
 recorded schedule was set equal to, or updated towards, the actual delivery.
-One possibility is that the field holds the "current" expected date rather
-than the original promise. **What cannot be determined:** which rows were
+The data dictionary confirms the mechanism: the field is the *current*
+anticipated date, so updating it is by design, not an error. **What cannot be
+determined:** which rows were
 revised, when, or what the original promise was. The file has no revision
 history, and a genuinely precise schedule cannot be ruled out row by row.
 
@@ -468,6 +516,9 @@ def main() -> int:
     open_window = int((dd["scheduled_date"] > last_delivery).sum())
 
     freight_status_dd = dd["freight_status"].value_counts()
+    refs = clean["freight_resolved_from_reference"].astype(bool)
+    ref_first = refs & ~clean["first_line_designation"].astype(bool)
+    assert int((refs & clean["first_line_designation"].astype(bool)).sum()) == 0
 
     report = f"""# SCMS data description and data quality
 
@@ -492,9 +543,10 @@ attribution text and why the data is kept out of git.
 
 ### 2.2 Features
 
-The raw file has {raw_original.shape[1]} columns. The meanings below are our
-reading of the column names and values, not a quotation of an official data
-dictionary, which was not available offline.
+The raw file has {raw_original.shape[1]} columns. "Official description" is
+copied verbatim from the column metadata of the dataset's page on the USAID
+Development Data Library. Source: {DICTIONARY_SOURCE}. That page has no
+separate data-dictionary attachment. "Our note" is our reading of the values.
 
 {md_table(features)}
 
@@ -539,6 +591,14 @@ complete.
 
 {md_table(missing)}
 
+The metadata confirms that weight and freight are shipment-level: they
+cover "all lines on an ASN DN". `first line designation` marks the line that
+carries them. In the data, all {int(ref_first.sum()):,} rows with a "See ... (ID#:n)"
+reference have `first line designation` = false, and none of the
+{int(clean['first_line_designation'].astype(bool).sum()):,} designated lines is a reference. This supports resolving the
+references and splitting a shipment's value across its lines, instead of
+copying it.
+
 Freight status for the {len(dd):,} direct-drop rows after resolving
 references: {', '.join(f"{k}: {v:,}" for k, v in freight_status_dd.items())}.
 
@@ -580,6 +640,11 @@ Decisions:
   The late rate in the last months is biased downward (right-censoring).
   Median actual lead time by PO year:
   {', '.join(f"{int(y)}: {v:.0f} d" for y, v in lead_by_year.items())}.
+- **The publisher's own caution.** The dataset description on the portal warns
+  that conclusions about the costs of moving specific items to specific
+  countries, and about "lead times by product/country will not be accurate"
+  (source: {DICTIONARY_SOURCE}). Our lead-time and freight figures are
+  descriptive of this file, not accurate unit costs or lead times.
 - **Domain and external validity.** These are donor-funded public-health
   commodities, bought by a large programme with pooled procurement, pre-qualified
   vendors and international air freight. Timing, prices and vendor behaviour
