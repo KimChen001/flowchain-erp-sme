@@ -155,7 +155,8 @@ export function buildProviderInputPackageV2(contextBundle = {}, request = {}, lo
     task: {
       question: cleanText(request.message).slice(0, 1200),
       intentLabel: cleanText(contextBundle.requestIntent?.label || localDraftResponse.conclusion?.title, '业务问题').slice(0, 120),
-      answerLanguage: 'zh-CN',
+      // The user's language; the tenant's locale still formats every value.
+      answerLanguage: request.answerLanguage === 'zh-CN' ? 'zh-CN' : 'en-US',
       outputRequirement: '基于给定证据生成业务回复；不得执行正式业务动作；如证据不足必须说明数据限制。',
     },
     evidencePackage: {

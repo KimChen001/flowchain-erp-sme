@@ -14,6 +14,7 @@ import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes
 import { createScmServer } from '../bootstrap/scm-server.mjs'
 import { extractBusinessContextFromAiResponseV2 } from './ai-runtime-conversation-context-v2.mjs'
 import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
+import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 
 function loadDb() {
   return createProductReviewScenarioDb()
@@ -539,25 +540,35 @@ test('visible text avoids forbidden technical and execution wording', () => {
   assert.doesNotMatch(text, /provider|model|API|key|token|endpoint|JSON|payload|fallback|mock|Coupa|RBAC|production|deploy|go-live/i)
 })
 
-test('route handler returns readiness respond validation and unsafe responses', async () => {
+test('route handler returns readiness, skill answers, bilingual validation and the refusal', async () => {
   const db = loadDb()
   const calls = []
   const send = (_res, status, payload) => calls.push({ status, payload })
+  const scenario = aiSkillScenario()
+  const respond = (body) => handleAiRuntimeGatewayRoute({ ...scenario.ctx, req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, send, readBody: async () => body })
   assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'GET' }, res: {}, url: new URL('/api/ai-runtime/readiness', 'http://localhost'), db, send }), true)
   assert.equal(calls.at(-1).status, 200)
-  assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, send, readBody: async () => ({ message: '今天有什么需要我处理？' }) }), true)
+  assert.equal(await respond({ message: '今天有什么需要我处理？', answerLanguage: 'zh-CN' }), true)
   assert.equal(calls.at(-1).status, 200)
-  assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, send, readBody: async () => ({ message: '' }) }), true)
-  assert.equal(calls.at(-1).status, 400)
-  assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, send, readBody: async () => ({ message: '直接批准这个 PO' }) }), true)
+  assert.equal(calls.at(-1).payload.intent, 'today_priorities')
+  assert.equal(calls.at(-1).payload.answerSource, 'workspace_rules')
+  await respond({ message: '' })
+  assert.deepEqual([calls.at(-1).status, calls.at(-1).payload.code, calls.at(-1).payload.error], [400, 'AI_QUESTION_TOO_SHORT', 'Enter a question of at least two characters.'])
+  await respond({ message: '', answerLanguage: 'zh-CN' })
+  assert.equal(calls.at(-1).payload.error, '请输入至少两个字的问题。')
+  await respond({ message: '直接批准这个 PO', answerLanguage: 'zh-CN' })
   assert.equal(calls.at(-1).status, 200)
-  assert.match(visibleText(calls.at(-1).payload), /无法执行|人工复核/)
+  assert.match(visibleText(calls.at(-1).payload), /不能批准/)
+  // Signed out, the skill path refuses before reading anything.
+  await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, send, readBody: async () => ({ message: 'What should I handle first today?' }) })
+  assert.deepEqual([calls.at(-1).status, calls.at(-1).payload.code], [401, 'AUTHENTICATION_REQUIRED'])
 })
 
-test('route handler serves provider-assisted success and failure as business-safe 200 responses', async () => {
+test('with the rollback flag the legacy gateway still serves provider-assisted success and failure', async () => {
   const db = loadDb()
   const calls = []
   const send = (_res, status, payload) => calls.push({ status, payload })
+  const identity = { authenticated: true, tenantId: 'tenant-legacy-gateway', userId: 'legacy-user' }
   await withServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ conclusion: { summary: '建议基于来源证据复核风险，并保留人工复核。' } }))
@@ -566,8 +577,9 @@ test('route handler serves provider-assisted success and failure as business-saf
     FLOWCHAIN_AI_PROVIDER_KIND: 'generic_http',
     FLOWCHAIN_AI_PROVIDER_ENDPOINT: endpoint,
     FLOWCHAIN_AI_PROVIDER_API_KEY: 'test-key',
+    FLOWCHAIN_AI_LEGACY_TEMPLATE_GATEWAY: 'true',
   }, async () => {
-    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, send, readBody: async () => ({ message: '今天有什么需要我处理？' }) }), true)
+    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, identity, send, readBody: async () => ({ message: '今天有什么需要我处理？' }) }), true)
   }))
   assert.equal(calls.at(-1).status, 200)
   assertRuntimeResponse(calls.at(-1).payload)
@@ -582,8 +594,9 @@ test('route handler serves provider-assisted success and failure as business-saf
     FLOWCHAIN_AI_PROVIDER_KIND: 'generic_http',
     FLOWCHAIN_AI_PROVIDER_ENDPOINT: endpoint,
     FLOWCHAIN_AI_PROVIDER_API_KEY: 'test-key',
+    FLOWCHAIN_AI_LEGACY_TEMPLATE_GATEWAY: 'true',
   }, async () => {
-    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, send, readBody: async () => ({ message: '哪些 SKU 有库存风险？' }) }), true)
+    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, identity, send, readBody: async () => ({ message: '哪些 SKU 有库存风险？' }) }), true)
   }))
   assert.equal(calls.at(-1).status, 200)
   assertRuntimeResponse(calls.at(-1).payload)
@@ -593,7 +606,8 @@ test('route handler serves provider-assisted success and failure as business-saf
 
 test('main route dispatcher serves AI runtime endpoints', async () => {
   await withProcessEnv({
-    DATABASE_URL: 'postgresql://flowchain:flowchain@127.0.0.1:5432/flowchain_test',
+    // A closed port: nothing is listening, so no database is contacted.
+    DATABASE_URL: 'postgresql://flowchain:flowchain@127.0.0.1:1/flowchain_test',
     FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS: 'true',
     FLOWCHAIN_DEFAULT_TENANT_ID: 'tenant-ai-runtime-route',
   }, async () => {
@@ -612,12 +626,23 @@ test('main route dispatcher serves AI runtime endpoints', async () => {
       assert.equal(anonymous.status, 401)
       const readiness = await fetch(`${base}/api/ai-runtime/readiness`, { headers: signedIn })
       assert.equal(readiness.status, 200)
+      // The workspace data cannot be read: a retryable 503 with a code and an
+      // English message, not a made-up empty answer.
       const response = await fetch(`${base}/api/ai-runtime/respond`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...signedIn },
         body: JSON.stringify({ message: '今天有什么需要我处理？' }),
       })
-      assert.equal(response.status, 200)
+      assert.equal(response.status, 503)
+      assert.deepEqual(await response.json(), { code: 'AI_SKILL_UNAVAILABLE', error: 'The assistant could not read your workspace data just now. Please try again.' })
+      // The retired template chat is off the path unless the rollback flag is on.
+      const legacy = await fetch(`${base}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...signedIn },
+        body: JSON.stringify({ question: '今天有什么需要我处理？' }),
+      })
+      assert.equal(legacy.status, 410)
+      assert.equal((await legacy.json()).code, 'AI_LEGACY_CHAT_RETIRED')
       const empty = await fetch(`${base}/api/ai-runtime/respond`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...signedIn },

@@ -1,7 +1,26 @@
 import { handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
-import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, buildAiRuntimeSafeFallbackV2, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
+import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
 import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs'
 import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
+import { isLegacyAiTemplateGatewayEnabled, runAiSkillRuntime } from '../domain/ai-skill-runtime.mjs'
+
+// Stable codes with an English message, or a Chinese one when the question
+// was asked in Chinese. The client maps the codes to its own recovery text.
+const ERRORS = {
+  AI_REQUEST_UNREADABLE: ['The question could not be read. Please ask again.', '问题内容无法读取，请重新输入。'],
+  AI_QUESTION_TOO_LONG: ['The question is too long. Please shorten it and ask again.', '问题过长，请缩短后重新提问。'],
+  AI_QUESTION_TOO_SHORT: ['Enter a question of at least two characters.', '请输入至少两个字的问题。'],
+  AUTHENTICATION_REQUIRED: ['Sign in to use the assistant.', '请登录后使用 AI 助手。'],
+  TENANT_CONTEXT_REQUIRED: ['A workspace is required to use the assistant.', '使用 AI 助手需要选择工作区。'],
+  ACTOR_NOT_PROVISIONED: ['Your user is not set up for this workspace.', '你的用户尚未在此工作区开通。'],
+  USER_DISABLED: ['Your user is disabled in this workspace.', '你的用户在此工作区已停用。'],
+  SESSION_STALE: ['Your access changed. Sign in again.', '你的权限已变更，请重新登录。'],
+  AI_SKILL_UNAVAILABLE: ['The assistant could not read your workspace data just now. Please try again.', 'AI 助手暂时无法读取工作区数据，请稍后重试。'],
+}
+function errorBody(code, body = {}) {
+  const [en, zh] = ERRORS[code] || ERRORS.AI_SKILL_UNAVAILABLE
+  return { code, error: body.answerLanguage === 'zh-CN' ? zh : en }
+}
 
 async function addKnowledgeContext(ctx, body, response) {
   if (classifyQueryScope(body) !== 'mixed') return response
@@ -47,7 +66,7 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
     try {
       body = await readBody(req)
     } catch {
-      send(res, 400, { error: '问题内容无法读取，请重新输入。', dataScopeLabel: '当前工作区数据' })
+      send(res, 400, errorBody('AI_REQUEST_UNREADABLE'))
       return true
     }
     try {
@@ -56,7 +75,8 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
       // Reject empty or oversized questions before any tenant data is read.
       const validation = validateAiRuntimeRequest(body)
       if (!validation.ok) {
-        send(res, validation.status, { error: validation.error, dataScopeLabel: '当前工作区数据' })
+        const tooLong = String(body.message || body.question || '').trim().length > 1200
+        send(res, validation.status, errorBody(tooLong ? 'AI_QUESTION_TOO_LONG' : 'AI_QUESTION_TOO_SHORT', body))
         return true
       }
       const businessQuery = await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
@@ -64,17 +84,28 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
         send(res, 200, await addKnowledgeContext(ctx, body, businessQuery))
         return true
       }
-      const facts = identity?.authenticated && identity.tenantId
-        ? await loadAiRuntimeFacts(repositories, identity.tenantId)
-        : {}
-      const result = await buildAiRuntimeResponseV2Async({ ...db, ...facts }, body, { env: process.env })
-      send(res, result.status, await addKnowledgeContext(ctx, body, result.body))
+      // Rollback only: the retired Chinese template gateway, off by default.
+      if (isLegacyAiTemplateGatewayEnabled(ctx.env || process.env)) {
+        const facts = identity?.authenticated && identity.tenantId
+          ? await loadAiRuntimeFacts(repositories, identity.tenantId)
+          : {}
+        const result = await buildAiRuntimeResponseV2Async({ ...db, ...facts }, body, { env: identity?.authenticated ? process.env : {} })
+        send(res, result.status, await addKnowledgeContext(ctx, body, result.body))
+        return true
+      }
+      send(res, 200, await addKnowledgeContext(ctx, body, await runAiSkillRuntime(ctx, body)))
     } catch (error) {
       if (isKnowledgeQuestion(body)) {
         send(res, error.status || 503, { code: error.code || 'KNOWLEDGE_UNAVAILABLE', error: error.status ? error.message : (body.answerLanguage === 'zh-CN' ? '知识库暂时不可用，请稍后重试。' : 'Knowledge is temporarily unavailable. Please try again.') })
         return true
       }
-      send(res, 200, buildAiRuntimeSafeFallbackV2(body, '当前工作区证据暂不完整'))
+      // Sign-in and workspace problems keep their status; anything else is a
+      // retryable 503, never a made-up "no records" answer.
+      if ([401, 403].includes(error.status) && ERRORS[error.code]) {
+        send(res, error.status, errorBody(error.code, body))
+        return true
+      }
+      send(res, 503, errorBody('AI_SKILL_UNAVAILABLE', body))
     }
     return true
   }

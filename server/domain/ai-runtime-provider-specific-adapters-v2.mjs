@@ -41,7 +41,7 @@ function safeTask(input = {}) {
   return {
     question: compact(task.question, 1200),
     intentLabel: compact(task.intentLabel, 160),
-    answerLanguage: compact(task.answerLanguage || 'zh-CN', 20),
+    answerLanguage: compact(task.answerLanguage || 'en-US', 20),
     outputRequirement: compact(task.outputRequirement, 600),
   }
 }

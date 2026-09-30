@@ -46,7 +46,8 @@ test('inventory search reports AI and evidence use the same runtime records with
   expect(graph.nodes.some((node: any) => node.entityId === sku)).toBe(true)
   expect(graph.nodes.every((node: any) => node.entityType && node.entityId && node.label && node.canonicalRoute && node.sourceRepository)).toBe(true)
 
-  const ai = await (await request.post('/api/ai/chat', { data: { question: `${sku} 库存怎么样？`, moduleId: 'inventory' } })).json()
+  // The assistant answers from the same runtime read models; /api/ai/chat is retired.
+  const ai = await (await request.post('/api/ai-runtime/respond', { data: { message: 'Which items have the highest risk?', answerLanguage: 'en-US' } })).json()
   expect(JSON.stringify(ai)).toContain(sku)
   expect(JSON.stringify(ai)).not.toMatch(/SKU-00412|PO-2026-1282|深圳新元电气/)
 
