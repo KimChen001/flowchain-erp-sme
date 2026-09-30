@@ -24,6 +24,16 @@ const appPort = Number(process.env.FLOWCHAIN_WALKTHROUGH_APP_PORT || 15201);
 const database = "flowchain_walkthrough";
 const user = "flowchain_walkthrough";
 
+// The server fills any empty variable from .env.local, .env and, in local
+// development, .local/ai-provider.env and .local/openai.env. Run only from a
+// checkout without them, so a real key or another database is never picked up.
+const localFiles = [".env.local", ".env", ".local"].filter((name) => existsSync(join(root, name)));
+if (localFiles.length) {
+  console.error(`[walkthrough] Refusing to start: ${localFiles.join(", ")} found in ${root}.`);
+  console.error("[walkthrough] Run it from a clean checkout (for example a new git worktree) so no local key or database is used.");
+  process.exit(1);
+}
+
 if (process.argv.includes("--reset")) rmSync(dataRoot, { recursive: true, force: true });
 mkdirSync(dataRoot, { recursive: true });
 
