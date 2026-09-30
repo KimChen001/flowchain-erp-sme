@@ -3,7 +3,7 @@ import { assertLocalDevelopment } from '../server/domain/local-development-contr
 import { localDemoSupplier } from './setup-local-demo.mjs'
 import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../server/domain/procurement-status-authority.mjs'
 import { createReceivingPostingCommandService } from '../server/domain/receiving-posting-command-service.mjs'
-import { recordOriginalPromises } from '../server/domain/purchase-order-promise-dates.mjs'
+import { applyPromisedDateChanges, recordOriginalPromises } from '../server/domain/purchase-order-promise-dates.mjs'
 import { resolveProvisionedActor } from '../server/domain/pilot-identity.mjs'
 import { authorize } from '../server/auth/authorization-service.mjs'
 import { fileURLToPath } from 'node:url'
@@ -20,7 +20,7 @@ import { resolve } from 'node:path'
 // inventory movements agree. Posted receipts are inventory history: once they
 // exist the scenario keeps its first seed day and refuses a different one.
 // No payables, payments or journal entries are created.
-export const LOCAL_SCENARIO_VERSION = 5
+export const LOCAL_SCENARIO_VERSION = 6
 const WAREHOUSE = 'LOCAL-DEMO-WH-001'
 const BUYERS = ['Kim', 'Dana Whitfield']
 const RECEIVER = 'Luis Ortega'
@@ -45,6 +45,9 @@ const EVERGREEN = 'LOCAL-DEMO-SUP-006'
 const PRECISION = 'LOCAL-DEMO-SUP-007'
 
 // Purchase orders. created and promised are day offsets from the seed day.
+// promised is the date the supplier first promised; revised is [new promised
+// day, day the supplier revised it, reason], recorded as a promise revision
+// after issue, as the revise command would.
 // Receipts: [receipt number, arrival day, local arrival time, accepted, rejected, rejection reason].
 // Invoice: [invoice number, invoice day, unit price billed, entered sales tax, status], due 30 days later
 // (Net 30). Every status is a committed one; only INV-001 carries a variance.
@@ -95,6 +98,15 @@ const purchaseOrders = [
   { n: 30, supplier: ACME, sku: 'LDM-005', qty: 1000, price: 1.95, status: S.CANCELLED, created: -45, promised: -30, sent: true, cancellationReason: 'Replaced by a lower-priced order' },
   { n: 31, supplier: EVERGREEN, sku: 'LDM-003', qty: 500, price: 12.9, status: S.CANCELLED, created: -28, promised: -12, sent: true, cancellationReason: 'Supplier could not meet the delivery date' },
   { n: 32, supplier: ATLAS, sku: 'LDM-004', qty: 2500, price: 0.44, status: S.CANCELLED, created: -10, promised: 5, cancellationReason: 'Duplicate order' },
+  // Northstar's recent deliveries. Two slipped and were re-promised, then arrived
+  // on the new date: late against the original promise, on time against the
+  // current date, so its scorecard shows the gap.
+  { n: 33, supplier: NORTHSTAR, sku: 'LDM-005', qty: 1000, price: 1.8, status: S.FULLY_RECEIVED, created: -60, promised: -45,
+    revised: [-40, -47, 'Supplier moved the ship date after a raw material delay'], receipts: [[15, -41, '10:15', 1000, 0]] },
+  { n: 34, supplier: NORTHSTAR, sku: 'LDM-005', qty: 500, price: 1.8, status: S.FULLY_RECEIVED, created: -50, promised: -34,
+    revised: [-30, -36, 'Carrier capacity shortage delayed the pickup'], receipts: [[16, -30, '13:20', 500, 0]] },
+  { n: 35, supplier: NORTHSTAR, sku: 'LDM-005', qty: 800, price: 1.82, status: S.FULLY_RECEIVED, created: -28, promised: -14,
+    receipts: [[17, -14, '09:40', 800, 0]] },
 ]
 
 const pad = (value) => String(value).padStart(3, '0')
@@ -315,6 +327,18 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
       // issue command records it. Recorded once; a later seed leaves it alone.
       if (sentStatuses.has(po.status) || po.sent) {
         await recordOriginalPromises(tx, { purchaseOrder: await tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { lines: true } }) })
+      }
+      // A revised promise goes through the same helper as the revise command:
+      // the original stays, the line moves, and a revision and audit row are
+      // written. A later seed finds the line already on the new date and skips it.
+      if (po.revised) {
+        const [revisedDay, revisedOn, reason] = po.revised
+        const ids = [`LOCAL-DEMO-POREV-${pad(po.n)}`, `LOCAL-DEMO-POREV-${pad(po.n)}-AUDIT`]
+        await applyPromisedDateChanges(tx, {
+          tenantId, purchaseOrder: await tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { lines: true } }),
+          changes: [{ purchaseOrderLineId: lineId, promisedDate: isoDay(revisedDay) }], reason, actorId: receiver.userId,
+          source: 'local_walkthrough_scenario', at: at(revisedOn, '10:00'), idFactory: () => ids.shift(),
+        })
       }
 
       let cumulative = 0
