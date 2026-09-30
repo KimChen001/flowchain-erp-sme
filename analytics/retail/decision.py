@@ -25,6 +25,11 @@ Setup (every number the report uses is computed here; assumptions are marked):
   26-week blocks within ABC class, which keeps each SKU's week-to-week error correlation.
 - Lead time: lognormal with an ASSUMED mean (2, 4 or 8 weeks) and the coefficient of
   variation of SCMS direct-drop actual lead times; rounded to whole weeks, minimum 1.
+- Terminal inventory: the inventory position left after week 13 (on hand + on order, since
+  orders placed at the last reviews are commitments that arrive into the post-season) is
+  charged a markdown/obsolescence loss of m x unit cost per unit (ASSUMED m = 0.3; sensitivity
+  0, 0.15, 0.5). An alternative with no cost assumption charges, at cost, only the stock beyond
+  8 weeks of forward P50 demand.
 """
 
 from __future__ import annotations
@@ -56,11 +61,17 @@ CAL_ORIGINS = (38, 51, 64)             # pre-test backtests for residual traject
 QUANTILE_GRID = (0.50, 0.70, 0.80, 0.90, 0.95, 0.98)
 BUDGET_FACTORS = (0.6, 0.8, 1.0)
 EXTRA_BUDGET = 1.2                     # only for the monotonicity check
-BASE = dict(mean_L=4.0, cv="all", cost_ratio=0.50, holding=0.25, stockout_mult=1.0, start="a")
+BASE = dict(mean_L=4.0, cv="all", cost_ratio=0.50, holding=0.25, stockout_mult=1.0, start="a", markdown=0.30)
+T_WINDOW = 13                          # test weeks
+EXCESS_WEEKS = 8                       # "true excess" = stock beyond this many weeks of forward P50 demand
 START_LABELS = {"a": "common start = (a) level", "a0.5": "common start = 0.5 x (a) level",
                 "a1.5": "common start = 1.5 x (a) level",
                 "own": "own order-up-to level (BIASED toward high-stock policies)"}
 POLICY_LABELS = {
+    "p50": "(ref) fixed P50 order-up-to level",
+    "p70": "(ref) fixed P70 order-up-to level",
+    "p80": "(ref) fixed P80 order-up-to level",
+    "p90": "(ref) fixed P90 order-up-to level",
     "a": "(a) rule of thumb: (L+R) x 4-week mean",
     "b": "(b) FlowChain rule: ROP = dL + 1 week, target = ROP + dR",
     "c": "(c) forecast + service level (critical-ratio quantile)",
@@ -170,8 +181,13 @@ class _quiet_fd1:
         os.close(self.saved)
 
 
-def plan_levels(D, L_plan, cr, cost, h_week, cu, mean_L):
-    """Order-up-to levels for (c) and the (d) candidate table at one review."""
+def plan_levels(D, L_plan, cr, cost, h_week, cu, term):
+    """Order-up-to levels for (c) and the (d) candidate table at one review.
+
+    ``term`` is the per-unit loss on stock left over at the end of the protection interval:
+    0 in intermediate cycles (leftovers carry to the next cycle and cost only holding), and
+    markdown x unit cost in the final cycle, whose leftovers remain at the end of the window.
+    """
     dlr = np.sort(demand_over(D, L_plan), axis=1)
     d_r = D[:, :, :R].sum(axis=2).mean(axis=1)
     s_c = row_quantile(dlr, cr)
@@ -180,7 +196,7 @@ def plan_levels(D, L_plan, cr, cost, h_week, cu, mean_L):
         short = np.maximum(dlr - S[:, None], 0).mean(axis=1)
         over = np.maximum(S[:, None] - dlr, 0).mean(axis=1)
         onhand = over + d_r / 2
-        return cu * short + h_week * R * onhand, cost * onhand
+        return cu * short + h_week * R * onhand + term * over, cost * onhand
 
     cand = {q: row_quantile(dlr, np.full(len(cr), q)) for q in QUANTILE_GRID}
     table = {q: (cand[q],) + plan(cand[q]) for q in QUANTILE_GRID}
@@ -213,10 +229,14 @@ def solve_budget(table, budget):
                "value_used": float(val @ x.ravel())}
 
 
-def simulate(start, levels, demand, L_orders, pack, cost, h_week, margin, stock_mult, rop=None):
+def simulate(start, levels, demand, L_orders, pack, cost, h_week, margin, stock_mult, markdown, fwd_p50,
+             rop=None):
     """Lost-sales periodic review. levels[:, r] is the order-up-to level at review r.
 
     With ``rop`` given (FlowChain rule), an order is placed only when IP <= rop[:, r].
+    The inventory position left after the last week (on hand + on order) is charged markdown x
+    cost per unit (terminal cost), and separately measured against ``fwd_p50`` (units of forward
+    P50 demand over EXCESS_WEEKS).
     """
     n, T = demand.shape
     on = start.astype(float).copy()
@@ -249,35 +269,51 @@ def simulate(start, levels, demand, L_orders, pack, cost, h_week, margin, stock_
         onhand_sum += on
     cyc_ok += (cyc_lost == 0)
     avg_on = onhand_sum / T
+    on_order = arrivals[:, T:].sum(axis=1)
+    left = on + on_order
+    excess = np.maximum(left - fwd_p50, 0)
     return pd.DataFrame({
         "demand": demand.sum(axis=1), "sales": sales, "lost": lost, "lost_margin": lost * margin,
         "stockout_cost": lost * margin * stock_mult, "holding": onhand_sum * cost * h_week,
-        "avg_onhand": avg_on, "avg_inv_value": avg_on * cost, "end_inv_value": on * cost, "orders": orders,
-        "cycles_ok": cyc_ok, "cycles": np.full(n, len(REVIEW_WEEKS)),
+        "avg_onhand": avg_on, "avg_inv_value": avg_on * cost, "end_onhand": left, "end_inv_value": left * cost,
+        "end_on_order_value": on_order * cost,
+        "terminal": markdown * cost * left, "excess_value": excess * cost, "fwd_p50": fwd_p50,
+        "orders": orders, "cycles_ok": cyc_ok, "cycles": np.full(n, len(REVIEW_WEEKS)),
     })
 
 
 def aggregate(df: pd.DataFrame, w: np.ndarray | None = None, ref: pd.DataFrame | None = None) -> dict:
+    """Totals and ratios; total cost = holding + stockout + terminal markdown.
+
+    ``alt_total`` = holding + stockout + excess value (stock beyond 8 weeks of forward P50 demand
+    valued at cost), which needs no markdown assumption.
+    """
     tot = df.sum()
     out = {"fill_rate": tot.sales / tot.demand, "csl": tot.cycles_ok / tot.cycles, "lost_units": tot.lost,
            "lost_margin": tot.lost_margin, "stockout_cost": tot.stockout_cost, "avg_inv_value": tot.avg_inv_value,
-           "weeks_of_supply": tot.avg_onhand / (tot.demand / 13), "holding": tot.holding,
-           "total_cost": tot.holding + tot.stockout_cost, "orders": int(tot.orders),
-           "end_inv_value": tot.end_inv_value}
+           "weeks_of_supply": tot.avg_onhand / (tot.demand / T_WINDOW), "holding": tot.holding,
+           "terminal": tot.terminal, "total_cost": tot.holding + tot.stockout_cost + tot.terminal,
+           "excess_value": tot.excess_value, "alt_total": tot.holding + tot.stockout_cost + tot.excess_value,
+           "end_inv_value": tot.end_inv_value, "end_on_order_value": tot.end_on_order_value,
+           "end_weeks_of_supply": tot.end_onhand / (tot.fwd_p50 / EXCESS_WEEKS), "orders": int(tot.orders)}
     if w is not None:
-        a = df.to_numpy()
         cols = {c: i for i, c in enumerate(df.columns)}
-        s = w @ a
-        fill = s[:, cols["sales"]] / s[:, cols["demand"]]
-        csl = s[:, cols["cycles_ok"]] / s[:, cols["cycles"]]
-        tc = s[:, cols["holding"]] + s[:, cols["stockout_cost"]]
-        inv = s[:, cols["avg_inv_value"]]
-        for k, v in (("fill_rate", fill), ("csl", csl), ("total_cost", tc), ("avg_inv_value", inv)):
+        s = w @ df.to_numpy()
+
+        def col(x, k):
+            return x[:, cols[k]]
+
+        fill = col(s, "sales") / col(s, "demand")
+        csl = col(s, "cycles_ok") / col(s, "cycles")
+        tc = col(s, "holding") + col(s, "stockout_cost") + col(s, "terminal")
+        alt = col(s, "holding") + col(s, "stockout_cost") + col(s, "excess_value")
+        inv = col(s, "avg_inv_value")
+        for k, v in (("fill_rate", fill), ("csl", csl), ("total_cost", tc), ("avg_inv_value", inv), ("alt_total", alt)):
             out[f"{k}_lo"], out[f"{k}_hi"] = np.percentile(v, [2.5, 97.5])
         if ref is not None:
             rs = w @ ref.to_numpy()
-            d = tc - (rs[:, cols["holding"]] + rs[:, cols["stockout_cost"]])
-            out["d_total_vs_b"] = out["total_cost"] - (ref.holding.sum() + ref.stockout_cost.sum())
+            d = tc - (col(rs, "holding") + col(rs, "stockout_cost") + col(rs, "terminal"))
+            out["d_total_vs_b"] = out["total_cost"] - (ref.holding.sum() + ref.stockout_cost.sum() + ref.terminal.sum())
             out["d_total_vs_b_lo"], out["d_total_vs_b_hi"] = np.percentile(d, [2.5, 97.5])
     return out
 
@@ -296,11 +332,12 @@ def run_scenario(sc, ctx, extra_checks=False):
     margin = price - cost
     h_week = sc["holding"] / 52
     cu = sc["stockout_mult"] * margin
-    co = h_week * cost * (EL + R)
-    cr = cu / (cu + co)
+    markdown = sc.get("markdown", BASE["markdown"])
     Yraw = ctx["Yraw"]
+    cr_by_review, final_flags = [], []
     lv = {}
-    for pol in ("a", "b_rop", "b_target", "c", "c50", "p50", *[f"d{f}" for f in BUDGET_FACTORS + (EXTRA_BUDGET,)]):
+    for pol in ("a", "b_rop", "b_target", "c", "c50", "p50", "p70", "p80", "p90",
+                *[f"d{f}" for f in BUDGET_FACTORS + (EXTRA_BUDGET,)]):
         lv[pol] = np.zeros((n, len(REVIEW_WEEKS)))
     milp_info, ss_value = [], []
     for r, t in enumerate(REVIEW_WEEKS):
@@ -311,20 +348,30 @@ def run_scenario(sc, ctx, extra_checks=False):
         lv["b_rop"][:, r] = d13 * EL + d13 * 1.0
         lv["b_target"][:, r] = lv["b_rop"][:, r] + d13 * R
         D = ctx["paths"][o]
-        s_c, c_val, table, dlr = plan_levels(D, L_plan, cr, cost, h_week * cost, cu, EL)
+        # Multi-period newsvendor: leftovers of an intermittent cycle carry over and cost holding over the
+        # protection interval; in the final cycle (protection interval past the window end) they also
+        # face the terminal markdown.
+        final = (t + EL + R) > T_WINDOW
+        term = markdown * cost if final else np.zeros(n)
+        co = h_week * cost * (EL + R) + term
+        cr = cu / (cu + co)
+        cr_by_review.append(float(np.median(cr)))
+        final_flags.append(bool(final))
+        s_c, c_val, table, dlr = plan_levels(D, L_plan, cr, cost, h_week * cost, cu, term)
         lv["c"][:, r] = s_c
         mean_dlr = dlr.mean(axis=1)
         ss_value.append(float(((s_c - mean_dlr) * cost).sum()))
         if extra_checks:
             lv["c50"][:, r] = row_quantile(dlr, np.full(n, 0.5))
-            lv["p50"][:, r] = table[0.5][0]
+            for qq in (0.5, 0.7, 0.8, 0.9):
+                lv[f"p{int(qq * 100)}"][:, r] = table[qq][0]
         for f in BUDGET_FACTORS + ((EXTRA_BUDGET,) if extra_checks else ()):
             S, info = solve_budget(table, f * c_val.sum())
             lv[f"d{f}"][:, r] = S
             milp_info.append({"review": t, "factor": f, **info})
     demand = ctx["actual"]
     common = dict(demand=demand, L_orders=L_orders, pack=ctx["pack"], cost=cost, h_week=h_week, margin=margin,
-                  stock_mult=sc["stockout_mult"])
+                  stock_mult=sc["stockout_mult"], markdown=markdown, fwd_p50=ctx["fwd_p50"])
     s_a0 = lv["a"][:, 0]
     mode = sc.get("start", "a")
 
@@ -340,9 +387,11 @@ def run_scenario(sc, ctx, extra_checks=False):
         res[f"d{f}"] = simulate(start(lv[f"d{f}"][:, 0]), lv[f"d{f}"], **common)
     if extra_checks:
         res["c50"] = simulate(start(lv["c50"][:, 0]), lv["c50"], **common)
-        res["p50"] = simulate(start(lv["p50"][:, 0]), lv["p50"], **common)
-    meta = {"cv": cv, "EL": EL, "median_L": float(np.median(EL_draws)), "median_cr": float(np.median(cr)), "safety_stock_value_c": float(np.mean(ss_value)),
-            "milp": milp_info, "levels": lv}
+        for pq in ("p50", "p70", "p80", "p90"):
+            res[pq] = simulate(start(lv[pq][:, 0]), lv[pq], **common)
+    meta = {"cv": cv, "EL": EL, "median_L": float(np.median(EL_draws)), "median_cr": cr_by_review[0],
+            "cr_by_review": cr_by_review, "final_reviews": [t for t, fl in zip(REVIEW_WEEKS, final_flags) if fl],
+            "markdown": markdown, "safety_stock_value_c": float(np.mean(ss_value)), "milp": milp_info, "levels": lv}
     return res, meta
 
 
@@ -442,8 +491,9 @@ def main(argv=None) -> int:
         out.to_csv(paths.outputs_dir / f"demand-paths-{name}.csv.gz", index=False, compression="gzip")
     print(f"  paths exported at {time.time() - t0:.0f}s", flush=True)
 
+    fwd_p50 = np.median(paths_by_origin[fwd_origin][:, :, :EXCESS_WEEKS], axis=1).sum(axis=1)
     rng = np.random.default_rng(SEED)
-    ctx = {"n": n, "lt": lt, "Yraw": Yraw, "paths": paths_by_origin, "t0": t0_idx,
+    ctx = {"fwd_p50": fwd_p50, "n": n, "lt": lt, "Yraw": Yraw, "paths": paths_by_origin, "t0": t0_idx,
            "U_plan": rng.random((n, args.paths)), "U_orders": rng.random((n, len(REVIEW_WEEKS))),
            "U_EL": rng.random(200_000),
            "price": par.median_price.to_numpy(float), "pack": par.pack_size_proxy.to_numpy(float),
@@ -476,11 +526,14 @@ def main(argv=None) -> int:
         "stockout = 2 x margin": {**BASE, "stockout_mult": 2.0},
         "start = 0.5 x (a)": {**BASE, "start": "a0.5"}, "start = 1.5 x (a)": {**BASE, "start": "a1.5"},
         "start = own level (biased)": {**BASE, "start": "own"},
+        "markdown m = 0": {**BASE, "markdown": 0.0}, "markdown m = 0.15": {**BASE, "markdown": 0.15},
+        "markdown m = 0.5": {**BASE, "markdown": 0.5},
     }
     rows, metas, base_res = [], {}, None
     res_n, meta_n = run_scenario(dict(BASE), {**ctx, "paths": paths_n})
     agg_n = aggregate(res_n["c"], n_boot_w)
     narrow.update({"c_fill": agg_n["fill_rate"], "c_csl": agg_n["csl"], "c_total": agg_n["total_cost"],
+                   "cr_by_review": meta_n["cr_by_review"],
                    "c_inv": agg_n["avg_inv_value"], "median_cr": meta_n["median_cr"],
                    "c_csl_lo": agg_n["csl_lo"], "c_csl_hi": agg_n["csl_hi"]})
     for name, sc in scenarios.items():
@@ -632,8 +685,10 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       f"{lt['cv_low_tier']:.3f}) and the {lt['tier_size']} with the highest CV the *unreliable* tier "
       f"({lt['cv_high_tier']:.3f}). Within-vendor CV = SD of lead time ÷ that vendor's mean.")
     a("- **Costs (ASSUMPTIONS, base case):** unit cost = 0.5 × median selling price; holding 25% of cost per year; "
-      "stockout = lost margin (price − cost) per unit, with no backorders. Sensitivity: cost ratio 0.35 and 0.65, holding "
-      "15% and 35%, stockout 0.5× and 2× margin.")
+      "stockout = lost margin (price − cost) per unit, with no backorders; **terminal markdown/obsolescence** "
+      f"m = {BASE['markdown']} × unit cost per unit of inventory position (on hand + on order) left after week 13, "
+      "i.e. gift-ware left after Christmas. "
+      "Sensitivity: cost ratio 0.35 and 0.65; holding 15% and 35%; stockout 0.5× and 2× margin; m = 0, 0.15, 0.5.")
     a("- **Policies** (same information at each review):")
     for p in ("a", "b", "c"):
         a(f"  - {POLICY_LABELS[p]}")
@@ -647,9 +702,15 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       "reorder point and safety stock as item parameters (`server/domain/inventory-allocation-read-model.mjs` flags "
       "available < reorder point or ≤ 7 days of cover); no document with this exact formula was found.")
     a("  - (c) S = the CR-quantile of simulated demand over L + R, CR = c_u / (c_u + c_o), c_u = stockout cost per "
-      f"unit, c_o = holding over E[L] + R weeks. Median CR in the base case is {bm['median_cr']:.3f}.")
+      "unit. This is the multi-period newsvendor logic. In an intermediate cycle, a unit left over is not lost: it "
+      "carries to the next cycle, so its overage cost is holding over E[L] + R weeks. In the final cycle, where "
+      "the protection interval t + E[L] + R runs past week 13, a leftover unit also takes the terminal markdown: "
+      "c_o = holding + m × unit cost. In the base case the final-cycle reviews are weeks "
+      + ", ".join(str(t) for t in bm["final_reviews"]) + ". Median CR by review: "
+      + " / ".join(f"{x:.3f}" for x in bm["cr_by_review"]) + ".")
     a("  - (d) per review, choose one level per SKU from {P50, P70, P80, P90, P95, P98} of the same distribution. "
-      "Minimise Σ c_u·E[shortage over L+R] + holding·R·E[on hand], subject to Σ cost·E[on hand] ≤ B, "
+      "Minimise Σ c_u·E[shortage over L+R] + holding·R·E[on hand] (+ m·cost·E[leftover] in the final cycle), "
+      "subject to Σ cost·E[on hand] ≤ B, "
       "E[on hand] ≈ E[(S − D_{L+R})⁺] + E[D_R]/2, and B = 0.6, 0.8, 1.0 × the same planned inventory "
       "value of (c). HiGHS proves optimality (see section 6).")
     a("")
@@ -667,8 +728,13 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       "the policies, not from luck.")
     a("- **Metrics:** fill rate = units served ÷ demand; cycle service level = share of SKU × 4-week cycles "
       "without a lost sale (weeks 0–3, 4–7, 8–11, 12); lost units and lost margin; average inventory value "
-      "(cost basis) and weeks of supply; holding cost; total cost = holding + stockout cost; number of orders. "
-      "95% CIs resample SKUs (2,000 draws).")
+      "(cost basis) and weeks of supply; holding cost; **terminal cost** = m × unit cost × inventory position "
+      "(on hand + on order) left after week 13. Orders placed at the last reviews are commitments that arrive "
+      "into the post-season, so leaving them out would reward late ordering. "
+      "**total cost = holding + stockout cost + terminal cost**; number of orders. Alternative without a markdown "
+      f"assumption: charge at cost only the stock beyond {EXCESS_WEEKS} weeks of forward P50 demand (from the "
+      "forward demand paths), which is true excess. **Ending weeks of supply** = units left ÷ forward P50 weekly "
+      "demand. 95% CIs resample SKUs (2,000 draws).")
     a("")
     a("## 4. Demand paths and recalibration")
     a("")
@@ -694,17 +760,33 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     a("## 5. Results, base case (mean L = 4 weeks, SCMS CV)")
     a("")
     a("| Policy | fill rate [95% CI] | cycle service [CI] | lost units | lost margin | avg inventory value [CI] | "
-      "weeks of supply | holding | total cost [CI] | Δ total vs (b) [paired CI] | orders | inventory left at week 13 |")
-    a("|---|---|---|---|---|---|---|---|---|---|---|---|")
-    for p in ("a", "b", "c", "d0.6", "d0.8", "d1.0"):
+      "weeks of supply | holding | terminal markdown | **total cost [95% CI]** | Δ total vs (b) [paired CI] | orders | "
+      "stock left after week 13 (of which on order) | ending weeks of supply |")
+    a("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for p in ("a", "b", "c", "d0.6", "d0.8", "d1.0", "p50", "p70", "p80", "p90"):
         r = s_base.loc[p]
         a(f"| {POLICY_LABELS[p]} | {r.fill_rate:.1%} [{r.fill_rate_lo:.1%}, {r.fill_rate_hi:.1%}] | "
           f"{r.csl:.1%} [{r.csl_lo:.1%}, {r.csl_hi:.1%}] | {r.lost_units:,.0f} | {fmt_money(r.lost_margin)} | "
           f"{fmt_money(r.avg_inv_value)} [{fmt_money(r.avg_inv_value_lo)}, {fmt_money(r.avg_inv_value_hi)}] | "
-          f"{r.weeks_of_supply:.1f} | {fmt_money(r.holding)} | {fmt_money(r.total_cost)} "
+          f"{r.weeks_of_supply:.1f} | {fmt_money(r.holding)} | {fmt_money(r.terminal)} | **{fmt_money(r.total_cost)}** "
           f"[{fmt_money(r.total_cost_lo)}, {fmt_money(r.total_cost_hi)}] | "
           + ("–" if p == "b" else f"{fmt_money(r.d_total_vs_b)} [{fmt_money(r.d_total_vs_b_lo)}, "
-             f"{fmt_money(r.d_total_vs_b_hi)}]") + f" | {int(r.orders):,} | {fmt_money(r.end_inv_value)} |")
+             f"{fmt_money(r.d_total_vs_b_hi)}]") + f" | {int(r.orders):,} | {fmt_money(r.end_inv_value)} "
+          f"({fmt_money(r.end_on_order_value)}) | "
+          f"{r.end_weeks_of_supply:.1f} |")
+    a("")
+    a("The reference rows use a fixed quantile (P50–P90) of the same simulated demand for every SKU. They check "
+      "whether less protection than (c) would do better.")
+    a("")
+    a(f"**Without a markdown assumption** (only the stock and orders beyond {EXCESS_WEEKS} weeks of forward P50 "
+      "demand are charged, at full unit cost, as true excess; same simulated runs as the base case):")
+    a("")
+    a("| Policy | true excess at week 13 | holding + stockout + excess [95% CI] | ending weeks of supply |")
+    a("|---|---|---|---|")
+    for p in ("a", "b", "c", "d0.6", "d0.8", "d1.0", "p50", "p70", "p80", "p90"):
+        r = s_base.loc[p]
+        a(f"| {POLICY_LABELS[p]} | {fmt_money(r.excess_value)} | {fmt_money(r.alt_total)} "
+          f"[{fmt_money(r.alt_total_lo)}, {fmt_money(r.alt_total_hi)}] | {r.end_weeks_of_supply:.1f} |")
     a("")
     a("![service vs inventory](figures/replenishment-service-inventory.png)")
     a("")
@@ -793,6 +875,22 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
           f"{fmt_money(d.loc['b', 'total_cost'])} | {fmt_money(d.loc['c', 'total_cost'])} | "
           f"{fmt_money(d.loc['d0.8', 'total_cost'])} | {d.loc['c', 'fill_rate']:.1%} | {main.total_cost.idxmin()} |")
     a("")
+    a("### Terminal markdown m")
+    a("")
+    a("(c) and (d) re-plan for each m (the final-cycle overage cost changes); (a) and (b) do not use m.")
+    a("")
+    a("| m | (a) total | (b) total | (c) total [95% CI] | (d, 0.6) total | (d, 0.8) total | (c) fill | cheapest policy |")
+    a("|---|---|---|---|---|---|---|---|")
+    for s_, m in (("markdown m = 0", 0.0), ("markdown m = 0.15", 0.15), ("base", BASE["markdown"]),
+                  ("markdown m = 0.5", 0.5)):
+        d = summary[summary.scenario == s_].set_index("policy")
+        main = d.loc[["a", "b", "c", "d0.6", "d0.8", "d1.0"]]
+        a(f"| {m}{' (base)' if s_ == 'base' else ''} | {fmt_money(d.loc['a', 'total_cost'])} | "
+          f"{fmt_money(d.loc['b', 'total_cost'])} | {fmt_money(d.loc['c', 'total_cost'])} "
+          f"[{fmt_money(d.loc['c', 'total_cost_lo'])}, {fmt_money(d.loc['c', 'total_cost_hi'])}] | "
+          f"{fmt_money(d.loc['d0.6', 'total_cost'])} | {fmt_money(d.loc['d0.8', 'total_cost'])} | "
+          f"{d.loc['c', 'fill_rate']:.1%} | {main.total_cost.idxmin()} |")
+    a("")
     a("### Starting inventory")
     a("")
     a("| Start (all policies alike) | (a) total | (b) total | (c) total | (d, 0.6) total | (d, 0.8) total | "
@@ -826,72 +924,92 @@ def write_discussion(a, lt, key, summary, s_base, metas, checks, tail):
     b, c, aa = s_base.loc["b"], s_base.loc["c"], s_base.loc["a"]
     main = s_base.loc[["a", "b", "c", "d0.6", "d0.8", "d1.0"]]
     best = main.total_cost.idxmin()
+    best_alt = main.alt_total.idxmin()
     diag, nar = key["calibration"], key["narrow_pool"]
-    cr = metas["base"]["median_cr"]
+    cr = metas["base"]["cr_by_review"]
+    refs = s_base.loc[["p50", "p70", "p80", "p90"]]
+    best_ref = refs.total_cost.idxmin()
+    p50 = s_base.loc[best_ref]
     a("## 9. Do the decisions make sense?")
     a("")
-    a(f"- **Lowest total cost in the base case: {POLICY_LABELS[best]}** ({fmt_money(main.loc[best, 'total_cost'])}). "
+    a(f"- **Lowest total cost in the base case: {POLICY_LABELS[best]}**, {fmt_money(main.loc[best, 'total_cost'])} "
+      f"[{fmt_money(main.loc[best, 'total_cost_lo'])}, {fmt_money(main.loc[best, 'total_cost_hi'])}], including the "
+      f"terminal markdown. Without a markdown assumption (true excess only) the cheapest is {POLICY_LABELS[best_alt]}. "
       f"Policy (c) against FlowChain's rule (b): fill {c.fill_rate:.1%} vs {b.fill_rate:.1%}; average inventory "
-      f"{fmt_money(c.avg_inv_value)} vs {fmt_money(b.avg_inv_value)} ({c.avg_inv_value / b.avg_inv_value:.1f}x); "
-      f"total cost {fmt_money(c.total_cost)} vs {fmt_money(b.total_cost)} (paired Δ {fmt_money(c.d_total_vs_b)}, "
-      f"CI [{fmt_money(c.d_total_vs_b_lo)}, {fmt_money(c.d_total_vs_b_hi)}]). The rule of thumb (a) behaves like (b) "
-      f"(fill {aa.fill_rate:.1%}, total {fmt_money(aa.total_cost)}).")
+      f"{fmt_money(c.avg_inv_value)} vs {fmt_money(b.avg_inv_value)}; total {fmt_money(c.total_cost)} vs "
+      f"{fmt_money(b.total_cost)} (paired Δ {fmt_money(c.d_total_vs_b)}, CI [{fmt_money(c.d_total_vs_b_lo)}, "
+      f"{fmt_money(c.d_total_vs_b_hi)}]). The rule of thumb (a) is close to (b) (fill {aa.fill_rate:.1%}, total "
+      f"{fmt_money(aa.total_cost)}). Among the fixed-quantile references the cheapest is "
+      f"{POLICY_LABELS[best_ref]}: fill {p50.fill_rate:.1%}, total {fmt_money(p50.total_cost)} "
+      f"[{fmt_money(p50.total_cost_lo)}, {fmt_money(p50.total_cost_hi)}], "
+      + ("so less protection than (c) does not pay." if p50.total_cost > c.total_cost else
+         ("so a lower quantile beats (c)" + (" and every policy (a)–(d) here." if p50.total_cost < main.total_cost.min()
+                                              else " here."))))
     a(f"- **Why (a) and (b) lose.** They set stock from recent averages, with no term for the autumn ramp or for "
-      f"lead-time variability, so they run short when demand rises. Under the assumed costs a lost unit costs the "
-      f"whole margin ({1 - BASE['cost_ratio']:.0%} of price), while a week of holding costs "
-      f"{BASE['holding'] / 52 * BASE['cost_ratio']:.2%} of price. Lost margin dominates their cost "
-      f"({fmt_money(b.lost_margin)} of {fmt_money(b.total_cost)} for (b)).")
-    a(f"- **Why (c) over-buys.** The critical ratio is high (median {cr:.3f}), and the recalibrated distribution is "
-      f"wide, so (c) holds {c.weeks_of_supply:.0f} weeks of supply and ends the window with "
-      f"{fmt_money(c.end_inv_value)} of stock, against {fmt_money(b.end_inv_value)} for (b). In the 13-week cost "
-      "this is cheap, because holding is only 25% a year and nothing is charged for stock left at the end. For "
-      "Christmas gift-ware carried into January that is optimistic: markdown and obsolescence risk are not in the "
-      "holding rate.")
-    a(f"- **Where (d) wins.** A budget cap cuts the over-buying where it costs least in service. At 0.6 x (c): fill "
-      f"{s_base.loc['d0.6', 'fill_rate']:.1%}, inventory {fmt_money(s_base.loc['d0.6', 'avg_inv_value'])} "
-      f"({s_base.loc['d0.6', 'avg_inv_value'] / c.avg_inv_value:.0%} of (c)), total "
-      f"{fmt_money(s_base.loc['d0.6', 'total_cost'])}. At 1.0 x (c) the MILP only reallocates on a coarse grid of "
-      f"quantiles (total {fmt_money(s_base.loc['d1.0', 'total_cost'])}). That the budgeted policy beats (c) on "
-      "realised cost says the planning distribution is wider than the test turned out to be. This is the "
-      "working-capital trade-off a small business actually faces.")
-    a(f"- **P90 under-coverage → realised service.** With the recalibrated (wide) pool, the weekly P90 covers "
-      f"{diag['weekly_p90_coverage']:.1%}. (c) plans a cycle service of about its critical ratio ({cr:.1%} median) "
-      f"and realises {c.csl:.1%}. Built instead on a narrow pool that leaves out autumn 2010 "
-      f"({'; '.join(nar['origins'])}), the weekly P90 covers only {nar['weekly_p90_coverage']:.1%}. The same policy "
-      f"then realises {nar['c_csl']:.1%} cycle service [{nar['c_csl_lo']:.1%}, {nar['c_csl_hi']:.1%}] and "
-      f"{nar['c_fill']:.1%} fill, with inventory {fmt_money(nar['c_inv'])} and total {fmt_money(nar['c_total'])}. "
-      + (f"So the narrower distribution costs {c.csl - nar['c_csl']:.1%} points of cycle service against the wide "
-         "pool and falls below its plan: a distribution calibrated outside the peak season delivers less service "
-         "than it promises." if nar["c_csl"] < nar["median_cr"] else
-         f"So the narrower distribution costs {c.csl - nar['c_csl']:.1%} points of cycle service against the wide pool "
-         "but, in this window, still meets its plan. Under-coverage here shows up as less headroom rather than a "
-         "missed target."))
+      f"lead-time variability, so they run short when demand rises. A lost unit costs the whole margin "
+      f"({1 - BASE['cost_ratio']:.0%} of price) and a week of holding {BASE['holding'] / 52 * BASE['cost_ratio']:.2%} of "
+      f"price, so lost margin dominates their cost ({fmt_money(b.lost_margin)} of {fmt_money(b.total_cost)} for (b)).")
+    a(f"- **What the terminal charge does to (c).** (c) holds {c.weeks_of_supply:.0f} weeks of supply on average and "
+      f"ends with {c.end_weeks_of_supply:.1f} weeks of forward P50 demand in stock and on order "
+      f"({fmt_money(c.end_inv_value)}, of which {fmt_money(c.end_on_order_value)} on order), against "
+      f"{b.end_weeks_of_supply:.1f} weeks for (b). At m = {BASE['markdown']} that leftover costs {fmt_money(c.terminal)}; "
+      f"the true excess beyond {EXCESS_WEEKS} weeks is {fmt_money(c.excess_value)}. The final-cycle critical ratio "
+      "includes the markdown (median " + " / ".join(f"{x:.3f}" for x in cr) + " by review), so (c) orders less "
+      "at the last reviews. But the multi-period logic still prices leftovers from the early cycles at holding "
+      "cost only, as if they would sell later. With a 13-week season ending at Christmas, much of that early "
+      "stock is still there at the end and takes the markdown too. Together with a wide demand distribution, "
+      "this is why (c) over-buys once the end of season is priced.")
+    dn = {f: s_base.loc[f"d{f}"] for f in (0.6, 0.8, 1.0)}
+    a(f"- **Budgeted (d).** At 0.6 × (c): fill {dn[0.6].fill_rate:.1%}, inventory {fmt_money(dn[0.6].avg_inv_value)} "
+      f"({dn[0.6].avg_inv_value / c.avg_inv_value:.0%} of (c)), total {fmt_money(dn[0.6].total_cost)}; at 0.8: "
+      f"{fmt_money(dn[0.8].total_cost)}; at 1.0: {fmt_money(dn[1.0].total_cost)}. "
+      + (f"A tighter budget lowers realised cost, so the planning distribution is wider than the test turned out and "
+         "(c) over-protects. A working-capital cap is the better default for a small business."
+         if dn[0.6].total_cost < c.total_cost else
+         "The budget cap does not lower realised cost here, so (c)'s extra stock is worth its cost."))
+    m_of = {"markdown m = 0": 0.0, "markdown m = 0.15": 0.15, "base": BASE["markdown"], "markdown m = 0.5": 0.5}
+    parts = []
+    for sname, m in sorted(m_of.items(), key=lambda kv: kv[1]):
+        d = summary[(summary.scenario == sname) & summary.policy.isin(["a", "b", "c", "d0.6", "d0.8", "d1.0"])]
+        d = d.set_index("policy")
+        parts.append(f"m = {m}: {d.total_cost.idxmin()} ({fmt_money(d.total_cost.min())}; (c) "
+                     f"{fmt_money(d.loc['c', 'total_cost'])}, (b) {fmt_money(d.loc['b', 'total_cost'])})")
+    a("- **Markdown sensitivity** (cheapest of (a)–(d)): " + "; ".join(parts) + ".")
+    a(f"- **P90 under-coverage → realised service.** (c) plans a cycle service of about its critical ratio "
+      f"({cr[0]:.1%} at the first reviews, {cr[-1]:.1%} in the final cycle). With the recalibrated (wide) pool, "
+      f"whose weekly P90 covers {diag['weekly_p90_coverage']:.1%}, it realises {c.csl:.1%} "
+      f"[{c.csl_lo:.1%}, {c.csl_hi:.1%}]. Built on a narrow pool that leaves out autumn 2010 "
+      f"({'; '.join(nar['origins'])}; weekly P90 coverage {nar['weekly_p90_coverage']:.1%}), the same policy realises "
+      f"{nar['c_csl']:.1%} [{nar['c_csl_lo']:.1%}, {nar['c_csl_hi']:.1%}], with {nar['c_fill']:.1%} fill and total "
+      f"{fmt_money(nar['c_total'])}. "
+      + ("Both fall short of the plan, and the narrow pool falls further. Quantiles that under-cover in the peak "
+         "season deliver less service than they promise, so planned service levels should be read as upper bounds."
+         if max(c.csl, nar["c_csl"]) < cr[0] else
+         "The narrow pool loses service against the wide one."))
     lvl = summary[summary.scenario.isin(["L=2", "base", "L=8"])]
     cL = lvl[lvl.policy == "c"].set_index("scenario")
     bL = lvl[lvl.policy == "b"].set_index("scenario")
     a(f"- **Lead-time mean.** (b) fill at mean L = 2 / 4 / 8 weeks: {bL.loc['L=2', 'fill_rate']:.1%} / "
       f"{bL.loc['base', 'fill_rate']:.1%} / {bL.loc['L=8', 'fill_rate']:.1%}; (c): {cL.loc['L=2', 'fill_rate']:.1%} / "
-      f"{cL.loc['base', 'fill_rate']:.1%} / {cL.loc['L=8', 'fill_rate']:.1%}; (c) total cost "
+      f"{cL.loc['base', 'fill_rate']:.1%} / {cL.loc['L=8', 'fill_rate']:.1%}; (c) total "
       f"{fmt_money(cL.loc['L=2', 'total_cost'])} / {fmt_money(cL.loc['base', 'total_cost'])} / "
-      f"{fmt_money(cL.loc['L=8', 'total_cost'])}. All policies start from the same stock, so these differences "
-      "come from the ordering rules. With a long lead time, an order placed at week 0 arrives late in the window, "
-      "and the common starting stock carries more of the demand.")
+      f"{fmt_money(cL.loc['L=8', 'total_cost'])}. All policies start from the same stock. With a long lead time, an "
+      "order placed at week 0 arrives late in the window, so the common starting stock carries more of the demand.")
     a("")
     a("## 10. Implications and limitations")
     a("")
     a("- **For FlowChain:** replace the fixed '1 week of demand' safety stock with a service-level rule that uses "
-      "the forecast distribution and the supplier's measured lead-time variability (from an SCMS-style scorecard). "
-      "Offer the budgeted version, with a working-capital cap, as the default for small businesses, since it "
-      "was cheapest here. Show the planned vs realised service so users see when the forecast is too narrow.")
+      "the forecast distribution, the supplier's measured lead-time variability (from an SCMS-style scorecard) and an "
+      "end-of-season markdown for seasonal items. Offer a working-capital cap, and show planned vs realised service "
+      "so users see when the forecast is too narrow.")
     a(f"- **Excluded tail:** the panel covers {key['n_skus']} of {tail['product_skus']:,} product SKUs. The other "
       f"{tail['tail_skus']:,} SKUs ({tail['tail_revenue_share']:.1%} of training revenue, "
       f"{tail['tail_units_share']:.1%} of units) are mostly intermittent or lumpy and are not in this backtest. "
       "They need Croston/SBA-type forecasts and a separate policy (for example, min–max or make-to-order).")
-    a("- **Other limits:** one test season; a common starting stock that stands in for unknown actual stock; "
-      "a 13-week window with "
-      "no value on leftover stock; assumed costs and lead-time means (only the variability comes from SCMS); "
-      "lognormal lead times; censored demand in the history. Treat the money figures as a comparison between "
-      "policies, not as a forecast of profit.")
+    a("- **Other limits:** one test season; a common starting stock that stands in for unknown actual stock; an "
+      "assumed markdown rate (bracketed by m = 0–0.5 and the no-assumption excess measure); assumed costs and "
+      "lead-time means (only the variability comes from SCMS); lognormal lead times; censored demand in the "
+      "history. Treat the money figures as a comparison between policies, not as a forecast of profit.")
 
 
 if __name__ == "__main__":
