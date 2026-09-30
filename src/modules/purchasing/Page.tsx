@@ -1,3 +1,4 @@
+import { invoiceVarianceLabelKey, isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
@@ -295,7 +296,7 @@ function receivedStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
 function invoiceStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
   const invoices = invoicesForPo(po.po, facts);
   if (!invoices.length) return "未开票";
-  if (invoices.some((invoice) => invoice.varianceType !== "无差异" || invoice.matchStatus === "差异待处理")) return "发票差异";
+  if (invoices.some((invoice) => !isNoInvoiceVariance(invoice.varianceType) || invoice.matchStatus === "差异待处理")) return "发票差异";
   if (invoices.every((invoice) => invoice.paid)) return "已付款";
   return "已开票";
 }
@@ -305,8 +306,8 @@ function matchStatus(po: PurchaseOrder, facts: ProcurementRuntimeFacts) {
   const grns = grnsForPo(po.po, facts);
   if (!invoices.length) return "缺少发票";
   if (!grns.length || grns.some((doc) => doc.status === "待收货" || doc.status === "质检中")) return "缺少收货";
-  const variance = invoices.find((invoice) => invoice.varianceType !== "无差异" || invoice.varianceAmount > 0);
-  if (variance) return variance.varianceType;
+  const variance = invoices.find((invoice) => !isNoInvoiceVariance(invoice.varianceType) || invoice.varianceAmount > 0);
+  if (variance) return invoiceVarianceLabelKey(variance.varianceType);
   if (invoices.every((invoice) => invoice.matchStatus === "自动匹配" || invoice.matchStatus === "已解决")) return "已匹配";
   return "需人工复核";
 }
@@ -440,9 +441,9 @@ function buildInvoiceRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): In
     invoiceDate: invoice.invoiceDate,
     dueDate: invoice.dueDate,
     matchStatus: invoice.matchStatus,
-    varianceType: line.varianceType || invoice.varianceType,
+    varianceType: invoiceVarianceLabelKey(line.varianceType || invoice.varianceType),
     varianceAmount: toNumber(line.varianceAmount ?? invoice.varianceAmount),
-    risk: (line.varianceType || invoice.varianceType) === "无差异" ? "低风险" : "需人工复核",
+    risk: isNoInvoiceVariance(line.varianceType || invoice.varianceType) ? "低风险" : "需人工复核",
     }));
   });
 }

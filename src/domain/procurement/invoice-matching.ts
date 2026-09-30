@@ -1,3 +1,4 @@
+import { invoiceVarianceCode, isInvoiceVarianceType, isNoInvoiceVariance } from "./variance-types";
 import type {
   InvoiceVarianceType,
   PurchaseOrder,
@@ -102,8 +103,8 @@ export function calculateInvoiceMatch(
     varianceAmount = Math.max(varianceAmount, Math.abs(invoiceAmount - grnAmt * 1.13));
     matchStatus = "差异待处理";
     status = "存在差异";
-  } else if (varianceType !== "无差异" && varianceAmount > 0) {
-    matchStatus = varianceType === "运费差异" || varianceType === "税额差异" ? "人工复核" : "差异待处理";
+  } else if (!isNoInvoiceVariance(varianceType) && varianceAmount > 0) {
+    matchStatus = isInvoiceVarianceType(varianceType, "freight_variance") || isInvoiceVarianceType(varianceType, "tax_variance") ? "人工复核" : "差异待处理";
     status = "存在差异";
   } else if (poDelta <= amountTolerance(poAmt)) {
     varianceType = "无差异";
@@ -125,12 +126,13 @@ export function calculateInvoiceMatch(
 }
 
 export function getInvoiceVarianceSummary(invoice: SupplierInvoice) {
-  if (invoice.varianceType === "无差异") return "三单金额和数量在容差内，可进入审批或过账应付。";
-  if (invoice.varianceType === "缺少收货") return "先完成 GRN 签收/质检，再继续发票匹配。";
-  if (invoice.varianceType === "重复发票") return "存在重复发票风险，建议退回或合并附件后关闭重复项。";
-  if (invoice.varianceType === "数量差异") return "复核发票数量、GRN 合格数量和拒收处理。";
-  if (invoice.varianceType === "价格差异") return "复核 PO 价格、合同调价或供应商报价依据。";
-  if (invoice.varianceType === "税额差异" || invoice.varianceType === "运费差异") return "由 AP 与采购复核税额/运费是否符合条款。";
+  const code = invoiceVarianceCode(invoice.varianceType);
+  if (code === "none") return "三单金额和数量在容差内，可进入审批或过账应付。";
+  if (code === "missing_grn") return "先完成 GRN 签收/质检，再继续发票匹配。";
+  if (code === "duplicate_invoice") return "存在重复发票风险，建议退回或合并附件后关闭重复项。";
+  if (code === "quantity_variance") return "复核发票数量、GRN 合格数量和拒收处理。";
+  if (code === "price_variance") return "复核 PO 价格、合同调价或供应商报价依据。";
+  if (code === "tax_variance" || code === "freight_variance") return "由 AP 与采购复核税额/运费是否符合条款。";
   return "需要人工复核单据来源和供应商提交内容。";
 }
 

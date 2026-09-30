@@ -1,3 +1,4 @@
+import { isInvoiceVarianceType, isNoInvoiceVariance } from "../procurement/variance-types";
 import {
   CONTRACTS,
   PORTAL_SUPPLIERS,
@@ -88,7 +89,7 @@ export function buildSrmSupplierRows(suppliers: SupplierRelationshipProfile[] = 
     const rfqs = RFQS.filter((rfq) => matchesSupplierName(rfq.bestSupplier, supplier));
     const contracts = CONTRACTS.filter((contract) => matchesSupplierName(contract.supplier, supplier));
     const invoices = SUPPLIER_INVOICES.filter((invoice) => matchesSupplierName(invoice.supplier, supplier));
-    const invoiceVarianceCount = invoices.filter((invoice) => invoice.varianceType !== "无差异" || ["人工复核", "差异待处理"].includes(invoice.matchStatus)).length;
+    const invoiceVarianceCount = invoices.filter((invoice) => !isNoInvoiceVariance(invoice.varianceType) || ["人工复核", "差异待处理"].includes(invoice.matchStatus)).length;
     const credits = SUPPLIER_CREDIT_MEMOS.filter((memo) => matchesSupplierName(memo.supplier, supplier));
     const reconciliation = SUPPLIER_RECONCILIATION_STATEMENTS.find((statement) => matchesSupplierName(statement.supplier, supplier));
     const returns = PURCHASE_RETURNS.filter((item) => matchesSupplierName(item.supplier, supplier));
@@ -103,10 +104,10 @@ export function buildSrmSupplierRows(suppliers: SupplierRelationshipProfile[] = 
     const unreceivedQty = Math.max(0, orderedQty - receivedQty);
     const rejectedQty = grns.reduce((sum, doc) => sum + grnLinesOf(doc).reduce((lineSum, line) => lineSum + toNumber(line.rejectedQty), 0), 0);
     const invoiceTotalAmount = invoices.reduce((sum, invoice) => sum + toNumber(invoice.total), 0);
-    const priceVarianceAmount = invoices.filter((invoice) => invoice.varianceType === "价格差异").reduce((sum, invoice) => sum + toNumber(invoice.varianceAmount), 0);
-    const quantityVarianceAmount = invoices.filter((invoice) => invoice.varianceType === "数量差异").reduce((sum, invoice) => sum + toNumber(invoice.varianceAmount), 0);
+    const priceVarianceAmount = invoices.filter((invoice) => isInvoiceVarianceType(invoice.varianceType, "price_variance")).reduce((sum, invoice) => sum + toNumber(invoice.varianceAmount), 0);
+    const quantityVarianceAmount = invoices.filter((invoice) => isInvoiceVarianceType(invoice.varianceType, "quantity_variance")).reduce((sum, invoice) => sum + toNumber(invoice.varianceAmount), 0);
     const receivedNotInvoicedAmount = uninvoicedAmountForPurchaseOrders(pos);
-    const matchExceptionCount = invoices.filter((invoice) => invoice.matchStatus !== "自动匹配" || invoice.varianceType !== "无差异").length;
+    const matchExceptionCount = invoices.filter((invoice) => invoice.matchStatus !== "自动匹配" || !isNoInvoiceVariance(invoice.varianceType)).length;
     const quoteResponseRate = rfqs.length ? Math.round(rfqs.reduce((sum, rfq) => sum + (rfq.quoted / Math.max(1, rfq.suppliers)), 0) / rfqs.length * 100) : 0;
     const invoiceMatchRate = invoices.length ? Math.round((invoices.length - matchExceptionCount) / invoices.length * 100) : 100;
     const onTimeReceiptRate = grns.length ? Math.round((grns.filter((doc) => doc.status === "已入库").length / grns.length) * 100) : supplier.onTimeRate;

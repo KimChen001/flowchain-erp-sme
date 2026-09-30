@@ -86,3 +86,11 @@ test("the tax code table keeps every stored digit and shows the recorded tax typ
   await expect(row).toContainText("US");
   await expect(page.getByRole("row", { name: /TAXEXEMPT/ })).toContainText("Exempt");
 });
+
+test("variance types show as labels, not stored codes", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-001");
+  await expect(page.getByText("LOCAL-DEMO-INV-001", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Price variance", { exact: true }).first()).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("price_variance");
+});

@@ -1,3 +1,4 @@
+import type { InvoiceVarianceCode } from "../domain/procurement/variance-types";
 export type Priority = "高" | "中" | "低";
 
 export type POStatus = "草稿" | "待审批" | "已审批" | "已发出" | "部分到货" | "已完成" | "已驳回" | "已取消";
@@ -5,7 +6,8 @@ export type PurchaseRequestStatus = "草稿" | "待审批" | "已批准" | "已�
 export type RecvStatus = "待收货" | "已签收" | "质检中" | "已入库" | "异常处理";
 export type SupplierInvoiceStatus = "草稿" | "已接收" | "待匹配" | "已匹配" | "存在差异" | "待审批" | "已审批" | "已过账应付" | "已付款" | "已驳回";
 export type SupplierInvoiceMatchStatus = "未匹配" | "自动匹配" | "人工复核" | "差异待处理" | "已解决";
-export type InvoiceVarianceType = "无差异" | "价格差异" | "数量差异" | "税额差异" | "运费差异" | "供应商不一致" | "缺少收货" | "缺少PO" | "重复发票";
+// Stored codes, plus the legacy Chinese business values older rows still carry.
+export type InvoiceVarianceType = InvoiceVarianceCode | "无差异" | "价格差异" | "数量差异" | "金额差异" | "税额差异" | "运费差异" | "供应商不一致" | "缺少收货" | "缺少PO" | "发票早于收货" | "重复发票";
 export type SupplierReconciliationStatus = "草稿" | "待确认" | "存在差异" | "已确认" | "已驳回" | "已关闭";
 export type SupplierSettlementStatus = "未结算" | "部分结算" | "已结算";
 export type SupplierReconciliationLineType = "PO" | "GRN" | "SupplierInvoice" | "PurchaseReturn" | "AP" | "Payment" | "Adjustment" | "CreditMemo";

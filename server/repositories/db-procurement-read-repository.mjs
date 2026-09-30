@@ -490,7 +490,9 @@ function mapReceivingDocument(record = {}) {
 function mapSupplierInvoice(record = {}) {
   const meta = metadata(record)
   const varianceAmount = numberFrom(record.varianceAmount, 0)
-  const varianceType = text(meta.varianceType, varianceAmount ? '金额差异' : '无差异')
+  // A stored variance type is returned as stored. Without one, return a stable
+  // code (see INVOICE_VARIANCE_TYPES) that the client labels in either language.
+  const varianceType = text(meta.varianceType, varianceAmount ? 'amount_variance' : 'none')
   const rawMatchStatus = text(record.matchStatus)
   const matchStatus = rawMatchStatus === 'variance'
     ? '差异待处理'
@@ -545,7 +547,7 @@ function mapSupplierInvoice(record = {}) {
         taxAmount,
         lineSubtotal,
         lineTotal: lineSubtotal + taxAmount,
-        varianceType: text(lineMeta.varianceType, lineVarianceAmount ? varianceType : '无差异'),
+        varianceType: text(lineMeta.varianceType, lineVarianceAmount ? varianceType : 'none'),
         varianceAmount: lineVarianceAmount,
       }
     }),

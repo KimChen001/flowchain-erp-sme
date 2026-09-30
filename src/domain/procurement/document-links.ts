@@ -1,3 +1,4 @@
+import { isNoInvoiceVariance } from "./variance-types";
 import type { PurchaseOrder, PurchaseRequest, PurchaseReturn, ReceivingDoc, SupplierCreditMemo, SupplierInvoice, SupplierReconciliationStatement } from "../../types/scm";
 import { type DocumentTone, statusTone } from "../../components/document/DocumentShell";
 
@@ -59,7 +60,7 @@ export function getGrnLinkedDocuments(
   return [
     po ? { label: "PO / 采购订单", value: po.po, moduleId: "purchasing", tone: documentLinkTone(po.status) } : { label: "PO / 采购订单", value: grn.po, moduleId: "purchasing", tone: "warning" },
     ...invoices.slice(0, 3).map((invoice) => ({ label: "供应商发票", value: invoice.invoiceNumber, moduleId: "procurement", tone: documentLinkTone(invoice.status) })),
-    invoices.length ? { label: "三单匹配结果", value: invoices.some((invoice) => invoice.varianceType !== "无差异") ? "存在差异" : "可匹配", moduleId: "procurement", tone: invoices.some((invoice) => invoice.varianceType !== "无差异") ? "danger" as const : "success" as const } : undefined,
+    invoices.length ? { label: "三单匹配结果", value: invoices.some((invoice) => !isNoInvoiceVariance(invoice.varianceType)) ? "存在差异" : "可匹配", moduleId: "procurement", tone: invoices.some((invoice) => !isNoInvoiceVariance(invoice.varianceType)) ? "danger" as const : "success" as const } : undefined,
   ].filter(Boolean) as BusinessDocumentLink[];
 }
 

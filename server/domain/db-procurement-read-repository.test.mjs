@@ -416,3 +416,18 @@ test('database procurement repository preserves type helpers and clean missing D
     (error) => error.message === DATABASE_CONFIG_ERROR && error.code === DATABASE_CONFIG_ERROR
   )
 })
+
+test('supplier invoices without a stored variance type get stable codes, not Chinese values', async () => {
+  const records = createRecords()
+  records.supplierInvoices.push({ ...records.supplierInvoices[0], id: 'INV-DB-2', varianceAmount: 0, matchStatus: 'pending', lines: [{ ...records.supplierInvoices[0].lines[0], id: 'INVL-DB-2' }] })
+  records.supplierInvoices.push({ ...records.supplierInvoices[0], id: 'INV-DB-3', metadata: { varianceType: 'price_variance' }, lines: [{ ...records.supplierInvoices[0].lines[0], id: 'INVL-DB-3', metadata: { varianceType: '价格差异' } }] })
+  const snapshot = await createDbProcurementReadRepository({ env, prisma: createPrisma(records) }).snapshot({ tenantId })
+  const invoice = (id) => snapshot.supplierInvoices.find((row) => row.id === id)
+  assert.equal(invoice('INV-DB-1').varianceType, 'amount_variance')
+  assert.equal(invoice('INV-DB-1').lines[0].varianceType, 'amount_variance')
+  assert.equal(invoice('INV-DB-2').varianceType, 'none')
+  assert.equal(invoice('INV-DB-2').lines[0].varianceType, 'none')
+  // A stored value, code or legacy, is returned as it was stored.
+  assert.equal(invoice('INV-DB-3').varianceType, 'price_variance')
+  assert.equal(invoice('INV-DB-3').lines[0].varianceType, '价格差异')
+})

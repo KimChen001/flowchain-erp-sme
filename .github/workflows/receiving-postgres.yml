@@ -57,6 +57,7 @@ jobs:
       - run: npm run test:api:settings
       - run: npm run test:db:english
       - run: npm run test:db:us-defaults
+      - run: npm run test:db:walkthrough-scenario
       - run: npm run test:db:tenant-scoped-reads
       - run: npm run test:db:report-truncation
       - run: npm run test:db:inventory-allocation

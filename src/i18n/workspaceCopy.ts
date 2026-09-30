@@ -69,6 +69,7 @@ const operationalEnglish: Record<string, string> = {
   '发票 / 匹配': 'Invoice / match', 'Invoice 编号': 'Invoice number', 'Invoice Line 编号': 'Invoice line number', '发票证据': 'Invoice evidence',
   '发票日期': 'Invoice date', '到期日': 'Due date', '开票数量': 'Invoiced quantity', '发票单价': 'Invoice unit price', '发票金额': 'Invoice amount', '匹配状态': 'Match status',
   '三单匹配': 'Three-way match', '匹配复核': 'Match review', '价格差异': 'Price variance', '数量差异': 'Quantity variance', '金额差异': 'Amount variance',
+  '税额差异': 'Tax variance', '运费差异': 'Freight variance', '供应商不一致': 'Supplier mismatch', '缺少PO': 'Missing PO', '发票早于收货': 'Invoiced before receipt',
   '收货缺口': 'Receiving gap', '发票缺口': 'Invoice gap', '差异类型': 'Variance type', '差异金额': 'Variance amount', '建议处理': 'Suggested action', '无差异': 'No variance',
   '概览': 'Overview', '历史记录': 'History', '查看收货单': 'View receipt', '查看供应商发票': 'View supplier invoice', '查看三单匹配': 'View three-way match',
   '复核收货记录': 'Review receiving record', '复核供应商发票': 'Review supplier invoice', '人工复核': 'Human review', '财务协同复核': 'Finance review',

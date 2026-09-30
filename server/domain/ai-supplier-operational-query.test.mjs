@@ -411,3 +411,15 @@ test('supplier operational intent detection avoids pure status prompt', () => {
   assert.equal(detectAiSupplierOperationalIntent('下一步跟进', { moduleId: 'srm' }), 'supplier_next_actions_query')
   assert.equal(detectAiSupplierOperationalIntent('查看高风险供应商', { moduleId: 'srm' }), 'supplier_high_risk_summary_query')
 })
+
+test('supplier invoice summary reads stable variance codes from the database repository', async () => {
+  const invoiceCard = async (invoice) => {
+    const db = createDb()
+    db.supplierInvoices = db.supplierInvoices.map((row) => row.supplier === 'Delta Plastics' ? { ...row, status: 'submitted', ...invoice } : row)
+    const route = createRouteContext({ message: 'Delta Plastics PO invoice contract inventory RFQ' }, db)
+    await handleAiRoute(route.ctx)
+    return route.response.payload.cards.find((card) => card.type === 'supplier_invoice_summary').data
+  }
+  assert.equal((await invoiceCard({ matchStatus: 'pending', varianceType: 'none', varianceAmount: 0 })).invoiceVarianceCount, 0)
+  assert.equal((await invoiceCard({ matchStatus: 'variance', varianceType: 'amount_variance', varianceAmount: 60 })).invoiceVarianceCount, 1)
+})

@@ -83,6 +83,9 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByText("LOCAL-DEMO-GRN-001", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("LOCAL-DEMO-INV-001", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("金额差异", { exact: true }).first()).toBeVisible();
+  // LOCAL-DEMO-INV-001 stores the price_variance code; the page shows its label.
+  await expect(page.getByText("价格差异", { exact: true }).first()).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("price_variance");
   await capture(page, "02-po-001-detail");
 
   await page.getByRole("button", { name: "查看供应商发票" }).click();
@@ -181,29 +184,42 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByTestId("create-sales-order")).toHaveCount(0);
   await capture(page, "07-sales-order-create-blocked");
 
+  // Walkthrough receipts are posted: LDM-001 is 8 opening pieces plus 20 received
+  // on LOCAL-DEMO-GRN-001, under a safety stock of 30 and reorder point of 40;
+  // LDM-002 is 60 plus 60 and 30 received.
   await page.goto("/app/inventory/stock");
-  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("8");
-  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("20 / 20");
-  await expect(page.getByTestId("inventory-item-LDM-002")).toContainText("60");
+  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("28");
+  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("30 / 40");
+  await expect(page.getByTestId("inventory-item-LDM-002")).toContainText("150");
   await capture(page, "08-inventory-stock");
 
   await page.goto("/app/inventory/warnings");
   await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("需补货");
-  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("20 / 20");
+  await expect(page.getByTestId("inventory-item-LDM-001")).toContainText("30 / 40");
   await expect(page.getByTestId("inventory-item-LDM-002")).toHaveCount(0);
   await capture(page, "09-inventory-warnings");
 
   await page.goto("/app/procurement/workbench");
-  await expect(page.getByRole("heading", { name: "今日采购待办：3" })).toBeVisible();
-  await expect(page.getByText("LOCAL-DEMO-PO-001", { exact: true })).toBeVisible();
-  await expect(page.getByText("LOCAL-DEMO-PO-002", { exact: true })).toBeVisible();
-  await expect(page.getByText("partially_received", { exact: false })).toBeVisible();
-  await expect(page.getByText("issued", { exact: false })).toBeVisible();
-  await expect(page.getByText("发票差异", { exact: true })).toBeVisible();
-  await expect(page.getByText("三单匹配异常", { exact: true })).toBeVisible();
+  // The walkthrough scenario has one submitted purchase request and 21 purchase
+  // orders that still need work: 32 orders less 8 fully received and 3 cancelled.
+  await expect(page.getByRole("heading", { name: "今日采购待办：22", exact: true })).toBeVisible();
+  const workbenchRow = (id: string) => page.getByRole("row").filter({ has: page.getByText(id, { exact: true }) });
+  await expect(workbenchRow("LOCAL-DEMO-PO-001")).toContainText("partially_received");
+  await expect(workbenchRow("LOCAL-DEMO-PO-002")).toContainText("issued");
+  await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("发票差异", { exact: true })).toBeVisible();
+  await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("三单匹配异常", { exact: true })).toBeVisible();
+  await expect(workbenchRow("LOCAL-DEMO-PO-002").getByText("发票差异", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("LOCAL-DEMO-PO-003", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("LOCAL-DEMO-PO-030", { exact: true })).toHaveCount(0);
   await capture(page, "10-procurement-workbench");
 
-  for (const route of ["movements", "lots", "serials", "exceptions"]) {
+  // Each posted walkthrough receipt has a receipt movement.
+  await page.goto("/app/inventory/movements");
+  await expect(page.getByRole("row").filter({ hasText: "LDM-001" })).toContainText("20.0000");
+  await expect(page.getByRole("row").filter({ hasText: "LDM-004" })).toHaveCount(4);
+  await expect(page.getByText(/STATIC-|SKU-01100/)).toHaveCount(0);
+
+  for (const route of ["lots", "serials", "exceptions"]) {
     await page.goto(`/app/inventory/${route}`);
     await expect(page.getByText(/当前工作区暂无|当前没有库存异常/)).toBeVisible();
     await expect(page.getByText(/STATIC-|SKU-01100/)).toHaveCount(0);
