@@ -14,6 +14,7 @@ export const DATABASE_MODE_MUTATION_BLOCKED_ERROR = 'This mutation is not availa
 const routeDefinitions = [
   { method: 'GET', pattern: /^\/api\/health$/, group: 'health', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed' },
   { method: 'GET', pattern: /^\/api\/dev\/local-status$/, group: 'local-development', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed-local-only' },
+  { method: 'GET', pattern: /^\/api\/dev\/sign-in-links$/, group: 'local-development', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed-local-only' },
   { method: 'OPTIONS', pattern: /^\/.*$/, group: 'cors-preflight', classification: ROUTE_CLASSES.diagnostics, writesJson: false, databaseMode: 'allowed' },
 
   { method: 'GET', pattern: /^\/api\/me$/, group: 'auth-context', classification: ROUTE_CLASSES.readOnly, writesJson: false, databaseMode: 'allowed' },
