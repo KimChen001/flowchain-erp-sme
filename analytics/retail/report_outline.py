@@ -89,6 +89,20 @@ def main(argv=None) -> int:
     best4 = main4.total_cost.idxmin()
     refs = base.loc[["p50", "p70", "p80", "p90"]]
     best_ref = refs.total_cost.idxmin()
+    pe = rep["policy_e"]
+    et = pd.DataFrame(pe["table"]).set_index("policy")
+    cmp_ = {(c["x"], c["y"]): c for c in pe["comparisons"]}
+    cn = pe["counts"]
+
+    def dl(x, y):
+        c = cmp_[(x, y)]
+        return f"{money(c['delta'])} ({money(c['lo'])} to {money(c['hi'])})"
+
+    cap75 = next(x for x, y in cmp_ if x.startswith("e0.75@") and y == "e0.75")
+
+    def elabel(pol):
+        q, _, f = pol[1:].partition("@")
+        return f"P{round(float(q) * 100)}" + (f", cap B = {f} × (c)" if f else ", no cap")
     m_rows = {m: sc[(sc.scenario == n) & sc.policy.isin(main4.index)].set_index("policy").total_cost
               for n, m in rep["markdown_scenarios"]}
     mb = rep["markdown_base"]
@@ -209,12 +223,15 @@ def main(argv=None) -> int:
                f"(on hand + on order) after week 13 (ASSUMED m = {mb}). Policies: (a) (L+R) × 4-wk mean; (b) FlowChain ROP "
                "rule; (c) critical-ratio quantile of simulated demand over L+R, where the final-cycle overage adds "
                "m × cost (multi-period newsvendor); (d) multiple-choice knapsack MILP (scipy/HiGHS) over {P50…P98} "
-               "under a working-capital budget of 0.6/0.8/1.0 × (c).", "–", "–"),
+               "under a working-capital budget of 0.6/0.8/1.0 × (c); (e) order-up-to P70/P75/P80 of the same simulated "
+               "demand, with a working-capital cap B (same grid as (d), 0.3–1.2 × (c)) that scales every SKU's level by one "
+               "common factor when the planned inventory value exceeds B.", "–", "–"),
         "5c": ("replenishment-results.md §5–9",
                f"Base total cost, GBP, 13 wk (95% CI): (a) {tc('a')}, (b) {tc('b')}, (c) {tc('c')}, (d 0.6) {tc('d0.6')}; "
                f"fill {base.loc['a', 'fill_rate']:.1%} / {base.loc['b', 'fill_rate']:.1%} / {base.loc['c', 'fill_rate']:.1%} / "
                f"{base.loc['d0.6', 'fill_rate']:.1%}. Cheapest of (a)–(d): {best4}. The fixed {best_ref.upper()} reference "
-               f"costs {tc(best_ref)}. (c) ends with {base.loc['c', 'end_weeks_of_supply']:.0f} weeks of forward P50 "
+               f"costs {tc(best_ref)}. (e) P75, no cap: {tc('e0.75')}; cheapest (e) setting on the grid, "
+               f"{elabel(pe['best_overall'])}: {tc(pe['best_overall'])}. (c) ends with {base.loc['c', 'end_weeks_of_supply']:.0f} weeks of forward P50 "
                f"demand in stock and on order vs {base.loc['b', 'end_weeks_of_supply']:.0f} for (b), so it over-buys once "
                "the season end is priced. Cheapest of (a)–(d) by markdown m: "
                + "; ".join(f"m = {m}: {v.idxmin()}" for m, v in m_rows.items())
@@ -225,7 +242,7 @@ def main(argv=None) -> int:
                "figures/replenishment-budget.png",
                "Common start stands in for unknown actual stock; markdown rate and costs are assumptions (bracketed "
                "by m = 0–0.5 and a no-assumption excess measure)."),
-        "5d": ("replenishment-results.md §7, §9–10",
+        "5d": ("replenishment-results.md §7, §9–11",
                f"Supplier reliability → cost (median L = 4 wk in every tier; unreliable − reliable, paired 95% CI): "
                f"on-time tiers (c) {tdelta('on-time tiers (primary)', 'c')}, (d 0.8) "
                f"{tdelta('on-time tiers (primary)', 'd0.8')}, (b) {tdelta('on-time tiers (primary)', 'b')}; slippage "
@@ -233,9 +250,14 @@ def main(argv=None) -> int:
                f"{tdelta('superseded CV tiers', 'c')}. (c) safety stock "
                f"{money(rep['safety_stock_value_c'][ts['promise_reliable']])} → "
                f"{money(rep['safety_stock_value_c'][ts['promise_unreliable']])} (on-time tiers). "
-               f"**Recommendation: budgeted service-level optimisation (d)** rather than the unconstrained (c); a "
-               f"budgeted (d) is cheapest of the four policies in {bc['d_cheapest_scenarios']} of {bc['n_scenarios']} "
-               f"scenarios. Budget rule: raise B while the lost margin saved exceeds the added holding + markdown. On the "
+               f"**Recommendation: policy (e), order up to a moderate quantile (P70–P80, default P75) of the forecast "
+               f"demand distribution, with a working-capital cap B as a control.** (e) P75 vs (d, 0.6) "
+               f"{dl('e0.75', 'd0.6')}; vs (b) {dl('e0.75', 'b')}. The cap binds only in the final cycle; best cap vs no "
+               f"cap for P75 ({elabel(cap75)}): {dl(cap75, 'e0.75')}. "
+               f"Scenario counts ({cn['n_unbiased']} scenarios, the biased own-level start excluded): (d, B = 0.6 × (c)) "
+               f"is the cheapest of (a)–(d) in {cn['d06_cheapest_four']} of {cn['n_unbiased']}; (e) P75 without a cap "
+               f"beats (d, 0.6) in {cn['e75_below_d06']} of {cn['n_unbiased']}. q and B are chosen in-sample on the one "
+               f"test season. For (d), the budget rule: raise B while the lost margin saved exceeds the added holding + markdown. On the "
                f"backtest frontier it stops at B = {bc['realised_factor']} × (c) ({money(rb['budget_week0'])} at week 0; "
                f"fill {rb['fill_rate']:.1%}, total {money(rb['total'])}); totals are flat within 3% for "
                f"{bc['flat_lo']}–{bc['flat_hi']} × (c). A narrow (non-autumn) "
@@ -245,11 +267,12 @@ def main(argv=None) -> int:
                "Mean L is assumed; only its variability comes from SCMS. The on-time tiers use the revised SCMS "
                "scheduled date, so their late tails (and the cost of unreliability) are lower bounds. The budget is chosen in-sample on one season; "
                "validate on another. **[PLACEHOLDER: combined decision story]**"),
-        "6a": ("replenishment-results.md §10; decision-inputs.md",
-               "FlowChain: replace '1 week of demand' safety stock with budgeted service-level optimisation (policy d). "
-               "It uses the forecast paths, the supplier's measured lead-time variability and an end-of-season markdown, "
-               "and sets the working-capital budget where the marginal lost margin equals the marginal holding + "
-               f"markdown (here B ≈ {bc['realised_factor']} × (c), {money(rb['budget_week0'])}). Show planned vs realised "
+        "6a": ("replenishment-results.md §10–12; decision-inputs.md",
+               "FlowChain: replace '1 week of demand' safety stock with policy (e): order up to P75 (P70–P80) of the "
+               "forecast demand distribution over lead time + review period, using the supplier's measured lead-time "
+               "variability, with a working-capital cap the buyer sets. Re-check q and B each season on a past-season "
+               "backtest (here both were chosen in-sample). Budgeted (d) is the optimised alternative (its budget rule "
+               f"stops at B ≈ {bc['realised_factor']} × (c), {money(rb['budget_week0'])}). Show planned vs realised "
                "service. The exported paths and SKU parameters feed the joint model.",
                "–", "**[PLACEHOLDER: combined decision story]**"),
         "6b": ("demand-forecast.md §9; replenishment-results.md §10",
@@ -270,7 +293,7 @@ def main(argv=None) -> int:
          f"4-week mean {ci('ma4', 'WAPE')}; P90 coverage {qm.coverage90:.1%}. Replenishment (13 test weeks, common "
          f"start, markdown m = {mb}): FlowChain rule fill {base.loc['b', 'fill_rate']:.1%}, total {tc('b')}; cheapest "
          f"of the four policies {best4}: fill {base.loc[best4, 'fill_rate']:.1%}, total {tc(best4)}; fixed "
-         f"{best_ref.upper()} reference {tc(best_ref)}.", ""]
+         f"{best_ref.upper()} reference {tc(best_ref)}; recommended (e) P75, no cap {tc('e0.75')}.", ""]
     for num, title, qs in RUBRIC:
         L += [f"## {num}. {title}.", "",
               "| # | rubric question | where | key numbers (retail) | figure | gap / placeholder |",

@@ -63,6 +63,7 @@ H = 26                                 # forecast horizon for the paths
 CAL_ORIGINS = (38, 51, 64)             # pre-test backtests for residual trajectories
 QUANTILE_GRID = (0.50, 0.70, 0.80, 0.90, 0.95, 0.98)
 BUDGET_FACTORS = (0.6, 0.8, 1.0)
+E_QUANTILES = (0.70, 0.75, 0.80)       # policy (e): order-up-to quantile of simulated demand over L + R
 EXTRA_BUDGET = 1.2                     # only for the monotonicity check
 FRONTIER = (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2)  # budget grid for the choice rule (base case)
 BASE = dict(mean_L=4.0, cv="all", cost_ratio=0.50, holding=0.25, stockout_mult=1.0, start="a", markdown=0.15)
@@ -82,7 +83,7 @@ TIER_SCENARIOS = {                      # lead-time source -> scenario name (all
     "low": "superseded low-CV tier, median = 4 wk",
     "high": "superseded high-CV tier, median = 4 wk",
 }
-TIER_POLICIES = ("b", "c", "d0.6", "d0.8")
+TIER_POLICIES = ("b", "c", "d0.6", "d0.8", "e0.75")
 TIER_PAIRS = (("on-time tiers (primary)", "promise_reliable", "promise_unreliable"),
               ("slippage variant", "slip_reliable", "slip_unreliable"),
               ("superseded CV tiers", "low", "high"))
@@ -101,6 +102,22 @@ POLICY_LABELS = {
     "d0.8": "(d) budgeted MILP, B = 0.8 x (c)",
     "d1.0": "(d) budgeted MILP, B = 1.0 x (c)",
 }
+
+
+def e_name(q: float, f: float | None = None) -> str:
+    """Policy key of (e): 'e0.75' (no cap) or 'e0.75@0.6' (capped at B = 0.6 x (c))."""
+    return f"e{q}" if f is None else f"e{q}@{f}"
+
+
+def e_keys(budgets=None) -> list[str]:
+    fs = FRONTIER if budgets is None else budgets
+    return [e_name(q) for q in E_QUANTILES] + [e_name(q, f) for q in E_QUANTILES for f in fs]
+
+
+for _q in E_QUANTILES:
+    POLICY_LABELS[e_name(_q)] = f"(e) P{round(_q * 100)} order-up-to, no cap"
+    for _f in FRONTIER:
+        POLICY_LABELS[e_name(_q, _f)] = f"(e) P{round(_q * 100)} order-up-to, cap B = {_f} x (c)"
 
 
 # ----------------------------------------------------------------------------- lead time
@@ -355,7 +372,37 @@ def plan_levels(D, L_plan, cr, cost, h_week, cu, term):
     cand = {q: row_quantile(dlr, np.full(len(cr), q)) for q in QUANTILE_GRID}
     table = {q: (cand[q],) + plan(cand[q]) for q in QUANTILE_GRID}
     c_cost, c_val = plan(s_c)[:2]
-    return s_c, c_val, table, dlr
+    return s_c, c_val, table, dlr, d_r
+
+
+def planned_onhand(S, dlr, d_r):
+    """Planned expected on-hand units per SKU, E[(S - D_{L+R})+] + E[D_R]/2 (the measure of (d)'s budget)."""
+    return np.maximum(S[:, None] - dlr, 0).mean(axis=1) + d_r / 2
+
+
+def cap_levels(S, dlr, d_r, cost, budget, iters=40):
+    """Policy (e) cap: scale every SKU's order-up-to level by one factor alpha <= 1 so that the planned inventory
+    value sum(cost x planned on hand) is at most ``budget`` (bisection on alpha). Proportional scaling, not a
+    greedy or optimal reallocation: the optimal reallocation under a budget is what (d) does.
+
+    Returns (levels, alpha, planned value, feasible). If even alpha = 0 exceeds the budget (the E[D_R]/2 term
+    alone), the cap is infeasible and the levels are 0.
+    """
+    def value(a):
+        return float((cost * planned_onhand(a * S, dlr, d_r)).sum())
+    v1 = value(1.0)
+    if v1 <= budget:
+        return S, 1.0, v1, True
+    if value(0.0) > budget:
+        return np.zeros_like(S), 0.0, value(0.0), False
+    lo, hi = 0.0, 1.0
+    for _ in range(iters):
+        mid = (lo + hi) / 2
+        if value(mid) <= budget:
+            lo = mid
+        else:
+            hi = mid
+    return lo * S, lo, value(lo), True
 
 
 def solve_budget(table, budget):
@@ -497,9 +544,10 @@ def run_scenario(sc, ctx, extra_checks=False):
     cr_by_review, final_flags = [], []
     lv = {}
     budgets = tuple(sorted(set(BUDGET_FACTORS + ((EXTRA_BUDGET,) + FRONTIER if extra_checks else ()))))
-    for pol in ("a", "b_rop", "b_target", "c", "c50", "p50", "p70", "p80", "p90", *[f"d{f}" for f in budgets]):
+    for pol in ("a", "b_rop", "b_target", "c", "c50", "p50", "p70", "p80", "p90", *[f"d{f}" for f in budgets],
+                *e_keys()):
         lv[pol] = np.zeros((n, len(REVIEW_WEEKS)))
-    milp_info, ss_value = [], []
+    milp_info, ss_value, e_caps = [], [], []
     for r, t in enumerate(REVIEW_WEEKS):
         o = ctx["t0"] + t - 1
         ma4 = Yraw[:, o - 3:o + 1].mean(axis=1)
@@ -517,14 +565,22 @@ def run_scenario(sc, ctx, extra_checks=False):
         cr = cu / (cu + co)
         cr_by_review.append(float(np.median(cr)))
         final_flags.append(bool(final))
-        s_c, c_val, table, dlr = plan_levels(D, L_plan, cr, cost, h_week * cost, cu, term)
+        s_c, c_val, table, dlr, d_r = plan_levels(D, L_plan, cr, cost, h_week * cost, cu, term)
         lv["c"][:, r] = s_c
         mean_dlr = dlr.mean(axis=1)
         ss_value.append(float(((s_c - mean_dlr) * cost).sum()))
         if extra_checks:
             lv["c50"][:, r] = row_quantile(dlr, np.full(n, 0.5))
-            for qq in (0.5, 0.7, 0.8, 0.9):
-                lv[f"p{int(qq * 100)}"][:, r] = table[qq][0]
+        for qq in (0.5, 0.7, 0.8, 0.9):
+            lv[f"p{int(qq * 100)}"][:, r] = table[qq][0]
+        for q in E_QUANTILES:
+            s_q = row_quantile(dlr, np.full(n, q))
+            lv[e_name(q)][:, r] = s_q
+            for f in FRONTIER:
+                S, alpha, val, ok = cap_levels(s_q, dlr, d_r, cost, f * c_val.sum())
+                lv[e_name(q, f)][:, r] = S
+                e_caps.append({"review": t, "q": q, "factor": f, "alpha": alpha, "binds": alpha < 1.0,
+                               "feasible": ok, "budget": float(f * c_val.sum()), "planned_value": val})
         for f in budgets:
             S, info = solve_budget(table, f * c_val.sum())
             lv[f"d{f}"][:, r] = S
@@ -547,14 +603,14 @@ def run_scenario(sc, ctx, extra_checks=False):
         res[f"d{f}"] = simulate(start(lv[f"d{f}"][:, 0]), lv[f"d{f}"], **common)
     if extra_checks:
         res["c50"] = simulate(start(lv["c50"][:, 0]), lv["c50"], **common)
-        for pq in ("p50", "p70", "p80", "p90"):
-            res[pq] = simulate(start(lv[pq][:, 0]), lv[pq], **common)
+    for pq in ("p50", "p70", "p80", "p90", *e_keys()):
+        res[pq] = simulate(start(lv[pq][:, 0]), lv[pq], **common)
     meta = {"cv": cv, "EL": EL, "median_L": float(np.median(EL_draws)), "median_cr": cr_by_review[0],
             "cr_by_review": cr_by_review, "final_reviews": [t for t, fl in zip(REVIEW_WEEKS, final_flags) if fl],
             "markdown": markdown,
             # safety stock of (c) at the week-0 review (S - E[demand over L+R], at cost); later reviews are
             # left out because the final-cycle markdown lowers their critical ratio
-            "safety_stock_value_c": float(ss_value[0]), "milp": milp_info, "levels": lv}
+            "safety_stock_value_c": float(ss_value[0]), "milp": milp_info, "e_caps": e_caps, "levels": lv}
     return res, meta
 
 
@@ -798,6 +854,9 @@ def main(argv=None) -> int:
               "realised_argmin": float(frontier.factor[frontier.total.idxmin()]),
               "planned_argmin": float(frontier.factor[frontier.plan_total.idxmin()])}
 
+    pe = policy_e_analysis(summary, s_base, base_res, bm, n_boot_w, frontier, choice)
+    pd.DataFrame(pe["table"]).to_csv(paths.outputs_dir / "replenishment-policy-e.csv", index=False)
+
     # planned vs realised service of (c): plan from the paths at each review
     lt_json = {**lt, "tiers": {k: {kk: vv for kk, vv in v.items() if kk != "ratios"} for k, v in lt["tiers"].items()}}
     key = {"lead_time": lt_json, "tier_contrast": tier_delta.to_dict(orient="records"),
@@ -809,7 +868,8 @@ def main(argv=None) -> int:
            "tail": tail_numbers(paths, skus), "narrow_pool": narrow,
            "markdown_base": BASE["markdown"], "markdown_scenarios": markdown_scenarios(),
            "budget_choice": choice, "frontier": frontier.to_dict(orient="records"),
-           "safety_stock_value_c": {k: v["safety_stock_value_c"] for k, v in metas.items()}}
+           "safety_stock_value_c": {k: v["safety_stock_value_c"] for k, v in metas.items()},
+           "policy_e": pe}
     (paths.outputs_dir / "key-numbers-replenishment.json").write_text(json.dumps(key, indent=2, default=float),
                                                                        encoding="utf-8")
     figures(paths, summary, s_base, checks, frontier, choice)
@@ -818,6 +878,80 @@ def main(argv=None) -> int:
     print(f"Wrote replenishment-results.md in {time.time() - t0:.0f}s")
     print(s_base[["fill_rate", "csl", "avg_inv_value", "holding", "lost_margin", "total_cost", "orders"]].round(3))
     return 0
+
+
+FOUR = ("a", "b", "c", "d0.6", "d0.8", "d1.0")      # policies (a)-(d) as run in every scenario
+REFS = ("p50", "p70", "p80", "p90")                 # fixed-quantile references
+BIASED = "start = own level (biased)"
+
+
+def policy_e_analysis(summary, s_base, base_res, bm, w, frontier, choice) -> dict:
+    """Evidence for policy (e): base-case grid over q x B, cap binding, paired comparisons, scenario robustness."""
+    caps = pd.DataFrame(bm["e_caps"])
+    rows = []
+    for q in E_QUANTILES:
+        for f in (None,) + FRONTIER:
+            pol = e_name(q, f)
+            r = s_base.loc[pol]
+            c = caps[(caps.q == q) & (caps.factor == f)] if f is not None else caps.iloc[0:0]
+            rows.append({"q": q, "factor": f, "policy": pol, "fill_rate": r.fill_rate, "csl": r.csl,
+                         "avg_inv_value": r.avg_inv_value, "terminal": r.terminal, "lost_margin": r.lost_margin,
+                         "total": r.total_cost, "total_lo": r.total_cost_lo, "total_hi": r.total_cost_hi,
+                         "reviews_bound": int(c.binds.sum()),
+                         "bound_weeks": [int(x) for x in c[c.binds].review],
+                         "alpha_min": float(c.alpha.min()) if len(c) else 1.0,
+                         "cap_infeasible": int((~c.feasible).sum()) if len(c) else 0,
+                         "max_value_over_budget": float((c.planned_value / c.budget).max()) if len(c) else np.nan})
+    tab = pd.DataFrame(rows)
+    unc = tab[tab.factor.isna()].set_index("policy")
+    best_unc = unc.total.idxmin()
+    best_all = tab.set_index("policy").total.idxmin()
+    rf = choice["realised_factor"]
+
+    def pdlt(x, y):
+        d, lo, hi = paired_delta(base_res[x], base_res[y], w)
+        return {"x": x, "y": y, "delta": d, "lo": lo, "hi": hi}
+
+    center = e_name(0.75)
+    comps = [pdlt(center, "b"), pdlt(center, "c"), pdlt(center, "d0.6"), pdlt(center, f"d{rf}"),
+             pdlt(center, e_name(0.70)), pdlt(center, e_name(0.80))]
+    for q in E_QUANTILES:                            # best cap for each q against the same q uncapped
+        sub = tab[(tab.q == q) & tab.factor.notna()]
+        comps.append(pdlt(sub.loc[sub.total.idxmin(), "policy"], e_name(q)))
+    comps.append(pdlt(best_all, f"d{rf}"))
+    # a cap that binds only where it hurts or helps: count bound reviews by week for the q = 0.75 grid
+    bind75 = tab[(tab.q == 0.75) & tab.factor.notna()]
+    never_binds_from = bind75[bind75.reviews_bound == 0].factor.min()
+
+    # scenario robustness (every scenario; the biased start is labelled and left out of the counts)
+    sc_rows = []
+    for sn in summary.scenario.unique():
+        d = summary[summary.scenario == sn].set_index("policy").total_cost
+        e_all = d[[k for k in d.index if k.startswith("e")]]
+        four = d[list(FOUR)]
+        sc_rows.append({"scenario": sn, "biased": sn == BIASED, **{k: float(d[k]) for k in FOUR},
+                        **{e_name(q): float(d[e_name(q)]) for q in E_QUANTILES},
+                        **{e_name(q, 0.6): float(d[e_name(q, 0.6)]) for q in E_QUANTILES},
+                        "best_e": e_all.idxmin(), "best_e_total": float(e_all.min()),
+                        "cheapest_four": four.idxmin(), "cheapest_four_total": float(four.min()),
+                        "cheapest_all": d.idxmin(), "cheapest_all_total": float(d.min())})
+    sct = pd.DataFrame(sc_rows)
+    ub = sct[~sct.biased]
+    counts = {
+        "n_scenarios": int(len(sct)), "n_unbiased": int(len(ub)),
+        "d06_cheapest_four": int((ub.cheapest_four == "d0.6").sum()),
+        "d_cheapest_four": int(ub.cheapest_four.str.startswith("d").sum()),
+        "d06_cheapest_four_biased": bool(sct[sct.biased].cheapest_four.eq("d0.6").all()),
+        "e75_below_d06": int((ub[e_name(0.75)] < ub["d0.6"]).sum()),
+        "e_unc_below_four": int((ub[[e_name(q) for q in E_QUANTILES]].min(axis=1) < ub.cheapest_four_total).sum()),
+        "e_any_below_four": int((ub.best_e_total < ub.cheapest_four_total).sum()),
+        "e75cap06_below_e75": int((ub[e_name(0.75, 0.6)] < ub[e_name(0.75)] - 0.5).sum()),
+        "e75cap06_equal_e75": int((ub[e_name(0.75, 0.6)] - ub[e_name(0.75)]).abs().le(0.5).sum()),
+        "cheapest_all_is_e": int(ub.cheapest_all.str.startswith("e").sum()),
+    }
+    return {"table": tab.to_dict(orient="records"), "best_uncapped": best_unc, "best_overall": best_all,
+            "comparisons": comps, "never_binds_from_075": None if pd.isna(never_binds_from) else float(never_binds_from),
+            "scenarios": sct.to_dict(orient="records"), "counts": counts}
 
 
 def sku_total(df: pd.DataFrame) -> np.ndarray:
@@ -844,16 +978,19 @@ def tail_numbers(paths, skus) -> dict:
 def figures(paths, summary, s_base, checks, frontier, choice):
     import matplotlib.pyplot as plt
     figs = paths.figures_dir
-    pols = ["a", "b", "c", "d0.6", "d0.8", "d1.0", "p50", "p70", "p90"]
+    pols = ["a", "b", "c", "d0.6", "d0.8", "d1.0", "p50", "p90", "e0.7", "e0.75", "e0.8", "e0.75@0.6"]
     short = {"a": "(a)", "b": "(b)", "c": "(c)", "d0.6": "(d) 0.6", "d0.8": "(d) 0.8", "d1.0": "(d) 1.0",
-             "p50": "P50", "p70": "P70", "p90": "P90"}
+             "p50": "P50", "p90": "P90", "e0.7": "(e) P70", "e0.75": "(e) P75", "e0.8": "(e) P80",
+             "e0.75@0.6": "(e) P75, B 0.6"}
     colors = {"a": P.SERIES[0], "b": P.SERIES[1], "c": P.SERIES[2], "d0.6": P.SERIES[3], "d0.8": P.SERIES[3],
-              "d1.0": P.SERIES[3], "p50": P.MUTED, "p70": P.MUTED, "p90": P.MUTED}
+              "d1.0": P.SERIES[3], "p50": P.MUTED, "p90": P.MUTED, "e0.7": P.SERIES[4], "e0.75": P.SERIES[4],
+              "e0.8": P.SERIES[4], "e0.75@0.6": P.SERIES[4]}
     fig, ax = plt.subplots(figsize=(8, 4.4))
     pts = sorted(((s_base.loc[p, "total_cost"] / 1e3, s_base.loc[p, "fill_rate"], p) for p in pols))
     for k, (x, y, p) in enumerate(pts):
         ax.scatter(x, y, s=46, color=colors[p], zorder=3, edgecolor=P.SURFACE, linewidth=1.5,
-                   marker="s" if p.startswith("d") else ("D" if p.startswith("p") else "o"))
+                   marker="s" if p.startswith("d") else ("D" if p.startswith("p") else ("^" if p.startswith("e")
+                                                                                          else "o")))
         dy = 14 if k % 2 == 0 else -18          # alternate labels above/below so close points stay readable
         ax.annotate(short[p], (x, y), textcoords="offset points", xytext=(0, dy), ha="center", fontsize=8,
                     color=P.TEXT2, arrowprops=dict(arrowstyle="-", color=P.GRID, lw=0.8))
@@ -864,6 +1001,7 @@ def figures(paths, summary, s_base, checks, frontier, choice):
     handles = [plt.Line2D([], [], marker=m, ls="", color=c, label=l) for m, c, l in (
         ("o", P.SERIES[0], "(a) rule of thumb"), ("o", P.SERIES[1], "(b) FlowChain rule"),
         ("o", P.SERIES[2], "(c) critical-ratio quantile"), ("s", P.SERIES[3], "(d) budgeted MILP, B/(c) = 0.6 / 0.8 / 1.0"),
+        ("^", P.SERIES[4], "(e) P70 / P75 / P80, with or without a cap"),
         ("D", P.MUTED, "fixed-quantile references"))]
     ax.legend(handles=handles, loc="lower right", fontsize=7)
     P.save(fig, figs / "replenishment-service-inventory.png")
@@ -908,13 +1046,16 @@ def figures(paths, summary, s_base, checks, frontier, choice):
     ax.plot(frontier.factor, frontier.lost / 1e3, marker="o", ms=3, lw=1.2, color=P.SERIES[1], label="realised lost margin")
     ax.plot(frontier.factor, frontier.hold_mark / 1e3, marker="o", ms=3, lw=1.2, color=P.SERIES[2],
             label="realised holding + markdown")
+    et = summary[(summary.scenario == "base")].set_index("policy")
+    ax.plot(frontier.factor, [et.loc[e_name(0.75, f), "total_cost"] / 1e3 for f in frontier.factor], marker="^",
+            ms=4, lw=1.2, ls="--", color=P.SERIES[4], label="(e) P75 with cap B, realised total")
     ax.axvline(choice["realised_factor"], color=P.TEXT2, lw=0.8, ls="--")
     ax.annotate(f"rule stops at B = {choice['realised_factor']} x (c)", (choice["realised_factor"], ax.get_ylim()[1]),
                 textcoords="offset points", xytext=(4, -12), fontsize=8, color=P.TEXT2)
     ax.set_xlabel("working-capital budget B, as a multiple of (c)'s planned inventory value")
     ax.set_ylabel("GBP thousand (13 weeks)")
-    ax.set_title("Budget frontier of policy (d)")
-    ax.legend(fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, frameon=False)
+    ax.set_title("Budget frontier of policy (d), with (e) P75 capped at the same B")
+    ax.legend(fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2, frameon=False)
     P.save(fig, figs / "replenishment-budget-frontier.png")
 
     fig, ax = plt.subplots(figsize=(6.8, 3.6))
@@ -978,6 +1119,8 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
         a(f"  - {POLICY_LABELS[p]}")
     a("  - (d) the same demand distribution as (c), under a working-capital budget: a multiple-choice knapsack "
       "solved as a MILP (`scipy.optimize.milp`, HiGHS).")
+    a("  - (e) order up to a moderate quantile of the same simulated demand, with a working-capital cap (the owner's "
+      "chosen policy).")
     a("")
     a("  Detail of the rules:")
     a("  - (a) S = (E[L] + R) × mean of the last 4 weeks.")
@@ -997,6 +1140,14 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       "subject to Σ cost·E[on hand] ≤ B, "
       "E[on hand] ≈ E[(S − D_{L+R})⁺] + E[D_R]/2, and B = 0.6, 0.8, 1.0 × the same planned inventory "
       "value of (c). HiGHS proves optimality (see section 6).")
+    a("  - (e) S = the q-quantile of simulated demand over L + R, q ∈ {"
+      + ", ".join(f"P{round(q * 100)}" for q in E_QUANTILES) + "}, the same for every SKU and review. **Cap:** at "
+      "each review, if the planned inventory value Σ cost·E[on hand] (the measure in (d)'s budget constraint) would "
+      "exceed B, every SKU's level is multiplied by one common factor α < 1, found by bisection, so that the planned "
+      "value equals B. B uses the same grid as (d): " + ", ".join(str(f) for f in FRONTIER) + " × (c)'s planned "
+      "inventory value at that review. Proportional scaling was chosen over a greedy reallocation by marginal value "
+      "because the optimal reallocation under a budget is what (d) already does; (e) tests the simple rule a buyer "
+      "can apply. (e) without a cap is the fixed-quantile reference at the same quantile.")
     a("")
     a("## 3. Backtest set-up")
     a("")
@@ -1047,7 +1198,7 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       "weeks of supply | holding | terminal markdown | **total cost [95% CI]** | Δ total vs (b) [paired CI] | orders | "
       "stock left after week 13 (of which on order) | ending weeks of supply |")
     a("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
-    for p in ("a", "b", "c", "d0.6", "d0.8", "d1.0", "p50", "p70", "p80", "p90"):
+    for p in ("a", "b", "c", "d0.6", "d0.8", "d1.0", "p50", "p70", "p80", "p90", "e0.75", "e0.75@0.4", "e0.75@0.6", "e0.75@0.8", "e0.8@0.4"):
         r = s_base.loc[p]
         a(f"| {POLICY_LABELS[p]} | {r.fill_rate:.1%} [{r.fill_rate_lo:.1%}, {r.fill_rate_hi:.1%}] | "
           f"{r.csl:.1%} [{r.csl_lo:.1%}, {r.csl_hi:.1%}] | {r.lost_units:,.0f} | {fmt_money(r.lost_margin)} | "
@@ -1060,14 +1211,16 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
           f"{r.end_weeks_of_supply:.1f} |")
     a("")
     a("The reference rows use a fixed quantile (P50–P90) of the same simulated demand for every SKU. They check "
-      "whether less protection than (c) would do better.")
+      "whether less protection than (c) would do better. The (e) rows add P75 and the working-capital cap; (e) P70 and "
+      "P80 without a cap are the P70 and P80 reference rows. The full (e) grid (P70/P75/P80 × every B) is in section 10 "
+      "and `replenishment-policy-e.csv`.")
     a("")
     a(f"**Without a markdown assumption** (only the stock and orders beyond {EXCESS_WEEKS} weeks of forward P50 "
       "demand are charged, at full unit cost, as true excess; same simulated runs as the base case):")
     a("")
     a("| Policy | true excess at week 13 | holding + stockout + excess [95% CI] | ending weeks of supply |")
     a("|---|---|---|---|")
-    for p in ("a", "b", "c", "d0.6", "d0.8", "d1.0", "p50", "p70", "p80", "p90"):
+    for p in ("a", "b", "c", "d0.6", "d0.8", "d1.0", "p50", "p70", "p80", "p90", "e0.75", "e0.75@0.4", "e0.75@0.6", "e0.75@0.8", "e0.8@0.4"):
         r = s_base.loc[p]
         a(f"| {POLICY_LABELS[p]} | {fmt_money(r.excess_value)} | {fmt_money(r.alt_total)} "
           f"[{fmt_money(r.alt_total_lo)}, {fmt_money(r.alt_total_hi)}] | {r.end_weeks_of_supply:.1f} |")
@@ -1110,6 +1263,18 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       f"(a multiple-choice knapsack has at most two fractional variables in its LP); infeasible budgets "
       f"{checks['milp_infeasible_budgets']} | "
       f"{'yes' if checks['milp_all_optimal'] else 'no'} |")
+    pe = key["policy_e"]
+    et = pd.DataFrame(pe["table"])
+    same = all(abs(s_base.loc[e_name(q), "total_cost"] - s_base.loc[f"p{round(q * 100)}", "total_cost"]) < 1e-6
+               for q in (0.70, 0.80))
+    a(f"| (e) without a cap vs the fixed P70 / P80 references | identical | totals "
+      f"{fmt_money(s_base.loc[e_name(0.70), 'total_cost'])} vs {fmt_money(s_base.loc['p70', 'total_cost'])}; "
+      f"{fmt_money(s_base.loc[e_name(0.80), 'total_cost'])} vs {fmt_money(s_base.loc['p80', 'total_cost'])} | "
+      f"{'yes' if same else 'no'} |")
+    capped = et[et.factor.notna()]
+    a(f"| (e) cap respected (planned inventory value ≤ B at every review) | ratio ≤ 1 | largest planned value ÷ B "
+      f"{capped.max_value_over_budget.max():.6f} (ratio < 1 where the cap does not bind); infeasible caps "
+      f"{int(capped.cap_infeasible.sum())} | {'yes' if capped.max_value_over_budget.max() <= 1 + 1e-9 else 'no'} |")
     a("")
     a("![budget](figures/replenishment-budget.png)")
     a("")
@@ -1128,6 +1293,23 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
         a(f"| {s} | {metas[s]['median_cr']:.3f} | {fmt_money(d.loc['a', 'total_cost'])} | "
           f"{fmt_money(d.loc['b', 'total_cost'])} | {fmt_money(d.loc['c', 'total_cost'])} | "
           f"{fmt_money(d.loc['d0.8', 'total_cost'])} | {d.loc['c', 'fill_rate']:.1%} | {main.total_cost.idxmin()} |")
+    a("")
+    a("### Every scenario, policies (a)–(e)")
+    a("")
+    a("Total cost (GBP, 13 weeks) in every scenario run. 'Cheapest (a)–(d)' compares the six (a)–(d) rows; "
+      "'cheapest of all' adds the fixed-quantile references and every (e) setting (P70/P75/P80 × no cap and every B). "
+      "Policy keys: d0.6 = (d) with B = 0.6 × (c); e0.8@0.4 = (e) P80 capped at B = 0.4 × (c); p70 = fixed P70 "
+      "(identical to (e) P70 without a cap). The own-level start is biased toward high-stock policies and is labelled.")
+    a("")
+    a("| Scenario | (a) | (b) | (c) | (d, 0.6) | (d, 0.8) | (d, 1.0) | (e) P70 | (e) P75 | (e) P80 | (e) P75, B = 0.6 | "
+      "cheapest (a)–(d) | cheapest of all |")
+    a("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|")
+    for r in key["policy_e"]["scenarios"]:
+        a(f"| {r['scenario'].replace('(biased)', '(BIASED)')} | "
+          + " | ".join(fmt_money(r[k]) for k in ("a", "b", "c", "d0.6", "d0.8", "d1.0", e_name(0.70), e_name(0.75),
+                                                  e_name(0.80), e_name(0.75, 0.6)))
+          + f" | {r['cheapest_four']} ({fmt_money(r['cheapest_four_total'])}) | {r['cheapest_all']} "
+          f"({fmt_money(r['cheapest_all_total'])}) |")
     a("")
     a("### Terminal markdown m")
     a("")
@@ -1232,15 +1414,16 @@ def write_bridge(a, lt, key, summary, metas):
           f"{t['cv_weeks']:.3f} |")
     a("")
     a("| Scenario | CV of L | E[L] | median L | (b) total | (c) total [95% CI] | (d, 0.6) total | (d, 0.8) total | "
-      "(c) safety stock at week 0 |")
-    a("|---|---|---|---|---|---|---|---|---|")
+      "(e) P75 total | (c) safety stock at week 0 |")
+    a("|---|---|---|---|---|---|---|---|---|---|")
     for nm in ["base", "no lead-time variability", *TIER_SCENARIOS.values()]:
         d = summary[summary.scenario == nm].set_index("policy")
         mt = metas[nm]
         a(f"| {nm} | {mt['cv']:.2f} | {mt['EL']:.2f} | {mt['median_L']:.0f} | {fmt_money(d.loc['b', 'total_cost'])} | "
           f"{fmt_money(d.loc['c', 'total_cost'])} [{fmt_money(d.loc['c', 'total_cost_lo'])}, "
           f"{fmt_money(d.loc['c', 'total_cost_hi'])}] | {fmt_money(d.loc['d0.6', 'total_cost'])} | "
-          f"{fmt_money(d.loc['d0.8', 'total_cost'])} | {fmt_money(mt['safety_stock_value_c'])} |")
+          f"{fmt_money(d.loc['d0.8', 'total_cost'])} | {fmt_money(d.loc[e_name(0.75), 'total_cost'])} | "
+          f"{fmt_money(mt['safety_stock_value_c'])} |")
     a("")
     td = pd.DataFrame(key["tier_contrast"])
     a("**What moving from the reliable to the unreliable tier costs** (GBP, 13 weeks, "
@@ -1269,7 +1452,8 @@ def write_bridge(a, lt, key, summary, metas):
       f"{verdict(prim, 'c')}: {signed_money(pc.delta)} [{fmt_money(pc.delta_lo)}, {fmt_money(pc.delta_hi)}], against "
       f"{signed_money(oc.delta)} [{fmt_money(oc.delta_lo)}, {fmt_money(oc.delta_hi)}] under the superseded CV tiers"
       + (f" ({pc.delta / oc.delta:.0%} of it)" if oc.delta > 0 and pc.delta > 0 else "")
-      + f". Under (d, 0.6) it {verdict(prim, 'd0.6')}; under (d, 0.8) it {verdict(prim, 'd0.8')}; under (b) it "
+      + f". Under (d, 0.6) it {verdict(prim, 'd0.6')}; under (d, 0.8) it {verdict(prim, 'd0.8')}; under (e) P75 it "
+      f"{verdict(prim, e_name(0.75))} ({signed_money(tdi.loc[(prim, e_name(0.75))].delta)}); under (b) it "
       f"{verdict(prim, 'b')}.")
     a(f"- **Slippage variant.** Under (c) the unreliable tier {verdict(var, 'c')}: {signed_money(sv.delta)} "
       f"[{fmt_money(sv.delta_lo)}, {fmt_money(sv.delta_hi)}]. This measure ranks vendors mostly by how dispersed their "
@@ -1286,6 +1470,122 @@ def write_bridge(a, lt, key, summary, metas):
           "and lose fewer sales. That comes from the rule, not from unreliability being useful.")
     a("")
     a("![supplier reliability](figures/replenishment-supplier-reliability.png)")
+
+
+def write_policy_e(a, key, s_base, fb, choice):
+    """Sections 10 and 11: the evidence on policy (e) and the recommendation that follows from it."""
+    pe = key["policy_e"]
+    et = pd.DataFrame(pe["table"])
+    cmp_ = {(c["x"], c["y"]): c for c in pe["comparisons"]}
+    cn = pe["counts"]
+    center, rf = e_name(0.75), choice["realised_factor"]
+
+    def dl(x, y):
+        c = cmp_[(x, y)]
+        return f"{signed_money(c['delta'])} [{fmt_money(c['lo'])}, {fmt_money(c['hi'])}]"
+
+    def ci_excl(x, y):
+        c = cmp_[(x, y)]
+        return c["lo"] > 0 or c["hi"] < 0
+
+    def tot(pol):
+        r = s_base.loc[pol]
+        return f"{fmt_money(r.total_cost)} [{fmt_money(r.total_cost_lo)}, {fmt_money(r.total_cost_hi)}]"
+
+    a("## 10. Policy (e): a moderate quantile with a working-capital cap")
+    a("")
+    a("Base case, total cost [95% CI] and fill rate; 'binds' = reviews (of 4) at which the cap scaled the levels "
+      "down, with the smallest scaling factor α. The same starting stock, markdown (m = "
+      f"{BASE['markdown']}) and demand as every other policy.")
+    a("")
+    a("| cap B / (c) | " + " | ".join(f"(e) P{round(q * 100)}: total [CI] / fill / binds (min α)" for q in E_QUANTILES)
+      + " |")
+    a("|---|" + "---|" * len(E_QUANTILES))
+    for f in (None,) + FRONTIER:
+        cells = []
+        for q in E_QUANTILES:
+            r = et[(et.q == q) & (et.factor.isna() if f is None else et.factor == f)].iloc[0]
+            b = ("–" if f is None else (f"{r.reviews_bound} (α {r.alpha_min:.2f})" if r.reviews_bound else "0"))
+            cells.append(f"{fmt_money(r.total)} [{fmt_money(r.total_lo)}, {fmt_money(r.total_hi)}] / "
+                         f"{r.fill_rate:.1%} / {b}")
+        a(f"| {'no cap' if f is None else f} | " + " | ".join(cells) + " |")
+    a("")
+    bu, bo = pe["best_uncapped"], pe["best_overall"]
+    unc_tot = [s_base.loc[e_name(q), "total_cost"] for q in E_QUANTILES]
+    spread = max(unc_tot) - min(unc_tot)
+    ro = et.set_index("policy").loc[bo]
+    wk = sorted({w for ws in et[et.q == 0.75].bound_weeks for w in ws})
+    wk_all = sorted({w for ws in et.bound_weeks for w in ws})
+    free = [t for t in REVIEW_WEEKS if t not in wk]
+    a("**What the grid shows** (paired differences resample SKUs; same demand and random numbers):")
+    a("")
+    a(f"- **Without a cap**, P70, P75 and P80 cost {fmt_money(s_base.loc[e_name(0.70), 'total_cost'])}, "
+      f"{fmt_money(s_base.loc[center, 'total_cost'])} and {fmt_money(s_base.loc[e_name(0.80), 'total_cost'])}; the "
+      f"cheapest is {POLICY_LABELS[bu]}. P75 − P70 is {dl(center, e_name(0.70))} "
+      f"({'interval excludes zero' if ci_excl(center, e_name(0.70)) else 'interval includes zero'}) and P75 − P80 is "
+      f"{dl(center, e_name(0.80))} ({'interval excludes zero' if ci_excl(center, e_name(0.80)) else 'interval includes zero'}"
+      f"); the three totals differ by at most {fmt_money(spread)}, "
+      f"{spread / s_base.loc[center, 'total_cost']:.1%} of the P75 total."
+      f" (e) P75 against (b): {dl(center, 'b')}; against (c): {dl(center, 'c')}; against (d, 0.6): "
+      f"{dl(center, 'd0.6')}.")
+    nb = pe["never_binds_from_075"]
+    a(f"- **When the cap binds.** For P75 the cap binds only at the reviews in weeks "
+      + " and ".join(str(x) for x in wk) + ", the final cycle, where (c)'s critical ratio falls (it prices the markdown) "
+      "and so does its planned inventory value, the basis of B"
+      + (f"; from B = {nb} × (c) upward it never binds" if nb is not None else "")
+      + ". At the reviews in weeks " + " and ".join(str(x) for x in free) + " no B on the grid binds for P75"
+      + (", although P80 at the lowest budgets binds there too." if set(wk_all) - set(wk) else "."))
+    capdl = [(k, v) for k, v in cmp_.items() if "@" in k[0] and k[1] == k[0].split("@")[0]]
+    helps = [(k, v) for k, v in capdl if v["hi"] < 0]
+    a("- **Does the cap save money?** Best cap against the same quantile without a cap: "
+      + "; ".join(f"{POLICY_LABELS[k[0]]}: {dl(*k)}" for k, _ in capdl) + ". "
+      + ("In this season a binding cap lowered realised cost: it trims the last orders of the season, which "
+         "mostly end up as marked-down leftovers. So here the cap was more than a control. That result is "
+         "in-sample (see below) and rests on the final cycle alone."
+         if helps else
+         "The cap does not lower realised cost here; where it binds it only removes stock. The cap is a "
+         "working-capital control, not a cost saver."))
+    a(f"- **Against (d).** The cheapest (e) setting on the grid, {POLICY_LABELS[bo]} ({tot(bo)}, fill "
+      f"{ro.fill_rate:.1%}), against (d) at its rule budget B = {rf} × (c) ({tot(f'd{rf}')}): "
+      f"{dl(bo, f'd{rf}')}. P75 without a cap against the same (d): {dl(center, f'd{rf}')}. "
+      + ("(e) needs no optimiser and is not reliably more expensive than (d)."
+         if cmp_[(center, f"d{rf}")]["lo"] <= 0 else
+         "(d) at its budget-rule B is reliably cheaper than uncapped P75, but that B was also chosen in-sample.")
+      )
+    a(f"- **Across scenarios** ({cn['n_unbiased']} scenarios; the biased own-level start is left out): (e) P75 "
+      f"without a cap is cheaper than (d, 0.6) in {cn['e75_below_d06']} of {cn['n_unbiased']}; the best uncapped "
+      f"(e) quantile beats every policy (a)–(d) in {cn['e_unc_below_four']} of {cn['n_unbiased']}; P75 capped at "
+      f"0.6 × (c) is cheaper than P75 without a cap in {cn['e75cap06_below_e75']}, equal in "
+      f"{cn['e75cap06_equal_e75']} (the cap does not bind) and dearer in "
+      f"{cn['n_unbiased'] - cn['e75cap06_below_e75'] - cn['e75cap06_equal_e75']}. Section 8 has the per-scenario "
+      "totals.")
+    a("")
+    a("## 11. Recommendation")
+    a("")
+    a("**Recommendation: policy (e). At each review, order up to a moderate quantile, P70–P80 (default P75), of the "
+      "forecast demand distribution over the lead time plus the review period, and cap the planned inventory value "
+      "at a working-capital budget B set by the buyer.** It uses the same demand paths and supplier lead-time "
+      "distribution as (c) and (d) but no optimiser, so a buyer can read and override it. The cap is the "
+      "working-capital control.")
+    a("")
+    a(f"- **Why a moderate quantile.** The critical-ratio level (c) plans a quantile near "
+      f"{key['median_cr_base']:.0%} and over-buys once the season end is priced; P70–P80 of the same distribution "
+      f"costs {fmt_money(min(s_base.loc[e_name(q), 'total_cost'] for q in E_QUANTILES))}–"
+      f"{fmt_money(max(s_base.loc[e_name(q), 'total_cost'] for q in E_QUANTILES))} against "
+      f"{fmt_money(s_base.loc['c', 'total_cost'])} for (c) and {fmt_money(s_base.loc['b', 'total_cost'])} for "
+      "FlowChain's current rule (b).")
+    a("- **What the cap does.** "
+      + ("In this season it also lowered cost when it bound in the final cycle (section 10), but that gain comes "
+         "from four reviews of one season and should not be banked. Treat the cap first as a control on working "
+         "capital."
+         if helps else
+         "Here it never lowered realised cost, so it is a control on working capital, not a cost saver."))
+    a(f"- **In-sample caveat.** q and B were chosen after looking at the same 13 test weeks they are scored on, and "
+      f"only one season exists. The cheapest setting found ({POLICY_LABELS[bo]}, {fmt_money(ro.total)}) is "
+      "therefore optimistic, and P75 is recommended as the default rather than that exact setting. Validate q and B "
+      "on another season before relying on them.")
+    a("- **Budgeted (d)** remains a sound alternative when the buyer wants the budget spent where it buys the most "
+      "margin; its budget rule is below.")
 
 
 def signed_money(v):
@@ -1371,12 +1671,9 @@ def write_discussion(a, lt, key, summary, s_base, metas, checks, tail, frontier,
     fb = frontier.set_index("factor")
     rf, pf = choice["realised_factor"], choice["planned_factor"]
     a("")
-    a("## 10. Recommendation and the budget choice rule")
+    write_policy_e(a, key, s_base, fb, choice)
     a("")
-    a("**Recommendation: budgeted service-level optimisation, policy (d)**, rather than the unconstrained service "
-      "level (c). It uses the same forecast paths and lead-time distribution as (c). It then spends a working-capital "
-      f"budget B where it buys the most expected margin. A budgeted (d) is the cheapest of the four policies in "
-      f"{choice['d_cheapest_scenarios']} of {choice['n_scenarios']} scenarios (sections 5–8).")
+    a("### The budget choice rule, shown for (d)")
     a("")
     a("**Budget choice rule for a manager:** raise B step by step and compare, for each step, the lost margin it "
       "saves with the holding plus end-of-season markdown it adds. Keep raising while the saving is larger (ratio ≥ "
@@ -1417,12 +1714,13 @@ def write_discussion(a, lt, key, summary, s_base, metas, checks, tail, frontier,
     a("")
     a("![budget frontier](figures/replenishment-budget-frontier.png)")
     a("")
-    a("## 11. Implications and limitations")
+    a("## 12. Implications and limitations")
     a("")
-    a("- **For FlowChain:** replace the fixed '1 week of demand' safety stock with budgeted service-level "
-      "optimisation. It should use the forecast distribution, the supplier's measured lead-time variability (from "
-      "an SCMS-style scorecard) and an end-of-season markdown for seasonal items, and set the working-capital "
-      "budget with the rule above. Show planned vs realised service so users see when the forecast is too narrow.")
+    a("- **For FlowChain:** replace the fixed '1 week of demand' safety stock with policy (e): order up to a "
+      "moderate quantile (P70–P80) of the forecast demand distribution, which uses the supplier's measured lead-time "
+      "variability, with a working-capital cap that the buyer sets. Re-check q and B each season on a past-season "
+      "backtest, because here both were chosen on the season they were tested on. Show planned vs realised service "
+      "so users see when the forecast is too narrow.")
     a(f"- **Excluded tail:** the panel covers {key['n_skus']} of {tail['product_skus']:,} product SKUs. The other "
       f"{tail['tail_skus']:,} SKUs ({tail['tail_revenue_share']:.1%} of training revenue, "
       f"{tail['tail_units_share']:.1%} of units) are mostly intermittent or lumpy and are not in this backtest. "
