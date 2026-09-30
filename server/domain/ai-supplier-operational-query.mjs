@@ -577,7 +577,7 @@ function buildInvoiceSummary(db = {}, supplier = {}) {
   const creditMemos = creditMemosFor(db, supplier)
   const issueInvoices = invoices.filter((invoice) =>
     toNumber(invoice.varianceAmount, 0) !== 0 ||
-    !/无差异|自动匹配|paid|已付款|已审批/i.test(`${invoice.varianceType || ''} ${invoice.matchStatus || ''} ${invoice.status || ''}`)
+    !/无差异|\bnone\b|自动匹配|paid|已付款|已审批/i.test(`${invoice.varianceType || ''} ${invoice.matchStatus || ''} ${invoice.status || ''}`)
   )
   const pendingReview = invoices.filter((invoice) => /待复核|待匹配|人工复核|差异|pending|review/i.test(`${invoice.status || ''} ${invoice.matchStatus || ''} ${invoice.approvalStatus || ''}`))
   const creditMemoAmount = creditMemos.reduce((sum, memo) => sum + toNumber(memo.total ?? memo.amount ?? memo.creditAmount, 0), 0)
