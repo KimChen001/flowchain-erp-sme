@@ -49,3 +49,30 @@ export function formatLocaleAmount(value: number, currency: string | null | unde
     return code ? `${plain} ${code}` : plain;
   }
 }
+
+// Wall-clock value ("YYYY-MM-DDTHH:mm") of an instant in the workspace
+// timezone, for <input type="datetime-local">.
+export function dateTimeInputInTimeZone(value: Date, timeZone?: string) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: timeZone || workspaceTimeZone || DEFAULT_WORKSPACE_TIMEZONE,
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(value).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+// The instant (ISO string) at which the workspace timezone reads the given
+// wall-clock value, so a time typed on the page means workspace time rather
+// than the browser's. Returns "" for an unreadable value.
+export function dateTimeInputToIso(value: string, timeZone?: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(String(value || "").trim());
+  if (!match) return "";
+  const [year, month, day, hour, minute] = match.slice(1).map(Number);
+  const wall = Date.UTC(year, month - 1, day, hour, minute);
+  const offset = (instant: number) => {
+    const shown = dateTimeInputInTimeZone(new Date(instant), timeZone).match(/\d+/g)!.map(Number);
+    return Date.UTC(shown[0], shown[1] - 1, shown[2], shown[3], shown[4]) - instant;
+  };
+  let instant = wall - offset(wall);
+  instant = wall - offset(instant);
+  return new Date(instant).toISOString();
+}

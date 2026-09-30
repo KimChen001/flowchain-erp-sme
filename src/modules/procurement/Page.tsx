@@ -5,7 +5,9 @@ import { ProcurementEmptyState } from "./ProcurementEmptyState";
 import { ProcurementWorkbench } from "./ProcurementWorkbench";
 import { ProcurementDocumentDetailPage } from "./ProcurementDocumentDetailPage";
 import { OrderFulfillmentLinesPage } from "./OrderFulfillmentLinesPage";
+import { useLocation, useSearchParams } from "react-router";
 import { ReceivingListPage } from "./ReceivingListPage";
+import { ReceivingForm } from "./ReceivingForm";
 import { RfqListPage } from "./RfqListPage";
 import { SupplierInvoiceListPage } from "./SupplierInvoiceListPage";
 import { ThreeWayMatchListPage } from "./ThreeWayMatchListPage";
@@ -35,6 +37,14 @@ const emptyViews: Record<string, { en: [string, string]; zh: [string, string] }>
 };
 const noDataView = { en: ["There is nothing to show in this view yet", ""] as [string, string], zh: ["当前视图暂无数据", ""] as [string, string] };
 
+// /app/procurement/receiving/new?po=<id> and /app/procurement/receiving/<id>/edit.
+function ReceivingFormRoute({ mode }: { mode: "new" | "edit" }) {
+  const [params] = useSearchParams();
+  const { pathname } = useLocation();
+  const receiptId = mode === "edit" ? decodeURIComponent(pathname.match(/\/receiving\/([^/]+)\/edit$/)?.[1] || "") : "";
+  return <ReceivingForm mode={mode} purchaseOrderId={params.get("po") || ""} receiptId={receiptId} />;
+}
+
 export default function ProcurementPanel({ intent = null, view = "workbench", focus = null, onNavigate, onActiveContextChange }: ProcurementPanelProps) {
   const { language } = useI18n();
   if (!view || view === "workbench" || view === "overview") return <ProcurementWorkbench onNavigate={onNavigate} />;
@@ -42,6 +52,8 @@ export default function ProcurementPanel({ intent = null, view = "workbench", fo
   if (view === "orders") return <PurchasingOrdersPage focus={focus} onNavigate={onNavigate} onActiveContextChange={onActiveContextChange} />;
   if (view === "rfq") return <RfqListPage />;
   if (view === "receiving") return <ReceivingListPage />;
+  if (view === "receiving-new") return <ReceivingFormRoute mode="new" />;
+  if (view === "receiving-edit") return <ReceivingFormRoute mode="edit" />;
   if (view === "order-lines") return <OrderFulfillmentLinesPage />;
   if (view === "invoices") return <SupplierInvoiceListPage />;
   if (view === "match") return <ThreeWayMatchListPage />;
