@@ -56,3 +56,28 @@ python -m retail.quality_report        # outputs/data-quality.md and figures
 python -m retail.forecast              # outputs/demand-forecast.md, metrics and figures
 python -m retail.decision_inputs       # outputs/demand-distribution.csv, decision-inputs.md
 ```
+
+`forecast.py` fits ETS and ARIMA per SKU in a process pool (`--workers`, default CPU count − 2)
+and takes about 20 minutes on 16 cores. `--limit N` runs on N SKUs for development, and
+`--reuse-stat` reuses the saved statsmodels forecasts.
+
+## Outputs (in `<data dir>/outputs/`)
+
+| File | Content |
+|---|---|
+| `cleaning-log.md/.csv` | each cleaning rule, rows and units affected, action |
+| `data-quality.md` | dataset, missing values, duplicates, cancellations, outliers, panel, intermittency |
+| `demand-forecast.md` | setup, models, test and rolling-origin metrics with CIs, ARIMA notes, P50/P90 |
+| `forecast-*.csv`, `arima-orders.csv` | the metric tables behind the report |
+| `demand-distribution.csv` | per SKU per week: point, P50, P90 (+ actual in the test); aggregates only |
+| `sku-parameters.csv`, `decision-inputs.md` | cost, holding, stockout and pack proxies; assumptions marked |
+
+## Key design decisions
+
+- **Target:** gross shipped units per SKU and Monday-start week. Voided orders (a cancellation that exactly
+  reverses a sale within 24 h) are removed; other cancellations are returns, reported separately.
+- **Sheet overlap:** the sheet-1 copy of 2010-12-01..09 is dropped after checking it is identical to sheet 2.
+- **Panel:** SKUs sold in ≥ 70 of the 91 training weeks, chosen without looking at the test weeks.
+- **Test:** the last 13 full weeks (2011-09-05 to 2011-11-28), plus six refitted rolling origins.
+- **Bulk lines:** flagged with a log-scale modified z-score per SKU; the capped history is used only if it
+  wins on the validation origins before the test.
