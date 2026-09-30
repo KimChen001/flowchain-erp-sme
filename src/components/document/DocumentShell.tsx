@@ -58,10 +58,10 @@ export function documentToneStyle(tone: DocumentTone = "neutral") {
 
 export function statusTone(status?: string): DocumentTone {
   if (!status) return "neutral";
-  if (["已付款", "已过账应付", "已审批", "已批准", "已完成", "已入库", "自动匹配", "已解决"].includes(status)) return "success";
-  if (["待审批", "待匹配", "人工复核", "质检中", "已发出", "部分到货"].includes(status)) return "warning";
-  if (["存在差异", "已驳回", "已取消", "异常处理", "差异待处理", "重复发票"].includes(status)) return "danger";
-  if (["已匹配", "已接收", "已签收"].includes(status)) return "info";
+  if (["已付款", "已过账应付", "已审批", "已批准", "已完成", "已入库", "自动匹配", "已解决", "approved", "fully_received", "completed"].includes(status)) return "success";
+  if (["待审批", "待匹配", "人工复核", "质检中", "已发出", "部分到货", "pending_approval", "issued", "partially_received"].includes(status)) return "warning";
+  if (["存在差异", "已驳回", "已取消", "异常处理", "差异待处理", "重复发票", "rejected", "cancelled"].includes(status)) return "danger";
+  if (["已匹配", "已接收", "已签收", "matched", "received"].includes(status)) return "info";
   return "neutral";
 }
 
@@ -94,7 +94,7 @@ export function DocumentShell({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 mb-1">
             {moduleLabel && <Chip label={String(moduleLabel)} color={A.blue} bg="#f0f6ff" />}
-            {status && <Chip label={status} color={style.color} bg={style.bg} />}
+            {status && <Chip label={copy(status)} color={style.color} bg={style.bg} />}
           </div>
           <h2 className="text-lg font-semibold tracking-tight" style={{ color: A.label }}>{copy(title)}</h2>
           <div className="text-xs mt-1" style={{ color: A.sub }}>

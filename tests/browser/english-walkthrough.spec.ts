@@ -94,3 +94,39 @@ test("variance types show as labels, not stored codes", async ({ page }) => {
   await expect(page.getByText("Price variance", { exact: true }).first()).toBeVisible();
   await expect(page.locator("body")).not.toContainText("price_variance");
 });
+
+// Stored status and type codes such as "issued" or "partially_received".
+const RAW_CODE_LINE = /[a-z]+_[a-z]+|^(draft|submitted|pending|approved|rejected|cancelled|issued|received|partial|posted|mismatch|matched|active|available|open|closed)$/;
+
+async function rawCodeLines(page: Page, root = page.locator("main").first()) {
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByText(/^(Checking access|Loading\b.*)$/)).toHaveCount(0);
+  const text = await root.innerText();
+  return [...new Set(text.split(/\n+/).map((line) => line.trim()).filter((line) => RAW_CODE_LINE.test(line)))];
+}
+
+test("purchase order detail shows the translated status, not the stored code", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-022");
+  await expect(page.getByText("LOCAL-DEMO-PO-022", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Approved", { exact: true }).first()).toBeVisible();
+  expect(await rawCodeLines(page)).toEqual([]);
+  await page.goto("/app/procurement/orders/LOCAL-DEMO-PO-002");
+  await expect(page.getByText("Issued", { exact: true }).first()).toBeVisible();
+  expect(await rawCodeLines(page)).toEqual([]);
+});
+
+for (const path of [
+  "/app/procurement/requests/LOCAL-DEMO-PR-001",
+  "/app/procurement/rfq/LOCAL-DEMO-RFQ-AWARD-001",
+  "/app/procurement/receiving/LOCAL-DEMO-GRN-001",
+  "/app/procurement/invoices/LOCAL-DEMO-INV-001",
+  "/app/procurement/three-way-match/MATCH-LOCAL-DEMO-INV-001",
+]) {
+  test(`detail page ${path} shows labels, not stored status or type codes`, async ({ page }) => {
+    await signIn(page);
+    await page.goto(path);
+    await expect(page.getByText(path.split("/").pop()!, { exact: true }).first()).toBeVisible();
+    expect(await rawCodeLines(page)).toEqual([]);
+  });
+}

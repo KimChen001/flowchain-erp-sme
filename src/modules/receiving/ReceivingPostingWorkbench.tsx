@@ -4,6 +4,7 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { A } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useI18n } from "../../i18n/I18n";
+import { statusCodeLabel } from "../../i18n/statusLabels";
 
 type Capability = { enabled?: boolean; maturity?: string };
 type Detail = {
@@ -21,11 +22,8 @@ type TimelineEvent = { id: string; type: string; event: string; occurredAt: stri
 type Reconciliation = { status: "matched" | "mismatch" | "unavailable"; reason?: string; entries: Array<{ sku: string; warehouseId?: string | null; locationKey: string; status: string; calculatedQuantity: string; recordedQuantity: string | null; differenceQuantity: string | null }> };
 type Navigate = (routeId: string, focus?: { entityType: string; entityId: string } | null, options?: { source?: string; entityLabel?: string }) => void;
 
-const label: Record<string, string> = {
-  draft: "Draft", ready_for_receiving: "Ready for posting", approved: "Approved", issued: "Issued", unposted: "Unposted", posted: "Posted", reversed: "Reversed",
-  not_received: "Not received", partially_received: "Partially received", fully_received: "Fully received",
-};
-const pretty = (value?: string | null) => label[value || ""] || value || "Unavailable";
+// This page is written in English; status codes use the shared English labels.
+const pretty = (value?: string | null) => statusCodeLabel(value || "", "en-US") || value || "Unavailable";
 const stamp = (value?: string | null) => value ? new Date(value).toLocaleString() : "Unavailable";
 const newKey = () => createSecureClientMutationId("receiving");
 // English source copy with its Chinese translation, for the draft actions.
@@ -155,7 +153,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
 
     <section className="rounded-2xl border bg-white p-4" data-testid="receiving-reconciliation"><div className="mb-3 font-semibold">Inventory reconciliation · {pretty(reconciliation?.status)}</div>{reconciliation?.entries.length ? <div className="space-y-2">{reconciliation.entries.map((entry) => <div key={`${entry.sku}-${entry.warehouseId || ''}-${entry.locationKey}`} className="grid gap-2 rounded-lg bg-gray-50 p-3 text-sm md:grid-cols-5"><span>{entry.sku}</span><span>{entry.warehouseId || 'No warehouse'} / {entry.locationKey || 'No location'}</span><span>Calculated {entry.calculatedQuantity}</span><span>Recorded {entry.recordedQuantity ?? 'Unavailable'}</span><span className={entry.status === 'matched' ? 'text-green-700' : 'text-red-700'}>{pretty(entry.status)}{entry.differenceQuantity != null ? ` · Δ ${entry.differenceQuantity}` : ''}</span></div>)}</div> : <div className="text-sm text-gray-500">{reconciliation?.reason || 'Reconciliation is unavailable.'}</div>}</section>
 
-    <section id="evidence" className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 font-semibold"><ShieldCheck size={16} />Evidence timeline</div><div className="space-y-3">{events.length ? events.map((event) => <div key={event.id} className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="min-w-24 text-xs text-gray-500">{stamp(event.occurredAt)}</div><div><div className="text-sm font-medium">{event.label}</div><div className="text-[11px] uppercase text-gray-500">{event.type.replace('_',' ')}{event.postedFact ? ' · Posted business fact' : ''}{event.actorId ? ` · ${event.actorId}` : ''}</div></div></div>) : <div className="text-sm text-gray-500">No evidence connected.</div>}</div></section>
+    <section id="evidence" className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 font-semibold"><ShieldCheck size={16} />Evidence timeline</div><div className="space-y-3">{events.length ? events.map((event) => <div key={event.id} className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="min-w-24 text-xs text-gray-500">{stamp(event.occurredAt)}</div><div><div className="text-sm font-medium">{event.label}</div><div className="text-[11px] uppercase text-gray-500">{event.type.replaceAll('_',' ')}{event.postedFact ? ' · Posted business fact' : ''}{event.actorId ? ` · ${event.actorId}` : ''}</div></div></div>) : <div className="text-sm text-gray-500">No evidence connected.</div>}</div></section>
     <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><strong>Beta limitation:</strong> {detail.limitations.join(' ')}</div>
 
     {preview && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-testid="impact-preview"><div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
