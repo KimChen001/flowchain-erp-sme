@@ -1,6 +1,8 @@
 export const GENERIC_INTERNAL_ERROR = 'Internal server error'
 export const SAFE_OPERATIONAL_ERROR_CODES = new Set([
   'FLOWCHAIN_DATABASE_CONFIG_MISSING',
+  // A read repository was called without a workspace; answered as its 403.
+  'TENANT_CONTEXT_REQUIRED',
 ])
 
 const SECRET_PATTERNS = [

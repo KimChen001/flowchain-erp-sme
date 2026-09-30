@@ -1,5 +1,6 @@
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
+import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
 
 const text = (value, fallback = '') => String(value ?? '').trim() || fallback
 const number = (value) => {
@@ -135,11 +136,10 @@ export function createDbSalesOrderReadRepository({ env = process.env, prisma } =
     validateDatabasePersistenceConfig(env)
     return prisma || getPrismaClient(env)
   }
-  const tenantIdFor = (filters = {}) => text(filters.tenantId || env.FLOWCHAIN_DEFAULT_TENANT_ID, 'tenant-flowchain-sme')
 
   async function listOrders(filters = {}) {
+    const where = { tenantId: requireTenantId(filters) }
     const db = await client()
-    const where = { tenantId: tenantIdFor(filters) }
     const search = text(filters.q || filters.search)
     if (search) where.OR = [
       { id: { contains: search, mode: 'insensitive' } },
@@ -147,12 +147,11 @@ export function createDbSalesOrderReadRepository({ env = process.env, prisma } =
       { customerName: { contains: search, mode: 'insensitive' } },
     ]
     if (text(filters.status)) where.workflowStatus = text(filters.status)
-    const rows = await db.salesOrder.findMany({
+    const rows = await findManyWithinLimit(db.salesOrder, {
       where,
       include: { lines: { orderBy: { id: 'asc' } } },
       orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
-      take: Math.min(500, Math.max(1, Number(filters.limit || 500))),
-    })
+    }, { limit: Math.min(500, Math.max(1, Number(filters.limit || 500))), subject: 'sales_orders', onTruncated: filters.onTruncated })
     return rows.map(mapOrder)
       .filter((order) => !text(filters.sku) || order.lines.some((line) => line.sku === text(filters.sku) || line.itemId === text(filters.sku)))
       .filter((order) => !text(filters.risk) || (filters.risk === 'true' ? order.deliveryRiskLevel !== 'low' : order.deliveryRiskLevel === filters.risk))

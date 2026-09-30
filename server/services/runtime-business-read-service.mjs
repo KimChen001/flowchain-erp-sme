@@ -17,7 +17,7 @@ function legacyRouteTestContext(db) {
     warehouses: db.warehouses || [], bins: db.bins || [], inventoryItems: db.inventoryItems || db.products || [],
     salesOrders: db.salesOrders || [], purchaseRequests: db.purchaseRequests || [], rfqs: db.rfqs || [],
     purchaseOrders: db.purchaseOrders || [], receipts: db.receivingDocs || [], supplierInvoices: db.supplierInvoices || [],
-    itemSupplierRelationships: db.itemSupplierRelationships || [], dataLimitations: ['isolated_route_test_context'],
+    itemSupplierRelationships: db.itemSupplierRelationships || [], dataLimitations: ['isolated_route_test_context'], truncatedSubjects: [],
     runtimeAdapters: {}, generatedAt: new Date().toISOString(),
   }
 }

@@ -1,6 +1,8 @@
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { createDbProcurementCommandService } from "../domain/procurement-db-command-service.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "../domain/receiving-transaction-policy.mjs";
+import { mapPurchaseRequest, mapRfq } from "./db-procurement-read-repository.mjs";
+import { findManyWithinLimit, requireTenantId } from "./repository-read-scope.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const decimal = (value) => value === null || value === undefined ? null : receivingDecimalString(receivingDecimalUnits(value));
@@ -53,9 +55,9 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
     authorityAdapter: "db-procurement-authority-v1",
     authority,
     async listForReport({ tenantId } = {}) {
-      if (!text(tenantId)) throw Object.assign(new Error('Workspace identity is required.'), { status: 403 });
+      const scopedTenantId = requireTenantId({ tenantId });
       const dbClient = await client();
-      const rows = await dbClient.purchaseOrder.findMany({ where: { tenantId: text(tenantId) }, include: { lines: true }, orderBy: [{ id: 'asc' }] });
+      const rows = await dbClient.purchaseOrder.findMany({ where: { tenantId: scopedTenantId }, include: { lines: true }, orderBy: [{ id: 'asc' }] });
       return rows.map(mapPo);
     },
     async get(type, id, options = {}) {
@@ -67,16 +69,24 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
       return authority.listPurchaseOrdersForApproval(options.context || options, options);
     },
     async snapshot(filters = {}) {
+      const tenantId = requireTenantId(filters);
       const dbClient = await client();
-      const tenantId = text(filters.tenantId || env.FLOWCHAIN_DEFAULT_TENANT_ID || "tenant-flowchain-sme");
-      const query = { where: { tenantId }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }], take: Math.min(500, Math.max(1, Number(filters.limit || 500))) };
-      const [rows, receivingRows, invoiceRows] = await Promise.all([
-        dbClient.purchaseOrder.findMany(query), dbClient.receivingDocument.findMany(query), dbClient.supplierInvoice.findMany(query),
+      const query = { where: { tenantId }, include: { lines: true }, orderBy: [{ updatedAt: "desc" }] };
+      const limit = Math.min(500, Math.max(1, Number(filters.limit || 500)));
+      const bounded = (subject) => ({ limit, subject, onTruncated: filters.onTruncated });
+      const [requestRows, rfqRows, rows, receivingRows, invoiceRows] = await Promise.all([
+        findManyWithinLimit(dbClient.purchaseRequest, query, bounded("purchase_requests")),
+        findManyWithinLimit(dbClient.rfq, query, bounded("rfqs")),
+        findManyWithinLimit(dbClient.purchaseOrder, query, bounded("purchase_orders")),
+        findManyWithinLimit(dbClient.receivingDocument, query, bounded("receipts")),
+        findManyWithinLimit(dbClient.supplierInvoice, query, bounded("supplier_invoices")),
       ]);
       const iso = value => value?.toISOString?.() || value || null;
       const receipts = receivingRows.map(row => ({ id: row.id, documentNumber: row.documentNumber, poId: row.poId, supplierId: row.supplierId, supplierName: row.supplierName, status: row.status, workflowStatus: row.workflowStatus, postingStatus: row.postingStatus, warehouseId: row.warehouseId, currency: row.currency, arrivedAt: iso(row.arrivedAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, acceptedQty: decimal(line.acceptedQty), rejectedQty: decimal(line.rejectedQty), unit: line.unit })) }));
       const supplierInvoices = invoiceRows.map(row => ({ id: row.id, invoiceNumber: row.invoiceNumber, supplierId: row.supplierId, supplierName: row.supplierName, poId: row.relatedPoId, receiptId: row.relatedGrnId, relatedPo: row.relatedPoId, relatedGrn: row.relatedGrnId, amount: decimal(row.amount), totalAmount: decimal(row.totalAmount), currency: row.currency, status: row.status, matchStatus: row.matchStatus, varianceAmount: decimal(row.varianceAmount), invoiceDate: iso(row.invoiceDate), dueDate: iso(row.dueDate), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, quantity: decimal(line.quantity), unitPrice: decimal(line.unitPrice), amount: decimal(line.amount), unit: line.unit })) }));
-      return { purchaseRequests: [], rfqs: [], supplierQuotations: [], purchaseOrders: rows.map(mapPo), receipts, receivingDocs: receipts, supplierInvoices, documentLinks: [], procurementFollowups: [] };
+      // Quotation counts back the RFQ response figures when the RFQ row has none.
+      const quotations = rfqRows.length ? await dbClient.supplierQuotation.findMany({ where: { tenantId, rfqId: { in: rfqRows.map(row => row.id) } }, select: { rfqId: true } }) : [];
+      return { purchaseRequests: requestRows.map(mapPurchaseRequest), rfqs: rfqRows.map(row => mapRfq(row, quotations)), supplierQuotations: [], purchaseOrders: rows.map(mapPo), receipts, receivingDocs: receipts, supplierInvoices, documentLinks: [], procurementFollowups: [] };
     },
     async transact() {
       throw Object.assign(new Error("Database Mode procurementRuntime is read-only; use the PostgreSQL command service."), { code: "PROCUREMENT_DATABASE_COMMAND_REQUIRED", status: 409 });
