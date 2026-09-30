@@ -31,6 +31,20 @@ function databaseEnabled(env) {
   return true;
 }
 
+// Each PO command: the statuses it starts from, the status it leaves, and the
+// catalog permission it needs. Drafting commands use "revise" (buyer, manager,
+// admin); approval decisions use "approve" and "reject" (manager, admin).
+// Cancelling a PO that is already pending or approved needs "reject".
+const { DRAFT, PENDING_APPROVAL, APPROVED, ISSUED, CANCELLED } = PURCHASE_ORDER_STATUS;
+const PURCHASE_ORDER_COMMANDS = Object.freeze({
+  submit: { from: [DRAFT], to: PENDING_APPROVAL, permission: "procurement.purchase_order.revise" },
+  approve: { from: [PENDING_APPROVAL], to: APPROVED, permission: "procurement.purchase_order.approve" },
+  reject: { from: [PENDING_APPROVAL], to: PURCHASE_ORDER_STATUS.REJECTED, permission: "procurement.purchase_order.reject", reasonRequired: true },
+  return_for_revision: { from: [PENDING_APPROVAL], to: DRAFT, permission: "procurement.purchase_order.revise", reasonRequired: true },
+  issue: { from: [APPROVED], to: ISSUED, permission: "procurement.purchase_order.revise" },
+  cancel: { from: [DRAFT, PENDING_APPROVAL, APPROVED], to: CANCELLED, permission: "procurement.purchase_order.revise", elevatedFrom: { [PENDING_APPROVAL]: "procurement.purchase_order.reject", [APPROVED]: "procurement.purchase_order.reject" } },
+});
+
 function mapLine(line = {}, includePrices = true) {
   return {
     id: line.id,
@@ -102,12 +116,14 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
   async function executeAction(id, action, input = {}, context) {
     databaseEnabled(env);
     const client = await db();
-    const permission = action === "approve" ? "procurement.purchase_order.approve" : action === "reject" ? "procurement.purchase_order.reject" : "procurement.purchase_order.revise";
+    const command = PURCHASE_ORDER_COMMANDS[action];
+    if (!command) fail("PURCHASE_ORDER_ACTION_UNSUPPORTED", `Unsupported purchase order action: ${action}.`, 400);
+    const permission = command.permission;
     const initial = await actorFor(client, context, permission);
     const key = text(input.idempotencyKey);
     if (!key) fail("IDEMPOTENCY_KEY_REQUIRED", "idempotencyKey is required.", 422);
     const expectedVersion = version(input.expectedVersion);
-    if (["reject", "return_for_revision"].includes(action) && !text(input.reason)) fail("PO_ACTION_REASON_REQUIRED", "A reason is required.", 422);
+    if (command.reasonRequired && !text(input.reason)) fail("PO_ACTION_REASON_REQUIRED", "A reason is required.", 422);
     const commandType = `purchase_order.${action}`;
     const payload = { id: text(id), action, expectedVersion, reason: text(input.reason), sourceDeviceId: text(input.sourceDeviceId) || null };
     const requestHash = hash(payload);
@@ -130,10 +146,21 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
       const row = await tx.purchaseOrder.findFirst({ where: { id: text(id), tenantId: actor.tenantId }, include: { lines: true } });
       if (!row) fail("PURCHASE_ORDER_NOT_FOUND", "Purchase order was not found.", 404);
       if (row.version !== expectedVersion) fail("SYNC_VERSION_CONFLICT", "Purchase order changed concurrently.", 409, { entityId: row.id, expectedVersion, currentVersion: row.version, conflictFields: ["version", "status"], availableActions: ["reload"], serverTime: serial(now()) });
-      if (row.status !== PURCHASE_ORDER_STATUS.PENDING_APPROVAL) fail("PURCHASE_ORDER_WORKFLOW_CONFLICT", `Purchase order cannot be ${action}ed from ${row.status}.`, 409);
-      const nextStatus = action === "approve" ? PURCHASE_ORDER_STATUS.APPROVED : action === "reject" ? PURCHASE_ORDER_STATUS.REJECTED : PURCHASE_ORDER_STATUS.DRAFT;
+      if (!command.from.includes(row.status)) fail("PURCHASE_ORDER_WORKFLOW_CONFLICT", `A ${row.status} purchase order cannot take the ${action} action.`, 409, { entityId: row.id, currentStatus: row.status, currentVersion: row.version });
+      const elevated = command.elevatedFrom?.[row.status];
+      if (elevated) assertAuthorized({ actor, permission: elevated, tenantId: actor.tenantId });
+      if (action === "cancel") {
+        // A receipt still being prepared against the PO would become unpostable.
+        const openReceipt = await tx.receivingDocument.findFirst({ where: { tenantId: actor.tenantId, poId: row.id, postingStatus: "unposted", workflowStatus: { not: "cancelled" } }, select: { id: true } });
+        if (openReceipt) fail("PURCHASE_ORDER_HAS_OPEN_RECEIPTS", "Cancel or post the receipts prepared for this purchase order first.", 409, { receivingDocumentId: openReceipt.id });
+      }
+      const nextStatus = command.to;
       const timeline = [...(Array.isArray(row.metadata?.approvalTimeline) ? row.metadata.approvalTimeline : []), { action, actorId: actor.user.id, at: serial(now()), reason: text(input.reason) || null }];
-      const updated = await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus: action === "approve" ? PURCHASE_ORDER_STATUS.APPROVED : row.receivingBaseStatus, version: { increment: 1 }, metadata: { ...(row.metadata || {}), approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } }, include: { lines: true } });
+      // Receiving restores receivingBaseStatus when a receipt is reversed.
+      const receivingBaseStatus = [APPROVED, ISSUED].includes(nextStatus) ? nextStatus : row.receivingBaseStatus;
+      // FlowChain records the issue; the buyer sends the PO to the supplier.
+      const issued = action === "issue" ? { transmissionStatus: "issued_outside_flowchain", issuedAt: serial(now()), issuedById: actor.user.id } : {};
+      const updated = await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus, version: { increment: 1 }, metadata: { ...(row.metadata || {}), ...issued, approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } }, include: { lines: true } });
       await inject("after_po_update");
       const result = { entityType: "PurchaseOrder", entityId: updated.id, status: updated.status, entityVersion: updated.version, purchaseOrder: mapPurchaseOrder(updated), pendingSync: false, serverTime: serial(now()) };
       await inject("before_audit");
@@ -158,7 +185,10 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
   return {
     readPurchaseOrder,
     listPurchaseOrdersForApproval,
+    submitPurchaseOrder: (id, input, context) => executeAction(id, "submit", input, context),
     approvePurchaseOrder: (id, input, context) => executeAction(id, "approve", input, context),
+    issuePurchaseOrder: (id, input, context) => executeAction(id, "issue", input, context),
+    cancelPurchaseOrder: (id, input, context) => executeAction(id, "cancel", input, context),
     rejectPurchaseOrder: (id, input, context) => executeAction(id, "reject", input, context),
     returnPurchaseOrderForRevision: (id, input, context) => executeAction(id, "return_for_revision", input, context),
   };

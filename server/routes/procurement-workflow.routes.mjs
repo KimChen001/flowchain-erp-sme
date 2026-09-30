@@ -1,71 +1,28 @@
-import { createProcurementWorkflowService } from "../services/procurement-workflow-service.mjs";
+import { createHash } from "node:crypto";
 import { createProcurementRequestCommandService } from "../services/procurement-request-command-service.mjs";
-import { authorizeMutation } from "../domain/mutation-authorization.mjs";
 import { recommendProcurementPath } from "../domain/procurement-workflow.mjs";
-const repositoryFor = (ctx) => {
-  if (!ctx.repositories?.procurementRuntime) throw new Error("PostgreSQL procurement repository is not configured.");
-  return ctx.repositories.procurementRuntime;
-};
-// Item and supplier lookups read the signed-in workspace's master data.
-const itemRepositoryFor = (ctx) => {
-  const masterData = ctx.repositories?.masterData;
-  if (!masterData) return undefined;
-  const scope = { tenantId: ctx.identity?.tenantId };
-  return {
-    getItem: (idOrSku) => masterData.getItem(idOrSku, scope),
-    getSupplier: (idOrName) => masterData.getSupplier(idOrName, scope),
-  };
-};
 const PROCUREMENT_PATH_POLICY = Object.freeze({
   directPurchaseThreshold: 50000,
   rfqRequiredAboveAmount: 100000,
   allowManagerOverride: true,
 });
-const workflowService = (ctx) => createProcurementWorkflowService({
-  repository: repositoryFor(ctx), itemRepository: itemRepositoryFor(ctx),
-  policyProvider: async () => PROCUREMENT_PATH_POLICY,
-});
 // Purchase request commands write PostgreSQL directly. Permissions come from
 // the signed-in actor's role grants inside the service, not from role names.
 const requestCommands = (ctx) => ctx.repositories?.procurementRequests
   || createProcurementRequestCommandService({ masterData: ctx.repositories?.masterData, env: ctx.env || process.env });
-const actor = (ctx) => ctx.identity.userId;
-const allowed = (ctx, action) => {
-  const r = ctx.identity.role;
-  if (["manager", "admin", "procurement-manager"].includes(r)) return true;
-  if (r === "viewer") return false;
-  if (r === "business-specialist")
-    return ["pr.create", "pr.submit", "pr.cancel", "pr.update"].includes(
-      action,
-    );
-  if (r === "procurement-specialist")
-    return [
-      "path",
-      "direct-po",
-      "rfq.create",
-      "po.submit",
-      "pr.create",
-      "pr.submit",
-    ].includes(action);
-  return false;
+// PO commands go through the same PostgreSQL authority as mobile approval.
+const purchaseOrderCommands = (ctx) => {
+  if (!ctx.repositories?.procurementAuthority) throw new Error("PostgreSQL procurement authority is not configured.");
+  return ctx.repositories.procurementAuthority;
 };
-const deny = (send, res) =>
-  send(res, 403, {
-    code: "PERMISSION_DENIED",
-    message: "当前用户无权执行此操作",
-    details: [],
-  });
-const authorizeAction = (ctx, action) => {
-  const authorization = authorizeMutation(ctx, {
-    allowedRoles: ["admin", "manager", "procurement-manager", "business-specialist", "procurement-specialist"],
-    action,
-    resource: "procurement-workflow",
-  });
-  if (authorization.blocked) return false;
-  if (allowed(ctx, action)) return true;
-  deny(ctx.send, ctx.res);
-  return false;
-};
+const PURCHASE_ORDER_ACTIONS = Object.freeze({
+  submit: "submitPurchaseOrder",
+  approve: "approvePurchaseOrder",
+  reject: "rejectPurchaseOrder",
+  "return-for-revision": "returnPurchaseOrderForRevision",
+  issue: "issuePurchaseOrder",
+  cancel: "cancelPurchaseOrder",
+});
 const failure = (send, res, e) => {
   // Serializable transactions that lose a race are safe to retry.
   if (e?.code === "P2034") return send(res, 409, { code: "TRANSACTION_CONFLICT", message: "Another change landed at the same time. Reload and try again.", details: [] });
@@ -96,10 +53,8 @@ const commandBody = async (ctx) => {
   return header && !body.idempotencyKey ? { ...body, idempotencyKey: header } : body;
 };
 export async function handleProcurementWorkflowRoute(ctx) {
-  const { req, res, url, send, readBody } = ctx;
+  const { req, res, url, send } = ctx;
   if (!url.pathname.startsWith("/api/procurement/")) return false;
-  const runtimeRepository = repositoryFor(ctx);
-  const service = workflowService(ctx);
   if (req.method === "GET" && url.pathname === "/api/procurement/requests") {
     if (!ctx.identity?.authenticated || !ctx.identity.tenantId) return send(res, 401, { code: "TENANT_CONTEXT_REQUIRED", message: "An authenticated tenant context is required." }) || true;
     const snapshot = await ctx.repositories.procurementRead.snapshot({ tenantId: ctx.identity.tenantId });
@@ -143,38 +98,21 @@ export async function handleProcurementWorkflowRoute(ctx) {
     return send(res, 200, snapshot.purchaseOrders) || true;
   }
   const orderDetail = url.pathname.match(/^\/api\/procurement\/orders\/([^/]+)$/);
-  if (req.method === "GET" && orderDetail) {
-    const order = await runtimeRepository.get("po", decodeURIComponent(orderDetail[1]));
-    return send(res, order ? 200 : 404, order || { code: "ENTITY_NOT_FOUND", message: "采购订单不存在" }) || true;
-  }
+  if (req.method === "GET" && orderDetail)
+    return respond(ctx, 200, () => purchaseOrderCommands(ctx).readPurchaseOrder(decodeURIComponent(orderDetail[1]), ctx));
   const poAction = url.pathname.match(
-    /^\/api\/procurement\/orders\/([^/]+)\/(submit|approve|issue|cancel)$/,
+    /^\/api\/procurement\/orders\/([^/]+)\/(submit|approve|reject|return-for-revision|issue|cancel)$/,
   );
   if (req.method === "POST" && poAction) {
-    const permissionAction =
-      poAction[2] === "submit" ? "po.submit" : "po.approve";
-    if (!authorizeAction(ctx, permissionAction)) return true;
-    try {
-      const b = await readBody(req);
-      const next = {
-        submit: "pending_approval",
-        approve: "approved",
-        issue: "issued",
-        cancel: "cancelled",
-      }[poAction[2]];
-      send(
-        res,
-        200,
-        await service.transitionPurchaseOrder(
-          decodeURIComponent(poAction[1]),
-          next,
-          { ...b, actor: actor(ctx) },
-        ),
-      );
-    } catch (e) {
-      failure(send, res, e);
-    }
-    return true;
+    const command = PURCHASE_ORDER_ACTIONS[poAction[2]];
+    const id = decodeURIComponent(poAction[1]);
+    return respond(ctx, 200, async () => {
+      const body = await commandBody(ctx);
+      // The desktop page sends no key: a resend of the same action, version and
+      // reason is the same command.
+      const idempotencyKey = body.idempotencyKey || `desktop.${poAction[2]}:${id}:v${body.expectedVersion}:${createHash("sha256").update(String(body.reason || "")).digest("hex").slice(0, 16)}`;
+      return purchaseOrderCommands(ctx)[command](id, { ...body, idempotencyKey }, ctx);
+    });
   }
   const rfqAction = url.pathname.match(
     /^\/api\/procurement\/rfqs\/([^/]+)\/(open|cancel)$/,
