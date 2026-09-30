@@ -742,7 +742,7 @@ def figures(paths, summary, s_base, checks, frontier, choice):
     ax.set_xlabel("working-capital budget B, as a multiple of (c)'s planned inventory value")
     ax.set_ylabel("GBP thousand (13 weeks)")
     ax.set_title("Budget frontier of policy (d)")
-    ax.legend(fontsize=7, loc="upper right")
+    ax.legend(fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, frameon=False)
     P.save(fig, figs / "replenishment-budget-frontier.png")
 
     fig, ax = plt.subplots(figsize=(6.8, 3.6))
@@ -921,6 +921,10 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       f"{'yes' if abs(checks['c_cr05_fill'] - checks['p50_fill']) < 0.005 else 'no'} |")
     a(f"| (d) budget 0.6 → 0.8 → 1.0 → 1.2 × (c) | fill rate rises monotonically | "
       + " → ".join(f"{x:.1%}" for x in checks["budget_fill"]) + f" | {'yes' if checks['budget_monotone'] else 'no'} |")
+    a(f"| (d) on the finer frontier grid {FRONTIER[0]}–{FRONTIER[-1]} × (c) | fill rate rises monotonically | "
+      + " → ".join(f"{x:.1%}" for x in checks["budget_fill_full_grid"])
+      + (" | yes |" if checks["budget_monotone_full_grid"] else
+         " | not strictly: small dips, because the MILP minimises planned cost, not realised fill |"))
     a(f"| Lead time without variability (CV 0) | lower safety stock | (c) safety stock (S − E[D over L+R], "
       f"at cost, week-0 review) {fmt_money(checks['ss_value_zero_cv'])} vs {fmt_money(checks['ss_value_base'])} "
       f"| {'yes' if checks['ss_lower_without_variability'] else 'no'} |")
