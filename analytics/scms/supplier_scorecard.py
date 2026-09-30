@@ -164,7 +164,12 @@ def main() -> int:
     product = scorecard(sc, "product_group", grace)
 
     for table, name in [(vendor, "vendor"), (mode, "mode"), (country, "country"), (product, "product-group")]:
-        table.to_csv(paths.outputs_dir / f"supplier-scorecard-{name}.csv", float_format="%.6g")
+        # Metrics of groups under the sample threshold are blanked: an "aggregate" of one or two
+        # shipments is close to a row-level extract, which the CC BY-ND licence does not allow sharing.
+        export = table.copy()
+        metric_columns = [c for c in export.columns if c not in ("shipments", "sample_status")]
+        export.loc[export["sample_status"].ne("ok"), metric_columns] = np.nan
+        export.to_csv(paths.outputs_dir / f"supplier-scorecard-{name}.csv", float_format="%.6g")
     fig = forest_plot(vendor, paths.figures_dir / "vendor-on-time.png")
 
     ok = vendor[vendor["sample_status"].eq("ok")]
