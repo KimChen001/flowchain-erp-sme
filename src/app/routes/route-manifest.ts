@@ -113,6 +113,9 @@ const primaryNavigation: Record<
     navigationLabel: "供应商",
   },
   "master-data:items": { navigationOrder: 70, navigationLabel: "物料" },
+  // Shown only while the operational finance capability and the
+  // finance.overview.read permission are both present.
+  finance: { navigationOrder: 75, navigationLabel: "财务" },
   reports: { navigationOrder: 80, navigationLabel: "报表" },
   "universal-intake": { navigationOrder: 90, navigationLabel: "数据接入" },
   "review-actions": { navigationOrder: 100, navigationLabel: "复核队列" },

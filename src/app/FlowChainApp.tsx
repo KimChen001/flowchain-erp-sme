@@ -1,5 +1,5 @@
 import { workspaceCopy } from "../i18n/workspaceCopy";
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Toaster, toast } from "sonner";
 import {
@@ -63,6 +63,7 @@ import {
   type CapabilityLoadState,
   type ModuleCapability,
 } from "./capabilityRouteGuard";
+import { RouteAvailabilityProvider } from "./routeAvailability";
 import {
   capabilityIdForRoute,
   hasRoutePermission,
@@ -915,6 +916,37 @@ export default function FlowChainApp() {
   const activeRouteHasPermission = activeRoute
     ? hasRoutePermission(activeRoute, effectivePermissionCodes)
     : false;
+  // Mirrors the route gate below so in-page links are hidden instead of
+  // landing on the "Access denied" or "Capability unavailable" screens.
+  const canOpenRoute = useCallback(
+    (routeId: string) => {
+      const route = routeById(routeId);
+      if (!route) return false;
+      if (
+        route.requiredPermission &&
+        (authorizationLoadState !== "ready" ||
+          !hasRoutePermission(route, effectivePermissionCodes))
+      )
+        return false;
+      const capabilityId = capabilityIdForRoute(route);
+      if (!capabilityId) return true;
+      return (
+        resolveCapabilityRouteAccess({
+          moduleId: capabilityId,
+          loadState: capabilityLoadState,
+          capabilities,
+          experimentalModuleIds,
+        }).status === "allowed"
+      );
+    },
+    [
+      authorizationLoadState,
+      capabilities,
+      capabilityLoadState,
+      effectivePermissionCodes,
+      experimentalModuleIds,
+    ],
+  );
   const contentMaxWidthClass =
     panelModule === "srm"
       ? "max-w-[1440px]"
@@ -1857,6 +1889,7 @@ export default function FlowChainApp() {
               data-testid="module-export-scope"
               className={`mx-auto w-full ${contentMaxWidthClass}`}
             >
+              <RouteAvailabilityProvider value={canOpenRoute}>
               {activeRoute ? (
                 <ModuleShell route={activeRoute} routeAccess={routeAccess}>
                   {activeRoute.directAccessBehavior === "LEGACY_REDIRECT" ? (
@@ -2021,6 +2054,7 @@ export default function FlowChainApp() {
               ) : (
                 <NotFoundRecovery pathname={location.pathname} />
               )}
+              </RouteAvailabilityProvider>
             </div>
           </main>
         </div>

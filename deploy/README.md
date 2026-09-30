@@ -20,6 +20,20 @@ It is a reproducible Staging reference, not a managed SaaS platform. The reverse
 
 The committed Compose file does not include PostgreSQL. Staging must use a managed or separately operated PostgreSQL 16-compatible service.
 
+## US trial capability set
+
+Capabilities outside the stable core stay off until their switch is `true`. `env.production.example`, `.env.example` and `.env.local.example` define the US trial set, using the environment names that `server/domain/capability-registry.mjs` reads:
+
+| Switch | Capabilities it enables |
+| --- | --- |
+| `FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING` | `receiving-posting`, `receiving-reversal` |
+| `FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING` | `sales-order-lifecycle`, `sales-reservation`, `sales-shipment-draft`, `sales-shipment-posting`, `sales-shipment-reversal` |
+| `FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS` | `stock-transfer`, `cycle-count`, `inventory-adjustment-document` |
+| `FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE` | `finance` (main navigation entry), `supplier-invoice`, `three-way-match`, `payable-obligation`, `supplier-credit-memo`, `customer-invoice`, `receivable-obligation`, `customer-credit-note` |
+| `FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS` | `mobile-operations`: mobile tasks, PO approval and receiving, plus attachment evidence. In database mode this is the only path that approves a PO or creates a receipt. |
+
+Operational finance records invoices, matching, payables and receivables; it does not execute payments, collections, refunds, FX, tax filing or general-ledger postings. Returns and quarantine, internal settlement, settlement workflow, bank reconciliation, Mobile Sync and Universal Intake stay off in the trial. When a capability is off, its navigation entry and in-page links are hidden; a direct link still shows "Capability unavailable". `server/domain/us-trial-capabilities.test.mjs` keeps the three example files and the registry in step.
+
 ## Release order
 
 Run from this directory:

@@ -23,6 +23,7 @@ import {
   TrendingUp,
   Upload,
   Users,
+  Wallet,
 } from "lucide-react";
 
 export type { AppRouteDefinition } from "./routes/index.ts";
@@ -2372,6 +2373,7 @@ const primaryNavIcons: Record<string, React.ElementType> = {
   sales: ClipboardList,
   "master-data:suppliers": Users,
   "master-data:items": Database,
+  finance: Wallet,
   reports: FileSpreadsheet,
   "universal-intake": FileSpreadsheet,
   "review-actions": FileCheck2,

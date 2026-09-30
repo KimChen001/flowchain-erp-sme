@@ -2,7 +2,7 @@ import { operationsEnglish } from "./operationsCopy";
 // Display labels only. Never apply this mapping to stored business values.
 const english: Record<string, string> = {
   '工作区管理员': 'Workspace administrator', '供应链经理': 'Supply Chain Manager', '只读用户': 'Read-only User', '业务专员': 'Business Specialist', '采购员': 'Buyer', '未知角色': 'Unknown role', '正在加载基础资料…': 'Loading master data…', '基础资料加载失败': 'Could not load master data', '重新加载': 'Reload',
-  '今日': 'Today', '采购': 'Purchasing', '采购履约': 'Purchase fulfillment', '库存': 'Inventory', '销售': 'Sales', '供应商': 'Suppliers', '物料': 'Items', '报表': 'Reports', '数据接入': 'Data intake', '复核队列': 'Review queue',
+  '今日': 'Today', '采购': 'Purchasing', '采购履约': 'Purchase fulfillment', '库存': 'Inventory', '销售': 'Sales', '供应商': 'Suppliers', '物料': 'Items', '报表': 'Reports', '财务': 'Finance', '数据接入': 'Data intake', '复核队列': 'Review queue',
   '商品资料 / 物料资料': 'Item master', '商品資料 / 物料資料': 'Item master', '物料资料': 'Items', '供应商资料': 'Suppliers', '仓库 / 库位': 'Warehouses / locations', '客户资料': 'Customers',
   '搜索基础资料': 'Search master data', '导出当前结果': 'Export results', '旧导入已停用': 'Legacy import retired',
   '物料 ID': 'Item ID', 'SKU 编码': 'SKU code', '物料名称': 'Item name', '简称': 'Short name', '物料类型': 'Item type', '分类': 'Category', '品牌': 'Brand', '规格型号': 'Specification', '基本单位': 'Base unit', '采购单位': 'Purchase unit', '默认仓库': 'Default warehouse', '税码': 'Tax code', '安全库存': 'Safety stock', '再订货点': 'Reorder point', '最小订购量': 'Minimum order quantity', '采购提前期（天）': 'Purchase lead time (days)', '条码': 'Barcode', '制造商料号': 'Manufacturer part number', '管理备注': 'Notes',
