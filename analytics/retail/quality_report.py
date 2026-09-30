@@ -384,7 +384,8 @@ def main(argv: list[str] | None = None) -> int:
       f"{st['pre_cleaning_counts_w_mon']['codes_ge_80']} codes sold in ≥ 80 of them and "
       f"{st['pre_cleaning_counts_w_mon']['codes_ge_52']} in ≥ 52. The small differences come from merging case variants, "
       "removing voids and dropping the partial weeks.")
-    a("- **ABC class** by training revenue within the panel: A = first 80% of cumulative revenue, B = next 15%, C = rest.")
+    a("- **ABC class** by training revenue within the panel: A = first 80% of cumulative revenue, B = next 15%, C = rest. "
+      "Revenue is in GBP (£), the currency of the data.")
     a("")
     a(md_table(abc, {"revenue": "£{:,.0f}", "units": "{:,}", "revenue share": "{:.1%}", "median_zero_share": "{:.1%}",
                      "median_cv2": "{:.2f}"}))

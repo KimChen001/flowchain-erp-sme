@@ -52,7 +52,7 @@ LABEL = {"naive": "naive", "ma4": "4-wk mean", "snaive": "seasonal naive", "sba"
 
 
 def money(v):
-    return f"£{v:,.0f}"
+    return f"−£{abs(v):,.0f}" if v < 0 else f"£{v:,.0f}"
 
 
 def main(argv=None) -> int:
@@ -80,6 +80,18 @@ def main(argv=None) -> int:
     base = sc[sc.scenario == "base"].set_index("policy")
     rel = sc[sc.scenario == "reliable supplier (low-CV tier)"].set_index("policy")
     unr = sc[sc.scenario == "unreliable supplier (high-CV tier)"].set_index("policy")
+    relm = sc[sc.scenario == "reliable supplier, median = 4 wk"].set_index("policy")
+    unrm = sc[sc.scenario == "unreliable supplier, median = 4 wk"].set_index("policy")
+    main4 = base.loc[["a", "b", "c", "d0.6", "d0.8", "d1.0"]]
+    best4 = main4.total_cost.idxmin()
+    refs = base.loc[["p50", "p70", "p80", "p90"]]
+    best_ref = refs.total_cost.idxmin()
+    m_rows = {m: sc[(sc.scenario == n) & sc.policy.isin(main4.index)].set_index("policy").total_cost
+              for n, m in (("markdown m = 0", 0.0), ("markdown m = 0.15", 0.15), ("base", 0.3), ("markdown m = 0.5", 0.5))}
+
+    def tc(p, d=base):
+        r = d.loc[p]
+        return f"{money(r.total_cost)} ({money(r.total_cost_lo)}–{money(r.total_cost_hi)})"
     lt, chk, cal, tail, nar = rep["lead_time"], rep["checks"], rep["calibration"], rep["tail"], rep["narrow_pool"]
     best_roll = roll.pivot_table(index="run", columns="model", values="WAPE").idxmin(axis=1)
     wins = int((best_roll == w).sum())
@@ -101,9 +113,8 @@ def main(argv=None) -> int:
         "1b": ("replenishment-results.md §5, §9",
                f"FlowChain's current rule (b) serves {base.loc['b', 'fill_rate']:.1%} of demand in the autumn test "
                f"weeks and loses {money(base.loc['b', 'lost_margin'])} of margin on {rep['n_skus']} SKUs in 13 weeks. "
-               f"The service-level policy (c) serves {base.loc['c', 'fill_rate']:.1%}, and the budgeted policy "
-               f"(0.6 × (c)) serves {base.loc['d0.6', 'fill_rate']:.1%} at total cost "
-               f"{money(base.loc['d0.6', 'total_cost'])} vs {money(base.loc['b', 'total_cost'])}.",
+               f"The cheapest of the four policies, {best4}, costs {tc(best4)} against {tc('b')} for (b), with fill "
+               f"{base.loc[best4, 'fill_rate']:.1%} (all GBP, including a terminal markdown).",
                "figures/replenishment-service-inventory.png",
                "Costs are assumptions (cost = 0.5 × price, holding 25%/yr, stockout = lost margin)."),
         "1c": ("README (repo)",
@@ -177,28 +188,41 @@ def main(argv=None) -> int:
                "purchase-request step on the inventory page.", "–",
                "**[PLACEHOLDER: combined decision story, retail demand forecast → requirement quantities → supplier allocation]**"),
         "5b": ("replenishment-results.md §2–4",
-               f"Lost-sales periodic review, R = 4, L lognormal (ASSUMED mean 2/4/8 weeks; SCMS direct-drop CV "
-               f"{lt['cv_all']:.3f} from {lt['rows']:,} lines; tiers {lt['cv_low_tier']:.3f} / {lt['cv_high_tier']:.3f}). "
-               "Policies: (a) (L+R) × 4-wk mean; (b) FlowChain ROP rule; (c) critical-ratio quantile of simulated "
-               "demand over L+R; (d) multiple-choice knapsack MILP (scipy/HiGHS) over {P50…P98} under a "
-               "working-capital budget of 0.6/0.8/1.0 × (c).", "–", "–"),
+               f"Lost-sales periodic review, R = 4 weeks, over the 13 test weeks. All policies start from the same "
+               f"stock, the (a) level at the test origin. L is lognormal (ASSUMED mean 2/4/8 weeks) with SCMS "
+               f"direct-drop CV {lt['cv_all']:.3f} ({lt['rows']:,} lines; tiers {lt['cv_low_tier']:.3f} / "
+               f"{lt['cv_high_tier']:.3f}). Total cost = holding + lost margin + terminal markdown m × cost × "
+               "(on hand + on order) after week 13 (ASSUMED m = 0.3). Policies: (a) (L+R) × 4-wk mean; (b) FlowChain ROP "
+               "rule; (c) critical-ratio quantile of simulated demand over L+R, where the final-cycle overage adds "
+               "m × cost (multi-period newsvendor); (d) multiple-choice knapsack MILP (scipy/HiGHS) over {P50…P98} "
+               "under a working-capital budget of 0.6/0.8/1.0 × (c).", "–", "–"),
         "5c": ("replenishment-results.md §5–9",
-               f"Base total cost (13 wk): (a) {money(base.loc['a', 'total_cost'])}, (b) {money(base.loc['b', 'total_cost'])}, "
-               f"(c) {money(base.loc['c', 'total_cost'])}, (d 0.6) {money(base.loc['d0.6', 'total_cost'])}; fill "
-               f"{base.loc['a', 'fill_rate']:.1%} / {base.loc['b', 'fill_rate']:.1%} / {base.loc['c', 'fill_rate']:.1%} / "
-               f"{base.loc['d0.6', 'fill_rate']:.1%}. Sanity: CR 0.5 = P50 (fill {chk['c_cr05_fill']:.1%} both); budget "
-               f"monotone {chk['budget_monotone']}; CV 0 lowers safety stock ({money(chk['ss_value_zero_cv'])} vs "
-               f"{money(chk['ss_value_base'])}); MILP optimal (gap {chk['milp_max_gap']:.0e}). (c) holds "
-               f"{base.loc['c', 'weeks_of_supply']:.0f} weeks of supply, so it over-buys.",
-               "figures/replenishment-service-inventory.png; figures/replenishment-budget.png",
-               "Start stock = each policy's own level; leftover stock not valued; costs assumed."),
+               f"Base total cost, GBP, 13 wk (95% CI): (a) {tc('a')}, (b) {tc('b')}, (c) {tc('c')}, (d 0.6) {tc('d0.6')}; "
+               f"fill {base.loc['a', 'fill_rate']:.1%} / {base.loc['b', 'fill_rate']:.1%} / {base.loc['c', 'fill_rate']:.1%} / "
+               f"{base.loc['d0.6', 'fill_rate']:.1%}. Cheapest of (a)–(d): {best4}. The fixed {best_ref.upper()} reference "
+               f"costs {tc(best_ref)}. (c) ends with {base.loc['c', 'end_weeks_of_supply']:.0f} weeks of forward P50 "
+               f"demand in stock and on order vs {base.loc['b', 'end_weeks_of_supply']:.0f} for (b), so it over-buys once "
+               "the season end is priced. Cheapest of (a)–(d) by markdown m: "
+               + "; ".join(f"m = {m}: {v.idxmin()}" for m, v in m_rows.items())
+               + f". Sanity: CR 0.5 = P50 (fill {chk['c_cr05_fill']:.1%} both); budget monotone {chk['budget_monotone']}; "
+               f"CV 0 lowers safety stock ({money(chk['ss_value_zero_cv'])} vs {money(chk['ss_value_base'])}); MILP "
+               f"optimal (gap {chk['milp_max_gap']:.0e}).",
+               "figures/replenishment-service-inventory.png; figures/replenishment-markdown.png; "
+               "figures/replenishment-budget.png",
+               "Common start stands in for unknown actual stock; markdown rate and costs are assumptions (bracketed "
+               "by m = 0–0.5 and a no-assumption excess measure)."),
         "5d": ("replenishment-results.md §7, §9–10",
-               f"Supplier reliability → cost: (c) total {money(unr.loc['c', 'total_cost'])} with the high-CV tier vs "
-               f"{money(rel.loc['c', 'total_cost'])} with the low-CV tier; safety stock value "
-               f"{money(rep['safety_stock_value_c']['unreliable supplier (high-CV tier)'])} vs "
-               f"{money(rep['safety_stock_value_c']['reliable supplier (low-CV tier)'])}. "
-               f"Rule (b) ignores variability. A narrow (non-autumn) residual pool gives weekly P90 coverage "
-               f"{nar['weekly_p90_coverage']:.1%} and cuts (c)'s cycle service to {nar['c_csl']:.1%}.",
+               f"Supplier reliability → cost at median L = 4 wk (clean contrast): unreliable vs reliable tier changes total "
+               f"cost by (b) {money(unrm.loc['b', 'total_cost'] - relm.loc['b', 'total_cost'])}, (c) "
+               f"{money(unrm.loc['c', 'total_cost'] - relm.loc['c', 'total_cost'])}, (d 0.8) "
+               f"{money(unrm.loc['d0.8', 'total_cost'] - relm.loc['d0.8', 'total_cost'])}; (c) safety stock "
+               f"{money(rep['safety_stock_value_c']['reliable supplier, median = 4 wk'])} → "
+               f"{money(rep['safety_stock_value_c']['unreliable supplier, median = 4 wk'])}. At mean L = 4 wk (b) moves by "
+               f"{money(unr.loc['b', 'total_cost'] - rel.loc['b', 'total_cost'])}, a shape artefact (median 2 vs 4 wk); "
+               "at a fixed median (b) still gains because its targets scale with E[L]. "
+               f"A working-capital cap beats the unconstrained service level on realised cost. A narrow (non-autumn) "
+               f"residual pool gives weekly P90 coverage {nar['weekly_p90_coverage']:.1%} and (c) cycle service "
+               f"{nar['c_csl']:.1%}, against a plan of about {nar['cr_by_review'][0]:.1%}.",
                "figures/replenishment-supplier-reliability.png",
                "Mean L is assumed; only its variability comes from SCMS. **[PLACEHOLDER: combined decision story]**"),
         "6a": ("replenishment-results.md §10; decision-inputs.md",
@@ -209,8 +233,9 @@ def main(argv=None) -> int:
         "6b": ("demand-forecast.md §9; replenishment-results.md §10",
                f"Re-estimate after a second autumn; model censored demand from stock records; forecast bulk orders "
                f"separately; cover the excluded tail ({tail['tail_skus']:,} SKUs, {tail['tail_revenue_share']:.1%} of "
-               "training revenue, mostly intermittent/lumpy) with Croston/SBA and a separate policy; value "
-               "end-of-season stock (markdown) in the decision.", "–", "–"),
+               "training revenue, mostly intermittent/lumpy) with Croston/SBA and a separate policy; estimate the "
+               "markdown rate from real clearance sales; add the season end to the multi-period policy (dynamic "
+               "programme or rolling horizon) instead of a final-cycle correction.", "–", "–"),
     }
 
     L = ["# Report outline: rubric to evidence map (retail)", "",
@@ -218,11 +243,12 @@ def main(argv=None) -> int:
          "Rubric questions are quoted verbatim. This file covers the retail demand-forecasting and replenishment "
          "analysis (UCI Online Retail II). The SCMS supplier analysis has its own outline (`analytics/scms/`), and the "
          "combined decision story is marked as a placeholder.", "",
+         "All money is in GBP (£), the currency of the data; nothing is converted.", "",
          f"Headline numbers: {pnl['n_skus']} SKUs × {wk['n_weeks']} weeks. Test WAPE GBM {ci('gbm', 'WAPE')} vs "
-         f"4-week mean {ci('ma4', 'WAPE')}; P90 coverage {qm.coverage90:.1%}. Replenishment (13 test weeks, base "
-         f"assumptions): FlowChain rule fill {base.loc['b', 'fill_rate']:.1%}, total {money(base.loc['b', 'total_cost'])}; "
-         f"budgeted service-level policy fill {base.loc['d0.6', 'fill_rate']:.1%}, total "
-         f"{money(base.loc['d0.6', 'total_cost'])}.", ""]
+         f"4-week mean {ci('ma4', 'WAPE')}; P90 coverage {qm.coverage90:.1%}. Replenishment (13 test weeks, common "
+         f"start, markdown m = 0.3): FlowChain rule fill {base.loc['b', 'fill_rate']:.1%}, total {tc('b')}; cheapest "
+         f"of the four policies {best4}: fill {base.loc[best4, 'fill_rate']:.1%}, total {tc(best4)}; fixed "
+         f"{best_ref.upper()} reference {tc(best_ref)}.", ""]
     for num, title, qs in RUBRIC:
         L += [f"## {num}. {title}.", "",
               "| # | rubric question | where | key numbers (retail) | figure | gap / placeholder |",
@@ -240,7 +266,8 @@ def main(argv=None) -> int:
           "them with FlowChain customer values.",
           f"- The panel excludes {tail['tail_skus']:,} intermittent/lumpy SKUs ({tail['tail_revenue_share']:.1%} of "
           "revenue); they need their own forecast and policy.",
-          "- The backtest covers one autumn; leftover stock at the end of the window is not valued (markdown risk)."]
+          "- The backtest covers one autumn. The terminal markdown rate (m = 0.3) is an assumption; m = 0–0.5 and "
+          "the no-assumption excess measure bracket it."]
     (out / "report-outline-retail.md").write_text("\n".join(L) + "\n", encoding="utf-8")
     print(f"Wrote {out / 'report-outline-retail.md'}")
     return 0

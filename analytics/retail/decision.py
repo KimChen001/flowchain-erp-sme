@@ -621,31 +621,50 @@ def tail_numbers(paths, skus) -> dict:
 def figures(paths, summary, s_base, checks):
     import matplotlib.pyplot as plt
     figs = paths.figures_dir
-    pols = ["a", "b", "c", "d0.6", "d0.8", "d1.0"]
-    fig, ax = plt.subplots(figsize=(7.5, 4))
-    for k, p in enumerate(pols):
-        r = s_base.loc[p]
-        ax.scatter(r.avg_inv_value / 1e3, r.fill_rate, s=44 if p in ("a", "c") else 36, color=P.SERIES[k], zorder=3,
-                   marker="o" if p in ("a", "c", "d0.6") else "s", edgecolor=P.SURFACE, linewidth=1.5,
-                   label=POLICY_LABELS[p])
-    ax.legend(loc="lower right", fontsize=7)
-    ax.set_xlabel("average inventory value (£ thousand, cost basis)")
+    pols = ["a", "b", "c", "d0.6", "d0.8", "d1.0", "p50", "p70", "p90"]
+    short = {"a": "(a)", "b": "(b)", "c": "(c)", "d0.6": "(d) 0.6", "d0.8": "(d) 0.8", "d1.0": "(d) 1.0",
+             "p50": "P50", "p70": "P70", "p90": "P90"}
+    colors = {"a": P.SERIES[0], "b": P.SERIES[1], "c": P.SERIES[2], "d0.6": P.SERIES[3], "d0.8": P.SERIES[3],
+              "d1.0": P.SERIES[3], "p50": P.MUTED, "p70": P.MUTED, "p90": P.MUTED}
+    fig, ax = plt.subplots(figsize=(8, 4.4))
+    pts = sorted(((s_base.loc[p, "total_cost"] / 1e3, s_base.loc[p, "fill_rate"], p) for p in pols))
+    for k, (x, y, p) in enumerate(pts):
+        ax.scatter(x, y, s=46, color=colors[p], zorder=3, edgecolor=P.SURFACE, linewidth=1.5,
+                   marker="s" if p.startswith("d") else ("D" if p.startswith("p") else "o"))
+        dy = 14 if k % 2 == 0 else -18          # alternate labels above/below so close points stay readable
+        ax.annotate(short[p], (x, y), textcoords="offset points", xytext=(0, dy), ha="center", fontsize=8,
+                    color=P.TEXT2, arrowprops=dict(arrowstyle="-", color=P.GRID, lw=0.8))
+    ax.set_xlabel("total cost, GBP thousand (holding + lost margin + terminal markdown, 13 weeks)")
     ax.set_ylabel("fill rate (units served / demand)")
     ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1.0))
-    ax.set_title("Base case: service vs inventory by policy (13 test weeks)")
+    ax.set_title("Base case: service vs total cost by policy (common start, m = 0.3)")
+    handles = [plt.Line2D([], [], marker=m, ls="", color=c, label=l) for m, c, l in (
+        ("o", P.SERIES[0], "(a) rule of thumb"), ("o", P.SERIES[1], "(b) FlowChain rule"),
+        ("o", P.SERIES[2], "(c) critical-ratio quantile"), ("s", P.SERIES[3], "(d) budgeted MILP, B/(c) = 0.6 / 0.8 / 1.0"),
+        ("D", P.MUTED, "fixed-quantile references"))]
+    ax.legend(handles=handles, loc="lower right", fontsize=7)
     P.save(fig, figs / "replenishment-service-inventory.png")
 
-    fig, ax = plt.subplots(figsize=(7.5, 3.6))
-    sc = ["reliable supplier (low-CV tier)", "base", "unreliable supplier (high-CV tier)"]
-    x = np.arange(len(sc))
-    for k, p in enumerate(["b", "c", "d0.8"]):
-        vals = [summary[(summary.scenario == s) & (summary.policy == p)].total_cost.iloc[0] / 1e3 for s in sc]
-        ax.bar(x + (k - 1) * 0.26, vals, width=0.24, color=P.SERIES[k], label=POLICY_LABELS[p][:60])
-    ax.set_xticks(x, ["reliable (low CV)", "SCMS all direct drop", "unreliable (high CV)"])
-    ax.set_ylabel("total cost, £ thousand (13 weeks)")
-    ax.set_title("Supplier reliability: holding + lost margin, mean L = 4 weeks")
-    ax.legend(fontsize=7)
-    P.save(fig, figs / "replenishment-supplier-reliability.png")
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.8), sharey=True)
+    versions = (("mean-matched (mean L = 4 wk)", "reliable supplier (low-CV tier)", "unreliable supplier (high-CV tier)"),
+                ("median-matched (median L = 4 wk)", "reliable supplier, median = 4 wk",
+                 "unreliable supplier, median = 4 wk"))
+    for ax, (title, rn, un) in zip(axes, versions):
+        x = np.arange(2)
+        for k, p in enumerate(["b", "c", "d0.8"]):
+            vals = [summary[(summary.scenario == sn) & (summary.policy == p)].total_cost.iloc[0] / 1e3 for sn in (rn, un)]
+            ax.bar(x + (k - 1) * 0.26, vals, width=0.24, color=P.SERIES[k + 1],
+                   label={"b": "(b) FlowChain rule", "c": "(c) critical-ratio quantile",
+                          "d0.8": "(d) budgeted MILP, B = 0.8 x (c)"}[p])
+        ax.set_xticks(x, ["reliable (low CV)", "unreliable (high CV)"])
+        ax.set_title(title, fontsize=10)
+    axes[0].set_ylabel("total cost, GBP thousand (13 weeks)")
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=3, fontsize=8, frameon=False)
+    fig.suptitle("Supplier reliability and total cost", x=0.02, ha="left", fontsize=11, fontweight="bold")
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    fig.savefig(figs / "replenishment-supplier-reliability.png", dpi=150)
+    plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6.5, 3.4))
     f = checks["budget_factors"]
@@ -654,10 +673,21 @@ def figures(paths, summary, s_base, checks):
     for b, xi, yi in zip(f, inv, checks["budget_fill"]):
         ax.annotate(f"B = {b} x (c)", (xi, yi), textcoords="offset points", xytext=(5, -10), fontsize=7, color=P.TEXT2)
     ax.yaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1.0))
-    ax.set_xlabel("realised average inventory value (£ thousand)")
+    ax.set_xlabel("realised average inventory value (GBP thousand)")
     ax.set_ylabel("fill rate")
     ax.set_title("Budgeted policy (d): fill rate vs budget")
     P.save(fig, figs / "replenishment-budget.png")
+
+    fig, ax = plt.subplots(figsize=(6.8, 3.6))
+    ms = [("markdown m = 0", 0.0), ("markdown m = 0.15", 0.15), ("base", BASE["markdown"]), ("markdown m = 0.5", 0.5)]
+    for k, p in enumerate(["a", "b", "c", "d0.6"]):
+        ys = [summary[(summary.scenario == sn) & (summary.policy == p)].total_cost.iloc[0] / 1e3 for sn, _ in ms]
+        ax.plot([m for _, m in ms], ys, marker="o", color=P.SERIES[k], label=POLICY_LABELS[p][:48])
+    ax.set_xlabel("terminal markdown m (share of unit cost lost on stock left after week 13)")
+    ax.set_ylabel("total cost, GBP thousand")
+    ax.set_title("Total cost vs terminal markdown")
+    ax.legend(fontsize=7, loc="upper left")
+    P.save(fig, figs / "replenishment-markdown.png")
 
 
 def fmt_money(v):
@@ -672,8 +702,8 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     tail = key["tail"]
     a("# Replenishment policy backtest (retail half, rubric section 5)")
     a("")
-    a("All numbers are computed by `analytics/retail/decision.py`. Money is in **GBP (£)**, the currency of the "
-      "Online Retail II data, and valued at the assumed unit cost. The seed is fixed.")
+    a("All numbers are computed by `analytics/retail/decision.py`. **All money is in GBP (£)**, the currency of "
+      "the Online Retail II data, valued at the assumed unit cost and not converted. The seed is fixed.")
     a("")
     a("## 1. The decision and who acts on it")
     a("")
@@ -768,7 +798,7 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
       "`demand-paths-forward.csv.gz` (origin = the last full week). Each has one row per SKU × path, weekly "
       "simulated units w01–w26.")
     a("")
-    a("## 5. Results, base case (mean L = 4 weeks, SCMS CV)")
+    a("## 5. Results, base case (mean L = 4 weeks, SCMS CV, common start, m = 0.3; money in GBP)")
     a("")
     a("| Policy | fill rate [95% CI] | cycle service [CI] | lost units | lost margin | avg inventory value [CI] | "
       "weeks of supply | holding | terminal markdown | **total cost [95% CI]** | Δ total vs (b) [paired CI] | orders | "
@@ -799,7 +829,7 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
         a(f"| {POLICY_LABELS[p]} | {fmt_money(r.excess_value)} | {fmt_money(r.alt_total)} "
           f"[{fmt_money(r.alt_total_lo)}, {fmt_money(r.alt_total_hi)}] | {r.end_weeks_of_supply:.1f} |")
     a("")
-    a("![service vs inventory](figures/replenishment-service-inventory.png)")
+    a("![service vs total cost](figures/replenishment-service-inventory.png)")
     a("")
     a("**By ABC class** (fill rate / average inventory value / total cost):")
     a("")
@@ -841,7 +871,7 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
     sc_names = ["reliable supplier (low-CV tier)", "base", "unreliable supplier (high-CV tier)",
                 "reliable supplier, median = 4 wk", "unreliable supplier, median = 4 wk",
                 "no lead-time variability", "L=2", "L=8"]
-    a("| Scenario | CV of L | E[L] | median L | policy | fill rate | avg inventory value | total cost |")
+    a("| Scenario | CV of L | E[L] | median L | policy | fill rate | avg inventory value (GBP) | total cost (GBP) |")
     a("|---|---|---|---|---|---|---|---|")
     for s in sc_names:
         for p in ("b", "c", "d0.8"):
@@ -850,8 +880,6 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
               f"{fmt_money(r.avg_inv_value)} | "
               f"{fmt_money(r.total_cost)} |")
     a("")
-    rel = summary[(summary.scenario == "reliable supplier (low-CV tier)")].set_index("policy")
-    unr = summary[(summary.scenario == "unreliable supplier (high-CV tier)")].set_index("policy")
     a("Two versions of the contrast, because a lognormal cannot hold both the mean and the median fixed while "
       "its dispersion changes: **mean-matched** (mean 4 weeks for both tiers; the high-CV tier then has a much lower "
       "median) and **median-matched** (median 4 weeks for both; the high-CV tier then has a higher mean, i.e. a "
@@ -885,16 +913,25 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
           f"({fmt_money(mu['safety_stock_value_c'] - mr['safety_stock_value_c'])}). Median L is "
           f"{mr['median_L']:.0f} vs {mu['median_L']:.0f} weeks, and E[L] {mr['EL']:.2f} vs {mu['EL']:.2f}.")
         a("")
+    rm_, um_ = (summary[summary.scenario == x].set_index("policy")
+                for x in ("reliable supplier, median = 4 wk", "unreliable supplier, median = 4 wk"))
+    b_med = um_.loc["b", "total_cost"] - rm_.loc["b", "total_cost"]
+    c_med = um_.loc["c", "total_cost"] - rm_.loc["c", "total_cost"]
+    em_r, em_u = metas["reliable supplier, median = 4 wk"]["EL"], metas["unreliable supplier, median = 4 wk"]["EL"]
     a("How to read it: in the mean-matched version the high-CV tier has a shorter median lead time, so most "
-      "orders arrive early. A rule that ignores variability can then look no worse, or even better, with the "
-      "unreliable supplier, which is an artefact of the shape rather than a benefit of unreliability. The "
-      "median-matched version removes that artefact: typical orders take the same 4 weeks, and the unreliable "
-      "tier only adds late orders. The difference between the tiers in that version is the cost of lead-time "
-      "unreliability that the SCMS scorecard measures (part 2).")
+      "orders arrive early, and a rule that ignores variability can look better with the unreliable supplier. "
+      "The median-matched version removes that shape effect: typical orders take the same 4 weeks and the "
+      f"unreliable tier only adds late orders. There, the policies that price variability cost more with the "
+      f"unreliable supplier ((c) {'+' if c_med >= 0 else '−'}{fmt_money(abs(c_med))}), which is the cost of "
+      "lead-time unreliability that the SCMS scorecard measures (part 2). "
+      + (f"Rule (b) still moves by {'−' if b_med < 0 else '+'}{fmt_money(abs(b_med))}. Its targets scale with E[L] "
+         f"({em_u:.1f} vs {em_r:.1f} weeks), so the unreliable tier makes this under-stocked rule hold more stock "
+         "and lose fewer sales. That comes from the rule's larger target, not from unreliability being useful."
+         if b_med < 0 else f"Rule (b) also costs more ({fmt_money(b_med)})."))
     a("")
     a("![supplier reliability](figures/replenishment-supplier-reliability.png)")
     a("")
-    a("## 8. Cost sensitivity (mean L = 4, SCMS CV)")
+    a("## 8. Sensitivity (mean L = 4, SCMS CV, common start; totals in GBP)")
     a("")
     a("| Scenario | median CR | (a) total | (b) total | (c) total | (d, 0.8) total | (c) fill | cheapest policy |")
     a("|---|---|---|---|---|---|---|---|")
@@ -907,6 +944,8 @@ def write_report(paths, lt, key, summary, s_base, abc_tab, checks, metas, cal_wi
           f"{fmt_money(d.loc['d0.8', 'total_cost'])} | {d.loc['c', 'fill_rate']:.1%} | {main.total_cost.idxmin()} |")
     a("")
     a("### Terminal markdown m")
+    a("")
+    a("![markdown](figures/replenishment-markdown.png)")
     a("")
     a("(c) and (d) re-plan for each m (the final-cycle overage cost changes); (a) and (b) do not use m.")
     a("")
@@ -976,7 +1015,7 @@ def write_discussion(a, lt, key, summary, s_base, metas, checks, tail):
       + ("so less protection than (c) does not pay." if p50.total_cost > c.total_cost else
          ("so a lower quantile beats (c)" + (" and every policy (a)–(d) here." if p50.total_cost < main.total_cost.min()
                                               else " here."))))
-    a(f"- **Why (a) and (b) lose.** They set stock from recent averages, with no term for the autumn ramp or for "
+    a(f"- **Why (a) and (b) fall short on service.** They set stock from recent averages, with no term for the autumn ramp or for "
       f"lead-time variability, so they run short when demand rises. A lost unit costs the whole margin "
       f"({1 - BASE['cost_ratio']:.0%} of price) and a week of holding {BASE['holding'] / 52 * BASE['cost_ratio']:.2%} of "
       f"price, so lost margin dominates their cost ({fmt_money(b.lost_margin)} of {fmt_money(b.total_cost)} for (b)).")

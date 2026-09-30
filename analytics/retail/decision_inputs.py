@@ -124,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
     a("")
     a(f"Point forecasts come from **{winner}** trained on **{variant}** history; P50/P90 come from **{qmethod}**. "
       "The choices and their evidence are in `demand-forecast.md`. Everything here is aggregated per SKU and week, "
-      "with no invoice lines.")
+      "with no invoice lines. All money is in GBP (£), the currency of the data; nothing is converted.")
     a("")
     a("## The decision these inputs feed")
     a("")
