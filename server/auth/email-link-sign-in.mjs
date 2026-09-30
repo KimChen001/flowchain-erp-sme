@@ -58,6 +58,30 @@ export function signInLinkBaseUrl(env, req) {
     || "http://localhost";
 }
 
+// Creates a single-use link for a user and invalidates their earlier unused
+// ones. Returns the raw token, which only the email (or a test harness that
+// stands in for the mailbox) ever sees.
+export async function issueSignInLink(tx, { tenantId, userId, client = {}, at = new Date() }) {
+  const invalidated = await tx.workspaceSignInLink.updateMany({
+    where: { tenantId, userId, consumedAt: null, invalidatedAt: null },
+    data: { invalidatedAt: at },
+  });
+  const token = randomBytes(32).toString("base64url");
+  const link = await tx.workspaceSignInLink.create({
+    data: {
+      id: randomUUID(),
+      tenantId,
+      userId,
+      tokenHash: sha256Hex(token),
+      createdAt: at,
+      expiresAt: new Date(at.getTime() + SIGN_IN_LINK_TTL_MS),
+      requestIp: client.ipAddress || null,
+      requestUserAgent: client.userAgent || null,
+    },
+  });
+  return { token, link, invalidated };
+}
+
 const linkAudit = ({ tenantId, actorId, action, entityType, entityId, summary, metadata }) => ({
   id: randomUUID(),
   tenantId,
@@ -118,23 +142,7 @@ export function createEmailLinkService({
       const user = await tx.user.findFirst({ where: { tenantId, email }, include: { tenant: true } });
       if (!user || user.status !== "active") return { outcome: "ignored" };
 
-      const invalidated = await tx.workspaceSignInLink.updateMany({
-        where: { tenantId, userId: user.id, consumedAt: null, invalidatedAt: null },
-        data: { invalidatedAt: at },
-      });
-      const token = randomBytes(32).toString("base64url");
-      const link = await tx.workspaceSignInLink.create({
-        data: {
-          id: randomUUID(),
-          tenantId,
-          userId: user.id,
-          tokenHash: sha256Hex(token),
-          createdAt: at,
-          expiresAt: new Date(at.getTime() + SIGN_IN_LINK_TTL_MS),
-          requestIp: client.ipAddress || null,
-          requestUserAgent: client.userAgent || null,
-        },
-      });
+      const { token, link, invalidated } = await issueSignInLink(tx, { tenantId, userId: user.id, client, at });
       await tx.auditLog.create({ data: linkAudit({
         tenantId,
         actorId: user.id,

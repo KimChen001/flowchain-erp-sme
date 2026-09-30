@@ -83,8 +83,9 @@ function appEnvironmentArgs() {
     "-e", "FLOWCHAIN_UPLOAD_STORAGE_DIR=/var/lib/flowchain/uploads",
     "-e", "FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP=false",
     "-e", "FLOWCHAIN_ENABLE_DB_MOBILE_SYNC=false",
-    // Production refuses to start without a mail provider. The smoke never
-    // requests a sign-in link, so this token is never used.
+    // Production refuses to start without a mail provider. The smoke signs in
+    // with a link it seeds itself and asks for a link only for an unknown
+    // address, which sends nothing, so this token is never used.
     "-e", "FLOWCHAIN_MAIL_PROVIDER=postmark",
     "-e", `POSTMARK_SERVER_TOKEN=container-smoke-never-sends-${suffix}`,
     "-e", "FLOWCHAIN_MAIL_FROM=FlowChain <sign-in@flowchain.test>",
@@ -92,8 +93,11 @@ function appEnvironmentArgs() {
   ];
 }
 
+// The seed also issues one sign-in link, standing in for the mailbox, and
+// prints its token; production has no email-only sign-in.
 const seedSource = `
 import { createPrismaClient } from "./server/persistence/prisma-client.mjs";
+import { issueSignInLink } from "./server/auth/email-link-sign-in.mjs";
 const prisma = await createPrismaClient(process.env);
 try {
   await prisma.tenant.create({ data: { id: ${JSON.stringify(tenantId)}, name: "Container Smoke Tenant" } });
@@ -120,6 +124,8 @@ try {
       },
     },
   });
+  const { token } = await prisma.$transaction((tx) => issueSignInLink(tx, { tenantId: ${JSON.stringify(tenantId)}, userId: ${JSON.stringify(userId)} }));
+  console.log("SIGN_IN_TOKEN=" + token);
 } finally {
   await prisma.$disconnect();
 }
@@ -143,7 +149,10 @@ try {
 
   console.log("[container-smoke] applying Prisma migrations as a separate release step");
   await runDocker(["run", "--rm", "--network", names.network, "-e", `DATABASE_URL=${databaseUrl}`, names.image, "npx", "prisma", "migrate", "deploy"]);
-  await runDocker(["run", "--rm", "-i", "--network", names.network, "-e", `DATABASE_URL=${databaseUrl}`, "-e", "FLOWCHAIN_PERSISTENCE_MODE=database", names.image, "node", "--input-type=module", "-"], { input: seedSource });
+  const seeded = await runDocker(["run", "--rm", "-i", "--network", names.network, "-e", `DATABASE_URL=${databaseUrl}`, "-e", "FLOWCHAIN_PERSISTENCE_MODE=database", names.image, "node", "--input-type=module", "-"], { input: seedSource });
+  const signInToken = seeded.stdout.match(/^SIGN_IN_TOKEN=([A-Za-z0-9_-]+)$/m)?.[1];
+  assert.ok(signInToken, "the seed issues a sign-in link");
+  redactions.push(signInToken);
 
   appPort = await freePort();
   await runDocker([
@@ -169,10 +178,22 @@ try {
   assert.equal(readiness.checks.tenant, "ready");
   assert.equal(readiness.checks.attachmentStorage, "ready");
 
-  const loginResponse = await fetch(`${base}/api/auth/login`, {
+  const directLogin = await fetch(`${base}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, name: "Container Smoke User", company: "Container Smoke Tenant" }),
+    body: JSON.stringify({ email }),
+  });
+  assert.equal(directLogin.status, 404, "production has no email-only sign-in");
+  const linkRequest = await fetch(`${base}/api/auth/email-link`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "not-provisioned@flowchain.invalid" }),
+  });
+  assert.equal(linkRequest.status, 202);
+  const loginResponse = await fetch(`${base}/api/auth/email-link/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: signInToken }),
   });
   assert.equal(loginResponse.status, 200);
   const login = await loginResponse.json();

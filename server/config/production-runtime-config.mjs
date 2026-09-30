@@ -22,6 +22,11 @@ function validateIdentityConfiguration(env, issues) {
   } else if (nodeEnv !== "production") {
     issues.push(issue("NODE_ENV", "production_required", "The production deployment profile requires NODE_ENV=production."));
   }
+  // Local development turns on the email-only sign-in and the local mail
+  // outbox helpers, so production refuses it.
+  if (enabled(env.FLOWCHAIN_DEV_LOCAL)) {
+    issues.push(issue("FLOWCHAIN_DEV_LOCAL", "local_development_forbidden", "Local development mode enables the email-only sign-in and must not be used in production."));
+  }
   if (enabled(env.FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS)) {
     issues.push(issue("FLOWCHAIN_ALLOW_TEST_IDENTITY_HEADERS", "test_identity_forbidden", "Test identity headers must be disabled in production."));
   }

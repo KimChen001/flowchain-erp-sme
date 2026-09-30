@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
-import { productionHarnessMailEnv } from "./test-support/production-harness.mjs";
+import { answerLegacySignInThroughEmailLink, productionHarnessMailEnv, productionHarnessMailer } from "./test-support/production-harness.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -333,7 +333,9 @@ try {
   prisma = await createPrismaClient(process.env);
   await seed();
   const { createScmServer } = await import("../server/scm-api.mjs");
-  server = createScmServer();
+  // Production mode refuses the email-only sign-in; the harness answers it
+  // through a real email-link confirm so the browser specs keep working.
+  server = answerLegacySignInThroughEmailLink(createScmServer({ mailer: productionHarnessMailer() }), { prisma, tenantId });
   server.listen(apiPort, "127.0.0.1", () =>
     console.log(`Returns browser API ready on ${apiPort}`),
   );

@@ -1,6 +1,7 @@
 import { issueLocalSessionToken } from "../domain/local-signed-session.mjs";
 import { publicSessionUser, requestClient, SESSION_TTL_SECONDS } from "../auth/workspace-sessions.mjs";
 import { EMAIL_LINK_ACCEPTED, SignInLinkInvalidError } from "../auth/email-link-sign-in.mjs";
+import { directEmailLoginEnabled } from "../domain/local-development-contract.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { readBody, send } from "../utils/http.mjs";
 import { roleLabel } from "../../shared/roles.mjs";
@@ -61,7 +62,13 @@ export async function handleSessionRoutes({
     return true;
   }
 
+  // Legacy email-only sign-in for local development and tests. Anywhere
+  // else the route does not exist; people sign in with email links.
   if (req.method === "POST" && url.pathname === "/api/auth/login") {
+    if (!directEmailLoginEnabled(env)) {
+      send(res, 404, { error: "Not found" });
+      return true;
+    }
     const body = await readBody(req);
     let profile;
     try {

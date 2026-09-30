@@ -101,8 +101,13 @@ test('business, settings and AI endpoints refuse anonymous requests on the real 
     assert.equal(expired.payload.code, 'INVALID_SESSION')
 
     assert.equal((await request(port, 'GET', '/api/health')).status, 200)
+    // Outside local development and tests the email-only sign-in does not
+    // exist; email-link confirm is reachable before sign-in.
     const login = await request(port, 'POST', '/api/auth/login', { body: {} })
-    assert.equal(login.status, 400)
+    assert.equal(login.status, 404)
+    const confirm = await request(port, 'POST', '/api/auth/email-link/confirm', { body: {} })
+    assert.equal(confirm.status, 400)
+    assert.equal(confirm.payload.code, 'SIGN_IN_LINK_INVALID')
     const accept = await request(port, 'POST', '/api/workspace/invitations/accept', { body: {} })
     assert.notEqual(accept.status, 401)
   })

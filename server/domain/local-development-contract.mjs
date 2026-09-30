@@ -27,3 +27,11 @@ export function assertLocalDevelopment(env = process.env, action = 'Local setup'
     throw new Error(`${action}: requires controlled local development or the explicit localhost PostgreSQL test harness.`)
   }
 }
+
+// The legacy email-only sign-in (POST /api/auth/login) signs in anyone who
+// types a provisioned address, so it exists only in controlled local
+// development and in test mode. Everywhere else people use email links.
+export function directEmailLoginEnabled(env = process.env) {
+  if (String(env.FLOWCHAIN_DEPLOYMENT_PROFILE || '').trim().toLowerCase() === 'production') return false
+  return localDevelopmentEnabled(env) || String(env.NODE_ENV || '').trim().toLowerCase() === 'test'
+}

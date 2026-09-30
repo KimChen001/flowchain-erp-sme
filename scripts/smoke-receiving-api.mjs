@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import EmbeddedPostgres from 'embedded-postgres'
 import { createPrismaClient } from '../server/persistence/prisma-client.mjs'
-import { productionHarnessMailEnv } from './test-support/production-harness.mjs'
+import { productionHarnessMailEnv, signInThroughEmailLink } from './test-support/production-harness.mjs'
 
 const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, '..')
@@ -56,8 +56,8 @@ async function request(base, path, { token, method = 'GET', body } = {}) {
   return payload
 }
 
-async function login(base) {
-  const result = await request(base, '/api/auth/login', { method: 'POST', body: { email, name: 'Receiving Smoke Manager', company: 'FlowChain Test' } })
+async function login(base, prisma) {
+  const result = await signInThroughEmailLink(base, prisma, { tenantId, email })
   assert.equal(result.user.id, actorId)
   assert.equal(result.user.tenantId, tenantId)
   return result.token
@@ -88,9 +88,12 @@ async function main() {
     await prisma.receivingDocument.create({ data: { id: 'smoke-grn', tenantId, documentNumber: 'GRN-SMOKE-001', poId: 'smoke-po', supplierName: 'Smoke Supplier', status: 'receiving', workflowStatus: 'approved', postingStatus: 'unposted', warehouseId: 'smoke-warehouse', receiver: 'Receiving Smoke Manager', currency: 'CNY', lines: { create: [{ id: 'smoke-grn-line', purchaseOrderLineId: 'smoke-po-line', itemId: 'smoke-item', sku: 'SMOKE-SKU', itemName: 'Smoke Item', acceptedQty: '4', rejectedQty: '0', unit: 'EA', warehouseId: 'smoke-warehouse', location: 'A-01', locationKey: 'a-01' }] } } })
 
     api = startApi(env); await waitFor(`${base}/api/health`)
-    const unprovisioned = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'unknown@example.com', name: 'Unknown', company: 'Forged', role: 'admin', tenantId: 'forged' }) })
-    assert.equal(unprovisioned.status, 403); assert.equal((await unprovisioned.json()).code, 'USER_NOT_PROVISIONED')
-    let token = await login(base)
+    // Production has no email-only sign-in, for unknown and provisioned users alike.
+    for (const loginEmail of ['unknown@example.com', email]) {
+      const direct = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: loginEmail, name: 'Unknown', company: 'Forged', role: 'admin', tenantId: 'forged' }) })
+      assert.equal(direct.status, 404)
+    }
+    let token = await login(base, prisma)
     assert.equal((await request(base, '/api/me/profile', { token })).role, 'manager')
     const detail = await request(base, '/api/procurement/receiving/smoke-grn', { token })
     assert.equal(detail.receivingDocument.postingStatus, 'unposted')
@@ -124,7 +127,7 @@ async function main() {
     const movementExport = await request(base, '/api/pilot/exports/inventory_movements', { token })
     assert.equal(movementExport.rowCount, 2); assert.equal(movementExport.tenantScoped, true)
 
-    await stop(api); api = startApi(env); await waitFor(`${base}/api/health`); token = await login(base)
+    await stop(api); api = startApi(env); await waitFor(`${base}/api/health`); token = await login(base, prisma)
     const persisted = await request(base, '/api/procurement/receiving/smoke-grn', { token })
     assert.equal(persisted.receivingDocument.postingStatus, 'reversed')
     assert.equal((await request(base, '/api/procurement/receiving/smoke-grn/evidence', { token })).events.some((event) => event.event === 'receiving_reversed'), true)

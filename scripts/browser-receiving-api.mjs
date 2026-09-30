@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import EmbeddedPostgres from 'embedded-postgres'
 import { createPrismaClient } from '../server/persistence/prisma-client.mjs'
-import { productionHarnessMailEnv } from './test-support/production-harness.mjs'
+import { answerLegacySignInThroughEmailLink, productionHarnessMailEnv, productionHarnessMailer } from './test-support/production-harness.mjs'
 
 const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, '..')
@@ -55,7 +55,9 @@ try {
   await prisma.purchaseOrder.create({ data: { id: 'browser-po', tenantId, status: 'issued', supplierName: 'Browser Supplier', currency: 'CNY', lines: { create: [{ id: 'browser-po-line', itemId: 'browser-item', sku: 'BROWSER-SKU', itemName: 'Browser Item', orderedQuantity: '10', receivedQuantity: '0', unit: 'EA' }] } } })
   await prisma.receivingDocument.create({ data: { id: 'browser-grn', tenantId, documentNumber: 'GRN-BROWSER-001', poId: 'browser-po', supplierName: 'Browser Supplier', status: 'receiving', workflowStatus: 'approved', postingStatus: 'unposted', warehouseId: 'browser-warehouse', receiver: 'Receiving Browser Manager', arrivedAt: new Date(), currency: 'CNY', lines: { create: [{ id: 'browser-grn-line', purchaseOrderLineId: 'browser-po-line', itemId: 'browser-item', sku: 'BROWSER-SKU', itemName: 'Browser Item', acceptedQty: '4', rejectedQty: '0', unit: 'EA', warehouseId: 'browser-warehouse', location: 'A-01', locationKey: 'a-01' }] } } })
   const { createScmServer } = await import('../server/scm-api.mjs')
-  server = createScmServer()
+  // Production mode refuses the email-only sign-in; the harness answers it
+  // through a real email-link confirm so the browser specs keep working.
+  server = answerLegacySignInThroughEmailLink(createScmServer({ mailer: productionHarnessMailer() }), { prisma, tenantId })
   server.listen(apiPort, '127.0.0.1', () => console.log(`Receiving browser API ready on ${apiPort}`))
 } catch (error) {
   console.error(String(error?.stack || error).replace(/postgres(?:ql)?:\/\/[^\s]+/gi, '[REDACTED_DATABASE_URL]'))

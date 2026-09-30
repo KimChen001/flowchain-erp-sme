@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
-import { productionHarnessMailEnv } from "./test-support/production-harness.mjs";
+import { productionHarnessMailEnv, signInThroughEmailLink } from "./test-support/production-harness.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -101,7 +101,7 @@ try {
   server = startApi(env);
   const base = `http://127.0.0.1:${apiPort}`;
   await waitFor(`${base}/api/health`);
-  const login = await request(base, "/api/auth/login", { method: "POST", body: { email, name: "Ignored", company: "Ignored" } });
+  const login = await signInThroughEmailLink(base, prisma, { tenantId, email });
   let token = login.token;
 
   let workspace = await request(base, "/api/workspace", { token });
@@ -154,7 +154,7 @@ try {
   await stop(server);
   server = startApi(env);
   await waitFor(`${base}/api/health`);
-  token = (await request(base, "/api/auth/login", { method: "POST", body: { email, name: "Ignored", company: "Ignored" } })).token;
+  token = (await signInThroughEmailLink(base, prisma, { tenantId, email })).token;
   const persistedWorkspace = await request(base, "/api/workspace", { token });
   const persistedSettings = await request(base, "/api/settings-runtime", { token });
   assert.equal(persistedWorkspace.defaultLanguage, "en-US");
