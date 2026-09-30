@@ -2,28 +2,26 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Card } from "../../components/ui";
-import { procurementApi } from "./procurementApi";
-import type { ProcurementDocument } from "./procurementTypes";
+import { receivingApi, type ReceiptListItem } from "./receivingApi";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 
-function quantity(value?: number) {
-  return Number.isFinite(value) ? Number(value).toLocaleString() : "—";
-}
-
+// Receipts come from PostgreSQL through /api/procurement/receiving, drafts
+// included, for the warehouses the signed-in user may read.
 export function ReceivingListPage() {
-  const { language } = useI18n();
+  const { language, formatNumber, formatDateTime } = useI18n();
+  const quantity = (value?: string | null) => value && Number.isFinite(Number(value)) ? formatNumber(Number(value)) : "—";
   const tr = (zh: string, en: string) => language === "en-US" ? en : zh;
   const statusLabel = (status: string) => language === "en-US"
     ? (workspaceCopy(status, language) !== status ? workspaceCopy(status, language) : status.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()))
-    : status;
-  const [rows, setRows] = useState<ProcurementDocument[]>([]);
+    : ({ draft: "草稿", ready_for_receiving: "待过账", received: "已收货", cancelled: "已取消", unposted: "未过账", posted: "已过账", reversed: "已冲销" } as Record<string, string>)[status] || status;
+  const [rows, setRows] = useState<ReceiptListItem[]>([]);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
 
   const load = useCallback(async () => {
     setState("loading");
     try {
-      setRows(await procurementApi.listDocuments("receiving"));
+      setRows(await receivingApi.list());
       setState("loaded");
     } catch {
       setRows([]);
@@ -41,7 +39,7 @@ export function ReceivingListPage() {
         <div>
           <div className="text-sm font-semibold">{tr("收货记录", "Receiving records")}</div>
           <div className="mt-1 text-xs" style={{ color: A.sub }}>
-            {tr("当前工作区的正式 GRN；点击编号查看收货、过账与库存影响。", "Posted GRNs in this workspace. Select a number to review receiving, posting, and inventory impact.")}
+            {tr("当前工作区的收货单；点击编号查看收货、过账与库存影响。在采购订单上点击“收货”新建收货单。", "Receipts in this workspace. Select a number to review receiving, posting, and inventory impact. Start a new receipt with Receive on a purchase order.")}
           </div>
         </div>
         <button
@@ -74,19 +72,19 @@ export function ReceivingListPage() {
           <div className="py-16 text-center">
             <div className="text-sm font-semibold">{tr("当前工作区暂无收货记录", "No receiving records in this workspace")}</div>
             <div className="mt-2 text-xs" style={{ color: A.sub }}>
-              {tr("创建并提交正式收货后，GRN 会显示在这里。", "GRNs will appear here after receiving is submitted.")}
+              {tr("在采购订单上收货后，收货单会显示在这里。", "Receipts appear here after you receive against a purchase order.")}
             </div>
           </div>
         ) : (
           <div className="divide-y">
             {rows.map((row) => {
-              const poId = row.poId || row.po;
+              const poId = row.poId;
               return (
                 <article key={row.id} className="p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <BusinessEntityLink entityType="receiving_doc" entityId={row.id}>
-                        {row.id}
+                        {row.documentNumber || row.id}
                       </BusinessEntityLink>
                       <div className="mt-1 text-xs" style={{ color: A.sub }}>
                         {tr("采购订单", "Purchase order")}{" "}
@@ -95,8 +93,9 @@ export function ReceivingListPage() {
                         </BusinessEntityLink>
                       </div>
                     </div>
-                    <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold">
-                      {statusLabel(row.status || "—")}
+                    <span className="flex gap-1">
+                      <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold" data-testid="receipt-workflow-status">{statusLabel(row.workflowStatus || "—")}</span>
+                      <span className="rounded bg-slate-100 px-2 py-1 text-xs font-semibold" data-testid="receipt-posting-status">{statusLabel(row.postingStatus || "—")}</span>
                     </span>
                   </div>
                   <dl className="mt-4 grid gap-x-6 gap-y-4 text-xs sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -105,18 +104,18 @@ export function ReceivingListPage() {
                       <dd className="mt-1 font-medium">{row.supplierName || "—"}</dd>
                     </div>
                     <div>
-                      <dt style={{ color: A.sub }}>{tr("收货 / 合格 / 拒收", "Received / accepted / rejected")}</dt>
+                      <dt style={{ color: A.sub }}>{tr("合格 / 拒收", "Accepted / rejected")}</dt>
                       <dd className="mt-1 font-medium tabular-nums">
-                        {quantity(row.receivedQuantity)} / {quantity(row.acceptedQty)} / {quantity(row.rejectedQty)}
+                        {quantity(row.acceptedQuantity)} / {quantity(row.rejectedQuantity)}
                       </dd>
                     </div>
                     <div>
                       <dt style={{ color: A.sub }}>{tr("仓库", "Warehouse")}</dt>
-                      <dd className="mt-1 font-medium">{row.warehouse || "—"}</dd>
+                      <dd className="mt-1 font-medium">{row.warehouse ? `${row.warehouse.code} · ${row.warehouse.name}` : "—"}</dd>
                     </div>
                     <div>
-                      <dt style={{ color: A.sub }}>{tr("到货日期", "Arrival date")}</dt>
-                      <dd className="mt-1 font-medium">{row.arrived || row.createdAt || "—"}</dd>
+                      <dt style={{ color: A.sub }}>{tr("到货时间", "Arrival time")}</dt>
+                      <dd className="mt-1 font-medium">{row.arrivedAt || row.createdAt ? formatDateTime(String(row.arrivedAt || row.createdAt)) : "—"}</dd>
                     </div>
                     <div>
                       <dt style={{ color: A.sub }}>{tr("收货人", "Receiver")}</dt>

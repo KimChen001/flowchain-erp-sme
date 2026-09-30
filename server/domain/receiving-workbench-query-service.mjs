@@ -85,6 +85,7 @@ function detailModel(aggregate, capabilities = {}, availableActions = {}) {
       currentlyAppliedQuantity: receivingDecimalString(currentlyApplied),
       acceptedQuantity: decimal(line.acceptedQty),
       rejectedQuantity: decimal(line.rejectedQty),
+      rejectionReason: text(line.metadata?.rejectionReason) || null,
       remainingReceivableQuantity: receivingDecimalString(remaining < ZERO ? ZERO : remaining),
       unit: line.unit || poLine.unit,
       warehouse: warehouse ? { id: warehouse.id, code: warehouse.code, name: warehouse.name } : null,
@@ -144,7 +145,12 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
       ...policy.blockingIssues.map((issue) => issue.code),
     ]
     const allowed = blockingReasonCodes.length === 0
+    // A draft is edited and submitted before it can be posted.
+    const draftOpen = grn.workflowStatus === 'draft' && grn.postingStatus === 'unposted'
+      && Boolean(capabilities.posting?.enabled) && can({ actor, permission: 'receiving.prepare', tenantId: actor.tenantId }) && warehouseAllowed
     return detailModel(aggregate, capabilities, {
+      canEditDraft: draftOpen,
+      canSubmit: draftOpen,
       canPost: operation === 'post' && allowed,
       canReverse: operation === 'reverse' && allowed,
       canViewReversal: grn.postingStatus === 'reversed',
