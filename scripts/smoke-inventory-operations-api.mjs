@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
+import { productionHarnessMailEnv } from "./test-support/production-harness.mjs";
 
 const execFileAsync = promisify(execFile),
   root = resolve(import.meta.dirname, ".."),
@@ -102,6 +103,7 @@ const env = {
   FLOWCHAIN_BRANCH: "test/inventory-operations-api-smoke",
   FLOWCHAIN_ENABLE_DB_MOBILE_SYNC: "false",
   SCM_API_PORT: String(apiPort),
+  ...productionHarnessMailEnv(),
   NODE_ENV: "production",
 };
 const base = `http://127.0.0.1:${apiPort}`;

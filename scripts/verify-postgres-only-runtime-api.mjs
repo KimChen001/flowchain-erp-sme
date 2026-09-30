@@ -8,6 +8,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
+import { productionHarnessMailEnv } from "./test-support/production-harness.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -146,6 +147,7 @@ try {
     FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
     FLOWCHAIN_ENABLE_DB_INTERNAL_SETTLEMENT: "true",
     SCM_API_PORT: String(apiPort),
+    ...productionHarnessMailEnv(),
     NODE_ENV: "production",
   };
   await execFileAsync(node, [prismaCli, "migrate", "deploy"], {

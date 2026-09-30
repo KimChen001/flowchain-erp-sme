@@ -83,6 +83,12 @@ function appEnvironmentArgs() {
     "-e", "FLOWCHAIN_UPLOAD_STORAGE_DIR=/var/lib/flowchain/uploads",
     "-e", "FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP=false",
     "-e", "FLOWCHAIN_ENABLE_DB_MOBILE_SYNC=false",
+    // Production refuses to start without a mail provider. The smoke never
+    // requests a sign-in link, so this token is never used.
+    "-e", "FLOWCHAIN_MAIL_PROVIDER=postmark",
+    "-e", `POSTMARK_SERVER_TOKEN=container-smoke-never-sends-${suffix}`,
+    "-e", "FLOWCHAIN_MAIL_FROM=FlowChain <sign-in@flowchain.test>",
+    "-e", "FLOWCHAIN_PUBLIC_BASE_URL=https://flowchain.test",
   ];
 }
 
