@@ -2,6 +2,9 @@ import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-i
 import { buildBusinessOverview } from './business-overview.mjs'
 import { isCommittedPurchaseOrder, isOpenPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
+import { buildDashboardFacts, buildDashboardVisuals } from './report-dashboard-visuals.mjs'
+import { reportCurrencyCode } from './report-currency.mjs'
+import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from './tenant-calendar-day.mjs'
 
 const array = value => Array.isArray(value) ? value : []
 const text = value => String(value ?? '').trim()
@@ -17,20 +20,16 @@ const knownTotal = rows => rows.some(row => row.amount === null) ? null : Math.r
 // Spend totals count committed documents only. A purchase order is committed
 // once approved (see isCommittedPurchaseOrder). A supplier invoice is committed
 // once submitted: the statuses that hold receipt lines against double
-// invoicing, so drafts, rejections and cancellations are left out.
+// invoicing, so drafts, rejections and cancellations are left out. A sales
+// order counts unless it is a draft or cancelled.
 const committedInvoiceStatuses = new Set(RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES)
 const committed = {
   purchase_orders: row => isCommittedPurchaseOrder(row),
   supplier_invoices: row => committedInvoiceStatuses.has(row.status.toLowerCase()),
-  sales_orders: () => true,
+  sales_orders: row => !['draft', 'cancelled', 'canceled'].includes(row.status),
 }
-const ISO_CURRENCY_CODE = /^[A-Z]{3}$/
-const supportedCurrencyCodes = new Set(Intl.supportedValuesOf?.('currency') || ['CNY', 'USD', 'EUR'])
 const currencyNames = { CNY: '人民币', USD: '美元', EUR: '欧元' }
-const currencyCode = value => {
-  const code = text(value).toUpperCase()
-  return ISO_CURRENCY_CODE.test(code) && supportedCurrencyCodes.has(code) ? code : ''
-}
+const currencyCode = reportCurrencyCode
 const currencyLabel = code => code ? (currencyNames[code] ? `${currencyNames[code]}（${code}）` : code) : '全部币种'
 const unknownCurrencyLabel = '币种缺失或无效'
 
@@ -43,15 +42,25 @@ const metricDefinitions = {
   inventory_risk_sku: ['库存风险 SKU', 'inventory_balances', 'number', '按统一 availability 口径存在 shortage 的 SKU 数。', '/app/inventory?risk=high'],
   invoice_amount: ['供应商发票金额', 'supplier_invoices', 'currency', '已提交供应商发票（已提交、匹配中、有差异、已匹配、已批准或暂挂）的金额合计，不含草稿、驳回和取消的发票；有发票缺少金额时不显示合计。', '/app/finance/invoices'],
   supplier_count: ['供应商数量', 'suppliers', 'number', '当前供应商主数据记录数。', '/app/master-data/suppliers'],
+  overdue_open_po_count: ['Overdue open POs', 'purchase_orders', 'number', 'Open purchase orders whose expected date is before today in the workspace timezone.', '/app/reports/procurement?status=open'],
+  on_time_receipt_rate: ['On-time receipts', 'receipts', 'percentage', "Share of receipts in range that arrived on or before the purchase order's expected date. Receipts without an expected date are left out.", '/app/procurement/receiving'],
+  active_supplier_count: ['Suppliers with committed orders', 'purchase_orders', 'number', 'Suppliers with at least one committed purchase order in range.', '/app/master-data/suppliers'],
+  invoice_match_rate: ['Invoices matched', 'supplier_invoices', 'percentage', 'Share of submitted supplier invoices whose three-way match passed.', '/app/finance/three-way-match'],
+  invoices_awaiting_match: ['Invoices awaiting match', 'supplier_invoices', 'number', 'Submitted supplier invoices without a three-way match result yet.', '/app/finance/three-way-match'],
+  invoices_with_exception: ['Match exceptions', 'supplier_invoices', 'number', 'Submitted supplier invoices whose three-way match found an exception.', '/app/finance/three-way-match'],
+  sales_order_amount: ['Sales order amount', 'sales_orders', 'currency', 'Total of sales orders in the current range, without drafts and cancellations. No total is shown across currencies.', '/app/sales/orders'],
+  order_fulfillment_rate: ['Orders shipped in full', 'sales_orders', 'percentage', 'Share of confirmed sales orders whose ordered quantity has shipped.', '/app/sales/orders'],
+  out_of_stock_sku: ['Out-of-stock SKUs', 'inventory_balances', 'number', 'SKUs with no available stock under the shared availability calculation.', '/app/inventory?risk=high'],
+  negative_atp_sku: ['SKUs short against demand', 'inventory_balances', 'number', 'SKUs whose available-to-promise quantity is below zero.', '/app/inventory?risk=high'],
 }
 
 const dashboardMetrics = {
   overview: ['purchase_order_amount', 'open_po_count', 'inventory_risk_sku', 'sales_order_count'],
-  procurement: ['purchase_order_amount', 'open_po_count'],
-  sales: ['sales_order_count', 'open_sales_demand'],
-  inventory: ['inventory_on_hand', 'inventory_risk_sku'],
-  finance: ['invoice_amount'],
-  suppliers: ['supplier_count', 'purchase_order_amount'],
+  procurement: ['purchase_order_amount', 'open_po_count', 'overdue_open_po_count', 'on_time_receipt_rate'],
+  sales: ['sales_order_count', 'open_sales_demand', 'sales_order_amount', 'order_fulfillment_rate'],
+  inventory: ['inventory_on_hand', 'inventory_risk_sku', 'out_of_stock_sku', 'negative_atp_sku'],
+  finance: ['invoice_amount', 'invoice_match_rate', 'invoices_awaiting_match', 'invoices_with_exception'],
+  suppliers: ['supplier_count', 'purchase_order_amount', 'active_supplier_count', 'on_time_receipt_rate'],
 }
 
 function runtimeRows(context, inventory) {
@@ -81,6 +90,7 @@ function statusMatches(row, status) {
 const subjectFilters = {
   purchase_orders: ['from', 'to', 'supplier', 'currency'], sales_orders: ['from', 'to', 'customer', 'currency'],
   supplier_invoices: ['from', 'to', 'supplier', 'currency'], inventory_balances: [], suppliers: ['supplier'],
+  receipts: ['from', 'to', 'supplier', 'currency'],
 }
 const applicableFilters = (subject, primaryKey) => [...subjectFilters[subject], ...(subject === primaryKey ? ['status'] : [])]
 
@@ -89,7 +99,7 @@ function filtered(rows, query, filters) {
   return rows.filter(row => (!applies('from') || (row.date && row.date >= query.from)) && (!applies('to') || (row.date && row.date <= query.to)) && (!applies('supplier') || row.supplier === query.supplier) && (!applies('customer') || row.customer === query.customer) && (!applies('currency') || row.currency === query.currency) && (!applies('status') || statusMatches(row, query.status)))
 }
 
-function value(id, all, inventory) {
+function value(id, all, inventory, facts) {
   if (id === 'sales_order_count') return all.sales_orders.length
   if (id === 'open_sales_demand') return all.sales_orders.filter(row => !['draft', 'cancelled', 'canceled'].includes(row.status)).reduce((total, row) => total + Math.max(0, row.quantity - row.fulfilled), 0)
   if (id === 'open_po_count') return all.purchase_orders.filter(row => row.isOpen).length
@@ -101,7 +111,34 @@ function value(id, all, inventory) {
   }
   if (id === 'inventory_risk_sku') return inventory.availability.filter(isInventoryRiskSku).length
   if (id === 'supplier_count') return all.suppliers.length
+  if (id === 'overdue_open_po_count') return facts.overdueOpenPurchaseOrders
+  if (id === 'on_time_receipt_rate') return facts.onTimeReceiptRate
+  if (id === 'active_supplier_count') return facts.activeSuppliers
+  if (id === 'invoice_match_rate') return facts.invoiceMatchRate
+  if (id === 'invoices_awaiting_match') return facts.invoicesAwaitingMatch
+  if (id === 'invoices_with_exception') return facts.invoicesWithException
+  if (id === 'order_fulfillment_rate') return facts.orderFulfillmentRate
+  if (id === 'out_of_stock_sku') return inventory.availability.filter(row => row.stockStatus === 'out_of_stock').length
+  if (id === 'negative_atp_sku') return inventory.availability.filter(row => row.availableToPromise !== null && row.availableToPromise < 0).length
   return 0
+}
+
+// The monthly series behind a KPI's sparkline: committed amounts while they
+// total in one currency, or counts. Undated records are left out, and a series
+// needs two months to show a direction.
+const trendSubjects = { purchase_order_amount: 'purchase_orders', invoice_amount: 'supplier_invoices', sales_order_amount: 'sales_orders', sales_order_count: 'sales_orders' }
+function metricTrend(id, all, money) {
+  const subject = trendSubjects[id]
+  const counting = id === 'sales_order_count'
+  if (!subject || (!counting && money?.total === null)) return null
+  const months = new Map()
+  for (const row of counting ? all[subject] : all[subject].filter(committed[subject])) {
+    if (!row.date) continue
+    const period = row.date.slice(0, 7)
+    months.set(period, Math.round(((months.get(period) || 0) + (counting ? 1 : row.amount)) * 10000) / 10000)
+  }
+  const trend = [...months].sort(([a], [b]) => a.localeCompare(b)).map(([period, value]) => ({ period, value }))
+  return trend.length > 1 ? trend : null
 }
 
 // Money is grouped by currency and never added across currencies. A missing
@@ -128,19 +165,22 @@ function currencySummary(rows, query) {
   }
 }
 
-function metric(id, all, inventory, query, primaryKey) {
+function metric(id, all, inventory, query, primaryKey, facts) {
   const [label, subject, unit, description, drilldownPath] = metricDefinitions[id]
   const money = unit === 'currency' ? currencySummary(all[subject].filter(committed[subject]), query) : null
-  const currentValue = money ? money.total : value(id, all, inventory)
+  const currentValue = money ? money.total : value(id, all, inventory, facts)
   const unconverted = money?.currencyAggregationStatus === 'multi_currency_unconverted'
   const incomplete = money ? currentValue === null : id === 'inventory_on_hand' && currentValue === null
-  const dataStatus = incomplete ? 'incomplete' : id === 'inventory_on_hand' && !inventory.availability.length ? 'empty' : 'complete'
+  // A rate with nothing to divide by has no records, not a rate of zero.
+  const dataStatus = incomplete ? 'incomplete' : id === 'inventory_on_hand' && !inventory.availability.length ? 'empty' : unit === 'percentage' && currentValue === null ? 'no_records' : 'complete'
   const limitations = money ? money.limitations : id === 'inventory_on_hand' && inventory.units?.length > 1 ? ['inventory_units_mixed'] : incomplete ? ['inventory_on_hand_incomplete'] : []
   const currency = money ? { currencyCode: money.currencyCode, currencyLabel: money.currencyLabel, currencies: money.currencies, currencyAggregationStatus: money.currencyAggregationStatus, currencyAmounts: money.currencyAmounts } : {}
-  return { id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, generatedAt: new Date().toISOString() }
+  return { id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, trend: metricTrend(id, all, money), generatedAt: new Date().toISOString() }
 }
 
-export function buildRuntimeGovernedReport(context, input = {}) {
+// options.now and options.timeZone set the workspace's "today" for overdue
+// counts; the route passes the tenant timezone.
+export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const inventory = buildRuntimeInventoryAllocation(context)
   inventory.units = [...new Set(array(context.inventoryItems).map(row => text(row.unit)).filter(Boolean))]
   if (inventory.units.length > 1) inventory.dataLimitations.push('inventory_units_mixed')
@@ -153,14 +193,13 @@ export function buildRuntimeGovernedReport(context, input = {}) {
   const scopeMoney = currencySummary(currencySubject ? all[currencySubject].filter(committed[currencySubject]) : [], query)
   const aggregationStatus = scopeMoney.currencyAggregationStatus
   const details = all[primaryKey].slice(0, query.limit)
-  const chartData = details.flatMap(row => {
-    const rawValue = Object.hasOwn(row, 'amount') ? row.amount : row.quantity
-    if ((query.subject === 'inventory' || Object.hasOwn(row, 'amount')) && (rawValue === null || rawValue === undefined || !Number.isFinite(Number(rawValue)))) return []
-    return [{ name: `${text(row.id)}${aggregationStatus === 'multi_currency_unconverted' && row.currency ? `（${row.currency}）` : ''}`, value: rawValue === null || rawValue === undefined ? 1 : Number(rawValue) }]
-  })
-  const charts = [{ id: `${query.subject}_runtime_records`, title: '当前范围真实记录', type: 'bar', data: chartData, categoryKey: 'name', valueKey: 'value', valueFormat: 'number', unit: 'number', legend: false, tooltip: true, colors: ['#2563eb'], drilldownPath: query.subject === 'sales' ? '/app/sales/orders' : query.subject === 'inventory' ? '/app/inventory' : query.subject === 'finance' ? '/app/finance/invoices' : query.subject === 'suppliers' ? '/app/master-data/suppliers' : '/app/procurement/orders', crossFilter: null, emptyState: '当前筛选范围暂无真实 runtime 记录。' }]
+  // Receipts follow their purchase order's filters other than the date range.
+  const purchaseOrderIdsAnyDate = new Set(filtered(source.purchase_orders, { ...query, from: '', to: '' }, applicableFilters('purchase_orders', primaryKey)).map(row => row.id))
+  const today = tenantCalendarDay(options.now instanceof Date && Number.isFinite(options.now.getTime()) ? options.now : new Date(), options.timeZone || DEFAULT_TENANT_TIMEZONE)
+  const facts = buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today })
+  const visuals = buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate })
   const columns = [...new Set(details.flatMap(row => Object.keys(row)))].map(key => ({ key, label: ({ id: '业务编号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: '缺口', availableToPromise: 'ATP', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
-  const kpis = metricIds.map(id => metric(id, all, inventory, query, primaryKey))
+  const kpis = metricIds.map(id => metric(id, all, inventory, query, primaryKey, facts))
   const moneyLimitations = ['multi_currency_unconverted', 'currency_missing_or_invalid', 'amount_missing']
   const limitations = [...new Set([...array(context.dataLimitations), ...inventory.dataLimitations, ...(inventory.availability.length && inventory.availability.some(row => row.onHand === null) ? ['inventory_on_hand_incomplete'] : []), ...scopeMoney.limitations, ...kpis.flatMap(item => item.limitations.filter(code => moneyLimitations.includes(code)))])]
   const distinct = values => [...new Set(values.map(text).filter(Boolean))]
@@ -168,7 +207,7 @@ export function buildRuntimeGovernedReport(context, input = {}) {
   const overview = query.subject === 'overview' ? buildBusinessOverview(all) : null
   // Subjects the read context could not load in full; totals over them may be low.
   const truncatedSubjects = array(context.truncatedSubjects).filter(entry => text(entry?.subject) && Number.isFinite(Number(entry?.limit))).map(entry => ({ subject: text(entry.subject), limit: Number(entry.limit) }))
-  return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, kpis, charts: overview?.charts || charts, attention: overview?.attention || [], totalRecords: all[primaryKey].length, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: metricDefinitions[id][4] })), exportRows: all[primaryKey], metricDefinitions: kpis }
+  return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, kpis, charts: overview ? [...overview.charts, ...visuals] : visuals, attention: overview?.attention || [], totalRecords: all[primaryKey].length, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: metricDefinitions[id][4] })), exportRows: all[primaryKey], metricDefinitions: kpis }
 }
 
 export function getRuntimeReportCatalog() {
