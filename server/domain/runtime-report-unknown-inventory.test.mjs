@@ -69,6 +69,12 @@ test('reports API and KPI UI preserve null and present data insufficiency withou
   assert.match(dashboard, /import \{ formatMetric \} from "\.\/currencyFormatting\.mjs"/)
   assert.match(dashboard, /if \(item\.dataStatus === "incomplete"\) return "数据不足"/)
   assert.match(dashboard, /item\.dataStatus === "incomplete" \? copy\([^;]*"库存数据不完整"\)/)
-  assert.match(dashboard, /\?\.value \?\? null/)
-  assert.doesNotMatch(dashboard, /\?\.value \|\| 0/)
+  // A chart value that is not recorded stays empty in the visual and its data table; it never becomes 0.
+  const { chartTable } = await import('../../src/modules/reports/charts/chartTable.ts')
+  const { chartOption } = await import('../../src/modules/reports/charts/chartOptions.ts')
+  const chart = { id: 'inventory_on_hand_by_sku', title: 'On hand by SKU', type: 'horizontal_bar', data: [{ name: 'SKU-KNOWN', value: 4 }, { name: 'SKU-UNKNOWN', value: null }], drilldownPath: '/app/inventory' }
+  const labels = { copy: value => value, category: (_chart, value) => value }
+  assert.deepEqual(chartTable(chart, labels).rows.map(row => row.values[0]), [4, null])
+  const option = chartOption(chart, { ...labels, format: String, compact: String, ratio: String, language: 'en-US' })
+  assert.deepEqual(option.series[0].data.map(point => point.value), [4, null])
 })
