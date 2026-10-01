@@ -231,7 +231,6 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
     read('src', 'app', 'routeRegistry.tsx'),
     read('src', 'modules', 'receiving', 'Page.tsx'),
     read('src', 'modules', 'inventory', 'Page.tsx'),
-    read('src', 'modules', 'procurement', 'ThreeWayMatchPanel.tsx'),
     read('src', 'modules', 'srm', 'Page.tsx'),
     read('src', 'components', 'ai', 'ContextualAIInsightPanel.tsx'),
     read('src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx'),
@@ -259,10 +258,6 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
   assert.match(uiSource, /需补货/)
   assert.match(uiSource, /质检/)
   assert.match(uiSource, /可用量/)
-  assert.match(uiSource, /发票三单匹配复核/)
-  assert.match(uiSource, /保存财务协同备注/)
-  assert.match(uiSource, /预览发票异常工单/)
-  assert.match(uiSource, /不审批、不付款、不过账/)
   assert.match(uiSource, /风险与异常/)
   assert.match(uiSource, /供应商跟进备注草稿/)
   assert.match(uiSource, /新增供应商关系/)

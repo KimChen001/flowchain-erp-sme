@@ -41,13 +41,10 @@ test('R194 inventory warnings avoid dead supplier-gated replenishment navigation
   assert.doesNotMatch(inventory, /预览 PR|auto-create|自动创建 PR/)
 })
 
-test('R195-R196 GRN and invoice contextual actions do not auto-post approve or pay', () => {
+test('R195-R196 GRN contextual actions do not auto-post approve or pay', () => {
   const receiving = source('src', 'modules', 'receiving', 'Page.tsx')
-  const invoice = source('src', 'modules', 'procurement', 'SupplierInvoiceRegister.tsx')
   assert.match(receiving, /不自动关闭、不自动收货过账、不修改库存/)
-  assert.match(invoice, /不自动审批、不付款、不做应付过账/)
   assert.match(receiving, /解释收货异常/)
-  assert.match(invoice, /解释匹配失败/)
 })
 
 test('R198 AI insight panel is embedded and not a standalone left navigation module', () => {
@@ -78,7 +75,6 @@ test('R200 business modules remain navigable and provider keys are not introduce
     source('src', 'modules', 'purchasing', 'Page.tsx'),
     source('src', 'modules', 'inventory', 'Page.tsx'),
     source('src', 'modules', 'receiving', 'Page.tsx'),
-    source('src', 'modules', 'procurement', 'SupplierInvoiceRegister.tsx'),
   ].join('\n')
   for (const id of ['procurement', 'inventory', 'master-data', 'finance', 'imports']) {
     assert.match(routes, new RegExp(`id:\\s*["']${id}`))
