@@ -37,9 +37,8 @@ test('typography tokens expose consolidated operational scale', () => {
 test('primary procurement table id links use table link class', () => {
   const purchasing = readSource('src', 'modules', 'purchasing', 'Page.tsx')
   const requests = readSource('src', 'modules', 'purchase-requests', 'CanonicalProcurementPanel.tsx')
-  const rfq = readSource('src', 'modules', 'rfq', 'Page.tsx')
 
-  for (const source of [purchasing, requests, rfq]) {
+  for (const source of [purchasing, requests]) {
     assert.match(source, /tableLinkClass/)
     assert.match(source, /className=\{tableLinkClass\}/)
   }

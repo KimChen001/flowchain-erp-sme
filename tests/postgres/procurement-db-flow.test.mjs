@@ -7,8 +7,8 @@ import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 // End-to-end procurement in database persistence mode, driven through the real
 // HTTP server and the endpoints the browser calls:
 //   PR   src/modules/purchase-requests/CanonicalProcurementPanel.tsx
-//   RFQ  src/components/procurement/CanonicalDownstreamPanel.tsx (create mode,
-//        open and cancel)
+//   RFQ  /api/procurement/requests/:id/rfqs, /api/procurement/rfqs/:id/open|cancel
+//        (no page mounts an RFQ create form at the moment)
 //   PO   /api/procurement/requests/:id/generate-purchase-orders (PR panel),
 //        /api/procurement/orders/:id/submit|approve|issue|cancel
 //        (PurchaseOrderWorkflowActions on the PO detail page),
