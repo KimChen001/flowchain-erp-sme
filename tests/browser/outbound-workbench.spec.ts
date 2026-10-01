@@ -134,11 +134,13 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await expect(page.getByTestId("inventory-active-filters")).toContainText(
     "销售订单",
   );
-  await expect(page.getByText("outbound-browser-opening")).toHaveCount(0);
+  // The list shows what moved the stock, not the movement id: the seeded
+  // opening balance appears by its source document once the filter is cleared.
+  await expect(page.getByText("outbound-browser-balance")).toHaveCount(0);
   await page.getByRole("button", { name: "清除筛选" }).click();
   await expect(page).not.toHaveURL(/relatedSalesOrderId=/);
   await expect(
-    page.getByText("outbound-browser-opening").first(),
+    page.getByText("outbound-browser-balance").first(),
   ).toBeVisible();
 
   await page.goto(orderUrl);
@@ -149,9 +151,10 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await expect(page.getByTestId("inventory-active-filters")).toContainText(
     "OUT-BROWSER-SKU",
   );
+  // The stock list formats quantities with their unit.
   await expect(
     page.getByTestId("inventory-item-OUT-BROWSER-SKU"),
-  ).toContainText("7.0000");
+  ).toContainText("7 EA");
   await page.goto(postedShipmentUrl);
 
   await page.getByTestId("open-reverse").click();
