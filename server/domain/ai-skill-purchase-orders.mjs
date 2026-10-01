@@ -29,7 +29,16 @@ export function runPurchaseOrders(facts, { route = null } = {}) {
   if (!po) return { ...base, mode: 'hidden', ids: [] }
   if (mode === 'single') return { ...base, orders: array(entities.purchaseOrders).slice(0, 5) }
   if (mode === 'ambiguous') return { ...base, ambiguous: array(entities.ambiguous) }
-  if (mode === 'not_found') return { ...base, ids: [...ids(entities.truncated), ...ids(entities.absent)], truncated: array(entities.truncated).length > 0, limit: array(facts.limitations).find((row) => row.code === 'truncated' && row.source === 'purchase_orders')?.limit ?? null }
+  if (mode === 'not_found') {
+    // A number that is not there says so; only when every named number is
+    // missing from a source read up to its limit is it "not among the
+    // records read", with that source's limit.
+    const absent = ids(entities.absent)
+    const truncated = array(entities.truncated)
+    const source = truncated[0]?.source || null
+    const limit = array(facts.limitations).find((row) => row.code === 'truncated' && row.source === source)?.limit ?? null
+    return absent.length ? { ...base, ids: absent, truncated: false } : { ...base, ids: ids(truncated), truncated: true, source, limit }
+  }
   if (mode === 'supplier') {
     const groups = array(entities.suppliers).map((supplier) => {
       const rows = po.rows.filter((row) => row.supplierId ? row.supplierId === supplier.id : row.supplier === supplier.name)
@@ -100,7 +109,7 @@ export function presentPurchaseOrders(result, facts, { skill, language, query })
   const base = { skill, facts, language, query, followUpIds: ['prepare_action_draft', 'today_priorities'] }
   const idList = (ids) => aiSkillList(array(ids), language)
   if (result.mode === 'hidden') {
-    return presentAiSkillAnswer({ ...base, title: result.ids?.length ? aiSkillText('po.hidden_lookup', language, { id: idList(result.ids) }) : aiSkillText('po.title_hidden', language), summary: '', severity: 'info', items: [], navigation: [] })
+    return presentAiSkillAnswer({ ...base, title: result.ids?.length ? aiSkillText('po.hidden_lookup', language, { id: idList(result.ids) }) : aiSkillText('po.title_hidden', language), summary: aiSkillText('access.ask_admin', language), severity: 'info', items: [], navigation: [] })
   }
   const fmt = aiSkillFormatter(facts, language)
   const amountsVisible = Boolean(facts.visibility?.amounts?.purchase_order_amounts)
@@ -114,13 +123,16 @@ export function presentPurchaseOrders(result, facts, { skill, language, query })
 
   if (result.mode === 'ambiguous') {
     const [first] = result.ambiguous
-    return empty(aiSkillText('po.ambiguous_title', language, { id: first?.id || '' }), aiSkillText('po.ambiguous_summary', language, { list: idList(first?.candidates) }))
+    return empty(aiSkillText('po.ambiguous_title', language, { id: first?.id || '' }), aiSkillText('po.ambiguous_summary', language, { list: aiSkillList(array(first?.candidates), language, { or: true }) }))
   }
   if (result.mode === 'not_found' || (result.mode === 'single' && !result.orders.length)) {
     const id = idList(result.ids) || query
-    return result.truncated
-      ? empty(aiSkillText('po.not_read_title', language, { id }), aiSkillText('po.not_read_summary', language, { limit: fmt.number(result.limit) }))
-      : empty(aiSkillText('po.not_found_title', language, { id }), aiSkillText('po.not_found_summary', language))
+    if (result.truncated) {
+      const prefix = result.source === 'inventory' ? 'stock' : 'po'
+      const summary = result.limit === null || result.limit === undefined ? aiSkillText(`${prefix}.not_read_summary_unknown`, language) : aiSkillText(`${prefix}.not_read_summary`, language, { limit: fmt.number(result.limit) })
+      return empty(aiSkillText(`${prefix}.not_read_title`, language, { id }), summary)
+    }
+    return empty(aiSkillText('lookup.not_found_title', language, { id }), aiSkillText(result.ids.every((value) => /(^|-)P\.?O-\d+$/i.test(value)) ? 'po.not_found_summary' : 'lookup.not_found_summary', language))
   }
   if (result.mode === 'single') {
     const [row, ...others] = result.orders

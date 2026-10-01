@@ -133,6 +133,7 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
     responseId: `AIQ-${Date.now()}-${Math.abs(text(request.message || request.question).length * 31)}`,
     query: text(request.message || request.question),
     intent: clarification ? 'business_query_clarification' : 'business_query_plan_v1',
+    language: english ? 'en-US' : 'zh-CN',
     runtimeModeLabel: L('业务事实读取 · 确定性执行 · 证据支持'),
     scope: { module: text(request.activeModuleId || request.moduleId || 'overview'), entityType: 'supplier', entityId: pack.scopeSummary.entityCount === 1 ? pack.sections?.[0]?.rows?.[0]?.supplier?.id || '' : '', timeRange: pack.timeWindow?.interpretation || '', dataScopeLabel: L('当前工作区授权数据') },
     conclusion,

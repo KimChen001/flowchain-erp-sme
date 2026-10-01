@@ -26,16 +26,18 @@ function supplierIdentity(record = {}) {
 }
 
 // A supplier name, code or alias as a whole phrase of the question: a
-// substring for a Chinese alias of two or more characters, a phrase of three
-// or more characters bounded by anything but a Latin letter or digit for a
-// Latin one, so code "AC" never matches inside "accounts" and "Acme" still
-// matches in "Acme的付款".
+// substring for a Chinese alias of two or more characters, a phrase bounded
+// by anything but a Latin letter or digit for a Latin one, so code "AC" never
+// matches inside "accounts" and "Acme" still matches in "Acme的付款". A
+// two-character Latin alias (HP, 3M) must also be written in capitals, so
+// "in" or "to" never names a supplier coded IN or TO.
 const CJK_TEXT = /[㐀-鿿豈-﫿]/u
 const LATIN_WORD_CHAR = /[a-z0-9]/i
-function mentionsAlias(normalized, alias) {
+function mentionsAlias(normalized, alias, message = '') {
   const needle = normalize(alias)
   if (CJK_TEXT.test(needle)) return needle.length >= 2 && normalized.includes(needle)
-  if (needle.length < 3) return false
+  if (needle.length < 2) return false
+  if (needle.length === 2) return new RegExp(`(?<![A-Za-z0-9])${needle.toUpperCase().replace(/[^A-Z0-9]/g, '')}(?![A-Za-z0-9])`).test(String(message))
   for (let index = normalized.indexOf(needle); index >= 0; index = normalized.indexOf(needle, index + 1)) {
     const before = normalized[index - 1]
     const after = normalized[index + needle.length]
@@ -49,7 +51,7 @@ function supplierMatches(message, suppliers) {
   const matches = []
   for (const supplier of suppliers) {
     const aliases = unique([supplier.id, supplier.name, ...supplier.aliases]).filter((item) => normalize(item).length >= 2 && !GENERIC_SUPPLIER_WORDS.has(normalize(item)))
-    if (aliases.some((alias) => mentionsAlias(normalized, alias))) matches.push(supplier)
+    if (aliases.some((alias) => mentionsAlias(normalized, alias, message))) matches.push(supplier)
   }
   return [...new Map(matches.map((supplier) => [supplier.id, supplier])).values()]
 }

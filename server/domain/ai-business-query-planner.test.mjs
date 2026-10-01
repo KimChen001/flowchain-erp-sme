@@ -135,4 +135,10 @@ test('a supplier code or name matches only as a whole phrase', () => {
   assert.deepEqual(scope('Can we pay Acme Components this week?').entityIds, ['supplier-ac'])
   assert.deepEqual(scope('NOR 需要付款吗？').entityIds, ['supplier-nor'])
   assert.deepEqual(scope('Northstar Electronics的应付款').entityIds, ['supplier-nor'])
+  // A two-character name or code counts when written in capitals.
+  const short = [{ tenantId: 't1', id: 'supplier-hp', name: 'HP', code: 'HP01' }, { tenantId: 't1', id: 'supplier-in', name: 'Inland Freight', code: 'IN' }]
+  const shortScope = (message) => buildDeterministicBusinessQueryPlan({ message, suppliers: short }).scope
+  assert.deepEqual(shortScope('Which payments to HP are blocked?').entityIds, ['supplier-hp'])
+  assert.deepEqual(shortScope('HP 的付款被阻断了吗？').entityIds, ['supplier-hp'])
+  assert.notEqual(shortScope('Which supplier payments are due in March?').source, 'explicit')
 })

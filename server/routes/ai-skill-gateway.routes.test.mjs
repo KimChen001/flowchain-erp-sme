@@ -98,7 +98,9 @@ test('knowledge and supplier business questions keep their own paths', async () 
   assert.equal(summaryRead, true)
   // A business query answer writes the same audit row as a skill answer,
   // with no question text.
+  assert.equal(payment.payload.language, 'en-US')
   assert.equal(business.audits.length, 1)
+  assert.equal(business.audits[0].metadata.language, 'en-US')
   assert.deepEqual([business.audits[0].action, business.audits[0].metadata.skillId, business.audits[0].metadata.answerSource], ['ai_skill_answered', payment.payload.intent, 'business_query'])
   assert.doesNotMatch(JSON.stringify(business.audits[0]), /need payment/)
 })

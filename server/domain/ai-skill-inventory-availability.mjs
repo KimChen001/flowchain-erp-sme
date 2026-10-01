@@ -23,7 +23,12 @@ export function runInventoryAvailability(facts, { route = null } = {}) {
   if (mode === 'hidden' || !facts?.inventory) return { skillId: 'inventory_availability', mode: 'hidden', hidden: true, ids: array(route?.entities?.hidden).map((entry) => entry.id) }
   const rows = array(facts.inventory.rows)
   if (mode === 'single') return { skillId: 'inventory_availability', mode, skus: array(route?.entities?.skus).slice(0, 5), total: rows.length }
-  if (mode === 'not_found') return { skillId: 'inventory_availability', mode, ids: [...array(route?.entities?.truncated), ...array(route?.entities?.absent)].filter((entry) => entry.source === 'inventory').map((entry) => entry.id) }
+  if (mode === 'not_found') {
+    const absent = array(route?.entities?.absent).filter((entry) => entry.source === 'inventory').map((entry) => entry.id)
+    const truncated = array(route?.entities?.truncated).filter((entry) => entry.source === 'inventory').map((entry) => entry.id)
+    const limit = array(facts.limitations).find((row) => row.code === 'truncated' && row.source === 'inventory')?.limit ?? null
+    return absent.length ? { skillId: 'inventory_availability', mode, ids: absent } : { skillId: 'inventory_availability', mode, ids: truncated, truncated: true, limit }
+  }
   if (mode === 'short') return { skillId: 'inventory_availability', mode, skus: rows.filter(isInventoryRiskSku).sort(worstFirst), total: rows.length }
   return { skillId: 'inventory_availability', mode: 'overview', skus: rows.filter(needsAttention).sort(worstFirst), total: rows.length }
 }
@@ -47,6 +52,15 @@ function skuRecord(row, fmt, language, rank) {
   }
 }
 
+// One SKU's headline: what can be promised, how much is missing even with
+// incoming receipts, or that it is not known.
+function skuTitle(row, fmt, language) {
+  const atp = row.availableToPromise
+  if (atp === null || atp === undefined) return aiSkillText('stock.single_title_unknown', language, { sku: row.sku })
+  if (atp < 0) return aiSkillText('stock.single_title_negative', language, { sku: row.sku, missing: fmt.quantity(-atp, row.unit) })
+  return aiSkillText('stock.single_title', language, { sku: row.sku, atp: fmt.quantity(atp, row.unit) })
+}
+
 function singleSentences(row, fmt, language) {
   const quantity = (value) => fmt.quantity(value, row.unit)
   const sentences = [aiSkillText('stock.single_summary', language, { onHand: quantity(row.onHand), reserved: quantity(row.reserved), available: quantity(row.available), demand: quantity(row.openSalesDemand), incoming: quantity(row.incomingApprovedPo) })]
@@ -58,24 +72,29 @@ function singleSentences(row, fmt, language) {
 
 export function presentInventoryAvailability(result, facts, { skill, language, query }) {
   const base = { skill, facts, language, query, followUpIds: ['highest_risk_items', 'prepare_action_draft'] }
-  if (result.hidden) return presentAiSkillAnswer({ ...base, title: result.ids?.length ? aiSkillText('stock.hidden_lookup', language, { id: aiSkillList(result.ids, language) }) : aiSkillText('stock.title_hidden', language), summary: '', severity: 'info', items: [], navigation: [] })
+  if (result.hidden) return presentAiSkillAnswer({ ...base, title: result.ids?.length ? aiSkillText('stock.hidden_lookup', language, { id: aiSkillList(result.ids, language) }) : aiSkillText('stock.title_hidden', language), summary: aiSkillText('access.ask_admin', language), severity: 'info', items: [], navigation: [] })
   const fmt = aiSkillFormatter(facts, language)
+  if (result.truncated) {
+    const summary = result.limit === null || result.limit === undefined ? aiSkillText('stock.not_read_summary_unknown', language) : aiSkillText('stock.not_read_summary', language, { limit: fmt.number(result.limit) })
+    return presentAiSkillAnswer({ ...base, title: aiSkillText('stock.not_read_title', language, { id: aiSkillList(array(result.ids), language) }), summary, severity: 'info', items: [], navigation: [] })
+  }
+  if (result.mode === 'single' && result.skus[0]?.noStock) {
+    const [row] = result.skus
+    return presentAiSkillAnswer({ ...base, title: aiSkillText('stock.no_stock_title', language, { sku: row.sku }), summary: aiSkillText('stock.no_stock_summary', language), severity: 'info', items: [], navigation: row.itemId ? [aiSkillNavigation({ label: row.sku, entityType: 'item', entityId: row.itemId }, language)] : [] })
+  }
   if (result.mode === 'not_found' || (result.mode === 'single' && !result.skus.length)) {
     return presentAiSkillAnswer({ ...base, title: aiSkillText('stock.not_found_title', language, { id: aiSkillList(array(result.ids), language) || query }), summary: aiSkillText('stock.not_found_summary', language), severity: 'info', items: [], navigation: [] })
   }
-  const built = result.skus.slice(0, MAX_EVIDENCE).map((row, index) => skuRecord(row, fmt, language, index + 1))
+  const stocked = result.skus.filter((row) => !row.noStock)
+  const built = stocked.slice(0, MAX_EVIDENCE).map((row, index) => skuRecord(row, fmt, language, index + 1))
   const evidence = { evidence: built.map((entry) => entry.evidence), impacts: built.map((entry) => entry.impact), navigation: built.slice(0, 3).map((entry) => entry.navigation) }
   if (result.mode === 'single') {
-    const [row, ...others] = result.skus
-    const atp = row.availableToPromise
-    const title = atp === null || atp === undefined
-      ? aiSkillText('stock.single_title_unknown', language, { sku: row.sku })
-      : atp < 0
-        ? aiSkillText('stock.single_title_negative', language, { sku: row.sku, missing: fmt.quantity(-atp, row.unit) })
-        : aiSkillText('stock.single_title', language, { sku: row.sku, atp: fmt.quantity(atp, row.unit) })
+    const [row, ...others] = stocked
+    const title = skuTitle(row, fmt, language)
     const sentences = singleSentences(row, fmt, language)
-    for (const other of others) sentences.push(aiSkillText('stock.single_title', language, { sku: other.sku, atp: fmt.quantity(other.availableToPromise, other.unit) }) + (language === 'zh-CN' ? '。' : '.'))
-    const figures = result.skus.flatMap((entry) => [
+    for (const other of others) sentences.push(skuTitle(other, fmt, language) + (language === 'zh-CN' ? '。' : '.'))
+    for (const other of result.skus.filter((entry) => entry.noStock)) sentences.push(aiSkillText('stock.no_stock_title', language, { sku: other.sku }) + (language === 'zh-CN' ? '。' : '.'))
+    const figures = stocked.flatMap((entry) => [
       ...(entry.availableToPromise !== null && entry.availableToPromise !== undefined ? [figure('atp', entry.sku, entry.availableToPromise, { unit: entry.unit })] : []),
       ...(entry.available !== null && entry.available !== undefined ? [figure('available', entry.sku, entry.available, { unit: entry.unit })] : []),
       ...(entry.onHand !== null && entry.onHand !== undefined ? [figure('on_hand', entry.sku, entry.onHand, { unit: entry.unit })] : []),

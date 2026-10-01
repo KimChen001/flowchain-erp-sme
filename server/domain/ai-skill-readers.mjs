@@ -213,8 +213,9 @@ export async function readAiSkillFacts(skillContext) {
       remaining: row.remaining, unit: row.unit, amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency,
       isOpen: row.isOpen, dataIncomplete: row.dataIncomplete, skus: skusById.get(row.id) || [],
     }))
-    // As stored, the way the purchase orders list filters it.
-    facts.purchaseOrders.pendingApproval = facts.purchaseOrders.index.filter((row) => rawStatusById.get(row.id) === PURCHASE_ORDER_STATUS.PENDING_APPROVAL)
+    // The stored status after alias normalisation ("待审批" is
+    // pending_approval), the way the purchase orders list filters it.
+    facts.purchaseOrders.pendingApproval = facts.purchaseOrders.index.filter((row) => purchaseOrderStatus(rawStatusById.get(row.id)) === PURCHASE_ORDER_STATUS.PENDING_APPROVAL)
   }
 
   if (visible.inventory) {
@@ -228,8 +229,13 @@ export async function readAiSkillFacts(skillContext) {
       // quantity is part of available to promise, which inventory shows.
       stockStatus: row.stockStatus, riskLevel: row.riskLevel, purchaseOrderIds: visible.purchase_orders ? row.purchaseOrderIds : [], salesOrderIds: row.salesOrderIds,
     }))
+    // Master items with no stock, sales or purchase line: known items the
+    // allocation has no row for, so a question about one is not "not found".
+    const allocated = new Set(rows.map((row) => text(row.sku)))
+    const masterOnly = array(business.items).filter((row) => text(row.sku) && !allocated.has(text(row.sku))).map((row) => ({ sku: text(row.sku), itemId: text(row.id || row.itemId) || null, itemName: text(row.name || row.itemName) || null, unit: text(row.unit) || null, noStock: true }))
     facts.inventory = {
       rows,
+      masterOnly,
       atRisk: rows.filter(isInventoryRiskSku).map((row) => row.sku).sort(),
       atRiskCount: kpi(overview, 'inventory_risk_sku')?.currentValue ?? rows.filter(isInventoryRiskSku).length,
     }

@@ -11,10 +11,16 @@ const array = (value) => Array.isArray(value) ? value : []
 const MAX_EVIDENCE = 5
 const largestFirst = (a, b) => Math.abs(b.variance ?? 0) - Math.abs(a.variance ?? 0) || String(a.id).localeCompare(String(b.id))
 
-export function runInvoiceSummary(facts) {
+// The total is for every supplier. A question that names an invoice number
+// or a supplier is told so, rather than getting the total as its answer.
+export function runInvoiceSummary(facts, { route = null } = {}) {
   if (!facts?.invoices) return { skillId: 'invoice_summary', hidden: true }
   const invoices = facts.invoices
-  return { skillId: 'invoice_summary', committed: invoices.committed, count: invoices.committedCount, matchCounts: invoices.matchCounts || { matched: 0, exception: 0, pending: 0 }, variances: [...array(invoices.variances)].sort(largestFirst) }
+  const entities = route?.entities || {}
+  return {
+    skillId: 'invoice_summary', committed: invoices.committed, count: invoices.committedCount, matchCounts: invoices.matchCounts || { matched: 0, exception: 0, pending: 0 }, variances: [...array(invoices.variances)].sort(largestFirst),
+    unsupported: array(entities.unsupported).map((entry) => entry.id).slice(0, 3), namedSuppliers: array(entities.suppliers).length > 0,
+  }
 }
 
 export function presentInvoiceSummary(result, facts, { skill, language, query }) {
@@ -28,10 +34,15 @@ export function presentInvoiceSummary(result, facts, { skill, language, query })
       ? aiSkillText('invoice.title', language, { amounts: fmt.moneyList(amounts), count: fmt.number(result.count) })
       : aiSkillText('invoice.title_hidden', language, { count: fmt.number(result.count) })
   const { matched, exception, pending } = result.matchCounts
+  const notices = [
+    array(result.unsupported).length ? aiSkillText(result.unsupported.length > 1 ? 'capability.unsupported_ids' : 'capability.unsupported_id', language, { id: aiSkillList(result.unsupported, language) }) : '',
+    result.namedSuppliers ? aiSkillText('invoice.scope_all', language) : '',
+  ]
   const sentences = result.count ? [
+    ...notices,
     aiSkillText('invoice.match', language, { matched: fmt.number(matched), exception: fmt.number(exception), pending: fmt.number(pending) }),
     aiSkillCountText('invoice.variances', result.variances.length, language, { count: fmt.number(result.variances.length) }),
-  ] : []
+  ] : notices
   const built = result.variances.slice(0, MAX_EVIDENCE).map((row, index) => {
     const match = aiSkillText(`match.${aiSkillInvoiceMatch(row)}`, language)
     return {

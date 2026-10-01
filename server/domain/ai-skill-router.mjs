@@ -131,8 +131,9 @@ const STOCK = [
 ]
 const AVAILABLE = [/\b(available|availability|promise|short)\b/i, /可用|可以承诺|能承诺/]
 const AVAILABLE_CONTEXT = [/\b(skus?|items?|units?|quantity|stock)\b/i, /库存|数量|物料/]
-const SHORT = [/\b(short|shortages?|stockouts?|out of stock)\b/i, /缺货|短缺|不足/]
-const RECORD_ID = /\b[A-Za-z]{2,}[A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+\b/g
+const SHORT = [/\b(short|shortages?|stockouts?|out of stock)\b/i, /缺货|短缺|不足|无法满足|满足不了/]
+// Linear on any input: one quantifier per run of letters.
+const RECORD_ID = /\b[A-Za-z][A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d+\b/g
 // "PO 012", "PO #12" and "PO12" are written as PO-012, PO-12 and PO-12.
 const SPACED_PO = /\bPO\s*#?\s*(\d{1,8})\b/gi
 
@@ -154,8 +155,11 @@ const recordIds = (message) => {
 export function detectAiActionRequest(message) {
   const raw = text(message)
   if (matches(ACTION, raw) || clauses(raw).some((clause) => matches(ACTION_CLAUSE, clause))) return true
-  // A mistyped verb opening a clause ("aprove PO-022") is still an instruction.
+  // A mistyped verb opening a clause ("aprove PO-022") is still an
+  // instruction. A clause that asks something ("Summit 有哪些未结的 PO？") is
+  // a question about a name, not a mistyped "submit".
   return clauses(raw).some((clause) => {
+    if (/[?？]|哪些|哪个|多少|什么|吗|呢|有没有|是否|几/.test(clause)) return false
     const [first, ...rest] = clause.split(/\s+/)
     const verb = aiSkillMistypedVerb(first)
     return Boolean(verb) && matches(ACTION_CLAUSE, [verb, ...rest].join(' '))

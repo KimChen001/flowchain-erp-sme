@@ -12,47 +12,55 @@ export function aiSkillLanguage(value) {
 }
 
 // The language to answer in: the language the question is phrased in, else
-// the interface language. A question is phrased by its frame words (English
-// question and function words; Chinese question words, particles and
-// pronouns), not by the names it carries: "How many 未结采购订单 do we have?"
-// is an English question about a Chinese term, and "PO-012 的状态是什么？" is
-// a Chinese one. Record ids, SKUs and numbers are removed first. When both
-// frames appear, the strong Chinese markers or the frame that opens the
-// question decide; single characters such as 的 or 有 also occur inside
-// names, so they decide only when nothing else does.
+// the interface language. A question is phrased by the words that make it a
+// question: English question words, auxiliaries, "please" and an imperative
+// opening a clause ("Show", "List"); Chinese question words, particles and
+// request words (多少, 哪些, 吗, 请, 帮我, 一下). Names do not count, so
+// "Bank of America 的发票是多少？" is Chinese and "How many 未结采购订单 do we
+// have?" is English: of, and, the and other function words are never
+// question words. With question words in both languages, a sentence-final
+// Chinese particle, then the larger count, then the earlier word decides.
+// Without any, the balance of Latin words and Chinese characters (about two
+// to a word) decides, and a tie falls back to the interface language. Record
+// ids, SKUs and numbers are removed first. Only the first 1,200 characters
+// are read: a longer question is rejected anyway.
 const CJK_CHAR = /[㐀-鿿豈-﫿]/gu
-const RECORD_ID = /\b[A-Za-z]{2,}[A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+\b/g
-const ENGLISH_FRAME = new Set(['what', 'which', 'who', 'whose', 'when', 'where', 'why', 'how', 'is', 'are', 'was', 'were', 'do', 'does', 'did', 'can', 'could', 'would', 'will', 'should', 'show', 'list', 'give', 'tell', 'find', 'me', 'my', 'we', 'our', 'us', 'you', 'your', 'the', 'an', 'of', 'for', 'to', 'in', 'on', 'at', 'with', 'by', 'from', 'any', 'there', 'many', 'much', 'have', 'has', 'please', 'about', 'this', 'that', 'these', 'those', 'need', 'needs', 'and', 'or', 'not', 'it', 'its', 'be', 'than', 'still'])
-const CHINESE_STRONG = /吗|呢|吧|哪些|哪个|哪家|哪张|哪里|多少|什么|怎么|怎样|为什么|是否|有没有|是不是|几个|几张|几家|几天|请|帮我|给我|替我|查一下|看看|看一下|列出|告诉我|我们|我的|这个|那个|这些|那些|现在|目前|还有|还差/gu
-const CHINESE_WEAK = /[的了是有还在和与及]/gu
-
-function positions(pattern, value) {
-  return [...value.matchAll(pattern)].map((match) => match.index)
-}
+const RECORD_ID = /\b[A-Za-z][A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-\d+\b/g
+const ENGLISH_QUESTION = new Set(['what', 'which', 'who', 'whom', 'whose', 'when', 'where', 'why', 'how', 'is', 'are', 'was', 'were', 'do', 'does', 'did', 'can', 'could', 'would', 'will', 'should', 'shall', 'may', 'might', 'has', 'have', 'had', 'please'])
+// Imperatives and "any" count only at the start of a clause ("Show me...",
+// "Any open POs?"), not inside a name or a noun phrase ("PO list").
+const ENGLISH_OPENER = new Set(['show', 'list', 'give', 'tell', 'find', 'check', 'get', 'any', 'count', 'compare', 'explain', 'summarize', 'summarise'])
+const CHINESE_QUESTION = /吗|呢|吧|哪些|哪个|哪家|哪张|哪里|哪儿|多少|什么|怎么|怎样|为什么|是否|有没有|是不是|几个|几张|几家|几天|几笔|请|帮我|给我|替我|查一下|看一下|看看|一下|列出|告诉我/gu
+const CHINESE_FINAL_PARTICLE = /[吗呢吧][\s?？!！。.]*$/u
 
 export function aiSkillQuestionLanguage(message, interfaceLanguage) {
-  const stripped = String(message || '').replace(RECORD_ID, ' ').replace(/\d+/g, ' ')
-  // Short all-capital tokens (SKU, PO, ATP, US) are acronyms, not frame words,
-  // unless the whole question is written in capitals.
+  const stripped = String(message || '').slice(0, 1200).replace(RECORD_ID, ' ').replace(/\d+/g, ' ')
+  // Short all-capital tokens (SKU, PO, ATP, US) are acronyms, unless the
+  // whole question is written in capitals.
   const shouting = !/[a-z]/.test(stripped)
   const acronym = (word) => word === word.toUpperCase() && word.length <= 4
   const words = [...stripped.matchAll(/[A-Za-z]{2,}/g)]
-  const english = words.filter((match) => ENGLISH_FRAME.has(match[0].toLowerCase()) && (shouting || !acronym(match[0]))).map((match) => match.index)
-  const strong = positions(CHINESE_STRONG, stripped)
-  const weak = positions(CHINESE_WEAK, stripped)
-  if (english.length && !strong.length && !weak.length) return 'en-US'
-  if (!english.length && (strong.length || weak.length)) return 'zh-CN'
+  const english = words.filter((match) => {
+    const word = match[0].toLowerCase()
+    if (!shouting && acronym(match[0])) return false
+    if (ENGLISH_QUESTION.has(word)) return true
+    // "Show 一下…" is the Chinese verb-plus-一下 request, with an English verb.
+    if (/^\s*一下/u.test(stripped.slice(match.index + match[0].length))) return false
+    return ENGLISH_OPENER.has(word) && /(^|[.!?;:,，。？！；：])\s*$/u.test(stripped.slice(0, match.index))
+  }).map((match) => match.index)
+  const chinese = [...stripped.matchAll(CHINESE_QUESTION)].map((match) => match.index)
+  if (english.length && !chinese.length) return 'en-US'
+  if (chinese.length && !english.length) return 'zh-CN'
   if (english.length) {
-    if (!strong.length && english.length >= 2) return 'en-US'
-    const chinese = strong.length ? strong : weak
+    if (CHINESE_FINAL_PARTICLE.test(stripped)) return 'zh-CN'
+    if (english.length !== chinese.length) return english.length > chinese.length ? 'en-US' : 'zh-CN'
     return Math.min(...english) < Math.min(...chinese) ? 'en-US' : 'zh-CN'
   }
-  // No frame words: "overdue POs" or "逾期订单". About two Chinese characters
-  // make a word.
-  const cjk = (stripped.match(CJK_CHAR) || []).length
+  // No question words: "overdue POs" or "逾期订单".
+  const cjkWords = (stripped.match(CJK_CHAR) || []).length / 2
   const latinWords = words.filter((match) => !acronym(match[0])).length
-  if (latinWords >= 2 && cjk / 2 < latinWords) return 'en-US'
-  if (cjk >= 2) return 'zh-CN'
+  if (latinWords >= 2 && latinWords > cjkWords) return 'en-US'
+  if (cjkWords >= 1 && cjkWords > latinWords) return 'zh-CN'
   return aiSkillLanguage(interfaceLanguage)
 }
 
@@ -89,6 +97,7 @@ const entries = {
   'capability.title': ['Here is what I can help with', '我可以帮你做这些'],
   'capability.summary': ["I can help with today's priorities, the highest-risk items, records that need more data, open purchase orders and spend, a purchase order, supplier or SKU you name, orders waiting for approval, supplier invoices, and preparing an action draft for your review.", '我可以帮你查看今日优先事项、风险最高的事项、需要补齐的数据、未结采购订单与金额、你点名的采购订单、供应商或 SKU、待审批的订单、供应商发票，并准备处理草稿供你复核。'],
   'capability.unsupported_id': ["I can't look up {id} by its number yet.", '暂时无法按编号查询 {id}。'],
+  'capability.unsupported_ids': ["I can't look up {id} by their numbers yet.", '暂时无法按编号查询 {id}。'],
   'capability.outside': ['I can only answer questions about your workspace data.', '我只能回答与当前工作区数据有关的问题。'],
   'capability.refusal.title': ["I can't do that, but I can prepare a draft", '我不能执行这个操作，但可以准备草稿'],
   'capability.refusal.summary': ["I can't approve, pay, send, issue, cancel or delete anything. I can prepare a draft for you to review.", '我不能批准、付款、发送、下达、取消或删除任何内容。我可以准备一份草稿供你复核。'],
@@ -296,12 +305,16 @@ const entries = {
   'po.sku_title_one': ['{name}: 1 open purchase order, {overdue} overdue', '{name}：未结采购订单 1 张，逾期 {overdue} 张'],
   'po.sku_title_none': ['{name} has no open purchase orders', '{name} 没有未结采购订单'],
   'po.group_sentence': ['{name}: {open} open, {overdue} overdue.', '{name}：未结 {open} 张，逾期 {overdue} 张。'],
-  'po.many_title': ['{count} matches: {open} open purchase orders, {overdue} overdue', '{count} 项：未结采购订单 {open} 张，逾期 {overdue} 张'],
+  'po.many_title': ['{count} matches: open purchase orders {open}, overdue {overdue}', '{count} 项：未结采购订单 {open} 张，逾期 {overdue} 张'],
   'po.hidden_lookup': ["Your role can't view purchase orders, so I can't look up {id}", '你的角色无法查看采购订单，因此无法查询 {id}'],
   'po.ambiguous_title': ['{id} matches more than one purchase order', '{id} 对应多张采购订单'],
   'po.ambiguous_summary': ['Which one do you mean: {list}?', '你指的是哪一张：{list}？'],
   'po.not_read_title': ['{id} is not among the purchase orders I read', '{id} 不在本次读取的采购订单中'],
   'po.not_read_summary': ['Only the first {limit} purchase orders were read. Search the purchase orders list for it.', '本次只读取了前 {limit} 张采购订单，请在采购订单列表中搜索。'],
+  'po.not_read_summary_unknown': ['Not every purchase order was read. Search the purchase orders list for it.', '本次没有读取全部采购订单，请在采购订单列表中搜索。'],
+  'lookup.not_found_title': ["I couldn't find {id} in this workspace", '当前工作区中找不到 {id}'],
+  'lookup.not_found_summary': ['Check the number or the name, or ask without it.', '请核对编号或名称，或不带它再问一次。'],
+  'access.ask_admin': ['Ask an administrator if you need access.', '如需查看，请联系管理员开通权限。'],
   'po.single_closed': ['{po}: {status}, nothing will be received', '{po}：{status}，不会再收货'],
   'po.single_not_committed': ['{po}: {status}, not yet committed ({ordered} ordered)', '{po}：{status}，尚未生效（订购 {ordered}）'],
   'po.as_of': ['Counted as in the open purchase orders report, as of {date}.', '按截至 {date} 的未结采购订单报表统计。'],
@@ -330,6 +343,7 @@ const entries = {
   'approval.filtered_title': ['{name}: {count} purchase orders waiting for approval', '{name}：{count} 张采购订单待审批'],
   'approval.filtered_title_one': ['{name}: 1 purchase order waiting for approval', '{name}：1 张采购订单待审批'],
   'approval.filtered_title_none': ['{name}: no purchase order waiting for approval', '{name}：没有待审批的采购订单'],
+  'approval.filtered_summary': ['Only orders for {name} are counted.', '只统计 {name} 的订单。'],
   'approval.requests': ['{count} purchase requests are also waiting for approval.', '另有 {count} 张采购申请待审批。'],
   'approval.requests_one': ['1 purchase request is also waiting for approval.', '另有 1 张采购申请待审批。'],
   'approval.requests_none': ['No purchase request is waiting for approval.', '没有待审批的采购申请。'],
@@ -342,10 +356,15 @@ const entries = {
   // inventory_availability
   'stock.single_title': ['{sku}: {atp} available to promise', '{sku}：可承诺 {atp}'],
   'stock.single_title_unknown': ['{sku}: available to promise is not known', '{sku}：可承诺数量未知'],
-  'stock.single_title_negative': ['{sku}: nothing to promise, {missing} short', '{sku}：没有可承诺数量，缺 {missing}'],
+  'stock.single_title_negative': ['{sku}: nothing to promise, {missing} short even with incoming receipts', '{sku}：没有可承诺数量，计入在途后仍缺 {missing}'],
+  'stock.no_stock_title': ['{sku}: no stock or demand recorded', '{sku}：没有库存或需求记录'],
+  'stock.no_stock_summary': ['The item exists, but no stock balance, open sales order or open purchase order includes it.', '该物料存在，但没有库存余额、未结销售订单或未结采购订单涉及它。'],
+  'stock.not_read_title': ['SKU {id} is not among the stock records I read', 'SKU {id} 不在本次读取的库存记录中'],
+  'stock.not_read_summary': ['Only the first {limit} stock records were read. Search the inventory list for it.', '本次只读取了前 {limit} 条库存记录，请在库存列表中搜索。'],
+  'stock.not_read_summary_unknown': ['Not every stock record was read. Search the inventory list for it.', '本次没有读取全部库存记录，请在库存列表中搜索。'],
   'stock.hidden_lookup': ["Your role can't view inventory, so I can't look up {id}", '你的角色无法查看库存，因此无法查询 {id}'],
   'stock.single_summary': ['On hand {onHand}, reserved {reserved}, available {available}. Open sales demand {demand}; incoming on approved purchase orders {incoming}.', '在手 {onHand}，已预留 {reserved}，可用 {available}。未结销售需求 {demand}；审批通过的采购订单在途 {incoming}。'],
-  'stock.short': ['Short {shortage} against open sales orders.', '相对未结销售订单短缺 {shortage}。'],
+  'stock.short': ['Before incoming receipts, stock is {shortage} short of open sales orders.', '不计在途，库存比未结销售订单少 {shortage}。'],
   'stock.status': ['Stock status: {status}.', '库存状态：{status}。'],
   'stock.atp_definition': ['Available to promise is on hand plus incoming, less reservations and open demand.', '可承诺量为在手加在途，减去预留和未结需求。'],
   'stock.overview_title': ['{count} of {total} SKUs need attention', '{total} 个 SKU 中有 {count} 个需要关注'],
@@ -371,6 +390,7 @@ const entries = {
   'stock.impact_unknown.explanation': ['Some quantities for this SKU are not recorded.', '该 SKU 的部分数量未记录。'],
 
   // invoice_summary
+  'invoice.scope_all': ["This total is for all suppliers; I can't total one supplier's invoices yet.", '这是全部供应商的合计，暂时无法按单个供应商汇总。'],
   'invoice.title': ['Committed supplier invoices: {amounts} across {count} invoices', '已提交供应商发票：{amounts}，共 {count} 张'],
   'invoice.title_hidden': ['{count} committed supplier invoices', '已提交供应商发票 {count} 张'],
   'invoice.title_none': ['No committed supplier invoices', '没有已提交的供应商发票'],
@@ -437,9 +457,11 @@ export function aiSkillSentences(parts, language) {
 }
 
 // A list of already localized parts: "a, b and c" / "a、b 和 c".
-export function aiSkillList(parts, language) {
+// With { or: true }, a choice: "a or b" / "a 还是 b".
+export function aiSkillList(parts, language, { or = false } = {}) {
   const items = parts.filter(Boolean)
   if (items.length <= 1) return items.join('')
-  if (aiSkillLanguage(language) === 'zh-CN') return `${items.slice(0, -1).join('、')}和${items.at(-1)}`
-  return items.length === 2 ? `${items[0]} and ${items[1]}` : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`
+  if (aiSkillLanguage(language) === 'zh-CN') return `${items.slice(0, -1).join('、')}${or ? ' 还是 ' : '和'}${items.at(-1)}`
+  const word = or ? 'or' : 'and'
+  return items.length === 2 ? `${items[0]} ${word} ${items[1]}` : `${items.slice(0, -1).join(', ')} ${word} ${items.at(-1)}`
 }

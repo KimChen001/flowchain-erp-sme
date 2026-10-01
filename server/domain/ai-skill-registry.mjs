@@ -55,6 +55,7 @@ const entityInput = (modes, lists) => Object.freeze({
 export const AI_SKILL_MODES = Object.freeze({
   purchase_orders: Object.freeze(['single', 'supplier', 'sku', 'overdue', 'not_found', 'hidden', 'ambiguous']),
   inventory_availability: Object.freeze(['single', 'overview', 'short', 'not_found', 'hidden']),
+  pending_approvals: Object.freeze(['all', 'not_found']),
 })
 
 const definitions = [

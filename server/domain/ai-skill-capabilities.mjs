@@ -23,7 +23,7 @@ export function presentCapabilityOverview(result, _facts, { skill, language, que
       ? aiSkillSentences([aiSkillText('capability.refusal.summary', language), aiSkillText('capability.summary', language)], language)
       : aiSkillSentences([
         result.outOfDomain ? aiSkillText('capability.outside', language) : '',
-        result.unsupported?.length ? aiSkillText('capability.unsupported_id', language, { id: aiSkillList(result.unsupported, language) }) : '',
+        result.unsupported?.length ? aiSkillText(result.unsupported.length > 1 ? 'capability.unsupported_ids' : 'capability.unsupported_id', language, { id: aiSkillList(result.unsupported, language) }) : '',
         aiSkillText('capability.summary', language),
       ], language),
     severity: result.refusal ? 'warning' : 'info',

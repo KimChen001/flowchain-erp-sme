@@ -76,14 +76,15 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
     // One answer language for every path (knowledge, business query, skills,
     // errors): the question's own language, else the interface language.
     if (body && typeof body === 'object' && !Array.isArray(body)) {
-      body = { ...body, interfaceLanguage: body.answerLanguage, answerLanguage: aiSkillQuestionLanguage(body.message || body.question, body.answerLanguage) }
+      body = { ...body, interfaceLanguage: body.answerLanguage, answerLanguage: aiSkillQuestionLanguage(String(body.message || body.question || '').slice(0, 1201), body.answerLanguage) }
     }
     try {
       // An instruction to approve, pay, send, cancel or delete goes straight
       // to the skill runtime's refusal: the knowledge and business query
       // paths would otherwise answer it (a payment or supplier word sends it
       // to the supplier query planner) and never refuse.
-      const actionRequest = detectAiActionRequest(body?.message || body?.question)
+      // Only the first 1,201 characters: a longer question is rejected below.
+      const actionRequest = detectAiActionRequest(String(body?.message || body?.question || '').slice(0, 1201))
       const knowledge = actionRequest ? null : await runKnowledgeQuery(ctx, body)
       if (knowledge) { send(res, 200, knowledge); return true }
       // Reject empty or oversized questions before any tenant data is read.
@@ -97,7 +98,7 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
       if (businessQuery) {
         // The same audit row as a skill answer: the plan's intent, the
         // records it cited and a hash of the question, never its text.
-        await recordAiSkillAudit(ctx, { response: { ...businessQuery, answerSource: businessQuery.answerSource || 'business_query' }, facts: null, message: body.message || body.question, latencyMs: Date.now() - started })
+        await recordAiSkillAudit(ctx, { response: { ...businessQuery, answerSource: businessQuery.answerSource || 'business_query', language: businessQuery.language || body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started })
         send(res, 200, await addKnowledgeContext(ctx, body, businessQuery))
         return true
       }

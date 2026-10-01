@@ -110,8 +110,45 @@ test('a role that cannot read a source gets the same answer for any record numbe
   const finance = harness('finance-specialist')
   const sku = await finance.ask("What's the ATP for LDM-001?")
   const unknown = await finance.ask("What's the ATP for LDM-999?")
-  assert.equal(sku.conclusion.title, "Your role can't view inventory, so I can't look up LDM-001")
-  assert.equal(unknown.conclusion.title.replace('LDM-999', 'LDM-001'), sku.conclusion.title)
+  assert.deepEqual([sku.conclusion.title, sku.conclusion.summary], ['Inventory is hidden for your role', 'Ask an administrator if you need access.'])
+  assert.deepEqual(unknown.conclusion, sku.conclusion)
+  // A typed number that is not a SKU is not echoed back as one.
+  assert.equal((await finance.ask('What are the top-10 stock shortages?')).conclusion.title, 'Inventory is hidden for your role')
+  // A role without purchase orders gets the same hidden answer in either language.
+  const english = await operations.ask('Which purchase orders from Acme Components are open?')
+  const chinese = await operations.ask('Acme Components 有哪些未结采购订单？')
+  assert.deepEqual([english.intent, chinese.intent], ['purchase_orders', 'purchase_orders'])
+  assert.deepEqual([english.conclusion.title, chinese.conclusion.title], ['Purchase orders are hidden for your role', '你的角色无法查看采购订单'])
+})
+
+test('every record answer has a summary in its own language', async () => {
+  const { ask } = harness()
+  for (const [question, language] of [
+    ['Which POs from Acme are waiting for approval?', 'zh-CN'],
+    ['Acme Components 有哪些待审批的采购订单？', 'en-US'],
+    ["What's the status of PO-999?", 'zh-CN'],
+    ['Which overdue POs are for LDM-777?', 'zh-CN'],
+  ]) {
+    const payload = await ask(question, language)
+    assert.ok(payload.conclusion.summary, question)
+    if (payload.language === 'en-US') assert.doesNotMatch(text(payload), CJK, question)
+  }
+  assert.equal((await ask('Which overdue POs are for LDM-777?')).conclusion.title, "I couldn't find LDM-777 in this workspace")
+})
+
+test('stored status aliases, several SKUs and lists read correctly', async () => {
+  const { ask, scenario } = harness()
+  // An order stored with the legacy alias status still waits for approval.
+  scenario.data.purchaseOrders.find((row) => row.id === 'PO-006').status = '待审批'
+  assert.deepEqual(figures(await ask('Which POs are waiting for approval?')), { pending_approval_po_count: 1, pending_approval_pr_count: 1 })
+  // Every SKU of a multi-SKU answer says how much is missing, never a
+  // negative quantity to promise.
+  scenario.data.salesOrders[0].lines.push({ sku: 'LDM-002', orderedQuantity: 400, fulfilledQuantity: 0, reservedQuantity: 0 })
+  const both = await ask("What's the ATP for LDM-001 and LDM-002?")
+  assert.match(both.conclusion.summary, /LDM-002: nothing to promise, [\d,]+ pcs short even with incoming receipts\./)
+  assert.doesNotMatch(text(both), /(^|[\s(])-\d/)
+  // Two document numbers, plural wording.
+  assert.match((await ask("What's the status of PR-001 and RFQ-001?")).conclusion.summary, /^I can't look up PR-001 and RFQ-001 by their numbers yet\./)
 })
 
 test('a role without amounts sees counts, never money', async () => {

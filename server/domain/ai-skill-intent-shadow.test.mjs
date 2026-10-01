@@ -41,6 +41,12 @@ function harness({ env = { FLOWCHAIN_PERSISTENCE_MODE: 'database' }, provider } 
 }
 
 const reply = (value) => () => ({ ok: true, rawOutput: { conclusion: { summary: JSON.stringify(value) } } })
+// With the classifier on, the audit row is written once the suggestion
+// arrives, after the answer.
+const audited = async (run) => {
+  for (let tries = 0; tries < 100 && !run.audits.length; tries += 1) await new Promise((resolve) => setTimeout(resolve, 10))
+  return run.audits[0]
+}
 const answer = (payload) => ({ intent: payload.intent, title: payload.conclusion.title, summary: payload.conclusion.summary, figures: payload.figures, evidence: payload.keyEvidence.map((item) => item.entityId) })
 
 test('the shadow classifier is off unless switched on and a provider is set', async () => {
@@ -59,15 +65,22 @@ test('a suggestion is recorded beside the answer and never changes it', async ()
   const agreeing = harness({ env: SHADOW_ENV, provider: reply({ skillId: 'purchase_orders', mode: 'single', confidence: 0.92 }) })
   assert.deepEqual(answer(await agreeing.ask("What's the status of PO-001?")), baseline)
   assert.deepEqual(
-    (({ status, skillId, mode, confidence, agrees }) => ({ status, skillId, mode, confidence, agrees }))(agreeing.audits[0].metadata.intentShadow),
+    (({ status, skillId, mode, confidence, agrees }) => ({ status, skillId, mode, confidence, agrees }))((await audited(agreeing)).metadata.intentShadow),
     { status: 'ready', skillId: 'purchase_orders', mode: 'single', confidence: 0.92, agrees: true },
   )
   const disagreeing = harness({ env: SHADOW_ENV, provider: reply({ skillId: 'invoice_summary', confidence: 0.4 }) })
   assert.deepEqual(answer(await disagreeing.ask("What's the status of PO-001?")), baseline)
-  assert.equal(disagreeing.audits[0].metadata.intentShadow.agrees, false)
-  // A refusal stays a refusal whatever the model suggests.
+  assert.equal((await audited(disagreeing)).metadata.intentShadow.agrees, false)
+  // A refusal is answered without asking the model at all.
   const refusal = harness({ env: SHADOW_ENV, provider: reply({ skillId: 'pending_approvals' }) })
   assert.equal((await refusal.ask('Approve PO-006 now')).intent, 'capability_overview')
+  assert.equal(refusal.calls.length, 0)
+  // The answer does not wait for a slow model.
+  const slow = harness({ env: SHADOW_ENV, provider: () => new Promise((resolve) => setTimeout(() => resolve({ ok: false, reason: 'late' }), 140)) })
+  const started = Date.now()
+  await slow.ask("What's the status of PO-001?")
+  assert.ok(Date.now() - started < 120, `${Date.now() - started} ms`)
+  assert.equal((await audited(slow)).metadata.intentShadow.status, 'degraded')
 })
 
 test('the model sees the question and the skill list, no workspace data', async () => {
@@ -103,6 +116,7 @@ test('an invalid, slow or failing reply is recorded as degraded', async () => {
     const started = Date.now()
     assert.deepEqual(answer(await run.ask('Which POs are overdue?')), baseline, reason)
     assert.ok(Date.now() - started < 2000, reason)
-    assert.deepEqual([run.audits[0].metadata.intentShadow.status, run.audits[0].metadata.intentShadow.reason], ['degraded', reason])
+    const row = await audited(run)
+    assert.deepEqual([row.metadata.intentShadow.status, row.metadata.intentShadow.reason], ['degraded', reason])
   }
 })

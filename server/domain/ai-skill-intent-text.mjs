@@ -54,6 +54,8 @@ const COMMON = new Set([
   'leave', 'lefty', 'loft', 'lists', 'listen', 'lost', 'priory', 'prior', 'demands', 'demanded', 'amounts',
   'statuses', 'shortly', 'shortest', 'deliver', 'delivered', 'delivering', 'items', 'itemized', 'quantities',
   'provide', 'provides', 'provided', 'premium', 'process', 'progress', 'project', 'remind', 'reminder',
+  'avoidable', 'unavoidable', 'rises', 'risen', 'committee', 'committees', 'regaining', 'relieving', 'wanting',
+  'waiving', 'marched', 'reviewing', 'receipting', 'shipping', 'shopping', 'ordering', 'availed', 'stocking',
 ])
 
 // Action verbs in every form. Never corrected, and never a correction's
@@ -67,7 +69,7 @@ const VERB_FORMS = new Set([
   'rejecting', 'void', 'voids', 'voided', 'voiding',
 ])
 
-const RECORD_ID = /\b[a-z]{2,}[a-z0-9]*(?:-[a-z0-9]+)*-\d+\b/g
+const RECORD_ID = /\b[a-z][a-z0-9]+(?:-[a-z0-9]+)*-\d+\b/g
 
 // Optimal string alignment distance: insertions, deletions, substitutions and
 // adjacent transpositions each cost 1.

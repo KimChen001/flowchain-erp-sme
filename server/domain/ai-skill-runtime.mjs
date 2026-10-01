@@ -5,7 +5,7 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { routeSkill } from './ai-skill-router.mjs'
 import { answerAiSkill, toolsFor } from './ai-skills.mjs'
 import { recordAiSkillAudit } from './ai-skill-audit.mjs'
-import { aiSkillIntentShadowAudit, classifyAiSkillIntentShadow } from './ai-skill-intent-shadow.mjs'
+import { aiSkillIntentShadowAudit, aiSkillIntentShadowEnabled, classifyAiSkillIntentShadow } from './ai-skill-intent-shadow.mjs'
 
 // The assistant's answer path after knowledge and business queries: route the
 // question to a workspace skill, read the facts through the report
@@ -29,7 +29,10 @@ export async function runAiSkillRuntime(ctx, body = {}) {
   const context = await loadAiSkillContext(ctx)
   // Off unless switched on: a model's suggestion for the audit row only. It
   // runs beside the facts read and never changes the route or the answer.
-  const shadow = classifyAiSkillIntentShadow({ message, actor: context.actor, env: ctx.env || process.env, ...(ctx.aiSkillIntentProvider ? { provider: ctx.aiSkillIntentProvider } : {}) })
+  // A refusal or a question about the outside world is not sent.
+  const shadow = route?.capability
+    ? Promise.resolve({ status: 'disabled' })
+    : classifyAiSkillIntentShadow({ message, actor: context.actor, env: ctx.env || process.env, ...(ctx.aiSkillIntentProvider ? { provider: ctx.aiSkillIntentProvider } : {}) })
   const allowed = new Set(toolsFor(context.actor).map((entry) => entry.id))
   const refusal = Boolean(route?.refusal)
   // Any question that is not refused or about the outside world reads the
@@ -41,7 +44,13 @@ export async function runAiSkillRuntime(ctx, body = {}) {
   const skillId = refined?.skillId && allowed.has(refined.skillId) ? refined.skillId : 'capability_overview'
   const answerFacts = skillId === 'capability_overview' ? null : facts
   const { response } = answerAiSkill({ skillId, facts: answerFacts, language, query: message, focus: refined?.focus || null, refusal, outOfDomain: Boolean(route?.outOfDomain), actor: context.actor, route: refined })
-  const intentShadow = aiSkillIntentShadowAudit(await shadow, { skillId, mode: refined?.mode || null })
-  await recordAiSkillAudit(ctx, { response, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow })
+  const audit = (intentShadow = null) => recordAiSkillAudit(ctx, { response, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow })
+  // With the classifier on, the answer does not wait for it: the audit row
+  // is written when its suggestion arrives (best effort, like every audit).
+  if (aiSkillIntentShadowEnabled(ctx.env || process.env) && !route?.capability) {
+    shadow.then((value) => audit(aiSkillIntentShadowAudit(value, { skillId, mode: refined?.mode || null }))).catch(() => {})
+    return response
+  }
+  await audit()
   return response
 }

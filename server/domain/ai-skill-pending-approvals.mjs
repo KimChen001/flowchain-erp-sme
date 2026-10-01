@@ -15,6 +15,10 @@ export function runPendingApprovals(facts, { route = null } = {}) {
   const skus = new Set(array(route?.entities?.skus).map((row) => row.sku))
   const order = (row) => (!suppliers.size || suppliers.has(row.supplierId)) && (!skus.size || array(row.skus).some((sku) => skus.has(sku)))
   const request = (row) => !suppliers.size && (!skus.size || array(row.skus).some((sku) => skus.has(sku)))
+  if (route?.mode === 'not_found') {
+    const entities = route.entities || {}
+    return { skillId: 'pending_approvals', notFound: [...array(entities.absent), ...array(entities.truncated)].map((entry) => entry.id) }
+  }
   return {
     skillId: 'pending_approvals',
     filtered: Boolean(suppliers.size || skus.size),
@@ -27,10 +31,12 @@ export function runPendingApprovals(facts, { route = null } = {}) {
 
 export function presentPendingApprovals(result, facts, { skill, language, query }) {
   const base = { skill, facts, language, query, followUpIds: ['purchase_orders', 'today_priorities'] }
-  if (!result.orders) return presentAiSkillAnswer({ ...base, title: aiSkillText('po.title_hidden', language), summary: '', severity: 'info', items: [] })
+  if (result.notFound) return presentAiSkillAnswer({ ...base, title: aiSkillText('lookup.not_found_title', language, { id: aiSkillList(result.notFound, language) }), summary: aiSkillText('lookup.not_found_summary', language), severity: 'info', items: [], navigation: [] })
+  if (!result.orders) return presentAiSkillAnswer({ ...base, title: aiSkillText('po.title_hidden', language), summary: aiSkillText('access.ask_admin', language), severity: 'info', items: [] })
   const fmt = aiSkillFormatter(facts, language)
   const status = aiSkillText('approval.status', language)
   const sentences = []
+  if (result.filtered) sentences.push(aiSkillText('approval.filtered_summary', language, { name: aiSkillList(result.names, language) }))
   if (result.requests && !result.bySupplier) sentences.push(aiSkillCountText('approval.requests', result.requests.length, language, { count: fmt.number(result.requests.length) }))
   // Money stays in its own currency, and only when the role may see it.
   if (facts.visibility?.amounts?.purchase_order_amounts) {
