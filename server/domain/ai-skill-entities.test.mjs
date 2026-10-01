@@ -135,6 +135,9 @@ test('the named records shape the route', () => {
   assert.deepEqual([refine('Open orders from Acme Components?').skillId, refine('Open orders from Acme Components?').mode], ['purchase_orders', 'supplier'])
   assert.deepEqual([refine('Which POs are open for LDM-001?').skillId, refine('Which POs are open for LDM-001?').mode], ['purchase_orders', 'sku'])
   assert.deepEqual([refine('Is LDM-002 in stock?').skillId, refine('Is LDM-002 in stock?').mode], ['inventory_availability', 'single'])
+  // The Chinese short-SKU prompt answers in the same mode as the English one.
+  assert.deepEqual([refine('哪些 SKU 无法满足未结销售订单？').skillId, refine('哪些 SKU 无法满足未结销售订单？').mode], ['inventory_availability', 'short'])
+  assert.deepEqual([refine('Which SKUs are short against open sales orders?').skillId, refine('Which SKUs are short against open sales orders?').mode], ['inventory_availability', 'short'])
   // Another document number: the capability answer says it is not looked up.
   const invoice = refine('What is the status of INV-001?')
   assert.equal(invoice.capability, true)

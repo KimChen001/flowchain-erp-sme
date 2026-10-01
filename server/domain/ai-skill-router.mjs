@@ -128,6 +128,9 @@ const INVOICE_QUESTION = [/\b(total|totals|committed|how much|amount|amounts|sum
 const STOCK = [
   /\b(stock|stock levels?|inventory|atp|available to promise|on hand|in stock|out of stock|shortages?|stockouts?|short against)\b/i,
   /库存|可承诺|缺货|短缺|在手|现货/,
+  // "哪些 SKU 无法满足未结销售订单？", the Chinese of "short against open
+  // sales orders"; a supplier that cannot meet a date is not a stock question.
+  /(sku|物料|商品|产品|存货)[^，。？！?]{0,12}(无法满足|满足不了)/i,
 ]
 const AVAILABLE = [/\b(available|availability|promise|short)\b/i, /可用|可以承诺|能承诺/]
 const AVAILABLE_CONTEXT = [/\b(skus?|items?|units?|quantity|stock)\b/i, /库存|数量|物料/]
