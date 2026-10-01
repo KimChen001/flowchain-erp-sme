@@ -12,8 +12,10 @@
 //   - it is not capitalized inside the sentence, where it is likely a name
 //     ("Is Rick handling PO-012?");
 //   - it starts with the same letter as exactly one closest vocabulary word;
-//   - the edit distance (with transpositions) is 1 for words of 4 to 6
+//   - the edit distance (with transpositions) is 1 for words of 4 to 8
 //     letters, or at most 2 for longer words. Shorter words are left alone.
+//     Two edits on a shorter word reach too many real words ("provide" is
+//     two edits from "promise").
 
 const VOCABULARY = Object.freeze([
   'purchase', 'purchases', 'purchasing', 'order', 'orders', 'overdue', 'outstanding', 'open',
@@ -51,6 +53,7 @@ const COMMON = new Set([
   'share', 'shares', 'shore', 'shot', 'stake', 'stark', 'stick', 'still', 'stills', 'total', 'hover', 'haven',
   'leave', 'lefty', 'loft', 'lists', 'listen', 'lost', 'priory', 'prior', 'demands', 'demanded', 'amounts',
   'statuses', 'shortly', 'shortest', 'deliver', 'delivered', 'delivering', 'items', 'itemized', 'quantities',
+  'provide', 'provides', 'provided', 'premium', 'process', 'progress', 'project', 'remind', 'reminder',
 ])
 
 // Action verbs in every form. Never corrected, and never a correction's
@@ -88,7 +91,7 @@ function correctWord(word) {
   if (word.length < 4 || VOCABULARY_SET.has(word) || COMMON.has(word) || VERB_FORMS.has(word)) return word
   // A word one edit from an action verb may be a mistyped instruction.
   for (const verb of VERB_FORMS) if (Math.abs(verb.length - word.length) <= 1 && editDistance(word, verb) <= 1) return word
-  const limit = word.length >= 7 ? 2 : 1
+  const limit = word.length >= 9 ? 2 : 1
   let best = null
   let bestDistance = Infinity
   let tied = false
@@ -124,4 +127,13 @@ export function aiSkillMistypedVerb(word) {
   if (lower.length < 5 || VERB_FORMS.has(lower) || VOCABULARY_SET.has(lower) || COMMON.has(lower)) return null
   for (const verb of ['approve', 'cancel', 'delete', 'remove', 'release', 'submit', 'reject']) if (editDistance(lower, verb) === 1) return verb
   return null
+}
+
+// A word the router or the corrector already knows: a workspace word, a
+// common English word or an action verb. A stored name made only of such
+// words ("Open Purchase Orders") is not distinctive enough to stand for a
+// record in a question.
+export function aiSkillIsKnownWord(word) {
+  const lower = String(word || '').toLowerCase()
+  return VOCABULARY_SET.has(lower) || COMMON.has(lower) || VERB_FORMS.has(lower)
 }

@@ -25,12 +25,31 @@ function supplierIdentity(record = {}) {
   }
 }
 
+// A supplier name, code or alias as a whole phrase of the question: a
+// substring for a Chinese alias of two or more characters, a phrase of three
+// or more characters bounded by anything but a Latin letter or digit for a
+// Latin one, so code "AC" never matches inside "accounts" and "Acme" still
+// matches in "Acme的付款".
+const CJK_TEXT = /[㐀-鿿豈-﫿]/u
+const LATIN_WORD_CHAR = /[a-z0-9]/i
+function mentionsAlias(normalized, alias) {
+  const needle = normalize(alias)
+  if (CJK_TEXT.test(needle)) return needle.length >= 2 && normalized.includes(needle)
+  if (needle.length < 3) return false
+  for (let index = normalized.indexOf(needle); index >= 0; index = normalized.indexOf(needle, index + 1)) {
+    const before = normalized[index - 1]
+    const after = normalized[index + needle.length]
+    if ((!before || !LATIN_WORD_CHAR.test(before)) && (!after || !LATIN_WORD_CHAR.test(after))) return true
+  }
+  return false
+}
+
 function supplierMatches(message, suppliers) {
   const normalized = normalize(message)
   const matches = []
   for (const supplier of suppliers) {
     const aliases = unique([supplier.id, supplier.name, ...supplier.aliases]).filter((item) => normalize(item).length >= 2 && !GENERIC_SUPPLIER_WORDS.has(normalize(item)))
-    if (aliases.some((alias) => normalized.includes(normalize(alias)))) matches.push(supplier)
+    if (aliases.some((alias) => mentionsAlias(normalized, alias))) matches.push(supplier)
   }
   return [...new Map(matches.map((supplier) => [supplier.id, supplier])).values()]
 }

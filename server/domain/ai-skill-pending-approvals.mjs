@@ -1,4 +1,4 @@
-import { aiSkillCountText, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
+import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillNavigation, aiSkillRecordEvidence, aiSkillRecordImpact, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 
 // Purchase orders waiting for approval (status pending_approval after alias
@@ -9,11 +9,19 @@ const array = (value) => Array.isArray(value) ? value : []
 const MAX_EVIDENCE = 8
 const oldestFirst = (a, b) => String(a.createdDate || a.requiredDate || '').localeCompare(String(b.createdDate || b.requiredDate || '')) || String(a.id).localeCompare(String(b.id))
 
-export function runPendingApprovals(facts) {
+// A supplier or SKU the question names narrows the list.
+export function runPendingApprovals(facts, { route = null } = {}) {
+  const suppliers = new Set(array(route?.entities?.suppliers).map((row) => row.id))
+  const skus = new Set(array(route?.entities?.skus).map((row) => row.sku))
+  const order = (row) => (!suppliers.size || suppliers.has(row.supplierId)) && (!skus.size || array(row.skus).some((sku) => skus.has(sku)))
+  const request = (row) => !suppliers.size && (!skus.size || array(row.skus).some((sku) => skus.has(sku)))
   return {
     skillId: 'pending_approvals',
-    orders: facts?.purchaseOrders ? [...array(facts.purchaseOrders.pendingApproval)].sort(oldestFirst) : null,
-    requests: facts?.purchaseRequests ? [...array(facts.purchaseRequests.awaitingApproval)].sort(oldestFirst) : null,
+    filtered: Boolean(suppliers.size || skus.size),
+    names: [...array(route?.entities?.suppliers).map((row) => row.name || row.code || row.id), ...array(route?.entities?.skus).map((row) => row.sku)],
+    bySupplier: Boolean(suppliers.size),
+    orders: facts?.purchaseOrders ? array(facts.purchaseOrders.pendingApproval).filter(order).sort(oldestFirst) : null,
+    requests: facts?.purchaseRequests ? array(facts.purchaseRequests.awaitingApproval).filter(request).sort(oldestFirst) : null,
   }
 }
 
@@ -23,7 +31,7 @@ export function presentPendingApprovals(result, facts, { skill, language, query 
   const fmt = aiSkillFormatter(facts, language)
   const status = aiSkillText('approval.status', language)
   const sentences = []
-  if (result.requests) sentences.push(aiSkillCountText('approval.requests', result.requests.length, language, { count: fmt.number(result.requests.length) }))
+  if (result.requests && !result.bySupplier) sentences.push(aiSkillCountText('approval.requests', result.requests.length, language, { count: fmt.number(result.requests.length) }))
   // Money stays in its own currency, and only when the role may see it.
   if (facts.visibility?.amounts?.purchase_order_amounts) {
     const totals = new Map()
@@ -40,7 +48,10 @@ export function presentPendingApprovals(result, facts, { skill, language, query 
   }))
   return presentAiSkillAnswer({
     ...base,
-    title: aiSkillCountText('approval.title', result.orders.length, language, { count: fmt.number(result.orders.length) }),
+    figures: result.filtered ? [] : [{ key: 'pending_approval_po_count', code: 'pending_approval_po_count', entityId: null, value: result.orders.length }, ...(result.requests ? [{ key: 'pending_approval_pr_count', code: 'pending_approval_pr_count', entityId: null, value: result.requests.length }] : [])],
+    title: result.filtered
+      ? aiSkillCountText('approval.filtered_title', result.orders.length, language, { count: fmt.number(result.orders.length), name: aiSkillList(result.names, language) })
+      : aiSkillCountText('approval.title', result.orders.length, language, { count: fmt.number(result.orders.length) }),
     summary: aiSkillSentences(sentences, language),
     severity: result.orders.length ? 'warning' : 'info',
     evidence: built.map((entry) => entry.evidence), impacts: built.map((entry) => entry.impact), navigation: built.slice(0, 3).map((entry) => entry.navigation),

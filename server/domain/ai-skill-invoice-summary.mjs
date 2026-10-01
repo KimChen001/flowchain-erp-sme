@@ -37,15 +37,21 @@ export function presentInvoiceSummary(result, facts, { skill, language, query })
     return {
       evidence: aiSkillRecordEvidence({
         evidenceType: 'invoice_variance', entityType: 'supplier_invoice', entityId: row.id, label: row.invoiceNumber || row.id, status: aiSkillText('invoice.impact', language),
-        summary: aiSkillText('invoice.evidence', language, { supplier: row.supplier, match }),
+        // A supplier the role may not see on invoices is "a supplier".
+        summary: aiSkillText('invoice.evidence', language, { supplier: row.supplier || aiSkillText('value.a_supplier', language), match }),
         value: row.variance === null || row.variance === undefined ? null : fmt.money(row.variance, row.currency), severity: 'warning', rank: index + 1,
       }, language),
       impact: aiSkillRecordImpact({ area: 'finance', entityId: row.id, severity: 'warning', impact: aiSkillText('invoice.impact', language), explanation: aiSkillText('invoice.impact.explanation', language) }, language),
       navigation: aiSkillNavigation({ label: row.invoiceNumber || row.id, entityType: 'supplier_invoice', entityId: row.id }, language),
     }
   })
+  const figures = [
+    ...amounts.filter((row) => row.currency).map((row) => ({ key: `committed_invoices:${row.currency}`, code: 'committed_invoices', entityId: null, currency: row.currency, value: row.amount })),
+    { key: 'committed_invoice_count', code: 'committed_invoice_count', entityId: null, value: result.count },
+    { key: 'invoice_variance_count', code: 'invoice_variance_count', entityId: null, value: result.variances.length },
+  ]
   return presentAiSkillAnswer({
-    ...base, title, summary: aiSkillSentences(sentences, language), severity: exception || result.variances.length ? 'warning' : 'info',
+    ...base, figures, title, summary: aiSkillSentences(sentences, language), severity: exception || result.variances.length ? 'warning' : 'info',
     evidence: built.map((entry) => entry.evidence), impacts: built.map((entry) => entry.impact), navigation: built.slice(0, 3).map((entry) => entry.navigation),
   })
 }

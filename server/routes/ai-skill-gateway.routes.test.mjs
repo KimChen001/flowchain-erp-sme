@@ -123,9 +123,10 @@ test('an instruction to pay or send is refused before the knowledge and business
 test('a reader failure is a retryable 503 with a code, never a made-up answer', async () => {
   const { ask, ctx } = harness()
   ctx.repositories.procurementRuntime.listForReport = async () => { throw new Error('connection reset') }
-  const failed = await ask({ message: 'What should I handle first today?', answerLanguage: 'zh-CN' })
+  // The error is in the question's language, whatever the interface language.
+  const failed = await ask({ message: '今天先处理什么？', answerLanguage: 'en-US' })
   assert.deepEqual(failed, { status: 503, payload: { code: 'AI_SKILL_UNAVAILABLE', error: 'AI 助手暂时无法读取工作区数据，请稍后重试。' } })
-  const english = await ask({ message: 'What should I handle first today?' })
+  const english = await ask({ message: 'What should I handle first today?', answerLanguage: 'zh-CN' })
   assert.equal(english.payload.error, 'The assistant could not read your workspace data just now. Please try again.')
   // Signed out: 401 with a code.
   ctx.identity = { authenticated: false }

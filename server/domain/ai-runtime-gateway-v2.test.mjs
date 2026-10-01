@@ -626,15 +626,22 @@ test('main route dispatcher serves AI runtime endpoints', async () => {
       assert.equal(anonymous.status, 401)
       const readiness = await fetch(`${base}/api/ai-runtime/readiness`, { headers: signedIn })
       assert.equal(readiness.status, 200)
-      // The workspace data cannot be read: a retryable 503 with a code and an
-      // English message, not a made-up empty answer.
+      // The workspace data cannot be read: a retryable 503 with a code and a
+      // message in the question's language, not a made-up empty answer.
       const response = await fetch(`${base}/api/ai-runtime/respond`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...signedIn },
+        body: JSON.stringify({ message: 'What needs my attention today?' }),
+      })
+      assert.equal(response.status, 503)
+      assert.deepEqual(await response.json(), { code: 'AI_SKILL_UNAVAILABLE', error: 'The assistant could not read your workspace data just now. Please try again.' })
+      const chinese = await fetch(`${base}/api/ai-runtime/respond`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...signedIn },
         body: JSON.stringify({ message: '今天有什么需要我处理？' }),
       })
-      assert.equal(response.status, 503)
-      assert.deepEqual(await response.json(), { code: 'AI_SKILL_UNAVAILABLE', error: 'The assistant could not read your workspace data just now. Please try again.' })
+      assert.equal(chinese.status, 503)
+      assert.deepEqual(await chinese.json(), { code: 'AI_SKILL_UNAVAILABLE', error: 'AI 助手暂时无法读取工作区数据，请稍后重试。' })
       // The retired template chat is off the path unless the rollback flag is on.
       const legacy = await fetch(`${base}/api/ai/chat`, {
         method: 'POST',

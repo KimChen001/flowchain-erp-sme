@@ -25,7 +25,7 @@ const text = (value) => String(value ?? '').trim()
 const amount = (value) => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
 const RAW_LIMIT = 500
 const committedInvoiceStatuses = new Set(RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES)
-const SUBJECT_SOURCE = { purchase_orders: 'purchase_orders', purchase_requests: 'purchase_requests', rfqs: 'rfqs', receipts: 'receipts', supplier_invoices: 'supplier_invoices', inventory_balances: 'inventory', items: 'inventory' }
+const SUBJECT_SOURCE = { purchase_orders: 'purchase_orders', purchase_requests: 'purchase_requests', rfqs: 'rfqs', receipts: 'receipts', supplier_invoices: 'supplier_invoices', inventory_balances: 'inventory', items: 'inventory', suppliers: 'suppliers' }
 
 // Money as the report KPI states it: per currency, with its aggregation status
 // and money limitations. The report's display labels are not carried over.
@@ -158,7 +158,7 @@ export async function readAiSkillFacts(skillContext) {
   const business = routeContext.aiSkillBusinessContext || await readBusinessContext(readCtx)
   for (const entry of array(business.truncatedSubjects)) {
     const source = SUBJECT_SOURCE[entry.subject]
-    if (source && visible[source]) limitations.push({ code: 'truncated', source, limit: entry.limit })
+    if (source && (visible[source] || (source === 'suppliers' && (visible.purchase_orders || visible.supplier_invoices)))) limitations.push({ code: 'truncated', source, limit: entry.limit })
   }
   const procurementRuntime = routeContext.repositories?.procurementRuntime
   const reportRows = visible.purchase_orders
@@ -181,13 +181,16 @@ export async function readAiSkillFacts(skillContext) {
   // day; say so when that is not the tenant's day.
   if (visible.purchase_orders && openReport.asOf !== today) limitations.push({ code: 'report_day', date: openReport.asOf })
 
-  // Suppliers by id, code and name, to resolve a supplier named in a question.
-  if (visible.purchase_orders || visible.supplier_invoices) {
+  // Suppliers by id, code and name, to resolve a supplier named in a question:
+  // for readers of purchase orders, or of invoices with the partner snapshot.
+  if (visible.purchase_orders || (visible.supplier_invoices && visibility.partner)) {
     facts.suppliers = array(business.suppliers).map((row) => ({ id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName) })).filter((row) => row.id && row.name)
   }
 
   if (visible.purchase_orders) {
     const lineById = new Map(reportRows.map((po) => [text(po.id), array(po.lines)[0] || null]))
+    const skusById = new Map(reportRows.map((po) => [text(po.id), [...new Set(array(po.lines).map((line) => text(line.sku)).filter(Boolean))]]))
+    const rawStatusById = new Map(reportRows.map((po) => [text(po.id), text(po.status)]))
     facts.purchaseOrders = {
       open: openReport.summary.open,
       overdue: openReport.summary.overdue,
@@ -197,7 +200,7 @@ export async function readAiSkillFacts(skillContext) {
         id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: row.status,
         dueDate: row.dueDate, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received, remaining: row.remaining, unit: row.unit,
         amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency, dataIncomplete: row.dataIncomplete,
-        sku: text(lineById.get(row.id)?.sku) || null, itemId: text(lineById.get(row.id)?.itemId) || null,
+        sku: text(lineById.get(row.id)?.sku) || null, itemId: text(lineById.get(row.id)?.itemId) || null, skus: skusById.get(row.id) || [],
       })),
     }
     // Every purchase order, whatever its status, by the open purchase orders
@@ -208,9 +211,10 @@ export async function readAiSkillFacts(skillContext) {
       id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: purchaseOrderStatus(row.status),
       createdDate: row.createdDate || null, dueDate: row.dueDate || null, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received,
       remaining: row.remaining, unit: row.unit, amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency,
-      isOpen: row.isOpen, dataIncomplete: row.dataIncomplete,
+      isOpen: row.isOpen, dataIncomplete: row.dataIncomplete, skus: skusById.get(row.id) || [],
     }))
-    facts.purchaseOrders.pendingApproval = facts.purchaseOrders.index.filter((row) => row.status === PURCHASE_ORDER_STATUS.PENDING_APPROVAL)
+    // As stored, the way the purchase orders list filters it.
+    facts.purchaseOrders.pendingApproval = facts.purchaseOrders.index.filter((row) => rawStatusById.get(row.id) === PURCHASE_ORDER_STATUS.PENDING_APPROVAL)
   }
 
   if (visible.inventory) {
@@ -220,7 +224,9 @@ export async function readAiSkillFacts(skillContext) {
       sku: row.sku, itemId: row.itemId, itemName: row.itemName, unit: unitBySku.get(text(row.sku)) || null, onHand: row.onHand, reserved: row.reserved, available: row.available,
       openSalesDemand: row.openSalesDemand, incomingApprovedPo: row.incomingApprovedPo, shortage: row.shortage,
       availableToPromise: row.availableToPromise, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint,
-      stockStatus: row.stockStatus, riskLevel: row.riskLevel, purchaseOrderIds: row.purchaseOrderIds, salesOrderIds: row.salesOrderIds,
+      // Purchase order ids only for readers of purchase orders; the incoming
+      // quantity is part of available to promise, which inventory shows.
+      stockStatus: row.stockStatus, riskLevel: row.riskLevel, purchaseOrderIds: visible.purchase_orders ? row.purchaseOrderIds : [], salesOrderIds: row.salesOrderIds,
     }))
     facts.inventory = {
       rows,
@@ -238,7 +244,7 @@ export async function readAiSkillFacts(skillContext) {
       matchCounts: committed.reduce((counts, row) => { counts[aiSkillInvoiceMatch(row)] += 1; return counts }, { matched: 0, exception: 0, pending: 0 }),
       variances: committed
         .filter((row) => (amount(row.varianceAmount) ?? 0) !== 0 || text(row.matchStatus) === 'variance')
-        .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: text(row.supplierId), supplier: text(row.supplierName || row.supplierId), poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null })),
+        .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: visibility.partner ? text(row.supplierId) : '', supplier: visibility.partner ? text(row.supplierName || row.supplierId) : null, poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null })),
     }
   }
 
@@ -246,7 +252,7 @@ export async function readAiSkillFacts(skillContext) {
     facts.purchaseRequests = {
       awaitingApproval: array(business.purchaseRequests).filter((row) => text(row.status) === 'submitted').map((row) => {
         const line = array(row.lines)[0] || {}
-        return { id: text(row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, quantity: amount(line.quantity), unit: text(line.unit) || null }
+        return { id: text(row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, skus: [...new Set(array(row.lines).map((entry) => text(entry.sku)).filter(Boolean))], quantity: amount(line.quantity), unit: text(line.unit) || null }
       }),
     }
   }

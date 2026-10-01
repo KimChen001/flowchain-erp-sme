@@ -4,6 +4,7 @@ import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs
 import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
 import { isLegacyAiTemplateGatewayEnabled, runAiSkillRuntime } from '../domain/ai-skill-runtime.mjs'
 import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
+import { aiSkillQuestionLanguage } from '../domain/ai-skill-copy.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
 // was asked in Chinese. The client maps the codes to its own recovery text.
@@ -69,6 +70,11 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
     } catch {
       send(res, 400, errorBody('AI_REQUEST_UNREADABLE'))
       return true
+    }
+    // One answer language for every path (knowledge, business query, skills,
+    // errors): the question's own language, else the interface language.
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      body = { ...body, interfaceLanguage: body.answerLanguage, answerLanguage: aiSkillQuestionLanguage(body.message || body.question, body.answerLanguage) }
     }
     try {
       // An instruction to approve, pay, send, cancel or delete goes straight

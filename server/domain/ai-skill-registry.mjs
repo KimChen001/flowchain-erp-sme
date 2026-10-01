@@ -53,8 +53,8 @@ const entityInput = (modes, lists) => Object.freeze({
 // The modes each record skill answers in, for the router and the optional
 // intent classifier.
 export const AI_SKILL_MODES = Object.freeze({
-  purchase_orders: Object.freeze(['single', 'supplier', 'overdue', 'not_found']),
-  inventory_availability: Object.freeze(['single', 'overview', 'short', 'not_found']),
+  purchase_orders: Object.freeze(['single', 'supplier', 'sku', 'overdue', 'not_found', 'hidden', 'ambiguous']),
+  inventory_availability: Object.freeze(['single', 'overview', 'short', 'not_found', 'hidden']),
 })
 
 const definitions = [
@@ -66,9 +66,9 @@ const definitions = [
   // Questions about named records. The runtime resolves the names and ids in
   // the question against the actor's own records; the skill never reads ids
   // the question did not name.
-  { id: 'purchase_orders', version: '1', requiredAnyPermission: anyReadPermission, sources: ['purchase_orders'], fieldGroups: ['purchase_order_amounts'], inputSchema: entityInput(['single', 'supplier', 'overdue', 'not_found'], ['purchaseOrderIds', 'supplierIds']), outputSchema: evidenceOutput },
+  { id: 'purchase_orders', version: '1', requiredAnyPermission: anyReadPermission, sources: ['purchase_orders'], fieldGroups: ['purchase_order_amounts'], inputSchema: entityInput(AI_SKILL_MODES.purchase_orders, ['purchaseOrderIds', 'supplierIds', 'skus']), outputSchema: evidenceOutput },
   { id: 'pending_approvals', version: '1', requiredAnyPermission: anyReadPermission, sources: ['purchase_orders', 'purchase_requests'], fieldGroups: ['purchase_order_amounts'], inputSchema: noInput, outputSchema: evidenceOutput },
-  { id: 'inventory_availability', version: '1', requiredAnyPermission: anyReadPermission, sources: ['inventory'], fieldGroups: [], inputSchema: entityInput(['single', 'overview', 'short', 'not_found'], ['skus']), outputSchema: evidenceOutput },
+  { id: 'inventory_availability', version: '1', requiredAnyPermission: anyReadPermission, sources: ['inventory'], fieldGroups: [], inputSchema: entityInput(AI_SKILL_MODES.inventory_availability, ['skus']), outputSchema: evidenceOutput },
   { id: 'invoice_summary', version: '1', requiredAnyPermission: anyReadPermission, sources: ['supplier_invoices'], fieldGroups: ['invoice_amounts'], inputSchema: noInput, outputSchema: { ...evidenceOutput, metrics: 'report_metrics' } },
   // Needs only sign-in: it reads no business data.
   { id: 'capability_overview', version: '1', requiredAnyPermission: [], sources: [], fieldGroups: [], inputSchema: noInput, outputSchema: { skills: 'skill[]' } },
@@ -109,7 +109,10 @@ export function aiSkillVisibility(actor) {
     purchase_order_amounts: Boolean(actor?.permissionCodes?.has?.('procurement.prices.read')) && sources.purchase_orders,
     invoice_amounts: Boolean(actor?.permissionCodes?.has?.('finance.amounts.read')) && sources.supplier_invoices,
   }
-  return { sources, amounts, canDraft: allowed(actor, AI_SKILL_DRAFT_PERMISSION) }
+  // Supplier names on invoices need the partner snapshot permission, as the
+  // finance screens and the business query show them.
+  const partner = Boolean(actor?.permissionCodes?.has?.('finance.partner_snapshot.read'))
+  return { sources, amounts, partner, canDraft: allowed(actor, AI_SKILL_DRAFT_PERMISSION) }
 }
 
 // The skills this actor may use. A skill that reads business data needs at

@@ -11,23 +11,47 @@ export function aiSkillLanguage(value) {
   return String(value || '').trim() === 'zh-CN' ? 'zh-CN' : 'en-US'
 }
 
-// The language to answer in: the question's own language when it is clearly
-// English or clearly Chinese, else the interface language. Record ids, SKUs
-// and numbers say nothing about the language, so they are removed first; a
-// Chinese question that names an English supplier or SKU is still Chinese,
-// and an English question naming one Chinese record is still English.
-// Chinese question words and workspace terms mark a Chinese sentence; a
-// Chinese record name on its own does not.
-const CJK_CHAR = /[㐀-鿿豈-﫿]/gu
+// The language to answer in: the language the question is phrased in, else
+// the interface language. A question is phrased by its frame words (English
+// question and function words; Chinese question words, particles and
+// pronouns), not by the names it carries: "How many 未结采购订单 do we have?"
+// is an English question about a Chinese term, and "PO-012 的状态是什么？" is
+// a Chinese one. Record ids, SKUs and numbers are removed first. When both
+// frames appear, the strong Chinese markers or the frame that opens the
+// question decide; single characters such as 的 or 有 also occur inside
+// names, so they decide only when nothing else does.
+const CJK_CHAR = /[㐀-鿿豈-﫿]/gu
 const RECORD_ID = /\b[A-Za-z]{2,}[A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+\b/g
-const CHINESE_PHRASING = /多少|哪些|哪个|哪家|什么|怎么|为什么|是否|有没有|吗|呢|吧|请|帮我|查一下|还有|还差|需要|可以|现在|今天|逾期|库存|采购|订单|供应商|发票|审批/u
+const ENGLISH_FRAME = new Set(['what', 'which', 'who', 'whose', 'when', 'where', 'why', 'how', 'is', 'are', 'was', 'were', 'do', 'does', 'did', 'can', 'could', 'would', 'will', 'should', 'show', 'list', 'give', 'tell', 'find', 'me', 'my', 'we', 'our', 'us', 'you', 'your', 'the', 'an', 'of', 'for', 'to', 'in', 'on', 'at', 'with', 'by', 'from', 'any', 'there', 'many', 'much', 'have', 'has', 'please', 'about', 'this', 'that', 'these', 'those', 'need', 'needs', 'and', 'or', 'not', 'it', 'its', 'be', 'than', 'still'])
+const CHINESE_STRONG = /吗|呢|吧|哪些|哪个|哪家|哪张|哪里|多少|什么|怎么|怎样|为什么|是否|有没有|是不是|几个|几张|几家|几天|请|帮我|给我|替我|查一下|看看|看一下|列出|告诉我|我们|我的|这个|那个|这些|那些|现在|目前|还有|还差/gu
+const CHINESE_WEAK = /[的了是有还在和与及]/gu
+
+function positions(pattern, value) {
+  return [...value.matchAll(pattern)].map((match) => match.index)
+}
+
 export function aiSkillQuestionLanguage(message, interfaceLanguage) {
   const stripped = String(message || '').replace(RECORD_ID, ' ').replace(/\d+/g, ' ')
+  // Short all-capital tokens (SKU, PO, ATP, US) are acronyms, not frame words,
+  // unless the whole question is written in capitals.
+  const shouting = !/[a-z]/.test(stripped)
+  const acronym = (word) => word === word.toUpperCase() && word.length <= 4
+  const words = [...stripped.matchAll(/[A-Za-z]{2,}/g)]
+  const english = words.filter((match) => ENGLISH_FRAME.has(match[0].toLowerCase()) && (shouting || !acronym(match[0]))).map((match) => match.index)
+  const strong = positions(CHINESE_STRONG, stripped)
+  const weak = positions(CHINESE_WEAK, stripped)
+  if (english.length && !strong.length && !weak.length) return 'en-US'
+  if (!english.length && (strong.length || weak.length)) return 'zh-CN'
+  if (english.length) {
+    if (!strong.length && english.length >= 2) return 'en-US'
+    const chinese = strong.length ? strong : weak
+    return Math.min(...english) < Math.min(...chinese) ? 'en-US' : 'zh-CN'
+  }
+  // No frame words: "overdue POs" or "逾期订单". About two Chinese characters
+  // make a word.
   const cjk = (stripped.match(CJK_CHAR) || []).length
-  const latinWords = (stripped.replace(CJK_CHAR, ' ').match(/[A-Za-z]{2,}/g) || []).length
-  if (CHINESE_PHRASING.test(stripped)) return 'zh-CN'
-  // About two Chinese characters make a word.
-  if (latinWords >= 2 && cjk / 2 <= latinWords) return 'en-US'
+  const latinWords = words.filter((match) => !acronym(match[0])).length
+  if (latinWords >= 2 && cjk / 2 < latinWords) return 'en-US'
   if (cjk >= 2) return 'zh-CN'
   return aiSkillLanguage(interfaceLanguage)
 }
@@ -64,6 +88,7 @@ const entries = {
   // Capability and refusal
   'capability.title': ['Here is what I can help with', '我可以帮你做这些'],
   'capability.summary': ["I can help with today's priorities, the highest-risk items, records that need more data, open purchase orders and spend, a purchase order, supplier or SKU you name, orders waiting for approval, supplier invoices, and preparing an action draft for your review.", '我可以帮你查看今日优先事项、风险最高的事项、需要补齐的数据、未结采购订单与金额、你点名的采购订单、供应商或 SKU、待审批的订单、供应商发票，并准备处理草稿供你复核。'],
+  'capability.unsupported_id': ["I can't look up {id} by its number yet.", '暂时无法按编号查询 {id}。'],
   'capability.outside': ['I can only answer questions about your workspace data.', '我只能回答与当前工作区数据有关的问题。'],
   'capability.refusal.title': ["I can't do that, but I can prepare a draft", '我不能执行这个操作，但可以准备草稿'],
   'capability.refusal.summary': ["I can't approve, pay, send, issue, cancel or delete anything. I can prepare a draft for you to review.", '我不能批准、付款、发送、下达、取消或删除任何内容。我可以准备一份草稿供你复核。'],
@@ -172,6 +197,7 @@ const entries = {
   'value.quotes': ['{responses} quotes', '{responses} 份报价'],
   'value.issues': ['{count} issues', '{count} 个问题'],
   'value.unknown': ['unknown', '未知'],
+  'value.a_supplier': ['a supplier', '某供应商'],
 
   // Areas
   'area.purchasing': ['Purchasing', '采购'],
@@ -263,10 +289,21 @@ const entries = {
   'po.due_missing': ['No promised date is recorded.', '未记录承诺到货日期。'],
   'po.amount': ['Order amount {amount}.', '订单金额 {amount}。'],
   'po.incomplete': ['Some line quantities or dates are missing, so these figures may be incomplete.', '部分行缺少数量或日期，以上数字可能不完整。'],
-  'po.supplier_title': ['{supplier}: {open} open purchase orders, {overdue} overdue', '{supplier}：未结采购订单 {open} 张，逾期 {overdue} 张'],
-  'po.supplier_title_none': ['{supplier} has no open purchase orders', '{supplier} 没有未结采购订单'],
-  'po.supplier_sentence': ['{supplier}: {open} open, {overdue} overdue.', '{supplier}：未结 {open} 张，逾期 {overdue} 张。'],
-  'po.supplier_many_title': ['{count} suppliers: {open} open purchase orders, {overdue} overdue', '{count} 个供应商：未结采购订单 {open} 张，逾期 {overdue} 张'],
+  'po.supplier_title': ['{name}: {open} open purchase orders, {overdue} overdue', '{name}：未结采购订单 {open} 张，逾期 {overdue} 张'],
+  'po.supplier_title_one': ['{name}: 1 open purchase order, {overdue} overdue', '{name}：未结采购订单 1 张，逾期 {overdue} 张'],
+  'po.supplier_title_none': ['{name} has no open purchase orders', '{name} 没有未结采购订单'],
+  'po.sku_title': ['{name}: {open} open purchase orders, {overdue} overdue', '{name}：未结采购订单 {open} 张，逾期 {overdue} 张'],
+  'po.sku_title_one': ['{name}: 1 open purchase order, {overdue} overdue', '{name}：未结采购订单 1 张，逾期 {overdue} 张'],
+  'po.sku_title_none': ['{name} has no open purchase orders', '{name} 没有未结采购订单'],
+  'po.group_sentence': ['{name}: {open} open, {overdue} overdue.', '{name}：未结 {open} 张，逾期 {overdue} 张。'],
+  'po.many_title': ['{count} matches: {open} open purchase orders, {overdue} overdue', '{count} 项：未结采购订单 {open} 张，逾期 {overdue} 张'],
+  'po.hidden_lookup': ["Your role can't view purchase orders, so I can't look up {id}", '你的角色无法查看采购订单，因此无法查询 {id}'],
+  'po.ambiguous_title': ['{id} matches more than one purchase order', '{id} 对应多张采购订单'],
+  'po.ambiguous_summary': ['Which one do you mean: {list}?', '你指的是哪一张：{list}？'],
+  'po.not_read_title': ['{id} is not among the purchase orders I read', '{id} 不在本次读取的采购订单中'],
+  'po.not_read_summary': ['Only the first {limit} purchase orders were read. Search the purchase orders list for it.', '本次只读取了前 {limit} 张采购订单，请在采购订单列表中搜索。'],
+  'po.single_closed': ['{po}: {status}, nothing will be received', '{po}：{status}，不会再收货'],
+  'po.single_not_committed': ['{po}: {status}, not yet committed ({ordered} ordered)', '{po}：{status}，尚未生效（订购 {ordered}）'],
   'po.as_of': ['Counted as in the open purchase orders report, as of {date}.', '按截至 {date} 的未结采购订单报表统计。'],
   'po.overdue_title': ['{count} purchase orders are overdue (as of {date})', '截至 {date}，逾期采购订单 {count} 张'],
   'po.overdue_title_one': ['1 purchase order is overdue (as of {date})', '截至 {date}，逾期采购订单 1 张'],
@@ -290,6 +327,9 @@ const entries = {
   'approval.title': ['{count} purchase orders are waiting for approval', '{count} 张采购订单待审批'],
   'approval.title_one': ['1 purchase order is waiting for approval', '1 张采购订单待审批'],
   'approval.title_none': ['No purchase order is waiting for approval', '没有待审批的采购订单'],
+  'approval.filtered_title': ['{name}: {count} purchase orders waiting for approval', '{name}：{count} 张采购订单待审批'],
+  'approval.filtered_title_one': ['{name}: 1 purchase order waiting for approval', '{name}：1 张采购订单待审批'],
+  'approval.filtered_title_none': ['{name}: no purchase order waiting for approval', '{name}：没有待审批的采购订单'],
   'approval.requests': ['{count} purchase requests are also waiting for approval.', '另有 {count} 张采购申请待审批。'],
   'approval.requests_one': ['1 purchase request is also waiting for approval.', '另有 1 张采购申请待审批。'],
   'approval.requests_none': ['No purchase request is waiting for approval.', '没有待审批的采购申请。'],
@@ -302,6 +342,8 @@ const entries = {
   // inventory_availability
   'stock.single_title': ['{sku}: {atp} available to promise', '{sku}：可承诺 {atp}'],
   'stock.single_title_unknown': ['{sku}: available to promise is not known', '{sku}：可承诺数量未知'],
+  'stock.single_title_negative': ['{sku}: nothing to promise, {missing} short', '{sku}：没有可承诺数量，缺 {missing}'],
+  'stock.hidden_lookup': ["Your role can't view inventory, so I can't look up {id}", '你的角色无法查看库存，因此无法查询 {id}'],
   'stock.single_summary': ['On hand {onHand}, reserved {reserved}, available {available}. Open sales demand {demand}; incoming on approved purchase orders {incoming}.', '在手 {onHand}，已预留 {reserved}，可用 {available}。未结销售需求 {demand}；审批通过的采购订单在途 {incoming}。'],
   'stock.short': ['Short {shortage} against open sales orders.', '相对未结销售订单短缺 {shortage}。'],
   'stock.status': ['Stock status: {status}.', '库存状态：{status}。'],

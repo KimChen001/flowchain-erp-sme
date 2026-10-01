@@ -104,7 +104,8 @@ export function aiSkillSignalReason(item, facts, language) {
     stock_shortage: { available: fmt.number(data.available), demand: fmt.number(data.demand), shortage: fmt.number(data.shortage), incoming: fmt.number(data.incoming) },
     stock_below_safety: { available: fmt.number(data.available), safety: fmt.number(data.safety), incoming: fmt.number(data.incoming) },
     stock_below_reorder: { atp: fmt.number(data.atp), reorder: fmt.number(data.reorder) },
-    invoice_variance: { amount: fmt.money(data.variance, data.currency), supplier: data.supplier },
+    // A supplier name the role may not see on invoices is "a supplier".
+    invoice_variance: { amount: fmt.money(data.variance, data.currency), supplier: data.supplier || aiSkillText('value.a_supplier', language) },
     pr_awaiting_approval: { priority: aiSkillText(`priority.${['high', 'medium', 'low'].includes(data.priority) ? data.priority : 'none'}`, language) },
     rfq_ready_to_award: { responses: fmt.number(data.responses) },
     grn_rejected_qty: { rejected: fmt.quantity(data.rejected, data.unit), supplier: data.supplier },

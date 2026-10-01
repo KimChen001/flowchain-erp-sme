@@ -165,7 +165,7 @@ export function detectAiActionRequest(message) {
 // Signals the entity step reads: a question about late orders or about
 // shortages narrows the records it answers with.
 function signalsOf(intent) {
-  return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent) }
+  return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent), orders: matches(ORDER_NOUN, intent) }
 }
 
 // The intent rules over one reading of the question. null when none matches.

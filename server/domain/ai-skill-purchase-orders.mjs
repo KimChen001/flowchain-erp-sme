@@ -2,46 +2,59 @@ import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './
 import { aiSkillFormatter, aiSkillNavigation, aiSkillRecordEvidence, aiSkillRecordImpact, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 
 // Purchase orders the question names: one order, the orders of the named
-// suppliers, or every overdue order. Figures are the open purchase orders
-// report's (facts.purchaseOrders.rows for open orders, .index for any order),
-// so "PO-012 has 6,000 to receive" is the report's remaining quantity and a
-// supplier's overdue count is the report's count for that supplier.
+// suppliers or of a SKU, or every overdue order. Figures are the open purchase
+// orders report's (facts.purchaseOrders.rows for open orders, .index for any
+// order), so "PO-012 has 6,000 to receive" is the report's remaining quantity
+// and a supplier's overdue count is the report's count for that supplier.
+// An order number the role may not look up, or that matches several orders,
+// gets an answer that says so (ai-skill-entities.mjs).
 
 const array = (value) => Array.isArray(value) ? value : []
 const PO_STATUSES = new Set(['draft', 'pending_approval', 'approved', 'issued', 'partially_received', 'fully_received', 'closed', 'cancelled', 'rejected'])
 const MAX_EVIDENCE = 8
+const byLateness = (a, b) => (b.overdueDays || 0) - (a.overdueDays || 0) || String(a.id).localeCompare(String(b.id))
+const figure = (code, entityId, value, extra = {}) => ({ key: entityId ? `${code}:${entityId}` : code, code, entityId: entityId || null, value, ...extra })
 
 export function aiSkillPurchaseOrderStatus(status, language) {
   return PO_STATUSES.has(status) ? aiSkillText(`po_status.${status}`, language) : aiSkillText('po_status.other', language, { status })
 }
 
-const byLateness = (a, b) => (b.overdueDays || 0) - (a.overdueDays || 0) || String(a.id).localeCompare(String(b.id))
-
 export function runPurchaseOrders(facts, { route = null } = {}) {
-  const po = facts?.purchaseOrders
   const mode = route?.mode || 'overdue'
-  if (!po) return { skillId: 'purchase_orders', mode, hidden: true }
   const entities = route?.entities || {}
-  if (mode === 'single') return { skillId: 'purchase_orders', mode, orders: array(entities.purchaseOrders).slice(0, 5) }
+  const base = { skillId: 'purchase_orders', mode, late: Boolean(route?.signals?.late) }
+  const ids = (list) => array(list).map((entry) => entry.id)
+  if (mode === 'hidden') return { ...base, ids: ids(entities.hidden) }
+  const po = facts?.purchaseOrders
+  if (!po) return { ...base, mode: 'hidden', ids: [] }
+  if (mode === 'single') return { ...base, orders: array(entities.purchaseOrders).slice(0, 5) }
+  if (mode === 'ambiguous') return { ...base, ambiguous: array(entities.ambiguous) }
+  if (mode === 'not_found') return { ...base, ids: [...ids(entities.truncated), ...ids(entities.absent)], truncated: array(entities.truncated).length > 0, limit: array(facts.limitations).find((row) => row.code === 'truncated' && row.source === 'purchase_orders')?.limit ?? null }
   if (mode === 'supplier') {
     const groups = array(entities.suppliers).map((supplier) => {
       const rows = po.rows.filter((row) => row.supplierId ? row.supplierId === supplier.id : row.supplier === supplier.name)
       return { supplier, open: rows.length, overdue: rows.filter((row) => row.overdueDays > 0).sort(byLateness), rows: [...rows].sort(byLateness) }
     })
-    return { skillId: 'purchase_orders', mode, groups, late: Boolean(route?.signals?.late) }
+    return { ...base, groups }
   }
-  if (mode === 'not_found') return { skillId: 'purchase_orders', mode, ids: array(entities.unresolved) }
-  return { skillId: 'purchase_orders', mode: 'overdue', overdue: po.rows.filter((row) => row.overdueDays > 0).sort(byLateness) }
+  if (mode === 'sku') {
+    const groups = array(entities.skus).map((sku) => {
+      const rows = po.rows.filter((row) => array(row.skus).includes(sku.sku) || row.sku === sku.sku)
+      return { sku, open: rows.length, overdue: rows.filter((row) => row.overdueDays > 0).sort(byLateness), rows: [...rows].sort(byLateness) }
+    })
+    return { ...base, groups }
+  }
+  return { ...base, mode: 'overdue', overdue: po.rows.filter((row) => row.overdueDays > 0).sort(byLateness) }
 }
 
 function orderEvidence(row, fmt, language, rank) {
   const status = aiSkillPurchaseOrderStatus(row.status, language)
+  const open = row.isOpen !== false
   const summary = row.overdueDays > 0
     ? aiSkillText('po.evidence_late', language, { status, supplier: row.supplier, days: fmt.number(row.overdueDays) })
-    : row.isOpen !== false && row.dueDate
+    : open && row.dueDate
       ? aiSkillText('po.evidence_due', language, { status, supplier: row.supplier, date: fmt.day(row.dueDate) })
       : aiSkillText('po.evidence_plain', language, { status, supplier: row.supplier })
-  const open = row.isOpen !== false
   return {
     evidence: aiSkillRecordEvidence({
       evidenceType: 'purchase_order', entityType: 'purchase_order', entityId: row.id, label: row.orderNumber || row.id, status, summary,
@@ -55,6 +68,18 @@ function orderEvidence(row, fmt, language, rank) {
     }, language),
     navigation: aiSkillNavigation({ label: row.orderNumber || row.id, entityType: 'purchase_order', entityId: row.id }, language),
   }
+}
+
+// The headline for one order. "Still to receive" only while the order is
+// open; a finished, cancelled or not yet committed order says what it is.
+function singleTitle(row, fmt, language) {
+  const po = row.orderNumber || row.id
+  const status = aiSkillPurchaseOrderStatus(row.status, language)
+  if (row.isOpen) return row.remaining === null || row.remaining === undefined ? aiSkillText('po.single_mixed', language, { po }) : aiSkillText('po.single_remaining', language, { po, remaining: fmt.quantity(row.remaining, row.unit) })
+  if (row.status === 'fully_received') return aiSkillText('po.single_received', language, { po })
+  if (['cancelled', 'rejected'].includes(row.status)) return aiSkillText('po.single_closed', language, { po, status })
+  if (['draft', 'pending_approval'].includes(row.status)) return aiSkillText('po.single_not_committed', language, { po, status, ordered: fmt.quantity(row.ordered, row.unit) })
+  return aiSkillText('po.single_status', language, { po, status })
 }
 
 function singleSentences(row, fmt, language, amountsVisible) {
@@ -71,48 +96,58 @@ function singleSentences(row, fmt, language, amountsVisible) {
   return sentences
 }
 
-function singleTitle(row, fmt, language) {
-  const po = row.orderNumber || row.id
-  if (row.isOpen) return row.remaining === null || row.remaining === undefined ? aiSkillText('po.single_mixed', language, { po }) : aiSkillText('po.single_remaining', language, { po, remaining: fmt.quantity(row.remaining, row.unit) })
-  if (row.status === 'fully_received') return aiSkillText('po.single_received', language, { po })
-  return aiSkillText('po.single_status', language, { po, status: aiSkillPurchaseOrderStatus(row.status, language) })
-}
-
 export function presentPurchaseOrders(result, facts, { skill, language, query }) {
   const base = { skill, facts, language, query, followUpIds: ['prepare_action_draft', 'today_priorities'] }
-  if (result.hidden) return presentAiSkillAnswer({ ...base, title: aiSkillText('po.title_hidden', language), summary: '', severity: 'info', items: [] })
+  const idList = (ids) => aiSkillList(array(ids), language)
+  if (result.mode === 'hidden') {
+    return presentAiSkillAnswer({ ...base, title: result.ids?.length ? aiSkillText('po.hidden_lookup', language, { id: idList(result.ids) }) : aiSkillText('po.title_hidden', language), summary: '', severity: 'info', items: [], navigation: [] })
+  }
   const fmt = aiSkillFormatter(facts, language)
   const amountsVisible = Boolean(facts.visibility?.amounts?.purchase_order_amounts)
   const asOf = aiSkillText('po.as_of', language, { date: fmt.day(facts.asOf) })
   const records = (rows) => rows.slice(0, MAX_EVIDENCE).map((row, index) => orderEvidence(row, fmt, language, index + 1))
-  const answer = (title, summary, severity, built) => presentAiSkillAnswer({
-    ...base, title, summary, severity,
+  const answer = (title, summary, severity, built, figures = []) => presentAiSkillAnswer({
+    ...base, title, summary, severity, figures,
     evidence: built.map((entry) => entry.evidence), impacts: built.map((entry) => entry.impact), navigation: built.slice(0, 3).map((entry) => entry.navigation),
   })
+  const empty = (title, summary) => presentAiSkillAnswer({ ...base, title, summary, severity: 'info', items: [], navigation: [] })
 
+  if (result.mode === 'ambiguous') {
+    const [first] = result.ambiguous
+    return empty(aiSkillText('po.ambiguous_title', language, { id: first?.id || '' }), aiSkillText('po.ambiguous_summary', language, { list: idList(first?.candidates) }))
+  }
   if (result.mode === 'not_found' || (result.mode === 'single' && !result.orders.length)) {
-    return presentAiSkillAnswer({ ...base, title: aiSkillText('po.not_found_title', language, { id: aiSkillList(array(result.ids), language) || query }), summary: aiSkillText('po.not_found_summary', language), severity: 'info', items: [], navigation: [] })
+    const id = idList(result.ids) || query
+    return result.truncated
+      ? empty(aiSkillText('po.not_read_title', language, { id }), aiSkillText('po.not_read_summary', language, { limit: fmt.number(result.limit) }))
+      : empty(aiSkillText('po.not_found_title', language, { id }), aiSkillText('po.not_found_summary', language))
   }
   if (result.mode === 'single') {
     const [row, ...others] = result.orders
-    const built = records(result.orders)
     const sentences = singleSentences(row, fmt, language, amountsVisible)
     for (const other of others) sentences.push(`${singleTitle(other, fmt, language)}${language === 'zh-CN' ? '。' : '.'}`)
-    return answer(singleTitle(row, fmt, language), aiSkillSentences(sentences, language), row.overdueDays > 0 ? 'risk' : row.isOpen ? 'warning' : 'info', built)
+    const figures = result.orders.filter((entry) => entry.isOpen && entry.remaining !== null && entry.remaining !== undefined).map((entry) => figure('po_remaining', entry.id, entry.remaining, { unit: entry.unit || null }))
+    return answer(singleTitle(row, fmt, language), aiSkillSentences(sentences, language), row.overdueDays > 0 ? 'risk' : row.isOpen ? 'warning' : 'info', records(result.orders), figures)
   }
-  if (result.mode === 'supplier') {
+  if (result.mode === 'supplier' || result.mode === 'sku') {
+    const bySupplier = result.mode === 'supplier'
+    const name = (group) => bySupplier ? group.supplier.name : group.sku.sku
     const open = result.groups.reduce((sum, group) => sum + group.open, 0)
     const overdue = result.groups.reduce((sum, group) => sum + group.overdue.length, 0)
     const [first] = result.groups
+    const key = bySupplier ? 'po.supplier' : 'po.sku'
     const title = result.groups.length === 1
-      ? aiSkillText(first.open ? 'po.supplier_title' : 'po.supplier_title_none', language, { supplier: first.supplier.name, open: fmt.number(first.open), overdue: fmt.number(first.overdue.length) })
-      : aiSkillText('po.supplier_many_title', language, { count: fmt.number(result.groups.length), open: fmt.number(open), overdue: fmt.number(overdue) })
-    const sentences = result.groups.length > 1 ? result.groups.map((group) => aiSkillText('po.supplier_sentence', language, { supplier: group.supplier.name, open: fmt.number(group.open), overdue: fmt.number(group.overdue.length) })) : []
-    const shown = result.groups.flatMap((group) => result.late ? group.overdue : group.rows).sort(byLateness)
+      ? aiSkillText(!first.open ? `${key}_title_none` : first.open === 1 ? `${key}_title_one` : `${key}_title`, language, { name: name(first), open: fmt.number(first.open), overdue: fmt.number(first.overdue.length) })
+      : aiSkillText('po.many_title', language, { count: fmt.number(result.groups.length), open: fmt.number(open), overdue: fmt.number(overdue) })
+    const sentences = result.groups.length > 1 ? result.groups.map((group) => aiSkillText('po.group_sentence', language, { name: name(group), open: fmt.number(group.open), overdue: fmt.number(group.overdue.length) })) : []
     const lateList = result.groups.flatMap((group) => group.overdue).sort(byLateness).slice(0, 5).map((row) => aiSkillText('po.overdue_item', language, { po: row.orderNumber || row.id, days: fmt.number(row.overdueDays) }))
     if (lateList.length) sentences.push(aiSkillText('po.overdue_summary', language, { list: aiSkillList(lateList, language) }))
     sentences.push(asOf)
-    return answer(title, aiSkillSentences(sentences, language), overdue ? 'risk' : 'info', records(shown))
+    const shown = result.groups.flatMap((group) => result.late ? group.overdue : group.rows).sort(byLateness)
+    const figures = result.groups.flatMap((group) => bySupplier
+      ? [figure('supplier_open_po', group.supplier.id, group.open), figure('supplier_overdue_po', group.supplier.id, group.overdue.length)]
+      : [figure('sku_open_po', group.sku.sku, group.open), figure('sku_overdue_po', group.sku.sku, group.overdue.length)])
+    return answer(title, aiSkillSentences(sentences, language), overdue ? 'risk' : 'info', records(shown), figures)
   }
   const count = result.overdue.length
   const list = result.overdue.slice(0, 5).map((row) => aiSkillText('po.overdue_item', language, { po: row.orderNumber || row.id, days: fmt.number(row.overdueDays) }))
@@ -121,5 +156,6 @@ export function presentPurchaseOrders(result, facts, { skill, language, query })
     aiSkillSentences([list.length ? aiSkillText('po.overdue_summary', language, { list: aiSkillList(list, language) }) : '', asOf], language),
     count ? 'risk' : 'info',
     records(result.overdue),
+    [figure('overdue_po_count', null, count), figure('open_po_count', null, facts.purchaseOrders.open)],
   )
 }
