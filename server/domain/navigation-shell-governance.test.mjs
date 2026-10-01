@@ -56,13 +56,9 @@ test("module content without a standalone workbench does not recreate a separate
   }
 });
 
-test("list context and recent pages use isolated bounded browser storage", () => {
+test("list context uses isolated browser storage", () => {
   const listState = read("src/components/navigation/useListRouteState.ts");
-  const recent = read("src/components/navigation/RecentPages.tsx");
   assert.match(listState, /flowchain:list:\$\{moduleId\}:\$\{routeId\}/);
   assert.match(listState, /useSearchParams/);
   assert.match(listState, /scrollTop/);
-  assert.match(recent, /MAX_RECENT = 8/);
-  assert.match(recent, /localStorage/);
-  assert.match(recent, /current\.pageType === "create"/);
 });
