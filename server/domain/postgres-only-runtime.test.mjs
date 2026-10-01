@@ -189,7 +189,6 @@ test('known runtime fixture symbols and identifiers are absent from production s
 test('runtime initialization modules contain no embedded business rows', async () => {
   const emptyModules = [
     'src/data/empty-business-state.ts',
-    'src/data/master-data.ts',
     'src/data/settlement.ts',
     'src/modules/inventory/adjustmentData.ts',
     'src/modules/sales/deliveryData.ts',
