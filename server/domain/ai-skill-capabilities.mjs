@@ -9,8 +9,8 @@ import { toolsFor } from './ai-skill-registry.mjs'
 // or delete: the assistant never acts, it offers a draft for review instead.
 // It reads no business data.
 
-export function runCapabilityOverview(_facts, { refusal = false, actor = null } = {}) {
-  return { skillId: 'capability_overview', refusal, skills: toolsFor(actor).map((entry) => entry.id).filter((id) => id !== 'capability_overview') }
+export function runCapabilityOverview(_facts, { refusal = false, outOfDomain = false, actor = null } = {}) {
+  return { skillId: 'capability_overview', refusal, outOfDomain: outOfDomain && !refusal, skills: toolsFor(actor).map((entry) => entry.id).filter((id) => id !== 'capability_overview') }
 }
 
 export function presentCapabilityOverview(result, _facts, { skill, language, query }) {
@@ -18,7 +18,9 @@ export function presentCapabilityOverview(result, _facts, { skill, language, que
   return presentAiSkillAnswer({
     skill, facts: null, language, query,
     title: aiSkillText(result.refusal ? 'capability.refusal.title' : 'capability.title', language),
-    summary: result.refusal ? aiSkillSentences([aiSkillText('capability.refusal.summary', language), aiSkillText('capability.summary', language)], language) : aiSkillText('capability.summary', language),
+    summary: result.refusal
+      ? aiSkillSentences([aiSkillText('capability.refusal.summary', language), aiSkillText('capability.summary', language)], language)
+      : aiSkillSentences([result.outOfDomain ? aiSkillText('capability.outside', language) : '', aiSkillText('capability.summary', language)], language),
     severity: result.refusal ? 'warning' : 'info',
     items: [],
     navigation: [],

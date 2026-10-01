@@ -43,7 +43,11 @@ const EN = {
   "查看付款阻断": "Show supplier payment blocks",
   "查看延期采购订单": "Show overdue supplier purchase orders",
   "查看发票差异": "Show supplier invoice exceptions",
-  "查看缺失证据": "Show missing supplier evidence"
+  "查看缺失证据": "Show missing supplier evidence",
+  "受限供应商": "Restricted supplier",
+  "需要澄清": "Clarification needed",
+  "全部供应商": "All suppliers",
+  "上一轮结果": "Previous results"
 }
 const GOAL_LABELS = Object.freeze({
   supplier_payables_due: '需要付款', supplier_payables_overdue: '逾期付款', supplier_payment_blocks: '付款阻断', supplier_payment_readiness: '付款准备度',
@@ -60,14 +64,26 @@ function severity(sections) {
   return 'info'
 }
 
+// The English clarification for the planner's ambiguity codes; the plan
+// carries its question in Chinese only.
+function englishClarification(ambiguities = []) {
+  const reason = text(ambiguities[0])
+  if (reason === 'previous_result_unavailable') return 'Which earlier result do you mean? Select a result first, or name the supplier.'
+  if (reason === 'current_supplier_unavailable') return 'This page is not about one supplier. Name the supplier or give its code.'
+  if (reason.startsWith('supplier_not_found:')) return `I couldn't find ${reason.slice('supplier_not_found:'.length)}. Check the supplier name or code.`
+  if (reason === 'prompt_injection') return 'This request contains instructions about the system or data access, which are not allowed. Describe the business facts you want to check instead.'
+  if (reason === 'no_supported_goal') return 'Do you want supplier payments, orders, receiving, invoices, RFQs or other risks?'
+  return ''
+}
+
 function evidenceItem(item, index, L) {
   const entityType = text(item.entityType || item.type)
   const entityId = text(item.entityId || item.id)
   const moduleId = entityType === 'purchase_order' ? 'procurement' : entityType === 'receiving_doc' ? 'procurement:receiving' : entityType === 'supplier_invoice' || entityType === 'payable_obligation' ? 'finance' : 'overview'
   return {
     id: entityId || `business-query-evidence-${index + 1}`,
-    label: text(item.label || item.entityLabel || entityId || L('业务证据')),
-    entityLabel: text(item.entityLabel || item.label || entityId || L('业务证据')),
+    label: L(text(item.label || item.entityLabel || entityId || '业务证据')),
+    entityLabel: L(text(item.entityLabel || item.label || entityId || '业务证据')),
     entityType,
     entityId,
     moduleId,
@@ -82,7 +98,7 @@ function evidenceItem(item, index, L) {
 export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
   const L = value => request.answerLanguage === "zh-CN" ? value : (EN[value] || value)
   const english = request.answerLanguage !== "zh-CN"
-  const scopeLabel = english ? (pack.scopeSummary.mode === "all" ? "All suppliers" : pack.scopeSummary.mode === "previous_result" ? "Previous results" : pack.scopeSummary.entityCount === 1 ? pack.scopeSummary.label : `${pack.scopeSummary.entityCount} suppliers`) : pack.scopeSummary.label
+  const scopeLabel = english ? (pack.scopeSummary.mode === "all" ? "All suppliers" : pack.scopeSummary.mode === "previous_result" ? "Previous results" : pack.scopeSummary.entityCount === 1 ? L(pack.scopeSummary.label) : `${pack.scopeSummary.entityCount} suppliers`) : pack.scopeSummary.label
   const followups = (pack.availableFollowups || []).map(L)
   const clarification = Boolean(pack.clarification?.needed)
   const sections = pack.sections || []
@@ -90,7 +106,7 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
   const confirmed = sections.filter((section) => section.state === 'confirmed').length
   const limited = sections.filter((section) => ['incomplete', 'hidden', 'unavailable'].includes(section.state)).length
   const conclusion = clarification
-    ? { title: L('需要补充查询范围'), summary: english ? (pack.clarification.questionEn || "Which suppliers should I check? Specify supplier names or use the current result.") : pack.clarification.question, severity: 'warning', confidence: 'low' }
+    ? { title: L('需要补充查询范围'), summary: english ? (pack.clarification.questionEn || englishClarification(pack.plan?.ambiguities) || "Which suppliers should I check? Specify supplier names or use the current result.") : pack.clarification.question, severity: 'warning', confidence: 'low' }
     : {
         title: english ? `${scopeLabel}: read-only checks completed` : `${scopeLabel}：已完成跨模块只读检查`,
         summary: english ? `Checked ${sections.length} business goals; ${confirmed} sections contain confirmed items and ${limited} have access, completeness, or availability limits.` : `已按 ${sections.length} 个业务目标读取授权数据；${confirmed} 个分区有已确认事项${limited ? `，${limited} 个分区存在权限、完整性或可用性限制` : ''}。`,
@@ -127,7 +143,7 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
     safetyBoundaries: [L('只读'), L('不创建 ActionProposal'), L('不执行付款'), L('不修改业务数据'), L('业务事实来自确定性 Read Service')],
     followUpQuestions: followups,
     followUpSuggestions: followups.slice(0, 4).map((label) => ({ label, prompt: label, intentHint: 'business_query_followup', requiresReview: false })),
-    resolvedContext: { resolvedFrom: pack.plan?.scope?.source === 'previous_result' ? 'previousResponse' : pack.plan?.scope?.source === 'current_context' ? 'activePage' : 'currentMessage', entityRefs: [...new Map(sections.flatMap(section => section.rows || []).filter(row => row.supplier?.id).map(row => [row.supplier.id, { entityType: "supplier", entityId: row.supplier.id, entityLabel: row.supplier.displayName || row.supplier.id }])).values()].slice(0, 12), intentCarryOver: 'business_query_plan_v1', confidence: planner.plan?.confidence >= 0.8 ? 'high' : 'medium' },
+    resolvedContext: { resolvedFrom: pack.plan?.scope?.source === 'previous_result' ? 'previousResponse' : pack.plan?.scope?.source === 'current_context' ? 'activePage' : 'currentMessage', entityRefs: [...new Map(sections.flatMap(section => section.rows || []).filter(row => row.supplier?.id).map(row => [row.supplier.id, { entityType: "supplier", entityId: row.supplier.id, entityLabel: L(row.supplier.displayName || row.supplier.id) }])).values()].slice(0, 12), intentCarryOver: 'business_query_plan_v1', confidence: planner.plan?.confidence >= 0.8 ? 'high' : 'medium' },
     sourceSummary: [],
     readinessSignals: [],
     generatedAt: new Date().toISOString(),

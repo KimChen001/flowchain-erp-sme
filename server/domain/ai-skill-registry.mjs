@@ -44,6 +44,18 @@ const focusInput = Object.freeze({
   required: ['focusEntityType', 'focusEntityId'],
 })
 const evidenceOutput = Object.freeze({ items: 'evidence[]', counts: 'object', limitations: 'limitation[]', checked: 'source[]' })
+const entityInput = (modes, lists) => Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: { mode: { type: 'string', enum: modes }, ...Object.fromEntries(lists.map((name) => [name, { type: 'array', items: { type: 'string' }, maxItems: 10 }])) },
+  required: ['mode'],
+})
+// The modes each record skill answers in, for the router and the optional
+// intent classifier.
+export const AI_SKILL_MODES = Object.freeze({
+  purchase_orders: Object.freeze(['single', 'supplier', 'overdue', 'not_found']),
+  inventory_availability: Object.freeze(['single', 'overview', 'short', 'not_found']),
+})
 
 const definitions = [
   { id: 'today_priorities', version: '1', requiredAnyPermission: anyReadPermission, sources: allSources, fieldGroups: ['purchase_order_amounts', 'invoice_amounts'], inputSchema: focusInput, outputSchema: evidenceOutput },
@@ -51,6 +63,13 @@ const definitions = [
   { id: 'records_needing_data', version: '1', requiredAnyPermission: anyReadPermission, sources: ['purchase_orders', 'purchase_requests', 'inventory', 'supplier_invoices', 'receipts'], fieldGroups: [], inputSchema: focusInput, outputSchema: evidenceOutput },
   { id: 'prepare_action_draft', version: '1', requiredAnyPermission: anyReadPermission, sources: allSources, fieldGroups: ['purchase_order_amounts', 'invoice_amounts'], inputSchema: focusInput, outputSchema: { ...evidenceOutput, reviewCards: 'review_card[]' } },
   { id: 'workspace_metrics', version: '1', requiredAnyPermission: anyReadPermission, sources: ['purchase_orders', 'inventory', 'supplier_invoices'], fieldGroups: ['purchase_order_amounts', 'invoice_amounts'], inputSchema: noInput, outputSchema: { metrics: 'report_metrics', limitations: 'limitation[]', checked: 'source[]' } },
+  // Questions about named records. The runtime resolves the names and ids in
+  // the question against the actor's own records; the skill never reads ids
+  // the question did not name.
+  { id: 'purchase_orders', version: '1', requiredAnyPermission: anyReadPermission, sources: ['purchase_orders'], fieldGroups: ['purchase_order_amounts'], inputSchema: entityInput(['single', 'supplier', 'overdue', 'not_found'], ['purchaseOrderIds', 'supplierIds']), outputSchema: evidenceOutput },
+  { id: 'pending_approvals', version: '1', requiredAnyPermission: anyReadPermission, sources: ['purchase_orders', 'purchase_requests'], fieldGroups: ['purchase_order_amounts'], inputSchema: noInput, outputSchema: evidenceOutput },
+  { id: 'inventory_availability', version: '1', requiredAnyPermission: anyReadPermission, sources: ['inventory'], fieldGroups: [], inputSchema: entityInput(['single', 'overview', 'short', 'not_found'], ['skus']), outputSchema: evidenceOutput },
+  { id: 'invoice_summary', version: '1', requiredAnyPermission: anyReadPermission, sources: ['supplier_invoices'], fieldGroups: ['invoice_amounts'], inputSchema: noInput, outputSchema: { ...evidenceOutput, metrics: 'report_metrics' } },
   // Needs only sign-in: it reads no business data.
   { id: 'capability_overview', version: '1', requiredAnyPermission: [], sources: [], fieldGroups: [], inputSchema: noInput, outputSchema: { skills: 'skill[]' } },
 ]

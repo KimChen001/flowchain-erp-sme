@@ -128,6 +128,22 @@ export function aiSkillEvidence(item, facts, language) {
   }
 }
 
+// Evidence for a record a record skill names itself, outside the attention
+// signals: a purchase order, a SKU, an invoice or a purchase request.
+export function aiSkillRecordEvidence({ evidenceType, entityType, entityId, label, status, summary, value = null, severity = 'info', rank = null }, language) {
+  const moduleId = AI_SKILL_MODULES[entityType]
+  return {
+    id: `${evidenceType}:${entityId}`, label: status, entityLabel: label || entityId, entityType, entityId, moduleId,
+    evidenceType, summary, value, status, statusCode: evidenceType, severity, rank,
+    sourceLabel: aiSkillText(`source.${SOURCE_OF[entityType]}`, language),
+    linkTarget: { moduleId, entityType, entityId },
+  }
+}
+
+export function aiSkillRecordImpact({ area, impact, explanation, severity = 'info', entityId }, language) {
+  return { area: aiSkillText(`area.${area}`, language), impact, severity, explanation, affectedObjects: [entityId] }
+}
+
 export function aiSkillImpact(item, language) {
   return {
     area: aiSkillText(`area.${item.area || 'purchasing'}`, language),
@@ -169,12 +185,12 @@ function limitationEntries(facts, language, { money: includeMoney = true } = {})
 }
 
 function followUps(ids, language) {
-  const key = { today_priorities: 'today', highest_risk_items: 'risk', records_needing_data: 'records', prepare_action_draft: 'draft', workspace_metrics: 'metrics' }
+  const key = { today_priorities: 'today', highest_risk_items: 'risk', records_needing_data: 'records', prepare_action_draft: 'draft', workspace_metrics: 'metrics', purchase_orders: 'orders', pending_approvals: 'approvals', inventory_availability: 'stock', invoice_summary: 'invoices' }
   return ids.map((id) => ({ label: aiSkillText(`followup.${key[id]}.label`, language), prompt: aiSkillText(`followup.${key[id]}.prompt`, language), intentHint: id, skillHint: id, requiresReview: id === 'prepare_action_draft' }))
 }
 
 // The full AiResponseV2. Every list is an array, so the renderer never throws.
-export function presentAiSkillAnswer({ skill, facts, language: requested, query, title, summary, severity, items = [], evidence, impacts, navigation, reviewCards = [], followUpIds = [], extraLimitations = [], scopeModule = 'workspace', moneyLimitations = true }) {
+export function presentAiSkillAnswer({ skill, facts, language: requested, query, title, summary, severity, items = [], evidence, impacts, navigation, reviewCards = [], followUpIds = [], extraLimitations = [], scopeModule = 'workspace', moneyLimitations = true, figures = [] }) {
   const language = aiSkillLanguage(requested)
   const keyEvidence = evidence || items.map((item) => aiSkillEvidence(item, facts, language))
   const businessImpact = impacts || items.map((item) => aiSkillImpact(item, language))
@@ -195,6 +211,9 @@ export function presentAiSkillAnswer({ skill, facts, language: requested, query,
     checked,
     checkedLabel: checked.length ? aiSkillText('answer.checked', language, { sources: aiSkillList(checked.map((source) => aiSkillText(`source.${source}`, language)), language) }) : '',
     ...(facts ? { metrics: aiSkillReportMetrics(facts) } : {}),
+    // The figures the answer states, keyed by code and record, as numbers:
+    // [{ key: 'atp:LDM-001', code: 'atp', entityId: 'LDM-001', value: 63, unit: 'pcs' }].
+    figures,
     scope: { module: scopeModule, timeRange: facts?.asOf || undefined, dataScopeLabel: aiSkillText('scope.label', language) },
     conclusion: { title, summary, severity: severity || (keyEvidence[0]?.severity ?? 'info'), confidence: 'high' },
     keyEvidence,

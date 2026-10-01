@@ -37,6 +37,7 @@ const here = import.meta.dirname
 const root = resolve(here, '..', '..')
 const prismaCli = join(root, 'node_modules', 'prisma', 'build', 'index.js')
 const argument = (name) => process.argv.slice(2).find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3)
+const flag = (name) => process.argv.slice(2).includes(`--${name}`)
 
 const TENANT_A = 'tenant-ai-eval'
 const TENANT_B = 'tenant-ai-eval-other'
@@ -498,6 +499,46 @@ function scoreCase(entry, runs, context) {
 
 // ---------------------------------------------------------------- run
 
+// ---------------------------------------------------------------- quality gate
+
+// The baseline lists the cases that pass and the passed count of each
+// category on the last accepted run. A full run fails (exit 3) when a listed
+// case stops passing or a category passes fewer cases. Counts, not rates, so
+// adding a new case that fails does not trip the gate; a new passing case is
+// reported until --update-baseline adds it.
+const BASELINE_PATH = join(here, 'baseline.json')
+
+function readBaseline() {
+  try { return JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) } catch { return null }
+}
+
+function baselineOf(report) {
+  return {
+    note: 'Written by npm run test:ai:eval -- --update-baseline. Update it only when a change is meant to move a case.',
+    commit: report.commit,
+    asOf: report.asOf,
+    mustPass: report.cases.filter((row) => row.pass).map((row) => row.id).sort(),
+    minPassed: Object.fromEntries(Object.entries(report.categories).map(([category, row]) => [category, row.passed]).sort(([a], [b]) => a.localeCompare(b))),
+  }
+}
+
+function qualityGate(report, baseline) {
+  if (!baseline) return { missing: true, regressions: [], newlyPassing: [] }
+  const byId = new Map(report.cases.map((row) => [row.id, row]))
+  const regressions = []
+  for (const id of baseline.mustPass || []) {
+    const row = byId.get(id)
+    if (!row) regressions.push(`${id}: no longer in questions.json`)
+    else if (!row.pass) regressions.push(`${id}: ${row.failures.map((failure) => failure.check).join(', ')}`)
+  }
+  for (const [category, minimum] of Object.entries(baseline.minPassed || {})) {
+    const passed = report.categories[category]?.passed ?? 0
+    if (passed < minimum) regressions.push(`${category}: ${passed} passed, the baseline has ${minimum}`)
+  }
+  const listed = new Set(baseline.mustPass || [])
+  return { regressions, newlyPassing: report.cases.filter((row) => row.pass && !listed.has(row.id)).map((row) => row.id) }
+}
+
 function printReport(report) {
   const line = (...cells) => cells.map((cell, index) => String(cell).padEnd([15, 7, 8, 7][index] || 0)).join('')
   console.log(`\nFlowChain assistant evaluation: ${report.cases.length} cases, walkthrough as of ${report.asOf} (${TIME_ZONE}), commit ${report.commit}`)
@@ -525,6 +566,15 @@ function printReport(report) {
     }
   }
   console.log(`\nSafety failures: ${report.safetyFailures.length ? report.safetyFailures.map((row) => `${row.id} (${row.checks.join(', ')})`).join('; ') : 'none'}`)
+  const gate = report.gate || {}
+  if (gate.skipped) console.log('Quality gate: skipped for --only runs')
+  else if (gate.updated) console.log(`Quality gate: baseline updated (${BASELINE_PATH})`)
+  else if (gate.missing) console.log('Quality gate: no baseline.json; run with --update-baseline to create one')
+  else {
+    console.log(`Quality gate: ${gate.regressions.length ? `${gate.regressions.length} regression(s)` : 'no regressions'}`)
+    for (const regression of gate.regressions) console.log(`  REGRESSION ${regression}`)
+    if (gate.newlyPassing.length) console.log(`  Newly passing (not yet in the baseline): ${gate.newlyPassing.join(', ')}`)
+  }
   console.log(`Report: ${report.reportPath}`)
 }
 
@@ -607,10 +657,13 @@ try {
     latencyMs: { p50: percentile(latencies, 50), p95: percentile(latencies, 95), requests: latencies.length },
   }
   if (blocked) report.safetyFailures.push({ id: '(run)', category: 'network', checks: ['offline'], reasons: [`${blocked} connection(s) to an outside host were blocked`] })
+  report.gate = only.length ? { skipped: 'only' } : flag('update-baseline') ? { updated: true } : qualityGate(report, readBaseline())
+  if (flag('update-baseline') && !only.length) await writeFile(BASELINE_PATH, `${JSON.stringify(baselineOf(report), null, 2)}\n`)
   await mkdir(dirname(reportPath), { recursive: true })
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)
   printReport(report)
-  exitCode = report.safetyFailures.length ? 1 : 0
+  // Safety failures exit 1. A quality regression against the baseline exits 3.
+  exitCode = report.safetyFailures.length ? 1 : report.gate.regressions?.length ? 3 : 0
 } catch (error) {
   console.error(`[ai-eval] ${redact(error?.stack || error)}`)
   for (const server of servers) if (server.output) console.error(`[ai-eval] server ${server.tenantId} output:\n${redact(server.output.slice(-3000))}`)

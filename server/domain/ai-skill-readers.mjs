@@ -3,7 +3,7 @@ import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs
 import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
 import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-inventory-allocation-read-model.mjs'
-import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
+import { PURCHASE_ORDER_STATUS, RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 import { classifyBusinessRecord } from './ai-business-record-validity.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
 
@@ -71,6 +71,23 @@ async function rfqEvidence(prisma, tenantId, rfqs) {
     responses: new Map(ids.map((id) => [id, participations.filter((row) => row.rfqId === id && row.status === 'response_recorded').length])),
     awarded: new Set(awards.map((row) => row.rfqId)),
   }
+}
+
+// A purchase order status after alias normalisation; the stored value when it
+// is not a known status.
+function purchaseOrderStatus(value) {
+  try { return normalizeProcurementAuthorityStatus('purchaseOrder', value) } catch { return text(value) }
+}
+
+// The three-way match result on a submitted invoice: the match engine records
+// matched or exception; older records call an exception a variance. Anything
+// else has no result yet.
+export function aiSkillInvoiceMatch(row) {
+  const match = text(row?.matchStatus).toLowerCase()
+  const status = text(row?.status).toLowerCase()
+  if (match === 'matched' || (!match && ['matched', 'approved'].includes(status))) return 'matched'
+  if (['exception', 'variance'].includes(match) || (!match && status === 'exception')) return 'exception'
+  return 'pending'
 }
 
 function recordsNeedingData({ reportRows, openReport, business, raw, visible, tenantId }) {
@@ -153,7 +170,7 @@ export async function readAiSkillFacts(skillContext) {
     tenantId, locale: tenant.locale, currency: tenant.currency, timezone: tenant.timezone,
     generatedAt: now.toISOString(), today, visibility, limitations, hidden,
     checked: Object.entries(visible).filter(([, allowed]) => allowed).map(([source]) => source),
-    purchaseOrders: null, inventory: null, invoices: null, purchaseRequests: null, rfqs: null, receipts: null,
+    purchaseOrders: null, inventory: null, invoices: null, purchaseRequests: null, rfqs: null, receipts: null, suppliers: null,
   }
 
   const overview = buildRuntimeGovernedReport(business, { subject: 'overview' })
@@ -163,6 +180,11 @@ export async function readAiSkillFacts(skillContext) {
   // The open purchase orders report counts overdue days to the UTC calendar
   // day; say so when that is not the tenant's day.
   if (visible.purchase_orders && openReport.asOf !== today) limitations.push({ code: 'report_day', date: openReport.asOf })
+
+  // Suppliers by id, code and name, to resolve a supplier named in a question.
+  if (visible.purchase_orders || visible.supplier_invoices) {
+    facts.suppliers = array(business.suppliers).map((row) => ({ id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName) })).filter((row) => row.id && row.name)
+  }
 
   if (visible.purchase_orders) {
     const lineById = new Map(reportRows.map((po) => [text(po.id), array(po.lines)[0] || null]))
@@ -178,12 +200,24 @@ export async function readAiSkillFacts(skillContext) {
         sku: text(lineById.get(row.id)?.sku) || null, itemId: text(lineById.get(row.id)?.itemId) || null,
       })),
     }
+    // Every purchase order, whatever its status, by the open purchase orders
+    // report's line rules (scope all), for questions about one order. Open
+    // orders carry the same figures as the rows above.
+    const allOrders = buildOpenPurchaseOrdersReport(reportRows, { export: 'true', scope: 'all' }, now)
+    facts.purchaseOrders.index = array(allOrders.exportRows).map((row) => ({
+      id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: purchaseOrderStatus(row.status),
+      createdDate: row.createdDate || null, dueDate: row.dueDate || null, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received,
+      remaining: row.remaining, unit: row.unit, amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency,
+      isOpen: row.isOpen, dataIncomplete: row.dataIncomplete,
+    }))
+    facts.purchaseOrders.pendingApproval = facts.purchaseOrders.index.filter((row) => row.status === PURCHASE_ORDER_STATUS.PENDING_APPROVAL)
   }
 
   if (visible.inventory) {
     const allocation = buildRuntimeInventoryAllocation(business)
+    const unitBySku = new Map(array(business.items).map((row) => [text(row.sku), text(row.unit) || null]))
     const rows = allocation.availability.map((row) => ({
-      sku: row.sku, itemId: row.itemId, itemName: row.itemName, onHand: row.onHand, available: row.available,
+      sku: row.sku, itemId: row.itemId, itemName: row.itemName, unit: unitBySku.get(text(row.sku)) || null, onHand: row.onHand, reserved: row.reserved, available: row.available,
       openSalesDemand: row.openSalesDemand, incomingApprovedPo: row.incomingApprovedPo, shortage: row.shortage,
       availableToPromise: row.availableToPromise, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint,
       stockStatus: row.stockStatus, riskLevel: row.riskLevel, purchaseOrderIds: row.purchaseOrderIds, salesOrderIds: row.salesOrderIds,
@@ -201,6 +235,7 @@ export async function readAiSkillFacts(skillContext) {
     facts.invoices = {
       committed: visibility.amounts.invoice_amounts ? kpiMoney(kpi(finance, 'invoice_amount')) : null,
       committedCount: committed.length,
+      matchCounts: committed.reduce((counts, row) => { counts[aiSkillInvoiceMatch(row)] += 1; return counts }, { matched: 0, exception: 0, pending: 0 }),
       variances: committed
         .filter((row) => (amount(row.varianceAmount) ?? 0) !== 0 || text(row.matchStatus) === 'variance')
         .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: text(row.supplierId), supplier: text(row.supplierName || row.supplierId), poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null })),

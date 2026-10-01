@@ -11,6 +11,27 @@ export function aiSkillLanguage(value) {
   return String(value || '').trim() === 'zh-CN' ? 'zh-CN' : 'en-US'
 }
 
+// The language to answer in: the question's own language when it is clearly
+// English or clearly Chinese, else the interface language. Record ids, SKUs
+// and numbers say nothing about the language, so they are removed first; a
+// Chinese question that names an English supplier or SKU is still Chinese,
+// and an English question naming one Chinese record is still English.
+// Chinese question words and workspace terms mark a Chinese sentence; a
+// Chinese record name on its own does not.
+const CJK_CHAR = /[㐀-鿿豈-﫿]/gu
+const RECORD_ID = /\b[A-Za-z]{2,}[A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+\b/g
+const CHINESE_PHRASING = /多少|哪些|哪个|哪家|什么|怎么|为什么|是否|有没有|吗|呢|吧|请|帮我|查一下|还有|还差|需要|可以|现在|今天|逾期|库存|采购|订单|供应商|发票|审批/u
+export function aiSkillQuestionLanguage(message, interfaceLanguage) {
+  const stripped = String(message || '').replace(RECORD_ID, ' ').replace(/\d+/g, ' ')
+  const cjk = (stripped.match(CJK_CHAR) || []).length
+  const latinWords = (stripped.replace(CJK_CHAR, ' ').match(/[A-Za-z]{2,}/g) || []).length
+  if (CHINESE_PHRASING.test(stripped)) return 'zh-CN'
+  // About two Chinese characters make a word.
+  if (latinWords >= 2 && cjk / 2 <= latinWords) return 'en-US'
+  if (cjk >= 2) return 'zh-CN'
+  return aiSkillLanguage(interfaceLanguage)
+}
+
 const entries = {
   // Answer frame
   'scope.label': ['Your workspace data', '当前工作区数据'],
@@ -29,12 +50,21 @@ const entries = {
   'skill.prepare_action_draft.description': ['Prepares follow-up drafts for your review. It never sends or approves anything.', '准备跟进草稿供你复核，不会发送或批准任何内容。'],
   'skill.workspace_metrics.title': ['Open purchase orders and spend', '未结采购订单与金额'],
   'skill.workspace_metrics.description': ['Reports open and overdue purchase orders, committed spend and short SKUs, as the reports count them.', '按报表口径汇总未结和逾期采购订单、已承诺金额和缺货 SKU。'],
+  'skill.purchase_orders.title': ['Purchase orders', '采购订单'],
+  'skill.purchase_orders.description': ["Looks up a purchase order, a supplier's orders or the overdue orders, with the open purchase orders report's figures.", '按未结采购订单报表口径，查询一张采购订单、某个供应商的订单或逾期订单。'],
+  'skill.pending_approvals.title': ['Waiting for approval', '待审批'],
+  'skill.pending_approvals.description': ['Lists the purchase orders and purchase requests waiting for approval.', '列出待审批的采购订单和采购申请。'],
+  'skill.inventory_availability.title': ['Stock and availability', '库存与可用量'],
+  'skill.inventory_availability.description': ['States on hand, available, open demand, incoming and available-to-promise quantities for a SKU, or the SKUs that need attention.', '说明某个 SKU 的在手、可用、未结需求、在途和可承诺数量，或列出需要关注的 SKU。'],
+  'skill.invoice_summary.title': ['Supplier invoices', '供应商发票'],
+  'skill.invoice_summary.description': ['Totals submitted supplier invoices per currency and counts their three-way match results.', '按币种汇总已提交的供应商发票，并统计三单匹配结果。'],
   'skill.capability_overview.title': ['What I can help with', '我可以帮你做什么'],
   'skill.capability_overview.description': ['Explains what the assistant can answer from workspace data.', '说明助手能基于工作区数据回答哪些问题。'],
 
   // Capability and refusal
   'capability.title': ['Here is what I can help with', '我可以帮你做这些'],
-  'capability.summary': ["I can help with today's priorities, the highest-risk items, records that need more data, open purchase orders and spend, and preparing an action draft for your review.", '我可以帮你查看今日优先事项、风险最高的事项、需要补齐的数据、未结采购订单与金额，并准备处理草稿供你复核。'],
+  'capability.summary': ["I can help with today's priorities, the highest-risk items, records that need more data, open purchase orders and spend, a purchase order, supplier or SKU you name, orders waiting for approval, supplier invoices, and preparing an action draft for your review.", '我可以帮你查看今日优先事项、风险最高的事项、需要补齐的数据、未结采购订单与金额、你点名的采购订单、供应商或 SKU、待审批的订单、供应商发票，并准备处理草稿供你复核。'],
+  'capability.outside': ['I can only answer questions about your workspace data.', '我只能回答与当前工作区数据有关的问题。'],
   'capability.refusal.title': ["I can't do that, but I can prepare a draft", '我不能执行这个操作，但可以准备草稿'],
   'capability.refusal.summary': ["I can't approve, pay, send, issue, cancel or delete anything. I can prepare a draft for you to review.", '我不能批准、付款、发送、下达、取消或删除任何内容。我可以准备一份草稿供你复核。'],
 
@@ -205,6 +235,115 @@ const entries = {
   'limitation.report_day.label': ['Report day', '报表日期'],
   'limitation.report_day.description': ['Overdue days are counted to {date}, the day the open purchase orders report uses.', '逾期天数按 {date} 计算，与未结采购订单报表一致。'],
 
+  // Purchase order status labels. Neutral wording: a label states the record's
+  // state and never reads as the assistant having acted.
+  'po_status.draft': ['Draft', '草稿'],
+  'po_status.pending_approval': ['Waiting for approval', '待审批'],
+  'po_status.approved': ['Approved, not yet issued', '审批通过，待发出'],
+  'po_status.issued': ['Issued to the supplier', '已发给供应商'],
+  'po_status.partially_received': ['Partially received', '部分收货'],
+  'po_status.fully_received': ['Fully received', '全部收货'],
+  'po_status.closed': ['Closed', '关闭'],
+  'po_status.cancelled': ['Cancelled', '作废'],
+  'po_status.rejected': ['Rejected', '驳回'],
+  'po_status.other': ['Status {status}', '状态 {status}'],
+
+  // purchase_orders
+  'po.title_hidden': ['Purchase orders are hidden for your role', '你的角色无法查看采购订单'],
+  'stock.title_hidden': ['Inventory is hidden for your role', '你的角色无法查看库存'],
+  'po.single_remaining': ['{po}: {remaining} still to receive', '{po}：还有 {remaining} 待收货'],
+  'po.single_received': ['{po} is fully received', '{po} 全部收货'],
+  'po.single_status': ['{po}: {status}', '{po}：{status}'],
+  'po.single_mixed': ['{po}: lines use different units, so there is no single remaining quantity', '{po}：各行单位不同，无法合计待收数量'],
+  'po.detail': ['Supplier {supplier}. Ordered {ordered}, received {received}.', '供应商 {supplier}。订购 {ordered}，已收 {received}。'],
+  'po.detail_supplier': ['Supplier {supplier}.', '供应商 {supplier}。'],
+  'po.due_overdue': ['Due {date}, {days} days overdue.', '应到货日期 {date}，逾期 {days} 天。'],
+  'po.due_overdue_one': ['Due {date}, 1 day overdue.', '应到货日期 {date}，逾期 1 天。'],
+  'po.due_on': ['Due {date}.', '应到货日期 {date}。'],
+  'po.due_missing': ['No promised date is recorded.', '未记录承诺到货日期。'],
+  'po.amount': ['Order amount {amount}.', '订单金额 {amount}。'],
+  'po.incomplete': ['Some line quantities or dates are missing, so these figures may be incomplete.', '部分行缺少数量或日期，以上数字可能不完整。'],
+  'po.supplier_title': ['{supplier}: {open} open purchase orders, {overdue} overdue', '{supplier}：未结采购订单 {open} 张，逾期 {overdue} 张'],
+  'po.supplier_title_none': ['{supplier} has no open purchase orders', '{supplier} 没有未结采购订单'],
+  'po.supplier_sentence': ['{supplier}: {open} open, {overdue} overdue.', '{supplier}：未结 {open} 张，逾期 {overdue} 张。'],
+  'po.supplier_many_title': ['{count} suppliers: {open} open purchase orders, {overdue} overdue', '{count} 个供应商：未结采购订单 {open} 张，逾期 {overdue} 张'],
+  'po.as_of': ['Counted as in the open purchase orders report, as of {date}.', '按截至 {date} 的未结采购订单报表统计。'],
+  'po.overdue_title': ['{count} purchase orders are overdue (as of {date})', '截至 {date}，逾期采购订单 {count} 张'],
+  'po.overdue_title_one': ['1 purchase order is overdue (as of {date})', '截至 {date}，逾期采购订单 1 张'],
+  'po.overdue_title_none': ['No purchase order is overdue (as of {date})', '截至 {date}，没有逾期采购订单'],
+  'po.overdue_summary': ['Most overdue first: {list}.', '按逾期天数排列：{list}。'],
+  'po.overdue_item': ['{po} ({days} days)', '{po}（{days} 天）'],
+  'po.not_found_title': ["I couldn't find {id} in this workspace", '当前工作区中找不到 {id}'],
+  'po.not_found_summary': ['Check the number, or ask about open or overdue purchase orders.', '请核对编号，或询问未结、逾期的采购订单。'],
+  'po.evidence_late': ['{status} · {supplier} · {days} days late', '{status} · {supplier} · 逾期 {days} 天'],
+  'po.evidence_due': ['{status} · {supplier} · due {date}', '{status} · {supplier} · 应到货 {date}'],
+  'po.evidence_plain': ['{status} · {supplier}', '{status} · {supplier}'],
+  'po.value_remaining': ['{remaining} to receive', '待收 {remaining}'],
+  'po.impact_late': ['Late receipt', '收货延迟'],
+  'po.impact_late.explanation': ['A late receipt can hold up the stock and sales orders that depend on it.', '收货延迟会影响依赖它的库存和销售订单。'],
+  'po.impact_open': ['Still to receive', '待收货'],
+  'po.impact_open.explanation': ['Follow up with the supplier before the due date.', '请在应到货日期前与供应商跟进。'],
+  'po.impact_closed': ['Nothing to receive', '无待收货'],
+  'po.impact_closed.explanation': ['Nothing is outstanding on this order.', '该订单没有待收数量。'],
+
+  // pending_approvals
+  'approval.title': ['{count} purchase orders are waiting for approval', '{count} 张采购订单待审批'],
+  'approval.title_one': ['1 purchase order is waiting for approval', '1 张采购订单待审批'],
+  'approval.title_none': ['No purchase order is waiting for approval', '没有待审批的采购订单'],
+  'approval.requests': ['{count} purchase requests are also waiting for approval.', '另有 {count} 张采购申请待审批。'],
+  'approval.requests_one': ['1 purchase request is also waiting for approval.', '另有 1 张采购申请待审批。'],
+  'approval.requests_none': ['No purchase request is waiting for approval.', '没有待审批的采购申请。'],
+  'approval.amounts': ['The waiting orders total {amounts}.', '待审批订单金额合计 {amounts}。'],
+  'approval.po_summary': ['{supplier} · created {date}', '{supplier} · 创建于 {date}'],
+  'approval.pr_summary': ['Required by {date}', '需求日期 {date}'],
+  'approval.status': ['Waiting for approval', '待审批'],
+  'approval.impact.explanation': ['An order waiting for approval cannot go to the supplier yet.', '待审批的订单还不能发给供应商。'],
+
+  // inventory_availability
+  'stock.single_title': ['{sku}: {atp} available to promise', '{sku}：可承诺 {atp}'],
+  'stock.single_title_unknown': ['{sku}: available to promise is not known', '{sku}：可承诺数量未知'],
+  'stock.single_summary': ['On hand {onHand}, reserved {reserved}, available {available}. Open sales demand {demand}; incoming on approved purchase orders {incoming}.', '在手 {onHand}，已预留 {reserved}，可用 {available}。未结销售需求 {demand}；审批通过的采购订单在途 {incoming}。'],
+  'stock.short': ['Short {shortage} against open sales orders.', '相对未结销售订单短缺 {shortage}。'],
+  'stock.status': ['Stock status: {status}.', '库存状态：{status}。'],
+  'stock.atp_definition': ['Available to promise is on hand plus incoming, less reservations and open demand.', '可承诺量为在手加在途，减去预留和未结需求。'],
+  'stock.overview_title': ['{count} of {total} SKUs need attention', '{total} 个 SKU 中有 {count} 个需要关注'],
+  'stock.overview_title_none': ['None of the {total} SKUs needs attention', '{total} 个 SKU 都不需要特别关注'],
+  'stock.short_title': ['{count} SKUs are short against open sales orders', '{count} 个 SKU 无法满足未结销售订单'],
+  'stock.short_title_one': ['1 SKU is short against open sales orders', '1 个 SKU 无法满足未结销售订单'],
+  'stock.short_title_none': ['No SKU is short against open sales orders', '没有 SKU 无法满足未结销售订单'],
+  'stock.evidence': ['ATP {atp} · available {available} · {status}', '可承诺 {atp} · 可用 {available} · {status}'],
+  'stock.not_found_title': ["I couldn't find SKU {id} in this workspace", '当前工作区中找不到 SKU {id}'],
+  'stock.not_found_summary': ['Check the SKU, or ask which SKUs are short.', '请核对 SKU，或询问哪些 SKU 缺货。'],
+  'stock_status.out_of_stock': ['Out of stock', '缺货'],
+  'stock_status.below_safety_stock': ['Below safety stock', '低于安全库存'],
+  'stock_status.below_reorder_point': ['Below reorder point', '低于再订货点'],
+  'stock_status.ok': ['In stock', '库存正常'],
+  'stock_status.unknown': ['Unknown', '未知'],
+  'stock.impact_short': ['Short against demand', '需求短缺'],
+  'stock.impact_short.explanation': ['Stock and incoming receipts cannot fill every open sales order.', '现有库存和在途收货无法满足全部未结销售订单。'],
+  'stock.impact_low': ['Below its stock threshold', '低于库存阈值'],
+  'stock.impact_low.explanation': ['Stock is under the level set to absorb demand swings.', '库存低于用于应对需求波动的设定水平。'],
+  'stock.impact_ok': ['Covered', '可满足'],
+  'stock.impact_ok.explanation': ['Stock and incoming receipts cover open demand.', '库存和在途收货可满足未结需求。'],
+  'stock.impact_unknown': ['Not known', '未知'],
+  'stock.impact_unknown.explanation': ['Some quantities for this SKU are not recorded.', '该 SKU 的部分数量未记录。'],
+
+  // invoice_summary
+  'invoice.title': ['Committed supplier invoices: {amounts} across {count} invoices', '已提交供应商发票：{amounts}，共 {count} 张'],
+  'invoice.title_hidden': ['{count} committed supplier invoices', '已提交供应商发票 {count} 张'],
+  'invoice.title_none': ['No committed supplier invoices', '没有已提交的供应商发票'],
+  'invoice.title_unavailable': ['Supplier invoices are hidden for your role', '你的角色无法查看供应商发票'],
+  'invoice.match': ['{matched} matched, {exception} with a match exception, {pending} awaiting match.', '已匹配 {matched} 张，匹配异常 {exception} 张，待匹配 {pending} 张。'],
+  'invoice.variances': ['{count} have a variance against the order or receipt.', '其中 {count} 张与订单或收货存在差异。'],
+  'invoice.variances_one': ['1 has a variance against the order or receipt.', '其中 1 张与订单或收货存在差异。'],
+  'invoice.variances_none': ['None has a variance against the order or receipt.', '没有与订单或收货存在差异的发票。'],
+  'invoice.evidence': ['{supplier} · {match}', '{supplier} · {match}'],
+  'match.matched': ['Matched', '已匹配'],
+  'match.exception': ['Match exception', '匹配异常'],
+  'match.pending': ['Awaiting match', '待匹配'],
+  'invoice.impact': ['Variance', '存在差异'],
+  'invoice.impact.explanation': ['Review the variance with the order and receipt before payment.', '付款前请对照订单和收货复核差异。'],
+
   // Follow-up suggestions (the prompts are the chip texts)
   'followup.today.label': ["Today's priorities", '今日优先事项'],
   'followup.today.prompt': ['What should I handle first today?', '今天先处理什么？'],
@@ -216,6 +355,14 @@ const entries = {
   'followup.draft.prompt': ['Prepare an action draft', '帮我准备一个处理草稿'],
   'followup.metrics.label': ['Open POs and spend', '未结 PO 与金额'],
   'followup.metrics.prompt': ['How many open purchase orders do we have?', '现在有多少未结采购订单？'],
+  'followup.orders.label': ['Overdue purchase orders', '逾期采购订单'],
+  'followup.orders.prompt': ['Which purchase orders are overdue?', '哪些采购订单逾期了？'],
+  'followup.approvals.label': ['Waiting for approval', '待审批'],
+  'followup.approvals.prompt': ['Which purchase orders are waiting for approval?', '哪些采购订单待审批？'],
+  'followup.stock.label': ['Short SKUs', '缺货 SKU'],
+  'followup.stock.prompt': ['Which SKUs are short against open sales orders?', '哪些 SKU 无法满足未结销售订单？'],
+  'followup.invoices.label': ['Supplier invoices', '供应商发票'],
+  'followup.invoices.prompt': ['What is the total of our committed supplier invoices?', '已提交的供应商发票金额是多少？'],
 
   // Navigation
   'nav.open': ['Open {id}', '打开 {id}'],

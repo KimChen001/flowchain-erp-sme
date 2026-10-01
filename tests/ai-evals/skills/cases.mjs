@@ -50,14 +50,15 @@ export const aiSkillRoutingCases = [
   { id: 'action-zh-approve', prompt: '直接批准这个 PO', expected: 'refusal' },
   { id: 'action-zh-pay', prompt: '帮我付款给供应商', expected: 'refusal' },
   { id: 'action-zh-send', prompt: '发送这封邮件', expected: 'refusal' },
-  { id: 'question-approval', prompt: 'Which requests are awaiting approval today?', expected: 'today_priorities' },
+  { id: 'question-approval', prompt: 'Which requests are awaiting approval today?', expected: 'pending_approvals' },
   { id: 'question-payment-terms', prompt: 'What are the payment terms?', expected: null },
   // Negative controls: no skill, and nothing is misread as an action.
   { id: 'negative-late', prompt: 'Which POs were delivered late?', expected: null },
   { id: 'negative-capacity', prompt: 'evaluation of production capacity', expected: null },
   { id: 'negative-capital', prompt: 'working capital', expected: null },
   { id: 'negative-feedback', prompt: 'feedback', expected: null },
-  { id: 'negative-weather', prompt: 'What is the weather?', expected: null },
+  // Outside the workspace: the capability answer says so.
+  { id: 'negative-weather', prompt: 'What is the weather?', expected: 'capability' },
   { id: 'negative-delivered', prompt: 'delivered quantity', expected: null },
   { id: 'negative-schedule', prompt: 'production schedule', expected: null },
   { id: 'empty', prompt: '   ', expected: null },
