@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
 const RFQ_ID = "LOCAL-DEMO-RFQ-001";
+const WAREHOUSE_ID = "LOCAL-DEMO-WH-001";
 const EMPTY_RFQ_ID = "LOCAL-DEMO-RFQ EMPTY";
 const exactRfqPath = (id: string) => `/api/procurement/documents/rfq/${encodeURIComponent(id)}`;
 
@@ -14,6 +15,16 @@ async function login(page: Page, request: APIRequestContext) {
     localStorage.setItem("flowchain:auth-token", token);
     localStorage.setItem("flowchain:current-user", JSON.stringify(user));
   }, session);
+  return session as { token: string };
+}
+
+async function warehouseLabel(request: APIRequestContext, token: string, id: string) {
+  const response = await request.get("/api/master-data/warehouses/select", { headers: { authorization: `Bearer ${token}` } });
+  expect(response.ok()).toBeTruthy();
+  const { options } = await response.json();
+  const option = options.find((candidate: { id: string }) => candidate.id === id);
+  expect(option?.label).toBeTruthy();
+  return option.label as string;
 }
 
 function collectRuntimeIssues(page: Page) {
@@ -37,7 +48,7 @@ async function expectNoWriteActions(page: Page) {
 }
 
 test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser history", async ({ page, request }) => {
-  await login(page, request);
+  const { token } = await login(page, request);
   const runtimeIssues = collectRuntimeIssues(page);
   const documentRequests: string[] = [];
   const allRequests: string[] = [];
@@ -68,8 +79,9 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(line).toContainText("50");
   await expect(line).toContainText("pcs");
   await expect(line).toContainText("2030-01-15");
-  // The line names its warehouse; the stored id LOCAL-DEMO-WH-001 is not shown.
-  await expect(line).toContainText("US Demo Warehouse");
+  // The line names its warehouse as the warehouse selector does; the stored id is not shown.
+  await expect(line).toContainText(await warehouseLabel(request, token, WAREHOUSE_ID));
+  await expect(line).not.toContainText(WAREHOUSE_ID);
 
   const quotation = page.getByTestId("rfq-quotation-LOCAL-DEMO-QUOTE-001");
   await expect(quotation).toContainText("Acme Components");
