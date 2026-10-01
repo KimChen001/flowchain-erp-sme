@@ -14,6 +14,7 @@ async function login(page: Page, request: APIRequestContext) {
     localStorage.setItem("flowchain:auth-token", token);
     localStorage.setItem("flowchain:current-user", JSON.stringify(user));
   }, session);
+  return session.token as string;
 }
 
 function collectRuntimeIssues(page: Page) {
@@ -37,7 +38,7 @@ async function expectNoWriteActions(page: Page) {
 }
 
 test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser history", async ({ page, request }) => {
-  await login(page, request);
+  const token = await login(page, request);
   const runtimeIssues = collectRuntimeIssues(page);
   const documentRequests: string[] = [];
   const allRequests: string[] = [];
@@ -69,7 +70,8 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(line).toContainText("pcs");
   await expect(line).toContainText("2030-01-15");
   // The delivery location shows the warehouse name, not its stored id.
-  await expect(line).toContainText("US Demo Warehouse");
+  const { options } = await (await request.get("/api/master-data/warehouses/select", { headers: { authorization: `Bearer ${token}` } })).json();
+  await expect(line).toContainText(options.find((option: { id: string }) => option.id === "LOCAL-DEMO-WH-001").label);
   await expect(line).not.toContainText("LOCAL-DEMO-WH-001");
 
   const quotation = page.getByTestId("rfq-quotation-LOCAL-DEMO-QUOTE-001");
