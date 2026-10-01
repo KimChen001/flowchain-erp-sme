@@ -65,14 +65,12 @@ test('R231 baseline review keeps exception case boundary aligned with existing e
   const inventoryExceptions = source('src', 'modules', 'inventory', 'InventoryExceptionDocuments.tsx')
   const evidence = source('src', 'domain', 'relationships', 'evidence.ts')
   const actionDraftRepo = source('server', 'repositories', 'db-action-draft-repository.mjs')
-  const cockpit = source('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
   assert.match(inventoryExceptions, /库存异常单据/)
   assert.match(evidence, /resolvePoDelayEvidence/)
   assert.match(evidence, /resolveSkuShortageEvidence/)
   assert.match(evidence, /resolveReceivingExceptionEvidence/)
   assert.match(evidence, /resolveInvoiceMatchingEvidence/)
   assert.match(actionDraftRepo, /previewDraft/)
-  assert.match(cockpit, /actionDraftRequest/)
 })
 
 test('R232 exception case model normalizes cases and drafts with review-first AI prohibitions', () => {

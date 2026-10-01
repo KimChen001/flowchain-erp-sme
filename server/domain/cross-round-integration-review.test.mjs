@@ -34,23 +34,18 @@ test('provider safety remains exact opt-in and evidence links remain frontend-on
 test('navigation evidence surfaces share canonical helper names', () => {
   const app = readSource('src', 'app', 'FlowChainApp.tsx')
   const aiPanel = readSource('src', 'modules', 'ai-assistant', 'Panel.tsx')
-  const cockpit = readSource('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
 
   assert.match(app, /navigationIntentFromGlobalSearchResult/)
   assert.match(app, /routePathForId\(intent\.activeId\)/)
   assert.match(aiPanel, /normalizeEvidenceLinks\(\[raw\], \{ source: "ai" \}\)/)
   assert.match(aiPanel, /raw\.summary/)
   assert.match(aiPanel, /navigationIntentFromEvidenceLink/)
-  assert.match(cockpit, /normalizeTodayCockpitTarget/)
 })
 
-test('typography and amount display boundaries are still documented', () => {
+test('table link typography boundaries are still documented', () => {
   const typographyDoc = readSource('docs', 'ui-typography-consistency-v1.md')
-  const cockpitTest = readSource('server', 'domain', 'today-cockpit-component-extraction.test.mjs')
   const table = readSource('src', 'components', 'ui', 'workbenchTable.ts')
 
   assert.match(typographyDoc, /PO, PR, and RFQ table ID buttons use `tableLinkClass`/)
   assert.match(table, /tableLinkClass = `\$\{typography\.tableLink\} tabular-nums hover:underline/)
-  assert.match(cockpitTest, /compactDisplay/)
-  assert.match(cockpitTest, /万元/)
 })

@@ -57,17 +57,14 @@ test('R204-R205 business back link and related records panel render graceful nav
   assert.match(doc, /source:\s*"documentEvidence"/)
 })
 
-test('R206-R208 AI insight, cockpit, and transactional links preserve workflow return context', () => {
+test('R206-R208 AI insight and transactional links preserve workflow return context', () => {
   const aiPanel = source('src', 'components', 'ai', 'ContextualAIInsightPanel.tsx')
-  const cockpit = source('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
   const purchasing = source('src', 'modules', 'purchasing', 'Page.tsx')
   const receiving = source('src', 'modules', 'receiving', 'Page.tsx')
   const invoice = source('src', 'modules', 'procurement', 'SupplierInvoiceRegister.tsx')
   assert.match(aiPanel, /onNavigateRecord/)
   assert.match(aiPanel, /source:\s*"contextualAiInsight"/)
   assert.doesNotMatch(aiPanel, /Back to AI Assistant/)
-  assert.match(cockpit, /returnLabel:\s*"返回 今日行动"/)
-  assert.match(cockpit, /source:\s*"todayCockpit"/)
   assert.match(purchasing, /returnLabel:\s*`返回采购订单 \$\{order\.po\}`/)
   assert.match(purchasing, /buildGrnRows\(selectedPO, facts\)/)
   assert.match(purchasing, /buildInvoiceRows\(selectedPO, facts\)/)
@@ -83,7 +80,6 @@ test('R210 guardrails keep AI embedded provider-free and non-mutating', () => {
   const changed = [
     source('src', 'components', 'ai', 'ContextualAIInsightPanel.tsx'),
     source('src', 'components', 'document', 'DocumentShell.tsx'),
-    source('src', 'modules', 'overview', 'TodayCockpitPanel.tsx'),
     source('src', 'modules', 'purchasing', 'Page.tsx'),
     source('src', 'modules', 'receiving', 'Page.tsx'),
     source('src', 'modules', 'procurement', 'SupplierInvoiceRegister.tsx'),

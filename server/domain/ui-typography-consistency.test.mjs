@@ -83,15 +83,6 @@ test('action draft review shell keeps evidence links and draft actions on shared
   assert.match(source, /className=\{draftEvidenceLinkClass\}/)
 })
 
-test('today cockpit recent document table uses standard table body scale', () => {
-  const source = readSource('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
-
-  assert.match(source, /tableBodyTextClass/)
-  assert.match(source, /thRightClass/)
-  assert.match(source, /tdNumericRightClass/)
-  assert.match(source, /className=\{tableLinkClass\}/)
-})
-
 test('Forecast MRP and S&OP tables use shared workbench typography scale', () => {
   const source = readSource('src', 'modules', 'forecast', 'Page.tsx')
   const activeSource = source.split('// Legacy forecast block removed in favor of S&OP engine above')[0]

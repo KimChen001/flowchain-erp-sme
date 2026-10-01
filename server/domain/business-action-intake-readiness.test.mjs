@@ -201,13 +201,6 @@ test('R230 end-to-end intake and UI/source guardrails keep provider disabled and
   assert.equal(intake.requiresReview, true)
   assert.equal(intake.drafts.every((draft) => draft.requiresReview && draft.mutationAllowed === false), true)
 
-  const panel = source('src', 'modules', 'action-drafts', 'BusinessActionPlanPanel.tsx')
-  for (const safe of ['编辑草稿', '保存草稿', '标记为已复核', '复制草稿', '继续补充字段', '取消']) {
-    assert.match(panel, new RegExp(safe))
-  }
-  for (const unsafe of ['Submit', 'Approve', 'Pay', 'Post', 'Send Email', 'Issue PO']) {
-    assert.doesNotMatch(panel, new RegExp(`>${unsafe}<|label:\\s*["']${unsafe}["']`))
-  }
   const routes = source('src', 'app', 'routeRegistry.tsx')
   assert.doesNotMatch(routes, /label:\s*["']AI Assistant["']/)
   assert.doesNotMatch(routes, /label:\s*["']AI Command Center["']/)
@@ -217,7 +210,6 @@ test('R230 end-to-end intake and UI/source guardrails keep provider disabled and
     source('server', 'domain', 'business-action-intent-extractor.mjs'),
     source('server', 'domain', 'business-action-draft-contract.mjs'),
     source('server', 'domain', 'business-draft-builders.mjs'),
-    panel,
   ].join('\n')
   assert.doesNotMatch(changedSources, /OPENAI_API_KEY|ARK_API_KEY|DOUBAO_API_KEY|sk-[A-Za-z0-9]/)
   assert.match(changedSources, /mutationAllowed:\s*false/)

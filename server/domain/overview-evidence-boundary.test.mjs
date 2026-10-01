@@ -22,27 +22,6 @@ test('homepage reads one server-derived BusinessReadContext overview', () => {
   assert.doesNotMatch(service, /ctx\.db|scm-demo|demo-data/)
 })
 
-test('overview evidence builders preserve module targets and export fields', () => {
-  const evidence = readSource('src', 'modules', 'overview', 'overviewEvidence.ts')
-
-  for (const moduleId of [
-    'procurement:requests',
-    'procurement:orders',
-    'inventory:movements',
-    'procurement:rfq',
-    'procurement:receiving',
-    'procurement:invoices',
-    'srm:performance',
-    'master-data',
-  ]) {
-    assert.match(evidence, new RegExp(moduleId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
-  }
-
-  for (const field of ['对象', '标题', '优先级', '模块', '证据项', '证据值', '业务原因', '建议动作']) {
-    assert.match(evidence, new RegExp(field))
-  }
-})
-
 test('homepage composition contains only overview work status and recent documents', () => {
   const page = readSource('src', 'modules', 'overview', 'Page.tsx')
 

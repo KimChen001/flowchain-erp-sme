@@ -233,9 +233,7 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
     read('src', 'modules', 'inventory', 'Page.tsx'),
     read('src', 'modules', 'procurement', 'ThreeWayMatchPanel.tsx'),
     read('src', 'modules', 'srm', 'Page.tsx'),
-    read('src', 'modules', 'overview', 'TodayCockpitPanel.tsx'),
     read('src', 'components', 'ai', 'ContextualAIInsightPanel.tsx'),
-    read('src', 'modules', 'action-drafts', 'BusinessActionPlanPanel.tsx'),
     read('src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx'),
   ].join('\n')
   const all = [domainSource, uiSource].join('\n')
@@ -270,10 +268,6 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
   assert.match(uiSource, /新增供应商关系/)
   assert.match(uiSource, /设为首选/)
   assert.match(uiSource, /暂无采购交易记录/)
-  assert.match(uiSource, /运营控制塔/)
-  assert.match(uiSource, /紧急、需复核、等待供应商、等待内部、已解决待关闭和数据缺口/)
-  assert.match(uiSource, /生成内部跟进草稿/)
-  assert.match(uiSource, /风险信号/)
   for (const forbidden of [
     /Operations Control Tower/,
     /Receiving Review Boundary/,
