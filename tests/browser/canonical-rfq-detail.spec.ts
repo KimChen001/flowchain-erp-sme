@@ -68,7 +68,9 @@ test("PostgreSQL RFQ list opens the exact canonical detail and preserves browser
   await expect(line).toContainText("50");
   await expect(line).toContainText("pcs");
   await expect(line).toContainText("2030-01-15");
-  await expect(line).toContainText("LOCAL-DEMO-WH-001");
+  // The delivery location shows the warehouse name, not its stored id.
+  await expect(line).toContainText("US Demo Warehouse");
+  await expect(line).not.toContainText("LOCAL-DEMO-WH-001");
 
   const quotation = page.getByTestId("rfq-quotation-LOCAL-DEMO-QUOTE-001");
   await expect(quotation).toContainText("Acme Components");
