@@ -96,6 +96,11 @@ test('knowledge and supplier business questions keep their own paths', async () 
   assert.equal(payment.status, 200)
   assert.ok(payment.payload.businessQuery, 'the business query path answered')
   assert.equal(summaryRead, true)
+  // A business query answer writes the same audit row as a skill answer,
+  // with no question text.
+  assert.equal(business.audits.length, 1)
+  assert.deepEqual([business.audits[0].action, business.audits[0].metadata.skillId, business.audits[0].metadata.answerSource], ['ai_skill_answered', payment.payload.intent, 'business_query'])
+  assert.doesNotMatch(JSON.stringify(business.audits[0]), /need payment/)
 })
 
 test('an instruction to pay or send is refused before the knowledge and business query paths', async () => {

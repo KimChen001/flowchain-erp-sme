@@ -34,6 +34,8 @@ type AiChatMessage = {
   content: string;
   cards?: AiChatCard[];
   retryPrompt?: string;
+  // The skill the failed question asked for, so a retry asks for it again.
+  retrySkillHint?: string;
 };
 
 type AiChatCard = {
@@ -105,7 +107,7 @@ export const AI_EMPTY_STATE_PROMPT_CHIPS = [
 // above stay as they are; the hint only tells the server which skill to run.
 const EMPTY_STATE_SKILL_HINTS = ["today_priorities", "highest_risk_items", "records_needing_data", "prepare_action_draft"];
 const PO_SKILL_HINTS = ["today_priorities", "records_needing_data", "highest_risk_items", "prepare_action_draft"];
-const SKU_SKILL_HINTS = ["today_priorities", "today_priorities", "highest_risk_items", "prepare_action_draft"];
+const SKU_SKILL_HINTS = ["today_priorities", "inventory_availability", "highest_risk_items", "prepare_action_draft"];
 
 const PO_EMPTY_PROMPTS = {
   "en-US": ["Why does this PO need attention?", "Which receipt or invoice evidence is missing?", "What will a delay affect?", "What should happen next?"],
@@ -1343,7 +1345,8 @@ function buildSessionGrounding(messages: AiChatMessage[], activeContext: ActiveC
   const primaryId = primaryType ? lastVisibleBusinessIds[primaryType]?.[0] : "";
   const primaryEntity = primaryEntityFromCards(cards);
   return {
-    lastIntent: cards[0]?.type,
+    // The skill or plan that answered, not the card type.
+    lastIntent: typeof cards[0]?.data?.intent === "string" ? cards[0].data.intent : cards[0]?.type,
     lastPrimaryEntity: primaryEntity || (primaryId ? { type: primaryType, id: primaryId, label: primaryId } : null),
     lastEvidenceIds,
     lastVisibleBusinessIds,
@@ -1811,6 +1814,7 @@ export default function FloatingAiAssistant({
           role: "assistant",
           content: displaySafeAssistantRecoveryMessage(message, language, aiRecoveryReason(error, timeoutHit || abortReasonRef.current === "timeout")),
           retryPrompt: message,
+          ...(skillHint ? { retrySkillHint: skillHint } : {}),
         },
       ]);
     } finally {
@@ -1905,7 +1909,7 @@ export default function FloatingAiAssistant({
                   {message.role === "assistant" && message.retryPrompt ? (
                     <button
                       type="button"
-                      onClick={() => askAi(message.retryPrompt || "")}
+                      onClick={() => askAi(message.retryPrompt || "", message.retrySkillHint)}
                       disabled={asking}
                       className="mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium disabled:cursor-not-allowed"
                       style={{ background: A.white, color: asking ? A.gray3 : A.blue, border: `1px solid ${A.border}` }}

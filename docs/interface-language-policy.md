@@ -56,3 +56,19 @@ For the conversational agent, carry an explicit response language through the
 request, tool presentation, provider instructions, validation, and fallback.
 UI language must not change business routing or authorization. Do not display
 English prompt suggestions whose backend intents are still unsupported.
+
+The assistant answers in the language the question is phrased in, and falls
+back to the UI language only when the question has no language of its own
+(`PO-012`, `SKU ATP`). The gateway decides this once per request
+(`aiSkillQuestionLanguage` in `server/domain/ai-skill-copy.mjs`) and passes it to
+the knowledge, business query and skill paths and to error messages. A question
+is phrased by its frame words (English question and function words; Chinese
+question words, particles and pronouns), not by the names it carries: "How many
+未结采购订单 do we have?" is answered in English and "PO-012 的状态是什么？" in
+Chinese. Supplier, item and record names are shown as stored. The original
+`answerLanguage` from the client is kept as `interfaceLanguage`.
+
+Checked in both languages: the workspace skill answers (every skill, both
+languages, the same ids, counts and amounts) and the business query labels the
+assistant evaluation reaches. Knowledge answers depend on the configured provider
+and are not covered by the offline evaluation.

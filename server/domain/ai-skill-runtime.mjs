@@ -5,6 +5,7 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { routeSkill } from './ai-skill-router.mjs'
 import { answerAiSkill, toolsFor } from './ai-skills.mjs'
 import { recordAiSkillAudit } from './ai-skill-audit.mjs'
+import { aiSkillIntentShadowAudit, classifyAiSkillIntentShadow } from './ai-skill-intent-shadow.mjs'
 
 // The assistant's answer path after knowledge and business queries: route the
 // question to a workspace skill, read the facts through the report
@@ -26,6 +27,9 @@ export async function runAiSkillRuntime(ctx, body = {}) {
   const language = aiSkillQuestionLanguage(message, body.answerLanguage)
   const route = routeSkill({ message, skillHint: body.skillHint, focusTarget: body.focusTarget })
   const context = await loadAiSkillContext(ctx)
+  // Off unless switched on: a model's suggestion for the audit row only. It
+  // runs beside the facts read and never changes the route or the answer.
+  const shadow = classifyAiSkillIntentShadow({ message, actor: context.actor, env: ctx.env || process.env, ...(ctx.aiSkillIntentProvider ? { provider: ctx.aiSkillIntentProvider } : {}) })
   const allowed = new Set(toolsFor(context.actor).map((entry) => entry.id))
   const refusal = Boolean(route?.refusal)
   // Any question that is not refused or about the outside world reads the
@@ -37,6 +41,7 @@ export async function runAiSkillRuntime(ctx, body = {}) {
   const skillId = refined?.skillId && allowed.has(refined.skillId) ? refined.skillId : 'capability_overview'
   const answerFacts = skillId === 'capability_overview' ? null : facts
   const { response } = answerAiSkill({ skillId, facts: answerFacts, language, query: message, focus: refined?.focus || null, refusal, outOfDomain: Boolean(route?.outOfDomain), actor: context.actor, route: refined })
-  await recordAiSkillAudit(ctx, { response, facts: answerFacts, message, latencyMs: Date.now() - started, refusal })
+  const intentShadow = aiSkillIntentShadowAudit(await shadow, { skillId, mode: refined?.mode || null })
+  await recordAiSkillAudit(ctx, { response, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow })
   return response
 }

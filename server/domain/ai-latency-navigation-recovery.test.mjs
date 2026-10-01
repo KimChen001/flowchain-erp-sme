@@ -28,7 +28,9 @@ test('AI assistant UI has duplicate request guard, abort, and timeout fallback',
   assert.match(aiPanelSource, /displaySafeAssistantRecoveryMessage\(message, language, aiRecoveryReason\(error/)
   assert.match(aiPanelSource, /retryPrompt/)
   assert.match(aiPanelSource, /retryPrompt: message/)
-  assert.match(aiPanelSource, /askAi\(message\.retryPrompt \|\| ""\)/)
+  // A retry asks the same question, for the same skill.
+  assert.match(aiPanelSource, /askAi\(message\.retryPrompt \|\| "", message\.retrySkillHint\)/)
+  assert.match(aiPanelSource, /retrySkillHint: skillHint/)
   assert.match(aiPanelSource, /"重试" : "Retry"/)
   assert.match(aiPanelSource, /disabled=\{asking\}/)
   assert.match(aiPanelSource, /Check npm run api, \/api\/health, SCM_API_PROXY_TARGET, stale node on 8787/)

@@ -123,7 +123,9 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
     stateLabel: L(STATE_LABELS[section.state] || section.state),
     counts: section.counts,
     amounts: section.amounts,
-    rows: section.rows,
+    // A supplier the role may not name carries the read service's placeholder
+    // label, shown in the answer language.
+    rows: (section.rows || []).map((row) => row?.supplier?.displayName ? { ...row, supplier: { ...row.supplier, displayName: L(row.supplier.displayName) } } : row),
     limitations: section.limitations,
   }))
   return {

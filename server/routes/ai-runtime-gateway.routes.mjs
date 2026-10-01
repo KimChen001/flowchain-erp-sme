@@ -5,6 +5,7 @@ import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
 import { isLegacyAiTemplateGatewayEnabled, runAiSkillRuntime } from '../domain/ai-skill-runtime.mjs'
 import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
 import { aiSkillQuestionLanguage } from '../domain/ai-skill-copy.mjs'
+import { recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
 // was asked in Chinese. The client maps the codes to its own recovery text.
@@ -64,6 +65,7 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/ai-runtime/respond') {
+    const started = Date.now()
     let body = {}
     try {
       body = await readBody(req)
@@ -93,6 +95,9 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
       }
       const businessQuery = actionRequest ? null : await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
       if (businessQuery) {
+        // The same audit row as a skill answer: the plan's intent, the
+        // records it cited and a hash of the question, never its text.
+        await recordAiSkillAudit(ctx, { response: { ...businessQuery, answerSource: businessQuery.answerSource || 'business_query' }, facts: null, message: body.message || body.question, latencyMs: Date.now() - started })
         send(res, 200, await addKnowledgeContext(ctx, body, businessQuery))
         return true
       }

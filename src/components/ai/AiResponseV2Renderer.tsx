@@ -128,7 +128,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   if (response.rag) return <RagAnswerCard rag={response.rag} title={response.conclusion.title} summary={response.conclusion.summary} />;
   const focused = toAiFocusedResponse(response, language);
   return (
-    <div data-testid="ai-response-v2" data-answer-mode={focused.answerMode} data-answer-source={response.answerSource || undefined} className="space-y-3 rounded-xl p-3" style={{ background: A.white, border: `1px solid ${A.border}` }}>
+    <div data-testid="ai-response-v2" lang={response.language || undefined} data-answer-mode={focused.answerMode} data-answer-source={response.answerSource || undefined} className="space-y-3 rounded-xl p-3" style={{ background: A.white, border: `1px solid ${A.border}` }}>
       {response.answerSourceLabel ? <div data-testid="ai-answer-source" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" style={{ color: A.gray2 }}><span className="inline-flex rounded-full px-2 py-0.5 font-semibold" style={{ background: A.gray6, color: A.gray1 }}>{response.answerSourceLabel}</span>{response.checkedLabel ? <span data-testid="ai-answer-checked">{response.checkedLabel}</span> : null}</div> : null}
       <section data-testid="ai-focused-conclusion">
         <div className="flex items-start justify-between gap-2"><div><h3 className="text-sm font-semibold leading-5" style={{ color: A.label }}>{focused.headline}</h3><p className="mt-1 text-xs leading-5" style={{ color: A.gray1 }}>{focused.summary}</p></div><Chip tone={focused.severity}>{copy.severity[focused.severity]}</Chip></div>
