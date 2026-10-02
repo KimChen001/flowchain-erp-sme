@@ -7,6 +7,7 @@ import { isLegacyAiTemplateGatewayEnabled, runAiSkillRuntime } from '../domain/a
 import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
 import { aiSkillQuestionLanguage } from '../domain/ai-skill-copy.mjs'
 import { recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
+import { reportReadAccess, scopeBusinessContext } from '../domain/report-read-access.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
 // was asked in Chinese. The client maps the codes to its own recovery text.
@@ -37,15 +38,19 @@ async function addKnowledgeContext(ctx, body, response) {
   }
 }
 
-export async function loadAiRuntimeFacts(repositories = {}, tenantId = '') {
+// access, the reader's report read access, scopes the facts as the business
+// read context is scoped: no collections the role cannot read, no hidden
+// amounts, invoice partners or supplier bank details, and stock from the
+// reader's warehouses.
+export async function loadAiRuntimeFacts(repositories = {}, tenantId = '', access = null) {
   if (!tenantId) return {}
   const scope = { tenantId }
   const [procurement, products, suppliers] = await Promise.all([
     repositories.procurementRead?.snapshot?.(scope) || {},
-    repositories.inventoryRead?.listItems?.(scope) || [],
+    repositories.inventoryRead?.listItems?.(access ? { ...scope, warehouseIds: access.warehouseIds } : scope) || [],
     repositories.masterData?.listSuppliers?.(scope) || [],
   ])
-  return {
+  const facts = {
     purchaseRequests: procurement.purchaseRequests || [],
     rfqs: procurement.rfqs || [],
     purchaseOrders: procurement.purchaseOrders || [],
@@ -53,6 +58,17 @@ export async function loadAiRuntimeFacts(repositories = {}, tenantId = '') {
     supplierInvoices: procurement.supplierInvoices || [],
     products,
     suppliers,
+  }
+  if (!access) return facts
+  const scoped = scopeBusinessContext({ ...facts, receipts: facts.receivingDocs, inventoryItems: facts.products, salesOrders: [] }, access)
+  return {
+    purchaseRequests: scoped.purchaseRequests,
+    rfqs: scoped.rfqs,
+    purchaseOrders: scoped.purchaseOrders,
+    receivingDocs: scoped.receipts,
+    supplierInvoices: scoped.supplierInvoices,
+    products: scoped.inventoryItems,
+    suppliers: scoped.suppliers,
   }
 }
 
@@ -105,8 +121,9 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
       }
       // Rollback only: the retired Chinese template gateway, off by default.
       if (!actionRequest && isLegacyAiTemplateGatewayEnabled(ctx.env || process.env)) {
+        // An actor that cannot be resolved gets the sign-in error below.
         const facts = identity?.authenticated && identity.tenantId
-          ? await loadAiRuntimeFacts(repositories, identity.tenantId)
+          ? await loadAiRuntimeFacts(repositories, identity.tenantId, await reportReadAccess(ctx))
           : {}
         const result = await buildAiRuntimeResponseV2Async({ ...db, ...facts }, body, { env: identity?.authenticated ? process.env : {} })
         send(res, result.status, await addKnowledgeContext(ctx, body, withoutUnavailableProductLinks(result.body)))
