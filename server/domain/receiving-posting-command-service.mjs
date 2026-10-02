@@ -526,7 +526,8 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
 
         await faultInjector('after_reversal_movements', { tx, receivingDocument, purchaseOrder, reversalMovements, balances })
         const nextPoLines = [...poLines.values()]
-        const nextPoStatus = poStatus(nextPoLines, purchaseOrder.status, purchaseOrder.receivingBaseStatus)
+        // A PO the buyer closed stays closed when one of its receipts is reversed.
+        const nextPoStatus = purchaseOrder.status === 'closed' ? 'closed' : poStatus(nextPoLines, purchaseOrder.status, purchaseOrder.receivingBaseStatus)
         const poUpdated = await tx.purchaseOrder.updateMany({
           where: { id: purchaseOrder.id, tenantId: scope.tenantId, version: purchaseOrder.version },
           data: { status: nextPoStatus, version: { increment: 1 } },

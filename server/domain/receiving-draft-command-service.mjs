@@ -248,6 +248,30 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
     })
   }
 
+  // Cancels a receipt that was never posted: a draft or one ready for posting.
+  // It keeps its lines for the record, holds no quantity and can no longer be
+  // revised, submitted or posted, so the PO can be cancelled or closed.
+  async function cancelDraft(id, input = {}, context, channel = RECEIVING_DRAFT_CHANNELS.desktop) {
+    const actor = await authorizedActor(prisma, context, channel)
+    const expected = expectedVersionOf(input.expectedVersion)
+    const key = text(input.idempotencyKey)
+    if (!key) fail('IDEMPOTENCY_KEY_REQUIRED', 'idempotencyKey is required.', 422)
+    const reason = text(input.reason)
+    if (!reason) fail('RECEIVING_CANCEL_REASON_REQUIRED', 'Give a reason for cancelling the receipt.', 422, [{ field: 'reason' }])
+    const commandType = `${channel.commandPrefix}.cancel`
+    return idempotent({ tenantId: actor.tenantId, commandType, key, requestHash: digest({ id: text(id), expectedVersion: expected, reason }), entityId: text(id) }, async (tx, execution) => {
+      const row = await lockDraft(tx, actor, id)
+      assertWarehouseAccess(actor, [...new Set([row.warehouseId, ...row.lines.map((line) => line.warehouseId)].filter(Boolean))], 'operate')
+      if (row.version !== expected) fail('SYNC_VERSION_CONFLICT', 'Receiving draft changed concurrently.', 409, { entityId: row.id, expectedVersion: expected, currentVersion: row.version, conflictFields: ['workflowStatus'], availableActions: ['reload'], serverTime: serial(now()) })
+      if (row.postingStatus !== RECEIVING_POSTING_STATUS.UNPOSTED || ![RECEIVING_WORKFLOW_STATUS.DRAFT, RECEIVING_WORKFLOW_STATUS.READY_FOR_RECEIVING].includes(row.workflowStatus)) fail('RECEIVING_WORKFLOW_CONFLICT', 'Only a receipt that was never posted may be cancelled. Reverse a posted receipt instead.', 409)
+      const updated = await tx.receivingDocument.update({ where: { id: row.id }, data: { workflowStatus: RECEIVING_WORKFLOW_STATUS.CANCELLED, version: { increment: 1 }, metadata: { ...(row.metadata || {}), cancelledAt: serial(now()), cancelledById: actor.user.id, cancelReason: reason } } })
+      const result = { entityId: row.id, receivingDocument: documentSummary(updated), pendingSync: false }
+      await audit(tx, actor, channel, updated, 'receiving_cancelled', `Cancelled receipt ${row.documentNumber}.`, { commandExecutionId: execution.id, commandType, idempotencyKey: key, expectedVersion: expected, reason, previousWorkflowStatus: row.workflowStatus })
+      await changeFeed(tx, actor, channel, updated, key)
+      return { result, entityId: row.id }
+    })
+  }
+
   // Open receivable POs with their remaining quantities and the warehouses the
   // actor may receive into.
   async function listReceivablePurchaseOrders({ search = '', purchaseOrderId = '' } = {}, context, channel = RECEIVING_DRAFT_CHANNELS.desktop) {
@@ -292,5 +316,5 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
     return { items, total: items.length }
   }
 
-  return { createDraft, reviseDraft, submitDraft, listReceivablePurchaseOrders, listReceivingDocuments }
+  return { createDraft, reviseDraft, submitDraft, cancelDraft, listReceivablePurchaseOrders, listReceivingDocuments }
 }

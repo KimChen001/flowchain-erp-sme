@@ -92,7 +92,7 @@ export function wilsonInterval(successes, trials, z = WILSON_Z) {
 // A line is closed when nothing more will be received against it: its PO is
 // fully received or cancelled, or the buyer closed the line short
 // (metadata.closedAt; closing a remainder is decision D5, not built yet).
-const CLOSED_PO_STATUSES = ['fully_received', 'cancelled']
+const CLOSED_PO_STATUSES = ['fully_received', 'closed', 'cancelled']
 export function isLineClosed(line, purchaseOrder) {
   return CLOSED_PO_STATUSES.includes(text(purchaseOrder?.status)) || Boolean(text(line?.metadata?.closedAt))
 }

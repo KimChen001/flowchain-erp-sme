@@ -156,9 +156,13 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
     // A draft is edited and submitted before it can be posted.
     const draftOpen = grn.workflowStatus === 'draft' && grn.postingStatus === 'unposted'
       && Boolean(capabilities.posting?.enabled) && can({ actor, permission: 'receiving.prepare', tenantId: actor.tenantId }) && warehouseAllowed
+    // A receipt that was never posted can be cancelled, as a draft or ready.
+    const canCancel = grn.postingStatus === 'unposted' && ['draft', 'ready_for_receiving'].includes(grn.workflowStatus)
+      && Boolean(capabilities.posting?.enabled) && can({ actor, permission: 'receiving.prepare', tenantId: actor.tenantId }) && warehouseAllowed
     return detailModel(aggregate, capabilities, {
       canEditDraft: draftOpen,
       canSubmit: draftOpen,
+      canCancel,
       canPost: operation === 'post' && allowed,
       canReverse: operation === 'reverse' && allowed,
       canViewReversal: grn.postingStatus === 'reversed',
