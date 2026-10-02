@@ -24,12 +24,9 @@ FlowChain authorization is now based on system-defined Permission Codes and tena
 
 Backfill is idempotent, preserves legacy administrator warehouse reach by materializing explicit operate scopes, records an audit event, and fails closed for unknown legacy values.
 
-Backfill runs again whenever a user who never had a role makes a request, for example a colleague who has just accepted an invitation. It never overrides an administrator's decision:
+Backfill runs again whenever a user who never had a role makes a request, for example a colleague who has just accepted an invitation. Template grants are filled into a default role only until an administrator first saves that role, so a code removed from a saved role stays removed. New catalog codes reach existing default roles through a data migration, as `20261002030000_master_data_permissions` does for the master data codes.
 
-- Only users with no role assignment, whose roles no administrator has ever set, get the template of their legacy value. A user an administrator narrowed, or left with no roles at all, keeps exactly the roles the administrator chose. The `user_role_assignments_changed` audit row records that decision.
-- Template grants are filled into a default role only until an administrator first saves that role. A code removed from a saved role stays removed. New catalog codes reach existing default roles through a data migration, as `20261002030000_master_data_permissions` does for the master data codes.
-
-Changing `User.role` (`PATCH /api/workspace/users/:id`) does not change role assignments. Since master data writes moved to `master_data.*` codes, that includes item, supplier and customer writes: demoting someone there no longer removes them. Change their roles in Roles & permissions instead.
+Item, supplier and customer writes follow the `master_data.*` codes of a user's role assignments, not `User.role`. Change who maintains master data in Roles & permissions.
 
 ## Return reconciliation
 

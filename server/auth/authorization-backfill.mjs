@@ -5,23 +5,6 @@ import { isTransactionConflict } from "../persistence/transaction-conflict.mjs"
 const stableId = (...parts) => `AUTH-${createHash("sha256").update(parts.join(":"), "utf8").digest("hex").slice(0, 28)}`
 const normalizedLegacyRole = (value) => String(value || "").trim().toLowerCase()
 
-// The audit action the governance service records whenever an administrator
-// sets a user's roles in Roles & permissions. It is the only trace an emptied
-// assignment list leaves, so the backfill reads it to tell "an administrator
-// removed every role" apart from "never had a role".
-export const ROLE_ASSIGNMENT_DECISION_ACTION = "user_role_assignments_changed"
-
-// The users among userIds whose roles an administrator has set at least once.
-export async function usersWithRoleAssignmentDecision(prisma, tenantId, userIds) {
-  if (!userIds.length) return new Set()
-  const rows = await prisma.auditLog.findMany({
-    where: { tenantId, source: "authorization_governance", action: ROLE_ASSIGNMENT_DECISION_ACTION, entityType: "User", entityId: { in: userIds } },
-    select: { entityId: true },
-    distinct: ["entityId"],
-  })
-  return new Set(rows.map((row) => row.entityId))
-}
-
 export async function backfillTenantAuthorization(prisma, tenantId, { actorId = null, requestId = null, idFactory = randomUUID } = {}) {
   if (!prisma || !tenantId) throw new Error("prisma and tenantId are required")
   const work = async (tx) => {
@@ -57,25 +40,17 @@ export async function backfillTenantAuthorization(prisma, tenantId, { actorId = 
       }
     }
 
-    const users = await tx.user.findMany({ where: { tenantId }, select: { id: true, role: true, _count: { select: { roleAssignments: true } } } })
+    const users = await tx.user.findMany({ where: { tenantId }, select: { id: true, role: true } })
     const warehouses = await tx.warehouse.findMany({ where: { tenantId }, select: { id: true } })
-    const unassigned = users.filter((user) => user._count.roleAssignments === 0).map((user) => user.id)
-    const decided = await usersWithRoleAssignmentDecision(tx, tenantId, unassigned)
     const unknownLegacyRoles = []
     for (const user of users) {
       const legacyRole = normalizedLegacyRole(user.role)
       const roleKey = legacyRoleTemplateMap[legacyRole] || "read-only-viewer"
-      // Only a user who has never had a role, such as someone who has just
-      // accepted an invitation, gets the template of their legacy role. Anyone
-      // else's roles are an administrator's decision, even an empty list, and
-      // stay as the administrator left them when someone else's first sign-in
-      // runs this backfill again.
-      if (user._count.roleAssignments === 0 && !decided.has(user.id)) {
-        if (!legacyRoleTemplateMap[legacyRole]) unknownLegacyRoles.push({ userId: user.id, legacyRole })
-        const role = roles.get(roleKey)
-        await tx.userRoleAssignment.upsert({ where: { userId_roleId: { userId: user.id, roleId: role.id } }, create: { id: stableId(tenantId, "assignment", user.id, role.id), tenantId, userId: user.id, roleId: role.id, status: "active", createdById: actorId }, update: {} })
-        createdAssignments += 1
-      }
+      if (!legacyRoleTemplateMap[legacyRole]) unknownLegacyRoles.push({ userId: user.id, legacyRole })
+      const role = roles.get(roleKey)
+      const existing = await tx.userRoleAssignment.findUnique({ where: { userId_roleId: { userId: user.id, roleId: role.id } } })
+      await tx.userRoleAssignment.upsert({ where: { userId_roleId: { userId: user.id, roleId: role.id } }, create: { id: stableId(tenantId, "assignment", user.id, role.id), tenantId, userId: user.id, roleId: role.id, status: "active", createdById: actorId }, update: {} })
+      if (!existing) createdAssignments += 1
       // Legacy admins previously bypassed warehouse scopes. Materialize the same
       // access as explicit UserWarehouseScope rows so role names are no longer a scope authority.
       if (roleKey === "workspace-administrator") {
