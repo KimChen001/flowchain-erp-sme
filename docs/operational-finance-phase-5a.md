@@ -64,6 +64,11 @@ that is already used is refused with `PAYABLE_OBLIGATION_NUMBER_DUPLICATE`
 (409). Two approvals racing for the same number end with a retryable 409 for
 the loser; running it again assigns the next free number.
 
+Supplier credit memo numbers are stored as entered and are unique per
+workspace (`SUPPLIER_CREDIT_MEMO_NUMBER_DUPLICATE`, 409). Two suppliers that
+both issue credit memo `CM-1` therefore cannot both be recorded under that
+number; making it unique per supplier needs a schema change.
+
 ## Explicit exclusions
 
 Phase 5A creates no bank payment, check, ACH, payment batch, bank

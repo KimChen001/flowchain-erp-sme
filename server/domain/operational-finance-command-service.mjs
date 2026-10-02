@@ -8,6 +8,7 @@ import {
   buildSupplierMatchPlan,
   financeFixed,
   financeUnits,
+  supplierCreditMemoNumberDuplicate,
 } from "./operational-finance-policy.mjs";
 
 export class OperationalFinanceError extends Error {
@@ -371,6 +372,10 @@ const payableNumberDuplicate = (obligationNumber) => ({
   details: { obligationNumber },
 });
 
+// Credit memo numbers are entered, not derived, and stay unique per workspace.
+const isSupplierCreditMemoNumberConflict = (error) =>
+  isUniqueConflictOn(error, "SupplierCreditMemo", "creditMemoNumber");
+
 export function createOperationalFinanceCommandService({
   prisma,
   env = process.env,
@@ -445,6 +450,10 @@ export function createOperationalFinanceCommandService({
           409,
           { invoiceNumber: payload.invoiceNumber },
         );
+      if (isSupplierCreditMemoNumberConflict(error)) {
+        const duplicate = supplierCreditMemoNumberDuplicate(payload.creditMemoNumber);
+        fail(duplicate.code, duplicate.message, duplicate.status, duplicate.details);
+      }
       if (error?.code === "P2002")
         fail(
           "FINANCE_UNIQUE_CONFLICT",

@@ -678,6 +678,22 @@ test(
         excessiveCredit.blockingIssues[0].code,
         "SUPPLIER_CREDIT_QUANTITY_EXCEEDED",
       );
+      // Credit memo numbers are unique per workspace; the preview names a
+      // repeat instead of leaving the create to fail on the unique index.
+      const repeatedCreditNumber = await command.previewSupplierCreditMemo(
+        creditPayload,
+        specialist,
+      );
+      assert.equal(repeatedCreditNumber.allowed, false);
+      assert.ok(
+        repeatedCreditNumber.blockingIssues.some(
+          (entry) =>
+            entry.code === "SUPPLIER_CREDIT_MEMO_NUMBER_DUPLICATE" &&
+            entry.status === 409 &&
+            entry.message.includes("SCM-FIN-001"),
+        ),
+      );
+
       assert.deepEqual(
         {
           balances: await prisma.inventoryBalance.count(),
