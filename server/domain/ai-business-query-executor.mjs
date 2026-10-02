@@ -105,10 +105,15 @@ function scopeSummary(plan, rows) {
   return { entityType: plan.scope.entityType, mode: plan.scope.mode, entityCount: rows.length, label }
 }
 
+// Valid plans can still ask for filters the executor cannot apply; those get a clarification answer.
+export function hasUnsupportedPlanFilters(plan) {
+  return plan.filters.statuses.length > 0 || plan.grouping.some(group => group !== "supplier") || plan.filters.dueState.some(state => ["settled", "due_this_week"].includes(state))
+}
+
 export async function executeBusinessQueryPlan(planCandidate, context = {}) {
   const plan = assertValidBusinessQueryPlan(planCandidate)
   assertReadOnlyGoalRegistry()
-  const unsupported = plan.filters.statuses.length > 0 || plan.grouping.some(group => group !== "supplier") || plan.filters.dueState.some(state => ["settled", "due_this_week"].includes(state))
+  const unsupported = hasUnsupportedPlanFilters(plan)
   if (plan.clarificationNeeded || unsupported) return {
     plan,
     scopeSummary: { entityType: plan.scope.entityType, mode: plan.scope.mode, entityCount: 0, label: '需要澄清' },
