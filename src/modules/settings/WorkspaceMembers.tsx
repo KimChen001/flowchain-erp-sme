@@ -7,7 +7,8 @@ import { useI18n } from "../../i18n/I18n";
 // Workspace members: invite a teammate with a role, revoke a pending
 // invitation, and enable or disable a member. Role assignments and warehouse
 // access are edited in the sections below. The server checks
-// settings.users.read and settings.users.manage on every call.
+// settings.users.read and settings.users.manage on every call, and
+// settings.roles.assign to invite.
 
 type Member = { id: string; name: string; email: string; role: string; status: string; version: number };
 type Invitation = { id: string; email: string; role: string; status: string; expiresAt: string; createdAt: string };
@@ -68,6 +69,9 @@ export default function WorkspaceMembers() {
   if (!permissions) return <Card className="p-5" data-testid="workspace-members">{tr("Loading members…", "正在加载成员…")}</Card>;
   if (!permissions.has("settings.users.read")) return null;
   const canManage = permissions.has("settings.users.manage");
+  // An invitation assigns its role when accepted, so the server also checks
+  // settings.roles.assign before creating one.
+  const canInvite = canManage && permissions.has("settings.roles.assign");
 
   const invite = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -101,7 +105,7 @@ export default function WorkspaceMembers() {
     <p className="mt-1 text-sm text-slate-500">{tr("Invite teammates and enable or disable members. Choose each member's roles and warehouse access below.", "邀请同事加入，启用或停用成员。成员的角色和仓库权限在下方设置。")}</p>
     {notice && <div role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{notice}</div>}
 
-    {canManage && <form onSubmit={(event) => void invite(event)} className="mt-4 flex flex-wrap items-end gap-2" data-testid="invite-member-form">
+    {canInvite && <form onSubmit={(event) => void invite(event)} className="mt-4 flex flex-wrap items-end gap-2" data-testid="invite-member-form">
       <label className="text-sm">{tr("Email", "邮箱")}<input data-testid="invite-email" type="email" required className={`${field} mt-1 block w-72`} placeholder="name@company.com" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
       <label className="text-sm">{tr("Role", "角色")}<select data-testid="invite-role" className={`${field} mt-1 block w-56`} value={role} onChange={(event) => setRole(event.target.value)}>{INVITATION_ROLES.map(([code, english, chinese]) => <option key={code} value={code}>{en ? english : chinese}</option>)}</select></label>
       <button data-testid="invite-submit" type="submit" disabled={busy === "invite" || !email.trim()} className={`${button} text-white`} style={{ background: A.blue }}><Send size={15} />{tr("Create invitation", "创建邀请")}</button>
