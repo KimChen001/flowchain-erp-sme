@@ -5,6 +5,8 @@ import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs
 import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
 import { isLegacyAiTemplateGatewayEnabled, runAiSkillRuntime } from '../domain/ai-skill-runtime.mjs'
 import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
+import { aiSkillQuestionLanguage } from '../domain/ai-skill-copy.mjs'
+import { recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
 // was asked in Chinese. The client maps the codes to its own recovery text.
@@ -64,6 +66,7 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/ai-runtime/respond') {
+    const started = Date.now()
     let body = {}
     try {
       body = await readBody(req)
@@ -71,12 +74,18 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
       send(res, 400, errorBody('AI_REQUEST_UNREADABLE'))
       return true
     }
+    // One answer language for every path (knowledge, business query, skills,
+    // errors): the question's own language, else the interface language.
+    if (body && typeof body === 'object' && !Array.isArray(body)) {
+      body = { ...body, interfaceLanguage: body.answerLanguage, answerLanguage: aiSkillQuestionLanguage(String(body.message || body.question || '').slice(0, 1201), body.answerLanguage) }
+    }
     try {
       // An instruction to approve, pay, send, cancel or delete goes straight
       // to the skill runtime's refusal: the knowledge and business query
       // paths would otherwise answer it (a payment or supplier word sends it
       // to the supplier query planner) and never refuse.
-      const actionRequest = detectAiActionRequest(body?.message || body?.question)
+      // Only the first 1,201 characters: a longer question is rejected below.
+      const actionRequest = detectAiActionRequest(String(body?.message || body?.question || '').slice(0, 1201))
       const knowledge = actionRequest ? null : await runKnowledgeQuery(ctx, body)
       if (knowledge) { send(res, 200, knowledge); return true }
       // Reject empty or oversized questions before any tenant data is read.
@@ -88,6 +97,9 @@ export async function handleAiRuntimeGatewayRoute(ctx) {
       }
       const businessQuery = actionRequest ? null : await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
       if (businessQuery) {
+        // The same audit row as a skill answer: the plan's intent, the
+        // records it cited and a hash of the question, never its text.
+        await recordAiSkillAudit(ctx, { response: { ...businessQuery, answerSource: businessQuery.answerSource || 'business_query', language: businessQuery.language || body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started })
         send(res, 200, await addKnowledgeContext(ctx, body, businessQuery))
         return true
       }
