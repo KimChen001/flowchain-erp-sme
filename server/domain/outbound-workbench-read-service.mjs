@@ -4,7 +4,7 @@ import {
   outboundDecimalUnits as units,
 } from "./outbound-transaction-policy.mjs";
 import { SalesWorkbenchError } from "./sales-order-workbench-service.mjs";
-import { can } from "../auth/authorization-service.mjs";
+import { assertAuthorized, can } from "../auth/authorization-service.mjs";
 
 const fail = (code, message, status = 400) => {
   throw new SalesWorkbenchError(code, message, status);
@@ -435,6 +435,7 @@ export function createOutboundWorkbenchReadService({
       prisma,
       context?.identity || context,
     );
+    assertAuthorized({ actor, permission: "sales_order.read", tenantId: actor.tenantId });
     const order = await prisma.salesOrder.findFirst({
       where: { id: text(id), tenantId: actor.tenantId },
       include: {
@@ -672,6 +673,7 @@ export function createOutboundWorkbenchReadService({
       prisma,
       context?.identity || context,
     );
+    assertAuthorized({ actor, permission: "shipment.read", tenantId: actor.tenantId });
     const shipment = await prisma.shipmentDocument.findFirst({
       where: { id: text(id), tenantId: actor.tenantId },
       include: {
