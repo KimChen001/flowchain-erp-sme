@@ -13,7 +13,9 @@ import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
+import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
+import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import {
   tableMinSmClass,
   tableScrollClass,
@@ -352,6 +354,7 @@ export default function OutboundWorkbench() {
 }
 
 function OrderList() {
+  const workspace = useWorkspaceCurrency();
   const stamp = useStamp();
   const [params, setParams] = useSearchParams(),
     [data, setData] = useState<{
@@ -471,7 +474,7 @@ function OrderList() {
               onChange={(e) => update({ currency: e.target.value, page: 1 })}
             >
               <option value="">{copy("全部")}</option>
-              {["USD", "EUR", "CNY"].map((x) => (
+              {orderedCurrencyCodes(workspace.currency, ["USD", "EUR", "CNY"]).map((x) => (
                 <option key={x}>{x}</option>
               ))}
             </select>
@@ -805,6 +808,7 @@ function OrderEntry() {
 }
 
 function OrderDetail({ id }: { id: string }) {
+  const warehouseName = useWarehouseNames();
   const stamp = useStamp();
   const [data, setData] = useState<Workbench | null>(null),
     [error, setError] = useState(""),
@@ -1248,7 +1252,7 @@ function OrderDetail({ id }: { id: string }) {
               className="mt-2 grid grid-cols-6 gap-2 rounded-lg bg-slate-50 p-2 text-xs"
               key={b.id}
             >
-              <span>{b.warehouseId}</span>
+              <span>{warehouseName(b.warehouseId)}</span>
               <span>{b.location || "默认库位"}</span>
               <span>现有 {b.onHandQuantity}</span>
               <span>预留 {b.reservedQuantity}</span>
@@ -1431,7 +1435,7 @@ function OrderDetail({ id }: { id: string }) {
                     <option value="">{copy("请选择库存余额")}</option>
                     {balanceOptions.map((x) => (
                       <option disabled={!x.selectable} value={x.id} key={x.id}>
-                        {x.warehouseId} · {x.location || "默认库位"} · 现有{" "}
+                        {warehouseName(x.warehouseId)} · {x.location || "默认库位"} · 现有{" "}
                         {x.onHandQuantity} / 预留 {x.reservedQuantity} / 可用{" "}
                         {x.availableQuantity} ·{" "}
                         {x.selectable ? "可操作" : "只读"}

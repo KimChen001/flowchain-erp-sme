@@ -1,3 +1,4 @@
+import { isUnavailableProductRoute } from "../../shared/unavailable-product-routes.mjs";
 import { randomUUID } from "node:crypto";
 import { assertAuthorized, can } from "../auth/authorization-service.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
@@ -38,11 +39,13 @@ export function createMobileOperationsService({ prisma, procurementAuthority, en
         for (const po of rows.filter((row) => row.status === PURCHASE_ORDER_STATUS.PENDING_APPROVAL)) tasks.push(task({ taskId: `purchase_order_approval:${po.id}`, taskType: "purchase_order_approval", entityType: "PurchaseOrder", entityId: po.id, title: `Purchase order ${po.orderNumber || po.id}`, summary: text(po.supplierSnapshot?.supplierName || po.supplierId), amountSummary: actor.permissionCodes.has("procurement.prices.read") ? { amount: po.totalAmount, currency: po.currency } : null, availableActions: can({ actor, permission: "mobile.procurement.approval.execute", tenantId: actor.tenantId }) && can({ actor, permission: "procurement.purchase_order.approve", tenantId: actor.tenantId }) ? ["approve", "reject", "return_for_revision"] : [], entityVersion: po.version, deepLink: `/app/mobile/purchase-orders/${encodeURIComponent(po.id)}` }, actor));
       }
     }
-    if (can({ actor, permission: "finance.settlement.read", tenantId: actor.tenantId })) {
+    // Settlements and internal transfers belong to the frozen settlement workflow
+    // and cashbook; they are not offered as mobile tasks.
+    if (!isUnavailableProductRoute("mobile-operations:settlement-detail") && can({ actor, permission: "finance.settlement.read", tenantId: actor.tenantId })) {
       const settlements = await prisma.settlementDocument.findMany({ where: { tenantId: actor.tenantId, workflowStatus: { in: ["submitted", "approved"] } }, orderBy: { updatedAt: "desc" } });
       for (const row of settlements) { const approval = row.workflowStatus === "submitted"; const permission = approval ? "finance.settlement.approve" : "finance.settlement.post"; if (!actor.permissionCodes.has(permission)) continue; tasks.push(task({ taskId: `${approval ? "settlement_approval" : "settlement_posting"}:${row.id}`, taskType: approval ? "settlement_approval" : "settlement_posting", entityType: "SettlementDocument", entityId: row.id, title: `Settlement ${row.settlementNumber}`, summary: actor.permissionCodes.has("finance.partner_snapshot.read") ? row.counterpartyNameSnapshot : null, amountSummary: actor.permissionCodes.has("finance.amounts.read") ? { amount: decimal(row.cashAmount), currency: row.currency } : null, availableActions: approval ? ["approve", "reject"] : ["preview", "post"], entityVersion: row.version, deepLink: `/app/mobile/settlements/${encodeURIComponent(row.id)}` }, actor)); }
     }
-    if (can({ actor, permission: "finance.internal_transfer.read", tenantId: actor.tenantId }) && can({ actor, permission: "finance.internal_transfer.approve", tenantId: actor.tenantId })) {
+    if (!isUnavailableProductRoute("finance:reconciliation") && can({ actor, permission: "finance.internal_transfer.read", tenantId: actor.tenantId }) && can({ actor, permission: "finance.internal_transfer.approve", tenantId: actor.tenantId })) {
       const transfers = await prisma.internalTransferDocument.findMany({ where: { tenantId: actor.tenantId, workflowStatus: "submitted" } });
       for (const row of transfers) tasks.push(task({ taskId: `internal_transfer_approval:${row.id}`, taskType: "internal_transfer_approval", entityType: "InternalTransferDocument", entityId: row.id, title: `Internal transfer ${row.transferNumber}`, summary: `${row.fromCashbookAccountId} -> ${row.toCashbookAccountId}`, amountSummary: actor.permissionCodes.has("finance.amounts.read") ? { amount: decimal(row.amount), currency: row.currency } : null, availableActions: ["approve", "reject"], entityVersion: row.version, deepLink: `/app/mobile/tasks/internal_transfer_approval:${row.id}` }, actor));
     }

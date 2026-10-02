@@ -1,4 +1,5 @@
 import { operationsEnglish } from "./operationsCopy";
+import { statusCodeLabel } from "./statusLabels";
 // Display labels only. Never apply this mapping to stored business values.
 const english: Record<string, string> = {
   '工作区管理员': 'Workspace administrator', '供应链经理': 'Supply Chain Manager', '只读用户': 'Read-only User', '业务专员': 'Business Specialist', '采购员': 'Buyer', '未知角色': 'Unknown role', '正在加载基础资料…': 'Loading master data…', '基础资料加载失败': 'Could not load master data', '重新加载': 'Reload',
@@ -109,7 +110,7 @@ const operationalEnglish: Record<string, string> = {
   '附件占位：报价比较、收货异常说明、发票差异说明均以只读引用展示。': 'Quote comparisons, receiving exception notes, and invoice variance notes are shown as read-only references.',
   '协同边界：当前仅生成内部草稿或预览。': 'Collaboration boundary: internal drafts and previews only.', '内部草稿动作': 'Internal draft actions',
   '生成内部复核备注草稿': 'Draft internal review note', '生成供应商风险说明草稿': 'Draft supplier risk note', '生成供应商沟通草稿': 'Draft supplier communication', '标记需人工复核预览': 'Preview human-review flag',
-  '张订单': 'orders', '待收货 / 未收齐': 'Pending / partially received', '跟进未完成采购订单': 'Follow up open purchase orders',
+  '张订单': 'orders', '已承诺采购订单金额': 'Committed PO value', '张已承诺订单（已批准、已下达或已收货）': 'committed orders (approved, issued or received)', '未完成采购订单': 'Open purchase orders', '已承诺且仍有待收数量': 'Committed and still to receive', '待收货 / 未收齐': 'Pending / partially received', '跟进未完成采购订单': 'Follow up open purchase orders',
   '采购与财务共同复核': 'Purchasing and finance review', '查看三单匹配异常': 'Review three-way match exceptions', '预测': 'Forecast', '手工': 'Manual',
   'ETA 起始': 'ETA from', 'ETA 结束': 'ETA to', '共': 'Total', '条，当前筛选': 'records; filtered', '只读复核': 'Read-only review',
   '未收货': 'Not received', '部分收货': 'Partially received', '未开票': 'Not invoiced', '缺少发票': 'Missing invoice',
@@ -133,8 +134,10 @@ const operationalEnglish: Record<string, string> = {
   '当前没有库存异常': 'No inventory exceptions', '当前可见库存记录未产生需要处理的异常。': 'Visible inventory records have no exceptions that require action.',
   '当前工作区暂无库存记录': 'No inventory records in this workspace', '页面不会用固定 SKU、批次、序列号或移动记录补足空数据。': 'The page does not fill empty results with fixed SKUs, lots, serials, or movements.',
   'SKU / 物料': 'SKU / item', '仓库 / 库位': 'Warehouse / location', '在手量': 'On hand', '预留量': 'Reserved', '可用量': 'Available', '安全库存 / 再订货点': 'Safety stock / reorder point', '库存详情': 'Inventory details', '在手': 'On hand', '预留': 'Reserved', '可用': 'Available',
-  '批次': 'Lot', '数量': 'Quantity', '序列号': 'Serial number', '移动单号': 'Movement number', '入库': 'Inbound', '出库': 'Outbound', '日期': 'Date', '异常单号': 'Exception number', '数量影响': 'Quantity impact',
+  '批次': 'Lot', '数量': 'Quantity', '序列号': 'Serial number', '移动单号': 'Movement number', '移动类型': 'Movement type', '来源单据': 'Source document', '入库': 'Inbound', '出库': 'Outbound', '日期': 'Date', '异常单号': 'Exception number', '数量影响': 'Quantity impact',
 };
 export function workspaceCopy(label: string, language: string): string {
-  return language === 'en-US' ? english[label] || operationalEnglish[label] || operationsEnglish[label] || label : label;
+  return language === 'en-US'
+    ? english[label] || operationalEnglish[label] || operationsEnglish[label] || statusCodeLabel(label, language) || label
+    : statusCodeLabel(label, language) || label;
 }

@@ -98,7 +98,7 @@ export function buildPrEvidence(item: PurchaseRequest): EvidenceDetail {
     evidence: [
       { label: "PR 编号", value: item.pr },
       { label: "来源 SKU", value: item.sourceSku || item.sourceName || "—" },
-      { label: "申请金额", value: fmt(Number(item.amount || 0)) },
+      { label: "申请金额", value: fmt(Number(item.amount || 0), item.currency) },
       { label: "申请数量", value: `${Number(item.quantity || 0).toLocaleString()} ${item.unit || ""}` },
       { label: "建议供应商", value: item.supplier || "待确认" },
       { label: "申请人", value: item.requester || "—" },

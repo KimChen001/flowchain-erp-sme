@@ -159,7 +159,7 @@ export function buildRuntimeGovernedReport(context, input = {}) {
     return [{ name: `${text(row.id)}${aggregationStatus === 'multi_currency_unconverted' && row.currency ? `（${row.currency}）` : ''}`, value: rawValue === null || rawValue === undefined ? 1 : Number(rawValue) }]
   })
   const charts = [{ id: `${query.subject}_runtime_records`, title: '当前范围真实记录', type: 'bar', data: chartData, categoryKey: 'name', valueKey: 'value', valueFormat: 'number', unit: 'number', legend: false, tooltip: true, colors: ['#2563eb'], drilldownPath: query.subject === 'sales' ? '/app/sales/orders' : query.subject === 'inventory' ? '/app/inventory' : query.subject === 'finance' ? '/app/finance/invoices' : query.subject === 'suppliers' ? '/app/master-data/suppliers' : '/app/procurement/orders', crossFilter: null, emptyState: '当前筛选范围暂无真实 runtime 记录。' }]
-  const columns = [...new Set(details.flatMap(row => Object.keys(row)))].map(key => ({ key, label: ({ id: '业务编号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: '缺口', availableToPromise: 'ATP', stockStatus: '库存状态' })[key] || key, type: ['amount'].includes(key) ? 'currency' : ['quantity', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
+  const columns = [...new Set(details.flatMap(row => Object.keys(row)))].map(key => ({ key, label: ({ id: '业务编号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: '缺口', availableToPromise: 'ATP', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
   const kpis = metricIds.map(id => metric(id, all, inventory, query, primaryKey))
   const moneyLimitations = ['multi_currency_unconverted', 'currency_missing_or_invalid', 'amount_missing']
   const limitations = [...new Set([...array(context.dataLimitations), ...inventory.dataLimitations, ...(inventory.availability.length && inventory.availability.some(row => row.onHand === null) ? ['inventory_on_hand_incomplete'] : []), ...scopeMoney.limitations, ...kpis.flatMap(item => item.limitations.filter(code => moneyLimitations.includes(code)))])]
@@ -176,7 +176,7 @@ export function getRuntimeReportCatalog() {
     purchase_orders: ['采购订单', '/app/procurement/orders'], sales_orders: ['销售订单', '/app/sales/orders'],
     inventory_balances: ['库存余额', '/app/inventory'], supplier_invoices: ['供应商发票', '/app/finance/invoices'],
     suppliers: ['供应商', '/app/master-data/suppliers'], purchase_requests: ['采购申请', '/app/procurement/requests'],
-    rfqs: ['询报价', '/app/procurement/rfqs'], receiving: ['收货', '/app/procurement/receiving'],
+    rfqs: ['询报价', '/app/procurement/rfq'], receiving: ['收货', '/app/procurement/receiving'],
   }
   const fieldDefinitions = [
     { key: 'id', label: '业务编号', type: 'business_link' }, { key: 'date', label: '业务日期', type: 'date' },

@@ -15,7 +15,22 @@ async function installSession(page: any, value: any) {
   }, value);
 }
 
-test("internal settlement closes the cashbook, posting, reversal, redaction, and permission gates", async ({ page, request, browser }) => {
+// Owner decision: internal settlement, cashbook and the settlement workflow are
+// frozen. Even with the capability enabled their pages show "Capability
+// unavailable"; the UI flow below is kept, skipped, for when the freeze lifts.
+test("frozen settlement and cashbook pages show Capability unavailable even when enabled", async ({ page, request }) => {
+  const session = await login(request, "settlement@example.com");
+  await page.addInitScript(({ token, user }) => {
+    localStorage.setItem("flowchain:auth-token", token);
+    localStorage.setItem("flowchain:current-user", JSON.stringify(user));
+  }, session);
+  for (const path of ["/app/finance/reconciliation", "/app/finance/settlement", "/app/finance/settlement/any-settlement"]) {
+    await page.goto(path);
+    await expect(page.getByTestId("capability-route-blocked"), path).toBeVisible();
+  }
+});
+
+test.skip("internal settlement closes the cashbook, posting, reversal, redaction, and permission gates", async ({ page, request, browser }) => {
   const specialist = await login(request, "settlement@example.com");
   const viewer = await login(request, "viewer@example.com");
   await installSession(page, specialist);

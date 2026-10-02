@@ -19,7 +19,7 @@ function repositories() {
     procurementRuntime: {
       adapter: 'durable-procurement-runtime-v2',
       snapshot: async () => ({
-        purchaseRequests: [{ id: 'PR-1', status: 'submitted', totalAmount: 120, updatedAt: '2026-07-14T01:00:00.000Z', lines: [{ supplierId: 'SUP-1' }] }],
+        purchaseRequests: [{ id: 'PR-1', status: 'submitted', totalAmount: 120, defaultCurrency: 'USD', updatedAt: '2026-07-14T01:00:00.000Z', lines: [{ supplierId: 'SUP-1' }] }],
         rfqs: [],
         purchaseOrders: [{ id: 'PO-1', status: 'draft', transmissionStatus: 'not_sent', supplierId: 'SUP-1', totalAmount: 120, updatedAt: '2026-07-14T02:00:00.000Z' }],
         receipts: [], supplierInvoices: [],
@@ -52,6 +52,13 @@ test('home overview is server-derived, uses canonical routes and does not manufa
   assert.equal(overview.recentDocuments.length, 2)
   assert.ok(overview.recentDocuments.every(row => row.canonicalRoute.startsWith('/app/')))
   assert.ok(overview.limitations.includes('unresolved_risk_metric_not_connected'))
+  // Amounts carry the document currency so the page can format them; a document
+  // without a stored currency carries none rather than a guess.
+  const request = overview.workItems.find(row => row.id === 'PR-1')
+  assert.equal(request.amount, 120)
+  assert.equal(request.currency, 'USD')
+  assert.equal(overview.recentDocuments.find(row => row.id === 'PR-1').currency, 'USD')
+  assert.equal(overview.recentDocuments.find(row => row.id === 'PO-1').currency, '')
 })
 
 test('BusinessReadContext carries each subject a repository cut off at its read limit', async () => {
@@ -66,4 +73,17 @@ test('BusinessReadContext carries each subject a repository cut off at its read 
   assert.deepEqual(context.truncatedSubjects, [{ subject: 'sales_orders', limit: 500 }, { subject: 'purchase_orders', limit: 500 }])
   const complete = await createBusinessReadContextService({ repositories: repositories() }).read({ tenantId: 'tenant-a' })
   assert.deepEqual(complete.truncatedSubjects, [])
+})
+
+test('changes today count documents updated on the tenant day, not the UTC day', async () => {
+  const context = await createBusinessReadContextService({ repositories: repositories(), dataMode: 'user' }).read()
+  // Both documents were updated on Jul 14 UTC, which is still Jul 13 in New York.
+  assert.equal(buildHomeOverview(context, { now: new Date('2026-07-14T03:30:00Z'), timeZone: 'America/New_York' }).todayChanges, 2)
+  assert.equal(buildHomeOverview(context, { now: new Date('2026-07-14T05:00:00Z'), timeZone: 'America/New_York' }).todayChanges, 0)
+  assert.equal(buildHomeOverview(context, { now: new Date('2026-07-14T05:00:00Z'), timeZone: 'UTC' }).todayChanges, 2)
+})
+
+test('recent RFQs link to the RFQ detail route, which is /app/procurement/rfq/:id', () => {
+  const overview = buildHomeOverview({ purchaseRequests: [], purchaseOrders: [], rfqs: [{ id: 'RFQ-1', status: 'open', updatedAt: '2026-07-14T02:00:00.000Z' }], dataLimitations: [] })
+  assert.equal(overview.recentDocuments[0].canonicalRoute, '/app/procurement/rfq/RFQ-1')
 })

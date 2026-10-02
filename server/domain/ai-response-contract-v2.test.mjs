@@ -97,5 +97,6 @@ test('data limitation appears when invoice data is incomplete', () => {
   const contract = contractFor('哪些数据依据不完整？', db)
   assert.equal(contract.intent, 'data_limitations_v2')
   assert.ok(contract.dataLimitations.some((item) => item.label.includes('Invoice') && item.missingData?.includes('Invoice')))
-  assert.ok(contract.navigationLinks.some((item) => item.moduleId === 'imports'))
+  // The retired imports pages are unavailable, so the answer does not link there.
+  assert.ok(!contract.navigationLinks.some((item) => item.moduleId === 'imports'))
 })

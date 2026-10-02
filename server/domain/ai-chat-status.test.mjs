@@ -528,7 +528,9 @@ test('planning AI controlled-review prompts return deterministic Forecast/MRP ev
   assert.deepEqual(businessSnapshot(db), before)
 })
 
-test('planning AI recommended actions route to matching Planning subviews', () => {
+// Forecast / MRP planning is an unavailable module (owner decision): the answer
+// stays, but its actions no longer route into the planning pages.
+test('planning AI recommended actions offer no link into the unavailable planning pages', () => {
   const cases = [
     ['今天计划模块最需要处理什么？', 'forecast:cockpit'],
     ['这个 forecast 的 MAPE 怎么样？', 'forecast:demand'],
@@ -543,8 +545,8 @@ test('planning AI recommended actions route to matching Planning subviews', () =
     const actions = response.cards.find((card) => card.type === 'recommended_actions').actions
 
     assert.equal(response.intent.name, 'planning_status_query', message)
-    assert.equal(actions[0].target, expectedTarget, message)
-    assert.ok(actions.every((action) => !String(action.target).startsWith('/')), message)
+    assert.ok(!actions.some((action) => action.target === expectedTarget), message)
+    assert.ok(actions.every((action) => !String(action.target).startsWith('forecast')), message)
   }
 })
 

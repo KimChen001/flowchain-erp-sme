@@ -18,6 +18,33 @@ export function fmt(n: number | null | undefined, currency?: string) {
   return formatCurrencyAmount(n, currency);
 }
 
+// A stored quantity for display: every stored digit kept, trailing zeros of the
+// fixed four-decimal scale dropped and thousands grouped ("19500.0000" ->
+// "19,500"). Strings are handled as text so large decimals stay exact.
+export function formatQuantity(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return "—";
+  const raw = String(value).trim();
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(raw);
+  if (!match) return raw;
+  const [, sign, whole, fraction = ""] = match;
+  const trimmed = fraction.replace(/0+$/, "");
+  return `${sign}${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${trimmed ? `.${trimmed}` : ""}`;
+}
+
+// An instant as a date and time in the workspace timezone ("Sep 29, 2026,
+// 10:35 AM"), not the UTC ISO string. A value that is not an instant is shown as is.
+export function formatDateTimeInTimeZone(value: string | null | undefined, locale?: string, timeZone?: string) {
+  if (!value) return "—";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return value;
+  try {
+    return new Intl.DateTimeFormat(locale || "en-US", { timeZone: timeZone || workspaceTimeZone || DEFAULT_WORKSPACE_TIMEZONE, dateStyle: "medium", timeStyle: "short" }).format(parsed);
+  } catch {
+    return value;
+  }
+}
+
 export const DEFAULT_WORKSPACE_TIMEZONE = "America/New_York";
 
 // Today's calendar date (YYYY-MM-DD) in the workspace timezone, not UTC or the browser.

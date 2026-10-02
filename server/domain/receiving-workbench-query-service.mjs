@@ -15,7 +15,15 @@ const ZERO = 0n
 const text = (value = '') => String(value ?? '').trim()
 const decimal = (value) => receivingDecimalString(receivingDecimalUnits(value ?? '0'))
 const iso = (value) => value ? new Date(value).toISOString() : null
-const add = (a, b) => receivingDecimalUnits(a) + receivingDecimalUnits(b)
+// Timeline labels name statuses and movement types in words; the stored codes
+// stay in each event's data.
+const TIMELINE_STATUS_LABELS = {
+  draft: 'Draft', approved: 'Approved', issued: 'Issued', cancelled: 'Cancelled', closed: 'Closed',
+  not_received: 'Not received', partially_received: 'Partially received', fully_received: 'Fully received',
+}
+const TIMELINE_MOVEMENT_LABELS = { receipt_posting: 'Receipt posting', receipt_reversal: 'Receipt reversal' }
+const statusText = (value) => TIMELINE_STATUS_LABELS[value] || text(value) || 'Unknown'
+const movementText = (value) => TIMELINE_MOVEMENT_LABELS[value] || 'Inventory movement'
 
 function fail(code, message, status = 400, details) {
   throw new ReceivingCommandError(code, message, status, details)
@@ -180,7 +188,7 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
       prisma.businessCommandExecution.findMany({ where: { tenantId: scope.tenantId, entityType: 'ReceivingDocument', entityId: receivingDocumentId }, orderBy: { createdAt: 'asc' } }),
     ])
     const events = [{ id: `created-${receivingDocumentId}`, type: 'business_fact', event: 'receiving_created', occurredAt: iso(aggregate.receivingDocument.createdAt), label: `Receiving ${aggregate.receivingDocument.documentNumber || receivingDocumentId} created`, postedFact: true }]
-    for (const movement of movements) events.push({ id: movement.id, type: 'business_fact', event: 'inventory_movement_created', occurredAt: iso(movement.occurredAt), label: `${movement.movementType} ${movement.sku} ${decimal(add(movement.quantityIn, -receivingDecimalUnits(movement.quantityOut)))}`, actorId: movement.actorId, postedFact: true, data: { movementId: movement.id, postingBatchId: movement.postingBatchId, quantityIn: decimal(movement.quantityIn), quantityOut: decimal(movement.quantityOut), reversalOfMovementId: movement.reversalOfMovementId } })
+    for (const movement of movements) events.push({ id: movement.id, type: 'business_fact', event: 'inventory_movement_created', occurredAt: iso(movement.occurredAt), label: `${movementText(movement.movementType)} · ${movement.sku} · ${receivingDecimalString(receivingDecimalUnits(movement.quantityIn) - receivingDecimalUnits(movement.quantityOut))}`, actorId: movement.actorId, postedFact: true, data: { movementId: movement.id, postingBatchId: movement.postingBatchId, quantityIn: decimal(movement.quantityIn), quantityOut: decimal(movement.quantityOut), reversalOfMovementId: movement.reversalOfMovementId } })
     for (const audit of audits) {
       const metadata = audit.metadata && typeof audit.metadata === 'object' ? audit.metadata : {}
       events.push({ id: audit.id, type: 'audit', event: audit.action, occurredAt: iso(audit.createdAt), label: audit.summary, actorId: audit.actorId, postedFact: false, data: metadata })
@@ -191,12 +199,12 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
         events.push({ id: `${audit.id}-po-line-${index}`, type: 'business_fact', event: 'purchase_order_line_received_changed', occurredAt: iso(audit.createdAt), label: `PO received ${change.receivedBefore} → ${change.receivedAfter}`, actorId: audit.actorId, postedFact: true, data: change })
       }
       if (metadata.poWorkflowBefore != null && metadata.poWorkflowAfter != null && metadata.poWorkflowBefore !== metadata.poWorkflowAfter) {
-        events.push({ id: `${audit.id}-po-workflow`, type: 'business_fact', event: 'purchase_order_workflow_changed', occurredAt: iso(audit.createdAt), label: `PO workflow ${metadata.poWorkflowBefore} → ${metadata.poWorkflowAfter}`, actorId: audit.actorId, postedFact: true, data: { before: metadata.poWorkflowBefore, after: metadata.poWorkflowAfter } })
+        events.push({ id: `${audit.id}-po-workflow`, type: 'business_fact', event: 'purchase_order_workflow_changed', occurredAt: iso(audit.createdAt), label: `PO workflow ${statusText(metadata.poWorkflowBefore)} → ${statusText(metadata.poWorkflowAfter)}`, actorId: audit.actorId, postedFact: true, data: { before: metadata.poWorkflowBefore, after: metadata.poWorkflowAfter } })
       }
       if (metadata.poFulfillmentBefore != null && metadata.poFulfillmentAfter != null && metadata.poFulfillmentBefore !== metadata.poFulfillmentAfter) {
-        events.push({ id: `${audit.id}-po-fulfillment`, type: 'business_fact', event: 'purchase_order_fulfillment_changed', occurredAt: iso(audit.createdAt), label: `PO fulfillment ${metadata.poFulfillmentBefore} → ${metadata.poFulfillmentAfter}`, actorId: audit.actorId, postedFact: true, data: { before: metadata.poFulfillmentBefore, after: metadata.poFulfillmentAfter } })
+        events.push({ id: `${audit.id}-po-fulfillment`, type: 'business_fact', event: 'purchase_order_fulfillment_changed', occurredAt: iso(audit.createdAt), label: `PO fulfillment ${statusText(metadata.poFulfillmentBefore)} → ${statusText(metadata.poFulfillmentAfter)}`, actorId: audit.actorId, postedFact: true, data: { before: metadata.poFulfillmentBefore, after: metadata.poFulfillmentAfter } })
       } else if (metadata.poFulfillmentBefore == null && metadata.poFulfillmentAfter == null && metadata.before?.poStatus !== metadata.after?.poStatus) {
-        events.push({ id: `${audit.id}-po-legacy-status`, type: 'limitation', event: 'legacy_purchase_order_status_interpretation', occurredAt: iso(audit.createdAt), label: `Legacy mixed PO status ${metadata.before?.poStatus || 'unknown'} → ${metadata.after?.poStatus || 'unknown'}; workflow and fulfillment cannot be separated.`, actorId: audit.actorId, postedFact: false })
+        events.push({ id: `${audit.id}-po-legacy-status`, type: 'limitation', event: 'legacy_purchase_order_status_interpretation', occurredAt: iso(audit.createdAt), label: `Legacy mixed PO status ${statusText(metadata.before?.poStatus)} → ${statusText(metadata.after?.poStatus)}; workflow and fulfillment cannot be separated.`, actorId: audit.actorId, postedFact: false })
       }
     }
     for (const execution of executions) events.push({ id: execution.id, type: 'human_activity', event: execution.commandType, occurredAt: iso(execution.completedAt || execution.createdAt), label: `${execution.commandType} command ${execution.status}`, postedFact: false, data: { idempotencyKey: execution.idempotencyKey, idempotentReplay: false } })

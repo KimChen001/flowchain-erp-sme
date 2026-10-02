@@ -158,10 +158,10 @@ export async function readAiSkillFacts(skillContext) {
 
   const overview = buildRuntimeGovernedReport(business, { subject: 'overview' })
   const kpi = (report, id) => array(report.kpis).find((row) => row.id === id)
-  const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now)
+  // Overdue days count to the tenant's calendar day, as in the report itself.
+  const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now, { timeZone: tenant.timezone })
   facts.asOf = openReport.asOf
-  // The open purchase orders report counts overdue days to the UTC calendar
-  // day; say so when that is not the tenant's day.
+  // The report and the assistant share one day; say so if they ever differ.
   if (visible.purchase_orders && openReport.asOf !== today) limitations.push({ code: 'report_day', date: openReport.asOf })
 
   if (visible.purchase_orders) {

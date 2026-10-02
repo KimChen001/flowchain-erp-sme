@@ -1,3 +1,4 @@
+import { withoutUnavailableProductLinks } from '../../shared/unavailable-product-routes.mjs'
 import {
   buildProcurementDocuments,
   buildProcurementFollowups,
@@ -426,14 +427,16 @@ function baseContract({ query, intent, scope = {}, conclusion, keyEvidence, busi
   }
 }
 
-function wrapResponse(contract, startedAt = Date.now()) {
+// Links into frozen or unavailable surfaces are removed before any answer leaves.
+function wrapResponse(rawContract, startedAt = Date.now()) {
+  const contract = withoutUnavailableProductLinks(rawContract)
   const evidence = contract.keyEvidence.map((item) => ({
     type: item.entityType,
     id: item.entityId,
     label: item.entityLabel,
     status: item.status,
     summary: item.summary,
-    route: item.linkTarget?.moduleId || item.moduleId,
+    route: item.linkTarget?.moduleId || item.moduleId || undefined,
   }))
   return {
     provider: 'local_ai_response_contract_v2',

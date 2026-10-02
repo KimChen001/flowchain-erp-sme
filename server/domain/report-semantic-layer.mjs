@@ -1,3 +1,4 @@
+import { isUnavailableProductRoute } from '../../shared/unavailable-product-routes.mjs'
 import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
 
 const SUBJECTS = Object.freeze({
@@ -292,7 +293,8 @@ export function buildGovernedReport(data = {}, input = {}) {
 }
 
 export function getReportCatalog() {
-  return { subjects: Object.entries(SUBJECTS).map(([id, value]) => ({ id, ...value, fields: reportFieldCatalog[id].map((field) => field.key) })), fields: reportFieldCatalog, metrics: reportMetricCatalog, templates: DASHBOARD_METRICS }
+  // Subjects of frozen surfaces (settlement, reconciliation) are not offered.
+  return { subjects: Object.entries(SUBJECTS).filter(([, value]) => !isUnavailableProductRoute(value.detailRoute)).map(([id, value]) => ({ id, ...value, fields: reportFieldCatalog[id].map((field) => field.key) })), fields: reportFieldCatalog, metrics: reportMetricCatalog, templates: DASHBOARD_METRICS }
 }
 
 export { SUBJECTS as reportSubjectCatalog, normalizeQuery as normalizeReportQuery }

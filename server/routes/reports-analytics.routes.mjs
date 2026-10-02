@@ -1,6 +1,7 @@
 import { buildRuntimeGovernedReport, getRuntimeReportCatalog } from '../domain/runtime-report-read-model.mjs'
 import { readBusinessContext } from '../services/runtime-business-read-service.mjs'
 import { buildOpenPurchaseOrdersReport } from '../domain/open-purchase-orders-report.mjs'
+import { readTenantTimezone } from '../domain/tenant-timezone.mjs'
 import { createSupplierScorecardReadService } from '../domain/supplier-scorecard.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 
@@ -15,7 +16,7 @@ export async function handleReportsAnalyticsRoute(ctx) {
       : !ctx.repositories && ctx.db ? (await readBusinessContext(ctx)).purchaseOrders : null
     if (!rows) { send(res, 503, { error: 'Purchase order reporting is unavailable.' }); return true }
     try {
-      send(res, 200, buildOpenPurchaseOrdersReport(rows, Object.fromEntries(url.searchParams.entries())))
+      send(res, 200, buildOpenPurchaseOrdersReport(rows, Object.fromEntries(url.searchParams.entries()), ctx.reportNow || new Date(), { timeZone: await readTenantTimezone(ctx) }))
     } catch (error) {
       if (error.code !== 'REPORT_DATE_RANGE_INVALID') throw error
       send(res, 422, { error: error.message, code: error.code })

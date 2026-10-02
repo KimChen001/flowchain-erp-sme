@@ -4,6 +4,7 @@ import { apiJson } from "../../lib/api-client";
 import { A, Card, Chip } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
 
+import { useWarehouseNames } from "../../lib/useWarehouseNames";
 type Capability = { enabled: boolean; maturity?: string };
 type Entry = {
   capabilities: Record<string, Capability>;
@@ -587,6 +588,7 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
 }
 
 function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
+  const warehouseName = useWarehouseNames();
   const navigate = useNavigate(),
     [number, setNumber] = useState(`ADJ-${Date.now()}`),
     [reasonCode, setReason] = useState("damage"),
@@ -684,7 +686,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                   .filter((row) => row.canOperate)
                   .map((row) => (
                     <option key={row.id} value={row.id}>
-                      {row.sku} · {row.warehouseId} · {row.location} ·{" "}
+                      {row.sku} · {warehouseName(row.warehouseId)} · {row.location} ·{" "}
                       {row.onHandQuantity}
                     </option>
                   ))}
@@ -741,6 +743,7 @@ function OperationDetail({
   entry: Entry;
   refresh: () => void;
 }) {
+  const warehouseName = useWarehouseNames();
   const config = {
     transfer: {
       url: `/api/inventory/transfers/${encodeURIComponent(id)}/workbench`,
@@ -950,12 +953,12 @@ function OperationDetail({
                 </td>
                 <td className="px-3 py-2">
                   {line.source
-                    ? `${line.source.warehouseId} / ${line.source.location}`
-                    : line.warehouseId}
+                    ? `${warehouseName(line.source.warehouseId)} / ${line.source.location}`
+                    : warehouseName(line.warehouseId)}
                 </td>
                 <td className="px-3 py-2">
                   {line.destination
-                    ? `${line.destination.warehouseId} / ${line.destination.location}`
+                    ? `${warehouseName(line.destination.warehouseId)} / ${line.destination.location}`
                     : line.location}
                 </td>
                 <td className="px-3 py-2">{line.varianceQuantity ?? "—"}</td>
@@ -1077,7 +1080,7 @@ function OperationDetail({
             >
               <span className="font-semibold">{movement.movementType}</span>
               <span className="ml-3">
-                {movement.warehouseId} · 入 {movement.quantityIn} · 出{" "}
+                {warehouseName(movement.warehouseId)} · 入 {movement.quantityIn} · 出{" "}
                 {movement.quantityOut}
               </span>
             </div>

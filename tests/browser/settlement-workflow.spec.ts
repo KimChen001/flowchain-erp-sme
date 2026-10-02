@@ -11,7 +11,22 @@ const login = async (request: any, email: string) => {
 };
 const install = async (page: any, session: any) => page.addInitScript(({ token, user }) => { localStorage.setItem("flowchain:auth-token", token); localStorage.setItem("flowchain:current-user", JSON.stringify(user)); }, session);
 
-test("governed settlement runs create, submit, independent approval, post, evidence, reconciliation, and reversal", async ({ page, request, browser }) => {
+// Owner decision: internal settlement, cashbook and the settlement workflow are
+// frozen. Even with the capability enabled their pages show "Capability
+// unavailable"; the UI flow below is kept, skipped, for when the freeze lifts.
+test("frozen settlement and cashbook pages show Capability unavailable even when enabled", async ({ page, request }) => {
+  const session = await login(request, "settlement@example.com");
+  await page.addInitScript(({ token, user }) => {
+    localStorage.setItem("flowchain:auth-token", token);
+    localStorage.setItem("flowchain:current-user", JSON.stringify(user));
+  }, session);
+  for (const path of ["/app/finance/settlement", "/app/finance/reconciliation", "/app/mobile/settlements/any-settlement"]) {
+    await page.goto(path);
+    await expect(page.getByTestId("capability-route-blocked"), path).toBeVisible();
+  }
+});
+
+test.skip("governed settlement runs create, submit, independent approval, post, evidence, reconciliation, and reversal", async ({ page, request, browser }) => {
   const finance = await login(request, "settlement@example.com");
   const manager = await login(request, "manager@example.com");
   await install(page, finance);

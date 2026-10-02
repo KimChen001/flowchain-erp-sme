@@ -78,14 +78,10 @@ test("mobile task inbox governs settlement and PO approval across offline and tw
   await page.goto("/app/mobile/tasks");
   await expect(page.getByTestId("mobile-operations-workbench")).toBeVisible();
   await expect(page.getByTestId("mobile-network-status")).toContainText("在线");
-  await expect(page.getByTestId("mobile-task").filter({ hasText: "SET-MOBILE-TASK" })).toBeVisible();
   await expect(page.getByTestId("mobile-task").filter({ hasText: "PO-MOBILE-APPROVE" })).toBeVisible();
+  // The settlement workflow is frozen: its approval is not offered as a mobile task.
+  await expect(page.getByTestId("mobile-task").filter({ hasText: "SET-MOBILE-TASK" })).toHaveCount(0);
   await expectNoPageOverflow(page);
-
-  await page.getByTestId("mobile-task").filter({ hasText: "SET-MOBILE-TASK" }).click();
-  await expect(page.getByText("submitted", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "approve", exact: true }).click();
-  await expect(page.getByText("approved", { exact: true })).toBeVisible();
 
   await page.goto("/app/mobile/purchase-orders/PO-MOBILE-APPROVE");
   await expect(page.getByTestId("mobile-po-detail")).toContainText("Finance Browser Supplier");
