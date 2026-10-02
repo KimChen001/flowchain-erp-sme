@@ -100,8 +100,9 @@ function withoutMoney(value) {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, MONEY_KEYS.has(key) ? null : withoutMoney(entry)]))
 }
 
+// The supplier id and code name the partner as surely as its name does.
 function withoutPartner(invoice) {
-  return { ...invoice, supplierName: null, supplierSnapshot: null }
+  return { ...invoice, supplierId: null, supplierCode: null, supplier: null, supplierName: null, supplierSnapshot: null }
 }
 
 // The business read context as this reader may see it.

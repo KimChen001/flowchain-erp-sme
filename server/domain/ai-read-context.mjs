@@ -34,6 +34,11 @@ async function readMasterData(repository, scope) {
   return { items, suppliers }
 }
 
+// Every collection, amount and partner detail, in every warehouse.
+function readsEverything(access) {
+  return access.warehouseIds === null && access.prices && access.amounts && access.partner && Object.values(access.collections).every(Boolean)
+}
+
 export async function buildAiReadContext(db = {}, ctx = {}) {
   const repositories = ctx.repositories || {}
   const dataMode = ctx.dataMode || db.__dataMode || 'test'
@@ -61,12 +66,17 @@ export async function buildAiReadContext(db = {}, ctx = {}) {
   }
 
   // Read only the signed-in workspace. The repositories reject a missing tenant.
+  // These repositories read every warehouse, every collection, amounts and
+  // supplier bank details. For a reader who may not see all of that
+  // (ctx.readAccess) they are not read: the read models are built from the
+  // read context, which was scoped to the reader.
   const tenantScope = { tenantId: ctx.identity?.tenantId }
-  const [procurement, inventory, masterData] = await Promise.all([
+  const unscopedReads = !ctx.readAccess || readsEverything(ctx.readAccess)
+  const [procurement, inventory, masterData] = unscopedReads ? await Promise.all([
     readProcurement(repositories.procurementRead, tenantScope),
     readInventory(repositories.inventoryRead, tenantScope),
     readMasterData(repositories.masterData, tenantScope),
-  ])
+  ]) : [null, null, null]
 
   const repositoryBacked = {
     procurementRead: Boolean(procurement),

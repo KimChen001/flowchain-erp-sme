@@ -1,4 +1,5 @@
 import { readBusinessContext } from '../services/runtime-business-read-service.mjs'
+import { reportReadAccessFor, scopeBusinessContext } from './report-read-access.mjs'
 import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs'
 import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
@@ -18,7 +19,11 @@ import { aiSkillVisibility } from './ai-skill-registry.mjs'
 //     remainder, stock status) and its at-risk definition.
 // The result holds codes, ids and numbers only; the presenter writes the text.
 // Every read carries the actor's tenant. A source the actor may not read is
-// left out and reported as hidden_by_permission, never as zero.
+// left out and reported as hidden_by_permission, never as zero. The business
+// read context is scoped to the actor as the reports scope it: collections
+// their role cannot open are empty, hidden amounts, invoice partners and
+// supplier bank details are null or left out, and inventory comes from their
+// warehouses.
 
 const array = (value) => Array.isArray(value) ? value : []
 const text = (value) => String(value ?? '').trim()
@@ -49,11 +54,13 @@ async function boundedRaw(delegate, args, subject, limitations) {
 // Raw Item and InventoryBalance columns for the data completeness check: the
 // read repositories default missing units and thresholds, which would hide
 // exactly what the check looks for.
-async function rawRecordColumns(prisma, tenantId, visible, limitations) {
+// Balances only in the reader's warehouses (warehouseIds null: every one).
+async function rawRecordColumns(prisma, tenantId, visible, limitations, warehouseIds = null) {
   if (!prisma || !visible.inventory) return { items: null, balances: null }
+  const balanceWhere = warehouseIds ? { tenantId, warehouseId: { in: warehouseIds } } : { tenantId }
   const [items, balances] = await Promise.all([
     boundedRaw(prisma.item, { where: { tenantId }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'items', limitations),
-    boundedRaw(prisma.inventoryBalance, { where: { tenantId }, select: { id: true, sku: true, itemId: true, availableQuantity: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'inventory', limitations),
+    boundedRaw(prisma.inventoryBalance, { where: balanceWhere, select: { id: true, sku: true, itemId: true, availableQuantity: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'inventory', limitations),
   ])
   return { items, balances }
 }
@@ -90,7 +97,7 @@ export function aiSkillInvoiceMatch(row) {
   return 'pending'
 }
 
-function recordsNeedingData({ reportRows, openReport, business, raw, visible, tenantId }) {
+function recordsNeedingData({ reportRows, openReport, business, raw, visible, visibility, tenantId }) {
   const records = []
   const checked = {}
   const add = (entityType, entityId, label, source, missing) => { if (missing.length) records.push({ entityType, entityId, label: label || entityId, source, missing: [...new Set(missing)] }) }
@@ -129,16 +136,18 @@ function recordsNeedingData({ reportRows, openReport, business, raw, visible, te
     checked.purchase_requests = requests.length
     for (const request of requests) add('purchase_request', text(request.id), text(request.id), 'purchase_requests', [...(!text(request.requiredDate) ? ['required_date'] : []), ...(!array(request.lines).length ? ['lines'] : [])])
   }
-  const classified = (entityType, rows, source, type, label) => {
+  // A field hidden from the reader is null in their rows: it is not reported
+  // as missing, since the reader cannot tell.
+  const classified = (entityType, rows, source, type, label, hiddenFields = []) => {
     checked[source] = rows.length
     for (const row of rows) {
       const result = classifyBusinessRecord(type, { tenantId, ...row })
-      const missing = result.state === 'incomplete' ? result.missingFields.map((field) => ({ supplierId: 'supplier', amount: 'amount', invoiceNumber: 'name', poId: 'purchase_order', status: 'status' })[field] || 'name') : []
+      const missing = result.state === 'incomplete' ? result.missingFields.map((field) => ({ supplierId: 'supplier', amount: 'amount', invoiceNumber: 'name', poId: 'purchase_order', status: 'status' })[field] || 'name').filter((field) => !hiddenFields.includes(field)) : []
       if (type === 'supplier_invoice' && !text(row.currency)) missing.push('currency')
       add(entityType, text(row.id), label(row), source, missing)
     }
   }
-  if (visible.supplier_invoices) classified('supplier_invoice', array(business.supplierInvoices), 'supplier_invoices', 'supplier_invoice', (row) => text(row.invoiceNumber || row.id))
+  if (visible.supplier_invoices) classified('supplier_invoice', array(business.supplierInvoices), 'supplier_invoices', 'supplier_invoice', (row) => text(row.invoiceNumber || row.id), [...(!visibility.amounts.invoice_amounts ? ['amount'] : []), ...(!visibility.partner ? ['supplier'] : [])])
   if (visible.receipts) classified('receiving_doc', array(business.receipts), 'receipts', 'receiving_document', (row) => text(row.documentNumber || row.id))
   return { records, checked }
 }
@@ -153,18 +162,26 @@ export async function readAiSkillFacts(skillContext) {
   if (visible.purchase_orders && !visibility.amounts.purchase_order_amounts) limitations.push({ code: 'amounts_hidden', what: 'purchase_orders' })
   if (visible.supplier_invoices && !visibility.amounts.invoice_amounts) limitations.push({ code: 'amounts_hidden', what: 'supplier_invoices' })
 
-  // The same reads the report routes make, scoped to the actor's tenant.
+  // The same reads the report routes make, scoped to the actor's tenant and
+  // to what the actor may read. The unscoped context (still in the actor's
+  // warehouses) only feeds inventory availability, which counts every
+  // order's demand, as the reports count it.
+  const access = routeContext.reportReadAccess || reportReadAccessFor(actor)
   const readCtx = { ...routeContext, identity: { ...routeContext.identity, tenantId } }
-  const business = routeContext.aiSkillBusinessContext || await readBusinessContext(readCtx)
+  const allocationContext = routeContext.aiSkillBusinessContext || await readBusinessContext(readCtx, { warehouseIds: access.warehouseIds })
+  const business = scopeBusinessContext(allocationContext, access)
   for (const entry of array(business.truncatedSubjects)) {
     const source = SUBJECT_SOURCE[entry.subject]
     if (source && (visible[source] || (source === 'suppliers' && (visible.purchase_orders || visible.supplier_invoices)))) limitations.push({ code: 'truncated', source, limit: entry.limit })
   }
   const procurementRuntime = routeContext.repositories?.procurementRuntime
-  const reportRows = visible.purchase_orders
+  // The open purchase orders report's rows, without prices for a reader who
+  // may not read them, as its route serves them.
+  const reportSource = visible.purchase_orders && access.collections.purchaseOrders
     ? (typeof procurementRuntime?.listForReport === 'function' ? await procurementRuntime.listForReport({ tenantId }) : array(business.purchaseOrders))
     : []
-  const raw = await rawRecordColumns(prisma, tenantId, visible, limitations)
+  const reportRows = access.prices ? reportSource : scopeBusinessContext({ purchaseOrders: reportSource }, { ...access, collections: {} }).purchaseOrders
+  const raw = await rawRecordColumns(prisma, tenantId, visible, limitations, access.warehouseIds)
 
   const facts = {
     tenantId, locale: tenant.locale, currency: tenant.currency, timezone: tenant.timezone,
@@ -173,7 +190,7 @@ export async function readAiSkillFacts(skillContext) {
     purchaseOrders: null, inventory: null, invoices: null, purchaseRequests: null, rfqs: null, receipts: null, suppliers: null,
   }
 
-  const overview = buildRuntimeGovernedReport(business, { subject: 'overview' })
+  const overview = buildRuntimeGovernedReport(business, { subject: 'overview' }, { allocationContext })
   const kpi = (report, id) => array(report.kpis).find((row) => row.id === id)
   // Overdue days count to the tenant's calendar day, as in the report itself.
   const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now, { timeZone: tenant.timezone })
@@ -219,7 +236,7 @@ export async function readAiSkillFacts(skillContext) {
   }
 
   if (visible.inventory) {
-    const allocation = buildRuntimeInventoryAllocation(business)
+    const allocation = buildRuntimeInventoryAllocation(access.collections.inventoryItems ? allocationContext : business)
     const unitBySku = new Map(array(business.items).map((row) => [text(row.sku), text(row.unit) || null]))
     const rows = allocation.availability.map((row) => ({
       sku: row.sku, itemId: row.itemId, itemName: row.itemName, unit: unitBySku.get(text(row.sku)) || null, onHand: row.onHand, reserved: row.reserved, available: row.available,
@@ -227,7 +244,8 @@ export async function readAiSkillFacts(skillContext) {
       availableToPromise: row.availableToPromise, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint,
       // Purchase order ids only for readers of purchase orders; the incoming
       // quantity is part of available to promise, which inventory shows.
-      stockStatus: row.stockStatus, riskLevel: row.riskLevel, purchaseOrderIds: visible.purchase_orders ? row.purchaseOrderIds : [], salesOrderIds: row.salesOrderIds,
+      // Sales order ids only for readers of sales orders.
+      stockStatus: row.stockStatus, riskLevel: row.riskLevel, purchaseOrderIds: visible.purchase_orders ? row.purchaseOrderIds : [], salesOrderIds: access.collections.salesOrders ? row.salesOrderIds : [],
     }))
     // Master items with no stock, sales or purchase line: known items the
     // allocation has no row for, so a question about one is not "not found".
@@ -289,7 +307,7 @@ export async function readAiSkillFacts(skillContext) {
     }
   }
 
-  const { records, checked } = recordsNeedingData({ reportRows, openReport, business, raw, visible, tenantId })
+  const { records, checked } = recordsNeedingData({ reportRows, openReport, business, raw, visible, visibility, tenantId })
   facts.records = records
   facts.recordsChecked = checked
   return facts
