@@ -18,13 +18,13 @@ export type ScorecardLine = {
   orderedQuantity: number; receivedQuantity: number; rejectedQuantity: number; acceptedByPromise?: number;
   originalPromisedDate: string | null; currentPromisedDate: string | null; revised: boolean;
   firstReceiptDay: string | null; fullDay: string | null; closed: boolean; acceptedQuantity: number; receipts: Array<{ receivingDocumentId: string; day: string; accepted: number; rejected: number }>;
-  onTime?: boolean; onTimeCurrent?: boolean; early?: boolean; inFull?: boolean | null; inFullPending?: boolean; otif?: boolean; otifCurrent?: boolean; daysLate?: number;
+  onTime?: boolean; onTimeCurrent?: boolean; early?: boolean; inFull?: boolean | null; inFullPending?: boolean; otif?: boolean | null; otifCurrent?: boolean; daysLate?: number; overdueUndelivered?: boolean;
   currency: string | null; amount: number | null;
 };
 type ScorecardInvoice = { supplierInvoiceId: string; invoiceNumber: string; invoiceDate: string; purchaseOrderId: string | null; currency: string | null; varianceAmount: number | null };
 export type SupplierScorecardRow = {
   supplierId: string; supplierName: string; sampleSize: number; sampleStatus: "ok" | "insufficient_sample" | "no_lines";
-  inFullPendingCount: number; originalNotRecordedCount: number; revisedCount: number;
+  inFullPendingCount: number; overdueUndeliveredCount?: number; originalNotRecordedCount: number; revisedCount: number;
   metrics: {
     onTime: LineRate; onTimeCurrent: LineRate; early: LineRate; inFull: LineRate; otif: LineRate; otifCurrent: LineRate;
     rejection: { rejectedQuantity: number; receivedQuantity: number; unit: string | null; mixedUnits: boolean; rate: number | null; interval: Interval };
@@ -47,6 +47,7 @@ const COPY: Record<string, [string, string]> = {
   loadFailed: ["Could not load supplier performance.", "无法加载供应商绩效。"], retry: ["Retry", "重试"],
   supplier: ["Supplier", "供应商"], lines: ["Lines", "行数"],
   onTime: ["On time", "准时率"], onTimeOriginal: ["On time vs original promise", "按原始承诺准时率"], onTimeCurrent: ["vs current date", "按当前日期"], onTimeCurrentFull: ["On time vs current date", "按当前日期准时率"],
+  overdueCount: ["{n} overdue, nothing received", "{n} 行逾期未到货"],
   inFull: ["In full", "足量率"], otif: ["OTIF", "OTIF"], otifOriginal: ["OTIF vs original promise", "按原始承诺 OTIF"], otifCurrentFull: ["OTIF vs current date", "按当前日期 OTIF"], pendingCount: ["{n} not in full yet", "{n} 行尚未足量"], pendingLines: ["Not in full yet", "尚未足量"], early: ["Early", "过早到货"], rejection: ["Rejection rate", "拒收率"],
   averageDelay: ["Average delay", "平均延迟"], priceVariances: ["Price variances", "价格差异"],
   insufficient: ["Insufficient sample", "样本不足"], noLines: ["No received lines with an original promise in this period", "本期没有带原始承诺交期的已收货订单行"],
@@ -60,8 +61,8 @@ const COPY: Record<string, [string, string]> = {
   warehouseScoped: ["Only receipts in your warehouses are counted.", "仅统计你有权限的仓库的收货。"],
   definitionTitle: ["How these figures are calculated", "指标口径"],
   definition: [
-    "Each figure counts PO lines whose original promised date falls in the period and that have a posted receipt. On time: the line's first receipt arrived by the original promised date plus the grace days. A first receipt more than 3 days early counts as early, not as a failure. In full: the accepted quantity eventually reached the ordered quantity. A line still open with a shortfall is not in full yet; it is listed as pending and left out of the in-full rate until it is fully received or closed. OTIF: the accepted quantity reached the ordered quantity by the original promised date plus the grace days. Rejection rate: rejected ÷ received quantity; it is not shown when the lines use different units. Average delay: mean days from the original promised date to the first receipt, over the late lines. Price variances: supplier invoices dated in the period with a price variance. \"vs current date\" repeats on time and OTIF against the current expected date, with the same grace days; a line not yet due against its current date counts as on time against it. The current date moves when a supplier revises, so the gap shows how much the revisions hide. Fewer than 5 lines is an insufficient sample. Ranges are Wilson 95% intervals.",
-    "统计单位是原始承诺交期在统计期内且已过账收货的采购订单行。准时：该行第一次收货在原始承诺交期加宽限天数之内到货；第一次收货提前超过 3 天记为过早到货，不算违约。足量：累计合格收货最终达到订购数量；仍未收齐且未关闭的订单行记为尚未足量，列为待定，在收齐或关闭前不计入足量率。OTIF：截至原始承诺交期加宽限天数，累计合格收货已达到订购数量。拒收率：拒收数量 ÷ 收货数量；各行单位不同时不显示。平均延迟：迟到行从原始承诺交期到第一次收货的平均天数。价格差异：统计期内开具且存在价格差异的供应商发票张数。“按当前日期”用当前预计交期和相同宽限天数重复准时和 OTIF 判断；按当前日期尚未到期的订单行视为准时。供应商改期时当前日期会随之变化，两者的差距就是改期掩盖的延迟。少于 5 行为样本不足。区间为 Wilson 95% 置信区间。",
+    "Each figure counts PO lines whose original promised date falls in the period and that have a posted receipt or are overdue. A line with nothing received past its original promised date plus the grace days is overdue: late, not OTIF, and not in full yet; a line not yet due with nothing received is left out. On time: the line's first receipt arrived by the original promised date plus the grace days. A first receipt more than 3 days early counts as early, not as a failure. In full: the accepted quantity eventually reached the ordered quantity. A line still open with a shortfall is not in full yet; it is listed as pending and left out of the in-full rate until it is fully received or closed. OTIF: the accepted quantity reached the ordered quantity by the original promised date plus the grace days; a line still short inside that window is undecided and left out of the OTIF rate. Rejection rate: rejected ÷ received quantity; it is not shown when the lines use different units. Average delay: mean days from the original promised date to the first receipt, or to today for an overdue line, over the late lines. Price variances: supplier invoices dated in the period with a price variance. \"vs current date\" repeats on time and OTIF against the current expected date, with the same grace days; a line not yet due against its current date counts as on time against it. The current date moves when a supplier revises, so the gap shows how much the revisions hide. Fewer than 5 lines is an insufficient sample. Ranges are Wilson 95% intervals.",
+    "统计单位是原始承诺交期在统计期内、已过账收货或已逾期的采购订单行。超过原始承诺交期加宽限天数仍未收货的订单行为逾期：记为迟到、非 OTIF，并列为尚未足量；尚未到期且未收货的订单行不计入。准时：该行第一次收货在原始承诺交期加宽限天数之内到货；第一次收货提前超过 3 天记为过早到货，不算违约。足量：累计合格收货最终达到订购数量；仍未收齐且未关闭的订单行记为尚未足量，列为待定，在收齐或关闭前不计入足量率。OTIF：截至原始承诺交期加宽限天数，累计合格收货已达到订购数量；仍在该期限内且尚未收齐的订单行暂不判定，不计入 OTIF。拒收率：拒收数量 ÷ 收货数量；各行单位不同时不显示。平均延迟：迟到行从原始承诺交期到第一次收货（逾期未收货的行算到今天）的平均天数。价格差异：统计期内开具且存在价格差异的供应商发票张数。“按当前日期”用当前预计交期和相同宽限天数重复准时和 OTIF 判断；按当前日期尚未到期的订单行视为准时。供应商改期时当前日期会随之变化，两者的差距就是改期掩盖的延迟。少于 5 行为样本不足。区间为 Wilson 95% 置信区间。",
   ],
   drilldown: ["Lines behind {metric}", "{metric} 对应的订单行"], allLines: ["All lines", "全部订单行"], close: ["Close", "关闭"],
   po: ["PO", "采购订单"], sku: ["SKU", "SKU"], original: ["Original promise", "原始承诺交期"], current: ["Current date", "当前交期"],
@@ -252,7 +253,7 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
               <td className="p-2 tabular-nums">{format.number(line.rejectedQuantity)}</td>
               <td className="p-2">{format.day(line.fullDay)}</td>
               <td className="p-2">{inFullText(line)}</td>
-              <td className="p-2">{line.otif ? tr("yes") : tr("no")}</td>
+              <td className="p-2">{line.otif === null || line.otif === undefined ? "—" : line.otif ? tr("yes") : tr("no")}</td>
               <td className="p-2 tabular-nums">{format.money(line.amount, line.currency)}</td>
             </tr>
           ))}</tbody></table></div>
@@ -291,7 +292,7 @@ function SupplierFigures({ row, limitations }: { row: SupplierScorecardRow; limi
     <div>
       {status === "insufficient_sample" && <div className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800" data-testid="supplier-performance-insufficient">{tr("insufficient")} · {tr("linesCount", { n: row.sampleSize })}</div>}
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4" data-testid="supplier-performance-figures">
-        <Tile testId="supplier-performance-on-time" label={`${tr("onTimeOriginal")} · ${tr("onTimeCurrent")}`} value={status === "ok" ? `${format.percent(m.onTime.rate)} · ${format.percent(m.onTimeCurrent.rate)}` : tr("insufficient")} detail={`${m.onTime.count}/${m.onTime.of} · ${m.onTimeCurrent.count}/${m.onTimeCurrent.of}`} onClick={() => setMetric("onTime")} />
+        <Tile testId="supplier-performance-on-time" label={`${tr("onTimeOriginal")} · ${tr("onTimeCurrent")}`} value={status === "ok" ? `${format.percent(m.onTime.rate)} · ${format.percent(m.onTimeCurrent.rate)}` : tr("insufficient")} detail={[`${m.onTime.count}/${m.onTime.of} · ${m.onTimeCurrent.count}/${m.onTimeCurrent.of}`, row.overdueUndeliveredCount ? tr("overdueCount", { n: row.overdueUndeliveredCount }) : ""].filter(Boolean).join(" · ")} onClick={() => setMetric("onTime")} />
         <Tile testId="supplier-performance-in-full" label={tr("inFull")} value={rateText(m.inFull, status, format, tr)} detail={[`${m.inFull.count}/${m.inFull.of}`, row.inFullPendingCount ? tr("pendingCount", { n: row.inFullPendingCount }) : ""].filter(Boolean).join(" · ")} onClick={() => setMetric(row.inFullPendingCount ? "pending" : "inFull")} />
         <Tile testId="supplier-performance-otif" label={`${tr("otifOriginal")} · ${tr("onTimeCurrent")}`} value={status === "ok" ? `${format.percent(m.otif.rate)} · ${format.percent(m.otifCurrent.rate)}` : tr("insufficient")} detail={`${m.otif.count}/${m.otif.of} · ${m.otifCurrent.count}/${m.otifCurrent.of}`} onClick={() => setMetric("otif")} />
         <Tile testId="supplier-performance-early" label={tr("early")} value={rateText(m.early, status, format, tr)} detail={`${m.early.count}/${m.early.of}`} onClick={() => setMetric("early")} />
