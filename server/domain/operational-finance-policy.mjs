@@ -591,6 +591,14 @@ export async function buildSupplierMatchPlan({
   });
 }
 
+export const supplierCreditMemoNumberDuplicate = (creditMemoNumber) =>
+  issue(
+    "SUPPLIER_CREDIT_MEMO_NUMBER_DUPLICATE",
+    `Credit memo number ${creditMemoNumber} is already recorded in this workspace.`,
+    409,
+    { creditMemoNumber },
+  );
+
 export async function buildSupplierCreditMemoPlan({
   prisma,
   tenantId,
@@ -749,6 +757,17 @@ export async function buildSupplierCreditMemoPlan({
       pricingSource,
     });
   }
+  // The number is stored as entered and is unique per workspace, so say so in
+  // the preview instead of letting the create fail on the unique index.
+  const creditMemoNumber = text(input.creditMemoNumber);
+  if (
+    creditMemoNumber &&
+    (await prisma.supplierCreditMemo.findUnique({
+      where: { tenantId_creditMemoNumber: { tenantId, creditMemoNumber } },
+      select: { id: true },
+    }))
+  )
+    blockingIssues.push(supplierCreditMemoNumberDuplicate(creditMemoNumber));
   return basePlan("supplier_credit_memo", blockingIssues, {
     invoice: {
       id: invoice.id,
@@ -758,7 +777,7 @@ export async function buildSupplierCreditMemoPlan({
     },
     returnPosting: { id: posting.id, postingNumber: posting.postingNumber },
     creditMemo: {
-      creditMemoNumber: text(input.creditMemoNumber),
+      creditMemoNumber,
       currency: text(input.currency).toUpperCase(),
       subtotalAmount: decimalString(subtotal),
       enteredTaxAmount: decimalString(tax),
