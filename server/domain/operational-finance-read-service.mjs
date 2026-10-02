@@ -22,6 +22,13 @@ const serial = (value) =>
 const decimal = (value) =>
   value === null || value === undefined ? null : String(value);
 
+// Every finance read needs the record's own read permission. A role without
+// it gets 403, not an empty list, so the UI can say why.
+function assertRead(actor, permission) {
+  if (!can({ actor, permission, tenantId: actor.tenantId }))
+    fail("PERMISSION_DENIED", "Your role cannot view this finance record.", 403, { permission });
+}
+
 function pageQuery(query = {}) {
   const page = Math.max(1, Number(query.page || 1));
   const pageSize = Math.min(100, Math.max(1, Number(query.pageSize || 25)));
@@ -62,12 +69,19 @@ function actions(actor, capability, row, type) {
   return [];
 }
 
+// Money on a finance record needs finance.amounts.read and the supplier needs
+// finance.partner_snapshot.read. A hidden value is null with a fieldVisibility
+// entry, never 0. A quantity exception's values are quantities, not money.
+const FINANCE_MONEY_KEYS = ["subtotalAmount", "enteredTaxAmount", "totalAmount", "varianceAmount", "originalAmount", "outstandingAmount", "approvedCreditAmount", "unitPrice", "lineAmount", "poUnitPrice", "invoiceUnitPrice", "priceVariance", "amountVariance", "expectedValue", "actualValue", "varianceValue"];
+const QUANTITY_VALUE_KEYS = new Set(["expectedValue", "actualValue", "varianceValue"]);
+
 function protectFinanceFields(model, actor) {
   const amountsVisible = can({ actor, permission: "finance.amounts.read", tenantId: actor.tenantId });
   const partnerVisible = can({ actor, permission: "finance.partner_snapshot.read", tenantId: actor.tenantId });
   const output = { ...model, fieldVisibility: { ...(model.fieldVisibility || {}) } };
-  for (const key of ["subtotalAmount", "enteredTaxAmount", "totalAmount", "varianceAmount", "originalAmount", "outstandingAmount", "approvedCreditAmount", "unitPrice", "lineAmount", "expectedValue", "actualValue", "varianceValue"]) if (key in output) { if (!amountsVisible) output[key] = null; output.fieldVisibility[key] = { visible: amountsVisible, reasonCode: amountsVisible ? null : "FIELD_PERMISSION_DENIED", permission: "finance.amounts.read" }; }
-  for (const key of ["supplierName", "supplierNameSnapshot"]) if (key in output) { if (!partnerVisible) output[key] = null; output.fieldVisibility[key] = { visible: partnerVisible, reasonCode: partnerVisible ? null : "FIELD_PERMISSION_DENIED", permission: "finance.partner_snapshot.read" }; }
+  const quantityException = model.exceptionType === "quantity";
+  for (const key of FINANCE_MONEY_KEYS) if (key in output && !(quantityException && QUANTITY_VALUE_KEYS.has(key))) { if (!amountsVisible) output[key] = null; output.fieldVisibility[key] = { visible: amountsVisible, reasonCode: amountsVisible ? null : "FIELD_PERMISSION_DENIED", permission: "finance.amounts.read" }; }
+  for (const key of ["supplierName", "supplierNameSnapshot", "supplierSnapshot"]) if (key in output) { if (!partnerVisible) output[key] = null; output.fieldVisibility[key] = { visible: partnerVisible, reasonCode: partnerVisible ? null : "FIELD_PERMISSION_DENIED", permission: "finance.partner_snapshot.read" }; }
   return output;
 }
 
@@ -158,6 +172,7 @@ export function createOperationalFinanceReadService({
 
   async function listSupplierInvoices(query, context) {
     const current = await actor(context);
+    assertRead(current, "finance.supplier_invoice.read");
     const { page, pageSize, skip } = pageQuery(query);
     const search = text(query.search);
     const where = {
@@ -204,6 +219,7 @@ export function createOperationalFinanceReadService({
 
   async function supplierInvoiceDetail(invoiceId, context) {
     const current = await actor(context);
+    assertRead(current, "finance.supplier_invoice.read");
     const invoice = await prisma.supplierInvoice.findFirst({
       where: { id: invoiceId, tenantId: current.tenantId },
       include: {
@@ -230,11 +246,16 @@ export function createOperationalFinanceReadService({
       .flatMap((run) => run.exceptions || [])
       .filter((entry) => ["open", "rejected"].includes(entry.status)).length;
     const summary = invoiceSummary({ ...invoice, blockingExceptionCount }, current, capabilities);
-    const match = invoice.matchRuns[0] || null;
+    const partner = protectFinanceFields({ supplierSnapshot: invoice.supplierSnapshot }, current);
+    // The match result is part of the three-way match, which has its own read
+    // permission; without it the invoice shows no match lines or variances.
+    const matchVisible = can({ actor: current, permission: "finance.three_way_match.read", tenantId: current.tenantId });
+    const match = matchVisible ? invoice.matchRuns[0] || null : null;
     return {
       ...summary,
-      supplierSnapshot: invoice.supplierSnapshot,
-      lines: invoice.lines.map((line) => ({
+      supplierSnapshot: partner.supplierSnapshot,
+      fieldVisibility: { ...summary.fieldVisibility, ...partner.fieldVisibility },
+      lines: invoice.lines.map((line) => protectFinanceFields({
         id: line.id,
         lineNumber: line.lineNumber,
         purchaseOrderLineId: line.purchaseOrderLineId,
@@ -248,7 +269,8 @@ export function createOperationalFinanceReadService({
         lineAmount: decimal(line.lineAmount ?? line.amount),
         enteredTaxAmount: decimal(line.enteredTaxAmount ?? 0),
         totalAmount: decimal(line.amount),
-      })),
+      }, current)),
+      matchVisible,
       match: match
         ? {
             id: match.id,
@@ -256,7 +278,7 @@ export function createOperationalFinanceReadService({
             status: match.status,
             blockingReason: match.blockingReason,
             createdAt: serial(match.createdAt),
-            lines: match.lines.map((line) => ({
+            lines: match.lines.map((line) => protectFinanceFields({
               id: line.id,
               supplierInvoiceLineId: line.supplierInvoiceLineId,
               purchaseOrderLineId: line.purchaseOrderLineId,
@@ -274,8 +296,8 @@ export function createOperationalFinanceReadService({
               priceVariance: decimal(line.priceVariance),
               amountVariance: decimal(line.amountVariance),
               currency: line.currency,
-            })),
-            exceptions: match.exceptions.map((entry) => ({
+            }, current)),
+            exceptions: match.exceptions.map((entry) => protectFinanceFields({
               id: entry.id,
               matchLineId: entry.matchLineId,
               exceptionType: entry.exceptionType,
@@ -286,13 +308,13 @@ export function createOperationalFinanceReadService({
               currency: entry.currency,
               resolution: entry.resolution,
               version: entry.version,
-            })),
+            }, current)),
           }
         : null,
-      payable: invoice.payableObligation
+      payable: invoice.payableObligation && can({ actor: current, permission: "finance.payable.read", tenantId: current.tenantId })
         ? payableSummary(invoice.payableObligation, current, capabilities)
         : null,
-      supplierCreditMemos: invoice.supplierCreditMemos.map((memo) =>
+      supplierCreditMemos: (can({ actor: current, permission: "finance.supplier_credit.read", tenantId: current.tenantId }) ? invoice.supplierCreditMemos : []).map((memo) =>
         creditMemoSummary(memo, current, capabilities),
       ),
       evidence: [
@@ -337,6 +359,7 @@ export function createOperationalFinanceReadService({
 
   async function listMatchExceptions(query, context) {
     const current = await actor(context);
+    assertRead(current, "finance.three_way_match.read");
     const { page, pageSize, skip } = pageQuery(query);
     const where = {
       tenantId: current.tenantId,
@@ -383,6 +406,7 @@ export function createOperationalFinanceReadService({
 
   async function listPayables(query, context) {
     const current = await actor(context);
+    assertRead(current, "finance.payable.read");
     const { page, pageSize, skip } = pageQuery(query);
     const where = {
       tenantId: current.tenantId,
@@ -417,6 +441,7 @@ export function createOperationalFinanceReadService({
 
   async function listSupplierCreditMemos(query, context) {
     const current = await actor(context);
+    assertRead(current, "finance.supplier_credit.read");
     const { page, pageSize, skip } = pageQuery(query);
     const where = {
       tenantId: current.tenantId,
@@ -445,6 +470,11 @@ export function createOperationalFinanceReadService({
 
   async function entryData(context) {
     const current = await actor(context);
+    // Entry data serves the supplier invoice and credit memo forms; the endpoint is shared, so a role
+    // that cannot create these documents gets empty lists, not a 403.
+    if (!["finance.supplier_invoice.create", "finance.supplier_credit.create"].some((permission) => can({ actor: current, permission, tenantId: current.tenantId })))
+      return { suppliers: [], purchaseOrders: [], receivingDocuments: [], supplierReturnPostings: [], capabilities };
+    const pricesVisible = can({ actor: current, permission: "procurement.prices.read", tenantId: current.tenantId });
     const [suppliers, purchaseOrders, receivingDocuments, returnPostings] =
       await Promise.all([
         prisma.supplier.findMany({
@@ -495,9 +525,12 @@ export function createOperationalFinanceReadService({
           itemName: line.itemName,
           orderedQuantity: decimal(line.orderedQuantity),
           unit: line.unit,
-          unitPrice: decimal(line.unitPrice),
+          unitPrice: pricesVisible ? decimal(line.unitPrice) : null,
         })),
       })),
+      fieldVisibility: {
+        unitPrice: { visible: pricesVisible, reasonCode: pricesVisible ? null : "FIELD_PERMISSION_DENIED", permission: "procurement.prices.read" },
+      },
       receivingDocuments: receivingDocuments.map((row) => ({
         id: row.id,
         documentNumber: row.documentNumber,
