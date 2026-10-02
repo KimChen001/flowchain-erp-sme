@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildGovernedReport, getReportCatalog, reportMetricCatalog } from './report-semantic-layer.mjs'
-import { canChangeReportView, canSeeReportView, reportViewActor, validateReportView } from '../repositories/report-view-repository.mjs'
+import { canChangeReportView, canSeeReportView, reportViewActor, reportViewAuditSummary, validateReportView } from '../repositories/report-view-repository.mjs'
 
 const db = {
   salesOrders: [
@@ -48,4 +48,10 @@ test('saved report view visibility comes from ownership and the workspace permis
   assert.deepEqual([owner, member, admin].map((actor) => canChangeReportView(teamView, actor)), [true, false, true])
   assert.throws(() => reportViewActor({ authenticated: false, tenantId: 'tenant-a', user: { id: 'owner' } }), { status: 401 })
   assert.throws(() => reportViewActor({ authenticated: true, tenantId: '', user: { id: 'owner' } }), { status: 401 })
+})
+
+test('saved report view audit summaries name a private view by id only', () => {
+  assert.equal(reportViewAuditSummary({ viewId: 'RV-1', name: 'Supplier exit plan', visibility: 'private' }, 'report_view_created'), 'Report view RV-1 created')
+  assert.equal(reportViewAuditSummary({ viewId: 'RV-1', name: 'Supplier exit plan', visibility: 'private' }, 'report_view_unshared'), 'Report view RV-1 made private')
+  assert.equal(reportViewAuditSummary({ viewId: 'RV-2', name: 'Open orders', visibility: 'team' }, 'report_view_shared'), 'Report view "Open orders" shared with the team')
 })

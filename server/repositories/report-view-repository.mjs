@@ -126,13 +126,23 @@ export function canChangeReportView(view, viewer) {
   return canSeeReportView(view, viewer) && (view.ownerId === viewer.id || (view.visibility === 'team' && Boolean(viewer.canManageTeamViews)))
 }
 
+// The audit log is read by everyone holding audit.read, read-only members
+// included, and its summary is never redacted. A private view's name is the
+// owner's own words about their work, so a change that leaves the view
+// private names it by id only. A team view's name is already in front of the
+// whole workspace.
+export function reportViewAuditSummary(view, action) {
+  const label = view.visibility === 'team' ? `"${view.name}"` : view.viewId
+  return `Report view ${label} ${AUDIT_SUMMARY[action]}`
+}
+
 export function createReportViewRepository({ prisma } = {}) {
   if (!prisma) throw new Error('A database client is required for saved report views.')
   const recordKey = (viewer, viewId) => ({ tenantId_namespace_recordKey: { tenantId: viewer.tenantId, namespace: REPORT_VIEW_NAMESPACE, recordKey: text(viewId) } })
   const findRow = async (client, viewer, viewId) => text(viewId) ? client.runtimeRecord.findUnique({ where: recordKey(viewer, viewId) }) : null
 
   async function audit(tx, viewer, action, view, metadata = {}) {
-    const row = await tx.auditLog.create({ data: { id: `AUD-RPT-${randomUUID()}`, tenantId: viewer.tenantId, source: 'report_views', module: 'reports', action, entityType: 'SavedReportView', entityId: view.viewId, actorId: viewer.id, summary: `Report view "${view.name}" ${AUDIT_SUMMARY[action]}`, metadata: { visibility: view.visibility, subject: view.subject, version: view.version, ownerId: view.ownerId, ...metadata } } })
+    const row = await tx.auditLog.create({ data: { id: `AUD-RPT-${randomUUID()}`, tenantId: viewer.tenantId, source: 'report_views', module: 'reports', action, entityType: 'SavedReportView', entityId: view.viewId, actorId: viewer.id, summary: reportViewAuditSummary(view, action), metadata: { visibility: view.visibility, subject: view.subject, version: view.version, ownerId: view.ownerId, ...metadata } } })
     return row.id
   }
 

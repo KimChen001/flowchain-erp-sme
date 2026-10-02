@@ -3,7 +3,9 @@ import test from 'node:test'
 import { backfillTenantAuthorization } from '../../server/auth/authorization-backfill.mjs'
 import { resolveProvisionedActor } from '../../server/domain/pilot-identity.mjs'
 import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
+import { createDbAuditLogRepository } from '../../server/repositories/db-audit-log-repository.mjs'
 import { REPORT_VIEW_NAMESPACE, createReportViewRepository, reportViewActor } from '../../server/repositories/report-view-repository.mjs'
+import { handleAuditLogRoute } from '../../server/routes/audit-log.routes.mjs'
 import { handleReportViewsRoute } from '../../server/routes/report-views.routes.mjs'
 
 // Saved report views through /api/report-views, against PostgreSQL: each view
@@ -210,6 +212,34 @@ test('saved report views are persisted per workspace and authorized from the sig
       assert.deepEqual([last.action, last.actorId, last.source, last.module, last.metadata.ownerId], ['report_view_deleted', users.admin.id, 'report_views', 'reports', users.owner.id])
       // Refused and conflicting requests leave no audit row.
       assert.equal(teamA.filter((row) => row.action === 'report_view_updated').length, 3)
+    })
+
+    // GET /api/audit-log returns summaries unredacted to anyone holding
+    // audit.read, read-only members included, so it must not name a view that
+    // was private when the change happened.
+    await t.test('the audit log names private views by id only, for members and administrators alike', async () => {
+      const auditLog = createDbAuditLogRepository({ env: process.env, prisma })
+      const readAudit = async (user) => {
+        let sent
+        const ctx = {
+          identity: await resolveProvisionedActor(prisma, identityOf(user)), env: process.env, repositories: { auditLog },
+          req: { method: 'GET', headers: {} }, res: {}, url: new URL('http://local/api/audit-log?entityType=SavedReportView&limit=200'),
+          send: (_res, status, payload) => { sent = { status, payload } },
+        }
+        assert.equal(await handleAuditLogRoute(ctx), true)
+        assert.equal(sent.status, 200, `${user.id} ${JSON.stringify(sent.payload)}`)
+        return sent.payload
+      }
+      for (const user of [users.member, users.admin]) {
+        const entries = await readAudit(user)
+        const summaries = entries.map((entry) => entry.summary)
+        for (const name of ['Owner private review', 'Owner team review (Copy)', 'Tenant B private review']) assert.ok(!JSON.stringify(entries).includes(name), `${user.id} reads ${name}`)
+        assert.ok(summaries.includes(`Report view ${created.privateA.viewId} created`), user.id)
+        assert.ok(summaries.includes(`Report view ${created.privateA.viewId} deleted`), user.id)
+        // A team view's name is already shown to the whole workspace.
+        assert.ok(summaries.includes('Report view "Owner team review" created'), user.id)
+        assert.ok(summaries.includes('Report view "Member layout" shared with the team'), user.id)
+      }
     })
   } finally {
     await prisma.$disconnect()
