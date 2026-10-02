@@ -25,11 +25,18 @@ export async function backfillTenantAuthorization(prisma, tenantId, { actorId = 
       })
       if (!existing) createdRoles += 1
       roles.set(template.roleKey, role)
+      // Template grants are filled in only until an administrator first saves
+      // the role (updateRole bumps its version). After that the role is
+      // theirs, and a code they removed stays removed when a later sign-in
+      // runs this backfill again. Codes added to a template afterwards reach
+      // saved roles through a migration, as 20261002030000_master_data_permissions does.
+      if (!role.isDefaultTemplate || role.version !== 0) continue
+      const granted = new Set((await tx.tenantRolePermission.findMany({ where: { roleId: role.id }, select: { permissionCode: true } })).map((grant) => grant.permissionCode))
       for (const permissionCode of template.permissions) {
+        if (granted.has(permissionCode)) continue
         const grantId = stableId(tenantId, "grant", role.id, permissionCode)
-        const existingGrant = await tx.tenantRolePermission.findUnique({ where: { roleId_permissionCode: { roleId: role.id, permissionCode } } })
         await tx.tenantRolePermission.upsert({ where: { roleId_permissionCode: { roleId: role.id, permissionCode } }, create: { id: grantId, tenantId, roleId: role.id, permissionCode, createdById: actorId }, update: {} })
-        if (!existingGrant) createdGrants += 1
+        createdGrants += 1
       }
     }
 
