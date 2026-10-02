@@ -13,6 +13,7 @@ export const AI_MODEL_POLICIES = Object.freeze({
   compoundDecompositionShadow: 'compound_decomposition_shadow',
   intentClassificationShadow: 'intent_classification_shadow',
   queryRewriteShadow: 'query_rewrite_shadow',
+  businessQueryPlanning: 'business_query_planning',
 })
 
 export const AI_MODEL_POLICY_DEFINITIONS = Object.freeze({
@@ -60,6 +61,13 @@ export const AI_MODEL_POLICY_DEFINITIONS = Object.freeze({
     enabledByDefault: false,
     modelMayRun: false,
     description: 'Future query rewrites are shadow-only and must not add business facts, entities, dates, numbers, or actions.',
+  },
+  // The owner opted into this on 2026-10-02 after the planner evaluation (docs/ai-query-integration.md).
+  [AI_MODEL_POLICIES.businessQueryPlanning]: {
+    enabledByDefault: false,
+    modelMayRun: true,
+    enabledBy: 'FLOWCHAIN_ENABLE_AI_SEMANTIC_PLANNER',
+    description: 'A model may plan the scope, goals and filters of supplier business queries that the deterministic gate routes to the planner. Plans are validated and executed by deterministic read models. The deterministic plan is used when the model is unavailable, returns an invalid plan, or asks for a clarification the deterministic plan does not need. The model never decides facts or actions.',
   },
 })
 
