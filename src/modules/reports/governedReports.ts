@@ -33,8 +33,13 @@ export function fetchGovernedReport(view: DashboardView, filters: Record<string,
   const topN = filters.topN ? Number(filters.topN) : undefined;
   return apiJson<GovernedReport>("/api/reports/query", { method: "POST", body: JSON.stringify({ subject: view, filters, measures: (filters.measures || "").split(",").filter(Boolean), comparison: filters.comparison, ...(topN ? { topN } : {}), limit: 50 }) });
 }
-export function listSavedReportViews(visibility = "") { return apiJson<{ views: SavedReportView[]; actor: { id: string; role: string } }>(`/api/report-views${visibility ? `?visibility=${visibility}` : ""}`); }
+// The signed-in person as the saved-view API sees them. canManageTeamViews
+// means they may also edit and delete team views they do not own.
+export type SavedReportViewActor = { id: string; name?: string; role: string; canManageTeamViews?: boolean };
+export function listSavedReportViews(visibility = "") { return apiJson<{ views: SavedReportView[]; actor: SavedReportViewActor }>(`/api/report-views${visibility ? `?visibility=${visibility}` : ""}`); }
 export function createSavedReportView(input: Partial<SavedReportView>) { return apiJson<{ view: SavedReportView; auditEventId: string }>("/api/report-views", { method: "POST", body: JSON.stringify(input) }); }
-export function updateSavedReportView(id: string, input: Partial<SavedReportView>) { return apiJson<{ view: SavedReportView }>(`/api/report-views/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }); }
+// expectedVersion is the version the caller last saw and is required; a newer
+// view answers 409 so a stale screen never overwrites someone else's change.
+export function updateSavedReportView(id: string, input: Partial<SavedReportView> & { expectedVersion: number }) { return apiJson<{ view: SavedReportView }>(`/api/report-views/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }); }
 export function cloneSavedReportView(id: string, name?: string) { return apiJson<{ view: SavedReportView }>(`/api/report-views/${encodeURIComponent(id)}/clone`, { method: "POST", body: JSON.stringify({ name }) }); }
 export function deleteSavedReportView(id: string) { return apiJson<{ deleted: true }>(`/api/report-views/${encodeURIComponent(id)}`, { method: "DELETE" }); }
