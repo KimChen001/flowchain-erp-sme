@@ -177,3 +177,47 @@ test('period and grace days are validated; the default period is the 90 days end
     assert.throws(() => scorecardParameters(query, '2026-09-30'), (error) => error.status === 422 && /^SCORECARD_/.test(error.code), JSON.stringify(query))
   }
 })
+
+test('a line past its promise with nothing received is late and not OTIF, so missed deliveries lower the rates', () => {
+  // 5 lines delivered on time and in full, 20 lines promised on 08-15 never
+  // delivered, as of 09-30. Before, the sample was the 5 delivered lines: 100%.
+  const delivered = Array.from({ length: 5 }, (_, index) => line(`D${index}`, '2026-08-10'))
+  const missed = Array.from({ length: 20 }, (_, index) => line(`M${index}`, '2026-08-15'))
+  const receipts = delivered.map((row) => ({ id: `GRN-${row.id}`, postedAt: new Date('2026-08-10T15:00:00Z'), lines: [{ purchaseOrderLineId: row.id, acceptedQty: 100, rejectedQty: 0 }] }))
+  const result = buildSupplierScorecard({ purchaseOrders: [po([...delivered, ...missed])], receipts, invoices: [], period: { from: '2026-08-01', to: '2026-09-30' }, asOfDay: '2026-09-30', timeZone: 'America/New_York' })
+  const [supplier] = result.suppliers
+  assert.equal(supplier.sampleSize, 25)
+  assert.equal(supplier.overdueUndeliveredCount, 20)
+  assert.deepEqual([supplier.metrics.onTime.count, supplier.metrics.onTime.of, pct(supplier.metrics.onTime.rate)], [5, 25, 20])
+  assert.deepEqual([supplier.metrics.otif.count, supplier.metrics.otif.of, pct(supplier.metrics.otif.rate)], [5, 25, 20])
+  // In full is pending for open lines, as for a partial delivery.
+  assert.deepEqual([supplier.metrics.inFull.count, supplier.metrics.inFull.of], [5, 5])
+  assert.equal(supplier.inFullPendingCount, 20)
+  const overdue = supplier.lines.find((row) => row.purchaseOrderLineId === 'M0')
+  assert.deepEqual([overdue.status, overdue.onTime, overdue.otif, overdue.daysLate, overdue.firstReceiptDay], ['evaluated', false, false, 46, null])
+  assert.deepEqual(supplier.metrics.averageDelayDays, { value: 46, lateCount: 20 })
+})
+
+test('a line with nothing received that is not due yet is left out', () => {
+  // Promised 09-28 with 5 grace days: due by 10-03.
+  const grace = { graceDays: 5 }
+  assert.equal(evaluate(line('L1', '2026-09-28'), [], grace).status, 'not_received')
+  // A day past the grace window it counts.
+  const late = evaluate(line('L1', '2026-09-24'), [], grace)
+  assert.deepEqual([late.status, late.onTime, late.otif, late.overdueUndelivered], ['evaluated', false, false, true])
+  // Revised to 10-10, it is still on time against the current date.
+  const revised = evaluate(line('L1', '2026-09-20', { current: '2026-10-10' }), [], grace)
+  assert.deepEqual([revised.onTime, revised.onTimeCurrent, revised.otifCurrent], [false, true, true])
+})
+
+test('a partial delivery inside its window is undecided for OTIF, as for in full', () => {
+  // Promised 09-28, 4 of 100 on 09-27, as of 09-30: the supplier has until 10-03.
+  const grace = { graceDays: 5 }
+  const pending = evaluate(line('L1', '2026-09-28'), [receipt('2026-09-27', 4)], grace)
+  assert.deepEqual([pending.onTime, pending.inFullPending, pending.otif, pending.otifCurrent], [true, true, null, true])
+  const summary = summarizeScorecardLines({ lines: [pending, evaluate(line('L2', '2026-09-01'), [receipt('2026-09-01', 100)], grace)] })
+  assert.deepEqual([summary.metrics.otif.count, summary.metrics.otif.of], [1, 1])
+  // Past the window and still short, it is not OTIF.
+  const short = evaluate(line('L1', '2026-09-20'), [receipt('2026-09-19', 4)], grace)
+  assert.equal(short.otif, false)
+})

@@ -138,9 +138,28 @@ export function evaluatePromiseLine({ line, purchaseOrder, receipts = [], asOfDa
     receipts: events.map((entry) => ({ receivingDocumentId: entry.receivingDocumentId, day: entry.day, accepted: quantity(entry.accepted), rejected: quantity(entry.rejected) })),
   }
   if (!originalDay) return { ...base, status: events.length ? 'original_not_recorded' : 'not_received' }
-  if (!events.length) return { ...base, status: 'not_received' }
   const cutoff = addDays(originalDay, graceDays)
   const currentCutoff = addDays(currentDay, graceDays)
+  if (!events.length) {
+    // Not delivered and not due yet: nothing to judge.
+    if (!asOfDay || asOfDay <= cutoff) return { ...base, status: 'not_received' }
+    // Past the original promise plus the grace days with nothing received:
+    // late and not OTIF, as the standard definition counts it. In full stays
+    // pending while the line is open, as for a partial delivery.
+    return {
+      ...base,
+      status: 'evaluated',
+      overdueUndelivered: true,
+      onTime: false,
+      early: false,
+      daysLate: daysBetween(originalDay, asOfDay),
+      onTimeCurrent: asOfDay <= currentCutoff,
+      inFull: base.closed ? false : null,
+      inFullPending: !base.closed,
+      otif: false,
+      otifCurrent: asOfDay <= currentCutoff,
+    }
+  }
   const onTime = firstReceiptDay <= cutoff
   // In full is decided once the line is fully received or closed.
   const inFullPending = !fullDay && !base.closed
@@ -153,7 +172,10 @@ export function evaluatePromiseLine({ line, purchaseOrder, receipts = [], asOfDa
     onTimeCurrent: firstReceiptDay <= currentCutoff,
     inFull: inFullPending ? null : Boolean(fullDay),
     inFullPending,
-    otif: Boolean(fullDay && fullDay <= cutoff),
+    overdueUndelivered: false,
+    // Not yet full but still inside the original promise plus the grace days:
+    // OTIF is undecided, as in full is, and left out of its rate.
+    otif: fullDay ? fullDay <= cutoff : asOfDay && asOfDay <= cutoff ? null : false,
     // Not yet due against the current date counts as OTIF against it.
     otifCurrent: fullDay ? fullDay <= currentCutoff : asOfDay <= currentCutoff,
   }
@@ -199,6 +221,7 @@ export function summarizeScorecardLines({ lines = [], invoices = [], lineAmounts
   const rejectionRate = sufficient && !mixedUnits ? rate(rejectedQuantity, receivedQuantity) : null
   const variances = invoices === null ? null : [...invoices].sort((a, b) => text(a.invoiceDate).localeCompare(text(b.invoiceDate)) || text(a.supplierInvoiceId).localeCompare(text(b.supplierInvoiceId)))
   const pending = sample.filter((line) => line.inFullPending)
+  const overdue = sample.filter((line) => line.overdueUndelivered)
   return {
     sampleSize: sample.length,
     sampleStatus: !sample.length ? 'no_lines' : sufficient ? 'ok' : 'insufficient_sample',
@@ -206,12 +229,14 @@ export function summarizeScorecardLines({ lines = [], invoices = [], lineAmounts
     // Open lines with a shortfall: in the sample, not yet in the in-full rate.
     inFullPendingCount: pending.length,
     pendingLines: pending,
+    // Lines past their promise plus the grace days with nothing received.
+    overdueUndeliveredCount: overdue.length,
     metrics: {
       onTime: lineRate(sample, 'onTime'),
       onTimeCurrent: lineRate(sample, 'onTimeCurrent'),
       early: lineRate(sample, 'early'),
       inFull: lineRate(sample, 'inFull', { decided: (line) => !line.inFullPending }),
-      otif: lineRate(sample, 'otif'),
+      otif: lineRate(sample, 'otif', { decided: (line) => line.otif !== null }),
       otifCurrent: lineRate(sample, 'otifCurrent'),
       rejection: {
         rejectedQuantity: round(rejectedQuantity),
