@@ -53,10 +53,11 @@ export default defineConfig({
             ? "node scripts/browser-outbound-api.mjs"
             : process.env.PLAYWRIGHT_RECEIVING_DB === "true"
               ? "node scripts/browser-receiving-api.mjs"
-              : "node scripts/browser-uat-api.mjs",
+              : "node scripts/browser-runner-required.mjs",
       url: `http://127.0.0.1:${apiPort}/api/health`,
       reuseExistingServer: false,
-      timeout: 30_000,
+      // Embedded PostgreSQL, migrations and the seed run before the API listens.
+      timeout: 120_000,
     },
     {
       command: "node scripts/browser-uat-vite.mjs",

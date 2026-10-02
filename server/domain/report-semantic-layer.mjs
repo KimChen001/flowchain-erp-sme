@@ -84,6 +84,9 @@ export const reportMetricCatalog = Object.freeze([
   metric('open_po_count', '开放 PO', 'purchase_orders', 'number', 'count(open)', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/procurement/orders?status=open'),
   metric('overdue_po_amount', '逾期 PO 金额', 'purchase_orders', 'currency', 'sum(overdue amount)', '承诺日期早于范围结束且未完成的采购订单金额。', '/app/procurement/orders?overdue=true'),
   metric('rfq_response_rate', 'RFQ 响应率', 'rfqs', 'percentage', 'quoted / invited', '已报价供应商数占邀请供应商数。', '/app/procurement/rfq', { numerator: 'quoted suppliers', denominator: 'invited suppliers' }),
+  // Legacy metric, kept as is: it counts receipts without rejections, not OTIF.
+  // The authoritative supplier OTIF is server/domain/supplier-scorecard.mjs
+  // (GET /api/reports/supplier-scorecard), measured against the original promise.
   metric('supplier_otif', '供应商 OTIF', 'receiving', 'percentage', 'on_time_in_full / due', '按承诺日期足量收货的订单占比。', '/app/reports/suppliers', { numerator: 'on-time in-full receipts', denominator: 'receipts due' }),
   metric('inventory_value', '库存金额', 'inventory_balances', 'currency', 'sum(quantity * unitCost)', '库存数量乘受控单位成本的合计。', '/app/inventory'),
   metric('inventory_turnover', '库存周转率', 'inventory_movements', 'number', 'annualized outbound / average inventory', '年化出库成本除以平均库存金额；无成本数据时为空。', '/app/inventory/movements'),
@@ -174,6 +177,7 @@ function calculate(metricId, rows, query) {
     purchase_order_amount: () => sum(po, 'amount'), open_po_count: () => po.filter((row) => row.isOpen).length,
     overdue_po_amount: () => sum(po.filter((row) => row.date < today && row.isOpen), 'amount'),
     rfq_response_rate: () => rate(sum(rfqs, 'quoted'), sum(rfqs, 'invited')),
+    // Legacy: not OTIF. See server/domain/supplier-scorecard.mjs for the authoritative definition.
     supplier_otif: () => rate(receiving.filter((row) => row.rejected === 0).length, receiving.length),
     inventory_value: () => sum(balances, 'amount'), inventory_turnover: () => 0,
     inventory_coverage_days: () => { const applicable = balances.filter((row) => row.monthlyDemand > 0); return applicable.length ? applicable.reduce((total, row) => total + number(row.quantity) / number(row.monthlyDemand) * 30, 0) / applicable.length : 0 },

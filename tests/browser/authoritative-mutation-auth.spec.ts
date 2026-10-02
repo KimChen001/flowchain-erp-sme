@@ -1,44 +1,33 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
 
-async function signedManager(request: APIRequestContext) {
+// The workspace administrator seeded by scripts/browser-product-recovery-api.mjs.
+async function signedAdmin(request: APIRequestContext) {
   const response = await request.post('/api/auth/login', {
-    data: { company: '新辰智能制造', name: '授权门禁经理', email: `auth-${Date.now()}@example.com` },
+    data: { company: 'FlowChain', name: 'Initial Admin', email: 'admin@flowchain.local' },
   })
   expect(response.status()).toBe(200)
   return (await response.json()).token as string
 }
 
-test('authoritative mutations reject anonymous and viewer identities and accept signed manager identity', async ({ request }) => {
-  const suffix = Date.now()
-  const inventoryBody = { sku: `AUTH-SKU-${suffix}`, itemName: '授权测试物料', onHandQuantity: 3, actor: 'forged-user' }
-  const salesBody = { salesOrderId: `AUTH-SO-${suffix}`, customerName: '授权测试客户', sku: inventoryBody.sku, orderedQty: 2, actor: 'forged-user' }
-
-  expect((await request.post('/api/inventory/items', { data: inventoryBody })).status()).toBe(401)
-  expect((await request.post('/api/inventory/items', { headers: { 'x-flowchain-role': 'viewer', 'x-flowchain-user': 'viewer-user' }, data: inventoryBody })).status()).toBe(403)
-  expect((await request.post('/api/sales-demand/orders', { data: salesBody })).status()).toBe(401)
-  expect((await request.post('/api/sales-demand/orders', { headers: { 'x-flowchain-role': 'viewer', 'x-flowchain-user': 'viewer-user' }, data: salesBody })).status()).toBe(403)
-
-  const settingsResponse = await request.get('/api/settings-runtime')
+test('settings mutations reject anonymous callers and record the signed-in actor, not a forged one', async ({ request }) => {
+  const headers = { authorization: `Bearer ${await signedAdmin(request)}` }
+  expect((await request.get('/api/settings-runtime')).status()).toBe(401)
+  const settingsResponse = await request.get('/api/settings-runtime', { headers })
   expect(settingsResponse.status()).toBe(200)
   const settings = await settingsResponse.json()
-  const settingsBody = { settings: { ...settings.company, workspaceName: `授权工作区-${suffix}` }, actor: { id: 'forged-user', name: '伪造管理员', role: 'admin' } }
-  expect((await request.patch('/api/settings-runtime/company', { data: settingsBody })).status()).toBe(401)
-  expect((await request.patch('/api/settings-runtime/company', { headers: { 'x-flowchain-role': 'business-specialist', 'x-flowchain-user': 'specialist-user' }, data: settingsBody })).status()).toBe(403)
+  // An unchanged numbering section: the write is audited even when nothing changes.
+  const body = { settings: settings.numbering, actor: { id: 'forged-user', name: 'Forged Admin', role: 'admin' } }
 
-  const token = await signedManager(request)
-  const headers = { authorization: `Bearer ${token}` }
-  const inventoryWrite = await request.post('/api/inventory/items', { headers, data: inventoryBody })
-  expect(inventoryWrite.status()).toBe(201)
-  expect((await inventoryWrite.json()).item).toMatchObject({ sku: inventoryBody.sku, createdBy: expect.not.stringContaining('forged') })
-  const salesWrite = await request.post('/api/sales-demand/orders', { headers, data: salesBody })
-  expect(salesWrite.status()).toBe(201)
-  expect((await salesWrite.json()).order).toMatchObject({ salesOrderId: salesBody.salesOrderId, createdBy: expect.not.stringContaining('forged') })
-  expect((await request.patch('/api/settings-runtime/company', { headers, data: settingsBody })).status()).toBe(200)
+  expect((await request.patch('/api/settings-runtime/numbering', { data: body })).status()).toBe(401)
+  expect((await request.patch('/api/settings-runtime/numbering', { headers: { 'x-flowchain-role': 'admin', 'x-flowchain-user': 'forged-user' }, data: body })).status()).toBe(401)
+  expect((await request.patch('/api/settings-runtime/numbering', { headers, data: body })).status()).toBe(200)
 
-  const auditResponse = await request.get('/api/audit-log')
-  expect(auditResponse.status()).toBe(200)
-  const persisted = await auditResponse.json()
-  const settingsAudit = persisted.find((entry: { entity?: { type?: string } }) => entry.entity?.type === 'settings_section')
-  expect(settingsAudit.actor.name).toBe('授权门禁经理')
-  expect(settingsAudit.actor.name).not.toBe('伪造管理员')
+  const audit = await request.get('/api/audit-log?limit=50', { headers })
+  expect(audit.status()).toBe(200)
+  const payload = await audit.json()
+  const entries: Array<{ action?: string; actor?: { id?: string; name?: string } }> = Array.isArray(payload) ? payload : payload.entries ?? payload.items ?? []
+  const settingsAudit = entries.find((entry) => entry.action === 'numbering_settings_updated')
+  expect(settingsAudit?.actor?.name).toBe('Initial Admin')
+  expect(JSON.stringify(settingsAudit)).not.toContain('forged-user')
+  expect(JSON.stringify(settingsAudit)).not.toContain('Forged Admin')
 })

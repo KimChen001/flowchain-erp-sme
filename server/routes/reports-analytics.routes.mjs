@@ -2,6 +2,8 @@ import { buildRuntimeGovernedReport, getRuntimeReportCatalog } from '../domain/r
 import { readBusinessContext } from '../services/runtime-business-read-service.mjs'
 import { buildOpenPurchaseOrdersReport } from '../domain/open-purchase-orders-report.mjs'
 import { readTenantTimezone } from '../domain/tenant-timezone.mjs'
+import { createSupplierScorecardReadService } from '../domain/supplier-scorecard.mjs'
+import { getPrismaClient } from '../persistence/prisma-client.mjs'
 
 export async function handleReportsAnalyticsRoute(ctx) {
   const { req, res, url, send, readBody } = ctx
@@ -18,6 +20,21 @@ export async function handleReportsAnalyticsRoute(ctx) {
     } catch (error) {
       if (error.code !== 'REPORT_DATE_RANGE_INVALID') throw error
       send(res, 422, { error: error.message, code: error.code })
+    }
+    return true
+  }
+
+  // Supplier delivery scorecard, measured against each line's original
+  // promised date. ?from&to (YYYY-MM-DD, default the last 90 days), graceDays,
+  // supplierId. The service checks the reader's permissions.
+  if (req.method === 'GET' && url.pathname === '/api/reports/supplier-scorecard') {
+    if (!ctx.identity?.authenticated || !ctx.identity.tenantId) { send(res, 401, { code: 'TENANT_CONTEXT_REQUIRED', message: 'An authenticated tenant context is required.' }); return true }
+    try {
+      const service = ctx.repositories?.supplierScorecard || createSupplierScorecardReadService({ prisma: await getPrismaClient(ctx.env || process.env) })
+      send(res, 200, await service.read(Object.fromEntries(url.searchParams.entries()), { identity: ctx.identity }))
+    } catch (error) {
+      if (!error?.status) throw error
+      send(res, error.status, { code: error.code || 'SUPPLIER_SCORECARD_FAILED', message: error.message, details: Array.isArray(error.details) ? error.details : [] })
     }
     return true
   }

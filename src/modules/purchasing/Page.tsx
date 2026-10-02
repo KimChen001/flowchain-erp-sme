@@ -67,6 +67,7 @@ import {
 } from "../../components/ui/workbenchTable";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { PurchaseOrderReceiveAction, PurchaseOrderWorkflowActions } from "./components/PurchaseOrderWorkflowActions";
+import { PurchaseOrderPromiseDates } from "./components/PurchaseOrderPromiseDates";
 
 const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
@@ -809,6 +810,8 @@ export default function PurchasingOrdersPage({
           <SectionTitle title={copy("PO 明细行")} right={<Chip label={`${poLines.length} ${copy(poLines.length === 1 ? "单行" : "行")}`} color={A.blue} bg="#f0f6ff" />} />
           <PurchaseOrderLineCards rows={poLines} currency={selectedPO.currency} />
         </div>
+
+        <PurchaseOrderPromiseDates poId={selectedPO.po} onChanged={loadWorkbench} />
 
         <section
           ref={fulfillmentFocusRef}
