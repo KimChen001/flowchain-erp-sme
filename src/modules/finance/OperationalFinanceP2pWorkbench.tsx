@@ -27,16 +27,19 @@ type ListPayload = {
 const value = (row: Record<string, any>, ...keys: string[]) =>
   keys.map((key) => row[key]).find((entry) => entry !== undefined && entry !== null);
 const query = () => window.location.search.replace(/^\?/, "");
+// A hidden or missing amount is null and shows as a dash, never as 0.
 const money = (amount: unknown, currency: unknown, locale: string) => {
+  if (amount === null || amount === undefined || amount === "") return "—";
   const code = String(currency || "");
-  const numeric = Number(amount || 0);
+  const numeric = Number(amount);
+  if (!Number.isFinite(numeric)) return "—";
   return /^[A-Z]{3}$/.test(code)
     ? new Intl.NumberFormat(locale, {
         style: "currency",
         currency: code,
         maximumFractionDigits: 4,
       }).format(numeric)
-    : `${amount || "0"} ${code}`.trim();
+    : `${amount} ${code}`.trim();
 };
 type TranslationKey = Parameters<ReturnType<typeof useI18n>["t"]>[0];
 const tokenKeys: Record<string, TranslationKey> = {
