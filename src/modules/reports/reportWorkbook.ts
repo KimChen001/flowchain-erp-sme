@@ -1,6 +1,7 @@
 import type { GovernedReport } from './governedReports';
 import { formatMetric } from './currencyFormatting.mjs';
 import { reportStatusCopy } from './analyticsCopy.ts';
+import { chartTable } from './charts/chartTable.ts';
 
 export function reportWorkbook(report: GovernedReport, filters: Record<string, string>, copy: (value: string) => string, limitations: string[], format: { locale?: string; language?: string } = {}) {
   const scope = report.dataScope;
@@ -11,9 +12,14 @@ export function reportWorkbook(report: GovernedReport, filters: Record<string, s
   // A money metric is described and formatted in its own currency, which can differ from the dashboard's.
   const metricCurrency = (item: GovernedReport['kpis'][number]) => item.unit === 'currency' && item.currencyAggregationStatus ? { code: item.currencyCode ?? null, label: item.currencyLabel || scope.currencyLabel, status: item.currencyAggregationStatus } : { code: scope.currencyCode, label: scope.currencyLabel, status: scope.currencyAggregationStatus };
   const metricValue = (item: GovernedReport['kpis'][number], value: number | null, status: keyof typeof aggregation, code: string | null) => item.unit === 'currency' && status === 'no_currency_data' ? '暂无金额数据' : item.unit === 'currency' && (status === 'multi_currency_unconverted' || status === 'currency_unknown') ? aggregation[status] : formatMetric(value, item.unit, code, format);
-  const chartRows = report.charts.flatMap(chart => chart.series?.length
-    ? chart.series.flatMap(series => series.data.map(point => row({ Chart: copy(chart.title), Dimension: point.period, Series: copy(series.label), Value: point.value })))
-    : (chart.data || []).flatMap(point => Object.entries(point).filter(([key]) => !['name', 'period', 'filterValue'].includes(key)).map(([key, value]) => row({ Chart: copy(chart.title), Dimension: copy(String(point.name || point.period || 'Uncategorized')), Series: copy(key === 'value' ? chart.title : key), Value: value }))));
+  // The same table each visual shows under "Show data", one row per value.
+  const language = format.language || 'en-US';
+  const category = (chart: GovernedReport['charts'][number], name: string) => chart.statusLabels || chart.id.endsWith('_status') ? reportStatusCopy(name, language) : copy(name);
+  const chartRows = report.charts.flatMap(chart => {
+    if (chart.series?.length) return chart.series.flatMap(series => series.data.map(point => row({ Chart: copy(chart.title), Dimension: point.period, Series: copy(series.label), Value: point.value })));
+    const table = chartTable(chart, { copy, category });
+    return table.rows.flatMap(entry => table.columns.map((column, index) => row({ Chart: copy(chart.title), Dimension: entry.label, Series: column.label, Value: entry.values[index] })));
+  });
   const sheets: Array<{ name: string; rows: Record<string, unknown>[] }> = [
     { name: copy('Metric summary'), rows: report.kpis.map(item => { const currency = metricCurrency(item); return { ...currencyMetadata(currency.code, currency.label, currency.status), ...row({ Metric: copy(item.label), 'Current value': copy(metricValue(item, item.currentValue, currency.status, currency.code)), 'Baseline value': item.comparisonValue === null ? copy('Not compared') : formatMetric(item.comparisonValue, item.unit, currency.code, format), Definition: copy(item.description), 'Data range': `${scope.from} — ${scope.to}` }) }; }) },
     { name: copy('Chart data'), rows: chartRows.map(item => ({ ...metadata, ...item })) },

@@ -31,6 +31,9 @@ names, or supplier names in place. Translate their presentation where appropriat
   comparison, error states, and reviewed award decision use the active language.
 - The local US development workspace includes one USD RFQ with two authoritative supplier
   quotation revisions so the complete comparison and award path is reviewable.
+- The report dashboards' visuals, KPIs, key insights, chart data tables and
+  downloads use the active language; status codes use the shared status labels and
+  business names stay as recorded (`docs/report-dashboards.md`).
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.

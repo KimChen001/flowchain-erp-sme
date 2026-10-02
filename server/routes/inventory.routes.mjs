@@ -314,18 +314,15 @@ export async function handleInventoryRoute(ctx) {
       resource: "inventory",
     });
     if (authorization.blocked) return true;
-    try {
-      const item = await repository().upsertItem(
-        await ctx.readBody(req),
-        authorization.identity.userId,
-      );
-      send(res, 201, { item });
-    } catch (error) {
-      send(res, error.status || 400, {
-        error: error.message,
-        code: error.code,
-      });
-    }
+    // No repository writes inventory items directly; balances change through
+    // transfers, counts and adjustments in the inventory operations workbench.
+    send(res, 501, {
+      code: "FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED",
+      message:
+        "Legacy inventory item mutation is not available. Use inventory transfers, cycle counts, or adjustments.",
+      capability: "inventory",
+      limitations: ["legacy_inventory_item_mutation_removed"],
+    });
     return true;
   }
 

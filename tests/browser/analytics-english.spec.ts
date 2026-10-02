@@ -64,8 +64,11 @@ test('populated overview uses readable status labels and filters by the original
   const chart = page.locator('[data-chart-title="Purchase order status"]');
   await expect(chart).toContainText('Partially received');
   await expect(page.getByTestId('bi-dashboard')).not.toContainText('partially_received');
-  await chart.locator('.recharts-pie-sector').first().click({ position: { x: 82, y: 10 } });
+  // The chart's data table lists each slice as a filter, as selecting the slice does.
+  await chart.getByRole('button', { name: 'Show data: Purchase order status' }).click();
+  await chart.getByTestId('visual-data-table').getByRole('button', { name: 'Partially received', exact: true }).click();
   await expect(page).toHaveURL(/status=partially_received/);
+  await expect(page.getByTestId('bi-global-filters')).toContainText('Status: Partially received');
   const start = page.getByRole('textbox', { name: 'Start date' });
   await start.fill('2026-02-30');
   await expect(start).toHaveJSProperty('validationMessage', 'Dates must use YYYY-MM-DD.');
@@ -86,8 +89,13 @@ test('analytics pages offer only filters the report applies and promise no missi
   for (const [view, subtitle] of [['procurement?view=analytics', 'Track committed purchasing spend and open purchase orders'], ['finance', 'Review submitted supplier invoice amounts'], ['suppliers', 'Review supplier records and committed purchasing spend']]) {
     await page.goto(`/app/reports/${view}`);
     await expect(page.getByTestId('bi-dashboard').getByText(subtitle, { exact: true })).toBeVisible();
-    await expect(page.getByTestId('bi-dashboard')).not.toContainText(/OTIF|quality|three-way|aging|year over year/i);
+    // Quality, aging and period comparisons are not measured, so no page names them.
+    await expect(page.getByTestId('bi-dashboard')).not.toContainText(/OTIF|quality|aging|year over year/i);
   }
+  // Three-way match results are recorded on invoices, so the finance page reports them.
+  await page.goto('/app/reports/finance');
+  await expect(page.locator('[data-chart-id="finance_match_rate"]')).toBeVisible();
+  await expect(page.locator('[data-chart-id="finance_match_outcome"]')).toBeVisible();
 });
 
 test('analytics subtitles stay accurate in Chinese', async ({ page }) => {
