@@ -44,6 +44,7 @@ await phase("shell and routing", [
   "tests/browser/typography-system.spec.ts",
   "tests/browser/authoritative-mutation-auth.spec.ts",
   "tests/browser/user-data-import-preview.spec.ts",
+  "tests/browser/motion-transitions.spec.ts",
 ]);
 // Email sign-in end to end, through the local mail outbox.
 const outboxPath = join(tmpdir(), `flowchain-mail-outbox-${process.pid}.json`);
