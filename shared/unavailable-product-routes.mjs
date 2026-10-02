@@ -3,7 +3,11 @@
 // in-page links. A direct URL shows the "Capability unavailable" page.
 //
 //   frozen        internal settlement, cashbook and the settlement workflow
-//                 (including its mobile settlement task);
+//                 (including its mobile settlement task), and the sales
+//                 delivery and receipt pages, which listed a static array that
+//                 is always empty and whose "New" form reported a draft as
+//                 saved without saving it (shipments are created and posted
+//                 from the sales order and shipment pages);
 //   unavailable   forecast / MRP planning and the legacy imports pages.
 export const FROZEN_PRODUCT_ROUTE_IDS = Object.freeze([
   'finance:settlement',
@@ -11,10 +15,17 @@ export const FROZEN_PRODUCT_ROUTE_IDS = Object.freeze([
   'finance:reconciliation',
   'finance:reconciliation-detail',
   'mobile-operations:settlement-detail',
+  'sales:delivery',
+  'sales:delivery:new',
+  'sales:delivery:edit',
+  'sales:delivery-detail',
+  'sales:receipts',
+  'sales:receipts:new',
+  'sales:receipt-detail',
 ])
 
 const UNAVAILABLE_ROUTE_ID = /^(forecast|imports)(:|$)/
-const UNAVAILABLE_PATH = /^\/app\/(finance\/settlement|finance\/reconciliation|mobile\/settlements|forecast|imports)(\/|\?|#|$)/
+const UNAVAILABLE_PATH = /^\/app\/(finance\/settlement|finance\/reconciliation|mobile\/settlements|sales\/deliveries|sales\/receipts|forecast|imports)(\/|\?|#|$)/
 
 // True for a route id ("forecast:mrp") or an app path ("/app/imports/failed")
 // that belongs to a frozen or unavailable product surface.

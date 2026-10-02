@@ -157,6 +157,16 @@ test("capability and permission metadata remain declarative boundaries", () => {
     ["finance:settlement", "internal-settlement"],
     ["finance:settlement-detail", "internal-settlement"],
     ["mobile-operations:settlement-detail", "mobile-operations"],
+    // The sales delivery and receipt pages listed an always-empty static
+    // array and their "New" form saved nothing; shipments stay on the sales
+    // order and shipment pages.
+    ["sales:delivery", "sales-shipment-draft"],
+    ["sales:delivery:new", "sales-shipment-draft"],
+    ["sales:delivery:edit", "sales-shipment-draft"],
+    ["sales:delivery-detail", "sales-shipment-draft"],
+    ["sales:receipts", "sales-shipment-posting"],
+    ["sales:receipts:new", "sales-shipment-posting"],
+    ["sales:receipt-detail", "sales-shipment-posting"],
   ]) {
     const route = routes.find((candidate) => candidate.id === id);
     assert.equal(route.classification, "FROZEN", id);
