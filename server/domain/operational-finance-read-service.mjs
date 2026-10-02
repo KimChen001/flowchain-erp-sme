@@ -36,11 +36,18 @@ function actions(actor, capability, row, type) {
       values.push("revise", "submit");
     if (can({ actor, permission: "finance.three_way_match.execute", tenantId: actor.tenantId }) && row.status === "submitted")
       values.push("match");
+    // An exception invoice can be approved only once every match exception
+    // is approved; until then the list must not offer Approve.
     if (
       can({ actor, permission: "finance.supplier_invoice.approve", tenantId: actor.tenantId }) &&
-      ["matched", "exception"].includes(row.status)
+      (row.status === "matched" || (row.status === "exception" && Number(row.blockingExceptionCount || 0) === 0))
     )
       values.push("approve");
+    if (
+      can({ actor, permission: "finance.supplier_invoice.revise", tenantId: actor.tenantId }) &&
+      ["draft", "submitted", "matched", "exception"].includes(row.status)
+    )
+      values.push("cancel");
     return values;
   }
   if (type === "payable") {
@@ -177,8 +184,17 @@ export function createOperationalFinanceReadService({
         take: pageSize,
       }),
     ]);
+    // Open or rejected match exceptions per invoice, which block approval.
+    const exceptionRows = rows.some((row) => row.status === "exception")
+      ? await prisma.financeMatchException.groupBy({
+          by: ["supplierInvoiceId"],
+          where: { supplierInvoiceId: { in: rows.filter((row) => row.status === "exception").map((row) => row.id) }, status: { in: ["open", "rejected"] } },
+          _count: { _all: true },
+        })
+      : [];
+    const blocking = new Map(exceptionRows.map((row) => [row.supplierInvoiceId, row._count._all]));
     return {
-      items: rows.map((row) => invoiceSummary(row, current, capabilities)),
+      items: rows.map((row) => invoiceSummary({ ...row, blockingExceptionCount: blocking.get(row.id) || 0 }, current, capabilities)),
       page,
       pageSize,
       total,

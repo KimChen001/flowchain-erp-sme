@@ -26,6 +26,7 @@ const text = (value) => String(value ?? "").trim();
 const commandPermission = (commandType) => ({
   create_supplier_invoice: "finance.supplier_invoice.create",
   revise_supplier_invoice: "finance.supplier_invoice.revise",
+  cancel_supplier_invoice: "finance.supplier_invoice.revise",
   submit_supplier_invoice: "finance.supplier_invoice.submit",
   match_supplier_invoice: "finance.three_way_match.execute",
   review_match_exception: "finance.match_exception.review",
@@ -709,6 +710,135 @@ export function createOperationalFinanceCommandService({
             before: invoiceResult(current).invoice,
             after: result.invoice,
             evidence: {
+              purchaseOrderId: current.relatedPoId,
+              receivingDocumentId: current.relatedGrnId,
+            },
+          }),
+        });
+        return result;
+      },
+    );
+  }
+
+  // Cancelling takes an invoice out of matching and payment: it is kept on
+  // record with its reason, releases the receipt it held (a cancelled
+  // invoice is not a receipt-holding status), and resolves its open match
+  // exceptions; rejected ones keep the reviewer's decision. An approved
+  // invoice already has a payable obligation and is not cancelled here.
+  const CANCELLABLE_INVOICE_STATUSES = ["draft", "submitted", "matched", "exception"];
+  function cancelIssues(invoice, version, reason) {
+    const issues = [];
+    if (!CANCELLABLE_INVOICE_STATUSES.includes(invoice.status))
+      issues.push({
+        code: "SUPPLIER_INVOICE_STATUS_INVALID",
+        message: "Only a draft, submitted, matched or exception invoice can be cancelled.",
+        status: 409,
+      });
+    if (invoice.version !== version)
+      issues.push({
+        code: "FINANCE_VERSION_CONFLICT",
+        message: "Supplier invoice changed concurrently.",
+        status: 409,
+      });
+    if (!text(reason))
+      issues.push({
+        code: "SUPPLIER_INVOICE_CANCEL_REASON_REQUIRED",
+        message: "Enter why the invoice is cancelled.",
+        status: 422,
+      });
+    return issues;
+  }
+
+  async function previewCancelSupplierInvoice(invoiceId, input, context) {
+    assertEnabled(env);
+    const actor = await resolveProvisionedActor(prisma, assertIdentity(context));
+    assertAuthorized({ actor, permission: "finance.supplier_invoice.revise", tenantId: actor.tenantId });
+    const invoice = await prisma.supplierInvoice.findFirst({
+      where: { id: invoiceId, tenantId: actor.tenantId },
+    });
+    if (!invoice)
+      fail("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404);
+    const version = expectedVersion(input.expectedVersion);
+    const blockingIssues = cancelIssues(invoice, version, input.reason);
+    const exceptions = await prisma.financeMatchException.count({
+      where: { supplierInvoiceId: invoice.id, status: "open" },
+    });
+    return {
+      operation: "cancel_supplier_invoice",
+      allowed: blockingIssues.length === 0,
+      blockingIssues,
+      expectedVersion: version,
+      currentStatus: invoice.status,
+      nextStatus: "cancelled",
+      releasesReceipt: Boolean(invoice.relatedGrnId) && invoice.status !== "draft",
+      closesMatchExceptions: exceptions,
+      factsToCreate: { payableObligations: 0, payments: 0, journalEntries: 0 },
+      paymentExecution: false,
+      ledgerMutation: false,
+    };
+  }
+
+  async function cancelSupplierInvoice(invoiceId, input, context) {
+    const payload = {
+      invoiceId: required(invoiceId, "invoiceId"),
+      expectedVersion: expectedVersion(input.expectedVersion),
+      reason: text(input.reason),
+    };
+    return execute(
+      "cancel_supplier_invoice",
+      input,
+      context,
+      payload,
+      async (tx, actor, normalized, command) => {
+        await lockTenantRow(
+          tx,
+          "SupplierInvoice",
+          actor.tenantId,
+          normalized.invoiceId,
+          "SUPPLIER_INVOICE_NOT_FOUND",
+        );
+        const current = await tx.supplierInvoice.findUnique({
+          where: { id: normalized.invoiceId },
+        });
+        const issues = cancelIssues(current, normalized.expectedVersion, normalized.reason);
+        if (issues.length) fail(issues[0].code, issues[0].message, issues[0].status);
+        // FinanceMatchException.status allows open, approved, rejected and
+        // resolved: an open exception is resolved by the cancellation.
+        const closed = await tx.financeMatchException.updateMany({
+          where: { supplierInvoiceId: current.id, status: "open" },
+          data: {
+            status: "resolved",
+            resolution: `Invoice cancelled: ${normalized.reason}`.slice(0, 500),
+            resolvedAt: now(),
+            resolvedById: actor.user.id,
+            version: { increment: 1 },
+          },
+        });
+        const invoice = await tx.supplierInvoice.update({
+          where: { id: current.id },
+          data: {
+            status: "cancelled",
+            cancelledAt: now(),
+            cancelledById: actor.user.id,
+            cancellationReason: normalized.reason,
+            version: { increment: 1 },
+          },
+        });
+        const result = invoiceResult(invoice);
+        await tx.auditLog.create({
+          data: audit({
+            idFactory,
+            actor,
+            action: "supplier_invoice_cancelled",
+            entityType: result.entityType,
+            entityId: result.entityId,
+            summary: "Supplier invoice cancelled; its receipt is released for a corrected invoice.",
+            ...command,
+            before: invoiceResult(current).invoice,
+            after: result.invoice,
+            evidence: {
+              reason: normalized.reason,
+              closedMatchExceptions: closed.count,
               purchaseOrderId: current.relatedPoId,
               receivingDocumentId: current.relatedGrnId,
             },
@@ -1654,6 +1784,8 @@ export function createOperationalFinanceCommandService({
     reviewMatchException,
     previewApproveSupplierInvoice,
     approveSupplierInvoice,
+    previewCancelSupplierInvoice,
+    cancelSupplierInvoice,
     previewPayableAction,
     holdPayable: (id, input, context) =>
       changePayableStatus("hold", id, input, context),

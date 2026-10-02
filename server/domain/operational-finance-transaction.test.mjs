@@ -801,9 +801,10 @@ test(
       const [index] = await prisma.$queryRawUnsafe(
         `SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'SupplierInvoice_tenant_supplier_number_key'`,
       );
+      // A cancelled invoice keeps its number but no longer reserves it.
       assert.match(
         index?.indexdef || "",
-        /UNIQUE INDEX .*\("tenantId", "supplierId", "invoiceNumber"\) WHERE \("invoiceNumber" IS NOT NULL\)/,
+        /UNIQUE INDEX .*\("tenantId", "supplierId", "invoiceNumber"\) WHERE \(\("invoiceNumber" IS NOT NULL\) AND \(status <> 'cancelled'::text\)\)/,
       );
     } finally {
       await prisma.$disconnect();
