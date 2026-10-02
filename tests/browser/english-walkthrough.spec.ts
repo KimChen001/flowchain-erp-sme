@@ -203,6 +203,24 @@ test("frozen and unavailable modules have no entry point and show Capability una
   await expect(page.locator("aside, nav").first()).not.toContainText(/Settlement|Cashbook|Forecast|MRP|Imports/);
 });
 
+test("an unknown address offers English recovery to the module and to home", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/app/inventory/not-a-real-page");
+  const recovery = page.getByTestId("not-found-recovery");
+  await expect(recovery).toContainText("Page not found");
+  await expect(recovery).toContainText("Inventory has no page at this address.");
+  expect(await settledChineseLines(page)).toEqual([]);
+  await page.getByRole("button", { name: "Go to Inventory" }).click();
+  await expect(page).toHaveURL(/\/app\/inventory\/stock$/);
+  await page.goto("/app/not-a-real-module");
+  await expect(page.getByTestId("not-found-recovery")).toContainText("This link does not exist or has been removed.");
+  await page.getByRole("button", { name: "Go to home" }).click();
+  await expect(page).toHaveURL(/\/app\/overview(\/|$)/);
+  // Under the home module there is one way back, not a second "Go to Home".
+  await page.goto("/app/overview/not-a-real-page");
+  await expect(page.getByTestId("not-found-recovery").getByRole("button")).toHaveText(["Go to home"]);
+});
+
 // The short English check of the walkthrough pages: no Chinese, no stored
 // status or type codes, no raw UUIDs and no unformatted money.
 const RAW_UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
