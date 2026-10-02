@@ -110,6 +110,8 @@ import { useI18n } from "../i18n/I18n";
 import {
   LoginScreen,
   SIGN_IN_CONFIRM_PATH,
+  ACCEPT_INVITATION_PATH,
+  AcceptInvitationScreen,
   SignInConfirmScreen,
   type LocalDevelopmentStatus,
 } from "./SignInScreens";
@@ -1172,6 +1174,11 @@ export default function FlowChainApp() {
         }}
       />
     );
+  }
+
+  // An invitation link lands here, signed in or not.
+  if (location.pathname === ACCEPT_INVITATION_PATH) {
+    return <AcceptInvitationScreen localStatus={localStatus} />;
   }
 
   if (!authToken || !user) {
