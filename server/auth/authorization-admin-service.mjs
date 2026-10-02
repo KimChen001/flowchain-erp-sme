@@ -15,11 +15,18 @@ function audit(actor, action, entityType, entityId, summary, metadata, idFactory
   return { id: idFactory(), tenantId: actor.tenantId, actorId: actor.userId, source: "authorization_governance", module: "settings", action, entityType, entityId, summary, metadata: { actor: { id: actor.userId }, timestamp: new Date().toISOString(), ...metadata } }
 }
 
-async function tenantHasRoleManager(tx, tenantId) {
-  const count = await tx.userRoleAssignment.count({ where: {
-    tenantId, status: "active", user: { status: "active" }, role: { status: "active", permissions: { some: { permissionCode: "settings.roles.manage" } } },
+// The active users who can still manage roles: settings.roles.manage through an
+// active assignment to an active role. Role governance, disabling a member in
+// Settings and the readiness diagnostics all use this one rule.
+export function countActiveRoleManagers(db, tenantId) {
+  return db.user.count({ where: {
+    tenantId, status: "active",
+    roleAssignments: { some: { tenantId, status: "active", role: { status: "active", permissions: { some: { permissionCode: "settings.roles.manage" } } } } },
   } })
-  return count > 0
+}
+
+export async function tenantHasRoleManager(tx, tenantId) {
+  return (await countActiveRoleManagers(tx, tenantId)) > 0
 }
 
 function publicRole(role) {

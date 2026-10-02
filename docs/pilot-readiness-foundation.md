@@ -22,7 +22,7 @@ The JSON runtime is not an authoritative fallback for these Pilot capabilities. 
 5. Provision the initial workspace with `npm run pilot:setup -- --tenant-id=... --workspace-name=... --admin-email=... --admin-name=... --warehouse-code=... --warehouse-name=... --confirm-production=true`.
 6. Run the setup command a second time and confirm it reports existing records without overwriting operator edits.
 7. Start the API, sign in as the provisioned admin and open Pilot Setup Status and Admin Diagnostics.
-8. Assign each non-admin user at least one warehouse read or operate scope before operational use.
+8. Assign each user at least one warehouse read or operate scope before operational use. An administrator's role does not grant warehouse access by itself.
 
 Never put passwords, database URLs, session secrets or invitation tokens in command output, documentation or source control.
 
@@ -40,9 +40,10 @@ Never put passwords, database URLs, session secrets or invitation tokens in comm
 
 ## User and invitation operations
 
-- The database role and tenant win over all client-supplied fields. A role change invalidates the old local session.
+- The database role assignments and tenant win over all client-supplied fields. Roles are assigned in Settings > Users & Roles (Roles & permissions); `PATCH /api/workspace/users/{id}` changes status only and refuses a role change with 422. A role assignment change or a status change invalidates the user's sessions.
 - Disabled or unprovisioned users cannot sign in.
-- The last active admin cannot be disabled or demoted.
+- A user cannot be disabled when that would leave no active user holding `settings.roles.manage`.
+- Creating an invitation needs `settings.roles.assign` as well as `settings.users.manage`, because accepting it assigns the invited role.
 - Invitation tokens are stored only as hashes. The raw invitation path is returned once for manual copy.
 - Pilot does not send invitation email. An administrator must copy the invitation link through an approved channel and can revoke a pending invitation.
 
@@ -67,7 +68,7 @@ Legacy modules that have not moved to the PostgreSQL Pilot boundary may have the
 
 `GET /api/pilot/exports/{receiving_documents|inventory_movements|inventory_balances|import_issues}` returns at most 5000 tenant-scoped rows and declares truncation. Warehouse-bearing datasets honor the caller's read scope.
 
-`GET /api/admin/pilot-diagnostics` is admin-only and read-only. It reports safe readiness signals for migrations, workspace completion, warehouses, active users/admins, missing scopes and import state. It never returns environment values, secrets, invitation tokens or database connection details.
+`GET /api/admin/pilot-diagnostics` requires `settings.diagnostics.read` and is read-only. It reports safe readiness signals for migrations, workspace completion, warehouses, active users and users who can manage roles, users without a warehouse scope, and import state. It never returns environment values, secrets, invitation tokens or database connection details.
 
 ## Verification and rollback
 

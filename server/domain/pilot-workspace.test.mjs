@@ -5,6 +5,8 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { resolve } from 'node:path'
 import { handlePilotWorkspaceRoute } from '../routes/pilot-workspace.routes.mjs'
+import { createAuthorizationAdminService } from '../auth/authorization-admin-service.mjs'
+import { resolveProvisionedActor } from './pilot-identity.mjs'
 import { createReceivingPostingCommandService } from './receiving-posting-command-service.mjs'
 import { createReceivingWorkbenchQueryService } from './receiving-workbench-query-service.mjs'
 import { cleanupReceivingScenario, expectCommandError, seedReceivingScenario, withLiveReceivingDatabase } from './receiving-posting-live-test-helpers.mjs'
@@ -80,6 +82,48 @@ test('Pilot workspace APIs provision users, protect admin actions, and enforce w
       assert.deepEqual([selfDisable.status, selfDisable.payload.code], [409, 'CANNOT_DISABLE_SELF'])
       const disabled = await call(admin, 'PATCH', `/api/workspace/users/${financeAccepted.payload.user.id}`, { status: 'disabled', version: financeAccepted.payload.user.version })
       assert.deepEqual([disabled.status, disabled.payload.status], [200, 'disabled'])
+
+      // The user endpoint changes status only. Roles come from role
+      // assignments, so a legacy role change is refused and nothing is written.
+      const kimBefore = await prisma.user.findUnique({ where: { id: manager.userId } })
+      const roleChange = await call(admin, 'PATCH', `/api/workspace/users/${manager.userId}`, { role: 'admin', status: 'active', version: kimBefore.version })
+      assert.deepEqual([roleChange.status, roleChange.payload.code], [422, 'USER_ROLE_CHANGE_NOT_SUPPORTED'])
+      assert.match(roleChange.payload.message, /Roles & permissions/)
+      const kimAfter = await prisma.user.findUnique({ where: { id: manager.userId } })
+      assert.deepEqual([kimAfter.role, kimAfter.status, kimAfter.version], ['manager', 'active', kimBefore.version])
+      // Status changes still work, also when the current role is sent back unchanged.
+      const enabled = await call(admin, 'PATCH', `/api/workspace/users/${financeAccepted.payload.user.id}`, { role: 'finance-specialist', status: 'active', version: disabled.payload.version })
+      assert.deepEqual([enabled.status, enabled.payload.status, enabled.payload.role], [200, 'active', 'finance-specialist'])
+
+      // Whether a member may be disabled follows role assignments too. Kim
+      // keeps the legacy manager role but is made Workspace Administrator.
+      const governance = createAuthorizationAdminService({ prisma })
+      const tenantRoles = await prisma.tenantRole.findMany({ where: { tenantId: scenario.tenantId } })
+      const administratorRole = tenantRoles.find(role => role.roleKey === 'workspace-administrator')
+      await governance.assignUserRoles(await resolveProvisionedActor(prisma, admin), manager.userId, [administratorRole.id])
+      // So Kim may disable the only legacy admin: Kim can still manage roles.
+      const adminRow = await prisma.user.findUnique({ where: { id: admin.userId } })
+      const adminDisabled = await call(manager, 'PATCH', `/api/workspace/users/${admin.userId}`, { status: 'disabled', version: adminRow.version })
+      assert.deepEqual([adminDisabled.status, adminDisabled.payload.status], [200, 'disabled'])
+      // A user administrator who may disable members but not manage roles
+      // cannot disable Kim, the last active user who can manage roles.
+      const kimActor = await resolveProvisionedActor(prisma, manager)
+      const userAdministrator = await governance.createRole(kimActor, { name: 'User Administrator', permissionCodes: ['settings.users.read', 'settings.users.manage'] })
+      await governance.assignUserRoles(kimActor, viewer.userId, [userAdministrator.id])
+      const kimRow = await prisma.user.findUnique({ where: { id: manager.userId } })
+      const lastManager = await call(noScopeManager, 'PATCH', `/api/workspace/users/${manager.userId}`, { status: 'disabled', version: kimRow.version })
+      assert.deepEqual([lastManager.status, lastManager.payload.code], [409, 'AUTHORIZATION_LAST_ROLES_MANAGER'])
+      const kimKept = await prisma.user.findUnique({ where: { id: manager.userId } })
+      assert.deepEqual([kimKept.status, kimKept.version], ['active', kimRow.version])
+      // Once another role manager is active again, Kim can be disabled.
+      const adminEnabled = await call(noScopeManager, 'PATCH', `/api/workspace/users/${admin.userId}`, { status: 'active', version: adminDisabled.payload.version })
+      assert.deepEqual([adminEnabled.status, adminEnabled.payload.status], [200, 'active'])
+      const kimDisabled = await call(noScopeManager, 'PATCH', `/api/workspace/users/${manager.userId}`, { status: 'disabled', version: kimRow.version })
+      assert.deepEqual([kimDisabled.status, kimDisabled.payload.status], [200, 'disabled'])
+      // Inviting assigns the invited role on acceptance, so it needs
+      // settings.roles.assign as well as settings.users.manage.
+      const userAdminInvite = await call(noScopeManager, 'POST', '/api/workspace/invitations', { email: 'second.admin@example.com', role: 'admin' })
+      assert.deepEqual([userAdminInvite.status, userAdminInvite.payload.code], [403, 'AUTHORIZATION_PERMISSION_DENIED'])
 
       const setupTenantId = `setup-${randomUUID()}`
       const setupScript = resolve('scripts/setup-pilot-workspace.mjs')
