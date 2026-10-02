@@ -678,7 +678,6 @@ test(
         excessiveCredit.blockingIssues[0].code,
         "SUPPLIER_CREDIT_QUANTITY_EXCEEDED",
       );
-
       assert.deepEqual(
         {
           balances: await prisma.inventoryBalance.count(),
@@ -805,6 +804,211 @@ test(
       assert.match(
         index?.indexdef || "",
         /UNIQUE INDEX .*\("tenantId", "supplierId", "invoiceNumber"\) WHERE \(\("invoiceNumber" IS NOT NULL\) AND \(status <> 'cancelled'::text\)\)/,
+      );
+    } finally {
+      await prisma.$disconnect();
+    }
+  },
+);
+
+test(
+  "suppliers that share an invoice number each get their own payable number",
+  { skip: !enabled },
+  async () => {
+    const prisma = await createPrismaClient(env);
+    try {
+      const payableTenantId = "tenant-operational-finance-payable-number";
+      const clerkId = "clerk-operational-finance-payable-number";
+      const approverId = "manager-operational-finance-payable-number";
+      const clerk = {
+        identity: identity(clerkId, "business-specialist", payableTenantId),
+      };
+      const approver = {
+        identity: identity(approverId, "manager", payableTenantId),
+      };
+      await prisma.tenant.create({
+        data: { id: payableTenantId, name: "Payable Number Per Supplier" },
+      });
+      await prisma.user.createMany({
+        data: [
+          { id: clerkId, tenantId: payableTenantId, email: "clerk-payable-number@flowchain.invalid", name: "Payable Clerk", role: "business-specialist" },
+          { id: approverId, tenantId: payableTenantId, email: "manager-payable-number@flowchain.invalid", name: "Payable Approver", role: "manager" },
+        ],
+      });
+      const suppliers = ["A", "B", "C", "D", "E", "F"];
+      await prisma.supplier.createMany({
+        data: suppliers.map((key) => ({
+          id: `supplier-payable-number-${key}`,
+          tenantId: payableTenantId,
+          code: `SUP-PAY-${key}`,
+          name: `Payable Supplier ${key}`,
+        })),
+      });
+      const sources = {};
+      for (const key of suppliers)
+        sources[key] = await source(prisma, `PAYABLE-${key}`, {
+          tenant: payableTenantId,
+          supplierId: `supplier-payable-number-${key}`,
+          supplierName: `Payable Supplier ${key}`,
+        });
+      const command = createOperationalFinanceCommandService({ prisma, env });
+      // Received facts come from source(); this records, submits and matches
+      // an invoice against them so it is ready for approval.
+      const matchedInvoice = async (key, invoiceNumber) => {
+        const label = `payable-${key}-${invoiceNumber}`;
+        const created = await command.createSupplierInvoice(
+          { ...invoicePayload(sources[key], label, { invoiceNumber }), idempotencyKey: `create-${label}` },
+          clerk,
+        );
+        await command.submitSupplierInvoice(
+          created.entityId,
+          { expectedVersion: 0, idempotencyKey: `submit-${label}` },
+          clerk,
+        );
+        const matched = await command.matchSupplierInvoice(
+          created.entityId,
+          { expectedVersion: 1, idempotencyKey: `match-${label}` },
+          clerk,
+        );
+        assert.equal(matched.invoice.status, "matched");
+        return created.entityId;
+      };
+      const approve = (invoiceId, idempotencyKey, extra = {}) =>
+        command.approveSupplierInvoice(
+          invoiceId,
+          { expectedVersion: 2, idempotencyKey, ...extra },
+          approver,
+        );
+      // The preview names the number the approval will record.
+      const previewThenApprove = async (invoiceId, idempotencyKey) => {
+        const preview = await command.previewApproveSupplierInvoice(
+          invoiceId,
+          { expectedVersion: 2 },
+          approver,
+        );
+        assert.equal(preview.allowed, true);
+        const approved = await approve(invoiceId, idempotencyKey);
+        assert.equal(approved.payable.obligationNumber, preview.after.obligationNumber);
+        return approved.payable.obligationNumber;
+      };
+
+      const fromA = await matchedInvoice("A", "1001");
+      const fromB = await matchedInvoice("B", "1001");
+      assert.equal(await previewThenApprove(fromA, "approve-payable-A"), "AP-1001");
+      assert.equal(await previewThenApprove(fromB, "approve-payable-B"), "AP-SUP-PAY-B-1001");
+      const replay = await approve(fromB, "approve-payable-B");
+      assert.equal(replay.idempotentReplay, true);
+      assert.equal(replay.payable.obligationNumber, "AP-SUP-PAY-B-1001");
+
+      // A number typed in by hand already holds supplier C's qualified number,
+      // so C's invoice 1001 counts up instead.
+      const typedForC = await matchedInvoice("C", "2001");
+      assert.equal(
+        (await approve(typedForC, "approve-payable-C-typed", { obligationNumber: "AP-SUP-PAY-C-1001" })).payable.obligationNumber,
+        "AP-SUP-PAY-C-1001",
+      );
+      const fromC = await matchedInvoice("C", "1001");
+      assert.equal(await previewThenApprove(fromC, "approve-payable-C"), "AP-SUP-PAY-C-1001-2");
+
+      // A typed number that is already used is refused with its number, in
+      // the preview and by the approval, and records nothing.
+      const typedDuplicate = await matchedInvoice("D", "4001");
+      const duplicatePreview = await command.previewApproveSupplierInvoice(
+        typedDuplicate,
+        { expectedVersion: 2, obligationNumber: "AP-1001" },
+        approver,
+      );
+      assert.equal(duplicatePreview.allowed, false);
+      assert.equal(duplicatePreview.blockingIssues[0].code, "PAYABLE_OBLIGATION_NUMBER_DUPLICATE");
+      await assert.rejects(
+        approve(typedDuplicate, "approve-payable-D-duplicate", { obligationNumber: "AP-1001" }),
+        (error) =>
+          error instanceof OperationalFinanceError &&
+          error.status === 409 &&
+          error.code === "PAYABLE_OBLIGATION_NUMBER_DUPLICATE" &&
+          error.message.includes("AP-1001"),
+      );
+      assert.equal(
+        (await prisma.supplierInvoice.findUnique({ where: { id: typedDuplicate } })).status,
+        "matched",
+      );
+      assert.equal(await prisma.payableObligation.count({ where: { supplierInvoiceId: typedDuplicate } }), 0);
+
+      // Two approvals racing for the same free number: either both land on
+      // distinct numbers, or the loser gets a retryable 409 and a retry
+      // assigns the next free number.
+      const racing = [await matchedInvoice("E", "5001"), await matchedInvoice("F", "5001")];
+      const settled = await Promise.allSettled(
+        racing.map((invoiceId, index) => approve(invoiceId, `approve-payable-race-${index}`)),
+      );
+      for (const [index, entry] of settled.entries()) {
+        if (entry.status === "fulfilled") continue;
+        const loser = entry.reason;
+        assert.ok(
+          loser instanceof OperationalFinanceError &&
+            loser.status === 409 &&
+            ["PAYABLE_OBLIGATION_NUMBER_CONFLICT", "FINANCE_CONCURRENCY_CONFLICT"].includes(loser.code),
+          `unexpected concurrent approval outcome: ${loser?.status} ${loser?.code} ${loser?.message}`,
+        );
+        await approve(racing[index], `approve-payable-race-${index}-retry`);
+      }
+      const raced = (
+        await prisma.payableObligation.findMany({
+          where: { supplierInvoiceId: { in: racing } },
+          select: { obligationNumber: true },
+        })
+      ).map((row) => row.obligationNumber).sort();
+      assert.equal(raced.length, 2);
+      assert.equal(raced[0], "AP-5001");
+      assert.match(raced[1], /^AP-SUP-PAY-[EF]-5001$/);
+
+      // The unique index is the last guard. Hide taken numbers from the
+      // in-transaction lookup so a taken number reaches the insert, as it
+      // would if another approval committed it in between.
+      const bound = (target, key) => {
+        const entry = Reflect.get(target, key);
+        return typeof entry === "function" ? entry.bind(target) : entry;
+      };
+      const blindTx = (tx) =>
+        new Proxy(tx, {
+          get: (target, key) =>
+            key === "payableObligation"
+              ? new Proxy(target.payableObligation, {
+                  get: (delegate, method) =>
+                    method === "findMany" ? async () => [] : bound(delegate, method),
+                })
+              : bound(target, key),
+        });
+      const blindCommand = createOperationalFinanceCommandService({
+        prisma: new Proxy(prisma, {
+          get: (target, key) =>
+            key === "$transaction"
+              ? (work, options) => target.$transaction((tx) => work(blindTx(tx)), options)
+              : bound(target, key),
+        }),
+        env,
+      });
+      const guarded = await matchedInvoice("D", "1001");
+      await assert.rejects(
+        blindCommand.approveSupplierInvoice(
+          guarded,
+          { expectedVersion: 2, idempotencyKey: "approve-payable-D-guarded" },
+          approver,
+        ),
+        (error) =>
+          error instanceof OperationalFinanceError &&
+          error.status === 409 &&
+          error.code === "PAYABLE_OBLIGATION_NUMBER_CONFLICT" &&
+          error.details?.retryable === true &&
+          error.message.includes("AP-1001"),
+      );
+      assert.equal(
+        (await prisma.supplierInvoice.findUnique({ where: { id: guarded } })).status,
+        "matched",
+      );
+      assert.equal(
+        (await approve(guarded, "approve-payable-D-guarded")).payable.obligationNumber,
+        "AP-SUP-PAY-D-1001",
       );
     } finally {
       await prisma.$disconnect();

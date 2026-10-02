@@ -53,6 +53,17 @@ Supplier credit memos require a non-reversed posted
 `supplier_return_dispatch` and an original supplier invoice line. Pricing is
 either the original invoice price or a manager-reviewed explicit amount.
 
+## Numbering
+
+Supplier invoice numbers are unique per supplier, while payable numbers are
+unique per workspace. Approval assigns `AP-{invoice number}` while it is free,
+`AP-{supplier code}-{invoice number}` when another supplier already holds it,
+and then `-2`, `-3` and so on. The approval preview shows the number the
+approval will record. A typed `obligationNumber` is kept as entered, and one
+that is already used is refused with `PAYABLE_OBLIGATION_NUMBER_DUPLICATE`
+(409). Two approvals racing for the same number end with a retryable 409 for
+the loser; running it again assigns the next free number.
+
 ## Explicit exclusions
 
 Phase 5A creates no bank payment, check, ACH, payment batch, bank

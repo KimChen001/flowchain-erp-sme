@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { assertAuthorized } from "../auth/authorization-service.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
+import { isPrismaConcurrencyError } from "./prisma-concurrency-error.mjs";
 import {
   buildSupplierCreditMemoPlan,
   buildSupplierInvoicePlan,
@@ -285,25 +286,90 @@ function supplierInvoiceLineData(line, idFactory) {
   };
 }
 
+// A serializable conflict raised by a raw row lock arrives as P2010 carrying
+// SQLSTATE 40001 rather than as P2034, for example when two approvals race
+// for the same payable number; the shared helper reads both shapes.
 const isConcurrency = (error) =>
-  error?.code === "P2034" ||
+  isPrismaConcurrencyError(error) ||
   /serialization|deadlock|write conflict/i.test(text(error?.message));
 
-// Supplier invoice numbers are unique per tenant and supplier through the
-// hand-written partial index SupplierInvoice_tenant_supplier_number_key, which
-// schema.prisma cannot declare, so read the violated fields from the driver.
-function isSupplierInvoiceNumberConflict(error) {
+// Reads which unique fields a P2002 violated. The driver adapter reports them
+// on the constraint, while older engines put them in meta.target.
+function isUniqueConflictOn(error, modelName, field) {
   const fields =
     error?.meta?.driverAdapterError?.cause?.constraint?.fields ??
     error?.meta?.target ??
     [];
   return (
-    error?.meta?.modelName === "SupplierInvoice" &&
+    error?.code === "P2002" &&
+    error?.meta?.modelName === modelName &&
     (Array.isArray(fields) ? fields : [fields]).some(
-      (field) => text(field).replaceAll('"', "") === "invoiceNumber",
+      (entry) => text(entry).replaceAll('"', "") === field,
     )
   );
 }
+
+// Supplier invoice numbers are unique per tenant and supplier through the
+// hand-written partial index SupplierInvoice_tenant_supplier_number_key, which
+// schema.prisma cannot declare, so read the violated fields from the driver.
+const isSupplierInvoiceNumberConflict = (error) =>
+  isUniqueConflictOn(error, "SupplierInvoice", "invoiceNumber");
+
+// Payable numbers are unique per workspace, but a supplier invoice number is
+// only unique per supplier, so two suppliers can both send invoice 1001. Keep
+// the short AP-{invoice} number while it is free, qualify it with the
+// supplier code once another supplier holds it, and count up from -2 when
+// even that is taken (for example by a number someone typed in by hand).
+// The preview and the approval both call this, the approval inside its
+// transaction; the unique index stays the final guard against a race.
+async function nextPayableNumber(db, tenantId, invoice) {
+  const invoiceNumber = text(invoice.invoiceNumber) || invoice.id;
+  const supplier = text(invoice.supplierId)
+    ? await db.supplier.findFirst({
+        where: { tenantId, id: invoice.supplierId },
+        select: { code: true },
+      })
+    : null;
+  const supplierCode =
+    text(supplier?.code) ||
+    text(invoice.supplierSnapshot?.code) ||
+    text(invoice.supplierId);
+  const short = `AP-${invoiceNumber}`;
+  const qualified = supplierCode ? `AP-${supplierCode}-${invoiceNumber}` : short;
+  // A prefix match can return extra rows; only exact numbers count as taken.
+  const rows = await db.payableObligation.findMany({
+    where: {
+      tenantId,
+      OR: [
+        { obligationNumber: short },
+        { obligationNumber: { startsWith: qualified } },
+      ],
+    },
+    select: { obligationNumber: true },
+  });
+  const taken = new Set(rows.map((row) => row.obligationNumber));
+  if (!taken.has(short)) return short;
+  if (!taken.has(qualified)) return qualified;
+  let suffix = 2;
+  while (taken.has(`${qualified}-${suffix}`)) suffix += 1;
+  return `${qualified}-${suffix}`;
+}
+
+async function payableNumberTaken(db, tenantId, obligationNumber) {
+  return Boolean(
+    await db.payableObligation.findUnique({
+      where: { tenantId_obligationNumber: { tenantId, obligationNumber } },
+      select: { id: true },
+    }),
+  );
+}
+
+const payableNumberDuplicate = (obligationNumber) => ({
+  code: "PAYABLE_OBLIGATION_NUMBER_DUPLICATE",
+  message: `Payable number ${obligationNumber} is already used in this workspace. Enter a different number, or leave it blank to have one assigned.`,
+  status: 409,
+  details: { obligationNumber },
+});
 
 export function createOperationalFinanceCommandService({
   prisma,
@@ -372,7 +438,7 @@ export function createOperationalFinanceCommandService({
       );
     } catch (error) {
       if (error instanceof OperationalFinanceError) throw error;
-      if (error?.code === "P2002" && isSupplierInvoiceNumberConflict(error))
+      if (isSupplierInvoiceNumberConflict(error))
         fail(
           "SUPPLIER_INVOICE_NUMBER_DUPLICATE",
           `Invoice number ${payload.invoiceNumber} is already recorded for this supplier.`,
@@ -1218,6 +1284,9 @@ export function createOperationalFinanceCommandService({
         message: "This supplier invoice already has a payable obligation.",
         status: 409,
       });
+    const typedNumber = text(input.obligationNumber);
+    if (typedNumber && (await payableNumberTaken(prisma, actor.tenantId, typedNumber)))
+      blockingIssues.push(payableNumberDuplicate(typedNumber));
     return {
       operation: "approve_supplier_invoice",
       allowed: blockingIssues.length === 0,
@@ -1227,7 +1296,7 @@ export function createOperationalFinanceCommandService({
         invoiceStatus: "approved",
         payableStatus: "approved",
         obligationNumber:
-          text(input.obligationNumber) || `AP-${invoice.invoiceNumber}`,
+          typedNumber || (await nextPayableNumber(prisma, actor.tenantId, invoice)),
         originalAmount: String(invoice.totalAmount ?? invoice.amount),
         outstandingAmount: String(invoice.totalAmount ?? invoice.amount),
         currency: invoice.currency,
@@ -1289,6 +1358,13 @@ export function createOperationalFinanceCommandService({
             "Every line-level match exception must be approved before invoice approval.",
             409,
           );
+        const typedNumber = normalized.obligationNumber;
+        if (typedNumber && (await payableNumberTaken(tx, actor.tenantId, typedNumber))) {
+          const duplicate = payableNumberDuplicate(typedNumber);
+          fail(duplicate.code, duplicate.message, duplicate.status, duplicate.details);
+        }
+        const obligationNumber =
+          typedNumber || (await nextPayableNumber(tx, actor.tenantId, current));
         const invoice = await tx.supplierInvoice.update({
           where: { id: current.id },
           data: {
@@ -1298,22 +1374,40 @@ export function createOperationalFinanceCommandService({
             version: { increment: 1 },
           },
         });
-        const payable = await tx.payableObligation.create({
-          data: {
-            id: idFactory(),
-            tenantId: actor.tenantId,
-            supplierInvoiceId: current.id,
-            obligationNumber:
-              normalized.obligationNumber || `AP-${current.invoiceNumber}`,
-            originalAmount: current.totalAmount ?? current.amount,
-            outstandingAmount: current.totalAmount ?? current.amount,
-            currency: current.currency,
-            dueDate: current.dueDate,
-            status: "approved",
-            approvedAt: now(),
-            approvedById: actor.user.id,
-          },
-        });
+        let payable;
+        try {
+          payable = await tx.payableObligation.create({
+            data: {
+              id: idFactory(),
+              tenantId: actor.tenantId,
+              supplierInvoiceId: current.id,
+              obligationNumber,
+              originalAmount: current.totalAmount ?? current.amount,
+              outstandingAmount: current.totalAmount ?? current.amount,
+              currency: current.currency,
+              dueDate: current.dueDate,
+              status: "approved",
+              approvedAt: now(),
+              approvedById: actor.user.id,
+            },
+          });
+        } catch (error) {
+          if (!isUniqueConflictOn(error, "PayableObligation", "obligationNumber"))
+            throw error;
+          // Another approval committed the same number after it was checked
+          // above. A typed number is a real duplicate; an assigned one only
+          // needs the approval run again to pick the next free number.
+          if (typedNumber) {
+            const duplicate = payableNumberDuplicate(typedNumber);
+            fail(duplicate.code, duplicate.message, duplicate.status, duplicate.details);
+          }
+          fail(
+            "PAYABLE_OBLIGATION_NUMBER_CONFLICT",
+            `Payable number ${obligationNumber} was taken by another approval at the same time. Retry the approval to assign the next free number.`,
+            409,
+            { obligationNumber, retryable: true },
+          );
+        }
         const result = {
           ...invoiceResult(invoice),
           payable: payableResult(payable).payable,
