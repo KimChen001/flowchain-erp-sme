@@ -57,6 +57,8 @@ export default function MasterDataPage({
   const [masterData, setMasterData] = useState<MasterDataSnapshot>(emptyMasterData);
   const [loadStatus, setLoadStatus] = useState<AsyncDataStatus>("loading");
   const [templateCatalog, setTemplateCatalog] = useState<PrintTemplateCatalogItem[]>(PRINT_TEMPLATE_CATALOG);
+  // Bumped after a customer is created or changed, to read the data again.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     setTab(initialView);
@@ -85,7 +87,7 @@ export default function MasterDataPage({
       })
       .catch((error) => { if (alive) { setMasterData(emptyMasterData); setLoadStatus(masterDataErrorStatus(error)); } });
     return () => { alive = false; };
-  }, []);
+  }, [reloadKey]);
 
   const query = search.trim().toLowerCase();
   const matches = (values: unknown[]) => !query || values.some((value) => String(value || "").toLowerCase().includes(query));
@@ -141,7 +143,7 @@ export default function MasterDataPage({
         {tab === "items" || tab === "overview" || tab === "suppliers" ? (
           <ItemMasterWorkbench focus={focus} onNavigate={onNavigate} />
         ) : tab === "customers" ? (
-          <CustomerTable customers={filteredCustomers} />
+          <CustomerTable customers={filteredCustomers} onChanged={() => setReloadKey((key) => key + 1)} />
         ) : tab === "print-templates" ? (
           <PrintTemplateTable templates={filteredTemplates} onCopy={(item) => setTemplateCatalog((current) => [...current, { ...item, id: `${item.id}-copy-${Date.now()}`, copyOf: item.copyOf || item.name, isDefault: false, updatedAt: new Date().toISOString() }])} />
         ) : (

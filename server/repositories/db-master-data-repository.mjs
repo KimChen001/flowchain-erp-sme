@@ -1,6 +1,7 @@
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
+import { CUSTOMER_NAMESPACE, listItemSupplierRecords, mapItemSupplierRecord, saveCustomerMaster, saveItemMaster, saveItemSupplier } from '../domain/master-data-commands.mjs'
 import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
 
 function requireDatabaseConfig(env = process.env) {
@@ -61,7 +62,8 @@ function mapItem(record = {}) {
     baseUom: baseUnit,
     baseUnit,
     purchaseUnit: text(meta.purchaseUnit, baseUnit),
-    defaultWarehouseId: meta.defaultWarehouseId || meta.warehouseId || 'WH-MAIN',
+    // Only a warehouse someone set: drafts and data-quality checks rely on it.
+    defaultWarehouseId: meta.defaultWarehouseId || meta.warehouseId || '',
     preferredSupplierId: record.preferredSupplierId || meta.preferredSupplierId || '',
     defaultSupplierId: record.preferredSupplierId || meta.preferredSupplierId || '',
     preferredSupplierSource: record.preferredSupplierId ? 'matched_supplier_master' : meta.preferredSupplierSource || 'missing',
@@ -181,6 +183,7 @@ function mapCustomer(record = {}) {
     address: text(payload.address),
     paymentTerms: text(payload.paymentTerms),
     creditStatus: text(payload.creditStatus),
+    version: Number(payload.version || 1),
     sourceType: 'database',
   }
 }
@@ -201,6 +204,21 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
     adapter: 'db-master-data-v1',
     createSupplier: async (input, actorId, scope) => mapSupplier(await saveSupplierMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope)),
     updateSupplier: async (id, input, actorId, scope) => mapSupplier(await saveSupplierMaster(await resolvePrisma({ env, prisma }), id, input, actorId, scope)),
+    createItem: async (input, actorId, scope) => mapItem(await saveItemMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope)),
+    updateItem: async (id, input, actorId, scope) => mapItem(await saveItemMaster(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope)),
+    createCustomer: async (input, actorId, scope) => mapCustomer(await saveCustomerMaster(await resolvePrisma({ env, prisma }), null, input, actorId, scope)),
+    updateCustomer: async (id, input, actorId, scope) => mapCustomer(await saveCustomerMaster(await resolvePrisma({ env, prisma }), decodeURIComponent(String(id || '')), input, actorId, scope)),
+    createItemSupplier: async (itemId, input, actorId, scope) => saveItemSupplier(await resolvePrisma({ env, prisma }), itemId, null, input, actorId, scope),
+    updateItemSupplier: async (itemId, relationshipId, input, actorId, scope) => saveItemSupplier(await resolvePrisma({ env, prisma }), itemId, relationshipId, input, actorId, scope),
+    // The items a supplier is linked to, with each item's SKU and name.
+    listSupplierItems: async (supplierId = '', options = {}) => {
+      const client = await resolvePrisma({ env, prisma })
+      const where = tenantWhere(options)
+      const rows = await listItemSupplierRecords(client, where.tenantId, { supplierId: text(supplierId) })
+      const items = rows.length ? await client.item.findMany({ where: { ...where, id: { in: rows.map((row) => text(row.payload?.itemId)) } } }) : []
+      const byId = new Map(items.map((item) => [item.id, item]))
+      return rows.map((row) => mapItemSupplierRecord(row, byId.get(text(row.payload?.itemId)) || null))
+    },
     listItems: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const records = await findManyWithinLimit(client.item, {
@@ -243,7 +261,7 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
         orderBy: [{ recordKey: 'asc' }],
         take: safeLimit(filters.limit),
       })
-      return records.map(mapCustomer).filter((customer) =>
+      return records.filter((record) => record.namespace === undefined || record.namespace === CUSTOMER_NAMESPACE).map(mapCustomer).filter((customer) =>
         (!query || [customer.id, customer.code, customer.name].some(value => lower(value).includes(query)))
         && (!text(filters.status) || customer.status === text(filters.status)),
       )
@@ -264,9 +282,10 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const record = records.find((supplier) => supplierMatches(supplier, key))
       return record ? mapSupplier(record) : null
     },
-    // PostgreSQL has no item-supplier relationship table yet. An item's
-    // approved purchasing source is its preferred supplier, when that supplier
-    // is an active supplier of the same workspace.
+    // An item's approved purchasing sources: its active, approved
+    // item-supplier relationships, plus its preferred supplier when no
+    // relationship records that supplier, each only while the supplier is
+    // active in the same workspace. The preferred source comes first.
     approvedSuppliersForItem: async (idOrSku = '', options = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const key = text(decodeURIComponent(String(idOrSku || '')))
@@ -274,23 +293,50 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const where = tenantWhere(options)
       const items = await client.item.findMany({ where, take: safeLimit(options.limit, 500) })
       const item = items.find((row) => itemMatches(row, key))
-      if (!item?.preferredSupplierId) return []
-      const supplier = await client.supplier.findFirst({ where: { ...where, id: item.preferredSupplierId } })
-      if (!supplier || lower(supplier.status || 'active') !== 'active') return []
+      if (!item) return []
       const itemMeta = metadata(item)
-      const supplierMeta = metadata(supplier)
-      const referencePrice = itemMeta.referencePrice ?? itemMeta.purchasePrice ?? null
-      return [{
-        ...mapSupplier(supplier),
-        preferred: true,
-        referencePrice: referencePrice === null || referencePrice === '' ? null : String(referencePrice),
-        // Only a currency someone recorded; never a guess.
-        currency: text(itemMeta.purchaseCurrency || supplierMeta.defaultCurrency || supplierMeta.currency) || null,
-      }]
+      const relationships = (await listItemSupplierRecords(client, where.tenantId, { itemId: item.id })).map((row) => mapItemSupplierRecord(row))
+      const sources = relationships.filter((row) => row.active && row.approved)
+      if (item.preferredSupplierId && !relationships.some((row) => row.supplierId === item.preferredSupplierId)) {
+        const legacyPrice = itemMeta.referencePrice ?? itemMeta.purchasePrice ?? null
+        sources.push({ supplierId: item.preferredSupplierId, preferred: true, referencePrice: legacyPrice === null || legacyPrice === '' ? null : Number(legacyPrice), currency: text(itemMeta.purchaseCurrency) })
+      }
+      if (!sources.length) return []
+      const suppliers = await client.supplier.findMany({ where: { ...where, id: { in: sources.map((row) => row.supplierId) } } })
+      const byId = new Map(suppliers.map((row) => [row.id, row]))
+      return sources
+        .map((source) => ({ source, supplier: byId.get(source.supplierId) }))
+        .filter(({ supplier }) => supplier && lower(supplier.status || 'active') === 'active')
+        .sort((a, b) => Number(Boolean(b.source.preferred || b.supplier.id === item.preferredSupplierId)) - Number(Boolean(a.source.preferred || a.supplier.id === item.preferredSupplierId)))
+        .map(({ source, supplier }) => {
+          const supplierMeta = metadata(supplier)
+          return {
+            ...mapSupplier(supplier),
+            preferred: Boolean(source.preferred) || supplier.id === item.preferredSupplierId,
+            referencePrice: source.referencePrice === null || source.referencePrice === undefined ? null : String(source.referencePrice),
+            // Only a currency someone recorded; never a guess.
+            currency: text(source.currency || supplierMeta.defaultCurrency || supplierMeta.currency) || null,
+            leadTimeDays: source.leadTimeDays ?? null,
+            minimumOrderQuantity: source.minimumOrderQuantity ?? null,
+          }
+        })
     },
     listItemSuppliers: async (idOrSku = '', options = {}) => {
-      const suppliers = await createDbMasterDataRepository({ env, prisma }).approvedSuppliersForItem(idOrSku, options)
-      return suppliers.map((supplier) => ({ supplierId: supplier.id, supplierName: supplier.name, status: 'approved', preferred: true, source: 'item_preferred_supplier' }))
+      const client = await resolvePrisma({ env, prisma })
+      const where = tenantWhere(options)
+      const key = text(decodeURIComponent(String(idOrSku || '')))
+      const items = key ? await client.item.findMany({ where, take: safeLimit(options.limit, 500) }) : []
+      const item = items.find((row) => itemMatches(row, key))
+      if (!item) return []
+      const rows = (await listItemSupplierRecords(client, where.tenantId, { itemId: item.id })).map((row) => mapItemSupplierRecord(row))
+      const suppliers = rows.length ? await client.supplier.findMany({ where: { ...where, id: { in: rows.map((row) => row.supplierId) } } }) : []
+      const names = new Map(suppliers.map((row) => [row.id, row.name]))
+      const listed = rows.map((row) => ({ ...row, supplierName: names.get(row.supplierId) || '', status: row.active && row.approved ? 'approved' : 'inactive' }))
+      if (item.preferredSupplierId && !rows.some((row) => row.supplierId === item.preferredSupplierId)) {
+        const supplier = await client.supplier.findFirst({ where: { ...where, id: item.preferredSupplierId } })
+        if (supplier) listed.unshift({ supplierId: supplier.id, supplierName: supplier.name, status: 'approved', preferred: true, source: 'item_preferred_supplier' })
+      }
+      return listed
     },
     listWarehouses: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })

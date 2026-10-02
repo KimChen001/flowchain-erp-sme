@@ -285,6 +285,10 @@ function creditStatus(value: unknown): CustomerMaster["creditStatus"] {
 
 export function normalizeCustomerRows(apiCustomers: ApiCustomer[] | undefined): CustomerMaster[] {
   return (apiCustomers || []).map((customer, index) => ({
+    id: text(customer.id),
+    version: Number(customer.version || 1),
+    currency: text(customer.currency),
+    email: text(customer.email),
     code: text(customer.code, `CUS-${index + 1}`),
     name: text(customer.name, text(customer.code)),
     contact: text(customer.contact),
