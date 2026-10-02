@@ -393,11 +393,13 @@ export async function buildSupplierMatchPlan({
     return basePlan("supplier_invoice_match", [
       issue("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404),
     ]);
-  if (!["submitted", "matching", "exception"].includes(invoice.status))
+  // The same rule as the match command: only a submitted invoice starts a
+  // match run. An exception invoice is cancelled and entered again instead.
+  if (invoice.status !== "submitted")
     blockingIssues.push(
       issue(
         "SUPPLIER_INVOICE_STATUS_INVALID",
-        "Only a submitted or exception invoice can be matched.",
+        "Only a submitted supplier invoice can start a match run.",
         409,
       ),
     );

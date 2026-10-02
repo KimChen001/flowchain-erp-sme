@@ -55,6 +55,7 @@ const tokenKeys: Record<string, TranslationKey> = {
   submit: "finance.action.submit",
   match: "finance.action.match",
   approve: "finance.action.approve",
+  cancel: "finance.action.cancel",
   hold: "finance.action.hold",
   mark_export_ready: "finance.action.mark_export_ready",
   release: "finance.action.release",
