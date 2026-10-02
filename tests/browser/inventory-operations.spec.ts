@@ -58,8 +58,9 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
       .getByTestId("operation-movement-stock_transfer_in")
       .filter({ hasText: "入 3.0000" }),
   ).toHaveCount(1);
+  // The stored "matched" status is shown as its label.
   await expect(page.getByTestId("inventory-reconciliation")).toContainText(
-    "matched",
+    "对账：已匹配",
   );
   let balances = await request.get(
     "/api/inventory/balances?sku=INV-BROWSER-SKU",

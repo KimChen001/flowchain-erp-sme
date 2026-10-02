@@ -176,7 +176,8 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();
   const salesLine = page.getByRole("row").filter({ hasText: "LDM-001" });
   await expect(salesLine).toContainText("Flow Controller");
-  await expect(salesLine).toContainText("35.0000");
+  // Ordered quantity, shown without the stored fixed scale ("35.0000").
+  await expect(salesLine.getByRole("cell").nth(1)).toHaveText("35");
   await capture(page, "06-sales-order-detail");
 
   await page.goto("/app/sales/orders/new");

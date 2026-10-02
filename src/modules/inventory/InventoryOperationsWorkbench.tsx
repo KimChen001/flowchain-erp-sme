@@ -5,6 +5,7 @@ import { A, Card, Chip } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
 
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
+import { useInventoryOperationsCopy } from "./inventoryOperationsCopy";
 type Capability = { enabled: boolean; maturity?: string };
 type Entry = {
   capabilities: Record<string, Capability>;
@@ -57,9 +58,10 @@ const enabled = (entry: Entry | null) =>
   );
 
 function Status({ value }: { value: string }) {
+  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   return (
     <Chip
-      label={value}
+      label={inventoryCodeLabel(value)}
       color={
         value === "posted" || value === "ready"
           ? A.green
@@ -73,6 +75,7 @@ function Status({ value }: { value: string }) {
 }
 
 export default function InventoryOperationsWorkbench() {
+  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   const location = useLocation(),
     navigate = useNavigate();
   const [entry, setEntry] = useState<Entry | null>(null),
@@ -83,7 +86,7 @@ export default function InventoryOperationsWorkbench() {
       .then(setEntry)
       .catch((reason) =>
         setError(
-          reason instanceof Error ? reason.message : "库存操作入口读取失败",
+          reason instanceof Error ? reason.message : copy("库存操作入口读取失败"),
         ),
       );
   }, [refresh]);
@@ -91,7 +94,7 @@ export default function InventoryOperationsWorkbench() {
   if (!entry)
     return (
       <Card className="p-8 text-sm text-slate-500">
-        正在读取正式库存操作数据...
+        {copy("正在读取正式库存操作数据...")}
       </Card>
     );
   const path = location.pathname,
@@ -123,23 +126,25 @@ export default function InventoryOperationsWorkbench() {
 }
 
 function ReadOnly({ entry }: { entry: Entry }) {
+  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   return enabled(entry) ? null : (
     <Card
       className="border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
       data-testid="inventory-operations-readonly"
     >
-      库存操作 Beta 尚未由管理员启用；正式记录保持只读，所有交易动作均已关闭。
+      {copy("库存操作 Beta 尚未由管理员启用；正式记录保持只读，所有交易动作均已关闭。")}
     </Card>
   );
 }
 
 function Landing({ entry }: { entry: Entry }) {
+  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   return (
     <div className="space-y-4" data-testid="inventory-operations-landing">
       <div>
-        <h2 className="text-lg font-semibold">库存操作</h2>
+        <h2 className="text-lg font-semibold">{copy("库存操作")}</h2>
         <p className="mt-1 text-xs text-slate-500">
-          正式 PostgreSQL 调拨、循环盘点与库存调整工作台。
+          {copy("正式 PostgreSQL 调拨、循环盘点与库存调整工作台。")}
         </p>
       </div>
       <ReadOnly entry={entry} />
@@ -147,25 +152,25 @@ function Landing({ entry }: { entry: Entry }) {
         {[
           [
             "/app/inventory/transfers",
-            "库存调拨",
-            "原子式来源扣减与目标增加，支持安全冲销。",
+            copy("库存调拨"),
+            copy("原子式来源扣减与目标增加，支持安全冲销。"),
           ],
-          ["/app/inventory/counts", "循环盘点", "快照、盲盘、复核与差异过账。"],
+          ["/app/inventory/counts", copy("循环盘点"), copy("快照、盲盘、复核与差异过账。")],
           [
             "/app/inventory/adjustments",
-            "库存调整",
-            "受控原因、预览、过账与冲销。",
+            copy("库存调整"),
+            copy("受控原因、预览、过账与冲销。"),
           ],
-        ].map(([to, title, copy]) => (
+        ].map(([to, title, description]) => (
           <Link
             key={to}
             to={to}
             className="rounded-xl border border-slate-200 bg-white p-5"
           >
             <h3 className="font-semibold">{title}</h3>
-            <p className="mt-2 text-xs leading-5 text-slate-500">{copy}</p>
+            <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
             <span className="mt-4 inline-block text-sm font-semibold text-blue-600">
-              打开工作台 →
+              {copy("打开工作台 →")}
             </span>
           </Link>
         ))}
@@ -179,23 +184,24 @@ function OperationList({
 }: {
   kind: "transfer" | "count" | "adjustment";
 }) {
+  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   const config = {
     transfer: {
-      title: "库存调拨",
+      title: copy("库存调拨"),
       url: "/api/inventory/transfers",
       key: "transfers",
       number: "transferNumber",
       newPath: "/app/inventory/transfers/new",
     },
     count: {
-      title: "循环盘点",
+      title: copy("循环盘点"),
       url: "/api/inventory/counts",
       key: "counts",
       number: "countNumber",
       newPath: "/app/inventory/counts/new",
     },
     adjustment: {
-      title: "库存调整",
+      title: copy("库存调整"),
       url: "/api/inventory/adjustments",
       key: "adjustments",
       number: "adjustmentNumber",
@@ -211,14 +217,14 @@ function OperationList({
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">{config.title}</h2>
         <Link className={button} to={config.newPath}>
-          新建
+          {copy("新建")}
         </Link>
       </div>
       <Card className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-xs">
           <thead>
             <tr className="border-b">
-              {["单号", "流程状态", "过账状态", "行数", "更新时间"].map(
+              {[copy("单号"), copy("流程状态"), copy("过账状态"), copy("行数"), copy("更新时间")].map(
                 (label) => (
                   <th key={label} className="px-4 py-3 text-left">
                     {label}
@@ -258,7 +264,7 @@ function OperationList({
         </table>
         {!rows.length && (
           <div className="p-8 text-center text-sm text-slate-500">
-            暂无正式记录
+            {copy("暂无正式记录")}
           </div>
         )}
       </Card>
@@ -267,6 +273,7 @@ function OperationList({
 }
 
 function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
+  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   const navigate = useNavigate(),
     [number, setNumber] = useState(`TR-${Date.now()}`),
     [lines, setLines] = useState<TransferLine[]>([
@@ -311,16 +318,16 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
         `/app/inventory/transfers/${encodeURIComponent(data.transfer.id)}`,
       );
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "创建失败");
+      setError(reason instanceof Error ? reason.message : copy("创建失败"));
     }
   };
   return (
     <div className="space-y-4" data-testid="transfer-create">
-      <h2 className="text-lg font-semibold">新建库存调拨</h2>
+      <h2 className="text-lg font-semibold">{copy("新建库存调拨")}</h2>
       <ReadOnly entry={entry} />
       <Card className="space-y-4 p-5">
         <label className="grid gap-1 text-xs">
-          调拨单号
+          {copy("调拨单号")}
           <input
             className={field}
             value={number}
@@ -333,16 +340,16 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
             className="grid gap-3 rounded-lg border p-4 md:grid-cols-6"
           >
             <label className="grid gap-1 text-xs">
-              物料
+              {copy("物料")}
               <select
-                aria-label={`调拨物料 ${index + 1}`}
+                aria-label={copy("调拨物料 {n}", { n: index + 1 })}
                 className={field}
                 value={line.itemId}
                 onChange={(event) =>
                   update(index, { itemId: event.target.value })
                 }
               >
-                <option value="">请选择</option>
+                <option value="">{copy("请选择")}</option>
                 {entry.items.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.sku} · {item.name}
@@ -351,9 +358,9 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
               </select>
             </label>
             <label className="grid gap-1 text-xs">
-              数量
+              {copy("数量")}
               <input
-                aria-label={`调拨数量 ${index + 1}`}
+                aria-label={copy("调拨数量 {n}", { n: index + 1 })}
                 className={field}
                 value={line.quantity}
                 onChange={(event) =>
@@ -362,16 +369,16 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
               />
             </label>
             <label className="grid gap-1 text-xs">
-              来源仓库
+              {copy("来源仓库")}
               <select
-                aria-label={`来源仓库 ${index + 1}`}
+                aria-label={copy("来源仓库 {n}", { n: index + 1 })}
                 className={field}
                 value={line.sourceWarehouseId}
                 onChange={(event) =>
                   update(index, { sourceWarehouseId: event.target.value })
                 }
               >
-                <option value="">请选择</option>
+                <option value="">{copy("请选择")}</option>
                 {entry.warehouses
                   .filter((row) => row.canOperate)
                   .map((row) => (
@@ -382,9 +389,9 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
               </select>
             </label>
             <label className="grid gap-1 text-xs">
-              来源库位
+              {copy("来源库位")}
               <input
-                aria-label={`来源库位 ${index + 1}`}
+                aria-label={copy("来源库位 {n}", { n: index + 1 })}
                 className={field}
                 value={line.sourceLocation}
                 onChange={(event) =>
@@ -393,16 +400,16 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
               />
             </label>
             <label className="grid gap-1 text-xs">
-              目标仓库
+              {copy("目标仓库")}
               <select
-                aria-label={`目标仓库 ${index + 1}`}
+                aria-label={copy("目标仓库 {n}", { n: index + 1 })}
                 className={field}
                 value={line.destinationWarehouseId}
                 onChange={(event) =>
                   update(index, { destinationWarehouseId: event.target.value })
                 }
               >
-                <option value="">请选择</option>
+                <option value="">{copy("请选择")}</option>
                 {entry.warehouses
                   .filter((row) => row.canOperate)
                   .map((row) => (
@@ -413,9 +420,9 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
               </select>
             </label>
             <label className="grid gap-1 text-xs">
-              目标库位
+              {copy("目标库位")}
               <input
-                aria-label={`目标库位 ${index + 1}`}
+                aria-label={copy("目标库位 {n}", { n: index + 1 })}
                 className={field}
                 value={line.destinationLocation}
                 onChange={(event) =>
@@ -432,7 +439,7 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
                   )
                 }
               >
-                删除行
+                {copy("删除行")}
               </button>
             )}
           </div>
@@ -454,7 +461,7 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
               ])
             }
           >
-            添加行
+            {copy("添加行")}
           </button>
           <button
             data-testid="create-transfer"
@@ -462,7 +469,7 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
             disabled={!enabled(entry)}
             onClick={() => void submit()}
           >
-            保存草稿
+            {copy("保存草稿")}
           </button>
         </div>
         {error && (
@@ -476,6 +483,7 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
 }
 
 function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
+  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   const navigate = useNavigate(),
     [number, setNumber] = useState(`CC-${Date.now()}`),
     [warehouseId, setWarehouseId] = useState(""),
@@ -499,17 +507,17 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
       });
       navigate(`/app/inventory/counts/${encodeURIComponent(data.session.id)}`);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "创建失败");
+      setError(reason instanceof Error ? reason.message : copy("创建失败"));
     }
   };
   return (
     <div className="space-y-4" data-testid="count-create">
-      <h2 className="text-lg font-semibold">新建循环盘点</h2>
+      <h2 className="text-lg font-semibold">{copy("新建循环盘点")}</h2>
       <ReadOnly entry={entry} />
       <Card className="space-y-4 p-5">
         <div className="grid gap-3 md:grid-cols-3">
           <label className="grid gap-1 text-xs">
-            盘点单号
+            {copy("盘点单号")}
             <input
               className={field}
               value={number}
@@ -517,9 +525,9 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
             />
           </label>
           <label className="grid gap-1 text-xs">
-            仓库
+            {copy("仓库")}
             <select
-              aria-label="盘点仓库"
+              aria-label={copy("盘点仓库")}
               className={field}
               value={warehouseId}
               onChange={(event) => {
@@ -527,7 +535,7 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
                 setBalanceIds([]);
               }}
             >
-              <option value="">请选择</option>
+              <option value="">{copy("请选择")}</option>
               {entry.warehouses
                 .filter((row) => row.canOperate)
                 .map((row) => (
@@ -543,7 +551,7 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
               checked={blind}
               onChange={(event) => setBlind(event.target.checked)}
             />
-            盲盘
+            {copy("盲盘")}
           </label>
         </div>
         <div className="space-y-2">
@@ -564,7 +572,7 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
                 }
               />
               <span>
-                {row.sku} · {row.location} · 可用 {row.availableQuantity}
+                {row.sku} · {row.location} · {copy("可用 {n}", { n: row.availableQuantity })}
               </span>
             </label>
           ))}
@@ -575,7 +583,7 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
           disabled={!enabled(entry)}
           onClick={() => void submit()}
         >
-          建立盘点快照
+          {copy("建立盘点快照")}
         </button>
         {error && (
           <p role="alert" className="text-sm text-red-600">
@@ -588,6 +596,7 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
 }
 
 function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
+  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   const warehouseName = useWarehouseNames();
   const navigate = useNavigate(),
     [number, setNumber] = useState(`ADJ-${Date.now()}`),
@@ -613,17 +622,17 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
         `/app/inventory/adjustments/${encodeURIComponent(data.adjustment.id)}`,
       );
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "创建失败");
+      setError(reason instanceof Error ? reason.message : copy("创建失败"));
     }
   };
   return (
     <div className="space-y-4" data-testid="adjustment-create">
-      <h2 className="text-lg font-semibold">新建库存调整</h2>
+      <h2 className="text-lg font-semibold">{copy("新建库存调整")}</h2>
       <ReadOnly entry={entry} />
       <Card className="space-y-4 p-5">
         <div className="grid gap-3 md:grid-cols-3">
           <label className="grid gap-1 text-xs">
-            调整单号
+            {copy("调整单号")}
             <input
               className={field}
               value={number}
@@ -631,9 +640,9 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
             />
           </label>
           <label className="grid gap-1 text-xs">
-            原因
+            {copy("原因")}
             <select
-              aria-label="调整原因"
+              aria-label={copy("调整原因")}
               className={field}
               value={reasonCode}
               onChange={(event) => setReason(event.target.value)}
@@ -646,14 +655,14 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                 "quality_disposition",
                 "other",
               ].map((value) => (
-                <option key={value}>{value}</option>
+                <option key={value} value={value}>{inventoryCodeLabel(value)}</option>
               ))}
             </select>
           </label>
           <label className="grid gap-1 text-xs">
-            备注
+            {copy("备注")}
             <input
-              aria-label="调整备注"
+              aria-label={copy("调整备注")}
               className={field}
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
@@ -666,9 +675,9 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
             className="grid gap-3 rounded-lg border p-4 md:grid-cols-2"
           >
             <label className="grid gap-1 text-xs">
-              库存余额
+              {copy("库存余额")}
               <select
-                aria-label={`调整余额 ${index + 1}`}
+                aria-label={copy("调整余额 {n}", { n: index + 1 })}
                 className={field}
                 value={line.inventoryBalanceId}
                 onChange={(event) =>
@@ -681,7 +690,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                   )
                 }
               >
-                <option value="">请选择</option>
+                <option value="">{copy("请选择")}</option>
                 {entry.balances
                   .filter((row) => row.canOperate)
                   .map((row) => (
@@ -693,9 +702,9 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
               </select>
             </label>
             <label className="grid gap-1 text-xs">
-              调整数量
+              {copy("调整数量")}
               <input
-                aria-label={`调整数量 ${index + 1}`}
+                aria-label={copy("调整数量 {n}", { n: index + 1 })}
                 className={field}
                 value={line.adjustmentQuantity}
                 onChange={(event) =>
@@ -710,7 +719,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
               />
             </label>
             <p className="text-xs text-amber-700 md:col-span-2">
-              减少库存不会影响已预留数量；调整后 On Hand 不得低于 Reserved。
+              {copy("减少库存不会影响已预留数量；调整后 On Hand 不得低于 Reserved。")}
             </p>
           </div>
         ))}
@@ -720,7 +729,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
           disabled={!enabled(entry)}
           onClick={() => void submit()}
         >
-          保存草稿
+          {copy("保存草稿")}
         </button>
         {error && (
           <p role="alert" className="text-sm text-red-600">
@@ -743,6 +752,7 @@ function OperationDetail({
   entry: Entry;
   refresh: () => void;
 }) {
+  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   const warehouseName = useWarehouseNames();
   const config = {
     transfer: {
@@ -778,7 +788,7 @@ function OperationDetail({
       })
       .catch((reasonValue) =>
         setError(
-          reasonValue instanceof Error ? reasonValue.message : "读取失败",
+          reasonValue instanceof Error ? reasonValue.message : copy("读取失败"),
         ),
       );
   useEffect(() => {
@@ -814,7 +824,7 @@ function OperationDetail({
       await load();
       refresh();
     } catch (reasonValue) {
-      setError(reasonValue instanceof Error ? reasonValue.message : "操作失败");
+      setError(reasonValue instanceof Error ? reasonValue.message : copy("操作失败"));
     }
   };
   const runPreview = async (action: string) => {
@@ -826,7 +836,7 @@ function OperationDetail({
         ),
       );
     } catch (reasonValue) {
-      setError(reasonValue instanceof Error ? reasonValue.message : "预览失败");
+      setError(reasonValue instanceof Error ? reasonValue.message : copy("预览失败"));
     }
   };
   const saveCounts = async () => {
@@ -846,14 +856,14 @@ function OperationDetail({
       await load();
     } catch (reasonValue) {
       setError(
-        reasonValue instanceof Error ? reasonValue.message : "盘点录入失败",
+        reasonValue instanceof Error ? reasonValue.message : copy("盘点录入失败"),
       );
     }
   };
   if (!data)
     return (
       <Card className="p-8 text-sm text-slate-500">
-        正在读取库存操作工作台...
+        {copy("正在读取库存操作工作台...")}
       </Card>
     );
   const actions = data.availableActions || {},
@@ -877,13 +887,13 @@ function OperationDetail({
           className={secondary}
           to={`/app/inventory/${kind === "transfer" ? "transfers" : kind === "count" ? "counts" : "adjustments"}`}
         >
-          返回列表
+          {copy("返回列表")}
         </Link>
       </div>
       <ReadOnly entry={entry} />
       {kind === "count" && (
         <Card className="p-5">
-          <h3 className="mb-3 font-semibold">盘点录入</h3>
+          <h3 className="mb-3 font-semibold">{copy("盘点录入")}</h3>
           <div className="space-y-2">
             {data.lines.map((line: any) => (
               <div
@@ -894,11 +904,11 @@ function OperationDetail({
                 <span>{line.location}</span>
                 <span data-testid="count-recorded">
                   {line.recordedOnHandQuantity === null
-                    ? "盲盘隐藏"
-                    : `记录 ${line.recordedOnHandQuantity}`}
+                    ? copy("盲盘隐藏")
+                    : copy("记录 {n}", { n: line.recordedOnHandQuantity })}
                 </span>
                 <input
-                  aria-label={`实盘数量 ${line.sku}`}
+                  aria-label={copy("实盘数量 {n}", { n: line.sku })}
                   className={field}
                   value={counts[line.id] || ""}
                   onChange={(event) =>
@@ -910,8 +920,8 @@ function OperationDetail({
                 />
                 <span>
                   {line.varianceQuantity === null
-                    ? "差异待复核"
-                    : `差异 ${line.varianceQuantity}`}
+                    ? copy("差异待复核")
+                    : copy("差异 {n}", { n: line.varianceQuantity })}
                 </span>
               </div>
             ))}
@@ -922,17 +932,17 @@ function OperationDetail({
               className={`${button} mt-3`}
               onClick={() => void saveCounts()}
             >
-              保存盘点数量
+              {copy("保存盘点数量")}
             </button>
           )}
         </Card>
       )}
       <Card className="overflow-x-auto p-5">
-        <h3 className="mb-3 font-semibold">业务行与库存影响</h3>
+        <h3 className="mb-3 font-semibold">{copy("业务行与库存影响")}</h3>
         <table className="w-full min-w-[720px] text-xs">
           <thead>
             <tr className="border-b">
-              {["SKU", "数量 / 调整", "来源 / 仓库", "目标 / 库位", "状态"].map(
+              {["SKU", copy("数量 / 调整"), copy("来源 / 仓库"), copy("目标 / 库位"), copy("状态")].map(
                 (label) => (
                   <th key={label} className="px-3 py-2 text-left">
                     {label}
@@ -968,7 +978,7 @@ function OperationDetail({
         </table>
       </Card>
       <Card className="space-y-3 p-5">
-        <h3 className="font-semibold">可执行动作</h3>
+        <h3 className="font-semibold">{copy("可执行动作")}</h3>
         <div className="flex flex-wrap gap-2">
           {actions.canReady && (
             <button
@@ -976,7 +986,7 @@ function OperationDetail({
               className={button}
               onClick={() => void run("ready")}
             >
-              Ready
+              {copy("Ready")}
             </button>
           )}
           {actions.canSubmit && (
@@ -985,7 +995,7 @@ function OperationDetail({
               className={button}
               onClick={() => void run("submit")}
             >
-              Submit
+              {copy("Submit")}
             </button>
           )}
           {actions.canReview && (
@@ -994,7 +1004,7 @@ function OperationDetail({
               className={button}
               onClick={() => void run("review")}
             >
-              Review
+              {copy("Review")}
             </button>
           )}
           {actions.canPost && (
@@ -1003,7 +1013,7 @@ function OperationDetail({
               className={button}
               onClick={() => void runPreview("post")}
             >
-              Post Preview
+              {copy("Post Preview")}
             </button>
           )}
           {actions.canReverse && (
@@ -1012,7 +1022,7 @@ function OperationDetail({
               className={button}
               onClick={() => void runPreview("reverse")}
             >
-              Reverse Preview
+              {copy("Reverse Preview")}
             </button>
           )}
           {actions.canCancel && (
@@ -1020,14 +1030,14 @@ function OperationDetail({
               className={secondary}
               onClick={() => void runPreview("cancel")}
             >
-              Cancel
+              {copy("Cancel")}
             </button>
           )}
         </div>
         <label className="grid max-w-lg gap-1 text-xs">
-          操作原因
+          {copy("操作原因")}
           <input
-            aria-label="操作原因"
+            aria-label={copy("操作原因")}
             className={field}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
@@ -1039,10 +1049,10 @@ function OperationDetail({
             className={`rounded-lg p-4 text-sm ${preview.allowed ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}
           >
             <div>
-              {preview.allowed ? "Preview 允许执行" : "Preview 阻止执行"}
+              {preview.allowed ? copy("Preview 允许执行") : copy("Preview 阻止执行")}
             </div>
             <div className="mt-2 text-xs">
-              {preview.blockingIssues?.map((item: any) => item.code).join("、")}
+              {preview.blockingIssues?.map((item: any) => item.code).join(", ")}
             </div>
             {preview.allowed && (
               <button
@@ -1058,7 +1068,7 @@ function OperationDetail({
                   )
                 }
               >
-                确认执行
+                {copy("确认执行")}
               </button>
             )}
           </div>
@@ -1070,7 +1080,7 @@ function OperationDetail({
         )}
       </Card>
       <Card className="p-5">
-        <h3 className="font-semibold">Movement Evidence</h3>
+        <h3 className="font-semibold">{copy("Movement Evidence")}</h3>
         <div className="mt-3 space-y-2">
           {(data.movements || []).map((movement: any) => (
             <div
@@ -1080,14 +1090,13 @@ function OperationDetail({
             >
               <span className="font-semibold">{movement.movementType}</span>
               <span className="ml-3">
-                {warehouseName(movement.warehouseId)} · 入 {movement.quantityIn} · 出{" "}
-                {movement.quantityOut}
+                {warehouseName(movement.warehouseId)} · {copy("入 {in} · 出 {out}", { in: movement.quantityIn, out: movement.quantityOut })}
               </span>
             </div>
           ))}
         </div>
         <div className="mt-4 text-sm" data-testid="inventory-reconciliation">
-          Reconciliation：<strong>{data.reconciliation?.status}</strong>
+          {copy("Reconciliation：")}<strong>{data.reconciliation?.status ? inventoryCodeLabel(data.reconciliation.status) : "—"}</strong>
         </div>
       </Card>
     </div>

@@ -11,6 +11,8 @@ import {
 import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { outboundEnglish } from "./outboundCopy";
+import { formatQuantity } from "../../lib/format";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
@@ -27,8 +29,13 @@ import {
   thClass,
 } from "../../components/ui/workbenchTable";
 
-const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
-const englishUi = () => typeof document === "undefined" || document.documentElement.lang === "en-US";
+// The interface language for this render. OutboundWorkbench, the root of every
+// page here, sets it from the i18n context before its children render. The
+// <html lang> attribute is updated only after that render, so it is not used.
+let activeLanguage = "en-US";
+const copy = (label: string) =>
+  activeLanguage === "en-US" ? outboundEnglish[label] || workspaceCopy(label, activeLanguage) : label;
+const englishUi = () => activeLanguage === "en-US";
 
 type Order = {
   id: string;
@@ -240,17 +247,24 @@ const pretty: Record<string, string> = {
   unavailable: "不可用",
 };
 const status = (value: string) => copy(pretty[value] || value);
-const reconciliationRuleLabel = (value: string) => ({
+const reconciliationRuleLabels: Record<string, string> = {
   "available = onHand - reserved": "可用量 = 在库量 - 预留量",
   "reserved + fulfilled <= ordered": "预留量 + 已履约量不超过订购量",
-}[value] || value);
+};
+const reconciliationRuleLabel = (value: string) =>
+  reconciliationRuleLabels[value] ? copy(reconciliationRuleLabels[value]) : value;
 // Timestamps follow the workspace locale and timezone.
 function useStamp() {
   const { formatDateTime } = useI18n();
   return (value?: string | null) =>
     value && !Number.isNaN(new Date(value).getTime()) ? formatDateTime(value) : value || "—";
 }
+// The message for an error, kept in its source form and translated where it
+// is shown, so it follows a language change made after the error occurred.
 function message(error: unknown) {
+  return errorMessage(error);
+}
+function errorMessage(error: unknown) {
   if (!(error instanceof ApiError)) return "网络连接失败，请检查连接后重试。";
   if (error.status === 401) return "登录已失效，请重新登录后读取销售订单。";
   if (error.status === 403) return "当前账号没有读取销售订单的权限。";
@@ -342,6 +356,7 @@ function smartLinkPath(link: SmartLink) {
 
 export default function OutboundWorkbench() {
   const { language } = useI18n();
+  activeLanguage = language;
   const location = useLocation();
   const shipment = location.pathname.match(
     /^\/app\/sales\/shipments\/([^/]+)$/,
@@ -419,7 +434,7 @@ function OrderList() {
       )}
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       <Section title={copy("销售订单查询")}>
@@ -507,8 +522,8 @@ function OrderList() {
                   "订单号",
                   "客户",
                   "流程",
-                  "预留",
-                  "履约",
+                  "预留状态",
+                  "履约状态",
                   "币种",
                   "行数",
                   "订购 / 预留 / 履约",
@@ -724,7 +739,7 @@ function OrderEntry() {
       </div>
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       <Section title={copy("订单信息")}>
@@ -793,7 +808,7 @@ function OrderEntry() {
             disabled={saving || !itemId || !customerName || !currency.trim()}
             onClick={() => void save()}
           >
-            {saving ? "保存中…" : "保存草稿"}
+            {saving ? copy("保存中…") : copy("保存草稿")}
           </Button>
           <Link
             className="rounded-lg bg-slate-100 px-3 py-2 text-sm"
@@ -820,7 +835,7 @@ function OrderDetail({ id }: { id: string }) {
     [selectedBalanceId, setSelectedBalanceId] = useState(""),
     [selectedReservationId, setSelectedReservationId] = useState(""),
     [quantity, setQuantity] = useState("1.0000"),
-    [reason, setReason] = useState("业务调整"),
+    [reason, setReason] = useState(() => copy("业务调整")),
     [shipmentNumber, setShipmentNumber] = useState(`SHIP-${Date.now()}`),
     [editCustomer, setEditCustomer] = useState(""),
     [editQuantity, setEditQuantity] = useState("1.0000"),
@@ -1042,7 +1057,7 @@ function OrderDetail({ id }: { id: string }) {
   if (!data)
     return (
       <div role="alert" className="rounded-lg bg-red-50 p-5 text-red-700">
-        {error}
+        {copy(error)}
       </div>
     );
   const a = data.availableActions;
@@ -1059,7 +1074,7 @@ function OrderDetail({ id }: { id: string }) {
     <div className="space-y-4" data-testid="outbound-order-workbench">
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       {data.scopeCoverage.status === "partial" && (
@@ -1126,7 +1141,7 @@ function OrderDetail({ id }: { id: string }) {
                 disabled={saving}
                 onClick={() => void lifecycle("hold")}
               >
-                {copy("暂停")}
+                {copy("暂停订单")}
               </Button>
             )}
             {a.canResume && (
@@ -1171,17 +1186,17 @@ function OrderDetail({ id }: { id: string }) {
                 to={smartLinkPath(link)}
                 key={link.id}
               >
-                {link.label} {link.count ?? ""}
+                {copy(link.label)} {link.count ?? ""}
               </Link>
             ) : (
               <span
                 aria-disabled="true"
-                title={link.unavailableReason || ""}
+                title={link.unavailableReason ? copy(link.unavailableReason) : ""}
                 className="rounded-lg border px-3 py-2 text-sm text-slate-400"
                 key={link.id}
               >
-                {link.label} {link.count ?? ""}
-                <span className="ml-1 text-xs">{link.unavailableReason}</span>
+                {copy(link.label)} {link.count ?? ""}
+                <span className="ml-1 text-xs">{link.unavailableReason ? copy(link.unavailableReason) : ""}</span>
               </span>
             ),
           )}
@@ -1204,7 +1219,7 @@ function OrderDetail({ id }: { id: string }) {
                   "可用量",
                 ].map((x) => (
                   <th className="p-2 text-left" key={x}>
-                    {x}
+                    {copy(x)}
                   </th>
                 ))}
               </tr>
@@ -1228,14 +1243,14 @@ function OrderDetail({ id }: { id: string }) {
                       line.orderedQuantity,
                       line.reservedQuantity,
                       line.fulfilledQuantity,
-                      line.remainingToReserve ?? "受限",
-                      line.remainingToFulfill ?? "受限",
+                      line.remainingToReserve ?? null,
+                      line.remainingToFulfill ?? null,
                       av?.totalOnHand,
                       av?.totalReserved,
                       av?.totalAvailable,
                     ].map((v, i) => (
-                      <td className="p-2" key={i}>
-                        {v}
+                      <td className="p-2 tabular-nums" key={i}>
+                        {v == null ? (i === 3 || i === 4 ? copy("受限") : "—") : formatQuantity(v)}
                       </td>
                     ))}
                   </tr>
@@ -1253,11 +1268,11 @@ function OrderDetail({ id }: { id: string }) {
               key={b.id}
             >
               <span>{warehouseName(b.warehouseId)}</span>
-              <span>{b.location || "默认库位"}</span>
-              <span>现有 {b.onHandQuantity}</span>
-              <span>预留 {b.reservedQuantity}</span>
-              <span>可用 {b.availableQuantity}</span>
-              <span>{b.selectable ? "可操作" : "只读"}</span>
+              <span>{b.location || copy("默认库位")}</span>
+              <span>{copy("现有 {n}").replace("{n}", formatQuantity(b.onHandQuantity))}</span>
+              <span>{copy("预留 {n}").replace("{n}", formatQuantity(b.reservedQuantity))}</span>
+              <span>{copy("可用 {n}").replace("{n}", formatQuantity(b.availableQuantity))}</span>
+              <span>{copy(b.selectable ? "可操作" : "只读")}</span>
             </div>
           ))}
       </Section>
@@ -1278,7 +1293,7 @@ function OrderDetail({ id }: { id: string }) {
             "预留 ID",
             "仓库",
             "库位",
-            "预留",
+            "预留量",
             "已分配",
             "已消耗",
             "已释放",
@@ -1338,8 +1353,10 @@ function OrderDetail({ id }: { id: string }) {
             className="border-t py-2 text-xs"
             key={`${x.affectedEntity.type}-${x.affectedEntity.id}`}
           >
-            {reconciliationRuleLabel(x.rule)} · {status(x.status)} · 计算 {x.calculated} / 记录{" "}
-            {x.recorded}
+            {reconciliationRuleLabel(x.rule)} · {status(x.status)} ·{" "}
+            {copy("计算 {calculated} / 记录 {recorded}")
+              .replace("{calculated}", formatQuantity(x.calculated))
+              .replace("{recorded}", formatQuantity(x.recorded))}
           </div>
         ))}
       </Section>
@@ -1435,10 +1452,11 @@ function OrderDetail({ id }: { id: string }) {
                     <option value="">{copy("请选择库存余额")}</option>
                     {balanceOptions.map((x) => (
                       <option disabled={!x.selectable} value={x.id} key={x.id}>
-                        {warehouseName(x.warehouseId)} · {x.location || "默认库位"} · 现有{" "}
-                        {x.onHandQuantity} / 预留 {x.reservedQuantity} / 可用{" "}
-                        {x.availableQuantity} ·{" "}
-                        {x.selectable ? "可操作" : "只读"}
+                        {warehouseName(x.warehouseId)} · {x.location || copy("默认库位")} ·{" "}
+                        {copy("现有 {n}").replace("{n}", formatQuantity(x.onHandQuantity))} /{" "}
+                        {copy("预留 {n}").replace("{n}", formatQuantity(x.reservedQuantity))} /{" "}
+                        {copy("可用 {n}").replace("{n}", formatQuantity(x.availableQuantity))} ·{" "}
+                        {copy(x.selectable ? "可操作" : "只读")}
                       </option>
                     ))}
                   </select>
@@ -1630,12 +1648,12 @@ function ShipmentDetail({ id }: { id: string }) {
         {copy("正在读取发货单…")}
       </div>
     );
-  if (!data) return <div role="alert">{error}</div>;
+  if (!data) return <div role="alert">{copy(error)}</div>;
   return (
     <div className="space-y-4" data-testid="shipment-workbench">
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       <section className="rounded-xl border bg-white p-5">
@@ -1666,7 +1684,7 @@ function ShipmentDetail({ id }: { id: string }) {
             <p className="mt-2 text-xs text-slate-500">
               过账 {stamp(data.shipment.postedAt)} · 冲销{" "}
               {stamp(data.shipment.reversedAt)} ·{" "}
-              {data.shipment.reversalReason || "无冲销原因"}
+              {data.shipment.reversalReason || copy("无冲销原因")}
             </p>
           </div>
           <div className="flex gap-2">
@@ -1706,7 +1724,7 @@ function ShipmentDetail({ id }: { id: string }) {
       <Section title={copy("分配与库存流水")}>
         <Table
           headers={[
-            "预留",
+            "预留 ID",
             "仓库",
             "库位",
             "数量",
@@ -1738,7 +1756,7 @@ function ShipmentDetail({ id }: { id: string }) {
         <div className="flex items-center gap-2">
           <ShieldCheck size={18} />
           <Badge value={data.reconciliation.status} />
-          <span className="text-sm">{data.aiExplain.conclusion}</span>
+          <span className="text-sm">{copy(data.aiExplain.conclusion)}</span>
         </div>
       </Section>
       {intent && (
@@ -1805,7 +1823,7 @@ function Table({
           <tr className="border-b text-left text-xs text-slate-500">
             {headers.map((x) => (
               <th className="p-2" key={x}>
-                {x}
+                {copy(x)}
               </th>
             ))}
           </tr>
@@ -1841,7 +1859,7 @@ function Timeline({ rows }: { rows: Workbench["evidence"] }) {
           </div>
           {x.commandExecutionId && (
             <div className="text-[11px] text-slate-400">
-              命令记录 {x.commandExecutionId} · 幂等键 {x.idempotencyKey}
+              {copy("命令记录")} {x.commandExecutionId} · {copy("幂等键")} {x.idempotencyKey}
             </div>
           )}
         </div>
