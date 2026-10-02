@@ -257,8 +257,10 @@ export default function SupplierMasterPage({
         deliveryCycleDays: Number(form.deliveryCycleDays || 0),
         expectedVersion: editing?.version,
       };
-      if (editing && String(body.bankAccountNumber || "").startsWith("****"))
-        delete body.bankAccountNumber;
+      // A value shown masked ("****1234") was not readable; leave it as stored.
+      if (editing)
+        for (const key of ["creditCode", "taxIdentificationNumber", "bankAccountName", "bankAccountNumber"] as const)
+          if (String(body[key] || "").startsWith("****")) delete body[key];
       const result = editing
         ? await request<{ supplier: Supplier }>(
             `/api/master-data/suppliers/${editing.id}`,

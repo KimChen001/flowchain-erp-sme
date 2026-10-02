@@ -79,6 +79,7 @@ test('procurement selectors fall back to tenant-scoped PostgreSQL item and suppl
       url: new URL(pathname, 'http://local'),
       identity: { authenticated: true, tenantId: 'tenant-local' },
       repositories,
+      masterDataReadAccess: { partner: true, prices: true },
       send: (_res, status, payload) => sent.push({ status, payload }),
     })
     assert.equal(sent[0].status, 200)

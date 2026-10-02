@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { SUPPLIER_SENSITIVE_FIELDS, isMaskedValue } from './master-data-read-access.mjs';
 const fields = ['shortName', 'businessType', 'contactName', 'telephone', 'email', 'address', 'postalCode', 'defaultCurrency', 'paymentTermsId', 'settlementMethod', 'creditCode', 'taxIdentificationNumber', 'bankName', 'bankAccountName', 'bankAccountNumber', 'internalComment'];
 const fail = (status, code, message, details = []) => Object.assign(new Error(message), { status, code, details });
 
@@ -15,7 +16,9 @@ export async function saveSupplierMaster(prisma, id, input, actorId, scope) {
       const status = input.status ?? old?.status ?? 'active';
       const next = { ...meta };
       for (const key of fields) if (Object.hasOwn(input, key)) next[key] = String(input[key] ?? '').trim();
-      if (String(next.bankAccountNumber || '').startsWith('****')) next.bankAccountNumber = meta.bankAccountNumber || '';
+      // A masked value ("****1234") is what a reader without
+      // finance.partner_snapshot.read was shown; saving it keeps the stored value.
+      for (const key of SUPPLIER_SENSITIVE_FIELDS) if (isMaskedValue(next[key])) next[key] = meta[key] || '';
       if (Object.hasOwn(input, 'categories')) next.categories = Array.isArray(input.categories) ? [...new Set(input.categories.map(value => String(value).trim()).filter(Boolean))] : [];
       if (Object.hasOwn(input, 'deliveryCycleDays')) next.deliveryCycleDays = Number(input.deliveryCycleDays);
       const issues = [];
