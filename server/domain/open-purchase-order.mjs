@@ -57,7 +57,7 @@ export function purchaseOrderLineRemaining(line) {
 export function isCommittedPurchaseOrder(purchaseOrder) {
   if (isPurchaseOrderReceivable(purchaseOrder?.status)) return true
   try {
-    return normalizeProcurementAuthorityStatus('purchaseOrder', purchaseOrder?.status) === PURCHASE_ORDER_STATUS.FULLY_RECEIVED
+    return [PURCHASE_ORDER_STATUS.FULLY_RECEIVED, PURCHASE_ORDER_STATUS.CLOSED].includes(normalizeProcurementAuthorityStatus('purchaseOrder', purchaseOrder?.status))
   } catch {
     return false
   }

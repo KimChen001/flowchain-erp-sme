@@ -24,6 +24,7 @@ const PURCHASE_ORDER_ACTIONS = Object.freeze({
   "return-for-revision": "returnPurchaseOrderForRevision",
   issue: "issuePurchaseOrder",
   cancel: "cancelPurchaseOrder",
+  close: "closePurchaseOrder",
 });
 const failure = (send, res, e) => {
   // Serializable transactions that lose a race are safe to retry.
@@ -105,7 +106,7 @@ export async function handleProcurementWorkflowRoute(ctx) {
       return access.prices ? order : { ...order, restrictedFields: ["amounts"] };
     });
   const poAction = url.pathname.match(
-    /^\/api\/procurement\/orders\/([^/]+)\/(submit|approve|reject|return-for-revision|issue|cancel)$/,
+    /^\/api\/procurement\/orders\/([^/]+)\/(submit|approve|reject|return-for-revision|issue|cancel|close)$/,
   );
   if (req.method === "POST" && poAction) {
     const command = PURCHASE_ORDER_ACTIONS[poAction[2]];
