@@ -17,10 +17,11 @@ function audit(actor, action, entityType, entityId, summary, metadata, idFactory
 
 // The active users who can still manage roles: settings.roles.manage through an
 // active assignment to an active role. Role governance, disabling a member in
-// Settings and the readiness diagnostics all use this one rule.
-export function countActiveRoleManagers(db, tenantId) {
+// Settings and the readiness diagnostics all use this one rule. With userId it
+// says whether that one user is such a manager.
+export function countActiveRoleManagers(db, tenantId, { userId } = {}) {
   return db.user.count({ where: {
-    tenantId, status: "active",
+    tenantId, status: "active", ...(userId ? { id: userId } : {}),
     roleAssignments: { some: { tenantId, status: "active", role: { status: "active", permissions: { some: { permissionCode: "settings.roles.manage" } } } } },
   } })
 }

@@ -5,13 +5,21 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { resolve } from 'node:path'
 import { handlePilotWorkspaceRoute } from '../routes/pilot-workspace.routes.mjs'
-import { createAuthorizationAdminService } from '../auth/authorization-admin-service.mjs'
+import { countActiveRoleManagers, createAuthorizationAdminService } from '../auth/authorization-admin-service.mjs'
+import { backfillTenantAuthorization } from '../auth/authorization-backfill.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
 import { createReceivingPostingCommandService } from './receiving-posting-command-service.mjs'
 import { createReceivingWorkbenchQueryService } from './receiving-workbench-query-service.mjs'
 import { cleanupReceivingScenario, expectCommandError, seedReceivingScenario, withLiveReceivingDatabase } from './receiving-posting-live-test-helpers.mjs'
 
 const execFileAsync = promisify(execFile)
+
+async function call(identity, method, path, body = {}) {
+  let response
+  const handled = await handlePilotWorkspaceRoute({ req: { method }, res: {}, url: new URL(path, 'http://local'), env: process.env, identity, readBody: async () => body, send(_res, status, payload) { response = { status, payload } } })
+  assert.equal(handled, true)
+  return response
+}
 
 test('Pilot workspace APIs provision users, protect admin actions, and enforce warehouse scope', async t => {
   await withLiveReceivingDatabase(t, async ({ prisma }) => {
@@ -25,12 +33,6 @@ test('Pilot workspace APIs provision users, protect admin actions, and enforce w
       { id: viewer.userId, tenantId: scenario.tenantId, email: viewer.email, name: viewer.name, role: 'viewer', status: 'active' },
     ] })
     await prisma.userWarehouseScope.create({ data: { id: randomUUID(), tenantId: scenario.tenantId, userId: manager.userId, warehouseId: scenario.warehouseId, accessLevel: 'operate' } })
-    async function call(identity, method, path, body = {}) {
-      let response
-      const handled = await handlePilotWorkspaceRoute({ req: { method }, res: {}, url: new URL(path, 'http://local'), env: process.env, identity, readBody: async () => body, send(_res, status, payload) { response = { status, payload } } })
-      assert.equal(handled, true)
-      return response
-    }
     try {
       const profile = await call(manager, 'GET', '/api/me/profile')
       assert.equal(profile.status, 200); assert.equal(profile.payload.name, 'Kim'); assert.equal(profile.payload.roleLabel, '供应链经理')
@@ -138,6 +140,72 @@ test('Pilot workspace APIs provision users, protect admin actions, and enforce w
     } finally {
       await prisma.workspaceInvitation.deleteMany({ where: { tenantId: scenario.tenantId } })
       await prisma.userWarehouseScope.deleteMany({ where: { tenantId: scenario.tenantId } })
+      await cleanupReceivingScenario(prisma, scenario)
+    }
+  })
+})
+
+test('Workspace member reads show every warehouse, and concurrent status changes keep a role manager', async t => {
+  await withLiveReceivingDatabase(t, async ({ prisma }) => {
+    const scenario = await seedReceivingScenario(prisma)
+    const tenantId = scenario.tenantId
+    const secondWarehouseId = `warehouse-second-${randomUUID()}`
+    await prisma.warehouse.create({ data: { id: secondWarehouseId, tenantId, code: `WH2-${randomUUID()}`, name: 'Second Warehouse', status: 'active' } })
+    const person = (key, role) => ({ authenticated: true, source: 'local_signed_session', tenantId, userId: `${key}-${randomUUID()}`, role, name: key, email: `${key}@example.com` })
+    const owner = person('owner', 'admin'); const deputy = person('deputy', 'admin')
+    const userAdmin = person('user-admin', 'viewer'); const reader = person('reader', 'viewer'); const buyer = person('buyer', 'buyer')
+    const members = Array.from({ length: 12 }, (_, index) => person(`member-${index}`, 'viewer'))
+    await prisma.user.createMany({ data: [owner, deputy, userAdmin, reader, buyer, ...members].map(identity => ({ id: identity.userId, tenantId, email: identity.email, name: identity.name, role: identity.role, status: 'active' })) })
+    await prisma.userWarehouseScope.create({ data: { id: randomUUID(), tenantId, userId: buyer.userId, warehouseId: scenario.warehouseId, accessLevel: 'read' } })
+    // Legacy admins get Workspace Administrator and operate on every warehouse;
+    // legacy viewers get Read-only Viewer and no warehouse.
+    await backfillTenantAuthorization(prisma, tenantId)
+    try {
+      // A Read-only Viewer with no warehouse of their own may read members'
+      // access, so they get every warehouse to show it against. Someone who
+      // cannot read members' access gets only their own warehouses.
+      const readerUsers = await call(reader, 'GET', '/api/workspace/users')
+      assert.equal(readerUsers.status, 200)
+      assert.deepEqual(readerUsers.payload.users.find(user => user.id === owner.userId).warehouseScopes.map(scope => scope.warehouseId).sort(), [scenario.warehouseId, secondWarehouseId].sort())
+      const readerWarehouses = await call(reader, 'GET', '/api/workspace/warehouses')
+      assert.deepEqual(readerWarehouses.payload.warehouses.map(warehouse => warehouse.id).sort(), [scenario.warehouseId, secondWarehouseId].sort())
+      const buyerWarehouses = await call(buyer, 'GET', '/api/workspace/warehouses')
+      assert.deepEqual(buyerWarehouses.payload.warehouses.map(warehouse => warehouse.id), [scenario.warehouseId])
+
+      // A user administrator may disable members but not manage roles.
+      const governance = createAuthorizationAdminService({ prisma })
+      const ownerActor = await resolveProvisionedActor(prisma, owner)
+      const userAdministrator = await governance.createRole(ownerActor, { name: 'User Administrator', permissionCodes: ['settings.users.read', 'settings.users.manage'] })
+      await governance.assignUserRoles(ownerActor, userAdmin.userId, [userAdministrator.id])
+      // Sets the status of several users at the same moment. Versions are read
+      // first, so the requests start together.
+      const setStatus = async (identities, status) => {
+        const rows = await prisma.user.findMany({ where: { id: { in: identities.map(identity => identity.userId) } } })
+        const version = id => rows.find(row => row.id === id).version
+        return Promise.all(identities.map(identity => call(userAdmin, 'PATCH', `/api/workspace/users/${identity.userId}`, { status, version: version(identity.userId) })))
+      }
+
+      // Members disabled at the same moment all succeed: a transaction aborted
+      // by a concurrent one is run again, not answered with an error. Whether
+      // two transactions collide depends on timing, so this runs a few rounds.
+      for (let round = 0; round < 3; round += 1) {
+        const batch = members.slice(round * 4, round * 4 + 4)
+        const results = await setStatus(batch, 'disabled')
+        assert.deepEqual(results.map(result => [result.status, result.payload.status]), batch.map(() => [200, 'disabled']))
+      }
+      assert.equal(await prisma.user.count({ where: { id: { in: members.map(member => member.userId) }, status: 'disabled' } }), members.length)
+
+      // Disabling the last two role managers at the same moment: one goes
+      // through, the other is refused, and one role manager stays active.
+      for (let round = 0; round < 3; round += 1) {
+        const results = await setStatus([owner, deputy], 'disabled')
+        assert.deepEqual(results.map(result => result.status).sort(), [200, 409])
+        assert.equal(results.find(result => result.status === 409).payload.code, 'AUTHORIZATION_LAST_ROLES_MANAGER')
+        assert.equal(await countActiveRoleManagers(prisma, tenantId), 1)
+        const [enabled] = await setStatus([[owner, deputy][results.findIndex(result => result.status === 200)]], 'active')
+        assert.deepEqual([enabled.status, enabled.payload.status], [200, 'active'])
+      }
+    } finally {
       await cleanupReceivingScenario(prisma, scenario)
     }
   })

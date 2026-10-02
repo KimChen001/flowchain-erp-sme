@@ -148,7 +148,10 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       if (granted.has("settings.users.read")) {
         const u = await apiJson<{ users: User[] }>("/api/workspace/users");
         setUsers(u.users);
-        setScopeUserId(current => current || u.users.find(user => user.id !== p.id)?.id || u.users[0]?.id || "");
+        // Whoever grants access opens on a teammate to edit; someone who may
+        // only read it opens on their own access.
+        const firstUserId = granted.has("settings.users.manage") ? u.users.find(user => user.id !== p.id)?.id : p.id;
+        setScopeUserId(current => current || firstUserId || u.users[0]?.id || "");
       }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : t("settings.loadFailed"));
@@ -217,8 +220,8 @@ export default function WorkspaceSettings({ view }: { view: string }) {
     { value: "zh-CN", label: "简体中文（中国）— zh-CN" },
     { value: "en-US", label: "English (United States) — en-US" },
   ];
-  // Someone who grants warehouse access is sent every warehouse, but their own
-  // default warehouse must still be one they can read.
+  // Someone who reads or grants warehouse access is sent every warehouse, but
+  // their own default warehouse must still be one they can read.
   const ownWarehouseIds = new Set((profile.warehouseScopes || []).map(scope => scope.warehouseId));
   const scopeTarget = canReadUsers ? users.find(user => user.id === scopeUserId) : undefined;
 

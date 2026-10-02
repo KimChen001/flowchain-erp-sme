@@ -37,16 +37,19 @@ async function saveCompany(page: any) {
 }
 
 // A legacy manager made Workspace Administrator, and a legacy admin reduced to
-// Read-only Viewer, both through Roles & permissions. Created once per worker.
-let users: Promise<{ delegate: string; reduced: string }> | null = null;
+// Read-only Viewer, both through Roles & permissions, plus a legacy viewer who
+// keeps Read-only Viewer and has no warehouse. Created once per worker.
+let users: Promise<{ delegate: string; reduced: string; reader: string }> | null = null;
 function setUpUsers(request: any) {
   users ||= (async () => {
     const stamp = Date.now();
     const delegate = `delegate-${stamp}@example.com`;
     const reduced = `reduced-admin-${stamp}@example.com`;
+    const reader = `reader-${stamp}@example.com`;
     const admin = await login(request, "admin@example.com");
     await invite(request, admin, delegate, "manager");
     await invite(request, admin, reduced, "admin");
+    await invite(request, admin, reader, "viewer");
     const model = await (await request.get("/api/authorization/roles", auth(admin.token))).json();
     const roleId = (roleKey: string) => model.roles.find((role: any) => role.roleKey === roleKey).id;
     const userId = (email: string) => model.users.find((user: any) => user.email === email).id;
@@ -54,7 +57,7 @@ function setUpUsers(request: any) {
       const assigned = await request.put(`/api/authorization/users/${userId(email)}/roles`, { ...auth(admin.token), data: { roleIds: [roleId(roleKey)] } });
       expect(assigned.ok()).toBeTruthy();
     }
-    return { delegate, reduced };
+    return { delegate, reduced, reader };
   })();
   return users;
 }
@@ -135,4 +138,26 @@ test("a legacy admin reduced to Read-only Viewer cannot edit company settings", 
   await expect(page.getByTestId("workspace-read-only")).toHaveText("你的角色不含“管理工作区设置”权限，这些设置只能查看。");
   await page.goto("/app/settings/profile");
   await expect(page.getByTestId("profile-roles")).toHaveValue("只读查看者");
+});
+
+test("a member who may only read warehouse access sees a teammate's access on every warehouse", async ({ page, request }) => {
+  const { reader } = await setUpUsers(request);
+  const value = await login(request, reader);
+  expect(value.user.role).toBe("viewer");
+  await session(page, value);
+  await forceLanguage(page, "en-US");
+  const members = (await (await request.get("/api/workspace/users", auth(value.token))).json()).users;
+  const memberId = (email: string) => members.find((user: any) => user.email === email).id;
+
+  // Read-only Viewer may read members' access but has no warehouse of its
+  // own. The page opens on the reader's own access, which is none.
+  await page.goto("/app/settings/warehouse-access");
+  await expect(page.getByTestId("warehouse-access-user")).toHaveValue(memberId(reader));
+  const mainRow = page.getByTestId("warehouse-access").getByRole("row", { name: /MAIN · Main Warehouse/ });
+  await expect(mainRow).toContainText("No access");
+  // A teammate's access is listed on warehouses outside the reader's scope.
+  await page.getByTestId("warehouse-access-user").selectOption(memberId("admin@example.com"));
+  await expect(mainRow).toContainText("Operate");
+  await expect(page.getByTestId("warehouse-access-save")).toHaveCount(0);
+  await expect(page.getByLabel("MAIN Warehouse scope", { exact: true })).toHaveCount(0);
 });

@@ -42,7 +42,8 @@ Never put passwords, database URLs, session secrets or invitation tokens in comm
 
 - The database role assignments and tenant win over all client-supplied fields. Roles are assigned in Settings > Users & Roles (Roles & permissions); `PATCH /api/workspace/users/{id}` changes status only and refuses a role change with 422. A role assignment change or a status change invalidates the user's sessions.
 - Disabled or unprovisioned users cannot sign in.
-- A user cannot be disabled when that would leave no active user holding `settings.roles.manage`.
+- A user cannot be disabled when that would leave no active user holding `settings.roles.manage`. Status changes run as Serializable transactions and are retried when a concurrent change in the same workspace aborts them; a change that still collides returns 409 `USER_CHANGE_CONFLICT`.
+- Whoever holds `settings.users.read` or `settings.users.manage` gets every workspace warehouse from `GET /api/workspace/warehouses`, so a member's warehouse access shows in full. Everyone else gets only the warehouses in their own scope.
 - Creating an invitation needs `settings.roles.assign` as well as `settings.users.manage`, because accepting it assigns the invited role.
 - Invitation tokens are stored only as hashes. The raw invitation path is returned once for manual copy.
 - Pilot does not send invitation email. An administrator must copy the invitation link through an approved channel and can revoke a pending invitation.
