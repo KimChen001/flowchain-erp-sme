@@ -14,9 +14,12 @@ async function routeReports(ctx) {
   const { req, res, url, send, readBody } = ctx
   // The business read context as the signed-in reader may see it, and the
   // unscoped context for each SKU's reserved and available quantity.
+  // Inventory is read in the reader's warehouses only, so availability counts
+  // every order's demand against the stock the reader may see.
   const readerContext = async () => {
-    const context = await readBusinessContext(ctx)
-    return { context: scopeBusinessContext(context, await reportReadAccess(ctx)), allocationContext: context }
+    const access = await reportReadAccess(ctx)
+    const context = await readBusinessContext(ctx, { warehouseIds: access.warehouseIds })
+    return { context: scopeBusinessContext(context, access), allocationContext: context }
   }
 
   if (req.method === 'GET' && url.pathname === '/api/reports/open-purchase-orders') {

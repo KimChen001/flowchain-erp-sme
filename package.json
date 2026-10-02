@@ -136,7 +136,8 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "test:db:finance-read-permissions": "node scripts/run-postgres-test-files.mjs tests/postgres/finance-read-permissions.test.mjs",
-    "test:db:sales-read-permissions": "node scripts/run-postgres-test-files.mjs tests/postgres/sales-read-permissions.test.mjs"
+    "test:db:sales-read-permissions": "node scripts/run-postgres-test-files.mjs tests/postgres/sales-read-permissions.test.mjs",
+    "test:db:inventory-warehouse-scope": "node scripts/run-postgres-test-files.mjs tests/postgres/inventory-warehouse-scope.test.mjs"
   },
   "dependencies": {
     "@langchain/core": "1.2.9",

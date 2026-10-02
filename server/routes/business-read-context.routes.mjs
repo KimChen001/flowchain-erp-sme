@@ -12,7 +12,10 @@ export async function handleBusinessReadContextRoute(ctx) {
   // fallbacks disagree, so one response could mix two tenants.
   // Each collection and amount as the signed-in reader may see it.
   let context
-  try { context = scopeBusinessContext(await service.read({ tenantId: ctx.identity?.tenantId }), await reportReadAccess(ctx)) } catch (error) { sendReadAccessError(ctx, error); return true }
+  try {
+    const access = await reportReadAccess(ctx)
+    context = scopeBusinessContext(await service.read({ tenantId: ctx.identity?.tenantId, warehouseIds: access.warehouseIds }), access)
+  } catch (error) { sendReadAccessError(ctx, error); return true }
   send(res, 200, url.pathname === '/api/home/overview' ? buildHomeOverview(context, { timeZone: await readTenantTimezone(ctx) }) : context)
   return true
 }

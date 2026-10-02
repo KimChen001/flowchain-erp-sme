@@ -185,19 +185,26 @@ function mapException(record = {}) {
   }
 }
 
+// filters.warehouseIds, when given, is the reader's warehouse scope: only
+// balances, lots, serials, movements and exceptions in those warehouses are
+// read. An empty list reads none. An item with stock only outside the scope is
+// left out rather than listed as an item without stock.
 async function loadInventorySnapshot(client, filters = {}) {
   const where = tenantWhere(filters)
+  const warehouseIds = Array.isArray(filters.warehouseIds) ? filters.warehouseIds.map((id) => text(id)).filter(Boolean) : null
+  const inScope = warehouseIds ? { ...where, warehouseId: { in: warehouseIds } } : where
   const take = safeLimit(filters.limit)
   const bounded = { limit: take, subject: 'inventory_items', onTruncated: filters.onTruncated }
-  const [items, balances, lots, serials, movements, exceptions] = await Promise.all([
+  const [items, balances, lots, serials, movements, exceptions, stockedSkus] = await Promise.all([
     findManyWithinLimit(client.item, { where, orderBy: [{ sku: 'asc' }] }, bounded),
-    findManyWithinLimit(client.inventoryBalance, { where, orderBy: [{ sku: 'asc' }] }, bounded),
-    client.inventoryLot.findMany({ where, orderBy: [{ updatedAt: 'desc' }], take }),
-    client.inventorySerial.findMany({ where, orderBy: [{ updatedAt: 'desc' }], take }),
-    client.inventoryMovement.findMany({ where, orderBy: [{ movementDate: 'desc' }, { createdAt: 'desc' }], take }),
-    client.inventoryException.findMany({ where, orderBy: [{ updatedAt: 'desc' }], take }),
+    findManyWithinLimit(client.inventoryBalance, { where: inScope, orderBy: [{ sku: 'asc' }] }, bounded),
+    client.inventoryLot.findMany({ where: inScope, orderBy: [{ updatedAt: 'desc' }], take }),
+    client.inventorySerial.findMany({ where: inScope, orderBy: [{ updatedAt: 'desc' }], take }),
+    client.inventoryMovement.findMany({ where: inScope, orderBy: [{ movementDate: 'desc' }, { createdAt: 'desc' }], take }),
+    client.inventoryException.findMany({ where: inScope, orderBy: [{ updatedAt: 'desc' }], take }),
+    warehouseIds ? client.inventoryBalance.findMany({ where, select: { sku: true }, distinct: ['sku'] }) : null,
   ])
-  const balanceSkus = new Set(balances.map((item) => text(item.sku).toLowerCase()).filter(Boolean))
+  const balanceSkus = new Set((stockedSkus || balances).map((item) => text(item.sku).toLowerCase()).filter(Boolean))
   return {
     products: [
       ...balances.map(mapBalance),

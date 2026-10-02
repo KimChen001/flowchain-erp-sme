@@ -47,9 +47,14 @@ const MONEY_KEYS = new Set([
 ])
 const SUPPLIER_SENSITIVE_KEYS = ['creditCode', 'taxIdentificationNumber', 'bankAccountName', 'bankAccountNumber']
 
+// The warehouses whose stock the reader may see: null for every warehouse
+// (a workspace-wide actor), else the read scope, which may be empty.
+const readableWarehouses = (actor) => actor?.allWarehouses || !(actor?.readWarehouseIds instanceof Set) ? null : [...actor.readWarehouseIds]
+
 export function reportReadAccessFor(actor) {
   const allowed = (permission) => Boolean(actor?.tenantId) && can({ actor, permission, tenantId: actor.tenantId })
   return {
+    warehouseIds: readableWarehouses(actor),
     collections: Object.fromEntries(Object.entries(COLLECTION_PERMISSION).map(([key, permission]) => [key, allowed(permission)])),
     prices: allowed('procurement.prices.read'),
     amounts: allowed('finance.amounts.read'),
@@ -62,7 +67,7 @@ export function reportReadAccessFor(actor) {
 // production refuses, reads with its role template's permissions.
 function testHeaderActor(identity) {
   const roleKey = legacyRoleTemplateMap[String(identity.role || '').toLowerCase()] || 'read-only-viewer'
-  return { authenticated: true, complete: true, tenantId: identity.tenantId, permissionCodes: new Set(defaultRoleTemplates.find(template => template.roleKey === roleKey)?.permissions || []) }
+  return { authenticated: true, complete: true, tenantId: identity.tenantId, allWarehouses: true, permissionCodes: new Set(defaultRoleTemplates.find(template => template.roleKey === roleKey)?.permissions || []) }
 }
 
 // The session identity when it already carries a resolved authorization
@@ -71,6 +76,10 @@ export async function reportReadAccess(ctx) {
   if (ctx.reportReadAccess) return ctx.reportReadAccess
   const identity = ctx.identity
   if (identity?.authenticated && identity.source === 'explicit_test_headers') return reportReadAccessFor(testHeaderActor(identity))
+  // A test identity built in code (source 'test'; the server never issues
+  // one) with no database to provision it reads with its role template.
+  const env = ctx.env || process.env
+  if (identity?.authenticated && identity.source === 'test' && !env.DATABASE_URL && !ctx.inventoryPrisma) return reportReadAccessFor(testHeaderActor(identity))
   const actor = identity?.authenticated && identity.complete && identity.permissionCodes
     ? identity
     : await resolveProvisionedActor(await getPrismaClient(ctx.env || process.env), identity, { allowMissingTestActor: true })
