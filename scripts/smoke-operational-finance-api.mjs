@@ -551,6 +551,9 @@ try {
   const listed = await request(base, `/api/finance/supplier-invoices?search=SUP-INV-API-002`, { token: managerLogin.token });
   const listedOver = listed.items.find((row) => row.id === over.entityId);
   assert.ok(!listedOver.availableActions.includes("approve"), "a rejected exception blocks approval, so the list does not offer it");
+  const detailOver = await request(base, `/api/finance/supplier-invoices/${over.entityId}`, { token: managerLogin.token });
+  assert.ok(!detailOver.availableActions.includes("approve"), "nor does the detail");
+  assert.ok(detailOver.availableActions.includes("cancel"));
   const corrected = { ...overcharge, lines: [{ ...overcharge.lines[0], unitPrice: "12.5000", lineAmount: "75.0000" }], totalAmount: "75.0000" };
   // While the rejected invoice holds the receipt, the corrected one is refused.
   const probe = await request(base, "/api/finance/supplier-invoices", { token: specialistLogin.token, method: "POST", body: { ...corrected, invoiceNumber: "SUP-INV-API-002B", idempotencyKey: "api-create-probe" } });

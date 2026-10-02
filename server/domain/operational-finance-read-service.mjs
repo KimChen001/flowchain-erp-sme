@@ -224,7 +224,12 @@ export function createOperationalFinanceReadService({
     });
     if (!invoice)
       fail("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404);
-    const summary = invoiceSummary(invoice, current, capabilities);
+    // The same approval rule as the list: open or rejected exceptions on any
+    // match run block approval, so the detail does not offer it.
+    const blockingExceptionCount = invoice.matchRuns
+      .flatMap((run) => run.exceptions || [])
+      .filter((entry) => ["open", "rejected"].includes(entry.status)).length;
+    const summary = invoiceSummary({ ...invoice, blockingExceptionCount }, current, capabilities);
     const match = invoice.matchRuns[0] || null;
     return {
       ...summary,
