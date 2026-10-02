@@ -85,7 +85,8 @@ type PurchaseOrderWorkbenchPayload = {
 // and open purchase orders. Committed value is one total per currency.
 type PurchaseOrderWorkbenchSummary = {
   committedOrderCount: number;
-  committedValueByCurrency: Array<{ currency: string; amount: number; orderCount: number }>;
+  // Null when the role cannot read prices.
+  committedValueByCurrency: Array<{ currency: string; amount: number; orderCount: number }> | null;
   openOrderCount: number;
   openPurchaseOrderIds: string[];
 };
@@ -263,10 +264,15 @@ function safeText(value: unknown, fallback = "待补齐") {
   return text || fallback;
 }
 
-function poAmount(po?: PurchaseOrder | null) {
-  if (!po) return 0;
+// Null when the role cannot see prices or the order has no amount, so the
+// page shows a dash rather than $0.00.
+const amountsHidden = (record?: { restrictedFields?: string[] } | null) => Boolean(record?.restrictedFields?.includes("amounts"));
+const amountOrNull = (value: unknown) => (value === null || value === undefined || value === "" ? null : Number(value));
+
+function poAmount(po?: PurchaseOrder | null): number | null {
+  if (!po || amountsHidden(po)) return null;
   const totals = poTotals(po);
-  return Number(po.totalAmount || totals.totalAmount || po.amount || 0);
+  return amountOrNull(po.totalAmount || totals.totalAmount || po.amount);
 }
 
 function poLineAmount(line: { quantityOrdered?: number; unitPrice?: number }, po?: PurchaseOrder | null) {
@@ -274,7 +280,8 @@ function poLineAmount(line: { quantityOrdered?: number; unitPrice?: number }, po
   if (direct > 0) return direct;
   const lines = poLinesOf(po);
   const totalQty = lines.reduce((sum, item) => sum + toNumber(item.quantityOrdered), 0);
-  return totalQty ? Math.round(poAmount(po) * (toNumber(line.quantityOrdered) / totalQty)) : poAmount(po);
+  const total = poAmount(po) ?? 0;
+  return totalQty ? Math.round(total * (toNumber(line.quantityOrdered) / totalQty)) : total;
 }
 
 function unitPriceForLine(line: { quantityOrdered?: number; unitPrice?: number; poLineId?: string }, po: PurchaseOrder | null | undefined, facts: ProcurementRuntimeFacts) {
@@ -646,6 +653,7 @@ export default function PurchasingOrdersPage({
   }, [viewMode, selectedPO?.po, selectedPO?.supplier, onActiveContextChange]);
 
   const committedValue = summary?.committedValueByCurrency || [];
+  const committedHidden = Boolean(summary) && summary?.committedValueByCurrency === null;
   const invoiceExceptions = orders.filter((order) => invoiceStatus(order, facts) === "发票差异").length;
   const matchExceptions = orders.filter((order) => !["已匹配", "缺少发票"].includes(matchStatus(order, facts))).length;
 
@@ -844,8 +852,8 @@ export default function PurchasingOrdersPage({
               { key: "unit", label: "单位" },
               { key: "arrived", label: "收货日期" },
               { key: "receiver", label: "Receiver" },
-              { key: "unitPrice", label: "单价", align: "right", render: (line) => fmt(Number(line.unitPrice || 0)) },
-              { key: "lineAmount", label: "行金额", align: "right", render: (line) => fmt(Number(line.lineAmount || 0)) },
+              { key: "unitPrice", label: "单价", align: "right", render: (line) => fmt(amountsHidden(selectedPO) ? null : amountOrNull(line.unitPrice)) },
+              { key: "lineAmount", label: "行金额", align: "right", render: (line) => fmt(amountsHidden(selectedPO) ? null : amountOrNull(line.lineAmount)) },
               { key: "status", label: "收货状态" },
               { key: "qcStatus", label: "质检 / 异常状态" },
               { key: "invoiceImpact", label: "是否影响发票匹配" },
@@ -970,7 +978,7 @@ export default function PurchasingOrdersPage({
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-4 gap-3">
-        <ActionableMetricCard label={copy("已承诺采购订单金额")} value={!summary ? "—" : committedValue.length === 0 ? formatCurrencyAmount(0, "") : committedValue.map((row) => formatCurrencyAmount(row.amount, row.currency)).join(" · ")} description={loading ? copy("加载中") : `${summary?.committedOrderCount ?? 0} ${copy("张已承诺订单（已批准、已下达或已收货）")}`} to="/app/procurement/orders" icon={FileText} color={A.blue} />
+        <ActionableMetricCard label={copy("已承诺采购订单金额")} value={!summary ? "—" : committedHidden ? copy("受限") : committedValue.length === 0 ? formatCurrencyAmount(0, "") : committedValue.map((row) => formatCurrencyAmount(row.amount, row.currency)).join(" · ")} description={loading ? copy("加载中") : `${summary?.committedOrderCount ?? 0} ${copy("张已承诺订单（已批准、已下达或已收货）")}`} to="/app/procurement/orders" icon={FileText} color={A.blue} />
         <ActionableMetricCard label={copy("未完成采购订单")} value={summary ? String(summary.openOrderCount) : "—"} description={copy("已承诺且仍有待收数量")} to="/app/procurement/orders?status=open" icon={Truck} color={A.orange} />
         <ActionableMetricCard label={copy("发票差异")} value={String(invoiceExceptions)} description={copy("采购与财务共同复核")} to="/app/finance/invoices?matchStatus=variance" icon={AlertCircle} color={A.red} />
         <ActionableMetricCard label={copy("匹配复核")} value={String(matchExceptions)} description={copy("查看三单匹配异常")} to="/app/finance/three-way-match" icon={ShieldCheck} color={A.purple} />

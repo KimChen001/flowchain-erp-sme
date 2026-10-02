@@ -80,6 +80,8 @@ export type PurchaseOrderLine = {
 };
 
 export type PurchaseOrder = {
+  // Set by the server when the role may not read prices ("amounts").
+  restrictedFields?: string[];
   po: string;
   supplier: string;
   created: string;

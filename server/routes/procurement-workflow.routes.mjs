@@ -1,3 +1,5 @@
+import { canReadProcurementDocument, maskProcurementRecord, maskProcurementSnapshot, procurementReadAccess } from "../domain/procurement-read-access.mjs";
+const denied = (send, res) => send(res, 403, { code: "PERMISSION_DENIED", message: "Your role cannot view these procurement records.", details: [] }) || true;
 import { createHash } from "node:crypto";
 import { createProcurementRequestCommandService } from "../services/procurement-request-command-service.mjs";
 import { recommendProcurementPath } from "../domain/procurement-workflow.mjs";
@@ -55,14 +57,19 @@ const commandBody = async (ctx) => {
 export async function handleProcurementWorkflowRoute(ctx) {
   const { req, res, url, send } = ctx;
   if (!url.pathname.startsWith("/api/procurement/")) return false;
-  if (req.method === "GET" && url.pathname === "/api/procurement/requests") {
+  // Lists answer only the collections the actor may read, with prices and
+  // amounts masked by role (procurement-read-access.mjs).
+  const list = async (key, type) => {
     if (!ctx.identity?.authenticated || !ctx.identity.tenantId) return send(res, 401, { code: "TENANT_CONTEXT_REQUIRED", message: "An authenticated tenant context is required." }) || true;
+    const access = await procurementReadAccess(ctx);
+    if (!canReadProcurementDocument(type, access)) return denied(send, res);
     const snapshot = await ctx.repositories.procurementRead.snapshot({ tenantId: ctx.identity.tenantId });
-    return send(res, 200, snapshot.purchaseRequests) || true;
-  }
+    return send(res, 200, maskProcurementSnapshot(snapshot, access)[key]) || true;
+  };
+  if (req.method === "GET" && url.pathname === "/api/procurement/requests") return list("purchaseRequests", "pr");
   const requestDetail = url.pathname.match(/^\/api\/procurement\/requests\/([^/]+)$/);
   if (req.method === "GET" && requestDetail)
-    return respond(ctx, 200, () => requestCommands(ctx).readPurchaseRequest(decodeURIComponent(requestDetail[1]), ctx));
+    return respond(ctx, 200, async () => maskProcurementRecord(await requestCommands(ctx).readPurchaseRequest(decodeURIComponent(requestDetail[1]), ctx), "pr", await procurementReadAccess(ctx)));
   if (req.method === "POST" && url.pathname === "/api/procurement/requests")
     return respond(ctx, 201, async () => requestCommands(ctx).createPurchaseRequest(await commandBody(ctx), ctx));
   if (req.method === "PATCH" && requestDetail)
@@ -87,19 +94,16 @@ export async function handleProcurementWorkflowRoute(ctx) {
   );
   if (req.method === "POST" && po)
     return respond(ctx, 201, async () => requestCommands(ctx).createPurchaseOrdersFromPurchaseRequest(decodeURIComponent(po[1]), await commandBody(ctx), ctx));
-  if (req.method === "GET" && url.pathname === "/api/procurement/rfqs") {
-    if (!ctx.identity?.authenticated || !ctx.identity.tenantId) return send(res, 401, { code: "TENANT_CONTEXT_REQUIRED", message: "An authenticated tenant context is required." }) || true;
-    const snapshot = await ctx.repositories.procurementRead.snapshot({ tenantId: ctx.identity.tenantId });
-    return send(res, 200, snapshot.rfqs) || true;
-  }
-  if (req.method === "GET" && url.pathname === "/api/procurement/orders") {
-    if (!ctx.identity?.authenticated || !ctx.identity.tenantId) return send(res, 401, { code: "TENANT_CONTEXT_REQUIRED", message: "An authenticated tenant context is required." }) || true;
-    const snapshot = await ctx.repositories.procurementRead.snapshot({ tenantId: ctx.identity.tenantId });
-    return send(res, 200, snapshot.purchaseOrders) || true;
-  }
+  if (req.method === "GET" && url.pathname === "/api/procurement/rfqs") return list("rfqs", "rfq");
+  if (req.method === "GET" && url.pathname === "/api/procurement/orders") return list("purchaseOrders", "po");
   const orderDetail = url.pathname.match(/^\/api\/procurement\/orders\/([^/]+)$/);
+  // Prices as the mobile detail shows them: only with procurement.prices.read.
   if (req.method === "GET" && orderDetail)
-    return respond(ctx, 200, () => purchaseOrderCommands(ctx).readPurchaseOrder(decodeURIComponent(orderDetail[1]), ctx));
+    return respond(ctx, 200, async () => {
+      const access = await procurementReadAccess(ctx);
+      const order = await purchaseOrderCommands(ctx).readPurchaseOrder(decodeURIComponent(orderDetail[1]), ctx, { includePrices: access.prices, includePartner: true });
+      return access.prices ? order : { ...order, restrictedFields: ["amounts"] };
+    });
   const poAction = url.pathname.match(
     /^\/api\/procurement\/orders\/([^/]+)\/(submit|approve|reject|return-for-revision|issue|cancel)$/,
   );
