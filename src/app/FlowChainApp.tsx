@@ -404,6 +404,8 @@ export default function FlowChainApp() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
+  // The reader's role hides some record types from search.
+  const [searchRestricted, setSearchRestricted] = useState(false);
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [searchFocus, setSearchFocus] = useState<GlobalSearchFocus | null>(
     null,
@@ -820,6 +822,7 @@ export default function FlowChainApp() {
     const trimmed = query.trim();
     setSearchQuery(query);
     setSearchError("");
+    setSearchRestricted(false);
     if (!trimmed) {
       setSearchResults([]);
       setSearchOpen(false);
@@ -833,8 +836,10 @@ export default function FlowChainApp() {
         query: string;
         results: GlobalSearchResult[];
         total: number;
+        restrictedSubjects?: string[];
       }>(`/api/search?q=${encodeURIComponent(trimmed)}`);
       setSearchResults(payload.results);
+      setSearchRestricted(Boolean(payload.restrictedSubjects?.length));
       setActiveSearchIndex(payload.results.length ? 0 : -1);
     } catch (error) {
       setSearchResults([]);
@@ -1613,6 +1618,14 @@ export default function FlowChainApp() {
                           </div>
                         ));
                       })()}
+                    {!searchLoading && !searchError && searchRestricted && (
+                      <div
+                        className={`${typography.searchResultMeta} px-3 py-2`}
+                        style={{ color: A.gray2 }}
+                      >
+                        {t("top.searchRestricted")}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

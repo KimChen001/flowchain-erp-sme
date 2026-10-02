@@ -7,6 +7,11 @@ import {
   searchGlobalBusinessRecords,
 } from './global-business-search.mjs'
 import { handleSearchRoute } from '../routes/search.routes.mjs'
+import { reportReadAccessFor } from './report-read-access.mjs'
+import { permissionCodes } from '../auth/permission-catalog.mjs'
+
+// A reader who may see everything.
+const fullReportAccess = reportReadAccessFor({ authenticated: true, complete: true, tenantId: 'tenant-any', permissionCodes: new Set(permissionCodes) })
 
 function createDb() {
   return {
@@ -218,6 +223,7 @@ test('GET /api/search returns capped payload', async () => {
     res: {},
     url: new URL('/api/search?q=ABC&limit=3', 'http://localhost'),
     db: createDb(),
+    reportReadAccess: fullReportAccess,
     send(_res, status, payload) {
       response = { status, payload }
     },
@@ -236,6 +242,7 @@ test('GET /api/search empty query returns empty payload', async () => {
     res: {},
     url: new URL('/api/search?q=', 'http://localhost'),
     db: createDb(),
+    reportReadAccess: fullReportAccess,
     send(_res, status, payload) {
       response = { status, payload }
     },
