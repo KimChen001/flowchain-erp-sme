@@ -30,13 +30,14 @@ export function masterDataReadAccessFor(actor) {
 }
 
 // The session identity when it already carries a resolved authorization
-// context, else the provisioned workspace user.
-export async function masterDataReadAccess(ctx) {
+// context, else the actor the caller already resolved (a write resolves one to
+// authorize itself), else the provisioned workspace user.
+export async function masterDataReadAccess(ctx, resolvedActor = null) {
   if (ctx.masterDataReadAccess) return ctx.masterDataReadAccess
   const identity = ctx.identity
   const actor = identity?.authenticated && identity.complete && identity.permissionCodes
     ? identity
-    : await resolveProvisionedActor(await getPrismaClient(ctx.env || process.env), identity)
+    : resolvedActor || await resolveProvisionedActor(await getPrismaClient(ctx.env || process.env), identity)
   return masterDataReadAccessFor(actor)
 }
 

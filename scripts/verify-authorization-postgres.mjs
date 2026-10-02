@@ -52,6 +52,10 @@ try {
   assert.equal(decision(buyer, "returns.request.submit", [warehouseId]), true); assert.equal(decision(buyer, "returns.posting.post", [warehouseId]), false); assert.equal(decision(buyer, "returns.posting.reverse", [warehouseId]), false)
   assert.equal(decision(ops, "returns.posting.post", [warehouseId]), true); assert.equal(decision(ops, "returns.posting.reverse", [warehouseId]), false)
   assert.equal(decision(viewer, "returns.posting.read"), true); assert.equal(decision(viewer, "returns.posting.post", [warehouseId]), false); assert.equal(decision(unknown, "returns.posting.post", [warehouseId]), false)
+  // Master data writes come from the backfilled roles: buyers maintain items
+  // and suppliers but not customers, and viewers change nothing.
+  const masterDataCodes = ["master_data.item.manage", "master_data.supplier.manage", "master_data.customer.manage"]
+  for (const [label, actor, expected] of [["admin", admin, [true, true, true]], ["manager", manager, [true, true, true]], ["ops", ops, [true, true, true]], ["buyer", buyer, [true, true, false]], ["viewer", viewer, [false, false, false]], ["unknown", unknown, [false, false, false]]]) assert.deepEqual(masterDataCodes.map((code) => decision(actor, code)), expected, label)
 
   const service = createAuthorizationAdminService({ prisma })
   const custom = await service.createRole(admin, { name: "退货执行员", permissionCodes: ["returns.posting.read", "returns.posting.prepare", "returns.posting.post", "returns.posting.reverse"] })
