@@ -1,4 +1,5 @@
 import { assertWarehouseAccess, hasWarehouseAccess, resolveProvisionedActor } from './pilot-identity.mjs'
+import { assertAuthorized } from '../auth/authorization-service.mjs'
 import {
   buildReservationReleasePlan,
   buildSalesOrderReservationPlan,
@@ -73,9 +74,17 @@ export function createOutboundQueryService({ prisma, capabilities = {} } = {}) {
   if (!prisma) throw new Error('prisma is required')
 
   async function actor(context) { return resolveProvisionedActor(prisma, identityFrom(context)) }
+  // Order state and the reservation and shipment-draft previews read the
+  // order (sales_order.read); shipment state and the shipment previews read
+  // the shipment (shipment.read). The commands check their own permissions.
+  async function reader(context, permission) {
+    const resolved = await actor(context)
+    assertAuthorized({ actor: resolved, permission, tenantId: resolved.tenantId })
+    return resolved
+  }
 
   async function getSalesOrderOutboundState({ salesOrderId }, context) {
-    const resolved = await actor(context)
+    const resolved = await reader(context, 'sales_order.read')
     const order = await prisma.salesOrder.findFirst({ where: { id: text(salesOrderId), tenantId: resolved.tenantId }, include: { lines: { orderBy: { id: 'asc' } }, reservations: { orderBy: { id: 'asc' } }, shipments: { orderBy: { createdAt: 'asc' } } } })
     if (!order) fail('SALES_ORDER_NOT_FOUND', 'Sales order was not found.', 404)
     assertWarehouseAccess(resolved, order.reservations.map((reservation) => reservation.warehouseId), 'read', { maskExistence: true })
@@ -90,7 +99,7 @@ export function createOutboundQueryService({ prisma, capabilities = {} } = {}) {
   }
 
   async function getShipmentPostingState({ shipmentId }, context) {
-    const resolved = await actor(context)
+    const resolved = await reader(context, 'shipment.read')
     const shipment = await prisma.shipmentDocument.findFirst({ where: { id: text(shipmentId), tenantId: resolved.tenantId }, include: { lines: { orderBy: { id: 'asc' }, include: { allocations: { orderBy: { id: 'asc' } } } } } })
     if (!shipment) fail('SHIPMENT_NOT_FOUND', 'Shipment was not found.', 404)
     const allocations = shipment.lines.flatMap((line) => line.allocations)
@@ -108,12 +117,12 @@ export function createOutboundQueryService({ prisma, capabilities = {} } = {}) {
     }
   }
 
-  async function previewSalesOrderReservation(input, context) { const resolved = await actor(context); assertPreviewCapability(capabilities, 'sales-reservation'); return assertPreviewWarehouseAccess(prisma, resolved, await buildSalesOrderReservationPlan({ prisma, tenantId: resolved.tenantId, ...input })) }
-  async function previewReservationRelease(input, context) { const resolved = await actor(context); assertPreviewCapability(capabilities, 'sales-reservation'); return assertPreviewWarehouseAccess(prisma, resolved, await buildReservationReleasePlan({ prisma, tenantId: resolved.tenantId, ...input })) }
-  async function previewShipmentDraft(input, context) { const resolved = await actor(context); assertPreviewCapability(capabilities, 'sales-shipment-draft'); return assertPreviewWarehouseAccess(prisma, resolved, await buildShipmentDraftPlan({ prisma, tenantId: resolved.tenantId, ...input })) }
-  async function previewShipmentCancellation(input, context) { const resolved = await actor(context); assertPreviewCapability(capabilities, 'sales-shipment-draft'); return assertPreviewWarehouseAccess(prisma, resolved, await buildShipmentCancellationPlan({ prisma, tenantId: resolved.tenantId, ...input })) }
-  async function previewShipmentPosting(input, context) { const resolved = await actor(context); assertPreviewCapability(capabilities, 'sales-shipment-posting'); return assertPreviewWarehouseAccess(prisma, resolved, await buildShipmentPostingPlan({ prisma, tenantId: resolved.tenantId, ...input })) }
-  async function previewShipmentReversal(input, context) { const resolved = await actor(context); assertPreviewCapability(capabilities, 'sales-shipment-reversal'); return assertPreviewWarehouseAccess(prisma, resolved, await buildShipmentReversalPlan({ prisma, tenantId: resolved.tenantId, ...input })) }
+  async function previewSalesOrderReservation(input, context) { const resolved = await reader(context, 'sales_order.read'); assertPreviewCapability(capabilities, 'sales-reservation'); return assertPreviewWarehouseAccess(prisma, resolved, await buildSalesOrderReservationPlan({ prisma, tenantId: resolved.tenantId, ...input })) }
+  async function previewReservationRelease(input, context) { const resolved = await reader(context, 'sales_order.read'); assertPreviewCapability(capabilities, 'sales-reservation'); return assertPreviewWarehouseAccess(prisma, resolved, await buildReservationReleasePlan({ prisma, tenantId: resolved.tenantId, ...input })) }
+  async function previewShipmentDraft(input, context) { const resolved = await reader(context, 'sales_order.read'); assertPreviewCapability(capabilities, 'sales-shipment-draft'); return assertPreviewWarehouseAccess(prisma, resolved, await buildShipmentDraftPlan({ prisma, tenantId: resolved.tenantId, ...input })) }
+  async function previewShipmentCancellation(input, context) { const resolved = await reader(context, 'shipment.read'); assertPreviewCapability(capabilities, 'sales-shipment-draft'); return assertPreviewWarehouseAccess(prisma, resolved, await buildShipmentCancellationPlan({ prisma, tenantId: resolved.tenantId, ...input })) }
+  async function previewShipmentPosting(input, context) { const resolved = await reader(context, 'shipment.read'); assertPreviewCapability(capabilities, 'sales-shipment-posting'); return assertPreviewWarehouseAccess(prisma, resolved, await buildShipmentPostingPlan({ prisma, tenantId: resolved.tenantId, ...input })) }
+  async function previewShipmentReversal(input, context) { const resolved = await reader(context, 'shipment.read'); assertPreviewCapability(capabilities, 'sales-shipment-reversal'); return assertPreviewWarehouseAccess(prisma, resolved, await buildShipmentReversalPlan({ prisma, tenantId: resolved.tenantId, ...input })) }
 
   return { getSalesOrderOutboundState, getShipmentPostingState, previewSalesOrderReservation, previewReservationRelease, previewShipmentDraft, previewShipmentCancellation, previewShipmentPosting, previewShipmentReversal }
 }

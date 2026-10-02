@@ -133,7 +133,8 @@
     "pilot:check": "node scripts/check-pilot-readiness.mjs",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "test:db:sales-read-permissions": "node scripts/run-postgres-test-files.mjs tests/postgres/sales-read-permissions.test.mjs"
   },
   "dependencies": {
     "@langchain/core": "1.2.9",
