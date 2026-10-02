@@ -27,10 +27,10 @@ test('archived Pilot import prototype remains test-only and documents prior dire
       await expectCommandError(service.commit((await service.preview({ ...file('items'), rows: [{ sku: 'PILOT-SKU-2', name: 'Second', unit: 'EA' }] }, identity)).id, { idempotencyKey: 'items-1' }, identity), 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD')
 
       await previewAndCommit('suppliers', [{ code: 'PILOT-SUP', name: 'Pilot Supplier', currency: 'CNY', status: 'active' }], 'suppliers-1')
-      await prisma.user.update({ where: { id: identity.userId }, data: { role: 'admin' } }); identity.role = 'admin'
+      await prisma.user.update({ where: { id: identity.userId }, data: { role: 'admin', rolesAssignedAt: null } }); identity.role = 'admin'
       await prisma.userRoleAssignment.deleteMany({ where: { userId: identity.userId } })
       await previewAndCommit('warehouses', [{ code: 'PILOT-WH', name: 'Pilot Warehouse', status: 'active' }], 'warehouses-1')
-      await prisma.user.update({ where: { id: identity.userId }, data: { role: 'manager' } }); identity.role = 'manager'
+      await prisma.user.update({ where: { id: identity.userId }, data: { role: 'manager', rolesAssignedAt: null } }); identity.role = 'manager'
       await prisma.userRoleAssignment.deleteMany({ where: { userId: identity.userId } })
       await previewAndCommit('locations', [{ warehouseCode: (await prisma.warehouse.findUnique({ where: { id: scenario.warehouseId } })).code, code: ' B-01 ', name: 'Bin B01', status: 'active' }], 'locations-1')
       await previewAndCommit('open_purchase_orders', [{ poNumber: 'PILOT-PO-001', supplierCode: 'PILOT-SUP', sku: 'PILOT-SKU', orderedQuantity: '10', receivedQuantity: '2', unit: 'EA', currency: 'CNY', status: 'issued' }], 'po-1')

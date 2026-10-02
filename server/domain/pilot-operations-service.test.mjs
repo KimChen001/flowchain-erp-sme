@@ -19,7 +19,7 @@ test('Pilot diagnostics are admin-only and exports honor tenant and warehouse sc
       const adminExport = await service.exportDataset('receiving_documents', actor)
       assert.equal(adminExport.rowCount, 1); assert.equal(adminExport.rows[0].documentNumber.startsWith('GRN-'), true)
 
-      await prisma.user.update({ where: { id: actor.userId }, data: { role: 'manager' } }); actor.role = 'manager'
+      await prisma.user.update({ where: { id: actor.userId }, data: { role: 'manager', rolesAssignedAt: null } }); actor.role = 'manager'
       await prisma.userRoleAssignment.deleteMany({ where: { userId: actor.userId } })
       await prisma.userWarehouseScope.upsert({ where: { tenantId_userId_warehouseId: { tenantId: scenario.tenantId, userId: actor.userId, warehouseId: scenario.warehouseId } }, create: { id: randomUUID(), tenantId: scenario.tenantId, userId: actor.userId, warehouseId: scenario.warehouseId, accessLevel: 'read' }, update: { accessLevel: 'read' } })
       assert.equal((await service.exportDataset('receiving_documents', actor)).rowCount, 1)
