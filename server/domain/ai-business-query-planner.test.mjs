@@ -147,3 +147,26 @@ test('payment blocking synonyms include cannot be paid and current week priority
   const priority = buildDeterministicBusinessQueryPlan({ message: 'current week 哪些供应商必须跟进？', suppliers })
   assert.ok(priority.goals.includes('supplier_priority'))
 })
+
+test('a supplier code or name matches only as a whole phrase', () => {
+  const coded = [
+    { tenantId: 't1', id: 'supplier-ac', name: 'Acme Components', code: 'AC' },
+    { tenantId: 't1', id: 'supplier-nor', name: 'Northstar Electronics', code: 'NOR' },
+  ]
+  const scope = (message) => buildDeterministicBusinessQueryPlan({ message, suppliers: coded }).scope
+  // A two-letter code never matches inside a word, and a code is not a
+  // prefix of a longer word.
+  assert.notEqual(scope('Which accounts need payment?').source, 'explicit')
+  assert.notEqual(scope('Which suppliers need payment normally?').source, 'explicit')
+  // A name or a three-letter code as a whole phrase still matches, also
+  // straight before Chinese text.
+  assert.deepEqual(scope('Can we pay Acme Components this week?').entityIds, ['supplier-ac'])
+  assert.deepEqual(scope('NOR 需要付款吗？').entityIds, ['supplier-nor'])
+  assert.deepEqual(scope('Northstar Electronics的应付款').entityIds, ['supplier-nor'])
+  // A two-character name or code counts when written in capitals.
+  const short = [{ tenantId: 't1', id: 'supplier-hp', name: 'HP', code: 'HP01' }, { tenantId: 't1', id: 'supplier-in', name: 'Inland Freight', code: 'IN' }]
+  const shortScope = (message) => buildDeterministicBusinessQueryPlan({ message, suppliers: short }).scope
+  assert.deepEqual(shortScope('Which payments to HP are blocked?').entityIds, ['supplier-hp'])
+  assert.deepEqual(shortScope('HP 的付款被阻断了吗？').entityIds, ['supplier-hp'])
+  assert.notEqual(shortScope('Which supplier payments are due in March?').source, 'explicit')
+})
