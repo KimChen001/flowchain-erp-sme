@@ -75,6 +75,35 @@ Official references: [regional endpoints](https://www.alibabacloud.com/help/en/m
 [embeddings and batch limits](https://www.alibabacloud.com/help/en/model-studio/text-embedding-synchronous-api),
 [JSON output](https://www.alibabacloud.com/help/en/model-studio/qwen-structured-output).
 
+### MIT Parley connection
+
+For members of MIT, set `FLOWCHAIN_KNOWLEDGE_PROVIDER=parley` and `PARLEY_API_KEY`
+(a key from `https://platform.parley.mit.edu/my-keys`). The preset fixes destinations
+to `https://parley.api.mit.edu/v1/embeddings` and
+`https://parley.api.mit.edu/v1/chat/completions`. When the assistant provider
+already points at a `https://parley.api.mit.edu/v1/` endpoint, its
+`FLOWCHAIN_AI_PROVIDER_API_KEY` is reused, so a local `.local/ai-provider.env` needs
+the key only once. No other key is ever sent to Parley.
+
+Defaults are `claude-haiku-4-5` for answers, with a 1,200-token cap and Parley's JSON
+mode, and `text-embedding-3-small` at 1,536 dimensions. Override them with
+`FLOWCHAIN_PARLEY_MODEL`, `FLOWCHAIN_PARLEY_EMBEDDING_MODEL`, and
+`FLOWCHAIN_PARLEY_EMBEDDING_DIMENSIONS`. Haiku 4.5 answers without extended
+thinking. The newer Claude models always think, so they are slower and cost more
+per answer. Parley's JSON mode on Claude models is only an instruction. Citation
+IDs are still validated locally.
+
+Parley serves the same `text-embedding-3-small` model as the OpenAI preset, under
+the same model name. Vectors indexed through either preset therefore stay
+compatible, and switching between the two does not require reindexing. Parley keys
+belong to individual MIT members and spend that member's monthly credits. Do not
+deploy one to a site that people outside MIT can reach until IS&T confirms this is
+permitted (`parley-support@mit.edu`).
+
+Official references: [chat completions](https://parley-docs.mit.edu/chat-completions),
+[embeddings](https://parley-docs.mit.edu/embeddings), [models](https://parley-docs.mit.edu/models)
+(sign-in with MIT credentials required).
+
 ### Retrieval and storage
 
 LangChain `RecursiveCharacterTextSplitter` produces overlapping 1,000-character

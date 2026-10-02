@@ -208,6 +208,10 @@ function createChatAdapter(kind, label) {
         ...(kind === 'qwen_chat' ? { enable_thinking: false, max_tokens: 1200,
           ...(input.task?.type === 'knowledge_rag' ? { response_format: { type: 'json_object' } } : {}),
         } : {}),
+        // Parley's JSON mode is best-effort on Claude and strips a fenced reply; replies are still validated here.
+        ...(kind === 'parley_chat' ? { max_tokens: 1200,
+          ...(['knowledge_rag', 'business_query_planning'].includes(input.task?.type) ? { response_format: { type: 'json_object' } } : {}),
+        } : {}),
       }
     },
     buildHeaders: jsonHeaders,
@@ -243,8 +247,9 @@ export const openaiResponsesAdapter = {
 export const deepseekChatAdapter = createChatAdapter('deepseek_chat', 'server-side chat adapter')
 export const doubaoChatAdapter = createChatAdapter('doubao_chat', 'server-side chat adapter')
 export const qwenChatAdapter = createChatAdapter('qwen_chat', 'server-side chat adapter')
+export const parleyChatAdapter = createChatAdapter('parley_chat', 'server-side chat adapter')
 
-export const providerSpecificAdapters = [openaiResponsesAdapter, deepseekChatAdapter, doubaoChatAdapter, qwenChatAdapter]
+export const providerSpecificAdapters = [openaiResponsesAdapter, deepseekChatAdapter, doubaoChatAdapter, qwenChatAdapter, parleyChatAdapter]
 
 export function selectProviderSpecificAdapter(kind = '') {
   return providerSpecificAdapters.find((adapter) => adapter.kind === kind) || null
