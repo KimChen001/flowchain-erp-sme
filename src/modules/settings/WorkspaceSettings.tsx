@@ -4,6 +4,7 @@ import { apiJson } from "../../lib/api-client";
 import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import AuthorizationWorkbench from "./AuthorizationWorkbench";
+import WorkspaceMembers from "./WorkspaceMembers";
 
 type Profile = {
   id: string;
@@ -212,7 +213,9 @@ export default function WorkspaceSettings({ view }: { view: string }) {
     { value: "en-US", label: "English (United States) — en-US" },
   ];
 
-  if (view === "roles") return <AuthorizationWorkbench />;
+  // Members, then roles, permissions and assignments. Both read the actor's
+  // effective permissions, not the legacy profile role.
+  if (view === "roles") return <div className="space-y-5"><WorkspaceMembers /><AuthorizationWorkbench /></div>;
 
   return <Card className="p-5" data-testid={`workspace-settings-${view}`}>
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -245,20 +248,6 @@ export default function WorkspaceSettings({ view }: { view: string }) {
         {" · "}
         {new Intl.NumberFormat(workspace.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1234567.89)}
       </div>
-    </div>}
-
-    {view === "roles" && <div className="mt-5 space-y-5">
-      {profile.role !== "admin" ? <div className="text-sm text-amber-700">{t("settings.workspaceOnly")}</div> : <>
-        <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-sm"><thead><tr>{[t("settings.user"), t("settings.email"), t("settings.role"), t("settings.status"), t("settings.warehouseScope")].map(label => <th className="p-2 text-left" key={label}>{label}</th>)}</tr></thead><tbody>{users.map(user => <tr className="border-t" key={user.id}>
-          <td className="p-2">{user.name}</td><td>{user.email}</td>
-          <td><select aria-label={`${user.email} ${t("settings.role")}`} value={user.role} onChange={event => void patchUser(user, { role: event.target.value })} className={field}><option value="admin">Admin</option><option value="manager">Manager</option><option value="viewer">Viewer</option><option value="business-specialist">Business Specialist</option><option value="buyer">Buyer</option></select></td>
-          <td><select aria-label={`${user.email} ${t("settings.status")}`} value={user.status} onChange={event => void patchUser(user, { status: event.target.value })} className={field}><option value="active">{t("settings.enabled")}</option><option value="disabled">{t("settings.disabled")}</option></select></td>
-          <td>{user.role === "admin" ? t("settings.allWarehouses") : user.warehouseScopes.map(scope => `${scope.warehouseId}:${scope.accessLevel}`).join(", ") || t("settings.none")}</td>
-        </tr>)}</tbody></table></div>
-        <div className="rounded-xl border p-4"><h3 className="font-semibold">{t("settings.invitation")}</h3><div className="mt-3 flex flex-wrap gap-2"><input className={`${field} max-w-xs`} placeholder="email@example.com" value={inviteEmail} onChange={event => setInviteEmail(event.target.value)} /><select className={`${field} w-44`} value={inviteRole} onChange={event => setInviteRole(event.target.value)}><option value="manager">Manager</option><option value="viewer">Viewer</option><option value="business-specialist">Business Specialist</option><option value="buyer">Buyer</option></select><button onClick={invite} className={`${button} text-white`} style={{ background: A.blue }}><Send size={15} />{t("settings.createInvitation")}</button></div>
-        {invitePath && <button onClick={() => void navigator.clipboard.writeText(`${location.origin}${invitePath}`)} className="mt-3 inline-flex items-center gap-2 text-sm text-blue-700"><Copy size={14} />{t("settings.copyInvitation")}</button>}
-        <div className="mt-3 space-y-2 text-xs">{invitations.map(invitation => <div className="flex flex-wrap items-center justify-between gap-2" key={invitation.id}><span>{invitation.email} · {displayRole(invitation.role)} · {invitation.status} · {formatDateTime(invitation.expiresAt)}</span>{invitation.status === "pending" && <button className="text-red-600" onClick={() => void revokeInvitation(invitation.id)}>{t("settings.revoke")}</button>}</div>)}</div></div>
-      </>}
     </div>}
 
     {view === "warehouse-access" && <div className="mt-5 overflow-x-auto">

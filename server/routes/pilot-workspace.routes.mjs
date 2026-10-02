@@ -4,6 +4,8 @@ import { PilotIdentityError, resolveProvisionedActor } from '../domain/pilot-ide
 import { roleLabel } from '../../shared/roles.mjs'
 import { assertAuthorized } from '../auth/authorization-service.mjs'
 import { revokeUserSessions } from '../auth/workspace-sessions.mjs'
+import { backfillTenantAuthorization } from '../auth/authorization-backfill.mjs'
+import { normalizeSignInEmail } from '../auth/email-link-sign-in.mjs'
 import {
   assertSupportedCurrency,
   assertSupportedLanguage,
@@ -20,7 +22,8 @@ import {
 const text = value => String(value ?? '').trim()
 const email = value => text(value).toLowerCase()
 const hashToken = token => createHash('sha256').update(token).digest('hex')
-const ALLOWED_ROLES = new Set(['admin', 'manager', 'viewer', 'business-specialist', 'buyer'])
+// Each maps to a default role template (legacyRoleTemplateMap).
+const ALLOWED_ROLES = new Set(['admin', 'manager', 'viewer', 'business-specialist', 'buyer', 'finance-specialist'])
 
 const fail = (code, message, status = 400, details) => { throw new PilotIdentityError(code, message, status, details) }
 const publicUser = user => ({ id: user.id, email: user.email, name: user.name, role: user.role, roleLabel: roleLabel(user.role), jobTitle: user.jobTitle, status: user.status, languagePreference: user.languagePreference, defaultWarehouseId: user.defaultWarehouseId, profileCompletedAt: user.profileCompletedAt, version: user.version, ...(Array.isArray(user.warehouseScopes) ? { warehouseScopes: user.warehouseScopes.map(scope => ({ warehouseId: scope.warehouseId, accessLevel: scope.accessLevel })) } : {}) })
@@ -99,7 +102,8 @@ export async function handlePilotWorkspaceRoute(ctx) {
   const prisma = await getPrismaClient(ctx.env || process.env)
   try {
     const accept = ctx.url.pathname === '/api/workspace/invitations/accept'
-    if (!accept && !ctx.identity?.authenticated) fail('AUTHENTICATION_REQUIRED', 'Authentication is required.', 401)
+    const inspect = ctx.url.pathname === '/api/workspace/invitations/inspect'
+    if (!accept && !inspect && !ctx.identity?.authenticated) fail('AUTHENTICATION_REQUIRED', 'Authentication is required.', 401)
 
     if (ctx.req.method === 'GET' && ctx.url.pathname === '/api/me/profile') {
       const actor = await resolveProvisionedActor(prisma, ctx.identity)
@@ -172,6 +176,8 @@ export async function handlePilotWorkspaceRoute(ctx) {
       if (!target) fail('USER_NOT_FOUND', 'Workspace user was not found.', 404)
       const role = text(body.role || target.role).toLowerCase(); const status = text(body.status || target.status).toLowerCase()
       if (!ALLOWED_ROLES.has(role) || !['active', 'disabled'].includes(status)) fail('USER_VALIDATION_FAILED', 'Role or status is invalid.')
+      // An administrator cannot lock themselves out.
+      if (target.id === actor.user.id && status !== 'active') fail('CANNOT_DISABLE_SELF', 'You cannot disable your own account.', 409)
       if (target.role === 'admin' && (role !== 'admin' || status !== 'active')) {
         const adminCount = await prisma.user.count({ where: { tenantId: actor.tenantId, role: 'admin', status: 'active' } })
         if (adminCount <= 1) fail('LAST_ADMIN_REQUIRED', 'The last active admin cannot be disabled or demoted.', 409)
@@ -218,8 +224,12 @@ export async function handlePilotWorkspaceRoute(ctx) {
     }
     if (ctx.req.method === 'POST' && ctx.url.pathname === '/api/workspace/invitations') {
       const actor = await adminActor(prisma, ctx.identity, 'settings.users.manage'); const body = await ctx.readBody(ctx.req)
-      const targetEmail = email(body.email); const role = text(body.role).toLowerCase(); const expiryHours = Math.min(168, Math.max(1, Number(body.expiryHours || 72)))
-      if (!targetEmail || !ALLOWED_ROLES.has(role)) fail('INVITATION_VALIDATION_FAILED', 'A valid email and canonical role are required.')
+      // The same address rule as sign-in, so every invitation can sign in.
+      const targetEmail = normalizeSignInEmail(body.email); const role = text(body.role).toLowerCase(); const expiryHours = Math.min(168, Math.max(1, Number(body.expiryHours || 72)))
+      if (!targetEmail) fail('INVITATION_EMAIL_INVALID', 'Enter a valid email address.', 422, [{ field: 'email' }])
+      if (!ALLOWED_ROLES.has(role)) fail('INVITATION_VALIDATION_FAILED', 'Choose a role for the invitation.', 422, [{ field: 'role' }])
+      const member = await prisma.user.findFirst({ where: { tenantId: actor.tenantId, email: targetEmail } })
+      if (member) fail('INVITATION_ALREADY_MEMBER', member.status === 'active' ? 'This person is already a member of the workspace.' : 'This person is a disabled member. Enable them instead of inviting them again.', 409)
       const token = randomBytes(32).toString('base64url')
       let invitation
       try { invitation = await prisma.workspaceInvitation.create({ data: { id: randomUUID(), tenantId: actor.tenantId, email: targetEmail, role, tokenHash: hashToken(token), expiresAt: new Date(Date.now() + expiryHours * 3600_000), invitedById: actor.user.id } }) }
@@ -233,6 +243,13 @@ export async function handlePilotWorkspaceRoute(ctx) {
       if (result.count !== 1) fail('INVITATION_NOT_PENDING', 'Pending invitation was not found.', 404)
       ctx.send(ctx.res, 200, { status: 'revoked' }); return true
     }
+    // What an invitation link is for, shown before it is accepted. The token
+    // is the secret, so its holder may see the invited email.
+    if (ctx.req.method === 'POST' && inspect) {
+      const body = await ctx.readBody(ctx.req); const invitation = await prisma.workspaceInvitation.findUnique({ where: { tokenHash: hashToken(text(body.token)) }, include: { tenant: true } })
+      if (!invitation || invitation.status !== 'pending' || invitation.expiresAt <= new Date()) fail('INVITATION_INVALID', 'Invitation is invalid or no longer pending.', 400)
+      ctx.send(ctx.res, 200, { email: invitation.email, role: invitation.role, roleLabel: roleLabel(invitation.role), workspaceName: invitation.tenant.name, expiresAt: invitation.expiresAt }); return true
+    }
     if (ctx.req.method === 'POST' && accept) {
       const body = await ctx.readBody(ctx.req); const tokenHash = hashToken(text(body.token)); const invitation = await prisma.workspaceInvitation.findUnique({ where: { tokenHash } })
       if (!invitation || invitation.status !== 'pending') fail('INVITATION_INVALID', 'Invitation is invalid or no longer pending.', 400)
@@ -245,7 +262,10 @@ export async function handlePilotWorkspaceRoute(ctx) {
         if (updated.count !== 1) fail('INVITATION_INVALID', 'Invitation was already used.', 409)
         return user
       })
-      ctx.send(ctx.res, 200, { user: publicUser(accepted), status: 'accepted' }); return true
+      // The new member gets the invitation's role template now, not on a
+      // later request.
+      if (!existing) await backfillTenantAuthorization(prisma, invitation.tenantId, { actorId: invitation.invitedById })
+      ctx.send(ctx.res, 200, { user: publicUser(accepted), email: accepted.email, status: 'accepted' }); return true
     }
     return false
   } catch (error) { sendError(ctx, error); return true }

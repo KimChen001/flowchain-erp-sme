@@ -56,6 +56,31 @@ test('Pilot workspace APIs provision users, protect admin actions, and enforce w
       const accepted = await call({ authenticated: false }, 'POST', '/api/workspace/invitations/accept', { token: invitation.payload.invitationToken, name: 'New User', role: 'admin', tenantId: 'forged' })
       assert.equal(accepted.status, 200); assert.equal(accepted.payload.user.role, 'viewer'); assert.equal(accepted.payload.user.email, 'new.user@example.com')
 
+      // An invitation needs an address sign-in accepts, and nobody already in the workspace.
+      const badEmail = await call(admin, 'POST', '/api/workspace/invitations', { email: 'not an email', role: 'viewer' })
+      assert.deepEqual([badEmail.status, badEmail.payload.code], [422, 'INVITATION_EMAIL_INVALID'])
+      const member = await call(admin, 'POST', '/api/workspace/invitations', { email: 'New.User@Example.com', role: 'manager' })
+      assert.deepEqual([member.status, member.payload.code], [409, 'INVITATION_ALREADY_MEMBER'])
+      // The link shows what it is for before it is accepted, without a session.
+      const financeInvite = await call(admin, 'POST', '/api/workspace/invitations', { email: 'finance.lead@example.com', role: 'finance-specialist' })
+      assert.equal(financeInvite.status, 201)
+      const inspected = await call({ authenticated: false }, 'POST', '/api/workspace/invitations/inspect', { token: financeInvite.payload.invitationToken })
+      assert.equal(inspected.status, 200)
+      assert.deepEqual([inspected.payload.email, inspected.payload.role, inspected.payload.workspaceName], ['finance.lead@example.com', 'finance-specialist', 'Pilot Workspace'])
+      assert.equal((await call({ authenticated: false }, 'POST', '/api/workspace/invitations/inspect', { token: 'forged' })).status, 400)
+      // Accepting assigns the invitation's role template at once.
+      const financeAccepted = await call({ authenticated: false }, 'POST', '/api/workspace/invitations/accept', { token: financeInvite.payload.invitationToken, name: 'Fin Lead' })
+      assert.equal(financeAccepted.status, 200)
+      const assignments = await prisma.userRoleAssignment.findMany({ where: { userId: financeAccepted.payload.user.id }, include: { role: true } })
+      assert.deepEqual(assignments.map((entry) => entry.role.roleKey), ['finance-specialist'])
+      assert.equal((await call({ authenticated: false }, 'POST', '/api/workspace/invitations/inspect', { token: financeInvite.payload.invitationToken })).status, 400)
+      // An administrator cannot disable themselves; disabling a member works.
+      const self = await prisma.user.findUnique({ where: { id: admin.userId } })
+      const selfDisable = await call(admin, 'PATCH', `/api/workspace/users/${admin.userId}`, { status: 'disabled', version: self.version })
+      assert.deepEqual([selfDisable.status, selfDisable.payload.code], [409, 'CANNOT_DISABLE_SELF'])
+      const disabled = await call(admin, 'PATCH', `/api/workspace/users/${financeAccepted.payload.user.id}`, { status: 'disabled', version: financeAccepted.payload.user.version })
+      assert.deepEqual([disabled.status, disabled.payload.status], [200, 'disabled'])
+
       const setupTenantId = `setup-${randomUUID()}`
       const setupScript = resolve('scripts/setup-pilot-workspace.mjs')
       await execFileAsync(process.execPath, [setupScript, `--tenant-id=${setupTenantId}`, '--workspace-name=First Pilot'], { env: process.env })
