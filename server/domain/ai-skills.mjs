@@ -9,6 +9,8 @@ import { presentPurchaseOrders, runPurchaseOrders } from './ai-skill-purchase-or
 import { presentPendingApprovals, runPendingApprovals } from './ai-skill-pending-approvals.mjs'
 import { presentInventoryAvailability, runInventoryAvailability } from './ai-skill-inventory-availability.mjs'
 import { presentInvoiceSummary, runInvoiceSummary } from './ai-skill-invoice-summary.mjs'
+import { presentRfqFollowups, runRfqFollowups } from './ai-skill-rfq-followups.mjs'
+import { presentReceivingIssues, runReceivingIssues } from './ai-skill-receiving-issues.mjs'
 
 // Attaches each skill's run and present to its registry entry. Import this
 // module (or anything that imports it) before calling a skill.
@@ -22,6 +24,8 @@ attachAiSkillHandlers('purchase_orders', { run: runPurchaseOrders, present: pres
 attachAiSkillHandlers('pending_approvals', { run: runPendingApprovals, present: presentPendingApprovals })
 attachAiSkillHandlers('inventory_availability', { run: runInventoryAvailability, present: presentInventoryAvailability })
 attachAiSkillHandlers('invoice_summary', { run: runInvoiceSummary, present: presentInvoiceSummary })
+attachAiSkillHandlers('rfq_followups', { run: runRfqFollowups, present: presentRfqFollowups })
+attachAiSkillHandlers('receiving_issues', { run: runReceivingIssues, present: presentReceivingIssues })
 
 export { aiSkillById, AI_SKILL_REGISTRY, toolsFor } from './ai-skill-registry.mjs'
 

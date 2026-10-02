@@ -6,7 +6,8 @@ import { aiSkillIntentText, aiSkillMistypedVerb } from './ai-skill-intent-text.m
 // answer language, so the same question routes the same way in English and
 // Chinese. Order: a known hint, an exact prompt chip, then word-bounded rules
 // (draft, action refusal, outside the workspace, records, risk, approvals,
-// overdue orders, invoices, stock, metrics, today). No match returns null.
+// overdue orders, invoices, RFQs, receipts, stock, metrics, today). No match
+// returns null.
 //
 // The intent rules read the question with misspelled workspace words
 // corrected (ai-skill-intent-text.mjs); the refusal reads it as typed. Record
@@ -132,6 +133,13 @@ const STOCK = [
   // sales orders"; a supplier that cannot meet a date is not a stock question.
   /(sku|物料|商品|产品|存货)[^，。？！?]{0,12}(无法满足|满足不了)/i,
 ]
+// Requests for quotation. A stock or price quote is caught by OUTSIDE first.
+const RFQ = [/\brfqs?\b|\brequests? for (?:a )?(?:quotes?|quotations?)\b|\bquot(?:es|ations?)\b/i, /询价|报价|比价/]
+// Receipts as documents. "Received" alone is not one: "How much is still to
+// be received on PO-012?" is about the order. The Chinese reads 收货单 or a
+// receiving problem, never 收货 on its own ("PO-012 还剩多少没收货？").
+const RECEIVING = [/\b(?:receipts?|receiving|grns?|goods receipts?)\b/i, /收货单|入库单|收货记录|拒收|未过账|没过账|收货[^，。？！]{0,4}(?:异常|问题)/]
+const NOT_RECEIPT = [/\b(?:invoices?|payments?|payables?|sales orders?|rfqs?|quotes?|quotations?)\b/i, /发票|付款|应付|销售订单|询价|报价/]
 const AVAILABLE = [/\b(available|availability|promise|short)\b/i, /可用|可以承诺|能承诺/]
 const AVAILABLE_CONTEXT = [/\b(skus?|items?|units?|quantity|stock)\b/i, /库存|数量|物料/]
 const SHORT = [/\b(short|shortages?|stockouts?|out of stock)\b/i, /缺货|短缺|不足|无法满足|满足不了/]
@@ -186,6 +194,10 @@ function intentRoute(intent, base) {
   const late = matches(LATE, intent) && !matches(DELIVERED, intent)
   if (late && matches(ORDER_NOUN, intent) && !otherRecord && !matches(COUNT_QUESTION, intent)) return route('purchase_orders')
   if (matches(INVOICE, intent) && matches(INVOICE_QUESTION, intent) && !matches(PAYMENT, intent)) return route('invoice_summary')
+  // A record number goes to the entity step, which looks it up or says it
+  // cannot ("What's the status of RFQ-003?").
+  if (!base.ids.length && matches(RFQ, intent) && !matches(PAYMENT, intent)) return route('rfq_followups')
+  if (!base.ids.length && matches(RECEIVING, intent) && !matches(NOT_RECEIPT, intent) && !matches(PAYMENT, intent)) return route('receiving_issues')
   if (matches(STOCK, intent) || (matches(AVAILABLE, intent) && (base.ids.length || matches(AVAILABLE_CONTEXT, intent)))) return route('inventory_availability')
   if (matches(METRICS, intent) || (late && matches(ORDER_NOUN, intent) && !otherRecord)) return route('workspace_metrics')
   if (matches(TODAY, intent)) return route('today_priorities')

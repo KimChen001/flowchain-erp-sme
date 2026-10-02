@@ -186,7 +186,7 @@ function limitationEntries(facts, language, { money: includeMoney = true } = {})
 }
 
 function followUps(ids, language) {
-  const key = { today_priorities: 'today', highest_risk_items: 'risk', records_needing_data: 'records', prepare_action_draft: 'draft', workspace_metrics: 'metrics', purchase_orders: 'orders', pending_approvals: 'approvals', inventory_availability: 'stock', invoice_summary: 'invoices' }
+  const key = { today_priorities: 'today', highest_risk_items: 'risk', records_needing_data: 'records', prepare_action_draft: 'draft', workspace_metrics: 'metrics', purchase_orders: 'orders', pending_approvals: 'approvals', inventory_availability: 'stock', invoice_summary: 'invoices', rfq_followups: 'rfqs', receiving_issues: 'receiving' }
   return ids.map((id) => ({ label: aiSkillText(`followup.${key[id]}.label`, language), prompt: aiSkillText(`followup.${key[id]}.prompt`, language), intentHint: id, skillHint: id, requiresReview: id === 'prepare_action_draft' }))
 }
 
