@@ -41,7 +41,7 @@ test('Pilot workspace APIs provision users, protect admin actions, and enforce w
       await expectCommandError(query.getReceivingDetail({ receivingDocumentId: scenario.receivingDocumentId }, { identity: viewer }), 'RECEIVING_NOT_FOUND')
       await expectCommandError(createReceivingPostingCommandService({ prisma, env: { NODE_ENV: 'production' } }).postReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: 'viewer-scope-denied' }, { identity: { ...viewer, role: 'manager' } }), 'SESSION_STALE')
       const noScopeManager = { ...viewer, role: 'manager' }
-      await prisma.user.update({ where: { id: viewer.userId }, data: { role: 'manager' } })
+      await prisma.user.update({ where: { id: viewer.userId }, data: { role: 'manager', rolesAssignedAt: null } })
       await prisma.userRoleAssignment.deleteMany({ where: { userId: viewer.userId } })
       await prisma.userWarehouseScope.create({ data: { id: randomUUID(), tenantId: scenario.tenantId, userId: viewer.userId, warehouseId: scenario.warehouseId, accessLevel: 'read' } })
       const readOnlyDetail = await query.getReceivingDetail({ receivingDocumentId: scenario.receivingDocumentId }, { identity: noScopeManager })

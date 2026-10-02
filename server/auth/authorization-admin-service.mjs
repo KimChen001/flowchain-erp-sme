@@ -94,6 +94,9 @@ export function createAuthorizationAdminService({ prisma, idFactory = randomUUID
       const before = await tx.userRoleAssignment.findMany({ where: { tenantId: actor.tenantId, userId, status: "active" }, select: { roleId: true } })
       await tx.userRoleAssignment.deleteMany({ where: { tenantId: actor.tenantId, userId, roleId: { notIn: nextRoleIds } } })
       for (const roleId of nextRoleIds) await tx.userRoleAssignment.upsert({ where: { userId_roleId: { userId, roleId } }, create: { id: idFactory(), tenantId: actor.tenantId, userId, roleId, status: "active", createdById: actor.userId }, update: { status: "active" } })
+      // From now on these assignments, even none, are the user's roles; the
+      // legacy User.role never grants a template again.
+      if (!target.rolesAssignedAt) await tx.user.update({ where: { id: userId }, data: { rolesAssignedAt: new Date() } })
       if (!(await tenantHasRoleManager(tx, actor.tenantId))) fail("AUTHORIZATION_LAST_ROLES_MANAGER", "This change would leave the tenant without a role administrator.", 409)
       await tx.auditLog.create({ data: audit(actor, "user_role_assignments_changed", "User", userId, `Role assignments changed for ${target.email}.`, { before: { roleIds: before.map((row) => row.roleId) }, after: { roleIds: nextRoleIds }, targetUser: { id: target.id, email: target.email }, role: null, permissionCodes: [] }, idFactory) })
       // A role change ends the user's sessions in the same transaction.

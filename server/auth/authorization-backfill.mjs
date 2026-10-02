@@ -40,16 +40,27 @@ export async function backfillTenantAuthorization(prisma, tenantId, { actorId = 
       }
     }
 
-    const users = await tx.user.findMany({ where: { tenantId }, select: { id: true, role: true } })
+    // The legacy User.role grants a role template once per user: only to a
+    // user whose roles have never been set. A user who has role assignments,
+    // or whose roles an administrator changed (even to none), keeps exactly
+    // those; a user with assignments from before this rule is marked now.
+    const users = await tx.user.findMany({ where: { tenantId }, select: { id: true, role: true, rolesAssignedAt: true, _count: { select: { roleAssignments: true } } } })
     const warehouses = await tx.warehouse.findMany({ where: { tenantId }, select: { id: true } })
     const unknownLegacyRoles = []
+    const assignedAt = new Date()
     for (const user of users) {
+      if (user.rolesAssignedAt) continue
+      if (user._count.roleAssignments > 0) {
+        await tx.user.update({ where: { id: user.id }, data: { rolesAssignedAt: assignedAt } })
+        continue
+      }
       const legacyRole = normalizedLegacyRole(user.role)
       const roleKey = legacyRoleTemplateMap[legacyRole] || "read-only-viewer"
       if (!legacyRoleTemplateMap[legacyRole]) unknownLegacyRoles.push({ userId: user.id, legacyRole })
       const role = roles.get(roleKey)
       const existing = await tx.userRoleAssignment.findUnique({ where: { userId_roleId: { userId: user.id, roleId: role.id } } })
       await tx.userRoleAssignment.upsert({ where: { userId_roleId: { userId: user.id, roleId: role.id } }, create: { id: stableId(tenantId, "assignment", user.id, role.id), tenantId, userId: user.id, roleId: role.id, status: "active", createdById: actorId }, update: {} })
+      await tx.user.update({ where: { id: user.id }, data: { rolesAssignedAt: assignedAt } })
       if (!existing) createdAssignments += 1
       // Legacy admins previously bypassed warehouse scopes. Materialize the same
       // access as explicit UserWarehouseScope rows so role names are no longer a scope authority.
