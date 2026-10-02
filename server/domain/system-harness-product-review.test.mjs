@@ -1,3 +1,7 @@
+import { procurementReadAccessFor } from './procurement-read-access.mjs'
+import { aiSkillActor } from './test-fixtures/ai-skill-scenario.mjs'
+// These checks are about routing and tenant scope: the actor may read everything.
+const fullAccess = (tenantId) => procurementReadAccessFor(aiSkillActor('workspace-administrator', tenantId))
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -73,6 +77,7 @@ function routeContext(method, pathname, db = createDb(), body = {}, helpers = {}
       db,
       repositories: createTestRepositoryRegistry(db),
       identity: { authenticated: true, tenantId: 'tenant-test', userId: 'user-test', role: 'manager', source: 'test' },
+      procurementReadAccess: fullAccess('tenant-test'),
       send(_res, status, payload) {
         response = { status, payload }
       },

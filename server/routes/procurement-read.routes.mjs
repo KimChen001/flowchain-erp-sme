@@ -1,3 +1,4 @@
+import { canReadProcurementDocument, maskProcurementRecord, procurementReadAccess } from '../domain/procurement-read-access.mjs'
 function query(url) {
   return {
     q: url.searchParams.get('q') || '',
@@ -25,13 +26,19 @@ export async function handleProcurementReadRoute(ctx) {
   const repository = procurementReadRepository(ctx)
   const tenantId = identity?.tenantId
 
+  // What the actor may read, looked up once and only after a request is
+  // known to be valid.
+  let accessLookup = null
+  const readAccess = () => (accessLookup ||= identity ? procurementReadAccess(ctx) : Promise.resolve(null))
+  const options = async () => { const access = await readAccess(); return access ? { access } : {} }
+
   if (req.method === 'GET' && url.pathname === '/api/procurement/documents') {
     const filters = query(url)
     if (filters.type && !repository.normalizeDocumentType(filters.type)) {
       send(res, 200, { documents: [] })
       return true
     }
-    send(res, 200, { documents: await repository.listDocuments({ ...filters, ...(tenantId ? { tenantId } : {}) }) })
+    send(res, 200, { documents: await repository.listDocuments({ ...filters, ...(tenantId ? { tenantId } : {}) }, await options()) })
     return true
   }
 
@@ -49,7 +56,15 @@ export async function handleProcurementReadRoute(ctx) {
       send(res, 400, { error: 'Invalid procurement document id' })
       return true
     }
-    const document = await repository.getDocument(documentType, documentId, tenantId ? { tenantId } : {})
+    // The type decides, before any lookup: the answer is the same for a real
+    // and a made-up number.
+    const access = await readAccess()
+    if (access && !canReadProcurementDocument(documentType, access)) {
+      send(res, 403, { code: 'PERMISSION_DENIED', message: 'Your role cannot view this kind of procurement document.', details: [] })
+      return true
+    }
+    const found = await repository.getDocument(documentType, documentId, tenantId ? { tenantId } : {})
+    const document = found && access ? maskProcurementRecord(found, documentType, access) : found
     if (!document) {
       send(res, 404, { error: 'Procurement document not found' })
       return true
@@ -59,17 +74,17 @@ export async function handleProcurementReadRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/procurement/links') {
-    send(res, 200, { links: await repository.listLinks({ ...query(url), ...(tenantId ? { tenantId } : {}) }) })
+    send(res, 200, { links: await repository.listLinks({ ...query(url), ...(tenantId ? { tenantId } : {}) }, await options()) })
     return true
   }
 
   if (req.method === 'GET' && url.pathname === '/api/procurement/followups') {
-    send(res, 200, { followups: await repository.listFollowups({ ...query(url), ...(tenantId ? { tenantId } : {}) }) })
+    send(res, 200, { followups: await repository.listFollowups({ ...query(url), ...(tenantId ? { tenantId } : {}) }, await options()) })
     return true
   }
 
   if (req.method === 'GET' && url.pathname === '/api/procurement/summary') {
-    send(res, 200, { summary: await repository.getSummary(tenantId ? { tenantId } : {}) })
+    send(res, 200, { summary: await repository.getSummary(tenantId ? { tenantId } : {}, await options()) })
     return true
   }
 
