@@ -13,6 +13,7 @@ const tenantB = 'tenant-master-writes-b'
 async function seedTenant(prisma, tenantId, tag) {
   await prisma.tenant.create({ data: { id: tenantId, name: `Workspace ${tag}`, currency: 'USD' } })
   await prisma.user.create({ data: { id: `${tenantId}-manager`, tenantId, email: `writer-${tag.toLowerCase()}@example.com`, name: `Manager ${tag}`, role: 'manager' } })
+  await prisma.user.create({ data: { id: `${tenantId}-specialist`, tenantId, email: `specialist-${tag.toLowerCase()}@example.com`, name: `Specialist ${tag}`, role: 'business-specialist' } })
   await prisma.supplier.create({ data: { id: `SUP-${tag}`, tenantId, code: `SUP-${tag}`, name: `Supplier ${tag}`, metadata: { defaultCurrency: 'USD', version: 1 } } })
   await prisma.supplier.create({ data: { id: `SUP-${tag}2`, tenantId, code: `SUP-${tag}2`, name: `Second Supplier ${tag}`, metadata: { defaultCurrency: 'EUR', version: 1 } } })
   await prisma.warehouse.create({ data: { id: `WH-${tag}`, tenantId, code: `WH-${tag}`, name: `Warehouse ${tag}` } })
@@ -122,6 +123,34 @@ test('items, customers and item suppliers can be created and edited in PostgreSQ
     const supplierItems = await call('GET', '/api/master-data/suppliers/SUP-A/items')
     assert.equal(supplierItems.status, 200)
     assert.deepEqual(supplierItems.payload.relationships.map((row) => [row.itemId, row.item?.sku]), [[item.itemId, 'NEW-100']])
+
+    // Registration, tax and bank details need finance.partner_snapshot.read and
+    // reference prices need procurement.prices.read. The operations specialist
+    // has neither: it sees "****" plus the last four characters, and saving the
+    // supplier with those masked values keeps what is stored.
+    await prisma.supplier.update({ where: { id: 'SUP-A' }, data: { metadata: { defaultCurrency: 'USD', version: 1, creditCode: '91310000MA1K', taxIdentificationNumber: '12-3456789', bankName: 'First Bank', bankAccountName: 'Supplier A LLC', bankAccountNumber: '000123456789' } } })
+    const managerView = await call('GET', '/api/master-data/suppliers/SUP-A')
+    assert.equal(managerView.payload.supplier.bankAccountNumber, '000123456789')
+    const specialistLogin = await request(port, 'POST', '/api/auth/login', { body: { email: 'specialist-a@example.com', name: 'Specialist A', company: 'Workspace A' } })
+    assert.equal(specialistLogin.status, 200)
+    const asSpecialist = (method, path, body) => request(port, method, path, { headers: { Authorization: `Bearer ${specialistLogin.payload.token}` }, body })
+    for (const path of ['/api/master-data/suppliers', '/api/master-data/suppliers/SUP-A', '/api/master-data/suppliers/select', '/api/master-data']) {
+      const seen = await asSpecialist('GET', path)
+      assert.equal(seen.status, 200, path)
+      const row = seen.payload.supplier || seen.payload.suppliers.find((entry) => entry.id === 'SUP-A')
+      assert.deepEqual([row.creditCode, row.taxIdentificationNumber, row.bankAccountName, row.bankAccountNumber], ['****MA1K', '****6789', '**** LLC', '****6789'], path)
+      assert.equal(JSON.stringify(seen.payload).includes('000123456789'), false, path)
+    }
+    const masked = (await asSpecialist('GET', '/api/master-data/suppliers/SUP-A')).payload.supplier
+    const resaved = await asSpecialist('PATCH', '/api/master-data/suppliers/SUP-A', { ...masked, contactName: 'Dana Lee', expectedVersion: masked.version })
+    assert.equal(resaved.status, 200, JSON.stringify(resaved.payload))
+    const kept = (await prisma.supplier.findUnique({ where: { id: 'SUP-A' } })).metadata
+    assert.deepEqual([kept.creditCode, kept.taxIdentificationNumber, kept.bankAccountName, kept.bankAccountNumber, kept.contactName], ['91310000MA1K', '12-3456789', 'Supplier A LLC', '000123456789', 'Dana Lee'])
+    const hiddenPrices = await asSpecialist('GET', `/api/master-data/items/${item.itemId}/suppliers`)
+    assert.ok(hiddenPrices.payload.relationships.length > 0)
+    assert.ok(hiddenPrices.payload.relationships.every((row) => row.referencePrice === null && row.restrictedFields.includes('referencePrice')))
+    const managerPrices = await call('GET', `/api/master-data/items/${item.itemId}/suppliers`)
+    assert.ok(managerPrices.payload.relationships.some((row) => row.referencePrice === 12.5))
 
     // Every write left an audit row in its own workspace.
     const audits = await prisma.auditLog.findMany({ where: { tenantId: tenantA, source: 'master-data' } })

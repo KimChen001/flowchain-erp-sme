@@ -21,6 +21,7 @@ function createRouteContext(method, pathname, db, repositories = createTestRepos
       url: new URL(pathname, 'http://localhost'),
       db,
       repositories,
+      masterDataReadAccess: { partner: true, prices: true },
       send(_res, status, payload) {
         response = { status, payload }
       },
@@ -229,6 +230,37 @@ test('GET /api/master-data/suppliers/:id returns one supplier', async () => {
   assert.ok(handled)
   assert.equal(route.response.status, 200)
   assert.equal(route.response.payload.supplier.supplierName, 'Runtime Supplier')
+})
+
+test('supplier registration, tax and bank details and reference prices are masked by permission', async () => {
+  const supplier = { id: 'SUP-BANK', supplierName: 'Bank Supplier', creditCode: '91310000MA1K', taxIdentificationNumber: '12-3456789', bankName: 'First Bank', bankAccountName: 'Bank Supplier LLC', bankAccountNumber: '000123456789', status: 'active' }
+  const relationship = { relationshipId: 'REL-1', itemId: 'ITEM-1', supplierId: 'SUP-BANK', referencePrice: 12.5 }
+  const repositories = { masterData: { listSuppliers: async () => [supplier], getSupplier: async () => supplier, listItemSuppliers: async () => [relationship], approvedSuppliersForItem: async () => [{ ...relationship }] } }
+  const hidden = { partner: false, prices: false }
+  for (const path of ['/api/master-data/suppliers', '/api/master-data/suppliers/SUP-BANK', '/api/master-data/suppliers/select']) {
+    const route = createRouteContext('GET', path, createDb(), repositories)
+    route.ctx.masterDataReadAccess = hidden
+    await handleMasterDataRoute(route.ctx)
+    const row = route.response.payload.supplier || route.response.payload.suppliers[0]
+    assert.equal(row.bankAccountNumber, '****6789', path)
+    assert.equal(row.taxIdentificationNumber, '****6789', path)
+    assert.equal(row.creditCode, '****MA1K', path)
+    assert.equal(row.bankAccountName, '**** LLC', path)
+    assert.equal(row.bankName, 'First Bank', path)
+    assert.deepEqual(row.restrictedFields, ['creditCode', 'taxIdentificationNumber', 'bankAccountName', 'bankAccountNumber'], path)
+    assert.equal(JSON.stringify(route.response.payload).includes('000123456789'), false, path)
+  }
+  const prices = createRouteContext('GET', '/api/master-data/items/ITEM-1/suppliers', createDb(), repositories)
+  prices.ctx.masterDataReadAccess = hidden
+  await handleMasterDataRoute(prices.ctx)
+  assert.equal(prices.response.payload.relationships[0].referencePrice, null)
+  assert.equal(prices.response.payload.suppliers[0].referencePrice, null)
+  assert.deepEqual(prices.response.payload.suppliers[0].restrictedFields, ['referencePrice'])
+
+  const visible = createRouteContext('GET', '/api/master-data/suppliers/SUP-BANK', createDb(), repositories)
+  await handleMasterDataRoute(visible.ctx)
+  assert.equal(visible.response.payload.supplier.bankAccountNumber, '000123456789')
+  assert.equal(visible.response.payload.supplier.restrictedFields, undefined)
 })
 
 test('GET /api/master-data/suppliers/:id returns 404 for missing supplier', async () => {

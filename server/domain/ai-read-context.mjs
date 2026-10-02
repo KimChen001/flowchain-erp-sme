@@ -1,3 +1,4 @@
+import { SUPPLIER_SENSITIVE_FIELDS } from './master-data-read-access.mjs'
 import { buildTodayCockpit } from './today-cockpit-read-model.mjs'
 import { buildUserDataScope } from './user-data-contract.mjs'
 
@@ -31,7 +32,9 @@ async function readMasterData(repository, scope) {
     repository.listItems(scope),
     repository.listSuppliers(scope),
   ])
-  return { items, suppliers }
+  // The assistant never needs a supplier's registration, tax or bank details.
+  const withoutBankDetails = (supplier) => Object.fromEntries(Object.entries(supplier || {}).filter(([key]) => !SUPPLIER_SENSITIVE_FIELDS.includes(key) && key !== 'bankName'))
+  return { items, suppliers: (suppliers || []).map(withoutBankDetails) }
 }
 
 export async function buildAiReadContext(db = {}, ctx = {}) {
