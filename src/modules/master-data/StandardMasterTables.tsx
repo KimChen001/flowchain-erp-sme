@@ -5,6 +5,7 @@ import { A, Chip } from "../../components/ui";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import type { CustomerMaster, PrintTemplateCatalogItem } from "./standardData";
 import { orNotProvided, useMasterDataCopy } from "./masterDataCopy";
+import { useMasterDataWriteAccess } from "./writeAccess";
 
 function creditStyle(status: string) {
   if (status === "正常") return { color: A.green, bg: "#f0faf4" };
@@ -77,6 +78,8 @@ function NewCustomerForm({ onSaved, onCancel }: { onSaved: () => void; onCancel:
 
 export function CustomerTable({ customers, onChanged }: { customers: CustomerMaster[]; onChanged?: () => void }) {
   const { copy } = useMasterDataCopy();
+  // Creating customers and changing their status needs master_data.customer.manage.
+  const canEdit = useMasterDataWriteAccess().customers;
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const setStatus = async (item: CustomerMaster, active: boolean) => {
@@ -91,7 +94,7 @@ export function CustomerTable({ customers, onChanged }: { customers: CustomerMas
   const toolbar = (
     <div className="flex items-center justify-end gap-2 px-4 py-3">
       {error ? <p role="alert" className="mr-auto text-xs" style={{ color: A.red }}>{error}</p> : null}
-      {!creating ? <button type="button" data-testid="customer-new" onClick={() => setCreating(true)} className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white">{copy("New customer")}</button> : null}
+      {canEdit && !creating ? <button type="button" data-testid="customer-new" onClick={() => setCreating(true)} className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white">{copy("New customer")}</button> : null}
     </div>
   );
   const form = creating ? <NewCustomerForm onCancel={() => setCreating(false)} onSaved={() => { setCreating(false); onChanged?.(); }} /> : null;
@@ -99,7 +102,7 @@ export function CustomerTable({ customers, onChanged }: { customers: CustomerMas
   return <div>{toolbar}{form}<div className="overflow-x-auto"><table className="w-full min-w-[980px] text-xs"><thead><tr>{["Customer code", "Customer name", "Contact", "Phone", "Address", "Credit status", "Payment terms", "Status", "Actions"].map((item) => <th key={item} className="px-4 py-3 text-left" style={{ color: A.gray1 }}>{copy(item)}</th>)}</tr></thead><tbody>{customers.map((item) => {
     const credit = creditStyle(item.creditStatus);
     const inactive = item.status === "停用";
-    return <tr key={item.code} style={{ borderTop: `1px solid ${A.border}` }}><td className="px-4 py-3 font-semibold"><BusinessEntityLink entityType="customer" entityId={item.code}>{item.code}</BusinessEntityLink></td><td className="px-4 py-3 font-medium"><BusinessEntityLink entityType="customer" entityId={item.code}>{item.name}</BusinessEntityLink></td><td className="px-4 py-3">{orNotProvided(item.contact)}</td><td className="px-4 py-3">{orNotProvided(item.phone)}</td><td className="px-4 py-3 max-w-[260px] truncate">{orNotProvided(item.address)}</td><td className="px-4 py-3">{item.creditStatus ? <Chip label={item.creditStatus} color={credit.color} bg={credit.bg} /> : orNotProvided(item.creditStatus)}</td><td className="px-4 py-3">{orNotProvided(item.paymentTerms)}</td><td className="px-4 py-3"><Chip label={item.status} color={inactive ? A.red : A.green} bg={inactive ? "#fff1f0" : "#f0faf4"} /></td><td className="px-4 py-3"><div className="flex gap-2"><BusinessEntityLink entityType="customer" entityId={item.code} className="rounded-md bg-slate-100 px-2.5 py-1.5">{copy("View details")}</BusinessEntityLink>{item.id ? <button type="button" data-testid={`customer-status-${item.code}`} onClick={() => void setStatus(item, inactive)} className="rounded-md bg-slate-100 px-2.5 py-1.5">{copy(inactive ? "Set active" : "Set inactive")}</button> : null}</div></td></tr>;
+    return <tr key={item.code} style={{ borderTop: `1px solid ${A.border}` }}><td className="px-4 py-3 font-semibold"><BusinessEntityLink entityType="customer" entityId={item.code}>{item.code}</BusinessEntityLink></td><td className="px-4 py-3 font-medium"><BusinessEntityLink entityType="customer" entityId={item.code}>{item.name}</BusinessEntityLink></td><td className="px-4 py-3">{orNotProvided(item.contact)}</td><td className="px-4 py-3">{orNotProvided(item.phone)}</td><td className="px-4 py-3 max-w-[260px] truncate">{orNotProvided(item.address)}</td><td className="px-4 py-3">{item.creditStatus ? <Chip label={item.creditStatus} color={credit.color} bg={credit.bg} /> : orNotProvided(item.creditStatus)}</td><td className="px-4 py-3">{orNotProvided(item.paymentTerms)}</td><td className="px-4 py-3"><Chip label={item.status} color={inactive ? A.red : A.green} bg={inactive ? "#fff1f0" : "#f0faf4"} /></td><td className="px-4 py-3"><div className="flex gap-2"><BusinessEntityLink entityType="customer" entityId={item.code} className="rounded-md bg-slate-100 px-2.5 py-1.5">{copy("View details")}</BusinessEntityLink>{canEdit && item.id ? <button type="button" data-testid={`customer-status-${item.code}`} onClick={() => void setStatus(item, inactive)} className="rounded-md bg-slate-100 px-2.5 py-1.5">{copy(inactive ? "Set active" : "Set inactive")}</button> : null}</div></td></tr>;
   })}</tbody></table></div></div>;
 }
 
