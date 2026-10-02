@@ -138,8 +138,8 @@ export function VisualCard({ chart, context, className = "", onDrill, onCrossFil
       <div className="mt-3"><VisualBody chart={chart} context={context} height={height} mode={mode} chartRef={chartRef} onCrossFilter={onCrossFilter} /></div>
       {footer}
     </Card>
-    {focused && <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-[2px]" onMouseDown={event => { if (event.currentTarget === event.target) setFocused(false); }}>
-      <div role="dialog" aria-modal="true" aria-label={`${copy("Focus mode")}: ${title}`} className="w-full max-w-6xl rounded-2xl bg-white p-6 shadow-2xl">
+    {focused && <div className="fc-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-[2px]" onMouseDown={event => { if (event.currentTarget === event.target) setFocused(false); }}>
+      <div role="dialog" aria-modal="true" aria-label={`${copy("Focus mode")}: ${title}`} className="fc-dialog-enter w-full max-w-6xl rounded-2xl bg-white p-6 shadow-2xl">
         {header(true)}
         <div className="mt-4"><VisualBody chart={chart} context={largeContext} height={Math.max(420, Math.round(window.innerHeight * 0.66))} mode={mode} chartRef={focusRef} onCrossFilter={(key, value) => { setFocused(false); onCrossFilter(key, value); }} /></div>
         {footer}

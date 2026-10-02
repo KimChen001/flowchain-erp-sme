@@ -1,4 +1,5 @@
 import { workspaceCopy } from "../i18n/workspaceCopy";
+import { FadeIn, PageSkeleton, PageTransition } from "../components/motion/Motion";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Toaster, toast } from "sonner";
@@ -1800,22 +1801,11 @@ export default function FlowChainApp() {
                       moduleLabel={activeChildLabel || activeModuleLabel}
                       language={language}
                     >
+                      <PageTransition>
                       <React.Suspense
-                        fallback={
-                          <div
-                            className="grid grid-cols-2 gap-3 lg:grid-cols-4"
-                            aria-label={language === "en-US" ? "Loading module" : "模块加载中"}
-                          >
-                            {[0, 1, 2, 3].map((item) => (
-                              <div
-                                key={item}
-                                className="h-24 animate-pulse rounded-xl"
-                                style={{ background: A.gray5 }}
-                              />
-                            ))}
-                          </div>
-                        }
+                        fallback={<PageSkeleton label={language === "en-US" ? "Loading module" : "模块加载中"} />}
                       >
+                        <FadeIn>
                         {activeRoute.id === "procurement:rfq-detail" ? (
                           <CanonicalRfqDetailPage
                             documentId={entityIdForRoutePath(activeRoute, location.pathname)}
@@ -1853,7 +1843,9 @@ export default function FlowChainApp() {
                           panels[activeModule] ||
                           panels.overview
                         )}
+                        </FadeIn>
                       </React.Suspense>
+                      </PageTransition>
                     </PanelErrorBoundary>
                   )}
                 </ModuleShell>

@@ -1,6 +1,7 @@
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import React from "react";
 import { Link, useNavigate } from "react-router";
+import { LayoutGroup, motion } from "motion/react";
 import {
   defaultRouteForModule,
   moduleRoute,
@@ -51,7 +52,16 @@ export function ModuleShell({ route, children, routeAccess }: { route: GovernedA
       </div>}
       {subRoutes.length > 1 && (
         <nav className="fc-module-subnav" aria-label={language === "en-US" ? `${rootLabel} navigation` : `${rootLabel}二级导航`} data-testid="module-subnav">
-          {subRoutes.map((item) => <Link key={item.id} to={item.path} aria-current={activeMenuId === item.id ? "page" : undefined} className={activeMenuId === item.id ? "is-active" : ""}>{routeLabel(item)}</Link>)}
+          {/* The active tab's background slides to the newly chosen tab. */}
+          <LayoutGroup id={`fc-subnav-${root.id}`}>
+            {subRoutes.map((item) => {
+              const active = activeMenuId === item.id;
+              return <Link key={item.id} to={item.path} aria-current={active ? "page" : undefined} className={active ? "is-active" : ""}>
+                {active && <motion.span layoutId="fc-subnav-pill" className="fc-subnav-pill" aria-hidden="true" transition={{ type: "spring", stiffness: 520, damping: 42, mass: 0.8 }} />}
+                <span className="fc-subnav-label">{routeLabel(item)}</span>
+              </Link>;
+            })}
+          </LayoutGroup>
         </nav>
       )}
       {showPageHeader && (
