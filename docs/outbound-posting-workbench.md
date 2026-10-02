@@ -45,6 +45,8 @@ The order workbench explicitly selects one order line and one existing reservati
 
 Unposted draft/ready shipments can be cancelled with reason and preview. Deallocation restores allocatable reservation quantity; balance and movements remain unchanged.
 
+A draft, confirmed or on-hold sales order with no posted shipment can be cancelled (`sales_order.cancel`, reason required) through `POST /api/sales/orders/:id/cancel-preview` and `/cancel`. In one SERIALIZABLE transaction the order's unposted shipments are cancelled, every active reservation is released, the reserved quantity returns to available on its balance, and the order becomes `cancelled` with `not_reserved`. No inventory movement is written. An order with a posted shipment is refused with `SALES_ORDER_HAS_POSTED_SHIPMENTS`; reverse the shipment first. The order workbench returns `canCancel`.
+
 ## 11. Posting Preview
 
 The server preview shows InventoryBalance, reservation, order line, shipment status, and facts to create. Available does not fall again at posting because on-hand and reserved decrease together.
@@ -103,7 +105,7 @@ Use Node 24, run `npm ci`, set database mode and a PostgreSQL `DATABASE_URL`, de
 
 ## 25. Known limitations
 
-New Sales Order UI currently creates one line. Shipment Draft UI currently creates one explicitly selected line and one explicitly selected Reservation Allocation per action; the API supports multiple lines and allocations. The workbench no longer silently uses the first eligible record. There is no FX conversion, costing/COGS, picking, lot/serial allocation, negative inventory, sales-order cancel, customer master overhaul, or automated AI transaction execution.
+New Sales Order UI currently creates one line. Shipment Draft UI currently creates one explicitly selected line and one explicitly selected Reservation Allocation per action; the API supports multiple lines and allocations. The workbench no longer silently uses the first eligible record. There is no FX conversion, costing/COGS, picking, lot/serial allocation, negative inventory, cancelling an order that has shipped goods, customer master overhaul, or automated AI transaction execution.
 
 ## 26. Order list
 
