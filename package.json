@@ -24,6 +24,7 @@
     "test:db:tenant-provision": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-provision.test.mjs",
     "test:db:walkthrough-scenario": "node scripts/run-postgres-test-files.mjs tests/postgres/walkthrough-scenario.test.mjs",
     "test:db:tenant-scoped-reads": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-scoped-business-reads.test.mjs",
+    "test:db:master-data-writes": "node scripts/run-postgres-test-files.mjs tests/postgres/master-data-writes.test.mjs",
     "test:db:report-truncation": "node scripts/run-postgres-test-files.mjs tests/postgres/report-truncation.test.mjs",
     "test:db:inventory-allocation": "node scripts/run-postgres-test-files.mjs tests/postgres/inventory-allocation-walkthrough.test.mjs",
     "test:db:ai-knowledge": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-knowledge.test.mjs",

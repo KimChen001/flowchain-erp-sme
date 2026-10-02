@@ -66,7 +66,7 @@ export async function handleMasterDataRoute(ctx) {
   if (req.method === 'POST' && url.pathname === '/api/master-data/customers') {
     if (authorizeWrite('customer-master').blocked) return true
     try {
-      send(res, 201, { customer: await repository.createCustomer(await readBody(req), actor()) })
+      send(res, 201, { customer: await repository.createCustomer(await readBody(req), actor(), tenantScope()) })
     } catch (error) {
       send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
     }
@@ -83,7 +83,7 @@ export async function handleMasterDataRoute(ctx) {
       const customer = await repository.updateCustomer(customerStatusMatch[1], {
         status: customerStatusMatch[2] === 'activate' ? 'active' : 'inactive',
         expectedVersion: body.expectedVersion,
-      }, actor())
+      }, actor(), tenantScope())
       send(res, 200, { customer })
     } catch (error) {
       send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
@@ -123,18 +123,19 @@ export async function handleMasterDataRoute(ctx) {
     if (!repository.createItem) {
       send(res, 501, {
         code: 'ADAPTER_WRITE_UNSUPPORTED',
-        message: '当前数据适配器尚未启用物料写入',
+        message: 'Item writes are not available in this workspace.',
       })
       return true
     }
     try {
       send(res, 201, {
-        item: await repository.createItem(await readBody(req), actor()),
+        item: await repository.createItem(await readBody(req), actor(), tenantScope()),
       })
     } catch (error) {
       send(res, error.status || 500, {
         code: error.code || 'PERSISTENCE_ERROR',
         message: error.message,
+        details: error.details || [],
       })
     }
     return true
@@ -160,7 +161,7 @@ export async function handleMasterDataRoute(ctx) {
     if (!repository.updateItem) {
       send(res, 501, {
         code: 'ADAPTER_WRITE_UNSUPPORTED',
-        message: '当前数据适配器尚未启用物料写入',
+        message: 'Item writes are not available in this workspace.',
       })
       return true
     }
@@ -170,12 +171,14 @@ export async function handleMasterDataRoute(ctx) {
           itemMatch[1],
           await readBody(req),
           actor(),
+          tenantScope(),
         ),
       })
     } catch (error) {
       send(res, error.status || 500, {
         code: error.code || 'PERSISTENCE_ERROR',
         message: error.message,
+        details: error.details || [],
       })
     }
     return true
@@ -189,7 +192,7 @@ export async function handleMasterDataRoute(ctx) {
   if (req.method === 'PATCH' && customerMatch) {
     if (authorizeWrite('customer-master').blocked) return true
     try {
-      send(res, 200, { customer: await repository.updateCustomer(customerMatch[1], await readBody(req), actor()) })
+      send(res, 200, { customer: await repository.updateCustomer(customerMatch[1], await readBody(req), actor(), tenantScope()) })
     } catch (error) {
       send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
     }
@@ -211,7 +214,7 @@ export async function handleMasterDataRoute(ctx) {
 
   if (req.method === 'POST' && url.pathname === '/api/master-data/suppliers') {
     if (authorizeWrite('supplier-master').blocked) return true
-    if (!repository.createSupplier) { send(res,501,{code:'ADAPTER_WRITE_UNSUPPORTED',message:'当前数据适配器不支持供应商写入'}); return true }
+    if (!repository.createSupplier) { send(res,501,{code:'ADAPTER_WRITE_UNSUPPORTED',message:'Supplier writes are not available in this workspace.'}); return true }
     try { send(res,201,{supplier:await repository.createSupplier(await readBody(req),actor(),tenantScope())}) } catch(error) { send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]}) }
     return true
   }
@@ -241,8 +244,8 @@ export async function handleMasterDataRoute(ctx) {
       send(res, 501, {
         code: 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED',
         capability: 'supplier-item-relationships',
-        message: '供应商–SKU 关系 read model 尚未接入当前 PostgreSQL repository。',
-        limitations: ['供应商基础资料可读取，但可供应物料关系暂不可用。'],
+        message: 'Supplier item relationships are not available in this workspace.',
+        limitations: ['Supplier details can be read, but the items they supply cannot.'],
       })
       return true
     }
@@ -256,8 +259,8 @@ export async function handleMasterDataRoute(ctx) {
       send(res, 501, {
         code: 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED',
         capability: 'item-supplier-relationships',
-        message: 'SKU–供应商关系 read model 尚未接入当前 PostgreSQL repository。',
-        limitations: ['物料基础资料可读取，但可采购供应商关系暂不可用。'],
+        message: 'Item supplier relationships are not available in this workspace.',
+        limitations: ['Item details can be read, but the suppliers they can be bought from cannot.'],
       })
       return true
     }
@@ -265,9 +268,9 @@ export async function handleMasterDataRoute(ctx) {
     send(res,200,{relationships:await repository.listItemSuppliers(itemId, tenantScope()),suppliers:await repository.approvedSuppliersForItem(itemId, tenantScope())})
     return true
   }
-  if (req.method === 'POST' && itemSuppliers) { if(authorizeWrite('item-supplier-relationship').blocked)return true; try{send(res,201,{relationship:await repository.createItemSupplier(decodeURIComponent(itemSuppliers[1]),await readBody(req),actor())})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})} return true }
+  if (req.method === 'POST' && itemSuppliers) { if(authorizeWrite('item-supplier-relationship').blocked)return true; try{send(res,201,{relationship:await repository.createItemSupplier(decodeURIComponent(itemSuppliers[1]),await readBody(req),actor(),tenantScope())})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})} return true }
   const relationshipMatch=url.pathname.match(/^\/api\/master-data\/items\/([^/]+)\/suppliers\/([^/]+)$/)
-  if(req.method==='PATCH'&&relationshipMatch){if(authorizeWrite('item-supplier-relationship').blocked)return true;try{send(res,200,{relationship:await repository.updateItemSupplier(decodeURIComponent(relationshipMatch[1]),decodeURIComponent(relationshipMatch[2]),await readBody(req),actor())})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})}return true}
+  if(req.method==='PATCH'&&relationshipMatch){if(authorizeWrite('item-supplier-relationship').blocked)return true;try{send(res,200,{relationship:await repository.updateItemSupplier(decodeURIComponent(relationshipMatch[1]),decodeURIComponent(relationshipMatch[2]),await readBody(req),actor(),tenantScope())})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})}return true}
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/warehouses') {
     send(res, 200, { warehouses: await repository.listWarehouses(tenantScope()) })
