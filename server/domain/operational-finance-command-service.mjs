@@ -294,6 +294,20 @@ const isConcurrency = (error) =>
   isPrismaConcurrencyError(error) ||
   /serialization|deadlock|write conflict/i.test(text(error?.message));
 
+// An approval reads the payable numbers it might assign, so two approvals in
+// one workspace can trip a serializable conflict even when their numbers
+// differ, and one that loses a race for a number fails with the retryable
+// PAYABLE_OBLIGATION_NUMBER_CONFLICT. Either way the whole transaction has
+// rolled back, so approval runs again a couple of times, seeing what the
+// other approval committed, before a 409 reaches the user. Only approval
+// assigns numbers this way, so the other P2P commands still return the 409
+// at once, as they did before.
+const isRetryableConflict = (error) =>
+  error instanceof OperationalFinanceError
+    ? error.details?.retryable === true
+    : isConcurrency(error);
+const APPROVAL_RETRIES = 2;
+
 // Reads which unique fields a P2002 violated. The driver adapter reports them
 // on the constraint, while older engines put them in meta.target.
 function isUniqueConflictOn(error, modelName, field) {
@@ -323,6 +337,15 @@ const isSupplierInvoiceNumberConflict = (error) =>
 // even that is taken (for example by a number someone typed in by hand).
 // The preview and the approval both call this, the approval inside its
 // transaction; the unique index stays the final guard against a race.
+//
+// Candidates are probed by exact number, a batch at a time, so the lookup
+// stays on the (tenantId, obligationNumber) unique index. A prefix search
+// cannot use that index under the database collation, so inside the
+// serializable approval it read every payable and made unrelated approvals
+// conflict. Prisma also leaves a backslash unescaped in such a pattern, which
+// hid a taken number whose supplier code contains one.
+const PAYABLE_NUMBER_BATCH = 10;
+
 async function nextPayableNumber(db, tenantId, invoice) {
   const invoiceNumber = text(invoice.invoiceNumber) || invoice.id;
   const supplier = text(invoice.supplierId)
@@ -337,23 +360,25 @@ async function nextPayableNumber(db, tenantId, invoice) {
     text(invoice.supplierId);
   const short = `AP-${invoiceNumber}`;
   const qualified = supplierCode ? `AP-${supplierCode}-${invoiceNumber}` : short;
-  // A prefix match can return extra rows; only exact numbers count as taken.
-  const rows = await db.payableObligation.findMany({
-    where: {
-      tenantId,
-      OR: [
-        { obligationNumber: short },
-        { obligationNumber: { startsWith: qualified } },
-      ],
-    },
-    select: { obligationNumber: true },
-  });
-  const taken = new Set(rows.map((row) => row.obligationNumber));
-  if (!taken.has(short)) return short;
-  if (!taken.has(qualified)) return qualified;
-  let suffix = 2;
-  while (taken.has(`${qualified}-${suffix}`)) suffix += 1;
-  return `${qualified}-${suffix}`;
+  const candidate = (index) =>
+    index === 0 ? short : index === 1 ? qualified : `${qualified}-${index}`;
+  for (let start = 0; ; start += PAYABLE_NUMBER_BATCH) {
+    // Without a supplier code the short and qualified forms are the same.
+    const batch = [
+      ...new Set(
+        Array.from({ length: PAYABLE_NUMBER_BATCH }, (_, offset) =>
+          candidate(start + offset),
+        ),
+      ),
+    ];
+    const rows = await db.payableObligation.findMany({
+      where: { tenantId, obligationNumber: { in: batch } },
+      select: { obligationNumber: true },
+    });
+    const taken = new Set(rows.map((row) => row.obligationNumber));
+    const free = batch.find((number) => !taken.has(number));
+    if (free) return free;
+  }
 }
 
 async function payableNumberTaken(db, tenantId, obligationNumber) {
@@ -384,7 +409,14 @@ export function createOperationalFinanceCommandService({
 } = {}) {
   if (!prisma) throw new Error("prisma is required");
 
-  async function execute(commandType, input, context, payload, work) {
+  async function execute(
+    commandType,
+    input,
+    context,
+    payload,
+    work,
+    { retries = 0 } = {},
+  ) {
     assertEnabled(env);
     const identity = assertIdentity(context);
     const idempotencyKey = required(
@@ -442,6 +474,15 @@ export function createOperationalFinanceCommandService({
         { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
       );
     } catch (error) {
+      if (retries > 0 && isRetryableConflict(error)) {
+        // A short random pause keeps the retries of several losers apart.
+        await new Promise((resolve) =>
+          setTimeout(resolve, 25 + Math.floor(Math.random() * 25)),
+        );
+        return execute(commandType, input, context, payload, work, {
+          retries: retries - 1,
+        });
+      }
       if (error instanceof OperationalFinanceError) throw error;
       if (isSupplierInvoiceNumberConflict(error))
         fail(
@@ -1405,7 +1446,8 @@ export function createOperationalFinanceCommandService({
             throw error;
           // Another approval committed the same number after it was checked
           // above. A typed number is a real duplicate; an assigned one only
-          // needs the approval run again to pick the next free number.
+          // needs the approval run again to pick the next free number, which
+          // execute does by itself a couple of times before returning this.
           if (typedNumber) {
             const duplicate = payableNumberDuplicate(typedNumber);
             fail(duplicate.code, duplicate.message, duplicate.status, duplicate.details);
@@ -1440,6 +1482,7 @@ export function createOperationalFinanceCommandService({
         });
         return result;
       },
+      { retries: APPROVAL_RETRIES },
     );
   }
 

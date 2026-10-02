@@ -833,68 +833,102 @@ test(
   async () => {
     const prisma = await createPrismaClient(env);
     try {
-      const payableTenantId = "tenant-operational-finance-payable-number";
-      const clerkId = "clerk-operational-finance-payable-number";
-      const approverId = "manager-operational-finance-payable-number";
-      const clerk = {
-        identity: identity(clerkId, "business-specialist", payableTenantId),
-      };
-      const approver = {
-        identity: identity(approverId, "manager", payableTenantId),
-      };
-      await prisma.tenant.create({
-        data: { id: payableTenantId, name: "Payable Number Per Supplier" },
-      });
-      await prisma.user.createMany({
-        data: [
-          { id: clerkId, tenantId: payableTenantId, email: "clerk-payable-number@flowchain.invalid", name: "Payable Clerk", role: "business-specialist" },
-          { id: approverId, tenantId: payableTenantId, email: "manager-payable-number@flowchain.invalid", name: "Payable Approver", role: "manager" },
-        ],
-      });
-      const suppliers = ["A", "B", "C", "D", "E", "F"];
-      await prisma.supplier.createMany({
-        data: suppliers.map((key) => ({
-          id: `supplier-payable-number-${key}`,
-          tenantId: payableTenantId,
-          code: `SUP-PAY-${key}`,
-          name: `Payable Supplier ${key}`,
-        })),
-      });
-      const sources = {};
-      for (const key of suppliers)
-        sources[key] = await source(prisma, `PAYABLE-${key}`, {
-          tenant: payableTenantId,
-          supplierId: `supplier-payable-number-${key}`,
-          supplierName: `Payable Supplier ${key}`,
+      // A workspace with a clerk who records invoices, an approver, and one
+      // supplier with received goods per key.
+      const workspace = async (tenant, label, supplierCodes) => {
+        const clerkId = `clerk-${label}`;
+        const approverId = `manager-${label}`;
+        await prisma.tenant.create({
+          data: { id: tenant, name: `Payable Number ${label}` },
         });
+        await prisma.user.createMany({
+          data: [
+            { id: clerkId, tenantId: tenant, email: `${clerkId}@flowchain.invalid`, name: "Payable Clerk", role: "business-specialist" },
+            { id: approverId, tenantId: tenant, email: `${approverId}@flowchain.invalid`, name: "Payable Approver", role: "manager" },
+          ],
+        });
+        await prisma.supplier.createMany({
+          data: Object.entries(supplierCodes).map(([key, code]) => ({
+            id: `supplier-${label}-${key}`,
+            tenantId: tenant,
+            code,
+            name: `Payable Supplier ${key}`,
+          })),
+        });
+        const sources = {};
+        for (const key of Object.keys(supplierCodes))
+          sources[key] = await source(prisma, `${label}-${key}`.toUpperCase(), {
+            tenant,
+            supplierId: `supplier-${label}-${key}`,
+            supplierName: `Payable Supplier ${key}`,
+          });
+        return {
+          label,
+          sources,
+          clerk: { identity: identity(clerkId, "business-specialist", tenant) },
+          approver: { identity: identity(approverId, "manager", tenant) },
+        };
+      };
+      const codes = Object.fromEntries(
+        [..."ABCDEFGH"].map((key) => [key, `SUP-PAY-${key}`]),
+      );
+      // A backslash is the LIKE escape character, so a prefix search would
+      // not find numbers built from this code.
+      codes.S = "SUP\\PAY-S";
+      const main = await workspace(
+        "tenant-operational-finance-payable-number",
+        "payable-number",
+        codes,
+      );
+      const other = await workspace(
+        "tenant-operational-finance-payable-number-other",
+        "payable-number-other",
+        { X: "SUP-PAY-X" },
+      );
+      const { approver } = main;
       const command = createOperationalFinanceCommandService({ prisma, env });
       // Received facts come from source(); this records, submits and matches
       // an invoice against them so it is ready for approval.
-      const matchedInvoice = async (key, invoiceNumber) => {
-        const label = `payable-${key}-${invoiceNumber}`;
+      const matchedInvoice = async (key, invoiceNumber, { label, sources, clerk } = main) => {
+        const tag = `${label}-${key}-${invoiceNumber}`;
         const created = await command.createSupplierInvoice(
-          { ...invoicePayload(sources[key], label, { invoiceNumber }), idempotencyKey: `create-${label}` },
+          { ...invoicePayload(sources[key], tag, { invoiceNumber }), idempotencyKey: `create-${tag}` },
           clerk,
         );
         await command.submitSupplierInvoice(
           created.entityId,
-          { expectedVersion: 0, idempotencyKey: `submit-${label}` },
+          { expectedVersion: 0, idempotencyKey: `submit-${tag}` },
           clerk,
         );
         const matched = await command.matchSupplierInvoice(
           created.entityId,
-          { expectedVersion: 1, idempotencyKey: `match-${label}` },
+          { expectedVersion: 1, idempotencyKey: `match-${tag}` },
           clerk,
         );
         assert.equal(matched.invoice.status, "matched");
         return created.entityId;
       };
-      const approve = (invoiceId, idempotencyKey, extra = {}) =>
+      const approve = (invoiceId, idempotencyKey, extra = {}, actor = approver) =>
         command.approveSupplierInvoice(
           invoiceId,
           { expectedVersion: 2, idempotencyKey, ...extra },
-          approver,
+          actor,
         );
+      const bound = (target, key) => {
+        const entry = Reflect.get(target, key);
+        return typeof entry === "function" ? entry.bind(target) : entry;
+      };
+      // Replaces payableObligation.findMany on a client, leaving the rest.
+      const withPayableLookup = (client, findMany) =>
+        new Proxy(client, {
+          get: (target, key) =>
+            key === "payableObligation"
+              ? new Proxy(target.payableObligation, {
+                  get: (delegate, method) =>
+                    method === "findMany" ? findMany : bound(delegate, method),
+                })
+              : bound(target, key),
+        });
       // The preview names the number the approval will record.
       const previewThenApprove = async (invoiceId, idempotencyKey) => {
         const preview = await command.previewApproveSupplierInvoice(
@@ -926,6 +960,16 @@ test(
       const fromC = await matchedInvoice("C", "1001");
       assert.equal(await previewThenApprove(fromC, "approve-payable-C"), "AP-SUP-PAY-C-1001-2");
 
+      // The same holds when the supplier code contains a backslash: the
+      // typed number is matched exactly, so S's invoice 1001 counts up too.
+      const typedForS = await matchedInvoice("S", "2001");
+      assert.equal(
+        (await approve(typedForS, "approve-payable-S-typed", { obligationNumber: "AP-SUP\\PAY-S-1001" })).payable.obligationNumber,
+        "AP-SUP\\PAY-S-1001",
+      );
+      const fromS = await matchedInvoice("S", "1001");
+      assert.equal(await previewThenApprove(fromS, "approve-payable-S"), "AP-SUP\\PAY-S-1001-2");
+
       // A typed number that is already used is refused with its number, in
       // the preview and by the approval, and records nothing.
       const typedDuplicate = await matchedInvoice("D", "4001");
@@ -950,56 +994,76 @@ test(
       );
       assert.equal(await prisma.payableObligation.count({ where: { supplierInvoiceId: typedDuplicate } }), 0);
 
-      // Two approvals racing for the same free number: either both land on
-      // distinct numbers, or the loser gets a retryable 409 and a retry
-      // assigns the next free number.
-      const racing = [await matchedInvoice("E", "5001"), await matchedInvoice("F", "5001")];
-      const settled = await Promise.allSettled(
-        racing.map((invoiceId, index) => approve(invoiceId, `approve-payable-race-${index}`)),
+      // Once a whole batch of candidates is taken the lookup moves on to the
+      // next batch. A stand-in lookup that answers only exact-number probes
+      // reports the first twelve candidates for D's invoice 4001 as taken.
+      const takenForD = new Set([
+        "AP-4001",
+        "AP-SUP-PAY-D-4001",
+        ...Array.from({ length: 10 }, (_, index) => `AP-SUP-PAY-D-4001-${index + 2}`),
+      ]);
+      const crowdedCommand = createOperationalFinanceCommandService({
+        prisma: withPayableLookup(prisma, async ({ where }) =>
+          where.obligationNumber.in
+            .filter((number) => takenForD.has(number))
+            .map((obligationNumber) => ({ obligationNumber })),
+        ),
+        env,
+      });
+      const crowded = await crowdedCommand.previewApproveSupplierInvoice(
+        typedDuplicate,
+        { expectedVersion: 2 },
+        approver,
       );
-      for (const [index, entry] of settled.entries()) {
-        if (entry.status === "fulfilled") continue;
-        const loser = entry.reason;
-        assert.ok(
-          loser instanceof OperationalFinanceError &&
-            loser.status === 409 &&
-            ["PAYABLE_OBLIGATION_NUMBER_CONFLICT", "FINANCE_CONCURRENCY_CONFLICT"].includes(loser.code),
-          `unexpected concurrent approval outcome: ${loser?.status} ${loser?.code} ${loser?.message}`,
-        );
-        await approve(racing[index], `approve-payable-race-${index}-retry`);
-      }
+      assert.equal(crowded.after.obligationNumber, "AP-SUP-PAY-D-4001-12");
+
+      // Two approvals racing for the same free number both succeed: the
+      // loser runs again by itself and takes the next free number.
+      const racing = [await matchedInvoice("E", "5001"), await matchedInvoice("F", "5001")];
       const raced = (
-        await prisma.payableObligation.findMany({
-          where: { supplierInvoiceId: { in: racing } },
-          select: { obligationNumber: true },
-        })
-      ).map((row) => row.obligationNumber).sort();
-      assert.equal(raced.length, 2);
+        await Promise.all(
+          racing.map((invoiceId, index) => approve(invoiceId, `approve-payable-race-${index}`)),
+        )
+      ).map((approved) => approved.payable.obligationNumber).sort();
       assert.equal(raced[0], "AP-5001");
       assert.match(raced[1], /^AP-SUP-PAY-[EF]-5001$/);
 
+      // Approvals that do not share a number all succeed together, in the
+      // same workspace and in another one, even though each reads the
+      // payable numbers inside its serializable transaction.
+      const unrelated = [
+        { invoiceId: await matchedInvoice("G", "6001"), actor: approver },
+        { invoiceId: await matchedInvoice("H", "6002"), actor: approver },
+        { invoiceId: await matchedInvoice("X", "6001", other), actor: other.approver },
+      ];
+      assert.deepEqual(
+        (
+          await Promise.all(
+            unrelated.map(({ invoiceId, actor }, index) =>
+              approve(invoiceId, `approve-payable-unrelated-${index}`, {}, actor),
+            ),
+          )
+        ).map((approved) => approved.payable.obligationNumber),
+        ["AP-6001", "AP-6002", "AP-6001"],
+      );
+
       // The unique index is the last guard. Hide taken numbers from the
       // in-transaction lookup so a taken number reaches the insert, as it
-      // would if another approval committed it in between.
-      const bound = (target, key) => {
-        const entry = Reflect.get(target, key);
-        return typeof entry === "function" ? entry.bind(target) : entry;
-      };
-      const blindTx = (tx) =>
-        new Proxy(tx, {
-          get: (target, key) =>
-            key === "payableObligation"
-              ? new Proxy(target.payableObligation, {
-                  get: (delegate, method) =>
-                    method === "findMany" ? async () => [] : bound(delegate, method),
-                })
-              : bound(target, key),
-        });
+      // would if another approval committed it in between. The automatic
+      // retries see the same hidden lookup, so the conflict reaches the
+      // caller once they run out.
+      let blindAttempts = 0;
       const blindCommand = createOperationalFinanceCommandService({
         prisma: new Proxy(prisma, {
           get: (target, key) =>
             key === "$transaction"
-              ? (work, options) => target.$transaction((tx) => work(blindTx(tx)), options)
+              ? (work, options) => {
+                  blindAttempts += 1;
+                  return target.$transaction(
+                    (tx) => work(withPayableLookup(tx, async () => [])),
+                    options,
+                  );
+                }
               : bound(target, key),
         }),
         env,
@@ -1018,6 +1082,8 @@ test(
           error.details?.retryable === true &&
           error.message.includes("AP-1001"),
       );
+      // One attempt plus two automatic retries.
+      assert.equal(blindAttempts, 3);
       assert.equal(
         (await prisma.supplierInvoice.findUnique({ where: { id: guarded } })).status,
         "matched",

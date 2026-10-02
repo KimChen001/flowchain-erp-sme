@@ -61,8 +61,22 @@ unique per workspace. Approval assigns `AP-{invoice number}` while it is free,
 and then `-2`, `-3` and so on. The approval preview shows the number the
 approval will record. A typed `obligationNumber` is kept as entered, and one
 that is already used is refused with `PAYABLE_OBLIGATION_NUMBER_DUPLICATE`
-(409). Two approvals racing for the same number end with a retryable 409 for
-the loser; running it again assigns the next free number.
+(409).
+
+Approval looks the candidate numbers up by exact value inside its
+serializable transaction. Two approvals in the same workspace can still
+conflict there, even when their numbers differ, and two approvals can race
+for the same number. In both cases the approval is retried automatically up to
+two times, and the retry assigns the next free number. Only when the retries
+run out does the user get a retryable 409 (`FINANCE_CONCURRENCY_CONFLICT` or
+`PAYABLE_OBLIGATION_NUMBER_CONFLICT`). The other P2P commands are not retried.
+
+A collision number such as `AP-SUP-001-1001` contains the supplier code.
+The payable number is the payable's business identifier and is never masked,
+so a user who can read payables or settlements without
+`finance.partner_snapshot.read` can see that code, even though the supplier
+name on the same row is hidden. The invoice's `supplierId` was already
+visible to these users.
 
 Supplier credit memo numbers are stored as entered and are unique per
 workspace (`SUPPLIER_CREDIT_MEMO_NUMBER_DUPLICATE`, 409). Two suppliers that
