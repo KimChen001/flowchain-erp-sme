@@ -52,7 +52,9 @@ export async function handleOutboundRoute(ctx) {
   const post = path.match(/^\/api\/sales\/shipments\/([^/]+)\/post$/)
   const reversePreview = path.match(/^\/api\/sales\/shipments\/([^/]+)\/reverse-preview$/)
   const reverse = path.match(/^\/api\/sales\/shipments\/([^/]+)\/reverse$/)
-  const matched = orderState || shipmentState || reservePreview || reserve || releasePreview || release || draftPreview || draft || cancelPreview || cancel || postPreview || post || reversePreview || reverse
+  const orderCancelPreview = path.match(/^\/api\/sales\/orders\/([^/]+)\/cancel-preview$/)
+  const orderCancel = path.match(/^\/api\/sales\/orders\/([^/]+)\/cancel$/)
+  const matched = orderState || shipmentState || reservePreview || reserve || releasePreview || release || draftPreview || draft || cancelPreview || cancel || postPreview || post || reversePreview || reverse || orderCancelPreview || orderCancel
   if (!matched) return false
   if ((orderState || shipmentState) ? ctx.req.method !== 'GET' : ctx.req.method !== 'POST') return false
   if (!ensureDatabaseMode(ctx) || !ensureIdentity(ctx)) return true
@@ -62,7 +64,16 @@ export async function handleOutboundRoute(ctx) {
   if (previewCapability && !capabilityForEnvironment(previewCapability, env)?.enabled) { unavailable(ctx, previewCapability); return true }
   const commandCapability = reserve || release ? 'sales-reservation' : draft || cancel ? 'sales-shipment-draft' : post ? 'sales-shipment-posting' : reverse ? 'sales-shipment-reversal' : null
   if (commandCapability && !capabilityForEnvironment(commandCapability, env)?.enabled) { unavailable(ctx, commandCapability); return true }
+  if ((orderCancelPreview || orderCancel) && !capabilityForEnvironment('sales-order-lifecycle', env)?.enabled) { unavailable(ctx, 'sales-order-lifecycle'); return true }
   try {
+    if (orderCancelPreview || orderCancel) {
+      const { command: orders } = await services(ctx, { needQuery: false, needCommand: true })
+      const body = await ctx.readBody(ctx.req)
+      const salesOrderId = decodeURIComponent((orderCancelPreview || orderCancel)[1])
+      if (orderCancelPreview) ctx.send(ctx.res, 200, await orders.previewSalesOrderCancellation({ salesOrderId }, { identity: ctx.identity }))
+      else ctx.send(ctx.res, 200, await orders.cancelSalesOrder({ salesOrderId, expectedOrderVersion: body.expectedOrderVersion, reason: body.reason, idempotencyKey: String(body.idempotencyKey || ctx.req.headers?.['idempotency-key'] || '').trim() }, { identity: ctx.identity }))
+      return true
+    }
     const needQuery = Boolean(orderState || shipmentState || previewCapability)
     const needCommand = Boolean(commandCapability)
     const { query, command } = await services(ctx, { needQuery, needCommand })

@@ -516,6 +516,13 @@ export function createOutboundWorkbenchReadService({
       canHold: lifecycleEnabled && permission(actor, "sales_order.revise") && confirmed,
       canResume:
         lifecycleEnabled && permission(actor, "sales_order.revise") && order.workflowStatus === "on_hold",
+      // Cancelling releases the order's reservations and cancels its unposted
+      // shipments; an order with goods shipped is not cancelled.
+      canCancel:
+        lifecycleEnabled &&
+        permission(actor, "sales_order.cancel") &&
+        ["draft", "confirmed", "on_hold"].includes(order.workflowStatus) &&
+        !order.shipments.some((shipment) => shipment.postingStatus === "posted"),
       canReserve:
         reservationEnabled &&
         permission(actor, "shipment.prepare") &&
