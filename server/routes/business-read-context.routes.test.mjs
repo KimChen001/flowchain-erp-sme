@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { handleBusinessReadContextRoute } from './business-read-context.routes.mjs'
+import { reportReadAccessFor } from '../domain/report-read-access.mjs'
+import { permissionCodes } from '../auth/permission-catalog.mjs'
+
+// A reader who may see everything.
+const fullReportAccess = reportReadAccessFor({ authenticated: true, complete: true, tenantId: 'tenant-any', permissionCodes: new Set(permissionCodes) })
 
 // Regression. The route called service.read() with no tenant, so every
 // repository fell back to its own default. Those defaults disagree: master data
@@ -43,6 +48,7 @@ function routeContext(pathname, repositories, identity) {
       repositories,
       dataMode: 'user',
       identity,
+      reportReadAccess: fullReportAccess,
     },
   }
 }
