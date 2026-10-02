@@ -6,6 +6,7 @@ import {
   receivingDecimalUnits,
   receivingFulfillmentStatus,
   receivingLocationKey,
+  receivingMovementNetUnits,
   receivingWorkflowStatus,
 } from './receiving-transaction-policy.mjs'
 import { assertWarehouseAccess, hasWarehouseAccess, resolveProvisionedActor } from './pilot-identity.mjs'
@@ -251,7 +252,7 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
         prisma.inventoryMovement.findMany({ where: { tenantId: scope.tenantId, sku: key.sku, warehouseId: key.warehouseId, locationKey: key.locationKey, status: 'posted' }, select: { id: true, quantityIn: true, quantityOut: true, adjustmentQty: true } }),
         prisma.inventoryBalance.findUnique({ where: { tenantId_sku_warehouseKey_locationKey: { tenantId: scope.tenantId, sku: key.sku, warehouseKey: key.warehouseKey, locationKey: key.locationKey } } }),
       ])
-      const calculated = movements.reduce((sum, movement) => sum + receivingDecimalUnits(movement.quantityIn) - receivingDecimalUnits(movement.quantityOut) + receivingDecimalUnits(movement.adjustmentQty), ZERO)
+      const calculated = movements.reduce((sum, movement) => sum + receivingMovementNetUnits(movement), ZERO)
       if (!balance) return { ...key, status: 'unavailable', calculatedQuantity: receivingDecimalString(calculated), recordedQuantity: null, differenceQuantity: null, movementIds: movements.map((movement) => movement.id), reason: 'Inventory balance is missing.' }
       const recorded = receivingDecimalUnits(balance.onHandQuantity)
       const difference = recorded - calculated

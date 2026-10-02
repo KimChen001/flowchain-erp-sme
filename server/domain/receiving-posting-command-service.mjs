@@ -243,9 +243,7 @@ function auditMetadata({ action, before, after, purchaseOrder, receivingDocument
     purchaseOrderLineChanges,
     balanceChanges: balances.map((balance, index) => {
       const movement = movements[index]
-      const delta = movement
-        ? decimalUnits(movement.quantityIn) - decimalUnits(movement.quantityOut) + decimalUnits(movement.adjustmentQty)
-        : 0n
+      const delta = movement ? receivingMovementNetUnits(movement) : 0n
       const afterOnHand = decimalUnits(balance.onHandQuantity)
       const afterAvailable = decimalUnits(balance.availableQuantity)
       return {
