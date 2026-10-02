@@ -188,7 +188,7 @@ test('master data writes follow the roles in Roles & permissions, not the legacy
   let server
   try {
     // Legacy roles; the first request backfills each into its default role.
-    const people = { admin: 'admin', manager: 'manager', demoted: 'manager', buyer: 'buyer', finance: 'finance-specialist', viewer: 'viewer' }
+    const people = { admin: 'admin', manager: 'manager', demoted: 'manager', emptied: 'manager', specialist: 'business-specialist', buyer: 'buyer', finance: 'finance-specialist', viewer: 'viewer' }
     await prisma.tenant.create({ data: { id: tenantRoles, name: 'Roles workspace', currency: 'USD' } })
     for (const [key, role] of Object.entries(people)) {
       await prisma.user.create({ data: { id: `${tenantRoles}-${key}`, tenantId: tenantRoles, email: `${key}-roles@example.com`, name: `Roles ${key}`, role } })
@@ -264,9 +264,48 @@ test('master data writes follow the roles in Roles & permissions, not the legacy
     assertDenied(await asDemoted('POST', '/api/master-data/items', item('DEM-1')), 'master_data.item.manage', 'demoted item')
     assertDenied(await asDemoted('PATCH', '/api/master-data/customers/CUST-DEM', { name: 'Renamed', expectedVersion: 1 }), 'master_data.customer.manage', 'demoted customer')
 
+    // Administrators' decisions survive the legacy backfill that runs again,
+    // for the whole workspace, when someone who never had a role signs in,
+    // such as an invited colleague. Before that happens, an administrator takes
+    // every role from a second manager and the supplier code from the default
+    // Operations Specialist role.
+    const asAdmin = await signIn('admin')
+    const emptiedId = `${tenantRoles}-emptied`
+    assert.equal((await asAdmin('PUT', `/api/authorization/users/${emptiedId}/roles`, { roleIds: [] })).status, 200)
+    const opsRole = await prisma.tenantRole.findFirst({ where: { tenantId: tenantRoles, roleKey: 'operations-specialist', isDefaultTemplate: true }, include: { permissions: true } })
+    const opsCodes = opsRole.permissions.map((grant) => grant.permissionCode).filter((code) => code !== 'master_data.supplier.manage')
+    const narrowed = await asAdmin('PATCH', `/api/authorization/roles/${opsRole.id}`, { permissionCodes: opsCodes })
+    assert.equal(narrowed.status, 200, JSON.stringify(narrowed.payload))
+    const invitation = await asAdmin('POST', '/api/workspace/invitations', { email: 'newcomer-roles@example.com', role: 'business-specialist' })
+    assert.equal(invitation.status, 201, JSON.stringify(invitation.payload))
+    assert.equal((await request(port, 'POST', '/api/workspace/invitations/accept', { body: { token: invitation.payload.invitationToken, name: 'Roles newcomer' } })).status, 200)
+    const asNewcomer = await signIn('newcomer')
+    const newcomer = await asNewcomer('GET', '/api/authorization/context')
+    assert.equal(newcomer.status, 200, JSON.stringify(newcomer.payload))
+    // The newcomer gets the role as the administrator left it.
+    assert.deepEqual(newcomer.payload.roles.map((role) => role.roleKey), ['operations-specialist'])
+    assert.equal(newcomer.payload.effectivePermissions.includes('master_data.supplier.manage'), false)
+    assertDenied(await asNewcomer('POST', '/api/master-data/suppliers', supplier('SUP-NEW')), 'master_data.supplier.manage', 'newcomer supplier')
+    // Nobody else was given a role back, and the code stayed removed.
+    const roleKeysOf = async (key) => (await prisma.userRoleAssignment.findMany({ where: { userId: `${tenantRoles}-${key}` }, include: { role: true } })).map((row) => row.role.roleKey).sort()
+    assert.deepEqual(await roleKeysOf('demoted'), ['read-only-viewer'])
+    assert.deepEqual(await roleKeysOf('emptied'), [])
+    assert.equal(await prisma.tenantRolePermission.count({ where: { roleId: opsRole.id, permissionCode: 'master_data.supplier.manage' } }), 0)
+    assertDenied(await (await signIn('demoted'))('POST', '/api/master-data/suppliers', supplier('SUP-DEM')), 'master_data.supplier.manage', 'demoted after backfill')
+    // The manager left without roles cannot write, and their own requests do
+    // not bring the legacy role back either.
+    const asEmptied = await signIn('emptied')
+    assertDenied(await asEmptied('POST', '/api/master-data/suppliers', supplier('SUP-EMP')), 'master_data.supplier.manage', 'emptied supplier')
+    assertDenied(await asEmptied('POST', '/api/master-data/items', item('EMP-1')), 'master_data.item.manage', 'emptied item')
+    assert.deepEqual(await roleKeysOf('emptied'), [])
+    // The existing specialist still edits items but no longer suppliers.
+    const asSpecialist = await signIn('specialist')
+    assertDenied(await asSpecialist('POST', '/api/master-data/suppliers', supplier('SUP-OPS')), 'master_data.supplier.manage', 'specialist supplier')
+    assert.equal((await asSpecialist('POST', '/api/master-data/items', item('OPS-1'))).status, 201)
+
     // Nothing refused was written.
     assert.deepEqual((await prisma.supplier.findMany({ where: { tenantId: tenantRoles }, orderBy: { code: 'asc' } })).map((row) => row.code), ['SUP-BUY', 'SUP-MGR', 'SUP-ROLES'])
-    assert.deepEqual((await prisma.item.findMany({ where: { tenantId: tenantRoles }, orderBy: { sku: 'asc' } })).map((row) => row.sku), ['BUY-1', 'MGR-1', 'SKU-ROLES'])
+    assert.deepEqual((await prisma.item.findMany({ where: { tenantId: tenantRoles }, orderBy: { sku: 'asc' } })).map((row) => row.sku), ['BUY-1', 'MGR-1', 'OPS-1', 'SKU-ROLES'])
     assert.deepEqual((await prisma.runtimeRecord.findMany({ where: { tenantId: tenantRoles, namespace: CUSTOMER_NAMESPACE }, orderBy: { recordKey: 'asc' } })).map((row) => [row.recordKey, row.payload.name]), [['CUST-DEM', 'Customer CUST-DEM'], ['CUST-MGR', 'Customer CUST-MGR']])
     assert.equal((await prisma.supplier.findUnique({ where: { id: 'SUP-ROLES' } })).metadata.bankAccountNumber, undefined)
   } finally {

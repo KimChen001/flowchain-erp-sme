@@ -32,8 +32,10 @@ END $$;
 -- Existing default roles receive the same grants as a fresh authorization
 -- backfill (defaultRoleTemplates in server/auth/permission-catalog.mjs), so
 -- the people who could change master data under their legacy role still can.
--- The backfill only adds missing grants when it runs, which is rarely.
--- Custom roles are left to workspace administrators.
+-- The backfill is no substitute: it runs only when a user who never had a
+-- role signs in, and it never adds grants to a default role an administrator
+-- has saved. Administrators can remove these grants afterwards and they stay
+-- removed. Custom roles are left to workspace administrators.
 INSERT INTO "TenantRolePermission" ("id", "tenantId", "roleId", "permissionCode")
 SELECT
   'AUTH-' || substr(md5(role."tenantId" || ':' || role."id" || ':' || grant_row.code), 1, 28),

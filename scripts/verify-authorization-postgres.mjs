@@ -75,6 +75,22 @@ try {
   await assert.rejects(() => prisma.tenantRolePermission.create({ data: { id: randomUUID(), tenantId, roleId: custom.id, permissionCode: "returns.posting.read" } }))
   await assert.rejects(() => prisma.userRoleAssignment.create({ data: { id: randomUUID(), tenantId, userId: "user-viewer", roleId: viewer.roleIds[0] } }))
   assert.equal(decision(ops, "returns.posting.post", ["warehouse-outside-scope"]), false)
+
+  // The backfill runs again whenever someone who never had a role signs in.
+  // It assigns that user only and keeps administrators' decisions: a narrowed
+  // user stays narrowed, a user left without roles stays without, and a code
+  // removed from a default role stays removed.
+  const viewerTemplate = await prisma.tenantRole.findFirstOrThrow({ where: { tenantId, roleKey: "read-only-viewer" }, include: { permissions: true } })
+  await service.updateRole(admin, viewerTemplate.id, { permissionCodes: viewerTemplate.permissions.map((grant) => grant.permissionCode).filter((code) => code !== "returns.posting.read") })
+  await service.assignUserRoles(admin, "user-manager", [viewerTemplate.id])
+  await service.assignUserRoles(admin, "user-unknown", [])
+  await prisma.user.create({ data: { id: "user-late", tenantId, email: "user-late@flowchain.invalid", name: "user-late", role: "viewer", status: "active" } })
+  const replay = await backfillTenantAuthorization(prisma, tenantId, { actorId: "user-admin", requestId: "db-gate-late-user" })
+  assert.deepEqual([replay.createdRoles, replay.createdGrants, replay.createdAssignments], [0, 0, 1])
+  const late = await context("user-late", "viewer"); assert.deepEqual(late.roleIds, [viewerTemplate.id]); assert.equal(decision(late, "returns.posting.read"), false)
+  assert.deepEqual((await context("user-manager", "manager")).roleIds, [viewerTemplate.id])
+  // The lazy backfill on a request does not re-provision the emptied user.
+  assert.deepEqual((await resolveAuthorizationContext(identity(tenantId, "user-unknown", "mystery-role"), { prisma })).roleIds, [])
   assert.ok(await prisma.auditLog.count({ where: { tenantId, source: { in: ["authorization_backfill", "authorization_governance"] } } }) >= 5)
   console.log(`Authorization PostgreSQL gate: PASS (${permissionCodes.length} catalog permissions, 0 failed, 0 skipped)`)
 } finally {

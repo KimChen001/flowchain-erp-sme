@@ -1,5 +1,5 @@
 import { FIELD_GROUP_PERMISSION, assertKnownPermissionCode, moduleReadPermissions, permissionCodeSet } from "./permission-catalog.mjs"
-import { backfillTenantAuthorization } from "./authorization-backfill.mjs"
+import { backfillTenantAuthorization, usersWithRoleAssignmentDecision } from "./authorization-backfill.mjs"
 
 export const AUTHORIZATION_REASON = Object.freeze({
   denied: "AUTHORIZATION_PERMISSION_DENIED",
@@ -54,7 +54,10 @@ export async function resolveAuthorizationContext(identity, { prisma, performLeg
     return { complete: false, authenticated: Boolean(identity?.authenticated), tenantId: text(identity?.tenantId), userId: text(identity?.userId || identity?.id), permissionCodes: new Set(), roleIds: [], inactiveRoleIds: [], readWarehouseIds: new Set(), operateWarehouseIds: new Set() }
   }
   let user = await loadUserContext(prisma, identity)
-  if (user && performLegacyBackfill && user.roleAssignments.length === 0 && typeof prisma.$transaction === "function") {
+  // A user an administrator left without roles has nothing to backfill, so
+  // their requests skip the tenant-wide backfill transaction.
+  if (user && performLegacyBackfill && user.roleAssignments.length === 0 && typeof prisma.$transaction === "function"
+    && !(await usersWithRoleAssignmentDecision(prisma, user.tenantId, [user.id])).has(user.id)) {
     await ensureTenantBackfilled(prisma, user.tenantId, user.id)
     user = await loadUserContext(prisma, identity)
   }
