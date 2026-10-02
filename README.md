@@ -1,274 +1,125 @@
-# FlowChain — ERP & Inventory-Purchase-Sales (进销存) Collaboration Platform for SMEs
+# FlowChain
 
-FlowChain is an ERP and inventory-purchase-sales (进销存) collaboration platform for SMEs. It gives operations teams one workspace to run purchase orders, receiving, inventory, sales demand, supplier collaboration, and invoice matching, backed by an AI evidence layer and review-first controls.
+**Purchasing, inventory and sales operations for small and medium businesses, with an AI assistant that answers from your own records and never changes them.**
 
-FlowChain 是面向中小企业的 ERP 进销存协同平台。系统以工作区数据为基础，统一支撑采购、收货、库存、销售需求、供应商协同与发票匹配的业务闭环，并以 AI 证据链、交付风险分析和权限边界保障运营可控。
+FlowChain is an ERP workspace for the buy-stock-sell loop (进销存). One team can take a purchase from request to received goods and a matched invoice, keep inventory accurate, and ship customer orders. The assistant explains what needs attention and cites the records behind every answer.
 
-FlowChain 覆盖中小企业进销存 ERP 的对象骨架：基础资料、采购、销售、库存、结算、报表和系统管理。差异化重点是 AI 证据链、交付风险分析、库存可承诺量、可复核动作草稿和数据质量说明。
+[中文简介](#中文简介)
 
-## Current Product State
+## What it covers
 
-FlowChain 已形成采购、库存、销售需求、供应商协同与发票匹配的进销存业务闭环。
+| Area | What you can do |
+| --- | --- |
+| **Today** | See the day's priorities across purchasing, inventory and sales, with links to the records behind them. |
+| **Purchasing** | Purchase requests, RFQs with supplier quotes and awards, and purchase orders from submit and approval through issue. Promised-date changes keep the original date and need a reason. |
+| **Purchase fulfillment** | Receiving (GRN): draft, post and reverse, with an impact preview before posting. |
+| **Inventory** | Balances, lots and serials, movements, availability and available-to-promise, plus transfers, cycle counts and adjustments. |
+| **Sales** | Sales orders (confirm, hold, resume), reservations and shipments, each posted after a preview. |
+| **Suppliers** | Supplier records and a scorecard: on time, in full and OTIF, measured against the original promise. |
+| **Items** | Item, warehouse and customer master data. |
+| **Finance** | Supplier invoices with three-way match (PO, receipt, invoice), payables, customer invoices, receivables and credit notes. |
+| **Reports** | Dashboards for overview, purchasing, sales, inventory, finance and suppliers, a report catalog and export. |
+| **AI assistant** | Questions about today's work, risks, missing data and your own documents. See [below](#ai-assistant). |
 
-当前核心入口：
+Every change to business data is made by a person: posting, approving and reversing are confirmed in the document's own page, usually after a preview of the effect.
 
-- 今日行动
-- AI 建议
-- AI 助手
-- 核心业务链
-- 数据接入与质量
-- 角色权限 / 业务审计 / 工作区边界
-- 人工复核草稿
+## AI assistant
 
-当前边界：
+- **Answers come from workspace data.** Everyday questions ("What should I handle first today?", "Which items have the highest risk?") are answered by read-only skills that query your records. By default no language model is called.
+- **Every answer shows its evidence.** Answers list the records they rely on, with links back to them, and state what was checked and what is missing.
+- **It never acts on your behalf.** Requests to approve, pay, send or change records are refused. The assistant can prepare a draft for a person to review, nothing more.
+- **Knowledge library.** Upload product guides or company policies and ask questions about them. Answers cite the passages used. It works with keyword search alone. With an OpenAI or Qwen key it adds semantic search and generated answers; see [Product and company knowledge](docs/ai-product-knowledge.md).
+- **Measured, not assumed.** An evaluation set of 100 questions (20 in Chinese) runs in CI. The current score is 84/100, with no permission leaks, no cross-tenant leaks and no business writes. See [tests/ai-eval](tests/ai-eval/README.md).
 
-- 证据解释
-- 草稿预览
-- 人工复核
-- 不提交
-- 不外发
-- 不写库存
-- 不写财务凭证
-- 不处理资金
-- 不修改供应商主数据
-- 不覆盖当前工作区数据
+## Quick start
 
-## Current Status
+Requires **Node.js 24**.
 
-FlowChain runs on a PostgreSQL-only authoritative runtime. `DATABASE_URL` is
-required; the removed JSON persistence mode and production fixture fallbacks
-fail closed.
-
-The first production deployment foundation provides an immutable Node 24
-container, fail-fast production configuration, separate liveness/readiness,
-graceful shutdown, and a controlled single-instance Staging reference. See
-[Production Deployment Foundation v1](docs/production-deployment-foundation-v1.md)
-and [Staging deployment](deploy/README.md).
-
-Universal Intake is the sole forward-looking intake authority. Phase 5.4A
-defines tenant-scoped artifacts, batches, records, mappings, validation, and
-review as a preview-only foundation. Legacy Pilot Import production routes are
-retired and fail closed; their historical `ImportBatch` and `ImportIssue`
-records are non-authoritative compatibility history and receive no new writes.
-Bounded CSV/XLSX parsing begins in Phase 5.4B, and governed business commit
-adapters begin in Phase 5.4C.
-
-## Core Modules
-
-- Daily Workbench / 每日工作台
-- Sales Demand / Customer Orders Lite
-- Inventory Allocation / Availability / Available to Promise
-- Evidence Graph / Cross-module Evidence Links
-- Demand-to-Procurement Links
-- Procurement / P2P
-- Purchase Request
-- RFQ / supplier quotation
-- Purchase Order
-- Receiving / GRN
-- Inventory and inventory exceptions
-- Supplier operations / SRM
-- Foundation Data / 基础资料
-- Data Intake and Quality / 数据接入与质量
-- Reports and Analytics / 报表与分析
-- Forecast / MRP
-- AI Assistant
-- Finance collaboration visibility
-
-## Scope Boundaries
-
-FlowChain focuses on the inventory-purchase-sales (进销存) ERP core and its supplier collaboration and finance-matching layers. The following adjacent enterprise systems are out of scope for this platform and are expected to integrate rather than be rebuilt inside FlowChain:
-
-- general ledger and statutory accounting;
-- HR and payroll;
-- CRM and customer lifecycle management;
-- bank and payment execution;
-- tax filing.
-
-AI-assisted actions are review-first: the system prepares drafts and explanations, and a person confirms before purchase orders are issued, supplier emails are sent, inventory is posted, invoices are approved, payments are executed, or supplier master data is changed.
-
-Supplier-facing portal capability is on the roadmap but not yet enabled: FlowChain does not currently create external supplier accounts, supplier logins, supplier self-service profile maintenance, online PO confirmation, or online invoice submission.
-
-Workbench/dashboard/cockpit surfaces are summary and navigation surfaces. They show pending counts, risk counts, top priority lists, evidence links, and document entry points. Detailed actions belong in the corresponding business document detail, drawer, or review panel, where reject, request-changes, and cancel decisions include a reason.
-
-## Run Locally
+**Try it with sample data.** No database setup is needed: the walkthrough starts its own embedded PostgreSQL. Run it from a fresh checkout without `.env`, `.env.local` or `.local/`.
 
 ```bash
 npm install
-npm run api
+npm run walkthrough:local
 ```
 
-In another terminal:
+Open http://127.0.0.1:15201 and sign in with `admin@flowchain.local` or `kim@example.com`. Then use **View the sign-in link** on the sign-in page; emails go to a local outbox. The data lives in `~/flowchain-data/walkthrough`, and `npm run walkthrough:local -- --reset` starts over.
+
+**Develop against your own PostgreSQL.**
 
 ```bash
-npm run dev
-```
-
-The frontend proxies `/api` requests to `http://127.0.0.1:8787`.
-
-## Validate
-
-```bash
-npm test
-npm run test:harness
-npm run typecheck
-npm run build
-```
-
-`npm run build` may report Vite chunk-size warnings; those warnings do not indicate a failed build.
-
-## Key Backend APIs
-
-Read and preview APIs:
-
-- `GET /api/health` (lightweight liveness)
-- `GET /api/ready` (PostgreSQL, tenant, attachment, and configuration readiness)
-- `GET /api/me`
-- `GET /api/tenants/current`
-- `GET /api/search`
-- `GET /api/today-cockpit`
-- `GET /api/sales-demand/summary`
-- `GET /api/sales-demand/orders`
-- `GET /api/sales-demand/orders/:id`
-- `GET /api/sales-demand/risks`
-- `GET /api/sales-demand/impact?sku=:sku`
-- `GET /api/sales-demand/po-impact?poId=:poId`
-- `GET /api/procurement/documents`
-- `GET /api/procurement/documents/:type/:id`
-- `GET /api/procurement/links`
-- `GET /api/procurement/followups`
-- `GET /api/procurement/summary`
-- `GET /api/inventory/items`
-- `GET /api/inventory/items/:sku`
-- `GET /api/inventory/lots`
-- `GET /api/inventory/serials`
-- `GET /api/inventory/movements`
-- `GET /api/inventory/exceptions`
-- `GET /api/inventory/summary`
-- `GET /api/inventory/availability`
-- `GET /api/inventory/availability/:sku`
-- `GET /api/inventory/allocation`
-- `GET /api/inventory/allocation/:sku`
-- `GET /api/inventory/shortages`
-- `GET /api/inventory/demand-supply-gap?sku=:sku`
-- `GET /api/inventory/available-to-promise?sku=:sku`
-- `GET /api/inventory/reservation-preview?sku=:sku&salesOrderId=:salesOrderId&requestedQty=:qty`
-- `GET /api/inventory/sales-order-impact?salesOrderId=:salesOrderId`
-- `GET /api/inventory/po-supply-impact?poId=:poId`
-- `GET /api/evidence-graph?entityType=:type&entityId=:id&depth=2`
-- `GET /api/evidence-graph/related?entityType=:type&entityId=:id&depth=2`
-- `GET /api/evidence-graph/sales-order/:id`
-- `GET /api/evidence-graph/sku/:sku`
-- `GET /api/evidence-graph/purchase-order/:poId`
-- `GET /api/evidence-graph/purchase-request/:prId`
-- `GET /api/evidence-graph/rfq/:rfqId`
-- `GET /api/evidence-graph/receiving/:grnId`
-- `GET /api/evidence-graph/supplier/:supplierIdOrName`
-- `GET /api/evidence-graph/invoice/:invoiceId`
-- `GET /api/master-data/items`
-- `GET /api/master-data/suppliers`
-- `GET /api/action-drafts/schema`
-- `POST /api/action-drafts/preview`
-- `GET /api/ai/tools`
-- `POST /api/ai/chat`
-
-Legacy/manual local write routes still exist for compatibility in selected
-non-import workflows. The legacy Pilot Import routes are specifically retired
-and cannot write business tables. The AI and draft-first surfaces do not
-autonomously execute writes.
-
-## AI Safety
-
-External AI providers are disabled by default. Placeholder `OPENAI_API_KEY`, `ARK_API_KEY`, or `DOUBAO_API_KEY` values do not enable provider calls.
-
-Cockpit-style prompts such as `今天最需要处理什么？` use a deterministic local fast path backed by Today Cockpit, procurement, inventory allocation, supplier, evidence graph, and planning read models. Unsupported prompts return guided, review-first responses when providers are disabled.
-
-## Draft-first Actions
-
-AI and Today Cockpit actions prepare reviewable drafts rather than executing business writes.
-
-Current draft previews include:
-
-- purchase request drafts;
-- RFQ drafts;
-- supplier follow-up drafts;
-- exception case drafts.
-
-Drafts remain preview-only and require user review before any future confirmed workflow can continue.
-
-## Documentation Map
-
-Start here:
-
-- [Docs index](docs/README.md)
-- [Product language and positioning](docs/product-language-and-positioning-v1.md)
-- [Product narrative](docs/product-narrative-v1.md)
-- [Productization final closure](docs/productization-final-closure-v1.md)
-- [Final operating readiness checklist](docs/final-operating-readiness-checklist-v1.md)
-- [Final acceptance checklist](docs/final-acceptance-checklist-v1.md)
-- [Product scope and boundary](docs/product-scope-and-boundary-v1.md)
-- [Current development limitations](docs/current-development-limitations-v1.md)
-- [Production deployment foundation](docs/production-deployment-foundation-v1.md)
-- [Controlled Staging deployment](deploy/README.md)
-- [Phase 5.4B Structured Smart Intake](docs/phase-5-4b-schema-aware-structured-intake.md)
-- [Custom Field Extension Foundation](docs/custom-field-extension-foundation-v1.md)
-- [Canonical Master Data Schemas](docs/canonical-master-data-schemas-v1.md)
-- [Architecture overview](docs/architecture-overview-v1.md)
-- [Backend route map](docs/backend-route-map-v1.md)
-- [Repository boundary](docs/repository-boundary-v1.md)
-- [JSON adapter contract tests](docs/json-adapter-contract-tests-v1.md)
-- [Persistence mode and adapter registry](docs/persistence-mode-and-adapter-registry-v1.md)
-- [Draft and audit repository adapter](docs/action-draft-audit-repository-adapter-v1.md)
-- [Master Data repository adapter](docs/master-data-repository-adapter-v1.md)
-- [Procurement and Inventory read repository adapters](docs/procurement-inventory-read-repository-adapters-v1.md)
-- [Roadmap](docs/roadmap-v1.md)
-- [AI safety and draft-first explainer](docs/ai-safety-and-draft-first-explainer-v1.md)
-
-## Current Limitations
-
-- The authoritative runtime requires PostgreSQL and uses Prisma.
-- Universal Intake supports bounded CSV, XLSX, Paste Table, and Paste JSON
-  previews for Supplier, Item, and Customer only.
-- Custom fields extend those standard entities but do not yet drive
-  operational forms or workflow conditions.
-- Universal Intake cannot commit into business tables.
-- No autonomous AI execution.
-- No complex WMS execution.
-- No automatic WMS release.
-- No automatic stock transfer posting.
-- No automatic inventory reservation or stock lock.
-- No automatic outbound shipment or inventory posting.
-- No automatic inventory mutation.
-- No automatic creation or closure of business documents.
-- No real supplier message sending from drafts.
-- No real external collaboration notification sending.
-- No payment execution.
-- No tax filing.
-- No full finance/GL.
-- No HR/payroll.
-- No CRM/customer lifecycle suite.
-- No sales order confirmation, shipment execution, invoicing, receivables, or customer notification automation.
-- No bank integration.
-
-## Roadmap
-
-- Phase 0 Product positioning and language governance
-- Phase 1 Sales Demand Lite
-- Phase 2 Inventory Allocation
-- Phase 3 Evidence Graph / Demand-to-Procurement Evidence Chain
-- Phase 4 AI Control Tower v2
-- Phase 5 Review-first Action Workflow
-- Phase 6 DB persistence, tenant isolation, RBAC, audit
-- Phase 7 Collaboration Notification Draft Adapters: Email, Slack, Microsoft Teams, DingTalk, WeCom, Feishu
-- Phase 8 deployment and launch hardening
-# Local development
-
-First start:
-
-```powershell
-Copy-Item .env.local.example .env.local
+cp .env.local.example .env.local   # then set DATABASE_URL
 npm run dev:local -- --demo
 ```
 
-Daily use `npm run dev:local`; for the complete explicit preview use `npm run dev:local -- --scenario`. Local login accounts are `admin@flowchain.local` and `kim@example.com`.
+Later runs only need `npm run dev:local`. See [Local development workflow](docs/local-development-workflow-v1.md) for scenarios, resets and port conflicts.
 
-Demo data is never loaded implicitly or returned as a production fallback. Use a separate PostgreSQL database and artifact directory for every worktree. See [Local development workflow](docs/local-development-workflow-v1.md), including shutdown, demo reset, and port-conflict guidance.
+## Testing
+
+```bash
+npm test             # server domain and route tests
+npm run typecheck
+npm run build
+npm run test:ai:eval # AI assistant evaluation on a disposable PostgreSQL
+```
+
+Browser tests use Playwright (`tests/browser/`). CI runs the PostgreSQL, browser and production-container suites in [`.github/workflows/receiving-postgres.yml`](.github/workflows/receiving-postgres.yml).
+
+## Tech stack
+
+- **Frontend:** React 18, Vite, Tailwind CSS, React Router, Recharts.
+- **Backend:** Node.js 24 with a plain `node:http` server.
+- **Data:** PostgreSQL with Prisma. pgvector is optional, for knowledge search.
+- **AI:** deterministic read-only skills, with LangChain retrieval for the knowledge library.
+- **Interface:** English by default, Chinese available. Business values, currencies and dates do not change with the language. Translation is still being completed; see the [interface language policy](docs/interface-language-policy.md).
+
+## Deployment
+
+[`render.yaml`](render.yaml) defines a Render staging service that deploys from `main` after checks pass, and a production service that is deployed manually. Each has its own PostgreSQL 16 database. The app ships as a Node 24 container with separate liveness (`/api/health`) and readiness (`/api/ready`) checks. See [Deploying on Render](docs/deploy-render.md) and [Staging deployment](deploy/README.md).
+
+## Scope
+
+FlowChain is the operational core and is meant to integrate with the systems around it, not replace them. It does not include:
+
+- general ledger or statutory accounting;
+- payment execution or bank integration;
+- tax filing;
+- HR and payroll;
+- CRM;
+- a supplier self-service portal.
+
+Not in the current release:
+
+- Forecasting and MRP, and purchase contracts: frozen.
+- Internal settlement and cashbook: frozen.
+- Returns and quarantine: planned next.
+- CSV import of business records: planned next. A preview-only intake foundation exists.
+- Demand forecasting: planned. It will build on the methods validated in the [analytics studies](analytics/).
+
+## Analytics studies
+
+[`analytics/`](analytics/) holds two Python studies written for a course report. They informed the product:
+
+- **USAID SCMS shipments:** supplier delivery performance, late-delivery prediction and supplier allocation. Its finding that each PO line needs an unchangeable original promised date is built into the supplier scorecard.
+- **Online Retail II:** weekly SKU demand forecasts and a replenishment backtest that recommends budgeted service-level targets.
+
+The datasets are public and stay outside the repository.
+
+## Documentation
+
+- [Docs index](docs/README.md)
+- [Architecture overview](docs/architecture-overview-v1.md) and [backend route map](docs/backend-route-map-v1.md)
+- [Receiving](docs/receiving-posting-workbench.md) and [outbound](docs/outbound-posting-workbench.md) posting workbenches
+- [AI safety and draft-first actions](docs/ai-safety-and-draft-first-explainer-v1.md)
+
+## 中文简介
+
+FlowChain 是面向中小企业的进销存 ERP 工作区。它覆盖这几块业务：
+
+- **采购**：从申请、询价、下单到收货入库，再到发票三单匹配。
+- **库存**：盘点、调拨和调整。
+- **销售**：销售订单和发货。
+- **报表**：各业务的报表看板。
+
+所有改动业务数据的操作，都由人确认后才执行。AI 助手按工作区里的真实数据回答，并列出依据的单据。它不会替你审批、付款或修改数据，默认也不调用任何大语言模型。
+
+界面默认是英文，可以在设置里切换成中文，中文翻译仍在补全。本地试用方法见上面的 [Quick start](#quick-start)。
