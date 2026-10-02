@@ -6,6 +6,7 @@ import OperationalFinanceO2cWorkbench, {
 import OperationalFinanceP2pWorkbench from "./OperationalFinanceP2pWorkbench";
 import InternalSettlementWorkbench from "./InternalSettlementWorkbench";
 import BankReconciliationWorkbench from "./BankReconciliationWorkbench";
+import { NewSupplierInvoice, SupplierInvoiceDetail } from "./SupplierInvoiceScreens";
 
 export type FinanceTab =
   | "invoices"
@@ -18,6 +19,8 @@ export type FinanceTab =
   | "settlement"
   | "settlement-detail"
   | "match"
+  | "supplier-invoice-new"
+  | "supplier-invoice-detail"
   | O2cView;
 
 const fallbackCopy = [
@@ -29,6 +32,8 @@ export default function FinanceWorkbench({ initialView = "invoices" }: { initial
   const { t } = useI18n();
   if (["customer-invoices", "customer-invoice-new", "customer-invoice-detail", "receivables", "aging", "customer-credit-notes"].includes(initialView))
     return <OperationalFinanceO2cWorkbench view={initialView as O2cView} />;
+  if (initialView === "supplier-invoice-new") return <NewSupplierInvoice />;
+  if (initialView === "supplier-invoice-detail") return <SupplierInvoiceDetail />;
   if (["overview", "invoices", "payables", "credits", "match"].includes(initialView))
     return <OperationalFinanceP2pWorkbench view={initialView as "overview" | "invoices" | "payables" | "credits" | "match"} />;
   if (initialView === "reconciliation") return <InternalSettlementWorkbench view="cashbook" />;

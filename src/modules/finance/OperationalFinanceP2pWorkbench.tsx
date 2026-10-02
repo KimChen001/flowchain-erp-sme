@@ -155,6 +155,11 @@ function FinanceList({
   return (
     <div className="space-y-4" data-testid={`operational-finance-${kind}-list`}>
       {!enabled && <Warning>{t("finance.capabilityDisabled")}</Warning>}
+      {kind === "invoice" && enabled && (
+        <div className="flex justify-end">
+          <a data-testid="supplier-invoice-new" href="/app/finance/invoices/new" className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-white" style={{ background: A.blue }}>{t("finance.newSupplierInvoice")}</a>
+        </div>
+      )}
       {kind === "payable" && <Warning>{t("finance.notPaid")}</Warning>}
       {kind === "credit" && <Warning>{t("finance.noRefund")}</Warning>}
       <Card className="overflow-x-auto">
@@ -213,7 +218,9 @@ function FinanceList({
               );
               return (
                 <tr className="border-b border-slate-50" key={id}>
-                  <td className="px-4 py-3 font-medium">{label}</td>
+                  <td className="px-4 py-3 font-medium">
+                    {kind === "invoice" && id ? <a className="text-blue-600 hover:underline" href={`/app/finance/invoices/${encodeURIComponent(id)}`}>{label}</a> : label}
+                  </td>
                   <td className="px-4 py-3">{source}</td>
                   <td className="px-4 py-3">
                     {money(amount, value(row, "currency"), locale)}
