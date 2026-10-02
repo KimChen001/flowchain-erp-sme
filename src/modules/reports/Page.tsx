@@ -1,6 +1,7 @@
 import { BiDashboard } from "./BiDashboard";
 import { ReportLibraryV2 } from "./ReportLibraryV2";
 import { OpenPurchaseOrdersPage } from "./OpenPurchaseOrdersPage";
+import { SupplierPerformanceTable } from "../srm/supplierPerformance";
 import type { DashboardView } from "./governedReports";
 import { Link, useSearchParams } from "react-router";
 import { useI18n } from "../../i18n/I18n";
@@ -19,6 +20,7 @@ export default function ReportsPanel({ onNavigate, initialView = "overview" }: R
       <Link className="font-semibold text-blue-600 hover:underline" to="/app/reports/procurement">{language === "en-US" ? "Open purchase orders" : "未完成采购订单"}</Link>
       <Link className="font-semibold text-blue-600 hover:underline" to="/app/reports/procurement?view=analytics">{language === "en-US" ? "Procurement analytics" : "采购分析"}</Link>
     </nav>}
+    {initialView === "suppliers" && <SupplierPerformanceTable />}
     {openOrders ? <OpenPurchaseOrdersPage /> : <BiDashboard view={initialView} onNavigate={onNavigate} />}
   </div>;
 }

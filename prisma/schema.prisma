@@ -41,6 +41,7 @@ model Tenant {
   supplierQuotationRevisionLines        SupplierQuotationRevisionLine[]
   rfqAwardDecisions                     RfqAwardDecision[]
   purchaseOrders                        PurchaseOrder[]
+  purchaseOrderPromiseRevisions         PurchaseOrderPromiseRevision[]
   receivingDocuments                    ReceivingDocument[]
   supplierInvoices                      SupplierInvoice[]
   threeWayMatches                       ThreeWayMatch[]
@@ -1271,10 +1272,37 @@ model PurchaseOrderLine {
   unitPrice        Decimal? @db.Decimal(18, 4)
   amount           Decimal? @db.Decimal(18, 4)
   metadata         Json?
+  // The date the supplier first promised once the PO was issued. Set once and
+  // never changed (a database trigger refuses a change); null means the
+  // original promise was not recorded. The current expected date stays in
+  // metadata.promisedDate, falling back to PurchaseOrder.expectedDate.
+  originalPromisedDate DateTime?
 
-  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  purchaseOrder    PurchaseOrder                  @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  promiseRevisions PurchaseOrderPromiseRevision[]
 
   @@index([purchaseOrderId])
+}
+
+// One row for every change to a line's promised date after the PO is issued.
+// Append-only: a database trigger refuses updates and deletes.
+model PurchaseOrderPromiseRevision {
+  id                  String    @id
+  tenantId            String
+  purchaseOrderId     String
+  purchaseOrderLineId String
+  previousDate        DateTime?
+  newDate             DateTime
+  reason              String
+  actorId             String?
+  source              String
+  createdAt           DateTime  @default(now())
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  purchaseOrderLine PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, purchaseOrderId])
+  @@index([purchaseOrderLineId, createdAt])
 }
 
 model ReceivingDocument {

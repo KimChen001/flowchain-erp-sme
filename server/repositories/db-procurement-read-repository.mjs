@@ -457,6 +457,8 @@ export function mapPurchaseOrder(record = {}) {
       requiredDate: isoDate(metadata(entry).requestedDate || metadata(entry).requiredDate),
       requestedDate: isoDate(metadata(entry).requestedDate || metadata(entry).requiredDate),
       promisedDate: isoDate(metadata(entry).promisedDate || record.expectedDate),
+      // Null when the original promise was not recorded (lines issued before it was kept).
+      originalPromisedDate: entry.originalPromisedDate ? isoDate(entry.originalPromisedDate) : null,
       status: numberFrom(entry.receivedQuantity, 0) >= numberFrom(entry.orderedQuantity, 0) ? 'received' : 'open',
     })),
     created: isoDate(record.createdAt),
