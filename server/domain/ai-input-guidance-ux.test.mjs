@@ -23,7 +23,10 @@ test('R135 the placeholder offers the page record next to the whole workspace, a
   assert.match(panelSource, /\[\.\.\.recordPrompts\.slice\(0, 2\), \.\.\.workspacePrompts\.slice\(0, 2\)\]/)
   assert.match(panelSource, /data-testid="ai-context-chip"/)
   assert.match(panelSource, /data-testid="ai-context-clear"/)
-  assert.match(panelSource, /当前上下文：/)
+  // The scope is the whole workspace on every page; a record's page only adds the record.
+  assert.match(panelSource, /范围：/)
+  assert.match(panelSource, /Whole workspace/)
+  assert.doesNotMatch(panelSource, /routeById\(moduleId\)\?\.moduleLabel/)
 })
 
 test('R136 follow-up chips are distinct from review-first recommended actions', () => {
