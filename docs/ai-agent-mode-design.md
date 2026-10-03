@@ -130,19 +130,27 @@ request ─ action refusal (gateway:88) ─ knowledge (:89) ─ length check (:9
 - The skill facts are read once per answer (`readAiSkillFacts`,
   `server/domain/ai-skill-readers.mjs:146`) and shared by every skill tool. Identical
   calls are made once.
-- **Protocol.** The model returns JSON steps, which works with every existing adapter.
-  The adapters send chat-completions JSON (`ai-runtime-provider-specific-adapters-v2.mjs:213-235`
-  (#105)). Whether Parley supports native `tools` is unverified, because its docs need a
-  sign-in. A paid API's native tool calling (strict schemas, parallel calls) would only
-  change the adapter.
+- **Protocol.** Native tool calls where the provider has them, JSON steps otherwise. The
+  adapters send chat-completions JSON (`ai-runtime-provider-specific-adapters-v2.mjs:213-235`
+  (#105)).
+  - **Parley: native tool calls work** (one local request, 2026-10-03). It accepted
+    OpenAI-style `tools` with `tool_choice: "auto"`. `claude-haiku-4-5` returned
+    `finish_reason: "tool_calls"` with two parallel, schema-valid calls,
+    `purchase_orders {"mode":"overdue"}` and
+    `inventory_availability {"mode":"single","skus":["LDM-001"]}`.
+  - That request took 1.3 s, with 799 input and 136 output tokens and two tools defined.
+    The reply also carried a sentence of `content`, which the loop ignores.
+  - Strict schemas are not guaranteed, so arguments are still validated. Streaming is
+    not verified yet.
+  - A provider without tool calls returns the same plan as JSON:
 
   ```json
   {"step":"plan","calls":[{"tool":"purchase_orders","args":{"mode":"overdue"}},
    {"tool":"inventory_availability","args":{"mode":"short"}}],"unansweredParts":0,"confidence":0.8}
   ```
 - **Plan validation.** A plan is used only if every tool is the actor's, every argument
-  passes the argument rules, the confidence is at least 0.6 (the routing threshold) and
-  there are at most 3 calls. Extra calls are dropped and counted as unanswered parts.
+  passes the argument rules, the confidence (when the JSON form carries one) is at least
+  0.6, the routing threshold, and there are at most 3 calls. Extra calls are dropped and counted as unanswered parts.
 
 ### 3.4 What the model sees
 
@@ -298,7 +306,7 @@ counts are estimates; measure them in P2.
 | Option | For | Against | Decision needed |
 | --- | --- | --- | --- |
 | No model in production (default) | Zero cost and zero data sharing; the rules path passes 151/151 gated cases (#105), and P1 works | No free phrasing beyond the rules, and no model wording | None |
-| MIT Parley | Already integrated and measured (Haiku 4.5) | Keys belong to individual MIT members and spend their credits. Use outside MIT needs IS&T confirmation (`docs/ai-product-knowledge.md:99-101` (#105)). No SLA; tool calling and streaming unverified. | Credits and acceptable use, with IS&T (owner rule) |
+| MIT Parley | Already integrated and measured (Haiku 4.5) | Keys belong to individual MIT members and spend their credits. Use outside MIT needs IS&T confirmation (`docs/ai-product-knowledge.md:99-101` (#105)). No SLA. Tool calling verified; streaming not yet. Replies name an AWS Bedrock inference profile, so requests are served through Bedrock. | Credits and acceptable use, with IS&T (owner rule) |
 | A paid API (for example Anthropic Haiku 4.5) | Native tool use with strict schemas, streaming, prompt caching, an SLA | Monthly cost (§7); a new adapter and a key on Render; tenant data goes to a third party (privacy notice, opt-in) | Provider, monthly cap, and the data policy |
 | A Chinese provider (Qwen, DeepSeek, Doubao adapters exist) | Fits a mainland deployment (`docs/aliyun-backend-deployment-roadmap.md`) | Never scored on this eval | Only if that deployment goes ahead |
 
@@ -350,9 +358,9 @@ coverage (`docs/interface-language-policy.md`).
 | P4 | Second tool round, `knowledge_search`, progress events | Dependent second lookups | The above, plus first-round results | Local | L |
 | Public | The chosen provider's adapter, a monthly cap, per-workspace rate limits and opt-in | — | — | Render production | M |
 
-Each phase ships only after the previous one passes its gate. Spikes needed before P2:
-whether Parley accepts `tools` and `stream`, tried with one local request and never in CI,
-and the token counts of the plan prompt.
+Each phase ships only after the previous one passes its gate. Before P2: Parley tool
+calling is verified (§3.3). Still to measure: the token count of the full plan prompt.
+Streaming matters only from P4.
 
 ## 11. Decisions for the owner
 
