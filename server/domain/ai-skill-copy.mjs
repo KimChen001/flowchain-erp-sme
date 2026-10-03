@@ -70,6 +70,8 @@ const entries = {
   'answer.source': ['Answered from your workspace data', '基于当前工作区数据回答'],
   'answer.checked': ['Checked: {sources}', '已检查：{sources}'],
   'answer.review_boundary': ['This answer does not send, approve or change anything.', '本回答不会发送、批准或修改任何内容。'],
+  // A question with several parts, answered part by part (ai-skill-compound.mjs).
+  'compound.title': ['Your question, answered part by part', '按问题的各部分分别回答'],
 
   // Skill titles and descriptions
   'skill.today_priorities.title': ["Today's priorities", '今日优先事项'],
@@ -287,6 +289,8 @@ const entries = {
   'limitation.draft_permission.label': ['Drafts not available', '无法准备草稿'],
   'limitation.report_day.label': ['Report day', '报表日期'],
   'limitation.report_day.description': ['Overdue days are counted to {date}, the day the open purchase orders report uses.', '逾期天数按 {date} 计算，与未结采购订单报表一致。'],
+  'limitation.compound_parts_limited.label': ['Only the first parts were answered', '只回答了前几个部分'],
+  'limitation.compound_parts_limited.description': ['I answered the first {count} parts of your question. Ask about the rest separately.', '已回答问题的前 {count} 个部分，其余部分请分开提问。'],
 
   // Purchase order status labels. Neutral wording: a label states the record's
   // state and never reads as the assistant having acted.

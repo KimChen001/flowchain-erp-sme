@@ -38,6 +38,9 @@ names, or supplier names in place. Translate their presentation where appropriat
   销售发票 in navigation, page titles, buttons and links; Finance is "Payables &
   receivables" / 应付与应收 (`docs/bills-invoices-and-accounting-handoff.md`).
   Field labels that name the supplier's own number still say "Invoice number".
+- The assistant's compound answers (a question with several parts) have English and
+  Chinese copy for the answer title, the "first parts only" limitation and the card's
+  section heading; each section is its skill's own answer in the question's language.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.
