@@ -13,7 +13,7 @@ export function aiSkillQueryHash(message) {
   return createHash('sha256').update(String(message ?? '')).digest('hex').slice(0, 32)
 }
 
-export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal = false, intentShadow = null, intentRouting = null, followUp = null }) {
+export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal = false, intentShadow = null, intentRouting = null, followUp = null, agent = null }) {
   const recordIds = [...new Set([...array(response.keyEvidence).map((item) => item.entityId), ...array(response.reviewCards).map((card) => card.targetEntityId)].filter(Boolean))].slice(0, 25)
   const rowCounts = facts ? {
     purchase_orders: facts.purchaseOrders ? facts.purchaseOrders.rows.length : null,
@@ -49,6 +49,8 @@ export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal
       ...(intentRouting ? { intentRouting } : {}),
       // How a follow-up was read with the previous answer (why, ordinal, about, topic, overdue_only).
       ...(followUp ? { followUp } : {}),
+      // A compound answer: the skills and modes of its sections, never the parts' text.
+      ...(agent ? { agent } : {}),
     },
   }
 }
