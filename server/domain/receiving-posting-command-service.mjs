@@ -243,9 +243,7 @@ function auditMetadata({ action, before, after, purchaseOrder, receivingDocument
     purchaseOrderLineChanges,
     balanceChanges: balances.map((balance, index) => {
       const movement = movements[index]
-      const delta = movement
-        ? decimalUnits(movement.quantityIn) - decimalUnits(movement.quantityOut) + decimalUnits(movement.adjustmentQty)
-        : 0n
+      const delta = movement ? receivingMovementNetUnits(movement) : 0n
       const afterOnHand = decimalUnits(balance.onHandQuantity)
       const afterAvailable = decimalUnits(balance.availableQuantity)
       return {
@@ -526,7 +524,8 @@ export function createReceivingPostingCommandService({ prisma, now = () => new D
 
         await faultInjector('after_reversal_movements', { tx, receivingDocument, purchaseOrder, reversalMovements, balances })
         const nextPoLines = [...poLines.values()]
-        const nextPoStatus = poStatus(nextPoLines, purchaseOrder.status, purchaseOrder.receivingBaseStatus)
+        // A PO the buyer closed stays closed when one of its receipts is reversed.
+        const nextPoStatus = purchaseOrder.status === 'closed' ? 'closed' : poStatus(nextPoLines, purchaseOrder.status, purchaseOrder.receivingBaseStatus)
         const poUpdated = await tx.purchaseOrder.updateMany({
           where: { id: purchaseOrder.id, tenantId: scope.tenantId, version: purchaseOrder.version },
           data: { status: nextPoStatus, version: { increment: 1 } },

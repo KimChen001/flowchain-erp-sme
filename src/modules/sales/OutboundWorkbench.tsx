@@ -36,6 +36,16 @@ let activeLanguage = "en-US";
 const copy = (label: string) =>
   activeLanguage === "en-US" ? outboundEnglish[label] || workspaceCopy(label, activeLanguage) : label;
 const englishUi = () => activeLanguage === "en-US";
+// New copy is written in English with its Chinese translation.
+const say = (english: string, chinese: string) => (activeLanguage === "en-US" ? english : chinese);
+
+type CancellationPreview = {
+  allowed: boolean;
+  blockingIssues: Array<{ code: string; message: string }>;
+  shipmentImpacts: Array<{ shipmentId: string; shipmentNumber: string }>;
+  reservationImpacts: Array<{ reservationId: string; sku: string; warehouseId: string; releasedQuantity: string }>;
+  releasedQuantity: string;
+};
 
 type Order = {
   id: string;
@@ -839,6 +849,8 @@ function OrderDetail({ id }: { id: string }) {
     [shipmentNumber, setShipmentNumber] = useState(`SHIP-${Date.now()}`),
     [editCustomer, setEditCustomer] = useState(""),
     [editQuantity, setEditQuantity] = useState("1.0000"),
+    [cancelReason, setCancelReason] = useState(""),
+    [cancelPreview, setCancelPreview] = useState<CancellationPreview | null>(null),
     [saving, setSaving] = useState(false);
   const lifecycleIntents = useRef<Record<string, string>>({}),
     inFlight = useRef(false);
@@ -879,6 +891,36 @@ function OrderDetail({ id }: { id: string }) {
       setSelectedLineId(data.lines[0]?.id || "");
       setEditCustomer(data.order.customerName);
       setEditQuantity(data.lines[0]?.orderedQuantity || "1.0000");
+    }
+  }
+  // Cancelling: the server's plan first, then the command with the same reason.
+  async function previewCancellation() {
+    if (!data) return;
+    setError("");
+    try {
+      setCancelPreview(await apiJson(`/api/sales/orders/${encodeURIComponent(id)}/cancel-preview`, { method: "POST", body: JSON.stringify({}) }));
+    } catch (e) {
+      setError(message(e));
+    }
+  }
+  async function cancelOrder() {
+    if (!data || !cancelPreview?.allowed || !cancelReason.trim() || inFlight.current) return;
+    inFlight.current = true;
+    setSaving(true);
+    try {
+      await apiJson(`/api/sales/orders/${encodeURIComponent(id)}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ expectedOrderVersion: data.order.version, reason: cancelReason.trim(), idempotencyKey: intentKey }),
+      });
+      setIntent("");
+      setCancelPreview(null);
+      await refresh();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) { setCancelPreview(null); await refresh(); }
+      setError(message(e));
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
     }
   }
   async function lifecycle(action: "confirm" | "hold" | "resume") {
@@ -1152,6 +1194,11 @@ function OrderDetail({ id }: { id: string }) {
                 {copy("恢复")}
               </Button>
             )}
+            {a.canCancel && (
+              <Button tone="secondary" testId="open-cancel-order" onClick={() => { start("cancel"); setCancelReason(""); setCancelPreview(null); }}>
+                {say("Cancel order", "取消订单")}
+              </Button>
+            )}
             {a.canReserve && (
               <Button testId="open-reserve" onClick={() => start("reserve")}>
                 {copy("预留库存")}
@@ -1363,7 +1410,9 @@ function OrderDetail({ id }: { id: string }) {
       {intent && (
         <ActionDialog
           title={
-            intent === "edit"
+            intent === "cancel"
+              ? say("Cancel sales order", "取消销售订单")
+              : intent === "edit"
               ? "编辑销售订单草稿"
               : intent === "reserve"
                 ? "预留库存"
@@ -1374,9 +1423,48 @@ function OrderDetail({ id }: { id: string }) {
           onClose={() => {
             setIntent("");
             setPreview(null);
+            setCancelPreview(null);
           }}
         >
-          {intent === "edit" ? (
+          {intent === "cancel" ? (
+            <div data-testid="cancel-order-panel">
+              <p className="text-sm text-slate-600">
+                {say("Cancelling releases every reservation on this order and cancels its unposted shipments. An order with goods shipped cannot be cancelled.", "取消订单会释放该订单的全部预留并取消未过账的发货单；已有发货过账的订单不能取消。")}
+              </p>
+              <label className="mt-3 block text-sm">
+                {say("Reason", "原因")}
+                <input
+                  data-testid="cancel-order-reason"
+                  aria-label={say("Reason for cancelling", "取消原因")}
+                  className="mt-1 w-full rounded-lg border p-2"
+                  value={cancelReason}
+                  onChange={(e) => { setCancelReason(e.target.value); setIntentKey(key()); }}
+                />
+              </label>
+              {cancelPreview && (
+                <div data-testid="cancel-order-preview" className={`mt-3 rounded-lg border p-3 text-xs ${cancelPreview.allowed ? "bg-emerald-50" : "bg-amber-50"}`}>
+                  <div className="font-semibold">{cancelPreview.allowed ? say("The order can be cancelled", "可以取消该订单") : say("The order cannot be cancelled", "该订单不能取消")}</div>
+                  {cancelPreview.blockingIssues.map((issue) => <div className="mt-1 text-red-700" key={issue.code}>{issue.message}</div>)}
+                  {cancelPreview.allowed && (
+                    <div className="mt-2">
+                      {say("Releases {q} reserved across {r} reservations; cancels {s} unposted shipments.", "释放预留 {q}（{r} 条预留），取消未过账发货单 {s} 张。")
+                        .replace("{q}", formatQuantity(cancelPreview.releasedQuantity))
+                        .replace("{r}", String(cancelPreview.reservationImpacts.length))
+                        .replace("{s}", String(cancelPreview.shipmentImpacts.length))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="mt-4 flex gap-2">
+                <Button testId="cancel-order-preview-button" disabled={saving} onClick={() => void previewCancellation()}>
+                  {say("Preview", "预览")}
+                </Button>
+                <Button testId="confirm-cancel-order" disabled={!cancelPreview?.allowed || !cancelReason.trim() || saving} onClick={() => void cancelOrder()}>
+                  {saving ? say("Cancelling…", "正在取消…") : say("Cancel order", "取消订单")}
+                </Button>
+              </div>
+            </div>
+          ) : intent === "edit" ? (
             <>
               <label className="text-sm">
                 {copy("客户")}
@@ -1911,12 +1999,12 @@ function ActionDialog({
   }, [onClose]);
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      className="fc-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
       role="dialog"
       aria-modal="true"
       aria-label={title}
     >
-      <div className="max-h-[90vh] w-full max-w-xl overflow-auto rounded-xl bg-white p-5 shadow-xl">
+      <div className="fc-dialog-enter max-h-[90vh] w-full max-w-xl overflow-auto rounded-xl bg-white p-5 shadow-xl">
         <div className="mb-4 flex justify-between">
           <h2 className="font-semibold">{title}</h2>
           <button aria-label={copy("关闭")} onClick={onClose}>

@@ -60,8 +60,34 @@ test('Chinese supplier form and cancel stay available', async ({ page }) => {
   await expect(page.getByTestId('supplier-form')).toHaveCount(0);
 });
 
+test('managers are offered item and customer create controls', async ({ page }) => {
+  await login(page);
+  await page.goto('/app/master-data/items');
+  await expect(page.getByRole('button', { name: 'New SKU', exact: true })).toBeVisible();
+  await page.goto('/app/master-data/customers');
+  await expect(page.getByTestId('customer-new')).toBeVisible();
+});
+
 test('read-only users cannot create suppliers', async ({ page }) => {
   const headers = await login(page, 'en-US', 'viewer');
   const response = await page.request.post('/api/master-data/suppliers', { headers, data: { supplierCode: 'DENIED', supplierName: 'Denied' } });
   expect(response.status()).toBe(403);
+  const denied = await response.json();
+  expect(denied).toMatchObject({ code: 'PERMISSION_DENIED', permission: 'master_data.supplier.manage' });
+  expect(denied.message).not.toMatch(/[㐀-鿿]/);
+  // The page reads the viewer's effective permissions and offers no create or
+  // edit control.
+  await page.goto('/app/master-data/suppliers');
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeVisible();
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByRole('button', { name: 'New supplier', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveCount(0);
+  await page.goto('/app/master-data/items');
+  await expect(page.getByPlaceholder('Search by SKU or item name')).toBeVisible();
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByRole('button', { name: 'New SKU', exact: true })).toHaveCount(0);
+  await page.goto('/app/master-data/customers');
+  await expect(page.getByPlaceholder('Search master data')).toBeVisible();
+  await page.waitForLoadState('networkidle');
+  await expect(page.getByTestId('customer-new')).toHaveCount(0);
 });

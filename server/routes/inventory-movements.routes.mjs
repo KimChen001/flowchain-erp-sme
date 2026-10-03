@@ -1,3 +1,5 @@
+import { reportReadAccess, sendReadAccessError } from '../domain/report-read-access.mjs'
+
 export async function handleInventoryMovementsRoute(ctx) {
   const { req, res, url, send, repositories, identity } = ctx
 
@@ -15,8 +17,13 @@ export async function handleInventoryMovementsRoute(ctx) {
         message: 'The PostgreSQL inventory read model is unavailable.',
       })
     }
+    // Movements need inventory.balance.read and follow the reader's warehouses.
+    let access
+    try { access = await reportReadAccess(ctx) } catch (error) { sendReadAccessError(ctx, error); return true }
+    if (!access.collections.inventoryItems) return send(res, 403, { code: 'PERMISSION_DENIED', message: 'Your role cannot view inventory.', details: { permission: 'inventory.balance.read' } })
     return send(res, 200, await repositories.inventoryRead.listMovements({
       tenantId: identity.tenantId,
+      ...(access.warehouseIds ? { warehouseIds: access.warehouseIds } : {}),
       q: url.searchParams.get('q') || '',
       status: url.searchParams.get('status') || '',
       warehouse: url.searchParams.get('warehouse') || '',

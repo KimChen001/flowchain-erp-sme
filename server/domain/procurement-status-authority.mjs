@@ -56,6 +56,9 @@ export const PURCHASE_ORDER_STATUS = freezeRecord({
   ISSUED: 'issued',
   PARTIALLY_RECEIVED: 'partially_received',
   FULLY_RECEIVED: 'fully_received',
+  // Closed by the buyer before everything arrived: nothing more is received,
+  // and what was received, invoiced and paid stays as it is.
+  CLOSED: 'closed',
   CANCELLED: 'cancelled',
 })
 
@@ -159,9 +162,10 @@ export const PROCUREMENT_STATUS_TRANSITIONS = Object.freeze({
     pending_approval: ['approved', 'rejected', 'draft', 'cancelled'],
     approved: ['issued', 'cancelled'],
     rejected: ['draft'],
-    issued: [],
-    partially_received: [],
+    issued: ['closed'],
+    partially_received: ['closed'],
     fully_received: [],
+    closed: [],
     cancelled: [],
   }),
   purchaseOrderReceiving: freezeTransitions({
@@ -172,6 +176,7 @@ export const PROCUREMENT_STATUS_TRANSITIONS = Object.freeze({
     issued: ['partially_received', 'fully_received'],
     partially_received: ['approved', 'issued', 'fully_received'],
     fully_received: ['approved', 'issued', 'partially_received'],
+    closed: [],
     cancelled: [],
   }),
   receivingWorkflow: freezeTransitions({

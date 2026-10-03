@@ -532,6 +532,56 @@ try {
   );
   assert.equal(held.payable.status, "held");
 
+  // An overcharge whose price exception is rejected can be cancelled; the
+  // cancelled invoice releases the receipt and its number, and the
+  // supplier's corrected invoice goes through.
+  const overcharge = {
+    ...invoice,
+    invoiceNumber: "SUP-INV-API-002",
+    totalAmount: "78.0000",
+    lines: [{ purchaseOrderLineId: "POL-FIN-API", receivingLineId: "GRNL-FIN-API", quantity: "6.0000", unitPrice: "13.0000", lineAmount: "78.0000", enteredTaxAmount: "0.0000" }],
+  };
+  const over = await request(base, "/api/finance/supplier-invoices", { token: specialistLogin.token, method: "POST", body: { ...overcharge, idempotencyKey: "api-create-overcharge" } });
+  await request(base, `/api/finance/supplier-invoices/${over.entityId}/submit`, { token: specialistLogin.token, method: "POST", body: { expectedVersion: 0, idempotencyKey: "api-submit-overcharge" } });
+  const overMatched = await request(base, `/api/finance/supplier-invoices/${over.entityId}/match`, { token: specialistLogin.token, method: "POST", body: { expectedVersion: 1, matchNumber: "MATCH-API-002", idempotencyKey: "api-match-overcharge" } });
+  assert.equal(overMatched.invoice.status, "exception");
+  const overException = await prisma.financeMatchException.findFirst({ where: { supplierInvoiceId: over.entityId, status: "open" } });
+  assert.ok(overException, "the overcharge raises a match exception");
+  await request(base, `/api/finance/match-exceptions/${overException.id}/review`, { token: managerLogin.token, method: "POST", body: { expectedVersion: overException.version, decision: "rejected", resolution: "Price above the PO", idempotencyKey: "api-reject-overcharge" } });
+  const listed = await request(base, `/api/finance/supplier-invoices?search=SUP-INV-API-002`, { token: managerLogin.token });
+  const listedOver = listed.items.find((row) => row.id === over.entityId);
+  assert.ok(!listedOver.availableActions.includes("approve"), "a rejected exception blocks approval, so the list does not offer it");
+  const detailOver = await request(base, `/api/finance/supplier-invoices/${over.entityId}`, { token: managerLogin.token });
+  assert.ok(!detailOver.availableActions.includes("approve"), "nor does the detail");
+  assert.ok(detailOver.availableActions.includes("cancel"));
+  const corrected = { ...overcharge, lines: [{ ...overcharge.lines[0], unitPrice: "12.5000", lineAmount: "75.0000" }], totalAmount: "75.0000" };
+  // While the rejected invoice holds the receipt, the corrected one is refused.
+  const probe = await request(base, "/api/finance/supplier-invoices", { token: specialistLogin.token, method: "POST", body: { ...corrected, invoiceNumber: "SUP-INV-API-002B", idempotencyKey: "api-create-probe" } });
+  const blocked = await request(base, `/api/finance/supplier-invoices/${probe.entityId}/submit-preview`, { token: specialistLogin.token, method: "POST", body: { expectedVersion: 0 } });
+  assert.equal(blocked.allowed, false, "the rejected invoice still holds the receipt");
+  const current = await prisma.supplierInvoice.findUnique({ where: { id: over.entityId } });
+  const noReason = await request(base, `/api/finance/supplier-invoices/${over.entityId}/cancel-preview`, { token: specialistLogin.token, method: "POST", body: { expectedVersion: current.version } });
+  assert.ok(noReason.blockingIssues.some((entry) => entry.code === "SUPPLIER_INVOICE_CANCEL_REASON_REQUIRED"));
+  const cancelPreview = await request(base, `/api/finance/supplier-invoices/${over.entityId}/cancel-preview`, { token: specialistLogin.token, method: "POST", body: { expectedVersion: current.version, reason: "Supplier billed above the PO price" } });
+  assert.deepEqual([cancelPreview.allowed, cancelPreview.nextStatus, cancelPreview.releasesReceipt], [true, "cancelled", true]);
+  const cancelled = await request(base, `/api/finance/supplier-invoices/${over.entityId}/cancel`, { token: specialistLogin.token, method: "POST", body: { expectedVersion: current.version, reason: "Supplier billed above the PO price", idempotencyKey: "api-cancel-overcharge" } });
+  assert.equal(cancelled.invoice.status, "cancelled");
+  const cancelledRow = await prisma.supplierInvoice.findUnique({ where: { id: over.entityId } });
+  assert.equal(cancelledRow.cancellationReason, "Supplier billed above the PO price");
+  // No open exception is left; the rejected one keeps the reviewer's decision.
+  assert.equal(await prisma.financeMatchException.count({ where: { supplierInvoiceId: over.entityId, status: "open" } }), 0);
+  assert.equal(await prisma.financeMatchException.count({ where: { supplierInvoiceId: over.entityId, status: "rejected" } }), 1);
+  const again = await raw(base, `/api/finance/supplier-invoices/${over.entityId}/cancel`, { token: specialistLogin.token, method: "POST", body: { expectedVersion: cancelledRow.version, reason: "Twice", idempotencyKey: "api-cancel-twice" } });
+  assert.equal(again.status, 409);
+  // The corrected invoice reuses the number and matches cleanly.
+  const rebilled = await request(base, "/api/finance/supplier-invoices", { token: specialistLogin.token, method: "POST", body: { ...corrected, idempotencyKey: "api-create-corrected" } });
+  await request(base, `/api/finance/supplier-invoices/${rebilled.entityId}/submit`, { token: specialistLogin.token, method: "POST", body: { expectedVersion: 0, idempotencyKey: "api-submit-corrected" } });
+  const rebilledMatch = await request(base, `/api/finance/supplier-invoices/${rebilled.entityId}/match`, { token: specialistLogin.token, method: "POST", body: { expectedVersion: 1, matchNumber: "MATCH-API-003", idempotencyKey: "api-match-corrected" } });
+  assert.equal(rebilledMatch.invoice.status, "matched");
+  // An approved invoice has a payable and is not cancelled here.
+  const approvedCancel = await request(base, `/api/finance/supplier-invoices/${created.entityId}/cancel-preview`, { token: specialistLogin.token, method: "POST", body: { expectedVersion: 3, reason: "Too late" } });
+  assert.ok(approvedCancel.blockingIssues.some((entry) => entry.code === "SUPPLIER_INVOICE_STATUS_INVALID"));
+
   const detail = await request(
     base,
     `/api/finance/supplier-invoices/${created.entityId}`,

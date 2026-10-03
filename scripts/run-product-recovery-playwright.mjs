@@ -44,10 +44,11 @@ await phase("shell and routing", [
   "tests/browser/typography-system.spec.ts",
   "tests/browser/authoritative-mutation-auth.spec.ts",
   "tests/browser/user-data-import-preview.spec.ts",
+  "tests/browser/motion-transitions.spec.ts",
 ]);
 // Email sign-in end to end, through the local mail outbox.
 const outboxPath = join(tmpdir(), `flowchain-mail-outbox-${process.pid}.json`);
-await phase("email link sign-in", "tests/browser/email-link-sign-in.spec.ts", { FLOWCHAIN_MAIL_OUTBOX_PATH: outboxPath });
+await phase("email link sign-in", ["tests/browser/email-link-sign-in.spec.ts", "tests/browser/workspace-invitation.spec.ts"], { FLOWCHAIN_MAIL_OUTBOX_PATH: outboxPath });
 await rm(outboxPath, { force: true });
 await phase("outbound read states", "tests/browser/outbound-read-states.spec.ts", {
   PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY: "true",

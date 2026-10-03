@@ -1,6 +1,7 @@
 // Presentation labels only. Do not translate record names or identifiers.
 const chinese: Record<string, string> = {
   'Mixed units': '混合计量单位',
+  'Restricted': '受限', 'Your role cannot view this figure': '你的角色无权查看此数据', 'Your role cannot view amounts.': '你的角色无权查看金额。',
   'Inventory uses different units; quantities are shown by SKU without a combined stock total.': '库存使用不同计量单位，数量按 SKU 展示，不合计在手总量。',
   'Undated': '无日期', 'Unspecified': '未指定', 'Status': '状态', 'Quantity': '数量', 'Amount': '金额', 'Available': '可用量', 'Shortage': '缺口',
   'Supplier count': '供应商数量', 'Supplier invoice amount': '供应商发票金额', 'Open POs': '开放 PO',

@@ -138,7 +138,10 @@ test('tenant:provision leaves an existing tenant, its users and warehouses as th
     assert.match(kept.stdout, /note: FLOWCHAIN_DEFAULT_TENANT_ID is another-tenant/)
     const after = await snapshot(prisma, tenantId)
     assert.deepEqual(after.tenant, before.tenant)
-    assert.deepEqual(after.users, before.users)
+    // The backfill only records when the user's roles were first assigned.
+    const withoutRoleMark = (users) => users.map(({ rolesAssignedAt, updatedAt, ...user }) => user)
+    assert.deepEqual(withoutRoleMark(after.users), withoutRoleMark(before.users))
+    assert.ok(after.users.every((user) => user.rolesAssignedAt))
     assert.deepEqual(after.warehouses, before.warehouses)
     assert.deepEqual(after.scopes, before.scopes)
     // Only missing role templates and role assignments are added, exactly as
@@ -155,7 +158,7 @@ test('tenant:provision leaves an existing tenant, its users and warehouses as th
       ['Renamed Inc.', 'USD', 'CN', 'zh-CN', 'Asia/Shanghai', 'zh-CN', before.tenant.version + 1],
     )
     assert.deepEqual(tenant.operationalSettings, { numbering: 'kept' })
-    assert.deepEqual(JSON.parse(JSON.stringify(await prisma.user.findMany({ where: { tenantId }, orderBy: { id: 'asc' } }))), before.users)
+    assert.deepEqual(withoutRoleMark(JSON.parse(JSON.stringify(await prisma.user.findMany({ where: { tenantId }, orderBy: { id: 'asc' } })))), withoutRoleMark(before.users))
   } finally {
     await prisma.$disconnect()
   }

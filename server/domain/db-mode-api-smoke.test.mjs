@@ -113,7 +113,7 @@ test('DB mode smoke routes use DB adapters through repository context', async ()
     userId: 'user-smoke',
     role: 'admin',
     roleIds: ['role-smoke-admin'],
-    permissionCodes: new Set(['audit.read', 'audit.read_sensitive']),
+    permissionCodes: new Set(['audit.read', 'audit.read_sensitive', 'inventory.balance.read']),
     permissionSourceRoleIds: new Map([
       ['audit.read', ['role-smoke-admin']],
       ['audit.read_sensitive', ['role-smoke-admin']],

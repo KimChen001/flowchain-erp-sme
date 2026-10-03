@@ -165,7 +165,23 @@ function currencySummary(rows, query) {
   }
 }
 
-function metric(id, all, inventory, query, primaryKey, facts) {
+// A figure over records the reader cannot read, or an amount the reader
+// cannot see, is restricted: no value, never 0.
+const RESTRICTED_FIGURE_SUBJECTS = { on_time_receipt_rate: ['purchase_orders', 'receipts'], active_supplier_count: ['purchase_orders'], overdue_open_po_count: ['purchase_orders'], invoice_match_rate: ['supplier_invoices'], invoices_awaiting_match: ['supplier_invoices'], invoices_with_exception: ['supplier_invoices'], order_fulfillment_rate: ['sales_orders'] }
+function restrictedMetric(base, reason) {
+  const currency = base.unit === 'currency' ? { currencyAmounts: (base.currencyAmounts || []).map(group => ({ ...group, amount: null })) } : {}
+  return { ...base, ...currency, value: null, currentValue: null, dataStatus: 'restricted', limitations: [reason], comparisonLabel: 'Restricted', trend: null }
+}
+
+function metric(id, all, inventory, query, primaryKey, facts, restriction = {}) {
+  const built = unrestrictedMetric(id, all, inventory, query, primaryKey, facts)
+  const subjects = [built.subject, ...(RESTRICTED_FIGURE_SUBJECTS[id] || [])]
+  if (subjects.some(subject => restriction.subjects?.has(subject))) return restrictedMetric(built, 'subject_restricted')
+  if (built.unit === 'currency' && restriction.amounts?.[built.subject]) return restrictedMetric(built, 'amount_restricted')
+  return built
+}
+
+function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
   const [label, subject, unit, description, drilldownPath] = metricDefinitions[id]
   const money = unit === 'currency' ? currencySummary(all[subject].filter(committed[subject]), query) : null
   const currentValue = money ? money.total : value(id, all, inventory, facts)
@@ -180,8 +196,12 @@ function metric(id, all, inventory, query, primaryKey, facts) {
 
 // options.now and options.timeZone set the workspace's "today" for overdue
 // counts; the route passes the tenant timezone.
+// options.allocationContext, when the context was scoped to a reader, is the
+// unscoped context: each SKU's reserved and available quantity counts every
+// sales order, whether or not the reader can read sales orders.
 export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
-  const inventory = buildRuntimeInventoryAllocation(context)
+  const restriction = { subjects: new Set(array(context.restrictedSubjects)), amounts: context.restrictedAmounts || {} }
+  const inventory = buildRuntimeInventoryAllocation(options.allocationContext && !restriction.subjects.has('inventory_balances') ? options.allocationContext : context)
   inventory.units = [...new Set(array(context.inventoryItems).map(row => text(row.unit)).filter(Boolean))]
   if (inventory.units.length > 1) inventory.dataLimitations.push('inventory_units_mixed')
   const query = { subject: dashboardMetrics[input.subject] ? input.subject : 'overview', from: text(input.filters?.from || ''), to: text(input.filters?.to || ''), supplier: text(input.filters?.supplier || ''), customer: text(input.filters?.customer || ''), currency: currencyCode(input.filters?.currency), status: text(input.filters?.status || ''), limit: Math.max(1, Math.min(200, number(input.limit || 50))) }
@@ -190,24 +210,25 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const all = Object.fromEntries(Object.entries(source).map(([key, value]) => [key, filtered(value, query, applicableFilters(key, primaryKey))]))
   const metricIds = array(input.measures).filter(id => metricDefinitions[id]).length ? input.measures.filter(id => metricDefinitions[id]) : dashboardMetrics[query.subject]
   const currencySubject = query.subject === 'sales' ? 'sales_orders' : query.subject === 'finance' ? 'supplier_invoices' : ['overview', 'procurement', 'suppliers'].includes(query.subject) ? 'purchase_orders' : null
-  const scopeMoney = currencySummary(currencySubject ? all[currencySubject].filter(committed[currencySubject]) : [], query)
+  const unscopedMoney = currencySummary(currencySubject ? all[currencySubject].filter(committed[currencySubject]) : [], query)
+  const scopeMoney = currencySubject && restriction.amounts[currencySubject] ? { ...unscopedMoney, total: null, currencyAmounts: unscopedMoney.currencyAmounts.map(group => ({ ...group, amount: null })), limitations: ['amount_restricted'] } : unscopedMoney
   const aggregationStatus = scopeMoney.currencyAggregationStatus
   const details = all[primaryKey].slice(0, query.limit)
   // Receipts follow their purchase order's filters other than the date range.
   const purchaseOrderIdsAnyDate = new Set(filtered(source.purchase_orders, { ...query, from: '', to: '' }, applicableFilters('purchase_orders', primaryKey)).map(row => row.id))
   const today = tenantCalendarDay(options.now instanceof Date && Number.isFinite(options.now.getTime()) ? options.now : new Date(), options.timeZone || DEFAULT_TENANT_TIMEZONE)
   const facts = buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today })
-  const visuals = buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate })
+  const visuals = buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts })
   const columns = [...new Set(details.flatMap(row => Object.keys(row)))].map(key => ({ key, label: ({ id: '业务编号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: '缺口', availableToPromise: 'ATP', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
-  const kpis = metricIds.map(id => metric(id, all, inventory, query, primaryKey, facts))
-  const moneyLimitations = ['multi_currency_unconverted', 'currency_missing_or_invalid', 'amount_missing']
+  const kpis = metricIds.map(id => metric(id, all, inventory, query, primaryKey, facts, restriction))
+  const moneyLimitations = ['multi_currency_unconverted', 'currency_missing_or_invalid', 'amount_missing', 'amount_restricted', 'subject_restricted']
   const limitations = [...new Set([...array(context.dataLimitations), ...inventory.dataLimitations, ...(inventory.availability.length && inventory.availability.some(row => row.onHand === null) ? ['inventory_on_hand_incomplete'] : []), ...scopeMoney.limitations, ...kpis.flatMap(item => item.limitations.filter(code => moneyLimitations.includes(code)))])]
   const distinct = values => [...new Set(values.map(text).filter(Boolean))]
   const dataScope = { label: '当前工作区 runtime 数据', company: '—', currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from || '—', to: query.to || '—', activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => query[key]).length, sourceLabel: 'BusinessReadContext', completenessLabel: details.length ? `已读取 ${details.length} 条真实记录` : '当前范围无真实业务记录', filterOptions: { companies: [], suppliers: distinct(array(context.suppliers).map(row => row.supplierName || row.name)), customers: distinct(array(context.customers).map(row => row.name || row.customerName)), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_orders, ...source.supplier_invoices].map(row => row.currency)) } }
   const overview = query.subject === 'overview' ? buildBusinessOverview(all) : null
   // Subjects the read context could not load in full; totals over them may be low.
   const truncatedSubjects = array(context.truncatedSubjects).filter(entry => text(entry?.subject) && Number.isFinite(Number(entry?.limit))).map(entry => ({ subject: text(entry.subject), limit: Number(entry.limit) }))
-  return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, kpis, charts: overview ? [...overview.charts, ...visuals] : visuals, attention: overview?.attention || [], totalRecords: all[primaryKey].length, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: metricDefinitions[id][4] })), exportRows: all[primaryKey], metricDefinitions: kpis }
+  return { query, generatedAt: new Date().toISOString(), dataScope, truncatedSubjects, restrictedSubjects: [...restriction.subjects], restrictedAmounts: Object.keys(restriction.amounts).filter(key => restriction.amounts[key]), kpis, charts: overview ? [...overview.charts, ...visuals] : visuals, attention: overview?.attention || [], totalRecords: all[primaryKey].length, rankings: [], details, columnDefinitions: columns, warnings: limitations, limitations, drilldowns: metricIds.map(id => ({ metricId: id, path: metricDefinitions[id][4] })), exportRows: all[primaryKey], metricDefinitions: kpis }
 }
 
 export function getRuntimeReportCatalog() {

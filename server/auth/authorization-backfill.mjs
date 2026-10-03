@@ -25,24 +25,42 @@ export async function backfillTenantAuthorization(prisma, tenantId, { actorId = 
       })
       if (!existing) createdRoles += 1
       roles.set(template.roleKey, role)
+      // Template grants are filled in only until an administrator first saves
+      // the role (updateRole bumps its version). After that the role is
+      // theirs, and a code they removed stays removed when a later sign-in
+      // runs this backfill again. Codes added to a template afterwards reach
+      // saved roles through a migration, as 20261002030000_master_data_permissions does.
+      if (!role.isDefaultTemplate || role.version !== 0) continue
+      const granted = new Set((await tx.tenantRolePermission.findMany({ where: { roleId: role.id }, select: { permissionCode: true } })).map((grant) => grant.permissionCode))
       for (const permissionCode of template.permissions) {
+        if (granted.has(permissionCode)) continue
         const grantId = stableId(tenantId, "grant", role.id, permissionCode)
-        const existingGrant = await tx.tenantRolePermission.findUnique({ where: { roleId_permissionCode: { roleId: role.id, permissionCode } } })
         await tx.tenantRolePermission.upsert({ where: { roleId_permissionCode: { roleId: role.id, permissionCode } }, create: { id: grantId, tenantId, roleId: role.id, permissionCode, createdById: actorId }, update: {} })
-        if (!existingGrant) createdGrants += 1
+        createdGrants += 1
       }
     }
 
-    const users = await tx.user.findMany({ where: { tenantId }, select: { id: true, role: true } })
+    // The legacy User.role grants a role template once per user: only to a
+    // user whose roles have never been set. A user who has role assignments,
+    // or whose roles an administrator changed (even to none), keeps exactly
+    // those; a user with assignments from before this rule is marked now.
+    const users = await tx.user.findMany({ where: { tenantId }, select: { id: true, role: true, rolesAssignedAt: true, _count: { select: { roleAssignments: true } } } })
     const warehouses = await tx.warehouse.findMany({ where: { tenantId }, select: { id: true } })
     const unknownLegacyRoles = []
+    const assignedAt = new Date()
     for (const user of users) {
+      if (user.rolesAssignedAt) continue
+      if (user._count.roleAssignments > 0) {
+        await tx.user.update({ where: { id: user.id }, data: { rolesAssignedAt: assignedAt } })
+        continue
+      }
       const legacyRole = normalizedLegacyRole(user.role)
       const roleKey = legacyRoleTemplateMap[legacyRole] || "read-only-viewer"
       if (!legacyRoleTemplateMap[legacyRole]) unknownLegacyRoles.push({ userId: user.id, legacyRole })
       const role = roles.get(roleKey)
       const existing = await tx.userRoleAssignment.findUnique({ where: { userId_roleId: { userId: user.id, roleId: role.id } } })
       await tx.userRoleAssignment.upsert({ where: { userId_roleId: { userId: user.id, roleId: role.id } }, create: { id: stableId(tenantId, "assignment", user.id, role.id), tenantId, userId: user.id, roleId: role.id, status: "active", createdById: actorId }, update: {} })
+      await tx.user.update({ where: { id: user.id }, data: { rolesAssignedAt: assignedAt } })
       if (!existing) createdAssignments += 1
       // Legacy admins previously bypassed warehouse scopes. Materialize the same
       // access as explicit UserWarehouseScope rows so role names are no longer a scope authority.

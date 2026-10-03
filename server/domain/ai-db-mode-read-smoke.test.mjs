@@ -3,6 +3,12 @@ import assert from 'node:assert/strict'
 import { createDatabaseRepositoryRegistry } from '../repositories/adapter-registry.mjs'
 import { handleAiRoute } from '../routes/ai.routes.mjs'
 import { buildAiReadContext } from './ai-read-context.mjs'
+import { reportReadAccessFor } from './report-read-access.mjs'
+import { permissionCodes } from '../auth/permission-catalog.mjs'
+
+// These smokes check repository reads against stale JSON, for a reader who
+// may see everything.
+const fullReportAccess = reportReadAccessFor({ authenticated: true, complete: true, tenantId: 'tenant-ai-db-smoke', permissionCodes: new Set(permissionCodes) })
 
 const env = {
   FLOWCHAIN_PERSISTENCE_MODE: 'database',
@@ -83,6 +89,7 @@ function createRoute({ message, db = staleJsonDb(), repositories, identity: rout
       db,
       repositories,
       identity: routeIdentity,
+      reportReadAccess: fullReportAccess,
       send(_res, status, payload) {
         response = { status, payload }
       },

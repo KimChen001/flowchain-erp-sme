@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { handleReportsAnalyticsRoute } from './reports-analytics.routes.mjs'
+import { reportReadAccessFor } from '../domain/report-read-access.mjs'
+import { permissionCodes } from '../auth/permission-catalog.mjs'
+
+// A reader who may see everything.
+const fullReportAccess = reportReadAccessFor({ authenticated: true, complete: true, tenantId: 'tenant-any', permissionCodes: new Set(permissionCodes) })
 
 test('POST /api/reports/query returns the governed dashboard contract', async () => {
   let response = null
@@ -8,6 +13,7 @@ test('POST /api/reports/query returns the governed dashboard contract', async ()
     req: { method: 'POST' }, res: {}, url: new URL('/api/reports/query', 'http://localhost'),
     db: { suppliers: [{ name: '深圳新元电气' }, { name: '华东精工机械' }], products: [], purchaseOrders: [], receivingDocs: [], rfqs: [] },
     async readBody() { return { subject: 'finance', filters: { currency: 'CNY' }, comparison: 'previous_period' } },
+    reportReadAccess: fullReportAccess,
     send(_res, status, payload) { response = { status, payload } },
   }
   const handled = await handleReportsAnalyticsRoute(ctx)

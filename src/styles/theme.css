@@ -203,8 +203,12 @@
   .fc-nav-primary { font-size: 13px; line-height: 20px; font-weight: 500; }
   .fc-nav-secondary { font-size: 12px; line-height: 18px; font-weight: 500; }
   .fc-module-subnav { @apply flex flex-wrap items-center gap-1 rounded-xl bg-white p-1.5; border: 1px solid rgba(0,0,0,.08); }
-  .fc-module-subnav a { @apply rounded-lg px-3 py-2; font-size: 13px; line-height: 20px; color: #6e6e73; }
-  .fc-module-subnav a.is-active, .fc-module-subnav a[aria-current="page"] { color: #0071e3; background: #f0f6ff; font-weight: 600; }
+  .fc-module-subnav a { @apply relative rounded-lg px-3 py-2; font-size: 13px; line-height: 20px; color: #6e6e73; transition: color 150ms ease; }
+  .fc-module-subnav a:hover { color: #1d1d1f; }
+  /* The active background is the sliding .fc-subnav-pill behind the label. */
+  .fc-module-subnav a.is-active, .fc-module-subnav a[aria-current="page"] { color: #0071e3; font-weight: 600; }
+  .fc-subnav-pill { position: absolute; inset: 0; border-radius: 0.5rem; background: #f0f6ff; }
+  .fc-subnav-label { position: relative; }
   .fc-recent-pages { @apply flex items-center gap-2 rounded-lg px-2 py-1.5; background: rgba(255,255,255,.72); border: 1px solid rgba(0,0,0,.06); }
   .fc-recent-page { @apply flex h-7 max-w-44 items-center gap-1 rounded-md px-2; font-size: 11px; line-height: 16px; color: #6e6e73; }
   .fc-recent-page.is-active { color: #0071e3; background: #f0f6ff; font-weight: 600; }
@@ -234,3 +238,20 @@
 
 button, input, select, textarea { font-family: var(--fc-font-family); font-size: 13px; line-height: 20px; }
 .tabular-nums, [data-numeric="true"] { font-variant-numeric: tabular-nums; }
+
+/* Motion. Short and quiet: overlays fade, dialogs rise and scale in, drawers
+   slide in from the right, skeletons shimmer. Each class runs once when the
+   element mounts; closing is immediate. All of it is off when the system asks
+   for reduced motion. */
+@keyframes fc-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fc-dialog-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes fc-drawer-in { from { opacity: 0.6; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+@keyframes fc-shimmer { 0% { opacity: 1; } 50% { opacity: 0.55; } 100% { opacity: 1; } }
+.fc-overlay-enter { animation: fc-fade-in 160ms ease-out both; }
+.fc-dialog-enter { animation: fc-dialog-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.fc-drawer-enter { animation: fc-drawer-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.fc-skeleton { animation: fc-shimmer 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .fc-overlay-enter, .fc-dialog-enter, .fc-drawer-enter, .fc-skeleton { animation: none !important; }
+  .fc-module-subnav a { transition: none; }
+}

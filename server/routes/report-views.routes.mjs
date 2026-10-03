@@ -1,25 +1,62 @@
-import { resolveCurrentUser } from '../domain/context.mjs'
-import { cloneReportView, createReportView, deleteReportView, getReportView, listReportViews, updateReportView } from '../repositories/report-view-repository.mjs'
+import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
+import { getPrismaClient } from '../persistence/prisma-client.mjs'
+import { createReportViewRepository, reportViewActor } from '../repositories/report-view-repository.mjs'
 
-function actorFrom(ctx) {
-  if (ctx.identity?.authenticated) return { id: ctx.identity.userId, name: ctx.identity.name, role: ctx.identity.role }
-  const user = resolveCurrentUser(ctx.db, ctx.req.headers.authorization || '')
-  const requested = String(ctx.req.headers['x-flowchain-role'] || user.role || '').toLowerCase()
-  const role = /admin|管理员/.test(requested) ? 'admin' : /manager|经理|approver/.test(requested) ? 'manager' : /viewer|只读/.test(requested) ? 'viewer' : 'analyst'
-  return { id: String(ctx.req.headers['x-flowchain-user'] || user.id), name: user.name, role }
+const COLLECTION_ACTIONS = { GET: 'list', POST: 'create' }
+const VIEW_ACTIONS = { GET: 'get', PUT: 'update', DELETE: 'remove' }
+const NOT_FOUND = { code: 'REPORT_VIEW_NOT_FOUND', error: 'Report view not found.' }
+
+function matchRoute(method, pathname) {
+  if (pathname === '/api/report-views') return COLLECTION_ACTIONS[method] ? { action: COLLECTION_ACTIONS[method] } : null
+  const match = pathname.match(/^\/api\/report-views\/([^/]+)(?:\/(clone|share))?$/)
+  const action = !match ? null : match[2] ? (method === 'POST' ? match[2] : null) : VIEW_ACTIONS[method]
+  if (!action) return null
+  try { return { action, id: decodeURIComponent(match[1]) } } catch { return { action: 'malformed' } }
 }
 
+async function readObject(ctx) {
+  let body
+  try { body = await ctx.readBody(ctx.req) } catch (error) {
+    if (error instanceof SyntaxError) throw Object.assign(new Error('The request body must be a JSON object.'), { status: 400, code: 'REPORT_VIEW_INVALID_BODY' })
+    throw error
+  }
+  return body && typeof body === 'object' && !Array.isArray(body) ? body : {}
+}
+
+// The actor comes only from the signed-in session: the tenant and the user it
+// names, provisioned and active in that tenant. No request header supplies a
+// role or a user here.
 export async function handleReportViewsRoute(ctx) {
-  const { req, res, url, send, readBody } = ctx; const actor = actorFrom(ctx)
-  if (req.method === 'GET' && url.pathname === '/api/report-views') { send(res, 200, { views: listReportViews(actor, { visibility: url.searchParams.get('visibility') || '' }), actor }); return true }
-  if (req.method === 'POST' && url.pathname === '/api/report-views') { const result = createReportView(await readBody(req), actor); send(res, result.status, result); return true }
-  const cloneMatch = url.pathname.match(/^\/api\/report-views\/([^/]+)\/clone$/)
-  if (req.method === 'POST' && cloneMatch) { const result = cloneReportView(decodeURIComponent(cloneMatch[1]), await readBody(req), actor); send(res, result.status, result); return true }
-  const shareMatch = url.pathname.match(/^\/api\/report-views\/([^/]+)\/share$/)
-  if (req.method === 'POST' && shareMatch) { const body = await readBody(req); const result = updateReportView(decodeURIComponent(shareMatch[1]), { visibility: body.visibility || 'team' }, actor); send(res, result.status, result); return true }
-  const match = url.pathname.match(/^\/api\/report-views\/([^/]+)$/)
-  if (req.method === 'GET' && match) { const view = getReportView(decodeURIComponent(match[1]), actor); send(res, view ? 200 : 404, view || { error: 'Report view not found.' }); return true }
-  if (req.method === 'PUT' && match) { const result = updateReportView(decodeURIComponent(match[1]), await readBody(req), actor); send(res, result.status, result); return true }
-  if (req.method === 'DELETE' && match) { const result = deleteReportView(decodeURIComponent(match[1]), actor); send(res, result.status, result); return true }
-  return false
+  const { res, url, send } = ctx
+  const route = matchRoute(ctx.req.method, url.pathname)
+  if (!route) return false
+  if (!ctx.identity?.authenticated || !String(ctx.identity.tenantId || '').trim()) {
+    send(res, 401, { code: 'AUTHENTICATION_REQUIRED', error: 'Sign in to a workspace to use saved report views.' })
+    return true
+  }
+  if (route.action === 'malformed') { send(res, 404, NOT_FOUND); return true }
+  try {
+    const prisma = ctx.reportViewsPrisma || await getPrismaClient(ctx.env || process.env)
+    const actor = reportViewActor(await resolveProvisionedActor(prisma, ctx.identity))
+    const views = createReportViewRepository({ prisma })
+    if (route.action === 'list') {
+      send(res, 200, { views: await views.list(actor, { visibility: url.searchParams.get('visibility') || '' }), actor: { id: actor.id, name: actor.name, role: actor.role, canManageTeamViews: actor.canManageTeamViews } })
+      return true
+    }
+    if (route.action === 'get') {
+      const view = await views.get(route.id, actor)
+      send(res, view ? 200 : 404, view || NOT_FOUND)
+      return true
+    }
+    const result = route.action === 'create' ? await views.create(await readObject(ctx), actor)
+      : route.action === 'update' ? await views.update(route.id, await readObject(ctx), actor)
+      : route.action === 'share' ? await views.share(route.id, await readObject(ctx), actor)
+      : route.action === 'clone' ? await views.clone(route.id, await readObject(ctx), actor)
+      : await views.remove(route.id, actor)
+    send(res, result.status, result)
+  } catch (error) {
+    if (!error?.status) throw error
+    send(res, error.status, { code: error.code || 'REPORT_VIEW_FAILED', error: error.message })
+  }
+  return true
 }

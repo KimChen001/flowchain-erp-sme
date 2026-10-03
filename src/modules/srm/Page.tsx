@@ -9,6 +9,7 @@ import { A, Card, Field, inputStyle } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 
 type Supplier = {
   id: string;
@@ -128,6 +129,9 @@ export default function SupplierMasterPage({
   const { language } = useI18n();
   const copy = (label: string) => supplierCopy(workspaceCopy(label, language), language);
   const listSeparator = language === "en-US" ? ", " : "、";
+  // Supplier edits need master_data.supplier.manage; the supplied-item links
+  // are item edits and need master_data.item.manage.
+  const writes = useMasterDataWriteAccess();
   const [saving, setSaving] = useState(false);
   const [currencyWarning, setCurrencyWarning] = useState(false);
   const [workspaceCurrency, setWorkspaceCurrency] = useState('');
@@ -257,8 +261,10 @@ export default function SupplierMasterPage({
         deliveryCycleDays: Number(form.deliveryCycleDays || 0),
         expectedVersion: editing?.version,
       };
-      if (editing && String(body.bankAccountNumber || "").startsWith("****"))
-        delete body.bankAccountNumber;
+      // A value shown masked ("****1234") was not readable; leave it as stored.
+      if (editing)
+        for (const key of ["creditCode", "taxIdentificationNumber", "bankAccountName", "bankAccountNumber"] as const)
+          if (String(body[key] || "").startsWith("****")) delete body[key];
       const result = editing
         ? await request<{ supplier: Supplier }>(
             `/api/master-data/suppliers/${editing.id}`,
@@ -338,20 +344,22 @@ export default function SupplierMasterPage({
             }}
           >
             {copy("返回供应商列表")}</button>
-          <div className="flex gap-2">
-            <button
-              onClick={() => startEdit(selected)}
-              className="inline-flex items-center gap-1 rounded border px-3 py-2 text-xs"
-            >
-              <Pencil size={14} />
-              {copy("编辑")}</button>
-            <button
-              onClick={() => toggle(selected)}
-              className="rounded border px-3 py-2 text-xs"
-            >
-              {copy(selected.status === "active" ? "停用" : "启用")}
-            </button>
-          </div>
+          {writes.suppliers && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => startEdit(selected)}
+                className="inline-flex items-center gap-1 rounded border px-3 py-2 text-xs"
+              >
+                <Pencil size={14} />
+                {copy("编辑")}</button>
+              <button
+                onClick={() => toggle(selected)}
+                className="rounded border px-3 py-2 text-xs"
+              >
+                {copy(selected.status === "active" ? "停用" : "启用")}
+              </button>
+            </div>
+          )}
         </div>
         <div role="tablist" aria-label={selected.supplierName} className="flex gap-1 border-b" style={{ borderColor: A.border }}>
           {(["details", "performance"] as const).map((tab) => (
@@ -398,7 +406,7 @@ export default function SupplierMasterPage({
         <Card className="p-5">
           <h2 className="text-sm font-semibold">{copy("可供应物料")}</h2>
           {relationshipLimitation && <p role="alert" className="mt-2 text-xs text-amber-700">{copy("Supplied-item links are currently unavailable.")}</p>}
-          <div className="mt-3 grid gap-2 md:grid-cols-4">
+          {writes.items && <div className="mt-3 grid gap-2 md:grid-cols-4">
             <select
               aria-label={copy("选择 SKU")}
               value={relationForm.itemId}
@@ -448,7 +456,7 @@ export default function SupplierMasterPage({
               className="rounded bg-blue-600 px-3 py-2 text-xs text-white"
             >
               {copy("新增供应商关系")}</button>
-          </div>
+          </div>}
           {relationships.length === 0 ? (
             <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
               {copy("暂无可供应物料")}</div>
@@ -464,7 +472,7 @@ export default function SupplierMasterPage({
                     "MOQ",
                     "参考价格",
                     "状态",
-                    "操作",
+                    ...(writes.items ? ["操作"] : []),
                   ].map((h) => (
                     <th key={copy(h)} className="p-2 text-left">
                       {copy(h)}
@@ -488,7 +496,7 @@ export default function SupplierMasterPage({
                       {r.currency} {r.referencePrice}
                     </td>
                     <td className="p-2">{copy(r.active ? "启用" : "停用")}</td>
-                    <td className="p-2 space-x-2">
+                    {writes.items && <td className="p-2 space-x-2">
                       {!r.preferred && (
                         <button
                           onClick={() =>
@@ -504,7 +512,7 @@ export default function SupplierMasterPage({
                       >
                         {copy(r.active ? "停用" : "启用")}
                       </button>
-                    </td>
+                    </td>}
                   </tr>
                 ))}
               </tbody>
@@ -573,13 +581,15 @@ export default function SupplierMasterPage({
             <RefreshCw size={14} />
             {copy("刷新")}
           </button>
-          <button
-            onClick={startCreate}
-            className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 text-xs text-white"
-          >
-            <Plus size={14} />
-            {copy("新增供应商")}
-          </button>
+          {writes.suppliers && (
+            <button
+              onClick={startCreate}
+              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 text-xs text-white"
+            >
+              <Plus size={14} />
+              {copy("新增供应商")}
+            </button>
+          )}
         </div>
       </Card>
       {error ? (
@@ -594,8 +604,10 @@ export default function SupplierMasterPage({
       ) : rows.length === 0 ? (
         <Card className="py-14 text-center text-sm" style={{ color: A.sub }}>
           {copy("暂无供应商")}
-          <br />
-          <span className="text-xs">{copy("点击“新增供应商”开始维护供应商资料。")}</span>
+          {writes.suppliers && <>
+            <br />
+            <span className="text-xs">{copy("点击“新增供应商”开始维护供应商资料。")}</span>
+          </>}
         </Card>
       ) : (
         <Card className="overflow-x-auto">
@@ -613,7 +625,7 @@ export default function SupplierMasterPage({
                   "送货周期",
                   "状态",
                   "更新时间",
-                  "操作",
+                  ...(writes.suppliers ? ["操作"] : []),
                 ].map((h) => (
                   <th key={copy(h)} className="p-3 text-left">
                     {copy(h)}
@@ -640,12 +652,12 @@ export default function SupplierMasterPage({
                   <td className="p-3">{row.deliveryCycleDays || "-"}</td>
                   <td className="p-3">{copy(statusLabel[row.status])}</td>
                   <td className="p-3">{row.updatedAt?.slice(0, 10)}</td>
-                  <td className="p-3 space-x-2">
+                  {writes.suppliers && <td className="p-3 space-x-2">
                     <button onClick={() => startEdit(row)}>{copy("编辑")}</button>
                     <button onClick={() => toggle(row)}>
                       {copy(row.status === "active" ? "停用" : "启用")}
                     </button>
-                  </td>
+                  </td>}
                 </tr>
               ))}
             </tbody>

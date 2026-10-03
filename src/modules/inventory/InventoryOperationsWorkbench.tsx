@@ -827,14 +827,15 @@ function OperationDetail({
       setError(reasonValue instanceof Error ? reasonValue.message : copy("操作失败"));
     }
   };
+  // The preview remembers which button opened it; confirming runs exactly
+  // that operation.
   const runPreview = async (action: string) => {
     try {
-      setPreview(
-        await apiJson<any>(
-          config.url.replace("/workbench", `/${action}-preview`),
-          { method: "POST", body: JSON.stringify({ reason }) },
-        ),
+      const plan = await apiJson<any>(
+        config.url.replace("/workbench", `/${action}-preview`),
+        { method: "POST", body: JSON.stringify({ reason }) },
       );
+      setPreview({ ...plan, action });
     } catch (reasonValue) {
       setError(reasonValue instanceof Error ? reasonValue.message : copy("预览失败"));
     }
@@ -1027,6 +1028,7 @@ function OperationDetail({
           )}
           {actions.canCancel && (
             <button
+              data-testid="operation-preview-cancel"
               className={secondary}
               onClick={() => void runPreview("cancel")}
             >
@@ -1058,15 +1060,7 @@ function OperationDetail({
               <button
                 data-testid="confirm-inventory-operation"
                 className={`${button} mt-3`}
-                onClick={() =>
-                  void run(
-                    preview.normalizedPlan?.reason
-                      ? "cancel"
-                      : document.postingStatus === "posted"
-                        ? "reverse"
-                        : "post",
-                  )
-                }
+                onClick={() => void run(preview.action)}
               >
                 {copy("确认执行")}
               </button>

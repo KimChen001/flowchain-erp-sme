@@ -15,11 +15,19 @@ function audit(actor, action, entityType, entityId, summary, metadata, idFactory
   return { id: idFactory(), tenantId: actor.tenantId, actorId: actor.userId, source: "authorization_governance", module: "settings", action, entityType, entityId, summary, metadata: { actor: { id: actor.userId }, timestamp: new Date().toISOString(), ...metadata } }
 }
 
-async function tenantHasRoleManager(tx, tenantId) {
-  const count = await tx.userRoleAssignment.count({ where: {
-    tenantId, status: "active", user: { status: "active" }, role: { status: "active", permissions: { some: { permissionCode: "settings.roles.manage" } } },
+// The active users who can still manage roles: settings.roles.manage through an
+// active assignment to an active role. Role governance, disabling a member in
+// Settings and the readiness diagnostics all use this one rule. With userId it
+// says whether that one user is such a manager.
+export function countActiveRoleManagers(db, tenantId, { userId } = {}) {
+  return db.user.count({ where: {
+    tenantId, status: "active", ...(userId ? { id: userId } : {}),
+    roleAssignments: { some: { tenantId, status: "active", role: { status: "active", permissions: { some: { permissionCode: "settings.roles.manage" } } } } },
   } })
-  return count > 0
+}
+
+export async function tenantHasRoleManager(tx, tenantId) {
+  return (await countActiveRoleManagers(tx, tenantId)) > 0
 }
 
 function publicRole(role) {
@@ -94,6 +102,9 @@ export function createAuthorizationAdminService({ prisma, idFactory = randomUUID
       const before = await tx.userRoleAssignment.findMany({ where: { tenantId: actor.tenantId, userId, status: "active" }, select: { roleId: true } })
       await tx.userRoleAssignment.deleteMany({ where: { tenantId: actor.tenantId, userId, roleId: { notIn: nextRoleIds } } })
       for (const roleId of nextRoleIds) await tx.userRoleAssignment.upsert({ where: { userId_roleId: { userId, roleId } }, create: { id: idFactory(), tenantId: actor.tenantId, userId, roleId, status: "active", createdById: actor.userId }, update: { status: "active" } })
+      // From now on these assignments, even none, are the user's roles; the
+      // legacy User.role never grants a template again.
+      if (!target.rolesAssignedAt) await tx.user.update({ where: { id: userId }, data: { rolesAssignedAt: new Date() } })
       if (!(await tenantHasRoleManager(tx, actor.tenantId))) fail("AUTHORIZATION_LAST_ROLES_MANAGER", "This change would leave the tenant without a role administrator.", 409)
       await tx.auditLog.create({ data: audit(actor, "user_role_assignments_changed", "User", userId, `Role assignments changed for ${target.email}.`, { before: { roleIds: before.map((row) => row.roleId) }, after: { roleIds: nextRoleIds }, targetUser: { id: target.id, email: target.email }, role: null, permissionCodes: [] }, idFactory) })
       // A role change ends the user's sessions in the same transaction.

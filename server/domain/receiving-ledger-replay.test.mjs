@@ -15,6 +15,10 @@ import { calculateMovementBalance } from './receiving-posting-command-service.mj
 const receipt = (id, quantity) => ({ id, quantityIn: quantity, quantityOut: '0', adjustmentQty: '0' })
 const outbound = (id, quantity) => ({ id, quantityIn: '0', quantityOut: quantity, adjustmentQty: '0' })
 const adjustment = (id, quantity) => ({ id, quantityIn: '0', quantityOut: '0', adjustmentQty: quantity })
+// How inventory-operations-policy.mjs records an adjustment or count variance.
+const inventoryAdjustment = (id, delta) => Number(delta) < 0
+  ? { id, quantityIn: '0', quantityOut: String(-Number(delta)), adjustmentQty: delta }
+  : { id, quantityIn: delta, quantityOut: '0', adjustmentQty: delta }
 const units = (value) => receivingDecimalString(value)
 
 test('net movement units follow the reconciliation formula', () => {
@@ -23,7 +27,23 @@ test('net movement units follow the reconciliation formula', () => {
   assert.equal(units(receivingMovementNetUnits(adjustment('a', '-1.2500'))), '-1.2500')
   // Missing quantities count as zero, as reconciliation already treats them.
   assert.equal(units(receivingMovementNetUnits({ id: 'n', quantityIn: null, quantityOut: undefined })), '0.0000')
-  assert.equal(units(receivingMovementNetUnits({ id: 'm', quantityIn: '2', quantityOut: '0.5', adjustmentQty: '-0.25' })), '1.2500')
+  // Inventory adjustments and cycle counts record the change in in or out and
+  // repeat it, signed, in adjustmentQty: the change counts once.
+  assert.equal(units(receivingMovementNetUnits(inventoryAdjustment('d', '-10'))), '-10.0000')
+  assert.equal(units(receivingMovementNetUnits(inventoryAdjustment('f', '5'))), '5.0000')
+})
+
+test('an inventory adjustment after two receipts neither breaks reconciliation nor blocks a safe reversal', () => {
+  // Receipts of 15 and 10, then a -10 damage adjustment: 15 on hand. Without
+  // the second receipt the location never drops below 5, so it may be reversed.
+  const ledger = [receipt('grn-1', '15'), receipt('grn-2', '10'), inventoryAdjustment('damage', '-10')]
+  assert.equal(calculateMovementBalance(ledger), '15.0000')
+  const replay = replayLedgerWithoutMovement(ledger, 'grn-2')
+  assert.equal(units(replay.lowest), '5.0000')
+  assert.equal(replay.lowestAtMovementId, 'damage')
+  assert.equal(units(replay.finalAfterRemoval), '5.0000')
+  // Without the first receipt the adjustment leaves the location at 0.
+  assert.equal(units(replayLedgerWithoutMovement(ledger, 'grn-1').finalAfterRemoval), '0.0000')
 })
 
 test('reconciliation and the replay share one formula', () => {

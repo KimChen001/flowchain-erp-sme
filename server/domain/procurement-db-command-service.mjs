@@ -36,7 +36,7 @@ function databaseEnabled(env) {
 // catalog permission it needs. Drafting commands use "revise" (buyer, manager,
 // admin); approval decisions use "approve" and "reject" (manager, admin).
 // Cancelling a PO that is already pending or approved needs "reject".
-const { DRAFT, PENDING_APPROVAL, APPROVED, ISSUED, CANCELLED } = PURCHASE_ORDER_STATUS;
+const { DRAFT, PENDING_APPROVAL, APPROVED, ISSUED, PARTIALLY_RECEIVED, CLOSED, CANCELLED } = PURCHASE_ORDER_STATUS;
 const PURCHASE_ORDER_COMMANDS = Object.freeze({
   submit: { from: [DRAFT], to: PENDING_APPROVAL, permission: "procurement.purchase_order.revise" },
   approve: { from: [PENDING_APPROVAL], to: APPROVED, permission: "procurement.purchase_order.approve" },
@@ -44,6 +44,9 @@ const PURCHASE_ORDER_COMMANDS = Object.freeze({
   return_for_revision: { from: [PENDING_APPROVAL], to: DRAFT, permission: "procurement.purchase_order.revise", reasonRequired: true },
   issue: { from: [APPROVED], to: ISSUED, permission: "procurement.purchase_order.revise" },
   cancel: { from: [DRAFT, PENDING_APPROVAL, APPROVED], to: CANCELLED, permission: "procurement.purchase_order.revise", elevatedFrom: { [PENDING_APPROVAL]: "procurement.purchase_order.reject", [APPROVED]: "procurement.purchase_order.reject" } },
+  // Short-close: the supplier will not deliver the rest. Received quantities,
+  // receipts and invoices stay as they are; nothing more can be received.
+  close: { from: [ISSUED, PARTIALLY_RECEIVED], to: CLOSED, permission: "procurement.purchase_order.reject", reasonRequired: true },
 });
 
 function mapLine(line = {}, includePrices = true, purchaseOrder = {}) {
@@ -204,11 +207,16 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
         if (!command.from.includes(row.status)) fail("PURCHASE_ORDER_WORKFLOW_CONFLICT", `A ${row.status} purchase order cannot take the ${action} action.`, 409, { entityId: row.id, currentStatus: row.status, currentVersion: row.version });
         const elevated = command.elevatedFrom?.[row.status];
         if (elevated) assertAuthorized({ actor, permission: elevated, tenantId: actor.tenantId });
-        if (action === "cancel") {
+        if (action === "cancel" || action === "close") {
           // A receipt still being prepared against the PO would become unpostable.
-          const openReceipt = await tx.receivingDocument.findFirst({ where: { tenantId: actor.tenantId, poId: row.id, postingStatus: "unposted", workflowStatus: { not: "cancelled" } }, select: { id: true } });
-          if (openReceipt) fail("PURCHASE_ORDER_HAS_OPEN_RECEIPTS", "Cancel or post the receipts prepared for this purchase order first.", 409, { receivingDocumentId: openReceipt.id });
+          const openReceipt = await tx.receivingDocument.findFirst({ where: { tenantId: actor.tenantId, poId: row.id, postingStatus: "unposted", workflowStatus: { not: "cancelled" } }, select: { id: true, documentNumber: true } });
+          if (openReceipt) fail("PURCHASE_ORDER_HAS_OPEN_RECEIPTS", `Cancel or post receipt ${openReceipt.documentNumber || openReceipt.id}, which is still being prepared for this purchase order, first.`, 409, { receivingDocumentId: openReceipt.id });
         }
+        // What was still open when the PO was closed, for the audit and the PO.
+        const closedOpenQuantities = action === "close"
+          ? row.lines.map((line) => ({ purchaseOrderLineId: line.id, sku: line.sku, openQuantity: decimalDifference(line.orderedQuantity, line.receivedQuantity) })).filter((line) => receivingDecimalUnits(line.openQuantity) > 0n)
+          : [];
+        const closed = action === "close" ? { closedAt: serial(now()), closedById: actor.user.id, closeReason: text(input.reason), closedOpenQuantities } : {};
         const nextStatus = command.to;
         const timeline = [...(Array.isArray(row.metadata?.approvalTimeline) ? row.metadata.approvalTimeline : []), { action, actorId: actor.user.id, at: serial(now()), reason: text(input.reason) || null }];
         // Receiving restores receivingBaseStatus when a receipt is reversed.
@@ -218,8 +226,8 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
         // Issuing fixes each dated line's original promise, which supplier
         // scorecards measure against.
         const originalPromisesRecorded = action === "issue" ? await recordOriginalPromises(tx, { purchaseOrder: row }) : [];
-        await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus, version: { increment: 1 }, metadata: { ...(row.metadata || {}), ...issued, approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } } });
-        return { action: `purchase_order_${action}`, summary: `${action} purchase order ${row.id}.`, metadata: { reason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null, ...(action === "issue" ? { originalPromisesRecorded } : {}) } };
+        await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus, version: { increment: 1 }, metadata: { ...(row.metadata || {}), ...issued, ...closed, approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } } });
+        return { action: `purchase_order_${action}`, summary: `${action} purchase order ${row.id}.`, metadata: { reason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null, ...(action === "issue" ? { originalPromisesRecorded } : {}), ...(action === "close" ? { closedOpenQuantities } : {}) } };
       },
     });
   }
@@ -258,6 +266,7 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
     approvePurchaseOrder: (id, input, context) => executeAction(id, "approve", input, context),
     issuePurchaseOrder: (id, input, context) => executeAction(id, "issue", input, context),
     cancelPurchaseOrder: (id, input, context) => executeAction(id, "cancel", input, context),
+    closePurchaseOrder: (id, input, context) => executeAction(id, "close", input, context),
     rejectPurchaseOrder: (id, input, context) => executeAction(id, "reject", input, context),
     returnPurchaseOrderForRevision: (id, input, context) => executeAction(id, "return_for_revision", input, context),
     revisePromisedDates,

@@ -356,6 +356,52 @@ try {
   );
   assert.equal(countPosted.movementIds.length, 1);
 
+  // Cancelling a count changes no stock in any state before posting, and
+  // its preview is a cancellation, never the posting plan.
+  const onHand = async () =>
+    String((await prisma.inventoryBalance.findFirst({ where: { id: "balance-a" } })).onHandQuantity);
+  const countCycle = async (number, { review = false } = {}) => {
+    const created = await request(base, "/api/inventory/counts", {
+      token,
+      method: "POST",
+      body: { countNumber: number, warehouseId: "warehouse-a", blindCount: true, balanceIds: ["balance-a"], idempotencyKey: `${number}-create` },
+    });
+    if (!review) return created.session;
+    const entered = await request(base, `/api/inventory/counts/${created.session.id}`, {
+      token,
+      method: "PATCH",
+      body: { expectedSessionVersion: created.session.version, idempotencyKey: `${number}-enter`, counts: [{ countLineId: created.session.lines[0].id, countedQuantity: "1", expectedLineVersion: created.session.lines[0].version ?? 0 }] },
+    });
+    const submitted = await request(base, `/api/inventory/counts/${created.session.id}/submit`, {
+      token, method: "POST", body: { expectedSessionVersion: entered.session.version, idempotencyKey: `${number}-submit` },
+    });
+    const reviewed = await request(base, `/api/inventory/counts/${created.session.id}/review`, {
+      token, method: "POST", body: { expectedSessionVersion: submitted.session.version, idempotencyKey: `${number}-review` },
+    });
+    return reviewed.session;
+  };
+  for (const [number, review] of [["CC-API-002", false], ["CC-API-003", true]]) {
+    const before = await onHand();
+    const session = await countCycle(number, { review });
+    const noReason = await raw(base, `/api/inventory/counts/${session.id}/cancel-preview`, { token, method: "POST", body: {} });
+    assert.equal(noReason.payload.allowed, false, `${number}: a reason is required`);
+    const preview = await request(base, `/api/inventory/counts/${session.id}/cancel-preview`, { token, method: "POST", body: { reason: "Not needed" } });
+    assert.equal(preview.allowed, true, number);
+    assert.equal(preview.normalizedPlan.reason, "Not needed", number);
+    assert.deepEqual(preview.balanceImpacts, [], number);
+    const cancelled = await request(base, `/api/inventory/counts/${session.id}/cancel`, {
+      token, method: "POST", body: { expectedSessionVersion: session.version, idempotencyKey: `${number}-cancel`, reason: "Not needed" },
+    });
+    assert.equal(cancelled.session.workflowStatus, "cancelled", number);
+    assert.equal(await onHand(), before, `${number}: cancelling a count posts nothing`);
+  }
+  // A posted count can be neither cancelled nor reversed.
+  const postedCancel = await raw(base, `/api/inventory/counts/${countCreated.session.id}/cancel-preview`, { token, method: "POST", body: { reason: "Too late" } });
+  assert.equal(postedCancel.payload.allowed, false);
+  assert.ok(postedCancel.payload.blockingIssues.some((item) => item.code === "COUNT_INVALID_STATE"));
+  const postedReverse = await raw(base, `/api/inventory/counts/${countCreated.session.id}/reverse-preview`, { token, method: "POST", body: {} });
+  assert.ok(postedReverse.payload.blockingIssues.some((item) => item.code === "COUNT_REVERSAL_UNSUPPORTED"));
+
   const adjustmentCreated = await request(base, "/api/inventory/adjustments", {
     token,
     method: "POST",

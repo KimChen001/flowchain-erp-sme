@@ -34,7 +34,10 @@ test('an order without a currency is totalled on its own, not added to another c
 
 test('the purchase orders page shows the server summary instead of adding every order', async () => {
   const route = await readFile(new URL('../routes/purchase-orders.routes.mjs', import.meta.url), 'utf8')
-  assert.match(route, /summary: purchaseOrderWorkbenchSummary\(snapshot\.purchaseOrders\)/)
+  // The summary is built from every order the reader may see; the committed
+  // value is withheld when the role cannot read prices.
+  assert.match(route, /purchaseOrderWorkbenchSummary\(loaded\.purchaseOrders\)/)
+  assert.match(route, /summary: access\.prices \? summary :/)
   const page = await readFile(new URL('../../src/modules/purchasing/Page.tsx', import.meta.url), 'utf8')
   assert.doesNotMatch(page, /orders\.reduce\(\(sum, order\) => sum \+ poAmount\(order\)/)
   assert.match(page, /Committed PO value|已承诺采购订单金额/)

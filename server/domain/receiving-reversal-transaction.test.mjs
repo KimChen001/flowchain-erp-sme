@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createReceivingPostingCommandService } from './receiving-posting-command-service.mjs'
 import { createInventoryOperationsCommandService } from './inventory-operations-command-service.mjs'
+import { createReceivingWorkbenchQueryService } from './receiving-workbench-query-service.mjs'
 import { createOperationalFinanceCommandService } from './operational-finance-command-service.mjs'
 import { cleanupReceivingScenario, expectCommandError, seedReceivingScenario, withLiveReceivingDatabase } from './receiving-posting-live-test-helpers.mjs'
 
@@ -112,11 +113,24 @@ test('database receiving reversal preserves history, restores state, and fails c
           await inventoryOperations.postTransfer(created.transfer.id, { expectedTransferVersion: ready.transfer.version, idempotencyKey: `ledger-transfer-post-${suffix}` }, manager)
           assert.ok(await prisma.inventoryMovement.findFirst({ where: { tenantId: scenario.tenantId, sku, warehouseId: scenario.warehouseId, movementType: 'stock_transfer_out' } }), 'the production service must have written a stock_transfer_out movement')
         },
+        // A real damage adjustment on A-01, written by the production inventory
+        // operations service: the change in quantityOut and again in adjustmentQty.
+        adjust: async (quantity) => {
+          const balance = await prisma.inventoryBalance.findFirst({ where: { tenantId: scenario.tenantId, sku, warehouseId: scenario.warehouseId, locationKey: 'a-01' } })
+          const created = await inventoryOperations.createAdjustment({ adjustmentNumber: `ADJ-${suffix}`, reasonCode: 'damage', notes: 'Damaged on the shelf', idempotencyKey: `ledger-adjust-create-${suffix}`, lines: [{ inventoryBalanceId: balance.id, adjustmentQuantity: quantity }] }, manager)
+          const ready = await inventoryOperations.readyAdjustment(created.adjustment.id, { expectedAdjustmentVersion: 0, idempotencyKey: `ledger-adjust-ready-${suffix}` }, manager)
+          await inventoryOperations.postAdjustment(created.adjustment.id, { expectedAdjustmentVersion: ready.adjustment.version, idempotencyKey: `ledger-adjust-post-${suffix}` }, manager)
+          const movement = await prisma.inventoryMovement.findFirst({ where: { tenantId: scenario.tenantId, sku, warehouseId: scenario.warehouseId, movementType: 'inventory_adjustment' } })
+          assert.ok(movement, 'the production service must have written an inventory_adjustment movement')
+          return movement
+        },
+        reconcileSecondReceipt: () => createReceivingWorkbenchQueryService({ prisma }).getReceivingReconciliation({ receivingDocumentId: secondReceivingDocumentId }, manager),
         reverseFirstReceipt: () => receiving.reverseReceiving({ receivingDocumentId: scenario.receivingDocumentId, idempotencyKey: `ledger-reverse-grn-1-${suffix}`, reason: 'Ledger replay regression' }, { identity: scenario.actor }),
         sourceOnHand: async () => (await prisma.inventoryBalance.findFirst({ where: { tenantId: scenario.tenantId, sku, warehouseId: scenario.warehouseId, locationKey: 'a-01' } })).onHandQuantity.toString(),
         cleanup: async () => {
           // Lines cascade from the document and legs cascade from lines.
           await prisma.stockTransferDocument.deleteMany({ where: { tenantId: scenario.tenantId } })
+          await prisma.inventoryAdjustmentDocument.deleteMany({ where: { tenantId: scenario.tenantId } })
           await prisma.receivingLine.deleteMany({ where: { receivingDocumentId: secondReceivingDocumentId } })
           await prisma.receivingDocument.deleteMany({ where: { id: secondReceivingDocumentId } })
           await cleanupReceivingScenario(prisma, scenario)
@@ -157,6 +171,33 @@ test('database receiving reversal preserves history, restores state, and fails c
     //   a real stock transfer moves 3 out of A-01    A-01 on-hand 5
     // Replaying A-01 without GRN-1 gives 4 then 1, never negative, so the
     // transfer did not depend on GRN-1 and the reversal must be allowed.
+    // Regression for an inventory adjustment counted twice by the ledger
+    // formula, which showed a false reconciliation mismatch and refused a safe
+    // reversal:
+    //   GRN-1 posts 4, GRN-2 posts 4                 A-01 on-hand 8
+    //   a damage adjustment of -3                    A-01 on-hand 5
+    // Replaying A-01 without GRN-1 gives 4 then 1, never negative.
+    await t.test('an inventory adjustment counts once in reconciliation and the reversal replay', async () => {
+      const ledger = await ledgerScenario()
+      try {
+        await ledger.postFirstReceipt()
+        await ledger.postSecondReceipt()
+        const adjustment = await ledger.adjust('-3')
+        assert.deepEqual([adjustment.quantityIn.toString(), adjustment.quantityOut.toString(), adjustment.adjustmentQty.toString()], ['0', '3', '-3'])
+        assert.equal(await ledger.sourceOnHand(), '5', 'A-01 holds 4 + 4 - 3')
+
+        const reconciliation = await ledger.reconcileSecondReceipt()
+        assert.equal(reconciliation.status, 'matched', JSON.stringify(reconciliation.entries))
+        assert.deepEqual([reconciliation.entries[0].calculatedQuantity, reconciliation.entries[0].recordedQuantity], ['5.0000', '5.0000'])
+
+        const reversed = await ledger.reverseFirstReceipt()
+        assert.equal(reversed.receivingDocument.postingStatus, 'reversed')
+        assert.equal(await ledger.sourceOnHand(), '1', 'A-01 holds 5 - 4 after the reversal')
+      } finally {
+        await ledger.cleanup()
+      }
+    })
+
     await t.test('consumption covered by another receipt does not block the reversal', async () => {
       const ledger = await ledgerScenario()
       try {

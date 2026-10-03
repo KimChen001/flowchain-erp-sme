@@ -45,6 +45,11 @@ export function invoiceMatchOutcome(invoice) {
 
 const MATCH_OUTCOME_LABELS = { matched: 'Matched', exception: 'Match exception', pending: 'Awaiting match' }
 
+// A reader who cannot see the amounts gets counts, as for mixed currencies.
+const RESTRICTED_SCOPE = Object.freeze({ ok: false, currencyCode: null, limitation: 'amount_restricted' })
+const RESTRICTED_EMPTY = 'Your role cannot view amounts.'
+const noAmountsState = scope => scope.limitation === 'amount_restricted' ? RESTRICTED_EMPTY : 'Select a currency to compare amounts.'
+
 // Amounts can be totalled within one currency only.
 function moneyScope(rows, query) {
   if (query.currency) return { ok: true, currencyCode: query.currency, limitation: null }
@@ -172,7 +177,7 @@ function lifecycleVisual(id, pos) {
 // the order's unit price, and the invoice lines linked to the order.
 function valueBridgeVisual(id, pos, scope) {
   const base = { unit: 'currency', currencyCode: scope.currencyCode, totals: ['Ordered', 'Received', 'Invoiced'], drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders in range, net of tax: ordered and received quantities at the order price, and the invoice lines linked to each order.' }
-  if (!scope.ok) return visual(id, 'Ordered, received and invoiced value', 'waterfall', [], { ...base, emptyState: 'Select a currency to compare amounts.', limitations: moneyLimitations(scope, pos) })
+  if (!scope.ok) return visual(id, 'Ordered, received and invoiced value', 'waterfall', [], { ...base, emptyState: noAmountsState(scope), limitations: moneyLimitations(scope, pos) })
   const ordered = sumKnown(pos.map(po => po.orderedValue))
   const received = sumKnown(pos.map(po => po.receivedValue))
   const invoiced = sumKnown(pos.map(po => po.invoicedValue))
@@ -375,7 +380,7 @@ function riskMatrixVisual(id, balances) {
 // Builds the visuals of one dashboard. `all` holds the filtered runtime rows;
 // `purchaseOrderIdsAnyDate` the purchase orders that pass every filter except
 // the date range, so receipts can follow their order's filters.
-export function buildDashboardVisuals({ subject, context, all, query, purchaseOrderIdsAnyDate }) {
+export function buildDashboardVisuals({ subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts = {} }) {
   const poById = new Map(array(context.purchaseOrders).map(row => [text(row.id || row.po), row]))
   const receiptsByPo = new Map()
   for (const receipt of array(context.receipts)) if (text(receipt.poId)) receiptsByPo.set(text(receipt.poId), true)
@@ -387,7 +392,7 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
   }
   const lazy = fn => { let value; return () => (value ||= fn()) }
   const pos = lazy(() => purchaseOrderFacts(context, all, receiptsByPo, invoicesByPo))
-  const poScope = lazy(() => moneyScope(pos(), query))
+  const poScope = lazy(() => restrictedAmounts.purchase_orders ? RESTRICTED_SCOPE : moneyScope(pos(), query))
   const receipts = lazy(() => receiptFacts(context, query, poById, purchaseOrderIdsAnyDate))
   const invoices = lazy(() => invoiceFacts(context, all))
   const performance = lazy(() => supplierPerformance(pos(), receipts(), invoices().map(row => row.raw), poScope()))
@@ -408,14 +413,14 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
   ]
 
   if (subject === 'finance') {
-    const scope = moneyScope(invoices(), query)
+    const scope = restrictedAmounts.supplier_invoices ? RESTRICTED_SCOPE : moneyScope(invoices(), query)
     const variance = scope.ok ? grouped(invoices(), row => row.supplier, row => row.variance === null ? null : Math.abs(row.variance)).filter(row => row.value > 0) : []
     return [
       trendVisual('finance_invoice_trend', 'Submitted invoices by month', invoices(), scope, { countKey: 'Invoices', amountKey: 'Invoice amount', drilldownPath: '/app/finance/invoices', description: 'Submitted supplier invoices by invoice date. Bars are amounts, the line is the number of invoices.' }),
       matchGaugeVisual('finance_match_rate', invoices()),
       matchOutcomeVisual('finance_match_outcome', invoices()),
       invoiceFlowVisual('finance_invoice_flow', invoices()),
-      rankingVisual('finance_variance_by_supplier', 'Invoice variance by supplier', variance, { unit: 'currency', currencyCode: scope.currencyCode, drilldownPath: '/app/finance/invoices', crossFilter: 'supplier', description: 'Absolute variance between invoices and their orders and receipts.', emptyState: scope.ok ? 'No invoice variance in the selected range.' : 'Select a currency to compare amounts.' }),
+      rankingVisual('finance_variance_by_supplier', 'Invoice variance by supplier', variance, { unit: 'currency', currencyCode: scope.currencyCode, drilldownPath: '/app/finance/invoices', crossFilter: 'supplier', description: 'Absolute variance between invoices and their orders and receipts.', emptyState: scope.ok ? 'No invoice variance in the selected range.' : noAmountsState(scope) }),
       statusVisual('finance_invoice_status', 'Invoice status', all.supplier_invoices, '/app/finance/invoices'),
     ]
   }
@@ -423,7 +428,7 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
   if (subject === 'sales') {
     const orders = salesFacts(context, all)
     const active = orders.filter(row => row.active)
-    const scope = moneyScope(active, query)
+    const scope = restrictedAmounts.sales_orders ? RESTRICTED_SCOPE : moneyScope(active, query)
     const demand = new Map()
     for (const row of active) if (row.sku) demand.set(row.sku, (demand.get(row.sku) || 0) + Math.max(0, row.quantity - row.fulfilled))
     return [

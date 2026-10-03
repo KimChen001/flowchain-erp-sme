@@ -21,6 +21,7 @@ export const OUTBOUND_COMMAND_TYPES = Object.freeze({
   cancel: 'cancel_shipment_draft',
   post: 'post_sales_shipment',
   reverse: 'reverse_sales_shipment',
+  cancelOrder: 'cancel_sales_order',
 })
 const commandPermissions = Object.freeze({
   [OUTBOUND_COMMAND_TYPES.reserve]: 'shipment.prepare',
@@ -29,6 +30,7 @@ const commandPermissions = Object.freeze({
   [OUTBOUND_COMMAND_TYPES.cancel]: 'shipment.prepare',
   [OUTBOUND_COMMAND_TYPES.post]: 'shipment.post',
   [OUTBOUND_COMMAND_TYPES.reverse]: 'shipment.reverse',
+  [OUTBOUND_COMMAND_TYPES.cancelOrder]: 'sales_order.cancel',
 })
 
 export class OutboundCommandError extends Error {
@@ -87,6 +89,7 @@ function normalizeInput(commandType, input = {}) {
   else if (commandType === OUTBOUND_COMMAND_TYPES.cancel) payload = { shipmentId: required(input.shipmentId, 'shipmentId'), expectedShipmentVersion: expectedVersion(input.expectedShipmentVersion, 'expectedShipmentVersion'), reason: required(input.reason, 'reason') }
   else if (commandType === OUTBOUND_COMMAND_TYPES.post) payload = { shipmentId: required(input.shipmentId, 'shipmentId'), expectedShipmentVersion: expectedVersion(input.expectedShipmentVersion, 'expectedShipmentVersion') }
   else if (commandType === OUTBOUND_COMMAND_TYPES.reverse) payload = { shipmentId: required(input.shipmentId, 'shipmentId'), expectedShipmentVersion: expectedVersion(input.expectedShipmentVersion, 'expectedShipmentVersion'), reason: required(input.reason, 'reason') }
+  else if (commandType === OUTBOUND_COMMAND_TYPES.cancelOrder) payload = { salesOrderId: required(input.salesOrderId, 'salesOrderId'), expectedOrderVersion: expectedVersion(input.expectedOrderVersion, 'expectedOrderVersion'), reason: required(input.reason, 'reason', 'SALES_ORDER_CANCEL_REASON_REQUIRED') }
   else fail('RESERVATION_VALIDATION_FAILED', 'Unknown outbound command type.', 422)
   return { idempotencyKey, payload, requestHash: outboundRequestHash(payload) }
 }
@@ -133,6 +136,82 @@ async function lockShipmentAggregate(tx, tenantId, shipmentId) {
   await lockIds(tx, 'ShipmentAllocation', tenantId, allocations.map((allocation) => allocation.id))
   await lockIds(tx, 'InventoryReservation', tenantId, allocations.map((allocation) => allocation.reservationId))
   return { lines, allocations }
+}
+
+// What cancelling a sales order does, or why it cannot be cancelled. A draft,
+// confirmed or on-hold order with no posted shipment can be cancelled: its
+// unposted shipments are cancelled, every active reservation is released and
+// the reserved stock becomes available again. An order with goods shipped is
+// not cancelled; reverse the shipment first.
+const CANCELLABLE_ORDER_STATUSES = ['draft', 'confirmed', 'on_hold']
+export async function buildSalesOrderCancellationPlan({ prisma, tenantId, salesOrderId }) {
+  const order = await prisma.salesOrder.findFirst({
+    where: { id: text(salesOrderId), tenantId },
+    include: { lines: true, reservations: true, shipments: { include: { lines: { include: { allocations: true } } } } },
+  })
+  if (!order) return { allowed: false, blockingIssues: [{ code: 'SALES_ORDER_NOT_FOUND', message: 'Sales order was not found.', status: 404 }] }
+  const blockingIssues = []
+  if (!CANCELLABLE_ORDER_STATUSES.includes(order.workflowStatus)) blockingIssues.push({ code: 'SALES_ORDER_INVALID_STATE', message: `A ${order.workflowStatus} sales order cannot be cancelled.`, status: 409 })
+  const posted = order.shipments.filter((shipment) => shipment.postingStatus === 'posted')
+  if (posted.length) blockingIssues.push({ code: 'SALES_ORDER_HAS_POSTED_SHIPMENTS', message: `Goods have shipped on this order (${posted.map((shipment) => shipment.shipmentNumber).join(', ')}). Reverse the shipment before cancelling the order.`, status: 409, details: { shipmentIds: posted.map((shipment) => shipment.id) } })
+  const openShipments = order.shipments.filter((shipment) => shipment.postingStatus === 'unposted' && shipment.workflowStatus !== 'cancelled')
+  const allocations = openShipments.flatMap((shipment) => shipment.lines.flatMap((line) => line.allocations)).filter((allocation) => allocation.status === 'allocated')
+  const deallocate = new Map()
+  for (const allocation of allocations) deallocate.set(allocation.reservationId, (deallocate.get(allocation.reservationId) || 0n) + decimalUnits(allocation.quantity))
+  const reservationImpacts = []
+  for (const reservation of order.reservations) {
+    const active = decimalUnits(reservation.reservedQuantity) - decimalUnits(reservation.consumedQuantity) - decimalUnits(reservation.releasedQuantity)
+    if (active <= 0n) continue
+    const allocatedAfter = decimalUnits(reservation.allocatedQuantity) - (deallocate.get(reservation.id) || 0n)
+    if (allocatedAfter !== 0n) blockingIssues.push({ code: 'RESERVATION_ALLOCATION_CONFLICT', message: `Reservation ${reservation.id} is allocated outside this order's open shipments.`, status: 409 })
+    const after = { ...reservation, allocatedQuantity: '0', releasedQuantity: decimalString(decimalUnits(reservation.releasedQuantity) + active) }
+    reservationImpacts.push({ reservation, reservationId: reservation.id, releaseUnits: active, deallocateUnits: deallocate.get(reservation.id) || 0n, releasedAfter: after.releasedQuantity, statusAfter: outboundReservationStatus(after) })
+  }
+  const byLine = new Map()
+  for (const impact of reservationImpacts) byLine.set(impact.reservation.salesOrderLineId, (byLine.get(impact.reservation.salesOrderLineId) || 0n) + impact.releaseUnits)
+  const salesOrderLineImpacts = order.lines.filter((line) => byLine.has(line.id)).map((line) => {
+    const reserved = decimalUnits(line.reservedQuantity)
+    const release = byLine.get(line.id)
+    if (reserved < release) blockingIssues.push({ code: 'RESERVATION_QUANTITY_CONFLICT', message: `Sales order line ${line.sku} has less reserved than its reservations.`, status: 409 })
+    return { salesOrderLineId: line.id, version: line.version, quantityUnits: release, reservedAfter: decimalString(reserved >= release ? reserved - release : 0n) }
+  })
+  const byBalance = new Map()
+  for (const impact of reservationImpacts) {
+    const key = `${impact.reservation.sku}|${impact.reservation.warehouseId}|${impact.reservation.locationKey}`
+    const entry = byBalance.get(key) || { sku: impact.reservation.sku, warehouseId: impact.reservation.warehouseId, locationKey: impact.reservation.locationKey, quantityUnits: 0n }
+    entry.quantityUnits += impact.releaseUnits
+    byBalance.set(key, entry)
+  }
+  const balanceImpacts = []
+  for (const entry of byBalance.values()) {
+    const balance = await prisma.inventoryBalance.findUnique({ where: { tenantId_sku_warehouseKey_locationKey: { tenantId, sku: entry.sku, warehouseKey: entry.warehouseId, locationKey: entry.locationKey } } })
+    if (!balance || decimalUnits(balance.reservedQuantity) < entry.quantityUnits) { blockingIssues.push({ code: 'RESERVATION_BALANCE_CONFLICT', message: `Inventory balance for ${entry.sku} does not hold the reserved quantity.`, status: 409 }); continue }
+    balanceImpacts.push({ balanceId: balance.id, version: balance.version, sku: entry.sku, warehouseId: entry.warehouseId, quantityUnits: entry.quantityUnits, reservedAfter: decimalString(decimalUnits(balance.reservedQuantity) - entry.quantityUnits), availableAfter: decimalString(decimalUnits(balance.availableQuantity) + entry.quantityUnits) })
+  }
+  return {
+    operation: 'cancel_sales_order',
+    allowed: blockingIssues.length === 0,
+    blockingIssues,
+    order,
+    shipmentImpacts: openShipments.map((shipment) => ({ shipmentId: shipment.id, shipmentNumber: shipment.shipmentNumber, version: shipment.version, allocationIds: shipment.lines.flatMap((line) => line.allocations).filter((allocation) => allocation.status === 'allocated').map((allocation) => allocation.id) })),
+    reservationImpacts,
+    salesOrderLineImpacts,
+    balanceImpacts,
+  }
+}
+
+// The cancellation plan as the preview endpoint returns it.
+export function publicCancellationPlan(plan) {
+  return {
+    operation: 'cancel_sales_order',
+    allowed: plan.allowed,
+    blockingIssues: plan.blockingIssues.map(({ code, message, details }) => ({ code, message, ...(details ? { details } : {}) })),
+    salesOrder: plan.order ? { id: plan.order.id, orderNumber: plan.order.orderNumber, workflowStatus: plan.order.workflowStatus, version: plan.order.version } : null,
+    shipmentImpacts: (plan.shipmentImpacts || []).map(({ shipmentId, shipmentNumber }) => ({ shipmentId, shipmentNumber, workflowStatusAfter: 'cancelled' })),
+    reservationImpacts: (plan.reservationImpacts || []).map((impact) => ({ reservationId: impact.reservationId, sku: impact.reservation.sku, warehouseId: impact.reservation.warehouseId, releasedQuantity: decimalString(impact.releaseUnits), statusAfter: impact.statusAfter })),
+    balanceImpacts: (plan.balanceImpacts || []).map((impact) => ({ balanceId: impact.balanceId, sku: impact.sku, warehouseId: impact.warehouseId, quantity: decimalString(impact.quantityUnits), reservedAfter: impact.reservedAfter, availableAfter: impact.availableAfter })),
+    releasedQuantity: decimalString((plan.reservationImpacts || []).reduce((sum, impact) => sum + impact.releaseUnits, 0n)),
+  }
 }
 
 function enforce(plan) {
@@ -278,6 +357,59 @@ export function createOutboundPostingCommandService({ prisma, env = process.env,
     })
   }
 
+  async function cancelSalesOrder(input, context) {
+    return execute(OUTBOUND_COMMAND_TYPES.cancelOrder, input, context, async (tx, actor, payload, normalized, execution) => {
+      const lineIds = (await tx.salesOrderLine.findMany({ where: { salesOrderId: payload.salesOrderId }, select: { id: true } })).map((line) => line.id)
+      await lockOrderAggregate(tx, actor.tenantId, payload.salesOrderId, lineIds)
+      const order = await tx.salesOrder.findFirst({ where: { id: payload.salesOrderId, tenantId: actor.tenantId } })
+      if (order.version !== payload.expectedOrderVersion) fail('SALES_ORDER_VERSION_CONFLICT', 'Sales order version does not match.', 409)
+      const openShipments = await tx.shipmentDocument.findMany({ where: { tenantId: actor.tenantId, salesOrderId: order.id, postingStatus: 'unposted', workflowStatus: { not: 'cancelled' } }, select: { id: true } })
+      for (const shipment of openShipments) await lockShipmentAggregate(tx, actor.tenantId, shipment.id)
+      const reservations = await tx.inventoryReservation.findMany({ where: { tenantId: actor.tenantId, salesOrderId: order.id } })
+      await lockIds(tx, 'InventoryReservation', actor.tenantId, reservations.map((entry) => entry.id))
+      await lockBalanceKeys(tx, actor.tenantId, reservations)
+      const plan = enforce(await buildSalesOrderCancellationPlan({ prisma: tx, tenantId: actor.tenantId, salesOrderId: order.id }))
+      assertWarehouseAccess(actor, plan.reservationImpacts.map((entry) => entry.reservation.warehouseId), 'operate')
+      for (const shipment of plan.shipmentImpacts) {
+        await tx.shipmentAllocation.updateMany({ where: { tenantId: actor.tenantId, id: { in: shipment.allocationIds }, status: 'allocated' }, data: { status: 'deallocated', version: { increment: 1 } } })
+        const updated = await tx.shipmentDocument.updateMany({ where: { id: shipment.shipmentId, tenantId: actor.tenantId, version: shipment.version }, data: { workflowStatus: 'cancelled', version: { increment: 1 }, metadata: { cancellationReason: payload.reason, cancelledWithSalesOrder: true } } })
+        if (updated.count !== 1) fail('SHIPMENT_VERSION_CONFLICT', 'A shipment changed during the order cancellation.', 409)
+      }
+      for (const impact of plan.reservationImpacts) {
+        const updated = await tx.inventoryReservation.updateMany({ where: { id: impact.reservationId, tenantId: actor.tenantId, version: impact.reservation.version }, data: { allocatedQuantity: '0', releasedQuantity: impact.releasedAfter, status: impact.statusAfter, version: { increment: 1 } } })
+        if (updated.count !== 1) fail('RESERVATION_VERSION_CONFLICT', 'A reservation changed during the order cancellation.', 409)
+        if (impact.deallocateUnits > 0n) await tx.inventoryReservationEvent.create({ data: { id: idFactory(), tenantId: actor.tenantId, reservationId: impact.reservationId, eventType: 'deallocated', quantity: decimalString(impact.deallocateUnits), commandType: OUTBOUND_COMMAND_TYPES.cancelOrder, commandExecutionId: execution.id, actorId: actor.user.id, reason: payload.reason } })
+        await tx.inventoryReservationEvent.create({ data: { id: idFactory(), tenantId: actor.tenantId, reservationId: impact.reservationId, eventType: 'released', quantity: decimalString(impact.releaseUnits), commandType: OUTBOUND_COMMAND_TYPES.cancelOrder, commandExecutionId: execution.id, actorId: actor.user.id, reason: payload.reason } })
+      }
+      for (const impact of plan.salesOrderLineImpacts) {
+        const updated = await tx.salesOrderLine.updateMany({ where: { id: impact.salesOrderLineId, salesOrderId: order.id, version: impact.version }, data: { reservedQuantity: impact.reservedAfter, version: { increment: 1 } } })
+        if (updated.count !== 1) fail('SALES_ORDER_VERSION_CONFLICT', 'A sales order line changed during the order cancellation.', 409)
+      }
+      for (const impact of plan.balanceImpacts) {
+        const updated = await tx.inventoryBalance.updateMany({ where: { id: impact.balanceId, tenantId: actor.tenantId, version: impact.version, reservedQuantity: { gte: decimalString(impact.quantityUnits) } }, data: { reservedQuantity: impact.reservedAfter, availableQuantity: impact.availableAfter, version: { increment: 1 } } })
+        if (updated.count !== 1) fail('OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT', 'Inventory balance changed during the order cancellation.', 409)
+      }
+      const at = now()
+      const orderUpdated = await tx.salesOrder.updateMany({ where: { id: order.id, tenantId: actor.tenantId, version: order.version }, data: { workflowStatus: 'cancelled', reservationStatus: 'not_reserved', version: { increment: 1 }, metadata: { ...(order.metadata || {}), cancelledAt: at.toISOString(), cancelledById: actor.user.id, cancelReason: payload.reason, statusBeforeCancel: order.workflowStatus } } })
+      if (orderUpdated.count !== 1) fail('SALES_ORDER_VERSION_CONFLICT', 'Sales order changed during cancellation.', 409)
+      const releasedQuantity = decimalString(plan.reservationImpacts.reduce((sum, impact) => sum + impact.releaseUnits, 0n))
+      const audit = auditData({ idFactory, tenantId: actor.tenantId, actorId: actor.user.id, action: 'sales_order_cancelled', entityType: 'SalesOrder', entityId: order.id, summary: `Sales order ${order.orderNumber} cancelled: ${payload.reason}`, commandType: OUTBOUND_COMMAND_TYPES.cancelOrder, idempotencyKey: normalized.idempotencyKey, metadata: { reason: payload.reason, statusBefore: order.workflowStatus, releasedQuantity, reservationIds: plan.reservationImpacts.map((entry) => entry.reservationId), cancelledShipmentIds: plan.shipmentImpacts.map((entry) => entry.shipmentId), balanceIds: plan.balanceImpacts.map((entry) => entry.balanceId) } })
+      await tx.auditLog.create({ data: audit })
+      return { entityType: 'SalesOrder', entityId: order.id, salesOrder: { id: order.id, version: order.version + 1, workflowStatus: 'cancelled', reservationStatus: 'not_reserved', fulfillmentStatus: order.fulfillmentStatus }, releasedQuantity, releasedReservationIds: plan.reservationImpacts.map((entry) => entry.reservationId), cancelledShipmentIds: plan.shipmentImpacts.map((entry) => entry.shipmentId), auditEventId: audit.id }
+    })
+  }
+
+  // The plan, without changing anything; needs the same permission as the command.
+  async function previewSalesOrderCancellation(input, context) {
+    assertEnabled(env)
+    const actor = await resolveProvisionedActor(prisma, mutationScope(context?.identity || context).identity)
+    assertAuthorized({ actor, permission: commandPermissions[OUTBOUND_COMMAND_TYPES.cancelOrder], tenantId: actor.tenantId })
+    const plan = await buildSalesOrderCancellationPlan({ prisma, tenantId: actor.tenantId, salesOrderId: required(input.salesOrderId, 'salesOrderId') })
+    if (plan.blockingIssues.some((issue) => issue.code === 'SALES_ORDER_NOT_FOUND')) fail('SALES_ORDER_NOT_FOUND', 'Sales order was not found.', 404)
+    assertWarehouseAccess(actor, plan.reservationImpacts.map((entry) => entry.reservation.warehouseId), 'operate')
+    return publicCancellationPlan(plan)
+  }
+
   async function postShipment(input, context) {
     return execute(OUTBOUND_COMMAND_TYPES.post, input, context, async (tx, actor, payload, normalized, execution) => {
       const initial = await tx.shipmentDocument.findFirst({ where: { id: payload.shipmentId, tenantId: actor.tenantId } })
@@ -341,5 +473,5 @@ export function createOutboundPostingCommandService({ prisma, env = process.env,
     })
   }
 
-  return { reserveSalesOrderInventory, releaseSalesOrderReservation, createShipmentDraft, cancelShipmentDraft, postShipment, reverseShipment }
+  return { reserveSalesOrderInventory, releaseSalesOrderReservation, createShipmentDraft, cancelShipmentDraft, postShipment, reverseShipment, cancelSalesOrder, previewSalesOrderCancellation }
 }
