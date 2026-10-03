@@ -1,8 +1,8 @@
 # Assistant agent mode (step C): design
 
-Status: proposal for the owner's decision, 2026-10-03. Nothing here is implemented.
-Every widening of what a model decides is listed in [§11](#11-decisions-for-the-owner)
-and needs an explicit yes first.
+Status: design, 2026-10-03. On 2026-10-03 the owner approved decisions 1, 2, 3, 6 and 9
+in [§11](#11-decisions-for-the-owner) and asked for P1 to start. Decisions 4, 5, 7 and 8
+are open. Every other widening of what a model decides still needs an explicit yes first.
 
 Builds on: main at `ff98025`; PR #105 (`claude/assistant-routing` at `1c2da08`, open),
 which adds model routing, the RFQ and receiving skills and Parley; step A (page context
@@ -72,8 +72,10 @@ request ─ action refusal (gateway:88) ─ knowledge (:89) ─ length check (:9
   A rewrite may carry only ids from the previous answer. The existing check in
   `validateCompoundQueryRewrite` (`server/domain/ai-model-router.mjs:167`) already
   rejects new ids, numbers and dates.
-- **The compound check** runs before the business query gate. A single-part supplier
-  question still goes to the planner path, as today.
+- **The compound check.** In P1 it runs inside the skill runtime, so a question the
+  business query gate takes is answered there, as today. From P2 it runs before that
+  gate, so a part the gate would take can become a `supplier_business_query` call. A
+  single-part supplier question still goes to the planner path.
 - **Splitting.** P1 reuses `splitCompoundBusinessQuestion` (`ai-compound-query.mjs:202-213`),
   which today serves only the older `/api/ai` chat route (`server/routes/ai.routes.mjs:15`).
   It has no English connectors (`ai-compound-query.mjs:185`). P1 adds "and", "also" and
@@ -339,9 +341,9 @@ coverage (`docs/interface-language-policy.md`).
 
 | Phase | Ships | The model decides | Sent to the model | Where | Size |
 | --- | --- | --- | --- | --- | --- |
-| P1 | English and Chinese splitting; composite answer with `sections`; tool-result view; `agent` audit block; scripted provider; `compound`, `grounding` and `agent_failure` scaffolding | Nothing | Nothing | Everywhere, Render included | M |
-| P2 | Plan step over skills and `supplier_business_query`; argument rules; entry rule | At most 3 tools and their arguments, taken from the question | The question and the tool list | Local (Parley) | M |
-| P3 | Slot compose, verifier, template fallback, P3 label | The sentence wording and which facts to mention, all through slots | The above, plus the masked tool results | Local | L |
+| P1 | English and Chinese splitting; composite answer with `sections`; `agent` audit block; `compound` eval cases | Nothing | Nothing | Everywhere, Render included | M |
+| P2 | Plan step over skills and `supplier_business_query`; argument rules; entry rule; tool-result view; scripted provider; `multi_tool` and `agent_failure` cases | At most 3 tools and their arguments, taken from the question | The question and the tool list | Local (Parley) | M |
+| P3 | Slot compose, verifier, template fallback, P3 label, `grounding` cases | The sentence wording and which facts to mention, all through slots | The above, plus the masked tool results | Local | L |
 | P4 | Second tool round, `knowledge_search`, progress events | Dependent second lookups | The above, plus first-round results | Local | L |
 | Public | The chosen provider's adapter, a monthly cap, per-workspace rate limits and opt-in | — | — | Render production | M |
 
@@ -351,14 +353,14 @@ and the token counts of the plan prompt.
 
 ## 11. Decisions for the owner
 
-| # | Decision | Recommendation |
-| --- | --- | --- |
-| 1 | Build P1, and switch it on by default once its gate passes. No model is involved. | Yes |
-| 2 | P2: let the model choose up to 3 read-only tools and their arguments, instead of one skill id. It still sees only the question and the tool list. Local only, off by default. | Yes |
-| 3 | In P2, the model writes the supplier business query plan directly, folding the opted-in `business_query_planning` decision into agent planning, with the same guards | Yes |
-| 4 | P3: let the model write the wording (facts only through verified slots), and send the actor's masked tool results to the provider. Local only. | Decide after the P2 results |
-| 5 | Provider for a public deployment: none, Parley after IS&T confirms, a paid API (which provider and what monthly cap), or a Chinese provider | None for now; revisit when a public trial needs it |
-| 6 | Before real tenants' data reaches any provider (P3 and later): a per-workspace opt-in, off by default | Yes |
-| 7 | The P3 answer label (§4) | As proposed |
-| 8 | The gate thresholds in §9 | As proposed |
-| 9 | Audit rows keep reason codes only, never question or model text | Yes |
+| # | Decision | Recommendation | Owner, 2026-10-03 |
+| --- | --- | --- | --- |
+| 1 | Build P1, and switch it on by default once its gate passes. No model is involved. | Yes | Approved |
+| 2 | P2: let the model choose up to 3 read-only tools and their arguments, instead of one skill id. It still sees only the question and the tool list. Local only, off by default. | Yes | Approved |
+| 3 | In P2, the model writes the supplier business query plan directly, folding the opted-in `business_query_planning` decision into agent planning, with the same guards | Yes | Approved |
+| 4 | P3: let the model write the wording (facts only through verified slots), and send the actor's masked tool results to the provider. Local only. | Decide after the P2 results | Open |
+| 5 | Provider for a public deployment: none, Parley after IS&T confirms, a paid API (which provider and what monthly cap), or a Chinese provider | None for now; revisit when a public trial needs it | Open |
+| 6 | Before real tenants' data reaches any provider (P3 and later): a per-workspace opt-in, off by default | Yes | Approved |
+| 7 | The P3 answer label (§4) | As proposed | Open |
+| 8 | The gate thresholds in §9 | As proposed | Open |
+| 9 | Audit rows keep reason codes only, never question or model text | Yes | Approved |
