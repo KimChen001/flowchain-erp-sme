@@ -1,10 +1,10 @@
 # Assistant agent mode (step C): design
 
-Status: design, 2026-10-03. On 2026-10-03 the owner approved decisions 1, 2, 3, 6 and 9
-in [§11](#11-decisions-for-the-owner) and asked for P1 to start. Decisions 4, 5, 7 and 8
-are open. Every other widening of what a model decides still needs an explicit yes first.
-P1 is in PR #111 (`claude/assistant-compound-answers`), where a follow-up read with the
-previous answer is answered as one question and never split.
+Status: design, 2026-10-03. On 2026-10-03 the owner approved decisions 1, 2, 3, 6, 8 and
+9 in [§11](#11-decisions-for-the-owner). Decisions 4, 5 and 7 are open. Every other
+widening of what a model decides still needs an explicit yes first. P1 was merged to main
+in PR #111 on 2026-10-03; there, a follow-up read with the previous answer is answered as
+one question and never split.
 
 Written against main at `ff98025` and PR #105 (`claude/assistant-routing` at `1c2da08`),
 which adds model routing, the RFQ and receiving skills and Parley. #105 was merged on
@@ -365,5 +365,5 @@ and the token counts of the plan prompt.
 | 5 | Provider for a public deployment: none, Parley after IS&T confirms, a paid API (which provider and what monthly cap), or a Chinese provider | None for now; revisit when a public trial needs it | Open |
 | 6 | Before real tenants' data reaches any provider (P3 and later): a per-workspace opt-in, off by default | Yes | Approved |
 | 7 | The P3 answer label (§4) | As proposed | Open |
-| 8 | The gate thresholds in §9 | As proposed | Open |
+| 8 | The gate thresholds in §9 | As proposed | Approved |
 | 9 | Audit rows keep reason codes only, never question or model text | Yes | Approved |
