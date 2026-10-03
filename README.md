@@ -2,7 +2,7 @@
 
 **Purchasing, inventory and sales operations for small and medium businesses, with an AI assistant that answers from your own records and never changes them.**
 
-FlowChain is an ERP workspace for the buy-stock-sell loop (进销存). One team can take a purchase from request to received goods and a matched invoice, keep inventory accurate, and ship customer orders. The assistant explains what needs attention and cites the records behind every answer.
+FlowChain is an ERP and inventory-purchase-sales (进销存) collaboration platform for SMEs. One team can take a purchase from request to received goods and a matched invoice, keep inventory accurate, and ship customer orders. The assistant explains what needs attention and cites the records behind every answer.
 
 [中文简介](#中文简介)
 
@@ -35,7 +35,7 @@ Every change to business data is made by a person: posting, approving and revers
 
 Requires **Node.js 24**.
 
-**Try it with sample data.** No database setup is needed: the walkthrough starts its own embedded PostgreSQL. Run it from a fresh checkout without `.env`, `.env.local` or `.local/`.
+**Try the walkthrough.** No database setup is needed: it starts its own embedded PostgreSQL. Run it from a fresh checkout without `.env`, `.env.local` or `.local/`.
 
 ```bash
 npm install
@@ -113,7 +113,7 @@ The datasets are public and stay outside the repository.
 
 ## 中文简介
 
-FlowChain 是面向中小企业的进销存 ERP 工作区。它覆盖这几块业务：
+FlowChain 是面向中小企业的 ERP 进销存协同平台，覆盖这几块业务：
 
 - **采购**：从申请、询价、下单到收货入库，再到发票三单匹配。
 - **库存**：盘点、调拨和调整。
