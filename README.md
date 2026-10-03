@@ -27,9 +27,10 @@ Every change to business data is made by a person: posting, approving and revers
 
 - **Answers come from workspace data.** Everyday questions ("What should I handle first today?", "Which items have the highest risk?") are answered by read-only skills that query your records. By default no language model is called.
 - **Every answer shows its evidence.** Answers list the records they rely on, with links back to them, and state what was checked and what is missing.
+- **Ask about a specific record.** Name a purchase order, SKU or supplier and the assistant looks it up among the records you are allowed to see. It answers in the language you asked in.
 - **It never acts on your behalf.** Requests to approve, pay, send or change records are refused. The assistant can prepare a draft for a person to review, nothing more.
 - **Knowledge library.** Upload product guides or company policies and ask questions about them. Answers cite the passages used. It works with keyword search alone. With an OpenAI or Qwen key it adds semantic search and generated answers; see [Product and company knowledge](docs/ai-product-knowledge.md).
-- **Measured, not assumed.** An evaluation set of 100 questions (20 in Chinese) runs in CI. The current score is 84/100, with no permission leaks, no cross-tenant leaks and no business writes. See [tests/ai-eval](tests/ai-eval/README.md).
+- **Measured, not assumed.** An evaluation set of 142 questions in English and Chinese runs in CI against a recorded baseline. All 142 pass, with no permission leaks, no cross-tenant leaks and no business writes. See [tests/ai-eval](tests/ai-eval/README.md).
 
 ## Quick start
 
@@ -66,7 +67,7 @@ Browser tests use Playwright (`tests/browser/`). CI runs the PostgreSQL, browser
 
 ## Tech stack
 
-- **Frontend:** React 18, Vite, Tailwind CSS, React Router, Recharts.
+- **Frontend:** React 18, Vite, Tailwind CSS, React Router, ECharts for the report dashboards and Recharts for other charts.
 - **Backend:** Node.js 24 with a plain `node:http` server.
 - **Data:** PostgreSQL with Prisma. pgvector is optional, for knowledge search.
 - **AI:** deterministic read-only skills, with LangChain retrieval for the knowledge library.
@@ -99,8 +100,8 @@ Not in the current release:
 
 [`analytics/`](analytics/) holds two Python studies written for a course report. They informed the product:
 
-- **USAID SCMS shipments:** supplier delivery performance, late-delivery prediction and supplier allocation. Its finding that each PO line needs an unchangeable original promised date is built into the supplier scorecard.
-- **Online Retail II:** weekly SKU demand forecasts and a replenishment backtest that recommends budgeted service-level targets.
+- **USAID SCMS shipments:** supplier delivery performance, reliability-based supplier tiers, late-delivery prediction and supplier allocation. Its finding that each PO line needs an unchangeable original promised date is built into the supplier scorecard.
+- **Online Retail II:** weekly SKU demand forecasts and a backtest that compares replenishment policies.
 
 The datasets are public and stay outside the repository.
 
@@ -120,6 +121,6 @@ FlowChain 是面向中小企业的 ERP 进销存协同平台，覆盖这几块�
 - **销售**：销售订单和发货。
 - **报表**：各业务的报表看板。
 
-所有改动业务数据的操作，都由人确认后才执行。AI 助手按工作区里的真实数据回答，并列出依据的单据。它不会替你审批、付款或修改数据，默认也不调用任何大语言模型。
+所有改动业务数据的操作，都由人确认后才执行。AI 助手按工作区里的真实数据回答，并列出依据的单据。可以直接问某张采购单、某个 SKU 或某个供应商，它会用你提问的语言回答。它不会替你审批、付款或修改数据，默认也不调用任何大语言模型。
 
 界面默认是英文，可以在设置里切换成中文，中文翻译仍在补全。本地试用方法见上面的 [Quick start](#quick-start)。
