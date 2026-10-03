@@ -9,6 +9,7 @@ import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { answerAiSkill } from './ai-skills.mjs'
+import { runAiSkillRuntime } from './ai-skill-runtime.mjs'
 
 // Renders the assistant's answer card and recovery message as the browser
 // would, in the default English interface: esbuild bundles the client modules
@@ -75,4 +76,23 @@ test('an English skill answer renders with no Chinese, the source badge and the 
   assert.match(displaySafeAssistantRecoveryMessage('q', 'en-US', aiRecoveryReason(new ApiError(401, { code: 'AUTHENTICATION_REQUIRED' }, ''), false)), /Sign in again/)
   assert.match(displaySafeAssistantRecoveryMessage('q', 'en-US', aiRecoveryReason(new ApiError(400, { code: 'AI_QUESTION_TOO_SHORT', error: 'Enter a question of at least two characters.' }, ''), false)), /Enter a question of at least two characters\./)
   assert.match(displaySafeAssistantRecoveryMessage('q', 'zh-CN', aiRecoveryReason(new ApiError(503, {}, ''), false)), /当前工作区数据暂时未能完整读取/)
+})
+
+test('a compound answer renders a section per part in place of the summary and the priorities', async () => {
+  const client = await loadClient()
+  const scenario = aiSkillScenario()
+  const response = await runAiSkillRuntime({ ...scenario.ctx, env: {} }, { message: 'Which purchase orders are overdue, and what is available for LDM-001?', answerLanguage: 'en-US' })
+  assert.equal(response.intent, 'compound')
+  const markup = client.render(response)
+  assert.doesNotMatch(markup, CJK)
+  assert.match(markup, /data-testid="ai-answer-sections"/)
+  assert.match(markup, />Answer by part</)
+  assert.deepEqual([...markup.matchAll(/data-testid="ai-answer-section" data-skill="([a-z_]+)"/g)].map((match) => match[1]), ['purchase_orders', 'inventory_availability'])
+  assert.match(markup, /LDM-001: 63 pcs available to promise/)
+  assert.equal(markup.includes(response.conclusion.summary), false, 'the summary repeats the section titles and is not shown')
+  assert.doesNotMatch(markup, /data-testid="ai-focused-primary-items"/)
+  // A one-part answer still shows its summary and priorities.
+  const single = client.render((await answers())('today_priorities'))
+  assert.match(single, /data-testid="ai-focused-primary-items"/)
+  assert.doesNotMatch(single, /data-testid="ai-answer-sections"/)
 })

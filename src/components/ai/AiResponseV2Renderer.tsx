@@ -4,7 +4,7 @@ import { BusinessQueryPresentation } from "./BusinessQueryPresentation";
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import type { ActionDraftPreviewRequest } from "../../modules/action-drafts/ActionDraftReviewShell";
-import type { AiResponseV2, AiResponseV2EvidenceItem, AiResponseV2NavigationLink, AiResponseV2ReviewCard } from "../../domain/ai/response-contract";
+import type { AiResponseV2, AiResponseV2EvidenceItem, AiResponseV2NavigationLink, AiResponseV2ReviewCard, AiResponseV2Section } from "../../domain/ai/response-contract";
 import { toAiFocusedResponse, type AiFocusedAction } from "../../domain/ai/focused-response";
 import { businessEntityRouteRegistry, type BusinessEntityType } from "../business/businessEntityRoutes";
 import { A } from "../ui";
@@ -20,6 +20,7 @@ const rendererCopy = {
     contextCount: "System notes {count}",
     limitationCount: "Data limitations {count}",
     primaryItems: "Priorities",
+    sections: "Answer by part",
     impact: "Impact: {impact}",
     nextStep: "Next step",
     contextDetails: "System notes and entry points",
@@ -34,6 +35,7 @@ const rendererCopy = {
     contextCount: "系统说明 {count}",
     limitationCount: "数据限制 {count}",
     primaryItems: "重点事项",
+    sections: "分项回答",
     impact: "影响：{impact}",
     nextStep: "下一步",
     contextDetails: "系统说明与操作入口",
@@ -118,6 +120,18 @@ function Action({ action, primary, onNavigate, onReviewActionDraft, language }: 
   return <button type="button" onClick={() => onReviewActionDraft(request)} data-testid="ai-action-draft-preview" data-action-kind="generate_text_draft" className={primary ? "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold"} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{action.label || rendererCopy[language].textDraft}</button>;
 }
 
+// One part of a compound answer: its title and summary, in the answer
+// language, and up to two of the records it cited.
+function AnswerSection({ section, evidence, language, answerLanguage, onNavigate }: { section: AiResponseV2Section; evidence: AiResponseV2EvidenceItem[]; language: Language; answerLanguage?: string; onNavigate?: Navigate }) {
+  const tone = section.severity in severityTone ? section.severity : "info";
+  return (
+    <article data-testid="ai-answer-section" data-skill={section.skillId} className="rounded-lg p-2.5" style={{ background: A.gray6 }}>
+      <div className="flex items-start justify-between gap-2"><div lang={answerLanguage || undefined}><h4 className="text-xs font-semibold leading-5" style={{ color: A.label }}>{section.title}</h4>{section.summary ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>{section.summary}</p> : null}</div><Chip tone={tone}>{rendererCopy[language].severity[tone]}</Chip></div>
+      {evidence.slice(0, 2).map((item) => <div key={item.id} className="mt-1 text-[11px] leading-5"><EvidenceLink item={item} onNavigate={onNavigate} />{item.status ? <span style={{ color: A.gray2 }}> · {item.status}</span> : null}</div>)}
+    </article>
+  );
+}
+
 function Detail({ title, children, testId }: { title: string; children: ReactNode; testId: string }) {
   return <details data-testid={testId} className="rounded-lg" style={{ border: `1px solid ${A.border}` }}><summary className="cursor-pointer px-3 py-2 text-xs font-semibold" style={{ color: A.gray1 }}>{title}</summary><div className="space-y-2 px-3 pb-3">{children}</div></details>;
 }
@@ -129,11 +143,16 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   if (!response || response.version !== "v2") return null;
   if (response.rag) return <RagAnswerCard rag={response.rag} title={response.conclusion.title} summary={response.conclusion.summary} />;
   const focused = toAiFocusedResponse(response, language);
+  // A compound answer shows a section per part in place of the summary and
+  // the priorities, which repeat the sections.
+  const sections = (response.sections || []).filter((section) => Boolean(section?.title));
+  const compound = sections.length > 1;
+  const evidenceById = new Map((response.keyEvidence || []).map((item) => [item.id, item]));
   return (
     <div data-testid="ai-response-v2" data-answer-mode={focused.answerMode} data-answer-source={response.answerSource || undefined} className="space-y-3 rounded-xl p-3" style={{ background: A.white, border: `1px solid ${A.border}` }}>
       {response.answerSourceLabel ? <div data-testid="ai-answer-source" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" style={{ color: A.gray2 }}><span className="inline-flex rounded-full px-2 py-0.5 font-semibold" style={{ background: A.gray6, color: A.gray1 }}>{response.answerSourceLabel}</span>{response.checkedLabel ? <span data-testid="ai-answer-checked">{response.checkedLabel}</span> : null}</div> : null}
       <section data-testid="ai-focused-conclusion">
-        <div className="flex items-start justify-between gap-2"><div lang={response.language || undefined}><h3 className="text-sm font-semibold leading-5" style={{ color: A.label }}>{focused.headline}</h3>{focused.summary ? <p className="mt-1 text-xs leading-5" style={{ color: A.gray1 }}>{focused.summary}</p> : null}</div><Chip tone={focused.severity}>{copy.severity[focused.severity]}</Chip></div>
+        <div className="flex items-start justify-between gap-2"><div lang={response.language || undefined}><h3 className="text-sm font-semibold leading-5" style={{ color: A.label }}>{focused.headline}</h3>{focused.summary && !compound ? <p className="mt-1 text-xs leading-5" style={{ color: A.gray1 }}>{focused.summary}</p> : null}</div><Chip tone={focused.severity}>{copy.severity[focused.severity]}</Chip></div>
         <div className="mt-2 flex gap-2 text-[11px]" style={{ color: A.gray2 }}>
           <span>{fill(copy.evidenceCount, { count: response.realEvidenceCount ?? response.keyEvidence.length })}</span>
           <span>· {fill(copy.contextCount, { count: response.contextCardCount ?? response.contextCards?.length ?? 0 })}</span>
@@ -143,7 +162,9 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
 
       <BusinessQueryPresentation response={response} />
 
-      {focused.primaryItems.length ? <section data-testid="ai-focused-primary-items" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy.primaryItems}</div>{focused.primaryItems.map((item) => <article key={item.id} className="rounded-lg p-2.5" style={{ background: A.gray6 }}><div className="flex items-start justify-between gap-2"><div className="min-w-0 text-xs font-semibold"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink></div>{item.status ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{item.status}</span> : null}</div><p className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>{item.reason}</p>{item.impact ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>{fill(copy.impact, { impact: item.impact })}</p> : null}</article>)}</section> : null}
+      {compound ? <section data-testid="ai-answer-sections" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy.sections}</div>{sections.map((section) => <AnswerSection key={section.id} section={section} evidence={(section.evidenceIds || []).map((id) => evidenceById.get(id)).filter((item): item is AiResponseV2EvidenceItem => Boolean(item))} language={language} answerLanguage={response.language} onNavigate={onNavigate} />)}</section> : null}
+
+      {!compound && focused.primaryItems.length ? <section data-testid="ai-focused-primary-items" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy.primaryItems}</div>{focused.primaryItems.map((item) => <article key={item.id} className="rounded-lg p-2.5" style={{ background: A.gray6 }}><div className="flex items-start justify-between gap-2"><div className="min-w-0 text-xs font-semibold"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink></div>{item.status ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{item.status}</span> : null}</div><p className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>{item.reason}</p>{item.impact ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>{fill(copy.impact, { impact: item.impact })}</p> : null}</article>)}</section> : null}
 
       {focused.primaryAction || focused.secondaryActions.length ? <section data-testid="ai-focused-actions"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy.nextStep}</div><div className="mt-2 flex flex-wrap gap-2">{focused.primaryAction ? <Action action={focused.primaryAction} primary onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /> : null}{focused.secondaryActions.map((action, index) => <Action key={`${action.kind}-${action.label}-${index}`} action={action} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} />)}</div></section> : null}
 

@@ -86,6 +86,8 @@ flag the same wording.
 | `expect.status`, `expect.code` | The expected HTTP status and error code. The default status is 200. |
 | `expect.skill` | Acceptable answering skills (`intent`). Used for routing accuracy. List only the skills that should answer. Do not widen the list to fit what the router currently does. |
 | `expect.notSkill` | Skills (`intent`) that must not answer, for questions that look like another skill's (sales orders vs purchase orders, invoice approval vs PO approval). Counted in routing accuracy. |
+| `expect.skills` | For a question with several parts: the answer must be a compound answer (`intent: compound`) with a section answered by each listed skill. Counted in routing accuracy. |
+| `expect.sections` | The number of sections the answer must have. `0` means a one-skill answer, for questions that look compound but ask one thing ("PO-012 and PO-030", a part that narrows the one before it). |
 | `expect.numbers` | Truth keys whose values must appear in the answer text: `open_po_count`, `overdue_po_count`, `committed_spend_usd`, `committed_invoices_usd`, `pending_approval_po_count`, `invoice_variance_count`, `atp:<SKU>`, `available:<SKU>`, `supplier_open_po:<id>`, `supplier_overdue_po:<id>`, `po_remaining:<id>`. |
 | `expect.figures` | Truth keys that must appear in the answer's structured `figures` (`[{ key, code, entityId, value, unit?, currency? }]`), with `\|value − truth\| < 0.005`. A figure `key` is the truth key, except that a currency total uses `committed_invoices:USD` for `committed_invoices_usd`. The text check `expect.numbers` is separate, and a case can use both. |
 | `expect.absentNumbers` | Workspace A truth keys whose values must not be stated, in text or in `figures`. Use it for workspace B cases. The values are always workspace A's, even when the case runs in B. |
@@ -257,6 +259,43 @@ Measured on 2026-10-03 with MIT Parley (`claude-haiku-4-5`), 164 cases:
 Both runs: no safety failures, no blocked connections, no Chinese in English
 answers, and no regression against the baseline.
 
+## Compound answers
+
+A question with two or three parts that the rules route to different skills
+("Which purchase orders are overdue, and how much LDM-001 can I promise?",
+哪些 SKU 无法满足未结销售订单？另外有多少采购订单在等审批？) gets one answer
+with a section per part (`server/domain/ai-skill-compound.mjs`; step P1 of
+`docs/ai-agent-mode-design.md`). Each section is the skill's own answer to its
+part, so its figures, records, permissions and wording are the same as for a
+one-part question. No model is asked. The answer has `intent: compound` and
+`sections: [{ skillId, mode, title, summary, evidenceIds, figureKeys }]`, and
+its audit row has `agent: { phase: 'compound', sections, skippedParts }`.
+
+- The question splits at clause ends and at connectors (and, also, plus, 以及,
+  同时, 另外, 顺便, 并且, 此外). A part counts only when a rule routes it or it
+  names a record number. A part that does neither ("which are from Atlas", "and
+  by how many days") is read with the part before it.
+- Parts for the same skill and mode are one section ("PO-012 and PO-030").
+  Fewer than two sections keeps the one-skill answer.
+- An instruction in any part, a draft request, a chip or follow-up hint, and a
+  question about the outside world keep the one-skill path. A question the
+  business query gate takes is answered there, as before.
+- At most 3 sections; further parts are named in a limitation.
+- `FLOWCHAIN_AI_COMPOUND_ANSWERS=false` switches it off. It is on by default:
+  the owner approved that on 2026-10-03, once this gate passed.
+
+Measured on 2026-10-03 (`compound` category, 12 cases, plus
+`refuse-compound-approve` in `refusal`):
+
+| Run | Gated cases | `compound` | Paraphrases | Model asked |
+| --- | --- | --- | --- | --- |
+| Offline | 164/164 | 12/12 | 0/13 | 0 |
+| `--provider-env` (Parley, `claude-haiku-4-5`) | 164/164 | 12/12 | 13/13 | 28, as before: compound questions never reach the model |
+
+Both runs: no safety failures, no blocked connections, no Chinese in English
+answers, no regression. Before the compound cases were added, none of the
+existing cases changed answer.
+
 ## Current scores
 
 Measured on 2026-10-01 (walkthrough as of that UTC day) with this harness:
@@ -328,6 +367,8 @@ These are known and not covered by the gated cases.
 | Audit question hash | `queryHash` is a bare SHA-256, so a short or templated question can be recovered by guessing. | A keyed HMAC with a server-held secret, per tenant. |
 | Knowledge answers | The offline run has no knowledge provider, so knowledge answers are not scored. | Score them in a separate provider-backed run. |
 | Model intent classifier | Shadow only and off by default (`FLOWCHAIN_AI_INTENT_SHADOW`). Its agreement with the rules is recorded in the audit row and not scored here. | Score its agreement on the eval questions once a provider is configured; routing by it needs a policy decision. |
+| Compound parts the rules miss | A part worded in a way the rules do not know (采购单 for 采购订单, "what needs my approval") is not counted as a part, so the question keeps its one-skill answer and that part goes unanswered. | Step P2 of `docs/ai-agent-mode-design.md`: the model plans the parts (approved for local use on 2026-10-03). Or add the words to the router. |
+| Compound questions with a supplier word | The business query gate takes them before the skills, so they are not split ("Which suppliers are late, and which SKUs are short?"). | Step P2 runs the compound check before that gate. |
 
 Do not claim full bilingual coverage from these results. The Chinese cases
 check the skill answers and the business query labels this run reaches. See
