@@ -118,6 +118,18 @@ const TODAY = [
   /值得(?:我|我们|你)?(?:分享|注意|关注|一提|说)|有(?:什么|啥)(?:新情况|新消息|新动态|动态|进展|要注意|需要注意|要关注|事)|最近(?:怎么样|如何|有什么)|跟我说说|汇报一下/,
 ]
 
+// A general question about suppliers: "供应商数据给我呢", "How are our
+// suppliers doing?", "Which suppliers need follow-up?". It names suppliers and
+// a general or attention cue, and no particular record, document type or
+// payment, and does not point at an earlier answer's suppliers ("these").
+const SUPPLIER = [/\b(?:suppliers?|vendors?)\b/i, /供应商|供方/]
+const SUPPLIER_CUE = [
+  /\b(?:data|info|information|summary|overview|status|snapshot|show|list|tell me about|give me|how (?:are|is)|doing|attention|follow.?ups?|priorit\w*|urgent|issues?|problems?|anything)\b/i,
+  /情况|概况|概览|数据|资料|信息|汇总|总结|状况|看看|给我|列出|怎么样|如何|注意|关注|跟进|优先|问题|要处理|需要处理/,
+]
+const PREVIOUS_RESULT = [/\b(?:these|those|them)\b/i, /这些|上述|刚才|上一轮|它们|这几家/]
+const SPECIFIC_ASPECT = [/\b(?:invoices?|payments?|payables?|pay|paid|rfqs?|quotes?|quotations?|receipts?|receiving|grns?|stock|inventory|skus?|purchase orders?|pos?|orders?|approvals?)\b/i, /发票|付款|应付|询价|报价|收货|到货|库存|物料|采购订单|订单|审批/]
+
 // Questions about the world outside the workspace. A question that also names
 // a workspace record type is about the workspace.
 const OUTSIDE = [
@@ -240,6 +252,7 @@ function intentRoute(intent, base) {
   if (!base.ids.length && matches(RECEIVING, intent) && !matches(NOT_RECEIPT, intent) && !matches(PAYMENT, intent)) return route('receiving_issues')
   if (matches(STOCK, intent) || (matches(AVAILABLE, intent) && (base.ids.length || matches(AVAILABLE_CONTEXT, intent)))) return route('inventory_availability')
   if (matches(METRICS, intent) || (late && matches(ORDER_NOUN, intent) && !otherRecord)) return route('workspace_metrics')
+  if (matches(SUPPLIER, intent) && matches(SUPPLIER_CUE, intent) && !base.ids.length && !matches(SPECIFIC_ASPECT, intent) && !matches(PREVIOUS_RESULT, intent)) return route('supplier_attention')
   if (matches(TODAY, intent)) return route('today_priorities')
   return null
 }

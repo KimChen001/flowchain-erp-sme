@@ -7,6 +7,7 @@ import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-i
 import { PURCHASE_ORDER_STATUS, RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 import { classifyBusinessRecord } from './ai-business-record-validity.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
+import { AI_SKILL_RECENT_DAYS, aiSkillDaysBetween } from './ai-skill-signals.mjs'
 
 // The facts every workspace skill reads, through the same definitions the
 // reports use, so an answer can never disagree with a report:
@@ -28,6 +29,18 @@ import { aiSkillVisibility } from './ai-skill-registry.mjs'
 const array = (value) => Array.isArray(value) ? value : []
 const text = (value) => String(value ?? '').trim()
 const amount = (value) => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
+// A stored date as its YYYY-MM-DD day, or null.
+const dayOf = (value) => {
+  const raw = value instanceof Date ? (Number.isNaN(value.getTime()) ? '' : value.toISOString()) : text(value)
+  return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : null
+}
+// Within the last AI_SKILL_RECENT_DAYS days of the report day, today included.
+const isRecent = (day, asOf) => {
+  if (!day || !asOf) return false
+  const age = aiSkillDaysBetween(day, asOf)
+  return age >= 0 && age < AI_SKILL_RECENT_DAYS
+}
+const UNCOMMITTED_INVOICE_STATUSES = new Set(['draft', 'cancelled', 'canceled', 'void', 'voided'])
 const RAW_LIMIT = 500
 const committedInvoiceStatuses = new Set(RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES)
 const SUBJECT_SOURCE = { purchase_orders: 'purchase_orders', purchase_requests: 'purchase_requests', rfqs: 'rfqs', receipts: 'receipts', supplier_invoices: 'supplier_invoices', inventory_balances: 'inventory', items: 'inventory', suppliers: 'suppliers' }
@@ -268,7 +281,12 @@ export async function readAiSkillFacts(skillContext) {
       matchCounts: committed.reduce((counts, row) => { counts[aiSkillInvoiceMatch(row)] += 1; return counts }, { matched: 0, exception: 0, pending: 0 }),
       variances: committed
         .filter((row) => (amount(row.varianceAmount) ?? 0) !== 0 || text(row.matchStatus) === 'variance')
-        .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: visibility.partner ? text(row.supplierId) : '', supplier: visibility.partner ? text(row.supplierName || row.supplierId) : null, poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null })),
+        .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: visibility.partner ? text(row.supplierId) : '', supplier: visibility.partner ? text(row.supplierName || row.supplierId) : null, poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null, invoiceDate: dayOf(row.invoiceDate || row.createdAt) })),
+      // Invoices dated in the last AI_SKILL_RECENT_DAYS days, for recent
+      // supplier activity. Without the partner snapshot they name no supplier.
+      recent: array(business.supplierInvoices)
+        .filter((row) => !UNCOMMITTED_INVOICE_STATUSES.has(text(row.status).toLowerCase()) && isRecent(dayOf(row.invoiceDate || row.createdAt), facts.asOf))
+        .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: visibility.partner ? text(row.supplierId) : '', invoiceDate: dayOf(row.invoiceDate || row.createdAt) })),
     }
   }
 
@@ -289,15 +307,15 @@ export async function readAiSkillFacts(skillContext) {
     facts.rfqs = {
       // Every open RFQ without an award, with or without quotes.
       open: rows.filter((row) => !row.awarded),
-      readyToAward: rows.filter((row) => row.responses > 0 && !row.awarded).map(({ id, title, responses, awarded }) => ({ id, title, responses, awarded })),
+      readyToAward: rows.filter((row) => row.responses > 0 && !row.awarded).map(({ id, title, responses, awarded, due }) => ({ id, title, responses, awarded, due })),
     }
   }
 
   if (visible.receipts) {
     const openPoIds = new Set(reportRows.filter(isOpenPurchaseOrder).map((po) => text(po.id)))
     const receipts = array(business.receipts).map((row) => ({
-      id: text(row.id), documentNumber: text(row.documentNumber || row.id), poId: text(row.poId) || null, supplier: text(row.supplierName || row.supplierId),
-      postingStatus: text(row.postingStatus) || null, arrivedDay: text(row.arrivedAt).slice(0, 10) || null,
+      id: text(row.id), documentNumber: text(row.documentNumber || row.id), poId: text(row.poId) || null, supplierId: text(row.supplierId) || null, supplier: text(row.supplierName || row.supplierId),
+      postingStatus: text(row.postingStatus) || null, arrivedDay: dayOf(row.arrivedAt),
       rejected: array(row.lines).reduce((sum, line) => sum + (amount(line.rejectedQty) ?? 0), 0),
       unit: [...new Set(array(row.lines).map((line) => text(line.unit)).filter(Boolean))].join('/') || null,
       poOpen: openPoIds.has(text(row.poId)),
@@ -306,6 +324,8 @@ export async function readAiSkillFacts(skillContext) {
       // A rejection is still actionable while its purchase order is open.
       rejected: receipts.filter((row) => row.rejected > 0 && row.poOpen),
       unposted: receipts.filter((row) => row.postingStatus === 'unposted'),
+      // Arrived in the last AI_SKILL_RECENT_DAYS days, for recent supplier activity.
+      recent: receipts.filter((row) => isRecent(row.arrivedDay, facts.asOf)).map(({ id, documentNumber, supplierId, supplier, arrivedDay }) => ({ id, documentNumber, supplierId, supplier, arrivedDay })),
     }
   }
 

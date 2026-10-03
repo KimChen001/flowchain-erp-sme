@@ -72,6 +72,7 @@ const ABOUT_QUESTION = Object.freeze({
   invoice_summary: 'What is the status of the supplier invoices for {x}?',
   rfq_followups: 'Which RFQs are open for {x}?',
   receiving_issues: 'Which receipts need attention for {x}?',
+  supplier_attention: 'What needs attention for supplier {x}?',
 })
 // "What about invoices?" after another answer: that topic's own question.
 const TOPIC_QUESTION = Object.freeze({
@@ -132,6 +133,9 @@ export function resolveAiSkillFollowUp({ message, route, conversationContext } =
   if (nth) {
     const record = previous.list[nth - 1]
     if (!record) return null
+    // A supplier: its open work by date; an order or item: its card; anything
+    // else: why it is listed.
+    if (record.entityType === 'supplier') return { kind: 'ordinal', message: 'What needs attention for this supplier?', focusTarget: record }
     return CARD_TYPES.has(record.entityType) ? { kind: 'ordinal', message: 'What is the status of this record?', focusTarget: record } : why(record, 'ordinal')
   }
   if (matches(OVERDUE_ONLY, raw)) return ['purchase_orders', 'workspace_metrics', 'today_priorities', 'highest_risk_items'].includes(previous.skillId) ? { kind: 'overdue_only', message: 'Which purchase orders are overdue?' } : null

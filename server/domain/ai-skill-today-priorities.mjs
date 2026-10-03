@@ -1,6 +1,6 @@
 import { aiSkillCountText, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
-import { buildAiSkillSignals, countAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
+import { buildAiSkillSignals, countAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 
 const TOP = 5
 const array = (value) => Array.isArray(value) ? value : []
@@ -19,9 +19,12 @@ export function matchesAiSkillFocus(item, focus) {
   return false
 }
 
+// Ordered by date, not by score (compareSignalsByDate in ai-skill-signals.mjs):
+// the longest overdue first, then what falls due soonest, then the oldest open
+// problems, then stock below its levels.
 export function runTodayPriorities(facts, { focus = null } = {}) {
   const signals = buildAiSkillSignals(facts)
-  const ranked = rankAiSkillItems(signals).filter((item) => matchesAiSkillFocus(item, focus))
+  const ranked = rankAiSkillItemsByDate(signals).filter((item) => matchesAiSkillFocus(item, focus))
   return { skillId: 'today_priorities', focus, total: ranked.length, items: ranked.slice(0, TOP).map((item, index) => ({ ...item, rank: index + 1 })), counts: countAiSkillSignals(signals) }
 }
 

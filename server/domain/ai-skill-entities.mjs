@@ -293,6 +293,8 @@ export function refineAiSkillRoute(route, message, facts) {
   }
   if (skill === 'inventory_availability') return as(skill, stockMode(found, short ? 'short' : 'overview'))
   if (skill === 'purchase_orders') return as(skill, orderMode(found, 'overdue', { bySku: true }))
+  // A supplier the question names (or the page's, when it points at it) narrows the list to it.
+  if (skill === 'supplier_attention') return as(skill, found.suppliers.length ? 'supplier' : 'all')
   if (skill === 'pending_approvals') {
     const narrowed = found.suppliers.length || found.skus.length
     return as(skill, !narrowed && (missing(found, 'inventory') || missing(found, 'suppliers') || missing(found, 'purchase_orders')) ? 'not_found' : 'all')

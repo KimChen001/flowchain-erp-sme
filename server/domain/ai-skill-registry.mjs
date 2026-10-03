@@ -73,6 +73,8 @@ const definitions = [
   { id: 'invoice_summary', version: '1', requiredAnyPermission: anyReadPermission, sources: ['supplier_invoices'], fieldGroups: ['invoice_amounts'], inputSchema: noInput, outputSchema: { ...evidenceOutput, metrics: 'report_metrics' } },
   { id: 'rfq_followups', version: '1', requiredAnyPermission: anyReadPermission, sources: ['rfqs'], fieldGroups: [], inputSchema: noInput, outputSchema: evidenceOutput },
   { id: 'receiving_issues', version: '1', requiredAnyPermission: anyReadPermission, sources: ['receipts', 'purchase_orders'], fieldGroups: [], inputSchema: noInput, outputSchema: evidenceOutput },
+  // Suppliers with open work, by date (ai-skill-supplier-attention.mjs).
+  { id: 'supplier_attention', version: '1', requiredAnyPermission: anyReadPermission, sources: ['purchase_orders', 'receipts', 'supplier_invoices'], fieldGroups: ['invoice_amounts'], inputSchema: noInput, outputSchema: evidenceOutput },
   // Needs only sign-in: it reads no business data.
   { id: 'capability_overview', version: '1', requiredAnyPermission: [], sources: [], fieldGroups: [], inputSchema: noInput, outputSchema: { skills: 'skill[]' } },
 ]

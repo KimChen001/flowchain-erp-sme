@@ -18,7 +18,7 @@ test('the readers keep every open RFQ without an award, with its quotes and invi
   const { facts } = await answers()
   // RFQ-002 is awarded, so only RFQ-001 is open; ready to award is unchanged.
   assert.deepEqual(facts.rfqs.open.map((row) => [row.id, row.responses, row.invited, row.awarded]), [['RFQ-001', 2, 2, false]])
-  assert.deepEqual(facts.rfqs.readyToAward, [{ id: 'RFQ-001', title: 'Flow Controller RFQ', responses: 2, awarded: false }])
+  assert.deepEqual(facts.rfqs.readyToAward, [{ id: 'RFQ-001', title: 'Flow Controller RFQ', responses: 2, awarded: false, due: null }])
 })
 
 test('RFQ follow-ups list the quoted RFQs first and link to the RFQ', async () => {
@@ -84,7 +84,8 @@ test('the capability answer names the topic a question was about and offers its 
   const { answer } = await answers()
   const supplier = answer('capability_overview', 'en-US', { query: 'supplier test' })
   assert.match(supplier.conclusion.summary, /^I couldn't tell what you want to know about suppliers\./)
-  assert.equal(supplier.followUpSuggestions[0].skillHint, 'purchase_orders')
+  // A supplier topic first offers the suppliers that need attention.
+  assert.equal(supplier.followUpSuggestions[0].skillHint, 'supplier_attention')
   const chinese = answer('capability_overview', 'zh-CN', { query: '供应商测试' })
   assert.match(chinese.conclusion.summary, /^我没能确定你想了解供应商的哪方面。/)
   const rfq = answer('capability_overview', 'en-US', { query: 'rfq stuff' })

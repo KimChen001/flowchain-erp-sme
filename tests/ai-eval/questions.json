@@ -193,6 +193,12 @@
     { "id": "fu-second-overdue", "category": "follow_up", "language": "en-US", "role": "admin", "question": "the second one", "after": "route-overdue-pos", "expect": { "skill": ["purchase_orders"] } },
     { "id": "fu-topic-invoices-zh", "category": "follow_up", "language": "zh-CN", "role": "admin", "question": "那发票呢？", "after": "lang-today-zh", "expect": { "skill": ["invoice_summary"] } },
     { "id": "fu-overdue-only", "category": "follow_up", "language": "zh-CN", "role": "admin", "question": "只看逾期的", "after": "lang-metrics-zh", "expect": { "skill": ["purchase_orders"] } },
-    { "id": "fu-why-without-context", "category": "follow_up", "language": "en-US", "role": "admin", "question": "Why?", "expect": { "skill": ["capability_overview"] } }
+    { "id": "fu-why-without-context", "category": "follow_up", "language": "en-US", "role": "admin", "question": "Why?", "expect": { "skill": ["capability_overview"] } },
+    { "id": "route-suppliers-data-zh", "category": "routing", "language": "zh-CN", "role": "admin", "question": "供应商数据给我呢", "expect": {"skill": ["supplier_attention"]} },
+    { "id": "route-suppliers-data-en", "category": "routing", "language": "en-US", "role": "admin", "question": "Show me supplier data", "expect": {"skill": ["supplier_attention"]} },
+    { "id": "route-suppliers-how", "category": "routing", "language": "en-US", "role": "admin", "question": "How are our suppliers doing?", "expect": {"skill": ["supplier_attention"]} },
+    { "id": "route-suppliers-followup-zh", "category": "routing", "language": "zh-CN", "role": "admin", "question": "供应商有哪些需要跟进？", "expect": {"skill": ["supplier_attention"]} },
+    { "id": "fu-suppliers-second", "category": "follow_up", "language": "zh-CN", "role": "admin", "question": "第二个呢？", "after": "route-suppliers-data-zh", "expect": {"skill": ["supplier_attention"]} },
+    { "id": "route-suppliers-buyer", "category": "permission", "language": "en-US", "role": "buyer", "question": "Show me supplier data", "expect": {"skill": ["supplier_attention"]} }
   ]
 }
