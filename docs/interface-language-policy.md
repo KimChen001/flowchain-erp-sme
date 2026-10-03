@@ -34,6 +34,9 @@ names, or supplier names in place. Translate their presentation where appropriat
 - The report dashboards' visuals, KPIs, key insights, chart data tables and
   downloads use the active language; status codes use the shared status labels and
   business names stay as recorded (`docs/report-dashboards.md`).
+- The assistant's compound answers (a question with several parts) have English and
+  Chinese copy for the answer title, the "first parts only" limitation and the card's
+  section heading; each section is its skill's own answer in the question's language.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.

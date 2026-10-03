@@ -159,6 +159,20 @@ export type AiBusinessQueryPresentation = {
   validitySummary?: { validCount?: number; incompleteCount?: number; invalidCount?: number; hiddenCount?: number; unavailable?: boolean } | null;
 };
 
+// One part of a question with several parts (a compound answer): the skill
+// that answered it, its own title and summary, and the evidence it cited.
+export type AiResponseV2Section = {
+  id: string;
+  skillId: string;
+  mode?: string | null;
+  question: string;
+  title: string;
+  summary: string;
+  severity: AiResponseV2Severity;
+  evidenceIds: string[];
+  figureKeys?: string[];
+};
+
 export type AiResponseV2 = {
   supplementalKnowledge?: { title: string; summary: string; rag: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> } };
   rag?: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> };
@@ -189,6 +203,8 @@ export type AiResponseV2 = {
   checked?: string[];
   checkedLabel?: string;
   skill?: { id: string; version: string; asOf?: string | null; timezone?: string | null; signalVersion?: string };
+  // A compound answer has a section per part; a one-part answer has none.
+  sections?: AiResponseV2Section[];
   metrics?: {
     asOf?: string;
     openPurchaseOrders: number | null;

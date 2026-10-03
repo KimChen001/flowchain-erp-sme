@@ -8,6 +8,8 @@ import { answerAiSkill, toolsFor } from './ai-skills.mjs'
 import { recordAiSkillAudit } from './ai-skill-audit.mjs'
 import { aiSkillIntentShadowAudit, aiSkillIntentShadowEnabled, classifyAiSkillIntentShadow } from './ai-skill-intent-shadow.mjs'
 import { aiSkillIntentRoutingAudit, aiSkillIntentRoutingEnabled, routeAiSkillIntent } from './ai-skill-intent-routing.mjs'
+import { aiCompoundAnswersEnabled, aiCompoundAudit, composeAiCompoundAnswer, planAiCompoundAnswer } from './ai-skill-compound.mjs'
+import { assertValidAiSkillResponse } from './ai-skill-validator.mjs'
 
 // The assistant's answer path after knowledge and business queries: route the
 // question to a workspace skill, read the facts through the report
@@ -15,11 +17,13 @@ import { aiSkillIntentRoutingAudit, aiSkillIntentRoutingEnabled, routeAiSkillInt
 // names (which can choose the skill), answer in the question's language, and
 // audit the answer. A short follow-up no rule answers on its own ("What about
 // PO-020?", 为什么？, 第一个) is read with the previous answer the panel sends
-// back (ai-skill-follow-up.mjs). A question no rule and no named record
-// matches may be routed by a model when that is switched on (ai-skill-intent-routing.mjs);
-// otherwise no model is called. A question still unmatched, an instruction
-// to act, a question about the world outside the workspace, or a skill the
-// actor may not use gets the capability answer.
+// back (ai-skill-follow-up.mjs). A question with two or three parts the rules
+// route to different skills gets a section per part (ai-skill-compound.mjs).
+// A question no rule and no named record matches may be routed by a model
+// when that is switched on (ai-skill-intent-routing.mjs); otherwise no model
+// is called. A question still unmatched, an instruction to act, a question
+// about the world outside the workspace, or a skill the actor may not use
+// gets the capability answer.
 
 const text = (value) => String(value ?? '').trim()
 
@@ -53,28 +57,40 @@ export async function runAiSkillRuntime(ctx, body = {}) {
   const readsFacts = Boolean(route && !route.capability && dataSkills)
   const facts = readsFacts ? await readAiSkillFacts(context) : null
   let refined = readsFacts ? refineAiSkillRoute(route, asked, facts) : route
+  const env = ctx.env || process.env
+  // Two or three parts the rules route to different skills: each skill
+  // answers its part, and the answers come back as one, with a section per
+  // part. Follow-ups, chips, follow-up hints, instructions and one-part
+  // questions keep the one-skill answer. No model is asked.
+  const compound = readsFacts && !followUp && aiCompoundAnswersEnabled(env) ? planAiCompoundAnswer({ message, route, facts, allowed, focusTarget: body.focusTarget }) : null
   // No rule and no named record chose a skill, no record number was left
   // unread, and the message is not a greeting or a test: the model may pick
   // one of the actor's skills. The pick runs through the same record step as
   // a rule's, so the mode and the records stay deterministic.
-  const env = ctx.env || process.env
   let intentRouting = null
-  if (readsFacts && !refined?.skillId && !refined?.capability && !route?.greeting && aiSkillIntentRoutingEnabled(env)) {
+  if (!compound && readsFacts && !refined?.skillId && !refined?.capability && !route?.greeting && aiSkillIntentRoutingEnabled(env)) {
     intentRouting = await routeAiSkillIntent({ message, actor: context.actor, env, excluded: route?.excluded || [], ...(ctx.aiSkillIntentProvider ? { provider: ctx.aiSkillIntentProvider } : {}) })
     if (intentRouting.status === 'routed' && allowed.has(intentRouting.skillId)) refined = refineAiSkillRoute({ ...route, skillId: intentRouting.skillId }, asked, facts) || refined
   }
-  const skillId = refined?.skillId && allowed.has(refined.skillId) ? refined.skillId : 'capability_overview'
+  const skillId = compound ? 'compound' : refined?.skillId && allowed.has(refined.skillId) ? refined.skillId : 'capability_overview'
   const answerFacts = skillId === 'capability_overview' ? null : facts
-  const answered = answerAiSkill({ skillId, facts: answerFacts, language, query: message, focus: refined?.focus || null, refusal, outOfDomain: Boolean(route?.outOfDomain), actor: context.actor, route: refined }).response
-  const modelRouted = intentRouting?.status === 'routed' && skillId === intentRouting.skillId
-  const routed = intentRouting ? { ...answered, skillRouting: { source: modelRouted ? 'model' : 'rules', modelStatus: intentRouting.status } } : answered
-  const response = followUp ? { ...routed, followUp: { kind: followUp.kind } } : routed
+  let response
+  if (compound) {
+    const sections = compound.sections.map((section) => ({ ...section, response: answerAiSkill({ skillId: section.route.skillId, facts, language, query: section.question, focus: section.route.focus || null, actor: context.actor, route: section.route }).response }))
+    response = assertValidAiSkillResponse(composeAiCompoundAnswer({ sections, facts, language, query: message, skipped: compound.skipped }), facts)
+  } else {
+    const answered = answerAiSkill({ skillId, facts: answerFacts, language, query: message, focus: refined?.focus || null, refusal, outOfDomain: Boolean(route?.outOfDomain), actor: context.actor, route: refined }).response
+    const modelRouted = intentRouting?.status === 'routed' && skillId === intentRouting.skillId
+    const routed = intentRouting ? { ...answered, skillRouting: { source: modelRouted ? 'model' : 'rules', modelStatus: intentRouting.status } } : answered
+    response = followUp ? { ...routed, followUp: { kind: followUp.kind } } : routed
+  }
   const routingAudit = aiSkillIntentRoutingAudit(intentRouting)
-  const audit = (intentShadow = null) => recordAiSkillAudit(ctx, { response, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow, intentRouting: routingAudit, followUp: followUp?.kind || null })
+  const agent = compound ? aiCompoundAudit(compound) : null
+  const audit = (intentShadow = null) => recordAiSkillAudit(ctx, { response, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow, intentRouting: routingAudit, followUp: followUp?.kind || null, agent })
   // With the classifier on, the answer does not wait for it: the audit row
   // is written when its suggestion arrives (best effort, like every audit).
   if (aiSkillIntentShadowEnabled(env) && !route?.capability) {
-    shadow.then((value) => audit(aiSkillIntentShadowAudit(value, { skillId, mode: refined?.mode || null }))).catch(() => {})
+    shadow.then((value) => audit(aiSkillIntentShadowAudit(value, { skillId, mode: compound ? null : refined?.mode || null }))).catch(() => {})
     return response
   }
   await audit()

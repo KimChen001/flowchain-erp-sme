@@ -51,6 +51,7 @@ function visibleTexts(response) {
     for (const key of ['title', 'description', 'allowedNextStep', 'draftTitle']) out.push([`reviewCards.${index}.${key}`, item[key]])
     for (const key of ['message', 'reason']) out.push([`reviewCards.${index}.payload.${key}`, item.payload?.[key]])
   }
+  for (const [index, item] of array(response.sections).entries()) for (const key of ['title', 'summary']) out.push([`sections.${index}.${key}`, item[key]])
   for (const [index, item] of array(response.followUpSuggestions).entries()) for (const key of ['label', 'prompt']) out.push([`followUpSuggestions.${index}.${key}`, item[key]])
   for (const [index, item] of array(response.safetyBoundaries).entries()) out.push([`safetyBoundaries.${index}`, item])
   return out.filter(([, value]) => value !== undefined && value !== null && value !== '').map(([path, value]) => [path, String(value)])
