@@ -87,10 +87,10 @@ const ORIGINAL_CASE_IDS = new Set([
   'repeat-risk', 'repeat-draft', 'repeat-today-zh',
 ])
 const EXPECT_FIELDS = new Set(['status', 'code', 'skill', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'absent', 'draft', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
-const CASE_FIELDS = new Set(['id', 'category', 'language', 'answerLanguage', 'role', 'tenant', 'question', 'questionRepeat', 'questionPrefix', 'skillHint', 'focusTarget', 'repeat', 'expect', 'pending', 'note'])
+const CASE_FIELDS = new Set(['id', 'category', 'language', 'answerLanguage', 'role', 'tenant', 'question', 'questionRepeat', 'questionPrefix', 'skillHint', 'focusTarget', 'after', 'repeat', 'expect', 'pending', 'note'])
 // The fields that define what a case asks and expects. A mustPass case whose
 // fingerprint differs from the baseline's is a regression ("expectation changed").
-const FINGERPRINT_FIELDS = ['question', 'questionPrefix', 'questionRepeat', 'role', 'tenant', 'language', 'answerLanguage', 'skillHint', 'focusTarget', 'repeat', 'expect']
+const FINGERPRINT_FIELDS = ['question', 'questionPrefix', 'questionRepeat', 'role', 'tenant', 'language', 'answerLanguage', 'skillHint', 'focusTarget', 'after', 'repeat', 'expect']
 
 const CJK = /[㐀-鿿豈-﫿]/u
 // One list with the server's answer validator, so both flag the same wording.
@@ -241,6 +241,11 @@ function validateCases(list) {
     }
   }
   for (const entry of list) {
+    if (entry?.after !== undefined) {
+      if (entry.after === entry.id) problems.push(`${entry.id}: after names the case itself`)
+      else if (!ids.has(entry.after)) problems.push(`${entry.id}: after names ${entry.after}, which is not a case`)
+      else if (entry.repeat) problems.push(`${entry.id}: a follow-up (after) cannot repeat`)
+    }
     for (const field of ['sameAs', 'sameAnswerAs']) {
       const target = entry?.expect?.[field]
       if (target === undefined) continue
@@ -258,7 +263,9 @@ const only = text(argument('only')).split(',').map(text).filter(Boolean)
 const unknownOnly = only.filter((id) => !cases.some((entry) => entry.id === id))
 if (unknownOnly.length) usageError(`--only names unknown case(s): ${unknownOnly.join(', ')}`)
 // A case another case compares with (sameAs, sameAnswerAs) is always asked too.
-const comparedWith = (entry) => [entry.expect?.sameAs, entry.expect?.sameAnswerAs].filter(Boolean)
+// The cases a case needs answered first: the ones it compares with, and the
+// one it follows up on.
+const comparedWith = (entry) => [entry.expect?.sameAs, entry.expect?.sameAnswerAs, entry.after].filter(Boolean)
 const selected = only.length ? cases.filter((entry) => only.includes(entry.id) || cases.some((other) => only.includes(other.id) && comparedWith(other).includes(entry.id))) : cases
 const reportPath = resolve(argument('report') || process.env.AI_EVAL_REPORT || join(tmpdir(), 'flowchain-ai-eval', 'ai-eval-report.json'))
 // The as-of day is a UTC calendar day, the same day the expected values and
@@ -531,8 +538,20 @@ function questionOf(entry) {
   return question
 }
 
-async function ask(token, server, entry) {
-  const body = { message: questionOf(entry), answerLanguage: entry.answerLanguage || entry.language, ...(entry.skillHint ? { skillHint: entry.skillHint } : {}), ...(entry.focusTarget ? { focusTarget: entry.focusTarget } : {}) }
+// The previous answer as the panel sends it back with the next question
+// (Panel.tsx buildSafeConversationContext), with the panel's record type names.
+const PANEL_TYPES = { purchase_order: 'PO', item: 'SKU', supplier: 'Supplier', supplier_invoice: 'Invoice', receiving_doc: 'GRN', rfq: 'RFQ', purchase_request: 'PR' }
+function conversationContextOf(payload) {
+  return {
+    previousIntent: payload?.intent,
+    previousQuestion: payload?.query,
+    previousConclusionTitle: payload?.conclusion?.title,
+    previousEvidenceRefs: array(payload?.keyEvidence).slice(0, 8).map((item) => ({ id: item.id, label: item.label, entityType: PANEL_TYPES[item.entityType] || 'Unknown', entityId: item.entityId, entityLabel: item.entityLabel })),
+  }
+}
+
+async function ask(token, server, entry, previous = null) {
+  const body = { message: questionOf(entry), answerLanguage: entry.answerLanguage || entry.language, ...(entry.skillHint ? { skillHint: entry.skillHint } : {}), ...(entry.focusTarget ? { focusTarget: entry.focusTarget } : {}), ...(previous ? { conversationContext: conversationContextOf(previous) } : {}) }
   const started = performance.now()
   const response = await fetch(`http://127.0.0.1:${server.port}/api/ai-runtime/respond`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) })
   const raw = await response.text()
@@ -890,7 +909,7 @@ try {
     if (!token) throw new Error(`Case ${entry.id}: no ${tenant}/${entry.role} user`)
     const runs = []
     for (let index = 0; index < (entry.repeat || 1); index++) {
-      const run = await ask(token, tenant === 'A' ? serverA : serverB, entry)
+      const run = await ask(token, tenant === 'A' ? serverA : serverB, entry, entry.after ? results.get(entry.after)?.runs?.[0]?.payload : null)
       const after = await businessState()
       const changed = Object.keys(after).filter((model) => !isDeepStrictEqual(after[model], state[model]))
       run.wrote = changed.length ? changed.join(', ') : null

@@ -80,6 +80,7 @@ flag the same wording.
 | `question`, `questionRepeat`, `questionPrefix` | The message. The two optional fields build long inputs. |
 | `answerLanguage` | The interface language that is sent. Defaults to `language`. |
 | `skillHint`, `focusTarget` | Sent with the question, as the interface sends them. |
+| `after` | The id of another case. This case is a follow-up to that case's answer: it is asked after it, with that answer sent back as the panel sends it (`conversationContext`: its skill, question and cited records). A follow-up case cannot `repeat`. |
 | `repeat` | Ask this many times. The answers must give the same numbers and records. |
 | `pending` | A reason, such as `"new case"`. The case is scored and listed under "Pending cases". It is left out of the safety failures, the exit code, the category table, the scores and the quality gate. The 100 original cases (`ORIGINAL_CASE_IDS` in `run-eval.mjs`, the cases at a792e2f) may not be pending. |
 | `note` | Free text for readers. Not scored. |
