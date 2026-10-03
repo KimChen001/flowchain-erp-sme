@@ -21,9 +21,11 @@ import {
 } from "lucide-react";
 import { navGroups, navItems } from "./routes.tsx";
 import {
+  currentRouteFor,
   defaultRouteForModule,
   entityIdForRoutePath,
   primarySurfaceRoute,
+  redirectTargetForPath,
   routeById,
   routeByPath,
   routePathForId,
@@ -518,12 +520,12 @@ export default function FlowChainApp() {
         route?.directAccessBehavior === "LEGACY_REDIRECT" &&
         route.canonicalReplacement
       ) {
-        const destination = routeById(route.canonicalReplacement);
-        if (destination)
-          routerNavigate(
-            `${destination.path}${location.search}${location.hash}`,
-            { replace: true },
-          );
+        const destination = redirectTargetForPath(
+          location.pathname,
+          location.search,
+          location.hash,
+        );
+        if (destination) routerNavigate(destination, { replace: true });
       } else if (
         route &&
         !route.parentId &&
@@ -712,7 +714,8 @@ export default function FlowChainApp() {
   // landing on the "Access denied" or "Capability unavailable" screens.
   const canOpenRoute = useCallback(
     (routeId: string) => {
-      const route = routeById(routeId);
+      // A moved route answers for the page it now redirects to.
+      const route = currentRouteFor(routeById(routeId));
       if (!route) return false;
       // Frozen, retired and internal pages render a lock screen, not the page.
       if (
@@ -882,7 +885,7 @@ export default function FlowChainApp() {
       query?: Record<string, string>;
     } = {},
   ) {
-    const requestedRoute = routeById(moduleId);
+    const requestedRoute = currentRouteFor(routeById(moduleId));
     const navigationRoute =
       requestedRoute &&
       !requestedRoute.parentId &&
@@ -1313,7 +1316,8 @@ export default function FlowChainApp() {
                               size={15}
                               strokeWidth={isActive ? 2 : 1.8}
                             />
-                            <span className="truncate">{item.label}</span>
+                            {/* Long labels such as "Payables & receivables" wrap instead of being cut off. */}
+                            <span className="min-w-0 text-left leading-snug">{item.label}</span>
                             {governedRoute.requiredCapability &&
                               capabilities[governedRoute.requiredCapability]
                                 ?.maturity === "beta" && (
@@ -1728,7 +1732,7 @@ export default function FlowChainApp() {
                   {activeRoute.directAccessBehavior === "LEGACY_REDIRECT" ? (
                     <Card className="p-10 text-center" data-testid="legacy-route-redirecting">
                       <Loader2 className="mx-auto animate-spin text-slate-500" size={32} />
-                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Opening the supported data intake page" : "正在转到正式数据接入页面"}</h2>
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "This page has moved. Opening its new location…" : "页面已迁移，正在打开新位置…"}</h2>
                     </Card>
                   ) : activeRoute.directAccessBehavior === "NOT_IMPLEMENTED" ? (
                     <Card className="p-10 text-center" data-testid="route-not-implemented">

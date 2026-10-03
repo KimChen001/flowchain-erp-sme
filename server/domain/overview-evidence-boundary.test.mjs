@@ -31,7 +31,7 @@ test('overview evidence builders preserve module targets and export fields', () 
     'inventory:movements',
     'procurement:rfq',
     'procurement:receiving',
-    'procurement:invoices',
+    'procurement:bills',
     'srm:performance',
     'master-data',
   ]) {

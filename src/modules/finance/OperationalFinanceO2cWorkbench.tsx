@@ -217,7 +217,7 @@ function InvoiceList() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Filters />
         <a
-          href="/app/finance/customer-invoices/new"
+          href="/app/sales/invoices/new"
           aria-disabled={!enabled}
           className={`${button} text-white ${!enabled ? "pointer-events-none opacity-50" : ""}`}
           style={{ background: A.blue }}
@@ -256,7 +256,7 @@ function InvoiceList() {
                   <td className="px-4 py-3">
                     <a
                       className="font-medium text-blue-700"
-                      href={`/app/finance/customer-invoices/${encodeURIComponent(row.id)}`}
+                      href={`/app/sales/invoices/${encodeURIComponent(row.id)}`}
                     >
                       {row.invoiceNumber}
                     </a>
@@ -505,7 +505,7 @@ function NewInvoice() {
         },
       );
       window.location.assign(
-        `/app/finance/customer-invoices/${encodeURIComponent(result.entityId)}`,
+        `/app/sales/invoices/${encodeURIComponent(result.entityId)}`,
       );
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : t("finance.loadFailed"));

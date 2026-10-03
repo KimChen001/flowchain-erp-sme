@@ -174,7 +174,7 @@ export default function SupplierDetailModal({
     { key: "rfq", label: "返回相关 RFQ", onClick: () => firstRfq ? go("procurement:rfq", { entityType: "rfq", entityId: firstRfq.id }, firstRfq.id) : setPreviewMessage("当前供应商暂无可跳转 RFQ。"), kind: "previous" as const },
     { key: "po", label: "返回相关 PO", onClick: () => firstPo ? go("procurement:orders", { entityType: "purchase_order", entityId: firstPo.po }, firstPo.po) : setPreviewMessage("当前供应商暂无可跳转 PO。"), kind: "previous" as const },
     { key: "grn", label: "返回相关收货记录", onClick: () => firstGrn ? go("procurement:receiving", { entityType: "receiving_doc", entityId: firstGrn.grn }, firstGrn.grn) : setPreviewMessage("当前供应商暂无可跳转收货记录。"), kind: "previous" as const },
-    { key: "invoice", label: "返回相关发票记录", onClick: () => firstInvoice ? go("procurement:invoices", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber) : setPreviewMessage("当前供应商暂无可跳转发票记录。"), kind: "previous" as const },
+    { key: "invoice", label: "返回相关发票记录", onClick: () => firstInvoice ? go("procurement:bills", { entityType: "supplier_invoice", entityId: firstInvoice.invoiceNumber }, firstInvoice.invoiceNumber) : setPreviewMessage("当前供应商暂无可跳转发票记录。"), kind: "previous" as const },
     { key: "evidence", label: "返回证据链", onClick: () => setPreviewMessage("已定位到供应商证据链，当前证据仅供内部复核。"), kind: "previous" as const },
     { key: "previous", label: "返回上一级", onClick: onClose, kind: "previous" as const },
   ];
@@ -293,7 +293,7 @@ export default function SupplierDetailModal({
                   <NavigationButton onClick={() => go("procurement:orders", { entityType: "purchase_order", entityId: po.po }, po.po)}>{copy("查看 PO")}</NavigationButton>
                   <NavigationButton onClick={() => go("procurement:orders", { entityType: "purchase_order", entityId: po.po }, po.po)}>{copy("查看 PO Line")}</NavigationButton>
                   <NavigationButton onClick={() => go("procurement:receiving", { entityType: "receiving_doc", entityId: row.relatedReceivingDocs.find((doc) => doc.po === po.po)?.grn || "" }, po.po)}>{copy("查看收货记录")}</NavigationButton>
-                  <NavigationButton onClick={() => go("procurement:invoices", { entityType: "supplier_invoice", entityId: row.relatedInvoices.find((invoice) => invoice.relatedPo === po.po)?.invoiceNumber || "" }, po.po)}>{copy("查看发票记录")}</NavigationButton>
+                  <NavigationButton onClick={() => go("procurement:bills", { entityType: "supplier_invoice", entityId: row.relatedInvoices.find((invoice) => invoice.relatedPo === po.po)?.invoiceNumber || "" }, po.po)}>{copy("查看发票记录")}</NavigationButton>
                   <NavigationButton onClick={() => go("procurement:match")}>{copy("查看三单匹配")}</NavigationButton>
                 </div>
               ) },

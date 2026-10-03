@@ -254,7 +254,7 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
   assert.match(relationships, /resolveEntityRelationships/)
   assert.doesNotMatch(relationships, /fetch\(|apiJson|POST|PATCH/)
   assert.doesNotMatch(all, /SKU-00412.*exception/i)
-  assert.match(uiSource, /label: "采购收货"/)
+  assert.match(uiSource, /label: "收货记录"/)
   assert.match(uiSource, /管理采购到货、质检与入库记录/)
   assert.match(uiSource, /打印入库单/)
   assert.doesNotMatch(uiSource, /收货复核边界/)

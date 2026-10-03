@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, FilePlus2, RefreshCw } from "lucide-react";
 import { A, Card, Chip } from "../../components/ui";
+import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
@@ -126,7 +127,7 @@ export function NewSupplierInvoice() {
         method: "POST",
         body: JSON.stringify({ ...body(), idempotencyKey: createSecureClientMutationId("p2p") }),
       });
-      window.location.assign(`/app/finance/invoices/${encodeURIComponent(result.entityId)}`);
+      window.location.assign(`/app/procurement/bills/${encodeURIComponent(result.entityId)}`);
     } catch (reason) {
       setNotice(message(reason, t("finance.loadFailed")));
     } finally {
@@ -255,18 +256,45 @@ function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel
 
 // -------------------------------------------------------------- detail
 
+type BillReadFailure = "notFound" | "unauthenticated" | "forbidden" | "error";
+
+function billReadFailure(reason: unknown): BillReadFailure {
+  if (!(reason instanceof ApiError)) return "error";
+  if (reason.status === 404) return "notFound";
+  if (reason.status === 401) return "unauthenticated";
+  if (reason.status === 403) return "forbidden";
+  return "error";
+}
+
 export function SupplierInvoiceDetail() {
   const { t, locale } = useI18n();
   const id = decodeURIComponent(window.location.pathname.split("/").filter(Boolean).at(-1) || "");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
+  // Why the first read failed; a failed reload after an action keeps the bill
+  // on screen and shows the error above it instead.
+  const [failure, setFailure] = useState<BillReadFailure | null>(null);
   const load = useCallback(() => {
+    setFailure(null);
     void apiJson(`/api/finance/supplier-invoices/${encodeURIComponent(id)}`)
       .then((next) => { setData(next); setError(""); })
-      .catch((reason) => setError(message(reason, t("finance.loadFailed"))));
+      .catch((reason) => {
+        setError(message(reason, t("finance.loadFailed")));
+        setFailure(billReadFailure(reason));
+      });
   }, [id]);
   useEffect(() => { load(); }, [load]);
-  if (error && !data) return <Notice>{error}</Notice>;
+  if (failure && !data) {
+    const testId = { notFound: "supplier-invoice-not-found", unauthenticated: "supplier-invoice-unauthenticated", forbidden: "supplier-invoice-forbidden", error: "supplier-invoice-read-error" }[failure];
+    const text = { notFound: t("finance.billNotFound"), unauthenticated: t("finance.billSignedOut"), forbidden: t("finance.billForbidden"), error: t("finance.billReadError") }[failure];
+    return (
+      <Card className="py-16 text-center" data-testid={testId}>
+        <div className="text-sm font-semibold">{text}</div>
+        <div className="mt-2 text-xs text-slate-500">{id}</div>
+        {failure === "error" && <button type="button" onClick={load} className="mt-3 text-sm font-semibold text-blue-600">{t("finance.retry")}</button>}
+      </Card>
+    );
+  }
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const base = `/api/finance/supplier-invoices/${encodeURIComponent(data.id)}`;
   const actions: string[] = Array.isArray(data.availableActions) ? data.availableActions : [];
@@ -281,7 +309,12 @@ export function SupplierInvoiceDetail() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="font-semibold">{data.invoiceNumber}</h2>
-            <p className="mt-1 text-sm text-slate-500">{data.supplierName || "—"} · {data.relatedPoId || "—"} · {data.relatedGrnId || "—"}</p>
+            <p className="mt-1 text-sm text-slate-500" data-testid="supplier-invoice-sources">
+              {data.supplierName || "—"}
+              {" · "}{t("finance.purchaseOrder")} {data.relatedPoId ? <BusinessEntityLink entityType="purchase_order" entityId={data.relatedPoId} /> : "—"}
+              {" · "}{t("finance.receipt")} {data.relatedGrnId ? <BusinessEntityLink entityType="receiving_doc" entityId={data.relatedGrnId} /> : "—"}
+              {data.relatedPoId && <>{" · "}<BusinessEntityLink entityType="three_way_match" entityId={`MATCH-${data.id}`}>{t("finance.threeWayMatch")}</BusinessEntityLink></>}
+            </p>
           </div>
           <div className="text-right">
             <strong>{money(data.totalAmount, data.currency, locale)}</strong>
