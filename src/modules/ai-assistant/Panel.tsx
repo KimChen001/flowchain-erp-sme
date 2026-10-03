@@ -82,6 +82,9 @@ type SafeConversationContext = {
   previousEntityRefs?: Array<{ entityType?: string; entityId?: string; entityLabel: string; source: string; confidence: string }>;
   previousNavigationRefs?: Array<{ label: string; moduleId?: string; entityType?: string; entityId?: string; entityLabel?: string; returnTo: "ai-assistant" }>;
   previousEvidenceRefs?: Array<{ id?: string; label?: string; entityType?: string; entityId?: string; entityLabel?: string; moduleId?: string }>;
+  // The records of the latest answer that listed several, so "the second one"
+  // still means that list after a "why?" about one of them.
+  previousListRefs?: Array<{ id?: string; label?: string; entityType?: string; entityId?: string; entityLabel?: string; moduleId?: string }>;
   previousModuleId?: string;
   previousViewId?: string;
   previousFocusTarget?: { entityType?: string; entityId?: string; entityLabel?: string } | null;
@@ -1375,10 +1378,23 @@ function safeEntityType(value: unknown) {
   return "Unknown";
 }
 
+function aiRuntimeResponses(messages: AiChatMessage[]): AiResponseV2[] {
+  return messages.flatMap((message) => message.role === "assistant" ? (message.cards || []).filter((card) => card.type === "ai_response_v2" && card.data).map((card) => card.data as unknown as AiResponseV2) : []);
+}
+
 function latestAiRuntimeResponse(messages: AiChatMessage[]): AiResponseV2 | null {
-  const assistant = [...messages].reverse().find((message) => message.role === "assistant" && message.cards?.some((card) => card.type === "ai_response_v2"));
-  const card = assistant?.cards?.find((item) => item.type === "ai_response_v2");
-  return card?.data ? card.data as unknown as AiResponseV2 : null;
+  return aiRuntimeResponses(messages).at(-1) || null;
+}
+
+function evidenceRefs(response: AiResponseV2 | null | undefined) {
+  return (response?.keyEvidence || []).slice(0, 8).map((item) => ({
+    id: item.id,
+    label: item.label,
+    entityType: safeEntityType(item.entityType || item.entityId),
+    entityId: item.entityId,
+    entityLabel: item.entityLabel,
+    moduleId: item.moduleId,
+  }));
 }
 
 function buildSafeConversationContext(messages: AiChatMessage[], activeContext: ActiveContext | null, sessionGrounding: AiSessionGrounding, language: "en-US" | "zh-CN" = "en-US"): SafeConversationContext {
@@ -1436,14 +1452,8 @@ function buildSafeConversationContext(messages: AiChatMessage[], activeContext: 
         returnTo: "ai-assistant",
       };
     }),
-    previousEvidenceRefs: (response?.keyEvidence || []).slice(0, 8).map((item) => ({
-      id: item.id,
-      label: item.label,
-      entityType: safeEntityType(item.entityType || item.entityId),
-      entityId: item.entityId,
-      entityLabel: item.entityLabel,
-      moduleId: item.moduleId,
-    })),
+    previousEvidenceRefs: evidenceRefs(response),
+    previousListRefs: evidenceRefs([...aiRuntimeResponses(messages)].reverse().find((item) => (item.keyEvidence || []).length > 1)),
     previousModuleId: response?.scope?.module || activeContext?.module,
     previousViewId: activeContext?.view,
     previousFocusTarget: activeContext?.entityId ? {

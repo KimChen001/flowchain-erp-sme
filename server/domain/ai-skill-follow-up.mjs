@@ -5,8 +5,10 @@ import { AI_SKILL_IDS } from './ai-skill-registry.mjs'
 // 那 Northstar 呢？, "Why?", 为什么？, "the first one", 第二个, "only the overdue
 // ones", 只看逾期的. Only a short question that no rule, chip or record answers
 // on its own is read this way, and only against the previous answer the panel
-// sends back (conversationContext): its skill (`previousIntent`) and the
-// records it cited, in order (`previousEvidenceRefs`).
+// sends back (conversationContext): its skill (`previousIntent`), the records
+// it cited, in order (`previousEvidenceRefs`), and the records of the latest
+// answer that listed several (`previousListRefs`), which "the second one"
+// counts in.
 //
 // The follow-up becomes a question the rules answer the usual way, so the
 // records are still looked up for the signed-in actor: a record of a source
@@ -80,16 +82,22 @@ const TOPIC_QUESTION = Object.freeze({
   purchase_orders: 'Which purchase orders are overdue?',
 })
 
-function previousAnswer(context) {
-  if (!context || typeof context !== 'object') return null
-  const skillId = AI_SKILL_IDS.includes(text(context.previousIntent)) ? text(context.previousIntent) : null
+function recordsOf(refs) {
   const records = []
-  for (const ref of array(context.previousEvidenceRefs).slice(0, 8)) {
+  for (const ref of array(refs).slice(0, 8)) {
     const entityType = RECORD_TYPES[text(ref?.entityType)]
     const entityId = text(ref?.entityId)
     if (entityType && RECORD_ID.test(entityId) && !records.some((record) => record.entityId === entityId)) records.push({ entityType, entityId })
   }
-  return skillId || records.length ? { skillId, records } : null
+  return records
+}
+
+function previousAnswer(context) {
+  if (!context || typeof context !== 'object') return null
+  const skillId = AI_SKILL_IDS.includes(text(context.previousIntent)) ? text(context.previousIntent) : null
+  const records = recordsOf(context.previousEvidenceRefs)
+  const list = recordsOf(context.previousListRefs)
+  return skillId || records.length || list.length ? { skillId, records, list: list.length ? list : records } : null
 }
 
 // "Why?" about a record: today's priorities narrowed to it.
@@ -122,7 +130,7 @@ export function resolveAiSkillFollowUp({ message, route, conversationContext } =
   if (matches(WHY, raw)) return previous.records[0] ? why(previous.records[0], 'why') : null
   const nth = ordinalOf(raw)
   if (nth) {
-    const record = previous.records[nth - 1]
+    const record = previous.list[nth - 1]
     if (!record) return null
     return CARD_TYPES.has(record.entityType) ? { kind: 'ordinal', message: 'What is the status of this record?', focusTarget: record } : why(record, 'ordinal')
   }
@@ -133,5 +141,9 @@ export function resolveAiSkillFollowUp({ message, route, conversationContext } =
   const topic = route.ids?.length ? null : aiSkillQuestionTopic(subject)
   if (topic && TOPIC_QUESTION[topic.id]) return { kind: 'topic', message: TOPIC_QUESTION[topic.id] }
   const template = ABOUT_QUESTION[previous.skillId]
-  return template ? { kind: 'about', message: template.replace('{x}', subject) } : null
+  if (!template) return null
+  // "Why does PO-012 need attention?" asked by its rule would get the order's
+  // card; the hint keeps it the reason why, as the previous answer was.
+  const keepSkill = previous.skillId === 'today_priorities' && route.ids?.length
+  return { kind: 'about', message: template.replace('{x}', subject), ...(keepSkill ? { skillHint: 'today_priorities' } : {}) }
 }

@@ -9,11 +9,8 @@ import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 // buildSafeConversationContext): its skill, its question and its records, in
 // order, with the panel's record type names.
 const PANEL_TYPES = { purchase_order: 'PO', item: 'SKU', supplier: 'Supplier', supplier_invoice: 'Invoice', receiving_doc: 'GRN', rfq: 'RFQ', purchase_request: 'PR' }
-const contextOf = (response) => ({
-  previousIntent: response.intent,
-  previousQuestion: response.query,
-  previousEvidenceRefs: response.keyEvidence.slice(0, 8).map((item) => ({ id: item.id, label: item.label, entityType: PANEL_TYPES[item.entityType] || 'Unknown', entityId: item.entityId, entityLabel: item.entityLabel })),
-})
+const refsOf = (response) => response.keyEvidence.slice(0, 8).map((item) => ({ id: item.id, label: item.label, entityType: PANEL_TYPES[item.entityType] || 'Unknown', entityId: item.entityId, entityLabel: item.entityLabel }))
+const contextOf = (response, list = response) => ({ previousIntent: response.intent, previousQuestion: response.query, previousEvidenceRefs: refsOf(response), previousListRefs: refsOf(list) })
 const risk = { previousIntent: 'highest_risk_items', previousEvidenceRefs: [{ entityType: 'PO', entityId: 'PO-020' }, { entityType: 'Invoice', entityId: 'INV-001' }, { entityType: 'SKU', entityId: 'LDM-002' }] }
 const resolve = (message, conversationContext = risk) => resolveAiSkillFollowUp({ message, route: routeSkill({ message }), conversationContext })
 
@@ -38,6 +35,13 @@ test('a short follow-up is read with the previous answer', () => {
   assert.equal(resolve('What about RFQs?'), null)
   assert.equal(routeSkill({ message: 'What about RFQs?' }).skillId, 'rfq_followups')
   assert.deepEqual(resolve('只看逾期的', { previousIntent: 'purchase_orders' }), { kind: 'overdue_only', message: 'Which purchase orders are overdue?' })
+  // After "why?" about one record, "the second one" still counts in the list
+  // the panel remembers.
+  const afterWhy = { previousIntent: 'today_priorities', previousEvidenceRefs: [{ entityType: 'PO', entityId: 'PO-020' }], previousListRefs: risk.previousEvidenceRefs }
+  assert.deepEqual(resolve('第二个呢？', afterWhy).focusTarget, { entityType: 'supplier_invoice', entityId: 'INV-001' })
+  assert.equal(resolve('第二个呢？', { ...afterWhy, previousListRefs: undefined }), null)
+  // Another order after a "why": still why, not the order's card.
+  assert.deepEqual(resolve('那 PO-012 呢？', afterWhy), { kind: 'about', message: 'Why does PO-012 need attention?', skillHint: 'today_priorities' })
 })
 
 test('only a short question no rule answers is a follow-up', () => {
@@ -86,6 +90,10 @@ test('follow-ups answer through the usual skills, in the language they are asked
   assert.equal(why.conclusion.title, `${top} 需要关注的原因`)
   assert.deepEqual(why.followUp, { kind: 'why' })
   assert.equal(audits.at(-1).metadata.followUp, 'why')
+  // Then "the second one" counts in the risk list, not in the one-record why.
+  const next = await ask({ message: '第二个呢？', answerLanguage: 'en-US', conversationContext: contextOf(why, first) })
+  assert.notEqual(next.intent, 'capability_overview')
+  assert.ok(next.keyEvidence.some((item) => item.entityId === first.keyEvidence[1].entityId), next.conclusion.title)
   // Another order for the same skill: its risk, not the page's or the list's.
   const other = await ask({ message: 'What about PO-008?', answerLanguage: 'en-US', conversationContext: contextOf(first) })
   assert.equal(other.intent, 'highest_risk_items')

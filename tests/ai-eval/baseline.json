@@ -1,6 +1,6 @@
 {
   "note": "Written by npm run test:ai:eval -- --update-baseline. Update it only when a change is meant to move a case.",
-  "commit": "131aa15",
+  "commit": "2304d98",
   "asOf": "2026-10-03",
   "mustPass": [
     "ctx-is-this-po-late",
@@ -198,7 +198,7 @@
     "ctx-today-on-po": "d51dc77080f3917769344980f8dc53e89fa6cf74eefe9ac2e9d49c5e1c508480",
     "ctx-today-on-po-zh": "37ce54fee4244983ccf914a937e3f772c1a9d7e7f7862962909a7cdd682fa3fc",
     "fu-about-po": "e4fa1b477611be5c2fb301ea8a577e7d31aa05d08ee90283e901eb045e49ffbe",
-    "fu-about-po-zh": "e82d00f0eb91e1650f45dd9bd892f05d4044203de387bf5f0b422491017af5cf",
+    "fu-about-po-zh": "50b0b942d037b15e5cea04c3f756dca9e5468b1fa954700984a957492aa940a8",
     "fu-overdue-only": "69917b66cd7e12696014afba725e735e044fd77d37305d420f301609c6875de8",
     "fu-second-overdue": "98d15b1cbe18e537d9026bdd0bcd4ecc8879e09623ac0244cea5752603c69f62",
     "fu-topic-invoices-zh": "9b52d275a3b8ecec5f39ff5df752cbf1fe857fe8e82168c27436dc181e7e96dd",
