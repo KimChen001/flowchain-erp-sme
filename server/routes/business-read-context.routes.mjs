@@ -1,4 +1,5 @@
 import { buildHomeOverview, createBusinessReadContextService } from '../services/business-read-context-service.mjs'
+import { readTenantTimezone } from '../domain/tenant-timezone.mjs'
 
 export async function handleBusinessReadContextRoute(ctx) {
   const { req, res, url, send, repositories, dataMode } = ctx
@@ -9,6 +10,6 @@ export async function handleBusinessReadContextRoute(ctx) {
   // does. Without it each repository applies its own fallback, and those
   // fallbacks disagree, so one response could mix two tenants.
   const context = await service.read({ tenantId: ctx.identity?.tenantId })
-  send(res, 200, url.pathname === '/api/home/overview' ? buildHomeOverview(context) : context)
+  send(res, 200, url.pathname === '/api/home/overview' ? buildHomeOverview(context, { timeZone: await readTenantTimezone(ctx) }) : context)
   return true
 }

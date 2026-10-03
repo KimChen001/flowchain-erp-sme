@@ -176,7 +176,8 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();
   const salesLine = page.getByRole("row").filter({ hasText: "LDM-001" });
   await expect(salesLine).toContainText("Flow Controller");
-  await expect(salesLine).toContainText("35.0000");
+  // Ordered quantity, shown without the stored fixed scale ("35.0000").
+  await expect(salesLine.getByRole("cell").nth(1)).toHaveText("35");
   await capture(page, "06-sales-order-detail");
 
   await page.goto("/app/sales/orders/new");
@@ -215,7 +216,10 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
 
   // Each posted walkthrough receipt has a receipt movement.
   await page.goto("/app/inventory/movements");
-  await expect(page.getByRole("row").filter({ hasText: "LDM-001" })).toContainText("20.0000");
+  // The movement names its receipt and shows the quantity without the stored scale.
+  const receipt = page.getByRole("row").filter({ hasText: "LDM-001" });
+  await expect(receipt).toContainText("LOCAL-DEMO-GRN-001");
+  await expect(receipt.getByRole("cell", { name: "20", exact: true })).toBeVisible();
   await expect(page.getByRole("row").filter({ hasText: "LDM-004" })).toHaveCount(4);
   await expect(page.getByText(/STATIC-|SKU-01100/)).toHaveCount(0);
 

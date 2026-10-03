@@ -137,6 +137,7 @@ export type PurchaseRequest = {
   unit: string;
   unitPrice: number;
   amount: number;
+  currency?: string;
   priority: Priority;
   status: PurchaseRequestStatus;
   reason: string;

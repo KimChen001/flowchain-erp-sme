@@ -20,12 +20,14 @@ Facts about Render in this document come from Render's documentation as read on
 2026-09-30. Anything marked **UNVERIFIED** was not confirmed there and should be
 checked the first time you do it.
 
-> **Sign-in warning. Read this before inviting anyone.** On `main` today,
-> sign-in asks only for a company, a name and an email address, and it lets in
-> anyone who types an email that has been provisioned. There is no password and
-> no emailed link yet. Email sign-in is being built on a separate branch. Until
-> it is merged and deployed, do not load real customer data and do not publish
-> the URL. Treat the service as a private staging system.
+> **How people sign in.** A user enters their email address and receives a
+> sign-in link. The link works once and expires after 15 minutes; a session then
+> lasts 8 hours and is stored in PostgreSQL. Only active users provisioned in
+> the workspace receive a link. The older form that signed in with an email
+> address alone exists only in local development; in production that route
+> answers 404. Because sign-in depends on email, neither service (staging or
+> production; both run the production profile) starts until a mail provider is
+> configured (see the table in step 2).
 
 ## 0. What you need
 
@@ -33,7 +35,8 @@ checked the first time you do it.
 - A payment card. Disks and pre-deploy migrations need paid plans, so neither service can use Render's free plan.
 - The tenant id you want for each environment: 3 to 64 lowercase letters, digits or hyphens, for example `flowchain-staging` and the customer's short name for production. It is not secret, but it cannot easily be changed later.
 - The first administrator's email address and name.
-- Optional for now: a Postmark or Resend account with a verified sender domain (needed once email sign-in lands) and an OpenAI API key.
+- A Postmark or Resend account with a verified sender domain. Sign-in links are sent through it, and neither service starts without it.
+- Optional: an OpenAI API key.
 
 ## 1. Create the Render account and connect GitHub
 
@@ -58,10 +61,10 @@ Enter these for both `flowchain-staging` and `flowchain-production`.
 | --- | --- | --- |
 | `FLOWCHAIN_DEFAULT_TENANT_ID` | No | The tenant id for this environment, for example `flowchain-staging`. Use the same value in step 4. |
 | `FLOWCHAIN_PUBLIC_BASE_URL` | No | The address users will open. Before the domain exists, use `https://flowchain-staging.onrender.com` or `https://flowchain-production.onrender.com`. Check the real address on the service page after the first deploy, because Render may add a suffix, and correct the value if it differs. |
-| `FLOWCHAIN_MAIL_PROVIDER` | No | `postmark` or `resend`. Leave empty until email sign-in is merged. |
-| `FLOWCHAIN_MAIL_FROM` | No | The sender address, for example `FlowChain <no-reply@getflowchain.com>`. Its domain must be verified with the mail provider. Leave empty for now if you have none. |
-| `POSTMARK_SERVER_TOKEN` | **Yes** | Your Postmark server API token, if you use Postmark. Otherwise leave it empty. |
-| `RESEND_API_KEY` | **Yes** | Your Resend API key, if you use Resend. Otherwise leave it empty. |
+| `FLOWCHAIN_MAIL_PROVIDER` | No | `postmark` or `resend`. Required: the service does not start without it. |
+| `FLOWCHAIN_MAIL_FROM` | No | The sender address, for example `FlowChain <no-reply@getflowchain.com>`. Its domain must be verified with the mail provider. Required. |
+| `POSTMARK_SERVER_TOKEN` | **Yes** | Your Postmark server API token. Required if the provider is `postmark`; otherwise leave it empty. |
+| `RESEND_API_KEY` | **Yes** | Your Resend API key. Required if the provider is `resend`; otherwise leave it empty. |
 | `OPENAI_API_KEY` | **Yes** | Your OpenAI API key, or leave it empty to keep the AI assistant off. |
 
 **UNVERIFIED:** whether Render's Blueprint form accepts an empty value. If it
@@ -124,20 +127,18 @@ Replace the address with your service's address.
 
 1. **Health**: open `https://flowchain-staging.onrender.com/api/health`. You should see `"live": true` and a `commitSha` that matches the latest commit on GitHub.
 2. **Ready**: open `https://flowchain-staging.onrender.com/api/ready`. You should see `"ready": true`, with `configuration`, `database`, `tenant` and `attachmentStorage` all `"ready"`. See [Troubleshooting](#troubleshooting) if any of them is `not_ready`.
-3. **Sign in**: open `https://flowchain-staging.onrender.com`. Enter the company name, the administrator's name and the administrator's email from step 4. The workspace should open in English.
+3. **Sign in**: open `https://flowchain-staging.onrender.com` and enter the administrator's email from step 4. Open the link in the email that arrives (check the mail provider's activity log if none does), then click the **Sign in to …** button (it names the workspace) on the page it opens: opening the link alone signs nobody in. The workspace should open in English.
 4. **One procurement read**: open **Purchasing** and the purchase order list. A new workspace shows an empty list without an error.
 
-From a terminal, steps 3 and 4 look like this (macOS, Linux, or Windows 10+ with `curl.exe`):
+From a terminal you can request the link for step 3 (macOS, Linux, or Git Bash or WSL on Windows; the quoting below does not work in PowerShell or cmd). The answer is the same `202` whether or not the address is provisioned, so confirm delivery in the mailbox or the provider's log:
 
 ```sh
 BASE=https://flowchain-staging.onrender.com
-TOKEN=$(curl -fsS -X POST "$BASE/api/auth/login" -H 'content-type: application/json' \
-  -d '{"company":"Harbor Supply Co.","name":"Pat Lee","email":"owner@example.com"}' \
-  | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8")).token')
-curl -fsS "$BASE/api/procurement/orders" -H "authorization: Bearer $TOKEN"
+curl -fsS -X POST "$BASE/api/auth/email-link" -H 'content-type: application/json' \
+  -d '{"email":"owner@example.com"}'
 ```
 
-Sessions are held in the server's memory, so every deploy or restart signs everyone out.
+Sessions are stored in PostgreSQL, so a deploy or restart does not sign anyone out.
 
 Repeat steps 4 and 5 for `flowchain-production`.
 
@@ -261,6 +262,4 @@ page mentions 1 GB included.
 
 Other known gaps (see `deploy/README.md` and the release notes):
 
-- Sign-in is not yet secure enough for real customer data (see the warning at the top).
 - The AI assistant's older request path sends OpenAI calls through a local proxy address when no proxy is configured. AI configuration is being consolidated separately. Until then, leave `OPENAI_API_KEY` empty in production.
-- Sessions do not survive a deploy or restart.

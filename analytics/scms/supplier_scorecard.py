@@ -188,8 +188,23 @@ def main() -> int:
         f"{', '.join(f'{v:.0f}' for v in local['median_lead_actual_days'])} days, consistent with a local distributor rather than an international supplier."
         if len(local) else ""
     )
-    # Do top/bottom intervals overlap?
-    separated = top["on_time_ci_low"].min() > bottom["on_time_ci_high"].max()
+    # Which top/bottom intervals overlap? Check every (top, bottom) pair rather than the groups as a whole.
+    pairs = [(t, b) for t in top.index for b in bottom.index
+             if top.loc[t, "on_time_ci_low"] <= bottom.loc[b, "on_time_ci_high"]]
+    clear_top = [t for t in top.index if all(p[0] != t for p in pairs)]
+    if not pairs:
+        overlap_note = "No top-three interval overlaps any bottom-three interval."
+    else:
+        overlap_note = (
+            f"Of the {len(top) * len(bottom)} top-three × bottom-three pairs of 95% intervals, {len(pairs)} overlap"
+            + ("s" if len(pairs) == 1 else "") + ": "
+            + "; ".join(f"{t} (lower bound {pct(top.loc[t, 'on_time_ci_low'])}) with {b} (upper bound "
+                        f"{pct(bottom.loc[b, 'on_time_ci_high'])})" for t, b in pairs)
+            + ". "
+            + (" and ".join(f"{t} (lower bound {pct(top.loc[t, 'on_time_ci_low'])})" for t in clear_top)
+               + (" lies" if len(clear_top) == 1 else " lie") + " above every bottom-three upper bound ("
+               + ", ".join(pct(v) for v in bottom["on_time_ci_high"]) + ")." if clear_top else "")
+        )
 
     def names(frame):
         return "; ".join(
@@ -249,7 +264,7 @@ Sensitivity of the overall on-time rate to the grace period:
 
 - **Highest on-time** (≥{MIN_SHIPMENTS} shipments): {names(top)}.
 - **Lowest on-time**: {names(bottom)}.
-- The top three and bottom three 95% intervals {'do not overlap' if separated else 'overlap'}.
+- {overlap_note}
 - The top three delivered on exactly the scheduled day in
   {', '.join(pct(v) for v in top['exact_on_schedule_rate'])} of shipments. That
   is the pattern `data-quality.md` §3.4 flags, so their perfect scores more

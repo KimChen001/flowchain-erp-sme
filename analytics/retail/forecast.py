@@ -732,7 +732,7 @@ def write_report(paths, sel, skus, weeks, ext, test_all, test_abc, test_seg, tes
     a(f"- **Are the complex models worth it?** Per-SKU ETS ({ets_d.dWAPE_vs_ref:+.1%} WAPE vs the 4-week mean, CI "
       f"[{ets_d.dWAPE_lo:+.1%}, {ets_d.dWAPE_hi:+.1%}]) and ARIMA ({ar_d.dWAPE_vs_ref:+.1%}, CI "
       f"[{ar_d.dWAPE_lo:+.1%}, {ar_d.dWAPE_hi:+.1%}]) are not; on this data they reduce to a smoothed level. "
-      + (f"The global GBM is worth it, but the gain is modest: {-w.dWAPE_vs_ref:.1%} points of WAPE, with a paired "
+      + (f"The global GBM is worth it, but the gain is modest: {-w.dWAPE_vs_ref * 100:.1f} percentage points of WAPE, with a paired "
          "CI that excludes zero, and it holds up across the rolling origins. Its residual quantiles also give "
          "the lowest P90 pinball loss." if (winner == "gbm" and sig) else
          "No model gives a clear gain over the 4-week mean.")
@@ -749,6 +749,29 @@ def write_report(paths, sel, skus, weeks, ext, test_all, test_abc, test_seg, tes
       f"figure is the more relevant one. The winner's MASE is {w.MASE:.2f}"
       + (": below 1, so even 1 to 13 weeks ahead it beats an in-sample one-step naive forecast." if w.MASE < 1
          else ": not below 1, so it does not beat an in-sample one-step naive forecast."))
+    beat_total = agg[agg.panel_total_WAPE < agg.loc[winner, "panel_total_WAPE"]].sort_values("panel_total_WAPE")
+    best_4wk = agg.sku_4wk_WAPE.idxmin()
+    a(f"- **Aggregate vs SKU-level accuracy.** On SKU × 4-week totals the best model is {LABELS[best_4wk]} "
+      f"({agg.loc[best_4wk, 'sku_4wk_WAPE']:.1%}). On the weekly panel total, "
+      + ("the ranking changes: " + ", ".join(f"{LABELS[m]} ({r.panel_total_WAPE:.1%})" for m, r in beat_total.iterrows())
+         + f" beat {LABELS[winner]} ({agg.loc[winner, 'panel_total_WAPE']:.1%}). "
+         if len(beat_total) else f"{LABELS[winner]} is also best ({agg.loc[winner, 'panel_total_WAPE']:.1%}). ")
+      + "Summed over all panel SKUs, errors in opposite directions cancel, so the panel-total WAPE is close to the "
+      "size of the overall bias ("
+      + "; ".join(f"{LABELS[m]}: bias {t.loc[m, 'Bias']:+.1%}, total WAPE {agg.loc[m, 'panel_total_WAPE']:.1%}"
+                  for m in list(beat_total.index) + [winner])
+      + "). The total rewards the smallest overall under-forecast of the ramp, not getting each SKU right. The "
+      "replenishment decision is made per SKU, so SKU-level accuracy (and SKU × 4-week accuracy) is the criterion "
+      "used here. For a total-level figure, such as a working-capital plan, the sum of the per-SKU "
+      + (" or ".join(LABELS[m] for m in beat_total.index) if len(beat_total) else LABELS[winner])
+      + " forecasts was the better estimate of the total in this test.")
+    a("")
+    a("| Model | SKU-week WAPE | SKU × 4-week WAPE | weekly panel-total WAPE | bias |")
+    a("|---|---|---|---|---|")
+    for m in agg.sort_values("sku_4wk_WAPE").index:
+        a(f"| {LABELS[m]} | {t.loc[m, 'WAPE']:.1%} | {agg.loc[m, 'sku_4wk_WAPE']:.1%} | "
+          f"{agg.loc[m, 'panel_total_WAPE']:.1%} | {t.loc[m, 'Bias']:+.1%} |")
+    a("")
     lvl = t.loc[["naive", "ma4", "sba", "ets", "arima", "gbm"], "Bias"]
     a(f"- **Every model that follows the recent level under-forecasts** (bias {lvl.max():+.0%} to "
       f"{lvl.min():+.0%}). The test is the autumn ramp: mean weekly panel demand in the test was "
@@ -777,7 +800,7 @@ def write_report(paths, sel, skus, weeks, ext, test_all, test_abc, test_seg, tes
     a("")
     a(f"- Use **{LABELS[winner]}** for point forecasts and **{pretty_method(best_q_method)}** for P50/P90, trained on "
       f"{chosen} history. Keep the 4-week moving average as the benchmark and fallback: it is within "
-      f"{t.loc['ma4'].WAPE - w.WAPE:.1%} WAPE of the winner and trivially robust.")
+      f"{(t.loc['ma4'].WAPE - w.WAPE) * 100:.1f} percentage points of WAPE of the winner and trivially robust.")
     a("- Treat the P90 as optimistic (see the coverage above). The decision model should widen it, or simulate "
       "lead-time demand, until the data holds more seasons.")
     a("- Future work: (1) re-estimate once a second autumn is in the training data, so the seasonal amplitude can be "

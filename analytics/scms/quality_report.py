@@ -124,8 +124,13 @@ HANDLING = {
 }
 
 
-def missing_table(raw: pd.DataFrame) -> pd.DataFrame:
-    """Blanks and non-value text per raw column, split by fulfilment channel."""
+def missing_table(raw: pd.DataFrame, clean: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Blanks and non-value text per raw column, split by fulfilment channel.
+
+    Counts are of the text in each row's own raw cell, before "See ... (ID#:n)" references are resolved. For weight
+    and freight the detail also gives the count after resolving references (from ``clean``), which is what the
+    cleaning log reports: a referencing row takes the status of the row it points to.
+    """
     rows = []
     dd = raw["fulfill via"].eq("Direct Drop")
     for column in raw.columns:
@@ -137,8 +142,17 @@ def missing_table(raw: pd.DataFrame) -> pd.DataFrame:
             numeric = pd.to_numeric(s, errors="coerce").notna()
             reference = s.str.startswith("See ")
             text_values = ~numeric & ~reference & ~blank
+            flags = {"Weight Captured Separately": "weight_captured_separately",
+                     "Freight Included in Commodity Cost": "freight_included",
+                     "Invoiced Separately": "freight_invoiced_separately"}
+
+            def after(k):
+                if clean is None or k not in flags:
+                    return ""
+                return f" in the cell, {int(clean[flags[k]].astype(bool).sum()):,} after resolving references"
+
             detail = f"{int(reference.sum()):,} references resolved; " + ", ".join(
-                f"'{k}': {v:,}" for k, v in s[text_values].value_counts().items()
+                f"'{k}': {v:,}{after(k)}" for k, v in s[text_values].value_counts().items()
             )
         elif column in ("po sent to vendor date", "pq first sent to client date", "vendor inco term", "pq #"):
             text_values = s.isin(["N/A - From RDC", "Date Not Captured", "Pre-PQ Process"])
@@ -478,7 +492,15 @@ def main() -> int:
     log = pd.read_csv(paths.outputs_dir / "cleaning-log.csv")
 
     features = feature_table(raw_original)
-    missing = missing_table(raw_original)
+    missing = missing_table(raw_original, clean)
+    after_parts = []
+    for col, text, flag in (("weight (kilograms)", "Weight Captured Separately", "weight_captured_separately"),
+                            ("freight cost (usd)", "Freight Included in Commodity Cost", "freight_included"),
+                            ("freight cost (usd)", "Invoiced Separately", "freight_invoiced_separately")):
+        in_cell = int(raw_original[col].astype(str).str.strip().eq(text).sum())
+        resolved = int(clean[flag].astype(bool).sum())
+        after_parts.append(f"'{text}' {in_cell:,} in the cell + {resolved - in_cell:,} by reference = {resolved:,}")
+    sentinel_after = "; ".join(after_parts)
 
     # Data points ----------------------------------------------------------------
     freight_usable = dd[dd["freight_share_of_value"].notna()]
@@ -596,6 +618,12 @@ complete.
 ![Missing by column]({'figures/' + fig_missing})
 
 {md_table(missing)}
+
+The blank and sentinel counts above are of the text in each row's own cell,
+before references are resolved. The cleaning log (section 3.2 and
+`cleaning-log.md`) counts the same sentinels after resolving references: a row
+whose "See ... (ID#:n)" reference points to a sentinel row takes that status
+too. That is why its counts are larger ({sentinel_after}).
 
 The metadata confirms that weight and freight are shipment-level: they
 cover "all lines on an ASN DN". `first line designation` marks the line that

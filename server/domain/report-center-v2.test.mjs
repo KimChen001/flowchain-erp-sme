@@ -14,7 +14,9 @@ const manager = { id: 'manager-1', name: '经理', role: 'manager' }
 
 test('governed catalog exposes controlled subjects fields and metrics', () => {
   const catalog = getReportCatalog()
-  for (const subject of ['purchase_orders', 'purchase_requests', 'rfqs', 'receiving', 'supplier_invoices', 'three_way_matches', 'reconciliation', 'settlement', 'sales_orders', 'deliveries', 'receipts', 'inventory_balances', 'inventory_movements', 'suppliers']) assert.ok(catalog.subjects.some((item) => item.id === subject), subject)
+  for (const subject of ['purchase_orders', 'purchase_requests', 'rfqs', 'receiving', 'supplier_invoices', 'three_way_matches', 'sales_orders', 'deliveries', 'receipts', 'inventory_balances', 'inventory_movements', 'suppliers']) assert.ok(catalog.subjects.some((item) => item.id === subject), subject)
+  // Frozen settlement and reconciliation subjects are not offered.
+  for (const subject of ['reconciliation', 'settlement']) assert.ok(!catalog.subjects.some((item) => item.id === subject), subject)
   assert.ok(catalog.fields.purchase_orders.every((field) => field.enabledForReporting && field.exportable))
   assert.ok(reportMetricCatalog.every((metric) => metric.version && metric.drilldownPath && metric.applicableFilters.length))
 })

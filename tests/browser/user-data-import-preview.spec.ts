@@ -32,25 +32,30 @@ function importPayload() {
   };
 }
 
-async function healthCounts(request: APIRequestContext) {
-  const response = await request.get("/api/health");
+// The manager seeded by scripts/browser-product-recovery-api.mjs.
+async function authHeaders(request: APIRequestContext) {
+  const login = await request.post("/api/auth/login", { data: { email: "kim@example.com", name: "Kim", company: "FlowChain" } });
+  expect(login.ok()).toBeTruthy();
+  return { authorization: `Bearer ${(await login.json()).token}` };
+}
+
+async function purchaseOrderCount(request: APIRequestContext, headers: Record<string, string>) {
+  const response = await request.get("/api/procurement/orders", { headers });
   expect(response.ok()).toBeTruthy();
-  const payload = await response.json();
-  return {
-    dataMode: payload.diagnostics.dataMode,
-    purchaseOrders: payload.purchaseOrders,
-    receivingDocs: payload.receivingDocs,
-  };
+  return ((await response.json()) as unknown[]).length;
 }
 
 test("R169 user data import preview API stays compact and non-mutating", async ({ request }) => {
-  const before = await healthCounts(request);
-  const response = await request.post("/api/user-data/import/preview", { data: importPayload() });
+  const headers = await authHeaders(request);
+  expect((await request.post("/api/user-data/import/preview", { data: importPayload() })).status()).toBe(401);
+  const before = await purchaseOrderCount(request, headers);
+  const response = await request.post("/api/user-data/import/preview", { headers, data: importPayload() });
   expect(response.status()).toBe(200);
   const payload = await response.json();
-  const after = await healthCounts(request);
+  expect(await purchaseOrderCount(request, headers)).toBe(before);
+  const search = await (await request.get("/api/search?q=PO-IMPORT-BROWSER-0001", { headers })).json();
+  expect(search.total).toBe(0);
 
-  expect(after).toEqual(before);
   expect(payload.ok).toBe(true);
   expect(payload.dryRun).toBe(true);
   expect(payload.writesFiles).toBe(false);

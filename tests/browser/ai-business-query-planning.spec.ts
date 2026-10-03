@@ -37,7 +37,7 @@ async function expectNoInternalLeakage(assistant: Locator) {
 test.describe('Phase 5.4A business query planning', () => {
   test('global supplier payment query renders authorized database facts', async ({ page }) => {
     await openApp(page)
-    const assistant = await ask(page, '有哪些供应商需要付款？')
+    const assistant = await ask(page, 'Which suppliers need payment?')
     await expect(assistant.getByTestId('ai-business-query-presentation')).toBeVisible()
     await expect(assistant.getByTestId('ai-business-query-scope')).toHaveText('All suppliers')
     await expect(assistant).toContainText('Payments due')
@@ -48,7 +48,7 @@ test.describe('Phase 5.4A business query planning', () => {
 
   test('multi-goal question renders stable payment, invoice, and overdue PO sections', async ({ page }) => {
     await openApp(page)
-    const assistant = await ask(page, '帮我同时看看供应商付款、延期 PO 和发票差异。')
+    const assistant = await ask(page, 'Check supplier payments, overdue POs and invoice variances together.')
     await expect(assistant.getByTestId('ai-business-query-scope')).toHaveText('All suppliers')
     for (const label of ['Payments due', 'Payment readiness', 'Invoice exceptions', 'Overdue POs']) await expect(assistant).toContainText(label)
     await expect(assistant.getByTestId('ai-business-query-section')).toHaveCount(4)
@@ -57,8 +57,8 @@ test.describe('Phase 5.4A business query planning', () => {
 
   test('unknown supplier produces clarification and executes no result section', async ({ page }) => {
     await openApp(page)
-    const assistant = await ask(page, '为什么 Supplier Missing 暂时不能付款？')
-    await expect(assistant.getByTestId('ai-business-query-clarification')).toContainText(/Which suppliers should I check/)
+    const assistant = await ask(page, "Why can't we pay Supplier Missing?")
+    await expect(assistant.getByTestId('ai-business-query-clarification')).toContainText("I couldn't find Supplier Missing")
     await expect(assistant.getByTestId('ai-business-query-section')).toHaveCount(0)
     await expectNoInternalLeakage(assistant)
   })
@@ -74,6 +74,16 @@ test.describe('Phase 5.4A business query planning', () => {
       expect(overflow.body).toBeLessThanOrEqual(1)
     })
   }
+
+  test('the answer follows the language of the question, not the interface', async ({ page }) => {
+    await openApp(page)
+    const chinese = await ask(page, '有哪些供应商需要付款？')
+    await expect(chinese.getByTestId('ai-business-query-scope')).toHaveText('全部供应商')
+    await expect(chinese).toContainText('需要付款')
+    const clarification = await ask(page, '为什么 Supplier Missing 暂时不能付款？')
+    await expect(clarification.getByTestId('ai-business-query-clarification')).toContainText('未找到 Supplier Missing')
+    await expectNoInternalLeakage(clarification)
+  })
 
   test('Chinese preference changes query results while retaining English as workspace default', async ({ page }) => {
     await openApp(page, 'zh-CN')

@@ -1,4 +1,5 @@
 import { AI_SKILL_DRAFT_TYPES } from './ai-skill-prepare-action-draft.mjs'
+import { aiAnswerClaimsAction } from './ai-answer-claims.mjs'
 
 // Checks a skill answer before it leaves the server:
 //   - every evidence, link and review card id is a record the readers returned;
@@ -13,11 +14,6 @@ import { AI_SKILL_DRAFT_TYPES } from './ai-skill-prepare-action-draft.mjs'
 // treat Chinese labels as identifiers.
 
 const CJK = /[㐀-鿿豈-﫿]/u
-const CLAIMS = [
-  /\b(I|we)\s+(have\s+|had\s+|just\s+)?(sent|emailed|approved|paid|issued|placed|posted|cancelled|canceled|deleted)\b/i,
-  /\b(was|were|has been|have been)\s+(sent|emailed|approved|paid|issued|placed)\b/i,
-  /已发送|已批准|已付款|已下单|已下达|已过账/,
-]
 const array = (value) => Array.isArray(value) ? value : []
 const text = (value) => value === null || value === undefined ? '' : String(value)
 
@@ -30,7 +26,9 @@ export function aiSkillKnownValues(facts) {
   const keep = (...values) => { for (const value of values) if (text(value).trim()) stored.add(text(value).trim()) }
   if (!facts) return { ids, stored }
   for (const row of array(facts.purchaseOrders?.rows)) { add(row.id, row.orderNumber, row.supplierId); keep(row.supplier, row.orderNumber, row.sku, row.unit) }
-  for (const row of array(facts.inventory?.rows)) { add(row.itemId, row.sku, ...array(row.purchaseOrderIds)); keep(row.sku, row.itemName) }
+  for (const row of array(facts.purchaseOrders?.index)) { add(row.id, row.orderNumber, row.supplierId); keep(row.supplier, row.orderNumber, row.unit) }
+  for (const row of array(facts.suppliers)) { add(row.id, row.code); keep(row.name, row.code) }
+  for (const row of array(facts.inventory?.rows)) { add(row.itemId, row.sku, ...array(row.purchaseOrderIds)); keep(row.sku, row.itemName, row.unit) }
   for (const row of array(facts.invoices?.variances)) { add(row.id, row.invoiceNumber, row.supplierId, row.poId); keep(row.supplier, row.invoiceNumber) }
   for (const row of array(facts.purchaseRequests?.awaitingApproval)) { add(row.id); keep(row.sku, row.unit) }
   for (const row of array(facts.rfqs?.readyToAward)) { add(row.id); keep(row.title) }
@@ -75,12 +73,13 @@ export function validateAiSkillResponse(response, facts) {
   // Longest first, so a name containing a shorter stored value is removed whole.
   const allowlist = [...stored].sort((a, b) => b.length - a.length)
   for (const [path, value] of visibleTexts(response)) {
-    if (response.language !== 'zh-CN') {
-      const stripped = allowlist.reduce((output, entry) => output.split(entry).join(''), value)
-      if (CJK.test(stripped)) errors.push(`Chinese text in an English answer at ${path}`)
-    }
-    if (CLAIMS.some((pattern) => pattern.test(value))) errors.push(`claims an action was taken at ${path}`)
+    // Stored names and ids are removed first: a supplier called "We Paid
+    // Logistics" is a name, not a claim.
+    const stripped = allowlist.reduce((output, entry) => output.split(entry).join(''), value)
+    if (response.language !== 'zh-CN' && CJK.test(stripped)) errors.push(`Chinese text in an English answer at ${path}`)
+    if (aiAnswerClaimsAction(stripped)) errors.push(`claims an action was taken at ${path}`)
   }
+  for (const figure of array(response.figures)) if (figure.entityId && !known(figure.entityId)) errors.push(`figure id not read: ${figure.entityId}`)
   return { ok: errors.length === 0, errors }
 }
 

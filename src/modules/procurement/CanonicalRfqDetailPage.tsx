@@ -7,6 +7,7 @@ import { procurementApi } from "./procurementApi";
 import { RfqSupplierResponseDialog } from "./RfqSupplierResponseDialog";
 import { useI18n } from "../../i18n/I18n";
 import { formatLocaleAmount } from "../../lib/format";
+import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import type { ProcurementQuotationRevision, ProcurementRfqDocument, ProcurementRfqQuotation } from "./procurementTypes";
 
 type ReadState = "loading" | "loaded" | "notFound" | "unauthenticated" | "forbidden" | "error" | "network" | "malformed";
@@ -47,9 +48,23 @@ const RESPONSE_STATE_LABELS: Labels = {
   withdrawn: ["已撤回", "Withdrawn"],
 };
 
+// How a quotation revision was recorded, and how a related record relates to this RFQ.
+const REVISION_SOURCE_LABELS: Labels = {
+  internal_recording: ["内部录入", "Recorded internally"],
+  local_demo_scenario: ["演练场景", "Walkthrough scenario"],
+  local_walkthrough_scenario: ["演练场景", "Walkthrough scenario"],
+};
+
+const RELATION_LABELS: Labels = {
+  canonical_record: ["本 RFQ", "This RFQ"],
+  source_request: ["来源采购申请", "Source purchase request"],
+  linked_po: ["关联采购订单", "Linked purchase order"],
+  quotation: ["供应商报价", "Supplier quotation"],
+};
+
 const LIMITATION_ENGLISH: Record<string, string> = {
-  "RFQ Supplier Participation 仅表达内部采购参与事实；invited_internal 不证明邮件送达、Supplier Portal 身份或外部登录。": "RFQ Supplier Participation represents an internal procurement fact only. invited_internal does not prove email delivery, supplier portal identity, or external login.",
-  "报价 latest authority 仅由最大 revisionNumber 决定；模型不维护 isLatest 标志或 current revision 指针。": "The highest revisionNumber alone determines the authoritative quotation revision. The model does not maintain an isLatest flag or current-revision pointer.",
+  "RFQ Supplier Participation 仅表达内部采购参与事实；invited_internal 不证明邮件送达、Supplier Portal 身份或外部登录。": "Supplier participation is an internal purchasing record. An internal invitation does not prove email delivery, a supplier portal account, or an external sign-in.",
+  "报价 latest authority 仅由最大 revisionNumber 决定；模型不维护 isLatest 标志或 current revision 指针。": "The quotation revision with the highest revision number is the current one.",
   "Supplier Response 与 Append Revision HTTP 写入仅可通过内部授权命令内核；当前 RFQ 页面仍保持只读。": "Supplier response and append-revision writes use the authorized internal command kernel. The RFQ page itself remains read-only.",
 };
 
@@ -127,7 +142,7 @@ function RelatedEvidence({ record }: { record: ProcurementRfqDocument }) {
             <div key={`${item.type}:${item.id}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
               <div>
                 <span className="font-medium">{item.label}</span>
-                <span className="ml-2" style={{ color: A.sub }}>{item.relation}</span>
+                <span className="ml-2" style={{ color: A.sub }}>{RELATION_LABELS[item.relation]?.[language === "en-US" ? 1 : 0] || item.relation}</span>
               </div>
               {path ? <Link className="font-semibold text-blue-600" to={path}>{tr("打开记录", "Open record")}</Link> : <span style={{ color: A.sub }}>{tr("当前只提供 ID 证据", "ID evidence only")}</span>}
             </div>
@@ -149,7 +164,7 @@ function RevisionSummary({ revision, currency }: { revision: ProcurementQuotatio
         <span>{statusLabel(revision.status, QUOTATION_STATUS_LABELS, language)} · {money(revision.quotedAmount, revision.currency || currency, locale)}</span>
       </div>
       <div className="mt-1 text-[11px]" style={{ color: A.sub }}>
-        {date(revision.submittedAt || revision.createdAt)} · {revision.source || tr("未提供来源", "Source not provided")}
+        {date(revision.submittedAt || revision.createdAt)} · {revision.source ? REVISION_SOURCE_LABELS[revision.source]?.[language === "en-US" ? 1 : 0] || revision.source : tr("未提供来源", "Source not provided")}
       </div>
       {revision.lines.map((line) => (
         <div key={line.id} className="mt-1 text-[11px]" style={{ color: A.sub }} data-testid={`rfq-revision-line-${line.id}`}>
@@ -183,6 +198,7 @@ function QuotationRow({ quotation, currency }: { quotation: ProcurementRfqQuotat
 function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload, onSuccessReload }: { record: ProcurementRfqDocument; canCompare: boolean; canCreate: boolean; canRevise: boolean; notice: string | null; onReload: () => Promise<void>; onSuccessReload: () => Promise<void> }) {
   const { language, locale } = useI18n();
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
+  const warehouseName = useWarehouseNames();
   const [editor, setEditor] = useState<{ supplier: typeof record.suppliers.knownParticipants[number]; mode: "initial" | "append" } | null>(null);
   const quotationFor = (supplierId: string) => record.quotations.find((quotation) => quotation.supplierId === supplierId) || null;
   const responseWorkflowOpen = ["open", "collecting_quotes"].includes(record.status || "");
@@ -249,7 +265,7 @@ function LoadedRfq({ record, canCompare, canCreate, canRevise, notice, onReload,
               <td className="p-3">{line.unit || "—"}</td>
               <td className="p-3 tabular-nums">{money(line.targetUnitPrice, record.currency, locale)}</td>
               <td className="p-3">{line.requiredDate || "—"}</td>
-              <td className="p-3">{line.deliveryLocation || "—"}</td>
+              <td className="p-3">{warehouseName(line.deliveryLocation) || "—"}</td>
             </tr>)}</tbody>
           </table></div>
         )}

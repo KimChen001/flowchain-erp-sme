@@ -64,6 +64,11 @@ test('database receiving workbench query service is tenant-scoped, read-only, an
       assert.equal(evidence.events.some((event) => event.event === 'purchase_order_line_received_changed'), true)
       assert.equal(evidence.events.some((event) => event.event === 'purchase_order_fulfillment_changed' && event.data.before === 'not_received' && event.data.after === 'partially_received'), true)
       assert.equal(evidence.events.some((event) => event.type === 'limitation'), true)
+      // Labels name statuses and movement types in words, never the stored codes.
+      assert.equal(evidence.events.find((event) => event.event === 'purchase_order_fulfillment_changed').label, 'PO fulfillment Not received → Partially received')
+      // The net quantity is shown once, not scaled by the fixed-point factor (4 read as 40000).
+      assert.match(evidence.events.find((event) => event.event === 'inventory_movement_created').label, /^Receipt posting · .+ · 4\.0000$/)
+      assert.equal(evidence.events.some((event) => /[a-z]+_[a-z]+/.test(event.label)), false)
 
       const postedDetail = await service.getReceivingDetail({ receivingDocumentId: scenario.receivingDocumentId }, { identity: scenario.actor })
       assert.equal(postedDetail.lines[0].previouslyReceivedQuantity, '0.0000')
