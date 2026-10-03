@@ -3,12 +3,15 @@
 Status: design, 2026-10-03. On 2026-10-03 the owner approved decisions 1, 2, 3, 6 and 9
 in [§11](#11-decisions-for-the-owner) and asked for P1 to start. Decisions 4, 5, 7 and 8
 are open. Every other widening of what a model decides still needs an explicit yes first.
+P1 is in PR #111 (`claude/assistant-compound-answers`), where a follow-up read with the
+previous answer is answered as one question and never split.
 
-Builds on: main at `ff98025`; PR #105 (`claude/assistant-routing` at `1c2da08`, open),
-which adds model routing, the RFQ and receiving skills and Parley; step A (page context
-only when the question refers to it) and step B (follow-ups rewritten into standalone
-questions), which are in progress. Line numbers refer to those commits; files marked
-(#105) exist only on that branch.
+Written against main at `ff98025` and PR #105 (`claude/assistant-routing` at `1c2da08`),
+which adds model routing, the RFQ and receiving skills and Parley. #105 was merged on
+2026-10-03 together with step A (page context only when the question refers to it) and
+step B (follow-ups read with the previous answer, `server/domain/ai-skill-follow-up.mjs`).
+Line numbers refer to those two commits; files marked (#105) were then only on that
+branch.
 
 ## Summary
 
