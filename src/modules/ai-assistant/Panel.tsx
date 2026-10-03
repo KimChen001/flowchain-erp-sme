@@ -139,11 +139,11 @@ const CONTEXT_ENTITY_PHRASES: Record<string, { "en-US": string; "zh-CN": string 
   purchase_request: { "en-US": "this purchase request", "zh-CN": "这个采购申请" },
 };
 
-export function getAiInputPlaceholder(moduleId: string, activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
+// The same on every page; a record's page only offers the record as well.
+export function getAiInputPlaceholder(activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
   const zh = language === "zh-CN";
   const phrase = CONTEXT_ENTITY_PHRASES[activeContext?.entityType || ""]?.[language];
   if (phrase) return zh ? `问工作区的任何问题，或问${phrase}` : `Ask anything about your workspace, or about ${phrase}`;
-  if (moduleId === "overview") return zh ? "问我：今天先看什么？哪些风险最高？" : "Ask what to review today or which risks are highest";
   return zh ? "问工作区的任何问题" : "Ask anything about your workspace";
 }
 
@@ -660,7 +660,7 @@ export default function FloatingAiAssistant({
   const currentContext = pageContext && pageContextKey !== dismissedContextKey ? pageContext : null;
   const sessionGrounding = useMemo(() => buildSessionGrounding(messages, currentContext), [messages, currentContext]);
   const contextLabel = getAiContextLabel(currentContext, language);
-  const inputPlaceholder = getAiInputPlaceholder(moduleId, currentContext, language);
+  const inputPlaceholder = getAiInputPlaceholder(currentContext, language);
   // On a PO or SKU page: two questions about the record, then two about the
   // workspace, so the assistant never turns into a single-record bot.
   const workspacePrompts = AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => language === "zh-CN" ? item.zhPrompt : item.prompt);
