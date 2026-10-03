@@ -13,7 +13,7 @@ export function aiSkillQueryHash(message) {
   return createHash('sha256').update(String(message ?? '')).digest('hex').slice(0, 32)
 }
 
-export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal = false, intentShadow = null }) {
+export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal = false, intentShadow = null, intentRouting = null }) {
   const recordIds = [...new Set([...array(response.keyEvidence).map((item) => item.entityId), ...array(response.reviewCards).map((card) => card.targetEntityId)].filter(Boolean))].slice(0, 25)
   const rowCounts = facts ? {
     purchase_orders: facts.purchaseOrders ? facts.purchaseOrders.rows.length : null,
@@ -46,6 +46,7 @@ export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal
       reviewCardCount: array(response.reviewCards).length,
       latencyMs,
       ...(intentShadow ? { intentShadow } : {}),
+      ...(intentRouting ? { intentRouting } : {}),
     },
   }
 }

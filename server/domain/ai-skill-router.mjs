@@ -139,6 +139,13 @@ const RFQ = [/\brfqs?\b|\brequests? for (?:a )?(?:quotes?|quotations?)\b|\bquot(
 // be received on PO-012?" is about the order. The Chinese reads 收货单 or a
 // receiving problem, never 收货 on its own ("PO-012 还剩多少没收货？").
 const RECEIVING = [/\b(?:receipts?|receiving|grns?|goods receipts?)\b/i, /收货单|入库单|收货记录|拒收|未过账|没过账|收货[^，。？！]{0,4}(?:异常|问题)/]
+// A greeting or a test message of a few words ("hello", "supplier test",
+// 测试一下) asks nothing a skill can answer. It gets the capability answer,
+// which names the topic, and is never sent to a model.
+const GREETING_OR_TEST = [/\b(?:hi|hello|hey|test|testing|ping)\b/i, /你好|您好|测试|在吗/]
+const isGreetingOrTest = (raw) => !/[?？]/.test(raw) && raw.split(/\s+/).filter(Boolean).length <= 3 && matches(GREETING_OR_TEST, raw)
+// Sales orders are not purchase orders; no skill answers for them yet.
+const SALES_ORDER = [/\b(?:sales|customer) orders?\b/i, /销售订单|客户订单/]
 const NOT_RECEIPT = [/\b(?:invoices?|payments?|payables?|sales orders?|rfqs?|quotes?|quotations?)\b/i, /发票|付款|应付|销售订单|询价|报价/]
 const AVAILABLE = [/\b(available|availability|promise|short)\b/i, /可用|可以承诺|能承诺/]
 const AVAILABLE_CONTEXT = [/\b(skus?|items?|units?|quantity|stock)\b/i, /库存|数量|物料/]
@@ -181,6 +188,20 @@ export function detectAiActionRequest(message) {
 // shortages narrows the records it answers with.
 function signalsOf(intent) {
   return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent), orders: matches(ORDER_NOUN, intent) }
+}
+
+// Skills a rule knows cannot answer this question, whichever skill is asked
+// for: purchase order skills for sales orders and for invoices or other
+// records that are late or waiting for approval, and the order and receipt
+// skills for deliveries that already arrived late, which no skill measures.
+// A model that routes an unmatched question may not pick them.
+function excludedSkills(intent) {
+  const excluded = new Set()
+  const add = (...ids) => ids.forEach((id) => excluded.add(id))
+  if (matches(SALES_ORDER, intent)) add('purchase_orders', 'pending_approvals', 'workspace_metrics')
+  if (matches(DELIVERED, intent)) add('purchase_orders', 'workspace_metrics', 'receiving_issues')
+  if (matches(OTHER_RECORD, intent) && (matches(APPROVAL, intent) || matches(LATE, intent))) add('purchase_orders', 'pending_approvals')
+  return [...excluded]
 }
 
 // The intent rules over one reading of the question. null when none matches.
@@ -228,5 +249,5 @@ export function routeSkill({ message, skillHint, focusTarget } = {}) {
   if (route) return route
   // No rule matched. The entity step may still find a record the question
   // names (a supplier, a SKU, an order) once it has read the data.
-  return { skillId: null, focus, ids, signals: signalsOf(plain) }
+  return { skillId: null, focus, ids, signals: signalsOf(plain), excluded: excludedSkills(plain), ...(isGreetingOrTest(raw) ? { greeting: true } : {}) }
 }

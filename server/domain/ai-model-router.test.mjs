@@ -83,10 +83,11 @@ test('R137 model policy taxonomy defines deterministic optional provider and fal
     assert.ok(AI_MODEL_POLICY_DEFINITIONS[policy], policy)
     assert.equal(AI_MODEL_POLICY_DEFINITIONS[policy].modelMayRun, false, policy)
   }
-  // Business query planning is the only opt-in model decision, and it is off by default.
+  // Business query planning and skill routing are the only opt-in model
+  // decisions, and both are off by default.
   const modelPolicies = Object.entries(AI_MODEL_POLICY_DEFINITIONS).filter(([, definition]) => definition.modelMayRun)
-  assert.deepEqual(modelPolicies.map(([policy]) => policy), ['business_query_planning'])
-  assert.equal(modelPolicies[0][1].enabledByDefault, false)
+  assert.deepEqual(modelPolicies.map(([policy]) => policy), ['business_query_planning', 'intent_routing'])
+  for (const [policy, definition] of modelPolicies) assert.equal(definition.enabledByDefault, false, policy)
 })
 
 test('R147 shadow decomposition defaults to no-op and cannot override deterministic subqueries', async () => {

@@ -58,7 +58,8 @@ which refuses any connection to a host other than this machine and reports it.
 Provider, mail and proxy settings are removed from the servers' environment. A
 blocked connection counts as a safety failure. The runner will not start if
 `.env`, `.env.local` or `.local` exists, because the server fills empty settings
-from those files.
+from those files. The one exception is `--provider-env` (see "Model routing"
+below), which lets the servers reach a single provider host.
 
 **Expected numbers are never hard-coded.** They are computed at run time from
 the same database, through:
@@ -205,6 +206,56 @@ An update prints the ids it adds to and removes from `mustPass`, and the
 
 To graduate a pending case, remove its `pending` field once it passes, then
 update the baseline.
+
+## Model routing
+
+`FLOWCHAIN_AI_INTENT_ROUTING=true` (policy `intent_routing`, off by default,
+opted into by the owner on 2026-10-02) lets a model pick the skill for a
+question that no rule and no named record routed. The rules always run first,
+so a question they answer never waits for a model. Refusals, questions about
+the outside world, record numbers the skills cannot look up, and greetings or
+test messages of a few words ("hello", "supplier test") never reach it. A skill
+a rule knows cannot answer the question (purchase order skills for sales
+orders or for invoices that are late or waiting for approval; order and receipt
+skills for deliveries that already arrived late) is refused even when the model
+picks it.
+The model sees the question and the ids and descriptions of the actor's skills,
+nothing from the workspace, and may only return one of them. The skill then
+runs on the actor's facts exactly as if a rule had chosen it. The capability
+answer stays when the call takes longer than
+`FLOWCHAIN_AI_INTENT_ROUTING_TIMEOUT_MS` (2000 by default, 5000 at most), fails,
+returns something else, is less than 0.6 sure, or picks `capability_overview`.
+A routed answer carries `skillRouting: { source: 'model' }`, and every call is
+recorded as `intentRouting` in the answer's audit row.
+
+To score it, give the runner the provider settings:
+
+```
+npm run test:ai:eval -- --provider-env=<path to an env file with FLOWCHAIN_AI_PROVIDER_*>
+```
+
+Only `FLOWCHAIN_AI_PROVIDER_*` and `FLOWCHAIN_AI_RUNTIME_MODE` are read from the
+file, and their values are never printed. The servers may reach that file's
+provider host and no other; every other outside connection is still blocked and
+fails the run. The gate is the same baseline, so routing may not break a case
+that passes offline, and such a run never updates the baseline. The printout
+adds how often the model was asked, what came of it, and its call latency.
+
+The `paraphrase` cases are questions the rules miss on purpose ("What's on my
+plate?", 哪些单子还在等老板签字？). They are pending: offline they get the
+capability answer, and with `--provider-env` they show what routing adds. The
+`unknown` cases (forecasts, profit, customers, "supplier test") must get the
+capability answer in both runs.
+
+Measured on 2026-10-03 with MIT Parley (`claude-haiku-4-5`), 164 cases:
+
+| Run | Gated cases | Paraphrases | Model asked | Model call p50 / p95 / max | Answer p50 / p95 |
+| --- | --- | --- | --- | --- | --- |
+| Offline | 151/151 | 0/13 | 0 | - | 17 / 45 ms |
+| `--provider-env` | 151/151 | 13/13 | 28: routed 15, declined 13 (no skill 12, excluded by a rule 1), degraded 0 | 753 / 874 / 889 ms | 27 / 795 ms |
+
+Both runs: no safety failures, no blocked connections, no Chinese in English
+answers, and no regression against the baseline.
 
 ## Current scores
 

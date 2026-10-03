@@ -83,7 +83,7 @@ const entries = {
   'skill.workspace_metrics.title': ['Open purchase orders and spend', '未结采购订单与金额'],
   'skill.workspace_metrics.description': ['Reports open and overdue purchase orders, committed spend and short SKUs, as the reports count them.', '按报表口径汇总未结和逾期采购订单、已承诺金额和缺货 SKU。'],
   'skill.purchase_orders.title': ['Purchase orders', '采购订单'],
-  'skill.purchase_orders.description': ["Looks up a purchase order, a supplier's orders or the overdue orders, with the open purchase orders report's figures.", '按未结采购订单报表口径，查询一张采购订单、某个供应商的订单或逾期订单。'],
+  'skill.purchase_orders.description': ["Looks up a purchase order, a supplier's orders or the purchase orders overdue now, with the open purchase orders report's figures. Not sales orders, and not deliveries that already arrived late.", '按未结采购订单报表口径，查询一张采购订单、某个供应商的订单或当前逾期的采购订单。不含销售订单，也不含已经迟到的到货。'],
   'skill.pending_approvals.title': ['Waiting for approval', '待审批'],
   'skill.pending_approvals.description': ['Lists the purchase orders and purchase requests waiting for approval.', '列出待审批的采购订单和采购申请。'],
   'skill.inventory_availability.title': ['Stock and availability', '库存与可用量'],
