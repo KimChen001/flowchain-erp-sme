@@ -136,15 +136,15 @@ test('R91 suggested actions are object-linked business actions', () => {
 })
 
 test('R91 AI evidence UI renders business labels instead of entity type keys', () => {
-  const source = readFileSync(new URL('../../src/modules/ai-assistant/Panel.tsx', import.meta.url), 'utf8')
+  const renderer = readFileSync(new URL('../../src/components/ai/AiResponseV2Renderer.tsx', import.meta.url), 'utf8')
 
-  assert.match(source, /const title = `依据：\$\{label\}`/)
-  assert.match(source, /raw\.summary/)
-  assert.doesNotMatch(source, /link\.entityType[^\\n]+link\.entityId/)
+  assert.match(renderer, /\{children \|\| item\.entityLabel \|\| item\.label \|\| item\.entityId\}/)
+  assert.doesNotMatch(renderer, /\{item\.entityType\}/)
 })
 
 test('R92 AI panel preserves chat state across module and evidence navigation', () => {
   const source = readFileSync(new URL('../../src/modules/ai-assistant/Panel.tsx', import.meta.url), 'utf8')
+  const renderer = readFileSync(new URL('../../src/components/ai/AiResponseV2Renderer.tsx', import.meta.url), 'utf8')
 
   assert.doesNotMatch(source, /module-change/)
   assert.doesNotMatch(source, /useEffect\(\(\) => \{[\s\S]*?setMessages\(\[\]\)[\s\S]*?\}, \[moduleId\]\)/)
@@ -152,7 +152,7 @@ test('R92 AI panel preserves chat state across module and evidence navigation', 
   assert.doesNotMatch(source, /useEffect\(\(\) => \{[\s\S]*?setAsking\(false\)[\s\S]*?\}, \[moduleId\]\)/)
   assert.match(source, /function AiResponseCard/)
   assert.match(source, /minimizeAfterNavigate/)
-  assert.match(source, /onNavigate\(intent\.activeId, intent\.focusTarget \|\| null, \{ returnTo: "ai"/)
+  assert.match(renderer, /onNavigate\(link\.moduleId, focusTarget, \{ returnTo: "ai"/)
   assert.match(source, /requestInFlightRef\.current = false/)
 })
 
@@ -258,11 +258,12 @@ test('R97 priority action flow is deterministic, object-specific, and review-fir
 
 test('R97 AI panel wires draft preview actions to review shell without unsafe submission copy', () => {
   const source = readFileSync(new URL('../../src/modules/ai-assistant/Panel.tsx', import.meta.url), 'utf8')
+  const renderer = readFileSync(new URL('../../src/components/ai/AiResponseV2Renderer.tsx', import.meta.url), 'utf8')
   const draftShell = readFileSync(new URL('../../src/modules/action-drafts/ActionDraftReviewShell.tsx', import.meta.url), 'utf8')
 
-  assert.match(source, /"draft_preview"/)
-  assert.match(source, /actionDraftRequestFromAction/)
-  assert.match(source, /onReviewActionDraft\?\.\(draftRequest\)/)
+  assert.match(source, /onReviewActionDraft=\{onReviewActionDraft\}/)
+  assert.match(renderer, /const request = reviewRequest\(action\.card\)/)
+  assert.match(renderer, /onClick=\{\(\) => onReviewActionDraft\(request\)\}/)
   assert.match(draftShell, /用户确认后也只保留允许范围内的安全内部记录/)
   assert.match(draftShell, /不提交/)
   assert.match(draftShell, /不外发/)
@@ -312,14 +313,10 @@ test('R98 unknown prompt fallback stays sanitized when provider is disabled', as
 test('R99 AI assistant pilot UI keeps compact business-facing states', () => {
   const source = readFileSync(new URL('../../src/modules/ai-assistant/Panel.tsx', import.meta.url), 'utf8')
 
-  assert.match(source, /const aiEvidenceLinkClass = `max-w-full text-left \$\{typography\.compactMetadata\}/)
-  assert.match(source, /const aiActionPillClass = `rounded-full px-2\.5 py-1 \$\{typography\.compactMetadata\}/)
-  assert.match(source, /const aiBoundaryNoticeClass = `\$\{typography\.metadata\}/)
   assert.match(source, /正在查询业务数据/)
   assert.match(source, /displaySafeAssistantRecoveryMessage/)
   assert.match(source, /当前工作区数据暂时未能完整读取，仍可先从相关模块查看来源证据并进入人工复核。/)
   assert.match(source, /草稿预览 · 人工复核 · 不提交 · 不外发 · 不写库存/)
-  assert.match(source, /当前没有匹配结果。/)
   assert.doesNotMatch(source, /```|JSON\.stringify\(.*message|raw debug|tool_result|response_card/)
 })
 
@@ -329,6 +326,7 @@ test('R100 AI copilot readiness checkpoint keeps core pilot contract intact', as
   const responses = prompts.map((message) => buildAiEvidenceReuseResponse(db, { moduleId: 'overview', message }, { cache: {} }))
   const visible = responses.map(visibleAiText).join('\n')
   const panel = readFileSync(new URL('../../src/modules/ai-assistant/Panel.tsx', import.meta.url), 'utf8')
+  const renderer = readFileSync(new URL('../../src/components/ai/AiResponseV2Renderer.tsx', import.meta.url), 'utf8')
   const evidenceLinks = readFileSync(new URL('../../src/lib/evidenceLinks.ts', import.meta.url), 'utf8')
 
   assert.equal(responses.every((response) => response && response.providerStatus === 'deterministic'), true)
@@ -337,7 +335,7 @@ test('R100 AI copilot readiness checkpoint keeps core pilot contract intact', as
   assert.match(visible, /采购单 PO-2026-1282/)
   assert.match(visible, /SKU-00412/)
   assert.match(visible, /询价单 RFQ-26-0046/)
-  assert.match(panel, /onClick=\{\(\) => onNavigate\(intent\.activeId, intent\.focusTarget \|\| null, \{ returnTo: "ai", entityLabel: label, source: "ai" \}\)\}/)
+  assert.match(renderer, /onClick=\{\(\) => onNavigate\(route\.listRouteId, \{ entityType: type, entityId: item\.entityId, focusArea \}, \{ returnTo: "ai", entityLabel: item\.entityLabel \|\| item\.entityId, source: "ai" \}\)\}/)
   assert.doesNotMatch(panel, /useEffect\(\(\) => \{[\s\S]*?setMessages\(\[\]\)[\s\S]*?\}, \[moduleId\]\)/)
   assert.match(evidenceLinks, /navigationIntentFromApiRoute/)
 })

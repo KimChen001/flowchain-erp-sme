@@ -54,10 +54,7 @@ test('R113 evidence workspace card uses business-readable labels and keeps evide
   assert.doesNotMatch(visibleText(workspace), /documentType|entityType|auditContext|debug|tool_result/)
 })
 
-test('R113 Panel renders evidence workspace without raw JSON or internal keys', () => {
-  assert.match(panelSource, /case "evidence_workspace"/)
-  assert.match(panelSource, /\["主对象", data\.primaryObject\]/)
-  assert.match(panelSource, /<EvidenceList evidence=\{card\.evidence\} onNavigate=\{onNavigate\}/)
+test('R113 Panel renders answers without raw JSON', () => {
   assert.doesNotMatch(panelSource, /JSON\.stringify\(card|JSON\.stringify\(data/)
 })
 

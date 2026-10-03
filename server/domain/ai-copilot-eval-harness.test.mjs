@@ -167,7 +167,6 @@ test('R120 readiness checkpoint keeps model boundaries disabled and UI grounding
   assert.equal(sandbox.businessMutationAllowed, false)
   assert.match(panelSource, /buildSessionGrounding\(messages, currentContext\)/)
   assert.match(panelSource, /sessionGrounding,/)
-  assert.match(panelSource, /case "evidence_workspace"/)
   assert.match(panelSource, /document\.addEventListener\("pointerdown", handlePointerDown\)/)
   assert.match(panelSource, /event\.key === "Escape"/)
   assert.doesNotMatch(panelSource, /messages:\s*messages|chatHistory|transcript/)

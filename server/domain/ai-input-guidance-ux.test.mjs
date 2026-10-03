@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const panelSource = readFileSync(new URL('../../src/modules/ai-assistant/Panel.tsx', import.meta.url), 'utf8')
+const rendererSource = readFileSync(new URL('../../src/components/ai/AiResponseV2Renderer.tsx', import.meta.url), 'utf8')
 
 test('R134 AI assistant empty state exposes business prompt chips', () => {
   assert.match(panelSource, /AI_EMPTY_STATE_PROMPT_CHIPS/)
@@ -35,5 +36,5 @@ test('R136 follow-up chips are distinct from review-first recommended actions', 
   assert.match(panelSource, /Preview supplier reminder/)
   assert.match(panelSource, /rag\?\.mode === "no_results"/)
   assert.match(panelSource, /getAiFollowUpChips\(message, language\)/)
-  assert.match(panelSource, /ai-action-draft-preview/)
+  assert.match(rendererSource, /ai-action-draft-preview/)
 })
