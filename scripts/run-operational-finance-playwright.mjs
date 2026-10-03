@@ -23,6 +23,9 @@ function run(spec, extra = {}) {
 }
 const enabled = await run("tests/browser/operational-finance.spec.ts");
 if (enabled !== 0) process.exit(enabled);
+// The invoice screens, on a fresh seeded database of their own.
+const screens = await run("tests/browser/supplier-invoice-ui.spec.ts");
+if (screens !== 0) process.exit(screens);
 process.exit(
   await run("tests/browser/operational-finance-disabled.spec.ts", {
     PLAYWRIGHT_OPERATIONAL_FINANCE_DISABLED: "true",

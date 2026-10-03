@@ -1,3 +1,4 @@
+import { SUPPLIER_SENSITIVE_FIELDS } from './master-data-read-access.mjs'
 import { buildTodayCockpit } from './today-cockpit-read-model.mjs'
 import { buildUserDataScope } from './user-data-contract.mjs'
 
@@ -31,7 +32,14 @@ async function readMasterData(repository, scope) {
     repository.listItems(scope),
     repository.listSuppliers(scope),
   ])
-  return { items, suppliers }
+  // The assistant never needs a supplier's registration, tax or bank details.
+  const withoutBankDetails = (supplier) => Object.fromEntries(Object.entries(supplier || {}).filter(([key]) => !SUPPLIER_SENSITIVE_FIELDS.includes(key) && key !== 'bankName'))
+  return { items, suppliers: (suppliers || []).map(withoutBankDetails) }
+}
+
+// Every collection, amount and partner detail, in every warehouse.
+function readsEverything(access) {
+  return access.warehouseIds === null && access.prices && access.amounts && access.partner && Object.values(access.collections).every(Boolean)
 }
 
 export async function buildAiReadContext(db = {}, ctx = {}) {
@@ -61,12 +69,17 @@ export async function buildAiReadContext(db = {}, ctx = {}) {
   }
 
   // Read only the signed-in workspace. The repositories reject a missing tenant.
+  // These repositories read every warehouse, every collection, amounts and
+  // supplier bank details. For a reader who may not see all of that
+  // (ctx.readAccess) they are not read: the read models are built from the
+  // read context, which was scoped to the reader.
   const tenantScope = { tenantId: ctx.identity?.tenantId }
-  const [procurement, inventory, masterData] = await Promise.all([
+  const unscopedReads = !ctx.readAccess || readsEverything(ctx.readAccess)
+  const [procurement, inventory, masterData] = unscopedReads ? await Promise.all([
     readProcurement(repositories.procurementRead, tenantScope),
     readInventory(repositories.inventoryRead, tenantScope),
     readMasterData(repositories.masterData, tenantScope),
-  ])
+  ]) : [null, null, null]
 
   const repositoryBacked = {
     procurementRead: Boolean(procurement),

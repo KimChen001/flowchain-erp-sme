@@ -29,7 +29,11 @@ async function seedTenant(prisma, tenantId, tag) {
     lines: { create: [{ id: `PR-${tag}-L1`, sku: `SKU-${tag}`, itemName: `Item ${tag}`, quantity: '4.0000', unit: 'EA' }] },
   } })
   await prisma.rfq.create({ data: { id: `RFQ-${tag}`, tenantId, title: `RFQ ${tag}`, supplierId: `SUP-${tag}`, status: 'active', currency: 'USD', sourceRequestId: `PR-${tag}` } })
-  await prisma.inventoryBalance.create({ data: { id: `BAL-${tag}`, tenantId, itemId: `ITEM-${tag}`, sku: `SKU-${tag}`, itemName: `Item ${tag}`, onHandQuantity: '5.0000', availableQuantity: '5.0000', unit: 'EA' } })
+  // Inventory follows the reader's warehouse scope, so the manager reads the
+  // workspace's one warehouse.
+  await prisma.warehouse.create({ data: { id: `WH-${tag}`, tenantId, code: `WH-${tag}`, name: `Warehouse ${tag}`, status: 'active' } })
+  await prisma.userWarehouseScope.create({ data: { id: `SCOPE-${tag}`, tenantId, userId: `${tenantId}-manager`, warehouseId: `WH-${tag}`, accessLevel: 'read' } })
+  await prisma.inventoryBalance.create({ data: { id: `BAL-${tag}`, tenantId, itemId: `ITEM-${tag}`, sku: `SKU-${tag}`, itemName: `Item ${tag}`, warehouseId: `WH-${tag}`, warehouseKey: `WH-${tag}`, onHandQuantity: '5.0000', availableQuantity: '5.0000', unit: 'EA' } })
 }
 
 async function request(port, method, path, { headers = {}, body } = {}) {

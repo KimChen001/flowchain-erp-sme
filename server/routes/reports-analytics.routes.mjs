@@ -4,19 +4,36 @@ import { buildOpenPurchaseOrdersReport } from '../domain/open-purchase-orders-re
 import { readTenantTimezone } from '../domain/tenant-timezone.mjs'
 import { createSupplierScorecardReadService } from '../domain/supplier-scorecard.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
+import { reportReadAccess, scopeBusinessContext, sendReadAccessError } from '../domain/report-read-access.mjs'
 
 export async function handleReportsAnalyticsRoute(ctx) {
+  try { return await routeReports(ctx) } catch (error) { sendReadAccessError(ctx, error); return true }
+}
+
+async function routeReports(ctx) {
   const { req, res, url, send, readBody } = ctx
+  // The business read context as the signed-in reader may see it, and the
+  // unscoped context for each SKU's reserved and available quantity.
+  // Inventory is read in the reader's warehouses only, so availability counts
+  // every order's demand against the stock the reader may see.
+  const readerContext = async () => {
+    const access = await reportReadAccess(ctx)
+    const context = await readBusinessContext(ctx, { warehouseIds: access.warehouseIds })
+    return { context: scopeBusinessContext(context, access), allocationContext: context }
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/reports/open-purchase-orders') {
     if (ctx.repositories && !ctx.identity?.tenantId) { send(res, 403, { error: 'Workspace identity is required.' }); return true }
+    const access = await reportReadAccess(ctx)
+    if (!access.collections.purchaseOrders) { send(res, 403, { code: 'PERMISSION_DENIED', message: 'Your role cannot view purchase orders.', details: { permission: 'procurement.purchase_order.read' } }); return true }
     const repository = ctx.repositories?.procurementRuntime
     const rows = repository?.listForReport
       ? await repository.listForReport({ tenantId: ctx.identity?.tenantId })
       : !ctx.repositories && ctx.db ? (await readBusinessContext(ctx)).purchaseOrders : null
+    const visibleRows = rows && !access.prices ? scopeBusinessContext({ purchaseOrders: rows }, { ...access, collections: {} }).purchaseOrders : rows
     if (!rows) { send(res, 503, { error: 'Purchase order reporting is unavailable.' }); return true }
     try {
-      send(res, 200, buildOpenPurchaseOrdersReport(rows, Object.fromEntries(url.searchParams.entries()), ctx.reportNow || new Date(), { timeZone: await readTenantTimezone(ctx) }))
+      send(res, 200, buildOpenPurchaseOrdersReport(visibleRows, Object.fromEntries(url.searchParams.entries()), ctx.reportNow || new Date(), { timeZone: await readTenantTimezone(ctx) }))
     } catch (error) {
       if (error.code !== 'REPORT_DATE_RANGE_INVALID') throw error
       send(res, 422, { error: error.message, code: error.code })
@@ -39,10 +56,11 @@ export async function handleReportsAnalyticsRoute(ctx) {
     return true
   }
   // Overdue counts use the workspace's calendar day.
-  const reportOptions = async () => ({ now: ctx.reportNow || new Date(), timeZone: await readTenantTimezone(ctx) })
+  const reportOptions = async (allocationContext) => ({ now: ctx.reportNow || new Date(), timeZone: await readTenantTimezone(ctx), allocationContext })
 
   if (req.method === 'GET' && url.pathname === '/api/reports-analytics') {
-    send(res, 200, buildRuntimeGovernedReport(await readBusinessContext(ctx), { subject: 'overview' }, await reportOptions()))
+    const { context, allocationContext } = await readerContext()
+    send(res, 200, buildRuntimeGovernedReport(context, { subject: 'overview' }, await reportOptions(allocationContext)))
     return true
   }
 
@@ -53,14 +71,16 @@ export async function handleReportsAnalyticsRoute(ctx) {
 
   if (req.method === 'POST' && url.pathname === '/api/reports/query') {
     const body = await readBody(req)
-    send(res, 200, buildRuntimeGovernedReport(await readBusinessContext(ctx), body, await reportOptions()))
+    const { context, allocationContext } = await readerContext()
+    send(res, 200, buildRuntimeGovernedReport(context, body, await reportOptions(allocationContext)))
     return true
   }
 
   const dashboardMatch = url.pathname.match(/^\/api\/reports\/(overview|procurement|sales|inventory|finance|suppliers)$/)
   if (req.method === 'GET' && dashboardMatch) {
     const filters = Object.fromEntries(url.searchParams.entries())
-    send(res, 200, buildRuntimeGovernedReport(await readBusinessContext(ctx), { subject: dashboardMatch[1], filters }, await reportOptions()))
+    const { context, allocationContext } = await readerContext()
+    send(res, 200, buildRuntimeGovernedReport(context, { subject: dashboardMatch[1], filters }, await reportOptions(allocationContext)))
     return true
   }
 

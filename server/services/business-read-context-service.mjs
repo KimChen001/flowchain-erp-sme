@@ -17,13 +17,16 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
       const truncated = new Map()
       const onTruncated = ({ subject, limit }) => { if (subject) truncated.set(subject, { subject, limit }) }
       const scope = { tenantId: options.tenantId, onTruncated }
+      // Inventory follows the reader's warehouse scope when one is given.
+      const warehouseScoped = Array.isArray(options.warehouseIds)
+      const inventoryScope = warehouseScoped ? { ...scope, warehouseIds: options.warehouseIds } : scope
       const itemMethod = typeof masterData?.listManagedItems === 'function' ? 'listManagedItems' : 'listItems'
       const [items, suppliers, customers, itemSupplierRelationships, inventoryItems, salesOrders, procurement] = await Promise.all([
         call(masterData, itemMethod, [], scope),
         call(masterData, 'listSuppliers', [], scope),
         call(masterData, 'listCustomers', [], scope),
         call(masterData, 'listAllItemSupplierRelationships', [], scope),
-        call(repositories.inventoryRuntime, 'listItems', [], scope),
+        call(repositories.inventoryRuntime, 'listItems', [], inventoryScope),
         call(repositories.salesOrders, 'listOrders', [], scope),
         call(repositories.procurementRuntime, 'snapshot', {}, scope),
       ])
@@ -32,6 +35,7 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
       if (!repositories.inventoryRuntime) dataLimitations.push('inventory_runtime_unavailable')
       if (!repositories.salesOrders) dataLimitations.push('sales_runtime_unavailable')
       dataLimitations.push('warehouse_runtime_not_connected', 'bin_runtime_not_connected')
+      if (warehouseScoped) dataLimitations.push('inventory_scoped_to_reader_warehouses')
       if (array(procurement.receipts).length === 0) dataLimitations.push('receipt_runtime_has_no_records')
       if (array(procurement.supplierInvoices).length === 0) dataLimitations.push('invoice_runtime_has_no_records')
 

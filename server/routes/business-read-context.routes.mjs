@@ -1,5 +1,6 @@
 import { buildHomeOverview, createBusinessReadContextService } from '../services/business-read-context-service.mjs'
 import { readTenantTimezone } from '../domain/tenant-timezone.mjs'
+import { reportReadAccess, scopeBusinessContext, sendReadAccessError } from '../domain/report-read-access.mjs'
 
 export async function handleBusinessReadContextRoute(ctx) {
   const { req, res, url, send, repositories, dataMode } = ctx
@@ -9,7 +10,12 @@ export async function handleBusinessReadContextRoute(ctx) {
   // Scope every read to the signed-in tenant, as readBusinessContext already
   // does. Without it each repository applies its own fallback, and those
   // fallbacks disagree, so one response could mix two tenants.
-  const context = await service.read({ tenantId: ctx.identity?.tenantId })
+  // Each collection and amount as the signed-in reader may see it.
+  let context
+  try {
+    const access = await reportReadAccess(ctx)
+    context = scopeBusinessContext(await service.read({ tenantId: ctx.identity?.tenantId, warehouseIds: access.warehouseIds }), access)
+  } catch (error) { sendReadAccessError(ctx, error); return true }
   send(res, 200, url.pathname === '/api/home/overview' ? buildHomeOverview(context, { timeZone: await readTenantTimezone(ctx) }) : context)
   return true
 }

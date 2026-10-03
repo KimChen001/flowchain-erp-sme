@@ -55,6 +55,12 @@ largest remaining areas. Translate them at their presentation boundary with both
 English and Chinese acceptance scenarios. A regression test requires every Chinese
 route, module, breadcrumb, and primary-navigation label to have an English mapping.
 
+The global search dropdown still shows Chinese literals for its heading, loading,
+empty and overflow states, and the server builds the search source hint and the
+evidence-graph risk summaries in Chinese. The notes that a role hides record
+types from search (`top.searchRestricted`) or cannot open an evidence chain
+(`evidence.restricted`) use the i18n context in both languages.
+
 For the conversational agent, carry an explicit response language through the
 request, tool presentation, provider instructions, validation, and fallback.
 UI language must not change business routing or authorization. Do not display

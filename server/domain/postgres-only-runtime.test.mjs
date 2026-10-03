@@ -10,6 +10,11 @@ import { handleInventoryMovementsRoute } from '../routes/inventory-movements.rou
 import { handleRuntimeCapabilityRoute } from '../routes/runtime-capability.routes.mjs'
 import { ROUTE_CLASSES, classifyRoute } from './route-classification.mjs'
 import { runtimeRouteAuthority } from './runtime-route-authority.mjs'
+import { reportReadAccessFor } from './report-read-access.mjs'
+import { permissionCodes } from '../auth/permission-catalog.mjs'
+
+// A reader who may see everything in every warehouse.
+const fullReadAccess = reportReadAccessFor({ authenticated: true, complete: true, tenantId: 'tenant-any', allWarehouses: true, permissionCodes: new Set(permissionCodes) })
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -96,6 +101,7 @@ function routeContext(handler, method, pathname, repositories = {}, identity = {
     url: new URL(pathname, 'http://localhost'),
     repositories,
     identity,
+    reportReadAccess: fullReadAccess,
     send(_res, status, payload) {
       response = { status, payload }
       return true

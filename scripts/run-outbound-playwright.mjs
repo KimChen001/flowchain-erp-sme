@@ -9,7 +9,7 @@ const cli = join(
 
 function run(spec, extraEnv = {}) {
   return new Promise((resolveRun) => {
-    const child = spawn(process.execPath, [cli, "test", spec], {
+    const child = spawn(process.execPath, [cli, "test", ...[spec].flat()], {
       stdio: "inherit",
       env: {
         ...process.env,
@@ -22,7 +22,7 @@ function run(spec, extraEnv = {}) {
   });
 }
 
-const workbench = await run("tests/browser/outbound-workbench.spec.ts");
+const workbench = await run(["tests/browser/outbound-workbench.spec.ts", "tests/browser/sales-order-cancel.spec.ts"]);
 if (workbench !== 0) process.exit(workbench);
 process.exit(
   await run("tests/browser/outbound-capability-disabled.spec.ts", {

@@ -93,6 +93,10 @@ export function buildRuntimeInventoryAllocation(context) {
     const explicitReserved = inventoryRows.map(row => quantity(row.reservedQuantity ?? row.reservedQty))
     const salesReserved = skuDemand.map(line => line.reserved)
     const openDemandParts = skuDemand.map(({ ordered, fulfilled }) => ordered === null || fulfilled === null ? null : Math.max(0, ordered - fulfilled))
+    // The part of each line's open demand its own reservation does not cover
+    // yet. Reserved stock is already out of available, so demand it covers is
+    // not set against available a second time.
+    const unreservedDemandParts = skuDemand.map(({ ordered, fulfilled, reserved: lineReserved }) => ordered === null || fulfilled === null ? null : Math.max(0, ordered - fulfilled - (lineReserved ?? 0)))
     const incomingParts = poLines.map(({ line }) => lineInTransit(line))
 
     if (!inventoryRows.length) dataLimitations.push(limitation('inventory_balance_missing', sku))
@@ -117,11 +121,12 @@ export function buildRuntimeInventoryAllocation(context) {
     }
     const available = onHand === null || reserved === null ? null : Math.max(0, onHand - reserved)
     const openSalesDemand = sumKnown(openDemandParts)
+    const unreservedSalesDemand = sumKnown(unreservedDemandParts)
     const incomingApprovedPo = sumKnown(incomingParts)
-    const shortage = available === null || openSalesDemand === null ? null : Math.max(0, openSalesDemand - available)
-    const availableToPromise = available === null || openSalesDemand === null || incomingApprovedPo === null
+    const shortage = available === null || unreservedSalesDemand === null ? null : Math.max(0, unreservedSalesDemand - available)
+    const availableToPromise = available === null || unreservedSalesDemand === null || incomingApprovedPo === null
       ? null
-      : available + incomingApprovedPo - openSalesDemand
+      : available + incomingApprovedPo - unreservedSalesDemand
     const master = rows(context.items).find(row => itemKey(row) === sku)
     const safetyStock = stockThreshold(master?.safetyStock, inventoryRows, 'safetyStock')
     const reorderPoint = stockThreshold(master?.reorderPoint, inventoryRows, 'reorderPoint')
@@ -134,6 +139,7 @@ export function buildRuntimeInventoryAllocation(context) {
       reserved,
       available,
       openSalesDemand,
+      unreservedSalesDemand,
       incomingApprovedPo,
       shortage,
       availableToPromise,

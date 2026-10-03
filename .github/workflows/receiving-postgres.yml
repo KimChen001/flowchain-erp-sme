@@ -61,6 +61,7 @@ jobs:
       - run: npm run test:db:tenant-provision
       - run: npm run test:db:walkthrough-scenario
       - run: npm run test:db:tenant-scoped-reads
+      - run: npm run test:db:master-data-writes
       - run: npm run test:db:report-truncation
       - run: npm run test:db:inventory-allocation
       - run: npm run test:db:ai-knowledge
@@ -90,6 +91,13 @@ jobs:
       - run: npm run test:db:procurement-flow
       - run: npm run test:db:original-promise
       - run: npm run test:db:supplier-scorecard
+      - run: npm run test:db:finance-read-permissions
+      - run: npm run test:db:sales-read-permissions
+      - run: npm run test:db:inventory-warehouse-scope
+      - run: npm run test:db:search-graph-read-scope
+      - run: npm run test:db:role-backfill-once
+      - run: npm run test:db:po-close-receipt-cancel
+      - run: npm run test:db:report-views
       - run: npm run test:db:rfq-response-revisions
       - run: npm run test:db:rfq-supplier-response-command
       - run: npm run test:db:rfq-supplier-comparison

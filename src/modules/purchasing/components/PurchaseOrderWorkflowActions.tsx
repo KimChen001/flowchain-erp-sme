@@ -5,7 +5,7 @@ import { useRouteAvailability } from "../../../app/routeAvailability";
 import { apiJson } from "../../../lib/api-client";
 import { useI18n } from "../../../i18n/I18n";
 
-type WorkflowAction = "submit" | "approve" | "reject" | "issue" | "cancel";
+type WorkflowAction = "submit" | "approve" | "reject" | "issue" | "cancel" | "close";
 
 // Mirrors the server's PO command table: the actions each status allows and
 // the permission each needs. The server still checks both on every command.
@@ -13,6 +13,9 @@ const ACTIONS_BY_STATUS: Record<string, WorkflowAction[]> = {
   draft: ["submit", "cancel"],
   pending_approval: ["approve", "reject", "cancel"],
   approved: ["issue", "cancel"],
+  // Closing ends an order the supplier will not finish; received goods stay.
+  issued: ["close"],
+  partially_received: ["close"],
 };
 const PERMISSION: Record<WorkflowAction, (status: string) => string> = {
   submit: () => "procurement.purchase_order.revise",
@@ -20,6 +23,7 @@ const PERMISSION: Record<WorkflowAction, (status: string) => string> = {
   reject: () => "procurement.purchase_order.reject",
   issue: () => "procurement.purchase_order.revise",
   cancel: (status) => (status === "draft" ? "procurement.purchase_order.revise" : "procurement.purchase_order.reject"),
+  close: () => "procurement.purchase_order.reject",
 };
 
 // English source copy with its Chinese translation.
@@ -29,6 +33,8 @@ const COPY: Record<string, [string, string]> = {
   reject: ["Reject", "驳回"],
   issue: ["Mark as issued to supplier", "标记为已下达供应商"],
   cancel: ["Cancel PO", "取消采购订单"],
+  close: ["Close PO", "关闭采购订单"],
+  closeReason: ["Why is this purchase order closed? The remaining quantity will not be received.", "请输入关闭原因（剩余数量将不再收货）"],
   rejectReason: ["Why is this purchase order rejected?", "请输入驳回原因"],
   cancelReason: ["Why is this purchase order cancelled?", "请输入取消原因"],
   done: ["Purchase order updated", "采购订单已更新"],
@@ -73,8 +79,8 @@ export function PurchaseOrderWorkflowActions({
 
   const run = async (action: WorkflowAction) => {
     let reason = "";
-    if (action === "reject" || action === "cancel") {
-      reason = window.prompt(tr(action === "reject" ? "rejectReason" : "cancelReason"))?.trim() || "";
+    if (action === "reject" || action === "cancel" || action === "close") {
+      reason = window.prompt(tr(action === "reject" ? "rejectReason" : action === "close" ? "closeReason" : "cancelReason"))?.trim() || "";
       if (!reason) return;
     }
     setBusy(action);

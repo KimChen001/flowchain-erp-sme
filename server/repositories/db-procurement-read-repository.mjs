@@ -1,3 +1,4 @@
+import { maskProcurementDocuments, maskProcurementSummary, readableProcurementRows, readableProcurementSnapshot } from '../domain/procurement-read-access.mjs'
 import {
   buildProcurementDocumentLinks,
   buildProcurementDocuments,
@@ -776,37 +777,43 @@ export function createDbProcurementReadRepository({ env = process.env, prisma } 
       const client = await resolvePrisma({ env, prisma })
       return loadProcurementSnapshot(client, filters)
     },
-    listDocuments: async (filters = {}) => {
+    // With `access` (procurement-read-access.mjs), documents the actor may
+    // not read are left out and hidden amounts are masked before any search
+    // filter runs, so a search can never match a hidden value.
+    listDocuments: async (filters = {}, { access = null } = {}) => {
       const client = await resolvePrisma({ env, prisma })
       const snapshot = await loadProcurementSnapshot(client, filters)
-      return filterProcurementRows(buildProcurementDocuments(snapshot), filters)
+      if (!access) return filterProcurementRows(buildProcurementDocuments(snapshot), filters)
+      return filterProcurementRows(maskProcurementDocuments(buildProcurementDocuments(readableProcurementSnapshot(snapshot, access)), access), filters)
     },
     getDocument: async (type, id, options = {}) => {
       const client = await resolvePrisma({ env, prisma })
       return getDirectProcurementDocument(client, type, id, tenantWhere(options).tenantId)
     },
-    listLinks: async (filters = {}) => {
+    listLinks: async (filters = {}, { access = null } = {}) => {
       const client = await resolvePrisma({ env, prisma })
-      const snapshot = await loadProcurementSnapshot(client, filters)
-      return filterProcurementRows([
-        ...buildProcurementDocumentLinks(snapshot),
-        ...snapshot.documentLinks,
-      ], filters)
+      const loaded = await loadProcurementSnapshot(client, filters)
+      const snapshot = access ? readableProcurementSnapshot(loaded, access) : loaded
+      const rows = [...buildProcurementDocumentLinks(snapshot), ...snapshot.documentLinks]
+      return filterProcurementRows(access ? readableProcurementRows(rows, access) : rows, filters)
     },
-    listFollowups: async (filters = {}) => {
+    listFollowups: async (filters = {}, { access = null } = {}) => {
       const client = await resolvePrisma({ env, prisma })
-      const snapshot = await loadProcurementSnapshot(client, filters)
-      return filterProcurementRows([
-        ...buildProcurementFollowups(snapshot),
-        ...snapshot.procurementFollowups,
-      ], filters)
+      const loaded = await loadProcurementSnapshot(client, filters)
+      const snapshot = access ? readableProcurementSnapshot(loaded, access) : loaded
+      const rows = [...buildProcurementFollowups(snapshot), ...snapshot.procurementFollowups]
+      return filterProcurementRows(access ? readableProcurementRows(rows, access) : rows, filters)
     },
-    getSummary: async (filters = {}) => {
+    // Counts come from what the actor may read; the open amount is hidden
+    // when any amount behind it is.
+    getSummary: async (filters = {}, { access = null } = {}) => {
       const client = await resolvePrisma({ env, prisma })
-      const snapshot = await loadProcurementSnapshot(client, filters)
-      const summary = buildProcurementSummary(snapshot)
+      const loaded = await loadProcurementSnapshot(client, filters)
+      const snapshot = access ? readableProcurementSnapshot(loaded, access) : loaded
+      const built = buildProcurementSummary(snapshot)
       const explicitFollowups = snapshot.procurementFollowups.length
-      return explicitFollowups ? { ...summary, followupCount: summary.followupCount + explicitFollowups } : summary
+      const summary = explicitFollowups ? { ...built, followupCount: built.followupCount + explicitFollowups } : built
+      return access ? maskProcurementSummary(summary, access) : summary
     },
     normalizeDocumentType: (type) => normalizeProcurementDocumentType(type),
     isDocumentType: (type) => isProcurementDocumentType(type),

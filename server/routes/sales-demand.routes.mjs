@@ -1,4 +1,16 @@
 import { authorizeMutation } from '../domain/mutation-authorization.mjs'
+import { can } from '../auth/authorization-service.mjs'
+import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
+import { getPrismaClient } from '../persistence/prisma-client.mjs'
+
+// The signed-in actor with its permissions: the session identity when it
+// already carries a resolved authorization context, else the provisioned user.
+async function actorFor(ctx) {
+  if (ctx.salesDemandActor) return ctx.salesDemandActor
+  const identity = ctx.identity
+  if (identity?.complete && identity.permissionCodes) return identity
+  return resolveProvisionedActor(await getPrismaClient(ctx.env || process.env), identity)
+}
 
 function query(url) {
   return { q: url.searchParams.get('q') || '', sku: url.searchParams.get('sku') || '', status: url.searchParams.get('status') || '', risk: url.searchParams.get('risk') || '' }
@@ -13,6 +25,14 @@ export async function handleSalesDemandRoute(ctx) {
     return true
   }
   const filters = () => ({ ...query(url), tenantId: ctx.identity.tenantId })
+  // Every sales-demand read returns customer orders, so it needs sales_order.read.
+  if (req.method === 'GET') {
+    const actor = await actorFor(ctx)
+    if (!can({ actor, permission: 'sales_order.read', tenantId: actor.tenantId })) {
+      send(res, 403, { code: 'PERMISSION_DENIED', message: 'Your role cannot view sales orders.', details: { permission: 'sales_order.read' } })
+      return true
+    }
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/sales-demand/summary') {
     send(res, 200, { summary: await repository.getSummary(filters()), evidenceLinks: [], dataLimitations: [] })

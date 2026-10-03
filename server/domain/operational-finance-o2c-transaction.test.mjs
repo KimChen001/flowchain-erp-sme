@@ -493,7 +493,12 @@ test(
 
       const usd = await shipment(prisma, "USD", "USD");
       await issueInvoice(command, invoiceInput(usd, "USD"), "USD");
-      const aging = await read.aging({}, viewer);
+      // The viewer reads the aging buckets but not their amounts.
+      const hiddenAging = await read.aging({}, viewer);
+      assert.deepEqual(hiddenAging.currencies, ["CNY", "USD"]);
+      assert.ok(hiddenAging.groups.every((group) => group.total === null && group.current === null && group.count > 0));
+      assert.ok(hiddenAging.items.every((item) => item.outstandingAmount === null));
+      const aging = await read.aging({}, manager);
       assert.equal(aging.timezone, "America/New_York");
       assert.equal(
         aging.currencyAggregationStatus,

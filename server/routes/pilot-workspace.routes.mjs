@@ -2,8 +2,12 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { PilotIdentityError, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { roleLabel } from '../../shared/roles.mjs'
-import { assertAuthorized } from '../auth/authorization-service.mjs'
+import { assertAuthorized, can } from '../auth/authorization-service.mjs'
+import { countActiveRoleManagers, tenantHasRoleManager } from '../auth/authorization-admin-service.mjs'
 import { revokeUserSessions } from '../auth/workspace-sessions.mjs'
+import { backfillTenantAuthorization } from '../auth/authorization-backfill.mjs'
+import { normalizeSignInEmail } from '../auth/email-link-sign-in.mjs'
+import { isTransactionConflict } from '../persistence/transaction-conflict.mjs'
 import {
   assertSupportedCurrency,
   assertSupportedLanguage,
@@ -20,7 +24,8 @@ import {
 const text = value => String(value ?? '').trim()
 const email = value => text(value).toLowerCase()
 const hashToken = token => createHash('sha256').update(token).digest('hex')
-const ALLOWED_ROLES = new Set(['admin', 'manager', 'viewer', 'business-specialist', 'buyer'])
+// Each maps to a default role template (legacyRoleTemplateMap).
+const ALLOWED_ROLES = new Set(['admin', 'manager', 'viewer', 'business-specialist', 'buyer', 'finance-specialist'])
 
 const fail = (code, message, status = 400, details) => { throw new PilotIdentityError(code, message, status, details) }
 const publicUser = user => ({ id: user.id, email: user.email, name: user.name, role: user.role, roleLabel: roleLabel(user.role), jobTitle: user.jobTitle, status: user.status, languagePreference: user.languagePreference, defaultWarehouseId: user.defaultWarehouseId, profileCompletedAt: user.profileCompletedAt, version: user.version, ...(Array.isArray(user.warehouseScopes) ? { warehouseScopes: user.warehouseScopes.map(scope => ({ warehouseId: scope.warehouseId, accessLevel: scope.accessLevel })) } : {}) })
@@ -80,6 +85,23 @@ async function hasPostedTransactions(prisma, tenantId, tenant) {
   return movementCount + receivingCount + shipmentCount + returnCount > 0
 }
 
+// Serializable transactions in one workspace can abort each other even when
+// their changes do not overlap. An aborted attempt wrote nothing, so it is run
+// again; if it keeps colliding the caller gets a 409 to retry, not a 500.
+const CONFLICT_ATTEMPTS = 5
+async function changeUserWithRetry(prisma, work) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await prisma.$transaction(work, { isolationLevel: 'Serializable' })
+    } catch (error) {
+      if (!isTransactionConflict(error)) throw error
+      if (attempt === CONFLICT_ATTEMPTS) fail('USER_CHANGE_CONFLICT', 'The user was changed by another request at the same time. Try again.', 409)
+      // Jittered, so two requests that collided do not collide again in step.
+      await new Promise(resolve => setTimeout(resolve, attempt * 20 + Math.random() * 20))
+    }
+  }
+}
+
 async function adminActor(prisma, identity, permission) {
   const actor = await resolveProvisionedActor(prisma, identity)
   assertAuthorized({ actor, permission, tenantId: actor.tenantId })
@@ -99,7 +121,8 @@ export async function handlePilotWorkspaceRoute(ctx) {
   const prisma = await getPrismaClient(ctx.env || process.env)
   try {
     const accept = ctx.url.pathname === '/api/workspace/invitations/accept'
-    if (!accept && !ctx.identity?.authenticated) fail('AUTHENTICATION_REQUIRED', 'Authentication is required.', 401)
+    const inspect = ctx.url.pathname === '/api/workspace/invitations/inspect'
+    if (!accept && !inspect && !ctx.identity?.authenticated) fail('AUTHENTICATION_REQUIRED', 'Authentication is required.', 401)
 
     if (ctx.req.method === 'GET' && ctx.url.pathname === '/api/me/profile') {
       const actor = await resolveProvisionedActor(prisma, ctx.identity)
@@ -134,6 +157,8 @@ export async function handlePilotWorkspaceRoute(ctx) {
       ctx.send(ctx.res, 200, publicUser(await prisma.user.findUnique({ where: { id: actor.user.id }, include: { warehouseScopes: true } }))); return true
     }
     if (ctx.req.method === 'GET' && ctx.url.pathname === '/api/workspace') {
+      // Any member reads the workspace name, base currency, locale and timezone
+      // their screens use. Changing them needs settings.workspace.manage.
       const actor = await resolveProvisionedActor(prisma, ctx.identity)
       const tenant = await prisma.tenant.findUnique({ where: { id: actor.tenantId } })
       ctx.send(ctx.res, 200, publicWorkspace(tenant, await hasPostedTransactions(prisma, actor.tenantId, tenant))); return true
@@ -170,26 +195,44 @@ export async function handlePilotWorkspaceRoute(ctx) {
       const userId = decodeURIComponent(userPatch[1]); const body = await ctx.readBody(ctx.req)
       const target = await prisma.user.findFirst({ where: { id: userId, tenantId: actor.tenantId } })
       if (!target) fail('USER_NOT_FOUND', 'Workspace user was not found.', 404)
-      const role = text(body.role || target.role).toLowerCase(); const status = text(body.status || target.status).toLowerCase()
-      if (!ALLOWED_ROLES.has(role) || !['active', 'disabled'].includes(status)) fail('USER_VALIDATION_FAILED', 'Role or status is invalid.')
-      if (target.role === 'admin' && (role !== 'admin' || status !== 'active')) {
-        const adminCount = await prisma.user.count({ where: { tenantId: actor.tenantId, role: 'admin', status: 'active' } })
-        if (adminCount <= 1) fail('LAST_ADMIN_REQUIRED', 'The last active admin cannot be disabled or demoted.', 409)
-      }
-      // Disabling a user or changing their role ends their sessions in the
-      // same transaction, so no request runs on the old role afterwards.
-      const accessChanged = role !== text(target.role).toLowerCase() || status !== text(target.status).toLowerCase()
-      await prisma.$transaction(async tx => {
-        const result = await tx.user.updateMany({ where: { id: target.id, tenantId: actor.tenantId, version: Number(body.version) }, data: { role, status, version: { increment: 1 } } })
+      // Permissions come from role assignments. The legacy User.role grants
+      // nothing a permission check reads, so changing it here would look like a
+      // role change while access stayed the same. Repeating the current value
+      // is harmless.
+      const requestedRole = text(body.role).toLowerCase()
+      if (requestedRole && requestedRole !== text(target.role).toLowerCase()) fail('USER_ROLE_CHANGE_NOT_SUPPORTED', 'Roles are changed in Roles & permissions under Settings > Users & Roles. This request can only change the user status.', 422, [{ field: 'role' }])
+      const status = text(body.status || target.status).toLowerCase()
+      if (!['active', 'disabled'].includes(status)) fail('USER_VALIDATION_FAILED', 'Status must be active or disabled.')
+      // An administrator cannot lock themselves out.
+      if (target.id === actor.user.id && status !== 'active') fail('CANNOT_DISABLE_SELF', 'You cannot disable your own account.', 409)
+      // A status change ends the user's sessions in the same transaction, so no
+      // request runs as a disabled user afterwards.
+      const statusChanged = status !== text(target.status).toLowerCase()
+      await changeUserWithRetry(prisma, async tx => {
+        // Only disabling someone who can manage roles can leave the workspace
+        // without one, so disabling anyone else skips the tenant-wide count.
+        const disablesRoleManager = statusChanged && status === 'disabled' && (await countActiveRoleManagers(tx, actor.tenantId, { userId: target.id })) > 0
+        const result = await tx.user.updateMany({ where: { id: target.id, tenantId: actor.tenantId, version: Number(body.version) }, data: { status, version: { increment: 1 } } })
         if (result.count !== 1) fail('VERSION_CONFLICT', 'User changed concurrently.', 409)
-        if (accessChanged) await revokeUserSessions(tx, { tenantId: actor.tenantId, userId: target.id, reason: status === 'disabled' ? 'user_disabled' : 'role_changed', actorId: actor.user.id })
+        // Checked after the update and under Serializable isolation, like the
+        // role changes in Roles & permissions, so two concurrent disables (or a
+        // disable and a role change) cannot each leave the other as the last
+        // manager: one of them is aborted and, on its retry, sees the other.
+        if (disablesRoleManager && !(await tenantHasRoleManager(tx, actor.tenantId))) fail('AUTHORIZATION_LAST_ROLES_MANAGER', 'Disabling this user would leave the workspace without an active user who can manage roles.', 409)
+        if (statusChanged) await revokeUserSessions(tx, { tenantId: actor.tenantId, userId: target.id, reason: status === 'disabled' ? 'user_disabled' : 'user_enabled', actorId: actor.user.id })
       })
-      if (accessChanged) ctx.sessionStore?.forgetUser(target.id)
+      if (statusChanged) ctx.sessionStore?.forgetUser(target.id)
       ctx.send(ctx.res, 200, publicUser(await prisma.user.findUnique({ where: { id: target.id } }))); return true
     }
     if (ctx.req.method === 'GET' && ctx.url.pathname === '/api/workspace/warehouses') {
       const actor = await resolveProvisionedActor(prisma, ctx.identity)
-      const where = actor.allWarehouses ? { tenantId: actor.tenantId } : { tenantId: actor.tenantId, id: { in: [...actor.readWarehouseIds] } }
+      // Whoever may read or grant members' warehouse access sees every
+      // warehouse, so a member's access shows in full and not only where it
+      // overlaps the reader's own scope; /api/workspace/users already lists
+      // those warehouse ids to the same people. Everyone else sees the
+      // warehouses in their own scope.
+      const allWarehouses = actor.allWarehouses || ['settings.users.read', 'settings.users.manage'].some(permission => can({ actor, permission, tenantId: actor.tenantId }))
+      const where = allWarehouses ? { tenantId: actor.tenantId } : { tenantId: actor.tenantId, id: { in: [...actor.readWarehouseIds] } }
       const warehouses = await prisma.warehouse.findMany({ where, orderBy: { code: 'asc' } })
       ctx.send(ctx.res, 200, { warehouses }); return true
     }
@@ -218,8 +261,16 @@ export async function handlePilotWorkspaceRoute(ctx) {
     }
     if (ctx.req.method === 'POST' && ctx.url.pathname === '/api/workspace/invitations') {
       const actor = await adminActor(prisma, ctx.identity, 'settings.users.manage'); const body = await ctx.readBody(ctx.req)
-      const targetEmail = email(body.email); const role = text(body.role).toLowerCase(); const expiryHours = Math.min(168, Math.max(1, Number(body.expiryHours || 72)))
-      if (!targetEmail || !ALLOWED_ROLES.has(role)) fail('INVITATION_VALIDATION_FAILED', 'A valid email and canonical role are required.')
+      // Accepting assigns the invited role template, so inviting is assigning a
+      // role: without this, settings.users.manage alone could invite a second
+      // address as Workspace Administrator.
+      assertAuthorized({ actor, permission: 'settings.roles.assign', tenantId: actor.tenantId })
+      // The same address rule as sign-in, so every invitation can sign in.
+      const targetEmail = normalizeSignInEmail(body.email); const role = text(body.role).toLowerCase(); const expiryHours = Math.min(168, Math.max(1, Number(body.expiryHours || 72)))
+      if (!targetEmail) fail('INVITATION_EMAIL_INVALID', 'Enter a valid email address.', 422, [{ field: 'email' }])
+      if (!ALLOWED_ROLES.has(role)) fail('INVITATION_VALIDATION_FAILED', 'Choose a role for the invitation.', 422, [{ field: 'role' }])
+      const member = await prisma.user.findFirst({ where: { tenantId: actor.tenantId, email: targetEmail } })
+      if (member) fail('INVITATION_ALREADY_MEMBER', member.status === 'active' ? 'This person is already a member of the workspace.' : 'This person is a disabled member. Enable them instead of inviting them again.', 409)
       const token = randomBytes(32).toString('base64url')
       let invitation
       try { invitation = await prisma.workspaceInvitation.create({ data: { id: randomUUID(), tenantId: actor.tenantId, email: targetEmail, role, tokenHash: hashToken(token), expiresAt: new Date(Date.now() + expiryHours * 3600_000), invitedById: actor.user.id } }) }
@@ -233,6 +284,13 @@ export async function handlePilotWorkspaceRoute(ctx) {
       if (result.count !== 1) fail('INVITATION_NOT_PENDING', 'Pending invitation was not found.', 404)
       ctx.send(ctx.res, 200, { status: 'revoked' }); return true
     }
+    // What an invitation link is for, shown before it is accepted. The token
+    // is the secret, so its holder may see the invited email.
+    if (ctx.req.method === 'POST' && inspect) {
+      const body = await ctx.readBody(ctx.req); const invitation = await prisma.workspaceInvitation.findUnique({ where: { tokenHash: hashToken(text(body.token)) }, include: { tenant: true } })
+      if (!invitation || invitation.status !== 'pending' || invitation.expiresAt <= new Date()) fail('INVITATION_INVALID', 'Invitation is invalid or no longer pending.', 400)
+      ctx.send(ctx.res, 200, { email: invitation.email, role: invitation.role, roleLabel: roleLabel(invitation.role), workspaceName: invitation.tenant.name, expiresAt: invitation.expiresAt }); return true
+    }
     if (ctx.req.method === 'POST' && accept) {
       const body = await ctx.readBody(ctx.req); const tokenHash = hashToken(text(body.token)); const invitation = await prisma.workspaceInvitation.findUnique({ where: { tokenHash } })
       if (!invitation || invitation.status !== 'pending') fail('INVITATION_INVALID', 'Invitation is invalid or no longer pending.', 400)
@@ -245,7 +303,10 @@ export async function handlePilotWorkspaceRoute(ctx) {
         if (updated.count !== 1) fail('INVITATION_INVALID', 'Invitation was already used.', 409)
         return user
       })
-      ctx.send(ctx.res, 200, { user: publicUser(accepted), status: 'accepted' }); return true
+      // The new member gets the invitation's role template now, not on a
+      // later request.
+      if (!existing) await backfillTenantAuthorization(prisma, invitation.tenantId, { actorId: invitation.invitedById })
+      ctx.send(ctx.res, 200, { user: publicUser(accepted), email: accepted.email, status: 'accepted' }); return true
     }
     return false
   } catch (error) { sendError(ctx, error); return true }

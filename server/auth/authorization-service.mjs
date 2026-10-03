@@ -54,7 +54,9 @@ export async function resolveAuthorizationContext(identity, { prisma, performLeg
     return { complete: false, authenticated: Boolean(identity?.authenticated), tenantId: text(identity?.tenantId), userId: text(identity?.userId || identity?.id), permissionCodes: new Set(), roleIds: [], inactiveRoleIds: [], readWarehouseIds: new Set(), operateWarehouseIds: new Set() }
   }
   let user = await loadUserContext(prisma, identity)
-  if (user && performLegacyBackfill && user.roleAssignments.length === 0 && typeof prisma.$transaction === "function") {
+  // Only a user whose roles were never set gets the legacy template; a user
+  // with no roles on purpose has no permissions.
+  if (user && performLegacyBackfill && !user.rolesAssignedAt && user.roleAssignments.length === 0 && typeof prisma.$transaction === "function") {
     await ensureTenantBackfilled(prisma, user.tenantId, user.id)
     user = await loadUserContext(prisma, identity)
   }
