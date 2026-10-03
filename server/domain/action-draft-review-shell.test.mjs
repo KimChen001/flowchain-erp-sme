@@ -48,7 +48,7 @@ test('action draft review shell renders business payload, validation, audit, and
 test('structured AI drafts use formal pages while text drafts retain the editor', () => {
   const app = readSource('src', 'app', 'FlowChainApp.tsx')
   const cockpit = readSource('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
-  const ai = readSource('src', 'modules', 'ai-assistant', 'Panel.tsx')
+  const ai = readSource('src', 'components', 'ai', 'AiResponseV2Renderer.tsx')
   const inventory = readSource('src', 'modules', 'inventory', 'Page.tsx')
 
   assert.match(app, /\/api\/action-drafts\/preview/)
@@ -62,8 +62,8 @@ test('structured AI drafts use formal pages while text drafts retain the editor'
   assert.match(app, /createsBusinessDocument/)
   assert.match(cockpit, /草稿预览/)
   assert.match(cockpit, /actionDraftRequest\(item\)/)
-  assert.match(ai, /actionDraftRequestFromCard/)
-  assert.match(ai, /审阅草稿/)
+  assert.match(ai, /const target = structuredDraftTarget\(action\.card\)/)
+  assert.match(ai, /onClick=\{\(\) => onReviewActionDraft\(request\)\}/)
   assert.match(inventory, /<EntityLink kind="item"/)
   assert.doesNotMatch(inventory, /\/api\/master-data\/items\/.*\/suppliers/)
   assert.doesNotMatch(inventory, /维护供应商关系/)

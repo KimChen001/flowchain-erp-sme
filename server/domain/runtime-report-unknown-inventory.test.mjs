@@ -8,6 +8,11 @@ import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-
 import { searchRuntimeBusinessContext } from './runtime-business-search.mjs'
 import { businessContextToReadDb } from '../services/runtime-business-read-service.mjs'
 import { handleReportsAnalyticsRoute } from '../routes/reports-analytics.routes.mjs'
+import { reportReadAccessFor } from '../domain/report-read-access.mjs'
+import { permissionCodes } from '../auth/permission-catalog.mjs'
+
+// A reader who may see everything.
+const fullReportAccess = reportReadAccessFor({ authenticated: true, complete: true, tenantId: 'tenant-any', permissionCodes: new Set(permissionCodes) })
 
 const context = inventoryItems => ({
   items: inventoryItems.map(row => ({ sku: row.sku, itemName: row.sku })), inventoryItems,
@@ -57,7 +62,7 @@ test('reports API and KPI UI preserve null and present data insufficiency withou
   await handleReportsAnalyticsRoute({
     req: { method: 'POST', headers: {} }, res: {}, url: new URL('/api/reports/query', 'http://local'),
     db: { __dataMode: 'user', inventoryItems: [{ sku: 'SKU-KNOWN', onHandQuantity: 4 }, { sku: 'SKU-UNKNOWN' }], products: [], salesOrders: [], purchaseOrders: [], suppliers: [], supplierInvoices: [] },
-    readBody: async () => ({ subject: 'inventory' }), send(_res, status, payload) { response = { status, payload: JSON.parse(JSON.stringify(payload)) } },
+    readBody: async () => ({ subject: 'inventory' }), reportReadAccess: fullReportAccess, send(_res, status, payload) { response = { status, payload: JSON.parse(JSON.stringify(payload)) } },
   })
   assert.equal(response.status, 200)
   assert.equal(metric(response.payload).currentValue, null)

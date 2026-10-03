@@ -59,6 +59,8 @@ test('an English skill answer renders with no Chinese, the source badge and the 
     assert.match(markup, /data-answer-source="workspace_rules"/, skillId)
     assert.match(markup, /Answered from your workspace data/, skillId)
   }
+  // The help answer reads no records: no "Verifiable records 0" line.
+  assert.doesNotMatch(client.render(answer('capability_overview')), /Verifiable records/)
   const today = client.render(answer('today_priorities'))
   assert.match(today, /Checked: purchase orders, purchase requests, RFQs, inventory balances, supplier invoices and receipts/)
   assert.match(today, /Verifiable records 5/)

@@ -32,14 +32,22 @@ export function receivingDecimalString(units) {
   return `${negative ? '-' : ''}${absolute / SCALE}.${String(absolute % SCALE).padStart(4, '0')}`
 }
 
-// Net on-hand effect of one posted movement: in minus out plus adjustment.
-// This is the single ledger formula. calculateMovementBalance, which backs
-// reconcileInventoryBalance, is built on it, so the reversal replay and the
-// reconciliation report cannot describe different on-hand quantities.
+// Net on-hand effect of one posted movement. This is the single ledger
+// formula. calculateMovementBalance, which backs reconcileInventoryBalance,
+// the receiving reconciliation and the posting balance changes are built on
+// it, so the reversal replay and the reconciliation report cannot describe
+// different on-hand quantities.
+//
+// Inventory adjustments, cycle-count adjustments and their reversals record
+// the change in quantityIn or quantityOut and repeat it, signed, in
+// adjustmentQty (see inventory-operations-policy.mjs), so adding all three
+// counted the change twice. A movement's effect is in minus out; adjustmentQty
+// counts only for a movement that records no in or out quantity at all.
 export function receivingMovementNetUnits(movement) {
-  return receivingDecimalUnits(movement?.quantityIn ?? 0)
-    - receivingDecimalUnits(movement?.quantityOut ?? 0)
-    + receivingDecimalUnits(movement?.adjustmentQty ?? 0)
+  const quantityIn = receivingDecimalUnits(movement?.quantityIn ?? 0)
+  const quantityOut = receivingDecimalUnits(movement?.quantityOut ?? 0)
+  if (quantityIn === 0n && quantityOut === 0n) return receivingDecimalUnits(movement?.adjustmentQty ?? 0)
+  return quantityIn - quantityOut
 }
 
 // Replays a location ledger with one movement removed.

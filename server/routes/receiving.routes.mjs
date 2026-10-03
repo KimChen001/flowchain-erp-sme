@@ -116,10 +116,11 @@ async function handleDesktopReceiving(ctx) {
   const create = method === 'POST' && path === '/api/procurement/receiving'
   const revise = method === 'PATCH' ? path.match(/^\/api\/procurement\/receiving\/([^/]+)$/) : null
   const submit = method === 'POST' ? path.match(/^\/api\/procurement\/receiving\/([^/]+)\/submit$/) : null
-  if (!list && !receivable && !create && !revise && !submit) return false
+  const cancel = method === 'POST' ? path.match(/^\/api\/procurement\/receiving\/([^/]+)\/cancel$/) : null
+  if (!list && !receivable && !create && !revise && !submit && !cancel) return false
   if (!ctx.identity?.authenticated) { ctx.send(ctx.res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.' }); return true }
   if (!ctx.identity?.tenantId) { ctx.send(ctx.res, 403, { code: 'TENANT_CONTEXT_REQUIRED', message: 'A server-resolved tenant context is required.' }); return true }
-  if ((create || revise || submit) && !capabilityForEnvironment('receiving-posting', ctx.env || process.env)?.enabled) { sendCapabilityUnavailable(ctx, 'receiving-posting'); return true }
+  if ((create || revise || submit || cancel) && !capabilityForEnvironment('receiving-posting', ctx.env || process.env)?.enabled) { sendCapabilityUnavailable(ctx, 'receiving-posting'); return true }
   try {
     const service = await draftService(ctx)
     if (list) { ctx.send(ctx.res, 200, await service.listReceivingDocuments({ purchaseOrderId: ctx.url.searchParams.get('poId') || '' }, ctx)); return true }
@@ -132,6 +133,11 @@ async function handleDesktopReceiving(ctx) {
     const body = (await ctx.readBody(ctx.req)) || {}
     const idempotencyKey = String(body.idempotencyKey || ctx.req.headers?.['idempotency-key'] || '').trim()
     if (create) { ctx.send(ctx.res, 201, await service.createDraft({ ...body, idempotencyKey }, ctx, DESKTOP)); return true }
+    if (cancel) {
+      const cancelId = decodeURIComponent(cancel[1])
+      ctx.send(ctx.res, 200, await service.cancelDraft(cancelId, { ...body, idempotencyKey: idempotencyKey || `desktop.cancel:${cancelId}:v${body.expectedVersion}` }, ctx, DESKTOP))
+      return true
+    }
     const id = decodeURIComponent((revise || submit)[1])
     // Without a key, a resend of the same change at the same version is the
     // same command.

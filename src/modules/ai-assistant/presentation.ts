@@ -1,7 +1,5 @@
 const JSON_LIKE_START = /^[\s\r\n]*[\[{]/;
 const DEBUG_LINE = /^(intent|cards|evidence|provider|model|tool|schema)\s*[:=]/i;
-const AMOUNT_LABEL = /(金额|余额|应付|贷项|差异|订单金额|发票金额|合同金额|采购额)/;
-const WAN_AMOUNT = /^(¥?)\s*(-?\d+(?:\.\d+)?)\s*万$/;
 const AMOUNT_CONTEXT_WAN = /(订单金额|发票金额|合同金额|差异金额|采购额|应付|余额|贷项|报价金额|金额)\s*(¥?)\s*(-?\d+(?:\.\d+)?)\s*万/g;
 
 // The AI answer's currency is not known here, so only keep a ¥ symbol that the
@@ -67,26 +65,4 @@ export function sanitizeAiMessage(value: unknown) {
     .map((line) => normalizeAiMessageAmounts(stripInlineMarkdownEmphasis(line.replace(/^\s{0,3}#{1,6}\s+/, "").trimEnd())))
     .join("\n")
     .trim();
-}
-
-export function aiDisplayMessage(value: unknown, hasCards = false) {
-  if (looksLikeRawJson(value)) {
-    return hasCards
-      ? "已找到相关业务记录，请查看下方结果。"
-      : "AI 助手暂时无法整理该结果，请换一种问法。";
-  }
-  return sanitizeAiMessage(value) || "已收到请求，但当前没有可展示的回复。";
-}
-
-export function safeUnknownCardMessage() {
-  return "暂不支持展示该结果类型。";
-}
-
-export function normalizeAiCardValue(label: string, value: unknown) {
-  if (typeof value !== "string" || !AMOUNT_LABEL.test(label)) return value;
-  const match = value.trim().match(WAN_AMOUNT);
-  if (!match) return value;
-  const amount = Number(match[2]) * 10000;
-  if (!Number.isFinite(amount)) return value;
-  return amountText(amount, match[1]);
 }

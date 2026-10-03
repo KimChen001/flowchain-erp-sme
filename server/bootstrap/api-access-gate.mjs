@@ -3,6 +3,7 @@
 // local status and login are answered earlier in the request handler.
 const PUBLIC_API_ROUTES = new Set([
   "POST /api/workspace/invitations/accept",
+  "POST /api/workspace/invitations/inspect",
 ]);
 
 export function apiAccessDenial({ method, pathname, identity }) {

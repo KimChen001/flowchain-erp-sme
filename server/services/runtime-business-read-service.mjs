@@ -1,13 +1,14 @@
 import { createBusinessReadContextService } from './business-read-context-service.mjs'
 
-export async function readBusinessContext(ctx) {
+// options.warehouseIds limits inventory to the reader's warehouses (null: all).
+export async function readBusinessContext(ctx, options = {}) {
   // Direct domain route tests created before the runtime registry existed do not
   // provide repositories. Production server contexts always provide the registry.
   if (!ctx.repositories && ctx.db) return legacyRouteTestContext(ctx.db)
   return await createBusinessReadContextService({
     repositories: ctx.repositories || {},
     dataMode: ctx.dataMode || 'user',
-  }).read({ tenantId: ctx.identity?.tenantId })
+  }).read({ tenantId: ctx.identity?.tenantId, warehouseIds: options.warehouseIds ?? null })
 }
 
 function legacyRouteTestContext(db) {

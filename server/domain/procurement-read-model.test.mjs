@@ -1,3 +1,7 @@
+import { procurementReadAccessFor } from './procurement-read-access.mjs'
+import { aiSkillActor } from './test-fixtures/ai-skill-scenario.mjs'
+// These checks are about routing and tenant scope: the actor may read everything.
+const fullAccess = (tenantId) => procurementReadAccessFor(aiSkillActor('workspace-administrator', tenantId))
 import test from 'node:test'
 import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 import assert from 'node:assert/strict'
@@ -352,7 +356,7 @@ test('GET /api/procurement/documents/:type/:id dispatches all canonical types wi
       req: { method: 'GET' },
       res: {},
       url: new URL(`/api/procurement/documents/${routeType}/DOC%2F001`, 'http://localhost'),
-      identity: { authenticated: true, tenantId: 'tenant-a' },
+      identity: { authenticated: true, tenantId: 'tenant-a' }, procurementReadAccess: fullAccess('tenant-a'),
       repositories,
       send(_res, status, payload) { response = { status, payload } },
     })
@@ -396,7 +400,7 @@ test('GET RFQ detail preserves authoritative participation and revision DTO fiel
     req: { method: 'GET' },
     res: {},
     url: new URL('/api/procurement/documents/rfq/RFQ-AUTHORITY-1', 'http://localhost'),
-    identity: { authenticated: true, tenantId: 'tenant-a' },
+    identity: { authenticated: true, tenantId: 'tenant-a' }, procurementReadAccess: fullAccess('tenant-a'),
     repositories: {
       procurementRead: {
         normalizeDocumentType: normalizeProcurementDocumentType,
@@ -447,7 +451,7 @@ test('GET /api/procurement/documents/:type/:id fails before repository reads for
     req: { method: 'GET' },
     res: {},
     url: new URL('/api/procurement/documents/customer/CUST-1', 'http://localhost'),
-    identity: { authenticated: true, tenantId: 'tenant-a' },
+    identity: { authenticated: true, tenantId: 'tenant-a' }, procurementReadAccess: fullAccess('tenant-a'),
     repositories,
     send(_res, status, payload) { invalidResponse = { status, payload } },
   })
@@ -473,7 +477,7 @@ test('GET /api/procurement/documents/:type/:id requires authentication and keeps
     req: { method: 'GET' },
     res: {},
     url: new URL('/api/procurement/documents/invoice/INV-TENANT-B', 'http://localhost'),
-    identity: { authenticated: true, tenantId: 'tenant-a' },
+    identity: { authenticated: true, tenantId: 'tenant-a' }, procurementReadAccess: fullAccess('tenant-a'),
     repositories: {
       procurementRead: {
         normalizeDocumentType: normalizeProcurementDocumentType,

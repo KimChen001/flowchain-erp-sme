@@ -14,7 +14,7 @@ type Detail = {
   lines: Array<{ id: string; poLineId: string; sku: string; itemName: string; orderedQuantity: string; previouslyReceivedQuantity: string; documentAcceptedQuantity: string; currentlyAppliedQuantity: string; acceptedQuantity: string; rejectedQuantity: string; remainingReceivableQuantity: string; unit?: string; warehouse?: { name?: string; code?: string } | null; location?: string; lotSerialCapability: { postingAvailable: boolean; message: string } }>;
   postingSummary: { acceptedQuantity: string; rejectedQuantity: string; lineCount: number };
   capabilities: { posting?: Capability; reversal?: Capability };
-  availableActions: { canEditDraft?: boolean; canSubmit?: boolean; canPost: boolean; canReverse: boolean; canViewReversal: boolean; primaryAction: "post" | "reverse" | "view_reversal" | null; blockingReasonCodes: string[] };
+  availableActions: { canEditDraft?: boolean; canSubmit?: boolean; canCancel?: boolean; canPost: boolean; canReverse: boolean; canViewReversal: boolean; primaryAction: "post" | "reverse" | "view_reversal" | null; blockingReasonCodes: string[] };
   limitations: string[];
 };
 type Preview = { operation: "post" | "reverse"; allowed: boolean; blockingIssues: Array<{ code: string; message: string }>; warnings: Array<{ code: string; message: string }>; inventoryImpacts: Array<Record<string, string>>; purchaseOrderImpacts: Array<Record<string, string>>; statusImpact: Record<string, string>; factsToCreate: { inventoryMovementCount: number; auditEventCount: number; commandExecutionCount: number }; limitations: string[] };
@@ -34,6 +34,9 @@ const DRAFT_COPY: Record<string, [string, string]> = {
   submitting: ["Submitting…", "正在提交…"],
   submitFailed: ["The receipt could not be submitted.", "收货单提交失败。"],
   draftNote: ["This receipt is a draft. Submit it to post it to inventory.", "该收货单为草稿，提交后方可过账入库。"],
+  cancelReceipt: ["Cancel receipt", "取消收货单"],
+  cancelReason: ["Why is this receipt cancelled? Nothing will be posted to inventory.", "请输入取消原因（不会过账入库）"],
+  cancelFailed: ["The receipt could not be cancelled.", "收货单取消失败。"],
 };
 
 function errorMessage(error: unknown) {
@@ -107,6 +110,20 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     } finally { setSaving(false); }
   }
 
+  async function cancelReceipt() {
+    if (!detail) return;
+    const reason = window.prompt(draftCopy("cancelReason"))?.trim() || "";
+    if (!reason) return;
+    setSaving(true); setError("");
+    try {
+      await apiJson(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/cancel`, { method: "POST", body: JSON.stringify({ idempotencyKey: newKey(), expectedVersion: detail.receivingDocument.version, reason }) });
+      await refresh();
+    } catch (nextError) {
+      setError(nextError instanceof ApiError ? `${draftCopy("cancelFailed")} ${nextError.message}` : draftCopy("cancelFailed"));
+      if (nextError instanceof ApiError && nextError.status === 409) await refresh();
+    } finally { setSaving(false); }
+  }
+
   async function openPreview(nextOperation: "post" | "reverse") {
     setError(""); setReason(""); setActionKey(newKey());
     try { setPreview(await apiJson<Preview>(`/api/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/impact-preview?operation=${nextOperation}`)); }
@@ -136,7 +153,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><div className="mb-2 flex items-center gap-2"><h1 className="text-xl font-semibold">{grn.documentNumber}</h1><span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">Beta · PostgreSQL</span></div><p className="text-sm text-gray-500">{grn.supplier?.name || "Unknown supplier"} · PO <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}>{detail.purchaseOrder.id}</a></p></div>
-        <div className="flex gap-2">{detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className="rounded-lg border px-4 py-2 text-sm font-semibold">{draftCopy("editDraft")}</a>}{detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}{canOfferAction && <button data-testid="receiving-primary-action" onClick={() => void openPreview(operation)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">{operation === "post" ? "Post Receipt" : "Reverse Receipt"}</button>}{detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className="rounded-lg bg-gray-100 px-4 py-2 text-sm">View Reversal</button>}</div>
+        <div className="flex gap-2">{detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className="rounded-lg border px-4 py-2 text-sm font-semibold">{draftCopy("editDraft")}</a>}{detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}{detail.availableActions.canCancel && <button data-testid="receiving-cancel" disabled={saving} onClick={() => void cancelReceipt()} className="rounded-lg border px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50">{draftCopy("cancelReceipt")}</button>}{canOfferAction && <button data-testid="receiving-primary-action" onClick={() => void openPreview(operation)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">{operation === "post" ? "Post Receipt" : "Reverse Receipt"}</button>}{detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className="rounded-lg bg-gray-100 px-4 py-2 text-sm">View Reversal</button>}</div>
       </div>
       {detail.availableActions.canSubmit && <div className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{draftCopy("draftNote")}</div>}
       {!capability?.enabled && <div className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Read-only. Database receiving capability requires explicit administrator enablement.</div>}
@@ -158,7 +175,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     <section id="evidence" className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 font-semibold"><ShieldCheck size={16} />Evidence timeline</div><div className="space-y-3">{events.length ? events.map((event) => <div key={event.id} className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="min-w-24 text-xs text-gray-500">{stamp(event.occurredAt)}</div><div><div className="text-sm font-medium">{event.label}</div><div className="text-[11px] uppercase text-gray-500">{event.type.replaceAll('_',' ')}{event.postedFact ? ' · Posted business fact' : ''}{event.actorId ? ` · ${event.actorId}` : ''}</div></div></div>) : <div className="text-sm text-gray-500">No evidence connected.</div>}</div></section>
     <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><strong>Beta limitation:</strong> {detail.limitations.join(' ')}</div>
 
-    {preview && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-testid="impact-preview"><div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
+    {preview && <div className="fc-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-testid="impact-preview"><div className="fc-dialog-enter max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
       <div className="flex items-start justify-between"><div><h2 className="text-lg font-semibold">{preview.operation === 'post' ? 'Review receipt posting' : 'Review receipt reversal'}</h2><p className="text-sm text-gray-500">No business fact is written until you confirm.</p></div><button onClick={() => setPreview(null)}>✕</button></div>
       {preview.blockingIssues.map((issue) => <div key={issue.code} className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{issue.code}: {issue.message}</div>)}
       {preview.warnings.map((issue) => <div key={issue.code} className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{issue.message}</div>)}

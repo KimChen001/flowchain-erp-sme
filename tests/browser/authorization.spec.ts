@@ -55,3 +55,34 @@ test("last role administrator is protected and capability denial is distinct", a
   await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
   await expect(page.getByTestId("authorization-route-denied")).toHaveCount(0);
 });
+
+test("admin grants a master data code from the permission matrix and it decides the write", async ({ page, request }) => {
+  const admin = await login(request, "admin@example.com");
+  await session(page, admin);
+  await page.goto("/app/settings/roles");
+  await expect(page.getByTestId("authorization-workbench")).toBeVisible();
+  page.once("dialog", dialog => dialog.accept("Supplier Steward"));
+  await page.getByTestId("create-role").click();
+  await page.getByText("Supplier Steward", { exact: true }).first().click();
+  // The master data codes have their own group in the matrix.
+  const group = page.locator("section").filter({ has: page.getByRole("heading", { name: /^(Master data|基础资料)$/ }) });
+  await expect(group.getByText("master_data.item.manage", { exact: true })).toBeVisible();
+  await expect(group.getByText("master_data.customer.manage", { exact: true })).toBeVisible();
+  await group.getByText("master_data.supplier.manage", { exact: true }).locator("xpath=ancestor::label").locator('input[type="checkbox"]').check();
+  await page.getByTestId("save-role").click();
+  await expect(page.getByRole("status")).toContainText(/立即生效|effective immediately/);
+  const model = await (await request.get("/api/authorization/roles", { headers: auth(admin.token) })).json();
+  const role = model.roles.find((item: any) => item.name === "Supplier Steward");
+  expect(role.permissionCodes).toEqual(["master_data.supplier.manage"]);
+
+  const supplier = (name: string) => ({ supplierCode: `STEWARD-${Date.now()}`, supplierName: name, defaultCurrency: "USD" });
+  const before = await login(request, "viewer@example.com");
+  expect((await request.post("/api/master-data/suppliers", { headers: auth(before.token), data: supplier("Denied") })).status()).toBe(403);
+  const viewer = model.users.find((item: any) => item.email === "viewer@example.com");
+  const assign = await request.put(`/api/authorization/users/${viewer.id}/roles`, { headers: auth(admin.token), data: { roleIds: [...viewer.roleIds, role.id] } });
+  expect(assign.ok()).toBeTruthy();
+  // The role change ended the viewer's sessions.
+  const after = await login(request, "viewer@example.com");
+  expect((await request.post("/api/master-data/suppliers", { headers: auth(after.token), data: supplier("Steward Supplier") })).status()).toBe(201);
+  expect((await request.post("/api/master-data/customers", { headers: auth(after.token), data: { code: `STEWARD-${Date.now()}`, name: "Denied" } })).status()).toBe(403);
+});

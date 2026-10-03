@@ -2,10 +2,7 @@ import test from 'node:test'
 import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { handleAiRoute } from '../routes/ai.routes.mjs'
-import { readFileSync } from 'node:fs'
 import {
   buildAiReceivingGapResponse,
   classifyCompoundBusinessQuery,
@@ -13,8 +10,6 @@ import {
   splitCompoundBusinessQuestion,
 } from './ai-compound-query.mjs'
 import { classifyAiBusinessIntent } from './ai-business-intent-router.mjs'
-
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 function runtimeDb() {
   return createProductReviewScenarioDb()
@@ -188,12 +183,4 @@ test('R145 compound response progressively discloses overlong questions', async 
   assert.ok(summary.data.deferredSubIntents.length > 0)
   assert.ok(actions.some((action) => action.kind === 'prompt' && /展开|查看/.test(action.label)))
   assert.equal(route.providerDispatchCount, 0)
-})
-
-test('R144 Panel renders compound and receiving cards explicitly', () => {
-  const source = readFileSync(path.join(repoRoot, 'src', 'modules', 'ai-assistant', 'Panel.tsx'), 'utf8')
-  assert.match(source, /case "compound_summary"/)
-  assert.match(source, /case "compound_section"/)
-  assert.match(source, /case "receiving_gap_summary"/)
-  assert.match(source, /未收货订单/)
 })

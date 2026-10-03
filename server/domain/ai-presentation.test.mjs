@@ -72,21 +72,6 @@ test('AI message sanitization does not convert non-amount wan words', async () =
   assert.equal(mod.sanitizeAiMessage('库存涉及万向节备件，需要查看 SKU-00412。'), '库存涉及万向节备件，需要查看 SKU-00412。')
 })
 
-test('JSON-like content with cards uses safe card message', async () => {
-  const { mod } = await loadPresentationModule()
-  assert.equal(mod.aiDisplayMessage('{"cards":[{"type":"supplier_status"}]}', true), '已找到相关业务记录，请查看下方结果。')
-})
-
-test('JSON-like content without cards uses safe fallback', async () => {
-  const { mod } = await loadPresentationModule()
-  assert.equal(mod.aiDisplayMessage('{"intent":"debug","evidence":[]}', false), 'AI 助手暂时无法整理该结果，请换一种问法。')
-})
-
-test('unknown card fallback stays business-safe', async () => {
-  const { mod } = await loadPresentationModule()
-  assert.equal(mod.safeUnknownCardMessage(), '暂不支持展示该结果类型。')
-})
-
 test('mixed text with JSON object line removes that line', async () => {
   const { mod } = await loadPresentationModule()
   assert.equal(
@@ -117,17 +102,4 @@ test('sanitization preserves document and item ids', async () => {
   for (const id of ['PO-2026-1287', 'PR-2026-2400', 'RFQ-26-0047', 'GRN-202605-0418', 'INV-SZ-260422', 'SKU-00412']) {
     assert.match(output, new RegExp(id))
   }
-})
-
-test('amount-like strings convert when label is amount-related', async () => {
-  const { mod } = await loadPresentationModule()
-  // The card's currency is unknown here, so no symbol is invented; an explicit ¥ in the source is kept.
-  assert.equal(mod.normalizeAiCardValue('订单金额', '14万'), '140,000')
-  assert.equal(mod.normalizeAiCardValue('发票金额', '¥14万'), '¥140,000')
-  assert.equal(mod.normalizeAiCardValue('差异金额', '1.4万'), '14,000')
-})
-
-test('non-amount labels do not convert Chinese text containing wan', async () => {
-  const { mod } = await loadPresentationModule()
-  assert.equal(mod.normalizeAiCardValue('说明', '库存涉及万向节备件'), '库存涉及万向节备件')
 })

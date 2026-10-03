@@ -73,57 +73,6 @@ const routePromptCases = Object.freeze([
   { moduleId: 'procurement', message: '查看 PR 状态 PR-1001', activeContext: { entityType: 'purchase_request', entityId: 'PR-1001', entityLabel: 'PR-1001' }, classification: 'supported_deterministic', surface: 'active:purchase_request' },
 ])
 
-const deterministicReturnedCardTypes = Object.freeze([
-  'ambiguous_match',
-  'confidence_summary',
-  'empty_state',
-  'evidence',
-  'finance_boundary_notice',
-  'finance_next_actions',
-  'finance_pending_settlement_summary',
-  'finance_variance_summary',
-  'inventory_risk_summary',
-  'inventory_exception_summary',
-  'inventory_movement_summary',
-  'inventory_replenishment_summary',
-  'inventory_status',
-  'master_data_boundary_notice',
-  'master_data_missing_fields_summary',
-  'master_data_next_actions',
-  'master_data_quality_summary',
-  'missing_fields',
-  'planning_status_summary',
-  'po_overdue_summary',
-  'po_status',
-  'pr_conversion_status',
-  'pr_conversion_summary',
-  'pr_draft',
-  'pr_status',
-  'procurement_exception_summary',
-  'procurement_followup_summary',
-  'receiving_exception_summary',
-  'receiving_status',
-  'recommended_actions',
-  'rfq_draft',
-  'rfq_response_summary',
-  'rfq_status',
-  'supplier_contract_summary',
-  'supplier_boundary_notice',
-  'supplier_high_risk_summary',
-  'supplier_inventory_risk_summary',
-  'supplier_invoice_summary',
-  'supplier_next_actions',
-  'supplier_operational_comparison',
-  'supplier_operational_summary',
-  'supplier_related_po_summary',
-  'supplier_rfq_participation',
-  'supplier_rfq_summary',
-  'supplier_scoring_explanation',
-  'supplier_status',
-  'stock_balance_gap_summary',
-  'three_way_match_summary',
-])
-
 function createDb() {
   return {
     products: [
@@ -211,11 +160,6 @@ function businessSnapshot(db) {
   })
 }
 
-function cardRenderersFromPanel() {
-  const source = fs.readFileSync(path.join(repoRoot, 'src/modules/ai-assistant/Panel.tsx'), 'utf8')
-  return new Set([...source.matchAll(/case "([^"]+)":/g)].map((match) => match[1]))
-}
-
 test('R76 enumerates every visible AI quick prompt and classifies the Alpha surface', async () => {
   const { mod } = await loadPromptModule()
   for (const entry of visiblePromptContract) {
@@ -264,8 +208,13 @@ test('R76 visible AI quick prompts do not fall through to provider_disabled on t
   }
 })
 
-test('R76 returned deterministic card types have frontend renderers', () => {
-  const renderers = cardRenderersFromPanel()
-  const missing = deterministicReturnedCardTypes.filter((type) => !renderers.has(type))
-  assert.deepEqual(missing, [])
+// The cards the template chat returns never reach the panel: it asks only
+// /api/ai-runtime/respond and renders each answer as one ai_response_v2 card.
+test('R76 the assistant panel renders only runtime answers', () => {
+  const panel = fs.readFileSync(path.join(repoRoot, 'src/modules/ai-assistant/Panel.tsx'), 'utf8')
+  const gateway = fs.readFileSync(path.join(repoRoot, 'src/modules/ai-assistant/aiRuntimeGateway.ts'), 'utf8')
+  assert.match(gateway, /"\/api\/ai-runtime\/respond"/)
+  assert.doesNotMatch(panel + gateway, /\/api\/ai\/chat/)
+  assert.deepEqual([...panel.matchAll(/\btype: "([^"]+)"/g)].map((match) => match[1]), ['ai_response_v2'])
+  assert.doesNotMatch(panel, /case "/)
 })

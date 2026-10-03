@@ -1,20 +1,24 @@
-export function formatNumberAmount(value: number | null | undefined, options: Intl.NumberFormatOptions = {}) {
-  const amount = Number(value || 0);
-  const safeAmount = Number.isFinite(amount) ? amount : 0;
+// A missing or hidden amount (null, undefined, empty or not a number)
+// renders as "—", never as 0: a role without the amount permission gets null
+// from the server, and showing it as $0.00 would state a false value.
+export function formatNumberAmount(value: number | string | null | undefined, options: Intl.NumberFormatOptions = {}) {
+  if (value === null || value === undefined || value === "") return "—";
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
     ...options,
-  }).format(safeAmount);
+  }).format(amount);
 }
 
-export function formatCurrencyAmount(value: number | null | undefined, currency?: string) {
+export function formatCurrencyAmount(value: number | string | null | undefined, currency?: string) {
   if (!currency) return formatNumberAmount(value);
   return formatNumberAmount(value, { style: "currency", currency });
 }
 
 // Pass the document or workspace currency when it is known. Without one the
 // amount renders as a plain number rather than guessing a currency symbol.
-export function fmt(n: number | null | undefined, currency?: string) {
+export function fmt(n: number | string | null | undefined, currency?: string) {
   return formatCurrencyAmount(n, currency);
 }
 

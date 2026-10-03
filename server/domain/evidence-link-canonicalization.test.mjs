@@ -76,24 +76,15 @@ test('AI evidence navigation supports object-specific PO SKU RFQ GRN and PR focu
   assert.match(source, /focusTarget: \{ entityType: target\.entityType, entityId \}/)
   assert.match(source, /focusTarget: \{ entityType: "inventory_item", entityId: decodeURIComponent\(parts\[3\]\) \}/)
   assert.match(app, /setSearchFocus\(\s*intent\.focusTarget/)
-  assert.match(ai, /navigationIntentFromEvidenceLink\(navigableLink, \{ source: "ai" \}\)/)
-  assert.match(ai, /navigationIntentFromInternalTarget\(action\.target, \{ source: "aiAction" \}\)/)
   assert.doesNotMatch(ai, /onClick=\{\(\) => askAi\(intent\.activeId/)
   assert.doesNotMatch(ai, /onClick=\{\(\) => askAi\(action\.target/)
 })
 
-test('AI and Today Cockpit render evidence through canonical links', () => {
+test('Today Cockpit renders evidence through canonical links', () => {
   const ai = readSource('src', 'modules', 'ai-assistant', 'Panel.tsx')
   const cockpit = readSource('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
 
-  assert.match(ai, /normalizeEvidenceLinks\(\[raw\], \{ source: "ai" \}\)/)
-  assert.match(ai, /raw\.summary/)
-  assert.match(ai, /navigationIntentFromEvidenceLink\(navigableLink, \{ source: "ai" \}\)/)
-  assert.match(ai, /focusTargetFromBusinessId\(businessId\)/)
-  assert.match(ai, /navigableLink\.clickable && intent && onNavigate/)
-  assert.match(ai, /navigationIntentFromInternalTarget\(action\.target, \{ source: "aiAction" \}\)/)
   assert.doesNotMatch(ai, /href=\{safeInternalTarget/)
-  assert.match(ai, /textValue\(title\)/)
   assert.match(cockpit, /normalizeTodayCockpitTarget\(card\)/)
   assert.match(cockpit, /normalizeTodayCockpitTarget\(doc\)/)
   assert.match(cockpit, /onNavigate\(moduleId, link\?\.focusTarget \|\| null, \{/)

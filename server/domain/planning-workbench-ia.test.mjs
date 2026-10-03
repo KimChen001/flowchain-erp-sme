@@ -40,10 +40,8 @@ test('Planning Cockpit CTAs use internal navigation clickthroughs', () => {
 })
 
 test('AI Planning actions accept canonical view ids instead of raw forecast hrefs', () => {
-  const panel = readSource('src', 'modules', 'ai-assistant', 'Panel.tsx')
   const status = readSource('server', 'domain', 'ai-chat-status.mjs')
 
-  assert.match(panel, /navigationIntentFromInternalTarget\(action\.target, \{ source: "aiAction" \}\) \|\| navigationIntentFromModule\(action\.target \|\| "overview", \{ source: "aiAction" \}\)/)
   for (const routeId of ['forecast:cockpit', 'forecast:demand', 'forecast:mrp', 'forecast:replenishment', 'forecast:parameters']) {
     assert.match(status, new RegExp(routeId))
   }

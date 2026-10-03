@@ -52,6 +52,10 @@ try {
   assert.equal(decision(buyer, "returns.request.submit", [warehouseId]), true); assert.equal(decision(buyer, "returns.posting.post", [warehouseId]), false); assert.equal(decision(buyer, "returns.posting.reverse", [warehouseId]), false)
   assert.equal(decision(ops, "returns.posting.post", [warehouseId]), true); assert.equal(decision(ops, "returns.posting.reverse", [warehouseId]), false)
   assert.equal(decision(viewer, "returns.posting.read"), true); assert.equal(decision(viewer, "returns.posting.post", [warehouseId]), false); assert.equal(decision(unknown, "returns.posting.post", [warehouseId]), false)
+  // Master data writes come from the backfilled roles: buyers maintain items
+  // and suppliers but not customers, and viewers change nothing.
+  const masterDataCodes = ["master_data.item.manage", "master_data.supplier.manage", "master_data.customer.manage"]
+  for (const [label, actor, expected] of [["admin", admin, [true, true, true]], ["manager", manager, [true, true, true]], ["ops", ops, [true, true, true]], ["buyer", buyer, [true, true, false]], ["viewer", viewer, [false, false, false]], ["unknown", unknown, [false, false, false]]]) assert.deepEqual(masterDataCodes.map((code) => decision(actor, code)), expected, label)
 
   const service = createAuthorizationAdminService({ prisma })
   const custom = await service.createRole(admin, { name: "退货执行员", permissionCodes: ["returns.posting.read", "returns.posting.prepare", "returns.posting.post", "returns.posting.reverse"] })
@@ -71,6 +75,16 @@ try {
   await assert.rejects(() => prisma.tenantRolePermission.create({ data: { id: randomUUID(), tenantId, roleId: custom.id, permissionCode: "returns.posting.read" } }))
   await assert.rejects(() => prisma.userRoleAssignment.create({ data: { id: randomUUID(), tenantId, userId: "user-viewer", roleId: viewer.roleIds[0] } }))
   assert.equal(decision(ops, "returns.posting.post", ["warehouse-outside-scope"]), false)
+
+  // The backfill runs again whenever someone who never had a role signs in.
+  // A code an administrator removed from a default role stays removed: the
+  // template fills a default role only until an administrator saves it.
+  const viewerTemplate = await prisma.tenantRole.findFirstOrThrow({ where: { tenantId, roleKey: "read-only-viewer" }, include: { permissions: true } })
+  await service.updateRole(admin, viewerTemplate.id, { permissionCodes: viewerTemplate.permissions.map((grant) => grant.permissionCode).filter((code) => code !== "returns.posting.read") })
+  await prisma.user.create({ data: { id: "user-late", tenantId, email: "user-late@flowchain.invalid", name: "user-late", role: "viewer", status: "active" } })
+  const replay = await backfillTenantAuthorization(prisma, tenantId, { actorId: "user-admin", requestId: "db-gate-late-user" })
+  assert.deepEqual([replay.createdRoles, replay.createdGrants], [0, 0])
+  const late = await context("user-late", "viewer"); assert.deepEqual(late.roleIds, [viewerTemplate.id]); assert.equal(decision(late, "returns.posting.read"), false)
   assert.ok(await prisma.auditLog.count({ where: { tenantId, source: { in: ["authorization_backfill", "authorization_governance"] } } }) >= 5)
   console.log(`Authorization PostgreSQL gate: PASS (${permissionCodes.length} catalog permissions, 0 failed, 0 skipped)`)
 } finally {

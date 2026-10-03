@@ -1,25 +1,16 @@
 import { KnowledgeLibrary } from "./KnowledgeLibrary";
-import { isUnavailableProductRoute } from "../../../shared/unavailable-product-routes.mjs";
 import { useI18n } from "../../i18n/I18n";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Maximize2, MessageCircle, Minimize2, Plus, RotateCcw, Send, Square, Sparkles, X } from "lucide-react";
-import {
-  navigationIntentFromInternalTarget,
-  navigationIntentFromEvidenceLink,
-  navigationIntentFromModule,
-  normalizeEvidenceLinks,
-  type CanonicalFocusTarget,
-} from "../../lib/evidenceLinks";
-import { fmt } from "../../lib/format";
+import type { CanonicalFocusTarget } from "../../lib/evidenceLinks";
 import { A } from "../../components/ui";
-import { typography } from "../../components/ui/typography";
 import { routeById } from "../../app/routeRegistry";
 import { AiResponseV2Renderer } from "../../components/ai/AiResponseV2Renderer";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import type { AiResponseV2 } from "../../domain/ai/response-contract";
 import { focusTargetFromActiveContext, postAiRuntimeResponse } from "./aiRuntimeGateway";
 import { ApiError } from "../../lib/api-client";
-import { aiDisplayMessage, looksLikeRawJson, normalizeAiCardValue, safeUnknownCardMessage, sanitizeAiMessage } from "./presentation";
+import { looksLikeRawJson, sanitizeAiMessage } from "./presentation";
 
 export type ActiveContext = {
   module?: string;
@@ -41,9 +32,7 @@ type AiChatMessage = {
 
 type AiChatCard = {
   type?: string;
-  title?: string;
   data?: Record<string, unknown>;
-  fields?: { name?: string; reason?: string }[] | Record<string, unknown> | null;
   actions?: {
     label?: string;
     kind?: string;
@@ -54,7 +43,6 @@ type AiChatCard = {
     originEvidence?: Record<string, unknown>[];
   }[];
   evidence?: { type?: string; id?: string; label?: string; status?: string; route?: string; summary?: string }[];
-  matches?: Record<string, unknown>[];
 };
 
 type AiNavigateOptions = {
@@ -82,6 +70,9 @@ type SafeConversationContext = {
   previousEntityRefs?: Array<{ entityType?: string; entityId?: string; entityLabel: string; source: string; confidence: string }>;
   previousNavigationRefs?: Array<{ label: string; moduleId?: string; entityType?: string; entityId?: string; entityLabel?: string; returnTo: "ai-assistant" }>;
   previousEvidenceRefs?: Array<{ id?: string; label?: string; entityType?: string; entityId?: string; entityLabel?: string; moduleId?: string }>;
+  // The records of the latest answer that listed several, so "the second one"
+  // still means that list after a "why?" about one of them.
+  previousListRefs?: Array<{ id?: string; label?: string; entityType?: string; entityId?: string; entityLabel?: string; moduleId?: string }>;
   previousModuleId?: string;
   previousViewId?: string;
   previousFocusTarget?: { entityType?: string; entityId?: string; entityLabel?: string } | null;
@@ -89,13 +80,6 @@ type SafeConversationContext = {
   lastResponseId?: string;
   returnContext?: { returnTo: "ai-assistant"; returnLabel: string; sourceModuleId?: string; sourceViewId?: string };
 };
-
-const aiEvidenceLinkClass = `max-w-full text-left ${typography.compactMetadata} font-medium truncate hover:underline`;
-const aiEvidenceTitleClass = `${typography.compactMetadata} font-medium truncate`;
-const aiEvidenceMetaClass = `${typography.compactMetadata} truncate`;
-const aiActionPillClass = `rounded-full px-2.5 py-1 ${typography.compactMetadata} font-medium`;
-const aiActionLinkClass = `${aiActionPillClass} hover:underline`;
-const aiBoundaryNoticeClass = `${typography.metadata} text-slate-600`;
 
 export const AI_EMPTY_STATE_PROMPT_CHIPS = [
   { label: "What should I handle first today?", prompt: "What should I handle first today?", zhLabel: "今天先处理什么？", zhPrompt: "今天先处理什么？" },
@@ -153,19 +137,23 @@ export function getAiContextLabel(moduleId: string, activeContext?: ActiveContex
   return language === "zh-CN" ? routeLabel : MODULE_LABELS_EN[routeLabel] || routeLabel;
 }
 
+// How the placeholder names the page's record. The assistant answers about the
+// whole workspace; it uses this record only when the question says "this ...".
+const CONTEXT_ENTITY_PHRASES: Record<string, { "en-US": string; "zh-CN": string }> = {
+  purchase_order: { "en-US": "this PO", "zh-CN": "这个 PO" },
+  item: { "en-US": "this SKU", "zh-CN": "这个 SKU" },
+  rfq: { "en-US": "this RFQ", "zh-CN": "这个 RFQ" },
+  supplier: { "en-US": "this supplier", "zh-CN": "这个供应商" },
+  sales_order: { "en-US": "this sales order", "zh-CN": "这个客户订单" },
+  purchase_request: { "en-US": "this purchase request", "zh-CN": "这个采购申请" },
+};
+
 export function getAiInputPlaceholder(moduleId: string, activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
   const zh = language === "zh-CN";
-  if (activeContext?.entityType === "purchase_order") return zh ? "问我：这个 PO 为什么优先？未到货风险在哪里？" : "Ask why this PO is a priority or where receipt risk exists";
-  if (activeContext?.entityType === "sales_order") return zh ? "问我：这个客户订单的交付风险在哪里？需要先看哪些证据？" : "Ask about delivery risk and evidence for this sales order";
-  if (activeContext?.entityType === "item") return zh ? "问我：这个 SKU 需要补货吗？库存覆盖够不够？" : "Ask whether this SKU needs replenishment or has enough coverage";
-  if (activeContext?.entityType === "rfq") return zh ? "问我：这个 RFQ 有几家回复？要不要提醒供应商？" : "Ask about RFQ responses or supplier follow-up";
-  if (activeContext?.entityType === "supplier") return zh ? "问我：这个供应商有哪些风险？需要怎么跟进？" : "Ask about this supplier's risks and follow-up";
+  const phrase = CONTEXT_ENTITY_PHRASES[activeContext?.entityType || ""]?.[language];
+  if (phrase) return zh ? `问工作区的任何问题，或问${phrase}` : `Ask anything about your workspace, or about ${phrase}`;
   if (moduleId === "overview") return zh ? "问我：今天先看什么？哪些风险最高？" : "Ask what to review today or which risks are highest";
-  return zh ? "问我：当前有什么问题？哪些数据不完整？" : "Ask about current issues or incomplete data";
-}
-
-function hasValue(value: unknown) {
-  return value !== undefined && value !== null && value !== "";
+  return zh ? "问工作区的任何问题" : "Ask anything about your workspace";
 }
 
 function textValue(value: unknown) {
@@ -176,244 +164,12 @@ function textValue(value: unknown) {
   return String(value ?? "");
 }
 
-// Amounts carry a currency symbol only when the card states its currency.
-function businessValue(label: string, value: unknown, currency?: string) {
-  if (/金额|余额|应付|贷项|差异/.test(label) && typeof value === "number") return fmt(value, currency);
-  return textValue(normalizeAiCardValue(label, value));
-}
-
-function fieldEntries(fields: [string, unknown][]) {
-  return fields.filter(([, value]) => hasValue(value));
-}
-
-function normalizeFieldPairs(fields: AiChatCard["fields"]) {
-  if (Array.isArray(fields)) {
-    return fields.map((field) => [field.name, field.reason] as [unknown, unknown]).filter(([name]) => hasValue(name));
-  }
-  if (fields && typeof fields === "object") {
-    return Object.entries(fields);
-  }
-  return [];
-}
-
-function bestText(...values: unknown[]) {
-  const found = values.find(hasValue);
-  return found === undefined ? "" : textValue(found);
-}
-
-function compactCandidateLabel(candidate: Record<string, unknown>) {
-  return bestText(
-    [candidate.supplierId, candidate.name].filter(Boolean).join(" · "),
-    [candidate.itemId, candidate.sku, candidate.name].filter(Boolean).join(" · "),
-    [candidate.rfqId, candidate.title].filter(Boolean).join(" · "),
-    [candidate.id, candidate.label].filter(Boolean).join(" · "),
-    candidate.name,
-    candidate.title,
-    candidate.label,
-  );
-}
-
-function priorityDisplayValue(data: Record<string, unknown>) {
-  return bestText(data.priorityLabel, data.priorityId, data.prioritySignal, data.prioritySource);
-}
-
 function arrayValue(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
-function yesNoValue(value: unknown) {
-  if (!hasValue(value)) return "";
-  return value === true ? "是" : value === false ? "否" : textValue(value);
-}
-
-function compactProcurementList(items: unknown[], type: "pr" | "po" | "receiving" | "issue") {
-  return items.map((item) => {
-    const row = typeof item === "object" && item ? item as Record<string, unknown> : { value: item };
-    if (type === "pr") {
-      return {
-        title: bestText(row.prId, row.pr, row.id, "PR"),
-        reason: [row.status, row.requiredDate, row.supplier].filter(hasValue).map(textValue).join(" · "),
-      };
-    }
-    if (type === "po") {
-      return {
-        title: bestText(row.poId, row.po, row.id, "PO"),
-        reason: [row.supplier, row.status, row.expectedDate, row.riskLevel].filter(hasValue).map(textValue).join(" · "),
-      };
-    }
-    if (type === "receiving") {
-      return {
-        title: bestText(row.receivingId, row.grn, row.id, "收货单"),
-        reason: [row.poId, row.supplier, row.varianceType, row.status].filter(hasValue).map(textValue).join(" · "),
-      };
-    }
-    return {
-      title: [row.type, row.id].filter(hasValue).map(textValue).join(" · ") || bestText(row.title, row.id, "重点事项"),
-      reason: bestText(row.summary, row.reason, row.status),
-    };
-  });
-}
-
-function CardShell({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl px-3 py-2.5 space-y-2" style={{ background: A.white, border: `1px solid ${A.border}` }}>
-      <div className="text-[11px] font-semibold" style={{ color: A.label }}>{title}</div>
-      {children}
-    </div>
-  );
-}
-
-function KeyValueGrid({ fields }: { fields: [string, unknown][] }) {
-  const entries = fieldEntries(fields);
-  if (!entries.length) return null;
-  const currencyField = entries.find(([label, value]) => /币种|currency/i.test(label) && typeof value === "string" && /^[A-Za-z]{3}$/.test(value.trim()));
-  const currency = currencyField ? String(currencyField[1]).trim().toUpperCase() : undefined;
-  return (
-    <div className="grid grid-cols-2 gap-1.5">
-      {entries.map(([label, value]) => (
-        <div key={label} className="rounded-lg px-2 py-1.5" style={{ background: A.gray6 }}>
-          <div className="fc-caption" style={{ color: A.gray2 }}>{label}</div>
-          <div className="text-[11px] font-medium truncate" style={{ color: A.label }}>{businessValue(label, value, currency)}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function MiniList({ items, limit = 2 }: { items: unknown[]; limit?: number }) {
-  const rows = items.slice(0, limit).filter(Boolean);
-  if (!rows.length) return null;
-  return (
-    <div className="space-y-1">
-      {rows.map((item, index) => {
-        const row = typeof item === "object" && item ? item as Record<string, unknown> : { value: item };
-        const title = compactCandidateLabel(row) || row.title || row.rfqId || row.id || row.pr || row.value || "匹配项";
-        const detail = row.reason || row.status || row.responseStatus || row.dueDate || row.riskLevel || row.summary;
-        return (
-          <div key={`${textValue(title)}-${index}`} className="rounded-lg px-2 py-1.5" style={{ background: A.gray6 }}>
-            {hasValue(title) && <div className="text-[11px] font-medium truncate" style={{ color: A.label }}>{textValue(title)}</div>}
-            {hasValue(detail) && <div className="fc-caption truncate" style={{ color: A.gray2 }}>{textValue(detail)}</div>}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function EvidenceList({
-  evidence = [],
-  onNavigate,
-}: {
-  evidence?: AiChatCard["evidence"];
-  onNavigate?: AiNavigate;
-}) {
-  const rows = (evidence || [])
-    .map((item) => {
-      const raw = typeof item === "object" && item ? item as Record<string, unknown> : {};
-      const link = normalizeEvidenceLinks([raw], { source: "ai" })[0] || null;
-      return { raw, link };
-    })
-    .filter((item) => item.link)
-    .slice(0, 3);
-  if (!rows.length) return null;
-  return (
-    <div className="space-y-1">
-      {rows.map(({ raw, link }, index) => {
-        if (!link) return null;
-        const rawLabel = bestText(raw.label, raw.title, raw.summary, link.label);
-        const businessId = visibleBusinessId(link.entityId, raw.id, raw.documentId, raw.label, raw.title, raw.summary, link.label);
-        const displayId = businessId || link.entityId;
-        const fallbackFocusTarget = focusTargetFromBusinessId(businessId);
-        const navigableLink = fallbackFocusTarget && !link.clickable
-          ? {
-              ...link,
-              clickable: true,
-              entityId: businessId,
-              entityType: fallbackFocusTarget.entityType,
-              moduleId: moduleIdForBusinessId(businessId),
-              focusTarget: fallbackFocusTarget,
-            }
-          : link;
-        const intent = navigationIntentFromEvidenceLink(navigableLink, { source: "ai" });
-        const label = displayId && rawLabel && !rawLabel.includes(displayId)
-          ? `${displayId} · ${rawLabel}`
-          : bestText(rawLabel, link.entityId);
-        const title = `依据：${label}`;
-        const detail = bestText(raw.summary, raw.reason, link.status && link.status !== link.label ? link.status : "");
-        return (
-          <div key={`${title}-${index}`} className="rounded-lg px-2 py-1.5" style={{ background: A.gray6 }}>
-            {navigableLink.clickable && intent && onNavigate && !isUnavailableProductRoute(intent.activeId) ? (
-              <button
-                type="button"
-                onClick={() => onNavigate(intent.activeId, intent.focusTarget || null, { returnTo: "ai", entityLabel: label, source: "ai" })}
-                data-testid="ai-evidence-link"
-                data-business-id={displayId}
-                className={aiEvidenceLinkClass}
-                style={{ color: A.blue }}
-              >
-                {textValue(title)}
-              </button>
-            ) : (
-              <div className={aiEvidenceTitleClass} style={{ color: A.label }}>{textValue(title)}</div>
-            )}
-            {hasValue(detail) && <div className={aiEvidenceMetaClass} style={{ color: A.gray2 }}>{textValue(detail)}</div>}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function actionDraftRequestFromCard(card: AiChatCard): ActionDraftPreviewRequest | null {
-  const data = card.data || {};
-  if (card.type === "pr_draft") {
-    return {
-      type: "purchase_request_draft",
-      title: card.title || "Purchase Request Draft",
-      source: "ai_assistant",
-      originEvidence: card.evidence as Record<string, unknown>[] || [],
-      payload: {
-        itemIdOrSku: data.itemId || data.sku || data.itemLabel || data.itemName,
-        quantity: data.quantity,
-        reason: data.reason || data.prioritySignal || "AI draft preparation",
-        supplierIdOrName: data.preferredSupplierId || data.supplierId || data.supplier,
-        warehouse: data.warehouseId || data.defaultWarehouseId,
-      },
-    };
-  }
-  if (card.type === "rfq_draft") {
-    return {
-      type: "rfq_draft",
-      title: card.title || "RFQ Draft",
-      source: "ai_assistant",
-      originEvidence: card.evidence as Record<string, unknown>[] || [],
-      payload: {
-        itemIdOrSku: data.itemId || data.sku || data.itemLabel || data.itemName,
-        quantity: data.quantity,
-        supplierCandidates: data.supplierCandidates,
-        requestedDeliveryDate: data.targetDeliveryDate || data.requiredDate,
-        quotationDeadline: data.quotationDeadline,
-        reason: data.reason || data.prioritySignal || "AI draft preparation",
-      },
-    };
-  }
-  return null;
-}
-
-function actionDraftRequestFromAction(action: NonNullable<AiChatCard["actions"]>[number]): ActionDraftPreviewRequest | null {
-  if (action.kind !== "draft_preview" || !action.draftType) return null;
-  return {
-    type: action.draftType,
-    title: action.draftTitle || action.label || "动作草稿预览",
-    source: "ai_assistant",
-    originEvidence: action.originEvidence || [],
-    payload: {
-      ...(action.payload || {}),
-      reason: action.payload?.reason || action.label || "AI 建议动作草稿预览，需人工审阅。",
-    },
-  };
-}
-
+// Answers arrive from /api/ai-runtime/respond as ai_response_v2 cards; the
+// panel creates no other card type.
 function AiResponseCard({
   card,
   onNavigate,
@@ -425,804 +181,15 @@ function AiResponseCard({
   onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void;
   onFollowUp?: (prompt: string, skillHint?: string) => void;
 }) {
-  const data = card.data || {};
-  switch (card.type) {
-    case "ai_response_v2":
-      return (
-        <AiResponseV2Renderer
-          response={data as unknown as AiResponseV2}
-          onNavigate={onNavigate}
-          onReviewActionDraft={onReviewActionDraft}
-          onFollowUp={onFollowUp}
-        />
-      );
-    case "supplier_status":
-      return (
-        <CardShell title={card.title || textValue(data.name) || "供应商状态"}>
-          <KeyValueGrid fields={[
-            ["状态", data.status],
-            ["风险", data.risk],
-            ["评分", data.score],
-            ["未结 PO", data.openPoCount],
-            ["逾期 PO", data.overduePoCount],
-            ["优选", data.preferred],
-          ]} />
-        </CardShell>
-      );
-    case "supplier_operational_summary":
-      return (
-        <CardShell title={card.title || textValue(data.supplierName) || "供应商运营摘要"}>
-          <KeyValueGrid fields={[
-            ["供应商", data.supplierName || data.supplierId],
-            ["状态", data.status],
-            ["风险", data.risk],
-            ["评分", data.score],
-            ["开放 PO", data.openPoCount],
-            ["逾期 PO", data.overduePoCount],
-            ["发票差异", data.invoiceIssueCount],
-            ["有效合同", data.activeContractCount],
-            ["库存风险", data.inventoryRiskItemCount],
-            ["开放 RFQ", data.openRfqCount],
-            ["下一步", data.nextAction],
-          ]} />
-        </CardShell>
-      );
-    case "supplier_related_po_summary":
-      return (
-        <CardShell title={card.title || "供应商 PO"}>
-          <KeyValueGrid fields={[
-            ["总 PO", data.totalPoCount],
-            ["开放 PO", data.openPoCount],
-            ["逾期 PO", data.overduePoCount],
-            ["临期 PO", data.dueSoonPoCount],
-          ]} />
-          <MiniList items={compactProcurementList(arrayValue(data.topPurchaseOrders), "po")} limit={3} />
-        </CardShell>
-      );
-    case "supplier_invoice_summary":
-      return (
-        <CardShell title={card.title || "供应商发票"}>
-          <KeyValueGrid fields={[
-            ["发票数", data.invoiceCount],
-            ["差异数", data.invoiceVarianceCount],
-            ["待复核", data.pendingReviewCount],
-            ["贷项金额", data.creditMemoAmount],
-            ["对账状态", data.reconciliationStatus],
-          ]} />
-          <MiniList items={arrayValue(data.topIssues)} limit={3} />
-        </CardShell>
-      );
-    case "supplier_contract_summary":
-      return (
-        <CardShell title={card.title || "供应商合同"}>
-          <KeyValueGrid fields={[
-            ["有效合同", data.activeContractCount],
-            ["即将到期", data.expiringContractCount],
-            ["已到期", data.expiredContractCount],
-          ]} />
-          <MiniList items={arrayValue(data.topContracts)} limit={3} />
-        </CardShell>
-      );
-    case "supplier_inventory_risk_summary":
-      return (
-        <CardShell title={card.title || "供应商库存风险"}>
-          <KeyValueGrid fields={[
-            ["关联物料", data.relatedItemCount],
-            ["风险物料", data.inventoryRiskItemCount],
-          ]} />
-          <MiniList items={arrayValue(data.topRiskItems)} limit={3} />
-        </CardShell>
-      );
-    case "supplier_rfq_summary":
-      return (
-        <CardShell title={card.title || "供应商 RFQ"}>
-          <KeyValueGrid fields={[
-            ["总 RFQ", data.totalRfqCount],
-            ["开放 RFQ", data.openRfqCount],
-            ["待回复", data.pendingResponseCount],
-          ]} />
-          <MiniList items={arrayValue(data.topRfqs)} limit={3} />
-        </CardShell>
-      );
-    case "supplier_operational_comparison":
-      return (
-        <CardShell title={card.title || "供应商运营对比"}>
-          <MiniList
-            items={arrayValue(data.suppliers).map((supplier) => {
-              const row = typeof supplier === "object" && supplier ? supplier as Record<string, unknown> : {};
-              return {
-                title: bestText(row.supplierName, row.supplierId),
-                reason: [
-                  `开放 PO ${textValue(row.openPoCount)}`,
-                  `发票差异 ${textValue(row.invoiceIssueCount)}`,
-                  `库存风险 ${textValue(row.inventoryRiskItemCount)}`,
-                  row.nextAction,
-                ].filter(hasValue).join(" · "),
-              };
-            })}
-            limit={3}
-          />
-        </CardShell>
-      );
-    case "supplier_high_risk_summary":
-      return (
-        <CardShell title={card.title || "高风险供应商"}>
-          <KeyValueGrid fields={[
-            ["供应商数", data.supplierCount],
-            ["高风险", data.highRiskCount],
-            ["逾期 PO", data.overduePoCount],
-            ["RFQ 待回复", data.pendingRfqResponseCount],
-            ["发票差异", data.invoiceIssueCount],
-          ]} />
-          <MiniList
-            items={arrayValue(data.topSuppliers).map((supplier) => {
-              const row = typeof supplier === "object" && supplier ? supplier as Record<string, unknown> : {};
-              return {
-                title: bestText(row.supplierName, row.supplierId),
-                reason: [
-                  row.risk ? `风险 ${textValue(row.risk)}` : "",
-                  row.score ? `评分 ${textValue(row.score)}` : "",
-                  row.pendingRfqResponseCount ? `RFQ 待回复 ${textValue(row.pendingRfqResponseCount)}` : "",
-                  row.nextAction,
-                ].filter(hasValue).join(" · "),
-              };
-            })}
-            limit={5}
-          />
-        </CardShell>
-      );
-    case "supplier_scoring_explanation":
-      return (
-        <CardShell title={card.title || "供应商评分规则"}>
-          <KeyValueGrid fields={[
-            ["已评分供应商", data.scoredSupplierCount],
-            ["说明", data.message],
-          ]} />
-          <MiniList items={arrayValue(data.rules).map((rule) => ({ title: textValue(rule) }))} limit={4} />
-        </CardShell>
-      );
-    case "supplier_next_actions":
-      return (
-        <CardShell title={card.title || "SRM 下一步"}>
-          <MiniList items={arrayValue(data.actions).map((action) => ({ title: textValue(action) }))} limit={5} />
-          <MiniList
-            items={arrayValue(data.topSuppliers).map((supplier) => {
-              const row = typeof supplier === "object" && supplier ? supplier as Record<string, unknown> : {};
-              return {
-                title: bestText(row.supplierName, row.supplierId),
-                reason: row.nextAction,
-              };
-            })}
-            limit={5}
-          />
-        </CardShell>
-      );
-    case "supplier_boundary_notice":
-      return (
-        <CardShell title={card.title || "SRM Alpha 边界"}>
-          <p className={aiBoundaryNoticeClass}>{textValue(data.message || card.title)}</p>
-        </CardShell>
-      );
-    case "inventory_status":
-      return (
-        <CardShell title={card.title || textValue(data.sku) || "库存状态"}>
-          <KeyValueGrid fields={[
-            ["物料", data.name || data.sku],
-            ["可用库存", data.availableQuantity],
-            ["风险", data.riskLevel],
-            ["原因", data.riskReason],
-            ["默认仓", data.defaultWarehouseId],
-          ]} />
-        </CardShell>
-      );
-    case "inventory_risk_summary":
-      return (
-        <CardShell title={card.title || "库存风险摘要"}>
-          <KeyValueGrid fields={[
-            ["物料数", data.itemCount],
-            ["有库存证据", data.itemsWithQuantityEvidence],
-            ["风险物料", data.riskItemCount],
-            ["库存流水", data.movementCount],
-            ["余额证据", data.stockBalanceEvidence],
-            ["证据缺口", data.balanceGapExplanation],
-          ]} />
-          <MiniList
-            items={arrayValue(data.topRiskItems).map((item) => {
-              const row = typeof item === "object" && item ? item as Record<string, unknown> : {};
-              return {
-                title: bestText(row.sku, row.itemId, row.name, "风险物料"),
-                reason: [
-                  hasValue(row.availableQuantity) ? `可用 ${textValue(row.availableQuantity)}` : "",
-                  row.riskLevel,
-                  row.riskReason,
-                ].filter(hasValue).map(textValue).join(" · "),
-              };
-            })}
-            limit={3}
-          />
-        </CardShell>
-      );
-    case "inventory_exception_summary":
-      return (
-        <CardShell title={card.title || "库存异常摘要"}>
-          <KeyValueGrid fields={[
-            ["异常数", data.exceptionCount],
-            ["未关闭", data.openExceptionCount],
-            ["高风险", data.highRiskCount],
-            ["影响数量", data.quantityImpact],
-          ]} />
-          <MiniList items={arrayValue(data.topExceptions)} limit={3} />
-        </CardShell>
-      );
-    case "inventory_movement_summary":
-      return (
-        <CardShell title={card.title || "库存流水摘要"}>
-          <KeyValueGrid fields={[
-            ["流水数", data.movementCount],
-            ["入库", data.inboundCount],
-            ["出库", data.outboundCount],
-            ["调整", data.adjustmentCount],
-            ["净变动", data.netMovement],
-          ]} />
-          <MiniList items={arrayValue(data.topMovements)} limit={3} />
-        </CardShell>
-      );
-    case "inventory_replenishment_summary":
-      return (
-        <CardShell title={card.title || "补货观察摘要"}>
-          <KeyValueGrid fields={[
-            ["建议数", data.replenishmentCount],
-            ["待审阅", data.reviewCount],
-            ["预估数量", data.plannedQuantity],
-            ["预估金额", data.plannedAmount],
-            ["边界", data.reviewBoundary],
-          ]} />
-          <MiniList items={arrayValue(data.topSuggestions)} limit={3} />
-        </CardShell>
-      );
-    case "stock_balance_gap_summary":
-      return (
-        <CardShell title={card.title || "库存余额证据缺口"}>
-          <KeyValueGrid fields={[
-            ["物料数", data.itemCount],
-            ["缺余额证据", data.missingBalanceCount],
-            ["可用字段", data.availableFields],
-            ["限制", data.limitation],
-          ]} />
-          <MiniList items={arrayValue(data.topItems)} limit={3} />
-        </CardShell>
-      );
-    case "finance_pending_settlement_summary":
-      return (
-        <CardShell title={card.title || "待结算协同摘要"}>
-          <KeyValueGrid fields={[
-            ["发票数", data.invoiceCount],
-            ["待协同", data.pendingSettlementCount],
-            ["待协同金额", data.pendingAmount],
-            ["差异发票", data.varianceInvoiceCount],
-            ["三单差异", data.threeWayVarianceCount],
-          ]} />
-          <MiniList
-            items={arrayValue(data.topInvoices).map((invoice) => {
-              const row = typeof invoice === "object" && invoice ? invoice as Record<string, unknown> : {};
-              return {
-                title: bestText(row.invoiceId, row.supplier, "发票"),
-                reason: bestText(row.reason, row.matchStatus, row.invoiceStatus),
-              };
-            })}
-            limit={3}
-          />
-        </CardShell>
-      );
-    case "finance_variance_summary":
-      return (
-        <CardShell title={card.title || "财务差异摘要"}>
-          <KeyValueGrid fields={[
-            ["差异发票", data.varianceInvoiceCount],
-            ["差异金额", data.totalVarianceAmount],
-          ]} />
-          <MiniList
-            items={arrayValue(data.topVariances).map((item) => {
-              const row = typeof item === "object" && item ? item as Record<string, unknown> : {};
-              return {
-                title: bestText(row.invoiceId, row.supplier, "差异发票"),
-                reason: bestText(row.reason, row.matchStatus, row.invoiceStatus),
-              };
-            })}
-            limit={3}
-          />
-        </CardShell>
-      );
-    case "finance_next_actions":
-      return (
-        <CardShell title={card.title || "财务下一步"}>
-          <MiniList items={arrayValue(data.actions)} limit={3} />
-          <KeyValueGrid fields={[
-            ["禁用动作", arrayValue(data.blockedActions).join("、")],
-          ]} />
-        </CardShell>
-      );
-    case "three_way_match_summary":
-      return (
-        <CardShell title={card.title || "三单匹配摘要"}>
-          <KeyValueGrid fields={[
-            ["匹配数", data.matchCount],
-            ["差异数", data.varianceCount],
-          ]} />
-          <MiniList
-            items={arrayValue(data.topMatches).map((item) => {
-              const row = typeof item === "object" && item ? item as Record<string, unknown> : {};
-              return {
-                title: bestText(row.matchId, row.invoice, "三单匹配"),
-                reason: [row.status, row.reason, hasValue(row.varianceAmount) ? `差异 ${textValue(row.varianceAmount)}` : ""].filter(hasValue).map(textValue).join(" · "),
-              };
-            })}
-            limit={3}
-          />
-        </CardShell>
-      );
-    case "finance_boundary_notice":
-      return (
-        <CardShell title={card.title || "财务协同边界"}>
-          <KeyValueGrid fields={[
-            ["边界", data.boundary],
-            ["付款执行", data.paymentExecution],
-            ["会计过账", data.accountingPosting],
-            ["税务申报", data.taxFiling],
-            ["最终审批", data.finalApproval],
-          ]} />
-        </CardShell>
-      );
-    case "master_data_quality_summary":
-      return (
-        <CardShell title={card.title || "基础资料质量摘要"}>
-          <KeyValueGrid fields={[
-            ["物料", data.itemCount],
-            ["供应商", data.supplierCount],
-            ["仓库/库位", data.warehouseCount],
-            ["付款条款", data.paymentTermCount],
-            ["税码", data.taxCodeCount],
-            ["质量信号", data.issueCount],
-            ["高优先级", data.highIssueCount],
-            ["中优先级", data.mediumIssueCount],
-          ]} />
-        </CardShell>
-      );
-    case "master_data_missing_fields_summary":
-      return (
-        <CardShell title={card.title || "缺少默认字段"}>
-          <KeyValueGrid fields={[["缺失/待确认", data.missingFieldCount]]} />
-          <MiniList
-            items={arrayValue(data.topIssues).map((issue) => {
-              const row = typeof issue === "object" && issue ? issue as Record<string, unknown> : {};
-              return {
-                title: bestText(row.label, row.entityId, row.field),
-                reason: [row.field, row.severity, row.reason].filter(hasValue).map(textValue).join(" · "),
-              };
-            })}
-            limit={6}
-          />
-        </CardShell>
-      );
-    case "master_data_next_actions":
-      return (
-        <CardShell title={card.title || "基础资料下一步"}>
-          <MiniList items={arrayValue(data.actions).map((action) => ({ title: textValue(action) }))} limit={5} />
-        </CardShell>
-      );
-    case "master_data_boundary_notice":
-      return (
-        <CardShell title={card.title || "基础资料边界"}>
-          <p className={aiBoundaryNoticeClass}>{textValue(data.message || card.title)}</p>
-        </CardShell>
-      );
-    case "planning_status_summary":
-      return (
-        <CardShell title={card.title || "计划/MRP 摘要"}>
-          <KeyValueGrid fields={[
-            ["SKU", data.sku],
-            ["物料", data.name],
-            ["例外", data.exception],
-            ["例外数", data.exceptionCount],
-            ["加急数", data.urgentCount],
-            ["计划数量", data.plannedQty],
-            ["计划金额", data.plannedAmount],
-            ["最大净需求", data.maxNetRequirement],
-            ["首个缺口周期", data.firstShortagePeriod],
-            ["MAPE", data.mape],
-            ["边界", data.reviewBoundary],
-          ]} />
-          <MiniList
-            items={arrayValue(data.plannedReleasePeriods).map((period) => ({
-              title: "计划释放周期",
-              reason: period,
-            }))}
-            limit={3}
-          />
-        </CardShell>
-      );
-    case "procurement_exception_summary":
-      return (
-        <CardShell title={card.title || "采购异常"}>
-          <KeyValueGrid fields={[
-            ["总数", data.totalIssueCount],
-            ["逾期 PO", data.overduePoCount],
-            ["待处理 PR", data.pendingPrCount],
-            ["待处理 RFQ", data.pendingRfqCount],
-          ]} />
-          {Array.isArray(data.topIssues) && <MiniList items={data.topIssues} />}
-        </CardShell>
-      );
-    case "rfq_status":
-      return (
-        <CardShell title={card.title || textValue(data.rfqId) || "RFQ 状态"}>
-          <KeyValueGrid fields={[
-            ["状态", data.status],
-            ["供应商", data.supplierCount],
-            ["已回复", data.respondedSupplierCount],
-            ["待回复", data.pendingSupplierCount],
-            ["截止", data.dueDate],
-            ["风险", data.riskLevel],
-          ]} />
-        </CardShell>
-      );
-    case "rfq_response_summary":
-      return (
-        <CardShell title={card.title || "RFQ 回复"}>
-          <KeyValueGrid fields={[
-            ["开放 RFQ", data.totalOpenRfqs],
-            ["待回复 RFQ", data.rfqsWithPendingResponses],
-          ]} />
-          {Array.isArray(data.topPendingRfqs) && <MiniList items={data.topPendingRfqs} />}
-        </CardShell>
-      );
-    case "supplier_rfq_participation":
-      return (
-        <CardShell title={card.title || textValue(data.supplierName) || "供应商 RFQ"}>
-          <KeyValueGrid fields={[
-            ["供应商", data.supplierName || data.supplierId],
-            ["总 RFQ", data.totalRfqs],
-            ["开放 RFQ", data.openRfqs],
-            ["待回复", data.pendingResponseCount],
-            ["已回复", data.respondedCount],
-          ]} />
-          {Array.isArray(data.recentRfqs) && <MiniList items={data.recentRfqs} />}
-        </CardShell>
-      );
-    case "pr_status":
-      return (
-        <CardShell title={card.title || "采购申请状态"}>
-          <KeyValueGrid fields={[
-            ["PR", data.prId],
-            ["状态", data.status],
-            ["申请人", data.requester],
-            ["采购负责人", data.buyer],
-            ["供应商", data.supplier],
-            ["物料", data.sku || data.itemId],
-            ["数量", data.quantity],
-            ["需求日期", data.requiredDate],
-            ["优先级", data.priority],
-            ["金额", data.amount],
-            ["关联 PO", data.linkedPo],
-            ["关联 RFQ", data.linkedRfq],
-            ["来源", data.source],
-          ]} />
-        </CardShell>
-      );
-    case "pr_conversion_status":
-      return (
-        <CardShell title={card.title || "PR 转单状态"}>
-          <KeyValueGrid fields={[
-            ["PR", data.prId],
-            ["状态", data.status],
-            ["可转 PO", yesNoValue(data.canConvert)],
-            ["阻塞原因", data.blockedReason],
-            ["关联 PO", data.linkedPo],
-            ["关联 RFQ", data.linkedRfq],
-            ["下一步", data.nextStep],
-          ]} />
-        </CardShell>
-      );
-    case "pr_conversion_summary":
-      return (
-        <CardShell title={card.title || "待转单采购申请"}>
-          <KeyValueGrid fields={[
-            ["待转 PO 的 PR", data.approvedNotConvertedCount],
-            ["待审批 PR", data.pendingApprovalCount],
-          ]} />
-          <MiniList items={compactProcurementList(arrayValue(data.topRequests), "pr")} limit={3} />
-        </CardShell>
-      );
-    case "po_status":
-      return (
-        <CardShell title={card.title || "采购订单状态"}>
-          <KeyValueGrid fields={[
-            ["PO", data.poId],
-            ["状态", data.status],
-            ["供应商", data.supplier],
-            ["来源 PR", data.sourceRequest],
-            ["预计日期", data.expectedDate],
-            ["已逾期", yesNoValue(data.overdue)],
-            ["临近到期", yesNoValue(data.dueSoon)],
-            ["订单数量", data.orderedQuantity],
-            ["已收数量", data.receivedQuantity],
-            ["收货状态", data.receivingStatus],
-            ["收货单数", data.receivingDocCount],
-          ]} />
-        </CardShell>
-      );
-    case "po_overdue_summary":
-      return (
-        <CardShell title={card.title || "PO 跟进摘要"}>
-          <KeyValueGrid fields={[
-            ["逾期 PO", data.overdueCount],
-            ["临近到期", data.dueSoonCount],
-          ]} />
-          <MiniList items={compactProcurementList(arrayValue(data.topPurchaseOrders), "po")} limit={3} />
-        </CardShell>
-      );
-    case "receiving_status":
-      return (
-        <CardShell title={card.title || "收货状态"}>
-          <KeyValueGrid fields={[
-            ["收货单", data.receivingId],
-            ["PO", data.poId],
-            ["供应商", data.supplier],
-            ["状态", data.status],
-            ["已收数量", data.receivedQuantity],
-            ["预计数量", data.expectedQuantity],
-            ["差异", data.variance],
-            ["不合格数量", data.failedQuantity],
-            ["是否异常", yesNoValue(data.exception)],
-            ["仓库", data.warehouse],
-          ]} />
-        </CardShell>
-      );
-    case "receiving_exception_summary":
-      return (
-        <CardShell title={card.title || "收货异常"}>
-          <KeyValueGrid fields={[
-            ["异常收货", data.exceptionCount],
-            ["未关闭异常", data.openExceptionCount],
-          ]} />
-          <MiniList items={compactProcurementList(arrayValue(data.topExceptions), "receiving")} limit={3} />
-        </CardShell>
-      );
-    case "procurement_followup_summary":
-      return (
-        <CardShell title={card.title || "采购跟进摘要"}>
-          <KeyValueGrid fields={[
-            ["待审批 PR", data.pendingPrCount],
-            ["待转 PO 的 PR", data.approvedNotConvertedPrCount],
-            ["待回复 RFQ", data.pendingRfqResponseCount],
-            ["逾期 PO", data.overduePoCount],
-            ["收货异常", data.receivingExceptionCount],
-          ]} />
-          <MiniList items={compactProcurementList(arrayValue(data.topIssues), "issue")} limit={3} />
-        </CardShell>
-      );
-    case "pr_draft":
-      const prDraftRequest = onReviewActionDraft ? actionDraftRequestFromCard(card) : null;
-      return (
-        <CardShell title={card.title || "采购申请草稿"}>
-          <KeyValueGrid fields={[
-            ["物料", data.itemLabel || data.itemName || data.name || data.sku || data.itemId],
-            ["数量", data.quantity],
-            ["需求日期", data.requiredDate],
-            ["仓库", data.warehouseId || data.defaultWarehouseId],
-            ["供应商", data.preferredSupplierId || data.supplierId || data.supplier],
-            ["优先级", priorityDisplayValue(data)],
-            ["优先级来源", data.prioritySource],
-            ["优先级置信度", data.priorityConfidence],
-            ["单据状态", data.documentStatus],
-            ["需要复核", (card as Record<string, unknown>).reviewRequired],
-            ["状态", data.status],
-          ]} />
-          {prDraftRequest ? (
-            <button
-              type="button"
-              onClick={() => onReviewActionDraft?.(prDraftRequest)}
-              data-testid="ai-action-draft-preview"
-              data-draft-type={prDraftRequest.type}
-              className={aiActionPillClass}
-              style={{ background: "#f0f6ff", color: A.blue }}
-            >
-              审阅草稿
-            </button>
-          ) : null}
-        </CardShell>
-      );
-    case "rfq_draft":
-      const rfqDraftRequest = onReviewActionDraft ? actionDraftRequestFromCard(card) : null;
-      return (
-        <CardShell title={card.title || "询价草稿"}>
-          <KeyValueGrid fields={[
-            ["物料", data.itemLabel || data.itemName || data.name || data.sku || data.itemId],
-            ["数量", data.quantity],
-            ["交期", data.targetDeliveryDate || data.requiredDate],
-            ["候选供应商", data.supplierCandidateCount || (Array.isArray(data.supplierCandidates) ? data.supplierCandidates.length : "")],
-            ["报价截止", data.quotationDeadline],
-            ["优先级", priorityDisplayValue(data)],
-            ["优先级来源", data.prioritySource],
-            ["优先级置信度", data.priorityConfidence],
-            ["单据状态", data.documentStatus],
-            ["需要复核", (card as Record<string, unknown>).reviewRequired],
-            ["状态", data.status],
-          ]} />
-          {rfqDraftRequest ? (
-            <button
-              type="button"
-              onClick={() => onReviewActionDraft?.(rfqDraftRequest)}
-              data-testid="ai-action-draft-preview"
-              data-draft-type={rfqDraftRequest.type}
-              className={aiActionPillClass}
-              style={{ background: "#f0f6ff", color: A.blue }}
-            >
-              审阅草稿
-            </button>
-          ) : null}
-        </CardShell>
-      );
-    case "missing_fields":
-      return (
-        <CardShell title="需补充信息">
-          <MiniList items={normalizeFieldPairs(card.fields).map(([name, value]) => ({ title: name, reason: value }))} />
-        </CardShell>
-      );
-    case "confidence_summary":
-      return (
-        <CardShell title={card.title || "字段级置信度"}>
-          <MiniList items={normalizeFieldPairs(card.fields).map(([name, value]) => ({ title: name, reason: value }))} limit={3} />
-        </CardShell>
-      );
-    case "recommended_actions": {
-      const actions = (card.actions || []).filter((action) => ["deep_link", "review", "edit", "draft_preview"].includes(String(action.kind || "")));
-      if (!actions.length) return null;
-      return (
-        <CardShell title="建议操作">
-          <div className="flex flex-wrap gap-1.5">
-            {actions.slice(0, 4).map((action) => {
-              const draftRequest = onReviewActionDraft ? actionDraftRequestFromAction(action) : null;
-              const intent = action.kind === "deep_link"
-                ? navigationIntentFromInternalTarget(action.target, { source: "aiAction" }) || navigationIntentFromModule(action.target || "overview", { source: "aiAction" })
-                : null;
-              return draftRequest ? (
-                <button
-                  key={`${action.label}-${action.kind}`}
-                  type="button"
-                  onClick={() => onReviewActionDraft?.(draftRequest)}
-                  data-testid="ai-action-draft-preview"
-                  data-draft-type={draftRequest.type}
-                  className={aiActionLinkClass}
-                  style={{ background: "#f0f6ff", color: A.blue }}
-                >
-                  {action.label || "预览草稿"}
-                </button>
-              ) : intent && onNavigate && !isUnavailableProductRoute(intent.activeId) ? (
-                <button
-                  key={`${action.label}-${action.target}`}
-                  type="button"
-                  onClick={() => onNavigate(intent.activeId, intent.focusTarget || null, { returnTo: "ai", entityLabel: action.label || intent.entityLabel, source: "ai" })}
-                  data-testid="ai-action-link"
-                  data-business-id={intent.focusTarget?.entityId || action.target || ""}
-                  className={aiActionLinkClass}
-                  style={{ background: A.gray6, color: A.blue }}
-                >
-                  {action.label || "打开"}
-                </button>
-              ) : (
-                <span key={`${action.label}-${action.kind}`} className={aiActionPillClass} style={{ background: A.gray6, color: A.gray1 }}>
-                  {action.label || action.kind}
-                </span>
-              );
-            })}
-          </div>
-        </CardShell>
-      );
-    }
-    case "compound_summary":
-      return (
-        <CardShell title={card.title || "多问题拆解"}>
-          <MiniList
-            items={arrayValue(data.sections).map((section) => {
-              const row = typeof section === "object" && section ? section as Record<string, unknown> : {};
-              return {
-                title: bestText(row.title, "业务问题"),
-                reason: row.conclusion,
-              };
-            })}
-            limit={3}
-          />
-          <MiniList
-            items={arrayValue(data.remainingTopics).map((topic) => {
-              const row = typeof topic === "object" && topic ? topic as Record<string, unknown> : {};
-              return {
-                title: bestText(row.title, "可继续展开"),
-                reason: row.prompt,
-              };
-            })}
-            limit={3}
-          />
-        </CardShell>
-      );
-    case "compound_section":
-      return (
-        <CardShell title={card.title || textValue(data.title) || "业务问题"}>
-          <MiniList items={[data.conclusion].filter(hasValue).map((item) => ({ title: item }))} limit={1} />
-          <MiniList items={arrayValue(data.keyFacts).map((item) => ({ title: item }))} limit={3} />
-          <MiniList items={arrayValue(data.limitations).map((item) => ({ title: "限制", reason: item }))} limit={2} />
-          <EvidenceList evidence={card.evidence} onNavigate={onNavigate} />
-        </CardShell>
-      );
-    case "receiving_gap_summary":
-      return (
-        <CardShell title={card.title || "未收货订单"}>
-          <KeyValueGrid fields={[
-            ["未完全收货 PO", data.openGapCount],
-            ["剩余数量", data.totalRemainingQuantity],
-          ]} />
-          <MiniList
-            items={arrayValue(data.topPurchaseOrders).map((po) => {
-              const row = typeof po === "object" && po ? po as Record<string, unknown> : {};
-              return {
-                title: bestText(row.poId, "PO"),
-                reason: [
-                  row.supplier,
-                  row.status,
-                  hasValue(row.receivedQuantity) && hasValue(row.orderedQuantity) ? `已收 ${textValue(row.receivedQuantity)} / 订购 ${textValue(row.orderedQuantity)}` : "",
-                  hasValue(row.remainingQuantity) ? `剩余 ${textValue(row.remainingQuantity)}` : "",
-                  row.expectedDate ? `预计 ${textValue(row.expectedDate)}` : "",
-                ].filter(hasValue).map(textValue).join(" · "),
-              };
-            })}
-            limit={3}
-          />
-          <MiniList items={arrayValue(data.limitations).map((item) => ({ title: "限制", reason: item }))} limit={2} />
-        </CardShell>
-      );
-    case "evidence_workspace":
-      return (
-        <CardShell title={card.title || "证据工作区"}>
-          <KeyValueGrid fields={[
-            ["主对象", data.primaryObject],
-          ]} />
-          <MiniList items={arrayValue(data.keyFacts).map((item) => ({ title: item }))} limit={5} />
-          <MiniList items={arrayValue(data.relatedDocuments).map((item) => ({ title: item }))} limit={4} />
-          <MiniList items={arrayValue(data.inventorySignals).map((item) => ({ title: item }))} limit={3} />
-          <MiniList items={arrayValue(data.supplierSignals).map((item) => ({ title: item }))} limit={2} />
-          <MiniList items={arrayValue(data.limitations).map((item) => ({ title: "限制", reason: item }))} limit={3} />
-          <EvidenceList evidence={card.evidence} onNavigate={onNavigate} />
-        </CardShell>
-      );
-    case "evidence":
-      if (!card.evidence?.length) return null;
-      return (
-        <CardShell title="依据">
-          <EvidenceList evidence={card.evidence} onNavigate={onNavigate} />
-        </CardShell>
-      );
-    case "empty_state":
-      return (
-        <CardShell title={card.title || "暂无结果"}>
-          <div className="text-[11px] leading-5" style={{ color: A.gray1 }}>
-            {bestText((card as Record<string, unknown>).reason, (card as Record<string, unknown>).message, (card as Record<string, unknown>).summary, data.reason, data.message, data.summary) || "当前没有匹配结果。"}
-          </div>
-        </CardShell>
-      );
-    case "ambiguous_match":
-      return (
-        <CardShell title={card.title || "需要选择匹配项"}>
-          <MiniList items={card.matches?.length ? card.matches : ["请提供更具体的信息。"]} limit={3} />
-        </CardShell>
-      );
-    default:
-      if (!card.type && !card.title) return null;
-      return (
-        <CardShell title={sanitizeAiMessage(card.title || "") || "结构化信息"}>
-          <div className="text-[11px]" style={{ color: A.gray1 }}>{safeUnknownCardMessage()}</div>
-        </CardShell>
-      );
-  }
+  if (card.type !== "ai_response_v2") return null;
+  return (
+    <AiResponseV2Renderer
+      response={(card.data || {}) as unknown as AiResponseV2}
+      onNavigate={onNavigate}
+      onReviewActionDraft={onReviewActionDraft}
+      onFollowUp={onFollowUp}
+    />
+  );
 }
 
 function businessTypeFromId(id = "") {
@@ -1233,28 +200,6 @@ function businessTypeFromId(id = "") {
   if (/^INV-/i.test(id)) return "invoice";
   if (/^SKU-/i.test(id)) return "sku";
   return "";
-}
-
-function focusTargetFromBusinessId(id = ""): CanonicalFocusTarget | null {
-  const type = businessTypeFromId(id);
-  if (type === "po") return { entityType: "purchase_order", entityId: id };
-  if (type === "pr") return { entityType: "purchase_request", entityId: id };
-  if (type === "rfq") return { entityType: "rfq", entityId: id };
-  if (type === "grn") return { entityType: "receiving_doc", entityId: id };
-  if (type === "invoice") return { entityType: "supplier_invoice", entityId: id };
-  if (type === "sku") return { entityType: "inventory_item", entityId: id };
-  return null;
-}
-
-function moduleIdForBusinessId(id = "") {
-  const type = businessTypeFromId(id);
-  if (type === "po") return "procurement:orders";
-  if (type === "pr") return "procurement:requests";
-  if (type === "rfq") return "procurement:rfq";
-  if (type === "grn") return "procurement:receiving";
-  if (type === "invoice") return "procurement:invoices";
-  if (type === "sku") return "inventory";
-  return "overview";
 }
 
 function visibleBusinessId(...values: unknown[]) {
@@ -1367,10 +312,23 @@ function safeEntityType(value: unknown) {
   return "Unknown";
 }
 
+function aiRuntimeResponses(messages: AiChatMessage[]): AiResponseV2[] {
+  return messages.flatMap((message) => message.role === "assistant" ? (message.cards || []).filter((card) => card.type === "ai_response_v2" && card.data).map((card) => card.data as unknown as AiResponseV2) : []);
+}
+
 function latestAiRuntimeResponse(messages: AiChatMessage[]): AiResponseV2 | null {
-  const assistant = [...messages].reverse().find((message) => message.role === "assistant" && message.cards?.some((card) => card.type === "ai_response_v2"));
-  const card = assistant?.cards?.find((item) => item.type === "ai_response_v2");
-  return card?.data ? card.data as unknown as AiResponseV2 : null;
+  return aiRuntimeResponses(messages).at(-1) || null;
+}
+
+function evidenceRefs(response: AiResponseV2 | null | undefined) {
+  return (response?.keyEvidence || []).slice(0, 8).map((item) => ({
+    id: item.id,
+    label: item.label,
+    entityType: safeEntityType(item.entityType || item.entityId),
+    entityId: item.entityId,
+    entityLabel: item.entityLabel,
+    moduleId: item.moduleId,
+  }));
 }
 
 function buildSafeConversationContext(messages: AiChatMessage[], activeContext: ActiveContext | null, sessionGrounding: AiSessionGrounding, language: "en-US" | "zh-CN" = "en-US"): SafeConversationContext {
@@ -1428,14 +386,8 @@ function buildSafeConversationContext(messages: AiChatMessage[], activeContext: 
         returnTo: "ai-assistant",
       };
     }),
-    previousEvidenceRefs: (response?.keyEvidence || []).slice(0, 8).map((item) => ({
-      id: item.id,
-      label: item.label,
-      entityType: safeEntityType(item.entityType || item.entityId),
-      entityId: item.entityId,
-      entityLabel: item.entityLabel,
-      moduleId: item.moduleId,
-    })),
+    previousEvidenceRefs: evidenceRefs(response),
+    previousListRefs: evidenceRefs([...aiRuntimeResponses(messages)].reverse().find((item) => (item.keyEvidence || []).length > 1)),
     previousModuleId: response?.scope?.module || activeContext?.module,
     previousViewId: activeContext?.view,
     previousFocusTarget: activeContext?.entityId ? {
@@ -1573,23 +525,17 @@ export function getAiFollowUpChips(message: AiChatMessage, language: "en-US" | "
   const cardTypes = new Set(message.cards.map((card) => card.type || ""));
   const chips: { label: string; prompt: string }[] = [];
 
-  if (cardTypes.has("procurement_followup_summary") || cardTypes.has("priority_explanation")) {
-    if (firstPo) chips.push(localizedChip("为什么这个 PO 优先？", "Why is this PO a priority?", "这个 PO 为什么优先？", "Why is this PO a priority?"));
-    if (firstSku) chips.push(localizedChip("查看关联 SKU", "View related SKU", "它和哪个 SKU 有关系？", "Which SKU is related to this?"));
-    chips.push(localizedChip("哪些数据不完整？", "Which data is incomplete?", "哪些数据依据不够完整？", "Which supporting data is incomplete?"));
-    if (firstPo || firstRfq) chips.push(localizedChip("预览跟进草稿", "Preview follow-up draft", "预览供应商跟进草稿", "Preview the supplier follow-up draft"));
-  }
   if (cardTypes.has("ai_response_v2")) {
     if (firstPo) chips.push(localizedChip("为什么这个 PO 优先？", "Why is this PO a priority?", "这个 PO 为什么优先？", "Why is this PO a priority?"));
     if (firstSku) chips.push(localizedChip("查看关联 SKU", "View related SKU", "这个 SKU 和哪些单据有关？", "Which records are related to this SKU?"));
     chips.push(localizedChip("哪些数据不完整？", "Which data is incomplete?", "哪些数据依据不完整？", "Which supporting data is incomplete?"));
   }
-  if (cardTypes.has("inventory_status") || firstSku) {
+  if (firstSku) {
     chips.push(localizedChip("需要补货吗？", "Does it need replenishment?", "这个 SKU 需要补货吗？", "Does this SKU need replenishment?"));
     chips.push(localizedChip("关联哪些采购单？", "Which purchase orders?", "这个 SKU 关联哪些采购单？", "Which purchase orders are related to this SKU?"));
     chips.push(localizedChip("预览补货 PR 草稿", "Preview replenishment PR", "预览补货 PR 草稿", "Preview a replenishment purchase request draft"));
   }
-  if (cardTypes.has("rfq_status") || cardTypes.has("rfq_followup") || firstRfq) {
+  if (firstRfq) {
     chips.push(localizedChip("有几家回复了？", "How many suppliers replied?", "刚才那个 RFQ 有几家回复了？", "How many suppliers replied to that RFQ?"));
     chips.push(localizedChip("谁还没回复？", "Who has not replied?", "谁还没回复这个 RFQ？", "Who has not replied to this RFQ?"));
     chips.push(localizedChip("预览供应商提醒草稿", "Preview supplier reminder", "预览供应商提醒草稿", "Preview a supplier reminder draft"));
@@ -1654,6 +600,7 @@ export default function FloatingAiAssistant({
   const [asking, setAsking] = useState(false);
   const [slowRequest, setSlowRequest] = useState(false);
   const [messages, setMessages] = useState<AiChatMessage[]>([]);
+  const [dismissedContextKey, setDismissedContextKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreButtonRef = useRef<HTMLButtonElement>(null);
@@ -1715,16 +662,22 @@ export default function FloatingAiAssistant({
     return () => window.clearTimeout(timer);
   }, [asking]);
 
-  const currentContext = cleanActiveContext(activeContext);
+  // The page's record, until the user sets it aside for this record. Opening
+  // another record brings its context back.
+  const pageContext = cleanActiveContext(activeContext);
+  const pageContextKey = pageContext ? `${pageContext.entityType}:${pageContext.entityId}` : null;
+  const currentContext = pageContext && pageContextKey !== dismissedContextKey ? pageContext : null;
   const sessionGrounding = useMemo(() => buildSessionGrounding(messages, currentContext), [messages, currentContext]);
   const contextLabel = getAiContextLabel(moduleId, currentContext, language);
   const inputPlaceholder = getAiInputPlaceholder(moduleId, currentContext, language);
-  const emptyPrompts = currentContext?.entityType === "purchase_order" ? PO_EMPTY_PROMPTS[language]
-    : currentContext?.entityType === "item" ? SKU_EMPTY_PROMPTS[language]
-      : AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => language === "zh-CN" ? item.zhPrompt : item.prompt);
-  const emptyPromptSkillHints = currentContext?.entityType === "purchase_order" ? PO_SKILL_HINTS
-    : currentContext?.entityType === "item" ? SKU_SKILL_HINTS
-      : EMPTY_STATE_SKILL_HINTS;
+  // On a PO or SKU page: two questions about the record, then two about the
+  // workspace, so the assistant never turns into a single-record bot.
+  const workspacePrompts = AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => language === "zh-CN" ? item.zhPrompt : item.prompt);
+  const recordPrompts = currentContext?.entityType === "purchase_order" ? PO_EMPTY_PROMPTS[language]
+    : currentContext?.entityType === "item" ? SKU_EMPTY_PROMPTS[language] : [];
+  const recordHints = currentContext?.entityType === "purchase_order" ? PO_SKILL_HINTS : SKU_SKILL_HINTS;
+  const emptyPrompts = recordPrompts.length ? [...recordPrompts.slice(0, 2), ...workspacePrompts.slice(0, 2)] : workspacePrompts;
+  const emptyPromptSkillHints = recordPrompts.length ? [...recordHints.slice(0, 2), ...EMPTY_STATE_SKILL_HINTS.slice(0, 2)] : EMPTY_STATE_SKILL_HINTS;
   const currentRequestLabel = requestScopeLabel(messages.filter((message) => message.role === "user").at(-1)?.content || input, language);
 
   function startNewConversation() {
@@ -1746,7 +699,7 @@ export default function FloatingAiAssistant({
     const message = text.trim();
     if (!message || requestInFlightRef.current) return;
 
-    const context = cleanActiveContext(activeContext);
+    const context = currentContext;
     const requestStartedAt = performance.now();
     const requestId = requestSeqRef.current + 1;
     const controller = new AbortController();
@@ -1845,8 +798,21 @@ export default function FloatingAiAssistant({
                 <Sparkles size={15} style={{ color: A.blue }} />
                 {language === "zh-CN" ? "AI 助手" : "AI assistant"}
               </div>
-              <div data-testid="ai-context-chip" className="text-[11px] truncate" style={{ color: A.gray2 }}>
-                {language === "zh-CN" ? "当前上下文：" : "Context: "}{contextLabel}
+              <div data-testid="ai-context-chip" className="flex min-w-0 items-center gap-1 text-[11px]" style={{ color: A.gray2 }}>
+                <span className="truncate">{language === "zh-CN" ? "当前上下文：" : "Context: "}{contextLabel}</span>
+                {currentContext && pageContextKey ? (
+                  <button
+                    type="button"
+                    data-testid="ai-context-clear"
+                    onClick={() => setDismissedContextKey(pageContextKey)}
+                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded hover:bg-slate-100"
+                    style={{ color: A.gray2 }}
+                    aria-label={language === "zh-CN" ? "不限于这条记录，回答整个工作区" : "Stop using this record; answer about the whole workspace"}
+                    title={language === "zh-CN" ? "不限于这条记录" : "Stop using this record"}
+                  >
+                    <X size={11} />
+                  </button>
+                ) : null}
               </div>
             </div>
             <div className="flex items-center gap-1">

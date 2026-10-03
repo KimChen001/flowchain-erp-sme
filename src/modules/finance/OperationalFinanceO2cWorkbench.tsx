@@ -102,8 +102,11 @@ const queryString = () => {
     if (params.get(key)) next.set(key, params.get(key) as string);
   return next.toString();
 };
-const money = (value: string, currency: string, locale: string) =>
-  /^[A-Z]{3}$/.test(currency)
+// A hidden or missing amount is null and shows as a dash, never as 0.
+const money = (value: string | null | undefined, currency: string, locale: string) =>
+  value === null || value === undefined || value === "" || !Number.isFinite(Number(value))
+    ? "—"
+    : /^[A-Z]{3}$/.test(currency)
     ? new Intl.NumberFormat(locale, {
         style: "currency",
         currency,

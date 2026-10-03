@@ -43,5 +43,6 @@ test('receiving workbench posts and reverses through real PostgreSQL APIs', asyn
   await page.getByRole('button', { name: 'My Profile' }).click()
   await expect(page.getByTestId('workspace-settings-profile')).toBeVisible()
   await expect(page.locator('input[value="kim@example.com"]')).toBeVisible()
-  await expect(page.getByRole('textbox', { name: 'Role', exact: true })).toHaveValue('Manager')
+  // The profile names the roles assigned in Roles & permissions, not the legacy role.
+  await expect(page.getByRole('textbox', { name: 'Role', exact: true })).toHaveValue('Operations Manager')
 })

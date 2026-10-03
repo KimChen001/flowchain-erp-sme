@@ -15,6 +15,8 @@ import { createScmServer } from '../bootstrap/scm-server.mjs'
 import { extractBusinessContextFromAiResponseV2 } from './ai-runtime-conversation-context-v2.mjs'
 import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
+import { reportReadAccessFor } from './report-read-access.mjs'
+import { permissionCodes } from '../auth/permission-catalog.mjs'
 
 function loadDb() {
   return createProductReviewScenarioDb()
@@ -569,6 +571,8 @@ test('with the rollback flag the legacy gateway still serves provider-assisted s
   const calls = []
   const send = (_res, status, payload) => calls.push({ status, payload })
   const identity = { authenticated: true, tenantId: 'tenant-legacy-gateway', userId: 'legacy-user' }
+  // A reader who may see everything; the facts are scoped to the reader.
+  const reportReadAccess = reportReadAccessFor({ authenticated: true, complete: true, tenantId: identity.tenantId, permissionCodes: new Set(permissionCodes) })
   await withServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ conclusion: { summary: '建议基于来源证据复核风险，并保留人工复核。' } }))
@@ -579,7 +583,7 @@ test('with the rollback flag the legacy gateway still serves provider-assisted s
     FLOWCHAIN_AI_PROVIDER_API_KEY: 'test-key',
     FLOWCHAIN_AI_LEGACY_TEMPLATE_GATEWAY: 'true',
   }, async () => {
-    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, identity, send, readBody: async () => ({ message: '今天有什么需要我处理？' }) }), true)
+    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, identity, reportReadAccess, send, readBody: async () => ({ message: '今天有什么需要我处理？' }) }), true)
   }))
   assert.equal(calls.at(-1).status, 200)
   assertRuntimeResponse(calls.at(-1).payload)
@@ -596,7 +600,7 @@ test('with the rollback flag the legacy gateway still serves provider-assisted s
     FLOWCHAIN_AI_PROVIDER_API_KEY: 'test-key',
     FLOWCHAIN_AI_LEGACY_TEMPLATE_GATEWAY: 'true',
   }, async () => {
-    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, identity, send, readBody: async () => ({ message: '哪些 SKU 有库存风险？' }) }), true)
+    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, identity, reportReadAccess, send, readBody: async () => ({ message: '哪些 SKU 有库存风险？' }) }), true)
   }))
   assert.equal(calls.at(-1).status, 200)
   assertRuntimeResponse(calls.at(-1).payload)

@@ -51,7 +51,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     finance:customer-invoices finance:receivables finance:aging
     finance:customer-credit-notes finance:credits
     finance:bank-statements finance:bank-reconciliation
-    finance:three-way-match finance:invoice-detail
+    finance:three-way-match finance:invoice-new finance:invoice-detail
     finance:customer-invoice-new finance:customer-invoice-detail
     finance:match-detail
     finance:credit-memo-detail
@@ -237,7 +237,7 @@ mapCapability(
 );
 mapCapability(
   "supplier-invoice",
-  "finance:invoices finance:invoice-detail",
+  "finance:invoices finance:invoice-new finance:invoice-detail",
 );
 mapCapability(
   "three-way-match",
@@ -292,7 +292,7 @@ mapPermission(
 );
 mapPermission(
   "finance.supplier_invoice.read",
-  "procurement:invoices procurement:invoice-detail finance:invoices finance:invoice-detail",
+  "procurement:invoices procurement:invoice-detail finance:invoices finance:invoice-new finance:invoice-detail",
 );
 mapPermission(
   "finance.three_way_match.read",

@@ -157,7 +157,7 @@ test('product terminology governance blocks non-product positioning in visible s
 
 test('primary product docs use FlowChain inventory purchase stock supplier positioning', () => {
   const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8')
-  const productReadme = readme.split('# Local development')[0]
+  const productReadme = readme.split('## Quick start')[0]
   const language = fs.readFileSync(path.join(repoRoot, 'docs', 'product-language-and-positioning-v1.md'), 'utf8')
   const narrative = fs.readFileSync(path.join(repoRoot, 'docs', 'product-narrative-v1.md'), 'utf8')
   const combined = [productReadme, language, narrative].join('\n')

@@ -243,15 +243,37 @@ function visibleFocus(focus, facts) {
   return focus || null
 }
 
+// The page's record as a record the question names, for the skills that are
+// narrowed by named records rather than by a focus. The router sets a page
+// focus only when the question points at the page's record and names none.
+function withPageRecord(found, focus, facts) {
+  const id = focus?.entityId
+  if (focus?.entityType === 'purchase_order' && !found.purchaseOrders.length) {
+    const row = array(facts.purchaseOrders?.index).find((entry) => [entry.id, entry.orderNumber].includes(id))
+    return row ? { ...found, purchaseOrders: [row] } : found
+  }
+  if (focus?.entityType === 'item' && !found.skus.length) {
+    const row = [...array(facts.inventory?.rows), ...array(facts.inventory?.masterOnly)].find((entry) => [entry.itemId, entry.sku].includes(id))
+    return row ? { ...found, skus: [row] } : found
+  }
+  if (focus?.entityType === 'supplier' && !found.suppliers.length) {
+    const row = array(facts.suppliers).find((entry) => [entry.id, entry.code].includes(id))
+    return row ? { ...found, suppliers: [row] } : found
+  }
+  return found
+}
+
 // The route after the named records are looked up. A prompt chip or a
 // follow-up's hint keeps its skill and takes a focus only from the page or a
 // record number. A question about orders, stock or approvals is narrowed by
-// the records it names. A general question that names a record becomes a
-// question about that record.
+// the records it names, or by the page's record when it points at it ("is
+// this PO late?"). A general question that names a record becomes a question
+// about that record.
 export function refineAiSkillRoute(route, message, facts) {
   if (!route || route.capability || !facts) return route
   route = { ...route, focus: visibleFocus(route.focus, facts) }
-  const found = resolveAiSkillEntities(message, route.ids, facts)
+  const named = resolveAiSkillEntities(message, route.ids, facts)
+  const found = FOCUS_SKILLS.has(route.skillId) ? named : withPageRecord(named, route.focus, facts)
   const short = Boolean(route.signals?.short)
   const orders = Boolean(route.signals?.orders)
   const as = (skillId, mode, entities = found) => ({ ...route, skillId, mode, entities })

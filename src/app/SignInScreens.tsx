@@ -18,6 +18,7 @@ export type LocalDevelopmentStatus = {
 };
 
 export const SIGN_IN_CONFIRM_PATH = "/sign-in/confirm";
+export const ACCEPT_INVITATION_PATH = "/accept-invitation";
 const RESEND_DELAY_SECONDS = 60;
 
 const COPY = {
@@ -61,7 +62,22 @@ const COPY = {
   invalidTitle: { en: "This sign-in link is invalid or has expired", zh: "登录链接无效或已过期" },
   invalidBody: { en: "Sign-in links work once and expire after 15 minutes. Request a new one to continue.", zh: "登录链接只能使用一次，15 分钟后失效。请重新获取链接后继续。" },
   backToSignIn: { en: "Back to sign in", zh: "返回登录" },
+  inviteChecking: { en: "Checking your invitation…", zh: "正在检查邀请…" },
+  inviteTitle: { en: "Join {workspace}", zh: "加入 {workspace}" },
+  inviteBody: { en: "You were invited as {role} with {email}.", zh: "你以 {email} 被邀请为{role}。" },
+  inviteName: { en: "Your name", zh: "你的姓名" },
+  inviteAccept: { en: "Accept and email me a sign-in link", zh: "接受邀请并发送登录链接" },
+  inviteAccepting: { en: "Accepting", zh: "正在接受" },
+  inviteInvalidTitle: { en: "This invitation is invalid or has expired", zh: "邀请无效或已过期" },
+  inviteInvalidBody: { en: "Invitations work once and expire. Ask the person who invited you for a new one.", zh: "邀请只能使用一次且会过期。请联系邀请你的人重新发送。" },
+  inviteFailed: { en: "The invitation could not be accepted. Try again.", zh: "邀请接受失败，请重试。" },
 } as const;
+
+const INVITED_ROLE: Record<string, [string, string]> = {
+  admin: ["Workspace Administrator", "工作区管理员"], manager: ["Operations Manager", "运营经理"],
+  "business-specialist": ["Operations Specialist", "运营专员"], buyer: ["Procurement Specialist", "采购专员"],
+  "finance-specialist": ["Finance Specialist", "财务专员"], viewer: ["Read-only Viewer", "只读查看者"],
+};
 
 type CopyKey = keyof typeof COPY;
 
@@ -261,6 +277,82 @@ export function LoginScreen({ localStatus }: { localStatus: LocalDevelopmentStat
         <button type="submit" disabled={sending} className={primaryButton} style={{ background: A.blue }}>
           {sending ? <Loader2 size={15} className="animate-spin" /> : <Mail size={15} />}
           {sending ? copy("sending") : copy("send")}
+        </button>
+      </form>
+    </SignInLayout>
+  );
+}
+
+// The page an invitation link opens. It shows what the invitation is for,
+// accepts it with the person's name, then emails a sign-in link to the invited
+// address. The token is removed from the address bar at once.
+export function AcceptInvitationScreen({ localStatus }: { localStatus: LocalDevelopmentStatus | null }) {
+  const copy = useCopy();
+  const { language } = useI18n();
+  const token = useRef<string | null>(null);
+  if (token.current === null) token.current = new URLSearchParams(window.location.search).get("token") || "";
+  const [invitation, setInvitation] = useState<{ email: string; role: string; workspaceName: string } | null>(null);
+  const [status, setStatus] = useState<"checking" | "ready" | "accepting" | "sent" | "invalid">("checking");
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (window.location.search) window.history.replaceState(window.history.state, "", ACCEPT_INVITATION_PATH);
+    if (!token.current) { setStatus("invalid"); return; }
+    let active = true;
+    apiJson<{ email: string; role: string; workspaceName: string }>("/api/workspace/invitations/inspect", { method: "POST", body: JSON.stringify({ token: token.current }) })
+      .then((result) => { if (active) { setInvitation(result); setStatus("ready"); } })
+      .catch(() => { if (active) setStatus("invalid"); });
+    return () => { active = false; };
+  }, []);
+
+  async function accept(event: React.FormEvent) {
+    event.preventDefault();
+    if (!invitation) return;
+    setStatus("accepting"); setError("");
+    try {
+      await apiJson("/api/workspace/invitations/accept", { method: "POST", body: JSON.stringify({ token: token.current, name: name.trim() }) });
+      await apiJson("/api/auth/email-link", { method: "POST", body: JSON.stringify({ email: invitation.email }) });
+      setStatus("sent");
+    } catch (failure) {
+      setError(failure instanceof ApiError && failure.status < 500 ? failure.message : copy("inviteFailed"));
+      setStatus("ready");
+    }
+  }
+
+  if (status === "checking") return <SignInLayout><div className="flex items-center gap-2 text-sm" style={{ color: A.gray1 }}><Loader2 size={14} className="animate-spin" />{copy("inviteChecking")}</div></SignInLayout>;
+  if (status === "invalid" || !invitation) return (
+    <SignInLayout>
+      <div data-testid="invitation-invalid" className="space-y-4">
+        <CardHeading icon={<Lock size={16} />} title={copy("inviteInvalidTitle")} />
+        <p className="text-sm leading-6" style={{ color: A.label }}>{copy("inviteInvalidBody")}</p>
+        <a href="/" className={secondaryButton} style={{ color: A.blue }}><ArrowLeft size={14} />{copy("backToSignIn")}</a>
+      </div>
+    </SignInLayout>
+  );
+  if (status === "sent") return (
+    <SignInLayout>
+      <div data-testid="invitation-accepted" className="space-y-4">
+        <CardHeading icon={<Mail size={16} />} title={copy("checkTitle")} />
+        <p className="text-sm leading-6" style={{ color: A.label }}>{copy("checkBody", { email: invitation.email })}</p>
+        <p className="text-xs leading-5" style={{ color: A.gray1 }}>{copy("checkHint")}</p>
+        {localStatus && <LocalSignInLink email={invitation.email} />}
+      </div>
+    </SignInLayout>
+  );
+  const roleName = INVITED_ROLE[invitation.role]?.[language === "zh-CN" ? 1 : 0] || invitation.role;
+  return (
+    <SignInLayout>
+      <form onSubmit={accept} className="space-y-4" data-testid="accept-invitation-form">
+        <CardHeading icon={<ShieldCheck size={16} />} title={copy("inviteTitle", { workspace: invitation.workspaceName })} subtitle={copy("inviteBody", { role: roleName, email: invitation.email })} />
+        <label className="block">
+          <span className="text-xs font-medium" style={{ color: A.gray1 }}>{copy("inviteName")}</span>
+          <input data-testid="accept-invitation-name" value={name} onChange={(event) => setName(event.target.value)} className="mt-1 w-full h-11 rounded-xl px-3 text-sm outline-none" style={{ background: A.gray6, color: A.label, border: "0.5px solid rgba(0,0,0,0.08)" }} autoComplete="name" required />
+        </label>
+        {error && <p className="text-xs" role="alert" style={{ color: A.red }}>{error}</p>}
+        <button data-testid="accept-invitation-submit" type="submit" disabled={status === "accepting" || !name.trim()} className={primaryButton} style={{ background: A.blue }}>
+          {status === "accepting" ? <Loader2 size={15} className="animate-spin" /> : <Mail size={15} />}
+          {status === "accepting" ? copy("inviteAccepting") : copy("inviteAccept")}
         </button>
       </form>
     </SignInLayout>

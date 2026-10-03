@@ -1,3 +1,7 @@
+import { procurementReadAccessFor } from '../domain/procurement-read-access.mjs'
+import { aiSkillActor } from '../domain/test-fixtures/ai-skill-scenario.mjs'
+// These checks are about routing and tenant scope: the actor may read everything.
+const fullAccess = (tenantId) => procurementReadAccessFor(aiSkillActor('workspace-administrator', tenantId))
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { loadAiRuntimeFacts } from './ai-runtime-gateway.routes.mjs'
@@ -14,6 +18,7 @@ function routeContext(pathname, snapshot, authenticated = true) {
       res: {},
       url: new URL(pathname, 'http://local'),
       db: { purchaseRequests: [{ id: 'STATIC-PR' }], purchaseOrders: [{ id: 'STATIC-PO' }] },
+      procurementReadAccess: fullAccess('tenant-local'),
       identity: authenticated ? { authenticated: true, tenantId: 'tenant-local' } : null,
       repositories: { procurementRead: { snapshot: async (scope) => {
         assert.equal(scope.tenantId, 'tenant-local')
@@ -79,6 +84,7 @@ test('procurement selectors fall back to tenant-scoped PostgreSQL item and suppl
       url: new URL(pathname, 'http://local'),
       identity: { authenticated: true, tenantId: 'tenant-local' },
       repositories,
+      masterDataReadAccess: { partner: true, prices: true },
       send: (_res, status, payload) => sent.push({ status, payload }),
     })
     assert.equal(sent[0].status, 200)

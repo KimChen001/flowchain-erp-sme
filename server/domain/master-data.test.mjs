@@ -21,6 +21,7 @@ function createRouteContext(method, pathname, db, repositories = createTestRepos
       url: new URL(pathname, 'http://localhost'),
       db,
       repositories,
+      masterDataReadAccess: { partner: true, prices: true },
       send(_res, status, payload) {
         response = { status, payload }
       },
@@ -229,6 +230,129 @@ test('GET /api/master-data/suppliers/:id returns one supplier', async () => {
   assert.ok(handled)
   assert.equal(route.response.status, 200)
   assert.equal(route.response.payload.supplier.supplierName, 'Runtime Supplier')
+})
+
+test('supplier registration, tax and bank details and reference prices are masked by permission', async () => {
+  const supplier = { id: 'SUP-BANK', supplierName: 'Bank Supplier', creditCode: '91310000MA1K', taxIdentificationNumber: '12-3456789', bankName: 'First Bank', bankAccountName: 'Bank Supplier LLC', bankAccountNumber: '000123456789', status: 'active' }
+  const relationship = { relationshipId: 'REL-1', itemId: 'ITEM-1', supplierId: 'SUP-BANK', referencePrice: 12.5 }
+  const repositories = { masterData: { listSuppliers: async () => [supplier], getSupplier: async () => supplier, listItemSuppliers: async () => [relationship], approvedSuppliersForItem: async () => [{ ...relationship }] } }
+  const hidden = { partner: false, prices: false }
+  for (const path of ['/api/master-data/suppliers', '/api/master-data/suppliers/SUP-BANK', '/api/master-data/suppliers/select']) {
+    const route = createRouteContext('GET', path, createDb(), repositories)
+    route.ctx.masterDataReadAccess = hidden
+    await handleMasterDataRoute(route.ctx)
+    const row = route.response.payload.supplier || route.response.payload.suppliers[0]
+    assert.equal(row.bankAccountNumber, '****6789', path)
+    assert.equal(row.taxIdentificationNumber, '****6789', path)
+    assert.equal(row.creditCode, '****MA1K', path)
+    assert.equal(row.bankAccountName, '**** LLC', path)
+    assert.equal(row.bankName, 'First Bank', path)
+    assert.deepEqual(row.restrictedFields, ['creditCode', 'taxIdentificationNumber', 'bankAccountName', 'bankAccountNumber'], path)
+    assert.equal(JSON.stringify(route.response.payload).includes('000123456789'), false, path)
+  }
+  const prices = createRouteContext('GET', '/api/master-data/items/ITEM-1/suppliers', createDb(), repositories)
+  prices.ctx.masterDataReadAccess = hidden
+  await handleMasterDataRoute(prices.ctx)
+  assert.equal(prices.response.payload.relationships[0].referencePrice, null)
+  assert.equal(prices.response.payload.suppliers[0].referencePrice, null)
+  assert.deepEqual(prices.response.payload.suppliers[0].restrictedFields, ['referencePrice'])
+
+  const visible = createRouteContext('GET', '/api/master-data/suppliers/SUP-BANK', createDb(), repositories)
+  await handleMasterDataRoute(visible.ctx)
+  assert.equal(visible.response.payload.supplier.bankAccountNumber, '000123456789')
+  assert.equal(visible.response.payload.supplier.restrictedFields, undefined)
+})
+
+// Writes are authorized from Roles & permissions. Without a database the
+// route takes the resolved actor from ctx.masterDataActor.
+const writer = (permissions, overrides = {}) => ({ complete: true, authenticated: true, tenantId: 'tenant-a', userId: 'user-a', roleIds: ['role-a'], inactiveRoleIds: [], permissionCodes: new Set(permissions), permissionSourceRoleIds: new Map(), readWarehouseIds: new Set(), operateWarehouseIds: new Set(), ...overrides })
+
+function writeRoute(method, pathname, { actor, role = 'manager', identity = { authenticated: true, tenantId: 'tenant-a', userId: 'user-a', role }, body = {} } = {}) {
+  const calls = []
+  const record = (name, result) => async (...args) => { calls.push(name); return result(...args) }
+  const masterData = {
+    createItem: record('createItem', (input) => ({ itemId: 'ITEM-NEW', ...input, version: 1 })),
+    updateItem: record('updateItem', (id, input) => ({ itemId: id, ...input })),
+    createSupplier: record('createSupplier', (input) => ({ id: 'SUP-NEW', ...input, version: 1 })),
+    updateSupplier: record('updateSupplier', (id, input) => ({ id, ...input })),
+    createCustomer: record('createCustomer', (input) => ({ id: 'CUST-NEW', ...input, version: 1 })),
+    updateCustomer: record('updateCustomer', (id, input) => ({ id, ...input })),
+    createItemSupplier: record('createItemSupplier', (itemId, input) => ({ relationshipId: 'REL-NEW', itemId, ...input })),
+    updateItemSupplier: record('updateItemSupplier', (itemId, relationshipId, input) => ({ relationshipId, itemId, ...input })),
+  }
+  const route = createRouteContext(method, pathname, createDb(), { masterData })
+  route.ctx.identity = identity
+  route.ctx.masterDataActor = actor
+  route.ctx.readBody = async () => body
+  return { route, calls }
+}
+
+const hasChinese = (value) => /[㐀-鿿]/.test(String(value))
+
+test('master data writes follow Roles & permissions, not the legacy role', async () => {
+  // A legacy buyer with the Procurement Specialist codes maintains items and
+  // suppliers, but not customers.
+  const buyer = writer(['master_data.item.manage', 'master_data.supplier.manage'])
+  for (const [method, path, status] of [
+    ['POST', '/api/master-data/suppliers', 201],
+    ['PATCH', '/api/master-data/suppliers/SUP-001', 200],
+    ['POST', '/api/master-data/items', 201],
+    ['PATCH', '/api/master-data/items/ITEM-A100', 200],
+    ['POST', '/api/master-data/items/ITEM-A100/suppliers', 201],
+    ['PATCH', '/api/master-data/items/ITEM-A100/suppliers/REL-1', 200],
+  ]) {
+    const { route, calls } = writeRoute(method, path, { actor: buyer, role: 'buyer', body: { name: 'Written' } })
+    assert.equal(await handleMasterDataRoute(route.ctx), true)
+    assert.equal(route.response.status, status, `${method} ${path} ${JSON.stringify(route.response.payload)}`)
+    assert.equal(calls.length, 1, `${method} ${path}`)
+  }
+  const customer = writeRoute('POST', '/api/master-data/customers', { actor: buyer, role: 'buyer', body: { code: 'CUST-1', name: 'Denied' } })
+  await handleMasterDataRoute(customer.route.ctx)
+  assert.equal(customer.route.response.status, 403)
+  assert.deepEqual(customer.calls, [])
+  assert.equal(customer.route.response.payload.code, 'PERMISSION_DENIED')
+  assert.equal(customer.route.response.payload.permission, 'master_data.customer.manage')
+  assert.equal(customer.route.response.payload.reasonCode, 'AUTHORIZATION_PERMISSION_DENIED')
+  assert.match(customer.route.response.payload.message, /Your roles do not allow changing customers/)
+  assert.equal(hasChinese(customer.route.response.payload.message), false)
+
+  // A legacy manager whose roles were narrowed to read codes changes nothing.
+  const narrowed = writer(['returns.request.read', 'sales_order.read', 'inventory.balance.read'])
+  for (const [method, path, permission] of [
+    ['POST', '/api/master-data/items', 'master_data.item.manage'],
+    ['PATCH', '/api/master-data/items/ITEM-A100', 'master_data.item.manage'],
+    ['POST', '/api/master-data/items/ITEM-A100/suppliers', 'master_data.item.manage'],
+    ['PATCH', '/api/master-data/items/ITEM-A100/suppliers/REL-1', 'master_data.item.manage'],
+    ['POST', '/api/master-data/suppliers', 'master_data.supplier.manage'],
+    ['PATCH', '/api/master-data/suppliers/SUP-001', 'master_data.supplier.manage'],
+    ['POST', '/api/master-data/customers', 'master_data.customer.manage'],
+    ['PATCH', '/api/master-data/customers/CUST-1', 'master_data.customer.manage'],
+    ['POST', '/api/master-data/customers/CUST-1/deactivate', 'master_data.customer.manage'],
+  ]) {
+    const { route, calls } = writeRoute(method, path, { actor: narrowed, role: 'manager' })
+    await handleMasterDataRoute(route.ctx)
+    assert.deepEqual([route.response.status, route.response.payload.code, route.response.payload.permission], [403, 'PERMISSION_DENIED', permission], `${method} ${path}`)
+    assert.deepEqual(calls, [], `${method} ${path}`)
+  }
+})
+
+test('master data writes refuse signed-out sessions and actors from another workspace', async () => {
+  const everything = ['master_data.item.manage', 'master_data.supplier.manage', 'master_data.customer.manage']
+  const signedOut = writeRoute('POST', '/api/master-data/items', { actor: writer(everything), identity: { authenticated: false } })
+  await handleMasterDataRoute(signedOut.route.ctx)
+  assert.deepEqual([signedOut.route.response.status, signedOut.route.response.payload.code], [401, 'AUTHENTICATION_REQUIRED'])
+  assert.equal(hasChinese(signedOut.route.response.payload.message), false)
+  assert.deepEqual(signedOut.calls, [])
+
+  const foreign = writeRoute('POST', '/api/master-data/suppliers', { actor: writer(everything, { tenantId: 'tenant-b' }) })
+  await handleMasterDataRoute(foreign.route.ctx)
+  assert.deepEqual([foreign.route.response.status, foreign.route.response.payload.reasonCode], [403, 'AUTHORIZATION_TENANT_MISMATCH'])
+  assert.deepEqual(foreign.calls, [])
+
+  const incomplete = writeRoute('POST', '/api/master-data/customers', { actor: writer(everything, { complete: false }) })
+  await handleMasterDataRoute(incomplete.route.ctx)
+  assert.deepEqual([incomplete.route.response.status, incomplete.route.response.payload.reasonCode], [403, 'AUTHORIZATION_CONTEXT_INCOMPLETE'])
+  assert.deepEqual(incomplete.calls, [])
 })
 
 test('GET /api/master-data/suppliers/:id returns 404 for missing supplier', async () => {

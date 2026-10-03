@@ -118,3 +118,40 @@ test('the skill context requires a signed-in identity bound to the actor tenant'
   const context = await loadAiSkillContext(scenario.ctx)
   assert.deepEqual(context.tenant, { locale: 'en-US', currency: 'USD', timezone: 'America/New_York' })
 })
+
+// The facts are read from the business read context as the actor may see it,
+// the way the reports read it.
+test('the read-only viewer gets no purchase order or invoice amounts in the skill facts', async () => {
+  const { facts } = await factsFor({ roleKey: 'read-only-viewer' })
+  const text = JSON.stringify(facts)
+  // PO totals 3,920 and 17,920 committed; invoices 2,381.50 and 7,381.50 committed.
+  for (const secret of ['17920', '3920', '2381.5', '7381.5']) assert.equal(text.includes(secret), false, secret)
+  assert.ok(facts.purchaseOrders.index.every((row) => row.amount === null))
+  // The invoice supplier needs finance.partner_snapshot.read.
+  assert.deepEqual(facts.invoices.variances.map((row) => [row.id, row.supplierId, row.supplier, row.variance]), [['INV-001', '', null, null]])
+  // A hidden amount or supplier is not a missing one.
+  assert.deepEqual(facts.records.filter((row) => row.source === 'supplier_invoices'), [])
+})
+
+test('the procurement specialist gets no supplier invoices or sales orders in the skill facts', async () => {
+  const { facts } = await factsFor({ roleKey: 'procurement-specialist' })
+  const text = JSON.stringify(facts)
+  for (const secret of ['INV-00', 'SO-001', 'Redwood', '2381.5', '7381.5']) assert.equal(text.includes(secret), false, secret)
+  assert.equal(facts.invoices, null)
+  // Availability still counts every order's demand, as the inventory report does.
+  const ldm1 = facts.inventory.rows.find((row) => row.sku === 'LDM-001')
+  assert.deepEqual([ldm1.openSalesDemand, ldm1.shortage, ldm1.salesOrderIds], [35, 7, []])
+  assert.deepEqual(facts.inventory.atRisk, ['LDM-001'])
+})
+
+test("the skill facts read inventory from the actor's warehouses only", async () => {
+  const scenario = aiSkillScenario({ roleKey: 'operations-specialist' })
+  scenario.actor.readWarehouseIds = new Set(['WH-EAST'])
+  const listItems = scenario.ctx.repositories.inventoryRuntime.listItems
+  let warehouseIds
+  scenario.ctx.repositories.inventoryRuntime.listItems = async (scope) => { warehouseIds = scope.warehouseIds; return listItems(scope) }
+  await readAiSkillFacts(await loadAiSkillContext(scenario.ctx))
+  assert.deepEqual(warehouseIds, ['WH-EAST'])
+  const [, , balanceRead] = scenario.calls.prisma.find(([model]) => model === 'inventoryBalance')
+  assert.deepEqual(balanceRead.where, { tenantId: AI_SKILL_TENANT, warehouseId: { in: ['WH-EAST'] } })
+})

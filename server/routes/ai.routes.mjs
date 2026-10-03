@@ -18,6 +18,7 @@ import { buildAiReadContext } from '../domain/ai-read-context.mjs'
 import { getAiToolRegistry } from '../domain/ai-tool-registry.mjs'
 import { buildUnknownGuidedFallbackResponse, classifyAiBusinessIntent, isTechnicalProviderDiagnosticPrompt } from '../domain/ai-business-intent-router.mjs'
 import { businessContextToReadDb, readBusinessContext } from '../services/runtime-business-read-service.mjs'
+import { reportReadAccess, scopeBusinessContext, sendReadAccessError } from '../domain/report-read-access.mjs'
 import { createAiHandlerRegistry, aiHandlersForPhase } from './ai-handler-registry.mjs'
 import { dispatchAiHandlers } from './ai-dispatcher.mjs'
 import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs'
@@ -583,9 +584,17 @@ export async function handleAiRoute(ctx) {
     repositories?.inventoryRuntime ||
     repositories?.salesOrders ||
     typeof repositories?.masterData?.listManagedItems === 'function'
+  // The assistant reads the business read context as the reader may see it:
+  // collections their role cannot open are empty, hidden amounts, invoice
+  // partners and supplier bank details are null or left out, and inventory
+  // comes from the reader's warehouses. Every answer below is built from it.
   let businessReadContext = null
+  let readAccess = null
   if (authoritativeRuntime) {
-    businessReadContext = await readBusinessContext(ctx)
+    try {
+      readAccess = await reportReadAccess(ctx)
+      businessReadContext = scopeBusinessContext(await readBusinessContext(ctx, { warehouseIds: readAccess.warehouseIds }), readAccess)
+    } catch (error) { sendReadAccessError(ctx, error); return true }
     db = businessContextToReadDb(businessReadContext)
   }
 
@@ -622,6 +631,7 @@ export async function handleAiRoute(ctx) {
     ...ctx,
     businessReadContext,
     businessReadDb: db,
+    readAccess,
   })
   state.readModelCache = aiReadContext.cache
 

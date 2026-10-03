@@ -1,10 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import path from 'node:path'
 import { handleAiRoute } from '../routes/ai.routes.mjs'
-
-const repoRoot = path.resolve(import.meta.dirname, '..', '..')
 
 const alphaCriticalPrompts = Object.freeze([
   { moduleId: 'overview', question: '今天最需要处理什么？' },
@@ -131,13 +127,7 @@ function businessSnapshot(db) {
   })
 }
 
-function cardRenderersFromPanel() {
-  const source = fs.readFileSync(path.join(repoRoot, 'src/modules/ai-assistant/Panel.tsx'), 'utf8')
-  return new Set([...source.matchAll(/case "([^"]+)":/g)].map((match) => match[1]))
-}
-
-test('R81 Alpha-critical AI prompts are localized, rendered, provider-free, and non-mutating', async () => {
-  const renderers = cardRenderersFromPanel()
+test('R81 Alpha-critical AI prompts are localized, provider-free, and non-mutating', async () => {
   for (const prompt of alphaCriticalPrompts) {
     const db = createDb()
     const before = businessSnapshot(db)
@@ -147,7 +137,6 @@ test('R81 Alpha-critical AI prompts are localized, rendered, provider-free, and 
     const label = `${prompt.moduleId}: ${prompt.question}`
     const payload = route.response?.payload
     const content = String(payload?.content || payload?.message || '')
-    const cardTypes = (payload?.cards || []).map((card) => card.type).filter(Boolean)
 
     assert.equal(route.response?.status, 200, label)
     assert.notEqual(payload.intent?.name, 'provider_disabled', label)
@@ -159,7 +148,6 @@ test('R81 Alpha-critical AI prompts are localized, rendered, provider-free, and 
     assert.match(content, /[\u4e00-\u9fa5]/, label)
     assert.doesNotMatch(content, /^\s*[{[]/, label)
     assert.doesNotMatch(content, /```|"\s*(cards|type|data|intent)"\s*:/, label)
-    assert.deepEqual(cardTypes.filter((type) => !renderers.has(type)), [], label)
     assert.deepEqual(businessSnapshot(db), before, label)
 
     if (payload.mode === 'draft_preparation') {

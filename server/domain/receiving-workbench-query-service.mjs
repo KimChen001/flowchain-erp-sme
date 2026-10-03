@@ -6,6 +6,7 @@ import {
   receivingDecimalUnits,
   receivingFulfillmentStatus,
   receivingLocationKey,
+  receivingMovementNetUnits,
   receivingWorkflowStatus,
 } from './receiving-transaction-policy.mjs'
 import { assertWarehouseAccess, hasWarehouseAccess, resolveProvisionedActor } from './pilot-identity.mjs'
@@ -156,9 +157,13 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
     // A draft is edited and submitted before it can be posted.
     const draftOpen = grn.workflowStatus === 'draft' && grn.postingStatus === 'unposted'
       && Boolean(capabilities.posting?.enabled) && can({ actor, permission: 'receiving.prepare', tenantId: actor.tenantId }) && warehouseAllowed
+    // A receipt that was never posted can be cancelled, as a draft or ready.
+    const canCancel = grn.postingStatus === 'unposted' && ['draft', 'ready_for_receiving'].includes(grn.workflowStatus)
+      && Boolean(capabilities.posting?.enabled) && can({ actor, permission: 'receiving.prepare', tenantId: actor.tenantId }) && warehouseAllowed
     return detailModel(aggregate, capabilities, {
       canEditDraft: draftOpen,
       canSubmit: draftOpen,
+      canCancel,
       canPost: operation === 'post' && allowed,
       canReverse: operation === 'reverse' && allowed,
       canViewReversal: grn.postingStatus === 'reversed',
@@ -251,7 +256,7 @@ export function createReceivingWorkbenchQueryService({ prisma, capabilities = {}
         prisma.inventoryMovement.findMany({ where: { tenantId: scope.tenantId, sku: key.sku, warehouseId: key.warehouseId, locationKey: key.locationKey, status: 'posted' }, select: { id: true, quantityIn: true, quantityOut: true, adjustmentQty: true } }),
         prisma.inventoryBalance.findUnique({ where: { tenantId_sku_warehouseKey_locationKey: { tenantId: scope.tenantId, sku: key.sku, warehouseKey: key.warehouseKey, locationKey: key.locationKey } } }),
       ])
-      const calculated = movements.reduce((sum, movement) => sum + receivingDecimalUnits(movement.quantityIn) - receivingDecimalUnits(movement.quantityOut) + receivingDecimalUnits(movement.adjustmentQty), ZERO)
+      const calculated = movements.reduce((sum, movement) => sum + receivingMovementNetUnits(movement), ZERO)
       if (!balance) return { ...key, status: 'unavailable', calculatedQuantity: receivingDecimalString(calculated), recordedQuantity: null, differenceQuantity: null, movementIds: movements.map((movement) => movement.id), reason: 'Inventory balance is missing.' }
       const recorded = receivingDecimalUnits(balance.onHandQuantity)
       const difference = recorded - calculated

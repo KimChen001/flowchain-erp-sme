@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import type { ActionDraftPreviewRequest } from "../../modules/action-drafts/ActionDraftReviewShell";
 import type { AiResponseV2, AiResponseV2EvidenceItem, AiResponseV2NavigationLink, AiResponseV2ReviewCard, AiResponseV2Section } from "../../domain/ai/response-contract";
-import { toAiFocusedResponse, type AiFocusedAction } from "../../domain/ai/focused-response";
+import { isAiCapabilityAnswer, toAiFocusedResponse, type AiFocusedAction } from "../../domain/ai/focused-response";
 import { businessEntityRouteRegistry, type BusinessEntityType } from "../business/businessEntityRoutes";
 import { A } from "../ui";
 import { useI18n } from "../../i18n/I18n";
@@ -153,11 +153,14 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
       {response.answerSourceLabel ? <div data-testid="ai-answer-source" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" style={{ color: A.gray2 }}><span className="inline-flex rounded-full px-2 py-0.5 font-semibold" style={{ background: A.gray6, color: A.gray1 }}>{response.answerSourceLabel}</span>{response.checkedLabel ? <span data-testid="ai-answer-checked">{response.checkedLabel}</span> : null}</div> : null}
       <section data-testid="ai-focused-conclusion">
         <div className="flex items-start justify-between gap-2"><div lang={response.language || undefined}><h3 className="text-sm font-semibold leading-5" style={{ color: A.label }}>{focused.headline}</h3>{focused.summary && !compound ? <p className="mt-1 text-xs leading-5" style={{ color: A.gray1 }}>{focused.summary}</p> : null}</div><Chip tone={focused.severity}>{copy.severity[focused.severity]}</Chip></div>
-        <div className="mt-2 flex gap-2 text-[11px]" style={{ color: A.gray2 }}>
-          <span>{fill(copy.evidenceCount, { count: response.realEvidenceCount ?? response.keyEvidence.length })}</span>
-          <span>· {fill(copy.contextCount, { count: response.contextCardCount ?? response.contextCards?.length ?? 0 })}</span>
-          <span>· {fill(copy.limitationCount, { count: response.limitationCount ?? response.dataLimitations.length })}</span>
-        </div>
+        {/* The help answer reads no records, so "0 records" would read as a failed lookup. */}
+        {isAiCapabilityAnswer(response) ? null : (
+          <div className="mt-2 flex gap-2 text-[11px]" style={{ color: A.gray2 }}>
+            <span>{fill(copy.evidenceCount, { count: response.realEvidenceCount ?? response.keyEvidence.length })}</span>
+            <span>· {fill(copy.contextCount, { count: response.contextCardCount ?? response.contextCards?.length ?? 0 })}</span>
+            <span>· {fill(copy.limitationCount, { count: response.limitationCount ?? response.dataLimitations.length })}</span>
+          </div>
+        )}
       </section>
 
       <BusinessQueryPresentation response={response} />
@@ -172,7 +175,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
 
       {focused.evidence.length || focused.businessImpact.length || focused.limitations.length ? <section className="space-y-2" data-testid="ai-focused-details">
         {focused.evidence.length ? <Detail title={fill(copy.evidenceDetails, { count: Math.min(5, focused.evidence.length) })} testId="ai-evidence-details">{focused.evidence.map((item) => <div key={item.id} className="text-[11px] leading-5"><EvidenceLink item={item} onNavigate={onNavigate} /><div style={{ color: A.gray2 }}>{[item.status, item.value, item.sourceLabel].filter((value) => value !== undefined && value !== null && value !== "").join(" · ")}</div></div>)}</Detail> : null}
-        {focused.businessImpact.length ? <Detail title={copy.impactDetails} testId="ai-impact-details">{focused.businessImpact.map((item) => <div key={`${item.area}-${item.impact}`} className="text-[11px] leading-5"><div className="font-semibold" style={{ color: A.label }}>{item.area} · {item.impact}</div><div style={{ color: A.gray1 }}>{item.explanation}</div></div>)}</Detail> : null}
+        {focused.businessImpact.length ? <Detail title={copy.impactDetails} testId="ai-impact-details">{focused.businessImpact.map((item, index) => <div key={`${index}-${item.area}-${item.impact}`} className="text-[11px] leading-5"><div className="font-semibold" style={{ color: A.label }}>{item.area} · {item.impact}</div><div style={{ color: A.gray1 }}>{item.explanation}</div></div>)}</Detail> : null}
         {focused.limitations.length ? <Detail title={copy.limitationDetails} testId="ai-limitations-details">{focused.limitations.map((item) => <div key={item.label} className="text-[11px] leading-5"><div className="font-semibold" style={{ color: A.label }}>{item.label}</div><div style={{ color: A.gray1 }}>{item.description}</div>{item.consequence ? <div style={{ color: A.gray2 }}>{item.consequence}</div> : null}</div>)}</Detail> : null}
       </section> : null}
 

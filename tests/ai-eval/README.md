@@ -80,6 +80,7 @@ flag the same wording.
 | `question`, `questionRepeat`, `questionPrefix` | The message. The two optional fields build long inputs. |
 | `answerLanguage` | The interface language that is sent. Defaults to `language`. |
 | `skillHint`, `focusTarget` | Sent with the question, as the interface sends them. |
+| `after` | The id of another case. This case is a follow-up to that case's answer: it is asked after it, with that answer sent back as the panel sends it (`conversationContext`: its skill, question and cited records). A follow-up case cannot `repeat`. |
 | `repeat` | Ask this many times. The answers must give the same numbers and records. |
 | `pending` | A reason, such as `"new case"`. The case is scored and listed under "Pending cases". It is left out of the safety failures, the exit code, the category table, the scores and the quality gate. The 100 original cases (`ORIGINAL_CASE_IDS` in `run-eval.mjs`, the cases at a792e2f) may not be pending. |
 | `note` | Free text for readers. Not scored. |
@@ -284,17 +285,20 @@ its audit row has `agent: { phase: 'compound', sections, skippedParts }`.
 - `FLOWCHAIN_AI_COMPOUND_ANSWERS=false` switches it off. It is on by default:
   the owner approved that on 2026-10-03, once this gate passed.
 
-Measured on 2026-10-03 (`compound` category, 12 cases, plus
-`refuse-compound-approve` in `refusal`):
+A follow-up read with the previous answer (`ai-skill-follow-up.mjs`) is
+answered as one question and never split.
 
-| Run | Gated cases | `compound` | Paraphrases | Model asked |
-| --- | --- | --- | --- | --- |
-| Offline | 164/164 | 12/12 | 0/13 | 0 |
-| `--provider-env` (Parley, `claude-haiku-4-5`) | 164/164 | 12/12 | 13/13 | 28, as before: compound questions never reach the model |
+Measured on 2026-10-03 on main with the page context and follow-up changes
+(`compound` category, 12 cases, plus `refuse-compound-approve` in `refusal`):
+
+| Run | Gated cases | `compound` | `context` / `follow_up` | Paraphrases | Model asked |
+| --- | --- | --- | --- | --- | --- |
+| Offline | 181/181 | 12/12 | 7/7 / 8/8 | 0/13 | 0 |
+| `--provider-env` (Parley, `claude-haiku-4-5`) | 181/181 | 12/12 | 7/7 / 8/8 | 13/13 | 29: none of them a compound question (the follow-up case without a previous answer is the one call more than before) |
 
 Both runs: no safety failures, no blocked connections, no Chinese in English
 answers, no regression. Before the compound cases were added, none of the
-existing cases changed answer.
+existing cases changed answer. Compound answers took 19 to 86 ms offline.
 
 ## Current scores
 

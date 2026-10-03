@@ -352,11 +352,11 @@ export function Modal({ open, onClose, title, subtitle, width = 560, children, f
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
+    <div className="fc-overlay-enter fixed inset-0 z-50 flex items-center justify-center p-6"
       style={{ background: "rgba(0,0,0,0.32)", backdropFilter: "blur(10px)" }}
       onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()}
-        className="bg-white rounded-2xl flex flex-col max-h-[88vh] overflow-hidden"
+        className="fc-dialog-enter bg-white rounded-2xl flex flex-col max-h-[88vh] overflow-hidden"
         style={{ width: `min(${width}px, calc(100vw - 32px))`, boxShadow: "0 24px 60px rgba(0,0,0,0.24), 0 0 0 0.5px rgba(0,0,0,0.08)" }}>
         <div className="px-6 pt-5 pb-4 flex items-start justify-between" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
           <div>
