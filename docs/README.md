@@ -74,6 +74,7 @@
 - [AI timeout diagnostics and cockpit fast path](ai-timeout-diagnostics-and-cockpit-fast-path-v1.md)
 - [AI response latency notes](ai-response-latency-notes.md)
 - [AI chat copilot plan](ai-chat-copilot-v1-plan.md)
+- [Assistant agent mode design (step C, proposal)](ai-agent-mode-design.md)
 
 ## UI
 
