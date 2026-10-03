@@ -18,6 +18,8 @@ import { AI_SKILL_RECENT_DAYS, aiSkillDaysBetween, buildAiSkillSignals, compareS
 
 const DESCRIBED = 3
 const LISTED = 5
+// Recent activity names at most three suppliers, the busiest first.
+const RECENT_LISTED = 3
 const OPEN_WORK = ['po_overdue', 'po_due_7d', 'grn_rejected_qty', 'grn_received_unposted', 'invoice_variance']
 const array = (value) => Array.isArray(value) ? value : []
 
@@ -39,7 +41,7 @@ function recentActivity(facts, names, only) {
   for (const row of array(facts.receipts?.recent)) add(row.supplierId, 'receipts')
   for (const row of array(facts.invoices?.recent)) add(row.supplierId, 'invoices')
   const total = (row) => row.orders + row.receipts + row.invoices
-  return [...bySupplier.values()].sort((a, b) => total(b) - total(a) || a.name.localeCompare(b.name)).slice(0, LISTED)
+  return [...bySupplier.values()].sort((a, b) => total(b) - total(a) || a.name.localeCompare(b.name)).slice(0, RECENT_LISTED)
 }
 
 export function runSupplierAttention(facts, { route = null, focus = null } = {}) {

@@ -566,7 +566,8 @@ export function aiSkillSentences(parts, language) {
 export function aiSkillList(parts, language, { or = false } = {}) {
   const items = parts.filter(Boolean)
   if (items.length <= 1) return items.join('')
-  if (aiSkillLanguage(language) === 'zh-CN') return `${items.slice(0, -1).join('、')}${or ? ' 还是 ' : '和'}${items.at(-1)}`
+  // 和 takes a space before a number or a Latin name: 收货单和 1 张发票, ……和 Northstar.
+  if (aiSkillLanguage(language) === 'zh-CN') return `${items.slice(0, -1).join('、')}${or ? ' 还是 ' : /^[0-9A-Za-z]/.test(items.at(-1)) ? '和 ' : '和'}${items.at(-1)}`
   const word = or ? 'or' : 'and'
   return items.length === 2 ? `${items[0]} ${word} ${items[1]}` : `${items.slice(0, -1).join(', ')} ${word} ${items.at(-1)}`
 }
