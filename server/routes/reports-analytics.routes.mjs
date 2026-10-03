@@ -38,9 +38,11 @@ export async function handleReportsAnalyticsRoute(ctx) {
     }
     return true
   }
+  // Overdue counts use the workspace's calendar day.
+  const reportOptions = async () => ({ now: ctx.reportNow || new Date(), timeZone: await readTenantTimezone(ctx) })
 
   if (req.method === 'GET' && url.pathname === '/api/reports-analytics') {
-    send(res, 200, buildRuntimeGovernedReport(await readBusinessContext(ctx), { subject: 'overview' }))
+    send(res, 200, buildRuntimeGovernedReport(await readBusinessContext(ctx), { subject: 'overview' }, await reportOptions()))
     return true
   }
 
@@ -51,14 +53,14 @@ export async function handleReportsAnalyticsRoute(ctx) {
 
   if (req.method === 'POST' && url.pathname === '/api/reports/query') {
     const body = await readBody(req)
-    send(res, 200, buildRuntimeGovernedReport(await readBusinessContext(ctx), body))
+    send(res, 200, buildRuntimeGovernedReport(await readBusinessContext(ctx), body, await reportOptions()))
     return true
   }
 
   const dashboardMatch = url.pathname.match(/^\/api\/reports\/(overview|procurement|sales|inventory|finance|suppliers)$/)
   if (req.method === 'GET' && dashboardMatch) {
     const filters = Object.fromEntries(url.searchParams.entries())
-    send(res, 200, buildRuntimeGovernedReport(await readBusinessContext(ctx), { subject: dashboardMatch[1], filters }))
+    send(res, 200, buildRuntimeGovernedReport(await readBusinessContext(ctx), { subject: dashboardMatch[1], filters }, await reportOptions()))
     return true
   }
 

@@ -9,7 +9,7 @@ FlowChain uses the familiar SME inventory/ERP object skeleton for orientation: f
 ## Phase 0 Product Positioning and Language Governance
 
 - Reposition FlowChain around SME inventory, sales-demand, procurement, supplier operations, and finance-collaboration exceptions.
-- Standardize user-visible copy in simplified Chinese for China SME users.
+- Write user-visible copy in English (`en-US`, the default) with a Chinese (`zh-CN`) translation; see `docs/interface-language-policy.md`. This replaced the original simplified-Chinese-only target when the product moved to US SMEs.
 - Keep internal enums, adapter names, and draft types out of visible UI.
 - Document allowed business abbreviations such as SKU, MRP, RFQ, PO, PR, and GRN with Chinese meaning.
 

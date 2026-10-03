@@ -199,12 +199,24 @@ def clean(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
             "Same as weight. ASSUMPTION: freight is split in proportion to line item value.")
     log.add("Rows sharing a referenced shipment freight", "all rows", group_size > 1,
             "allocated freight", "Rows in multi-line shipments (referencing rows plus their target rows).")
-    log.add("Weight Captured Separately", "all rows", df["weight_captured_separately"], "NaN weight + flag",
-            "Weight is not in the file; no defensible imputation.")
-    log.add("Freight Included in Commodity Cost", "all rows", df["freight_included"], "NaN freight + flag",
-            "Freight is embedded in the price; it cannot be separated, so freight share is undefined (not zero).")
-    log.add("Freight Invoiced Separately", "all rows", df["freight_invoiced_separately"], "NaN freight + flag",
-            "Freight exists but is not in the file.")
+    # Sentinel counts are AFTER resolving references: a row whose "See ... (ID#:n)" reference leads to a sentinel
+    # row takes that status too. The rationale also gives the raw-text count (the text in the row's own cell), which
+    # is what data-quality.md section 3.1 counts, so the two reports can be reconciled.
+    def sentinel_note(raw_col: str, text: str, flag: pd.Series) -> str:
+        in_cell = df[raw_col].astype(str).str.strip().eq(text)
+        return (f"Counted after resolving references: {int(in_cell.sum()):,} rows hold the text in their own cell and "
+                f"{int((flag & ~in_cell).sum()):,} more reference such a row.")
+
+    log.add("Weight Captured Separately (after resolving references)", "all rows", df["weight_captured_separately"],
+            "NaN weight + flag", "Weight is not in the file; no defensible imputation. "
+            + sentinel_note("weight_raw", "Weight Captured Separately", df["weight_captured_separately"]))
+    log.add("Freight Included in Commodity Cost (after resolving references)", "all rows", df["freight_included"],
+            "NaN freight + flag",
+            "Freight is embedded in the price; it cannot be separated, so freight share is undefined (not zero). "
+            + sentinel_note("freight_raw", "Freight Included in Commodity Cost", df["freight_included"]))
+    log.add("Freight Invoiced Separately (after resolving references)", "all rows", df["freight_invoiced_separately"],
+            "NaN freight + flag", "Freight exists but is not in the file. "
+            + sentinel_note("freight_raw", "Invoiced Separately", df["freight_invoiced_separately"]))
     zero_weight = df["weight_kg_shipment"].eq(0)
     log.add("Weight recorded as 0 kg", "all rows", zero_weight, "set to NaN + flag",
             "Physical goods cannot weigh 0 kg; treated as not captured.")

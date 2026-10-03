@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
-const fontSizeTenAllowlist = ["src/modules/forecast/Page.tsx", "src/modules/inventory/Page.tsx", "src/modules/print-layout/printLayoutPresets.ts"];
+// Chart-coordinate text (axis, legend and mark labels) and print layouts.
+const fontSizeTenAllowlist = ["src/modules/forecast/Page.tsx", "src/modules/inventory/Page.tsx", "src/modules/print-layout/printLayoutPresets.ts", "src/modules/reports/charts/chartOptions.ts"];
 
 test("tracked application source has no explicit 10px utility text", () => {
   let matches = "";

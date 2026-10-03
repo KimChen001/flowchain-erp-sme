@@ -38,10 +38,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
   `),
   EXTENSION: ids(`
     procurement:receiving:new procurement:receiving:edit procurement:returns
-    sales:order-new sales:delivery sales:delivery:new
-    sales:delivery:edit sales:receipts sales:receipts:new sales:returns
-    sales:returns:new sales:shipment-detail sales:delivery-detail
-    sales:receipt-detail
+    sales:order-new sales:returns sales:returns:new sales:shipment-detail
     inventory:operations inventory:returns inventory:return-requests
     inventory:return-request-new inventory:return-request-detail
     inventory:return-authorizations inventory:return-authorization-detail
@@ -77,7 +74,8 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     pilot-readiness:checklist
   `),
   // Owner decision: internal settlement, cashbook and the settlement
-  // workflow are frozen (FROZEN_PRODUCT_ROUTE_IDS); forecast / MRP is unavailable.
+  // workflow, and the empty sales delivery and receipt pages, are frozen
+  // (FROZEN_PRODUCT_ROUTE_IDS); forecast / MRP is unavailable.
   FROZEN: new Set([
     ...ids(`
     procurement:contracts

@@ -181,11 +181,11 @@ test("purchase request amounts use the document currency", async ({ page }) => {
 test("the purchase orders header totals committed orders only, per currency", async ({ page }) => {
   await signIn(page);
   await page.goto("/app/procurement/orders");
-  // 23 committed orders; the 32 loaded include drafts, pending approvals and cancellations.
+  // 26 committed orders; the 35 loaded include drafts, pending approvals and cancellations.
   const committed = page.getByRole("link", { name: /Committed PO value/ });
-  await expect(committed).toContainText("$75,536.50");
-  await expect(committed).toContainText("23 committed orders");
-  await expect(page.locator("main").first()).not.toContainText("$112,639.00");
+  await expect(committed).toContainText("$79,692.50");
+  await expect(committed).toContainText("26 committed orders");
+  await expect(page.locator("main").first()).not.toContainText("$116,795.00");
   // Open purchase orders match the open purchase orders report.
   await expect(page.getByRole("link", { name: /Open purchase orders/ })).toContainText("15");
 });
@@ -201,6 +201,24 @@ test("frozen and unavailable modules have no entry point and show Capability una
   const links = await page.locator("a[href], [href]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("href") || ""));
   expect(links.filter((href) => /\/app\/(finance\/settlement|finance\/reconciliation|mobile\/settlements|forecast|imports)\b/.test(href))).toEqual([]);
   await expect(page.locator("aside, nav").first()).not.toContainText(/Settlement|Cashbook|Forecast|MRP|Imports/);
+});
+
+test("an unknown address offers English recovery to the module and to home", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/app/inventory/not-a-real-page");
+  const recovery = page.getByTestId("not-found-recovery");
+  await expect(recovery).toContainText("Page not found");
+  await expect(recovery).toContainText("Inventory has no page at this address.");
+  expect(await settledChineseLines(page)).toEqual([]);
+  await page.getByRole("button", { name: "Go to Inventory" }).click();
+  await expect(page).toHaveURL(/\/app\/inventory\/stock$/);
+  await page.goto("/app/not-a-real-module");
+  await expect(page.getByTestId("not-found-recovery")).toContainText("This link does not exist or has been removed.");
+  await page.getByRole("button", { name: "Go to home" }).click();
+  await expect(page).toHaveURL(/\/app\/overview(\/|$)/);
+  // Under the home module there is one way back, not a second "Go to Home".
+  await page.goto("/app/overview/not-a-real-page");
+  await expect(page.getByTestId("not-found-recovery").getByRole("button")).toHaveText(["Go to home"]);
 });
 
 // The short English check of the walkthrough pages: no Chinese, no stored

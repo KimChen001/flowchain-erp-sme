@@ -2,10 +2,8 @@ import type { ReactNode } from "react";
 import { isUnavailableProductRoute } from "../../../shared/unavailable-product-routes.mjs";
 import { Link, useLocation } from "react-router";
 import { businessEntityPath, businessEntityRouteRegistry, type BusinessEntityType } from "./businessEntityRoutes";
-import { workspaceCopy } from "../../i18n/workspaceCopy";
-
-const copy = (label: string) =>
-  workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
+import { businessEntityCopy } from "./businessEntityCopy";
+import { useI18n } from "../../i18n/I18n";
 
 type Props = {
   entityType: BusinessEntityType;
@@ -18,6 +16,9 @@ type Props = {
 
 export function BusinessEntityLink({ entityType, entityId, children, className = "", exists = true, returnLabel }: Props) {
   const location = useLocation();
+  // The i18n language, not <html lang>, which is updated only after a language change renders.
+  const { language } = useI18n();
+  const copy = (label: string) => businessEntityCopy(label, language);
   const value = entityId?.trim();
   if (!value || !exists) return <span className={className || undefined}>{children ?? value ?? "—"}</span>;
   const route = businessEntityRouteRegistry[entityType];
