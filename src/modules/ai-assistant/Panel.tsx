@@ -82,6 +82,9 @@ type SafeConversationContext = {
   previousEntityRefs?: Array<{ entityType?: string; entityId?: string; entityLabel: string; source: string; confidence: string }>;
   previousNavigationRefs?: Array<{ label: string; moduleId?: string; entityType?: string; entityId?: string; entityLabel?: string; returnTo: "ai-assistant" }>;
   previousEvidenceRefs?: Array<{ id?: string; label?: string; entityType?: string; entityId?: string; entityLabel?: string; moduleId?: string }>;
+  // The records of the latest answer that listed several, so "the second one"
+  // still means that list after a "why?" about one of them.
+  previousListRefs?: Array<{ id?: string; label?: string; entityType?: string; entityId?: string; entityLabel?: string; moduleId?: string }>;
   previousModuleId?: string;
   previousViewId?: string;
   previousFocusTarget?: { entityType?: string; entityId?: string; entityLabel?: string } | null;
@@ -153,15 +156,23 @@ export function getAiContextLabel(moduleId: string, activeContext?: ActiveContex
   return language === "zh-CN" ? routeLabel : MODULE_LABELS_EN[routeLabel] || routeLabel;
 }
 
+// How the placeholder names the page's record. The assistant answers about the
+// whole workspace; it uses this record only when the question says "this ...".
+const CONTEXT_ENTITY_PHRASES: Record<string, { "en-US": string; "zh-CN": string }> = {
+  purchase_order: { "en-US": "this PO", "zh-CN": "这个 PO" },
+  item: { "en-US": "this SKU", "zh-CN": "这个 SKU" },
+  rfq: { "en-US": "this RFQ", "zh-CN": "这个 RFQ" },
+  supplier: { "en-US": "this supplier", "zh-CN": "这个供应商" },
+  sales_order: { "en-US": "this sales order", "zh-CN": "这个客户订单" },
+  purchase_request: { "en-US": "this purchase request", "zh-CN": "这个采购申请" },
+};
+
 export function getAiInputPlaceholder(moduleId: string, activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
   const zh = language === "zh-CN";
-  if (activeContext?.entityType === "purchase_order") return zh ? "问我：这个 PO 为什么优先？未到货风险在哪里？" : "Ask why this PO is a priority or where receipt risk exists";
-  if (activeContext?.entityType === "sales_order") return zh ? "问我：这个客户订单的交付风险在哪里？需要先看哪些证据？" : "Ask about delivery risk and evidence for this sales order";
-  if (activeContext?.entityType === "item") return zh ? "问我：这个 SKU 需要补货吗？库存覆盖够不够？" : "Ask whether this SKU needs replenishment or has enough coverage";
-  if (activeContext?.entityType === "rfq") return zh ? "问我：这个 RFQ 有几家回复？要不要提醒供应商？" : "Ask about RFQ responses or supplier follow-up";
-  if (activeContext?.entityType === "supplier") return zh ? "问我：这个供应商有哪些风险？需要怎么跟进？" : "Ask about this supplier's risks and follow-up";
+  const phrase = CONTEXT_ENTITY_PHRASES[activeContext?.entityType || ""]?.[language];
+  if (phrase) return zh ? `问工作区的任何问题，或问${phrase}` : `Ask anything about your workspace, or about ${phrase}`;
   if (moduleId === "overview") return zh ? "问我：今天先看什么？哪些风险最高？" : "Ask what to review today or which risks are highest";
-  return zh ? "问我：当前有什么问题？哪些数据不完整？" : "Ask about current issues or incomplete data";
+  return zh ? "问工作区的任何问题" : "Ask anything about your workspace";
 }
 
 function hasValue(value: unknown) {
@@ -1367,10 +1378,23 @@ function safeEntityType(value: unknown) {
   return "Unknown";
 }
 
+function aiRuntimeResponses(messages: AiChatMessage[]): AiResponseV2[] {
+  return messages.flatMap((message) => message.role === "assistant" ? (message.cards || []).filter((card) => card.type === "ai_response_v2" && card.data).map((card) => card.data as unknown as AiResponseV2) : []);
+}
+
 function latestAiRuntimeResponse(messages: AiChatMessage[]): AiResponseV2 | null {
-  const assistant = [...messages].reverse().find((message) => message.role === "assistant" && message.cards?.some((card) => card.type === "ai_response_v2"));
-  const card = assistant?.cards?.find((item) => item.type === "ai_response_v2");
-  return card?.data ? card.data as unknown as AiResponseV2 : null;
+  return aiRuntimeResponses(messages).at(-1) || null;
+}
+
+function evidenceRefs(response: AiResponseV2 | null | undefined) {
+  return (response?.keyEvidence || []).slice(0, 8).map((item) => ({
+    id: item.id,
+    label: item.label,
+    entityType: safeEntityType(item.entityType || item.entityId),
+    entityId: item.entityId,
+    entityLabel: item.entityLabel,
+    moduleId: item.moduleId,
+  }));
 }
 
 function buildSafeConversationContext(messages: AiChatMessage[], activeContext: ActiveContext | null, sessionGrounding: AiSessionGrounding, language: "en-US" | "zh-CN" = "en-US"): SafeConversationContext {
@@ -1428,14 +1452,8 @@ function buildSafeConversationContext(messages: AiChatMessage[], activeContext: 
         returnTo: "ai-assistant",
       };
     }),
-    previousEvidenceRefs: (response?.keyEvidence || []).slice(0, 8).map((item) => ({
-      id: item.id,
-      label: item.label,
-      entityType: safeEntityType(item.entityType || item.entityId),
-      entityId: item.entityId,
-      entityLabel: item.entityLabel,
-      moduleId: item.moduleId,
-    })),
+    previousEvidenceRefs: evidenceRefs(response),
+    previousListRefs: evidenceRefs([...aiRuntimeResponses(messages)].reverse().find((item) => (item.keyEvidence || []).length > 1)),
     previousModuleId: response?.scope?.module || activeContext?.module,
     previousViewId: activeContext?.view,
     previousFocusTarget: activeContext?.entityId ? {
@@ -1654,6 +1672,7 @@ export default function FloatingAiAssistant({
   const [asking, setAsking] = useState(false);
   const [slowRequest, setSlowRequest] = useState(false);
   const [messages, setMessages] = useState<AiChatMessage[]>([]);
+  const [dismissedContextKey, setDismissedContextKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreButtonRef = useRef<HTMLButtonElement>(null);
@@ -1715,16 +1734,22 @@ export default function FloatingAiAssistant({
     return () => window.clearTimeout(timer);
   }, [asking]);
 
-  const currentContext = cleanActiveContext(activeContext);
+  // The page's record, until the user sets it aside for this record. Opening
+  // another record brings its context back.
+  const pageContext = cleanActiveContext(activeContext);
+  const pageContextKey = pageContext ? `${pageContext.entityType}:${pageContext.entityId}` : null;
+  const currentContext = pageContext && pageContextKey !== dismissedContextKey ? pageContext : null;
   const sessionGrounding = useMemo(() => buildSessionGrounding(messages, currentContext), [messages, currentContext]);
   const contextLabel = getAiContextLabel(moduleId, currentContext, language);
   const inputPlaceholder = getAiInputPlaceholder(moduleId, currentContext, language);
-  const emptyPrompts = currentContext?.entityType === "purchase_order" ? PO_EMPTY_PROMPTS[language]
-    : currentContext?.entityType === "item" ? SKU_EMPTY_PROMPTS[language]
-      : AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => language === "zh-CN" ? item.zhPrompt : item.prompt);
-  const emptyPromptSkillHints = currentContext?.entityType === "purchase_order" ? PO_SKILL_HINTS
-    : currentContext?.entityType === "item" ? SKU_SKILL_HINTS
-      : EMPTY_STATE_SKILL_HINTS;
+  // On a PO or SKU page: two questions about the record, then two about the
+  // workspace, so the assistant never turns into a single-record bot.
+  const workspacePrompts = AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => language === "zh-CN" ? item.zhPrompt : item.prompt);
+  const recordPrompts = currentContext?.entityType === "purchase_order" ? PO_EMPTY_PROMPTS[language]
+    : currentContext?.entityType === "item" ? SKU_EMPTY_PROMPTS[language] : [];
+  const recordHints = currentContext?.entityType === "purchase_order" ? PO_SKILL_HINTS : SKU_SKILL_HINTS;
+  const emptyPrompts = recordPrompts.length ? [...recordPrompts.slice(0, 2), ...workspacePrompts.slice(0, 2)] : workspacePrompts;
+  const emptyPromptSkillHints = recordPrompts.length ? [...recordHints.slice(0, 2), ...EMPTY_STATE_SKILL_HINTS.slice(0, 2)] : EMPTY_STATE_SKILL_HINTS;
   const currentRequestLabel = requestScopeLabel(messages.filter((message) => message.role === "user").at(-1)?.content || input, language);
 
   function startNewConversation() {
@@ -1746,7 +1771,7 @@ export default function FloatingAiAssistant({
     const message = text.trim();
     if (!message || requestInFlightRef.current) return;
 
-    const context = cleanActiveContext(activeContext);
+    const context = currentContext;
     const requestStartedAt = performance.now();
     const requestId = requestSeqRef.current + 1;
     const controller = new AbortController();
@@ -1845,8 +1870,21 @@ export default function FloatingAiAssistant({
                 <Sparkles size={15} style={{ color: A.blue }} />
                 {language === "zh-CN" ? "AI 助手" : "AI assistant"}
               </div>
-              <div data-testid="ai-context-chip" className="text-[11px] truncate" style={{ color: A.gray2 }}>
-                {language === "zh-CN" ? "当前上下文：" : "Context: "}{contextLabel}
+              <div data-testid="ai-context-chip" className="flex min-w-0 items-center gap-1 text-[11px]" style={{ color: A.gray2 }}>
+                <span className="truncate">{language === "zh-CN" ? "当前上下文：" : "Context: "}{contextLabel}</span>
+                {currentContext && pageContextKey ? (
+                  <button
+                    type="button"
+                    data-testid="ai-context-clear"
+                    onClick={() => setDismissedContextKey(pageContextKey)}
+                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded hover:bg-slate-100"
+                    style={{ color: A.gray2 }}
+                    aria-label={language === "zh-CN" ? "不限于这条记录，回答整个工作区" : "Stop using this record; answer about the whole workspace"}
+                    title={language === "zh-CN" ? "不限于这条记录" : "Stop using this record"}
+                  >
+                    <X size={11} />
+                  </button>
+                ) : null}
               </div>
             </div>
             <div className="flex items-center gap-1">

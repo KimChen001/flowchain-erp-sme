@@ -8,6 +8,10 @@ import net from 'node:net'
 
 export const OFFLINE_GUARD_MARKER = '[ai-eval-offline-guard] blocked'
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]', '::ffff:127.0.0.1', ''])
+// The runner's --provider-env mode lets the API servers reach the one model
+// provider host it names (exact match); every other outside host is still
+// refused and reported. The runner itself never sets it.
+const ALLOWED_HOST = String(process.env.FLOWCHAIN_AI_EVAL_ALLOW_HOST || '').trim().toLowerCase()
 
 function targetOf(args) {
   const first = Array.isArray(args[0]) ? args[0][0] : args[0]
@@ -22,7 +26,8 @@ if (!globalThis.__flowchainAiEvalOfflineGuard) {
   const connect = net.Socket.prototype.connect
   net.Socket.prototype.connect = function guardedConnect(...args) {
     const target = targetOf(args)
-    if (target.path || LOOPBACK.has(String(target.host).toLowerCase())) return connect.apply(this, args)
+    const host = String(target.host).toLowerCase()
+    if (target.path || LOOPBACK.has(host) || (ALLOWED_HOST && host === ALLOWED_HOST)) return connect.apply(this, args)
     process.stderr.write(`${OFFLINE_GUARD_MARKER} ${target.host}:${target.port ?? ''}\n`)
     const error = Object.assign(new Error(`The AI evaluation runs offline; ${target.host} is not reachable.`), { code: 'AI_EVAL_OFFLINE' })
     process.nextTick(() => this.destroy(error))

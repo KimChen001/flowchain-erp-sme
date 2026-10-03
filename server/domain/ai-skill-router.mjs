@@ -2,11 +2,13 @@ import { AI_SKILL_IDS } from './ai-skill-registry.mjs'
 import { aiSkillIntentText, aiSkillMistypedVerb } from './ai-skill-intent-text.mjs'
 
 // Deterministic routing from a question to a workspace skill. It reads only the
-// raw message, the chip's skillHint and the page focus; it never reads the
+// raw message, the chip's skillHint and the page's record (used only when the
+// question points at it); it never reads the
 // answer language, so the same question routes the same way in English and
 // Chinese. Order: a known hint, an exact prompt chip, then word-bounded rules
 // (draft, action refusal, outside the workspace, records, risk, approvals,
-// overdue orders, invoices, stock, metrics, today). No match returns null.
+// overdue orders, invoices, RFQs, receipts, stock, metrics, today). No match
+// returns null.
 //
 // The intent rules read the question with misspelled workspace words
 // corrected (ai-skill-intent-text.mjs); the refusal reads it as typed. Record
@@ -18,24 +20,38 @@ const text = (value) => String(value ?? '').trim()
 const normalize = (value) => text(value).toLowerCase().replace(/\s+/g, ' ').replace(/[?？!！。.]+$/u, '').trim()
 
 // The assistant's prompt chips (Panel.tsx) and the skill follow-up prompts.
+// The page chips are offered only on a record's page and ask about it.
 const CHIPS = [
   ['What should I handle first today?', '今天先处理什么？', 'today_priorities'],
   ['Which items have the highest risk?', '哪些事项风险最高？', 'highest_risk_items'],
   ['Which records need more data?', '哪些数据需要补齐？', 'records_needing_data'],
   ['Prepare an action draft', '帮我准备一个处理草稿', 'prepare_action_draft'],
   ['How many open purchase orders do we have?', '现在有多少未结采购订单？', 'workspace_metrics'],
-  // Purchase order focus chips.
-  ['Why does this PO need attention?', '这个 PO 为什么需要关注？', 'today_priorities'],
-  ['Which receipt or invoice evidence is missing?', '还差哪些收货或发票证据？', 'records_needing_data'],
-  ['What will a delay affect?', '延误会影响什么？', 'highest_risk_items'],
-  ['What should happen next?', '建议下一步是什么？', 'prepare_action_draft'],
-  // SKU focus chips.
-  ['Does this SKU need replenishment?', '这个 SKU 需要补货吗？', 'today_priorities'],
-  ['What is the available inventory?', '当前可用库存是多少？', 'inventory_availability'],
-  ['Which orders will be affected?', '哪些订单会受影响？', 'highest_risk_items'],
-  ['What action is recommended?', '建议如何处理？', 'prepare_action_draft'],
+  // Purchase order page chips.
+  ['Why does this PO need attention?', '这个 PO 为什么需要关注？', 'today_priorities', 'page'],
+  ['Which receipt or invoice evidence is missing?', '还差哪些收货或发票证据？', 'records_needing_data', 'page'],
+  ['What will a delay affect?', '延误会影响什么？', 'highest_risk_items', 'page'],
+  ['What should happen next?', '建议下一步是什么？', 'prepare_action_draft', 'page'],
+  // SKU page chips.
+  ['Does this SKU need replenishment?', '这个 SKU 需要补货吗？', 'today_priorities', 'page'],
+  ['What is the available inventory?', '当前可用库存是多少？', 'inventory_availability', 'page'],
+  ['Which orders will be affected?', '哪些订单会受影响？', 'highest_risk_items', 'page'],
+  ['What action is recommended?', '建议如何处理？', 'prepare_action_draft', 'page'],
 ]
 const chipSkill = new Map(CHIPS.flatMap(([en, zh, skillId]) => [[normalize(en), skillId], [normalize(zh), skillId]]))
+const pageChips = new Set(CHIPS.filter((chip) => chip[3] === 'page').flatMap(([en, zh]) => [normalize(en), normalize(zh)]))
+
+// Words that point at the record of the page the question is asked on: "this
+// PO", "the current supplier", "it", "here", 这张单, 该供应商, 它. "This
+// month", "these" (an earlier answer's records) and 这个月 do not. "It" counts
+// only in a question about one thing, not in "which orders is it blocking?".
+const PAGE_REFERENCE = [
+  /\b(?:this|that|the current|current)\s+(?:purchase\s+)?(?:po|order|sku|item|product|supplier|vendor|rfq|request|invoice|receipt|record|document|one|page)\b|\bhere\b/i,
+  /这(?:个|张|笔|份|家|条)(?!月|星期|礼拜|季度|周|年|时候)|这(?:单|订单|采购订单|PO|SKU|物料|供应商|询价单?|发票|收货单)|(?:此|该|本)(?:单|订单|采购订单|PO|SKU|物料|商品|供应商|询价单?|发票|收货单|记录|页面?)|当前(?:订单|采购订单|PO|SKU|物料|供应商|页面|记录)|它|这里/i,
+]
+const PAGE_PRONOUN = /\b(?:it|its|it's|it’s)\b/i
+const MANY = [/\b(?:which|all|every|list|how many|any)\b/i, /哪些|所有|全部|多少/]
+const refersToPage = (raw) => matches(PAGE_REFERENCE, raw) || (PAGE_PRONOUN.test(raw) && !matches(MANY, raw))
 
 // A draft request: prepare/write/create ... draft, or a draft of a message.
 const DRAFT = [
@@ -96,6 +112,10 @@ const TODAY = [
   /\b(priorit(y|ies|ise|ize)|attention|urgent|to-?do)\b/i,
   /\b(today|first|this morning)\b[^.?!]*\b(handle|do|work on|focus|tackle|deal with|look at|need|needs|should)\b|\b(handle|do|work on|focus|tackle|deal with|look at|need|needs|should)\b[^.?!]*\b(today|first|this morning)\b/i,
   /优先|先处理|待办|重点|需要关注|需要处理|(今天|今日)[^。？！]*(处理|做|关注|跟进)/,
+  // An open question about what is going on ("anything worth sharing?",
+  // 有什么值得注意的？) gets today's priorities rather than a list of topics.
+  /\bwhat(?:'s|’s| is) (?:new|going on|happening)\b|\banything (?:new|worth|important|interesting|i should know|to (?:share|know|note|report))\b|\bwhat should i know\b|\bany updates?\b|\b(?:catch|fill) me (?:up|in)\b/i,
+  /值得(?:我|我们|你)?(?:分享|注意|关注|一提|说)|有(?:什么|啥)(?:新情况|新消息|新动态|动态|进展|要注意|需要注意|要关注|事)|最近(?:怎么样|如何|有什么)|跟我说说|汇报一下/,
 ]
 
 // Questions about the world outside the workspace. A question that also names
@@ -132,6 +152,20 @@ const STOCK = [
   // sales orders"; a supplier that cannot meet a date is not a stock question.
   /(sku|物料|商品|产品|存货)[^，。？！?]{0,12}(无法满足|满足不了)/i,
 ]
+// Requests for quotation. A stock or price quote is caught by OUTSIDE first.
+const RFQ = [/\brfqs?\b|\brequests? for (?:a )?(?:quotes?|quotations?)\b|\bquot(?:es|ations?)\b/i, /询价|报价|比价/]
+// Receipts as documents. "Received" alone is not one: "How much is still to
+// be received on PO-012?" is about the order. The Chinese reads 收货单 or a
+// receiving problem, never 收货 on its own ("PO-012 还剩多少没收货？").
+const RECEIVING = [/\b(?:receipts?|receiving|grns?|goods receipts?)\b/i, /收货单|入库单|收货记录|拒收|未过账|没过账|收货[^，。？！]{0,4}(?:异常|问题)/]
+// A greeting or a test message of a few words ("hello", "supplier test",
+// 测试一下) asks nothing a skill can answer. It gets the capability answer,
+// which names the topic, and is never sent to a model.
+const GREETING_OR_TEST = [/\b(?:hi|hello|hey|test|testing|ping)\b/i, /你好|您好|测试|在吗/]
+const isGreetingOrTest = (raw) => !/[?？]/.test(raw) && raw.split(/\s+/).filter(Boolean).length <= 3 && matches(GREETING_OR_TEST, raw)
+// Sales orders are not purchase orders; no skill answers for them yet.
+const SALES_ORDER = [/\b(?:sales|customer) orders?\b/i, /销售订单|客户订单/]
+const NOT_RECEIPT = [/\b(?:invoices?|payments?|payables?|sales orders?|rfqs?|quotes?|quotations?)\b/i, /发票|付款|应付|销售订单|询价|报价/]
 const AVAILABLE = [/\b(available|availability|promise|short)\b/i, /可用|可以承诺|能承诺/]
 const AVAILABLE_CONTEXT = [/\b(skus?|items?|units?|quantity|stock)\b/i, /库存|数量|物料/]
 const SHORT = [/\b(short|shortages?|stockouts?|out of stock)\b/i, /缺货|短缺|不足|无法满足|满足不了/]
@@ -175,6 +209,20 @@ function signalsOf(intent) {
   return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent), orders: matches(ORDER_NOUN, intent) }
 }
 
+// Skills a rule knows cannot answer this question, whichever skill is asked
+// for: purchase order skills for sales orders and for invoices or other
+// records that are late or waiting for approval, and the order and receipt
+// skills for deliveries that already arrived late, which no skill measures.
+// A model that routes an unmatched question may not pick them.
+function excludedSkills(intent) {
+  const excluded = new Set()
+  const add = (...ids) => ids.forEach((id) => excluded.add(id))
+  if (matches(SALES_ORDER, intent)) add('purchase_orders', 'pending_approvals', 'workspace_metrics')
+  if (matches(DELIVERED, intent)) add('purchase_orders', 'workspace_metrics', 'receiving_issues')
+  if (matches(OTHER_RECORD, intent) && (matches(APPROVAL, intent) || matches(LATE, intent))) add('purchase_orders', 'pending_approvals')
+  return [...excluded]
+}
+
 // The intent rules over one reading of the question. null when none matches.
 function intentRoute(intent, base) {
   const route = (skillId) => ({ ...base, skillId, signals: signalsOf(intent) })
@@ -186,6 +234,10 @@ function intentRoute(intent, base) {
   const late = matches(LATE, intent) && !matches(DELIVERED, intent)
   if (late && matches(ORDER_NOUN, intent) && !otherRecord && !matches(COUNT_QUESTION, intent)) return route('purchase_orders')
   if (matches(INVOICE, intent) && matches(INVOICE_QUESTION, intent) && !matches(PAYMENT, intent)) return route('invoice_summary')
+  // A record number goes to the entity step, which looks it up or says it
+  // cannot ("What's the status of RFQ-003?").
+  if (!base.ids.length && matches(RFQ, intent) && !matches(PAYMENT, intent)) return route('rfq_followups')
+  if (!base.ids.length && matches(RECEIVING, intent) && !matches(NOT_RECEIPT, intent) && !matches(PAYMENT, intent)) return route('receiving_issues')
   if (matches(STOCK, intent) || (matches(AVAILABLE, intent) && (base.ids.length || matches(AVAILABLE_CONTEXT, intent)))) return route('inventory_availability')
   if (matches(METRICS, intent) || (late && matches(ORDER_NOUN, intent) && !otherRecord)) return route('workspace_metrics')
   if (matches(TODAY, intent)) return route('today_priorities')
@@ -194,9 +246,13 @@ function intentRoute(intent, base) {
 
 export function routeSkill({ message, skillHint, focusTarget } = {}) {
   const raw = text(message)
-  const focus = focusOf(focusTarget)
   const hint = text(skillHint)
   const ids = recordIds(raw)
+  // The page's record is the focus only when the question points at it or is
+  // one of the page's chips. Every other question is about the workspace,
+  // whatever page it is asked on, and a record the question names wins.
+  const pageFocus = focusOf(focusTarget)
+  const focus = pageFocus && !ids.length && (pageChips.has(normalize(raw)) || refersToPage(raw)) ? pageFocus : null
   // An instruction is refused whatever chip or hint came with it.
   if (raw && !matches(DRAFT, raw) && detectAiActionRequest(raw)) return { capability: true, refusal: true }
   if (hint && AI_SKILL_IDS.includes(hint)) return hint === 'capability_overview' ? { capability: true } : { skillId: hint, focus, ids, explicit: true, signals: signalsOf(raw.toLowerCase()) }
@@ -216,5 +272,5 @@ export function routeSkill({ message, skillHint, focusTarget } = {}) {
   if (route) return route
   // No rule matched. The entity step may still find a record the question
   // names (a supplier, a SKU, an order) once it has read the data.
-  return { skillId: null, focus, ids, signals: signalsOf(plain) }
+  return { skillId: null, focus, ids, signals: signalsOf(plain), excluded: excludedSkills(plain), ...(isGreetingOrTest(raw) ? { greeting: true } : {}) }
 }

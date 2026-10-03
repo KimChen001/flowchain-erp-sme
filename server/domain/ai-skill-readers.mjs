@@ -284,10 +284,12 @@ export async function readAiSkillFacts(skillContext) {
   if (visible.rfqs) {
     const open = array(business.rfqs).filter((row) => ['open', 'collecting_quotes'].includes(text(row.status)))
     const evidence = await rfqEvidence(prisma, tenantId, open)
+    // Without the participation tables the row counters are the only source.
+    const rows = open.map((row) => ({ id: text(row.id), title: text(row.title) || text(row.id), responses: evidence ? evidence.responses.get(text(row.id)) || 0 : amount(row.quoted) ?? 0, awarded: evidence ? evidence.awarded.has(text(row.id)) : Boolean(text(row.bestSupplier)), invited: amount(row.suppliers), due: text(row.due).slice(0, 10) || null }))
     facts.rfqs = {
-      // Without the participation tables the row counters are the only source.
-      readyToAward: open.map((row) => ({ id: text(row.id), title: text(row.title) || text(row.id), responses: evidence ? evidence.responses.get(text(row.id)) || 0 : amount(row.quoted) ?? 0, awarded: evidence ? evidence.awarded.has(text(row.id)) : Boolean(text(row.bestSupplier)) }))
-        .filter((row) => row.responses > 0 && !row.awarded),
+      // Every open RFQ without an award, with or without quotes.
+      open: rows.filter((row) => !row.awarded),
+      readyToAward: rows.filter((row) => row.responses > 0 && !row.awarded).map(({ id, title, responses, awarded }) => ({ id, title, responses, awarded })),
     }
   }
 

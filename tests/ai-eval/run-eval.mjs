@@ -11,9 +11,15 @@
 // Every connection to a host other than this machine is refused (offline-guard.mjs),
 // in this process and in the servers, and provider settings are removed from
 // the servers' environment: no model provider or paid service is ever called.
+// The one exception is --provider-env=<file>, which scores model routing
+// (ai-skill-intent-routing.mjs): the servers get the provider settings from
+// that file and FLOWCHAIN_AI_INTENT_ROUTING=true, and may reach that file's
+// provider host only. Such a run is gated by the same baseline and never
+// updates it.
 //
 //   npm run test:ai:eval
 //   npm run test:ai:eval -- --as-of=2026-09-29 --only=refuse-approve,num-item-atp --report=out.json
+//   npm run test:ai:eval -- --provider-env=<env file with FLOWCHAIN_AI_PROVIDER_*>
 //
 // Writes ai-eval-report.json (default: <os tmpdir>/flowchain-ai-eval/) and a
 // table to stdout. Exit codes: 0 pass; 1 a safety check failed (or the run
@@ -81,10 +87,10 @@ const ORIGINAL_CASE_IDS = new Set([
   'repeat-risk', 'repeat-draft', 'repeat-today-zh',
 ])
 const EXPECT_FIELDS = new Set(['status', 'code', 'skill', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'absent', 'draft', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
-const CASE_FIELDS = new Set(['id', 'category', 'language', 'answerLanguage', 'role', 'tenant', 'question', 'questionRepeat', 'questionPrefix', 'skillHint', 'focusTarget', 'repeat', 'expect', 'pending', 'note'])
+const CASE_FIELDS = new Set(['id', 'category', 'language', 'answerLanguage', 'role', 'tenant', 'question', 'questionRepeat', 'questionPrefix', 'skillHint', 'focusTarget', 'after', 'repeat', 'expect', 'pending', 'note'])
 // The fields that define what a case asks and expects. A mustPass case whose
 // fingerprint differs from the baseline's is a regression ("expectation changed").
-const FINGERPRINT_FIELDS = ['question', 'questionPrefix', 'questionRepeat', 'role', 'tenant', 'language', 'answerLanguage', 'skillHint', 'focusTarget', 'repeat', 'expect']
+const FINGERPRINT_FIELDS = ['question', 'questionPrefix', 'questionRepeat', 'role', 'tenant', 'language', 'answerLanguage', 'skillHint', 'focusTarget', 'after', 'repeat', 'expect']
 
 const CJK = /[㐀-鿿豈-﫿]/u
 // One list with the server's answer validator, so both flag the same wording.
@@ -235,6 +241,11 @@ function validateCases(list) {
     }
   }
   for (const entry of list) {
+    if (entry?.after !== undefined) {
+      if (entry.after === entry.id) problems.push(`${entry.id}: after names the case itself`)
+      else if (!ids.has(entry.after)) problems.push(`${entry.id}: after names ${entry.after}, which is not a case`)
+      else if (entry.repeat) problems.push(`${entry.id}: a follow-up (after) cannot repeat`)
+    }
     for (const field of ['sameAs', 'sameAnswerAs']) {
       const target = entry?.expect?.[field]
       if (target === undefined) continue
@@ -252,7 +263,9 @@ const only = text(argument('only')).split(',').map(text).filter(Boolean)
 const unknownOnly = only.filter((id) => !cases.some((entry) => entry.id === id))
 if (unknownOnly.length) usageError(`--only names unknown case(s): ${unknownOnly.join(', ')}`)
 // A case another case compares with (sameAs, sameAnswerAs) is always asked too.
-const comparedWith = (entry) => [entry.expect?.sameAs, entry.expect?.sameAnswerAs].filter(Boolean)
+// The cases a case needs answered first: the ones it compares with, and the
+// one it follows up on.
+const comparedWith = (entry) => [entry.expect?.sameAs, entry.expect?.sameAnswerAs, entry.after].filter(Boolean)
 const selected = only.length ? cases.filter((entry) => only.includes(entry.id) || cases.some((other) => only.includes(other.id) && comparedWith(other).includes(entry.id))) : cases
 const reportPath = resolve(argument('report') || process.env.AI_EVAL_REPORT || join(tmpdir(), 'flowchain-ai-eval', 'ai-eval-report.json'))
 // The as-of day is a UTC calendar day, the same day the expected values and
@@ -268,6 +281,24 @@ const allowDrop = new Set(text(argument('allow-drop')).split(',').map(text).filt
 const inCi = Boolean(process.env.CI) && !['false', '0'].includes(String(process.env.CI).toLowerCase())
 if (updateBaseline && only.length) usageError('--update-baseline needs a full run; drop --only.')
 if (updateBaseline && asOf !== startDay) usageError(`--update-baseline needs the walkthrough as of today (UTC ${startDay}), not ${asOf}.`)
+
+// --provider-env: only the provider settings are taken from the file (never
+// mail, proxy or knowledge settings), and their values are never printed.
+const PROVIDER_SETTING = /^(FLOWCHAIN_AI_PROVIDER_[A-Z_]+|FLOWCHAIN_AI_RUNTIME_MODE)$/
+function readProviderEnv(path) {
+  if (!existsSync(path)) usageError(`--provider-env: ${path} does not exist.`)
+  const settings = {}
+  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/)
+    if (match && PROVIDER_SETTING.test(match[1])) settings[match[1]] = match[2].replace(/^(["'])(.*)\1$/, '$2')
+  }
+  let host = ''
+  try { host = new URL(settings.FLOWCHAIN_AI_PROVIDER_ENDPOINT).hostname.toLowerCase() } catch { usageError('--provider-env: the file has no valid FLOWCHAIN_AI_PROVIDER_ENDPOINT.') }
+  return { host, env: { ...settings, FLOWCHAIN_AI_INTENT_ROUTING: 'true', FLOWCHAIN_AI_EVAL_ALLOW_HOST: host } }
+}
+const providerEnvPath = argument('provider-env')
+if (providerEnvPath && updateBaseline) usageError('--update-baseline needs an offline run; drop --provider-env.')
+const provider = providerEnvPath ? readProviderEnv(resolve(providerEnvPath)) : null
 
 const pgPort = await freePort()
 const password = `ai-eval-${randomUUID()}`
@@ -366,7 +397,7 @@ async function seed() {
 
 async function startServer(tenantId) {
   const port = await freePort()
-  const env = { ...baseEnv, FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, SCM_API_PORT: String(port) }
+  const env = { ...baseEnv, ...(provider?.env || {}), FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, SCM_API_PORT: String(port) }
   const child = spawn(process.execPath, ['--import', pathToFileURL(join(here, 'offline-guard.mjs')).href, 'server/index.mjs'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] })
   const server = { tenantId, port, child, output: '' }
   child.stdout.on('data', (chunk) => { server.output += chunk })
@@ -507,8 +538,20 @@ function questionOf(entry) {
   return question
 }
 
-async function ask(token, server, entry) {
-  const body = { message: questionOf(entry), answerLanguage: entry.answerLanguage || entry.language, ...(entry.skillHint ? { skillHint: entry.skillHint } : {}), ...(entry.focusTarget ? { focusTarget: entry.focusTarget } : {}) }
+// The previous answer as the panel sends it back with the next question
+// (Panel.tsx buildSafeConversationContext), with the panel's record type names.
+const PANEL_TYPES = { purchase_order: 'PO', item: 'SKU', supplier: 'Supplier', supplier_invoice: 'Invoice', receiving_doc: 'GRN', rfq: 'RFQ', purchase_request: 'PR' }
+function conversationContextOf(payload) {
+  return {
+    previousIntent: payload?.intent,
+    previousQuestion: payload?.query,
+    previousConclusionTitle: payload?.conclusion?.title,
+    previousEvidenceRefs: array(payload?.keyEvidence).slice(0, 8).map((item) => ({ id: item.id, label: item.label, entityType: PANEL_TYPES[item.entityType] || 'Unknown', entityId: item.entityId, entityLabel: item.entityLabel })),
+  }
+}
+
+async function ask(token, server, entry, previous = null) {
+  const body = { message: questionOf(entry), answerLanguage: entry.answerLanguage || entry.language, ...(entry.skillHint ? { skillHint: entry.skillHint } : {}), ...(entry.focusTarget ? { focusTarget: entry.focusTarget } : {}), ...(previous ? { conversationContext: conversationContextOf(previous) } : {}) }
   const started = performance.now()
   const response = await fetch(`http://127.0.0.1:${server.port}/api/ai-runtime/respond`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) })
   const raw = await response.text()
@@ -789,6 +832,11 @@ function printReport(report) {
   console.log(`Chinese in English:       ${m.chineseInEnglish} answers`)
   console.log(`Audit rows per answer:    ${m.audit.auditRows}/${m.audit.answered} (${m.audit.complete ? 'one per answer' : 'MISSING ROWS'}; quality, gated)`)
   console.log(`Latency p50 / p95:        ${m.latencyMs.p50} / ${m.latencyMs.p95} ms over ${m.latencyMs.requests} requests`)
+  if (m.modelRouting) {
+    const r = m.modelRouting
+    console.log(`Model routing (${r.host}): asked ${r.consulted} times; routed ${r.routed}, declined ${r.declined}, degraded ${r.degraded}${Object.keys(r.reasons).length ? ` (${Object.entries(r.reasons).map(([reason, n]) => `${reason} ${n}`).join(', ')})` : ''}`)
+    console.log(`Model call p50 / p95 / max: ${r.latencyMs.p50} / ${r.latencyMs.p95} / ${r.latencyMs.max} ms`)
+  }
   const printCase = (value, prefix = '') => {
     console.log(`  ${prefix}[${value.category}] ${value.id}${value.set === 'new' && !value.pending ? ' (new)' : ''} (${value.tenant}/${value.role}) "${value.question.slice(0, 90)}"`)
     for (const failure of value.failures) console.log(`      ${failure.safety ? 'SAFETY ' : ''}${failure.check}: ${failure.reason}`)
@@ -861,7 +909,7 @@ try {
     if (!token) throw new Error(`Case ${entry.id}: no ${tenant}/${entry.role} user`)
     const runs = []
     for (let index = 0; index < (entry.repeat || 1); index++) {
-      const run = await ask(token, tenant === 'A' ? serverA : serverB, entry)
+      const run = await ask(token, tenant === 'A' ? serverA : serverB, entry, entry.after ? results.get(entry.after)?.runs?.[0]?.payload : null)
       const after = await businessState()
       const changed = Object.keys(after).filter((model) => !isDeepStrictEqual(after[model], state[model]))
       run.wrote = changed.length ? changed.join(', ') : null
@@ -885,6 +933,7 @@ try {
       id: entry.id, category: entry.category, set: ORIGINAL_CASE_IDS.has(entry.id) ? 'original' : 'new', pending, language: entry.language, role: entry.role, tenant: entry.tenant || 'A',
       question: questionOf(entry).length > 200 ? `${questionOf(entry).slice(0, 200)}... (${questionOf(entry).length} characters)` : questionOf(entry),
       status: runs[0].status, intent: runs[0].payload?.intent || runs[0].payload?.code || null,
+      routing: runs[0].payload?.skillRouting ? { source: runs[0].payload.skillRouting.source, modelStatus: runs[0].payload.skillRouting.modelStatus } : null,
       latencyMs: runs.map((run) => Math.round(run.latencyMs)), pass: !failures.length, failures, fingerprint: fingerprintOf(entry),
     })
     const safetyChecks = failures.filter((failure) => failure.safety)
@@ -923,6 +972,16 @@ try {
     auditRows,
     audit: { auditRows, answered, complete: auditRows === answered },
     latencyMs: { p50: percentile(latencies, 50), p95: percentile(latencies, 95), requests: latencies.length },
+  }
+  if (provider) {
+    // What the model did, from the audit rows: how often it was asked, what
+    // came of it, and how long each call took.
+    const rows = await prisma.auditLog.findMany({ where: { action: 'ai_skill_answered' }, select: { metadata: true }, orderBy: { createdAt: 'desc' }, take: auditRows })
+    // The audit row keeps the entry's own metadata under metadata.metadata.
+    const calls = rows.map((row) => row.metadata?.metadata?.intentRouting).filter(Boolean)
+    const modelLatencies = calls.map((call) => call.latencyMs).filter((value) => typeof value === 'number')
+    const by = (status) => calls.filter((call) => call.status === status).length
+    report.scores.modelRouting = { host: provider.host, consulted: calls.length, routed: by('routed'), declined: by('declined'), degraded: by('degraded'), reasons: Object.fromEntries([...new Set(calls.map((call) => call.reason).filter(Boolean))].map((reason) => [reason, calls.filter((call) => call.reason === reason).length])), latencyMs: { p50: percentile(modelLatencies, 50), p95: percentile(modelLatencies, 95), max: modelLatencies.length ? Math.max(...modelLatencies) : null } }
   }
   if (blocked) report.safetyFailures.push({ id: '(run)', category: 'network', checks: ['offline'], reasons: [`${blocked} connection(s) to an outside host were blocked`] })
 

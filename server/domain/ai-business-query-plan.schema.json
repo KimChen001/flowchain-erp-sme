@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "flowchain://schemas/business-query-plan-v1",
+  "$comment": "Sent to the planning model. It offers only filters the executor applies; validateBusinessQueryPlan in ai-business-query-plan.mjs stays the authority on valid plans.",
   "title": "FlowChain BusinessQueryPlan v1",
   "type": "object",
   "additionalProperties": false,
@@ -19,20 +20,20 @@
         "source": { "enum": ["explicit", "global", "current_context", "previous_result", "clarification"] }
       }
     },
-    "goals": { "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "type": "string" } },
+    "goals": { "description": "Who needs paying: supplier_payables_due with supplier_payment_readiness. Overdue payments: supplier_payables_overdue. Blocked or held payments: supplier_payment_blocks. Work other than payment: supplier_operational_followups. Priorities or this week: supplier_priority. Comparing named suppliers: supplier_comparison with supplier_priority. Invoice mismatches or disputes: supplier_invoice_exceptions. Receiving or GRN issues: supplier_receiving_exceptions. Late purchase orders: supplier_overdue_purchase_orders. Unanswered or expired RFQs: supplier_rfq_followups. Missing documents: supplier_missing_evidence. Bank matching: supplier_bank_reconciliation_exceptions. Empty, placeholder or miscounted records: data_quality_limitations.", "type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": { "enum": ["supplier_payables_due", "supplier_payables_overdue", "supplier_payment_blocks", "supplier_payment_readiness", "supplier_operational_followups", "supplier_priority", "supplier_comparison", "supplier_invoice_exceptions", "supplier_receiving_exceptions", "supplier_overdue_purchase_orders", "supplier_rfq_followups", "supplier_missing_evidence", "supplier_bank_reconciliation_exceptions", "inventory_risks", "procurement_exceptions", "data_quality_limitations"] } },
     "filters": {
       "type": "object",
       "additionalProperties": false,
       "required": ["timeWindow", "dueState", "riskLevels", "statuses", "currencies"],
       "properties": {
         "timeWindow": { "enum": ["today", "current_week", "next_7_days", "next_30_days", "month_end", "overdue", "all"] },
-        "dueState": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "enum": ["due_now", "due_this_week", "overdue", "future_due", "ready_for_payment", "blocked", "partially_settled", "settled", "disputed", "held", "missing_evidence"] } },
+        "dueState": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "enum": ["overdue", "blocked"] } },
         "riskLevels": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "enum": ["critical", "high", "medium", "low"] } },
-        "statuses": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "type": "string", "maxLength": 80 } },
+        "statuses": { "type": "array", "maxItems": 0, "uniqueItems": true, "items": { "type": "string", "maxLength": 80 } },
         "currencies": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z]{3}$" } }
       }
     },
-    "grouping": { "type": "array", "maxItems": 5, "uniqueItems": true, "items": { "enum": ["supplier", "currency", "priority", "goal", "status"] } },
+    "grouping": { "type": "array", "maxItems": 5, "uniqueItems": true, "items": { "enum": ["supplier"] } },
     "comparison": {
       "type": "object",
       "additionalProperties": false,

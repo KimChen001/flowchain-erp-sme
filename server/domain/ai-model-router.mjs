@@ -13,6 +13,8 @@ export const AI_MODEL_POLICIES = Object.freeze({
   compoundDecompositionShadow: 'compound_decomposition_shadow',
   intentClassificationShadow: 'intent_classification_shadow',
   queryRewriteShadow: 'query_rewrite_shadow',
+  businessQueryPlanning: 'business_query_planning',
+  intentRouting: 'intent_routing',
 })
 
 export const AI_MODEL_POLICY_DEFINITIONS = Object.freeze({
@@ -60,6 +62,20 @@ export const AI_MODEL_POLICY_DEFINITIONS = Object.freeze({
     enabledByDefault: false,
     modelMayRun: false,
     description: 'Future query rewrites are shadow-only and must not add business facts, entities, dates, numbers, or actions.',
+  },
+  // The owner opted into this on 2026-10-02 after the planner evaluation (docs/ai-query-integration.md).
+  [AI_MODEL_POLICIES.businessQueryPlanning]: {
+    enabledByDefault: false,
+    modelMayRun: true,
+    enabledBy: 'FLOWCHAIN_ENABLE_AI_SEMANTIC_PLANNER',
+    description: 'A model may plan the scope, goals and filters of supplier business queries that the deterministic gate routes to the planner. Plans are validated and executed by deterministic read models. The deterministic plan is used when the model is unavailable, returns an invalid plan, or asks for a clarification the deterministic plan does not need. The model never decides facts or actions.',
+  },
+  // The owner opted into this on 2026-10-02 (tests/ai-eval/README.md, "Model routing").
+  [AI_MODEL_POLICIES.intentRouting]: {
+    enabledByDefault: false,
+    modelMayRun: true,
+    enabledBy: 'FLOWCHAIN_AI_INTENT_ROUTING',
+    description: 'A model may pick which workspace skill answers a question that no deterministic rule and no named record routed. It sees only the question and the skills the actor may use, and may only return one of them. The skill runs on the facts of the actor as if a rule had chosen it. The capability answer stays when the model is unavailable, slow, unsure or picks no skill. The model never decides facts, records, figures, wording or actions.',
   },
 })
 

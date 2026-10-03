@@ -177,7 +177,7 @@ test('PostgreSQL read model preserves permission, redaction, and capability stat
     const redactedPermissions = permissions.filter((code) => !['finance.amounts.read', 'finance.partner_snapshot.read'].includes(code))
     const redacted = await service.read({}, { actor: actor(redactedPermissions) })
     assert.ok(redacted.items.length > 0)
-    assert.ok(redacted.items.every((item) => item.supplier.name === null && item.supplier.displayName === '受限供应商'))
+    assert.ok(redacted.items.every((item) => item.supplier.name === null && item.supplier.displayName === null && item.supplier.fieldVisibility.partner === false))
     assert.ok(redacted.items.every((item) => item.payment.dueAmount === null && item.payment.overdueAmount === null))
     assert.ok(redacted.items.some((item) => Number.isInteger(item.payment.dueCount)))
 

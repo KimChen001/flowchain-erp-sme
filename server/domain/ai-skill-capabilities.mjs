@@ -14,8 +14,27 @@ export function runCapabilityOverview(_facts, { refusal = false, outOfDomain = f
   return { skillId: 'capability_overview', refusal, outOfDomain: outOfDomain && !refusal, unsupported, skills: toolsFor(actor).map((entry) => entry.id).filter((id) => id !== 'capability_overview') }
 }
 
+// The workspace topic a question names, most specific first, and the skills
+// that answer it. A question no skill matched still says what it was about
+// ("supplier test"), so the follow-ups start there.
+const TOPICS = [
+  ['rfqs', [/\brfqs?\b|\bquot(?:e|es|ations?)\b/i, /询价|报价/], ['rfq_followups']],
+  ['receiving', [/\b(?:receipts?|receiving|grns?)\b/i, /收货|入库/], ['receiving_issues']],
+  ['invoices', [/\binvoices?\b|\bpayments?\b|\bpayables?\b/i, /发票|付款|应付/], ['invoice_summary']],
+  ['inventory', [/\b(?:stock|inventory|skus?)\b/i, /库存|物料|sku/i], ['inventory_availability']],
+  ['purchase_orders', [/\b(?:purchase orders?|pos?)\b/i, /采购订单|采购|\bpo\b/i], ['purchase_orders', 'pending_approvals', 'workspace_metrics']],
+  ['suppliers', [/\b(?:suppliers?|vendors?)\b/i, /供应商|供方/], ['purchase_orders', 'invoice_summary', 'rfq_followups', 'receiving_issues']],
+]
+
+export function aiSkillQuestionTopic(query) {
+  const question = String(query ?? '')
+  const topic = TOPICS.find(([, patterns]) => patterns.some((pattern) => pattern.test(question)))
+  return topic ? { id: topic[0], skills: topic[2] } : null
+}
+
 export function presentCapabilityOverview(result, _facts, { skill, language, query }) {
-  const order = result.refusal ? ['prepare_action_draft', 'today_priorities', 'highest_risk_items', 'records_needing_data', 'workspace_metrics'] : ['today_priorities', 'highest_risk_items', 'records_needing_data', 'workspace_metrics', 'prepare_action_draft']
+  const topic = result.refusal || result.outOfDomain ? null : aiSkillQuestionTopic(query)
+  const order = result.refusal ? ['prepare_action_draft', 'today_priorities', 'highest_risk_items', 'records_needing_data', 'workspace_metrics'] : [...(topic?.skills || []), 'today_priorities', 'highest_risk_items', 'records_needing_data', 'workspace_metrics', 'prepare_action_draft']
   return presentAiSkillAnswer({
     skill, facts: null, language, query,
     title: aiSkillText(result.refusal ? 'capability.refusal.title' : 'capability.title', language),
@@ -24,12 +43,13 @@ export function presentCapabilityOverview(result, _facts, { skill, language, que
       : aiSkillSentences([
         result.outOfDomain ? aiSkillText('capability.outside', language) : '',
         result.unsupported?.length ? aiSkillText(result.unsupported.length > 1 ? 'capability.unsupported_ids' : 'capability.unsupported_id', language, { id: aiSkillList(result.unsupported, language) }) : '',
+        topic && !result.unsupported?.length ? aiSkillText('capability.topic', language, { topic: aiSkillText(`topic.${topic.id}`, language) }) : '',
         aiSkillText('capability.summary', language),
       ], language),
     severity: result.refusal ? 'warning' : 'info',
     items: [],
     navigation: [],
-    followUpIds: order.filter((id) => result.skills.includes(id)).slice(0, 4),
+    followUpIds: [...new Set(order)].filter((id) => result.skills.includes(id)).slice(0, 4),
   })
 }
 

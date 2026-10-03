@@ -8,6 +8,8 @@ import { callConfiguredProvider, providerRuntimeConfig } from './ai-runtime-prov
 import { isAuthoritativeBusinessId, partitionBusinessRecords } from './ai-business-record-validity.mjs'
 
 const GOAL_ORDER = new Map(BUSINESS_QUERY_GOALS.map((goal, index) => [goal, index]))
+// No truncation here: a merged plan over the goal limit fails validation instead of losing goals.
+const goalsInPlanOrder = (goals) => [...new Set(goals)].sort((a, b) => GOAL_ORDER.get(a) - GOAL_ORDER.get(b))
 const GENERIC_SUPPLIER_WORDS = new Set(['supplier', 'suppliers', 'vendor', 'vendors', '供应商', '供方', '付款', '跟进', '风险', '状态'])
 const GENERIC_SUPPLIER_TAIL = /^(?:payment|payments|payable|payables|pay|work|follow.?ups?|priorities?|priority|invoice|invoices|receiving|rfqs?|quotation(?:s)?|information|status|risk|issues?|purchase(?:\s+orders?)?|orders?|po|grn|bank|reconciliation|exception(?:s)?|readiness|due|overdue|blocked|hold|供应商|付款|应付|跟进|待办|风险|状态|发票|收货|到货|询价|报价|订单|采购订单|延期|异常|银行|对账)(?:\s|$)/i
 const GENERIC_SUPPLIER_CJK_TAIL = /^(?:供应商|付款|应付|跟进|待办|风险|状态|发票|收货|到货|询价|报价|订单|采购订单|延期|异常|银行|对账)/i
@@ -259,7 +261,12 @@ export async function planBusinessQuery(input = {}, options = {}) {
   const candidate = extractProviderPlan(response.rawOutput ?? response.plan ?? response.output)
   const validation = validateBusinessQueryPlan(candidate)
   if (!validation.valid) return { plan: deterministicPlan, plannerStatus: 'degraded', plannerMode: 'deterministic_fallback', provider: provider.kind, latencyMs: Date.now() - startedAt, fallbackReason: 'invalid_provider_plan', validation }
-  return { plan: validation.plan, plannerStatus: 'ready', plannerMode: 'provider', provider: provider.kind, latencyMs: Date.now() - startedAt, fallbackReason: null, validation }
+  // A model plan may not turn a question the deterministic plan answers into a clarification.
+  if (validation.plan.clarificationNeeded && !deterministicPlan.clarificationNeeded) return { plan: deterministicPlan, plannerStatus: 'ready', plannerMode: 'deterministic_fallback', provider: provider.kind, latencyMs: Date.now() - startedAt, fallbackReason: 'provider_clarification_overridden', validation: validateBusinessQueryPlan(deterministicPlan) }
+  // It may add goals but not drop the goals of a deterministic plan that needs no clarification.
+  const merged = deterministicPlan.clarificationNeeded ? validation : validateBusinessQueryPlan({ ...validation.plan, goals: goalsInPlanOrder([...validation.plan.goals, ...deterministicPlan.goals]) })
+  if (!merged.valid) return { plan: deterministicPlan, plannerStatus: 'degraded', plannerMode: 'deterministic_fallback', provider: provider.kind, latencyMs: Date.now() - startedAt, fallbackReason: 'invalid_provider_plan', validation: merged }
+  return { plan: merged.plan, plannerStatus: 'ready', plannerMode: 'provider', provider: provider.kind, latencyMs: Date.now() - startedAt, fallbackReason: null, validation: merged }
 }
 
 export function semanticPlannerAudit(result) {

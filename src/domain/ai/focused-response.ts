@@ -82,6 +82,11 @@ function actions(response: AiResponseV2, language: Language) {
   return explicitDraftRequest ? [...drafts, ...navigation] : navigation;
 }
 
+// The help answer ("Here is what I can help with"): it reads no records.
+export function isAiCapabilityAnswer(response: AiResponseV2) {
+  return response.skill?.id === "capability_overview";
+}
+
 export function toAiFocusedResponse(response: AiResponseV2, language: Language = "en-US"): AiFocusedResponseModel {
   const copy = focusedCopy[language];
   // A workspace skill answer always carries its own summary, in the answer
@@ -101,9 +106,11 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
     evidence: item,
   }));
   const availableActions = actions(response, language);
+  // The help answer has no records to show, so its suggestions are the answer:
+  // all four of them. Any other answer offers two next questions.
   const followUps = (response.followUpSuggestions || [])
     .filter((item, index, rows) => Boolean(item.label && item.prompt) && rows.findIndex((row) => row.prompt === item.prompt) === index)
-    .slice(0, 2)
+    .slice(0, isAiCapabilityAnswer(response) ? 4 : 2)
     .map((item) => ({ label: item.label, prompt: item.prompt, ...(item.skillHint ? { skillHint: item.skillHint } : {}) }));
   return {
     answerMode: answerMode(response),

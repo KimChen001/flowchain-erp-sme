@@ -1,3 +1,5 @@
+import { isProcurementAuthorityStatus, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
+
 const EN = {
   "需要付款": "Payments due",
   "逾期付款": "Overdue payments",
@@ -56,7 +58,79 @@ const GOAL_LABELS = Object.freeze({
   supplier_bank_reconciliation_exceptions: '银行核对异常', inventory_risks: '库存风险', procurement_exceptions: '采购异常', data_quality_limitations: '数据质量限制',
 })
 const STATE_LABELS = Object.freeze({ confirmed: '已确认', confirmed_zero: '确认没有', incomplete: '数据不完整', hidden: '无权限', unavailable: '数据不可用' })
+// Stored status codes on supplier summary evidence (payables, purchase orders,
+// supplier invoices, receiving documents), as [English, Chinese]. Users see the
+// label; the code itself stays in `statusCode`.
+const STATUS_COPY = Object.freeze({
+  draft: ['Draft', '草稿'],
+  submitted: ['Submitted', '已提交'],
+  pending: ['Pending', '待处理'],
+  pending_approval: ['Pending approval', '待审批'],
+  approved: ['Approved', '已批准'],
+  rejected: ['Rejected', '已拒绝'],
+  issued: ['Issued', '已下达'],
+  open: ['Open', '进行中'],
+  overdue: ['Overdue', '已逾期'],
+  partially_received: ['Partially received', '部分收货'],
+  fully_received: ['Fully received', '全部收货'],
+  receiving: ['Receiving', '收货中'],
+  inspecting: ['Inspecting', '检验中'],
+  ready_for_receiving: ['Ready for posting', '待过账'],
+  received: ['Received', '已收货'],
+  unposted: ['Unposted', '未过账'],
+  posted: ['Posted', '已过账'],
+  reversed: ['Reversed', '已冲销'],
+  matching: ['Matching', '匹配中'],
+  matched: ['Matched', '已匹配'],
+  mismatch: ['Mismatch', '不一致'],
+  exception: ['Exception', '异常'],
+  disputed: ['Disputed', '有争议'],
+  held: ['On hold', '已暂停'],
+  on_hold: ['On hold', '已暂停'],
+  export_ready: ['Ready for export', '待导出'],
+  partially_settled: ['Partially settled', '部分结算'],
+  settled: ['Settled', '已结清'],
+  paid: ['Paid', '已付款'],
+  closed: ['Closed', '已关闭'],
+  completed: ['Completed', '已完成'],
+  cancelled: ['Cancelled', '已取消'],
+  canceled: ['Cancelled', '已取消'],
+  voided: ['Voided', '已作废'],
+  // Older receiving documents store the Chinese status itself.
+  异常: ['Exception', '异常'],
+  拒收: ['Rejected', '拒收'],
+})
+// Why the supplier summary picked each record as evidence (`reasonCode`).
+const EVIDENCE_REASON_COPY = Object.freeze({
+  payable_due: ['Outstanding payable.', '未结清的应付款。'],
+  payable_overdue: ['Payable past its due date.', '应付款已过到期日。'],
+  payable_blocked: ['Payment is blocked; see the block reasons.', '付款被阻断，请查看阻断原因。'],
+  purchase_order_overdue: ['Purchase order past its promised date.', '采购订单已超过承诺交期。'],
+  invoice_match_difference: ['Invoice has a three-way match difference.', '发票存在三单匹配差异。'],
+  receiving_exception: ['Receipt has an exception or rejected quantity.', '收货存在异常或拒收数量。'],
+})
+const RESTRICTED_SUPPLIER = Object.freeze(['Restricted supplier', '受限供应商'])
 const text = (value) => String(value ?? '').trim()
+const inLanguage = ([en, zh], english) => english ? en : zh
+
+// Never returns an unlisted code as is: English gets it as words, Chinese a
+// general label. A stored Chinese status stays as is in Chinese.
+function statusLabel(entityType, code, english) {
+  if (!code) return ''
+  const canonical = entityType === 'purchase_order' && isProcurementAuthorityStatus('purchaseOrder', code) ? normalizeProcurementAuthorityStatus('purchaseOrder', code) : code
+  const pair = STATUS_COPY[canonical] || STATUS_COPY[canonical.toLowerCase()]
+  if (pair) return inLanguage(pair, english)
+  if (english) return /^[a-z][a-z0-9]*(?:[ _-][a-z0-9]+)*$/i.test(code) ? code.replace(/[ _-]+/g, ' ').replace(/^./, (first) => first.toUpperCase()) : 'Other status'
+  return /[\u4e00-\u9fff]/.test(code) ? code : '其他状态'
+}
+
+// A supplier the role may not see by name is labelled as restricted, in the
+// answer language; every other supplier keeps its stored name.
+function supplierLabel(supplier, english) {
+  if (!supplier) return ''
+  if (supplier.fieldVisibility?.partner === false) return inLanguage(RESTRICTED_SUPPLIER, english)
+  return text(supplier.displayName || supplier.name || supplier.id)
+}
 
 function severity(sections) {
   if (sections.some((section) => section.state === 'incomplete' || section.state === 'unavailable')) return 'warning'
@@ -76,10 +150,12 @@ function englishClarification(ambiguities = []) {
   return ''
 }
 
-function evidenceItem(item, index, L) {
+function evidenceItem(item, index, { L, english }) {
   const entityType = text(item.entityType || item.type)
   const entityId = text(item.entityId || item.id)
   const moduleId = entityType === 'purchase_order' ? 'procurement' : entityType === 'receiving_doc' ? 'procurement:receiving' : entityType === 'supplier_invoice' || entityType === 'payable_obligation' ? 'finance' : 'overview'
+  const statusCode = text(item.status)
+  const reason = EVIDENCE_REASON_COPY[text(item.reasonCode)]
   return {
     id: entityId || `business-query-evidence-${index + 1}`,
     label: L(text(item.label || item.entityLabel || entityId || '业务证据')),
@@ -88,9 +164,12 @@ function evidenceItem(item, index, L) {
     entityId,
     moduleId,
     evidenceType: entityType || 'business_record',
-    summary: text(item.summary || item.status || L('来自已授权确定性 Read Service。')),
-    status: text(item.status),
+    summary: text(item.summary) || (reason ? inLanguage(reason, english) : L('来自已授权确定性 Read Service。')),
+    status: statusLabel(entityType, statusCode, english),
+    statusCode,
     severity: 'info',
+    // The server's order, so translated labels never reorder the evidence.
+    rank: index,
     sourceLabel: L('确定性业务读取'),
   }
 }
@@ -98,7 +177,8 @@ function evidenceItem(item, index, L) {
 export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
   const L = value => request.answerLanguage === "zh-CN" ? value : (EN[value] || value)
   const english = request.answerLanguage !== "zh-CN"
-  const scopeLabel = english ? (pack.scopeSummary.mode === "all" ? "All suppliers" : pack.scopeSummary.mode === "previous_result" ? "Previous results" : pack.scopeSummary.entityCount === 1 ? L(pack.scopeSummary.label) : `${pack.scopeSummary.entityCount} suppliers`) : pack.scopeSummary.label
+  const singleSupplier = !["all", "previous_result"].includes(pack.scopeSummary.mode) && pack.scopeSummary.entityCount === 1
+  const scopeLabel = singleSupplier ? supplierLabel(pack.scopeSummary.supplier, english) || L(text(pack.scopeSummary.label)) : english ? (pack.scopeSummary.mode === "all" ? "All suppliers" : pack.scopeSummary.mode === "previous_result" ? "Previous results" : `${pack.scopeSummary.entityCount} suppliers`) : pack.scopeSummary.label
   const followups = (pack.availableFollowups || []).map(L)
   const clarification = Boolean(pack.clarification?.needed)
   const sections = pack.sections || []
@@ -113,7 +193,8 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
         severity: tone,
         confidence: planner.plan?.confidence >= 0.8 ? 'high' : planner.plan?.confidence >= 0.5 ? 'medium' : 'low',
       }
-  const evidence = (pack.evidence || []).slice(0, 12).map((item, index) => evidenceItem(item, index, L))
+  const evidence = (pack.evidence || []).slice(0, 12).map((item, index) => evidenceItem(item, index, { L, english }))
+  const withSupplierLabel = (row) => row?.supplier ? { ...row, supplier: { ...row.supplier, displayName: supplierLabel(row.supplier, english) } } : row
   const limitations = [...new Set(pack.limitations || [])].map((item) => ({ label: L('查询限制'), description: text(item), severity: 'warning', consequence: L('该限制不会被解释为业务数量 0。') }))
   const goalLabels = (planner.plan?.goals || sections.map((section) => section.goal)).map((goal) => L(GOAL_LABELS[goal] || goal))
   const sectionCards = sections.map((section) => ({
@@ -123,9 +204,7 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
     stateLabel: L(STATE_LABELS[section.state] || section.state),
     counts: section.counts,
     amounts: section.amounts,
-    // A supplier the role may not name carries the read service's placeholder
-    // label, shown in the answer language.
-    rows: (section.rows || []).map((row) => row?.supplier?.displayName ? { ...row, supplier: { ...row.supplier, displayName: L(row.supplier.displayName) } } : row),
+    rows: (section.rows || []).map(withSupplierLabel),
     limitations: section.limitations,
   }))
   return {
@@ -146,7 +225,7 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
     safetyBoundaries: [L('只读'), L('不创建 ActionProposal'), L('不执行付款'), L('不修改业务数据'), L('业务事实来自确定性 Read Service')],
     followUpQuestions: followups,
     followUpSuggestions: followups.slice(0, 4).map((label) => ({ label, prompt: label, intentHint: 'business_query_followup', requiresReview: false })),
-    resolvedContext: { resolvedFrom: pack.plan?.scope?.source === 'previous_result' ? 'previousResponse' : pack.plan?.scope?.source === 'current_context' ? 'activePage' : 'currentMessage', entityRefs: [...new Map(sections.flatMap(section => section.rows || []).filter(row => row.supplier?.id).map(row => [row.supplier.id, { entityType: "supplier", entityId: row.supplier.id, entityLabel: L(row.supplier.displayName || row.supplier.id) }])).values()].slice(0, 12), intentCarryOver: 'business_query_plan_v1', confidence: planner.plan?.confidence >= 0.8 ? 'high' : 'medium' },
+    resolvedContext: { resolvedFrom: pack.plan?.scope?.source === 'previous_result' ? 'previousResponse' : pack.plan?.scope?.source === 'current_context' ? 'activePage' : 'currentMessage', entityRefs: [...new Map(sections.flatMap(section => section.rows || []).filter(row => row.supplier?.id).map(row => [row.supplier.id, { entityType: "supplier", entityId: row.supplier.id, entityLabel: supplierLabel(row.supplier, english) }])).values()].slice(0, 12), intentCarryOver: 'business_query_plan_v1', confidence: planner.plan?.confidence >= 0.8 ? 'high' : 'medium' },
     sourceSummary: [],
     readinessSignals: [],
     generatedAt: new Date().toISOString(),

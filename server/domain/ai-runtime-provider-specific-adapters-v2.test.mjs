@@ -22,7 +22,7 @@ import {
 import { buildAiRuntimeResponseV2, buildAiRuntimeResponseV2Async } from './ai-runtime-gateway-v2.mjs'
 import { buildAiRuntimeEvaluationV2 } from './ai-runtime-observability-v2.mjs'
 
-const providerKinds = ['openai_responses', 'deepseek_chat', 'doubao_chat', 'qwen_chat']
+const providerKinds = ['openai_responses', 'deepseek_chat', 'doubao_chat', 'qwen_chat', 'parley_chat']
 import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 
 function loadDb() {
@@ -246,4 +246,11 @@ test('semantic planning retains the question and server-owned schema while dropp
   assert.equal(request.responseShape.properties.planningVersion.const, 'business-query-plan-v1');
   assert.doesNotMatch(JSON.stringify(request), /DO_NOT_SEND|executePayment/);
   assert.equal(request.safetyPolicy.readOnly, true);
+});
+
+test('semantic planning tells the model the server-owned goal names and keeps previous results', async () => {
+  const { BUSINESS_QUERY_GOALS } = await import('./ai-business-query-plan.mjs');
+  const request = buildBoundedProviderRequestCore({ task: { type: 'business_query_planning', message: 'What else is open for these suppliers?', previousResult: [{ id: 'supplier-a', name: 'Supplier A' }] } });
+  assert.deepEqual(request.responseShape.properties.goals.items.enum, [...BUSINESS_QUERY_GOALS]);
+  assert.deepEqual(request.task.previousResult, [{ entityType: '', entityId: 'supplier-a', entityLabel: 'Supplier A' }]);
 });

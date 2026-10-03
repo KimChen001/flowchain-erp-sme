@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { emptyBusinessQueryPlan, validateBusinessQueryPlan } from './ai-business-query-plan.mjs'
+import { BUSINESS_QUERY_GOALS, emptyBusinessQueryPlan, validateBusinessQueryPlan } from './ai-business-query-plan.mjs'
 import { resolveBusinessTimeWindow } from './ai-business-time-window.mjs'
 import { buildDeterministicBusinessQueryPlan, planBusinessQuery } from './ai-semantic-query-planner.mjs'
 
@@ -61,6 +61,34 @@ test('invalid provider output and timeout degrade to deterministic plan', async 
   const timeout = await planBusinessQuery({ message: '有哪些供应商需要付款？', suppliers }, { env, providerPlanner: async () => ({ ok: false, reason: 'timeout' }) })
   assert.equal(timeout.fallbackReason, 'timeout')
   assert.equal(timeout.plannerMode, 'deterministic_fallback')
+})
+
+test('a provider clarification never replaces a deterministic plan that needs none', async () => {
+  const env = { FLOWCHAIN_ENABLE_AI_SEMANTIC_PLANNER: 'true' }
+  const asking = buildDeterministicBusinessQueryPlan({ message: '帮我看看供应商。', suppliers })
+  const overridden = await planBusinessQuery({ message: 'Why is an empty record counted as one?', suppliers }, { env, providerPlanner: async () => ({ ok: true, rawOutput: asking }) })
+  assert.equal(overridden.plannerMode, 'deterministic_fallback')
+  assert.equal(overridden.fallbackReason, 'provider_clarification_overridden')
+  assert.equal(overridden.plan.clarificationNeeded, false)
+  assert.ok(overridden.plan.goals.includes('data_quality_limitations'))
+  const kept = await planBusinessQuery({ message: '帮我看看供应商。', suppliers }, { env, providerPlanner: async () => ({ ok: true, rawOutput: asking }) })
+  assert.equal(kept.plannerMode, 'provider')
+  assert.equal(kept.plan.clarificationNeeded, true)
+})
+
+test('a provider plan keeps the goals of a deterministic plan and may add its own', async () => {
+  const env = { FLOWCHAIN_ENABLE_AI_SEMANTIC_PLANNER: 'true' }
+  const message = 'Check supplier payments, overdue POs, and invoice mismatches together.'
+  const deterministic = buildDeterministicBusinessQueryPlan({ message, suppliers })
+  const narrower = { ...deterministic, goals: ['supplier_invoice_exceptions', 'supplier_rfq_followups'] }
+  const result = await planBusinessQuery({ message, suppliers }, { env, providerPlanner: async () => ({ ok: true, rawOutput: narrower }) })
+  assert.equal(result.plannerMode, 'provider')
+  for (const goal of deterministic.goals) assert.ok(result.plan.goals.includes(goal), goal)
+  assert.ok(result.plan.goals.includes('supplier_rfq_followups'))
+  const tooMany = { ...deterministic, goals: BUSINESS_QUERY_GOALS.filter((goal) => !deterministic.goals.includes(goal)).slice(0, 8) }
+  const capped = await planBusinessQuery({ message, suppliers }, { env, providerPlanner: async () => ({ ok: true, rawOutput: tooMany }) })
+  assert.equal(capped.plannerMode, 'deterministic_fallback')
+  assert.deepEqual(capped.plan.goals, deterministic.goals)
 })
 
 test('provider plan cannot request writes or carry business facts', async () => {

@@ -37,7 +37,8 @@ export type AiResponseV2EvidenceItem = {
   severity?: AiResponseV2Severity;
   sourceLabel?: string;
   linkTarget?: AiResponseV2LinkTarget;
-  // Workspace skill answers: the server's order and the raw status code.
+  // Workspace skill and business query answers: the server's order and the raw
+  // status code. `status` is then the label in the answer language.
   rank?: number | null;
   statusCode?: string;
 };

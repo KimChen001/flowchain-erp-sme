@@ -40,9 +40,14 @@ export function runHighestRisk(facts, { focus = null } = {}) {
 export function presentHighestRisk(result, facts, { skill, language, query }) {
   const fmt = aiSkillFormatter(facts, language)
   const first = result.items[0]
-  const title = first
-    ? aiSkillText('risk.title', language, { first: aiSkillText('risk.first', language, { label: first.label, status: aiSkillText(`signal.${first.type}.status`, language).toLowerCase() }) })
-    : aiSkillText('risk.title_none', language, { date: fmt.day(facts.asOf) })
+  const status = first ? aiSkillText(`signal.${first.type}.status`, language).toLowerCase() : ''
+  const firstText = first ? aiSkillText('risk.first', language, { label: first.label, status }) : ''
+  // Narrowed to one record, the title says so: "Risk on PO-016", never
+  // "Highest risk", which would read as the whole workspace's.
+  const id = result.focus?.entityId
+  const title = id
+    ? first ? aiSkillText('risk.focus_title', language, { id, first: first.label === id ? status : firstText }) : aiSkillText('risk.focus_none', language, { id, date: fmt.day(facts.asOf) })
+    : first ? aiSkillText('risk.title', language, { first: firstText }) : aiSkillText('risk.title_none', language, { date: fmt.day(facts.asOf) })
   const summary = aiSkillSentences([
     ...(result.total ? [aiSkillText('risk.summary', language, { count: fmt.number(result.total) })] : []),
     ...aiSkillMetricSentences(facts, language, { spend: false, invoices: false }),
