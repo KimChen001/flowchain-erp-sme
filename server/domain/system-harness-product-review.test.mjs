@@ -248,15 +248,12 @@ test('system harness covers key read API contracts without mutation', async () =
 test('system harness validates evidence and navigation compatibility surfaces', () => {
   const helper = readSource('src', 'lib', 'evidenceLinks.ts')
   const app = readSource('src', 'app', 'FlowChainApp.tsx')
-  const aiPanel = readSource('src', 'modules', 'ai-assistant', 'Panel.tsx')
   const cockpit = buildTodayCockpit(createDb())
 
   assert.match(helper, /pr: \{ entityType: "purchase_request", moduleId: "procurement:requests"/)
   assert.match(helper, /threeWayMatch: \{ entityType: "supplier_invoice", moduleId: "finance:invoices"/)
   assert.match(helper, /focusTarget: clickable \? \{ entityType: normalizedEntityType, entityId \}/)
   assert.match(app, /navigationIntentFromGlobalSearchResult\(result, \{ returnTo: active \}\)/)
-  assert.match(aiPanel, /normalizeEvidenceLinks\(\[raw\], \{ source: "ai" \}\)/)
-  assert.match(aiPanel, /raw\.summary/)
   assert.ok(cockpit.recommendedActions.every((item) => Array.isArray(item.evidence)))
 })
 

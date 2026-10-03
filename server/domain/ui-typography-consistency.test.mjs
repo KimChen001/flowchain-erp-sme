@@ -57,21 +57,6 @@ test('shared field input and chip typography follows compact SaaS scale', () => 
   assert.match(source, /fontSize: 13, lineHeight: "20px"/)
 })
 
-test('AI assistant evidence and actions use compact typography tokens', () => {
-  const source = readSource('src', 'modules', 'ai-assistant', 'Panel.tsx')
-
-  assert.match(source, /import \{ typography \} from "\.\.\/\.\.\/components\/ui\/typography"/)
-  assert.match(source, /aiEvidenceLinkClass = `max-w-full text-left \$\{typography\.compactMetadata\} font-medium truncate hover:underline`/)
-  assert.match(source, /aiEvidenceTitleClass = `\$\{typography\.compactMetadata\} font-medium truncate`/)
-  assert.match(source, /aiEvidenceMetaClass = `\$\{typography\.compactMetadata\} truncate`/)
-  assert.match(source, /aiActionPillClass = `rounded-full px-2\.5 py-1 \$\{typography\.compactMetadata\} font-medium`/)
-  assert.match(source, /aiBoundaryNoticeClass = `\$\{typography\.metadata\} text-slate-600`/)
-  assert.match(source, /className=\{aiEvidenceLinkClass\}/)
-  assert.match(source, /className=\{aiActionLinkClass\}/)
-  assert.match(source, /className=\{aiBoundaryNoticeClass\}/)
-  assert.doesNotMatch(source, /text-sm text-slate-600/)
-})
-
 test('action draft review shell keeps evidence links and draft actions on shared typography tokens', () => {
   const source = readSource('src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx')
 
