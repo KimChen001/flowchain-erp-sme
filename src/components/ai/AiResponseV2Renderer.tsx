@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import type { ActionDraftPreviewRequest } from "../../modules/action-drafts/ActionDraftReviewShell";
 import type { AiResponseV2, AiResponseV2EvidenceItem, AiResponseV2NavigationLink, AiResponseV2ReviewCard } from "../../domain/ai/response-contract";
-import { toAiFocusedResponse, type AiFocusedAction } from "../../domain/ai/focused-response";
+import { isAiCapabilityAnswer, toAiFocusedResponse, type AiFocusedAction } from "../../domain/ai/focused-response";
 import { businessEntityRouteRegistry, type BusinessEntityType } from "../business/businessEntityRoutes";
 import { A } from "../ui";
 import { useI18n } from "../../i18n/I18n";
@@ -134,11 +134,14 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
       {response.answerSourceLabel ? <div data-testid="ai-answer-source" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" style={{ color: A.gray2 }}><span className="inline-flex rounded-full px-2 py-0.5 font-semibold" style={{ background: A.gray6, color: A.gray1 }}>{response.answerSourceLabel}</span>{response.checkedLabel ? <span data-testid="ai-answer-checked">{response.checkedLabel}</span> : null}</div> : null}
       <section data-testid="ai-focused-conclusion">
         <div className="flex items-start justify-between gap-2"><div lang={response.language || undefined}><h3 className="text-sm font-semibold leading-5" style={{ color: A.label }}>{focused.headline}</h3>{focused.summary ? <p className="mt-1 text-xs leading-5" style={{ color: A.gray1 }}>{focused.summary}</p> : null}</div><Chip tone={focused.severity}>{copy.severity[focused.severity]}</Chip></div>
-        <div className="mt-2 flex gap-2 text-[11px]" style={{ color: A.gray2 }}>
-          <span>{fill(copy.evidenceCount, { count: response.realEvidenceCount ?? response.keyEvidence.length })}</span>
-          <span>· {fill(copy.contextCount, { count: response.contextCardCount ?? response.contextCards?.length ?? 0 })}</span>
-          <span>· {fill(copy.limitationCount, { count: response.limitationCount ?? response.dataLimitations.length })}</span>
-        </div>
+        {/* The help answer reads no records, so "0 records" would read as a failed lookup. */}
+        {isAiCapabilityAnswer(response) ? null : (
+          <div className="mt-2 flex gap-2 text-[11px]" style={{ color: A.gray2 }}>
+            <span>{fill(copy.evidenceCount, { count: response.realEvidenceCount ?? response.keyEvidence.length })}</span>
+            <span>· {fill(copy.contextCount, { count: response.contextCardCount ?? response.contextCards?.length ?? 0 })}</span>
+            <span>· {fill(copy.limitationCount, { count: response.limitationCount ?? response.dataLimitations.length })}</span>
+          </div>
+        )}
       </section>
 
       <BusinessQueryPresentation response={response} />

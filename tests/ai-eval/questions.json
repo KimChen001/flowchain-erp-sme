@@ -176,6 +176,15 @@
     { "id": "route-rfq-open-en", "category": "routing", "language": "en-US", "role": "admin", "question": "Which RFQs are still open?", "expect": { "skill": ["rfq_followups"] } },
     { "id": "route-rfq-open-zh", "category": "routing", "language": "zh-CN", "role": "admin", "question": "哪些询价单还没授标？", "expect": { "skill": ["rfq_followups"] } },
     { "id": "route-receiving-en", "category": "routing", "language": "en-US", "role": "admin", "question": "Which receipts need attention?", "expect": { "skill": ["receiving_issues"] } },
-    { "id": "route-receiving-zh", "category": "routing", "language": "zh-CN", "role": "admin", "question": "哪些收货单需要处理？", "expect": { "skill": ["receiving_issues"] } }
+    { "id": "route-receiving-zh", "category": "routing", "language": "zh-CN", "role": "admin", "question": "哪些收货单需要处理？", "expect": { "skill": ["receiving_issues"] } },
+    { "id": "ctx-today-on-po", "category": "context", "language": "en-US", "role": "admin", "question": "What should I handle first today?", "focusTarget": { "entityType": "purchase_order", "entityId": "LOCAL-DEMO-PO-016" }, "expect": { "skill": ["today_priorities"], "sameAs": "route-today-en" } },
+    { "id": "ctx-risk-on-po", "category": "context", "language": "en-US", "role": "admin", "question": "Which items have the highest risk?", "focusTarget": { "entityType": "purchase_order", "entityId": "LOCAL-DEMO-PO-016" }, "expect": { "skill": ["highest_risk_items"], "sameAs": "route-risk-en" } },
+    { "id": "ctx-today-on-po-zh", "category": "context", "language": "zh-CN", "role": "admin", "question": "今天先处理什么？", "focusTarget": { "entityType": "purchase_order", "entityId": "LOCAL-DEMO-PO-016" }, "expect": { "skill": ["today_priorities"], "sameAs": "route-today-zh" } },
+    { "id": "ctx-named-po-on-page", "category": "context", "language": "en-US", "role": "admin", "question": "What is the risk on PO-020?", "focusTarget": { "entityType": "purchase_order", "entityId": "LOCAL-DEMO-PO-016" }, "expect": { "skill": ["highest_risk_items"], "mentions": ["LOCAL-DEMO-PO-020"] } },
+    { "id": "ctx-this-po", "category": "context", "language": "en-US", "role": "admin", "question": "Why does this PO need attention?", "focusTarget": { "entityType": "purchase_order", "entityId": "LOCAL-DEMO-PO-016" }, "expect": { "skill": ["today_priorities"], "mentions": ["LOCAL-DEMO-PO-016"] } },
+    { "id": "ctx-this-po-zh", "category": "context", "language": "zh-CN", "role": "admin", "question": "这张单为什么需要关注？", "focusTarget": { "entityType": "purchase_order", "entityId": "LOCAL-DEMO-PO-016" }, "expect": { "skill": ["today_priorities"], "mentions": ["LOCAL-DEMO-PO-016"] } },
+    { "id": "ctx-is-this-po-late", "category": "context", "language": "en-US", "role": "admin", "question": "Is this order late?", "focusTarget": { "entityType": "purchase_order", "entityId": "LOCAL-DEMO-PO-016" }, "expect": { "skill": ["purchase_orders"], "mentions": ["LOCAL-DEMO-PO-016"] } },
+    { "id": "route-open-share-en", "category": "routing", "language": "en-US", "role": "admin", "question": "Anything worth sharing?", "expect": { "skill": ["today_priorities"] } },
+    { "id": "route-open-share-zh", "category": "routing", "language": "zh-CN", "role": "admin", "question": "你有什么值得分享的", "expect": { "skill": ["today_priorities"] } }
   ]
 }

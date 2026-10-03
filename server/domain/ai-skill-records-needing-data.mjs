@@ -22,7 +22,9 @@ export function presentRecordsNeedingData(result, facts, { skill, language, quer
   }))
   return presentAiSkillAnswer({
     skill, facts, language, query,
-    title: aiSkillCountText('records.title', result.total, language, { count: fmt.number(result.total) }),
+    title: result.focus
+      ? aiSkillText(result.total ? 'records.focus_title' : 'records.focus_none', language, { id: result.focus.entityId })
+      : aiSkillCountText('records.title', result.total, language, { count: fmt.number(result.total) }),
     summary: aiSkillText('records.summary', language, { checked: fmt.number(result.checked), sources: fmt.number(result.sources) }),
     severity: result.total ? 'warning' : 'success',
     evidence,

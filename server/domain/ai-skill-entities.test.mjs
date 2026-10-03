@@ -65,6 +65,29 @@ test('a hidden source answers the same whether or not the record exists', () => 
   assert.deepEqual([focused('PO-001').focus, focused('PO-099').focus], [null, null])
 })
 
+test('a question that points at the page record answers for it as if it named it', () => {
+  const onPage = (message, focus) => refineAiSkillRoute(routeSkill({ message, focusTarget: focus }), message, facts())
+  const po = { entityType: 'purchase_order', entityId: 'PO-001' }
+  // "Is this order late?" asks about the page's order, not every late order.
+  const late = onPage('Is this order late?', po)
+  assert.deepEqual([late.skillId, late.mode, late.entities.purchaseOrders.map((row) => row.id)], ['purchase_orders', 'single', ['PO-001']])
+  // No rule matched: the page's order, not the capability answer.
+  const status = onPage('这张单现在什么情况？', po)
+  assert.deepEqual([status.skillId, status.mode], ['purchase_orders', 'single'])
+  // The focus skills keep narrowing by the focus itself.
+  assert.deepEqual(onPage('What is the risk on this PO?', po).focus, po)
+  // A stock question on an item page answers for that item.
+  const stock = onPage('How much of this item is available?', { entityType: 'item', entityId: 'ITEM-001' })
+  assert.deepEqual([stock.skillId, stock.mode, stock.entities.skus.map((row) => row.sku)], ['inventory_availability', 'single', ['LDM-001']])
+  // A question that does not point at it is about the workspace.
+  const all = onPage('Which purchase orders are late?', po)
+  assert.deepEqual([all.skillId, all.mode, all.focus], ['purchase_orders', 'overdue', null])
+  // The page's record of a hidden source is never looked up.
+  const hidden = refineAiSkillRoute(routeSkill({ message: 'Is this order late?', focusTarget: po }), 'Is this order late?', facts({ purchaseOrders: false }))
+  assert.equal(hidden.focus, null)
+  assert.deepEqual(hidden.entities.purchaseOrders, [])
+})
+
 test('supplier and item names count only when they are distinctive and whole', () => {
   const suppliers = (message, options) => resolve(message, [], options).suppliers.map((row) => row.id)
   assert.deepEqual(suppliers('Open orders from Acme Components?'), ['SUP-001'])

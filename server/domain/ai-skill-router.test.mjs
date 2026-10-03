@@ -54,3 +54,32 @@ test('the action detector refuses instructions but not questions about them', ()
   // A focus of an unsupported type is dropped rather than passed through.
   assert.equal(routeSkill({ message: 'What should I handle first today?', focusTarget: { entityType: 'tenant', entityId: 'x' } }).focus, null)
 })
+
+test('the page record is the focus only when the question points at it', () => {
+  const page = { entityType: 'purchase_order', entityId: 'PO-016' }
+  const focusOf = (message, skillHint) => routeSkill({ message, skillHint, focusTarget: page }).focus
+  // Questions about the workspace stay about the workspace on a PO page.
+  for (const message of [
+    'What should I handle first today?', 'Which items have the highest risk?', 'Prepare an action draft', 'Which records need more data?',
+    '今天先处理什么？', '哪些事项风险最高？', 'Which orders is it blocking?', '这个月有哪些逾期 PO？', '这些供应商还有什么事情没有处理？',
+  ]) assert.equal(focusOf(message), null, message)
+  // A follow-up chip's hint does not bring the page back either.
+  assert.equal(focusOf("Today's priorities", 'today_priorities'), null)
+  // Pointing at the page's record, or one of its own chips, uses it.
+  for (const message of [
+    'Why does this PO need attention?', 'Is this order late?', 'Why is it late?', "What's wrong here?", 'What should happen next?',
+    '这个 PO 为什么需要关注？', '这张单有什么风险？', '该订单还差什么数据？', '它为什么逾期？',
+  ]) assert.deepEqual(focusOf(message), page, message)
+  assert.deepEqual(focusOf('Why does this PO need attention?', 'today_priorities'), page)
+  // A record the question names wins over the page.
+  assert.equal(focusOf('What is the risk on PO-020?'), null)
+  assert.deepEqual(routeSkill({ message: 'What is the risk on PO-020?', focusTarget: page }).ids, ['PO-020'])
+})
+
+test('an open question about what is going on gets today\'s priorities', () => {
+  for (const message of ['Anything worth sharing?', "What's new?", 'Anything I should know?', 'Any updates?', '你有什么值得分享的', '有什么值得我注意的？', '最近怎么样？']) {
+    assert.equal(routeSkill({ message }).skillId, 'today_priorities', message)
+  }
+  // "News" is still a question about the outside world.
+  assert.equal(routeSkill({ message: 'Any news today?' }).outOfDomain, true)
+})
