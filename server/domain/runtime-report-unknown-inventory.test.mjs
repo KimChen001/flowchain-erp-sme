@@ -8,6 +8,11 @@ import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-
 import { searchRuntimeBusinessContext } from './runtime-business-search.mjs'
 import { businessContextToReadDb } from '../services/runtime-business-read-service.mjs'
 import { handleReportsAnalyticsRoute } from '../routes/reports-analytics.routes.mjs'
+import { reportReadAccessFor } from '../domain/report-read-access.mjs'
+import { permissionCodes } from '../auth/permission-catalog.mjs'
+
+// A reader who may see everything.
+const fullReportAccess = reportReadAccessFor({ authenticated: true, complete: true, tenantId: 'tenant-any', permissionCodes: new Set(permissionCodes) })
 
 const context = inventoryItems => ({
   items: inventoryItems.map(row => ({ sku: row.sku, itemName: row.sku })), inventoryItems,
@@ -57,7 +62,7 @@ test('reports API and KPI UI preserve null and present data insufficiency withou
   await handleReportsAnalyticsRoute({
     req: { method: 'POST', headers: {} }, res: {}, url: new URL('/api/reports/query', 'http://local'),
     db: { __dataMode: 'user', inventoryItems: [{ sku: 'SKU-KNOWN', onHandQuantity: 4 }, { sku: 'SKU-UNKNOWN' }], products: [], salesOrders: [], purchaseOrders: [], suppliers: [], supplierInvoices: [] },
-    readBody: async () => ({ subject: 'inventory' }), send(_res, status, payload) { response = { status, payload: JSON.parse(JSON.stringify(payload)) } },
+    readBody: async () => ({ subject: 'inventory' }), reportReadAccess: fullReportAccess, send(_res, status, payload) { response = { status, payload: JSON.parse(JSON.stringify(payload)) } },
   })
   assert.equal(response.status, 200)
   assert.equal(metric(response.payload).currentValue, null)
@@ -69,6 +74,12 @@ test('reports API and KPI UI preserve null and present data insufficiency withou
   assert.match(dashboard, /import \{ formatMetric \} from "\.\/currencyFormatting\.mjs"/)
   assert.match(dashboard, /if \(item\.dataStatus === "incomplete"\) return "数据不足"/)
   assert.match(dashboard, /item\.dataStatus === "incomplete" \? copy\([^;]*"库存数据不完整"\)/)
-  assert.match(dashboard, /\?\.value \?\? null/)
-  assert.doesNotMatch(dashboard, /\?\.value \|\| 0/)
+  // A chart value that is not recorded stays empty in the visual and its data table; it never becomes 0.
+  const { chartTable } = await import('../../src/modules/reports/charts/chartTable.ts')
+  const { chartOption } = await import('../../src/modules/reports/charts/chartOptions.ts')
+  const chart = { id: 'inventory_on_hand_by_sku', title: 'On hand by SKU', type: 'horizontal_bar', data: [{ name: 'SKU-KNOWN', value: 4 }, { name: 'SKU-UNKNOWN', value: null }], drilldownPath: '/app/inventory' }
+  const labels = { copy: value => value, category: (_chart, value) => value }
+  assert.deepEqual(chartTable(chart, labels).rows.map(row => row.values[0]), [4, null])
+  const option = chartOption(chart, { ...labels, format: String, compact: String, ratio: String, language: 'en-US' })
+  assert.deepEqual(option.series[0].data.map(point => point.value), [4, null])
 })

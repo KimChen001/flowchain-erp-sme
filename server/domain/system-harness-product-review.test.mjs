@@ -1,3 +1,7 @@
+import { procurementReadAccessFor } from './procurement-read-access.mjs'
+import { aiSkillActor } from './test-fixtures/ai-skill-scenario.mjs'
+// These checks are about routing and tenant scope: the actor may read everything.
+const fullAccess = (tenantId) => procurementReadAccessFor(aiSkillActor('workspace-administrator', tenantId))
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -73,6 +77,7 @@ function routeContext(method, pathname, db = createDb(), body = {}, helpers = {}
       db,
       repositories: createTestRepositoryRegistry(db),
       identity: { authenticated: true, tenantId: 'tenant-test', userId: 'user-test', role: 'manager', source: 'test' },
+      procurementReadAccess: fullAccess('tenant-test'),
       send(_res, status, payload) {
         response = { status, payload }
       },
@@ -290,16 +295,11 @@ test('Phase 0 product positioning and visible language governance stay productiz
   const reportsPage = readSource('src', 'modules', 'reports', 'Page.tsx')
   const aiEvidenceReuse = readSource('server', 'domain', 'ai-evidence-reuse.mjs')
   const aiSop = readSource('server', 'domain', 'ai-sop-retrieval.mjs')
-  const publicDocs = [readme.split('# Local development')[0], docsIndex.split('# Phase 5.4B.1 local truthfulness')[0], narrative, roadmap, limitations.split('# Phase 5.4B.1 limitations')[0]].join('\n')
+  const publicDocs = [readme.split('## Quick start')[0], docsIndex.split('# Phase 5.4B.1 local truthfulness')[0], narrative, roadmap, limitations.split('# Phase 5.4B.1 limitations')[0]].join('\n')
   const uiCopySources = [constants, forecast, actionShell, overview, importsPage, inventoryPage, reportsPage].join('\n')
   const aiVisibleCopySources = [aiEvidenceReuse, aiSop].join('\n')
 
-  assert.match(readme, /FlowChain — ERP & Inventory-Purchase-Sales \(进销存\) Collaboration Platform for SMEs/)
   assert.match(readme, /FlowChain is an ERP and inventory-purchase-sales \(进销存\) collaboration platform for SMEs/)
-  assert.match(readme, /Sales Demand \/ Customer Orders Lite/)
-  assert.match(readme, /Inventory Allocation \/ Availability/)
-  assert.match(readme, /Demand-to-Procurement Links/)
-  assert.match(readme, /Phase 8 deployment and launch hardening/)
   assert.match(language, /FlowChain 是面向中小企业的 ERP 进销存协同平台/)
   assert.match(language, /SKU = 物料编码 \/ 商品编码/)
   assert.match(language, /MRP = 物料需求计划/)

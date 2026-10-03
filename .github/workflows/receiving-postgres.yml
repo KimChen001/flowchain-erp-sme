@@ -61,6 +61,7 @@ jobs:
       - run: npm run test:db:tenant-provision
       - run: npm run test:db:walkthrough-scenario
       - run: npm run test:db:tenant-scoped-reads
+      - run: npm run test:db:master-data-writes
       - run: npm run test:db:report-truncation
       - run: npm run test:db:inventory-allocation
       - run: npm run test:db:ai-knowledge
@@ -90,6 +91,13 @@ jobs:
       - run: npm run test:db:procurement-flow
       - run: npm run test:db:original-promise
       - run: npm run test:db:supplier-scorecard
+      - run: npm run test:db:finance-read-permissions
+      - run: npm run test:db:sales-read-permissions
+      - run: npm run test:db:inventory-warehouse-scope
+      - run: npm run test:db:search-graph-read-scope
+      - run: npm run test:db:role-backfill-once
+      - run: npm run test:db:po-close-receipt-cancel
+      - run: npm run test:db:report-views
       - run: npm run test:db:rfq-response-revisions
       - run: npm run test:db:rfq-supplier-response-command
       - run: npm run test:db:rfq-supplier-comparison
@@ -162,29 +170,54 @@ jobs:
       - run: npm run db:generate
         env:
           DATABASE_URL: postgresql://generate_only:generate_only@127.0.0.1:55432/flowchain_generate_only?schema=public
-      - run: npx playwright install --with-deps chromium
+      - id: browser-setup
+        run: npx playwright install --with-deps chromium
+      # Each suite runs even after an earlier one fails, so one failure cannot
+      # hide others; the job still fails. Suites are skipped only when setup failed.
       - run: npm run test:browser:english
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:receiving
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:reports
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:outbound
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:product-recovery
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:canonical-rfq-detail
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:canonical-rfq-comparison
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:canonical-rfq-supplier-response
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:inventory-operations
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:returns-quarantine
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:settings
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:intake
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:operational-finance
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:authorization
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:internal-settlement
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:settlement-workflow
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:mobile-operations
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:mobile-authority
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:mobile-sync-controls
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:bank-reconciliation
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:bank-security-hardening
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:ai-business-query-planning
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - name: Upload Product Recovery browser evidence
         if: always()
         uses: actions/upload-artifact@v4

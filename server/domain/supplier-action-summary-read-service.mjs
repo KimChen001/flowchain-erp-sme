@@ -59,9 +59,11 @@ function isOverdue(value, now) {
   return Boolean(due && due < now)
 }
 
-function evidence(type, id, label, status, route) {
+// `status` is the stored status code and `reasonCode` says why the record is
+// evidence. Both are codes; the answer builder words them in the answer language.
+function evidence(type, id, label, status, route, reasonCode) {
   if (!id) return null
-  return { type, entityType: type, id, entityId: id, label, entityLabel: label, status, route }
+  return { type, entityType: type, id, entityId: id, label, entityLabel: label, status, reasonCode, route }
 }
 
 function supplierKey(row) {
@@ -202,7 +204,9 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
     if (!visible.amounts) limitations.push('amounts_hidden')
     if (!visible.partner) limitations.push('partner_snapshot_hidden')
     const result = {
-      supplier: { id, code: text(supplier.code) || null, name: visible.partner ? text(supplier.name) : null, displayName: visible.partner ? text(supplier.name) : '受限供应商', fieldVisibility: { partner: visible.partner } },
+      // Without the partner snapshot permission there is no name to show; the
+      // answer builder labels the supplier as restricted in the answer language.
+      supplier: { id, code: text(supplier.code) || null, name: visible.partner ? text(supplier.name) : null, displayName: visible.partner ? text(supplier.name) : null, fieldVisibility: { partner: visible.partner } },
       payment: {
         currencies,
         state: sourceState(available.payables, visible.payables, partitions.payables, scopedPayables.length),
@@ -259,10 +263,10 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
         bankExceptions.length ? 'review_bank_reconciliation_exceptions' : null,
       ]),
       evidence: unique([
-        ...scopedPayables.map((row) => evidence('payable_obligation', row.id, row.obligationNumber || row.id, row.status, '/finance?view=payables')),
-        ...overduePos.map((row) => evidence('purchase_order', row.id, row.id, row.status, '/procurement?view=purchase-orders')),
-        ...mismatchInvoices.map((row) => evidence('supplier_invoice', row.id, row.invoiceNumber || row.id, row.status, '/finance?view=invoices')),
-        ...receivingExceptions.map((row) => evidence('receiving_doc', row.id, row.documentNumber || row.id, row.status, '/receiving')),
+        ...scopedPayables.map((row) => evidence('payable_obligation', row.id, row.obligationNumber || row.id, row.status, '/finance?view=payables', blockedIds.has(row.id) ? 'payable_blocked' : isOverdue(row.dueDate, current) ? 'payable_overdue' : 'payable_due')),
+        ...overduePos.map((row) => evidence('purchase_order', row.id, row.id, row.status, '/procurement?view=purchase-orders', 'purchase_order_overdue')),
+        ...mismatchInvoices.map((row) => evidence('supplier_invoice', row.id, row.invoiceNumber || row.id, row.status, '/finance?view=invoices', 'invoice_match_difference')),
+        ...receivingExceptions.map((row) => evidence('receiving_doc', row.id, row.documentNumber || row.id, row.status, '/receiving', 'receiving_exception')),
       ].filter(Boolean).map((item) => JSON.stringify(item))).map((item) => JSON.parse(item)),
       sourceStatus: { available, visible },
     }

@@ -199,3 +199,33 @@ test('item master safety stock and reorder point columns reach the allocation', 
   const model = buildRuntimeInventoryAllocation(context({ items, inventoryItems: [balance('LDM', 8, { safetyStock: 0, reorderPoint: 0 })] }))
   assert.equal(getRuntimeSkuAvailability(model, 'LDM').stockStatus, 'below_safety_stock')
 })
+
+test('reserving stock for an order does not turn the order into a shortage', () => {
+  // 120 on hand and a confirmed order for 100, before and after the order
+  // reserves its 100 units, then after 40 of them ship.
+  const at = (onHandQuantity, reservedQuantity, fulfilledQuantity) => getRuntimeSkuAvailability(buildRuntimeInventoryAllocation(context({
+    inventoryItems: [balance('SKU-R', onHandQuantity, { reservedQuantity })],
+    salesOrders: [salesOrder('SO-R', [soLine('SKU-R', 100, reservedQuantity, fulfilledQuantity)])],
+  })), 'SKU-R')
+  for (const [label, row] of [['before', at(120, 0, 0)], ['reserved', at(120, 100, 0)], ['part shipped', at(80, 60, 40)]]) {
+    assert.equal(row.shortage, 0, label)
+    assert.equal(row.availableToPromise, 20, label)
+    assert.equal(row.riskLevel, 'low', label)
+  }
+  const reserved = at(120, 100, 0)
+  assert.deepEqual([reserved.available, reserved.openSalesDemand, reserved.unreservedSalesDemand], [20, 100, 0])
+})
+
+test('another order still competes for the stock left after a reservation', () => {
+  const model = buildRuntimeInventoryAllocation(context({
+    inventoryItems: [balance('SKU-S', 120, { reservedQuantity: 100 })],
+    salesOrders: [salesOrder('SO-S1', [soLine('SKU-S', 100, 100)]), salesOrder('SO-S2', [{ ...soLine('SKU-S', 50), id: 'SKU-S-line-2' }])],
+  }))
+  const row = getRuntimeSkuAvailability(model, 'SKU-S')
+  assert.equal(row.available, 20)
+  assert.equal(row.unreservedSalesDemand, 50)
+  assert.equal(row.shortage, 30)
+  assert.equal(row.availableToPromise, -30)
+  assert.equal(row.riskLevel, 'high')
+  assert.equal(model.summary.highRiskSkuCount, 1)
+})

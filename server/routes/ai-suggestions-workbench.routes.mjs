@@ -1,10 +1,12 @@
+import { withoutUnavailableProductLinks } from '../../shared/unavailable-product-routes.mjs'
 import { buildAiSuggestionsWorkbenchV2 } from '../domain/ai-suggestions-workbench-v2.mjs'
 
 export async function handleAiSuggestionsWorkbenchRoute(ctx) {
   const { req, res, url, db, send } = ctx
 
   if (req.method === 'GET' && url.pathname === '/api/ai-suggestions-workbench') {
-    send(res, 200, buildAiSuggestionsWorkbenchV2(db))
+    // No suggestion links into frozen or unavailable surfaces (such as the retired imports pages).
+    send(res, 200, withoutUnavailableProductLinks(buildAiSuggestionsWorkbenchV2(db)))
     return true
   }
 

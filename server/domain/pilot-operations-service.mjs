@@ -1,5 +1,6 @@
 import { PilotIdentityError, resolveProvisionedActor } from './pilot-identity.mjs'
 import { assertAuthorized } from '../auth/authorization-service.mjs'
+import { countActiveRoleManagers } from '../auth/authorization-admin-service.mjs'
 
 const fail = (code, message, status = 400) => { throw new PilotIdentityError(code, message, status) }
 const DATASETS = new Set(['receiving_documents', 'inventory_movements', 'inventory_balances', 'import_issues'])
@@ -10,12 +11,14 @@ export function createPilotOperationsService({ prisma, now = () => new Date() } 
   async function diagnostics(identity) {
     const actor = await resolveProvisionedActor(prisma, identity)
     assertAuthorized({ actor, permission: 'settings.diagnostics.read', tenantId: actor.tenantId })
-    const [tenant, activeWarehouses, activeUsers, admins, unscopedUsers, pendingImports, failedImports, migrationRows] = await Promise.all([
+    // Counted from role assignments and warehouse scopes. The legacy User.role
+    // grants nothing: an admin by that name sees only their scoped warehouses.
+    const [tenant, activeWarehouses, activeUsers, roleManagers, unscopedUsers, pendingImports, failedImports, migrationRows] = await Promise.all([
       prisma.tenant.findUnique({ where: { id: actor.tenantId }, select: { workspaceCompletedAt: true, openingBalanceLockedAt: true } }),
       prisma.warehouse.count({ where: { tenantId: actor.tenantId, status: 'active' } }),
       prisma.user.count({ where: { tenantId: actor.tenantId, status: 'active' } }),
-      prisma.user.count({ where: { tenantId: actor.tenantId, status: 'active', role: 'admin' } }),
-      prisma.user.count({ where: { tenantId: actor.tenantId, status: 'active', role: { not: 'admin' }, warehouseScopes: { none: {} } } }),
+      countActiveRoleManagers(prisma, actor.tenantId),
+      prisma.user.count({ where: { tenantId: actor.tenantId, status: 'active', warehouseScopes: { none: {} } } }),
       prisma.importBatch.count({ where: { tenantId: actor.tenantId, status: { in: ['uploaded', 'validated', 'ready', 'committing'] } } }),
       prisma.importBatch.count({ where: { tenantId: actor.tenantId, status: { in: ['blocked', 'failed'] } } }),
       prisma.$queryRaw`SELECT count(*)::int AS count FROM "_prisma_migrations" WHERE "finished_at" IS NOT NULL AND "rolled_back_at" IS NULL`,
@@ -24,8 +27,8 @@ export function createPilotOperationsService({ prisma, now = () => new Date() } 
       { id: 'migrations', status: Number(migrationRows[0]?.count || 0) >= 4 ? 'pass' : 'fail', detail: `${Number(migrationRows[0]?.count || 0)} migrations applied` },
       { id: 'workspace', status: tenant?.workspaceCompletedAt ? 'pass' : 'warn', detail: tenant?.workspaceCompletedAt ? 'Workspace profile complete' : 'Workspace profile incomplete' },
       { id: 'warehouses', status: activeWarehouses > 0 ? 'pass' : 'fail', detail: `${activeWarehouses} active warehouses` },
-      { id: 'users', status: activeUsers > 0 && admins > 0 ? 'pass' : 'fail', detail: `${activeUsers} active users; ${admins} active admins` },
-      { id: 'warehouse_scopes', status: unscopedUsers === 0 ? 'pass' : 'warn', detail: `${unscopedUsers} active non-admin users without warehouse scope` },
+      { id: 'users', status: activeUsers > 0 && roleManagers > 0 ? 'pass' : 'fail', detail: `${activeUsers} active users; ${roleManagers} can manage roles` },
+      { id: 'warehouse_scopes', status: unscopedUsers === 0 ? 'pass' : 'warn', detail: `${unscopedUsers} active users without warehouse scope` },
       { id: 'imports', status: failedImports === 0 ? 'pass' : 'warn', detail: `${pendingImports} pending; ${failedImports} blocked or failed` },
     ]
     return { generatedAt: now().toISOString(), workspaceId: actor.tenantId, overall: checks.some(row => row.status === 'fail') ? 'not_ready' : checks.some(row => row.status === 'warn') ? 'attention' : 'ready', checks, openingBalanceLocked: Boolean(tenant?.openingBalanceLockedAt), safe: true }

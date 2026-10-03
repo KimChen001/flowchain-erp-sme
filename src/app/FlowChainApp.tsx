@@ -1,4 +1,5 @@
 import { workspaceCopy } from "../i18n/workspaceCopy";
+import { FadeIn, PageSkeleton, PageTransition } from "../components/motion/Motion";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Toaster, toast } from "sonner";
@@ -110,6 +111,8 @@ import { useI18n } from "../i18n/I18n";
 import {
   LoginScreen,
   SIGN_IN_CONFIRM_PATH,
+  ACCEPT_INVITATION_PATH,
+  AcceptInvitationScreen,
   SignInConfirmScreen,
   type LocalDevelopmentStatus,
 } from "./SignInScreens";
@@ -404,6 +407,8 @@ export default function FlowChainApp() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
+  // The reader's role hides some record types from search.
+  const [searchRestricted, setSearchRestricted] = useState(false);
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [searchFocus, setSearchFocus] = useState<GlobalSearchFocus | null>(
     null,
@@ -709,6 +714,17 @@ export default function FlowChainApp() {
     (routeId: string) => {
       const route = routeById(routeId);
       if (!route) return false;
+      // Frozen, retired and internal pages render a lock screen, not the page.
+      if (
+        [
+          "FROZEN_UNAVAILABLE",
+          "LEGACY_REDIRECT",
+          "LEGACY_UNAVAILABLE",
+          "INTERNAL_ONLY",
+          "NOT_IMPLEMENTED",
+        ].includes(route.directAccessBehavior)
+      )
+        return false;
       if (
         route.requiredPermission &&
         (authorizationLoadState !== "ready" ||
@@ -809,6 +825,7 @@ export default function FlowChainApp() {
     const trimmed = query.trim();
     setSearchQuery(query);
     setSearchError("");
+    setSearchRestricted(false);
     if (!trimmed) {
       setSearchResults([]);
       setSearchOpen(false);
@@ -822,8 +839,10 @@ export default function FlowChainApp() {
         query: string;
         results: GlobalSearchResult[];
         total: number;
+        restrictedSubjects?: string[];
       }>(`/api/search?q=${encodeURIComponent(trimmed)}`);
       setSearchResults(payload.results);
+      setSearchRestricted(Boolean(payload.restrictedSubjects?.length));
       setActiveSearchIndex(payload.results.length ? 0 : -1);
     } catch (error) {
       setSearchResults([]);
@@ -1156,6 +1175,11 @@ export default function FlowChainApp() {
         }}
       />
     );
+  }
+
+  // An invitation link lands here, signed in or not.
+  if (location.pathname === ACCEPT_INVITATION_PATH) {
+    return <AcceptInvitationScreen localStatus={localStatus} />;
   }
 
   if (!authToken || !user) {
@@ -1602,6 +1626,14 @@ export default function FlowChainApp() {
                           </div>
                         ));
                       })()}
+                    {!searchLoading && !searchError && searchRestricted && (
+                      <div
+                        className={`${typography.searchResultMeta} px-3 py-2`}
+                        style={{ color: A.gray2 }}
+                      >
+                        {t("top.searchRestricted")}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1719,19 +1751,12 @@ export default function FlowChainApp() {
                       </button>
                     </Card>
                   ) : activeRoute.directAccessBehavior === "LEGACY_UNAVAILABLE" ? (
-                    <Card className="p-10 text-center" data-testid="legacy-route-unavailable">
-                      <AlertTriangle className="mx-auto text-amber-600" size={34} />
-                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Legacy page retired" : "旧页面已停用"}</h2>
-                      <p className="mt-2 text-sm text-slate-500">
-                        {language === "en-US" ? "This legacy route has no direct replacement." : "该旧路径没有一对一替代页面，不会跳转到无关功能。"}
-                      </p>
-                      <button
-                        type="button"
-                        className="mt-5 text-sm font-semibold text-blue-600 hover:underline"
-                        onClick={() => routerNavigate("/app/universal-intake")}
-                      >
-                        {language === "en-US" ? "Open unified data intake" : "前往统一数据接入"}
-                      </button>
+                    // The retired imports pages are an unavailable module: the same
+                    // "Capability unavailable" page, with no link onward.
+                    <Card className="p-10 text-center" data-testid="capability-route-blocked" data-legacy-route="true">
+                      <Lock className="mx-auto text-slate-500" size={34} />
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Capability unavailable" : "能力暂不可用"}</h2>
+                      <p className="mt-2 text-sm text-slate-500">{language === "en-US" ? "This page is no longer part of the product." : "该页面已不再属于产品功能。"}</p>
                     </Card>
                   ) : activeRoute.directAccessBehavior === "INTERNAL_ONLY" ? (
                     <Card className="p-10 text-center" data-testid="internal-route-blocked">
@@ -1796,22 +1821,11 @@ export default function FlowChainApp() {
                       moduleLabel={activeChildLabel || activeModuleLabel}
                       language={language}
                     >
+                      <PageTransition>
                       <React.Suspense
-                        fallback={
-                          <div
-                            className="grid grid-cols-2 gap-3 lg:grid-cols-4"
-                            aria-label={language === "en-US" ? "Loading module" : "模块加载中"}
-                          >
-                            {[0, 1, 2, 3].map((item) => (
-                              <div
-                                key={item}
-                                className="h-24 animate-pulse rounded-xl"
-                                style={{ background: A.gray5 }}
-                              />
-                            ))}
-                          </div>
-                        }
+                        fallback={<PageSkeleton label={language === "en-US" ? "Loading module" : "模块加载中"} />}
                       >
+                        <FadeIn>
                         {activeRoute.id === "procurement:rfq-detail" ? (
                           <CanonicalRfqDetailPage
                             documentId={entityIdForRoutePath(activeRoute, location.pathname)}
@@ -1849,7 +1863,9 @@ export default function FlowChainApp() {
                           panels[activeModule] ||
                           panels.overview
                         )}
+                        </FadeIn>
                       </React.Suspense>
+                      </PageTransition>
                     </PanelErrorBoundary>
                   )}
                 </ModuleShell>

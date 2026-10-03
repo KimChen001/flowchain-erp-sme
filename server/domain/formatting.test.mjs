@@ -45,11 +45,17 @@ test('currency amounts render as full comma-formatted values', async () => {
   assert.equal(mod.formatCurrencyAmount(12345.67, 'USD'), '$12,345.67')
   assert.equal(mod.formatCurrencyAmount(12345.67, 'CNY'), 'CN¥12,345.67')
   assert.equal(mod.formatCurrencyAmount(12345.67, 'EUR'), '€12,345.67')
-  assert.equal(mod.formatCurrencyAmount(null), '0')
+  // A missing or hidden amount is a dash, never 0; a real zero stays 0.
+  assert.equal(mod.formatCurrencyAmount(null), '—')
+  assert.equal(mod.formatCurrencyAmount(undefined, 'USD'), '—')
+  assert.equal(mod.formatCurrencyAmount(0, 'USD'), '$0.00')
+  assert.equal(mod.fmt('125.50', 'USD'), '$125.50')
 })
 
 test('number amount formatter handles invalid values safely', async () => {
   const { mod } = await loadFormatModule()
-  assert.equal(mod.formatNumberAmount(Number.NaN), '0')
+  assert.equal(mod.formatNumberAmount(Number.NaN), '—')
+  assert.equal(mod.formatNumberAmount(''), '—')
+  assert.equal(mod.formatNumberAmount(0), '0')
   assert.equal(mod.formatNumberAmount(12500.556, { maximumFractionDigits: 1 }), '12,500.6')
 })

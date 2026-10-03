@@ -74,6 +74,7 @@ test('formal procurement status domains expose one canonical catalog', () => {
     'issued',
     'partially_received',
     'fully_received',
+    'closed',
     'cancelled',
   ])
   assert.equal(PURCHASE_REQUEST_STATUS.SUBMITTED, 'submitted')
@@ -116,6 +117,11 @@ test('workflow and receiving transitions use distinct purchase-order authorities
   assert.equal(canTransitionProcurementAuthorityStatus('rfq', 'open', 'closed'), false)
   assert.equal(canTransitionProcurementAuthorityStatus('purchaseOrderWorkflow', 'approved', 'issued'), true)
   assert.equal(canTransitionProcurementAuthorityStatus('purchaseOrderWorkflow', 'issued', 'partially_received'), false)
+  // A buyer closes an issued or partially received PO; a closed PO stays closed.
+  assert.equal(canTransitionProcurementAuthorityStatus('purchaseOrderWorkflow', 'issued', 'closed'), true)
+  assert.equal(canTransitionProcurementAuthorityStatus('purchaseOrderWorkflow', 'partially_received', 'closed'), true)
+  assert.equal(canTransitionProcurementAuthorityStatus('purchaseOrderWorkflow', 'fully_received', 'closed'), false)
+  assert.equal(canTransitionProcurementAuthorityStatus('purchaseOrderReceiving', 'closed', 'partially_received'), false)
   assert.equal(canTransitionProcurementAuthorityStatus('purchaseOrderReceiving', 'issued', 'partially_received'), true)
   assert.equal(canTransitionProcurementAuthorityStatus('purchaseOrderReceiving', 'fully_received', 'issued'), true)
   assert.equal(canTransitionProcurementAuthorityStatus('purchaseOrderReceiving', 'fully_received', 'approved'), true)

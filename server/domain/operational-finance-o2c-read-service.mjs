@@ -17,6 +17,37 @@ const page = (query = {}) => {
   return { page: number, pageSize: size, skip: (number - 1) * size };
 };
 const validCurrency = (value) => /^[A-Z]{3}$/.test(text(value).toUpperCase());
+const CLOSED_DOCUMENT_STATUSES = ["cancelled", "void", "voided", "rejected"];
+
+// The currencies the finance landing reports on: every live supplier and
+// customer invoice as well as every open payable and receivable. Invoices
+// that have not yet become obligations still carry money, so a workspace with
+// only USD supplier invoices is a single-currency workspace, not one with no
+// currency data. Amounts are never converted between currencies.
+export function financeCurrencyLimitations(...currencyRows) {
+  const currencies = [
+    ...new Set(
+      currencyRows
+        .flat()
+        .map((row) => text(row?.currency).toUpperCase())
+        .filter(validCurrency),
+    ),
+  ].sort();
+  return {
+    currencies,
+    aggregationStatus:
+      currencies.length > 1
+        ? "multi_currency_unconverted"
+        : currencies.length === 1
+          ? "single_currency"
+          : "no_currency_data",
+    fxConverted: false,
+    message:
+      currencies.length > 1
+        ? "Amounts remain grouped by original currency; no FX conversion is applied."
+        : "No FX conversion is applied.",
+  };
+}
 
 function invoiceActions(actor, capability, row) {
   if (!capability?.enabled) return [];
@@ -39,6 +70,15 @@ function creditActions(actor, capability, row) {
     ? ["approve"]
     : [];
 }
+
+// Every finance read needs the record's own read permission; see the
+// supplier side in operational-finance-read-service.mjs.
+function assertRead(actor, permission) {
+  if (!can({ actor, permission, tenantId: actor.tenantId }))
+    fail("PERMISSION_DENIED", "Your role cannot view this finance record.", 403, { permission });
+}
+
+const amountsVisibleFor = (actor) => can({ actor, permission: "finance.amounts.read", tenantId: actor.tenantId });
 
 function protectFinanceFields(model, actor) {
   const amountsVisible = can({ actor, permission: "finance.amounts.read", tenantId: actor.tenantId });
@@ -168,6 +208,7 @@ export function createOperationalFinanceO2cReadService({
 
   async function listCustomerInvoices(query, context) {
     const current = await actor(context);
+    assertRead(current, "finance.customer_invoice.read");
     const paging = page(query);
     const search = text(query.search);
     const where = {
@@ -211,6 +252,7 @@ export function createOperationalFinanceO2cReadService({
 
   async function customerInvoiceDetail(id, context) {
     const current = await actor(context);
+    assertRead(current, "finance.customer_invoice.read");
     const row = await prisma.customerInvoice.findFirst({
       where: { id, tenantId: current.tenantId },
       include: {
@@ -226,9 +268,11 @@ export function createOperationalFinanceO2cReadService({
     });
     if (!row)
       fail("CUSTOMER_INVOICE_NOT_FOUND", "Customer invoice was not found.", 404);
+    const amountsVisible = amountsVisibleFor(current);
+    const hidden = (value) => (amountsVisible ? decimal(value) : null);
     return {
       ...invoiceSummary(row, current, capabilities),
-      lines: row.lines.map((line) => ({
+      lines: row.lines.map((line) => protectFinanceFields({
         id: line.id,
         lineNumber: line.lineNumber,
         shipmentLineId: line.shipmentLineId,
@@ -242,11 +286,11 @@ export function createOperationalFinanceO2cReadService({
         lineAmount: decimal(line.lineAmount),
         enteredTaxAmount: decimal(line.enteredTaxAmount),
         totalAmount: decimal(line.totalAmount),
-      })),
-      receivable: row.receivableObligation
+      }, current)),
+      receivable: row.receivableObligation && can({ actor: current, permission: "finance.receivable.read", tenantId: current.tenantId })
         ? receivableSummary(row.receivableObligation, current, capabilities)
         : null,
-      customerCreditNotes: row.creditNotes.map((note) =>
+      customerCreditNotes: (can({ actor: current, permission: "finance.customer_credit.read", tenantId: current.tenantId }) ? row.creditNotes : []).map((note) =>
         creditSummary(note, current, capabilities),
       ),
       evidence: [
@@ -266,9 +310,9 @@ export function createOperationalFinanceO2cReadService({
       ],
       reconciliation: {
         currency: row.currency,
-        subtotalAmount: decimal(row.subtotalAmount),
-        enteredTaxAmount: decimal(row.enteredTaxAmount),
-        totalAmount: decimal(row.totalAmount),
+        subtotalAmount: hidden(row.subtotalAmount),
+        enteredTaxAmount: hidden(row.enteredTaxAmount),
+        totalAmount: hidden(row.totalAmount),
         fxConverted: false,
       },
     };
@@ -276,6 +320,7 @@ export function createOperationalFinanceO2cReadService({
 
   async function listReceivables(query, context) {
     const current = await actor(context);
+    assertRead(current, "finance.receivable.read");
     const paging = page(query);
     const where = {
       tenantId: current.tenantId,
@@ -308,6 +353,8 @@ export function createOperationalFinanceO2cReadService({
 
   async function aging(query, context) {
     const current = await actor(context);
+    assertRead(current, "finance.receivable.read");
+    const amountsVisible = amountsVisibleFor(current);
     const workspace = await prisma.tenant.findUnique({
       where: { id: current.tenantId },
       select: { timezone: true },
@@ -366,12 +413,12 @@ export function createOperationalFinanceO2cReadService({
         return {
           currency,
           count: group.count,
-          current: fixed(group.current),
-          "1_30": fixed(group["1_30"]),
-          "31_60": fixed(group["31_60"]),
-          "61_90": fixed(group["61_90"]),
-          "90_plus": fixed(group["90_plus"]),
-          total: fixed(group.total),
+          current: amountsVisible ? fixed(group.current) : null,
+          "1_30": amountsVisible ? fixed(group["1_30"]) : null,
+          "31_60": amountsVisible ? fixed(group["31_60"]) : null,
+          "61_90": amountsVisible ? fixed(group["61_90"]) : null,
+          "90_plus": amountsVisible ? fixed(group["90_plus"]) : null,
+          total: amountsVisible ? fixed(group.total) : null,
         };
       }),
       items: rows.map((row) => ({
@@ -384,6 +431,7 @@ export function createOperationalFinanceO2cReadService({
 
   async function listCustomerCreditNotes(query, context) {
     const current = await actor(context);
+    assertRead(current, "finance.customer_credit.read");
     const paging = page(query);
     const where = {
       tenantId: current.tenantId,
@@ -413,6 +461,11 @@ export function createOperationalFinanceO2cReadService({
 
   async function entryData(context) {
     const current = await actor(context);
+    // Entry data serves the customer invoice and credit note forms; the endpoint is shared, so a role
+    // that cannot create these documents gets empty lists, not a 403.
+    if (!["finance.customer_invoice.create", "finance.customer_credit.create"].some((permission) => can({ actor: current, permission, tenantId: current.tenantId })))
+      return { postedShipments: [], customerInvoices: [], customerReturnPostings: [], capabilities };
+    const amountsVisible = amountsVisibleFor(current);
     const [shipments, invoices, returnPostings] = await Promise.all([
       prisma.shipmentDocument.findMany({
         where: {
@@ -465,7 +518,7 @@ export function createOperationalFinanceO2cReadService({
           itemName: line.itemName,
           postedQuantity: decimal(line.postedQuantity),
           unit: line.unit,
-          unitPrice: decimal(line.salesOrderLine.unitPrice),
+          unitPrice: amountsVisible ? decimal(line.salesOrderLine.unitPrice) : null,
         })),
       })),
       customerInvoices: invoices.map((row) =>
@@ -489,6 +542,7 @@ export function createOperationalFinanceO2cReadService({
 
   async function landing(context) {
     const current = await actor(context);
+    assertRead(current, "finance.overview.read");
     const asOf = now();
     const [
       supplierInvoicesAwaitingMatch,
@@ -501,6 +555,8 @@ export function createOperationalFinanceO2cReadService({
       customerCreditNotes,
       payableCurrencies,
       receivableCurrencies,
+      supplierInvoiceCurrencies,
+      customerInvoiceCurrencies,
     ] = await Promise.all([
       prisma.supplierInvoice.count({
         where: { tenantId: current.tenantId, status: "submitted" },
@@ -558,14 +614,17 @@ export function createOperationalFinanceO2cReadService({
         distinct: ["currency"],
         select: { currency: true },
       }),
+      prisma.supplierInvoice.findMany({
+        where: { tenantId: current.tenantId, status: { notIn: CLOSED_DOCUMENT_STATUSES } },
+        distinct: ["currency"],
+        select: { currency: true },
+      }),
+      prisma.customerInvoice.findMany({
+        where: { tenantId: current.tenantId, status: { notIn: CLOSED_DOCUMENT_STATUSES } },
+        distinct: ["currency"],
+        select: { currency: true },
+      }),
     ]);
-    const currencies = [
-      ...new Set(
-        [...payableCurrencies, ...receivableCurrencies]
-          .map((row) => text(row.currency).toUpperCase())
-          .filter(validCurrency),
-      ),
-    ].sort();
     return {
       dataSource: "Authoritative PostgreSQL",
       generatedAt: asOf.toISOString(),
@@ -579,20 +638,12 @@ export function createOperationalFinanceO2cReadService({
         supplierCreditMemos,
         customerCreditNotes,
       },
-      currencyLimitations: {
-        currencies,
-        aggregationStatus:
-          currencies.length > 1
-            ? "multi_currency_unconverted"
-            : currencies.length === 1
-              ? "single_currency"
-              : "no_currency_data",
-        fxConverted: false,
-        message:
-          currencies.length > 1
-            ? "Amounts remain grouped by original currency; no FX conversion is applied."
-            : "No FX conversion is applied.",
-      },
+      currencyLimitations: financeCurrencyLimitations(
+        payableCurrencies,
+        receivableCurrencies,
+        supplierInvoiceCurrencies,
+        customerInvoiceCurrencies,
+      ),
       settlementClaims: {
         payableMeansPaid: false,
         receivableMeansCollected: false,

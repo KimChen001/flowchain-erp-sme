@@ -24,6 +24,7 @@ export type AiRuntimeRequestV2 = {
     previousEntityRefs?: Array<Record<string, unknown>>;
     previousNavigationRefs?: Array<Record<string, unknown>>;
     previousEvidenceRefs?: Array<Record<string, unknown>>;
+    previousListRefs?: Array<Record<string, unknown>>;
     previousModuleId?: string;
     previousViewId?: string;
     previousFocusTarget?: Record<string, unknown> | null;

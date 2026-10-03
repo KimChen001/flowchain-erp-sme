@@ -4,6 +4,7 @@ import {
   InventoryOperationsError,
 } from "../domain/inventory-operations-command-service.mjs";
 import {
+  buildCycleCountCancellationPlan,
   buildCycleCountPostingPlan,
   buildInventoryAdjustmentCancellationPlan,
   buildInventoryAdjustmentPostingPlan,
@@ -173,11 +174,36 @@ export async function handleInventoryOperationsRoute(ctx) {
                 });
       } else if (kind === "counts") {
         await read.countWorkbench(id, ctx);
-        plan = await buildCycleCountPostingPlan({
-          prisma,
-          tenantId: ctx.identity?.tenantId,
-          countSessionId: id,
-        });
+        // Each preview answers for its own operation: cancel previews a
+        // cancellation, never the posting plan.
+        plan =
+          operation === "cancel"
+            ? await buildCycleCountCancellationPlan({
+                prisma,
+                tenantId: ctx.identity?.tenantId,
+                countSessionId: id,
+                reason: body.reason,
+              })
+            : operation === "post"
+              ? await buildCycleCountPostingPlan({
+                  prisma,
+                  tenantId: ctx.identity?.tenantId,
+                  countSessionId: id,
+                })
+              : {
+                  normalizedPlan: { countSessionId: id },
+                  allowed: false,
+                  blockingIssues: [
+                    {
+                      code: "COUNT_REVERSAL_UNSUPPORTED",
+                      message: "Posted cycle counts cannot be reversed. Post an adjustment instead.",
+                      status: 409,
+                    },
+                  ],
+                  warnings: [],
+                  balanceImpacts: [],
+                  documentImpacts: [],
+                };
       } else {
         await read.adjustmentWorkbench(id, ctx);
         plan =

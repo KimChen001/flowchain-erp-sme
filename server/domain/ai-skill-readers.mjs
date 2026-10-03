@@ -1,9 +1,10 @@
 import { readBusinessContext } from '../services/runtime-business-read-service.mjs'
+import { reportReadAccessFor, scopeBusinessContext } from './report-read-access.mjs'
 import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs'
 import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
 import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-inventory-allocation-read-model.mjs'
-import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
+import { PURCHASE_ORDER_STATUS, RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 import { classifyBusinessRecord } from './ai-business-record-validity.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
 
@@ -18,14 +19,18 @@ import { aiSkillVisibility } from './ai-skill-registry.mjs'
 //     remainder, stock status) and its at-risk definition.
 // The result holds codes, ids and numbers only; the presenter writes the text.
 // Every read carries the actor's tenant. A source the actor may not read is
-// left out and reported as hidden_by_permission, never as zero.
+// left out and reported as hidden_by_permission, never as zero. The business
+// read context is scoped to the actor as the reports scope it: collections
+// their role cannot open are empty, hidden amounts, invoice partners and
+// supplier bank details are null or left out, and inventory comes from their
+// warehouses.
 
 const array = (value) => Array.isArray(value) ? value : []
 const text = (value) => String(value ?? '').trim()
 const amount = (value) => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
 const RAW_LIMIT = 500
 const committedInvoiceStatuses = new Set(RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES)
-const SUBJECT_SOURCE = { purchase_orders: 'purchase_orders', purchase_requests: 'purchase_requests', rfqs: 'rfqs', receipts: 'receipts', supplier_invoices: 'supplier_invoices', inventory_balances: 'inventory', items: 'inventory' }
+const SUBJECT_SOURCE = { purchase_orders: 'purchase_orders', purchase_requests: 'purchase_requests', rfqs: 'rfqs', receipts: 'receipts', supplier_invoices: 'supplier_invoices', inventory_balances: 'inventory', items: 'inventory', suppliers: 'suppliers' }
 
 // Money as the report KPI states it: per currency, with its aggregation status
 // and money limitations. The report's display labels are not carried over.
@@ -49,11 +54,13 @@ async function boundedRaw(delegate, args, subject, limitations) {
 // Raw Item and InventoryBalance columns for the data completeness check: the
 // read repositories default missing units and thresholds, which would hide
 // exactly what the check looks for.
-async function rawRecordColumns(prisma, tenantId, visible, limitations) {
+// Balances only in the reader's warehouses (warehouseIds null: every one).
+async function rawRecordColumns(prisma, tenantId, visible, limitations, warehouseIds = null) {
   if (!prisma || !visible.inventory) return { items: null, balances: null }
+  const balanceWhere = warehouseIds ? { tenantId, warehouseId: { in: warehouseIds } } : { tenantId }
   const [items, balances] = await Promise.all([
     boundedRaw(prisma.item, { where: { tenantId }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'items', limitations),
-    boundedRaw(prisma.inventoryBalance, { where: { tenantId }, select: { id: true, sku: true, itemId: true, availableQuantity: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'inventory', limitations),
+    boundedRaw(prisma.inventoryBalance, { where: balanceWhere, select: { id: true, sku: true, itemId: true, availableQuantity: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'inventory', limitations),
   ])
   return { items, balances }
 }
@@ -73,7 +80,24 @@ async function rfqEvidence(prisma, tenantId, rfqs) {
   }
 }
 
-function recordsNeedingData({ reportRows, openReport, business, raw, visible, tenantId }) {
+// A purchase order status after alias normalisation; the stored value when it
+// is not a known status.
+function purchaseOrderStatus(value) {
+  try { return normalizeProcurementAuthorityStatus('purchaseOrder', value) } catch { return text(value) }
+}
+
+// The three-way match result on a submitted invoice: the match engine records
+// matched or exception; older records call an exception a variance. Anything
+// else has no result yet.
+export function aiSkillInvoiceMatch(row) {
+  const match = text(row?.matchStatus).toLowerCase()
+  const status = text(row?.status).toLowerCase()
+  if (match === 'matched' || (!match && ['matched', 'approved'].includes(status))) return 'matched'
+  if (['exception', 'variance'].includes(match) || (!match && status === 'exception')) return 'exception'
+  return 'pending'
+}
+
+function recordsNeedingData({ reportRows, openReport, business, raw, visible, visibility, tenantId }) {
   const records = []
   const checked = {}
   const add = (entityType, entityId, label, source, missing) => { if (missing.length) records.push({ entityType, entityId, label: label || entityId, source, missing: [...new Set(missing)] }) }
@@ -112,16 +136,18 @@ function recordsNeedingData({ reportRows, openReport, business, raw, visible, te
     checked.purchase_requests = requests.length
     for (const request of requests) add('purchase_request', text(request.id), text(request.id), 'purchase_requests', [...(!text(request.requiredDate) ? ['required_date'] : []), ...(!array(request.lines).length ? ['lines'] : [])])
   }
-  const classified = (entityType, rows, source, type, label) => {
+  // A field hidden from the reader is null in their rows: it is not reported
+  // as missing, since the reader cannot tell.
+  const classified = (entityType, rows, source, type, label, hiddenFields = []) => {
     checked[source] = rows.length
     for (const row of rows) {
       const result = classifyBusinessRecord(type, { tenantId, ...row })
-      const missing = result.state === 'incomplete' ? result.missingFields.map((field) => ({ supplierId: 'supplier', amount: 'amount', invoiceNumber: 'name', poId: 'purchase_order', status: 'status' })[field] || 'name') : []
+      const missing = result.state === 'incomplete' ? result.missingFields.map((field) => ({ supplierId: 'supplier', amount: 'amount', invoiceNumber: 'name', poId: 'purchase_order', status: 'status' })[field] || 'name').filter((field) => !hiddenFields.includes(field)) : []
       if (type === 'supplier_invoice' && !text(row.currency)) missing.push('currency')
       add(entityType, text(row.id), label(row), source, missing)
     }
   }
-  if (visible.supplier_invoices) classified('supplier_invoice', array(business.supplierInvoices), 'supplier_invoices', 'supplier_invoice', (row) => text(row.invoiceNumber || row.id))
+  if (visible.supplier_invoices) classified('supplier_invoice', array(business.supplierInvoices), 'supplier_invoices', 'supplier_invoice', (row) => text(row.invoiceNumber || row.id), [...(!visibility.amounts.invoice_amounts ? ['amount'] : []), ...(!visibility.partner ? ['supplier'] : [])])
   if (visible.receipts) classified('receiving_doc', array(business.receipts), 'receipts', 'receiving_document', (row) => text(row.documentNumber || row.id))
   return { records, checked }
 }
@@ -136,36 +162,52 @@ export async function readAiSkillFacts(skillContext) {
   if (visible.purchase_orders && !visibility.amounts.purchase_order_amounts) limitations.push({ code: 'amounts_hidden', what: 'purchase_orders' })
   if (visible.supplier_invoices && !visibility.amounts.invoice_amounts) limitations.push({ code: 'amounts_hidden', what: 'supplier_invoices' })
 
-  // The same reads the report routes make, scoped to the actor's tenant.
+  // The same reads the report routes make, scoped to the actor's tenant and
+  // to what the actor may read. The unscoped context (still in the actor's
+  // warehouses) only feeds inventory availability, which counts every
+  // order's demand, as the reports count it.
+  const access = routeContext.reportReadAccess || reportReadAccessFor(actor)
   const readCtx = { ...routeContext, identity: { ...routeContext.identity, tenantId } }
-  const business = routeContext.aiSkillBusinessContext || await readBusinessContext(readCtx)
+  const allocationContext = routeContext.aiSkillBusinessContext || await readBusinessContext(readCtx, { warehouseIds: access.warehouseIds })
+  const business = scopeBusinessContext(allocationContext, access)
   for (const entry of array(business.truncatedSubjects)) {
     const source = SUBJECT_SOURCE[entry.subject]
-    if (source && visible[source]) limitations.push({ code: 'truncated', source, limit: entry.limit })
+    if (source && (visible[source] || (source === 'suppliers' && (visible.purchase_orders || visible.supplier_invoices)))) limitations.push({ code: 'truncated', source, limit: entry.limit })
   }
   const procurementRuntime = routeContext.repositories?.procurementRuntime
-  const reportRows = visible.purchase_orders
+  // The open purchase orders report's rows, without prices for a reader who
+  // may not read them, as its route serves them.
+  const reportSource = visible.purchase_orders && access.collections.purchaseOrders
     ? (typeof procurementRuntime?.listForReport === 'function' ? await procurementRuntime.listForReport({ tenantId }) : array(business.purchaseOrders))
     : []
-  const raw = await rawRecordColumns(prisma, tenantId, visible, limitations)
+  const reportRows = access.prices ? reportSource : scopeBusinessContext({ purchaseOrders: reportSource }, { ...access, collections: {} }).purchaseOrders
+  const raw = await rawRecordColumns(prisma, tenantId, visible, limitations, access.warehouseIds)
 
   const facts = {
     tenantId, locale: tenant.locale, currency: tenant.currency, timezone: tenant.timezone,
     generatedAt: now.toISOString(), today, visibility, limitations, hidden,
     checked: Object.entries(visible).filter(([, allowed]) => allowed).map(([source]) => source),
-    purchaseOrders: null, inventory: null, invoices: null, purchaseRequests: null, rfqs: null, receipts: null,
+    purchaseOrders: null, inventory: null, invoices: null, purchaseRequests: null, rfqs: null, receipts: null, suppliers: null,
   }
 
-  const overview = buildRuntimeGovernedReport(business, { subject: 'overview' })
+  const overview = buildRuntimeGovernedReport(business, { subject: 'overview' }, { allocationContext })
   const kpi = (report, id) => array(report.kpis).find((row) => row.id === id)
-  const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now)
+  // Overdue days count to the tenant's calendar day, as in the report itself.
+  const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now, { timeZone: tenant.timezone })
   facts.asOf = openReport.asOf
-  // The open purchase orders report counts overdue days to the UTC calendar
-  // day; say so when that is not the tenant's day.
+  // The report and the assistant share one day; say so if they ever differ.
   if (visible.purchase_orders && openReport.asOf !== today) limitations.push({ code: 'report_day', date: openReport.asOf })
+
+  // Suppliers by id, code and name, to resolve a supplier named in a question:
+  // for readers of purchase orders, or of invoices with the partner snapshot.
+  if (visible.purchase_orders || (visible.supplier_invoices && visibility.partner)) {
+    facts.suppliers = array(business.suppliers).map((row) => ({ id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName) })).filter((row) => row.id && row.name)
+  }
 
   if (visible.purchase_orders) {
     const lineById = new Map(reportRows.map((po) => [text(po.id), array(po.lines)[0] || null]))
+    const skusById = new Map(reportRows.map((po) => [text(po.id), [...new Set(array(po.lines).map((line) => text(line.sku)).filter(Boolean))]]))
+    const rawStatusById = new Map(reportRows.map((po) => [text(po.id), text(po.status)]))
     facts.purchaseOrders = {
       open: openReport.summary.open,
       overdue: openReport.summary.overdue,
@@ -175,21 +217,43 @@ export async function readAiSkillFacts(skillContext) {
         id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: row.status,
         dueDate: row.dueDate, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received, remaining: row.remaining, unit: row.unit,
         amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency, dataIncomplete: row.dataIncomplete,
-        sku: text(lineById.get(row.id)?.sku) || null, itemId: text(lineById.get(row.id)?.itemId) || null,
+        sku: text(lineById.get(row.id)?.sku) || null, itemId: text(lineById.get(row.id)?.itemId) || null, skus: skusById.get(row.id) || [],
       })),
     }
+    // Every purchase order, whatever its status, by the open purchase orders
+    // report's line rules (scope all), for questions about one order. Open
+    // orders carry the same figures as the rows above.
+    const allOrders = buildOpenPurchaseOrdersReport(reportRows, { export: 'true', scope: 'all' }, now)
+    facts.purchaseOrders.index = array(allOrders.exportRows).map((row) => ({
+      id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: purchaseOrderStatus(row.status),
+      createdDate: row.createdDate || null, dueDate: row.dueDate || null, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received,
+      remaining: row.remaining, unit: row.unit, amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency,
+      isOpen: row.isOpen, dataIncomplete: row.dataIncomplete, skus: skusById.get(row.id) || [],
+    }))
+    // The stored status after alias normalisation ("待审批" is
+    // pending_approval), the way the purchase orders list filters it.
+    facts.purchaseOrders.pendingApproval = facts.purchaseOrders.index.filter((row) => purchaseOrderStatus(rawStatusById.get(row.id)) === PURCHASE_ORDER_STATUS.PENDING_APPROVAL)
   }
 
   if (visible.inventory) {
-    const allocation = buildRuntimeInventoryAllocation(business)
+    const allocation = buildRuntimeInventoryAllocation(access.collections.inventoryItems ? allocationContext : business)
+    const unitBySku = new Map(array(business.items).map((row) => [text(row.sku), text(row.unit) || null]))
     const rows = allocation.availability.map((row) => ({
-      sku: row.sku, itemId: row.itemId, itemName: row.itemName, onHand: row.onHand, available: row.available,
+      sku: row.sku, itemId: row.itemId, itemName: row.itemName, unit: unitBySku.get(text(row.sku)) || null, onHand: row.onHand, reserved: row.reserved, available: row.available,
       openSalesDemand: row.openSalesDemand, incomingApprovedPo: row.incomingApprovedPo, shortage: row.shortage,
       availableToPromise: row.availableToPromise, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint,
-      stockStatus: row.stockStatus, riskLevel: row.riskLevel, purchaseOrderIds: row.purchaseOrderIds, salesOrderIds: row.salesOrderIds,
+      // Purchase order ids only for readers of purchase orders; the incoming
+      // quantity is part of available to promise, which inventory shows.
+      // Sales order ids only for readers of sales orders.
+      stockStatus: row.stockStatus, riskLevel: row.riskLevel, purchaseOrderIds: visible.purchase_orders ? row.purchaseOrderIds : [], salesOrderIds: access.collections.salesOrders ? row.salesOrderIds : [],
     }))
+    // Master items with no stock, sales or purchase line: known items the
+    // allocation has no row for, so a question about one is not "not found".
+    const allocated = new Set(rows.map((row) => text(row.sku)))
+    const masterOnly = array(business.items).filter((row) => text(row.sku) && !allocated.has(text(row.sku))).map((row) => ({ sku: text(row.sku), itemId: text(row.id || row.itemId) || null, itemName: text(row.name || row.itemName) || null, unit: text(row.unit) || null, noStock: true }))
     facts.inventory = {
       rows,
+      masterOnly,
       atRisk: rows.filter(isInventoryRiskSku).map((row) => row.sku).sort(),
       atRiskCount: kpi(overview, 'inventory_risk_sku')?.currentValue ?? rows.filter(isInventoryRiskSku).length,
     }
@@ -201,9 +265,10 @@ export async function readAiSkillFacts(skillContext) {
     facts.invoices = {
       committed: visibility.amounts.invoice_amounts ? kpiMoney(kpi(finance, 'invoice_amount')) : null,
       committedCount: committed.length,
+      matchCounts: committed.reduce((counts, row) => { counts[aiSkillInvoiceMatch(row)] += 1; return counts }, { matched: 0, exception: 0, pending: 0 }),
       variances: committed
         .filter((row) => (amount(row.varianceAmount) ?? 0) !== 0 || text(row.matchStatus) === 'variance')
-        .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: text(row.supplierId), supplier: text(row.supplierName || row.supplierId), poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null })),
+        .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: visibility.partner ? text(row.supplierId) : '', supplier: visibility.partner ? text(row.supplierName || row.supplierId) : null, poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null })),
     }
   }
 
@@ -211,7 +276,7 @@ export async function readAiSkillFacts(skillContext) {
     facts.purchaseRequests = {
       awaitingApproval: array(business.purchaseRequests).filter((row) => text(row.status) === 'submitted').map((row) => {
         const line = array(row.lines)[0] || {}
-        return { id: text(row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, quantity: amount(line.quantity), unit: text(line.unit) || null }
+        return { id: text(row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, skus: [...new Set(array(row.lines).map((entry) => text(entry.sku)).filter(Boolean))], quantity: amount(line.quantity), unit: text(line.unit) || null }
       }),
     }
   }
@@ -219,10 +284,12 @@ export async function readAiSkillFacts(skillContext) {
   if (visible.rfqs) {
     const open = array(business.rfqs).filter((row) => ['open', 'collecting_quotes'].includes(text(row.status)))
     const evidence = await rfqEvidence(prisma, tenantId, open)
+    // Without the participation tables the row counters are the only source.
+    const rows = open.map((row) => ({ id: text(row.id), title: text(row.title) || text(row.id), responses: evidence ? evidence.responses.get(text(row.id)) || 0 : amount(row.quoted) ?? 0, awarded: evidence ? evidence.awarded.has(text(row.id)) : Boolean(text(row.bestSupplier)), invited: amount(row.suppliers), due: text(row.due).slice(0, 10) || null }))
     facts.rfqs = {
-      // Without the participation tables the row counters are the only source.
-      readyToAward: open.map((row) => ({ id: text(row.id), title: text(row.title) || text(row.id), responses: evidence ? evidence.responses.get(text(row.id)) || 0 : amount(row.quoted) ?? 0, awarded: evidence ? evidence.awarded.has(text(row.id)) : Boolean(text(row.bestSupplier)) }))
-        .filter((row) => row.responses > 0 && !row.awarded),
+      // Every open RFQ without an award, with or without quotes.
+      open: rows.filter((row) => !row.awarded),
+      readyToAward: rows.filter((row) => row.responses > 0 && !row.awarded).map(({ id, title, responses, awarded }) => ({ id, title, responses, awarded })),
     }
   }
 
@@ -242,7 +309,7 @@ export async function readAiSkillFacts(skillContext) {
     }
   }
 
-  const { records, checked } = recordsNeedingData({ reportRows, openReport, business, raw, visible, tenantId })
+  const { records, checked } = recordsNeedingData({ reportRows, openReport, business, raw, visible, visibility, tenantId })
   facts.records = records
   facts.recordsChecked = checked
   return facts

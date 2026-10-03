@@ -15,6 +15,8 @@ import { createScmServer } from '../bootstrap/scm-server.mjs'
 import { extractBusinessContextFromAiResponseV2 } from './ai-runtime-conversation-context-v2.mjs'
 import { createProductReviewScenarioDb } from './test-fixtures/product-review-scenario.mjs'
 import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
+import { reportReadAccessFor } from './report-read-access.mjs'
+import { permissionCodes } from '../auth/permission-catalog.mjs'
 
 function loadDb() {
   return createProductReviewScenarioDb()
@@ -569,6 +571,8 @@ test('with the rollback flag the legacy gateway still serves provider-assisted s
   const calls = []
   const send = (_res, status, payload) => calls.push({ status, payload })
   const identity = { authenticated: true, tenantId: 'tenant-legacy-gateway', userId: 'legacy-user' }
+  // A reader who may see everything; the facts are scoped to the reader.
+  const reportReadAccess = reportReadAccessFor({ authenticated: true, complete: true, tenantId: identity.tenantId, permissionCodes: new Set(permissionCodes) })
   await withServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ conclusion: { summary: '建议基于来源证据复核风险，并保留人工复核。' } }))
@@ -579,7 +583,7 @@ test('with the rollback flag the legacy gateway still serves provider-assisted s
     FLOWCHAIN_AI_PROVIDER_API_KEY: 'test-key',
     FLOWCHAIN_AI_LEGACY_TEMPLATE_GATEWAY: 'true',
   }, async () => {
-    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, identity, send, readBody: async () => ({ message: '今天有什么需要我处理？' }) }), true)
+    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, identity, reportReadAccess, send, readBody: async () => ({ message: '今天有什么需要我处理？' }) }), true)
   }))
   assert.equal(calls.at(-1).status, 200)
   assertRuntimeResponse(calls.at(-1).payload)
@@ -596,7 +600,7 @@ test('with the rollback flag the legacy gateway still serves provider-assisted s
     FLOWCHAIN_AI_PROVIDER_API_KEY: 'test-key',
     FLOWCHAIN_AI_LEGACY_TEMPLATE_GATEWAY: 'true',
   }, async () => {
-    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, identity, send, readBody: async () => ({ message: '哪些 SKU 有库存风险？' }) }), true)
+    assert.equal(await handleAiRuntimeGatewayRoute({ req: { method: 'POST' }, res: {}, url: new URL('/api/ai-runtime/respond', 'http://localhost'), db, identity, reportReadAccess, send, readBody: async () => ({ message: '哪些 SKU 有库存风险？' }) }), true)
   }))
   assert.equal(calls.at(-1).status, 200)
   assertRuntimeResponse(calls.at(-1).payload)
@@ -626,15 +630,22 @@ test('main route dispatcher serves AI runtime endpoints', async () => {
       assert.equal(anonymous.status, 401)
       const readiness = await fetch(`${base}/api/ai-runtime/readiness`, { headers: signedIn })
       assert.equal(readiness.status, 200)
-      // The workspace data cannot be read: a retryable 503 with a code and an
-      // English message, not a made-up empty answer.
+      // The workspace data cannot be read: a retryable 503 with a code and a
+      // message in the question's language, not a made-up empty answer.
       const response = await fetch(`${base}/api/ai-runtime/respond`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...signedIn },
+        body: JSON.stringify({ message: 'What needs my attention today?' }),
+      })
+      assert.equal(response.status, 503)
+      assert.deepEqual(await response.json(), { code: 'AI_SKILL_UNAVAILABLE', error: 'The assistant could not read your workspace data just now. Please try again.' })
+      const chinese = await fetch(`${base}/api/ai-runtime/respond`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...signedIn },
         body: JSON.stringify({ message: '今天有什么需要我处理？' }),
       })
-      assert.equal(response.status, 503)
-      assert.deepEqual(await response.json(), { code: 'AI_SKILL_UNAVAILABLE', error: 'The assistant could not read your workspace data just now. Please try again.' })
+      assert.equal(chinese.status, 503)
+      assert.deepEqual(await chinese.json(), { code: 'AI_SKILL_UNAVAILABLE', error: 'AI 助手暂时无法读取工作区数据，请稍后重试。' })
       // The retired template chat is off the path unless the rollback flag is on.
       const legacy = await fetch(`${base}/api/ai/chat`, {
         method: 'POST',

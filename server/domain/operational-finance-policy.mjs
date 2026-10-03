@@ -393,11 +393,13 @@ export async function buildSupplierMatchPlan({
     return basePlan("supplier_invoice_match", [
       issue("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404),
     ]);
-  if (!["submitted", "matching", "exception"].includes(invoice.status))
+  // The same rule as the match command: only a submitted invoice starts a
+  // match run. An exception invoice is cancelled and entered again instead.
+  if (invoice.status !== "submitted")
     blockingIssues.push(
       issue(
         "SUPPLIER_INVOICE_STATUS_INVALID",
-        "Only a submitted or exception invoice can be matched.",
+        "Only a submitted supplier invoice can start a match run.",
         409,
       ),
     );
@@ -589,6 +591,14 @@ export async function buildSupplierMatchPlan({
   });
 }
 
+export const supplierCreditMemoNumberDuplicate = (creditMemoNumber) =>
+  issue(
+    "SUPPLIER_CREDIT_MEMO_NUMBER_DUPLICATE",
+    `Credit memo number ${creditMemoNumber} is already recorded in this workspace.`,
+    409,
+    { creditMemoNumber },
+  );
+
 export async function buildSupplierCreditMemoPlan({
   prisma,
   tenantId,
@@ -747,6 +757,17 @@ export async function buildSupplierCreditMemoPlan({
       pricingSource,
     });
   }
+  // The number is stored as entered and is unique per workspace, so say so in
+  // the preview instead of letting the create fail on the unique index.
+  const creditMemoNumber = text(input.creditMemoNumber);
+  if (
+    creditMemoNumber &&
+    (await prisma.supplierCreditMemo.findUnique({
+      where: { tenantId_creditMemoNumber: { tenantId, creditMemoNumber } },
+      select: { id: true },
+    }))
+  )
+    blockingIssues.push(supplierCreditMemoNumberDuplicate(creditMemoNumber));
   return basePlan("supplier_credit_memo", blockingIssues, {
     invoice: {
       id: invoice.id,
@@ -756,7 +777,7 @@ export async function buildSupplierCreditMemoPlan({
     },
     returnPosting: { id: posting.id, postingNumber: posting.postingNumber },
     creditMemo: {
-      creditMemoNumber: text(input.creditMemoNumber),
+      creditMemoNumber,
       currency: text(input.currency).toUpperCase(),
       subtotalAmount: decimalString(subtotal),
       enteredTaxAmount: decimalString(tax),

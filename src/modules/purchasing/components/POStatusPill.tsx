@@ -14,6 +14,11 @@ const poStatusMeta: Record<POStatus, { color: string; bg: string }> = {
   "已驳回":   { color: A.red,    bg: "#fff1f0" },
   "已取消":   { color: A.red,    bg: "#fff1f0" },
 };
+// The same colours for the stored status codes.
+const poStatusCodeMeta: Record<string, POStatus> = {
+  draft: "草稿", pending_approval: "待审批", approved: "已审批", issued: "已发出",
+  partially_received: "部分到货", fully_received: "已完成", completed: "已完成", rejected: "已驳回", cancelled: "已取消",
+};
 
 export function POStatusPill({ status }: { status: string }) {
   const displayStatus = status || "未知";
@@ -21,7 +26,7 @@ export function POStatusPill({ status }: { status: string }) {
   const visibleStatus = translatedStatus !== displayStatus
     ? translatedStatus
     : displayStatus.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-  const m = poStatusMeta[displayStatus as POStatus] ?? { color: A.gray1, bg: A.gray6 };
+  const m = poStatusMeta[(poStatusCodeMeta[displayStatus] || displayStatus) as POStatus] ?? { color: A.gray1, bg: A.gray6 };
   return (
     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium"
       style={{ color: m.color, background: m.bg }}>{visibleStatus}</span>

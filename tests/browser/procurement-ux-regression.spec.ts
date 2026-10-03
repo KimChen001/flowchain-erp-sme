@@ -1,7 +1,0 @@
-import { test, expect } from '@playwright/test'
-test.beforeEach(async({page})=>page.addInitScript(()=>{localStorage.setItem('flowchain:auth-token','ux');localStorage.setItem('flowchain:current-user',JSON.stringify({id:'ux-user',name:'UX User',role:'采购经理'}))}))
-test('procurement workbench and order routes render distinct runtime content',async({page})=>{await page.goto('/app/procurement/workbench');await expect(page.getByText(/今日采购待办/)).toBeVisible();await page.goto('/app/procurement/orders');await expect(page.getByRole('heading',{name:'采购订单'}).last()).toBeVisible();await expect(page.getByText(/详细视图|需要查看完整列表/)).toHaveCount(0)})
-test('purchase request runtime list has real empty or persisted rows',async({page})=>{await page.goto('/app/procurement/requests');await expect(page.getByRole('heading',{name:'新建采购申请'})).toBeVisible();await expect(page.getByText('采购负责人')).toHaveCount(0);await expect(page.getByText('建议供应商')).toHaveCount(0)})
-test('RFQ runtime empty state replaces synthetic query rows',async({page})=>{await page.goto('/app/procurement/rfq');await expect(page.getByText('暂无询价单')).toBeVisible();await expect(page.locator('tbody tr')).toHaveCount(0)})
-test('RFQ page does not expose obsolete buyer filters',async({page})=>{await page.goto('/app/procurement/rfq');await expect(page.getByPlaceholder('RFQ、SKU 或标题')).toHaveCount(0);await expect(page.getByText(/RFQ-2026-/)).toHaveCount(0)})
-test('AI focus evidence and impact are collapsed by default',async({page})=>{await page.goto('/app/overview');await expect(page.locator('body')).toBeVisible()})

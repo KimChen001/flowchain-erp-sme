@@ -4,6 +4,7 @@ import { apiJson } from "../../lib/api-client";
 import { Card, Chip, A } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
 
+import { useWarehouseNames } from "../../lib/useWarehouseNames";
 type Capability = { enabled?: boolean; reason?: string };
 type SourceLine = {
   id: string;
@@ -250,6 +251,7 @@ function GovernanceList({
 }: {
   kind: "requests" | "authorizations" | "postings";
 }) {
+  const warehouseName = useWarehouseNames();
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
@@ -386,7 +388,7 @@ function GovernanceList({
                     <td className="px-4 py-3"><Status value={state} /></td>
                     <td className="px-4 py-3">{related || "—"}</td>
                     <td className="px-4 py-3">{row.lineCount ?? row.lines?.length ?? row.postingCount ?? "—"}</td>
-                    <td className="px-4 py-3">{row.warehouseId || row.warehouseIds?.join(", ") || "—"}</td>
+                    <td className="px-4 py-3">{row.warehouseId ? warehouseName(row.warehouseId) : row.warehouseIds?.map(warehouseName).join(", ") || "—"}</td>
                     <td className="px-4 py-3">
                       <Link className="font-semibold text-blue-600" to={`/app/inventory/returns/${kind}/${id}`}>
                         打开工作台
@@ -809,12 +811,13 @@ function BalanceSelect({
   options: BalanceOption[];
   onChange: (value: string) => void;
 }) {
+  const warehouseName = useWarehouseNames();
   return (
     <select aria-label={label} className={field} value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">请选择余额</option>
       {options.map((option) => (
         <option key={option.id} value={option.id}>
-          {option.warehouseId} / {option.location || "无库位"} · {option.balanceType === "available" ? `可用 ${option.availableQuantity}` : `隔离 ${option.quarantineQuantity}`}
+          {warehouseName(option.warehouseId)} / {option.location || "无库位"} · {option.balanceType === "available" ? `可用 ${option.availableQuantity}` : `隔离 ${option.quarantineQuantity}`}
         </option>
       ))}
     </select>
@@ -822,6 +825,7 @@ function BalanceSelect({
 }
 
 function PostingDetail({ id }: { id: string }) {
+  const warehouseName = useWarehouseNames();
   const { data, error, refresh } = useWorkbench(`/api/returns/postings/${encodeURIComponent(id)}/workbench`);
   const [preview, setPreview] = useState<any>(null);
   const [action, setAction] = useState("");
@@ -875,7 +879,7 @@ function PostingDetail({ id }: { id: string }) {
       <Card className="overflow-x-auto">
         <table className="w-full min-w-[920px] text-xs">
           <thead><tr className="border-b">{["SKU", "数量", "处置路径", "来源余额", "目标余额", "仓库 / 库位"].map((label) => <th key={label} className="px-4 py-3 text-left">{label}</th>)}</tr></thead>
-          <tbody>{data.lines.map((line: any) => <tr key={line.id} className="border-b last:border-0"><td className="px-4 py-3 font-semibold">{line.sku}</td><td className="px-4 py-3">{line.quantity} {line.unit}</td><td className="px-4 py-3">{pretty(line.dispositionRoute)}</td><td className="px-4 py-3">{line.sourceBalanceId}</td><td className="px-4 py-3">{line.destinationBalanceId || "—"}</td><td className="px-4 py-3">{line.warehouseId} / {line.location || "无库位"}</td></tr>)}</tbody>
+          <tbody>{data.lines.map((line: any) => <tr key={line.id} className="border-b last:border-0"><td className="px-4 py-3 font-semibold">{line.sku}</td><td className="px-4 py-3">{line.quantity} {line.unit}</td><td className="px-4 py-3">{pretty(line.dispositionRoute)}</td><td className="px-4 py-3">{line.sourceBalanceId}</td><td className="px-4 py-3">{line.destinationBalanceId || "—"}</td><td className="px-4 py-3">{warehouseName(line.warehouseId)} / {line.location || "无库位"}</td></tr>)}</tbody>
         </table>
       </Card>
       {action === "reverse" ? <input aria-label="冲销原因" className={`${field} w-full`} placeholder="必须填写冲销原因" value={reason} onChange={(event) => setReason(event.target.value)} /> : null}
@@ -937,6 +941,7 @@ function Evidence({
 }
 
 function QuarantineList() {
+  const warehouseName = useWarehouseNames();
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
@@ -971,7 +976,7 @@ function QuarantineList() {
         </div>
       </Card>
       <Card className="overflow-x-auto">
-        {data.balances.length ? <table className="w-full min-w-[860px] text-xs"><thead><tr className="border-b">{["SKU", "物料", "仓库", "库位", "隔离数量", "可用数量", "可预留", "状态"].map((label) => <th key={label} className="px-4 py-3 text-left">{label}</th>)}</tr></thead><tbody>{data.balances.map((row: any) => <tr key={row.id} className="border-b last:border-0"><td className="px-4 py-3 font-semibold">{row.sku}</td><td className="px-4 py-3">{row.itemName}</td><td className="px-4 py-3">{row.warehouseId}</td><td className="px-4 py-3">{row.location || "—"}</td><td className="px-4 py-3 font-semibold text-amber-700">{row.quarantineQuantity} {row.unit}</td><td className="px-4 py-3">—（独立库存类别）</td><td className="px-4 py-3">否</td><td className="px-4 py-3">{row.status || "active"}</td></tr>)}</tbody></table> : <div className="p-10 text-center text-sm text-slate-500">当前筛选范围没有隔离库存。</div>}
+        {data.balances.length ? <table className="w-full min-w-[860px] text-xs"><thead><tr className="border-b">{["SKU", "物料", "仓库", "库位", "隔离数量", "可用数量", "可预留", "状态"].map((label) => <th key={label} className="px-4 py-3 text-left">{label}</th>)}</tr></thead><tbody>{data.balances.map((row: any) => <tr key={row.id} className="border-b last:border-0"><td className="px-4 py-3 font-semibold">{row.sku}</td><td className="px-4 py-3">{row.itemName}</td><td className="px-4 py-3">{warehouseName(row.warehouseId)}</td><td className="px-4 py-3">{row.location || "—"}</td><td className="px-4 py-3 font-semibold text-amber-700">{row.quarantineQuantity} {row.unit}</td><td className="px-4 py-3">—（独立库存类别）</td><td className="px-4 py-3">否</td><td className="px-4 py-3">{row.status || "active"}</td></tr>)}</tbody></table> : <div className="p-10 text-center text-sm text-slate-500">当前筛选范围没有隔离库存。</div>}
       </Card>
     </div>
   );

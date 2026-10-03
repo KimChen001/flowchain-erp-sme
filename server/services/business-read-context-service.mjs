@@ -1,3 +1,5 @@
+import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from '../domain/tenant-calendar-day.mjs'
+
 const clone = value => structuredClone(value)
 const array = value => Array.isArray(value) ? value : []
 
@@ -15,13 +17,16 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
       const truncated = new Map()
       const onTruncated = ({ subject, limit }) => { if (subject) truncated.set(subject, { subject, limit }) }
       const scope = { tenantId: options.tenantId, onTruncated }
+      // Inventory follows the reader's warehouse scope when one is given.
+      const warehouseScoped = Array.isArray(options.warehouseIds)
+      const inventoryScope = warehouseScoped ? { ...scope, warehouseIds: options.warehouseIds } : scope
       const itemMethod = typeof masterData?.listManagedItems === 'function' ? 'listManagedItems' : 'listItems'
       const [items, suppliers, customers, itemSupplierRelationships, inventoryItems, salesOrders, procurement] = await Promise.all([
         call(masterData, itemMethod, [], scope),
         call(masterData, 'listSuppliers', [], scope),
         call(masterData, 'listCustomers', [], scope),
         call(masterData, 'listAllItemSupplierRelationships', [], scope),
-        call(repositories.inventoryRuntime, 'listItems', [], scope),
+        call(repositories.inventoryRuntime, 'listItems', [], inventoryScope),
         call(repositories.salesOrders, 'listOrders', [], scope),
         call(repositories.procurementRuntime, 'snapshot', {}, scope),
       ])
@@ -30,6 +35,7 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
       if (!repositories.inventoryRuntime) dataLimitations.push('inventory_runtime_unavailable')
       if (!repositories.salesOrders) dataLimitations.push('sales_runtime_unavailable')
       dataLimitations.push('warehouse_runtime_not_connected', 'bin_runtime_not_connected')
+      if (warehouseScoped) dataLimitations.push('inventory_scoped_to_reader_warehouses')
       if (array(procurement.receipts).length === 0) dataLimitations.push('receipt_runtime_has_no_records')
       if (array(procurement.supplierInvoices).length === 0) dataLimitations.push('invoice_runtime_has_no_records')
 
@@ -67,11 +73,15 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
 }
 
 const updatedAt = record => String(record.updatedAt || record.createdAt || '')
+// The currency the document records. Never a guess: '' when none is stored.
+const documentCurrency = record => String(record.defaultCurrency || record.currency || record.lines?.find(line => line?.currency)?.currency || '').trim().toUpperCase()
 
-export function buildHomeOverview(context) {
+// "Changes today" counts documents updated on the tenant's calendar day.
+export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
   const workItems = [
     ...context.purchaseRequests.filter(row => row.status === 'submitted').map(row => ({
       priority: '高', title: '采购申请待审批', id: row.id, description: `申请金额 ${row.totalAmount ?? '—'}`,
+      amount: row.totalAmount ?? null, currency: documentCurrency(row),
       canonicalRoute: `/app/procurement/requests/${encodeURIComponent(row.id)}`, entityType: 'purchase_request', updatedAt: updatedAt(row),
     })),
     ...context.purchaseRequests.filter(row => row.status === 'approved').map(row => ({
@@ -85,12 +95,13 @@ export function buildHomeOverview(context) {
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10)
 
   const documents = [
-    ...context.purchaseRequests.map(row => ({ type: '采购申请', entityType: 'purchase_request', id: row.id, status: row.status, supplier: row.lines?.[0]?.supplierSnapshot?.supplierName || row.lines?.[0]?.supplierId || '—', amount: row.totalAmount ?? null, updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/requests/${encodeURIComponent(row.id)}` })),
-    ...context.rfqs.map(row => ({ type: '询价', entityType: 'rfq', id: row.id, status: row.status, supplier: '—', amount: row.totalAmount ?? null, updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/rfqs/${encodeURIComponent(row.id)}` })),
-    ...context.purchaseOrders.map(row => ({ type: '采购订单', entityType: 'purchase_order', id: row.id, status: row.status, supplier: row.supplierSnapshot?.supplierName || row.supplierId || '—', amount: row.totalAmount ?? null, updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/orders/${encodeURIComponent(row.id)}` })),
+    ...context.purchaseRequests.map(row => ({ type: '采购申请', entityType: 'purchase_request', id: row.id, status: row.status, supplier: row.lines?.[0]?.supplierSnapshot?.supplierName || row.lines?.[0]?.supplierId || '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/requests/${encodeURIComponent(row.id)}` })),
+    ...context.rfqs.map(row => ({ type: '询价', entityType: 'rfq', id: row.id, status: row.status, supplier: '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/rfq/${encodeURIComponent(row.id)}` })),
+    ...context.purchaseOrders.map(row => ({ type: '采购订单', entityType: 'purchase_order', id: row.id, status: row.status, supplier: row.supplierSnapshot?.supplierName || row.supplierId || '—', amount: row.totalAmount ?? null, currency: documentCurrency(row), updatedAt: updatedAt(row), canonicalRoute: `/app/procurement/orders/${encodeURIComponent(row.id)}` })),
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 10)
-  const today = new Date().toISOString().slice(0, 10)
-  const todayChanges = documents.filter(row => row.updatedAt.startsWith(today)).length
+  const today = tenantCalendarDay(now, timeZone)
+  const dayOf = value => /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : Number.isFinite(Date.parse(value)) ? tenantCalendarDay(new Date(value), timeZone) : ''
+  const todayChanges = documents.filter(row => dayOf(row.updatedAt) === today).length
   const limitations = [...context.dataLimitations, 'unresolved_risk_metric_not_connected']
   return {
     workItems,

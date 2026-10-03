@@ -1,4 +1,6 @@
 // Explicit knowledge-only preset. Never reuse a key with an arbitrary inherited endpoint.
+const PARLEY_API_BASE = 'https://parley.api.mit.edu/v1'
+
 export function knowledgeProviderEnv(env = {}) {
   if (env.FLOWCHAIN_KNOWLEDGE_PROVIDER === 'qwen') {
     const region = String(env.FLOWCHAIN_QWEN_REGION || '')
@@ -20,6 +22,25 @@ export function knowledgeProviderEnv(env = {}) {
       FLOWCHAIN_AI_EMBEDDING_MODEL: env.FLOWCHAIN_QWEN_EMBEDDING_MODEL || 'text-embedding-v4',
       FLOWCHAIN_AI_EMBEDDING_DIMENSIONS: env.FLOWCHAIN_QWEN_EMBEDDING_DIMENSIONS || '1024',
       FLOWCHAIN_AI_EMBEDDING_BATCH_SIZE: '10',
+    }
+  }
+  if (env.FLOWCHAIN_KNOWLEDGE_PROVIDER === 'parley') {
+    // The assistant key is reused only when it is already configured for Parley.
+    const assistantKeyIsParley = String(env.FLOWCHAIN_AI_PROVIDER_ENDPOINT || '').trim().startsWith(`${PARLEY_API_BASE}/`)
+    const key = String(env.PARLEY_API_KEY || (assistantKeyIsParley ? env.FLOWCHAIN_AI_PROVIDER_API_KEY : '') || '').trim()
+    return {
+      ...env,
+      FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted',
+      FLOWCHAIN_AI_PROVIDER_KIND: 'parley_chat',
+      FLOWCHAIN_AI_PROVIDER_ENDPOINT: `${PARLEY_API_BASE}/chat/completions`,
+      FLOWCHAIN_AI_PROVIDER_API_KEY: key,
+      FLOWCHAIN_AI_PROVIDER_MODEL: env.FLOWCHAIN_PARLEY_MODEL || 'claude-haiku-4-5',
+      FLOWCHAIN_AI_PROVIDER_TIMEOUT_MS: '15000',
+      FLOWCHAIN_AI_PROVIDER_MAX_OUTPUT_CHARS: '12000',
+      FLOWCHAIN_AI_EMBEDDING_ENDPOINT: `${PARLEY_API_BASE}/embeddings`,
+      FLOWCHAIN_AI_EMBEDDING_API_KEY: key,
+      FLOWCHAIN_AI_EMBEDDING_MODEL: env.FLOWCHAIN_PARLEY_EMBEDDING_MODEL || 'text-embedding-3-small',
+      FLOWCHAIN_AI_EMBEDDING_DIMENSIONS: env.FLOWCHAIN_PARLEY_EMBEDDING_DIMENSIONS || '1536',
     }
   }
   if (env.FLOWCHAIN_KNOWLEDGE_PROVIDER !== 'openai') return env

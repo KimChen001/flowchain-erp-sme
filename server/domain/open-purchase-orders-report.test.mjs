@@ -3,6 +3,11 @@ import assert from 'node:assert/strict'
 import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs'
 import { createDbProcurementRuntimeRepository } from '../repositories/db-procurement-runtime-repository.mjs'
 import { handleReportsAnalyticsRoute } from '../routes/reports-analytics.routes.mjs'
+import { reportReadAccessFor } from '../domain/report-read-access.mjs'
+import { permissionCodes } from '../auth/permission-catalog.mjs'
+
+// A reader who may see everything.
+const fullReportAccess = reportReadAccessFor({ authenticated: true, complete: true, tenantId: 'tenant-any', permissionCodes: new Set(permissionCodes) })
 
 const now = new Date('2026-09-11T10:00:00Z')
 const po = (id, extra = {}) => ({ id, supplierName: 'Acme', createdAt: '2026-09-01', expectedDate: '2026-09-09', status: 'issued', currency: 'USD', totalAmount: 125.5, lines: [{ quantity: 10, receivedQuantity: 2, unit: 'pcs' }], ...extra })
@@ -80,7 +85,7 @@ test('report repository requires tenant scope, retains report fields and has no 
 
 test('report route uses authenticated tenant identity and forwards export filters', async () => {
   let response, tenant
-  const handled = await handleReportsAnalyticsRoute({ req: { method: 'GET' }, res: {}, url: new URL('http://localhost/api/reports/open-purchase-orders?export=true&currency=USD&tenantId=other'), identity: { tenantId: 'tenant-a' }, repositories: { procurementRuntime: { listForReport: async scope => { tenant = scope.tenantId; return [po('A'), po('B', { currency: 'CNY' })] } } }, send: (_res, status, payload) => { response = { status, payload } } })
+  const handled = await handleReportsAnalyticsRoute({ req: { method: 'GET' }, res: {}, url: new URL('http://localhost/api/reports/open-purchase-orders?export=true&currency=USD&tenantId=other'), identity: { tenantId: 'tenant-a' }, reportReadAccess: fullReportAccess, repositories: { procurementRuntime: { listForReport: async scope => { tenant = scope.tenantId; return [po('A'), po('B', { currency: 'CNY' })] } } }, send: (_res, status, payload) => { response = { status, payload } } })
   assert.equal(handled, true)
   assert.equal(tenant, 'tenant-a')
   assert.equal(response.status, 200)
@@ -112,4 +117,30 @@ test('only committed orders with quantity still to receive are open, and only th
   const all = report(rows, { scope: 'all' })
   assert.equal(all.total, 5)
   assert.deepEqual(Object.fromEntries(all.rows.map((row) => [row.id, row.isOpen])), { ISSUED: true, DRAFT: false, PENDING: false, STALE: false, CANCELLED: false })
+})
+
+test('overdue days count to the tenant calendar day, not the UTC day', () => {
+  const due = [po('PO-DUE', { expectedDate: '2026-09-29', lines: [{ quantity: 10, receivedQuantity: 0, unit: 'pcs', promisedDate: '2026-09-29' }] })]
+  // 21:30 on Sep 29 in New York is already Sep 30 in UTC: the order is due today, not late.
+  const evening = buildOpenPurchaseOrdersReport(due, {}, new Date('2026-09-30T01:30:00Z'), { timeZone: 'America/New_York' })
+  assert.equal(evening.asOf, '2026-09-29')
+  assert.equal(evening.rows[0].overdueDays, 0)
+  assert.equal(evening.summary.overdue, 0)
+  // One minute before and after midnight in New York (04:00 UTC during daylight time).
+  assert.equal(buildOpenPurchaseOrdersReport(due, {}, new Date('2026-09-30T03:59:00Z'), { timeZone: 'America/New_York' }).rows[0].overdueDays, 0)
+  const midnight = buildOpenPurchaseOrdersReport(due, {}, new Date('2026-09-30T04:00:00Z'), { timeZone: 'America/New_York' })
+  assert.equal(midnight.asOf, '2026-09-30')
+  assert.equal(midnight.rows[0].overdueDays, 1)
+  // A tenant on UTC is already a day late at 01:30 UTC.
+  assert.equal(buildOpenPurchaseOrdersReport(due, {}, new Date('2026-09-30T01:30:00Z'), { timeZone: 'UTC' }).rows[0].overdueDays, 1)
+  // Without a stored timezone the workspace default (America/New_York) applies.
+  assert.equal(buildOpenPurchaseOrdersReport(due, {}, new Date('2026-09-30T01:30:00Z')).asOf, '2026-09-29')
+})
+
+test('the open purchase orders route counts overdue to the tenant timezone', async () => {
+  let response
+  await handleReportsAnalyticsRoute({ req: { method: 'GET' }, res: {}, url: new URL('http://localhost/api/reports/open-purchase-orders'), identity: { tenantId: 'tenant-a' }, reportReadAccess: fullReportAccess, reportNow: new Date('2026-09-30T01:30:00Z'), tenantTimezone: 'Asia/Shanghai', repositories: { procurementRuntime: { listForReport: async () => [] } }, send: (_res, status, payload) => { response = { status, payload } } })
+  assert.equal(response.status, 200)
+  assert.equal(response.payload.asOf, '2026-09-30')
+  assert.equal(response.payload.timezone, 'Asia/Shanghai')
 })

@@ -1,5 +1,8 @@
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
+import { tenantCalendarDay } from './tenant-calendar-day.mjs'
+
+export { tenantCalendarDay }
 
 // Everything a workspace skill needs besides the business rows: the signed-in
 // actor with their permissions, the tenant's locale, currency and timezone,
@@ -19,15 +22,6 @@ export class AiSkillError extends Error {
 
 export const AI_SKILL_TENANT_DEFAULTS = Object.freeze({ locale: 'en-US', currency: 'USD', timezone: 'America/New_York' })
 
-// The calendar day of an instant in a timezone, as YYYY-MM-DD.
-export function tenantCalendarDay(instant, timeZone) {
-  try {
-    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(instant).map((part) => [part.type, part.value]))
-    return `${parts.year}-${parts.month}-${parts.day}`
-  } catch {
-    return instant.toISOString().slice(0, 10)
-  }
-}
 
 async function prismaFor(ctx) {
   if (ctx.aiSkillPrisma) return ctx.aiSkillPrisma

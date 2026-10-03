@@ -17,7 +17,6 @@
     "typecheck": "tsc --noEmit",
     "audit:i18n": "node scripts/audit-interface-language.mjs",
     "test": "node --test server/domain/*.test.mjs server/routes/*.test.mjs",
-    "test:browser": "playwright test",
     "test:browser:english": "playwright test --config playwright.english.config.ts",
     "test:db:english": "node scripts/run-postgres-test-files.mjs tests/postgres/english-default-language.test.mjs",
     "test:db:us-defaults": "node scripts/run-postgres-test-files.mjs tests/postgres/us-business-defaults.test.mjs",
@@ -25,11 +24,11 @@
     "test:db:tenant-provision": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-provision.test.mjs",
     "test:db:walkthrough-scenario": "node scripts/run-postgres-test-files.mjs tests/postgres/walkthrough-scenario.test.mjs",
     "test:db:tenant-scoped-reads": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-scoped-business-reads.test.mjs",
+    "test:db:master-data-writes": "node scripts/run-postgres-test-files.mjs tests/postgres/master-data-writes.test.mjs",
     "test:db:report-truncation": "node scripts/run-postgres-test-files.mjs tests/postgres/report-truncation.test.mjs",
     "test:db:inventory-allocation": "node scripts/run-postgres-test-files.mjs tests/postgres/inventory-allocation-walkthrough.test.mjs",
     "test:db:ai-knowledge": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-knowledge.test.mjs",
     "test:db:ai-pgvector": "node --test tests/postgres/ai-pgvector-service.test.mjs",
-    "test:browser:ai": "playwright test tests/browser/ai-copilot.spec.ts",
     "test:browser:receiving": "node scripts/run-receiving-playwright.mjs",
     "test:browser:reports": "node scripts/run-reports-playwright.mjs",
     "test:browser:outbound": "node scripts/run-outbound-playwright.mjs",
@@ -51,7 +50,6 @@
     "test:browser:bank-reconciliation": "node scripts/run-bank-reconciliation-playwright.mjs",
     "attachment:health-check": "node scripts/attachment-health-check.mjs",
     "attachment:orphan-check": "node scripts/attachment-orphan-check.mjs",
-    "test:browser:ai:empty": "node scripts/browser-uat-ai-empty.mjs",
     "test:browser:ai-business-query-planning": "node scripts/run-ai-business-query-playwright.mjs",
     "test:ai-provider-smoke:fake": "node scripts/ai-runtime-provider-smoke.mjs --all-fake",
     "check:ai-provider-env": "node scripts/ai-runtime-provider-env-check.mjs",
@@ -96,6 +94,7 @@
     "test:db:procurement-flow": "node scripts/run-postgres-test-files.mjs tests/postgres/procurement-db-flow.test.mjs",
     "test:db:original-promise": "node scripts/run-postgres-test-files.mjs tests/postgres/purchase-order-original-promise.test.mjs",
     "test:db:supplier-scorecard": "node scripts/run-postgres-test-files.mjs tests/postgres/supplier-scorecard.test.mjs",
+    "test:db:report-views": "node scripts/run-postgres-test-files.mjs tests/postgres/report-views.test.mjs",
     "test:db:rfq-response-revisions": "node scripts/verify-rfq-response-revision-upgrade.mjs && node scripts/run-postgres-test-files.mjs tests/postgres/rfq-participation-revision-authority.test.mjs",
     "test:db:rfq-supplier-response-command": "node scripts/run-postgres-test-files.mjs tests/postgres/rfq-supplier-response-command.test.mjs",
     "test:db:rfq-supplier-comparison": "node scripts/run-postgres-test-files.mjs tests/postgres/rfq-supplier-comparison.test.mjs",
@@ -136,7 +135,13 @@
     "pilot:check": "node scripts/check-pilot-readiness.mjs",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "test:db:finance-read-permissions": "node scripts/run-postgres-test-files.mjs tests/postgres/finance-read-permissions.test.mjs",
+    "test:db:sales-read-permissions": "node scripts/run-postgres-test-files.mjs tests/postgres/sales-read-permissions.test.mjs",
+    "test:db:inventory-warehouse-scope": "node scripts/run-postgres-test-files.mjs tests/postgres/inventory-warehouse-scope.test.mjs",
+    "test:db:search-graph-read-scope": "node scripts/run-postgres-test-files.mjs tests/postgres/search-evidence-graph-read-scope.test.mjs",
+    "test:db:role-backfill-once": "node scripts/run-postgres-test-files.mjs tests/postgres/role-backfill-once.test.mjs",
+    "test:db:po-close-receipt-cancel": "node scripts/run-postgres-test-files.mjs tests/postgres/po-close-receipt-cancel.test.mjs"
   },
   "dependencies": {
     "@langchain/core": "1.2.9",
@@ -173,6 +178,7 @@
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
     "csv-parse": "7.0.2",
+    "echarts": "6.1.0",
     "embla-carousel-react": "8.6.0",
     "iconv-lite": "^0.7.3",
     "input-otp": "1.4.2",
@@ -205,7 +211,7 @@
     "prisma": "7.8.0",
     "tailwindcss": "4.1.12",
     "typescript": "^5.9.3",
-    "vite": "6.3.5"
+    "vite": "6.4.3"
   },
   "peerDependencies": {
     "react": "18.3.1",
@@ -221,7 +227,7 @@
   },
   "pnpm": {
     "overrides": {
-      "vite": "6.3.5"
+      "vite": "6.4.3"
     }
   }
 }

@@ -35,14 +35,17 @@ function createDb() {
   }
 }
 
-function routeContext(method, path, db = createDb()) {
+const actorWith = (...permissions) => ({ authenticated: true, complete: true, tenantId: 'tenant-sales', userId: 'runtime-manager', permissionCodes: new Set(permissions) })
+
+function routeContext(method, path, db = createDb(), actor = actorWith('sales_order.read')) {
   let response = null
   let wrote = false
   const orders = db.salesOrders.map(row => ({ ...row, statusLabel: row.status, deliveryRiskLevel: row.status === 'shortage_risk' ? 'high' : 'low', linkedPurchaseOrders: (row.linkedPurchaseOrders || []).map(id => ({ id })) }))
   return {
     ctx: {
       req: { method },
-      identity: { authenticated: true, userId: 'runtime-manager', name: 'Runtime Manager', role: 'manager' },
+      identity: { authenticated: true, tenantId: 'tenant-sales', userId: 'runtime-manager', name: 'Runtime Manager', role: 'manager' },
+      salesDemandActor: actor,
       res: {},
       url: new URL(path, 'http://localhost'),
       db,
@@ -133,4 +136,15 @@ test('Sales Demand route reads repository facts and fails closed for the removed
 
   assert.equal(listSalesOrders(db, { q: '华东' })[0].salesOrderId, 'SO-HIGH')
   assert.equal(buildCustomerDeliveryRisks(db)[0].salesOrderId, 'SO-HIGH')
+})
+
+test('Sales Demand reads need sales_order.read', async () => {
+  const db = createDb()
+  for (const path of ['/api/sales-demand/summary', '/api/sales-demand/orders', '/api/sales-demand/orders/SO-HIGH', '/api/sales-demand/risks', '/api/sales-demand/impact?sku=SKU-OK', '/api/sales-demand/po-impact?poId=PO-2026-1282']) {
+    const denied = routeContext('GET', path, db, actorWith('procurement.purchase_order.read', 'finance.supplier_invoice.read'))
+    assert.equal(await handleSalesDemandRoute(denied.ctx), true)
+    assert.equal(denied.response.status, 403, path)
+    assert.equal(denied.response.payload.code, 'PERMISSION_DENIED', path)
+    assert.equal(JSON.stringify(denied.response.payload).includes('SO-HIGH'), false, path)
+  }
 })

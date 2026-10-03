@@ -9,7 +9,7 @@ const definitions = [
   ['customer', 'customers', ['id', 'code', 'customerCode'], ['name', 'customerName', 'code'], '/app/master-data/customers', 'masterData.customerRuntime'],
   ['sales_order', 'salesOrders', ['salesOrderId', 'id'], ['customerName', 'salesOrderId'], '/app/sales/orders', 'salesOrders'],
   ['purchase_request', 'purchaseRequests', ['id', 'pr'], ['title', 'id'], '/app/procurement/requests', 'procurementRuntime'],
-  ['rfq', 'rfqs', ['id'], ['title', 'id'], '/app/procurement/rfqs', 'procurementRuntime'],
+  ['rfq', 'rfqs', ['id'], ['title', 'id'], '/app/procurement/rfq', 'procurementRuntime'],
   ['purchase_order', 'purchaseOrders', ['id', 'po'], ['supplierSnapshot.supplierName', 'id'], '/app/procurement/orders', 'procurementRuntime'],
   ['inventory_item', 'inventoryItems', ['sku', 'itemId', 'id'], ['itemName', 'name', 'sku'], '/app/inventory/items', 'inventoryRuntime'],
   ['warehouse', 'warehouses', ['id', 'warehouseId', 'code'], ['name', 'warehouseName', 'code'], '/app/master-data/warehouses', 'warehouseRuntime'],

@@ -29,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 163);
+  assert.equal(routes.length, 164);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -46,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    163,
+    164,
   );
   assert.throws(
     () =>
@@ -142,13 +142,36 @@ test("capability and permission metadata remain declarative boundaries", () => {
     "navigation metadata must not impersonate runtime authorization",
   );
   for (const [id, capability] of [
-    ["finance:reconciliation", "cashbook"],
-    ["finance:settlement", "internal-settlement"],
     ["finance:bank-statements", "bank-statement-reconciliation"],
     ["finance:bank-reconciliation", "bank-statement-reconciliation"],
   ]) {
     const route = routes.find((candidate) => candidate.id === id);
     assert.equal(route.classification, "EXTENSION", id);
+    assert.equal(route.requiredCapability, capability, id);
+  }
+  // Owner decision: internal settlement, cashbook and the settlement workflow
+  // are frozen. They keep their capability mapping but are never reachable.
+  for (const [id, capability] of [
+    ["finance:reconciliation", "cashbook"],
+    ["finance:reconciliation-detail", "cashbook"],
+    ["finance:settlement", "internal-settlement"],
+    ["finance:settlement-detail", "internal-settlement"],
+    ["mobile-operations:settlement-detail", "mobile-operations"],
+    // The sales delivery and receipt pages listed an always-empty static
+    // array and their "New" form saved nothing; shipments stay on the sales
+    // order and shipment pages.
+    ["sales:delivery", "sales-shipment-draft"],
+    ["sales:delivery:new", "sales-shipment-draft"],
+    ["sales:delivery:edit", "sales-shipment-draft"],
+    ["sales:delivery-detail", "sales-shipment-draft"],
+    ["sales:receipts", "sales-shipment-posting"],
+    ["sales:receipts:new", "sales-shipment-posting"],
+    ["sales:receipt-detail", "sales-shipment-posting"],
+  ]) {
+    const route = routes.find((candidate) => candidate.id === id);
+    assert.equal(route.classification, "FROZEN", id);
+    assert.equal(route.directAccessBehavior, "FROZEN_UNAVAILABLE", id);
+    assert.equal(route.navigationVisibility, "HIDDEN", id);
     assert.equal(route.requiredCapability, capability, id);
   }
   assert.equal(
@@ -201,6 +224,9 @@ test("hidden and searchable route projections respect classifications", () => {
     "imports:pilot",
     "settings:advanced",
     "finance:reconciliation",
+    "finance:settlement",
+    "forecast:mrp",
+    "imports:failed",
     "procurement:invoice-detail",
     "procurement:match-detail",
   ]) {
@@ -469,5 +495,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /163\/163 frontend route stability audit/);
+  assert.match(matrix, /164\/164 frontend route stability audit/);
 });

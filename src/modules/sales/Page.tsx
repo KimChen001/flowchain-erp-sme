@@ -2,7 +2,7 @@ import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useI18n } from "../../i18n/I18n";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Boxes, ClipboardList, FileText, PackageSearch, ShoppingCart, Truck, Users } from "lucide-react";
-import { apiJson } from "../../lib/api-client";
+import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Chip, SectionHeader } from "../../components/ui";
 import type { InventoryAvailability } from "../inventory/api";
 import {
@@ -15,8 +15,6 @@ import {
   ReviewActionPanel,
 } from "../../components/business/BusinessObjectDetail";
 import EvidenceGraphPanel, { type EvidenceGraphResponse, type EvidenceNavigate } from "../../components/evidence/EvidenceGraphPanel";
-import DeliveryPage from "./DeliveryPage";
-import ReceiptPage from "./ReceiptPage";
 import SalesReturnPage from "./SalesReturnPage";
 import { BusinessDocumentForm } from "../../components/business/BusinessDocumentForm";
 import { Link, useLocation, useSearchParams } from "react-router";
@@ -34,6 +32,8 @@ import {
   thClass,
 } from "../../components/ui/workbenchTable";
 import OutboundWorkbench from "./OutboundWorkbench";
+
+const RESTRICTED_GRAPH = "evidence.restricted";
 
 type SalesOrder = {
   salesOrderId: string;
@@ -128,13 +128,7 @@ function viewFromInitial(initialView?: string): SalesView {
 export default function SalesDemandPage(props: SalesDemandPageProps) {
   const location = useLocation();
   if (location.pathname === "/app/sales/orders" || location.pathname === "/app/sales/orders/new" || /^\/app\/sales\/orders\/[^/]+$/.test(location.pathname) || /^\/app\/sales\/shipments\/[^/]+$/.test(location.pathname)) return <OutboundWorkbench />;
-  const documentId = decodeURIComponent(location.pathname.split("/").at(-2) || "");
-  if (props.initialView === "delivery-new") return <BusinessDocumentForm documentLabel="发货单" listPath="/app/sales/deliveries" />;
-  if (props.initialView === "delivery-edit") return <BusinessDocumentForm mode="edit" documentLabel="发货单" documentId={documentId} listPath="/app/sales/deliveries" />;
-  if (props.initialView === "receipts-new") return <BusinessDocumentForm documentLabel="签收单" listPath="/app/sales/receipts" />;
   if (props.initialView === "returns-new") return <BusinessDocumentForm documentLabel="销售退货单" listPath="/app/sales/returns" />;
-  if (props.initialView === "delivery") return <DeliveryPage />;
-  if (props.initialView === "receipts") return <ReceiptPage />;
   if (props.initialView === "returns") return <SalesReturnPage />;
   return <SalesDemandCore {...props} />;
 }
@@ -489,6 +483,12 @@ function EvidenceChainView({
   const [graph, setGraph] = useState<EvidenceGraphResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const { t } = useI18n();
+  // A 403 means the reader's role cannot open this record's evidence chain;
+  // it is translated when shown so a language change applies to it.
+  const graphError = (reason: unknown) => reason instanceof ApiError && reason.status === 403
+    ? RESTRICTED_GRAPH
+    : "当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。";
 
   useEffect(() => {
     if (!selectedOrderId) {
@@ -504,10 +504,10 @@ function EvidenceChainView({
         if (!alive) return;
         setGraph(payload);
       })
-      .catch(() => {
+      .catch((reason) => {
         if (!alive) return;
         setGraph(null);
-        setError("当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。");
+        setError(graphError(reason));
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
@@ -530,7 +530,7 @@ function EvidenceChainView({
     setLoading(true);
     apiJson<EvidenceGraphResponse>(`/api/evidence-graph/sales-order/${encodeURIComponent(selectedOrderId)}`)
       .then(setGraph)
-      .catch(() => setError("当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。"))
+      .catch((reason) => setError(graphError(reason)))
       .finally(() => setLoading(false));
   }
 
@@ -603,7 +603,7 @@ function EvidenceChainView({
           <EvidenceGraphPanel
             graph={graph}
             loading={loading}
-            error={error}
+            error={error === RESTRICTED_GRAPH ? t("evidence.restricted") : error}
             onNavigate={onNavigate}
             onRetry={retry}
             onBack={() => onNavigate?.("sales")}

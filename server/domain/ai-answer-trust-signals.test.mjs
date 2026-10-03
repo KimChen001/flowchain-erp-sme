@@ -106,7 +106,6 @@ test('R85 critical AI answers keep summary evidence action and boundary trust si
     { moduleId: 'finance', question: '查看待结算项', boundary: /不执行付款|过账|最终审批/ },
     { moduleId: 'srm', question: '查看高风险供应商', boundary: /不创建 RFQ|不发送供应商消息|不变更评分/ },
     { moduleId: 'master-data', question: '检查主数据质量', boundary: /不创建或修改主数据|不自动修复默认值/ },
-    { moduleId: 'forecast', question: '今天计划模块最需要处理什么？', boundary: /只读|不创建 PR\/PO|人工复核/ },
   ]
 
   for (const prompt of prompts) {
@@ -123,6 +122,11 @@ test('R85 critical AI answers keep summary evidence action and boundary trust si
     assert.doesNotMatch(text, /I found|Please provide|No .*found|not available|read-only lookup|Open |Review /, label)
     assert.doesNotMatch(text, /已执行付款|可执行付款|将执行付款|已过账|过账已启用|将自动修复|automatic correction/i, label)
   }
+  // Forecast / MRP planning is an unavailable module: its answer keeps the
+  // read-only boundary but offers no action into the planning pages.
+  const planning = await ask({ moduleId: 'forecast', question: '今天计划模块最需要处理什么？' })
+  assert.match(visibleText(planning), /只读|不创建 PR\/PO|人工复核/)
+  assert.ok(actions(planning).every((action) => !String(action.target || action.moduleId || '').startsWith('forecast')))
 })
 
 test('R85 draft preparation copy stays preview-only and localized', async () => {

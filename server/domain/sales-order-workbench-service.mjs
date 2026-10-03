@@ -145,7 +145,9 @@ export function createSalesOrderWorkbenchService({ prisma, idFactory = randomUUI
 export function createSalesOrderReadService({ prisma, lifecycleCapability = { enabled: false } } = {}) {
   if (!prisma) throw new Error('prisma is required')
   async function listOrders(query, context) {
-    const actor = await actorFor(prisma, context), page = Math.max(1, Number(query.page) || 1), pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
+    const actor = await actorFor(prisma, context)
+    assertAuthorized({ actor, permission: 'sales_order.read', tenantId: actor.tenantId })
+    const page = Math.max(1, Number(query.page) || 1), pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
     const where = { tenantId: actor.tenantId }
     const search = text(query.search); if (search) where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }]
     for (const key of ['workflowStatus', 'reservationStatus', 'fulfillmentStatus', 'currency']) if (text(query[key])) where[key] = text(query[key])
@@ -156,6 +158,7 @@ export function createSalesOrderReadService({ prisma, lifecycleCapability = { en
   }
   async function entryData(context) {
     const actor = await actorFor(prisma, context)
+    assertAuthorized({ actor, permission: 'sales_order.read', tenantId: actor.tenantId })
     const items = await prisma.item.findMany({ where: { tenantId: actor.tenantId, status: 'active' }, select: { id: true, sku: true, name: true, unit: true }, orderBy: { sku: 'asc' }, take: 200 })
     return { dataSource: 'Authoritative PostgreSQL', capabilities: { salesOrderLifecycle: lifecycleCapability }, items: lifecycleCapability.enabled ? items : [] }
   }

@@ -82,8 +82,16 @@ function actions(response: AiResponseV2, language: Language) {
   return explicitDraftRequest ? [...drafts, ...navigation] : navigation;
 }
 
+// The help answer ("Here is what I can help with"): it reads no records.
+export function isAiCapabilityAnswer(response: AiResponseV2) {
+  return response.skill?.id === "capability_overview";
+}
+
 export function toAiFocusedResponse(response: AiResponseV2, language: Language = "en-US"): AiFocusedResponseModel {
   const copy = focusedCopy[language];
+  // A workspace skill answer always carries its own summary, in the answer
+  // language; it is never filled with interface-language text.
+  const answerCopy = focusedCopy[response.language === "zh-CN" || response.language === "en-US" ? response.language : language];
   const impacts = (response.businessImpact || []).slice(0, 3);
   // The server's rank, when it gives one, is the order; otherwise a heuristic.
   const ranked = (response.keyEvidence || []).every((item) => typeof item.rank === "number");
@@ -98,14 +106,16 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
     evidence: item,
   }));
   const availableActions = actions(response, language);
+  // The help answer has no records to show, so its suggestions are the answer:
+  // all four of them. Any other answer offers two next questions.
   const followUps = (response.followUpSuggestions || [])
     .filter((item, index, rows) => Boolean(item.label && item.prompt) && rows.findIndex((row) => row.prompt === item.prompt) === index)
-    .slice(0, 2)
+    .slice(0, isAiCapabilityAnswer(response) ? 4 : 2)
     .map((item) => ({ label: item.label, prompt: item.prompt, ...(item.skillHint ? { skillHint: item.skillHint } : {}) }));
   return {
     answerMode: answerMode(response),
-    headline: response.conclusion?.title || copy.headline,
-    summary: response.conclusion?.summary || copy.summary,
+    headline: response.conclusion?.title || answerCopy.headline,
+    summary: response.conclusion?.summary || (response.answerSource === "workspace_rules" ? "" : answerCopy.summary),
     severity: response.conclusion?.severity || "info",
     primaryItems,
     primaryAction: availableActions[0] || null,

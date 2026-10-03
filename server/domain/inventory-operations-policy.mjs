@@ -528,6 +528,44 @@ export async function buildStockTransferCancellationPlan({
   );
 }
 
+// Cancelling a count changes no stock: any count that is not posted or
+// already cancelled can be cancelled, with a reason, whatever its review
+// state. The plan carries the session version the command checks.
+export async function buildCycleCountCancellationPlan({
+  prisma,
+  tenantId,
+  countSessionId,
+  reason,
+}) {
+  const session = await prisma.cycleCountSession.findFirst({
+    where: { id: text(countSessionId), tenantId },
+  });
+  const blockingIssues = [];
+  if (!session)
+    blockingIssues.push(issue("COUNT_NOT_FOUND", "Cycle count was not found.", 404));
+  else if (["posted", "cancelled"].includes(session.workflowStatus))
+    blockingIssues.push(
+      issue(
+        "COUNT_INVALID_STATE",
+        "Posted or cancelled counts cannot be cancelled.",
+        409,
+      ),
+    );
+  if (!text(reason))
+    blockingIssues.push(
+      issue("COUNT_INVALID_STATE", "A cancellation reason is required."),
+    );
+  return result(
+    {
+      countSessionId: text(countSessionId),
+      reason: text(reason),
+      expectedSessionVersion: session?.version ?? null,
+    },
+    blockingIssues,
+    { session },
+  );
+}
+
 export async function buildCycleCountSubmissionPlan({
   prisma,
   tenantId,

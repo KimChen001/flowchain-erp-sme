@@ -45,13 +45,13 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   );
   await page.getByTestId("confirm-outbound-action").click();
   await expect(page.getByTestId("availability-balance")).toContainText(
-    "现有 10.0000",
+    "现有 10",
   );
   await expect(page.getByTestId("availability-balance")).toContainText(
-    "预留 4.0000",
+    "预留 4",
   );
   await expect(page.getByTestId("availability-balance")).toContainText(
-    "可用 6.0000",
+    "可用 6",
   );
   await page.getByTestId("smart-link-reservation").focus();
   await page.keyboard.press("Enter");
@@ -64,10 +64,10 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.getByTestId("outbound-preview").click();
   await page.getByTestId("confirm-outbound-action").click();
   await expect(page.getByTestId("availability-balance")).toContainText(
-    "预留 3.0000",
+    "预留 3",
   );
   await expect(page.getByTestId("availability-balance")).toContainText(
-    "可用 7.0000",
+    "可用 7",
   );
 
   await page.getByTestId("open-shipment-draft").click();
@@ -92,7 +92,7 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.getByLabel("发货单号").fill("SHIP-PW-POST");
   await page.getByTestId("outbound-preview").click();
   await page.getByTestId("confirm-outbound-action").click();
-  await page.getByRole("button", { name: "暂停" }).click();
+  await page.getByRole("button", { name: "暂停订单" }).click();
   await expect(page.getByText("暂停", { exact: true }).first()).toBeVisible();
   await page.getByText("SHIP-PW-POST", { exact: true }).click();
   await expect(page.getByTestId("open-post")).toHaveCount(0);
@@ -134,11 +134,13 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await expect(page.getByTestId("inventory-active-filters")).toContainText(
     "销售订单",
   );
-  await expect(page.getByText("outbound-browser-opening")).toHaveCount(0);
+  // Movements are listed by type, not id: the seeded opening balance
+  // ("期初余额") is outside the order filter and reappears once it is cleared.
+  await expect(page.getByText("期初余额", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "清除筛选" }).click();
   await expect(page).not.toHaveURL(/relatedSalesOrderId=/);
   await expect(
-    page.getByText("outbound-browser-opening").first(),
+    page.getByText("期初余额", { exact: true }).first(),
   ).toBeVisible();
 
   await page.goto(orderUrl);
@@ -151,7 +153,7 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   );
   await expect(
     page.getByTestId("inventory-item-OUT-BROWSER-SKU"),
-  ).toContainText("7.0000");
+  ).toContainText("7 EA");
   await page.goto(postedShipmentUrl);
 
   await page.getByTestId("open-reverse").click();

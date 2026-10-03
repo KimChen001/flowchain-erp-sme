@@ -39,8 +39,8 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
     <UnsavedContext.Provider value={value}>
       {children}
       {blocker.state === "blocked" && (
-        <div className="fixed inset-0 z-[140] flex items-center justify-center p-6" data-testid="unsaved-changes-dialog" style={{ background: "rgba(15,23,42,.42)", backdropFilter: "blur(6px)" }}>
-          <div className="w-full max-w-md rounded-2xl bg-white p-6" style={{ boxShadow: "0 24px 60px rgba(15,23,42,.24)" }}>
+        <div className="fc-overlay-enter fixed inset-0 z-[140] flex items-center justify-center p-6" data-testid="unsaved-changes-dialog" style={{ background: "rgba(15,23,42,.42)", backdropFilter: "blur(6px)" }}>
+          <div className="fc-dialog-enter w-full max-w-md rounded-2xl bg-white p-6" style={{ boxShadow: "0 24px 60px rgba(15,23,42,.24)" }}>
             <h2 className="fc-modal-title">当前修改尚未保存</h2>
             <p className="fc-body mt-2" style={{ color: A.sub }}>{Array.from(entries.values()).map((entry) => entry.label).join("、")}尚未保存，确定离开吗？</p>
             <div className="mt-5 flex flex-wrap justify-end gap-2">

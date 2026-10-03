@@ -2185,4 +2185,70 @@ if (!realPostgres) {
       await clientB.$disconnect();
     }
   });
+
+  // Cancelling a sales order: unposted shipments are cancelled, every active
+  // reservation is released and the stock is available again, in one
+  // transaction. An order with goods shipped is not cancelled.
+  test("cancelling an order releases its reservations and cancels its unposted shipment", async () => {
+    const ids = await seed({ stock: "10.0000", ordered: "6.0000" });
+    const who = identity(ids.tenantId, ids.actorId);
+    const reserved = await command().reserveSalesOrderInventory(reserveInput(ids, "6.0000"), who);
+    const reservationId = reserved.reservations[0].id;
+    const draft = await command().createShipmentDraft({ salesOrderId: ids.salesOrderId, shipmentNumber: `SHIP-${randomUUID()}`, expectedOrderVersion: reserved.salesOrder.version, idempotencyKey: `draft-${randomUUID()}`, lines: [{ salesOrderLineId: ids.salesOrderLineId, allocations: [{ reservationId, quantity: "2.0000" }] }] }, who);
+    const before = await prisma.inventoryBalance.findUnique({ where: { id: ids.balanceId } });
+    assert.deepEqual([fixed(before.reservedQuantity), fixed(before.availableQuantity)], ["6.0000", "4.0000"]);
+
+    const preview = await command().previewSalesOrderCancellation({ salesOrderId: ids.salesOrderId }, who);
+    assert.equal(preview.allowed, true);
+    assert.equal(preview.releasedQuantity, "6.0000");
+    assert.deepEqual(preview.shipmentImpacts.map((entry) => entry.shipmentId), [draft.entityId]);
+    const order = await prisma.salesOrder.findUnique({ where: { id: ids.salesOrderId } });
+    await assert.rejects(command().cancelSalesOrder({ salesOrderId: ids.salesOrderId, expectedOrderVersion: order.version, idempotencyKey: `cancel-${randomUUID()}` }, who), (error) => error.code === "SALES_ORDER_CANCEL_REASON_REQUIRED");
+    const key = `cancel-${randomUUID()}`;
+    const cancelled = await command().cancelSalesOrder({ salesOrderId: ids.salesOrderId, expectedOrderVersion: order.version, reason: "Customer cancelled", idempotencyKey: key }, who);
+    assert.equal(cancelled.salesOrder.workflowStatus, "cancelled");
+    assert.equal(cancelled.releasedQuantity, "6.0000");
+    const replayed = await command().cancelSalesOrder({ salesOrderId: ids.salesOrderId, expectedOrderVersion: order.version, reason: "Customer cancelled", idempotencyKey: key }, who);
+    assert.equal(replayed.idempotentReplay, true);
+
+    const balance = await prisma.inventoryBalance.findUnique({ where: { id: ids.balanceId } });
+    assert.deepEqual([fixed(balance.onHandQuantity), fixed(balance.reservedQuantity), fixed(balance.availableQuantity)], ["10.0000", "0.0000", "10.0000"]);
+    const reservation = await prisma.inventoryReservation.findUnique({ where: { id: reservationId } });
+    assert.deepEqual([reservation.status, fixed(reservation.releasedQuantity), fixed(reservation.allocatedQuantity)], ["released", "6.0000", "0.0000"]);
+    const shipment = await prisma.shipmentDocument.findUnique({ where: { id: draft.entityId } });
+    assert.deepEqual([shipment.workflowStatus, shipment.postingStatus], ["cancelled", "unposted"]);
+    assert.equal(await prisma.shipmentAllocation.count({ where: { tenantId: ids.tenantId, status: "allocated" } }), 0);
+    const after = await prisma.salesOrder.findUnique({ where: { id: ids.salesOrderId }, include: { lines: true } });
+    assert.deepEqual([after.workflowStatus, after.reservationStatus, fixed(after.lines[0].reservedQuantity), after.metadata.cancelReason, after.metadata.statusBeforeCancel], ["cancelled", "not_reserved", "0.0000", "Customer cancelled", "confirmed"]);
+    assert.equal(await prisma.inventoryMovement.count({ where: { tenantId: ids.tenantId, movementType: { not: "opening_balance" } } }), 0);
+    assert.equal(await prisma.auditLog.count({ where: { tenantId: ids.tenantId, action: "sales_order_cancelled" } }), 1);
+    assert.deepEqual((await prisma.inventoryReservationEvent.findMany({ where: { reservationId }, orderBy: { createdAt: "asc" } })).map((event) => event.eventType), ["reserved", "allocated", "deallocated", "released"]);
+    // A cancelled order cannot be cancelled again, and the workbench offers nothing.
+    const again = await command().previewSalesOrderCancellation({ salesOrderId: ids.salesOrderId }, who);
+    assert.equal(again.allowed, false);
+    const workbench = await createOutboundWorkbenchReadService({ prisma, capabilities: enabledWorkbenchCapabilities }).orderWorkbench(ids.salesOrderId, who);
+    assert.equal(workbench.availableActions.canCancel, false);
+  });
+
+  test("an order with a posted shipment, or a role without sales_order.cancel, cannot be cancelled", async () => {
+    const ids = await seed({ stock: "10.0000", ordered: "6.0000" });
+    const who = identity(ids.tenantId, ids.actorId);
+    const workbench = () => createOutboundWorkbenchReadService({ prisma, capabilities: enabledWorkbenchCapabilities }).orderWorkbench(ids.salesOrderId, who);
+    assert.equal((await workbench()).availableActions.canCancel, true);
+    const reserved = await command().reserveSalesOrderInventory(reserveInput(ids, "6.0000"), who);
+    const draft = await command().createShipmentDraft({ salesOrderId: ids.salesOrderId, shipmentNumber: `SHIP-${randomUUID()}`, expectedOrderVersion: reserved.salesOrder.version, idempotencyKey: `draft-${randomUUID()}`, lines: [{ salesOrderLineId: ids.salesOrderLineId, allocations: [{ reservationId: reserved.reservations[0].id, quantity: "2.0000" }] }] }, who);
+    await command().postShipment({ shipmentId: draft.entityId, expectedShipmentVersion: draft.shipment.version, idempotencyKey: `post-${randomUUID()}` }, who);
+    const preview = await command().previewSalesOrderCancellation({ salesOrderId: ids.salesOrderId }, who);
+    assert.equal(preview.allowed, false);
+    assert.equal(preview.blockingIssues[0].code, "SALES_ORDER_HAS_POSTED_SHIPMENTS");
+    const order = await prisma.salesOrder.findUnique({ where: { id: ids.salesOrderId } });
+    await assert.rejects(command().cancelSalesOrder({ salesOrderId: ids.salesOrderId, expectedOrderVersion: order.version, reason: "Too late", idempotencyKey: `cancel-${randomUUID()}` }, who), (error) => error.code === "SALES_ORDER_HAS_POSTED_SHIPMENTS");
+    assert.equal((await prisma.salesOrder.findUnique({ where: { id: ids.salesOrderId } })).workflowStatus, "confirmed");
+    assert.equal((await workbench()).availableActions.canCancel, false);
+
+    // A read-only viewer can read sales orders but not cancel them.
+    const specialist = await seed({ actorRole: "viewer" });
+    const specialistWho = identity(specialist.tenantId, specialist.actorId, "viewer");
+    await assert.rejects(command().cancelSalesOrder({ salesOrderId: specialist.salesOrderId, expectedOrderVersion: 0, reason: "No", idempotencyKey: `cancel-${randomUUID()}` }, specialistWho), (error) => error.code === "AUTHORIZATION_PERMISSION_DENIED");
+  });
 }

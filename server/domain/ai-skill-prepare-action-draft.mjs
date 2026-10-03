@@ -80,13 +80,19 @@ function card(candidate, facts, language) {
     payload: { itemIdOrSku: item.label, quantity: candidate.quantity, reason, language }, originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
 }
 
+// Narrowed to one record, the title names it.
+function focusTitle(id, count, fmt, language) {
+  if (!count) return aiSkillText('draft.focus_none', language, { id })
+  return aiSkillText(count === 1 ? 'draft.focus_title' : 'draft.focus_title_many', language, { id, count: fmt.number(count) })
+}
+
 export function presentPrepareActionDraft(result, facts, { skill, language, query }) {
   const fmt = aiSkillFormatter(facts, language)
   const reviewCards = result.drafts.map((candidate) => card(candidate, facts, language))
   const extraLimitations = result.canDraft ? [] : [{ code: 'draft_permission', label: aiSkillText('limitation.draft_permission.label', language), description: aiSkillText('draft.no_permission', language), severity: 'warning', missingData: [] }]
   return presentAiSkillAnswer({
     skill, facts, language, query,
-    title: result.canDraft ? aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }) : aiSkillText('draft.title_blocked', language),
+    title: !result.canDraft ? aiSkillText('draft.title_blocked', language) : result.focus ? focusTitle(result.focus.entityId, reviewCards.length, fmt, language) : aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }),
     summary: aiSkillText(!result.canDraft ? 'draft.no_permission' : reviewCards.length ? 'draft.summary' : 'draft.none_summary', language),
     severity: result.items[0]?.severity || 'info',
     items: result.items,

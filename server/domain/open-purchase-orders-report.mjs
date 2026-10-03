@@ -1,4 +1,5 @@
 import { isOpenPurchaseOrder, purchaseOrderBusinessDate, purchaseOrderLineRemaining } from './open-purchase-order.mjs'
+import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from './tenant-calendar-day.mjs'
 const text = value => String(value ?? '').trim()
 const numeric = value => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
 const day = value => {
@@ -10,11 +11,15 @@ const round = value => Math.round(value * 10000) / 10000
 const sumKnown = values => values.length && values.every(value => value !== null) ? round(values.reduce((a, b) => a + b, 0)) : null
 const daysLate = (due, today) => due && Number.isFinite(Date.parse(due)) ? Math.max(0, Math.floor((Date.parse(today) - Date.parse(due)) / 86400000)) : null
 
-export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {}, now = new Date()) {
+// Overdue days count to the tenant's calendar day (options.timeZone, the
+// workspace timezone), so an order due today is not late in the evening
+// merely because UTC has moved on to tomorrow.
+export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {}, now = new Date(), { timeZone = DEFAULT_TENANT_TIMEZONE } = {}) {
   if (['from', 'to'].some(key => filters[key] && (!day(filters[key]) || text(filters[key]).length !== 10)) || (filters.from && filters.to && filters.from > filters.to)) {
     throw Object.assign(new Error('Enter a valid date range in YYYY-MM-DD format.'), { status: 422, code: 'REPORT_DATE_RANGE_INVALID' })
   }
-  const asOf = now.toISOString().slice(0, 10)
+  const timezone = text(timeZone) || DEFAULT_TENANT_TIMEZONE
+  const asOf = tenantCalendarDay(now, timezone)
   const source = purchaseOrders.map(po => {
     const lines = (po.lines || []).map(line => {
       const ordered = numeric(line.orderedQuantity ?? line.quantity)
@@ -66,7 +71,7 @@ export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {},
   for (const row of rows.filter(row => row.isOpen && row.overdueDays > 0)) supplierCounts.set(row.supplier, (supplierCounts.get(row.supplier) || 0) + 1)
   return {
     overdueSuppliers: [...supplierCounts].map(([supplier, count]) => ({ supplier, count })).sort((a, b) => b.count - a.count || a.supplier.localeCompare(b.supplier)).slice(0, 5),
-    asOf, generatedAt: now.toISOString(), query, total, page, pageSize, pages,
+    asOf, timezone, generatedAt: now.toISOString(), query, total, page, pageSize, pages,
     summary: { open: rows.filter(row => row.isOpen).length, overdue: rows.filter(row => row.isOpen && row.overdueDays > 0).length, incomplete: rows.filter(row => row.dataIncomplete).length, totals },
     suppliers: [...new Set(source.map(row => row.supplier).filter(Boolean))].sort(), currencies: [...new Set(source.map(row => row.currency).filter(Boolean))].sort(),
     rows: rows.slice((page - 1) * pageSize, page * pageSize),

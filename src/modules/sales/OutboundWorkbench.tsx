@@ -11,9 +11,13 @@ import {
 import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { outboundEnglish } from "./outboundCopy";
+import { formatQuantity } from "../../lib/format";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
+import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
+import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import {
   tableMinSmClass,
   tableScrollClass,
@@ -25,8 +29,23 @@ import {
   thClass,
 } from "../../components/ui/workbenchTable";
 
-const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
-const englishUi = () => typeof document === "undefined" || document.documentElement.lang === "en-US";
+// The interface language for this render. OutboundWorkbench, the root of every
+// page here, sets it from the i18n context before its children render. The
+// <html lang> attribute is updated only after that render, so it is not used.
+let activeLanguage = "en-US";
+const copy = (label: string) =>
+  activeLanguage === "en-US" ? outboundEnglish[label] || workspaceCopy(label, activeLanguage) : label;
+const englishUi = () => activeLanguage === "en-US";
+// New copy is written in English with its Chinese translation.
+const say = (english: string, chinese: string) => (activeLanguage === "en-US" ? english : chinese);
+
+type CancellationPreview = {
+  allowed: boolean;
+  blockingIssues: Array<{ code: string; message: string }>;
+  shipmentImpacts: Array<{ shipmentId: string; shipmentNumber: string }>;
+  reservationImpacts: Array<{ reservationId: string; sku: string; warehouseId: string; releasedQuantity: string }>;
+  releasedQuantity: string;
+};
 
 type Order = {
   id: string;
@@ -238,17 +257,24 @@ const pretty: Record<string, string> = {
   unavailable: "不可用",
 };
 const status = (value: string) => copy(pretty[value] || value);
-const reconciliationRuleLabel = (value: string) => ({
+const reconciliationRuleLabels: Record<string, string> = {
   "available = onHand - reserved": "可用量 = 在库量 - 预留量",
   "reserved + fulfilled <= ordered": "预留量 + 已履约量不超过订购量",
-}[value] || value);
+};
+const reconciliationRuleLabel = (value: string) =>
+  reconciliationRuleLabels[value] ? copy(reconciliationRuleLabels[value]) : value;
 // Timestamps follow the workspace locale and timezone.
 function useStamp() {
   const { formatDateTime } = useI18n();
   return (value?: string | null) =>
     value && !Number.isNaN(new Date(value).getTime()) ? formatDateTime(value) : value || "—";
 }
+// The message for an error, kept in its source form and translated where it
+// is shown, so it follows a language change made after the error occurred.
 function message(error: unknown) {
+  return errorMessage(error);
+}
+function errorMessage(error: unknown) {
   if (!(error instanceof ApiError)) return "网络连接失败，请检查连接后重试。";
   if (error.status === 401) return "登录已失效，请重新登录后读取销售订单。";
   if (error.status === 403) return "当前账号没有读取销售订单的权限。";
@@ -340,6 +366,7 @@ function smartLinkPath(link: SmartLink) {
 
 export default function OutboundWorkbench() {
   const { language } = useI18n();
+  activeLanguage = language;
   const location = useLocation();
   const shipment = location.pathname.match(
     /^\/app\/sales\/shipments\/([^/]+)$/,
@@ -352,6 +379,7 @@ export default function OutboundWorkbench() {
 }
 
 function OrderList() {
+  const workspace = useWorkspaceCurrency();
   const stamp = useStamp();
   const [params, setParams] = useSearchParams(),
     [data, setData] = useState<{
@@ -416,7 +444,7 @@ function OrderList() {
       )}
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       <Section title={copy("销售订单查询")}>
@@ -471,7 +499,7 @@ function OrderList() {
               onChange={(e) => update({ currency: e.target.value, page: 1 })}
             >
               <option value="">{copy("全部")}</option>
-              {["USD", "EUR", "CNY"].map((x) => (
+              {orderedCurrencyCodes(workspace.currency, ["USD", "EUR", "CNY"]).map((x) => (
                 <option key={x}>{x}</option>
               ))}
             </select>
@@ -504,8 +532,8 @@ function OrderList() {
                   "订单号",
                   "客户",
                   "流程",
-                  "预留",
-                  "履约",
+                  "预留状态",
+                  "履约状态",
                   "币种",
                   "行数",
                   "订购 / 预留 / 履约",
@@ -721,7 +749,7 @@ function OrderEntry() {
       </div>
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       <Section title={copy("订单信息")}>
@@ -790,7 +818,7 @@ function OrderEntry() {
             disabled={saving || !itemId || !customerName || !currency.trim()}
             onClick={() => void save()}
           >
-            {saving ? "保存中…" : "保存草稿"}
+            {saving ? copy("保存中…") : copy("保存草稿")}
           </Button>
           <Link
             className="rounded-lg bg-slate-100 px-3 py-2 text-sm"
@@ -805,6 +833,7 @@ function OrderEntry() {
 }
 
 function OrderDetail({ id }: { id: string }) {
+  const warehouseName = useWarehouseNames();
   const stamp = useStamp();
   const [data, setData] = useState<Workbench | null>(null),
     [error, setError] = useState(""),
@@ -816,10 +845,12 @@ function OrderDetail({ id }: { id: string }) {
     [selectedBalanceId, setSelectedBalanceId] = useState(""),
     [selectedReservationId, setSelectedReservationId] = useState(""),
     [quantity, setQuantity] = useState("1.0000"),
-    [reason, setReason] = useState("业务调整"),
+    [reason, setReason] = useState(() => copy("业务调整")),
     [shipmentNumber, setShipmentNumber] = useState(`SHIP-${Date.now()}`),
     [editCustomer, setEditCustomer] = useState(""),
     [editQuantity, setEditQuantity] = useState("1.0000"),
+    [cancelReason, setCancelReason] = useState(""),
+    [cancelPreview, setCancelPreview] = useState<CancellationPreview | null>(null),
     [saving, setSaving] = useState(false);
   const lifecycleIntents = useRef<Record<string, string>>({}),
     inFlight = useRef(false);
@@ -860,6 +891,36 @@ function OrderDetail({ id }: { id: string }) {
       setSelectedLineId(data.lines[0]?.id || "");
       setEditCustomer(data.order.customerName);
       setEditQuantity(data.lines[0]?.orderedQuantity || "1.0000");
+    }
+  }
+  // Cancelling: the server's plan first, then the command with the same reason.
+  async function previewCancellation() {
+    if (!data) return;
+    setError("");
+    try {
+      setCancelPreview(await apiJson(`/api/sales/orders/${encodeURIComponent(id)}/cancel-preview`, { method: "POST", body: JSON.stringify({}) }));
+    } catch (e) {
+      setError(message(e));
+    }
+  }
+  async function cancelOrder() {
+    if (!data || !cancelPreview?.allowed || !cancelReason.trim() || inFlight.current) return;
+    inFlight.current = true;
+    setSaving(true);
+    try {
+      await apiJson(`/api/sales/orders/${encodeURIComponent(id)}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ expectedOrderVersion: data.order.version, reason: cancelReason.trim(), idempotencyKey: intentKey }),
+      });
+      setIntent("");
+      setCancelPreview(null);
+      await refresh();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) { setCancelPreview(null); await refresh(); }
+      setError(message(e));
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
     }
   }
   async function lifecycle(action: "confirm" | "hold" | "resume") {
@@ -1038,7 +1099,7 @@ function OrderDetail({ id }: { id: string }) {
   if (!data)
     return (
       <div role="alert" className="rounded-lg bg-red-50 p-5 text-red-700">
-        {error}
+        {copy(error)}
       </div>
     );
   const a = data.availableActions;
@@ -1055,7 +1116,7 @@ function OrderDetail({ id }: { id: string }) {
     <div className="space-y-4" data-testid="outbound-order-workbench">
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       {data.scopeCoverage.status === "partial" && (
@@ -1122,7 +1183,7 @@ function OrderDetail({ id }: { id: string }) {
                 disabled={saving}
                 onClick={() => void lifecycle("hold")}
               >
-                {copy("暂停")}
+                {copy("暂停订单")}
               </Button>
             )}
             {a.canResume && (
@@ -1131,6 +1192,11 @@ function OrderDetail({ id }: { id: string }) {
                 onClick={() => void lifecycle("resume")}
               >
                 {copy("恢复")}
+              </Button>
+            )}
+            {a.canCancel && (
+              <Button tone="secondary" testId="open-cancel-order" onClick={() => { start("cancel"); setCancelReason(""); setCancelPreview(null); }}>
+                {say("Cancel order", "取消订单")}
               </Button>
             )}
             {a.canReserve && (
@@ -1167,17 +1233,17 @@ function OrderDetail({ id }: { id: string }) {
                 to={smartLinkPath(link)}
                 key={link.id}
               >
-                {link.label} {link.count ?? ""}
+                {copy(link.label)} {link.count ?? ""}
               </Link>
             ) : (
               <span
                 aria-disabled="true"
-                title={link.unavailableReason || ""}
+                title={link.unavailableReason ? copy(link.unavailableReason) : ""}
                 className="rounded-lg border px-3 py-2 text-sm text-slate-400"
                 key={link.id}
               >
-                {link.label} {link.count ?? ""}
-                <span className="ml-1 text-xs">{link.unavailableReason}</span>
+                {copy(link.label)} {link.count ?? ""}
+                <span className="ml-1 text-xs">{link.unavailableReason ? copy(link.unavailableReason) : ""}</span>
               </span>
             ),
           )}
@@ -1200,7 +1266,7 @@ function OrderDetail({ id }: { id: string }) {
                   "可用量",
                 ].map((x) => (
                   <th className="p-2 text-left" key={x}>
-                    {x}
+                    {copy(x)}
                   </th>
                 ))}
               </tr>
@@ -1224,14 +1290,14 @@ function OrderDetail({ id }: { id: string }) {
                       line.orderedQuantity,
                       line.reservedQuantity,
                       line.fulfilledQuantity,
-                      line.remainingToReserve ?? "受限",
-                      line.remainingToFulfill ?? "受限",
+                      line.remainingToReserve ?? null,
+                      line.remainingToFulfill ?? null,
                       av?.totalOnHand,
                       av?.totalReserved,
                       av?.totalAvailable,
                     ].map((v, i) => (
-                      <td className="p-2" key={i}>
-                        {v}
+                      <td className="p-2 tabular-nums" key={i}>
+                        {v == null ? (i === 3 || i === 4 ? copy("受限") : "—") : formatQuantity(v)}
                       </td>
                     ))}
                   </tr>
@@ -1248,12 +1314,12 @@ function OrderDetail({ id }: { id: string }) {
               className="mt-2 grid grid-cols-6 gap-2 rounded-lg bg-slate-50 p-2 text-xs"
               key={b.id}
             >
-              <span>{b.warehouseId}</span>
-              <span>{b.location || "默认库位"}</span>
-              <span>现有 {b.onHandQuantity}</span>
-              <span>预留 {b.reservedQuantity}</span>
-              <span>可用 {b.availableQuantity}</span>
-              <span>{b.selectable ? "可操作" : "只读"}</span>
+              <span>{warehouseName(b.warehouseId)}</span>
+              <span>{b.location || copy("默认库位")}</span>
+              <span>{copy("现有 {n}").replace("{n}", formatQuantity(b.onHandQuantity))}</span>
+              <span>{copy("预留 {n}").replace("{n}", formatQuantity(b.reservedQuantity))}</span>
+              <span>{copy("可用 {n}").replace("{n}", formatQuantity(b.availableQuantity))}</span>
+              <span>{copy(b.selectable ? "可操作" : "只读")}</span>
             </div>
           ))}
       </Section>
@@ -1274,7 +1340,7 @@ function OrderDetail({ id }: { id: string }) {
             "预留 ID",
             "仓库",
             "库位",
-            "预留",
+            "预留量",
             "已分配",
             "已消耗",
             "已释放",
@@ -1334,15 +1400,19 @@ function OrderDetail({ id }: { id: string }) {
             className="border-t py-2 text-xs"
             key={`${x.affectedEntity.type}-${x.affectedEntity.id}`}
           >
-            {reconciliationRuleLabel(x.rule)} · {status(x.status)} · 计算 {x.calculated} / 记录{" "}
-            {x.recorded}
+            {reconciliationRuleLabel(x.rule)} · {status(x.status)} ·{" "}
+            {copy("计算 {calculated} / 记录 {recorded}")
+              .replace("{calculated}", formatQuantity(x.calculated))
+              .replace("{recorded}", formatQuantity(x.recorded))}
           </div>
         ))}
       </Section>
       {intent && (
         <ActionDialog
           title={
-            intent === "edit"
+            intent === "cancel"
+              ? say("Cancel sales order", "取消销售订单")
+              : intent === "edit"
               ? "编辑销售订单草稿"
               : intent === "reserve"
                 ? "预留库存"
@@ -1353,9 +1423,48 @@ function OrderDetail({ id }: { id: string }) {
           onClose={() => {
             setIntent("");
             setPreview(null);
+            setCancelPreview(null);
           }}
         >
-          {intent === "edit" ? (
+          {intent === "cancel" ? (
+            <div data-testid="cancel-order-panel">
+              <p className="text-sm text-slate-600">
+                {say("Cancelling releases every reservation on this order and cancels its unposted shipments. An order with goods shipped cannot be cancelled.", "取消订单会释放该订单的全部预留并取消未过账的发货单；已有发货过账的订单不能取消。")}
+              </p>
+              <label className="mt-3 block text-sm">
+                {say("Reason", "原因")}
+                <input
+                  data-testid="cancel-order-reason"
+                  aria-label={say("Reason for cancelling", "取消原因")}
+                  className="mt-1 w-full rounded-lg border p-2"
+                  value={cancelReason}
+                  onChange={(e) => { setCancelReason(e.target.value); setIntentKey(key()); }}
+                />
+              </label>
+              {cancelPreview && (
+                <div data-testid="cancel-order-preview" className={`mt-3 rounded-lg border p-3 text-xs ${cancelPreview.allowed ? "bg-emerald-50" : "bg-amber-50"}`}>
+                  <div className="font-semibold">{cancelPreview.allowed ? say("The order can be cancelled", "可以取消该订单") : say("The order cannot be cancelled", "该订单不能取消")}</div>
+                  {cancelPreview.blockingIssues.map((issue) => <div className="mt-1 text-red-700" key={issue.code}>{issue.message}</div>)}
+                  {cancelPreview.allowed && (
+                    <div className="mt-2">
+                      {say("Releases {q} reserved across {r} reservations; cancels {s} unposted shipments.", "释放预留 {q}（{r} 条预留），取消未过账发货单 {s} 张。")
+                        .replace("{q}", formatQuantity(cancelPreview.releasedQuantity))
+                        .replace("{r}", String(cancelPreview.reservationImpacts.length))
+                        .replace("{s}", String(cancelPreview.shipmentImpacts.length))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="mt-4 flex gap-2">
+                <Button testId="cancel-order-preview-button" disabled={saving} onClick={() => void previewCancellation()}>
+                  {say("Preview", "预览")}
+                </Button>
+                <Button testId="confirm-cancel-order" disabled={!cancelPreview?.allowed || !cancelReason.trim() || saving} onClick={() => void cancelOrder()}>
+                  {saving ? say("Cancelling…", "正在取消…") : say("Cancel order", "取消订单")}
+                </Button>
+              </div>
+            </div>
+          ) : intent === "edit" ? (
             <>
               <label className="text-sm">
                 {copy("客户")}
@@ -1431,10 +1540,11 @@ function OrderDetail({ id }: { id: string }) {
                     <option value="">{copy("请选择库存余额")}</option>
                     {balanceOptions.map((x) => (
                       <option disabled={!x.selectable} value={x.id} key={x.id}>
-                        {x.warehouseId} · {x.location || "默认库位"} · 现有{" "}
-                        {x.onHandQuantity} / 预留 {x.reservedQuantity} / 可用{" "}
-                        {x.availableQuantity} ·{" "}
-                        {x.selectable ? "可操作" : "只读"}
+                        {warehouseName(x.warehouseId)} · {x.location || copy("默认库位")} ·{" "}
+                        {copy("现有 {n}").replace("{n}", formatQuantity(x.onHandQuantity))} /{" "}
+                        {copy("预留 {n}").replace("{n}", formatQuantity(x.reservedQuantity))} /{" "}
+                        {copy("可用 {n}").replace("{n}", formatQuantity(x.availableQuantity))} ·{" "}
+                        {copy(x.selectable ? "可操作" : "只读")}
                       </option>
                     ))}
                   </select>
@@ -1626,12 +1736,12 @@ function ShipmentDetail({ id }: { id: string }) {
         {copy("正在读取发货单…")}
       </div>
     );
-  if (!data) return <div role="alert">{error}</div>;
+  if (!data) return <div role="alert">{copy(error)}</div>;
   return (
     <div className="space-y-4" data-testid="shipment-workbench">
       {error && (
         <div role="alert" className="rounded-lg bg-red-50 p-3 text-red-700">
-          {error}
+          {copy(error)}
         </div>
       )}
       <section className="rounded-xl border bg-white p-5">
@@ -1662,7 +1772,7 @@ function ShipmentDetail({ id }: { id: string }) {
             <p className="mt-2 text-xs text-slate-500">
               过账 {stamp(data.shipment.postedAt)} · 冲销{" "}
               {stamp(data.shipment.reversedAt)} ·{" "}
-              {data.shipment.reversalReason || "无冲销原因"}
+              {data.shipment.reversalReason || copy("无冲销原因")}
             </p>
           </div>
           <div className="flex gap-2">
@@ -1702,7 +1812,7 @@ function ShipmentDetail({ id }: { id: string }) {
       <Section title={copy("分配与库存流水")}>
         <Table
           headers={[
-            "预留",
+            "预留 ID",
             "仓库",
             "库位",
             "数量",
@@ -1734,7 +1844,7 @@ function ShipmentDetail({ id }: { id: string }) {
         <div className="flex items-center gap-2">
           <ShieldCheck size={18} />
           <Badge value={data.reconciliation.status} />
-          <span className="text-sm">{data.aiExplain.conclusion}</span>
+          <span className="text-sm">{copy(data.aiExplain.conclusion)}</span>
         </div>
       </Section>
       {intent && (
@@ -1801,7 +1911,7 @@ function Table({
           <tr className="border-b text-left text-xs text-slate-500">
             {headers.map((x) => (
               <th className="p-2" key={x}>
-                {x}
+                {copy(x)}
               </th>
             ))}
           </tr>
@@ -1837,7 +1947,7 @@ function Timeline({ rows }: { rows: Workbench["evidence"] }) {
           </div>
           {x.commandExecutionId && (
             <div className="text-[11px] text-slate-400">
-              命令记录 {x.commandExecutionId} · 幂等键 {x.idempotencyKey}
+              {copy("命令记录")} {x.commandExecutionId} · {copy("幂等键")} {x.idempotencyKey}
             </div>
           )}
         </div>
@@ -1889,12 +1999,12 @@ function ActionDialog({
   }, [onClose]);
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      className="fc-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
       role="dialog"
       aria-modal="true"
       aria-label={title}
     >
-      <div className="max-h-[90vh] w-full max-w-xl overflow-auto rounded-xl bg-white p-5 shadow-xl">
+      <div className="fc-dialog-enter max-h-[90vh] w-full max-w-xl overflow-auto rounded-xl bg-white p-5 shadow-xl">
         <div className="mb-4 flex justify-between">
           <h2 className="font-semibold">{title}</h2>
           <button aria-label={copy("关闭")} onClick={onClose}>

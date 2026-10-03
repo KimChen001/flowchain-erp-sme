@@ -27,16 +27,19 @@ type ListPayload = {
 const value = (row: Record<string, any>, ...keys: string[]) =>
   keys.map((key) => row[key]).find((entry) => entry !== undefined && entry !== null);
 const query = () => window.location.search.replace(/^\?/, "");
+// A hidden or missing amount is null and shows as a dash, never as 0.
 const money = (amount: unknown, currency: unknown, locale: string) => {
+  if (amount === null || amount === undefined || amount === "") return "—";
   const code = String(currency || "");
-  const numeric = Number(amount || 0);
+  const numeric = Number(amount);
+  if (!Number.isFinite(numeric)) return "—";
   return /^[A-Z]{3}$/.test(code)
     ? new Intl.NumberFormat(locale, {
         style: "currency",
         currency: code,
         maximumFractionDigits: 4,
       }).format(numeric)
-    : `${amount || "0"} ${code}`.trim();
+    : `${amount} ${code}`.trim();
 };
 type TranslationKey = Parameters<ReturnType<typeof useI18n>["t"]>[0];
 const tokenKeys: Record<string, TranslationKey> = {
@@ -55,6 +58,7 @@ const tokenKeys: Record<string, TranslationKey> = {
   submit: "finance.action.submit",
   match: "finance.action.match",
   approve: "finance.action.approve",
+  cancel: "finance.action.cancel",
   hold: "finance.action.hold",
   mark_export_ready: "finance.action.mark_export_ready",
   release: "finance.action.release",
@@ -154,6 +158,11 @@ function FinanceList({
   return (
     <div className="space-y-4" data-testid={`operational-finance-${kind}-list`}>
       {!enabled && <Warning>{t("finance.capabilityDisabled")}</Warning>}
+      {kind === "invoice" && enabled && (
+        <div className="flex justify-end">
+          <a data-testid="supplier-invoice-new" href="/app/finance/invoices/new" className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-white" style={{ background: A.blue }}>{t("finance.newSupplierInvoice")}</a>
+        </div>
+      )}
       {kind === "payable" && <Warning>{t("finance.notPaid")}</Warning>}
       {kind === "credit" && <Warning>{t("finance.noRefund")}</Warning>}
       <Card className="overflow-x-auto">
@@ -212,7 +221,9 @@ function FinanceList({
               );
               return (
                 <tr className="border-b border-slate-50" key={id}>
-                  <td className="px-4 py-3 font-medium">{label}</td>
+                  <td className="px-4 py-3 font-medium">
+                    {kind === "invoice" && id ? <a className="text-blue-600 hover:underline" href={`/app/finance/invoices/${encodeURIComponent(id)}`}>{label}</a> : label}
+                  </td>
                   <td className="px-4 py-3">{source}</td>
                   <td className="px-4 py-3">
                     {money(amount, value(row, "currency"), locale)}

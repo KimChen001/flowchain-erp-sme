@@ -126,23 +126,25 @@ test('sign-out revokes the session in the database and records it', async () => 
   }
 })
 
-test('disabling a user or changing their role ends their sessions at once', async () => {
+test('disabling a user or changing their role assignments ends their sessions at once', async () => {
   const server = await startInProcess()
   try {
     const admin = (await signIn(server.base, users.admin.email)).body.token
     const target = async () => (await signIn(server.base, users.viewer.email)).body.token
     const current = async () => prisma.user.findUnique({ where: { id: users.viewer.id } })
 
-    // Legacy role change through the user settings page.
+    // The user endpoint refuses a legacy role change, which would grant
+    // nothing, so the session is kept.
     let token = await target()
     assert.equal((await call(server.base, 'GET', '/api/auth/me', { token })).status, 200)
     let patch = await call(server.base, 'PATCH', `/api/workspace/users/${users.viewer.id}`, { token: admin, body: { role: 'manager', status: 'active', version: (await current()).version } })
-    assert.equal(patch.status, 200)
-    assert.equal((await call(server.base, 'GET', '/api/auth/me', { token })).status, 401)
+    assert.equal(patch.status, 422)
+    assert.equal(patch.body.code, 'USER_ROLE_CHANGE_NOT_SUPPORTED')
+    assert.equal((await current()).role, 'viewer')
+    assert.equal((await call(server.base, 'GET', '/api/auth/me', { token })).status, 200)
 
     // Saving without a change keeps the session.
-    token = await target()
-    patch = await call(server.base, 'PATCH', `/api/workspace/users/${users.viewer.id}`, { token: admin, body: { role: 'manager', status: 'active', version: (await current()).version } })
+    patch = await call(server.base, 'PATCH', `/api/workspace/users/${users.viewer.id}`, { token: admin, body: { role: 'viewer', status: 'active', version: (await current()).version } })
     assert.equal(patch.status, 200)
     assert.equal((await call(server.base, 'GET', '/api/auth/me', { token })).status, 200)
 
@@ -156,12 +158,12 @@ test('disabling a user or changing their role ends their sessions at once', asyn
 
     // Disabling the user.
     token = await target()
-    patch = await call(server.base, 'PATCH', `/api/workspace/users/${users.viewer.id}`, { token: admin, body: { role: 'manager', status: 'disabled', version: (await current()).version } })
+    patch = await call(server.base, 'PATCH', `/api/workspace/users/${users.viewer.id}`, { token: admin, body: { status: 'disabled', version: (await current()).version } })
     assert.equal(patch.status, 200)
     assert.equal((await call(server.base, 'GET', '/api/auth/me', { token })).status, 401)
     assert.equal(await prisma.workspaceSession.count({ where: { tenantId, userId: users.viewer.id, revokedAt: null } }), 0)
     const revocations = await prisma.auditLog.findMany({ where: { tenantId, action: 'sessions_revoked', entityId: users.viewer.id }, orderBy: { createdAt: 'asc' } })
-    assert.deepEqual(revocations.map((row) => row.metadata.reason), ['role_changed', 'role_changed', 'user_disabled'])
+    assert.deepEqual(revocations.map((row) => row.metadata.reason), ['role_changed', 'user_disabled'])
     assert.ok(revocations.every((row) => row.actorId === users.admin.id))
     // The admin's own session is untouched.
     assert.equal((await call(server.base, 'GET', '/api/auth/me', { token: admin })).status, 200)

@@ -1,15 +1,16 @@
 import { Building2, Check, ChevronDown } from 'lucide-react';
 import { useI18n } from '../../i18n/I18n';
 import { supplierCopy } from './supplierCopy';
+import { orderedCurrencyCodes } from '../../lib/currencyOptions';
 
-type Props = { form: Record<string, any>; editing: boolean; saving: boolean; errors: Array<{ field?: string; message?: string }>; currencyWarning: boolean; onChange: (key: string, value: string) => void; onSave: () => void; onCancel: () => void };
+type Props = { form: Record<string, any>; editing: boolean; saving: boolean; errors: Array<{ field?: string; message?: string }>; currencyWarning: boolean; workspaceCurrency?: string; onChange: (key: string, value: string) => void; onSave: () => void; onCancel: () => void };
 const basic = [['supplierCode', 'Supplier code'], ['supplierName', 'Supplier name'], ['shortName', 'Short name'], ['businessType', 'Business type'], ['categories', 'Categories']];
 const contact = [['contactName', 'Contact name'], ['telephone', 'Phone'], ['email', 'Email'], ['address', 'Address'], ['postalCode', 'Postal / ZIP code']];
 const commercial = [['defaultCurrency', 'Default currency'], ['paymentTermsId', 'Payment terms'], ['deliveryCycleDays', 'Delivery lead time (days)'], ['settlementMethod', 'Settlement method']];
 const tax = [['creditCode', 'Business registration ID'], ['taxIdentificationNumber', 'Tax ID'], ['bankName', 'Bank name'], ['bankAccountName', 'Account holder'], ['bankAccountNumber', 'Account number']];
 const control = 'mt-1.5 block w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50';
 
-export function SupplierForm({ form, editing, saving, errors, currencyWarning, onChange, onSave, onCancel }: Props) {
+export function SupplierForm({ form, editing, saving, errors, currencyWarning, workspaceCurrency, onChange, onSave, onCancel }: Props) {
   const { language } = useI18n();
   const t = (value: string) => supplierCopy(value, language);
   function field([key, label]: string[]) {
@@ -18,7 +19,7 @@ export function SupplierForm({ form, editing, saving, errors, currencyWarning, o
     const props = { id: `supplier-${key}`, 'aria-label': t(label), 'aria-invalid': !!error, 'aria-describedby': error ? `supplier-error-${key}` : undefined, required, value: form[key] ?? '', onChange: (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => onChange(key, event.target.value), className: control };
     return <div key={key} className={key === 'address' || key === 'categories' ? 'md:col-span-2' : ''}>
       <label htmlFor={props.id} className="text-sm font-medium text-slate-600">{t(label)}{required && <span className="ml-1 text-blue-600">*</span>}</label>
-      {key === 'defaultCurrency' ? <select {...props}><option value="">{t('Choose currency')}</option>{[...new Set(['USD', 'EUR', 'GBP', 'CAD', 'CNY', ...Intl.supportedValuesOf('currency'), form.defaultCurrency].filter(Boolean))].map(code => <option key={code} value={code}>{code}</option>)}</select> : <input {...props} type={key === 'email' ? 'email' : key === 'telephone' ? 'tel' : key === 'deliveryCycleDays' ? 'number' : 'text'} min={key === 'deliveryCycleDays' ? 0 : undefined} step={key === 'deliveryCycleDays' ? 1 : undefined} maxLength={key === 'internalComment' ? 4000 : 500} />}
+      {key === 'defaultCurrency' ? <select {...props}><option value="">{t('Choose currency')}</option>{orderedCurrencyCodes(workspaceCurrency, null, form.defaultCurrency).map(code => <option key={code} value={code}>{code}</option>)}</select> : <input {...props} type={key === 'email' ? 'email' : key === 'telephone' ? 'tel' : key === 'deliveryCycleDays' ? 'number' : 'text'} min={key === 'deliveryCycleDays' ? 0 : undefined} step={key === 'deliveryCycleDays' ? 1 : undefined} maxLength={key === 'internalComment' ? 4000 : 500} />}
       {error && <p id={`supplier-error-${key}`} className="mt-1 text-xs text-red-600">{t(error.message || 'Check the highlighted fields.')}</p>}
       {key === 'supplierCode' && <p className="mt-1 text-xs text-slate-500">{t('Use a unique code, such as SUP-001.')}</p>}
       {key === 'categories' && <p className="mt-1 text-xs text-slate-500">{t('Separate categories with commas.')}</p>}

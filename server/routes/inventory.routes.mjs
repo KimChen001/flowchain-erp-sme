@@ -7,6 +7,7 @@ import { authorizeMutation } from "../domain/mutation-authorization.mjs";
 import { createInventoryAuthoritativeReadService } from "../domain/inventory-authoritative-read-service.mjs";
 import { capabilityForEnvironment } from "../domain/capability-registry.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { reportReadAccess, scopeBusinessContext, sendReadAccessError } from "../domain/report-read-access.mjs";
 
 function query(url) {
   return {
@@ -37,6 +38,12 @@ function inventoryReadRepository(ctx) {
   return ctx.repositories.inventoryRead;
 }
 
+// The balances, movements and quarantine routes read through the
+// authoritative inventory service, which checks permissions and warehouse
+// scope itself. Every other inventory read needs inventory.balance.read and
+// sees only the reader's warehouses.
+const AUTHORITATIVE_READS = new Set(["/api/inventory/balances", "/api/inventory/balances/select", "/api/inventory/movements", "/api/inventory/quarantine-balances", "/api/inventory/quarantine-balances/select"]);
+
 export async function handleInventoryRoute(ctx) {
   const { req, res, url, send } = ctx;
   if (url.pathname.startsWith("/api/inventory") && !ctx.identity?.authenticated) {
@@ -46,17 +53,29 @@ export async function handleInventoryRoute(ctx) {
     });
     return true;
   }
+  if (!url.pathname.startsWith("/api/inventory/")) return false;
+  let access;
+  if (req.method === "GET" && !AUTHORITATIVE_READS.has(url.pathname)) {
+    try { access = await reportReadAccess(ctx); } catch (error) { sendReadAccessError(ctx, error); return true; }
+    if (!access.collections.inventoryItems) {
+      send(res, 403, { code: "PERMISSION_DENIED", message: "Your role cannot view inventory.", details: { permission: "inventory.balance.read" } });
+      return true;
+    }
+  }
+  const denied = (permission, message) => { send(res, 403, { code: "PERMISSION_DENIED", message, details: { permission } }); return true; };
   let readRepository;
   const repository = () => (readRepository ||= inventoryReadRepository(ctx));
+  const warehouseScope = () => (access?.warehouseIds ? { warehouseIds: access.warehouseIds } : {});
   const scopedQuery = () => ({
     ...query(url),
     tenantId: ctx.identity.tenantId,
+    ...warehouseScope(),
   });
+  // Stock in the reader's warehouses against every open order's demand.
+  const scopedContext = () => readBusinessContext(ctx, { warehouseIds: access?.warehouseIds ?? null });
   let runtimeModel;
   const allocationModel = async () =>
-    (runtimeModel ||= buildRuntimeInventoryAllocation(
-      await readBusinessContext(ctx),
-    ));
+    (runtimeModel ||= buildRuntimeInventoryAllocation(await scopedContext()));
 
   const allocationPath =
     /^\/api\/inventory\/(?:availability|allocation|shortages|demand-supply-gap|available-to-promise|reservation-preview|sales-order-impact|po-supply-impact)(?:\/.*)?$/.test(
@@ -239,10 +258,11 @@ export async function handleInventoryRoute(ctx) {
     req.method === "GET" &&
     url.pathname === "/api/inventory/sales-order-impact"
   ) {
-    const context = await readBusinessContext(ctx);
+    if (!access.collections.salesOrders) return denied("sales_order.read", "Your role cannot view sales orders.");
+    const context = await scopedContext();
     const model = buildRuntimeInventoryAllocation(context);
     const id = url.searchParams.get("salesOrderId") || "";
-    const order = context.salesOrders.find(
+    const order = scopeBusinessContext(context, access).salesOrders.find(
       (row) => String(row.salesOrderId || row.id) === id,
     );
     const availability = order
@@ -269,10 +289,12 @@ export async function handleInventoryRoute(ctx) {
     req.method === "GET" &&
     url.pathname === "/api/inventory/po-supply-impact"
   ) {
-    const context = await readBusinessContext(ctx);
+    if (!access.collections.purchaseOrders) return denied("procurement.purchase_order.read", "Your role cannot view purchase orders.");
+    const context = await scopedContext();
     const model = buildRuntimeInventoryAllocation(context);
     const id = url.searchParams.get("poId") || "";
-    const po = context.purchaseOrders.find(
+    // Prices on the order follow procurement.prices.read.
+    const po = scopeBusinessContext(context, access).purchaseOrders.find(
       (row) => String(row.id || row.po) === id,
     );
     const impactedSkus = po
@@ -314,18 +336,15 @@ export async function handleInventoryRoute(ctx) {
       resource: "inventory",
     });
     if (authorization.blocked) return true;
-    try {
-      const item = await repository().upsertItem(
-        await ctx.readBody(req),
-        authorization.identity.userId,
-      );
-      send(res, 201, { item });
-    } catch (error) {
-      send(res, error.status || 400, {
-        error: error.message,
-        code: error.code,
-      });
-    }
+    // No repository writes inventory items directly; balances change through
+    // transfers, counts and adjustments in the inventory operations workbench.
+    send(res, 501, {
+      code: "FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED",
+      message:
+        "Legacy inventory item mutation is not available. Use inventory transfers, cycle counts, or adjustments.",
+      capability: "inventory",
+      limitations: ["legacy_inventory_item_mutation_removed"],
+    });
     return true;
   }
 
@@ -333,6 +352,7 @@ export async function handleInventoryRoute(ctx) {
   if (req.method === "GET" && itemMatch) {
     const item = await repository().getItem(itemMatch[1], {
       tenantId: ctx.identity.tenantId,
+      ...warehouseScope(),
     });
     if (!item) {
       send(res, 404, { error: "Inventory item not found" });
@@ -434,7 +454,7 @@ export async function handleInventoryRoute(ctx) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/inventory/summary") {
-    send(res, 200, { summary: await repository().getSummary({ tenantId: ctx.identity.tenantId }) });
+    send(res, 200, { summary: await repository().getSummary({ tenantId: ctx.identity.tenantId, ...warehouseScope() }) });
     return true;
   }
 

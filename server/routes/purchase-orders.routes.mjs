@@ -1,3 +1,6 @@
+import { canReadProcurementDocument, maskProcurementSnapshot, procurementReadAccess } from '../domain/procurement-read-access.mjs'
+import { purchaseOrderWorkbenchSummary } from '../domain/purchase-order-workbench-summary.mjs'
+
 export async function handlePurchaseOrdersRoute(ctx) {
   const {
     req, res, url, db, send, readBody, event, todayLabel, repositories, identity,
@@ -10,20 +13,28 @@ export async function handlePurchaseOrdersRoute(ctx) {
   if (req.method === 'GET' && url.pathname === '/api/purchase-orders') {
     if (!identity?.authenticated || !identity.tenantId) return send(res, 401, { code: 'TENANT_CONTEXT_REQUIRED', message: 'An authenticated tenant context is required.' }) || true
     if (!repositories?.procurementRead?.snapshot) return send(res, 503, { code: 'FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE', message: 'The PostgreSQL procurement read model is unavailable.' }) || true
-    const snapshot = await repositories.procurementRead.snapshot({ tenantId: identity.tenantId })
+    const access = await procurementReadAccess(ctx)
+    if (!canReadProcurementDocument('po', access)) return send(res, 403, { code: 'PERMISSION_DENIED', message: 'Your role cannot view purchase orders.', details: [] }) || true
+    const snapshot = maskProcurementSnapshot(await repositories.procurementRead.snapshot({ tenantId: identity.tenantId }), access)
     return send(res, 200, snapshot.purchaseOrders) || true
   }
 
   if (req.method === 'GET' && url.pathname === '/api/purchase-orders-workbench') {
     if (!identity?.authenticated || !identity.tenantId) return send(res, 401, { code: 'TENANT_CONTEXT_REQUIRED', message: 'An authenticated tenant context is required.' }) || true
     if (!repositories?.procurementRead?.snapshot) return send(res, 503, { code: 'FLOWCHAIN_POSTGRESQL_READ_MODEL_UNAVAILABLE', message: 'The PostgreSQL procurement read model is unavailable.' }) || true
-    const snapshot = await repositories.procurementRead.snapshot({ tenantId: identity.tenantId })
+    const access = await procurementReadAccess(ctx)
+    if (!canReadProcurementDocument('po', access)) return send(res, 403, { code: 'PERMISSION_DENIED', message: 'Your role cannot view purchase orders.', details: [] }) || true
+    const loaded = await repositories.procurementRead.snapshot({ tenantId: identity.tenantId })
+    const snapshot = maskProcurementSnapshot(loaded, access)
+    // Counts from the orders; the committed value only when prices are visible.
+    const summary = purchaseOrderWorkbenchSummary(loaded.purchaseOrders)
     return send(res, 200, {
       purchaseOrders: snapshot.purchaseOrders,
       receivingDocs: snapshot.receivingDocs,
       supplierInvoices: snapshot.supplierInvoices,
       documentLinks: snapshot.documentLinks,
       procurementFollowups: snapshot.procurementFollowups,
+      summary: access.prices ? summary : { ...summary, committedValueByCurrency: null, restrictedFields: ['amounts'] },
     }) || true
   }
 

@@ -1,4 +1,6 @@
 export type CustomerMaster = {
+  // id and version come from the server and are needed to change a customer.
+  id?: string; version?: number; currency?: string; email?: string;
   code: string; name: string; contact: string; phone: string; address: string;
   // "" means the workspace has not recorded a credit status.
   creditStatus: "正常" | "受限" | "待评估" | "";

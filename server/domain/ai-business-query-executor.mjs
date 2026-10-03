@@ -19,11 +19,18 @@ function aggregateState(rows, section, sourceStatus = {}) {
   return 'confirmed_zero'
 }
 
+// A supplier whose name the role cannot see is matched by id only, never by a
+// name, so a typed "Restricted supplier" cannot select every restricted supplier.
+function matchableName(supplier) {
+  if (supplier.fieldVisibility?.partner === false) return ''
+  return text(supplier.name || supplier.displayName).toLowerCase()
+}
+
 function scopeRows(items, scope) {
   if (scope.mode === 'all') return items
   const ids = new Set(scope.entityIds.map(text))
-  const names = new Set(scope.entityNames.map((item) => text(item).toLowerCase()))
-  return items.filter((row) => ids.has(text(row.supplier.id)) || names.has(text(row.supplier.name || row.supplier.displayName).toLowerCase()))
+  const names = new Set(scope.entityNames.map((item) => text(item).toLowerCase()).filter(Boolean))
+  return items.filter((row) => ids.has(text(row.supplier.id)) || names.has(matchableName(row.supplier)))
 }
 
 function countsFor(section, row) {
@@ -102,13 +109,19 @@ function scopeSummary(plan, rows) {
     : plan.scope.mode === 'previous_result'
       ? '上一轮结果'
       : rows.length === 1 ? rows[0].supplier.displayName : `${rows.length} 家供应商`
-  return { entityType: plan.scope.entityType, mode: plan.scope.mode, entityCount: rows.length, label }
+  // The single supplier in scope, so the answer can label it in the answer language.
+  return { entityType: plan.scope.entityType, mode: plan.scope.mode, entityCount: rows.length, label, supplier: rows.length === 1 ? rows[0].supplier : null }
+}
+
+// Valid plans can still ask for filters the executor cannot apply; those get a clarification answer.
+export function hasUnsupportedPlanFilters(plan) {
+  return plan.filters.statuses.length > 0 || plan.grouping.some(group => group !== "supplier") || plan.filters.dueState.some(state => ["settled", "due_this_week"].includes(state))
 }
 
 export async function executeBusinessQueryPlan(planCandidate, context = {}) {
   const plan = assertValidBusinessQueryPlan(planCandidate)
   assertReadOnlyGoalRegistry()
-  const unsupported = plan.filters.statuses.length > 0 || plan.grouping.some(group => group !== "supplier") || plan.filters.dueState.some(state => ["settled", "due_this_week"].includes(state))
+  const unsupported = hasUnsupportedPlanFilters(plan)
   if (plan.clarificationNeeded || unsupported) return {
     plan,
     scopeSummary: { entityType: plan.scope.entityType, mode: plan.scope.mode, entityCount: 0, label: '需要澄清' },

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
+import { useMasterDataWriteAccess } from "./writeAccess";
 
 export type MasterItem = {
   itemId: string;
@@ -135,6 +136,8 @@ export default function ItemMasterWorkbench({
 }) {
   const { language } = useI18n();
   const copy = (label: string) => workspaceCopy(label, language);
+  // Creating and editing items needs master_data.item.manage.
+  const canEdit = useMasterDataWriteAccess().items;
   const [items, setItems] = useState<MasterItem[]>([]);
   const [selected, setSelected] = useState<MasterItem | null>(null);
   const [editing, setEditing] = useState<Partial<MasterItem> | null>(null);
@@ -294,12 +297,14 @@ export default function ItemMasterWorkbench({
               {selected.status} · v{selected.version}
             </p>
           </div>
-          <button
-            onClick={() => setEditing(selected)}
-            className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
-          >
-            {copy("编辑 SKU")}
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => setEditing(selected)}
+              className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
+            >
+              {copy("编辑 SKU")}
+            </button>
+          )}
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
           {fields.map(([key, label]) => (
@@ -350,15 +355,17 @@ export default function ItemMasterWorkbench({
           onChange={(e) => setCategory(e.target.value)}
           style={inputStyle}
         />
-        <button
-          className="ml-auto rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
-          onClick={() => {
-            setSelected(null);
-            setEditing({ ...empty });
-          }}
-        >
-          {copy("新建 SKU")}
-        </button>
+        {canEdit && (
+          <button
+            className="ml-auto rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
+            onClick={() => {
+              setSelected(null);
+              setEditing({ ...empty });
+            }}
+          >
+            {copy("新建 SKU")}
+          </button>
+        )}
       </div>
       {error && <p className="mt-3 text-xs text-red-600">{error}</p>}
       <div className="mt-3 overflow-auto">
@@ -378,7 +385,7 @@ export default function ItemMasterWorkbench({
               <th>{copy("单位")}</th>
               <th>{copy("规格")}</th>
               <th>{copy("状态")}</th>
-              <th>{copy("操作")}</th>
+              {canEdit && <th>{copy("操作")}</th>}
             </tr>
           </thead>
           <tbody>
@@ -395,17 +402,19 @@ export default function ItemMasterWorkbench({
                 <td>{item.baseUnit}</td>
                 <td>{item.specification}</td>
                 <td>{item.status}</td>
-                <td>
-                  <button
-                    className="text-blue-600"
-                    onClick={() => {
-                      setSelected(item);
-                      setEditing(item);
-                    }}
-                  >
-                    {copy("编辑")}
-                  </button>
-                </td>
+                {canEdit && (
+                  <td>
+                    <button
+                      className="text-blue-600"
+                      onClick={() => {
+                        setSelected(item);
+                        setEditing(item);
+                      }}
+                    >
+                      {copy("编辑")}
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

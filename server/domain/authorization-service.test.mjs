@@ -36,6 +36,31 @@ test("intake uploader, reviewer, and administrator duties remain separated", () 
   assert.ok(administrator.permissions.includes("intake.commit"))
 })
 
+test("master data write codes go to the roles that maintain master data, and never to viewers", () => {
+  const masterData = permissionCatalog.filter((permission) => permission.module === "master_data")
+  assert.deepEqual(masterData.map(({ code, action, riskLevel }) => [code, action, riskLevel]), [
+    ["master_data.item.manage", "manage", "high"],
+    ["master_data.supplier.manage", "manage", "critical"],
+    ["master_data.customer.manage", "manage", "high"],
+  ])
+  const grants = Object.fromEntries(defaultRoleTemplates.map((role) => [role.roleKey, role.permissions.filter((code) => code.startsWith("master_data.")).sort()]))
+  assert.deepEqual(grants, {
+    "workspace-administrator": ["master_data.customer.manage", "master_data.item.manage", "master_data.supplier.manage"],
+    "intake-uploader": [],
+    "intake-reviewer": [],
+    "operations-manager": ["master_data.customer.manage", "master_data.item.manage", "master_data.supplier.manage"],
+    "operations-specialist": ["master_data.customer.manage", "master_data.item.manage", "master_data.supplier.manage"],
+    "procurement-specialist": ["master_data.item.manage", "master_data.supplier.manage"],
+    "finance-specialist": [],
+    "read-only-viewer": [],
+  })
+  // The viewer template is built from read actions only, so no manage code
+  // reaches it.
+  const viewer = defaultRoleTemplates.find((role) => role.roleKey === "read-only-viewer")
+  assert.ok(viewer.permissions.length > 0)
+  assert.equal(viewer.permissions.some((code) => !["read", "read_sensitive"].includes(permissionCatalog.find((permission) => permission.code === code).action)), false)
+})
+
 test("operations manager can review sensitive approval evidence without settlement posting authority", () => {
   const manager = defaultRoleTemplates.find((role) => role.roleKey === "operations-manager")
   for (const permission of ["procurement.prices.read", "finance.amounts.read", "finance.partner_snapshot.read", "procurement.purchase_order.approve", "finance.settlement.approve"]) assert.ok(manager.permissions.includes(permission), permission)
