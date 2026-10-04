@@ -151,7 +151,13 @@ writes commit together; failures roll back. Native pgvector availability does no
 prove older JSON-only documents have been backfilled: reindex those documents.
 
 The existing provider configuration enables generation. Only the top five passages
-are supplied, as untrusted reference text. Unknown or missing citation IDs, provider
+are supplied, as untrusted reference text. The model returns an answer and the
+passages it used, named by id or by number; inline references are written `[1]`,
+and `[sourceNumber 1]` is read as `[1]`. Every reference, listed or inline, must be
+a passage retrieved for this request. A reply with an empty list is a no-answer: a
+fixed English or Chinese sentence ("The documents you can access do not answer this
+question.") with the passages that were searched; the model's own text is never
+shown. A reference to a passage that was not retrieved, a malformed reply, provider
 failure, or missing provider configuration return explicitly labelled excerpts.
 No matching passages return a no-results message. No business mutations run here.
 Citation validation checks source identity; it does not prove every generated claim.

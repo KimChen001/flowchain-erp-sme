@@ -111,8 +111,13 @@ test('a passage may be named by its number or only inline, but it must be one re
   const inline = await ask({ answer: 'The warranty is 18 months [1] and starts on delivery [2].', citationIds: [first] })
   assert.equal(inline.mode, 'generated')
   assert.deepEqual(inline.citations.map(c => c.sourceNumber), [1, 2])
-  // Inline references alone are a cited answer, not a no-answer.
-  assert.equal((await ask({ answer: 'It starts on delivery [2].', citationIds: [] })).mode, 'generated')
+  // An empty list is the model's own no-answer, even with an inline reference: its text is never shown.
+  const declared = await ask({ answer: 'The excerpts give no price; [1] only lists the warranty. It is likely around $40.', citationIds: [] })
+  assert.equal(declared.mode, 'no_answer')
+  assert.doesNotMatch(declared.answer, /\$40/)
+  // A reply whose answer is not text is broken, not a no-answer.
+  for (const answer of [['18 months [1]'], { text: '18 months' }, 42]) assert.equal((await ask({ answer, citationIds: [] })).mode, 'model_unavailable', JSON.stringify(answer))
+  assert.equal((await ask({ citationIds: [] })).mode, 'no_answer')
   // A number or inline reference past the retrieved passages, or an unknown id, is rejected.
   for (const reply of [{ answer: 'x [1]', citationIds: ['3'] }, { answer: 'x [3]', citationIds: ['chunk-a'] }, { answer: 'x', citationIds: ['chunk-z'] }]) assert.equal((await ask(reply)).mode, 'model_unavailable', JSON.stringify(reply))
 })

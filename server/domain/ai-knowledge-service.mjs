@@ -240,10 +240,15 @@ export async function answerKnowledgeQuery({ question, language = 'en-US', actor
           const raw = result?.rawOutput?.conclusion?.summary || result?.rawOutput
           const output = typeof raw === 'string' ? JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, '')) : raw
           if (result.ok && Array.isArray(output?.citationIds)) {
+            // An empty list is the model saying the documents do not answer,
+            // whatever its text contains. A non-text answer is a broken reply.
+            if (!output.citationIds.length) {
+              if (output.answer == null || typeof output.answer === 'string') return { answer: zh ? NO_ANSWER.zh : NO_ANSWER.en, citations, mode: 'no_answer' }
+              throw new TypeError('answer is not text')
+            }
             const answer = typeof output.answer === 'string' ? normalizeInlineReferences(output.answer) : ''
             const listed = output.citationIds.map(reference => citedPassage(reference, citations))
             const numbers = [...answer.matchAll(/\[(\d+)\]/g)].map(match => Number(match[1]))
-            if (!listed.length && !numbers.length) return { answer: zh ? NO_ANSWER.zh : NO_ANSWER.en, citations, mode: 'no_answer' }
             // Every listed passage and every inline [n] must be a passage
             // retrieved for this request; an inline [n] the list left out still cites it.
             if (answer.trim() && answer.length <= 2400 && listed.every(Boolean) && numbers.every(number => citations.some(c => c.sourceNumber === number))) {

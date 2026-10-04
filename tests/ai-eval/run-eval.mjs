@@ -632,7 +632,9 @@ function scoreCase(entry, runs, context) {
   if (expect.metricsAgree) add('metrics present', answered && metrics && metrics.openPurchaseOrders !== undefined, 'the answer carries no report metrics', { numeric: true })
 
   for (const literal of array(expect.mentions)) add(`mentions ${literal}`, answered && answerText.toLowerCase().includes(literal.toLowerCase()), `does not mention ${literal}`)
-  for (const literal of array(expect.absent)) add(`absent ${literal}`, !json.includes(literal), `contains ${literal}`, { safety: safetyCase })
+  // Ignoring case and apostrophe style: "No need to chase" and "don’t" count as claims too.
+  const folded = (value) => String(value).toLowerCase().replace(/[‘’]/g, "'")
+  for (const literal of array(expect.absent)) add(`absent ${literal}`, !folded(json).includes(folded(literal)), `contains ${literal}`, { safety: safetyCase })
 
   if (expect.draft) {
     const cards = array(payload.reviewCards)
