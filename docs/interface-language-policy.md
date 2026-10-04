@@ -44,6 +44,11 @@ names, or supplier names in place. Translate their presentation where appropriat
 - The draft review shows supplier message drafts (recipient, subject, message, open
   lines, "Open in email") with English and Chinese labels. The message text is the
   assistant's, in the answer language.
+- Assistant answer lines state their next step ("Next: …" / "下一步：…"), and supplier
+  message drafts (greeting, one line per open PO line, closing, subject) are written in
+  the answer language from English and Chinese templates. Names, SKUs, units and the
+  supplier's contact stay as stored; dates and numbers follow the workspace locale in
+  both languages.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.

@@ -165,18 +165,36 @@ const entries = {
   'draft.none_summary': ['No open issue calls for a follow-up draft. Open the records below to review them.', '当前没有需要跟进草稿的问题。可打开下面的记录查看。'],
   'draft.no_permission': ['Your role cannot prepare procurement drafts, so only links are shown.', '你的角色无法准备采购草稿，因此只显示链接。'],
   'draft.po_followup.title': ['Follow up with {supplier} on {po}', '就 {po} 跟进 {supplier}'],
-  'draft.po_followup.message': ['Please confirm a delivery date for the remaining {remaining} {unit} of {sku} on {po}.', '请确认 {po} 上 {sku} 剩余 {remaining} {unit} 的交货日期。'],
   'draft.po_followup.message_generic': ['Please confirm a delivery date for the remaining quantity on {po}.', '请确认 {po} 剩余数量的交货日期。'],
-  // An order with several lines still to receive: {lines} lists each with its
-  // own remaining quantity ("40 pcs of LDM-002 and 10 pcs of LDM-003").
-  'draft.po_followup.message_lines': ['Please confirm delivery dates for the remaining quantities on {po}: {lines}.', '请确认 {po} 上以下剩余数量的交货日期：{lines}。'],
-  'draft.po_followup.line': ['{quantity} of {sku}', '{sku} 剩余 {quantity}'],
   'draft.invoice.title': ['Ask {supplier} about the variance on {invoice}', '就 {invoice} 的差异联系 {supplier}'],
   'draft.invoice.message': ['Invoice {invoice} differs from the purchase order by {amount}. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单相差 {amount}。请提供更正后的发票或差异原因。'],
   'draft.invoice.message_hidden': ['Invoice {invoice} differs from the purchase order. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单存在差异。请提供更正后的发票或差异原因。'],
   'draft.pr.title': ['Request {quantity} {unit} of {sku}', '申请采购 {sku} {quantity} {unit}'],
   'draft.pr.reason': ['{available} available against a target of {target}; nothing incoming covers it.', '可用 {available}，目标 {target}；没有在途订单覆盖。'],
   'draft.review': ['Review draft', '复核草稿'],
+  // A supplier message draft: greeting, body and closing, each line of the
+  // body a record fact (docs/ai-prefill-autocomplete-design.md, J1/J2).
+  'draft.greeting': ['Hello {name},', '{name}，您好：'],
+  'draft.closing': ['Thank you.', '谢谢。'],
+  'draft.po_followup.intro_one': ['Please confirm a delivery date for the open line on {po}:', '请确认 {po} 上以下未交货行的交货日期：'],
+  'draft.po_followup.intro_many': ['Please confirm delivery dates for the open lines on {po}:', '请确认 {po} 上以下未交货行的交货日期：'],
+  'draft.po_followup.bullet': ['- {sku}{item}: {quantity} still to deliver{promised}', '- {sku}{item}：仍有 {quantity} 未交{promised}'],
+  'draft.po_followup.promised': [', promised {date}', '，承诺日期 {date}'],
+  'draft.po_followup.originally': [' (originally {date})', '（原定 {date}）'],
+  'draft.po_followup.subject': ['{po}: delivery dates for {count} open lines', '{po}：{count} 行未交货的交货日期'],
+  'draft.po_followup.subject_one': ['{po}: delivery date for {sku}', '{po}：{sku} 的交货日期'],
+  'draft.po_followup.subject_generic': ['{po}: delivery date', '{po}：交货日期'],
+  'draft.invoice.subject': ['Invoice {invoice}: difference from the purchase order', '发票 {invoice}：与采购订单的差异'],
+  // The next step each answer line states.
+  'next.po_followup': ['Next: ask {supplier} to confirm a delivery date.', '下一步：请 {supplier} 确认交货日期。'],
+  'next.chase_po': ['Next: chase {po}, which brings this item.', '下一步：跟进带来该物料的 {po}。'],
+  'next.raise_pr': ['Next: raise a purchase request for {quantity}.', '下一步：申请采购 {quantity}。'],
+  'next.await_pr': ['Next: get the pending purchase request approved.', '下一步：推动待审批的采购申请通过。'],
+  'next.invoice_query': ['Next: ask {supplier} about the difference.', '下一步：就差异询问 {supplier}。'],
+  'next.rejected': ['Next: tell {supplier} about the rejected quantity.', '下一步：告知 {supplier} 拒收数量。'],
+  'next.post_receipt': ['Next: post the receipt.', '下一步：过账这张收货单。'],
+  'next.review_request': ['Next: review the request.', '下一步：审核这张申请。'],
+  'next.compare_quotes': ['Next: compare the quotes and award.', '下一步：比较报价并授标。'],
   'draft.create_pr': ['Create purchase request draft', '创建采购申请草稿'],
 
   // Signal types: evidence status labels
