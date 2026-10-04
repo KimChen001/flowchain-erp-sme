@@ -50,7 +50,12 @@ const METHOD_KEYS: Record<string, TranslationKey> = {
   cash: "finance.method.cash",
   other: "finance.method.other",
 };
-const today = () => new Date().toISOString().slice(0, 10);
+// Today on the user's calendar, not in UTC: in a US evening UTC is already
+// tomorrow.
+const today = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
 // A hidden or missing amount is null and shows as a dash, never as 0.
 const money = (amount: unknown, currency: string, locale: string) => {
   if (amount === null || amount === undefined || amount === "" || !Number.isFinite(Number(amount))) return "—";
