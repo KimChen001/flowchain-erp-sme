@@ -13,6 +13,8 @@
 // They are versioned and need product sign-off. Ties break by record id so
 // the order never depends on read order.
 
+import { PURCHASE_ORDER_STATUS, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
+
 export const AI_SKILL_SIGNAL_VERSION = 'ai-skill-signals-v1'
 export const AI_SKILL_SIGNAL_WEIGHTS = Object.freeze({
   po_overdue: 80, // plus one per day late, up to 20
@@ -74,12 +76,22 @@ function projection(facts, sku, incoming) {
   return { incoming: incoming ?? null, pendingRequests }
 }
 
+// Approved but not yet issued: the supplier does not have the order, so there
+// is nothing to chase (decision V5, 2026-10-04). The report still counts it as
+// open and, past its date, as overdue, and so do the signals; the answers say
+// it has not been issued, and no supplier follow-up is drafted for it.
+export function aiSkillPurchaseOrderNotSent(po) {
+  let status = String(po?.status ?? '')
+  try { status = normalizeProcurementAuthorityStatus('purchaseOrder', status) } catch { /* an unknown status stays as stored */ }
+  return status === PURCHASE_ORDER_STATUS.APPROVED
+}
+
 export function buildAiSkillSignals(facts) {
   const signals = []
   const asOf = facts.asOf
   for (const po of array(facts.purchaseOrders?.rows)) {
     const common = { supplierId: po.supplierId, supplier: po.supplier, when: aiSkillWhenDue(po.dueDate, asOf) }
-    const lineData = { remaining: po.remaining, unit: po.unit, sku: po.sku, itemId: po.itemId, openLines: po.openLines, dueDate: po.dueDate, supplier: po.supplier }
+    const lineData = { remaining: po.remaining, unit: po.unit, sku: po.sku, itemId: po.itemId, openLines: po.openLines, dueDate: po.dueDate, supplier: po.supplier, notSent: aiSkillPurchaseOrderNotSent(po) }
     // The report's own overdue days decide lateness, as in the reports.
     if (po.overdueDays > 0) signals.push(signal('po_overdue', 'purchase_order', po.id, po.orderNumber, { ...lineData, days: po.overdueDays }, { ...common, bonus: Math.min(OVERDUE_BONUS_CAP, po.overdueDays), when: { kind: 'overdue', days: po.overdueDays, date: po.dueDate || null } }))
     else if (po.dueDate && asOf && daysBetween(asOf, po.dueDate) >= 0 && daysBetween(asOf, po.dueDate) <= DUE_SOON_DAYS) signals.push(signal('po_due_7d', 'purchase_order', po.id, po.orderNumber, { ...lineData, days: daysBetween(asOf, po.dueDate) }, common))
