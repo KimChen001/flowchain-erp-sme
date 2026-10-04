@@ -95,6 +95,7 @@ jobs:
       - run: npm run test:db:supplier-scorecard
       - run: npm run test:db:finance-read-permissions
       - run: npm run test:db:sales-read-permissions
+      - run: npm run test:db:search-wildcards
       - run: npm run test:db:inventory-warehouse-scope
       - run: npm run test:db:search-graph-read-scope
       - run: npm run test:db:role-backfill-once

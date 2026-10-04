@@ -1,3 +1,4 @@
+import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
@@ -145,7 +146,7 @@ const TIER_FILTERS = Object.freeze({ 1: { tier: 1 }, 2: { tier: 2 }, 3: { tier: 
 // tab; tier and owner pick the tab. The owner "me" is the signed-in user.
 function supplierWhere(filters = {}, { tab = true } = {}) {
   // Prisma's contains does not escape LIKE wildcards: "%" alone would match every supplier.
-  const query = text(filters.query).replace(/[\\%_]/g, '\\$&')
+  const query = escapeLikePattern(text(filters.query))
   const category = text(filters.category)
   const owner = text(filters.owner) === 'me' ? text(filters.currentUserId) || '-' : text(filters.owner)
   return {
