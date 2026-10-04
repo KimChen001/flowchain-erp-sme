@@ -41,6 +41,9 @@ names, or supplier names in place. Translate their presentation where appropriat
   "Prefilled from…" banner and each field's source label in English and Chinese
   (`src/components/prefill/PrefillSource.tsx`). A reason the assistant wrote is kept in
   the language it was written in, as stored business text.
+- The receiving form (warehouse, arrival time, accepted quantities) and the RFQ supplier
+  response dialog (quantities and delivery dates from the RFQ lines) label their prefilled
+  values in English and Chinese.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.
