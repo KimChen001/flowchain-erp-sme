@@ -1,8 +1,17 @@
 # Assistant prefill and autocomplete: design
 
 Status: design, 2026-10-03. The owner approved decisions 1-8 in [§9](#9-decisions-for-the-owner)
-as recommended the same day, and P1 is being built. Decision 9 (P3) is open. Written
-against main at `a783fd4` (PR #113 merged); line numbers refer to that commit.
+as recommended the same day. Decision 9 (P3) is open. Written against main at `a783fd4`
+(PR #113 merged); line numbers refer to that commit.
+
+P1 is built, in four PRs (2026-10-04, open):
+- #119: the purchase request form opened from the assistant, source labels, the
+  suggestion trail;
+- #120: supplier message drafts reviewed as a message, with "Open in email";
+- #122: a next step and a draft on every answer line, drafts as letters. It needs #118;
+- #124: new receipts and first supplier quotes prefilled from their records.
+
+Merge order: #118, #119, #120, #122; #124 after #119.
 
 Related: the agent mode design (`docs/ai-agent-mode-design.md`, PR #108). This design
 gives a model no new decision until its optional phase 3, and phase 3 reuses the agent
