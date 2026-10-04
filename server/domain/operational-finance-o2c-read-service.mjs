@@ -572,7 +572,7 @@ export function createOperationalFinanceO2cReadService({
       customerInvoiceCurrencies,
     ] = await Promise.all([
       prisma.supplierInvoice.count({
-        where: { tenantId: current.tenantId, status: "submitted" },
+        where: { tenantId: current.tenantId, status: "submitted", relatedGrnId: { not: null } },
       }),
       prisma.financeMatchException.count({
         where: {
