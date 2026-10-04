@@ -14,7 +14,9 @@ const array = (value) => Array.isArray(value) ? value : []
 // Questions a workspace skill answers with the reports' own figures: invoice
 // totals and match results, stock and availability, one named order, orders
 // waiting for approval. They go to the skills unless they are about payments.
-const SKILL_FIRST = new Set(['invoice_summary', 'inventory_availability', 'pending_approvals'])
+// A general question about suppliers gets the supplier list by date
+// (supplier_attention) unless it is about payments.
+const SKILL_FIRST = new Set(['invoice_summary', 'inventory_availability', 'pending_approvals', 'supplier_attention'])
 
 function shouldUseSemanticBusinessQuery(message, body = {}) {
   const input = text(message).toLowerCase()

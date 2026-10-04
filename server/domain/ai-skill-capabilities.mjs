@@ -1,6 +1,6 @@
 import { aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
-import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
+import { buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { toolsFor } from './ai-skill-registry.mjs'
 
 // The capability answer: what the assistant can do, as follow-up prompts for
@@ -23,7 +23,7 @@ const TOPICS = [
   ['invoices', [/\binvoices?\b|\bpayments?\b|\bpayables?\b/i, /发票|付款|应付/], ['invoice_summary']],
   ['inventory', [/\b(?:stock|inventory|skus?)\b/i, /库存|物料|sku/i], ['inventory_availability']],
   ['purchase_orders', [/\b(?:purchase orders?|pos?)\b/i, /采购订单|采购|\bpo\b/i], ['purchase_orders', 'pending_approvals', 'workspace_metrics']],
-  ['suppliers', [/\b(?:suppliers?|vendors?)\b/i, /供应商|供方/], ['purchase_orders', 'invoice_summary', 'rfq_followups', 'receiving_issues']],
+  ['suppliers', [/\b(?:suppliers?|vendors?)\b/i, /供应商|供方/], ['supplier_attention', 'purchase_orders', 'invoice_summary', 'receiving_issues']],
 ]
 
 export function aiSkillQuestionTopic(query) {
@@ -56,7 +56,7 @@ export function presentCapabilityOverview(result, _facts, { skill, language, que
 // Open and overdue purchase orders, committed spend and short SKUs, exactly as
 // the reports count them, with the most overdue orders as evidence.
 export function runWorkspaceMetrics(facts) {
-  const overdue = rankAiSkillItems(buildAiSkillSignals(facts).filter((item) => item.type === 'po_overdue')).slice(0, 5)
+  const overdue = rankAiSkillItemsByDate(buildAiSkillSignals(facts).filter((item) => item.type === 'po_overdue')).slice(0, 5)
   return { skillId: 'workspace_metrics', items: overdue }
 }
 
