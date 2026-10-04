@@ -3389,6 +3389,9 @@ model AiKnowledgeChunk {
   documentId String
   position Int
   content String
+  // Markdown heading path of the section the chunk came from, e.g.
+  // "Sensor Guide › FC-DEMO-SENSOR-100"; null for text without headings.
+  heading String?
   contentHash String?
   embedding Json?
   embeddingModel String?

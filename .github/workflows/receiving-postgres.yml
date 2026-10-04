@@ -65,6 +65,7 @@ jobs:
       - run: npm run test:db:report-truncation
       - run: npm run test:db:inventory-allocation
       - run: npm run test:db:ai-knowledge
+      - run: npm run test:ai:eval:knowledge
       - run: npm run test:db:ai-pgvector
         env:
           DATABASE_URL: postgresql://flowchain_ci:flowchain_ci_password@127.0.0.1:55432/flowchain_ci_diagnostics?schema=public

@@ -1,0 +1,175 @@
+{
+  "notice": "Every document here describes a fictional workspace and fictional products. The three files in documents/ are the sample documents of the AI master plan v2.0 (section 15); the cases are its starter evaluation (section 16) plus the plan's demo request and isolation checks.",
+  "corpus": [
+    { "tenant": "C", "file": "documents/product-guide.md" },
+    { "tenant": "C", "file": "documents/purchasing-policy.md" },
+    { "tenant": "C", "file": "documents/invoice-policy.md" },
+    { "tenant": "C", "key": "archived-guide", "title": "Old sensor guide", "archived": true, "content": "# Old Sensor Guide\n\nFICTIONAL DEMO DOCUMENT. Withdrawn.\n\n## FC-DEMO-SENSOR-100\n\nThe operating temperature range is -10 to 80 degrees Celsius. The supply voltage is 24 V DC." },
+    { "tenant": "C", "key": "finance-limits", "title": "Invoice approval limits", "requiredPermission": "finance.payable.read", "content": "# Invoice Approval Limits\n\nFICTIONAL DEMO DOCUMENT. Supplier invoices above 5,000 USD need a second finance approver before payment is confirmed." },
+    { "tenant": "D", "key": "other-tenant-guide", "title": "Other workspace sensor guide", "content": "# Other Workspace Sensor Guide\n\nFICTIONAL DEMO DOCUMENT for another workspace.\n\n## FC-DEMO-SENSOR-100\n\nThe operating temperature range is -40 to 125 degrees Celsius. The supply voltage is 48 V DC." }
+  ],
+  "cases": [
+    {
+      "id": "product-temperature",
+      "question": "Can FC-DEMO-SENSOR-100 operate at 70 degrees Celsius?",
+      "scope": "knowledge",
+      "sources": ["product-guide.md"],
+      "sections": ["FC-DEMO-SENSOR-100"],
+      "firstSection": "FC-DEMO-SENSOR-100",
+      "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "expect": "No; maximum operating temperature is 60 degrees Celsius.",
+      "mustNot": "Use the 85-degree limit of model 200."
+    },
+    {
+      "id": "product-demo-step-2",
+      "question": "Can FC-DEMO-SENSOR-100 be used at 70 degrees Celsius?",
+      "scope": "knowledge",
+      "sources": ["product-guide.md"],
+      "sections": ["FC-DEMO-SENSOR-100"],
+      "firstSection": "FC-DEMO-SENSOR-100",
+      "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "expect": "No; it is rated to 60 degrees Celsius, not the 85 degrees of model 200."
+    },
+    {
+      "id": "product-paraphrase",
+      "question": "Our room reaches seventy degrees C. Is the FC-DEMO-SENSOR-100 suitable?",
+      "scope": "knowledge",
+      "sources": ["product-guide.md"],
+      "sections": ["FC-DEMO-SENSOR-100"],
+      "firstSection": "FC-DEMO-SENSOR-100",
+      "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "expect": "No, based on its stated operating range."
+    },
+    {
+      "id": "product-chinese",
+      "language": "zh-CN",
+      "question": "FC-DEMO-SENSOR-100 在七十摄氏度下可以用吗？",
+      "scope": "knowledge",
+      "sources": ["product-guide.md"],
+      "sections": ["FC-DEMO-SENSOR-100"],
+      "firstSection": "FC-DEMO-SENSOR-100",
+      "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "expect": "Answer in Chinese: no; its maximum operating temperature is 60 degrees Celsius."
+    },
+    {
+      "id": "warranty",
+      "question": "When does the warranty start for FC-DEMO-SENSOR-100, and how long is it?",
+      "scope": "knowledge",
+      "sources": ["product-guide.md"],
+      "sections": ["FC-DEMO-SENSOR-100"],
+      "firstSection": "FC-DEMO-SENSOR-100",
+      "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "expect": "12 months from delivery."
+    },
+    {
+      "id": "exact-sku",
+      "question": "What voltage does FC-DEMO-SENSOR-200 need?",
+      "scope": "knowledge",
+      "sources": ["product-guide.md"],
+      "sections": ["FC-DEMO-SENSOR-200"],
+      "firstSection": "FC-DEMO-SENSOR-200",
+      "forbiddenSections": ["FC-DEMO-SENSOR-100"],
+      "expect": "12 V DC.",
+      "mustNot": "Answer 24 V DC."
+    },
+    {
+      "id": "unknown-price",
+      "question": "What is the price of FC-DEMO-SENSOR-100?",
+      "scope": "knowledge",
+      "knownGaps": { "scope": "Automatic mode keeps price questions with business data. Choosing between documents and records is left to model tool planning (P2)." },
+      "sources": ["product-guide.md"],
+      "sections": ["FC-DEMO-SENSOR-100"],
+      "firstSection": "FC-DEMO-SENSOR-100",
+      "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "expect": "The supplied guide does not specify a price; ask for a current quotation."
+    },
+    {
+      "id": "unknown-certification",
+      "question": "Is FC-DEMO-SENSOR-100 certified for food-contact use?",
+      "scope": "knowledge",
+      "sources": ["product-guide.md"],
+      "sections": ["FC-DEMO-SENSOR-100"],
+      "firstSection": "FC-DEMO-SENSOR-100",
+      "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "expect": "Cannot confirm certification or suitability from the supplied guide."
+    },
+    {
+      "id": "substitution",
+      "question": "Can we automatically replace FC-DEMO-SENSOR-100 with model 200?",
+      "scope": "knowledge",
+      "sources": ["product-guide.md", "purchasing-policy.md"],
+      "sections": ["FC-DEMO-SENSOR-100", "FC-DEMO-SENSOR-200", "Replacement products"],
+      "expect": "No automatic substitution; voltage differs and compatibility plus buyer approval is needed."
+    },
+    {
+      "id": "missing-date",
+      "question": "A PO line has no promised date. Should I call it overdue?",
+      "scope": "knowledge",
+      "sources": ["purchasing-policy.md"],
+      "sections": ["Overdue goods"],
+      "firstSection": "Overdue goods",
+      "expect": "No; request a confirmed date and identify missing data."
+    },
+    {
+      "id": "escalation",
+      "question": "When should I escalate a supplier follow-up?",
+      "scope": "knowledge",
+      "sources": ["purchasing-policy.md"],
+      "sections": ["Follow-up and escalation"],
+      "firstSection": "Follow-up and escalation",
+      "expect": "Two business days without a response after follow-up, or a demonstrated impact on linked customer delivery within three business days; do not claim a current order is affected."
+    },
+    {
+      "id": "partial-invoice",
+      "question": "The invoice total is lower than the PO total. Is that necessarily a price variance?",
+      "scope": "knowledge",
+      "sources": ["invoice-policy.md"],
+      "sections": ["Price differences"],
+      "firstSection": "Price differences",
+      "expect": "No; a partial invoice can differ. Compare agreed unit prices, quantities, units and separate tax."
+    },
+    {
+      "id": "invoice-before-receipt",
+      "question": "Can I record a supplier invoice before receiving the goods?",
+      "scope": "knowledge",
+      "sources": ["invoice-policy.md"],
+      "sections": ["Invoice before goods"],
+      "firstSection": "Invoice before goods",
+      "expect": "Under this example policy, yes, with receipt link pending; do not create receipt evidence or imply that goods arrived."
+    },
+    {
+      "id": "demo-acme-follow-up",
+      "question": "Check Acme's outstanding orders, explain which need follow-up under our purchasing policy, and prepare a message asking about partial delivery.",
+      "scope": "mixed",
+      "sources": ["purchasing-policy.md"],
+      "sections": ["Follow-up and escalation"],
+      "expect": "Business data answers the orders; the purchasing policy is cited alongside."
+    },
+    {
+      "id": "isolation-other-tenant",
+      "tenant": "D",
+      "question": "What is the operating range of FC-DEMO-SENSOR-100 in degrees Celsius?",
+      "scope": "knowledge",
+      "sources": ["other-tenant-guide"],
+      "sections": ["FC-DEMO-SENSOR-100"],
+      "expect": "The other workspace sees only its own guide; the global checks prove workspace C never does."
+    },
+    {
+      "id": "audience-buyer",
+      "role": "buyer",
+      "question": "What is our policy for approving supplier invoices above 5,000 USD?",
+      "scope": "knowledge",
+      "notSources": ["finance-limits"],
+      "openDenied": "finance-limits",
+      "expect": "A buyer cannot retrieve or open the finance-only document."
+    },
+    {
+      "id": "audience-finance",
+      "role": "finance",
+      "question": "What is our policy for approving supplier invoices above 5,000 USD?",
+      "scope": "knowledge",
+      "sources": ["finance-limits"],
+      "expect": "A finance reader retrieves the finance-only document."
+    }
+  ]
+}
