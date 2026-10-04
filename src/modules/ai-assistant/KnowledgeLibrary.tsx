@@ -6,11 +6,11 @@ const endpoint = '/api/ai-runtime/knowledge';
 type Source = { id: string; title: string; language: string; indexStatus: 'semantic' | 'partial' | 'keyword' | 'outdated'; indexAttemptStatus?: string; indexAttemptError?: string; indexAttemptFinishedAt?: string; indexedChunks?: number; embeddingModel: string | null; embeddingDimensions: number | null; _count: { chunks: number } };
 type Capabilities = { embeddingConfigured: boolean; generationConfigured?: boolean; generationModel?: string | null; vectorStorage: string; model: string | null; dimensions: number | null };
 type PendingFile = { fileName: string; contentBase64: string };
-export type RagAnswer = { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> };
+export type RagAnswer = { mode: string; citations: Array<{ id: string; documentId: string; title: string; heading?: string | null; position: number; excerpt: string; sourceNumber?: number }> };
 
 function KnowledgeDocument({ id, chunkId, onClose }: { id: string; chunkId?: string; onClose: () => void }) {
   const { language } = useI18n();
-  const [document, setDocument] = useState<{ title: string; chunks: Array<{ id: string; position: number; content: string }> } | null>(null);
+  const [document, setDocument] = useState<{ title: string; chunks: Array<{ id: string; position: number; content: string; heading?: string | null }> } | null>(null);
   const [error, setError] = useState('');
   const highlighted = useRef<HTMLElement | null>(null);
   useEffect(() => { highlighted.current?.scrollIntoView({ block: 'center' }); }, [document, chunkId]);
@@ -21,7 +21,7 @@ function KnowledgeDocument({ id, chunkId, onClose }: { id: string; chunkId?: str
     <h2 className="mb-4 text-lg font-semibold">{document?.title || (language === 'zh-CN' ? '读取来源' : 'Loading source')}</h2>
     {error && <p role="alert">{error}</p>}
     {document && chunkId && !document.chunks.some(chunk => chunk.id === chunkId) && <p role="status" className="mb-3 text-sm text-amber-800">{language === 'zh-CN' ? '原文已更新，原引用段落不再可用。' : 'The source has changed. The cited passage is no longer available.'}</p>}
-    {document?.chunks.map(chunk => <section key={chunk.id} ref={chunk.id === chunkId ? highlighted : undefined} data-cited={chunk.id === chunkId ? 'true' : undefined} className={`mb-4 rounded-lg border p-3 ${chunk.id === chunkId ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-100' : ''}`}><p className="mb-2 text-xs text-slate-500">{language === 'zh-CN' ? '段落' : 'Passage'} {chunk.position + 1}{chunk.id === chunkId ? (language === 'zh-CN' ? ' · 已引用' : ' · Cited passage') : ''}</p><p className="whitespace-pre-wrap break-words text-sm">{chunk.content}</p></section>)}
+    {document?.chunks.map(chunk => <section key={chunk.id} ref={chunk.id === chunkId ? highlighted : undefined} data-cited={chunk.id === chunkId ? 'true' : undefined} className={`mb-4 rounded-lg border p-3 ${chunk.id === chunkId ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-100' : ''}`}><p className="mb-2 text-xs text-slate-500">{language === 'zh-CN' ? '段落' : 'Passage'} {chunk.position + 1}{chunk.heading ? ` · ${chunk.heading}` : ''}{chunk.id === chunkId ? (language === 'zh-CN' ? ' · 已引用' : ' · Cited passage') : ''}</p><p className="whitespace-pre-wrap break-words text-sm">{chunk.content}</p></section>)}
   </div>;
 }
 
@@ -33,7 +33,7 @@ export function RagAnswerCard({ rag, title, summary }: { rag: RagAnswer; title: 
     <h3 className="text-sm font-semibold">{title}</h3>
     {rag.mode !== 'generated' && rag.mode !== 'no_results' && rag.mode !== 'unavailable' && <p className="text-xs text-amber-800">{zh ? '以下为检索原文摘录；模型未配置或本次生成结果不可用。' : 'These are retrieved excerpts. A model is not configured or its response was unavailable.'}</p>}
     <p className="whitespace-pre-wrap break-words text-sm">{summary}</p>
-    <div data-testid="ai-knowledge-citations" className="space-y-2">{rag.citations.map((citation, index) => <details key={citation.id} className="rounded-lg border p-2 text-xs"><summary className="cursor-pointer font-medium">[{citation.sourceNumber || index + 1}] {citation.title} · {zh ? '段落' : 'Passage'} {citation.position + 1}</summary><p className="my-2 whitespace-pre-wrap break-words">{citation.excerpt}</p><button type="button" onClick={() => setSource({ documentId: citation.documentId, chunkId: citation.id })} className="text-blue-700 underline">{zh ? '打开引用段落' : 'Open cited passage'}</button></details>)}</div>
+    <div data-testid="ai-knowledge-citations" className="space-y-2">{rag.citations.map((citation, index) => <details key={citation.id} className="rounded-lg border p-2 text-xs"><summary className="cursor-pointer font-medium">[{citation.sourceNumber || index + 1}] {citation.title} · {citation.heading || `${zh ? '段落' : 'Passage'} ${citation.position + 1}`}</summary><p className="my-2 whitespace-pre-wrap break-words">{citation.excerpt}</p><button type="button" onClick={() => setSource({ documentId: citation.documentId, chunkId: citation.id })} className="text-blue-700 underline">{zh ? '打开引用段落' : 'Open cited passage'}</button></details>)}</div>
     {source && <KnowledgeDocument id={source.documentId} chunkId={source.chunkId} onClose={() => setSource(null)} />}
   </section>;
 }

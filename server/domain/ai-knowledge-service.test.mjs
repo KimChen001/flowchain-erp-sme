@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Document } from '@langchain/core/documents'
-import { WorkspaceKnowledgeRetriever, answerKnowledgeQuery, createKnowledgeService, knowledgeIndexSummary } from './ai-knowledge-service.mjs'
+import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters'
+import { WorkspaceKnowledgeRetriever, answerKnowledgeQuery, createKnowledgeService, knowledgeIndexSummary, knowledgeModelCodes, splitKnowledgeContent } from './ai-knowledge-service.mjs'
 import { buildBoundedProviderRequestCore } from './ai-runtime-provider-specific-adapters-v2.mjs'
 
 const documents = [new Document({ pageContent: 'The Zephyr controller uses a 24 volt power supply. Its warranty is 18 months.', metadata: { id: 'chunk-a', documentId: 'doc-a', title: 'Zephyr product guide', position: 0 } }), new Document({ pageContent: 'Staff submit travel receipts to the office administrator.', metadata: { id: 'chunk-b', documentId: 'doc-b', title: 'Travel expenses', position: 0 } })]
@@ -97,4 +98,76 @@ test('reindex replaces all chunk vectors atomically and preserves existing data 
   const unavailable = createKnowledgeService(prisma, { embeddingProvider: async () => ({ ok: false, reason: 'timeout' }) })
   await assert.rejects(unavailable.reindex(actor, 'doc-1'), { code: 'KNOWLEDGE_EMBEDDING_UNAVAILABLE', status: 503 })
   assert.equal(updates.length, 0)
+})
+
+const sensorGuide = `# Sensor Guide
+
+Fictional document. Version 1.
+
+## ZX-PRO-SENSOR-100
+
+The operating temperature range is -10 to 60 degrees Celsius. The supply voltage is 24 V DC.
+
+## ZX-PRO-SENSOR-200
+
+The operating temperature range is -20 to 85 degrees Celsius. The supply voltage is 12 V DC.`
+const asDocuments = (chunks, documentId = 'guide', title = 'Sensor guide') => chunks.map((chunk, position) => new Document({ pageContent: chunk.content, metadata: { id: `${documentId}-${position}`, documentId, title, heading: chunk.heading, position } }))
+
+test('Markdown sections become their own chunks and carry their heading path', async () => {
+  const chunks = await splitKnowledgeContent(sensorGuide)
+  assert.deepEqual(chunks.map(chunk => chunk.heading), ['Sensor Guide', 'Sensor Guide › ZX-PRO-SENSOR-100', 'Sensor Guide › ZX-PRO-SENSOR-200'])
+  assert.match(chunks[1].content, /^## ZX-PRO-SENSOR-100\n/)
+  assert.doesNotMatch(chunks[1].content, /SENSOR-200|85 degrees/)
+  // A long section is split, and every piece keeps the section's heading.
+  const long = await splitKnowledgeContent(`## Returns\n\n${'Returned goods are inspected before credit. '.repeat(60)}`)
+  assert.ok(long.length > 1)
+  assert.ok(long.every(chunk => chunk.heading === 'Returns'))
+  // A heading with only a subheading under it has no chunk; a deeper heading
+  // replaces its siblings in the path; # inside a code fence is not a heading.
+  const nested = await splitKnowledgeContent('# Policy\n## Overdue goods\nLines past their date are overdue.\n### Missing dates\nAsk for a date.\n## Payment\n```\n# not a heading\n```\nFinance confirms payment.')
+  assert.deepEqual(nested.map(chunk => chunk.heading), ['Policy › Overdue goods', 'Policy › Overdue goods › Missing dates', 'Policy › Payment'])
+  assert.match(nested[2].content, /# not a heading/)
+})
+
+test('text without headings is split exactly as before', async () => {
+  const text = `${'Receiving staff count every carton and record damage. '.repeat(40)}\n\n${'Quarantined stock stays in QC-01 until released. '.repeat(30)}`
+  const before = await new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 120, separators: ['\n\n', '\n', '。', '. ', ' ', ''] }).splitText(text)
+  const after = await splitKnowledgeContent(text)
+  assert.deepEqual(after.map(chunk => chunk.content), before)
+  assert.ok(after.every(chunk => chunk.heading === null))
+})
+
+test('model codes are read whole, and "model 200" means the 200 of the one family named', () => {
+  assert.deepEqual(knowledgeModelCodes('Can ZX-PRO-SENSOR-100 operate at 70 degrees Celsius?'), ['zx-pro-sensor-100'])
+  assert.deepEqual(knowledgeModelCodes('ZX-PRO-SENSOR-100 在七十摄氏度下可以用吗？'), ['zx-pro-sensor-100'])
+  assert.deepEqual(knowledgeModelCodes('LDM-001 warranty'), ['ldm-001'])
+  assert.deepEqual(knowledgeModelCodes('Can we automatically replace ZX-PRO-SENSOR-100 with model 200?'), ['zx-pro-sensor-100', 'zx-pro-sensor-200'])
+  assert.deepEqual(knowledgeModelCodes('ZX-PRO-SENSOR-100 能换成型号200吗？'), ['zx-pro-sensor-100', 'zx-pro-sensor-200'])
+  // A quantity is not a model, and two families leave a bare number unresolved.
+  assert.deepEqual(knowledgeModelCodes('Order 200 pcs of ZX-PRO-SENSOR-100'), ['zx-pro-sensor-100'])
+  assert.deepEqual(knowledgeModelCodes('Compare LDM-001 and ZX-PRO-SENSOR-100 with model 200'), ['ldm-001', 'zx-pro-sensor-100'])
+  assert.deepEqual(knowledgeModelCodes('When should I escalate a follow-up?'), [])
+})
+
+test('a passage about another model is never evidence; a passage naming no model can be', async () => {
+  const guide = asDocuments(await splitKnowledgeContent(sensorGuide))
+  const policy = asDocuments([{ content: 'Do not promise a replacement automatically. Obtain technical compatibility approval and buyer approval before proposing a substitute.', heading: 'Policy › Replacement products' }], 'policy', 'Purchasing policy')
+  const retriever = new WorkspaceKnowledgeRetriever({ loadDocuments: async () => [...guide, ...policy] })
+  const ids = async question => (await retriever.invoke(question)).map(doc => doc.metadata.id)
+  assert.equal((await ids('What voltage does ZX-PRO-SENSOR-200 need?'))[0], 'guide-2')
+  assert.ok(!(await ids('What voltage does ZX-PRO-SENSOR-200 need?')).includes('guide-1'))
+  assert.ok(!(await ids('Can ZX-PRO-SENSOR-100 operate at 70 degrees Celsius?')).includes('guide-2'))
+  const substitution = await ids('Can we automatically replace ZX-PRO-SENSOR-100 with model 200?')
+  for (const id of ['guide-1', 'guide-2', 'policy-0']) assert.ok(substitution.includes(id), id)
+  // The heading alone can carry the code: the passage under it is still about that model.
+  const body = asDocuments([{ content: 'The warranty is 12 months from delivery.', heading: 'Sensor Guide › ZX-PRO-SENSOR-100' }], 'w')
+  assert.deepEqual((await new WorkspaceKnowledgeRetriever({ loadDocuments: async () => body }).invoke('ZX-PRO-SENSOR-100 warranty')).map(doc => doc.metadata.id), ['w-0'])
+})
+
+test('citations name the section they came from', async () => {
+  const result = await answerKnowledgeQuery({ question: 'What voltage does ZX-PRO-SENSOR-200 need?', actor: {}, service: { documents: async () => asDocuments(await splitKnowledgeContent(sensorGuide)) } })
+  assert.equal(result.citations[0].heading, 'Sensor Guide › ZX-PRO-SENSOR-200')
+  assert.match(result.answer, /12 V DC/)
+  const core = buildBoundedProviderRequestCore({ task: { type: 'knowledge_rag', question: 'q' }, evidencePackage: { citations: result.citations } })
+  assert.equal(core.evidencePackage.citations[0].section, 'Sensor Guide › ZX-PRO-SENSOR-200')
 })
