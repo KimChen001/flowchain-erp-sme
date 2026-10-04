@@ -1,12 +1,12 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
+import { createTempClusterDirectory } from "./test-support/temp-cluster.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -24,8 +24,7 @@ const freePort = () => new Promise((resolvePort, reject) => {
 });
 const pgPort = await freePort();
 const password = `settings-browser-${randomUUID()}`;
-const directory = await mkdtemp(join(tmpdir(), "flowchain-settings-browser-"));
-const artifactDirectory = await mkdtemp(join(tmpdir(), "flowchain-intake-browser-artifacts-"));
+const directory = await createTempClusterDirectory("flowchain-settings-browser-");
 const database = "flowchain_settings_browser";
 const url = `postgresql://flowchain_settings_browser:${encodeURIComponent(password)}@127.0.0.1:${pgPort}/${database}?schema=public`;
 const pg = new EmbeddedPostgres({ databaseDir: directory, user: "flowchain_settings_browser", password, port: pgPort, persistent: false, onLog: () => {}, onError: () => {} });
@@ -37,7 +36,6 @@ async function cleanup() {
   await prisma?.$disconnect().catch(() => {});
   await pg.stop().catch(() => {});
   await rm(directory, { recursive: true, force: true }).catch(() => {});
-  await rm(artifactDirectory, { recursive: true, force: true }).catch(() => {});
 }
 
 async function seed() {
@@ -64,7 +62,7 @@ try {
     FLOWCHAIN_LOCAL_SESSION_SECRET: `settings-browser-${randomUUID()}-secure-secret`,
     SCM_API_PORT: String(apiPort),
     NODE_ENV: "test",
-    FLOWCHAIN_INTAKE_LOCAL_STORAGE_DIR: artifactDirectory,
+    FLOWCHAIN_INTAKE_LOCAL_STORAGE_DIR: join(directory, "intake-artifacts"),
   });
   await execFileAsync(node, [prismaCli, "migrate", "deploy"], { cwd: root, env: process.env, maxBuffer: 10 * 1024 * 1024 });
   prisma = await createPrismaClient(process.env);

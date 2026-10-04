@@ -1,14 +1,19 @@
 import { defineConfig, devices } from "@playwright/test";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const appPort = Number(process.env.PLAYWRIGHT_APP_PORT || 15173);
 const apiPort = Number(process.env.PLAYWRIGHT_API_PORT || 18787);
 const workers = Number(process.env.PLAYWRIGHT_WORKERS || 1);
+// One output folder per checkout and API port, emptied by Playwright at the
+// start of each run. A folder named after process.pid was never reused, and
+// every worker evaluated this file with its own pid.
+const checkout = createHash("sha256").update(import.meta.dirname).digest("hex").slice(0, 12);
 
 export default defineConfig({
   testDir: "./tests/browser",
-  outputDir: join(tmpdir(), "flowchain-playwright-results", String(process.pid)),
+  outputDir: join(tmpdir(), "flowchain-playwright-results", `${checkout}-${apiPort}`),
   timeout: 45_000,
   expect: { timeout: 10_000 },
   workers,
