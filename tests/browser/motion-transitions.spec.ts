@@ -26,10 +26,11 @@ test("navigation animates in and leaves no transform behind", async ({ page }) =
   await expect(pillTab(page)).toHaveAttribute("aria-current", "page");
 
   const nextTab = page.locator('[data-testid="module-subnav"] a:not([aria-current="page"])').first();
-  const nextLabel = (await nextTab.innerText()).trim();
+  const nextHref = String(await nextTab.getAttribute("href"));
   await nextTab.click();
-  // The pill now sits on the chosen tab, and only there.
-  await expect(pillTab(page)).toHaveText(nextLabel);
+  // The pill now sits on the chosen tab, and only there. The link identifies
+  // the tab: its label may still change language while the page loads.
+  await expect(pillTab(page)).toHaveAttribute("href", nextHref);
   await expect(pillTab(page)).toHaveAttribute("aria-current", "page");
   // Once the animation settles the content carries no transform.
   await expect.poll(() => pageTransform(page)).toBe("none");
@@ -47,7 +48,13 @@ test("with reduced motion, navigation and drawers do not move", async ({ page })
   await signIn(page);
   await page.goto("/app/procurement/requests");
   const nextTab = page.locator('[data-testid="module-subnav"] a:not([aria-current="page"])').first();
+  const nextHref = String(await nextTab.getAttribute("href"));
   await nextTab.click();
+  // Read the new page, not the one being replaced: a detached element has no
+  // computed transform at all. The link, not the label, identifies the tab,
+  // because the interface language may still switch while the page loads.
+  await expect(pillTab(page)).toHaveAttribute("href", nextHref);
+  await expect(page.getByTestId("page-transition")).toBeVisible();
   // Motion skips transforms: the content never rises.
   expect(await pageTransform(page)).toBe("none");
   await page.goto("/app/reports/procurement?view=analytics");
