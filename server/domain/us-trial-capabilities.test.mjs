@@ -5,14 +5,14 @@ import test from "node:test";
 import { capabilityRegistry, capabilityRegistryForEnvironment } from "./capability-registry.mjs";
 
 // The documented US trial set: receiving posting (desktop receiving), outbound
-// posting, inventory operations, operational finance and mobile operations,
-// which stays available but is not needed to receive. Everything else stays off.
+// posting, inventory operations and operational finance. Everything else stays
+// off, mobile operations included (decision R4, 2026-10-04): POs are approved
+// and received on the desktop.
 const US_TRIAL_FLAGS = [
   "FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING",
   "FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING",
   "FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS",
   "FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE",
-  "FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS",
 ];
 
 const parseExample = (relativePath) => Object.fromEntries(
@@ -50,7 +50,6 @@ for (const example of ["deploy/env.production.example", ".env.example", ".env.lo
       "payable-obligation",
       "customer-invoice",
       "receivable-obligation",
-      "mobile-operations",
     ]) assert.ok(enabled.includes(id), `${example} ${id}`);
 
     const trialFlags = new Set(US_TRIAL_FLAGS);
@@ -58,6 +57,8 @@ for (const example of ["deploy/env.production.example", ".env.example", ".env.lo
       .filter((entry) => entry.requiresExplicitEnable && !trialFlags.has(entry.environmentFlag))
       .map((entry) => entry.id);
     assert.ok(outsideTrial.includes("mobile-sync"));
+    assert.ok(outsideTrial.includes("mobile-operations"));
+    assert.equal(env.FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS, "false", `${example} keeps mobile operations off`);
     for (const id of outsideTrial) assert.ok(!enabled.includes(id), `${example} must keep ${id} off`);
   });
 }
