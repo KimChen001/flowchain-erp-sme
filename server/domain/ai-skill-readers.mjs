@@ -307,7 +307,7 @@ export async function readAiSkillFacts(skillContext) {
     facts.purchaseRequests = {
       awaitingApproval: array(business.purchaseRequests).filter((row) => text(row.status) === 'submitted').map((row) => {
         const line = array(row.lines)[0] || {}
-        return { id: text(row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, skus: [...new Set(array(row.lines).map((entry) => text(entry.sku)).filter(Boolean))], quantity: amount(line.quantity), unit: text(line.unit) || null }
+        return { id: text(row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, skus: [...new Set(array(row.lines).map((entry) => text(entry.sku)).filter(Boolean))], itemIds: [...new Set(array(row.lines).map((entry) => text(entry.itemId)).filter(Boolean))], quantity: amount(line.quantity), unit: text(line.unit) || null }
       }),
     }
   }
