@@ -152,9 +152,10 @@ test("a short follow-up is read with the previous answer", async ({ page }) => {
   await expect(headline(second)).toContainText(listed[1]);
   await expect(evidenceLinks(second).first()).toHaveText(listed[1]);
 
-  // "Why?" asks about the record the previous answer was about.
+  // "Why?" asks about the record the previous answer was about, named as
+  // the list showed it: a supplier by its name, never by its code.
   const why = await askTyped(panel, "Why?");
-  await expect(headline(why)).toHaveText(/^Why .+ needs attention$/);
+  await expect(headline(why)).toHaveText(`Why ${listed[1]} needs attention`);
   await expect(evidenceLinks(why).first()).toBeVisible();
 
   expect(await chineseLines(panel)).toEqual([]);

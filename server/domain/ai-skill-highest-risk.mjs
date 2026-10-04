@@ -1,5 +1,5 @@
 import { aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
-import { aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
+import { aiSkillFocusLabel, aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, compareSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
 import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
 
@@ -43,10 +43,12 @@ export function presentHighestRisk(result, facts, { skill, language, query }) {
   const status = first ? aiSkillText(`signal.${first.type}.status`, language).toLowerCase() : ''
   const firstText = first ? aiSkillText('risk.first', language, { label: first.label, status }) : ''
   // Narrowed to one record, the title says so: "Risk on PO-016", never
-  // "Highest risk", which would read as the whole workspace's.
+  // "Highest risk", which would read as the whole workspace's. A supplier is
+  // named, not coded.
   const id = result.focus?.entityId
+  const name = id ? aiSkillFocusLabel(result.focus, facts) : ''
   const title = id
-    ? first ? aiSkillText('risk.focus_title', language, { id, first: first.label === id ? status : firstText }) : aiSkillText('risk.focus_none', language, { id, date: fmt.day(facts.asOf) })
+    ? first ? aiSkillText('risk.focus_title', language, { id: name, first: [id, name].includes(first.label) ? status : firstText }) : aiSkillText('risk.focus_none', language, { id: name, date: fmt.day(facts.asOf) })
     : first ? aiSkillText('risk.title', language, { first: firstText }) : aiSkillText('risk.title_none', language, { date: fmt.day(facts.asOf) })
   const summary = aiSkillSentences([
     ...(result.total ? [aiSkillText('risk.summary', language, { count: fmt.number(result.total) })] : []),

@@ -138,6 +138,21 @@ test('focus narrows an answer to the record and the records tied to it', async (
   assert.deepEqual(none.keyEvidence, [])
 })
 
+test('a narrowed answer names a supplier by its name and an item by its SKU in its title', async () => {
+  const { answer } = await answers()
+  const supplier = { entityType: 'supplier', entityId: 'SUP-001' }
+  assert.equal(answer('today_priorities', 'en-US', { focus: supplier }).conclusion.title, 'Why Acme Components needs attention')
+  assert.equal(answer('today_priorities', 'zh-CN', { focus: supplier }).conclusion.title, 'Acme Components 需要关注的原因')
+  assert.match(answer('highest_risk_items', 'en-US', { focus: supplier }).conclusion.title, /^Risk on Acme Components: /)
+  for (const skillId of ['records_needing_data', 'prepare_action_draft']) {
+    assert.doesNotMatch(answer(skillId, 'en-US', { focus: supplier }).conclusion.title, /SUP-001/, skillId)
+  }
+  // The answer's records keep their ids; only the title names the supplier.
+  const today = answer('today_priorities', 'en-US', { focus: supplier })
+  assert.ok(today.keyEvidence.some((item) => item.entityId === 'PO-001'))
+  assert.equal(answer('today_priorities', 'en-US', { focus: { entityType: 'item', entityId: 'ITEM-001' } }).conclusion.title, 'Why LDM-001 needs attention')
+})
+
 test('the refusal offers a draft and never acts', async () => {
   const { answer } = await answers()
   const refusal = answer('capability_overview', 'en-US', { refusal: true })

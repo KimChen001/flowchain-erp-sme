@@ -1,5 +1,5 @@
 import { aiSkillCountText, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
-import { aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
+import { aiSkillFocusLabel, aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, countAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 
 const TOP = 5
@@ -38,7 +38,7 @@ export function presentTodayPriorities(result, facts, { skill, language, query }
   const fmt = aiSkillFormatter(facts, language)
   const date = fmt.day(facts.asOf)
   const title = result.focus
-    ? aiSkillText(result.items.length ? 'today.focus_title' : 'today.focus_none', language, { id: result.focus.entityId })
+    ? aiSkillText(result.items.length ? 'today.focus_title' : 'today.focus_none', language, { id: aiSkillFocusLabel(result.focus, facts) })
     : aiSkillCountText('today.title', result.total, language, { count: fmt.number(result.total), date })
   return presentAiSkillAnswer({
     skill, facts, language, query, title,
