@@ -1,9 +1,8 @@
 # Bills, invoices and the accounting handoff
 
 Status: design agreed with the owner on 2026-10-03. Steps 1a (names,
-navigation, redirects) and 1b (entry from source documents, invoice actions)
-are implemented. The owner chose the light payment record for step 2; the rest
-is planned.
+navigation, redirects), 1b (entry from source documents, invoice actions) and
+2 (light payment records) are implemented; the rest is planned.
 
 ## 1. Problem
 
@@ -180,16 +179,33 @@ It changes only the last step of each chain:
 
 The frozen internal settlement and cashbook module (`docs/internal-settlement-cashbook-phase-5-2.md`)
 is too heavy for a small business and is not maintained. Step 2 adds a light
-record instead:
+record instead (`PaymentRecord`, `server/domain/payment-record-command-service.mjs`):
 
-- **Record payment** on a bill to pay or a receivable: date, amount, method
-  (check, ACH, card, cash, other), reference, note.
-- Partial payments are allowed; the total can never exceed the outstanding
-  amount; the currency is the document currency.
-- Status follows the records: open → partially paid → paid.
-- A held bill or a disputed receivable cannot take a payment.
-- A wrong record is voided with a reason, never edited or deleted.
-- It records that money moved; FlowChain never moves money.
+- **Record payment** on the bill to pay (bill page) and **Record payment
+  received** on the receivable (invoice page): date, amount, method (check,
+  ACH, wire, card, cash, other), reference, note. The form offers what is
+  still outstanding.
+- Partial payments are allowed; one payment can never exceed what is
+  outstanding; the currency is the document currency and nothing is
+  converted. The date cannot be in the future.
+- Status follows the records, using the statuses the obligations already had:
+  approved or open → `partially_settled` ("Partly paid") → `settled`
+  ("Paid"). The page shows what was paid and what is outstanding.
+- A held bill to pay or a disputed receivable cannot take a payment until it
+  is released or the dispute is resolved.
+- A wrong record is voided with a reason, never edited or deleted. Voiding
+  puts the amount back and the status follows.
+- A bill to pay exists only after its bill passed the three-way match and was
+  approved, so no payment can be recorded for goods that were not received or
+  a bill that was not matched.
+- Recording and voiding need `finance.payable.record_payment` or
+  `finance.receivable.record_payment`, which the workspace administrator,
+  operations manager and finance specialist roles get by default; seeing
+  payments needs only the read permission, and amounts follow
+  `finance.amounts.read`. Writes need the operational finance capability.
+- Each step is previewed, then confirmed; commands are idempotent and audited.
+- It records that money moved; FlowChain never moves money and writes no
+  cashbook or ledger entry.
 
 ## 9. Accounting handoff
 
@@ -286,7 +302,7 @@ contacts", "Import inventory items" and the Xero API reference; Microsoft
 | --- | --- | --- |
 | 1a | Names, navigation, redirects; the bill detail links its PO, receipt and match | No |
 | 1b | Create buttons on source documents with prefill; submit, approve and issue on the invoice page | No |
-| 2 | Record payment on bills to pay and receivables | Yes |
+| 2 | Record payment on bills to pay and receivables (implemented) | Yes |
 | 3 | Books setting, export presets (Excel, Xero, QuickBooks Online) and export batches | Yes |
 | 4 | Payments import; supplier, customer and item import | Yes |
 | 5 | QuickBooks Online connector, then Xero | Yes |

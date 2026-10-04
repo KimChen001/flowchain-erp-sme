@@ -4,7 +4,8 @@ import { AlertTriangle, FilePlus2, RefreshCw } from "lucide-react";
 import { Link } from "react-router";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
-import { StatusChip, TwoStepAction } from "./SupplierInvoiceScreens";
+import { StatusChip, TwoStepAction } from "./FinanceControls";
+import { PaymentRecords } from "./PaymentRecords";
 import { useI18n } from "../../i18n/I18n";
 import { A, Card } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
@@ -26,6 +27,7 @@ type Invoice = {
 type Receivable = {
   id: string;
   obligationNumber: string;
+  customerInvoiceId?: string;
   customerInvoiceNumber?: string;
   customerName?: string;
   outstandingAmount: string;
@@ -294,6 +296,14 @@ function InvoiceList() {
   );
 }
 
+type TranslationKey = Parameters<ReturnType<typeof useI18n>["t"]>[0];
+const RECEIVABLE_ACTION_KEYS: Record<string, TranslationKey> = {
+  record_payment: "finance.action.record_receivable_payment",
+  dispute: "finance.action.dispute",
+  resolve_dispute: "finance.action.resolve_dispute",
+  record_external_reference: "finance.action.record_external_reference",
+};
+
 function Receivables() {
   const { t, locale } = useI18n();
   const [data, setData] = useState<ListPayload<Receivable> | null>(null);
@@ -330,14 +340,19 @@ function Receivables() {
           <tbody>
             {data.items.map((row) => (
               <tr className="border-b border-slate-50" key={row.id}>
-                <td className="px-4 py-3">{row.customerInvoiceNumber || row.obligationNumber}</td>
+                <td className="px-4 py-3">
+                  {row.customerInvoiceId
+                    ? <Link className="font-medium text-blue-600 hover:underline" to={`/app/sales/invoices/${encodeURIComponent(row.customerInvoiceId)}`}>{row.customerInvoiceNumber || row.obligationNumber}</Link>
+                    : row.customerInvoiceNumber || row.obligationNumber}
+                </td>
                 <td className="px-4 py-3">{row.customerName || "—"}</td>
                 <td className="px-4 py-3">{date(row.dueDate, locale)}</td>
                 <td className="px-4 py-3 font-medium">
                   {money(row.outstandingAmount, row.currency, locale)}
                 </td>
                 <td className="px-4 py-3">
-                  {row.status} · {row.disputeStatus}
+                  <StatusChip status={row.status} />
+                  {row.disputeStatus === "open" && <span className="ml-1 text-xs text-amber-700">{t("finance.status.disputed")}</span>}
                   {row.externalSettlementReference && (
                     <div className="mt-1 text-xs text-amber-700">
                       {t("finance.externalUnverified")}
@@ -345,7 +360,7 @@ function Receivables() {
                   )}
                 </td>
                 <td className="px-4 py-3 text-xs">
-                  {row.availableActions.join(" · ") || "—"}
+                  {row.availableActions.map((action) => RECEIVABLE_ACTION_KEYS[action] ? t(RECEIVABLE_ACTION_KEYS[action]) : action).join(" · ") || "—"}
                 </td>
               </tr>
             ))}
@@ -674,7 +689,7 @@ function InvoiceDetail() {
             <div className="flex items-center gap-2"><strong>{money(receivable.outstandingAmount, receivable.currency, locale)}</strong><StatusChip status={receivable.status} /></div>
           </div>
           <div className="text-xs text-slate-500">{t("finance.dueDate")} {date(receivable.dueDate, locale)}</div>
-          <Notice>{t("finance.noCollection")}</Notice>
+          <PaymentRecords kind="receivable" obligation={receivable} onDone={load} />
         </Card>
       )}
     </div>

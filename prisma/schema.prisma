@@ -51,6 +51,7 @@ model Tenant {
   customerInvoices                      CustomerInvoice[]
   receivableObligations                 ReceivableObligation[]
   customerCreditNotes                   CustomerCreditNote[]
+  paymentRecords                        PaymentRecord[]
   cashbookAccounts                      CashbookAccount[]
   settlementDocuments                   SettlementDocument[]
   settlementAllocations                 SettlementAllocation[]
@@ -1567,6 +1568,7 @@ model PayableObligation {
   supplierInvoice       SupplierInvoice              @relation(fields: [supplierInvoiceId], references: [id], onDelete: Restrict)
   settlementAllocations SettlementAllocation[]
   advanceApplications   AdvanceApplicationDocument[]
+  paymentRecords        PaymentRecord[]
 
   @@unique([tenantId, obligationNumber])
   @@unique([tenantId, id])
@@ -1729,12 +1731,49 @@ model ReceivableObligation {
   customerInvoice       CustomerInvoice              @relation(fields: [customerInvoiceId], references: [id], onDelete: Restrict)
   settlementAllocations SettlementAllocation[]
   advanceApplications   AdvanceApplicationDocument[]
+  paymentRecords        PaymentRecord[]
 
   @@unique([tenantId, obligationNumber])
   @@unique([tenantId, id])
   @@index([tenantId, status])
   @@index([tenantId, dueDate])
   @@index([tenantId, currency])
+}
+
+// A payment someone made or received outside FlowChain, recorded against one
+// bill to pay or one receivable. FlowChain never moves money: the record only
+// lowers what is outstanding. A wrong record is voided with a reason, never
+// edited or deleted (docs/bills-invoices-and-accounting-handoff.md, step 2).
+model PaymentRecord {
+  id                     String    @id
+  tenantId               String
+  obligationType         String
+  payableObligationId    String?
+  receivableObligationId String?
+  paymentDate            DateTime
+  amount                 Decimal   @db.Decimal(18, 4)
+  currency               String
+  method                 String
+  reference              String?
+  note                   String?
+  status                 String    @default("recorded")
+  recordedById           String
+  voidedAt               DateTime?
+  voidedById             String?
+  voidReason             String?
+  version                Int       @default(0)
+  metadata               Json?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  payableObligation    PayableObligation?    @relation(fields: [tenantId, payableObligationId], references: [tenantId, id], onDelete: Restrict)
+  receivableObligation ReceivableObligation? @relation(fields: [tenantId, receivableObligationId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, payableObligationId])
+  @@index([tenantId, receivableObligationId])
+  @@index([tenantId, paymentDate])
 }
 
 model CashbookAccount {

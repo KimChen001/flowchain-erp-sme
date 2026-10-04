@@ -50,6 +50,8 @@ const tokenKeys: Record<string, TranslationKey> = {
   approved: "finance.status.approved",
   held: "finance.status.held",
   export_ready: "finance.status.export_ready",
+  partially_settled: "finance.status.partially_settled",
+  settled: "finance.status.settled",
   open: "finance.status.open",
   reviewed: "finance.status.reviewed",
   resolved: "finance.status.resolved",
@@ -62,6 +64,7 @@ const tokenKeys: Record<string, TranslationKey> = {
   hold: "finance.action.hold",
   mark_export_ready: "finance.action.mark_export_ready",
   release: "finance.action.release",
+  record_payment: "finance.action.record_payment",
 };
 
 function Warning({ children }: { children: ReactNode }) {
@@ -222,7 +225,9 @@ function FinanceList({
               return (
                 <tr className="border-b border-slate-50" key={id}>
                   <td className="px-4 py-3 font-medium">
-                    {kind === "invoice" && id ? <a className="text-blue-600 hover:underline" href={`/app/procurement/bills/${encodeURIComponent(id)}`}>{label}</a> : label}
+                    {kind === "invoice" && id ? <a className="text-blue-600 hover:underline" href={`/app/procurement/bills/${encodeURIComponent(id)}`}>{label}</a>
+                      : kind === "payable" && row.supplierInvoiceId ? <a className="text-blue-600 hover:underline" href={`/app/procurement/bills/${encodeURIComponent(String(row.supplierInvoiceId))}`}>{label}</a>
+                      : label}
                   </td>
                   <td className="px-4 py-3">{source}</td>
                   <td className="px-4 py-3">
