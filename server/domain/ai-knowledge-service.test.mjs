@@ -2,8 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Document } from '@langchain/core/documents'
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters'
-import { WorkspaceKnowledgeRetriever, answerKnowledgeQuery, createKnowledgeService, knowledgeIndexSummary, knowledgeModelCodes, splitKnowledgeContent } from './ai-knowledge-service.mjs'
-import { buildBoundedProviderRequestCore } from './ai-runtime-provider-specific-adapters-v2.mjs'
+import { WorkspaceKnowledgeRetriever, answerKnowledgeQuery, createKnowledgeService, knowledgeIndexSummary, knowledgeModelCodes, knowledgeResponse, normalizeInlineReferences, splitKnowledgeContent } from './ai-knowledge-service.mjs'
+import { buildBoundedProviderRequestCore, parleyChatAdapter } from './ai-runtime-provider-specific-adapters-v2.mjs'
 
 const documents = [new Document({ pageContent: 'The Zephyr controller uses a 24 volt power supply. Its warranty is 18 months.', metadata: { id: 'chunk-a', documentId: 'doc-a', title: 'Zephyr product guide', position: 0 } }), new Document({ pageContent: 'Staff submit travel receipts to the office administrator.', metadata: { id: 'chunk-b', documentId: 'doc-b', title: 'Travel expenses', position: 0 } })]
 test('an exact SKU cannot be answered with a similar SKU document', async () => {
@@ -63,6 +63,47 @@ test('configured generation accepts only references retrieved for this request',
   assert.equal(result.mode, 'generated')
   assert.equal(result.citations[0].documentId, 'doc-a')
   assert.match(result.answer, /18 months/)
+})
+
+const providerEnv = { FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted', FLOWCHAIN_AI_PROVIDER_KIND: 'deepseek_chat', FLOWCHAIN_AI_PROVIDER_ENDPOINT: 'https://example.invalid/chat', FLOWCHAIN_AI_PROVIDER_API_KEY: 'test-only', FLOWCHAIN_AI_PROVIDER_MODEL: 'test' }
+const replying = reply => async () => ({ ok: true, rawOutput: { conclusion: { summary: JSON.stringify(reply) } } })
+
+test('a reply that cites nothing is a no-answer: a fixed sentence and the searched passages, never the model text', async () => {
+  for (const [language, sentence] of [['en-US', /do not answer this question/], ['zh-CN', /没有这个问题的答案/]]) {
+    const result = await answerKnowledgeQuery({ question: 'Zephyr warranty', language, actor: {}, service: { documents: async () => documents }, env: providerEnv, provider: replying({ answer: 'The excerpts do not say. Probably 24 months.', citationIds: [] }) })
+    assert.equal(result.mode, 'no_answer')
+    assert.match(result.answer, sentence)
+    assert.doesNotMatch(result.answer, /24 months|excerpts do not say/)
+    assert.deepEqual(result.citations.map(citation => citation.id), ['chunk-a'])
+  }
+  assert.equal(knowledgeResponse({ answer: 'x', citations: [], mode: 'no_answer' }, 'Zephyr warranty').conclusion.title, 'Not answered by your documents')
+  assert.equal(knowledgeResponse({ answer: 'x', citations: [], mode: 'no_answer' }, 'Zephyr warranty', 'zh-CN').conclusion.title, '资料中没有答案')
+})
+
+test('an unusable reply is still shown as unavailable, not as a no-answer', async () => {
+  for (const reply of [{ answer: 'No citations field' }, { answer: 'Cites another request', citationIds: ['forged'] }]) {
+    const result = await answerKnowledgeQuery({ question: 'Zephyr warranty', actor: {}, service: { documents: async () => documents }, env: providerEnv, provider: replying(reply) })
+    assert.equal(result.mode, 'model_unavailable')
+  }
+  const failed = await answerKnowledgeQuery({ question: 'Zephyr warranty', actor: {}, service: { documents: async () => documents }, env: providerEnv, provider: async () => ({ ok: false, reason: 'timeout', rawOutput: { conclusion: { summary: JSON.stringify({ answer: '', citationIds: [] }) } } }) })
+  assert.equal(failed.mode, 'model_unavailable')
+})
+
+test('"[sourceNumber 1]" references are read as [1] and checked like any other', async () => {
+  assert.equal(normalizeInlineReferences('A [sourceNumber 1], B [sourceNumber2], C [SourceNumber: 3], D [1]'), 'A [1], B [2], C [3], D [1]')
+  const result = await answerKnowledgeQuery({ question: 'Zephyr warranty', actor: {}, service: { documents: async () => documents }, env: providerEnv, provider: replying({ answer: 'The warranty is 18 months [sourceNumber 1].', citationIds: ['chunk-a'] }) })
+  assert.equal(result.mode, 'generated')
+  assert.equal(result.answer, 'The warranty is 18 months [1].')
+  // A normalised reference to a source the reply did not cite is still rejected.
+  const unchecked = await answerKnowledgeQuery({ question: 'Zephyr warranty', actor: {}, service: { documents: async () => documents }, env: providerEnv, provider: replying({ answer: 'The warranty is 18 months [sourceNumber 2].', citationIds: ['chunk-a'] }) })
+  assert.equal(unchecked.mode, 'model_unavailable')
+})
+
+test('the knowledge prompt asks for [1]-style references and an empty citation list when nothing answers', () => {
+  const prompt = parleyChatAdapter.buildRequestBody({ task: { type: 'knowledge_rag', question: 'q', answerLanguage: 'en-US' }, evidencePackage: { citations: [] }, safetyPolicy: { readOnly: true } }, { model: 'test' }).messages[0].content
+  assert.match(prompt, /\[1\], \[2\]/)
+  assert.match(prompt, /empty citationIds/)
+  assert.doesNotMatch(prompt, /\[sourceNumber\]/)
 })
 
 test('knowledge list reports semantic, partial, and keyword index coverage', async () => {

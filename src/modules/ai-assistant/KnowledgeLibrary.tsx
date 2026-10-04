@@ -31,7 +31,7 @@ export function RagAnswerCard({ rag, title, summary }: { rag: RagAnswer; title: 
   const [source, setSource] = useState<{ documentId: string; chunkId: string } | null>(null);
   return <section data-testid="ai-knowledge-answer" className="space-y-3 rounded-xl border bg-white p-3">
     <h3 className="text-sm font-semibold">{title}</h3>
-    {rag.mode !== 'generated' && rag.mode !== 'no_results' && rag.mode !== 'unavailable' && <p className="text-xs text-amber-800">{zh ? '以下为检索原文摘录；模型未配置或本次生成结果不可用。' : 'These are retrieved excerpts. A model is not configured or its response was unavailable.'}</p>}
+    {rag.mode !== 'generated' && rag.mode !== 'no_results' && rag.mode !== 'no_answer' && rag.mode !== 'unavailable' && <p className="text-xs text-amber-800">{zh ? '以下为检索原文摘录；模型未配置或本次生成结果不可用。' : 'These are retrieved excerpts. A model is not configured or its response was unavailable.'}</p>}
     <p className="whitespace-pre-wrap break-words text-sm">{summary}</p>
     <div data-testid="ai-knowledge-citations" className="space-y-2">{rag.citations.map((citation, index) => <details key={citation.id} className="rounded-lg border p-2 text-xs"><summary className="cursor-pointer font-medium">[{citation.sourceNumber || index + 1}] {citation.title} · {citation.heading || `${zh ? '段落' : 'Passage'} ${citation.position + 1}`}</summary><p className="my-2 whitespace-pre-wrap break-words">{citation.excerpt}</p><button type="button" onClick={() => setSource({ documentId: citation.documentId, chunkId: citation.id })} className="text-blue-700 underline">{zh ? '打开引用段落' : 'Open cited passage'}</button></details>)}</div>
     {source && <KnowledgeDocument id={source.documentId} chunkId={source.chunkId} onClose={() => setSource(null)} />}
