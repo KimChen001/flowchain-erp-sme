@@ -142,11 +142,14 @@ function answerStrings(response) {
     ...response.keyEvidence.flatMap((item) => [item.label, item.entityLabel, item.summary, item.status, item.sourceLabel]),
     ...response.navigationLinks.map((link) => link.label),
     ...response.dataLimitations.flatMap((item) => [item.label, item.description, item.consequence]),
-    response.businessQuery.scopeBadge, ...response.businessQuery.goalLabels,
-    ...response.businessQuery.sectionCards.flatMap((card) => [card.label, card.stateLabel, ...card.rows.map((row) => row.supplier?.displayName)]),
+    response.businessQuery.scopeBadge, ...response.businessQuery.goalLabels, response.businessQuery.clarification?.question,
+    ...response.businessQuery.sectionCards.flatMap((card) => [card.label, card.stateLabel, ...card.rows.map((row) => row.supplier?.displayName), ...card.limitations]),
     ...response.resolvedContext.entityRefs.map((ref) => ref.entityLabel),
   ].filter(Boolean)
 }
+// Code-shaped tokens such as bankReconciliation_unavailable or supplier_not_found;
+// a timezone like America/New_York is a value, not a code.
+const codeToken = /\b[a-z][A-Za-z]*_[a-z][A-Za-z_]*/
 
 test('evidence statuses and a restricted supplier are labelled in the answer language, with the codes kept', async () => {
   const plan = emptyBusinessQueryPlan({ goals: ['supplier_payment_blocks', 'supplier_overdue_purchase_orders', 'supplier_invoice_exceptions', 'supplier_receiving_exceptions'], scope: { mode: 'single', entityIds: ['a'], source: 'explicit' } })
@@ -199,4 +202,76 @@ test('time window limitations are worded in the answer language, with the codes 
     assert.deepEqual(timeWindow.map((item) => item.description), descriptions, answerLanguage)
     if (answerLanguage === 'en-US') assert.deepEqual(answerStrings(response).filter((value) => /[\u4e00-\u9fff]/.test(value)), [])
   }
+})
+
+test('every limitation code is worded in the answer language, never shown as the code, with the codes kept', async () => {
+  // From the supplier summary read service, then codes no copy lists yet.
+  const sourceCodes = ['suppliers_unavailable', 'payables_unavailable', 'invoices_unavailable', 'settlements_unavailable', 'purchaseOrders_unavailable', 'receiving_unavailable', 'rfqs_unavailable', 'bankReconciliation_unavailable', 'amounts_hidden', 'partner_snapshot_hidden']
+  const unlisted = ['ledger_unavailable', 'bank_reconciliation_hidden', 'new_limitation']
+  const failing = { ...structuredClone(summary), dataQuality: { incompleteRecordCount: 0, limitations: [...sourceCodes, ...unlisted] }, get invoice() { throw new Error('invoice read failed') } }
+  const plan = emptyBusinessQueryPlan({ goals: ['supplier_payables_due', 'supplier_invoice_exceptions'] })
+  const executed = await executeBusinessQueryPlan(plan, { summaryService: { read: async () => ({ items: [failing] }) } })
+  assert.deepEqual(executed.limitations, [...sourceCodes, ...unlisted, 'supplier_invoice_exceptions:execution_failed'])
+  assert.deepEqual(executed.sections.map((section) => section.limitations), [[...sourceCodes, ...unlisted], ['independent_goal_execution_failed']])
+  // The executor puts this one on inventory rows only; added so its wording is checked too.
+  const pack = { ...executed, limitations: [...executed.limitations, 'inventory_supplier_projection_unavailable'] }
+  const ambiguities = ['supplier_scope_unspecified', 'supplier_not_found:Supplier Missing, Supplier Gone', 'previous_result_unavailable', 'current_supplier_unavailable', 'prompt_injection', 'no_supported_goal', 'provider_free_text']
+  const asked = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ clarificationNeeded: true, clarificationQuestion: '要查看哪一家供应商？', ambiguities }), { summaryService })
+  const listed = [...sourceCodes, 'independent_goal_execution_failed', 'inventory_supplier_projection_unavailable', ...ambiguities.slice(0, -1)]
+  const expected = {
+    'en-US': {
+      bankReconciliation_unavailable: 'Bank reconciliation is unavailable, so reconciliation exceptions are unknown.',
+      amounts_hidden: 'Your role cannot view amounts, so they are not shown.',
+      independent_goal_execution_failed: 'This check could not be completed, so its counts are unknown.',
+      'supplier_invoice_exceptions:execution_failed': 'Invoice exceptions: this check could not be completed, so its counts are unknown.',
+      'supplier_not_found:Supplier Missing, Supplier Gone': 'No authorized supplier matches Supplier Missing, Supplier Gone.',
+      ledger_unavailable: 'Some source data is unavailable, so related counts are unknown.',
+      bank_reconciliation_hidden: 'Your role cannot view some of this data, so it is not shown.',
+      new_limitation: 'Some data could not be checked, so related counts may be incomplete.',
+      provider_free_text: 'The question needs more detail before records can be checked.',
+    },
+    'zh-CN': {
+      bankReconciliation_unavailable: '银行核对暂不可用，核对异常未知。',
+      amounts_hidden: '当前角色无权查看金额，因此未显示金额。',
+      independent_goal_execution_failed: '该项检查未能完成，相关数量未知。',
+      'supplier_invoice_exceptions:execution_failed': '发票差异：该项检查未能完成，相关数量未知。',
+      'supplier_not_found:Supplier Missing, Supplier Gone': '未找到与 Supplier Missing, Supplier Gone 匹配的授权供应商。',
+      ledger_unavailable: '部分数据源暂不可用，相关数量未知。',
+      bank_reconciliation_hidden: '当前角色无权查看部分数据，因此未显示。',
+      new_limitation: '部分数据未能检查，相关数量可能不完整。',
+      provider_free_text: '问题需要补充信息后才能读取记录。',
+    },
+  }
+  for (const [answerLanguage, sentences] of Object.entries(expected)) {
+    const response = buildBusinessQueryResponseV2(pack, { plan }, { answerLanguage })
+    const clarification = buildBusinessQueryResponseV2(asked, { plan: asked.plan }, { answerLanguage })
+    assert.equal(clarification.intent, 'business_query_clarification')
+    assert.deepEqual(response.dataLimitations.map((item) => item.code), pack.limitations)
+    assert.deepEqual(clarification.dataLimitations.map((item) => item.code), ambiguities)
+    assert.deepEqual(response.businessQuery.sectionCards.map((card) => card.limitationCodes), [[...sourceCodes, ...unlisted], ['independent_goal_execution_failed']])
+    // Section cards carry one sentence per code here, in the codes' order.
+    assert.ok(response.businessQuery.sectionCards.every((card) => card.limitations.length === card.limitationCodes.length))
+    const cardSentences = response.businessQuery.sectionCards.flatMap((card) => card.limitations.map((sentence, index) => [card.limitationCodes[index], sentence]))
+    const described = Object.fromEntries([...response.dataLimitations, ...clarification.dataLimitations].map((item) => [item.code, item.description]).concat(cardSentences))
+    for (const [code, sentence] of Object.entries(sentences)) assert.equal(described[code], sentence, `${answerLanguage} ${code}`)
+    assert.deepEqual(response.dataLimitations.map((item) => item.description), pack.limitations.map((code) => described[code]))
+    // Each listed code has its own sentence, not one of the general ones.
+    const general = new Set([...unlisted, 'provider_free_text'].map((code) => described[code]))
+    assert.equal(new Set(listed.map((code) => described[code]).filter((sentence) => sentence && !general.has(sentence))).size, listed.length, answerLanguage)
+    for (const answer of [response, clarification]) {
+      const strings = answerStrings(answer)
+      assert.deepEqual(strings.filter((value) => codeToken.test(value)), [], answerLanguage)
+      if (answerLanguage === 'en-US') assert.deepEqual(strings.filter((value) => /[\u4e00-\u9fff]/.test(value)), [])
+      else assert.deepEqual(answer.dataLimitations.filter((item) => !/[\u4e00-\u9fff]/.test(item.description)), [])
+    }
+  }
+})
+
+test('a section card shows a shared general sentence once, with every code kept', () => {
+  const codes = ['ledger_unavailable', 'journal_unavailable']
+  const pack = { scopeSummary: { mode: 'all', entityCount: 0, label: '全部供应商' }, sections: [{ goal: 'supplier_payables_due', state: 'unavailable', counts: {}, amounts: {}, rows: [], limitations: codes }], limitations: codes, clarification: { needed: false } }
+  const response = buildBusinessQueryResponseV2(pack, {}, { answerLanguage: 'en-US' })
+  assert.deepEqual(response.businessQuery.sectionCards[0].limitationCodes, codes)
+  assert.deepEqual(response.businessQuery.sectionCards[0].limitations, ['Some source data is unavailable, so related counts are unknown.'])
+  assert.deepEqual(response.dataLimitations.map((item) => item.code), codes)
 })

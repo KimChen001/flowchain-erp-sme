@@ -125,10 +125,12 @@ const answerStrings = (response) => [
   ...response.navigationLinks.map((link) => link.label),
   ...response.dataLimitations.flatMap((item) => [item.label, item.description, item.consequence]),
   ...response.businessImpact.flatMap((item) => [item.area, item.impact, item.explanation]),
-  response.businessQuery.scopeBadge, ...response.businessQuery.goalLabels,
-  ...response.businessQuery.sectionCards.flatMap((card) => [card.label, card.stateLabel, ...card.rows.map((row) => row.supplier?.displayName)]),
+  response.businessQuery.scopeBadge, ...response.businessQuery.goalLabels, response.businessQuery.clarification?.question,
+  ...response.businessQuery.sectionCards.flatMap((card) => [card.label, card.stateLabel, ...card.rows.map((row) => row.supplier?.displayName), ...card.limitations]),
   ...response.resolvedContext.entityRefs.map((ref) => ref.entityLabel),
 ].filter(Boolean)
+// Code-shaped tokens such as bankReconciliation_unavailable or supplier_not_found.
+const codeToken = /\b[a-z][A-Za-z]*_[a-z][A-Za-z_]*/
 
 test('a restricted role sees evidence statuses and the supplier label in the answer language', async () => {
   // The answer follows the question's language, so each language asks in its own.
@@ -191,6 +193,59 @@ test('a recent or soon business query words the 7-day default in the answer lang
     assert.equal(response.language, english ? 'en-US' : 'zh-CN', message)
     assert.deepEqual(response.dataLimitations.map((item) => [item.code, item.description]), [[code, description]], message)
     const strings = answerStrings(response)
+    if (english) assert.deepEqual(strings.filter((value) => /[\u4e00-\u9fff]/.test(value)), [], message)
+    else assert.ok(strings.includes(description) && strings.includes('查询限制'), message)
+  }
+})
+
+test('unavailable sources and hidden fields are worded in the answer language, never as codes', async () => {
+  // A role without amounts or supplier details, with RFQs and bank reconciliation unavailable.
+  const limitedActor = { tenantId: 'tenant-test', permissionCodes: new Set([...permissions].filter((code) => !['finance.amounts.read', 'finance.partner_snapshot.read'].includes(code))) }
+  const limitedService = { read: async ({ timeWindow, filters }) => buildSupplierActionSummaries({ records: restrictedRecords, actor: limitedActor, sourceAvailability: { rfqs: false, bankReconciliation: false }, timeWindow, filters, now: new Date('2026-07-24T00:00:00.000Z') }) }
+  const codes = ['rfqs_unavailable', 'bankReconciliation_unavailable', 'amounts_hidden', 'partner_snapshot_hidden']
+  const expected = {
+    'en-US': { message: 'Check supplier payments, overdue POs, and invoice mismatches together.', descriptions: ['RFQs are unavailable, so RFQ follow-ups are unknown.', 'Bank reconciliation is unavailable, so reconciliation exceptions are unknown.', 'Your role cannot view amounts, so they are not shown.', 'Your role cannot view supplier details, so supplier names are hidden.'] },
+    'zh-CN': { message: '帮我同时看看供应商付款、延期 PO 和发票差异。', descriptions: ['RFQ 数据暂不可用，RFQ 跟进事项未知。', '银行核对暂不可用，核对异常未知。', '当前角色无权查看金额，因此未显示金额。', '当前角色无权查看供应商详情，因此已隐藏供应商名称。'] },
+  }
+  for (const [answerLanguage, { message, descriptions }] of Object.entries(expected)) {
+    const harness = baseContext('/api/ai-runtime/respond', { message, answerLanguage, activeModuleId: 'srm' })
+    harness.ctx.aiBusinessQueryActor = limitedActor
+    harness.ctx.aiBusinessQuerySummaryService = limitedService
+    await handleAiRuntimeGatewayRoute(harness.ctx)
+    const response = harness.result().payload
+    assert.equal(response.intent, 'business_query_plan_v1', answerLanguage)
+    assert.equal(response.language, answerLanguage)
+    assert.deepEqual(response.dataLimitations.map((item) => [item.code, item.description]), codes.map((code, index) => [code, descriptions[index]]), answerLanguage)
+    assert.ok(response.businessQuery.sectionCards.length > 0)
+    for (const card of response.businessQuery.sectionCards) {
+      assert.deepEqual(card.limitationCodes, codes, card.goal)
+      assert.deepEqual(card.limitations, descriptions, card.goal)
+    }
+    const strings = answerStrings(response)
+    assert.deepEqual(strings.filter((value) => codeToken.test(value)), [], answerLanguage)
+    if (answerLanguage === 'en-US') assert.deepEqual(strings.filter((value) => /[\u4e00-\u9fff]/.test(value)), [])
+    else assert.ok(strings.includes('查询限制') && !strings.includes('Query limitation'))
+  }
+})
+
+test('a clarification words the planner ambiguity in the answer language, never as a code', async () => {
+  const cases = [
+    { message: 'Which payments are due for Supplier Missing?', code: 'supplier_not_found:Supplier Missing', description: 'No authorized supplier matches Supplier Missing.' },
+    { message: 'What else should I follow up on for these suppliers?', code: 'previous_result_unavailable', description: 'There is no earlier result to refer to.' },
+    { message: 'Which payments are due for this supplier?', code: 'current_supplier_unavailable', description: 'The current page is not about a single supplier.' },
+    { message: '供应商 Supplier Missing 有哪些付款到期？', code: 'supplier_not_found:Supplier Missing', description: '未找到与 Supplier Missing 匹配的授权供应商。' },
+    { message: '这些供应商还有什么需要跟进？', code: 'previous_result_unavailable', description: '没有可引用的上一轮结果。' },
+    { message: '这个供应商有哪些付款到期？', code: 'current_supplier_unavailable', description: '当前页面没有绑定唯一供应商。' },
+  ]
+  for (const { message, code, description } of cases) {
+    const english = !/[\u4e00-\u9fff]/.test(message)
+    const harness = baseContext('/api/ai-runtime/respond', { message, answerLanguage: english ? 'en-US' : 'zh-CN' })
+    await handleAiRuntimeGatewayRoute(harness.ctx)
+    const response = harness.result().payload
+    assert.equal(response.intent, 'business_query_clarification', message)
+    assert.deepEqual(response.dataLimitations.map((item) => [item.code, item.description]), [[code, description]], message)
+    const strings = answerStrings(response)
+    assert.deepEqual(strings.filter((value) => codeToken.test(value)), [], message)
     if (english) assert.deepEqual(strings.filter((value) => /[\u4e00-\u9fff]/.test(value)), [], message)
     else assert.ok(strings.includes(description) && strings.includes('查询限制'), message)
   }

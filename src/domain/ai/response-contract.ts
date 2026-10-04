@@ -146,7 +146,9 @@ export type AiBusinessQuerySectionCard = {
   counts: Record<string, number | null>;
   amounts: Record<string, number | null>;
   rows: Array<Record<string, unknown>>;
+  // Sentences in the answer language; the machine codes behind them, never shown, are in limitationCodes.
   limitations: string[];
+  limitationCodes?: string[];
 };
 
 export type AiBusinessQueryPresentation = {

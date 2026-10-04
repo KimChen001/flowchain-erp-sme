@@ -117,16 +117,54 @@ const TIME_WINDOW_LIMITATION_COPY = Object.freeze({
   time_window_soon_default: ['"Soon" means the next 7 days by default; give a date for a narrower window.', '“很快”按产品默认的未来 7 天窗口解释；可指定更精确日期。'],
 })
 const timezoneInvalidCopy = (configured, resolved) => [`The workspace timezone ${configured} is not valid, so dates use ${resolved}.`, `无效工作区时区 ${configured}，已按 ${resolved} 解释。`]
+// Limitation codes from the supplier summary read service (`dataQuality.limitations`),
+// the executor and the planner's ambiguities, as [English, Chinese]. Users see
+// the sentence; the code itself stays in `code` and in a section card's `limitationCodes`.
+const LIMITATION_COPY = Object.freeze({
+  suppliers_unavailable: ['Supplier records are unavailable, so some suppliers may be missing.', '供应商记录暂不可用，结果可能缺少部分供应商。'],
+  payables_unavailable: ['Payables are unavailable, so payment counts are unknown.', '应付数据暂不可用，付款数量未知。'],
+  invoices_unavailable: ['Supplier invoices are unavailable, so invoice counts are unknown.', '供应商发票暂不可用，发票数量未知。'],
+  settlements_unavailable: ['Settlements are unavailable, so payment blocks may be incomplete.', '结算数据暂不可用，付款阻断可能不完整。'],
+  purchaseOrders_unavailable: ['Purchase orders are unavailable, so purchase order counts are unknown.', '采购订单暂不可用，采购订单数量未知。'],
+  receiving_unavailable: ['Receiving records are unavailable, so receiving counts are unknown.', '收货记录暂不可用，收货数量未知。'],
+  rfqs_unavailable: ['RFQs are unavailable, so RFQ follow-ups are unknown.', 'RFQ 数据暂不可用，RFQ 跟进事项未知。'],
+  bankReconciliation_unavailable: ['Bank reconciliation is unavailable, so reconciliation exceptions are unknown.', '银行核对暂不可用，核对异常未知。'],
+  amounts_hidden: ['Your role cannot view amounts, so they are not shown.', '当前角色无权查看金额，因此未显示金额。'],
+  partner_snapshot_hidden: ['Your role cannot view supplier details, so supplier names are hidden.', '当前角色无权查看供应商详情，因此已隐藏供应商名称。'],
+  independent_goal_execution_failed: ['This check could not be completed, so its counts are unknown.', '该项检查未能完成，相关数量未知。'],
+  inventory_supplier_projection_unavailable: ['Inventory risks are not linked to suppliers yet, so they are not checked here.', '库存风险尚未关联到供应商，此处未检查。'],
+  supplier_scope_unspecified: ['The question does not say which suppliers to check.', '问题未说明要查看哪些供应商。'],
+  previous_result_unavailable: ['There is no earlier result to refer to.', '没有可引用的上一轮结果。'],
+  current_supplier_unavailable: ['The current page is not about a single supplier.', '当前页面没有绑定唯一供应商。'],
+  prompt_injection: ['The request includes instructions about the system or data access, so no records were read.', '请求包含不允许的系统或数据访问指令，因此未读取任何记录。'],
+  no_supported_goal: ['The question does not match a supported supplier check.', '该问题未对应已支持的供应商查询。'],
+})
+const supplierNotFoundCopy = (names) => [`No authorized supplier matches ${names}.`, `未找到与 ${names} 匹配的授权供应商。`]
+const goalFailedCopy = ([en, zh]) => [`${en}: this check could not be completed, so its counts are unknown.`, `${zh}：该项检查未能完成，相关数量未知。`]
+// For codes not listed above, so a new code is never shown as is.
+const UNLISTED_LIMITATION_COPY = Object.freeze({
+  unavailable: ['Some source data is unavailable, so related counts are unknown.', '部分数据源暂不可用，相关数量未知。'],
+  hidden: ['Your role cannot view some of this data, so it is not shown.', '当前角色无权查看部分数据，因此未显示。'],
+  clarification: ['The question needs more detail before records can be checked.', '问题需要补充信息后才能读取记录。'],
+  other: ['Some data could not be checked, so related counts may be incomplete.', '部分数据未能检查，相关数量可能不完整。'],
+})
 const text = (value) => String(value ?? '').trim()
 const inLanguage = ([en, zh], english) => english ? en : zh
+const limitationCodes = (items) => [...new Set((items || []).map(text).filter(Boolean))]
 
-// Words the time window's limitation codes in the answer language; any other
-// limitation keeps the text the executor gave it.
-function limitationDescription(code, english) {
-  if (TIME_WINDOW_LIMITATION_COPY[code]) return inLanguage(TIME_WINDOW_LIMITATION_COPY[code], english)
-  const [head, resolved, ...configured] = code.split(':')
-  if (head === 'workspace_timezone_invalid') return inLanguage(timezoneInvalidCopy(configured.join(':'), resolved), english)
-  return code
+// Words a limitation code in the answer language. Never returns the code
+// itself: an unlisted code gets a general sentence.
+function limitationDescription(code, { english, clarification }) {
+  const listed = TIME_WINDOW_LIMITATION_COPY[code] || LIMITATION_COPY[code]
+  if (listed) return inLanguage(listed, english)
+  const [head, ...values] = code.split(':')
+  if (head === 'workspace_timezone_invalid') return inLanguage(timezoneInvalidCopy(values.slice(1).join(':'), values[0]), english)
+  if (head === 'supplier_not_found') return inLanguage(supplierNotFoundCopy(values.join(':')), english)
+  // `<goal>:<reason>` from a goal the executor could not complete.
+  if (values.length && GOAL_LABELS[head]) return inLanguage(goalFailedCopy([EN[GOAL_LABELS[head]], GOAL_LABELS[head]]), english)
+  if (/_unavailable$/.test(code)) return inLanguage(UNLISTED_LIMITATION_COPY.unavailable, english)
+  if (/_hidden$/.test(code)) return inLanguage(UNLISTED_LIMITATION_COPY.hidden, english)
+  return inLanguage(clarification ? UNLISTED_LIMITATION_COPY.clarification : UNLISTED_LIMITATION_COPY.other, english)
 }
 
 // Never returns an unlisted code as is: English gets it as words, Chinese a
@@ -211,7 +249,8 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
       }
   const evidence = (pack.evidence || []).slice(0, 12).map((item, index) => evidenceItem(item, index, { L, english }))
   const withSupplierLabel = (row) => row?.supplier ? { ...row, supplier: { ...row.supplier, displayName: supplierLabel(row.supplier, english) } } : row
-  const limitations = [...new Set(pack.limitations || [])].map(text).map((code) => ({ code, label: L('查询限制'), description: limitationDescription(code, english), severity: 'warning', consequence: L('该限制不会被解释为业务数量 0。') }))
+  const describe = (code) => limitationDescription(code, { english, clarification })
+  const limitations = limitationCodes(pack.limitations).map((code) => ({ code, label: L('查询限制'), description: describe(code), severity: 'warning', consequence: L('该限制不会被解释为业务数量 0。') }))
   const goalLabels = (planner.plan?.goals || sections.map((section) => section.goal)).map((goal) => L(GOAL_LABELS[goal] || goal))
   const sectionCards = sections.map((section) => ({
     goal: section.goal,
@@ -221,7 +260,9 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
     counts: section.counts,
     amounts: section.amounts,
     rows: (section.rows || []).map(withSupplierLabel),
-    limitations: section.limitations,
+    // Sentences in the answer language (unlisted codes can share one); the codes are in `limitationCodes`.
+    limitations: [...new Set(limitationCodes(section.limitations).map(describe))],
+    limitationCodes: limitationCodes(section.limitations),
   }))
   return {
     version: 'v2',

@@ -89,8 +89,13 @@ languages, the same ids, counts and amounts) and the business query labels the
 assistant evaluation reaches. Knowledge answers depend on the configured provider
 and are not covered by the offline evaluation.
 
-Business query limitations from the time window ("recent", "soon", an invalid
-workspace timezone) are codes that the answer words in its language, with the
-code kept in `code`. Other limitation codes from the supplier summary, the
-executor and the planner (`bankReconciliation_unavailable`,
-`supplier_scope_unspecified`, ...) are still shown as the code in both languages.
+Business query limitations are codes that the answer words in its language
+(`limitationDescription` in `server/domain/ai-business-query-response.mjs`): the
+time window ("recent", "soon", an invalid workspace timezone), the supplier
+summary (`<source>_unavailable`, `amounts_hidden`, `partner_snapshot_hidden`),
+the executor (a goal it could not complete) and the planner ambiguities a
+clarification shows (`supplier_not_found:<names>`, `supplier_scope_unspecified`,
+...). A code without its own sentence gets a general one, so no code is shown as
+is. Each `dataLimitations` item keeps its code in `code`, and a section card keeps
+its codes in `limitationCodes` next to the sentences in `limitations`. The
+inventory rows' own `limitations` stay codes; the panel does not show them.
