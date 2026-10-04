@@ -156,6 +156,12 @@ test("a short follow-up is read with the previous answer", async ({ page }) => {
   // the list showed it: a supplier by its name, never by its code.
   const why = await askTyped(panel, "Why?");
   await expect(headline(why)).toHaveText(`Why ${listed[1]} needs attention`);
+  // In the walkthrough that record is a supplier: the summary says what that
+  // supplier has open and its most urgent record, not the workspace's totals.
+  const whySummary = why.getByTestId("ai-focused-conclusion").locator("p");
+  await expect(whySummary).toContainText(`${listed[1]} has `);
+  await expect(whySummary).toContainText("Most urgent: ");
+  await expect(whySummary).not.toContainText("open purchase orders");
   await expect(evidenceLinks(why).first()).toBeVisible();
 
   expect(await chineseLines(panel)).toEqual([]);
