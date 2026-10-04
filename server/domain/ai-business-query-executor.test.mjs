@@ -141,6 +141,7 @@ function answerStrings(response) {
     response.conclusion.title, response.conclusion.summary,
     ...response.keyEvidence.flatMap((item) => [item.label, item.entityLabel, item.summary, item.status, item.sourceLabel]),
     ...response.navigationLinks.map((link) => link.label),
+    ...response.dataLimitations.flatMap((item) => [item.label, item.description, item.consequence]),
     response.businessQuery.scopeBadge, ...response.businessQuery.goalLabels,
     ...response.businessQuery.sectionCards.flatMap((card) => [card.label, card.stateLabel, ...card.rows.map((row) => row.supplier?.displayName)]),
     ...response.resolvedContext.entityRefs.map((ref) => ref.entityLabel),
@@ -180,4 +181,22 @@ test('an unlisted status code is shown as words, never as the code', async () =>
   const statuses = (answerLanguage) => buildBusinessQueryResponseV2(pack, {}, { answerLanguage }).keyEvidence.map((item) => [item.statusCode, item.status])
   assert.deepEqual(statuses('en-US'), [['awaiting_bank_file', 'Awaiting bank file'], ['待质检', 'Other status']])
   assert.deepEqual(statuses('zh-CN'), [['awaiting_bank_file', '其他状态'], ['待质检', '待质检']])
+})
+
+test('time window limitations are worded in the answer language, with the codes kept', async () => {
+  const plan = emptyBusinessQueryPlan({ goals: ['supplier_payables_due'], filters: { timeWindow: 'next_7_days' } })
+  const pack = await executeBusinessQueryPlan(plan, { summaryService, timezone: 'Not/AZone', message: 'Which suppliers need payment soon? Any recent ones?' })
+  const codes = ['time_window_recent_default', 'time_window_soon_default', 'workspace_timezone_invalid:America/New_York:Not/AZone']
+  assert.deepEqual(pack.limitations.slice(0, 3), codes)
+  const expected = {
+    'en-US': ['"Recent" means the next 7 days by default.', '"Soon" means the next 7 days by default; give a date for a narrower window.', 'The workspace timezone Not/AZone is not valid, so dates use America/New_York.'],
+    'zh-CN': ['“最近”按产品默认的未来 7 天窗口解释。', '“很快”按产品默认的未来 7 天窗口解释；可指定更精确日期。', '无效工作区时区 Not/AZone，已按 America/New_York 解释。'],
+  }
+  for (const [answerLanguage, descriptions] of Object.entries(expected)) {
+    const response = buildBusinessQueryResponseV2(pack, { plan }, { answerLanguage })
+    const timeWindow = response.dataLimitations.filter((item) => codes.includes(item.code))
+    assert.deepEqual(timeWindow.map((item) => item.code), codes, answerLanguage)
+    assert.deepEqual(timeWindow.map((item) => item.description), descriptions, answerLanguage)
+    if (answerLanguage === 'en-US') assert.deepEqual(answerStrings(response).filter((value) => /[\u4e00-\u9fff]/.test(value)), [])
+  }
 })
