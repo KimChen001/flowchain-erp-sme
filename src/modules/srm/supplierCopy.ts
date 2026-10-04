@@ -19,6 +19,20 @@ const zh: Record<string, string> = {
   'Purchase records': '采购记录', 'No purchase records available': '暂无采购交易记录', 'Risks and exceptions': '风险与异常', 'No risks or exceptions available': '暂无风险或异常',
   'Supplied-item links are currently unavailable.': '可供应物料关联暂不可用。',
   'Preferred': '首选', 'Approved': '已批准', 'Lead Time': '交期', 'MOQ': '最小起订量',
+  // Supplier tiers and business owners.
+  'Tier 1 Strategic': '一级 · 战略', 'Tier 2 Core': '二级 · 核心', 'Tier 3 Transactional': '三级 · 一般', 'Not tiered': '未分级',
+  'Tier 1': '一级', 'Tier 2': '二级', 'Tier 3': '三级', 'Tier': '层级', 'All': '全部', 'Managed by me': '我负责的', 'Supplier tiers': '供应商层级',
+  'Losing this supplier would stop sales or operations soon. Needs a named owner and regular review.': '失去该供应商会很快影响销售或运营，需要指定负责人并定期复核。',
+  'A regular, approved source, with alternatives or limited impact.': '常用的已批准来源，有替代来源或影响有限。',
+  'Occasional or low-impact purchases.': '偶尔采购或影响较小的采购。', 'Nobody has decided yet.': '尚未确定层级。',
+  'Change tier': '调整层级', 'Reason': '原因', 'Set by': '设置人', 'Workspace setup': '工作区初始化', 'Save tier': '保存层级', 'Tier saved': '层级已保存',
+  'Business owner': '业务负责人', 'Change owner': '更换负责人', 'No owner': '无负责人', 'Save owner': '保存负责人', 'Owner saved': '负责人已保存',
+  'All owners': '全部负责人', 'Owner filter': '负责人筛选', 'The person who manages this supplier relationship.': '负责维护该供应商关系的人。',
+  'Why this tier? For example: the only approved source of our best-selling item.': '为什么定这个层级？例如：它是我们畅销物料唯一的已批准来源。',
+  'Tier and owner history': '层级与负责人记录', 'Suggestion accepted': '采纳了系统建议', 'Could not load workspace users.': '无法读取工作区用户。',
+  'Could not save. Please try again.': '保存失败，请重试。', 'Enter a reason of 3 to 500 characters.': '请填写 3 到 500 个字的原因。',
+  'Choose Tier 1, 2 or 3, or Not tiered.': '请选择一级、二级、三级或未分级。', 'Choose a different tier.': '请选择不同的层级。',
+  'Choose an active user of this workspace.': '请选择本工作区的在职用户。', 'Choose a different owner.': '请选择不同的负责人。',
 };
 const en = Object.fromEntries(Object.entries(zh).map(([key, value]) => [value, key]));
 export const supplierCopy = (value: string, language: string) => language === 'en-US' ? en[value] || value : zh[value] || value;

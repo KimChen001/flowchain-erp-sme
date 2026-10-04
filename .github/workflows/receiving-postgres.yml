@@ -62,6 +62,7 @@ jobs:
       - run: npm run test:db:walkthrough-scenario
       - run: npm run test:db:tenant-scoped-reads
       - run: npm run test:db:master-data-writes
+      - run: npm run test:db:supplier-tiers
       - run: npm run test:db:report-truncation
       - run: npm run test:db:inventory-allocation
       - run: npm run test:db:ai-knowledge
