@@ -1859,6 +1859,7 @@ export default function FlowChainApp() {
                             "item",
                             "settlement_document",
                             "supplier_invoice",
+                            "customer_invoice",
                             "three_way_match",
                           ].includes(activeRoute.entityType) ? (
                           <BusinessEntityDetailPage route={activeRoute} />
