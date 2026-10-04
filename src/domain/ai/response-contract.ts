@@ -102,6 +102,8 @@ export type AiResponseV2ReviewCard = {
   draftType?: string;
   draftTitle?: string;
   payload?: Record<string, unknown>;
+  // Which payload fields were suggested, and from where (record, default, template).
+  prefill?: Record<string, { source: "record" | "default" | "template" | "history" | "workspace_history" | "model"; ref?: string; value: string }>;
   originEvidence?: Record<string, unknown>[];
 };
 

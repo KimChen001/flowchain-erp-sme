@@ -1,9 +1,12 @@
-import { Copy, RotateCcw, Save, ShieldCheck } from "lucide-react";
+import { Copy, Mail, RotateCcw, Save, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { A, Chip, Modal, RecoveryActions } from "../../components/ui";
 import { typography } from "../../components/ui/typography";
 import { useI18n } from "../../i18n/I18n";
 import { navigationIntentFromEvidenceLink, normalizeEvidenceLinks, type CanonicalFocusTarget } from "../../lib/evidenceLinks";
+import type { PrefillEntry } from "../../lib/prefill";
+import { PrefillSourceChip } from "../../components/prefill/PrefillSource";
+import { MESSAGE_DRAFT_TYPES, MESSAGE_FIELDS, draftLines, mailtoLink, messageKey, messageText, recordActionDraftUse } from "./draftMessage";
 
 export type ActionDraftPreviewRequest = {
   type: string;
@@ -11,6 +14,8 @@ export type ActionDraftPreviewRequest = {
   source?: string;
   originEvidence?: Record<string, unknown>[];
   payload?: Record<string, unknown>;
+  // Which payload fields were suggested, and from where.
+  prefill?: Record<string, PrefillEntry>;
 };
 
 export type ActionDraftPreview = {
@@ -23,6 +28,7 @@ export type ActionDraftPreview = {
   requiresConfirmation: boolean;
   originEvidence?: Record<string, unknown>[];
   payload?: Record<string, unknown>;
+  prefill?: Record<string, PrefillEntry>;
   validation?: {
     ok?: boolean;
     status?: string;
@@ -71,6 +77,12 @@ const ZH: Record<string, string> = {
   "This draft still needs human review. After confirmation only safe internal records within the allowed scope are kept.": "该草稿仍需人工复核；用户确认后也只保留允许范围内的安全内部记录。",
   "Audit preview:": "审计预览：", "Draft preview prepared. No business record was created or submitted.": "草稿预览已生成；未创建或提交业务记录。",
   "No draft preview": "暂无草稿预览",
+  "Supplier message": "供应商消息", "To": "收件人", "Subject": "主题", "Message": "消息内容",
+  "Open lines": "未到货明细", "Item": "物料", "Remaining": "未到数量", "Promised date": "承诺日期", "Originally {date}": "原定 {date}",
+  "Open in email": "在邮件中打开", "Copied": "已复制",
+  "Purchase order": "采购订单", "Invoice": "发票",
+  "Open in email starts a message in your own mail app. FlowChain does not send anything.": "“在邮件中打开”会在你自己的邮件程序中新建邮件；FlowChain 不会发送任何内容。",
+  "This message is long, so your mail app gets a shortened copy. Use Copy draft for the full text.": "消息较长，邮件程序收到的是截短的内容；如需完整内容请使用“复制草稿内容”。",
 };
 const EN = Object.fromEntries(Object.entries(ZH).map(([english, chinese]) => [chinese, english]));
 type Tr = (value: string, params?: Record<string, string>) => string;
@@ -115,6 +127,7 @@ const PAYLOAD_LABELS: Record<string, string> = {
   relatedDocumentType: "Related document type", relatedDocumentId: "Related document", followupReason: "Follow-up reason",
   messageDraft: "Message draft", message: "Message draft", severity: "Priority", urgency: "Urgency", dueDate: "Due date",
   availableQuantity: "Available stock", reorderPoint: "Reorder point", safetyStock: "Safety stock",
+  poId: "Purchase order", invoiceId: "Invoice",
 };
 
 function payloadLabel(key: string, tr: Tr) {
@@ -199,7 +212,18 @@ export function ActionDraftReviewShell({
   const validation = activeDraft?.validation;
   const evidence = normalizeEvidenceLinks(activeDraft?.originEvidence || [], { source: "actionDraft" }).slice(0, 6);
   const audit = activeDraft?.auditTrail?.[0];
-  const payloadEntries = useMemo(() => Object.entries(activeDraft?.payload || {}), [activeDraft?.payload]);
+  const isMessageDraft = MESSAGE_DRAFT_TYPES.has(activeDraft?.type || "");
+  // A message draft shows its recipient, subject, text and lines in the message
+  // section; the grid lists the remaining fields.
+  const payloadEntries = useMemo(
+    () => Object.entries(activeDraft?.payload || {}).filter(([key]) => !(isMessageDraft && MESSAGE_FIELDS.has(key))),
+    [activeDraft?.payload, isMessageDraft],
+  );
+  const messagePayload = activeDraft?.payload || {};
+  const bodyKey = messageKey(messagePayload);
+  const lines = draftLines(messagePayload);
+  const mailto = isMessageDraft ? mailtoLink(messagePayload) : null;
+  const suggestion = (field: string) => activeDraft?.prefill?.[field];
 
   useEffect(() => {
     setWorkingDraft(draft);
@@ -240,9 +264,13 @@ export function ActionDraftReviewShell({
   }
 
   async function copyDraft() {
-    const content = copyTextForDraft(activeDraft, tr, locale);
-    if (!content || !navigator?.clipboard) return;
+    const content = isMessageDraft && activeDraft
+      ? messageText(activeDraft.payload || {}, { to: tr("To"), subject: tr("Subject") })
+      : copyTextForDraft(activeDraft, tr, locale);
+    if (!content || !navigator?.clipboard || !activeDraft) return;
     await navigator.clipboard.writeText(content);
+    setSaveStatus(tr("Copied"));
+    void recordActionDraftUse(activeDraft, "copied");
   }
 
   return (
@@ -266,6 +294,17 @@ export function ActionDraftReviewShell({
           <button type="button" onClick={copyDraft} disabled={!activeDraft} className={draftButtonClass} style={{ background: A.white, color: activeDraft ? A.blue : A.gray2 }}>
             <Copy size={12} className="mr-1 inline" />{tr("Copy draft")}
           </button>
+          {mailto && activeDraft ? (
+            <a
+              href={mailto.href}
+              data-testid="action-draft-open-email"
+              onClick={() => { void recordActionDraftUse(activeDraft, "opened_in_email"); }}
+              className={`${draftButtonClass} inline-flex items-center`}
+              style={{ background: A.white, color: A.blue }}
+            >
+              <Mail size={12} className="mr-1 inline" />{tr("Open in email")}
+            </a>
+          ) : null}
           <button type="button" onClick={saveDraft} disabled={!activeDraft || !onSaveDraft || saving} className={draftButtonClass} style={{ background: activeDraft && onSaveDraft ? A.blue : A.gray4, color: A.white }}>
             <Save size={12} className="mr-1 inline" />{saving ? tr("Keeping…") : tr("Keep draft for review")}
           </button>
@@ -316,6 +355,51 @@ export function ActionDraftReviewShell({
               <div className="mt-1 text-[12px] font-semibold" style={{ color: A.orange }}>{activeDraft.requiresConfirmation ? tr("Needs human confirmation") : tr("Preview")}</div>
             </div>
           </div>
+
+          {isMessageDraft ? (
+            <section data-testid="action-draft-message" className="space-y-2">
+              <div className="text-[12px] font-semibold" style={{ color: A.label }}>{tr("Supplier message")}</div>
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                <label className="block rounded-lg border px-3 py-2" style={{ borderColor: A.border }}>
+                  <span className="fc-caption" style={{ color: A.gray2 }}>{tr("To")}{messagePayload.contactName ? ` · ${String(messagePayload.contactName)}` : ""}</span>
+                  <input data-testid="action-draft-to" type="email" value={String(messagePayload.to ?? "")} onChange={(event) => updatePayloadField("to", event.target.value, "")} className="mt-1 w-full rounded-md border px-2 py-1 text-[12px] font-semibold outline-none" style={{ borderColor: A.border, color: A.label }} />
+                  <PrefillSourceChip entry={suggestion("to")} current={String(messagePayload.to ?? "")} testId="action-draft-source-to" />
+                </label>
+                <label className="block rounded-lg border px-3 py-2" style={{ borderColor: A.border }}>
+                  <span className="fc-caption" style={{ color: A.gray2 }}>{tr("Subject")}</span>
+                  <input data-testid="action-draft-subject" value={String(messagePayload.subject ?? "")} onChange={(event) => updatePayloadField("subject", event.target.value, "")} className="mt-1 w-full rounded-md border px-2 py-1 text-[12px] font-semibold outline-none" style={{ borderColor: A.border, color: A.label }} />
+                  <PrefillSourceChip entry={suggestion("subject")} current={String(messagePayload.subject ?? "")} testId="action-draft-source-subject" />
+                </label>
+              </div>
+              <label className="block rounded-lg border px-3 py-2" style={{ borderColor: A.border }}>
+                <span className="fc-caption" style={{ color: A.gray2 }}>{tr("Message")}</span>
+                <textarea data-testid="action-draft-message-body" rows={6} value={String(messagePayload[bodyKey] ?? "")} onChange={(event) => updatePayloadField(bodyKey, event.target.value, "")} className="mt-1 w-full rounded-md border px-2 py-1.5 text-[12px] leading-5 outline-none" style={{ borderColor: A.border, color: A.label }} />
+                <PrefillSourceChip entry={suggestion(bodyKey)} current={String(messagePayload[bodyKey] ?? "")} testId="action-draft-source-message" />
+              </label>
+              {lines.length ? (
+                <div className="overflow-x-auto rounded-lg border" style={{ borderColor: A.border }} data-testid="action-draft-lines">
+                  <table className="w-full text-left text-[11px]">
+                    <caption className="px-3 pt-2 text-left text-[11px] font-semibold" style={{ color: A.gray1 }}>{tr("Open lines")}</caption>
+                    <thead><tr style={{ color: A.gray2 }}><th className="px-3 py-1 font-medium">SKU</th><th className="px-3 py-1 font-medium">{tr("Item")}</th><th className="px-3 py-1 text-right font-medium">{tr("Remaining")}</th><th className="px-3 py-1 font-medium">{tr("Promised date")}</th></tr></thead>
+                    <tbody>
+                      {lines.map((line, index) => (
+                        <tr key={line.lineId || `${line.sku}-${index}`} className="border-t" style={{ borderColor: A.border, color: A.label }}>
+                          <td className="px-3 py-1 font-semibold">{line.sku || "—"}</td>
+                          <td className="px-3 py-1">{line.itemName || "—"}</td>
+                          <td className="px-3 py-1 text-right">{line.remaining === null || line.remaining === undefined ? "—" : `${Number(line.remaining).toLocaleString(locale)}${line.unit ? ` ${line.unit}` : ""}`}</td>
+                          <td className="px-3 py-1">{line.promisedDate || "—"}{line.originalPromisedDate && line.originalPromisedDate !== line.promisedDate ? <span style={{ color: A.gray2 }}> · {tr("Originally {date}", { date: line.originalPromisedDate })}</span> : null}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+              <p className="text-[11px] leading-5" style={{ color: A.gray2 }}>
+                {tr("Open in email starts a message in your own mail app. FlowChain does not send anything.")}
+                {mailto?.shortened ? ` ${tr("This message is long, so your mail app gets a shortened copy. Use Copy draft for the full text.")}` : ""}
+              </p>
+            </section>
+          ) : null}
 
           <section>
             <div className="mb-2 text-[12px] font-semibold" style={{ color: A.label }}>{tr("Business content (simple fields can be edited)")}</div>
