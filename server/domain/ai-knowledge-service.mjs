@@ -218,6 +218,12 @@ const NO_ANSWER = {
   zh: '你有权查看的资料中没有这个问题的答案。下面列出了本次检索到的段落。',
 }
 
+// The retrieved passage a reply names: by its id, or by its number ("1", 1,
+// "[1]") when a model lists numbers instead of ids. Anything else names no
+// passage retrieved for this request.
+const SOURCE_NUMBER = /^\s*\[?\s*(\d+)\s*\]?\s*$/
+const citedPassage = (reference, citations) => citations.find(c => c.id === reference) || citations.find(c => c.sourceNumber === Number(String(reference).match(SOURCE_NUMBER)?.[1]))
+
 export async function answerKnowledgeQuery({ question, language = 'en-US', actor, service, env = {}, provider = callConfiguredProvider, embeddingProvider = callConfiguredEmbeddingProvider }) {
   const zh = language === 'zh-CN'
   const queryVector = await embeddingProvider([question], env)
@@ -233,12 +239,17 @@ export async function answerKnowledgeQuery({ question, language = 'en-US', actor
           const result = await provider({ task: { type: 'knowledge_rag', question, answerLanguage: language }, evidencePackage: { citations }, safetyPolicy: { readOnly: true } }, env)
           const raw = result?.rawOutput?.conclusion?.summary || result?.rawOutput
           const output = typeof raw === 'string' ? JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, '')) : raw
-          if (result.ok && Array.isArray(output?.citationIds) && !output.citationIds.length) return { answer: zh ? NO_ANSWER.zh : NO_ANSWER.en, citations, mode: 'no_answer' }
-          if (result.ok && typeof output?.answer === 'string' && output.answer.trim() && output.answer.length <= 2400 && Array.isArray(output.citationIds) && output.citationIds.length && output.citationIds.every(id => citations.some(c => c.id === id))) {
-            const answer = normalizeInlineReferences(output.answer)
-            const selected = citations.filter(c => output.citationIds.includes(c.id))
+          if (result.ok && Array.isArray(output?.citationIds)) {
+            const answer = typeof output.answer === 'string' ? normalizeInlineReferences(output.answer) : ''
+            const listed = output.citationIds.map(reference => citedPassage(reference, citations))
             const numbers = [...answer.matchAll(/\[(\d+)\]/g)].map(match => Number(match[1]))
-            if (numbers.every(number => selected.some(c => c.sourceNumber === number))) return { answer, citations: selected, mode: 'generated' }
+            if (!listed.length && !numbers.length) return { answer: zh ? NO_ANSWER.zh : NO_ANSWER.en, citations, mode: 'no_answer' }
+            // Every listed passage and every inline [n] must be a passage
+            // retrieved for this request; an inline [n] the list left out still cites it.
+            if (answer.trim() && answer.length <= 2400 && listed.every(Boolean) && numbers.every(number => citations.some(c => c.sourceNumber === number))) {
+              const used = new Set([...listed.map(c => c.id), ...citations.filter(c => numbers.includes(c.sourceNumber)).map(c => c.id)])
+              return { answer, citations: citations.filter(c => used.has(c.id)), mode: 'generated' }
+            }
           }
         } catch { /* Retrieval remains available when model output cannot be used. */ }
       }

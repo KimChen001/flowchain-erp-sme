@@ -163,12 +163,14 @@ function rejectionReason(response, citations) {
   if (!response.ok) return `provider ${response.reason || response.status || 'error'}`
   let output = response.rawOutput?.conclusion?.summary || response.rawOutput
   try { if (typeof output === 'string') output = JSON.parse(output.replace(/^```(?:json)?\s*|\s*```$/g, '')) } catch { return 'reply is not JSON' }
-  if (Array.isArray(output?.citationIds) && !output.citationIds.length) return `reply cites nothing (a no-answer): "${String(output.answer || '').slice(0, 160)}"`
-  if (typeof output?.answer !== 'string' || !output.answer.trim()) return 'reply has no answer'
+  if (!Array.isArray(output?.citationIds)) return 'reply has no citationIds'
+  const numbers = [...String(output.answer || '').replace(/\[\s*source\s*number\s*:?\s*(\d+)\s*\]/giu, '[$1]').matchAll(/\[(\d+)\]/g)].map(match => Number(match[1]))
+  if (!output.citationIds.length && !numbers.length) return `reply cites nothing (a no-answer): "${String(output.answer || '').slice(0, 160)}"`
+  if (typeof output.answer !== 'string' || !output.answer.trim()) return 'reply has no answer'
   if (output.answer.length > 2400) return 'answer longer than 2,400 characters'
-  if (!Array.isArray(output.citationIds)) return 'reply has no citationIds'
-  if (!output.citationIds.every(id => citations.some(c => c.id === id))) return 'reply cites an id that was not retrieved'
-  return 'an inline [n] reference names a source the reply did not cite'
+  const named = reference => citations.some(c => c.id === reference || c.sourceNumber === Number(String(reference).match(/^\s*\[?\s*(\d+)\s*\]?\s*$/)?.[1]))
+  if (!output.citationIds.every(named)) return 'reply names a passage that was not retrieved'
+  return 'an inline [n] reference names a passage that was not retrieved'
 }
 
 async function ask(entry) {

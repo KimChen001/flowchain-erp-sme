@@ -94,9 +94,27 @@ test('"[sourceNumber 1]" references are read as [1] and checked like any other',
   const result = await answerKnowledgeQuery({ question: 'Zephyr warranty', actor: {}, service: { documents: async () => documents }, env: providerEnv, provider: replying({ answer: 'The warranty is 18 months [sourceNumber 1].', citationIds: ['chunk-a'] }) })
   assert.equal(result.mode, 'generated')
   assert.equal(result.answer, 'The warranty is 18 months [1].')
-  // A normalised reference to a source the reply did not cite is still rejected.
+  // A normalised reference to a passage that was not retrieved is still rejected.
   const unchecked = await answerKnowledgeQuery({ question: 'Zephyr warranty', actor: {}, service: { documents: async () => documents }, env: providerEnv, provider: replying({ answer: 'The warranty is 18 months [sourceNumber 2].', citationIds: ['chunk-a'] }) })
   assert.equal(unchecked.mode, 'model_unavailable')
+})
+
+test('a passage may be named by its number or only inline, but it must be one retrieved for this request', async () => {
+  const twoPassages = [documents[0], new Document({ pageContent: 'The Zephyr warranty starts on delivery.', metadata: { id: 'chunk-c', documentId: 'doc-a', title: 'Zephyr product guide', position: 1 } })]
+  const ask = reply => answerKnowledgeQuery({ question: 'Zephyr warranty', actor: {}, service: { documents: async () => twoPassages }, env: providerEnv, provider: replying(reply) })
+  // Numbers instead of ids in citationIds.
+  const byNumber = await ask({ answer: 'The warranty is 18 months [1].', citationIds: ['1'] })
+  assert.equal(byNumber.mode, 'generated')
+  assert.deepEqual(byNumber.citations.map(c => c.sourceNumber), [1])
+  // An inline [2] the list left out still cites passage 2.
+  const first = byNumber.citations[0].id
+  const inline = await ask({ answer: 'The warranty is 18 months [1] and starts on delivery [2].', citationIds: [first] })
+  assert.equal(inline.mode, 'generated')
+  assert.deepEqual(inline.citations.map(c => c.sourceNumber), [1, 2])
+  // Inline references alone are a cited answer, not a no-answer.
+  assert.equal((await ask({ answer: 'It starts on delivery [2].', citationIds: [] })).mode, 'generated')
+  // A number or inline reference past the retrieved passages, or an unknown id, is rejected.
+  for (const reply of [{ answer: 'x [1]', citationIds: ['3'] }, { answer: 'x [3]', citationIds: ['chunk-a'] }, { answer: 'x', citationIds: ['chunk-z'] }]) assert.equal((await ask(reply)).mode, 'model_unavailable', JSON.stringify(reply))
 })
 
 test('the knowledge prompt asks for [1]-style references and an empty citation list when nothing answers', () => {
