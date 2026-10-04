@@ -101,6 +101,13 @@ function text(value: unknown, tr: Tr, locale: string) {
   return String(value);
 }
 
+// A calendar day in the workspace locale, as the draft's message states it.
+function dayText(value: unknown, locale: string) {
+  const day = String(value ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return String(value ?? "") || "—";
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(`${day}T12:00:00Z`));
+}
+
 function compactObject(value: Record<string, unknown>, tr: Tr, locale: string) {
   return [
     value.supplierId || value.supplierIdOrName || value.supplierName || value.name,
@@ -387,7 +394,7 @@ export function ActionDraftReviewShell({
                           <td className="px-3 py-1 font-semibold">{line.sku || "—"}</td>
                           <td className="px-3 py-1">{line.itemName || "—"}</td>
                           <td className="px-3 py-1 text-right">{line.remaining === null || line.remaining === undefined ? "—" : `${Number(line.remaining).toLocaleString(locale)}${line.unit ? ` ${line.unit}` : ""}`}</td>
-                          <td className="px-3 py-1">{line.promisedDate || "—"}{line.originalPromisedDate && line.originalPromisedDate !== line.promisedDate ? <span style={{ color: A.gray2 }}> · {tr("Originally {date}", { date: line.originalPromisedDate })}</span> : null}</td>
+                          <td className="px-3 py-1">{line.promisedDate ? dayText(line.promisedDate, locale) : "—"}{line.originalPromisedDate && line.originalPromisedDate !== line.promisedDate ? <span style={{ color: A.gray2 }}> · {tr("Originally {date}", { date: dayText(line.originalPromisedDate, locale) })}</span> : null}</td>
                         </tr>
                       ))}
                     </tbody>
