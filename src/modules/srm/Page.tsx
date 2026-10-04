@@ -1,7 +1,7 @@
 import { SupplierForm } from "./SupplierForm";
 import { supplierCopy } from "./supplierCopy";
 import { SupplierPerformancePanel, supplierPerformanceTabLabel } from "./supplierPerformance";
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -162,31 +162,40 @@ export default function SupplierMasterPage({
       // Empty means "use the supplier's default currency" when saving.
       currency: "",
     });
+  // Only the latest request may fill the list: an older, slower one is dropped.
+  const loadSequence = useRef(0);
+  const loadedOnce = useRef(false);
+  // Every category seen so far, so choosing one does not empty the filter's own options.
+  const [knownCategories, setKnownCategories] = useState<string[]>([]);
   const load = async () => {
+    const sequence = ++loadSequence.current;
     setLoading(true);
     setError("");
     try {
       const data = await request<{ suppliers: Supplier[] }>(
         `/api/master-data/suppliers?query=${encodeURIComponent(query)}&status=${status}&category=${encodeURIComponent(category)}`,
       );
-      setRows((data.suppliers || []).map((supplier) => normalizeSupplier(supplier)));
+      if (sequence !== loadSequence.current) return;
+      const next = (data.suppliers || []).map((supplier) => normalizeSupplier(supplier));
+      setRows(next);
+      setKnownCategories((current) => [...new Set([...current, ...next.flatMap((r) => r.categories || [])])]);
     } catch (e: any) {
-      setError(e.message || "供应商数据加载失败");
+      if (sequence === loadSequence.current) setError(e.message || "供应商数据加载失败");
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   };
+  // Filters apply as they change; typing waits for a short pause.
   useEffect(() => {
-    load();
-  }, []);
+    const timer = setTimeout(load, loadedOnce.current ? 300 : 0);
+    loadedOnce.current = true;
+    return () => clearTimeout(timer);
+  }, [query, status, category]);
   useEffect(() => {
     if (focus?.entityType === "supplier" && focus.entityId)
       openDetail(focus.entityId);
   }, [focus?.at]);
-  const categories = useMemo(
-    () => [...new Set(rows.flatMap((r) => r.categories || []))],
-    [rows],
-  );
+  const categories = knownCategories;
   const openDetail = async (id: string) => {
     try {
       const { supplier } = await request<{ supplier: Supplier }>(
@@ -548,7 +557,7 @@ export default function SupplierMasterPage({
               aria-label={copy("搜索供应商")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={copy("编号、名称或联系人")}
+              placeholder={copy("编号或名称")}
               className="h-9 flex-1 outline-none"
             />
           </label>
@@ -599,8 +608,12 @@ export default function SupplierMasterPage({
             {copy("重试")}
           </button>
         </Card>
-      ) : loading ? (
+      ) : loading && rows.length === 0 ? (
         <Card className="p-8 text-center text-xs">{copy("加载中")}</Card>
+      ) : rows.length === 0 && (query || status || category) ? (
+        <Card className="py-14 text-center text-sm" style={{ color: A.sub }}>
+          {copy("没有符合筛选条件的供应商")}
+        </Card>
       ) : rows.length === 0 ? (
         <Card className="py-14 text-center text-sm" style={{ color: A.sub }}>
           {copy("暂无供应商")}

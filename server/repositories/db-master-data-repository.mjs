@@ -243,10 +243,19 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
     },
     listSuppliers: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
+      // Prisma's contains does not escape LIKE wildcards: "%" alone would match every supplier.
+      const query = text(filters.query).replace(/[\\%_]/g, '\\$&')
+      const category = text(filters.category)
       const records = await findManyWithinLimit(client.supplier, {
         where: {
           ...tenantWhere(filters),
           ...(text(filters.status) ? { status: text(filters.status) } : {}),
+          // Filters run in the database, so a match beyond the row limit is still found.
+          AND: [
+            ...(query ? [{ OR: [{ code: { contains: query, mode: 'insensitive' } }, { name: { contains: query, mode: 'insensitive' } }] }] : []),
+            // The column holds a supplier's first category; metadata lists all of them.
+            ...(category ? [{ OR: [{ category }, { metadata: { path: ['categories'], array_contains: [category] } }] }] : []),
+          ],
         },
         orderBy: [{ name: 'asc' }],
       }, { limit: safeLimit(filters.limit), subject: 'suppliers', onTruncated: filters.onTruncated })
