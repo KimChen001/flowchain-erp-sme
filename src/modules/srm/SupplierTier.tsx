@@ -4,6 +4,7 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { supplierCopy } from "./supplierCopy";
+import { formatSuggestionReason, suggestionDiffers, suggestionReasonText, type TierSuggestion } from "./supplierInsights";
 
 // Supplier tiers and business owners (docs/supplier-tiers-design.md, T1). A
 // tier is importance to the business, set by a person with a reason; the
@@ -41,7 +42,7 @@ export const TIER_OPTIONS: Array<{ tier: Tier; label: string; meaning: string }>
 export const tierLabel = (tier: Tier) => TIER_OPTIONS.find((option) => option.tier === tier)?.label || "Not tiered";
 const shortTier = (tier: Tier) => (tier ? `Tier ${tier}` : "Not tiered");
 
-export function TierChip({ tier, short = false }: { tier: Tier; short?: boolean }) {
+export function TierChip({ tier, short = false, testId = "supplier-tier-chip" }: { tier: Tier; short?: boolean; testId?: string }) {
   const { language } = useI18n();
   const t = (value: string) => supplierCopy(value, language);
   const style = tier === 1
@@ -51,13 +52,13 @@ export function TierChip({ tier, short = false }: { tier: Tier; short?: boolean 
       : tier === 3
         ? { background: "#F1F5F9", color: "#334155", border: "1px solid #E2E8F0" }
         : { background: "transparent", color: "#64748B", border: "1px dashed #CBD5E1" };
-  return <span data-testid="supplier-tier-chip" data-tier={tier ?? "none"} className="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold" style={style}>
+  return <span data-testid={testId} data-tier={tier ?? "none"} className="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold" style={style}>
     {t(short ? shortTier(tier) : tierLabel(tier))}
   </span>;
 }
 
-export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: SupplierTierFields; canEdit: boolean; onChanged: () => void | Promise<void> }) {
-  const { language, formatDateTime } = useI18n();
+export function SupplierTierPanel({ supplier, canEdit, onChanged, suggestion = null }: { supplier: SupplierTierFields; canEdit: boolean; onChanged: () => void | Promise<void>; suggestion?: TierSuggestion | null }) {
+  const { language, locale, formatDateTime } = useI18n();
   const t = (value: string) => supplierCopy(value, language);
   const [editing, setEditing] = useState<"tier" | "owner" | null>(null);
   const [tierChoice, setTierChoice] = useState<Tier>(supplier.tier);
@@ -66,12 +67,15 @@ export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: 
   const [ownerChoice, setOwnerChoice] = useState(supplier.businessOwner?.id || "");
   const [errors, setErrors] = useState<Array<{ field?: string; message?: string }>>([]);
   const [saving, setSaving] = useState(false);
+  // The form was opened from the suggestion: saving its tier records it as accepted.
+  const [fromSuggestion, setFromSuggestion] = useState(false);
   const history = supplier.tierHistory || [];
   const person = (value: Person | null | undefined) => value?.name || t("Workspace setup");
 
   const open = async (what: "tier" | "owner") => {
     setErrors([]);
     setEditing(what);
+    setFromSuggestion(false);
     if (what === "tier") { setTierChoice(supplier.tier); setReason(""); }
     if (what === "owner") {
       setOwnerChoice(supplier.businessOwner?.id || "");
@@ -85,7 +89,7 @@ export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: 
     setSaving(true);
     try {
       const body = editing === "tier"
-        ? { tier: tierChoice, reason: reason.trim(), expectedVersion: supplier.version }
+        ? { tier: tierChoice, reason: reason.trim(), expectedVersion: supplier.version, acceptedSuggestion: fromSuggestion && tierChoice === suggestion?.tier }
         : { businessOwnerId: ownerChoice || null, expectedVersion: supplier.version };
       await apiJson(`/api/master-data/suppliers/${encodeURIComponent(supplier.id)}/${editing}`, { method: "PATCH", body: JSON.stringify(body) });
       toast.success(t(editing === "tier" ? "Tier saved" : "Owner saved"));
@@ -119,6 +123,22 @@ export function SupplierTierPanel({ supplier, canEdit, onChanged }: { supplier: 
         <p className="mt-1 text-xs" style={{ color: A.sub }}>{t("The person who manages this supplier relationship.")}</p>
       </section>
     </div>
+
+    {!editing && suggestion && (suggestionDiffers(supplier.tier, suggestion) || (supplier.tier === null && suggestion.tier === null)) && <section data-testid="supplier-tier-suggestion" className="mt-5 rounded-lg border p-4" style={{ borderColor: "#BFDBFE", background: "#F8FBFF" }}>
+      {suggestion.tier === null
+        ? <p className="text-xs" style={{ color: A.sub }}>{t("No suggestion: there are not enough facts you can see.")}</p>
+        : <>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">{t("Suggested")}: <TierChip tier={suggestion.tier} testId="supplier-suggested-tier" /></div>
+            {canEdit && <button type="button" data-testid="supplier-accept-suggestion" className="rounded bg-blue-600 px-3 py-1 text-xs text-white" onClick={() => {
+              setErrors([]); setEditing("tier"); setTierChoice(suggestion.tier); setReason(suggestionReasonText(suggestion, language, locale)); setFromSuggestion(true);
+            }}>{t("Review and accept")}</button>}
+          </div>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">{suggestion.reasons.map((item, index) => <li key={index}>{formatSuggestionReason(item, language, locale)}</li>)}</ul>
+        </>}
+      {suggestion.partial && <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("Based on what you can see: purchase orders are hidden for your role.")}</p>}
+      <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("A suggestion states facts only. Delivery performance never changes it.")}</p>
+    </section>}
 
     {editing === "tier" && <form noValidate data-testid="supplier-tier-form" className="mt-5 space-y-3 rounded-lg border p-4" onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <fieldset>

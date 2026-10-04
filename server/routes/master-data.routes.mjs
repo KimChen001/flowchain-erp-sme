@@ -3,6 +3,7 @@ import { selectMasterData } from '../domain/master-data-selectors.mjs'
 import { maskReferencePrice, maskSupplier, masterDataReadAccess } from '../domain/master-data-read-access.mjs'
 import { PilotIdentityError, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
+import { createSupplierInsightsReadService } from '../domain/supplier-insights.mjs'
 
 // Writes are decided by Roles & permissions, never by the legacy User.role, so
 // an administrator who narrows someone's roles narrows what they can change.
@@ -252,6 +253,26 @@ export async function handleMasterDataRoute(ctx) {
       typeof repository.supplierTabCounts === 'function' ? repository.supplierTabCounts(filters) : null,
     ])
     send(res, 200, { suppliers: await suppliersFor(suppliers), ...(counts ? { counts } : {}) })
+    return true
+  }
+
+  // Every supplier's list metrics and tier suggestion, for the signed-in
+  // reader: what they may not see comes back null. Read once per list load,
+  // not per search.
+  if (req.method === 'GET' && url.pathname === '/api/master-data/supplier-insights') {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read supplier metrics.' })
+      return true
+    }
+    try {
+      const service = ctx.supplierInsightsService || createSupplierInsightsReadService({
+        prisma: await getPrismaClient(ctx.env || process.env),
+        listPurchaseOrders: ctx.repositories?.procurementRuntime?.listForReport,
+      })
+      send(res, 200, await service.read(ctx))
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'SUPPLIER_INSIGHTS_UNAVAILABLE', message: error.status ? error.message : 'Supplier metrics are unavailable. Try again.' })
+    }
     return true
   }
 

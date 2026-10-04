@@ -33,6 +33,17 @@ const zh: Record<string, string> = {
   'Could not save. Please try again.': '保存失败，请重试。', 'Enter a reason of 3 to 500 characters.': '请填写 3 到 500 个字的原因。',
   'Choose Tier 1, 2 or 3, or Not tiered.': '请选择一级、二级、三级或未分级。', 'Choose a different tier.': '请选择不同的层级。',
   'Choose an active user of this workspace.': '请选择本工作区的在职用户。', 'Choose a different owner.': '请选择不同的负责人。',
+  // Supplier metrics and tier suggestions.
+  'Supplier': '供应商', 'Suggested': '建议', 'Review and accept': '核对后采纳', 'No suggestion: there are not enough facts you can see.': '暂无建议：你可见的数据不足。',
+  'Based on what you can see: purchase orders are hidden for your role.': '仅基于你可见的数据：你的角色看不到采购单。',
+  'A suggestion states facts only. Delivery performance never changes it.': '建议只列事实，交货表现不会改变建议。',
+  'Spend, 12 months': '近 12 个月花费', 'Open POs': '未完成 PO', 'Overdue POs': '逾期 PO', 'On time, 90 days': '90 天准时率', 'Open issues': '未结问题',
+  'Hidden for your role': '你的角色不可见', 'Fewer than 5 lines in 90 days': '90 天内不足 5 行，暂不计算', 'Suggestion differs': '建议不同',
+  'Sort by': '排序', 'Name': '名称', 'Spend': '花费', 'Overdue': '逾期', 'Issues': '问题', 'currencies': '种币种',
+  'Review suggestions': '审核建议', 'Suppliers not tiered yet, with what FlowChain suggests. Each acceptance is saved with its reasons and its own audit row.': '尚未分级的供应商及系统建议。每次采纳都会连同理由保存，并各自留一条审计记录。',
+  'Accept': '采纳', 'Accepted': '已采纳', 'Accept all shown': '全部采纳', 'Confirm': '确认', 'Back to the list': '返回列表',
+  'Accept all suggestions shown? Each supplier gets its tier, the suggestion as its reason and its own audit row.': '确认采纳当前显示的全部建议？每家供应商都会设为建议的层级，以建议理由作为原因，并各留一条审计记录。',
+  'Every supplier is tiered.': '所有供应商都已分级。', 'Not saved': '未保存', 'No suggestion': '无建议',
 };
 const en = Object.fromEntries(Object.entries(zh).map(([key, value]) => [value, key]));
 export const supplierCopy = (value: string, language: string) => language === 'en-US' ? en[value] || value : zh[value] || value;
