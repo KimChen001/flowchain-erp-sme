@@ -13,6 +13,10 @@ P1 is built, in four PRs (2026-10-04, open):
 
 Merge order: #118, #119, #120, #122; #124 after #119.
 
+Decision 10 (the assistant opens the purchase request form by itself when asked for an
+order) was approved on 2026-10-04 and is built in #125, stacked on #119. See
+[J3](#j3-raise-a-purchase-request-for-a-short-sku).
+
 Related: the agent mode design (`docs/ai-agent-mode-design.md`, PR #108). This design
 gives a model no new decision until its optional phase 3, and phase 3 reuses the agent
 mode verifier instead of adding a second one ([§7](#7-fit-with-agent-mode)).
@@ -41,6 +45,7 @@ mode verifier instead of adding a second one ([§7](#7-fit-with-agent-mode)).
   - **P3（可选）：描述性文字的模型补全。** 只用本地 Parley，默认关闭。数字、编号、日期由服务器填槽并校验。和 agent mode 决定 4 一起决定。
   - **P4（可选）：** 同事的结构化历史值，以及移动端优化。
 - **决定（[§9](#9-decisions-for-the-owner)）**：2026-10-03 已按推荐批准 1–8，P1 开始实施；决定 9（P3）待定。
+- **决定 10（2026-10-04 批准，#125）**：用户让助手"生成订单/下单"且目标明确时，助手直接打开预填好的采购申请，不保存也不提交。已有在途订单或待审批申请覆盖缺口时不自动打开，回答第一句先说明已有哪些在途订单，再给"跟进 PO"和"仍然新建"两个按钮，避免用户困惑和重复采购。
 
 ## Summary
 
@@ -170,6 +175,24 @@ Source tags in the tables: **R** record, **D** master data or default, **T** tem
 | Line note | "12 available against a reorder point of 50; nothing incoming covers it." in the UI language | T + R | P1 |
 | Department | Your last request's department (`metadata.departmentId`, `server/services/procurement-request-command-service.mjs:224`) | H | P2 |
 | "Your last quantity for this SKU: 200 (PR-0042, Sep 12)" | A hint chip only. It never replaces the computed gap. | H | P2 |
+
+**When the user asks for an order (decision 10, #125).** "Can you help me generate the
+order?", "create a PO for LDM-001", 帮我下单 and 补货 are a request for this form. The
+assistant works out what to buy (rules only: `server/domain/ai-skill-start-order.mjs`)
+and opens the form by itself, filled in as above, when the choice is clear:
+
+| Situation | The answer | Opens the form |
+| --- | --- | --- |
+| A SKU is named, or the page's SKU | The gap; ordered on top of open orders, the target less what is available | Yes |
+| No SKU named; exactly one SKU still short after open POs and pending requests | That SKU's gap | Yes |
+| Several SKUs still short | A button per SKU, named | No: the user picks |
+| Open POs or pending requests already cover the shortage | The first sentence names what is already on order. Then a follow-up on the latest PO, and "open a request anyway" | No ("anyway" or 仍然 opens it) |
+| Nothing short | A blank purchase request | No |
+| The question asks whether or what to order | The same buttons | No |
+
+The form opens unsaved, and only its own Save button saves. The assistant stays open, so the user
+reads why the page changed, and a new answer is shown from its first line. "Issue",
+"submit" and 下达 are still refused.
 
 ### J4 Record a receipt exception
 
@@ -433,3 +456,4 @@ Effort is in developer days for one engineer, with tests and English and Chinese
 | 7 | Measure through audit rows with counts and source codes only (no text), plus a weekly report; no new telemetry service | Yes | Approved |
 | 8 | Tab accepts a visible suggestion; Esc dismisses; with no suggestion, Tab moves focus | Yes | Approved |
 | 9 | P3 model completion for descriptive text: local Parley only, off by default, behind the per-workspace opt-in | Decide together with agent mode decision 4, after the P2 results | Open |
+| 10 | When the user asks for an order and the choice is clear, the assistant opens the purchase request form filled in, without a click; it never saves or submits. When open orders already cover the shortage it does not open the form, and its first sentence says what is already on order ([J3](#j3-raise-a-purchase-request-for-a-short-sku)) | Yes | Approved 2026-10-04 (#125) |
