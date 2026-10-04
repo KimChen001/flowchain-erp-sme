@@ -269,6 +269,10 @@ const zh = {
   "finance.action.hold": "暂停",
   "finance.action.mark_export_ready": "标记为可导出",
   "finance.action.release": "解除暂停",
+  "finance.action.issue": "开具",
+  "finance.status.issued": "已开具",
+  "finance.status.disputed": "有争议",
+  "finance.issueCreatesReceivable": "开具发票后会生成应收款。",
 } as const;
 
 const en: Record<keyof typeof zh, string> = {
@@ -524,6 +528,10 @@ const en: Record<keyof typeof zh, string> = {
   "finance.action.hold": "Hold",
   "finance.action.mark_export_ready": "Mark export ready",
   "finance.action.release": "Release hold",
+  "finance.action.issue": "Issue",
+  "finance.status.issued": "Issued",
+  "finance.status.disputed": "Disputed",
+  "finance.issueCreatesReceivable": "Issuing the invoice creates the receivable.",
 };
 
 const routeKeys: Record<string, keyof typeof zh> = {

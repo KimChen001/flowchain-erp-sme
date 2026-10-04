@@ -365,6 +365,56 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   );
   expect(customerCreditApproved.creditNote.status).toBe("approved");
 
+  // A draft entered for the rest of the CNY shipment is submitted, approved
+  // and issued from its detail page, each step previewed before confirming.
+  const uiDraft = await api(
+    request,
+    specialist.token,
+    "post",
+    "/api/finance/customer-invoices",
+    {
+      invoiceNumber: "CUS-INV-BROWSER-UI",
+      shipmentId: "finance-browser-shipment-CNY",
+      currency: "CNY",
+      invoiceDate: "2026-07-01T00:00:00.000Z",
+      dueDate: "2026-07-10T00:00:00.000Z",
+      totalAmount: "12.5000",
+      lines: [
+        {
+          shipmentLineId: "finance-browser-shipment-line-CNY",
+          quantity: "1.0000",
+          enteredTaxAmount: "0.0000",
+        },
+      ],
+      idempotencyKey: "browser-create-customer-ui",
+    },
+  );
+  await page.goto(`/app/finance/customer-invoices/${uiDraft.entityId}`);
+  await expect(page.getByTestId("customer-invoice-detail")).toContainText("CUS-INV-BROWSER-UI");
+  for (const action of ["submit", "approve", "issue"]) {
+    await page.getByTestId(`customer-invoice-${action}`).click();
+    await page.getByTestId(`customer-invoice-${action}-preview`).click();
+    await page.getByTestId(`customer-invoice-${action}-confirm`).click();
+    await expect(page.getByTestId(`customer-invoice-${action}-panel`)).toHaveCount(0);
+  }
+  await expect(page.getByTestId("customer-invoice-actions")).toContainText(/当前状态下没有可执行的操作|No action is available/);
+  const uiIssued = await api(
+    request,
+    manager.token,
+    "get",
+    `/api/finance/customer-invoices/${uiDraft.entityId}`,
+  );
+  expect(uiIssued.status).toBe("issued");
+  expect(uiIssued.receivable.obligationNumber).toBe("AR-CUS-INV-BROWSER-UI");
+
+  await page.goto("/app/finance/overview");
+  await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
+  // Every receivable here is past its 2026-07-10 due date, so the overdue
+  // card's link must list them although none has the stored status overdue.
+  await page.getByRole("link", { name: /逾期应收义务|Overdue receivables/ }).click();
+  await expect(page).toHaveURL(/\/app\/finance\/receivables\?status=overdue$/);
+  for (const number of ["CUS-INV-BROWSER-CNY", "CUS-INV-BROWSER-USD", "CUS-INV-BROWSER-UI"])
+    await expect(page.getByTestId("receivables-workbench")).toContainText(number);
   await page.goto("/app/finance/overview");
   await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
   await expect(page.getByText("应付义务不代表已付款。")).toBeVisible();

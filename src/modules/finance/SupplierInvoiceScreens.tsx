@@ -35,6 +35,8 @@ const STATUS_KEYS: Record<string, TranslationKey> = {
   open: "finance.status.open",
   resolved: "finance.status.resolved",
   cancelled: "finance.status.cancelled",
+  issued: "finance.status.issued",
+  disputed: "finance.status.disputed",
 };
 
 const money = (amount: unknown, currency: unknown, locale: string) => {
@@ -59,7 +61,7 @@ function Notice({ children, tone = "warning" }: { children: ReactNode; tone?: "w
   );
 }
 
-function StatusChip({ status }: { status: string }) {
+export function StatusChip({ status }: { status: string }) {
   const { t } = useI18n();
   return <Chip label={STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status || "—"} color={A.blue} bg="#eff6ff" />;
 }
@@ -202,8 +204,9 @@ export function NewSupplierInvoice() {
 // -------------------------------------------------------------- actions
 
 // One operation: an optional reason, a preview of the server's plan, then a
-// confirm that runs exactly the previewed operation.
-function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, onDone, tone = "primary" }: {
+// confirm that runs exactly the previewed operation. The customer invoice
+// screen uses it too.
+export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, onDone, tone = "primary" }: {
   label: string; testId: string; previewUrl: string; runUrl: string; payload: () => Record<string, unknown>;
   reasonLabel?: string; onDone: () => void; tone?: "primary" | "secondary";
 }) {

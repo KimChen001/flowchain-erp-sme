@@ -57,7 +57,7 @@ Posting requires a confirmation dialog, expected shipment version, stable intent
 
 ## 13. Reversal UX
 
-Only posted, in-scope shipments can be reversed. Reason and preview are required. Movement-integrity mismatches return `SHIPMENT_REVERSAL_NOT_SAFE`; no force-bypass action exists. Original and reversal movements remain visible.
+Only posted, in-scope shipments can be reversed. Reason and preview are required. Movement-integrity mismatches return `SHIPMENT_REVERSAL_NOT_SAFE`, and a shipment that a submitted or later customer invoice bills returns `SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE`; no force-bypass action exists. Original and reversal movements remain visible.
 
 ## 14. Evidence
 

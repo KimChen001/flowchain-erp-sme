@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { AlertTriangle, FilePlus2, RefreshCw } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { A, Card, Chip } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { StatusChip, TwoStepAction } from "./SupplierInvoiceScreens";
 
 type Capability = { enabled?: boolean; maturity?: string; reason?: string };
 type Invoice = {
@@ -96,7 +97,8 @@ const button =
   "inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50";
 const queryString = () => {
   const params = new URLSearchParams(window.location.search);
-  const allowed = ["status", "currency", "search", "page", "pageSize"];
+  // disputeStatus carries the landing page's "disputed receivables" link.
+  const allowed = ["status", "disputeStatus", "currency", "search", "page", "pageSize"];
   const next = new URLSearchParams();
   for (const key of allowed)
     if (params.get(key)) next.set(key, params.get(key) as string);
@@ -294,12 +296,19 @@ function Receivables() {
   const { t, locale } = useI18n();
   const [data, setData] = useState<ListPayload<Receivable> | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => {
+  const load = () => {
+    setError("");
     void apiJson<ListPayload<Receivable>>(
       `/api/finance/receivables?${queryString()}`,
     )
       .then(setData)
       .catch((reason) => setError(reason instanceof Error ? reason.message : t("finance.loadFailed")));
+  };
+  useEffect(load, []);
+  // The filters change the query string and announce it with popstate.
+  useEffect(() => {
+    window.addEventListener("popstate", load);
+    return () => window.removeEventListener("popstate", load);
   }, []);
   if (error) return <Notice>{error}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
@@ -545,19 +554,34 @@ function InvoiceDetail() {
   const id = decodeURIComponent(window.location.pathname.split("/").filter(Boolean).at(-1) || "");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
-  useEffect(() => {
+  const load = useCallback(() => {
     void apiJson(`/api/finance/customer-invoices/${encodeURIComponent(id)}`)
-      .then(setData)
+      .then((next) => { setData(next); setError(""); })
       .catch((reason) => setError(reason instanceof Error ? reason.message : t("finance.loadFailed")));
   }, [id]);
-  if (error) return <Notice>{error}</Notice>;
+  useEffect(() => { load(); }, [load]);
+  if (error && !data) return <Notice>{error}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
+  // The server lists only the next step this role may take: submit a draft,
+  // approve a submitted invoice, or issue an approved one (which creates the
+  // receivable). Each previews the server's plan before confirming.
+  const base = `/api/finance/customer-invoices/${encodeURIComponent(data.id)}`;
+  const actions: string[] = Array.isArray(data.availableActions) ? data.availableActions : [];
+  const version = () => ({ expectedVersion: data.version });
   return (
     <div className="space-y-4" data-testid="customer-invoice-detail">
+      {error && <Notice>{error}</Notice>}
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><h2 className="font-semibold">{data.invoiceNumber}</h2><p className="mt-1 text-sm text-slate-500">{data.customerName}</p></div>
-          <div className="text-right"><strong>{money(data.totalAmount, data.currency, locale)}</strong><div className="text-xs text-slate-500">{data.status}</div></div>
+          <div className="text-right"><strong>{money(data.totalAmount, data.currency, locale)}</strong><div className="mt-1"><StatusChip status={data.status} /></div></div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2" data-testid="customer-invoice-actions">
+          {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="customer-invoice-submit" previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={version} onDone={load} />}
+          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="customer-invoice-approve" previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={version} onDone={load} />}
+          {actions.includes("issue") && <TwoStepAction label={t("finance.action.issue")} testId="customer-invoice-issue" previewUrl={`${base}/issue-preview`} runUrl={`${base}/issue`} payload={version} onDone={load} />}
+          {actions.includes("issue") && <span className="self-center text-xs text-slate-500">{t("finance.issueCreatesReceivable")}</span>}
+          {!actions.length && <span className="text-xs text-slate-500">{t("finance.noActions")}</span>}
         </div>
       </Card>
       <Card className="p-5">

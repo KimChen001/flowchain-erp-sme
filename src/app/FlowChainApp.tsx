@@ -1856,6 +1856,9 @@ export default function FlowChainApp() {
                             "settlement_document",
                             "supplier_invoice",
                             "three_way_match",
+                            // The finance workbench renders the customer
+                            // invoice; the generic page has no route for it.
+                            "customer_invoice",
                           ].includes(activeRoute.entityType) ? (
                           <BusinessEntityDetailPage route={activeRoute} />
                         ) : (
