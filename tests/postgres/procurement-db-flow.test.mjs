@@ -255,11 +255,33 @@ test('step 1: a signed-in manager saves and edits a PR draft (POST, PATCH /api/p
 })
 
 test('step 1b: a signed-in buyer saves, submits and withdraws a PR but cannot approve or reject it', async () => {
-  const body = { departmentId: 'operations', defaultNeedByDate: needBy, lines: [uiPrLine({ currency: undefined })] }
+  // Opened from the assistant: the form sends what became of each prefilled
+  // value. Only codes reach the audit row; values and free text are dropped.
+  const suggestionTrail = {
+    origin: 'ai_assistant',
+    note: 'free text is not kept',
+    fields: [
+      { field: 'line.quantity', source: 'record', ref: 'assistant:gap', outcome: 'edited', value: '10' },
+      { field: 'line.supplierId', source: 'default', ref: 'item_supplier:preferred', outcome: 'accepted' },
+      { field: 'line.internalLineComment', source: 'template', ref: 'assistant:reason', outcome: 'cleared' },
+      { field: 'line.estimatedUnitPrice', source: 'guess', outcome: 'accepted' },
+    ],
+  }
+  const body = { departmentId: 'operations', defaultNeedByDate: needBy, lines: [uiPrLine({ currency: undefined })], suggestionTrail }
   const created = await api(tokens.buyerA, 'POST', '/api/procurement/requests', body)
   assert.equal(created.status, 201, describe(created))
   const row = await prisma.purchaseRequest.findUnique({ where: { id: created.body.id } })
   assert.equal(row.requester, buyerA.id)
+  const createdAudit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityType: 'PurchaseRequest', entityId: row.id, action: 'purchase_request_created' } })
+  assert.deepEqual(createdAudit.metadata.suggestions, {
+    origin: 'ai_assistant',
+    fields: [
+      { field: 'line.quantity', source: 'record', ref: 'assistant:gap', outcome: 'edited' },
+      { field: 'line.supplierId', source: 'default', ref: 'item_supplier:preferred', outcome: 'accepted' },
+      { field: 'line.internalLineComment', source: 'template', ref: 'assistant:reason', outcome: 'cleared' },
+    ],
+    counts: { prefilled: 3, accepted: 1, edited: 1, cleared: 1 },
+  })
   assert.equal(row.currency, 'USD', 'the workspace currency is the default')
   const submitted = await api(tokens.buyerA, 'POST', `/api/procurement/requests/${row.id}/submit`, { expectedVersion: 1 })
   assert.equal(submitted.status, 200, describe(submitted))

@@ -12,6 +12,8 @@ import { A, Card, Field, inputStyle } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { tableLinkClass } from "../../components/ui/workbenchTable";
 import { createClientTemporaryId } from "../../lib/client-id";
+import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
+import { buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin } from "../../lib/prefill";
 
 type Item = {
   itemId: string;
@@ -42,6 +44,8 @@ type SupplierOption = Supplier & {
   preferred?: boolean;
   referencePrice?: number;
   currency?: string;
+  leadTimeDays?: number | null;
+  minimumOrderQuantity?: number | string | null;
 };
 type Line = {
   lineId: string;
@@ -78,6 +82,9 @@ type PR = {
   linkedPurchaseOrderIds?: string[];
 };
 type FieldError = { field?: string; message?: string };
+// The line fields a handoff (the assistant's purchase request draft) can fill.
+type PrefillLineField = "itemId" | "supplierId" | "quantity" | "estimatedUnitPrice" | "targetWarehouseId" | "needByDate" | "internalLineComment";
+type LinePrefill = { origin: PrefillOrigin; intent: string | null; lineId: string; fields: Partial<Record<PrefillLineField, PrefillEntry>> };
 // Today in the workspace timezone (America/New_York when unknown), not UTC.
 const today = (timeZone?: string) => todayInTimeZone(timeZone);
 const makeLine = (date = today()): Line => ({
@@ -124,6 +131,7 @@ export default function CanonicalProcurementPanel({
       : formatLocaleAmount(Number(value), currencyCode, locale, { maximumFractionDigits: 2 });
   const [searchParams] = useSearchParams();
   const prefilled = useRef(false);
+  const [prefill, setPrefill] = useState<LinePrefill | null>(null);
   const [items, setItems] = useState<Item[]>([]),
     [suppliers, setSuppliers] = useState<Supplier[]>([]),
     [warehouses, setWarehouses] = useState<SelectorOption[]>([]),
@@ -191,6 +199,10 @@ export default function CanonicalProcurementPanel({
   useEffect(() => {
     load().catch((e) => toast.error(copy(e.message)));
   }, []);
+  // A handoff opens the form with one line filled from the query: the item,
+  // the quantity and reason the assistant computed, and the master data
+  // defaults for that item. Every filled field shows where its value came
+  // from, and nothing is saved until the user saves.
   useEffect(() => {
     if (prefilled.current || !items.length) return;
     const requestedItem = searchParams.get("itemId") || searchParams.get("sku");
@@ -202,9 +214,6 @@ export default function CanonicalProcurementPanel({
     if (!item) return;
     prefilled.current = true;
     const itemId = item.itemId || item.id || "";
-    const quantity = String(
-      Math.max(1, Number(searchParams.get("quantity") || 1)),
-    );
     request<{ suppliers: SupplierOption[] }>(
       `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
     )
@@ -213,31 +222,38 @@ export default function CanonicalProcurementPanel({
           ...current,
           [itemId]: result.suppliers,
         }));
-        const preferred =
-          result.suppliers.find((s) => s.preferred) || result.suppliers[0];
-        setLines([
-          {
-            ...makeLine(defaultDate),
-            itemId,
-            sku: item.sku,
-            itemNameSnapshot: item.itemName || item.name || "",
-            unitSnapshot: item.purchaseUnit || item.baseUnit,
-            specificationSnapshot: item.specification || "",
-            commodityId: item.category || "",
-            targetWarehouseId: item.defaultWarehouseId || "",
-            quantity,
-            supplierId: preferred?.id || "",
-            estimatedUnitPrice: preferred?.referencePrice
-              ? String(preferred.referencePrice)
-              : "",
-            currency: preferred?.currency || currency,
-            internalLineComment:
-              "由库存补货入口预填；保存前请人工复核数量、供应商和需求日期。",
-          },
-        ]);
+        const plan = planPurchaseRequestPrefill({
+          query: Object.fromEntries(searchParams.entries()),
+          item: { itemId, defaultWarehouseId: item.defaultWarehouseId },
+          suppliers: result.suppliers,
+          today: today(timezone),
+          defaultDate,
+        });
+        const line: Line = {
+          ...makeLine(defaultDate),
+          itemId,
+          sku: item.sku,
+          itemNameSnapshot: item.itemName || item.name || "",
+          unitSnapshot: item.purchaseUnit || item.baseUnit,
+          specificationSnapshot: item.specification || "",
+          commodityId: item.category || "",
+          targetWarehouseId: plan.values.targetWarehouseId,
+          quantity: plan.values.quantity,
+          supplierId: plan.values.supplierId,
+          estimatedUnitPrice: plan.values.estimatedUnitPrice,
+          currency: plan.values.currency || currency,
+          needByDate: plan.values.needByDate,
+          internalLineComment: plan.values.internalLineComment,
+        };
+        setLines([line]);
+        setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields });
       })
       .catch((error) => toast.error(copy(error.message || "供应商关系读取失败")));
   }, [items, searchParams]);
+  const prefillChip = (line: Line, field: PrefillLineField) =>
+    prefill && line.lineId === prefill.lineId ? (
+      <PrefillSourceChip entry={prefill.fields[field]} current={line[field] ?? ""} testId={`prefill-source-${field}`} />
+    ) : null;
   const patchLine = (index: number, patch: Partial<Line>) =>
     setLines((current) =>
       current.map((line, i) => (i === index ? { ...line, ...patch } : line)),
@@ -299,6 +315,7 @@ export default function CanonicalProcurementPanel({
   );
   const reset = () => {
     setEditing(null);
+    setPrefill(null);
     setLines([makeLine(defaultDate)]);
     setErrors([]);
   };
@@ -323,13 +340,22 @@ export default function CanonicalProcurementPanel({
           currency: l.currency || currency,
         })),
       };
+      // What became of each prefilled value: codes only, for the audit row.
+      const prefilledLine = prefill && !editing ? lines.find((line) => line.lineId === prefill.lineId) : undefined;
+      const suggestionTrail = prefill && !editing
+        ? buildSuggestionTrail({
+            origin: prefill.origin,
+            prefills: Object.fromEntries(Object.entries(prefill.fields).map(([field, entry]) => [`line.${field}`, entry])),
+            values: Object.fromEntries(Object.keys(prefill.fields).map((field) => [`line.${field}`, prefilledLine?.[field as PrefillLineField] ?? ""])),
+          })
+        : null;
       const pr = editing
         ? await request<PR>(
             `/api/procurement/requests/${editing.id}`,
             "PATCH",
             { ...body, expectedVersion: editing.version },
           )
-        : await request<PR>("/api/procurement/requests", "POST", body);
+        : await request<PR>("/api/procurement/requests", "POST", suggestionTrail ? { ...body, suggestionTrail } : body);
       if (submit)
         await request(`/api/procurement/requests/${pr.id}/submit`, "POST", {
           expectedVersion: pr.version,
@@ -503,6 +529,7 @@ export default function CanonicalProcurementPanel({
             >{copy("保存并提交")}</button>
           </div>
         </div>
+        {prefill && !editing ? <PrefillBanner origin={prefill.origin} intent={prefill.intent} /> : null}
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <Field label={copy("申请人")}>
             <input
@@ -627,6 +654,7 @@ export default function CanonicalProcurementPanel({
                   ) : (
                     <span className="block py-2 text-xs">{copy("非目录")}</span>
                   )}
+                  {prefillChip(line, "itemId")}
                 </Field>
                 <Field label={copy("供应商")}>
                   <select
@@ -645,6 +673,7 @@ export default function CanonicalProcurementPanel({
                       </option>
                     ))}
                   </select>
+                  {prefillChip(line, "supplierId")}
                   {line.sourceType === "catalog_item" &&
                     line.itemId &&
                     supplierOptions(line).length === 0 && (
@@ -689,6 +718,7 @@ export default function CanonicalProcurementPanel({
                         }
                         style={inputStyle}
                       />
+                      {prefillChip(line, "quantity")}
                     </Field>
                     <Field label={copy("预计单价")}>
                       <input
@@ -704,6 +734,7 @@ export default function CanonicalProcurementPanel({
                         }
                         style={inputStyle}
                       />
+                      {prefillChip(line, "estimatedUnitPrice")}
                     </Field>
                   </>
                 )}
@@ -747,6 +778,7 @@ export default function CanonicalProcurementPanel({
                       </option>
                     ))}
                   </select>
+                  {prefillChip(line, "targetWarehouseId")}
                 </Field>
                 <Field label={copy("需求日期")}>
                   <input
@@ -757,6 +789,7 @@ export default function CanonicalProcurementPanel({
                     }
                     style={inputStyle}
                   />
+                  {prefillChip(line, "needByDate")}
                 </Field>
               </div>
               <Field label={copy("行级内部备注")}>
@@ -768,6 +801,7 @@ export default function CanonicalProcurementPanel({
                   }
                   className="mt-2 min-h-16 w-full rounded-md border p-2 text-xs"
                 />
+                {prefillChip(line, "internalLineComment")}
               </Field>
             </div>
           ))}
