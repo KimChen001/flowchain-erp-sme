@@ -32,8 +32,16 @@ await phase("acceptance", "tests/browser/product-recovery-acceptance.spec.ts");
 await phase("english walkthrough", "tests/browser/english-walkthrough.spec.ts");
 // Supplier performance against the original promise, in English.
 await phase("supplier performance", "tests/browser/supplier-performance-english.spec.ts");
-// The assistant answers the walkthrough prompt chips in English from workspace data.
-await phase("english assistant", "tests/browser/ai-assistant-english.spec.ts");
+// The assistant answers the walkthrough prompt chips in English from workspace
+// data, answers about an opened record only when asked, reads follow-ups and
+// compound questions, refuses instructions to act and opens drafts for review
+// only.
+await phase("english assistant", [
+  "tests/browser/ai-assistant-english.spec.ts",
+  "tests/browser/ai-assistant-workflow.spec.ts",
+]);
+// A sales order's evidence graph and the records it links to.
+await phase("order evidence", "tests/browser/evidence-graph-ui.spec.ts");
 // Shell, routing, capability and authorization checks on the walkthrough data.
 await phase("shell and routing", [
   "tests/browser/frontend-route-governance.spec.ts",
@@ -50,7 +58,12 @@ await phase("shell and routing", [
 const outboxPath = join(tmpdir(), `flowchain-mail-outbox-${process.pid}.json`);
 await phase("email link sign-in", ["tests/browser/email-link-sign-in.spec.ts", "tests/browser/workspace-invitation.spec.ts"], { FLOWCHAIN_MAIL_OUTBOX_PATH: outboxPath });
 await rm(outboxPath, { force: true });
-await phase("outbound read states", "tests/browser/outbound-read-states.spec.ts", {
+// Master data only, no transactions: truthful empty states in sales and in
+// the assistant.
+await phase("empty workspace", [
+  "tests/browser/outbound-read-states.spec.ts",
+  "tests/browser/ai-assistant-empty-workspace.spec.ts",
+], {
   PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY: "true",
 });
 
