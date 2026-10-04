@@ -1,6 +1,6 @@
 import { readBusinessContext } from '../services/runtime-business-read-service.mjs'
 import { reportReadAccessFor, scopeBusinessContext } from './report-read-access.mjs'
-import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs'
+import { buildOpenPurchaseOrdersReport, purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
 import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-inventory-allocation-read-model.mjs'
@@ -220,6 +220,18 @@ export async function readAiSkillFacts(skillContext) {
   if (visible.purchase_orders) {
     const lineById = new Map(reportRows.map((po) => [text(po.id), array(po.lines)[0] || null]))
     const skusById = new Map(reportRows.map((po) => [text(po.id), [...new Set(array(po.lines).map((line) => text(line.sku)).filter(Boolean))]]))
+    // The lines still to receive, by the report's line rules, each with its
+    // own remaining quantity, unit and promised day. The order's sku is its
+    // first line, which may be fully received, and its remaining quantity is
+    // the order total: a follow-up names these lines instead. Quantities and
+    // dates only, no prices.
+    const openLinesById = new Map(reportRows.map((po) => [text(po.id), array(po.lines).flatMap((line) => {
+      const read = purchaseOrderReportLine(line, po)
+      return read.open ? [{
+        lineId: text(line.id) || null, sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName || line.itemNameSnapshot) || null,
+        remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
+      }] : []
+    })]))
     const rawStatusById = new Map(reportRows.map((po) => [text(po.id), text(po.status)]))
     facts.purchaseOrders = {
       open: openReport.summary.open,
@@ -231,6 +243,7 @@ export async function readAiSkillFacts(skillContext) {
         dueDate: row.dueDate, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received, remaining: row.remaining, unit: row.unit,
         amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency, dataIncomplete: row.dataIncomplete,
         sku: text(lineById.get(row.id)?.sku) || null, itemId: text(lineById.get(row.id)?.itemId) || null, skus: skusById.get(row.id) || [],
+        openLines: openLinesById.get(row.id) || [],
       })),
     }
     // Every purchase order, whatever its status, by the open purchase orders
@@ -241,7 +254,7 @@ export async function readAiSkillFacts(skillContext) {
       id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: purchaseOrderStatus(row.status),
       createdDate: row.createdDate || null, dueDate: row.dueDate || null, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received,
       remaining: row.remaining, unit: row.unit, amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency,
-      isOpen: row.isOpen, dataIncomplete: row.dataIncomplete, skus: skusById.get(row.id) || [],
+      isOpen: row.isOpen, dataIncomplete: row.dataIncomplete, skus: skusById.get(row.id) || [], openLines: openLinesById.get(row.id) || [],
     }))
     // The stored status after alias normalisation ("待审批" is
     // pending_approval), the way the purchase orders list filters it.
