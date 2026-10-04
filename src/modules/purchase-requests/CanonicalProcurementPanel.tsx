@@ -4,7 +4,7 @@ import { formatLocaleAmount, todayInTimeZone } from "../../lib/format";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -130,7 +130,11 @@ export default function CanonicalProcurementPanel({
       ? "—"
       : formatLocaleAmount(Number(value), currencyCode, locale, { maximumFractionDigits: 2 });
   const [searchParams] = useSearchParams();
-  const prefilled = useRef(false);
+  const location = useLocation();
+  // The navigation the form was last filled from: each handoff is a new one,
+  // so a handoff while the page is open (the assistant opening another
+  // request, or the same one again) fills the form again.
+  const prefilled = useRef<string | null>(null);
   const [prefill, setPrefill] = useState<LinePrefill | null>(null);
   const [items, setItems] = useState<Item[]>([]),
     [suppliers, setSuppliers] = useState<Supplier[]>([]),
@@ -204,7 +208,8 @@ export default function CanonicalProcurementPanel({
   // defaults for that item. Every filled field shows where its value came
   // from, and nothing is saved until the user saves.
   useEffect(() => {
-    if (prefilled.current || !items.length) return;
+    const handoff = location.key;
+    if (prefilled.current === handoff || !items.length) return;
     const requestedItem = searchParams.get("itemId") || searchParams.get("sku");
     if (!requestedItem) return;
     const item = items.find(
@@ -212,7 +217,7 @@ export default function CanonicalProcurementPanel({
         (row.itemId || row.id) === requestedItem || row.sku === requestedItem,
     );
     if (!item) return;
-    prefilled.current = true;
+    prefilled.current = handoff;
     const itemId = item.itemId || item.id || "";
     request<{ suppliers: SupplierOption[] }>(
       `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
@@ -249,7 +254,7 @@ export default function CanonicalProcurementPanel({
         setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields });
       })
       .catch((error) => toast.error(copy(error.message || "供应商关系读取失败")));
-  }, [items, searchParams]);
+  }, [items, searchParams, location.key]);
   const prefillChip = (line: Line, field: PrefillLineField) =>
     prefill && line.lineId === prefill.lineId ? (
       <PrefillSourceChip entry={prefill.fields[field]} current={line[field] ?? ""} testId={`prefill-source-${field}`} />

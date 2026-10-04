@@ -2,6 +2,7 @@ import { aiSkillCountText, aiSkillText } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillFormatter, aiSkillNavigation, aiSkillSignalReason, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
 import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
+import { presentStartOrder, runStartOrder } from './ai-skill-start-order.mjs'
 
 // Review-only drafts for the top signals. A draft is never sent, approved or
 // saved by the assistant: each card opens the action draft review, and there
@@ -10,6 +11,8 @@ import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
 //   shortage no open PO or pending request covers                      -> purchase_request_draft
 //   invoice variance                                                    -> supplier_followup_draft
 //   request awaiting approval, RFQ ready to award                       -> a link only
+// A request to start an order (route mode order) is answered by
+// ai-skill-start-order.mjs.
 
 export const AI_SKILL_DRAFT_TYPES = Object.freeze(['po_followup_draft', 'supplier_followup_draft', 'purchase_request_draft'])
 const MAX_CARDS = 3
@@ -36,7 +39,8 @@ function candidates(facts, ranked) {
   return out
 }
 
-export function runPrepareActionDraft(facts, { focus = null } = {}) {
+export function runPrepareActionDraft(facts, { focus = null, route = null } = {}) {
+  if (route?.mode === 'order') return runStartOrder(facts, { focus, route, canDraft: Boolean(facts.visibility?.canDraft) })
   const ranked = rankAiSkillItems(buildAiSkillSignals(facts)).filter((item) => matchesAiSkillFocus(item, focus))
   const all = candidates(facts, ranked)
   const seen = new Set()
@@ -87,6 +91,7 @@ function focusTitle(id, count, fmt, language) {
 }
 
 export function presentPrepareActionDraft(result, facts, { skill, language, query }) {
+  if (result.mode === 'order') return presentStartOrder(result, facts, { skill, language, query })
   const fmt = aiSkillFormatter(facts, language)
   const reviewCards = result.drafts.map((candidate) => card(candidate, facts, language))
   const extraLimitations = result.canDraft ? [] : [{ code: 'draft_permission', label: aiSkillText('limitation.draft_permission.label', language), description: aiSkillText('draft.no_permission', language), severity: 'warning', missingData: [] }]
