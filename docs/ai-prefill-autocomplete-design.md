@@ -1,6 +1,7 @@
 # Assistant prefill and autocomplete: design
 
-Status: design for the owner's decision, 2026-10-03. Nothing here is built yet. Written
+Status: design, 2026-10-03. The owner approved decisions 1-8 in [§9](#9-decisions-for-the-owner)
+as recommended the same day, and P1 is being built. Decision 9 (P3) is open. Written
 against main at `a783fd4` (PR #113 merged); line numbers refer to that commit.
 
 Related: the agent mode design (`docs/ai-agent-mode-design.md`, PR #108). This design
@@ -30,10 +31,7 @@ mode verifier instead of adding a second one ([§7](#7-fit-with-agent-mode)).
     - 新增"记录已发送"，保存发给供应商的跟进消息，以后可以复用。
   - **P3（可选）：描述性文字的模型补全。** 只用本地 Parley，默认关闭。数字、编号、日期由服务器填槽并校验。和 agent mode 决定 4 一起决定。
   - **P4（可选）：** 同事的结构化历史值，以及移动端优化。
-- **需要你决定的事项见 [§9](#9-decisions-for-the-owner)。** 核心是三条：
-  - 批准 P1；
-  - 每条回答都给草稿入口；
-  - 跟进日志保存消息正文，价格只作提示、不预填。
+- **决定（[§9](#9-decisions-for-the-owner)）**：2026-10-03 已按推荐批准 1–8，P1 开始实施；决定 9（P3）待定。
 
 ## Summary
 
@@ -415,14 +413,14 @@ Effort is in developer days for one engineer, with tests and English and Chinese
 
 ## 9. Decisions for the owner
 
-| # | Decision | Recommendation |
-| --- | --- | --- |
-| 1 | Build P1 (no model): drafts land on the normal screens with record and master data prefills, and every field shows its source | Yes |
-| 2 | Show the next step and a draft action on every answer line with a draftable record (at most one per line, three per answer), not only when the question asks for a draft | Yes |
-| 3 | "Open in email" hands the draft to the user's own mail app (mailto). FlowChain still sends nothing. | Yes |
-| 4 | P2 "Log as sent": store the final message text, the date and the channel on the PO or bill, readable by whoever can read that record. Only the author's own messages are reused as suggestions. | Yes, store the text |
-| 5 | Suggest other users' values (W): short structured values only, never their free text | Defer to P4; then structured values only |
-| 6 | Prices and amounts from history are hints, never prefilled. Quantities come from rules (gap, minimum order quantity), with your last quantity as a hint. | Yes |
-| 7 | Measure through audit rows with counts and source codes only (no text), plus a weekly report; no new telemetry service | Yes |
-| 8 | Tab accepts a visible suggestion; Esc dismisses; with no suggestion, Tab moves focus | Yes |
-| 9 | P3 model completion for descriptive text: local Parley only, off by default, behind the per-workspace opt-in | Decide together with agent mode decision 4, after the P2 results |
+| # | Decision | Recommendation | Owner, 2026-10-03 |
+| --- | --- | --- | --- |
+| 1 | Build P1 (no model): drafts land on the normal screens with record and master data prefills, and every field shows its source | Yes | Approved |
+| 2 | Show the next step and a draft action on every answer line with a draftable record (at most one per line, three per answer), not only when the question asks for a draft | Yes | Approved |
+| 3 | "Open in email" hands the draft to the user's own mail app (mailto). FlowChain still sends nothing. | Yes | Approved |
+| 4 | P2 "Log as sent": store the final message text, the date and the channel on the PO or bill, readable by whoever can read that record. Only the author's own messages are reused as suggestions. | Yes, store the text | Approved |
+| 5 | Suggest other users' values (W): short structured values only, never their free text | Defer to P4; then structured values only | Approved |
+| 6 | Prices and amounts from history are hints, never prefilled. Quantities come from rules (gap, minimum order quantity), with your last quantity as a hint. | Yes | Approved |
+| 7 | Measure through audit rows with counts and source codes only (no text), plus a weekly report; no new telemetry service | Yes | Approved |
+| 8 | Tab accepts a visible suggestion; Esc dismisses; with no suggestion, Tab moves focus | Yes | Approved |
+| 9 | P3 model completion for descriptive text: local Parley only, off by default, behind the per-workspace opt-in | Decide together with agent mode decision 4, after the P2 results | Open |
