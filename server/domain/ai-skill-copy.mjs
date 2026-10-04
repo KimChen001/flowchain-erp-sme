@@ -167,6 +167,10 @@ const entries = {
   'draft.po_followup.title': ['Follow up with {supplier} on {po}', '就 {po} 跟进 {supplier}'],
   'draft.po_followup.message': ['Please confirm a delivery date for the remaining {remaining} {unit} of {sku} on {po}.', '请确认 {po} 上 {sku} 剩余 {remaining} {unit} 的交货日期。'],
   'draft.po_followup.message_generic': ['Please confirm a delivery date for the remaining quantity on {po}.', '请确认 {po} 剩余数量的交货日期。'],
+  // An order with several lines still to receive: {lines} lists each with its
+  // own remaining quantity ("40 pcs of LDM-002 and 10 pcs of LDM-003").
+  'draft.po_followup.message_lines': ['Please confirm delivery dates for the remaining quantities on {po}: {lines}.', '请确认 {po} 上以下剩余数量的交货日期：{lines}。'],
+  'draft.po_followup.line': ['{quantity} of {sku}', '{sku} 剩余 {quantity}'],
   'draft.invoice.title': ['Ask {supplier} about the variance on {invoice}', '就 {invoice} 的差异联系 {supplier}'],
   'draft.invoice.message': ['Invoice {invoice} differs from the purchase order by {amount}. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单相差 {amount}。请提供更正后的发票或差异原因。'],
   'draft.invoice.message_hidden': ['Invoice {invoice} differs from the purchase order. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单存在差异。请提供更正后的发票或差异原因。'],

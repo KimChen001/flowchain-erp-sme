@@ -27,6 +27,7 @@ export function aiSkillKnownValues(facts) {
   if (!facts) return { ids, stored }
   for (const row of array(facts.purchaseOrders?.rows)) { add(row.id, row.orderNumber, row.supplierId); keep(row.supplier, row.orderNumber, row.sku, row.unit) }
   for (const row of array(facts.purchaseOrders?.index)) { add(row.id, row.orderNumber, row.supplierId); keep(row.supplier, row.orderNumber, row.unit) }
+  for (const row of [...array(facts.purchaseOrders?.rows), ...array(facts.purchaseOrders?.index)]) for (const line of array(row.openLines)) keep(line.sku, line.itemName, line.unit)
   for (const row of array(facts.suppliers)) { add(row.id, row.code); keep(row.name, row.code) }
   for (const row of array(facts.inventory?.rows)) { add(row.itemId, row.sku, ...array(row.purchaseOrderIds)); keep(row.sku, row.itemName, row.unit) }
   for (const row of array(facts.invoices?.variances)) { add(row.id, row.invoiceNumber, row.supplierId, row.poId); keep(row.supplier, row.invoiceNumber) }
