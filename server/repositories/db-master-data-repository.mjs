@@ -1,3 +1,4 @@
+import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
@@ -244,7 +245,7 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
     listSuppliers: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
       // Prisma's contains does not escape LIKE wildcards: "%" alone would match every supplier.
-      const query = text(filters.query).replace(/[\\%_]/g, '\\$&')
+      const query = escapeLikePattern(text(filters.query))
       const category = text(filters.category)
       const records = await findManyWithinLimit(client.supplier, {
         where: {
