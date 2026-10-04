@@ -16,6 +16,7 @@ import {
 } from '../domain/procurement-read-model.mjs'
 import { normalizeProcurementAuthorityStatus } from '../domain/procurement-status-authority.mjs'
 import { exactRfqDecimalString } from '../domain/rfq-commercial-decimal.mjs'
+import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { requireTenantId } from './repository-read-scope.mjs'
@@ -107,11 +108,13 @@ function decodeDocumentId(value) {
   }
 }
 
+// Case-insensitive equals is an ILIKE in PostgreSQL, so an unescaped "%" in the
+// id would open whichever document came first.
 function documentWhere(tenantId, id) {
   return {
     tenantId,
     id: {
-      equals: id,
+      equals: escapeLikePattern(id),
       mode: 'insensitive',
     },
   }
