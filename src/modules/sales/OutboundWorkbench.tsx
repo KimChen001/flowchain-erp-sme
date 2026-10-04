@@ -18,6 +18,7 @@ import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
+import { CreateInvoiceAction } from "../../components/business/BillingEntryActions";
 import {
   tableMinSmClass,
   tableScrollClass,
@@ -1217,6 +1218,10 @@ function OrderDetail({ id }: { id: string }) {
                 {copy("创建发货草稿")}
               </Button>
             )}
+            {/* An invoice covers shipped goods, so it waits for a posted shipment. */}
+            {data.shipments.some((shipment) => shipment.postingStatus === "posted") && (
+              <CreateInvoiceAction salesOrderId={id} />
+            )}
             <Button tone="secondary" onClick={() => void refresh()} ariaLabel="刷新销售订单">
               <RefreshCw size={15} />
             </Button>
@@ -1794,6 +1799,9 @@ function ShipmentDetail({ id }: { id: string }) {
               >
                 {copy("冲销发货")}
               </Button>
+            )}
+            {data.shipment.postingStatus === "posted" && (
+              <CreateInvoiceAction shipmentId={id} />
             )}
           </div>
         </div>

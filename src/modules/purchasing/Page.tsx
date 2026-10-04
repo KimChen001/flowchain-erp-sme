@@ -67,9 +67,12 @@ import {
 } from "../../components/ui/workbenchTable";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { PurchaseOrderReceiveAction, PurchaseOrderWorkflowActions } from "./components/PurchaseOrderWorkflowActions";
+import { RecordBillAction } from "../../components/business/BillingEntryActions";
 import { PurchaseOrderPromiseDates } from "./components/PurchaseOrderPromiseDates";
 
 const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
+// Statuses in which some goods were received, so a bill can be recorded.
+const BILLABLE_PO_STATUSES = new Set(["partially_received", "received", "fully_received", "closed"]);
 
 type PurchaseOrderViewMode = "list" | "detail";
 type NavigateFn = (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null, options?: { returnTo?: string; entityLabel?: string; returnContext?: WorkflowContext | null; source?: string }) => void;
@@ -787,6 +790,8 @@ export default function PurchasingOrdersPage({
         <div className="flex flex-wrap items-center gap-3">
           <PurchaseOrderWorkflowActions poId={selectedPO.po} status={selectedPO.status} version={selectedPO.version} onChanged={loadWorkbench} />
           <PurchaseOrderReceiveAction poId={selectedPO.po} status={selectedPO.status} />
+          {/* A bill covers received goods, so it is offered once something arrived. */}
+          {BILLABLE_PO_STATUSES.has(selectedPO.status) && <RecordBillAction purchaseOrderId={selectedPO.po} showNote />}
         </div>
 
         <div>

@@ -1,7 +1,9 @@
 # Bills, invoices and the accounting handoff
 
-Status: design agreed with the owner on 2026-10-03. Step 1a (names,
-navigation, redirects) is implemented; the rest is planned.
+Status: design agreed with the owner on 2026-10-03. Steps 1a (names,
+navigation, redirects) and 1b (entry from source documents, invoice actions)
+are implemented. The owner chose the light payment record for step 2; the rest
+is planned.
 
 ## 1. Problem
 
@@ -136,9 +138,20 @@ Suppliers · Items · Reports
 - Reading a bill or an invoice never needs the operational finance capability,
   only the read permission. This keeps the rule that capabilities gate
   transactions, not reads.
-- Source documents carry the create buttons (step 1b): "Record bill" on a
-  purchase order or receipt with received-but-unbilled quantity, "Create
-  invoice" on a sales order or shipment with shipped-but-uninvoiced quantity.
+- Source documents carry the create buttons (step 1b):
+  - "Record bill" on a purchase order once something was received (partially
+    received, received or closed) and on a posted receipt. It opens
+    `/app/procurement/bills/new?po=…` or `?receipt=…`: the supplier and receipt
+    are chosen and each accepted quantity is offered. A purchase order without
+    a posted receipt says so instead of offering a bill.
+  - "Create invoice" on a sales order with a posted shipment and on a posted
+    shipment. It opens `/app/sales/invoices/new?salesOrder=…` or `?shipment=…`
+    with the shipment chosen and each shipped quantity offered.
+  - The buttons show only with the create permission
+    (`finance.supplier_invoice.create`, `finance.customer_invoice.create`) and
+    the capability; the server checks quantities, prices and permissions again.
+- The invoice page submits, approves and issues the invoice, each step
+  previewed first; issuing shows the new receivable.
 - Old URLs and route ids keep working (`legacyRouteRedirects` in
   `src/app/routes/route-manifest.ts`):
 
@@ -285,5 +298,6 @@ contacts", "Import inventory items" and the Xero API reference; Microsoft
 - Supplier deposits and prepayments are not supported.
 - Sales tax is not calculated; exports leave tax to the accounting system. This
   is also why QuickBooks Online customers with sales tax need the connector.
-- The invoice page has no submit, approve or issue buttons yet; those actions
-  exist only in the API until step 1b.
+- Quantities offered on a new bill or invoice are the received or shipped
+  quantities, not what is left after earlier bills or invoices; the preview
+  reports any excess and the user corrects the line.

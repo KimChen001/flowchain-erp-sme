@@ -36,6 +36,9 @@ const STATUS_KEYS: Record<string, TranslationKey> = {
   open: "finance.status.open",
   resolved: "finance.status.resolved",
   cancelled: "finance.status.cancelled",
+  issued: "finance.status.issued",
+  overdue: "finance.status.overdue",
+  disputed: "finance.status.disputed",
 };
 
 const money = (amount: unknown, currency: unknown, locale: string) => {
@@ -49,6 +52,9 @@ const money = (amount: unknown, currency: unknown, locale: string) => {
 };
 const fixed = (value: number) => (Number.isFinite(value) ? value.toFixed(4) : "0.0000");
 const message = (reason: unknown, fallback: string) => (reason instanceof Error ? reason.message : fallback);
+// Each line of a receipt starts at its accepted quantity; the user can lower it.
+const receivedQuantities = (receipt: EntryData["receivingDocuments"][number]) =>
+  Object.fromEntries(receipt.lines.map((line) => [line.id, { quantity: String(Number(line.acceptedQuantity)) }]));
 
 function Notice({ children, tone = "warning" }: { children: ReactNode; tone?: "warning" | "success" }) {
   const colors = tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900";
@@ -60,7 +66,7 @@ function Notice({ children, tone = "warning" }: { children: ReactNode; tone?: "w
   );
 }
 
-function StatusChip({ status }: { status: string }) {
+export function StatusChip({ status }: { status: string }) {
   const { t } = useI18n();
   return <Chip label={STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status || "—"} color={A.blue} bg="#eff6ff" />;
 }
@@ -79,12 +85,48 @@ export function NewSupplierInvoice() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  // Set when the form was opened from a purchase order: only its receipts.
+  const [poFilter, setPoFilter] = useState("");
+  const [sourceNotice, setSourceNotice] = useState("");
   useEffect(() => {
     void apiJson<EntryData>("/api/finance/entry-data")
       .then(setEntry)
       .catch((reason) => setNotice(message(reason, t("finance.loadFailed"))));
   }, []);
-  const receipts = useMemo(() => (entry?.receivingDocuments || []).filter((row) => !supplierId || row.supplierId === supplierId), [entry, supplierId]);
+  // Opened from a receipt (?receipt=) or a purchase order (?po=): choose the
+  // supplier and receipt and offer each received quantity. A bill only covers
+  // received goods, so a PO without a posted receipt is explained, not billed.
+  useEffect(() => {
+    if (!entry) return;
+    const params = new URLSearchParams(window.location.search);
+    const receiptParam = params.get("receipt");
+    const poParam = params.get("po");
+    if (receiptParam) {
+      const found = entry.receivingDocuments.find((row) => row.id === receiptParam || row.documentNumber === receiptParam);
+      if (!found) { setSourceNotice(`${receiptParam}: ${t("finance.receiptNotBillable")}`); return; }
+      setSupplierId(found.supplierId);
+      setReceiptId(found.id);
+      setLines(receivedQuantities(found));
+    } else if (poParam) {
+      const forPo = entry.receivingDocuments.filter((row) => row.poId === poParam);
+      const order = entry.purchaseOrders.find((row) => row.id === poParam);
+      if (!forPo.length) {
+        if (order) setSupplierId(order.supplierId);
+        setSourceNotice(`${poParam}: ${t("finance.noPostedReceipt")}`);
+        return;
+      }
+      setSupplierId(forPo[0].supplierId);
+      setPoFilter(poParam);
+      if (forPo.length === 1) {
+        setReceiptId(forPo[0].id);
+        setLines(receivedQuantities(forPo[0]));
+      }
+    }
+  }, [entry]);
+  const receipts = useMemo(
+    () => (entry?.receivingDocuments || []).filter((row) => (!supplierId || row.supplierId === supplierId) && (!poFilter || row.poId === poFilter)),
+    [entry, supplierId, poFilter],
+  );
   const receipt = receipts.find((row) => row.id === receiptId) || null;
   const order = entry?.purchaseOrders.find((row) => row.id === receipt?.poId) || null;
   const poLine = (id: string | null) => order?.lines.find((line) => line.id === id) || null;
@@ -140,16 +182,23 @@ export function NewSupplierInvoice() {
     <div className="space-y-4" data-testid="new-supplier-invoice">
       {!enabled && <Notice>{t("finance.capabilityDisabled")}</Notice>}
       {notice && <Notice>{notice}</Notice>}
+      {sourceNotice && <Notice>{sourceNotice}</Notice>}
       <Card className="space-y-4 p-5">
+        {poFilter && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600" data-testid="supplier-invoice-po-filter">
+            <span>{t("finance.receiptsForPo")} <strong>{poFilter}</strong></span>
+            <button type="button" className="font-semibold text-blue-600" onClick={() => setPoFilter("")}>{t("finance.showAllReceipts")}</button>
+          </div>
+        )}
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-xs">{t("finance.supplier")}
-            <select data-testid="supplier-invoice-supplier" className={`${field} mt-1 w-full`} value={supplierId} onChange={(event) => { setSupplierId(event.target.value); setReceiptId(""); setLines({}); reset(); }}>
+            <select data-testid="supplier-invoice-supplier" className={`${field} mt-1 w-full`} value={supplierId} onChange={(event) => { setSupplierId(event.target.value); setPoFilter(""); setReceiptId(""); setLines({}); reset(); }}>
               <option value="">—</option>
               {entry.suppliers.map((row) => <option key={row.id} value={row.id}>{row.name}{row.code ? ` · ${row.code}` : ""}</option>)}
             </select>
           </label>
           <label className="text-xs">{t("finance.postedReceipt")}
-            <select data-testid="supplier-invoice-receipt" className={`${field} mt-1 w-full`} value={receiptId} onChange={(event) => { setReceiptId(event.target.value); setLines({}); reset(); }}>
+            <select data-testid="supplier-invoice-receipt" className={`${field} mt-1 w-full`} value={receiptId} onChange={(event) => { const next = receipts.find((row) => row.id === event.target.value); setReceiptId(event.target.value); setLines(next ? receivedQuantities(next) : {}); reset(); }}>
               <option value="">—</option>
               {receipts.map((row) => <option key={row.id} value={row.id}>{row.documentNumber || row.id} · {row.poId || "—"}{row.supplierName ? ` · ${row.supplierName}` : ""}</option>)}
             </select>
@@ -204,7 +253,7 @@ export function NewSupplierInvoice() {
 
 // One operation: an optional reason, a preview of the server's plan, then a
 // confirm that runs exactly the previewed operation.
-function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, onDone, tone = "primary" }: {
+export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, onDone, tone = "primary" }: {
   label: string; testId: string; previewUrl: string; runUrl: string; payload: () => Record<string, unknown>;
   reasonLabel?: string; onDone: () => void; tone?: "primary" | "secondary";
 }) {
