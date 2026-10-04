@@ -1,6 +1,8 @@
 # Supplier tiers and the supplier list: design
 
-Status: design, 2026-10-04. Written against main at `36025e4`.
+Status: design, 2026-10-04. Written against main at `36025e4`. On 2026-10-04 the owner
+approved all eight decisions in [§10](#10-decisions-for-the-owner) as recommended and asked
+for T1.
 
 Owner decisions so far, all made on 2026-10-04:
 - Tiers mean importance to the business. People set them; the system suggests a
@@ -212,7 +214,8 @@ In T3:
 
 | PR | Ships | Size |
 | --- | --- | --- |
-| T1 | Migration and columns; tier and owner endpoints with audit rows; owner picker endpoint; tier chip, change dialogs and history on the detail page; list tabs, tier column, owner column and owner filter; seed; unused SRM code removed | M |
+| T1 | Migration and columns; tier and owner endpoints with audit rows; owner picker endpoint; tier chip, change dialogs and history on the detail page; list tabs, tier column, owner column and owner filter; seed | M |
+| T1b | The unused SRM code removed. It moved out of T1 when T1 was built: three tests and `server/domain/supplier-risk-control-tower.mjs` still reference those files, so removing them is its own change. | S |
 | T2 | Metric columns with masking; suggestions; the Review suggestions page; the "Suggestion differs" mark | M–L |
 | T3 | Purchase records and Risks and exceptions on the detail page; tier in assistant answers and as a filter | M |
 
@@ -244,13 +247,13 @@ Not in T1–T3:
 
 ## 10. Decisions for the owner
 
-| # | Decision | Recommendation |
-| --- | --- | --- |
-| 1 | Tier names and meanings: Tier 1 Strategic, Tier 2 Core, Tier 3 Transactional, plus Not tiered (§2.1) | As proposed |
-| 2 | Suggestion rules: 12 months; Tier 1 for the suppliers that together make the first 50% of spend, or the only approved source of an active item; Tier 3 for no PO in 12 months and no items (§3). On the walkthrough this gives three Tier 1 suppliers out of six active ones (§7). | As proposed; revisit the 50% once a trial workspace has real spend |
-| 3 | Delivery performance never changes the suggested tier; it is shown beside it | Yes |
-| 4 | Review suggestions may accept all shown suppliers at once, after a confirmation, with one audit row per supplier | Yes |
-| 5 | The owner picker lists every active workspace user. Owner names are visible to everyone who can read suppliers. | Yes |
-| 6 | The list's default columns (§4), with contact, phone, currency, payment terms, lead time and updated moved to the detail page | As proposed |
-| 7 | The walkthrough seed sets tiers and owners (§7) | Yes |
-| 8 | In the assistant, the tier filters and labels and never re-ranks (§6, T3) | Yes |
+| # | Decision | Recommendation | Owner, 2026-10-04 |
+| --- | --- | --- | --- |
+| 1 | Tier names and meanings: Tier 1 Strategic, Tier 2 Core, Tier 3 Transactional, plus Not tiered (§2.1) | As proposed | Approved |
+| 2 | Suggestion rules: 12 months; Tier 1 for the suppliers that together make the first 50% of spend, or the only approved source of an active item; Tier 3 for no PO in 12 months and no items (§3). On the walkthrough this gives three Tier 1 suppliers out of six active ones (§7). | As proposed; revisit the 50% once a trial workspace has real spend | Approved |
+| 3 | Delivery performance never changes the suggested tier; it is shown beside it | Yes | Approved |
+| 4 | Review suggestions may accept all shown suppliers at once, after a confirmation, with one audit row per supplier | Yes | Approved |
+| 5 | The owner picker lists every active workspace user. Owner names are visible to everyone who can read suppliers. | Yes | Approved |
+| 6 | The list's default columns (§4), with contact, phone, currency, payment terms, lead time and updated moved to the detail page | As proposed | Approved |
+| 7 | The walkthrough seed sets tiers and owners (§7) | Yes | Approved |
+| 8 | In the assistant, the tier filters and labels and never re-ranks (§6, T3) | Yes | Approved |
