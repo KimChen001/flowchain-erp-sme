@@ -67,7 +67,8 @@ test('a supplier line takes the step and draft of its most urgent record', async
 
 test('a reader who may not prepare drafts sees the next steps, but no draft and no supplier contact', async () => {
   const { facts, answer } = await setup({ roleKey: 'read-only-viewer' })
-  for (const supplier of facts.suppliers || []) assert.deepEqual(Object.keys(supplier).sort(), ['code', 'id', 'name'])
+  // No contact (email, contact name); the tier is not a contact and every reader of suppliers sees it.
+  for (const supplier of facts.suppliers || []) assert.deepEqual(Object.keys(supplier).sort(), ['code', 'id', 'name', 'tier'])
   const today = answer('today_priorities')
   assert.deepEqual(today.reviewCards, [])
   assert.ok(today.keyEvidence.some((item) => item.nextStep))
