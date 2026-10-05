@@ -35,11 +35,11 @@ const listed = (skus) => {
 }
 
 // Committed purchase orders per supplier id over a window of business days.
-export function supplierPurchaseTotals(purchaseOrders = [], { from, to }) {
+export function supplierPurchaseTotals(purchaseOrders = [], { from, to, timeZone }) {
   const totals = new Map()
   for (const po of purchaseOrders) {
     const supplierId = text(po?.supplierId)
-    const day = purchaseOrderBusinessDate(po)
+    const day = purchaseOrderBusinessDate(po, timeZone)
     if (!supplierId || !isCommittedPurchaseOrder(po) || !day || day < from || day > to) continue
     const row = totals.get(supplierId) || { orders: 0, byCurrency: new Map(), amountKnown: true }
     row.orders += 1
@@ -189,7 +189,7 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
         listItemSupplierRecords(prisma, tenantId).then((rows) => rows.map((row) => mapItemSupplierRecord(row))),
         visibility.orders && listPurchaseOrders ? listPurchaseOrders({ tenantId }) : [],
       ])
-      const totals = supplierPurchaseTotals(purchaseOrders, window)
+      const totals = supplierPurchaseTotals(purchaseOrders, { ...window, timeZone: tenant.timezone })
       const openRows = visibility.orders ? buildOpenPurchaseOrdersReport(purchaseOrders, { export: 'true' }, instant, { timeZone: tenant.timezone }).exportRows || [] : []
       const scorecard = visibility.onTime ? await createSupplierScorecardReadService({ prisma, now: () => instant }).read({}, { actor }) : null
       const signals = visibility.issues ? buildAiSkillSignals(await readAiSkillFacts(skillContext)) : []

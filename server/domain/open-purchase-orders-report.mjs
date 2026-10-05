@@ -45,7 +45,7 @@ export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {},
     const dataIncomplete = !lines.length || lines.some(line => line.ordered === null || line.received === null) || (isOpen && (!dueDate || openLines.some(line => !line.due)))
     return {
       id: text(po.id), orderNumber: text(po.orderNumber || po.id), supplier: text(po.supplierSnapshot?.supplierName || po.supplierName || po.supplierId),
-      supplierId: text(po.supplierId), createdDate: purchaseOrderBusinessDate(po), dueDate, overdueDays, owner: text(po.owner),
+      supplierId: text(po.supplierId), createdDate: purchaseOrderBusinessDate(po, timezone), dueDate, overdueDays, owner: text(po.owner),
       ordered: sameUnit ? sumKnown(lines.map(line => line.ordered)) : null,
       received: sameUnit ? sumKnown(lines.map(line => line.received)) : null,
       remaining: sameUnit ? sumKnown(lines.map(line => line.remaining)) : null,

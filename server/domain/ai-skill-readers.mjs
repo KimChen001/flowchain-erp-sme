@@ -203,7 +203,7 @@ export async function readAiSkillFacts(skillContext) {
     purchaseOrders: null, inventory: null, invoices: null, purchaseRequests: null, rfqs: null, receipts: null, suppliers: null,
   }
 
-  const overview = buildRuntimeGovernedReport(business, { subject: 'overview' }, { allocationContext })
+  const overview = buildRuntimeGovernedReport(business, { subject: 'overview' }, { allocationContext, now, timeZone: tenant.timezone })
   const kpi = (report, id) => array(report.kpis).find((row) => row.id === id)
   // Overdue days count to the tenant's calendar day, as in the report itself.
   const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now, { timeZone: tenant.timezone })
@@ -286,7 +286,7 @@ export async function readAiSkillFacts(skillContext) {
   }
 
   if (visible.supplier_invoices) {
-    const finance = buildRuntimeGovernedReport(business, { subject: 'finance' })
+    const finance = buildRuntimeGovernedReport(business, { subject: 'finance' }, { now, timeZone: tenant.timezone })
     const committed = array(business.supplierInvoices).filter((row) => committedInvoiceStatuses.has(text(row.status).toLowerCase()))
     facts.invoices = {
       committed: visibility.amounts.invoice_amounts ? kpiMoney(kpi(finance, 'invoice_amount')) : null,

@@ -1,6 +1,7 @@
 import { isCommittedPurchaseOrder, isOpenPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
+import { instantCalendarDay } from './tenant-calendar-day.mjs'
 
 // The analytics visuals of each report dashboard. Every visual aggregates the
 // whole filtered scope, not the detail page, and reads only recorded values:
@@ -9,7 +10,11 @@ import { reportCurrencyCode } from './report-currency.mjs'
 //   - amounts are added only within one currency (the currency filter, or the
 //     single currency every row is in). Otherwise a visual counts documents, or
 //     asks for a currency, and names the limitation;
-//   - quantities are added only within one SKU, because SKUs use different units.
+//   - quantities are added only within one SKU and unit, because SKUs use
+//     different units;
+//   - a stored instant (creation or arrival time) counts on its calendar day in
+//     the workspace timezone; date-only values (expected, promised and invoice
+//     dates) are read as the day they hold.
 // Titles, stage names and measure names are English interface copy that the
 // dashboard translates; supplier, customer and SKU names are business values
 // and stay as recorded.
@@ -123,7 +128,7 @@ function statusVisual(id, title, rows, drilldownPath) {
 }
 
 // Committed purchase orders in scope, with their receipt and invoice progress.
-function purchaseOrderFacts(context, all, receiptsByPo, invoicesByPo) {
+function purchaseOrderFacts(context, all, receiptsByPo, invoicesByPo, timeZone) {
   const inScope = new Set(all.purchase_orders.map(row => row.id))
   return array(context.purchaseOrders).filter(row => inScope.has(text(row.id || row.po)) && isCommittedPurchaseOrder(row)).map(row => {
     const id = text(row.id || row.po)
@@ -139,7 +144,7 @@ function purchaseOrderFacts(context, all, receiptsByPo, invoicesByPo) {
     const fullyReceived = !isOpenPurchaseOrder(row)
     const promised = lines.map(line => line.promised).filter(Boolean).sort()
     return {
-      id, supplier: poSupplier(row), date: purchaseOrderBusinessDate(row), amount, currency: reportCurrencyCode(row.currency || row.lines?.[0]?.currency),
+      id, supplier: poSupplier(row), date: purchaseOrderBusinessDate(row, timeZone), amount, currency: reportCurrencyCode(row.currency || row.lines?.[0]?.currency),
       due: reportCalendarDay(row.expectedDate) || promised[0] || '', open: !fullyReceived, lines,
       receivingStarted: fullyReceived || lines.some(line => line.received > 0) || receiptsByPo.has(id),
       fullyReceived, invoiced: invoices.length > 0,
@@ -212,12 +217,12 @@ function spendTreemapVisual(id, pos, scope) {
 
 // Receipts whose arrival is in range. Every other filter follows the receipt's
 // purchase order, so a supplier, currency or status filter narrows receipts the
-// way it narrows the orders. Receipts use the arrival date, falling back to the
-// date the receipt was created.
-function receiptFacts(context, query, poById, purchaseOrderIdsAnyDate) {
+// way it narrows the orders. Receipts use the arrival day in the workspace
+// timezone, falling back to the posting and then the creation time.
+function receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone) {
   return array(context.receipts).filter(row => !voidReceiptStatuses.has(text(row.status).toLowerCase())).map(row => {
     const po = poById.get(text(row.poId))
-    const day = reportCalendarDay(row.arrivedAt || row.createdAt)
+    const day = instantCalendarDay(row.arrivedAt || row.postedAt || row.createdAt, timeZone)
     const promised = array(po?.lines).map(line => reportCalendarDay(line.promisedDate || line.metadata?.promisedDate)).filter(Boolean).sort()
     const due = po ? reportCalendarDay(po.expectedDate) || promised[0] || '' : ''
     const lines = array(row.lines).map(line => ({ accepted: known(line.acceptedQty), rejected: known(line.rejectedQty) }))
@@ -303,9 +308,9 @@ function activityHeatmapVisual(id, pos) {
   return visual(id, 'Purchase orders by supplier and month', 'heatmap', rows, { seriesKeys: months, drilldownPath: '/app/procurement/orders', crossFilter: 'supplier', description: 'Committed purchase orders, by order date.' })
 }
 
-function invoiceFacts(context, all) {
+function invoiceFacts(context, all, timeZone) {
   const inScope = new Set(all.supplier_invoices.map(row => row.id))
-  return array(context.supplierInvoices).filter(row => inScope.has(text(row.id || row.invoiceNumber)) && submittedInvoiceStatuses.has(text(row.status).toLowerCase())).map(row => ({ id: text(row.id || row.invoiceNumber), supplier: invoiceSupplier(row), date: reportCalendarDay(row.invoiceDate || row.createdAt), amount: known(row.totalAmount ?? row.amount), variance: known(row.varianceAmount), currency: reportCurrencyCode(row.currency), outcome: invoiceMatchOutcome(row), raw: row }))
+  return array(context.supplierInvoices).filter(row => inScope.has(text(row.id || row.invoiceNumber)) && submittedInvoiceStatuses.has(text(row.status).toLowerCase())).map(row => ({ id: text(row.id || row.invoiceNumber), supplier: invoiceSupplier(row), date: reportCalendarDay(row.invoiceDate) || instantCalendarDay(row.createdAt, timeZone), amount: known(row.totalAmount ?? row.amount), variance: known(row.varianceAmount), currency: reportCurrencyCode(row.currency), outcome: invoiceMatchOutcome(row), raw: row }))
 }
 
 function matchGaugeVisual(id, invoices) {
@@ -335,15 +340,28 @@ function invoiceFlowVisual(id, invoices) {
   return visual(id, 'Invoices from supplier to match outcome', 'sankey', rows.map(row => ({ name: `${row.source} → ${row.target}`, value: row.value })), { links: rows, targets: Object.values(MATCH_OUTCOME_LABELS), drilldownPath: '/app/finance/invoices', description: 'Each band is a number of submitted invoices.' })
 }
 
-function salesFacts(context, all) {
+// Sales orders in scope with their shipping progress, decided per line
+// (salesDemand: { orderId, ordered, fulfilled }): shipped when any line has
+// shipped, shipped in full when every line has shipped its ordered quantity.
+// Order-level quantities add lines in different units, so they are not used.
+function salesFacts(context, all, salesDemand = []) {
   const reserved = new Map(array(context.salesOrders).map(order => [text(order.salesOrderId || order.id), known(order.reservedQty) || 0]))
-  return all.sales_orders.map(row => ({ ...row, active: !inactiveSalesStatuses.has(row.status), reserved: reserved.get(row.id) || 0 }))
+  const linesByOrder = new Map()
+  for (const line of salesDemand) linesByOrder.set(line.orderId, [...(linesByOrder.get(line.orderId) || []), line])
+  return all.sales_orders.map(row => {
+    const lines = linesByOrder.get(row.id) || []
+    return {
+      ...row, active: !inactiveSalesStatuses.has(row.status), reserved: reserved.get(row.id) || 0,
+      shipped: lines.some(line => line.fulfilled > 0),
+      shippedInFull: lines.length > 0 && lines.every(line => line.ordered > 0 && line.fulfilled !== null && line.fulfilled >= line.ordered),
+    }
+  })
 }
 
 // Active orders that are reserved or shipped, then shipped, then shipped in full.
 function fulfillmentFunnelVisual(id, orders) {
   const active = orders.filter(row => row.active)
-  const stages = [['Active orders', () => true], ['Reserved or shipped', row => row.reserved > 0 || row.fulfilled > 0], ['Shipped', row => row.fulfilled > 0], ['Shipped in full', row => row.quantity > 0 && row.fulfilled >= row.quantity]]
+  const stages = [['Active orders', () => true], ['Reserved or shipped', row => row.reserved > 0 || row.shipped], ['Shipped', row => row.shipped], ['Shipped in full', row => row.shippedInFull]]
   let reached = active
   const data = stages.map(([name, test]) => { reached = reached.filter(test); return { name, value: reached.length } })
   return visual(id, 'Sales order fulfillment', 'funnel', active.length ? data : [], { drilldownPath: '/app/sales/orders', description: 'Confirmed sales orders in range, without drafts and cancellations. Each stage counts the orders that reached it.' })
@@ -351,8 +369,8 @@ function fulfillmentFunnelVisual(id, orders) {
 
 function fulfillmentGaugeVisual(id, orders) {
   const active = orders.filter(row => row.active)
-  const full = active.filter(row => row.quantity > 0 && row.fulfilled >= row.quantity).length
-  return visual(id, 'Orders shipped in full', 'gauge', active.length ? [{ name: 'Orders shipped in full', value: share(full, active.length) }] : [], { unit: 'percentage', detail: { count: full, total: active.length }, drilldownPath: '/app/sales/orders', description: 'Share of confirmed sales orders whose ordered quantity has shipped.' })
+  const full = active.filter(row => row.shippedInFull).length
+  return visual(id, 'Orders shipped in full', 'gauge', active.length ? [{ name: 'Orders shipped in full', value: share(full, active.length) }] : [], { unit: 'percentage', detail: { count: full, total: active.length }, drilldownPath: '/app/sales/orders', description: 'Share of confirmed sales orders whose every line has shipped its ordered quantity.' })
 }
 
 // Stock position per SKU. Quantities are never added across SKUs.
@@ -380,7 +398,7 @@ function riskMatrixVisual(id, balances) {
 // Builds the visuals of one dashboard. `all` holds the filtered runtime rows;
 // `purchaseOrderIdsAnyDate` the purchase orders that pass every filter except
 // the date range, so receipts can follow their order's filters.
-export function buildDashboardVisuals({ subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts = {} }) {
+export function buildDashboardVisuals({ subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts = {}, today = '', timeZone, salesDemand = [] }) {
   const poById = new Map(array(context.purchaseOrders).map(row => [text(row.id || row.po), row]))
   const receiptsByPo = new Map()
   for (const receipt of array(context.receipts)) if (text(receipt.poId)) receiptsByPo.set(text(receipt.poId), true)
@@ -391,10 +409,10 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
     if (poId) invoicesByPo.set(poId, [...(invoicesByPo.get(poId) || []), invoice])
   }
   const lazy = fn => { let value; return () => (value ||= fn()) }
-  const pos = lazy(() => purchaseOrderFacts(context, all, receiptsByPo, invoicesByPo))
+  const pos = lazy(() => purchaseOrderFacts(context, all, receiptsByPo, invoicesByPo, timeZone))
   const poScope = lazy(() => restrictedAmounts.purchase_orders ? RESTRICTED_SCOPE : moneyScope(pos(), query))
-  const receipts = lazy(() => receiptFacts(context, query, poById, purchaseOrderIdsAnyDate))
-  const invoices = lazy(() => invoiceFacts(context, all))
+  const receipts = lazy(() => receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone))
+  const invoices = lazy(() => invoiceFacts(context, all, timeZone))
   const performance = lazy(() => supplierPerformance(pos(), receipts(), invoices().map(row => row.raw), poScope()))
 
   if (subject === 'overview') return [
@@ -426,17 +444,24 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
   }
 
   if (subject === 'sales') {
-    const orders = salesFacts(context, all)
+    const orders = salesFacts(context, all, salesDemand)
     const active = orders.filter(row => row.active)
     const scope = restrictedAmounts.sales_orders ? RESTRICTED_SCOPE : moneyScope(active, query)
+    // Open demand per SKU and unit, from the order lines: an SKU sold in two
+    // units is two bars, and no bar adds quantities across units.
     const demand = new Map()
-    for (const row of active) if (row.sku) demand.set(row.sku, (demand.get(row.sku) || 0) + Math.max(0, row.quantity - row.fulfilled))
+    for (const line of salesDemand) {
+      if (!line.active || !line.sku || !(line.open > 0)) continue
+      const key = `${line.sku}\u0000${line.unit}`
+      demand.set(key, { name: line.unit ? `${line.sku} (${line.unit})` : line.sku, unit: line.unit, value: Math.round(((demand.get(key)?.value || 0) + line.open) * 10000) / 10000 })
+    }
+    const demandUnits = [...new Set([...demand.values()].map(row => row.unit))].sort()
     return [
       trendVisual('sales_order_trend', 'Sales orders by month', active, scope, { countKey: 'Sales orders', amountKey: 'Order amount', drilldownPath: '/app/sales/orders', description: 'Confirmed sales orders by order date. Bars are amounts, the line is the number of orders.' }),
       fulfillmentFunnelVisual('sales_fulfillment', orders),
       paretoVisual('sales_customer_pareto', 'Sales concentration by customer', active, scope, row => row.customer, { otherLabel: OTHER_CUSTOMERS, drilldownPath: '/app/sales/orders', crossFilter: 'customer', countLabel: 'Sales orders' }),
       fulfillmentGaugeVisual('sales_shipped_in_full', orders),
-      rankingVisual('sales_open_demand', 'Open demand by SKU', [...demand].filter(([, value]) => value > 0).map(([name, value]) => ({ name, value })), { drilldownPath: '/app/sales/orders', description: 'Ordered less shipped quantity, in each SKU\'s unit.', limit: 12 }),
+      { ...rankingVisual('sales_open_demand', 'Open demand by SKU', [...demand.values()].map(({ name, value }) => ({ name, value })), { drilldownPath: '/app/sales/orders', description: demandUnits.length > 1 ? 'Ordered less shipped quantity, in each SKU\'s unit. Bars in different units are not comparable.' : 'Ordered less shipped quantity, in each SKU\'s unit.', limit: 12 }), units: demandUnits },
       statusVisual('sales_order_status', 'Sales order status', all.sales_orders, '/app/sales/orders'),
     ]
   }
@@ -469,12 +494,12 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
 
 // Facts behind the dashboards' KPIs and summary sentences, from the same
 // scope as the visuals.
-export function buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today }) {
+export function buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand = [] }) {
   const poById = new Map(array(context.purchaseOrders).map(row => [text(row.id || row.po), row]))
-  const receipts = receiptFacts(context, query, poById, purchaseOrderIdsAnyDate)
+  const receipts = receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone)
   const timed = receipts.filter(row => row.onTime !== null)
-  const invoices = invoiceFacts(context, all)
-  const orders = salesFacts(context, all).filter(row => row.active)
+  const invoices = invoiceFacts(context, all, timeZone)
+  const orders = salesFacts(context, all, salesDemand).filter(row => row.active)
   const openPurchaseOrders = all.purchase_orders.filter(row => row.isOpen)
   const overdue = openPurchaseOrders.filter(row => {
     const po = poById.get(row.id)
@@ -490,7 +515,7 @@ export function buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDa
     invoicesAwaitingMatch: invoices.filter(row => row.outcome === 'pending').length,
     invoicesWithException: invoices.filter(row => row.outcome === 'exception').length,
     submittedInvoices: invoices.length,
-    orderFulfillmentRate: share(orders.filter(row => row.quantity > 0 && row.fulfilled >= row.quantity).length, orders.length),
+    orderFulfillmentRate: share(orders.filter(row => row.shippedInFull).length, orders.length),
     activeSuppliers: new Set(all.purchase_orders.filter(row => isCommittedPurchaseOrder(poById.get(row.id) || row)).map(row => row.supplier).filter(Boolean)).size,
   }
 }

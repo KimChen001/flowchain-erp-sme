@@ -92,8 +92,11 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
     if (pareto) insights.push(concentration(pareto, zh, format, "customer"));
     const shipped = kpiById(report, "order_fulfillment_rate");
     if (shipped) insights.push({ id: "shipped", tone: "neutral", text: zh ? `${format(shipped.currentValue, "percentage")} 的已确认销售订单已全部发货。` : `${format(shipped.currentValue, "percentage")} of confirmed sales orders have shipped in full.` });
-    const demand = chartById(report, "sales_open_demand")?.data?.[0];
-    if (demand) insights.push({ id: "demand", tone: "neutral", text: zh ? `${demand.name} 的未履约需求最多：${format(num(demand.value), "number")}。` : `${demand.name} has the most open demand: ${format(num(demand.value), "number")}.` });
+    // Demand in different units cannot be compared, so "most" needs one unit.
+    const demandChart = chartById(report, "sales_open_demand");
+    const demandUnit = demandChart?.units?.length === 1 ? demandChart.units[0] : "";
+    const demand = demandUnit ? demandChart?.data?.[0] : undefined;
+    if (demand) insights.push({ id: "demand", tone: "neutral", text: zh ? `${demand.name} 的未履约需求最多：${format(num(demand.value), "number")} ${demandUnit}。` : `${demand.name} has the most open demand: ${format(num(demand.value), "number")} ${demandUnit}.` });
   }
 
   if (view === "inventory") {

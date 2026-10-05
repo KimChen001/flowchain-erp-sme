@@ -16,6 +16,18 @@ const isoDate = (value) => {
   return Number.isNaN(date.getTime()) ? text(value) : date.toISOString().slice(0, 10)
 }
 const sum = (lines, key) => lines.reduce((total, line) => total + number(line[key]), 0)
+// An amount that was never recorded is unknown, not zero.
+const amount = (value) => {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = typeof value?.toNumber === 'function' ? value.toNumber() : Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+// The order total, only when every line has an amount; null otherwise, so a
+// report says the amount is missing instead of counting it as 0.
+const totalAmount = (lines) => {
+  const amounts = lines.map((line) => amount(line.amount))
+  return amounts.length && amounts.every((value) => value !== null) ? Math.round(amounts.reduce((total, value) => total + value, 0) * 10000) / 10000 : null
+}
 
 const STATUS_LABELS = Object.freeze({
   draft: '草稿',
@@ -76,7 +88,7 @@ function mapOrder(row = {}) {
     customerId: text(row.customerId),
     customerName: text(row.customerName, '未命名客户'),
     currency: text(row.currency),
-    totalAmount: sum(lines, 'amount'),
+    totalAmount: totalAmount(lines),
     customerTier: '常规客户',
     itemId: text(firstLine.itemId),
     sku,
@@ -114,6 +126,7 @@ function mapOrder(row = {}) {
       reservedQuantity: number(line.reservedQuantity),
       fulfilledQuantity: number(line.fulfilledQuantity),
       unit: line.unit,
+      amount: amount(line.amount),
     })),
     createdAt: row.createdAt?.toISOString?.() || row.createdAt || null,
     updatedAt: row.updatedAt?.toISOString?.() || row.updatedAt || null,

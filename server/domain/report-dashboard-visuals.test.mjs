@@ -221,3 +221,67 @@ test('the overview keeps its first three charts and adds spend and lifecycle vis
   const report = buildRuntimeGovernedReport(procurementContext(), { subject: 'overview' })
   assert.deepEqual(report.charts.map(item => item.id), ['overview_activity', 'overview_status', 'overview_suppliers', 'overview_spend_trend', 'overview_lifecycle'])
 })
+
+test('report days follow the workspace timezone around midnight', () => {
+  // PO-LATE was entered at 21:00 on Sep 30 in New York (01:00 UTC on Oct 1).
+  const data = context({
+    purchaseOrders: [
+      po('PO-LATE', 'Acme', 'issued', [line('A', 1, 0, 100)], { createdAt: '2026-10-01T01:00:00.000Z', expectedDate: '2026-10-01T00:00:00.000Z' }),
+      po('PO-OCT', 'Acme', 'issued', [line('A', 1, 0, 50)], { createdAt: '2026-10-01T04:00:00.000Z', expectedDate: '2026-10-01T00:00:00.000Z' }),
+    ],
+    receipts: [
+      receipt('GRN-BEFORE', 'PO-LATE', 'Acme', '2026-10-01T03:59:00.000Z'),
+      receipt('GRN-AFTER', 'PO-OCT', 'Acme', '2026-10-01T04:00:00.000Z'),
+    ],
+  })
+  const newYork = buildRuntimeGovernedReport(data, { subject: 'procurement' }, { timeZone: 'America/New_York' })
+  assert.deepEqual(chart(newYork, 'procurement_spend_trend').data, [{ name: '2026-09', 'Committed amount': 100, 'Purchase orders': 1 }, { name: '2026-10', 'Committed amount': 50, 'Purchase orders': 1 }])
+  assert.deepEqual(kpi(newYork, 'purchase_order_amount').trend, [{ period: '2026-09', value: 100 }, { period: '2026-10', value: 50 }])
+  assert.deepEqual(chart(newYork, 'procurement_receipt_calendar').data, [{ name: '2026-09-30', value: 1 }, { name: '2026-10-01', value: 1 }])
+  const october = buildRuntimeGovernedReport(data, { subject: 'procurement', filters: { from: '2026-10-01', to: '2026-10-31' } }, { timeZone: 'America/New_York' })
+  assert.deepEqual(october.details.map(row => row.id), ['PO-OCT'])
+  // The same records in UTC put both orders and both receipts in October.
+  const utc = buildRuntimeGovernedReport(data, { subject: 'procurement' }, { timeZone: 'UTC' })
+  assert.deepEqual(chart(utc, 'procurement_spend_trend').data, [{ name: '2026-10', 'Committed amount': 150, 'Purchase orders': 2 }])
+  assert.deepEqual(chart(utc, 'procurement_receipt_calendar').data, [{ name: '2026-10-01', value: 2 }])
+})
+
+test('open sales demand is booked per line and never added across units', () => {
+  const order = (id, lines, extra = {}) => ({ id, salesOrderId: id, workflowStatus: 'confirmed', status: 'confirmed', customerName: 'Northwind', currency: 'USD', orderDate: '2026-09-05', reservedQty: 0, lines, ...extra })
+  const salesLine = (sku, unit, orderedQuantity, fulfilledQuantity, amount = 10) => ({ sku, unit, orderedQuantity, fulfilledQuantity, reservedQuantity: 0, amount })
+  // The order-level sku and quantity summarise the first line and the order
+  // total, as the sales repository returns them: LDM-001 with 60.
+  const mixed = order('SO-1', [salesLine('LDM-001', 'pcs', 10, 0), salesLine('CAB-9', 'ft', 50, 0)], { sku: 'LDM-001', orderedQty: 60, fulfilledQty: 0 })
+  const report = buildRuntimeGovernedReport(context({ salesOrders: [mixed] }), { subject: 'sales' })
+  const demand = chart(report, 'sales_open_demand')
+  assert.deepEqual(demand.data, [{ name: 'CAB-9 (ft)', value: 50 }, { name: 'LDM-001 (pcs)', value: 10 }])
+  assert.deepEqual(demand.units, ['ft', 'pcs'])
+  assert.match(demand.description, /not comparable/)
+  const total = kpi(report, 'open_sales_demand')
+  assert.equal(total.currentValue, null)
+  assert.deepEqual(total.limitations, ['sales_demand_units_mixed'])
+  assert.equal(total.dataStatus, 'incomplete')
+  // The detail row names no single SKU and no quantity across units.
+  assert.deepEqual([report.details[0].sku, report.details[0].quantity, report.details[0].unit], ['', null, 'mixed'])
+
+  // One unit across lines and orders: a total with its unit.
+  const pieces = [order('SO-2', [salesLine('LDM-001', 'pcs', 10, 4), salesLine('LDM-002', 'pcs', 5, 0)]), order('SO-3', [salesLine('LDM-001', 'pcs', 3, 0)])]
+  const single = buildRuntimeGovernedReport(context({ salesOrders: pieces }), { subject: 'sales' })
+  assert.equal(kpi(single, 'open_sales_demand').currentValue, 14)
+  assert.equal(kpi(single, 'open_sales_demand').quantityUnit, 'pcs')
+  assert.deepEqual(chart(single, 'sales_open_demand').data, [{ name: 'LDM-001 (pcs)', value: 9 }, { name: 'LDM-002 (pcs)', value: 5 }])
+  assert.deepEqual(chart(single, 'sales_open_demand').units, ['pcs'])
+  assert.equal(single.details.find(row => row.id === 'SO-3').sku, 'LDM-001')
+})
+
+test('an order is shipped in full only when every line has shipped', () => {
+  const order = (id, lines) => ({ id, salesOrderId: id, workflowStatus: 'confirmed', status: 'confirmed', customerName: 'Northwind', currency: 'USD', orderDate: '2026-09-05', reservedQty: 0, lines })
+  // SO-1 shipped 10 of 10 pcs but none of its 50 ft: its order-level total
+  // (10 of 60) hides that only one line is done. SO-2 shipped every line.
+  const report = buildRuntimeGovernedReport(context({ salesOrders: [
+    order('SO-1', [{ sku: 'A', unit: 'pcs', orderedQuantity: 10, fulfilledQuantity: 10 }, { sku: 'B', unit: 'ft', orderedQuantity: 50, fulfilledQuantity: 0 }]),
+    order('SO-2', [{ sku: 'A', unit: 'pcs', orderedQuantity: 2, fulfilledQuantity: 2 }, { sku: 'B', unit: 'ft', orderedQuantity: 5, fulfilledQuantity: 5 }]),
+  ] }), { subject: 'sales' })
+  assert.equal(kpi(report, 'order_fulfillment_rate').currentValue, 50)
+  assert.deepEqual(chart(report, 'sales_fulfillment').data.map(row => row.value), [2, 2, 2, 1])
+})

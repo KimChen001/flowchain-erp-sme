@@ -258,3 +258,20 @@ test('the activity chart explains the business date in both languages', () => {
   assert.equal(analyticsCopy(english, 'zh-CN'), '活动按订单日期统计，缺失时使用创建日期。数量表示订单数，并非收入。')
   assert.equal(analyticsCopy(analyticsCopy(english, 'zh-CN'), 'en-US'), english)
 })
+
+test('a sales order without an amount is missing, not zero', () => {
+  const sales = (id, totalAmount) => ({ id, salesOrderId: id, workflowStatus: 'confirmed', status: 'confirmed', customerName: 'Northwind', currency: 'USD', orderDate: '2026-09-05', totalAmount, lines: [{ sku: 'A', unit: 'pcs', orderedQuantity: 1, fulfilledQuantity: 0 }] })
+  const report = buildRuntimeGovernedReport(context({ salesOrders: [sales('SO-1', 120), sales('SO-2', null)] }), { subject: 'sales' })
+  assert.equal(kpi(report, 'sales_order_amount').currentValue, null)
+  assert.equal(kpi(report, 'sales_order_amount').dataStatus, 'incomplete')
+  assert.ok(kpi(report, 'sales_order_amount').limitations.includes('amount_missing'))
+  assert.ok(report.limitations.includes('amount_missing'))
+  assert.deepEqual(report.details.map(row => row.amount), [120, null])
+})
+
+test('a purchase order quantity is totalled only within one unit', () => {
+  const lines = (...units) => units.map(unit => ({ sku: `SKU-${unit}`, orderedQuantity: 10, receivedQuantity: 0, unit }))
+  const report = buildRuntimeGovernedReport(context({ purchaseOrders: [po('PO-PCS', 'issued', 1, { lines: lines('pcs', 'pcs') }), po('PO-MIXED', 'issued', 1, { lines: lines('pcs', 'ft') }), po('PO-NO-UNIT', 'issued', 1, { lines: lines('') })] }), { subject: 'procurement' })
+  assert.deepEqual(report.details.map(row => [row.id, row.quantity, row.unit]), [['PO-PCS', 20, 'pcs'], ['PO-MIXED', null, 'mixed'], ['PO-NO-UNIT', null, '']])
+  assert.ok(report.columnDefinitions.some(column => column.key === 'unit' && column.label === '单位'))
+})

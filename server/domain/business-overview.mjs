@@ -1,8 +1,13 @@
 // Aggregate the loaded, permission-scoped records before applying the detail limit.
-export function buildBusinessOverview(all) {
+// salesDemand holds the open demand of each sales order line in scope
+// ({ orderId, open }); an order is unfulfilled while any of its lines has
+// demand left, so lines in different units are never added to decide it.
+export function buildBusinessOverview(all, { salesDemand = null } = {}) {
   const purchases = all.purchase_orders;
   const sales = all.sales_orders;
   const active = row => !['closed', 'cancelled', 'canceled', 'completed', 'fully_received', 'rejected'].includes(row.status);
+  const ordersWithDemand = salesDemand ? new Set(salesDemand.filter(line => line.open > 0).map(line => line.orderId)) : null;
+  const unfulfilled = row => ordersWithDemand ? ordersWithDemand.has(row.id) : row.quantity > row.fulfilled;
   const months = new Map();
   for (const [rows, key] of [[purchases, 'Purchase orders'], [sales, 'Sales orders']]) {
     for (const row of rows) {
@@ -29,7 +34,7 @@ export function buildBusinessOverview(all) {
       // purchase orders report it links to always count the same orders.
       { id: 'open_orders', label: 'Open purchase orders', count: purchases.filter(row => row.isOpen).length, path: '/app/reports/procurement?status=open', action: 'Review orders' },
       { id: 'inventory_shortages', label: 'Inventory shortages', count: all.inventory_balances.filter(row => row.shortage !== null && row.shortage > 0).length, path: '/app/inventory?risk=high', action: 'Review inventory' },
-      { id: 'unfulfilled_sales', label: 'Unfulfilled sales orders', count: sales.filter(row => active(row) && row.status !== 'draft' && row.quantity > row.fulfilled).length, path: '/app/sales/orders', action: 'Review orders' },
+      { id: 'unfulfilled_sales', label: 'Unfulfilled sales orders', count: sales.filter(row => active(row) && row.status !== 'draft' && unfulfilled(row)).length, path: '/app/sales/orders', action: 'Review orders' },
     ],
   };
 }

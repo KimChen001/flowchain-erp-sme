@@ -6,7 +6,7 @@ export type CurrencyAggregationStatus = "single_currency" | "filtered_currency" 
 export type CurrencyAmount = { currencyCode: string | null; currencyLabel: string; amount: number | null; recordCount?: number };
 // Money metrics carry their own currency, computed from their own rows.
 export type MetricCurrency = { currencyCode?: string | null; currencyLabel?: string; currencies?: string[]; currencyAggregationStatus?: CurrencyAggregationStatus; currencyAmounts?: CurrencyAmount[] };
-export type MetricDefinition = MetricCurrency & { id: string; label: string; description: string; subject: string; unit: string; format: string; aggregation: string; numerator: string; denominator: string | null; dateField: string; applicableFilters: string[]; drilldownPath: string; emptyValue: number; version: string; value: number | null; currentValue: number | null; dataStatus?: "complete" | "no_records" | "numeric_zero" | "incomplete" | "multi_currency_unconverted" | "restricted"; limitations?: string[]; comparisonValue: number | null; comparisonDelta: number | null; comparisonRate: number | null; comparisonDirection: "up" | "down" | "flat"; comparisonLabel: string; comparisonUnit: string; calculationLabel: string; trend?: Array<{ period: string; value: number }> | null };
+export type MetricDefinition = MetricCurrency & { id: string; label: string; description: string; subject: string; unit: string; format: string; aggregation: string; numerator: string; denominator: string | null; dateField: string; applicableFilters: string[]; drilldownPath: string; emptyValue: number; version: string; value: number | null; currentValue: number | null; dataStatus?: "complete" | "no_records" | "numeric_zero" | "incomplete" | "multi_currency_unconverted" | "restricted"; limitations?: string[]; /** The one unit an open-quantity figure is in, when it has one. */ quantityUnit?: string | null; comparisonValue: number | null; comparisonDelta: number | null; comparisonRate: number | null; comparisonDirection: "up" | "down" | "flat"; comparisonLabel: string; comparisonUnit: string; calculationLabel: string; trend?: Array<{ period: string; value: number }> | null };
 export type ReportChartType = "line" | "bar" | "horizontal_bar" | "area" | "stacked_bar" | "pie" | "donut" | "combo" | "pareto" | "funnel" | "waterfall" | "treemap" | "gauge" | "heatmap" | "calendar" | "sankey" | "scatter" | "radar";
 // A measure of a combo, Pareto or scatter visual: which value axis it uses (or
 // the x, y and size of a scatter) and its unit.
@@ -16,6 +16,8 @@ export type ReportChart = {
   description?: string; currencyCode?: string | null; measures?: ReportMeasure[]; totals?: string[]; breakdown?: Record<string, Array<{ name: string; value: number }>>;
   range?: [string, string]; links?: Array<{ source: string; target: string; value: number }>; targets?: string[]; guides?: { x: number | null; y: number | null };
   detail?: { count: number; total: number; exception?: number; pending?: number }; statusLabels?: boolean; limitations?: string[];
+  /** The units a quantity visual's bars are in; bars in different units are not comparable. */
+  units?: string[];
 };
 export type ReportColumnDefinition = { key: string; label: string; type: string; subject: string; valueMap?: Record<string, string> };
 export type GovernedReport = {
