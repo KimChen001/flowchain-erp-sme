@@ -21,6 +21,9 @@
     { "id": "route-draft-en", "category": "routing", "language": "en-US", "role": "admin", "question": "Prepare an action draft", "expect": { "skill": ["prepare_action_draft"], "draft": true } },
     { "id": "route-draft-supplier-email", "category": "routing", "language": "en-US", "role": "buyer", "question": "Draft a follow-up email to Precision Fastener Works about their late order.", "expect": { "skill": ["prepare_action_draft"], "draft": true, "mentions": ["Precision Fastener Works"] } },
     { "id": "route-draft-zh", "category": "routing", "language": "zh-CN", "role": "admin", "question": "帮我准备一个处理草稿", "expect": { "skill": ["prepare_action_draft"], "draft": true } },
+    { "id": "route-order-generate-en", "category": "routing", "language": "en-US", "role": "buyer", "question": "Can you help me generate the order?", "expect": { "skill": ["prepare_action_draft"], "draft": true, "mentions": ["LDM-001"] }, "note": "A request to start an order: the purchase request it opens, or why none is opened." },
+    { "id": "route-order-named-en", "category": "routing", "language": "en-US", "role": "buyer", "question": "Create a purchase order for LDM-001", "expect": { "skill": ["prepare_action_draft"], "draft": true, "mentions": ["Opening a", "LDM-001"] } },
+    { "id": "route-order-zh", "category": "routing", "language": "zh-CN", "role": "buyer", "question": "帮我下单", "expect": { "skill": ["prepare_action_draft"], "draft": true, "sameAs": "route-order-generate-en" } },
     { "id": "route-risk-en", "category": "routing", "language": "en-US", "role": "admin", "question": "Which items have the highest risk?", "expect": { "skill": ["highest_risk_items"] } },
 
     { "id": "num-open-overdue", "category": "numeric", "language": "en-US", "role": "admin", "question": "How many open purchase orders do we have?", "expect": { "skill": ["workspace_metrics"], "numbers": ["open_po_count", "overdue_po_count"], "metricsAgree": true } },
@@ -152,6 +155,7 @@
     { "id": "neg-stuck-approval", "category": "negative", "language": "en-US", "role": "admin", "question": "Which POs are stuck in approval?", "expect": { "skill": ["pending_approvals"], "notSkill": ["inventory_availability"] } },
     { "id": "neg-sales-orders-overdue", "category": "negative", "language": "en-US", "role": "admin", "question": "Which sales orders are overdue?", "expect": { "notSkill": ["purchase_orders", "workspace_metrics"] } },
     { "id": "neg-invoice-awaiting-approval", "category": "negative", "language": "en-US", "role": "finance", "question": "Which supplier invoices are still waiting for approval?", "expect": { "notSkill": ["pending_approvals", "purchase_orders"] } },
+    { "id": "neg-order-reorder-point", "category": "negative", "language": "en-US", "role": "admin", "question": "What is the reorder point of LDM-001?", "expect": { "notSkill": ["prepare_action_draft"] } },
     { "id": "neg-fiscal-year-token", "category": "negative", "language": "en-US", "role": "admin", "question": "How many open POs do we have in FY-2026?", "expect": { "skill": ["workspace_metrics"], "numbers": ["open_po_count"], "absent": ["couldn't find"] } },
     { "id": "neg-delivered-late", "category": "negative", "language": "en-US", "role": "admin", "question": "Which POs were delivered late?", "expect": { "notSkill": ["purchase_orders"] } },
     { "id": "neg-promised-word", "category": "negative", "language": "en-US", "role": "admin", "question": "Which approved POs are still pending delivery?", "expect": { "notSkill": ["pending_approvals"] } },

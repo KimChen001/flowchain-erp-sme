@@ -71,9 +71,12 @@ function answerMode(response: AiResponseV2): AiFocusedAnswerMode {
 
 function draftAction(card: AiResponseV2ReviewCard, language: Language): AiFocusedAction {
   const structured = ["purchase_request_draft", "rfq_draft", "task_draft"].includes(card.draftType || "");
+  // An order card names its SKU ("Open request: 12 pcs of LDM-001"), so
+  // several of them can be told apart.
+  const named = typeof card.autoOpen === "boolean" && card.allowedNextStep;
   return {
     kind: structured ? "structured_draft" : "text_draft",
-    label: structured
+    label: named ? card.allowedNextStep : structured
       ? card.draftType === "rfq_draft" ? focusedCopy[language].rfqDraft : card.draftType === "task_draft" ? focusedCopy[language].taskDraft : focusedCopy[language].prDraft
       : card.allowedNextStep || focusedCopy[language].textDraft,
     card,

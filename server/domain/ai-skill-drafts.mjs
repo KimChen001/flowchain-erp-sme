@@ -61,7 +61,7 @@ function withGreeting(name, body, language) {
 // date promised for it (and the original date when it moved). When the open
 // lines are unknown (none, or one without a SKU or a known quantity) the
 // message names none.
-function poFollowupBody(po, fmt, language) {
+export function poFollowupBody(po, fmt, language) {
   const lines = array(po.openLines)
   if (!lines.length || lines.some((line) => !line.sku || line.remaining === null || line.remaining === undefined)) return aiSkillText('draft.po_followup.message_generic', language, { po: po.orderNumber })
   const bullets = lines.map((line) => aiSkillText('draft.po_followup.bullet', language, {
@@ -134,3 +134,5 @@ export function aiSkillNextStepText(candidate, facts, language) {
   return key ? aiSkillText(key, language, { supplier }) : ''
 }
 
+// Starting an order (ai-skill-start-order.mjs) words its follow-up as the drafts do.
+export { poFollowupBody as poFollowupMessage }

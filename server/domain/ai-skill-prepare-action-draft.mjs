@@ -3,14 +3,19 @@ import { aiSkillFormatter, aiSkillNavigation, presentAiSkillAnswer } from './ai-
 import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
 import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
 import { AI_SKILL_DRAFT_TYPES, aiSkillDraftCandidate, aiSkillDraftCard } from './ai-skill-drafts.mjs'
+import { presentStartOrder, runStartOrder } from './ai-skill-start-order.mjs'
 
 // Review-only drafts for the top signals: the best candidate of each draft
 // type, then the rest by rank, at most three. The candidates and cards are
-// shared with the draft each answer line offers (ai-skill-drafts.mjs).
+// shared with the draft each answer line offers (ai-skill-drafts.mjs). A
+// request to start an order (route mode order) is answered by
+// ai-skill-start-order.mjs, whose follow-up is worded as the drafts word it.
 export { AI_SKILL_DRAFT_TYPES }
+export { poFollowupMessage } from './ai-skill-drafts.mjs'
 const MAX_CARDS = 3
 
-export function runPrepareActionDraft(facts, { focus = null } = {}) {
+export function runPrepareActionDraft(facts, { focus = null, route = null } = {}) {
+  if (route?.mode === 'order') return runStartOrder(facts, { focus, route, canDraft: Boolean(facts.visibility?.canDraft) })
   const ranked = rankAiSkillItems(buildAiSkillSignals(facts)).filter((item) => matchesAiSkillFocus(item, focus))
   const all = ranked.map((item) => aiSkillDraftCandidate(item, facts))
   const seen = new Set()
@@ -37,6 +42,7 @@ function focusTitle(id, count, fmt, language) {
 }
 
 export function presentPrepareActionDraft(result, facts, { skill, language, query }) {
+  if (result.mode === 'order') return presentStartOrder(result, facts, { skill, language, query })
   const fmt = aiSkillFormatter(facts, language)
   const reviewCards = result.drafts.map((candidate) => aiSkillDraftCard(candidate, facts, language))
   const extraLimitations = result.canDraft ? [] : [{ code: 'draft_permission', label: aiSkillText('limitation.draft_permission.label', language), description: aiSkillText('draft.no_permission', language), severity: 'warning', missingData: [] }]
