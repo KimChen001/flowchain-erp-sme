@@ -28,6 +28,7 @@ const REF_LABELS: Record<string, readonly [string, string]> = {
   "item_supplier:first_approved": ["First approved supplier", "第一个已批准供应商"],
   "item_supplier:reference_price": ["Reference price", "参考价"],
   "item:default_warehouse": ["Item default warehouse", "物料默认仓库"],
+  "supplier:email": ["Supplier contact", "供应商联系人"],
   "purchase_order:warehouse": ["Purchase order warehouse", "采购订单仓库"],
   "user:default_warehouse": ["Your default warehouse", "你的默认仓库"],
   "workspace:only_warehouse": ["Your only warehouse", "你唯一可用的仓库"],
