@@ -8,7 +8,9 @@ import { answerAiSkill, toolsFor } from './ai-skills.mjs'
 import { recordAiSkillAudit } from './ai-skill-audit.mjs'
 import { aiSkillIntentShadowAudit, aiSkillIntentShadowEnabled, classifyAiSkillIntentShadow } from './ai-skill-intent-shadow.mjs'
 import { aiSkillIntentRoutingAudit, aiSkillIntentRoutingEnabled, routeAiSkillIntent } from './ai-skill-intent-routing.mjs'
-import { aiCompoundAnswersEnabled, aiCompoundAudit, composeAiCompoundAnswer, planAiCompoundAnswer } from './ai-skill-compound.mjs'
+import { aiCompoundAnswersEnabled, aiCompoundAudit, composeAiCompoundAnswer, planAiCompoundAnswer, splitAiCompoundQuestion } from './ai-skill-compound.mjs'
+import { aiAgentAudit, aiAgentPlanningEnabled, planAiAgentTools } from './ai-agent-planning.mjs'
+import { aiSkillById } from './ai-skill-registry.mjs'
 import { assertValidAiSkillResponse } from './ai-skill-validator.mjs'
 
 // The assistant's answer path after knowledge and business queries: route the
@@ -20,12 +22,23 @@ import { assertValidAiSkillResponse } from './ai-skill-validator.mjs'
 // back (ai-skill-follow-up.mjs). A question with two or three parts the rules
 // route to different skills gets a section per part (ai-skill-compound.mjs).
 // A question no rule and no named record matches may be routed by a model
-// when that is switched on (ai-skill-intent-routing.mjs); otherwise no model
-// is called. A question still unmatched, an instruction to act, a question
+// when that is switched on (ai-skill-intent-routing.mjs). With agent planning
+// on (ai-agent-planning.mjs), such a question, and a question with several
+// parts the compound rules could not answer part by part, goes to one model
+// call that picks up to three skills; it replaces the one-skill pick, and the
+// rules' answer stays when it fails. Otherwise no model is called. A question
+// still unmatched, an instruction to act, a question
 // about the world outside the workspace, or a skill the actor may not use
 // gets the capability answer.
 
 const text = (value) => String(value ?? '').trim()
+
+// A record the model named, in the question's own spelling (case aside, the
+// planner only keeps records the question contains).
+function spelledAsAsked(message, record) {
+  const escaped = record.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return String(message).match(new RegExp(escaped, 'iu'))?.[0] || record
+}
 
 export function isLegacyAiTemplateGatewayEnabled(env = process.env) {
   return text(env?.FLOWCHAIN_AI_LEGACY_TEMPLATE_GATEWAY).toLowerCase() === 'true'
@@ -67,25 +80,60 @@ export async function runAiSkillRuntime(ctx, body = {}) {
   // unread, and the message is not a greeting or a test: the model may pick
   // one of the actor's skills. The pick runs through the same record step as
   // a rule's, so the mode and the records stay deterministic.
+  // Agent planning (P2): a question no rule and no named record chose a
+  // skill for, or one with several parts the compound rules did not answer
+  // part by part (a draft request among them, for example). Chips, follow-ups,
+  // greetings, instructions and outside-world questions never reach it.
+  const agentEntry = readsFacts && !followUp && !route?.greeting && !route?.explicit && !refined?.capability && aiAgentPlanningEnabled(env)
+    ? (!refined?.skillId ? 'unmatched' : !compound && splitAiCompoundQuestion(message).length >= 2 ? 'multi_part' : null)
+    : null
+  const agentPlan = agentEntry ? await planAiAgentTools({ message, actor: context.actor, env, excluded: route?.excluded || [], ...(ctx.aiAgentProvider ? { provider: ctx.aiAgentProvider } : {}) }) : null
+  // Each planned call runs through the same record step as a rule's: the
+  // records the model named (all written in the question) are looked up in the
+  // actor's own facts, and the skill answers in its own words.
+  const agentSections = agentPlan?.status === 'planned'
+    ? agentPlan.calls.map((call) => {
+      // Each record as the question writes it, set off as a name, so the record
+      // step reads it exactly as it reads the question.
+      const named = call.records.map((record) => `${spelledAsAsked(message, record)},`).join(' ')
+      const base = routeSkill({ message: named }) || {}
+      const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short' }, skillId: call.tool }, named, facts)
+      if (!partRoute || partRoute.capability || !partRoute.skillId || !allowed.has(partRoute.skillId)) return null
+      return { question: aiSkillById(partRoute.skillId)?.title?.[language === 'zh-CN' ? 'zh' : 'en'] || partRoute.skillId, route: partRoute }
+    }).filter(Boolean)
+    : []
   let intentRouting = null
-  if (!compound && readsFacts && !refined?.skillId && !refined?.capability && !route?.greeting && aiSkillIntentRoutingEnabled(env)) {
+  if (!agentEntry && !compound && readsFacts && !refined?.skillId && !refined?.capability && !route?.greeting && aiSkillIntentRoutingEnabled(env)) {
     intentRouting = await routeAiSkillIntent({ message, actor: context.actor, env, excluded: route?.excluded || [], ...(ctx.aiSkillIntentProvider ? { provider: ctx.aiSkillIntentProvider } : {}) })
     if (intentRouting.status === 'routed' && allowed.has(intentRouting.skillId)) refined = refineAiSkillRoute({ ...route, skillId: intentRouting.skillId }, asked, facts) || refined
   }
-  const skillId = compound ? 'compound' : refined?.skillId && allowed.has(refined.skillId) ? refined.skillId : 'capability_overview'
+  // One planned section answers as that skill; two or three as a compound answer.
+  const agentServed = agentSections.length > 0
+  if (agentSections.length === 1) refined = agentSections[0].route
+  const skillId = compound || agentSections.length > 1 ? 'compound' : refined?.skillId && allowed.has(refined.skillId) ? refined.skillId : 'capability_overview'
   const answerFacts = skillId === 'capability_overview' ? null : facts
   let response
-  if (compound) {
+  if (agentSections.length > 1) {
+    const sections = agentSections.map((section) => ({ ...section, response: answerAiSkill({ skillId: section.route.skillId, facts, language, query: message, focus: section.route.focus || null, actor: context.actor, route: section.route }).response }))
+    response = { ...assertValidAiSkillResponse(composeAiCompoundAnswer({ sections, facts, language, query: message }), facts), skillRouting: { source: 'model', modelStatus: 'planned' } }
+  } else if (compound) {
     const sections = compound.sections.map((section) => ({ ...section, response: answerAiSkill({ skillId: section.route.skillId, facts, language, query: section.question, focus: section.route.focus || null, actor: context.actor, route: section.route }).response }))
     response = assertValidAiSkillResponse(composeAiCompoundAnswer({ sections, facts, language, query: message, skipped: compound.skipped }), facts)
   } else {
     const answered = answerAiSkill({ skillId, facts: answerFacts, language, query: message, focus: refined?.focus || null, refusal, outOfDomain: Boolean(route?.outOfDomain), actor: context.actor, route: refined }).response
     const modelRouted = intentRouting?.status === 'routed' && skillId === intentRouting.skillId
-    const routed = intentRouting ? { ...answered, skillRouting: { source: modelRouted ? 'model' : 'rules', modelStatus: intentRouting.status } } : answered
+    const routed = agentServed
+      ? { ...answered, skillRouting: { source: 'model', modelStatus: 'planned' } }
+      : agentPlan
+        ? { ...answered, skillRouting: { source: 'rules', modelStatus: agentPlan.status } }
+        : intentRouting ? { ...answered, skillRouting: { source: modelRouted ? 'model' : 'rules', modelStatus: intentRouting.status } } : answered
     response = followUp ? { ...routed, followUp: { kind: followUp.kind } } : routed
   }
+  // A model step was tried and failed: the rules answered, and the answer says
+  // it may not cover every part (the limited-mode label).
+  if (agentPlan && !agentServed && agentPlan.status === 'degraded') response = { ...response, agentPlanning: { status: 'degraded', entry: agentEntry } }
   const routingAudit = aiSkillIntentRoutingAudit(intentRouting)
-  const agent = compound ? aiCompoundAudit(compound) : null
+  const agent = agentPlan ? aiAgentAudit(agentPlan, { entry: agentEntry, served: agentSections.map((section) => section.route.skillId) }) : compound ? aiCompoundAudit(compound) : null
   const audit = (intentShadow = null) => recordAiSkillAudit(ctx, { response, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow, intentRouting: routingAudit, followUp: followUp?.kind || null, agent })
   // With the classifier on, the answer does not wait for it: the audit row
   // is written when its suggestion arrives (best effort, like every audit).
