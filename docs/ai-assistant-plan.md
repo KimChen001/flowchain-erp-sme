@@ -97,7 +97,7 @@ request is named.
 | Stage | On main | In open pull requests | Still missing |
 | --- | --- | --- | --- |
 | A. Baseline | Real-provider runs of both evaluations, recorded in `docs/ai-provider-baseline-2026-10-04.md` (#130) | #144: token totals for planning calls in `--agent` runs | Failures sorted per case by stage (routing, data, retrieval, generation, permission, provider); the model name in reports |
-| B. Model tool planning (P2) | Nothing: the adapters send no `tools` and read no `tool_calls` | #144 (draft): native tool calls, the supplier business query tool, a tier argument, the Acme entry rule with cases in both languages, the `agent` audit block, the limited-mode label. The P2 gate passed with Parley on 2026-10-05 (§8) | Merging with the flag off (§6); the `agent_failure` category; multi-turn `turns` |
+| B. Model tool planning (P2) | Nothing: the adapters send no `tools` and read no `tool_calls` | #144 (draft): native tool calls, the supplier business query tool, a tier argument, the Acme entry rule with cases in both languages, the `agent` audit block, the limited-mode label. The P2 gate passed with Parley on 2026-10-05, also after merging main (§8) | Merging with the flag off (§6); naming an unanswered part; a scripted provider for offline runs; the `agent_failure` category; multi-turn `turns` |
 | C. Knowledge evidence | Routing of product and policy questions, whole model codes, Markdown section chunks (#126); an honest "the documents don't say" is a no-answer, citations read `[1]`, 18 knowledge cases (#139) | — | Knowledge search as a P2 tool (PR-3); a relevance threshold (baseline finding 3); conflicting documents (handling and a case); a prompt-injection document case; document version and effective date; the original file; headings and pages for PDF and DOCX; audit rows for knowledge answers |
 | D. Reviewable drafts | The purchase request form opens prefilled with field sources; message drafts with To, Subject and Open in email; a next step and draft on every answer line; receiving and quote prefill; the order form opens by itself; follow-ups only for issued orders (#118, #119, #120, #122, #124, #125, #140) | #148: a tier the question names narrows the drafts; #152: the order answer chases only issued orders | Partial-delivery wording and a policy citation on the draft review (PR-4); one message per supplier covering several orders; "no supplier email on file" |
 | E. Authorized execution | Nothing; the legacy `/api/user-confirmed-actions` route is still mounted, with no permission check and no caller | #151: the design. The assistant proposes, a person confirms, the system runs the existing command. v1 is a draft purchase request and a draft RFQ from an approved request; decisions A1–A8 | C1 (purchase request), C2 (RFQ), C3 (model proposal tools) |
@@ -266,16 +266,20 @@ Status in #144 as of 2026-10-05: **done** or **not yet**.
 - **Done.** A flag (`FLOWCHAIN_AI_AGENT_MODE=plan`, off by default) and an
   `agent_planning` policy entry with its approval date. With the flag off,
   behaviour is unchanged.
-- **Done.** Fallbacks (#108 §6): rules and pick-one routing stay the floor; a part
-  that is not answered says so; a timeout (2.5 s by default) degrades to the rules'
-  answer.
+- **In part.** Fallbacks (#108 §6): rules and pick-one routing stay the floor, and a
+  timeout (2.5 s by default) degrades to the rules' answer.
+  - **Not yet:** when the planner declines or drops one part, the answer does not
+    say which part went unanswered.
 - **Done.** An `agent` audit block with codes and counts only: tools, status, record
   counts, milliseconds, model calls, fallback reason (agent mode decision 9).
 - **Done.** A limited-mode label, in English with a Chinese translation, shown only
   when a model step was tried and failed.
-- **In part.** A scripted provider in the unit tests; the `multi_tool` category (14
-  cases); token totals for planning calls in `--agent` runs.
-  - **Not yet:** the `agent_failure` category and multi-turn `turns`.
+- **In part.** The `multi_tool` category (14 cases); token totals for planning calls
+  in `--agent` runs.
+  - The planner's failure modes (throw, hang, invalid record, declined) are unit
+    tests with scripted providers, not runner cases.
+  - **Not yet:** an in-process scripted provider for offline runs, the
+    `agent_failure` category, and multi-turn `turns`.
 - **Done.** Evaluation cases asserting that the Acme request enters the planner, in
   both languages.
 
@@ -291,11 +295,15 @@ Status in #144 as of 2026-10-05: **done** or **not yet**.
 - `repeat: 3` gives identical figures and records; at most 2% degraded calls;
 - agent latency at most 1.5 s at p50 and 2.5 s at p95.
 
-**P2 result, with Parley (claude-haiku-4-5 through Bedrock), 2026-10-05, #144:**
-- `multi_tool`: 13 of 14 (93%);
-- degraded calls: 0 of 54;
-- planning p95: 1,307 ms;
-- no regression in the gated cases.
+**P2 result, with Parley (claude-haiku-4-5 through Bedrock), 2026-10-05, #144, run again
+after merging `51b21d7`:**
+- **Passes.**
+  - No regression in the 210 gated cases.
+  - The Acme entry cases pass in both languages.
+  - Degraded calls: 0 of 54.
+  - Planning latency: p50 849 ms, p95 1,743 ms.
+- **`multi_tool`: 13 of 14 (93%).** The miss is `mt-tier-draft-en`: for "prepare a
+  message to them" the model picks `supplier_attention`, not `prepare_action_draft`.
 
 **Knowledge:** the knowledge cases pass offline; a provider run is scored per case
 and allows a no-answer only where a case lists it.
