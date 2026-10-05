@@ -22,6 +22,10 @@ test('a manager receives an issued purchase order on the desktop and posts the r
   await expect(form).toBeVisible()
   await expect(form.getByLabel('Receiving warehouse')).toHaveValue('browser-warehouse')
   await expect(form.getByTestId('receiving-form-line')).toContainText('BROWSER-SKU')
+  // A new receipt says where its prefilled values came from.
+  await expect(form.getByTestId('receiving-prefill-warehouse')).toHaveText(/^(Purchase order warehouse|Your default warehouse|Your only warehouse)$/)
+  await expect(form.getByTestId('receiving-prefill-arrival')).toHaveText('Now')
+  await expect(form.getByTestId('receiving-prefill-accepted')).toHaveText('Starts at the quantity still to receive')
   await form.getByLabel('Accepted BROWSER-SKU').fill('4')
   await form.getByLabel('Rejected BROWSER-SKU').fill('1')
   await form.getByTestId('receiving-form-save').click()
@@ -36,6 +40,8 @@ test('a manager receives an issued purchase order on the desktop and posts the r
   await expect(page.getByTestId('receiving-submit-draft')).toBeVisible()
   await page.getByTestId('receiving-edit-draft').click()
   await expect(page.getByTestId('receiving-form')).toBeVisible()
+  // Editing a saved receipt shows its saved values, with no prefill labels.
+  await expect(page.getByTestId('receiving-prefill-arrival')).toHaveCount(0)
   await expect(page.getByLabel('Accepted BROWSER-SKU')).toHaveValue('4')
   await expect(page.getByLabel('Rejection reason BROWSER-SKU')).toHaveValue('Carton crushed in transit')
   await page.getByLabel('Accepted BROWSER-SKU').fill('5')

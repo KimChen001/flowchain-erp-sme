@@ -1,6 +1,7 @@
 import { SupplierForm } from "./SupplierForm";
 import { supplierCopy } from "./supplierCopy";
 import { SupplierPerformancePanel, supplierPerformanceTabLabel } from "./supplierPerformance";
+import { SupplierActivityCards } from "./supplierActivity";
 import { SupplierTierPanel, TierChip, type Tier, type TierHistoryRow } from "./SupplierTier";
 import { formatSuggestionReason, suggestionDiffers, suggestionReasonText, type SupplierInsight, type SupplierInsights } from "./supplierInsights";
 import { useEffect, useState, useRef } from "react";
@@ -651,16 +652,11 @@ export default function SupplierMasterPage({
             </table>
           )}
         </Card>
-        <Card className="p-5">
-          <h2 className="text-sm font-semibold">{copy("采购记录")}</h2>
-          <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
-            {copy("暂无采购交易记录")}</div>
-        </Card>
-        <Card className="p-5">
-          <h2 className="text-sm font-semibold">{copy("风险与异常")}</h2>
-          <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
-            {copy("暂无风险或异常")}</div>
-        </Card>
+        <SupplierActivityCards
+          supplierId={selected.id}
+          titles={{ orders: copy("采购记录"), risks: copy("风险与异常") }}
+          empty={{ orders: copy("暂无采购交易记录"), risks: copy("暂无风险或异常") }}
+        />
         </>}
       </div>
     );
