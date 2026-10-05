@@ -77,7 +77,7 @@ function EvidenceLink({ item, children, onNavigate }: { item: AiResponseV2Eviden
 
 function reviewRequest(card: AiResponseV2ReviewCard): ActionDraftPreviewRequest | null {
   if (!card.draftType || !["supplier_followup_draft", "po_followup_draft", "exception_note", "inventory_exception_closure_draft"].includes(card.draftType)) return null;
-  return { type: card.draftType, title: card.draftTitle || card.title, source: "ai_assistant", originEvidence: card.originEvidence || [], payload: { ...(card.payload || {}), reason: card.payload?.reason || card.description || card.allowedNextStep } };
+  return { type: card.draftType, title: card.draftTitle || card.title, source: "ai_assistant", originEvidence: card.originEvidence || [], payload: { ...(card.payload || {}), reason: card.payload?.reason || card.description || card.allowedNextStep } , ...(card.prefill ? { prefill: card.prefill } : {}) };
 }
 
 function NavigationAction({ link, primary = false, onNavigate }: { link: AiResponseV2NavigationLink; primary?: boolean; onNavigate?: Navigate }) {

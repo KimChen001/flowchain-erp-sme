@@ -1,6 +1,7 @@
 import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillFormatter, aiSkillImpact, aiSkillNavigation, aiSkillSignalReason, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { AI_SKILL_RECENT_DAYS, aiSkillDaysBetween, buildAiSkillSignals, compareSignalsByDate } from './ai-skill-signals.mjs'
+import { aiSkillSupplierWithTier } from './ai-skill-purchase-orders.mjs'
 
 // "供应商数据给我呢", "How are our suppliers doing?": which suppliers need
 // attention, and why, without a score. Each supplier's open work is its
@@ -14,7 +15,9 @@ import { AI_SKILL_RECENT_DAYS, aiSkillDaysBetween, buildAiSkillSignals, compareS
 // scorecard. The answer also names the suppliers the workspace dealt with in
 // the last AI_SKILL_RECENT_DAYS days (new orders, receipts, invoices),
 // whether or not anything is wrong. A supplier the question names (or the
-// page's supplier, when the question points at it) narrows the answer to it.
+// page's supplier, when the question points at it) narrows the answer to it;
+// a tier ("Tier 1 suppliers") narrows it to that tier's suppliers, in the same
+// order. Each supplier with a tier is labelled with it.
 
 const DESCRIBED = 3
 const LISTED = 5
@@ -47,9 +50,11 @@ function recentActivity(facts, names, only) {
 export function runSupplierAttention(facts, { route = null, focus = null } = {}) {
   const names = new Map(array(facts.suppliers).map((row) => [row.id, row.name || row.code || row.id]))
   const only = new Set([...array(route?.entities?.suppliers).map((row) => row.id), ...(focus?.entityType === 'supplier' ? [focus.entityId] : [])])
+  const tier = route?.tier || null
+  const tierIds = tier?.supplierIds ? new Set(tier.supplierIds) : null
   const groups = new Map()
   for (const item of buildAiSkillSignals(facts)) {
-    if (!OPEN_WORK.includes(item.type) || !item.supplierId || (only.size && !only.has(item.supplierId))) continue
+    if (!OPEN_WORK.includes(item.type) || !item.supplierId || (only.size && !only.has(item.supplierId)) || (tierIds && !tierIds.has(item.supplierId))) continue
     const group = groups.get(item.supplierId) || { supplierId: item.supplierId, name: names.get(item.supplierId) || item.supplier || item.supplierId, items: [], counts: {} }
     group.items.push(item)
     group.counts[item.type] = (group.counts[item.type] || 0) + 1
@@ -67,8 +72,9 @@ export function runSupplierAttention(facts, { route = null, focus = null } = {})
     suppliers: suppliers.slice(0, LISTED),
     more: Math.max(0, suppliers.length - LISTED),
     totals,
-    quiet: only.size ? 0 : Math.max(0, names.size - suppliers.length),
-    recent: recentActivity(facts, names, only),
+    quiet: only.size ? 0 : Math.max(0, (tierIds ? tierIds.size : names.size) - suppliers.length),
+    recent: recentActivity(facts, names, only.size || !tierIds ? only : tierIds),
+    tier,
   }
 }
 
@@ -95,9 +101,13 @@ export function presentSupplierAttention(result, facts, { skill, language, query
   const date = fmt.day(facts.asOf)
   const first = result.suppliers[0]
   const named = result.named.length === 1 ? result.named[0] : null
+  const label = (group) => aiSkillSupplierWithTier(group.name, group.supplierId, facts, language)
+  // A tier filter the reader can apply: the title names the group.
+  const group = result.tier?.supplierIds ? aiSkillText(`tier.group_${result.tier.tier}`, language) : null
   const title = result.hidden ? aiSkillText('suppliers.title_hidden', language)
-    : !first ? (named ? aiSkillText('suppliers.title_named_none', language, { supplier: named, date }) : aiSkillText('suppliers.title_none', language, { date }))
-      : aiSkillCountText('suppliers.title', result.total, language, { count: fmt.number(result.total), supplier: first.name, lead: leadText(first.items[0], fmt, language) })
+    : group && !named && !result.tier.supplierIds.length ? aiSkillText('suppliers.tier_empty', language, { group })
+      : !first ? (named ? aiSkillText('suppliers.title_named_none', language, { supplier: named, date }) : group ? aiSkillText('suppliers.tier_title_none', language, { group, date }) : aiSkillText('suppliers.title_none', language, { date }))
+        : aiSkillCountText(group && !named ? 'suppliers.tier_title' : 'suppliers.title', result.total, language, { count: fmt.number(result.total), supplier: label(first), lead: leadText(first.items[0], fmt, language), ...(group ? { group } : {}) })
   const totalsText = partsText(result.totals, fmt, language)
   const summary = aiSkillSentences([
     totalsText ? aiSkillText('suppliers.totals', language, { parts: totalsText }) : '',
@@ -106,6 +116,7 @@ export function presentSupplierAttention(result, facts, { skill, language, query
     result.hidden ? '' : result.recent.length
       ? aiSkillText('suppliers.recent', language, { days: fmt.number(AI_SKILL_RECENT_DAYS), list: aiSkillList(result.recent.map((row) => activityText(row, fmt, language)), language) })
       : aiSkillText('suppliers.recent_none', language, { days: fmt.number(AI_SKILL_RECENT_DAYS) }),
+    result.tier && !result.tier.supplierIds ? aiSkillText('tier.unavailable', language) : '',
   ], language)
   const evidence = result.suppliers.map((group, index) => {
     const lead = group.items[0]
@@ -114,7 +125,7 @@ export function presentSupplierAttention(result, facts, { skill, language, query
     // The first three say which record is most urgent and why, with its date.
     const detail = index < DESCRIBED ? aiSkillText('suppliers.most_urgent', language, { id: lead.label, reason: aiSkillSignalReason(lead, facts, language) }) : ''
     return {
-      id: `supplier_attention:${group.supplierId}`, label: status, entityLabel: group.name, entityType: 'supplier', entityId: group.supplierId,
+      id: `supplier_attention:${group.supplierId}`, label: status, entityLabel: label(group), entityType: 'supplier', entityId: group.supplierId,
       moduleId: AI_SKILL_MODULES.supplier, evidenceType: 'supplier_attention', summary: aiSkillSentences([parts, detail], language),
       value: aiSkillText('value.issues', language, { count: fmt.number(group.items.length) }), status, statusCode: lead.type,
       severity: lead.severity, rank: index + 1, sourceLabel: aiSkillText(`area.${lead.area || 'purchasing'}`, language),

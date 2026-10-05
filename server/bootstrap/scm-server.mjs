@@ -729,13 +729,6 @@ function applyReceivingToPoAndInventory(db, grn, po, options = {}) {
   return { warnings: validation.warnings };
 }
 
-function supplierFlag(score, rejectRate) {
-  if (score >= 92 && rejectRate <= 2) return "战略";
-  if (score >= 84 && rejectRate <= 5) return "核心";
-  if (score >= 74 && rejectRate <= 12) return "备选";
-  return "整改";
-}
-
 function supplierPerformance(db) {
   return Array.isArray(db.suppliers) ? db.suppliers : [];
 }

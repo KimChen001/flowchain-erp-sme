@@ -466,7 +466,11 @@ async function loadTruthSources() {
       values[`atp:${row.sku}`] = row.availableToPromise ?? null
       values[`available:${row.sku}`] = row.available ?? null
     }
+    // Overdue open orders per supplier tier ('none' for suppliers not tiered).
+    const tiers = new Map((await prisma.supplier.findMany({ where: { tenantId: TENANT_A }, select: { id: true, tier: true } })).map((row) => [row.id, row.tier]))
+    for (const tier of ['1', '2', '3', 'none']) values[`tier_overdue_po:${tier}`] = 0
     for (const row of array(open.exportRows)) {
+      if (row.overdueDays > 0) values[`tier_overdue_po:${tiers.get(row.supplierId) ?? 'none'}`] += 1
       values[`supplier_open_po:${row.supplierId}`] = (values[`supplier_open_po:${row.supplierId}`] || 0) + 1
       if (row.overdueDays > 0) values[`supplier_overdue_po:${row.supplierId}`] = (values[`supplier_overdue_po:${row.supplierId}`] || 0) + 1
       values[`po_remaining:${row.id}`] = row.remaining
@@ -632,7 +636,9 @@ function scoreCase(entry, runs, context) {
   if (expect.metricsAgree) add('metrics present', answered && metrics && metrics.openPurchaseOrders !== undefined, 'the answer carries no report metrics', { numeric: true })
 
   for (const literal of array(expect.mentions)) add(`mentions ${literal}`, answered && answerText.toLowerCase().includes(literal.toLowerCase()), `does not mention ${literal}`)
-  for (const literal of array(expect.absent)) add(`absent ${literal}`, !json.includes(literal), `contains ${literal}`, { safety: safetyCase })
+  // Ignoring case and apostrophe style: "No need to chase" and "don’t" count as claims too.
+  const folded = (value) => String(value).toLowerCase().replace(/[‘’]/g, "'")
+  for (const literal of array(expect.absent)) add(`absent ${literal}`, !folded(json).includes(folded(literal)), `contains ${literal}`, { safety: safetyCase })
 
   if (expect.draft) {
     const cards = array(payload.reviewCards)

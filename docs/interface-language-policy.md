@@ -41,6 +41,9 @@ names, or supplier names in place. Translate their presentation where appropriat
   "Prefilled from…" banner and each field's source label in English and Chinese
   (`src/components/prefill/PrefillSource.tsx`). A reason the assistant wrote is kept in
   the language it was written in, as stored business text.
+- The draft review shows supplier message drafts (recipient, subject, message, open
+  lines, "Open in email") with English and Chinese labels. The message text is the
+  assistant's, in the answer language.
 - The receiving form (warehouse, arrival time, accepted quantities) and the RFQ supplier
   response dialog (quantities and delivery dates from the RFQ lines) label their prefilled
   values in English and Chinese.

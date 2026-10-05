@@ -91,3 +91,38 @@ test('read-only users cannot create suppliers', async ({ page }) => {
   await page.waitForLoadState('networkidle');
   await expect(page.getByTestId('customer-new')).toHaveCount(0);
 });
+
+test('supplier search and category filters narrow the list as they change', async ({ page }) => {
+  const headers = await login(page);
+  const stamp = Date.now();
+  const valves = `Harbor Valves ${stamp}`;
+  const cartons = `Summit Cartons ${stamp}`;
+  for (const [code, name, categories] of [[`FLT-A-${stamp}`, valves, ['Valves']], [`FLT-B-${stamp}`, cartons, ['Packaging', 'Labels']]] as const) {
+    const created = await page.request.post('/api/master-data/suppliers', { headers, data: { supplierCode: code, supplierName: name, defaultCurrency: 'USD', categories } });
+    expect(created.status()).toBe(201);
+  }
+  await page.goto('/app/master-data/suppliers');
+  const row = (name: string) => page.getByRole('row').filter({ hasText: name });
+  await expect(row(valves)).toHaveCount(1);
+  const search = page.getByLabel('Search suppliers', { exact: true });
+  await expect(search).toHaveAttribute('placeholder', 'Code or name');
+  // Name, ignoring case, then code, without pressing Refresh.
+  await search.fill(`harbor valves ${stamp}`);
+  await expect(row(cartons)).toHaveCount(0);
+  await expect(row(valves)).toHaveCount(1);
+  await search.fill(`flt-b-${stamp}`);
+  await expect(row(valves)).toHaveCount(0);
+  await expect(row(cartons)).toHaveCount(1);
+  // A supplier's second category matches too, and the other categories stay on offer.
+  await search.fill(String(stamp));
+  const category = page.getByLabel('Filter by category', { exact: true });
+  await category.selectOption('Labels');
+  await expect(row(valves)).toHaveCount(0);
+  await expect(row(cartons)).toHaveCount(1);
+  await expect(category.locator('option', { hasText: 'Valves' })).toHaveCount(1);
+  await category.selectOption('Valves');
+  await expect(row(cartons)).toHaveCount(0);
+  await expect(row(valves)).toHaveCount(1);
+  await search.fill(`no-such-supplier-${stamp}`);
+  await expect(page.getByText('No suppliers match these filters', { exact: true })).toBeVisible();
+});
