@@ -43,10 +43,9 @@ export function createKnowledgeService(prisma, { env = process.env, embeddingPro
       const requiredPermission = body.requiredPermission || null
       if (!KNOWLEDGE_AUDIENCES.includes(requiredPermission)) fail('KNOWLEDGE_INVALID_AUDIENCE', 'Choose a supported reader group.')
       if (requiredPermission && !actor.permissionCodes?.has(requiredPermission)) fail('KNOWLEDGE_AUDIENCE_DENIED', 'You must belong to the selected reader group.', 403)
-      const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 120, separators: ['\n\n', '\n', '。', '. ', ' ', ''] })
-      const chunks = await splitter.splitText(content)
+      const chunks = await splitKnowledgeContent(content)
       const documentId = randomUUID()
-      const chunkRows = chunks.map((content, position) => ({ id: randomUUID(), position, content, contentHash: hash(content) }))
+      const chunkRows = chunks.map(({ content, heading }, position) => ({ id: randomUUID(), position, content, heading, contentHash: hash(content) }))
       const document = await prisma.aiKnowledgeDocument.create({ data: { id: documentId, tenantId: actor.tenantId, title, language: body.language === 'zh-CN' ? 'zh-CN' : 'en-US', requiredPermission, createdById: actor.user?.id || actor.userId, chunks: { create: chunkRows } }, select: docSelect })
       // Save readable text first. An unavailable provider must not lose the imported document.
       try { return { ...document, ...await service.reindex(actor, documentId) } }
@@ -55,7 +54,7 @@ export function createKnowledgeService(prisma, { env = process.env, embeddingPro
     async get(actor, id) {
       const document = await prisma.aiKnowledgeDocument.findFirst({ where: { ...readable(actor), id }, include: { chunks: { orderBy: { position: 'asc' } } } })
       if (!document) fail('KNOWLEDGE_NOT_FOUND', 'Document not found or no longer accessible.', 404)
-      return { id: document.id, title: document.title, language: document.language, createdAt: document.createdAt, chunks: document.chunks.map(({ id, position, content }) => ({ id, position, content })) }
+      return { id: document.id, title: document.title, language: document.language, createdAt: document.createdAt, chunks: document.chunks.map(({ id, position, content, heading }) => ({ id, position, content, heading })) }
     },
     async archive(actor, id) {
       if (!manageable(actor)) fail('KNOWLEDGE_MANAGE_DENIED', 'Workspace administrator access is required.', 403)
@@ -106,11 +105,39 @@ export function createKnowledgeService(prisma, { env = process.env, embeddingPro
     async documents(actor) {
       const chunks = await prisma.aiKnowledgeChunk.findMany({ where: { document: readable(actor) }, include: { document: { select: { id: true, title: true, language: true, createdAt: true } } }, orderBy: [{ documentId: 'asc' }, { position: 'asc' }], take: 2001 })
       if (chunks.length > 2000) fail('KNOWLEDGE_INDEX_LIMIT', 'The local index exceeds 2,000 chunks. Archive older documents before searching.', 409)
-      return chunks.map(row => new Document({ pageContent: row.content, metadata: { id: row.id, documentId: row.documentId, title: row.document.title, position: row.position, language: row.document.language, contentHash: row.contentHash, embedding: row.embedding, embeddingModel: row.embeddingModel, embeddingDimensions: row.embeddingDimensions } }))
+      return chunks.map(row => new Document({ pageContent: row.content, metadata: { id: row.id, documentId: row.documentId, title: row.document.title, heading: row.heading || null, position: row.position, language: row.document.language, contentHash: row.contentHash, embedding: row.embedding, embeddingModel: row.embeddingModel, embeddingDimensions: row.embeddingDimensions } }))
     },
     semanticRanks(actor, queryVector, model) { return pgvectorKnowledgeRanks(prisma, actor, queryVector, model) },
   }
   return service
+}
+
+const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 120, separators: ['\n\n', '\n', '。', '. ', ' ', ''] })
+
+// Markdown headings (levels 1-3, outside code fences) start a new section. Each
+// section is split on its own and its chunks carry the heading path, so two
+// models described under their own headings never share a chunk, a vector or a
+// citation. Text without headings is split exactly as before, with no heading.
+export async function splitKnowledgeContent(content) {
+  const sections = [{ heading: null, lines: [] }]
+  const path = []
+  let fence = null
+  for (const line of String(content || '').split('\n')) {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1]
+    if (marker && (!fence || (marker[0] === fence[0] && marker.length >= fence.length))) fence = fence ? null : marker
+    const heading = !fence && !marker && line.match(/^ {0,3}(#{1,3})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/)
+    if (!heading) { sections.at(-1).lines.push(line); continue }
+    path.length = heading[1].length - 1
+    path[heading[1].length - 1] = heading[2].trim()
+    sections.push({ heading: path.filter(Boolean).join(' › ').slice(0, 300), lines: [line] })
+  }
+  const chunks = []
+  for (const section of sections) {
+    // A heading followed directly by a subheading has no passage of its own.
+    if (section.lines.slice(section.heading ? 1 : 0).every(line => !line.trim())) continue
+    for (const content of await splitter.splitText(section.lines.join('\n').trim())) chunks.push({ content, heading: section.heading })
+  }
+  return chunks
 }
 
 const stopWords = new Set('a an the of to for in on and or is are was be with what which how should i we you it its this that please cite source sources according document documents tell me about do does can'.split(' '))
@@ -120,20 +147,42 @@ export function knowledgeTokens(text) {
   return words.filter(word => word.length > 1 && !stopWords.has(word))
 }
 
+// A model code is one token: hyphen-joined parts that start with a letter and
+// end in a part of three or more digits, such as LDM-001 or ZX-PRO-SENSOR-100.
+const MODEL_CODE = /^[a-z][a-z0-9_]*(?:-[a-z0-9_]+)*-\d{3,}[a-z0-9_]*$/
+const modelCodesIn = words => [...new Set(words.map(word => word.replace(/-+$/, '')).filter(word => MODEL_CODE.test(word)))]
+export function knowledgeModelCodes(question) {
+  const codes = modelCodesIn(knowledgeTokens(question))
+  // "Replace ZX-PRO-SENSOR-100 with model 200": with one family of codes
+  // named, a bare model number means that family's code.
+  const families = new Set(codes.map(code => code.replace(/\d{3,}[a-z0-9_]*$/, '')))
+  if (families.size !== 1) return codes
+  const [family] = families
+  for (const match of String(question).toLowerCase().matchAll(/(?:\bmodels?|型号)\s*(\d{3,})\b|\b(\d{3,})\s*models?\b/g)) {
+    const code = `${family}${match[1] || match[2]}`
+    if (!codes.includes(code)) codes.push(code)
+  }
+  return codes
+}
+
 // The actor-scoped corpus is fetched anew for every request; no shared tenant cache.
 export class WorkspaceKnowledgeRetriever extends BaseRetriever {
   lc_namespace = ['flowchain', 'retrievers']
   constructor({ loadDocuments, limit = 5, queryEmbedding = null, embeddingModel = null, databaseSemanticRanks = null }) { super(); this.loadDocuments = loadDocuments; this.limit = limit; this.queryEmbedding = queryEmbedding; this.embeddingModel = embeddingModel; this.databaseSemanticRanks = databaseSemanticRanks }
   async _getRelevantDocuments(query) {
-    const allDocuments = await this.loadDocuments()
-    // Model codes are exact constraints: a near-neighbor SKU is not an answer for the requested SKU.
-    const identifiers = String(query).toLowerCase().match(/\b[a-z]{2,}[a-z0-9]*-\d{3,}[a-z0-9-]*\b/g) || []
-    const documents = allDocuments.filter(document => {
-      const tokens = knowledgeTokens(`${document.metadata.title} ${document.pageContent}`)
-      return identifiers.every(identifier => tokens.includes(identifier))
+    const requested = knowledgeModelCodes(query)
+    const candidates = (await this.loadDocuments()).map(document => ({ document, words: knowledgeTokens(`${document.metadata.title} ${document.metadata.heading || ''} ${document.pageContent}`) }))
+    // Model codes are exact constraints: a passage about other models is no
+    // answer for the requested one. A passage that names no model, such as a
+    // policy, can still be.
+    const eligible = candidates.filter(({ words }) => {
+      const named = modelCodesIn(words)
+      return !requested.length || !named.length || named.some(code => requested.includes(code))
     })
-    const tokens = documents.map(doc => knowledgeTokens(`${doc.metadata.title} ${doc.pageContent}`))
-    const queryTokens = [...new Set(knowledgeTokens(query))]
+    const documents = eligible.map(item => item.document)
+    const tokens = eligible.map(item => item.words)
+    // A code resolved from "model 200" is searched for like a code the question spelled out.
+    const queryTokens = [...new Set([...knowledgeTokens(query), ...requested])]
     const average = tokens.reduce((n, words) => n + words.length, 0) / (tokens.length || 1)
     const scored = documents.map((document, index) => {
       let score = 0
@@ -156,6 +205,25 @@ export class WorkspaceKnowledgeRetriever extends BaseRetriever {
   }
 }
 
+// Models sometimes write the evidence field's name instead of the number:
+// "[sourceNumber 1]" or "[sourceNumber1]". Read those as "[1]" so the
+// reference is checked like any other and the reader never sees the field name.
+export const normalizeInlineReferences = answer => String(answer).replace(/\[\s*source\s*number\s*:?\s*(\d+)\s*\]/giu, '[$1]')
+
+// A model reply that cites nothing means the documents do not answer the
+// question. Its wording is never shown: only this fixed sentence and the
+// passages that were searched.
+const NO_ANSWER = {
+  en: 'The documents you can access do not answer this question. The passages that were searched are listed below.',
+  zh: '你有权查看的资料中没有这个问题的答案。下面列出了本次检索到的段落。',
+}
+
+// The retrieved passage a reply names: by its id, or by its number ("1", 1,
+// "[1]") when a model lists numbers instead of ids. Anything else names no
+// passage retrieved for this request.
+const SOURCE_NUMBER = /^\s*\[?\s*(\d+)\s*\]?\s*$/
+const citedPassage = (reference, citations) => citations.find(c => c.id === reference) || citations.find(c => c.sourceNumber === Number(String(reference).match(SOURCE_NUMBER)?.[1]))
+
 export async function answerKnowledgeQuery({ question, language = 'en-US', actor, service, env = {}, provider = callConfiguredProvider, embeddingProvider = callConfiguredEmbeddingProvider }) {
   const zh = language === 'zh-CN'
   const queryVector = await embeddingProvider([question], env)
@@ -164,17 +232,29 @@ export async function answerKnowledgeQuery({ question, language = 'en-US', actor
   const chain = RunnableSequence.from([
     RunnableLambda.from(async input => ({ question: input, documents: await retriever.invoke(input) })),
     RunnableLambda.from(async ({ question, documents }) => {
-      const citations = documents.map((doc, index) => ({ id: doc.metadata.id, documentId: doc.metadata.documentId, title: doc.metadata.title, position: doc.metadata.position, sourceNumber: index + 1, language: doc.metadata.language, contentHash: doc.metadata.contentHash, excerpt: doc.pageContent }))
+      const citations = documents.map((doc, index) => ({ id: doc.metadata.id, documentId: doc.metadata.documentId, title: doc.metadata.title, heading: doc.metadata.heading || null, position: doc.metadata.position, sourceNumber: index + 1, language: doc.metadata.language, contentHash: doc.metadata.contentHash, excerpt: doc.pageContent }))
       if (!citations.length) return { answer: zh ? '没有找到有权限访问的相关资料。请先导入产品资料或补充具体型号、术语。' : 'No relevant accessible documents were found. Import product information or add a specific model or term to your question.', citations, mode: 'no_results' }
       if (canCallConfiguredProvider(env)) {
         try {
           const result = await provider({ task: { type: 'knowledge_rag', question, answerLanguage: language }, evidencePackage: { citations }, safetyPolicy: { readOnly: true } }, env)
           const raw = result?.rawOutput?.conclusion?.summary || result?.rawOutput
           const output = typeof raw === 'string' ? JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g, '')) : raw
-          if (result.ok && typeof output?.answer === 'string' && output.answer.trim() && output.answer.length <= 2400 && Array.isArray(output.citationIds) && output.citationIds.length && output.citationIds.every(id => citations.some(c => c.id === id))) {
-            const selected = citations.filter(c => output.citationIds.includes(c.id))
-            const numbers = [...output.answer.matchAll(/\[(\d+)\]/g)].map(match => Number(match[1]))
-            if (numbers.every(number => selected.some(c => c.sourceNumber === number))) return { answer: output.answer, citations: selected, mode: 'generated' }
+          if (result.ok && Array.isArray(output?.citationIds)) {
+            // An empty list is the model saying the documents do not answer,
+            // whatever its text contains. A non-text answer is a broken reply.
+            if (!output.citationIds.length) {
+              if (output.answer == null || typeof output.answer === 'string') return { answer: zh ? NO_ANSWER.zh : NO_ANSWER.en, citations, mode: 'no_answer' }
+              throw new TypeError('answer is not text')
+            }
+            const answer = typeof output.answer === 'string' ? normalizeInlineReferences(output.answer) : ''
+            const listed = output.citationIds.map(reference => citedPassage(reference, citations))
+            const numbers = [...answer.matchAll(/\[(\d+)\]/g)].map(match => Number(match[1]))
+            // Every listed passage and every inline [n] must be a passage
+            // retrieved for this request; an inline [n] the list left out still cites it.
+            if (answer.trim() && answer.length <= 2400 && listed.every(Boolean) && numbers.every(number => citations.some(c => c.sourceNumber === number))) {
+              const used = new Set([...listed.map(c => c.id), ...citations.filter(c => numbers.includes(c.sourceNumber)).map(c => c.id)])
+              return { answer, citations: citations.filter(c => used.has(c.id)), mode: 'generated' }
+            }
           }
         } catch { /* Retrieval remains available when model output cannot be used. */ }
       }
@@ -186,6 +266,6 @@ export async function answerKnowledgeQuery({ question, language = 'en-US', actor
 
 export function knowledgeResponse(result, question, language = 'en-US') {
   const zh = language === 'zh-CN'
-  const label = result.mode === 'generated' ? (zh ? '基于资料的回答' : 'Answer from your knowledge base') : result.mode === 'no_results' ? (zh ? '未找到相关资料' : 'No matching knowledge') : (zh ? '相关资料摘录' : 'Retrieved document excerpts')
+  const label = result.mode === 'generated' ? (zh ? '基于资料的回答' : 'Answer from your knowledge base') : result.mode === 'no_results' ? (zh ? '未找到相关资料' : 'No matching knowledge') : result.mode === 'no_answer' ? (zh ? '资料中没有答案' : 'Not answered by your documents') : (zh ? '相关资料摘录' : 'Retrieved document excerpts')
   return { version: 'v2', query: question, intent: 'knowledge_retrieval', scope: { module: 'ai', dataScopeLabel: zh ? '当前工作区可访问资料' : 'Accessible workspace documents' }, conclusion: { title: label, summary: result.answer, severity: 'info', confidence: 'medium' }, keyEvidence: [], businessImpact: [], recommendedActions: [], navigationLinks: [], dataLimitations: [], reviewCards: [], followUpQuestions: [], rag: { ...result, answer: undefined }, runtimeModeLabel: label }
 }

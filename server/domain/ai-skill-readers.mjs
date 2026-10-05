@@ -211,13 +211,15 @@ export async function readAiSkillFacts(skillContext) {
   // The report and the assistant share one day; say so if they ever differ.
   if (visible.purchase_orders && openReport.asOf !== today) limitations.push({ code: 'report_day', date: openReport.asOf })
 
-  // Suppliers by id, code and name, to resolve a supplier named in a question:
+  // Suppliers by id, code and name, to resolve a supplier named in a question,
+  // with their tier (1 to 3, null when not tiered) to label and filter by:
   // for readers of purchase orders, or of invoices with the partner snapshot.
   if (visible.purchase_orders || (visible.supplier_invoices && visibility.partner)) {
     // The contact a draft is addressed to, from master data, only for readers
     // who may prepare drafts.
+    const tierOf = (value) => ([1, 2, 3].includes(Number(value)) ? Number(value) : null)
     facts.suppliers = array(business.suppliers).map((row) => ({
-      id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName),
+      id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName), tier: tierOf(row.tier),
       ...(visibility.canDraft ? { email: text(row.email) || null, contactName: text(row.contactName) || null } : {}),
     })).filter((row) => row.id && row.name)
   }
