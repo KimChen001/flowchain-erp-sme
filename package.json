@@ -25,6 +25,8 @@
     "test:db:walkthrough-scenario": "node scripts/run-postgres-test-files.mjs tests/postgres/walkthrough-scenario.test.mjs",
     "test:db:tenant-scoped-reads": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-scoped-business-reads.test.mjs",
     "test:db:master-data-writes": "node scripts/run-postgres-test-files.mjs tests/postgres/master-data-writes.test.mjs",
+    "test:db:data-import": "node scripts/run-postgres-test-files.mjs server/domain/data-import-transaction.test.mjs",
+    "test:api:data-import": "node scripts/smoke-data-import-api.mjs",
     "test:db:supplier-tiers": "node scripts/run-postgres-test-files.mjs tests/postgres/supplier-tiers.test.mjs",
     "test:db:supplier-insights": "node scripts/run-postgres-test-files.mjs tests/postgres/supplier-insights.test.mjs",
     "test:db:report-truncation": "node scripts/run-postgres-test-files.mjs tests/postgres/report-truncation.test.mjs",
