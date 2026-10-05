@@ -62,7 +62,7 @@ function procurementModuleForDocument(type?: string) {
   if (type === "rfq") return "procurement:rfq";
   if (type === "po") return "procurement:orders";
   if (type === "grn") return "procurement:receiving";
-  if (type === "invoice" || type === "threeWayMatch") return "procurement:invoices";
+  if (type === "invoice" || type === "threeWayMatch") return "procurement:bills";
   return "procurement";
 }
 

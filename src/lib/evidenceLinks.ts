@@ -43,9 +43,9 @@ const PROCUREMENT_DOCUMENT_TYPES: Record<string, { entityType: string; moduleId:
   grn: { entityType: "receiving_doc", moduleId: "procurement:receiving", label: "GRN" },
   receiving_doc: { entityType: "receiving_doc", moduleId: "procurement:receiving", label: "GRN" },
   receivingDoc: { entityType: "receiving_doc", moduleId: "procurement:receiving", label: "GRN" },
-  invoice: { entityType: "supplier_invoice", moduleId: "finance:invoices", label: "供应商发票" },
-  supplier_invoice: { entityType: "supplier_invoice", moduleId: "finance:invoices", label: "供应商发票" },
-  threeWayMatch: { entityType: "supplier_invoice", moduleId: "finance:invoices", label: "三单匹配" },
+  invoice: { entityType: "supplier_invoice", moduleId: "procurement:bills", label: "采购发票" },
+  supplier_invoice: { entityType: "supplier_invoice", moduleId: "procurement:bills", label: "采购发票" },
+  threeWayMatch: { entityType: "supplier_invoice", moduleId: "procurement:bills", label: "三单匹配" },
 };
 
 const ENTITY_TARGETS: Record<string, { moduleId: string; entityType: string; module: CanonicalEvidenceModule; label: string }> = {
@@ -61,7 +61,7 @@ const ENTITY_TARGETS: Record<string, { moduleId: string; entityType: string; mod
   item_master: { moduleId: "master-data:items", entityType: "item", module: "masterData", label: "SKU" },
   supplier: { moduleId: "srm:master", entityType: "supplier", module: "supplier", label: "供应商" },
   supplier_master: { moduleId: "srm:master", entityType: "supplier", module: "supplier", label: "供应商" },
-  supplier_invoice: { moduleId: "finance:invoices", entityType: "supplier_invoice", module: "procurement", label: "供应商发票" },
+  supplier_invoice: { moduleId: "procurement:bills", entityType: "supplier_invoice", module: "procurement", label: "采购发票" },
   exception_case: { moduleId: "exception-cases", entityType: "exception_case", module: "procurement", label: "异常工单" },
   warehouse: { moduleId: "master-data:warehouses", entityType: "warehouse", module: "masterData", label: "仓库" },
   bin: { moduleId: "master-data:warehouses", entityType: "bin", module: "masterData", label: "库位" },

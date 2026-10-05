@@ -63,6 +63,12 @@ test("planned Supplier progresses draft to submitted revisions with one idempote
   await expect(page.getByLabel("提交模式", { exact: true })).toHaveCount(0);
   await expect(page.getByTestId("rfq-supplier-response-editor")).toContainText("保存草稿不会记录为供应商已响应");
   await expect(page.getByTestId("rfq-supplier-response-editor")).toContainText("正式提交需要覆盖全部 RFQ 行项目");
+  // A first response starts from the RFQ's requested quantities, labelled as
+  // such; prices are never prefilled.
+  const firstRow = page.getByTestId(`rfq-response-editor-line-${LINE_1}`);
+  await expect(firstRow.getByLabel(`报价数量 ${LINE_1}`)).not.toHaveValue("");
+  await expect(page.getByTestId(`rfq-response-prefill-quantity-${LINE_1}`)).toHaveText("来自询价单");
+  await expect(firstRow.getByLabel(`单价 ${LINE_1}`)).toHaveValue("");
   await selectLine(page, LINE_1, "10.0000", "12.3456");
 
   let firstAttempt = true;

@@ -25,6 +25,9 @@ async function withPo001Lines(lines, { requestLines = [], ...options } = {}) {
   return { facts, row: facts.purchaseOrders.rows.find((row) => row.id === 'PO-001'), draft, answer }
 }
 
+// A calendar day as drafts show it: the tenant locale (en-US here), medium style.
+const shown = (value) => new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`))
+
 test('a PO whose first line is fully received names the open line and its own quantity', async () => {
   const { row, draft } = await withPo001Lines([['LDM-001', '20', '20'], ['LDM-002', '40', '0', 'pcs', { originalPromisedDate: `${day(-9)}T00:00:00.000Z` }]])
   // The order's SKU is its first line's; two SKUs have no order-wide total.
@@ -32,10 +35,13 @@ test('a PO whose first line is fully received names the open line and its own qu
   // The open lines, by the report's line rules: the received line is left out.
   assert.deepEqual(row.openLines, [{ lineId: 'PO-001-L2', sku: 'LDM-002', itemId: 'ITEM-002', itemName: 'LDM-002', remaining: 40, unit: 'pcs', promisedDate: day(-4), originalPromisedDate: day(-9) }])
 
+  // The message is a letter to the supplier: one line per open line, with its
+  // own quantity and promised date, and the original date when it moved.
   const english = draft('en-US')
-  assert.equal(english.payload.message, 'Please confirm a delivery date for the remaining 40 pcs of LDM-002 on PO-001.')
+  assert.deepEqual(english.payload.message.split('\n'), ['Hello Acme Components,', '', 'Please confirm a delivery date for the open line on PO-001:', `- LDM-002: 40 pcs still to deliver, promised ${shown(day(-4))} (originally ${shown(day(-9))})`, '', 'Thank you.'])
   assert.doesNotMatch(english.payload.message, /LDM-001/)
-  assert.equal(draft('zh-CN').payload.message, '请确认 PO-001 上 LDM-002 剩余 40 pcs 的交货日期。')
+  assert.equal(english.payload.subject, 'PO-001: delivery date for LDM-002')
+  assert.deepEqual(draft('zh-CN').payload.message.split('\n'), ['Acme Components，您好：', '', '请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 pcs 未交，承诺日期 ${shown(day(-4))}（原定 ${shown(day(-9))}）`, '', '谢谢。'])
   // The card carries the open lines next to the message, and stays review-only.
   assert.deepEqual(english.payload.lines, row.openLines)
   assert.deepEqual([english.previewOnly, english.reviewRequired, english.requiresHumanReview], [true, true, true])
@@ -47,16 +53,20 @@ test('several open lines are each named with their own remaining quantity and un
   assert.deepEqual([row.remaining, row.unit], [null, 'mixed'])
   assert.deepEqual(row.openLines.map((line) => [line.sku, line.remaining, line.unit]), [['LDM-002', 40, 'pcs'], ['LDM-003', 10, '箱']])
   // A stored unit in Chinese is a stored value, allowed in an English answer.
-  assert.equal(draft('en-US').payload.message, 'Please confirm delivery dates for the remaining quantities on PO-001: 40 pcs of LDM-002 and 10 箱 of LDM-003.')
-  assert.equal(draft('zh-CN').payload.message, '请确认 PO-001 上以下剩余数量的交货日期：LDM-002 剩余 40 pcs和 LDM-003 剩余 10 箱。')
+  const english = draft('en-US')
+  assert.deepEqual(english.payload.message.split('\n').slice(2, 5), ['Please confirm delivery dates for the open lines on PO-001:', `- LDM-002: 40 pcs still to deliver, promised ${shown(day(-4))}`, `- LDM-003: 10 箱 still to deliver, promised ${shown(day(-4))}`])
+  assert.equal(english.payload.subject, 'PO-001: delivery dates for 2 open lines')
+  assert.deepEqual(draft('zh-CN').payload.message.split('\n').slice(2, 5), ['请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 pcs 未交，承诺日期 ${shown(day(-4))}`, `- LDM-003：仍有 10 箱 未交，承诺日期 ${shown(day(-4))}`])
 })
 
 test('an open line with an unknown quantity or no SKU gets the generic message', async () => {
   for (const lines of [[['LDM-001', '20', '20'], ['LDM-002', '40', null]], [['LDM-001', '20', '20'], ['', '40', '0']]]) {
     const { row, draft } = await withPo001Lines(lines)
     assert.equal(row.openLines.length, 1)
-    assert.equal(draft('en-US').payload.message, 'Please confirm a delivery date for the remaining quantity on PO-001.')
-    assert.equal(draft('zh-CN').payload.message, '请确认 PO-001 剩余数量的交货日期。')
+    assert.equal(draft('en-US').payload.message, 'Hello Acme Components,\n\nPlease confirm a delivery date for the remaining quantity on PO-001.\n\nThank you.')
+    // The subject names the SKU when the line has one.
+    assert.match(draft('en-US').payload.subject, /^PO-001: delivery date( for LDM-002)?$/)
+    assert.equal(draft('zh-CN').payload.message, 'Acme Components，您好：\n\n请确认 PO-001 剩余数量的交货日期。\n\n谢谢。')
   }
 })
 
@@ -97,7 +107,7 @@ test('an item focus finds a PO by its open lines and a request by any line, not 
     assert.deepEqual(focused('today_priorities', entityId), ['PO-001', 'PO-002'], entityId)
     assert.deepEqual(focused('highest_risk_items', entityId), ['PO-001'], entityId)
     assert.deepEqual(focused('prepare_action_draft', entityId), ['PO-001', 'PO-002'], entityId)
-    assert.equal(answer('prepare_action_draft', 'en-US', { entityType: 'item', entityId }).reviewCards[0].payload.message, 'Please confirm a delivery date for the remaining 40 pcs of LDM-002 on PO-001.')
+    assert.match(answer('prepare_action_draft', 'en-US', { entityType: 'item', entityId }).reviewCards[0].payload.message, /^- LDM-002: 40 pcs still to deliver/m)
   }
   // Nothing of LDM-001 is left to receive on PO-001. PR-001 is found by its
   // item id as well as its SKU.
