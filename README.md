@@ -63,7 +63,7 @@ npm run build
 npm run test:ai:eval # AI assistant evaluation on a disposable PostgreSQL
 ```
 
-Browser tests use Playwright (`tests/browser/`). CI runs the PostgreSQL, browser and production-container suites in [`.github/workflows/receiving-postgres.yml`](.github/workflows/receiving-postgres.yml).
+Browser tests use Playwright (`tests/browser/`). CI runs the PostgreSQL, browser and production-container suites in [`.github/workflows/receiving-postgres.yml`](.github/workflows/receiving-postgres.yml); the browser suites run in three parallel shards. Browser suites for the frozen settlement, bank and mobile sync modules run nightly in [`.github/workflows/frozen-modules-nightly.yml`](.github/workflows/frozen-modules-nightly.yml).
 
 ## Tech stack
 
