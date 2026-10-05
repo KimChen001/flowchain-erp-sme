@@ -363,10 +363,10 @@ export function scorecardParameters(query = {}, asOfDay) {
   const from = text(query.from) || addDays(to, -(periodDays - 1))
   if (!isDay(from) || !isDay(to)) throw new SupplierScorecardError('SCORECARD_PERIOD_INVALID', 'Enter the period as calendar dates (YYYY-MM-DD).', 422, [{ field: isDay(from) ? 'to' : 'from' }])
   if (from > to) throw new SupplierScorecardError('SCORECARD_PERIOD_INVALID', 'The period must start on or before its end.', 422, [{ field: 'from' }])
-  if (daysBetween(from, to) + 1 > maxPeriodDays) throw new SupplierScorecardError('SCORECARD_PERIOD_TOO_LONG', `The period can cover at most ${maxPeriodDays} days.`, 422, [{ field: 'from' }])
+  if (daysBetween(from, to) + 1 > maxPeriodDays) throw new SupplierScorecardError('SCORECARD_PERIOD_TOO_LONG', `The period can cover at most ${maxPeriodDays} days.`, 422, [{ field: 'from', maxDays: maxPeriodDays }])
   const graceText = text(query.graceDays)
   const graceDays = graceText === '' ? SUPPLIER_SCORECARD_RULES.graceDays : Number(graceText)
-  if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > maxGraceDays) throw new SupplierScorecardError('SCORECARD_GRACE_DAYS_INVALID', `Grace days must be a whole number from 0 to ${maxGraceDays}.`, 422, [{ field: 'graceDays' }])
+  if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > maxGraceDays) throw new SupplierScorecardError('SCORECARD_GRACE_DAYS_INVALID', `Grace days must be a whole number from 0 to ${maxGraceDays}.`, 422, [{ field: 'graceDays', maxDays: maxGraceDays }])
   return { period: { from, to }, graceDays, supplierId: text(query.supplierId) || null }
 }
 

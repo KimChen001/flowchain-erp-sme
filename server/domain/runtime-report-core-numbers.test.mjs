@@ -194,6 +194,22 @@ test('workbook metric summary reads each KPI as the dashboard shows it', () => {
   assert.equal(reportWorkbook(onTime, {}, copy, [], { locale: 'en-US', language: 'en-US' })[0].rows[0]['Current value'], 'Fewer than 5 lines')
 })
 
+test('workbook detail rows name an order without a quantity total as the dashboard does', () => {
+  const poLine = (sku, unit) => ({ sku, unit, orderedQuantity: 5, receivedQuantity: 0 })
+  const report = buildRuntimeGovernedReport(context({ purchaseOrders: [
+    po('PO-SKUS', 'issued', 10, { lines: [poLine('BOLT', 'pcs'), poLine('MOTOR', 'pcs')] }),
+    po('PO-UNITS', 'issued', 10, { lines: [poLine('BOLT', 'pcs'), poLine('BOLT', 'box')] }),
+    po('PO-ONE', 'issued', 10, { lines: [poLine('BOLT', 'pcs')] }),
+  ] }), { subject: 'procurement' })
+  for (const [language, skus, units] of [['en-US', 'Multiple SKUs', 'Mixed units'], ['zh-CN', '多个 SKU', '混合计量单位']]) {
+    const tr = value => analyticsCopy(value, language)
+    const detail = reportWorkbook(report, {}, tr, [], { locale: language, language })[2].rows
+    const unitOf = id => detail.find(row => row[tr('业务编号')] === id)[tr('单位')]
+    assert.deepEqual([unitOf('PO-SKUS'), unitOf('PO-UNITS'), unitOf('PO-ONE')], [skus, units, 'pcs'], language)
+    assert.doesNotMatch(JSON.stringify(detail), /multiple_skus|"mixed"/)
+  }
+})
+
 // Filters and business dates.
 const filterContext = () => context({
   purchaseOrders: [

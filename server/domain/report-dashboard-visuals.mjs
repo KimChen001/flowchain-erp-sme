@@ -239,8 +239,10 @@ function receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone)
 // falls in the date range; a line past its promise with nothing received is
 // late. A rate needs at least SUPPLIER_SCORECARD_RULES.minimumSample (5) lines.
 // warehouseIds, when the reader is limited to some warehouses, leaves out
-// receipts in other warehouses, as the scorecard does.
-export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone, { graceDays = SUPPLIER_SCORECARD_RULES.graceDays, warehouseIds = null } = {}) {
+// receipts in other warehouses, as the scorecard does. purchaseOrderIds, when
+// given, are the orders measured in place of purchaseOrderIdsAnyDate.
+export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone, { graceDays = SUPPLIER_SCORECARD_RULES.graceDays, warehouseIds = null, purchaseOrderIds = null } = {}) {
+  const measured = purchaseOrderIds || purchaseOrderIdsAnyDate
   const readable = Array.isArray(warehouseIds) ? new Set(warehouseIds.map(text)) : null
   const receiptLines = new Map()
   for (const document of array(context.receipts)) {
@@ -255,7 +257,7 @@ export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today,
   const from = query.from || '0001-01-01'
   const to = query.to || '9999-12-31'
   return array(context.purchaseOrders)
-    .filter(po => isPromiseMeasuredPurchaseOrder(po) && (!purchaseOrderIdsAnyDate || purchaseOrderIdsAnyDate.has(text(po.id || po.po))))
+    .filter(po => isPromiseMeasuredPurchaseOrder(po) && (!measured || measured.has(text(po.id || po.po))))
     .flatMap(po => array(po.lines).map(line => ({ ...evaluatePromiseLine({ line, purchaseOrder: { ...po, id: text(po.id || po.po) }, receipts: receiptLines.get(text(line.id)) || [], asOfDay: today || null, graceDays }), supplier: poSupplier(po) })))
     .filter(line => line.status === 'evaluated' && line.originalPromisedDate >= from && line.originalPromisedDate <= to)
 }
@@ -326,7 +328,8 @@ function performanceMatrixVisual(id, performance, scope, emptyState = ON_TIME_EM
 const ON_TIME_EMPTY = 'No supplier has 5 or more PO lines first promised in the selected range.'
 // On time is not measured when the reader cannot see receipts, or when not
 // every receipt was loaded: a line whose receipt is missing would count as late.
-const ON_TIME_WITHHELD = { restricted: 'Your role cannot view receipts.', truncated: 'Not every receipt could be loaded, so on-time lines are not measured here.' }
+// Nor, on the supplier page, over a range the scorecard there does not accept.
+const ON_TIME_WITHHELD = { restricted: 'Your role cannot view receipts.', truncated: 'Not every receipt could be loaded, so on-time lines are not measured here.', period_too_long: 'The range is longer than the supplier scorecard allows, so on-time lines are not measured. Choose a shorter range.' }
 
 function scorecardVisual(id, performance, scope) {
   const indicators = [['On-time lines', 'onTimeRate'], ['Lines accepted in full', 'acceptedRate'], ['Invoices matched', 'matchRate'], [scope.ok ? 'Share of spend' : 'Share of orders', 'spendShare']]
@@ -442,7 +445,7 @@ function riskMatrixVisual(id, balances) {
 // Builds the visuals of one dashboard. `all` holds the filtered runtime rows;
 // `purchaseOrderIdsAnyDate` the purchase orders that pass every filter except
 // the date range, so receipts can follow their order's filters.
-// onTimeWithheld ('restricted' or 'truncated') leaves the on-time measures
+// onTimeWithheld ('restricted', 'truncated' or 'period_too_long') leaves the on-time measures
 // out; promiseOptions carries the grace days and the reader's warehouses.
 export function buildDashboardVisuals({ subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts = {}, today = '', timeZone, salesDemand = [], onTimeWithheld = null, promiseOptions = {} }) {
   const poById = new Map(array(context.purchaseOrders).map(row => [text(row.id || row.po), row]))

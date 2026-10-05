@@ -124,6 +124,8 @@ const chinese: Record<string, string> = {
   'Fewer than 5 lines': '少于 5 行', 'Needs at least 5 PO lines': '至少需要 5 个采购订单行',
   'Not measured': '未计量', 'Not every receipt could be loaded': '未能读取全部收货记录', 'Your role cannot view receipts.': '你的角色无权查看收货记录。',
   'Not every receipt could be loaded, so on-time lines are not measured here.': '未能读取全部收货记录，因此此处不计量准时行。',
+  'Range longer than the scorecard allows': '范围超过供应商评分卡允许的天数',
+  'The range is longer than the supplier scorecard allows, so on-time lines are not measured. Choose a shorter range.': '日期范围超过供应商评分卡允许的天数，因此不计量准时行。请选择更短的范围。',
   'Last 90 days': '最近 90 天',
   'On-time lines': '准时行占比', 'PO lines': '采购订单行数', 'On-time lines by supplier': '按供应商统计准时行占比',
   'PO lines first promised in range whose first posted receipt arrived by that date. Each supplier needs at least 5 lines.': '原承诺日期在当前范围内、首次过账收货在该日期当天或之前到达的采购订单行占比。每家供应商至少需要 5 行。',

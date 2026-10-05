@@ -225,8 +225,9 @@ export async function readAiSkillFacts(skillContext) {
     // The lines still to receive, by the report's line rules, each with its
     // own remaining quantity, unit and promised day. The order's sku is its
     // first line, which may be fully received, and its remaining quantity is
-    // the order total: a follow-up names these lines instead. Quantities and
-    // dates only, no prices.
+    // the order total, which the report gives only for one SKU in one unit: a
+    // follow-up, and an answer about an order of several SKUs, names these
+    // lines instead. Quantities and dates only, no prices.
     const openLinesById = new Map(reportRows.map((po) => [text(po.id), array(po.lines).flatMap((line) => {
       const read = purchaseOrderReportLine(line, po)
       return read.open ? [{

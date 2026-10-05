@@ -5,7 +5,7 @@ import { purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
 import { buildDashboardFacts, buildDashboardVisuals } from './report-dashboard-visuals.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
-import { SUPPLIER_SCORECARD_RULES, addDays } from './supplier-scorecard.mjs'
+import { SUPPLIER_SCORECARD_RULES, addDays, daysBetween } from './supplier-scorecard.mjs'
 import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay, tenantCalendarDay } from './tenant-calendar-day.mjs'
 
 const array = value => Array.isArray(value) ? value : []
@@ -262,10 +262,11 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
   // and neither does a receipt list that was not loaded in full.
   const smallSample = id === 'on_time_receipt_rate' && currentValue === null && facts.onTimeLines > 0
   const receiptsCut = id === 'on_time_receipt_rate' && facts.onTimeWithheld === 'truncated'
-  const incomplete = money ? currentValue === null : (['inventory_on_hand', 'open_sales_demand'].includes(id) && currentValue === null) || smallSample || receiptsCut
+  const periodTooLong = id === 'on_time_receipt_rate' && facts.onTimeWithheld === 'period_too_long'
+  const incomplete = money ? currentValue === null : (['inventory_on_hand', 'open_sales_demand'].includes(id) && currentValue === null) || smallSample || receiptsCut || periodTooLong
   // A rate with nothing to divide by has no records, not a rate of zero.
   const dataStatus = incomplete ? 'incomplete' : id === 'inventory_on_hand' && !inventory.availability.length ? 'empty' : unit === 'percentage' && currentValue === null ? 'no_records' : 'complete'
-  const limitations = money ? money.limitations : demand ? (demand.limitation ? [demand.limitation] : []) : receiptsCut ? ['receipts_truncated'] : smallSample ? ['insufficient_sample'] : []
+  const limitations = money ? money.limitations : demand ? (demand.limitation ? [demand.limitation] : []) : receiptsCut ? ['receipts_truncated'] : periodTooLong ? ['period_too_long'] : smallSample ? ['insufficient_sample'] : []
   const currency = money ? { currencyCode: money.currencyCode, currencyLabel: money.currencyLabel, currencies: money.currencies, currencyAggregationStatus: money.currencyAggregationStatus, currencyAmounts: money.currencyAmounts } : {}
   return { id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, ...(demand ? { quantityUnit: demand.unit } : {}), comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, trend: metricTrend(id, all, money), generatedAt: new Date().toISOString() }
 }
@@ -320,8 +321,15 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   // partial receipt list, where a line whose receipt was not loaded would
   // count as late. options.warehouseIds limits receipts to the reader's
   // warehouses, as on the supplier scorecard.
-  const onTimeWithheld = restriction.subjects.has('receipts') || restriction.subjects.has('purchase_orders') ? 'restricted' : array(context.truncatedSubjects).some(entry => entry?.subject === 'receipts') ? 'truncated' : null
-  const promiseOptions = { graceDays: query.graceDays, warehouseIds: Array.isArray(options.warehouseIds) ? options.warehouseIds : null }
+  // Nor, on the supplier page, over a range longer than the scorecard beside
+  // it accepts: the table could not show the figure to match.
+  const periodTooLong = query.subject === 'suppliers' && /^\d{4}-\d{2}-\d{2}$/.test(query.from) && /^\d{4}-\d{2}-\d{2}$/.test(query.to) && daysBetween(query.from, query.to) + 1 > SUPPLIER_SCORECARD_RULES.maxPeriodDays
+  const onTimeWithheld = restriction.subjects.has('receipts') || restriction.subjects.has('purchase_orders') ? 'restricted' : array(context.truncatedSubjects).some(entry => entry?.subject === 'receipts') ? 'truncated' : periodTooLong ? 'period_too_long' : null
+  // On the supplier page the on-time figures measure the scorecard's lines,
+  // and the scorecard has no currency filter: a currency has no bearing on
+  // delivery, so those figures count orders in every currency.
+  const promisePurchaseOrderIds = query.subject === 'suppliers' && query.currency ? new Set(filtered(source.purchase_orders, { ...query, from: '', to: '', currency: '' }, applicableFilters('purchase_orders', primaryKey)).map(row => row.id)) : null
+  const promiseOptions = { graceDays: query.graceDays, warehouseIds: Array.isArray(options.warehouseIds) ? options.warehouseIds : null, purchaseOrderIds: promisePurchaseOrderIds }
   const facts = { ...buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand, onTimeWithheld, promiseOptions }), salesDemandTotal: salesDemandTotal(salesDemand), inventoryOnHand: inventoryOnHandTotal(source.inventory_balances, inventory.units) }
   const visuals = buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts, today, timeZone, salesDemand, onTimeWithheld, promiseOptions })
   const inventoryLabels = primaryKey === 'inventory_balances' ? { id: 'SKU', itemName: '物料名称', status: 'Risk' } : {}

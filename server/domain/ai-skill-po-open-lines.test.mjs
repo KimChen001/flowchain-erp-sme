@@ -27,8 +27,8 @@ async function withPo001Lines(lines, { requestLines = [], ...options } = {}) {
 
 test('a PO whose first line is fully received names the open line and its own quantity', async () => {
   const { row, draft } = await withPo001Lines([['LDM-001', '20', '20'], ['LDM-002', '40', '0', 'pcs', { originalPromisedDate: `${day(-9)}T00:00:00.000Z` }]])
-  // The order-wide figures are unchanged: the first line's SKU and the total.
-  assert.deepEqual([row.sku, row.remaining, row.unit], ['LDM-001', 40, 'pcs'])
+  // The order's SKU is its first line's; two SKUs have no order-wide total.
+  assert.deepEqual([row.sku, row.remaining, row.unit], ['LDM-001', null, 'multiple_skus'])
   // The open lines, by the report's line rules: the received line is left out.
   assert.deepEqual(row.openLines, [{ lineId: 'PO-001-L2', sku: 'LDM-002', itemId: 'ITEM-002', itemName: 'LDM-002', remaining: 40, unit: 'pcs', promisedDate: day(-4), originalPromisedDate: day(-9) }])
 
@@ -58,6 +58,21 @@ test('an open line with an unknown quantity or no SKU gets the generic message',
     assert.equal(draft('en-US').payload.message, 'Please confirm a delivery date for the remaining quantity on PO-001.')
     assert.equal(draft('zh-CN').payload.message, '请确认 PO-001 剩余数量的交货日期。')
   }
+})
+
+test('an order of two SKUs in one unit names each SKU still to receive, never a total', async () => {
+  const { facts, row, answer } = await withPo001Lines([['LDM-001', '10', '0'], ['LDM-002', '5', '0']])
+  const indexed = facts.purchaseOrders.index.find((entry) => entry.id === 'PO-001')
+  for (const entry of [row, indexed]) assert.deepEqual([entry.ordered, entry.received, entry.remaining, entry.unit], [null, null, null, 'multiple_skus'])
+  const single = (language) => answerAiSkill({ skillId: 'purchase_orders', facts, language, query: 'PO-001', route: { mode: 'single', entities: { purchaseOrders: [indexed] } } }).response
+  assert.equal(single('en-US').conclusion.title, 'PO-001: 10 pcs of LDM-001 and 5 pcs of LDM-002 still to receive')
+  assert.equal(single('zh-CN').conclusion.title, 'PO-001：还有 LDM-001 10 pcs和 LDM-002 5 pcs 待收货')
+  const texts = (response) => JSON.stringify([response.conclusion, response.keyEvidence])
+  for (const language of ['en-US', 'zh-CN']) assert.doesNotMatch(texts(single(language)), /15/)
+  // The overdue signal names the lines too.
+  const reason = answer('today_priorities', 'en-US').keyEvidence.find((item) => item.entityId === 'PO-001').summary
+  assert.match(reason, /10 pcs of LDM-001 and 5 pcs of LDM-002 still to receive/)
+  assert.doesNotMatch(reason, /15|unknown/)
 })
 
 test('open lines carry quantities and dates only, for every reader of purchase orders', async () => {

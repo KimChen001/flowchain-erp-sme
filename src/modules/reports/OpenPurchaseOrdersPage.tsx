@@ -16,14 +16,14 @@ const zh: Record<string, string> = {
   'Supplier': '供应商', 'All suppliers': '全部供应商', 'Currency': '币种', 'All currencies': '全部币种', 'Search PO, supplier or owner': '搜索订单、供应商或负责人',
   'Open orders': '未完成订单', 'Overdue': '已逾期', 'Missing data': '资料不完整', 'All orders': '全部订单', 'Clear filters': '清除筛选',
   'Order amount': '订单金额', 'Unavailable': '暂无数据', 'Multiple currencies — totals shown separately': '多币种金额分别汇总',
-  'PO number': '采购单号', 'Order date': '订单日期', 'Next promised date': '最近承诺交期', 'Days overdue': '逾期天数', 'Ordered': '订购数量', 'Received': '已收数量', 'Remaining': '待收数量', 'Unit': '单位', 'Owner': '负责人', 'Status': '状态', 'Actions': '操作', 'View order': '查看订单', 'Mixed units': '多种单位',
+  'PO number': '采购单号', 'Order date': '订单日期', 'Next promised date': '最近承诺交期', 'Days overdue': '逾期天数', 'Ordered': '订购数量', 'Received': '已收数量', 'Remaining': '待收数量', 'Unit': '单位', 'Owner': '负责人', 'Status': '状态', 'Actions': '操作', 'View order': '查看订单', 'Mixed units': '多种单位', 'Multiple SKUs': '多个 SKU',
   'Draft': '草稿', 'Pending approval': '待审批', 'Approved': '已审批', 'Issued': '已下发', 'Partially received': '部分收货', 'Fully received': '全部收货', 'Cancelled': '已取消', 'Closed': '已关闭', 'Completed': '已完成', 'Rejected': '已驳回', 'Unknown': '未知',
   'Loading report…': '正在加载报表…', 'Could not load report. Please retry.': '无法加载报表，请重试。', 'Could not export report. Please retry.': '无法导出报表，请重试。',
   'No orders match these filters.': '没有符合筛选条件的订单。', 'Previous': '上一页', 'Next': '下一页', 'Rows per page': '每页条数', 'Page': '页', 'of': '/', 'results': '条结果', 'Showing': '显示',
   'Updated': '更新于', 'As of (workspace time)': '统计日期（工作区时间）', 'Metric definitions': '指标说明',
   'Open orders are committed purchase orders (approved, issued or partially received) that still have quantity to receive. Drafts, orders pending approval, and rejected, cancelled or fully received orders are excluded.': '未完成订单是已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单，不含草稿、待审批、已驳回、已取消或已全部收货的订单。',
   'Overdue uses the earliest promised date of an outstanding line, falling back to the order expected date. Missing dates are unknown, not on time.': '逾期按待收货行的最早承诺交期计算，没有行交期则使用订单预计日期；缺少交期不视为准时。',
-  'Quantities use recorded purchase order receipts. Different units are not added together. Amount is the full order amount, not the unpaid balance.': '数量来自采购订单已记账收货记录，不同单位不相加。金额为完整订单金额，并非未付款余额。',
+  'Quantities use recorded purchase order receipts. Quantities of different SKUs or units are not added together. Amount is the full order amount, not the unpaid balance.': '数量来自采购订单已记账收货记录，不同 SKU 或不同单位的数量不相加。金额为完整订单金额，并非未付款余额。',
   'Date filters use the order date, or the creation date when no order date is recorded; orders with neither are left out of a date range. KPIs and exports include every matching order; pagination only changes the displayed rows.': '日期按订单日期筛选，没有订单日期时使用创建日期；两者都没有的订单不计入日期范围。指标与导出包含全部符合条件的订单，分页仅影响显示行。',
   'Purchase orders': '采购订单', 'Report scope': '报表范围', 'Generated at': '生成时间', 'Matching orders': '符合条件的订单', 'FX converted': '已做汇率换算', 'No': '否', 'Field': '字段', 'Definition': '说明', 'Scope': '范围',
   'Bookmark this page to keep your filters and columns.': '收藏当前页面以保留筛选条件和显示列。',
@@ -37,7 +37,7 @@ const statusLabels: Record<string, string> = { draft: 'Draft', pending_approval:
 const definitions = [
   'Open orders are committed purchase orders (approved, issued or partially received) that still have quantity to receive. Drafts, orders pending approval, and rejected, cancelled or fully received orders are excluded.',
   'Overdue uses the earliest promised date of an outstanding line, falling back to the order expected date. Missing dates are unknown, not on time.',
-  'Quantities use recorded purchase order receipts. Different units are not added together. Amount is the full order amount, not the unpaid balance.',
+  'Quantities use recorded purchase order receipts. Quantities of different SKUs or units are not added together. Amount is the full order amount, not the unpaid balance.',
   'Date filters use the order date, or the creation date when no order date is recorded; orders with neither are left out of a date range. KPIs and exports include every matching order; pagination only changes the displayed rows.',
 ];
 const fieldClass = 'mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm';
@@ -86,7 +86,7 @@ export function OpenPurchaseOrdersPage() {
     next.set('direction', params.get('sort') === key && params.get('direction') === 'asc' ? 'desc' : 'asc');
     setParams(next, { replace: true });
   };
-  const cell = (row: Row, key: keyof Row) => key === 'status' ? t(statusLabels[row.status] || 'Unknown') : key === 'unit' ? row.unit === 'mixed' ? t('Mixed units') : row.unit || t('Unavailable') : row[key] === null || row[key] === '' ? t('Unavailable') : row[key];
+  const cell = (row: Row, key: keyof Row) => key === 'status' ? t(statusLabels[row.status] || 'Unknown') : key === 'unit' ? row.unit === 'mixed' ? t('Mixed units') : row.unit === 'multiple_skus' ? t('Multiple SKUs') : row.unit || t('Unavailable') : row[key] === null || row[key] === '' ? t('Unavailable') : row[key];
   const exportAll = async () => {
     setExporting(true); setError('');
     try {

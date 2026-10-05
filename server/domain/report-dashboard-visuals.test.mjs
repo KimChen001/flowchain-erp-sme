@@ -190,6 +190,19 @@ test('the supplier dashboard and the scorecard measure the same lines for the sa
   data.receipts = data.receipts.map(row => ({ ...row, warehouseId: row.id === 'GRN-2' ? 'WH-2' : 'WH-1' }))
   const scoped = buildRuntimeGovernedReport(data, { subject: 'suppliers' }, { ...asOf, warehouseIds: ['WH-1'] })
   assert.equal(chart(scoped, 'supplier_on_time').data[0].value, rateOf(scorecardFor({}, data.receipts.filter(row => row.warehouseId === 'WH-1')), 'SUP-ACME'))
+
+  // The scorecard has no currency filter, so a currency picked on the page
+  // leaves the on-time figures alone: five more Acme lines, in EUR, all late.
+  const euro = scorecardContext()
+  euro.purchaseOrders.push(po('PO-EUR', 'Acme', 'issued', ['E1', 'E2', 'E3', 'E4', 'E5'].map(id => promiseLine(id)), { supplierId: 'SUP-ACME', currency: 'EUR' }))
+  euro.receipts.push(postedReceipt('GRN-EUR', 'PO-EUR', 'Acme', '2026-09-28T15:00:00.000Z', ['E1', 'E2', 'E3', 'E4', 'E5']))
+  const euroScorecard = buildSupplierScorecard({ purchaseOrders: euro.purchaseOrders, receipts: euro.receipts.filter(row => row.postingStatus === 'posted'), ...scorecardParameters({}, '2026-10-05'), asOfDay: '2026-10-05', timeZone: 'America/New_York' })
+  for (const currency of ['EUR', 'USD', '']) {
+    const filtered = buildRuntimeGovernedReport(euro, { subject: 'suppliers', filters: { currency } }, asOf)
+    assert.equal(chart(filtered, 'supplier_on_time').data.find(row => row.name === 'Acme').value, rateOf(euroScorecard, 'SUP-ACME'), currency)
+    assert.equal(kpi(filtered, 'on_time_receipt_rate').currentValue, overall(euroScorecard), currency)
+  }
+  assert.equal(rateOf(euroScorecard, 'SUP-ACME'), 36.4)
 })
 
 test('on time is not measured from receipts the reader cannot see or that were not all loaded', () => {
@@ -209,6 +222,23 @@ test('on time is not measured from receipts the reader cannot see or that were n
   assert.deepEqual([onTime.currentValue, onTime.dataStatus, onTime.limitations], [null, 'incomplete', ['receipts_truncated']])
   assert.deepEqual(chart(truncated, 'supplier_on_time').data, [])
   assert.match(chart(truncated, 'supplier_on_time').emptyState, /Not every receipt could be loaded/)
+})
+
+test('the supplier dashboard does not measure on time over a range the scorecard refuses', () => {
+  // 2023-01-01 to 2026-10-05 is longer than the scorecard's 731 days.
+  assert.throws(() => scorecardParameters({ from: '2023-01-01', to: '2026-10-05' }, '2026-10-05'), error => error.code === 'SCORECARD_PERIOD_TOO_LONG' && error.details[0].maxDays === 731)
+  const long = buildRuntimeGovernedReport(scorecardContext(), { subject: 'suppliers', filters: { from: '2023-01-01', to: '2026-10-05' } }, asOf)
+  const onTime = kpi(long, 'on_time_receipt_rate')
+  assert.deepEqual([onTime.currentValue, onTime.dataStatus, onTime.limitations], [null, 'incomplete', ['period_too_long']])
+  for (const id of ['supplier_on_time', 'supplier_performance_matrix']) {
+    assert.deepEqual(chart(long, id).data, [])
+    assert.match(chart(long, id).emptyState, /longer than the supplier scorecard allows/)
+  }
+  // The longest range the scorecard accepts is still measured, and other
+  // dashboards keep any range.
+  const longest = buildRuntimeGovernedReport(scorecardContext(), { subject: 'suppliers', filters: { from: '2024-10-05', to: '2026-10-05' } }, asOf)
+  assert.equal(kpi(longest, 'on_time_receipt_rate').currentValue, 75)
+  assert.equal(kpi(buildRuntimeGovernedReport(scorecardContext(), { subject: 'procurement', filters: { from: '2023-01-01', to: '2026-10-05' } }, asOf), 'on_time_receipt_rate').currentValue, 75)
 })
 
 test('overdue open purchase orders count to the workspace calendar day', () => {
@@ -399,13 +429,19 @@ test('open sales demand is booked per line and never added across units or SKUs'
 
 test('a purchase order quantity is a total only for one SKU in one unit', () => {
   const poLine = (id, sku, quantity, unit = 'pcs') => ({ id, sku, orderedQuantity: quantity, receivedQuantity: 0, unit })
-  const report = buildRuntimeGovernedReport(context({ purchaseOrders: [
+  const purchaseOrders = [
     { id: 'PO-BOLTS-MOTORS', status: 'issued', currency: 'USD', totalAmount: 100, orderDate: '2026-09-01', supplierName: 'Acme', lines: [poLine('L1', 'BOLT', 10), poLine('L2', 'MOTOR', 5)] },
     { id: 'PO-BOLTS', status: 'issued', currency: 'USD', totalAmount: 50, orderDate: '2026-09-02', supplierName: 'Acme', lines: [poLine('L3', 'BOLT', 10), poLine('L4', 'BOLT', 4)] },
-  ] }), { subject: 'procurement' })
+  ]
+  const report = buildRuntimeGovernedReport(context({ purchaseOrders }), { subject: 'procurement' })
   const row = id => report.details.find(item => item.id === id)
   assert.deepEqual([row('PO-BOLTS-MOTORS').quantity, row('PO-BOLTS-MOTORS').unit], [null, 'multiple_skus'])
   assert.deepEqual([row('PO-BOLTS').quantity, row('PO-BOLTS').unit], [14, 'pcs'])
+  // The open purchase orders report, which the assistant reads, agrees.
+  const open = buildOpenPurchaseOrdersReport(purchaseOrders, { scope: 'all' }, new Date('2026-09-10T12:00:00Z'))
+  const openRow = id => open.rows.find(item => item.id === id)
+  assert.deepEqual([openRow('PO-BOLTS-MOTORS').ordered, openRow('PO-BOLTS-MOTORS').remaining, openRow('PO-BOLTS-MOTORS').unit], [null, null, 'multiple_skus'])
+  assert.deepEqual([openRow('PO-BOLTS').ordered, openRow('PO-BOLTS').remaining, openRow('PO-BOLTS').unit], [14, 14, 'pcs'])
 })
 
 test('an order is shipped in full only when every line has shipped', () => {

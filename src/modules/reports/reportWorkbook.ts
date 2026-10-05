@@ -31,10 +31,14 @@ export function reportWorkbook(report: GovernedReport, filters: Record<string, s
     const table = chartTable(chart, { copy, category });
     return table.rows.flatMap(entry => table.columns.map((column, index) => row({ Chart: copy(chart.title), Dimension: entry.label, Series: column.label, Value: entry.values[index] })));
   });
+  // A detail value as the dashboard table shows it: statuses in words, and
+  // 'mixed' or 'multiple_skus' in the unit column as why a row has no total.
+  const unitReasons: Record<string, string> = { mixed: 'Mixed units', multiple_skus: 'Multiple SKUs' };
+  const detailValue = (key: string, value: unknown) => key === 'status' || key === 'stockStatus' ? copy(reportStatusCopy(String(value ?? '—'), language)) : key === 'unit' && typeof value === 'string' && unitReasons[value] ? copy(unitReasons[value]) : value ?? '—';
   const sheets: Array<{ name: string; rows: Record<string, unknown>[] }> = [
     { name: copy('Metric summary'), rows: report.kpis.map(item => { const currency = metricCurrency(item); return { ...currencyMetadata(currency.code, currency.label, currency.status), ...row({ Metric: copy(item.label), 'Current value': copy(metricValue(item, currency.status)), 'Baseline value': item.comparisonValue === null ? copy('Not compared') : formatMetric(item.comparisonValue, item.unit, currency.code, format), Definition: copy(item.description), 'Data range': dateRangeLabel(scope.from, scope.to, copy) }) }; }) },
     { name: copy('Chart data'), rows: chartRows.map(item => ({ ...metadata, ...item })) },
-    { name: copy('Detail data'), rows: report.exportRows.map(item => ({ ...metadata, ...Object.fromEntries(report.columnDefinitions.map(column => [copy(column.label), column.key === 'status' || column.key === 'stockStatus' ? copy(reportStatusCopy(String(item[column.key] ?? '—'), format.language || 'en-US')) : item[column.key] ?? '—'])) })) },
+    { name: copy('Detail data'), rows: report.exportRows.map(item => ({ ...metadata, ...Object.fromEntries(report.columnDefinitions.map(column => [copy(column.label), detailValue(column.key, item[column.key])])) })) },
     { name: copy('Filters'), rows: [{ ...metadata, ...row({ '开始日期': scope.from || '—', '结束日期': scope.to || '—', '供应商': filters.supplier || copy('全部供应商'), '客户': filters.customer || copy('全部客户'), '比较方式': copy(filters.comparison === 'year_over_year' ? '同比' : filters.comparison === 'previous_period' ? '上期' : '不比较') }) }] },
     { name: copy('指标口径'), rows: report.kpis.map(item => row({ Metric: copy(item.label), Definition: copy(item.description), Calculation: copy(item.calculationLabel), 'Date field': copy('Record date'), 'Metric version': item.version, 'Data limitations': limitations.map(copy).join('; ') || copy('None') })) },
   ];
