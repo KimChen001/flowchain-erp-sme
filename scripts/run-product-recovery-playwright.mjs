@@ -19,10 +19,25 @@ function run(specs, extraEnv = {}) {
   });
 }
 
+// CI runs the phases in two groups on separate runners, chosen with
+// PRODUCT_RECOVERY_GROUP: "shell" is the phases named here, "walkthrough" is
+// every other phase, so a new phase lands in walkthrough unless it is added
+// here. Without the variable every phase runs, as locally.
+const SHELL_PHASES = new Set(["shell and routing", "email link sign-in", "outbound read states"]);
+const group = process.env.PRODUCT_RECOVERY_GROUP || "";
+if (group && !["walkthrough", "shell"].includes(group)) {
+  console.error(`PRODUCT_RECOVERY_GROUP must be "walkthrough" or "shell", not "${group}".`);
+  process.exit(2);
+}
+const selected = (name) => !group || (group === "shell") === SHELL_PHASES.has(name);
+
 // Every phase runs even when an earlier one fails, so one failure cannot hide
 // another; the runner exits with the first failing phase's code.
 const failures = [];
+const ran = [];
 async function phase(name, specs, extraEnv) {
+  if (!selected(name)) return;
+  ran.push(name);
   const code = await run(specs, extraEnv);
   if (code !== 0) failures.push({ name, code });
 }
@@ -54,5 +69,6 @@ await phase("outbound read states", "tests/browser/outbound-read-states.spec.ts"
   PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY: "true",
 });
 
+if (group) console.log(`Product recovery group ${group}: ${ran.join(", ") || "no phases"}`);
 for (const failure of failures) console.error(`Product recovery phase failed: ${failure.name} (exit ${failure.code})`);
 process.exit(failures[0]?.code ?? 0);
