@@ -466,7 +466,11 @@ async function loadTruthSources() {
       values[`atp:${row.sku}`] = row.availableToPromise ?? null
       values[`available:${row.sku}`] = row.available ?? null
     }
+    // Overdue open orders per supplier tier ('none' for suppliers not tiered).
+    const tiers = new Map((await prisma.supplier.findMany({ where: { tenantId: TENANT_A }, select: { id: true, tier: true } })).map((row) => [row.id, row.tier]))
+    for (const tier of ['1', '2', '3', 'none']) values[`tier_overdue_po:${tier}`] = 0
     for (const row of array(open.exportRows)) {
+      if (row.overdueDays > 0) values[`tier_overdue_po:${tiers.get(row.supplierId) ?? 'none'}`] += 1
       values[`supplier_open_po:${row.supplierId}`] = (values[`supplier_open_po:${row.supplierId}`] || 0) + 1
       if (row.overdueDays > 0) values[`supplier_overdue_po:${row.supplierId}`] = (values[`supplier_overdue_po:${row.supplierId}`] || 0) + 1
       values[`po_remaining:${row.id}`] = row.remaining

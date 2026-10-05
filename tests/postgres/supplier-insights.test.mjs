@@ -114,6 +114,43 @@ test('supplier metrics agree with the reports and suggestions state their facts,
     const operations = await read('operations')
     assert.deepEqual(operations.visibility, { orders: false, amounts: false, onTime: false, issues: true })
 
+    // One supplier's detail page (T3): its purchase records and open issues,
+    // per reader. The issues are what the list counts as "Open issues".
+    const activity = (key, supplierId) => service.readActivity({ env, repositories, identity: { authenticated: true, tenantId, userId: `${tenantId}-${key}`, role: people[key], name: `Insights ${key}`, source: 'test-suite' } }, supplierId)
+    const acme = await activity('admin', SUP(1))
+    assert.deepEqual(acme.visibility, { orders: true, orderAmounts: true, invoices: true, invoiceAmounts: true, issues: true })
+    const acmeOrders = purchaseOrders.filter((po) => po.supplierId === SUP(1))
+    assert.equal(acme.purchaseOrders.total, acmeOrders.length)
+    assert.equal(acme.purchaseOrders.rows.length, Math.min(20, acmeOrders.length))
+    const dates = acme.purchaseOrders.rows.map((row) => row.date)
+    assert.deepEqual(dates, [...dates].sort().reverse(), 'newest first')
+    for (const row of acme.purchaseOrders.rows) {
+      assert.equal(row.overdueDays, report.find((po) => po.id === row.id)?.overdueDays || 0, row.id)
+      assert.equal(row.amount, Number(acmeOrders.find((po) => po.id === row.id).amount), row.id)
+    }
+    assert.ok(acme.purchaseOrders.rows.some((row) => row.overdueDays > 0))
+    assert.equal(acme.invoices.rows.length, Math.min(20, await prisma.supplierInvoice.count({ where: { tenantId, supplierId: SUP(1) } })))
+    for (const [supplierId, row] of Object.entries(admin.suppliers)) assert.equal((await activity('admin', supplierId)).issues.length, row.openIssues, supplierId)
+    // The assistant's date order: overdue records first, longest overdue first.
+    const overdue = acme.issues.filter((issue) => issue.when.kind === 'overdue')
+    assert.deepEqual(acme.issues.slice(0, overdue.length), overdue)
+    assert.deepEqual(overdue.map((issue) => issue.when.days), [...overdue.map((issue) => issue.when.days)].sort((a, b) => b - a))
+    // A viewer: orders without amounts, and no invoices, which would name the
+    // supplier without the partner snapshot.
+    const viewerAcme = await activity('viewer', SUP(1))
+    assert.deepEqual(viewerAcme.visibility, { orders: true, orderAmounts: false, invoices: false, invoiceAmounts: false, issues: true })
+    assert.ok(viewerAcme.purchaseOrders.rows.every((row) => row.amount === null))
+    assert.equal(viewerAcme.invoices, null)
+    assert.equal(viewerAcme.issues.length, viewer.suppliers[SUP(1)].openIssues)
+    // Finance: invoices with amounts, no orders.
+    const financeAcme = await activity('finance', SUP(1))
+    assert.deepEqual(financeAcme.visibility, { orders: false, orderAmounts: false, invoices: true, invoiceAmounts: true, issues: true })
+    assert.equal(financeAcme.purchaseOrders, null)
+    assert.ok(financeAcme.invoices.rows.length > 0 && financeAcme.invoices.rows.every((row) => typeof row.amount === 'number'))
+    // Operations reads invoices but not the partner snapshot: no invoice list.
+    assert.equal((await activity('operations', SUP(1))).invoices, null)
+    await assert.rejects(activity('admin', 'LOCAL-DEMO-SUP-404'), (error) => error.status === 404)
+
     // The route serves the same read to the signed-in user.
     server = createScmServer()
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -125,6 +162,12 @@ test('supplier metrics agree with the reports and suggestions state their facts,
     assert.equal(served.status, 200, JSON.stringify(served.payload))
     assert.deepEqual(served.payload.visibility, { orders: true, amounts: false, onTime: true, issues: true })
     assert.equal(Object.keys(served.payload.suppliers).length, 10)
+    assert.equal((await request(port, 'GET', `/api/master-data/suppliers/${SUP(1)}/activity`)).status, 401)
+    const detail = await request(port, 'GET', `/api/master-data/suppliers/${SUP(1)}/activity`, { headers: { Authorization: `Bearer ${login.payload.token}` } })
+    assert.equal(detail.status, 200, JSON.stringify(detail.payload))
+    assert.deepEqual(detail.payload.visibility, viewerAcme.visibility)
+    assert.equal(detail.payload.purchaseOrders.total, acmeOrders.length)
+    assert.equal((await request(port, 'GET', '/api/master-data/suppliers/LOCAL-DEMO-SUP-404/activity', { headers: { Authorization: `Bearer ${login.payload.token}` } })).status, 404)
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve))
     await disconnectPrismaClient()
