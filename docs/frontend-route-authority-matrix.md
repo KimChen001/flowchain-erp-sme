@@ -34,7 +34,7 @@ set) and the user holds `finance.overview.read`. Settings remains in the
 profile menu. Mobile Operations remains a hidden Extension; Frozen, Legacy,
 and Internal surfaces remain outside normal navigation.
 
-The 164/164 frontend route stability audit verifies
+The 165/165 frontend route stability audit verifies
 resolution, shell rendering, no route-level 404 recovery, no render crash, and
 no observed API 5xx. It does not prove business semantics, data authority,
 permission correctness, capability correctness, or complete functionality.
@@ -81,6 +81,7 @@ classification and navigation metadata.
 | `master-data:bins` | `/app/master-data/bins` | 库位 / 货位 | `master-data` | CORE | SECONDARY | no | master-data | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `master-data:payment-terms` | `/app/master-data/payment-terms` | 支付方式 / 付款条款 | `master-data` | CORE | SECONDARY | no | master-data | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `master-data:tax-codes` | `/app/master-data/tax-codes` | 税码 | `master-data` | CORE | SECONDARY | no | master-data | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `master-data:import` | `/app/master-data/import` | 导入数据 | `master-data` | EXTENSION | SECONDARY | no | master-data | `src/modules/master-data` | /api/data-import/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | data-import | — | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `master-data:print-templates` | `/app/master-data/print-templates` | 打印模板 | `master-data` | CORE | SECONDARY | no | master-data | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `master-data:supplier-detail` | `/app/master-data/suppliers/:id` | 供应商详情 | `master-data` | CORE | CONTEXTUAL | no | supplier | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `master-data:item-detail` | `/app/master-data/items/:id` | 物料详情 | `master-data` | CORE | CONTEXTUAL | no | item | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |

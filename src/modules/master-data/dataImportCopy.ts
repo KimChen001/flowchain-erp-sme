@@ -1,0 +1,179 @@
+import { useMemo } from "react";
+import { useI18n } from "../../i18n/I18n";
+
+// Copy for the CSV import page and its entry buttons. English is the source;
+// zh-CN entries translate it. Codes sent by the server (issue codes, actions,
+// skip reasons) are never shown raw when a label exists for them.
+const chinese: Record<string, string> = {
+  "Import data": "导入数据",
+  Import: "导入",
+  "Import opening stock": "导入期初库存",
+  "Create records from a CSV or XLSX file. Existing records are skipped, never changed.": "从 CSV 或 XLSX 文件新建记录。已存在的记录会跳过，不会被修改。",
+  Items: "物料",
+  Suppliers: "供应商",
+  Customers: "客户",
+  "Item suppliers": "物料供应商",
+  "Opening stock": "期初库存",
+  "Import in this order: items, suppliers, customers, item suppliers, then opening stock.": "请按以下顺序导入：物料、供应商、客户、物料供应商，最后是期初库存。",
+  "Download template": "下载模板",
+  "Choose file": "选择文件",
+  "No file chosen": "未选择文件",
+  "File encoding": "文件编码",
+  "UTF-8 (recommended)": "UTF-8（推荐）",
+  "GB18030 (Chinese Excel on Windows)": "GB18030（Windows 中文版 Excel）",
+  Sheet: "工作表",
+  "Check file": "检查文件",
+  "Checking…": "正在检查…",
+  "Import {n} rows": "导入 {n} 行",
+  "Import 1 row": "导入 1 行",
+  "Importing…": "正在导入…",
+  "Imported {done} of {total} rows": "已导入 {done} / {total} 行",
+  "Errors only": "仅显示错误",
+  Row: "行号",
+  Key: "关键字段",
+  Action: "处理方式",
+  Issues: "问题",
+  Outcome: "结果",
+  Details: "详情",
+  Unit: "单位",
+  Warehouse: "仓库",
+  Location: "库位",
+  Quantity: "数量",
+  "Stock record": "库存记录",
+  Currency: "币种",
+  Create: "新建",
+  "Skipped — already exists": "已存在，跳过",
+  Error: "有错误",
+  Created: "已创建",
+  "Not imported": "未导入",
+  "Not sent: fix the file and upload it again": "未提交：请修改文件后重新上传",
+  "New stock record": "新库存记录",
+  "Existing stock record": "已有库存记录",
+  "Already in draft {number}": "已在调整草稿 {number} 中",
+  "This location already holds stock.": "该库位已有库存。",
+  "From the file": "来自文件",
+  "Workspace currency": "工作区本位币",
+  "Supplier's default currency": "供应商默认币种",
+  "Not recorded": "未记录",
+  "{rows} rows: {create} to create, {skip} already exist, {error} with errors": "共 {rows} 行：新建 {create} 行，已存在 {skip} 行，有错误 {error} 行",
+  "{rows} rows: {created} created, {skipped} already existed, {error} not imported": "共 {rows} 行：已创建 {created} 行，已存在 {skipped} 行，未导入 {error} 行",
+  "Rows with errors are never imported. Fix them in the file and upload it again.": "有错误的行不会导入。请在文件中修改后重新上传。",
+  "Columns ignored: {columns}": "已忽略的列：{columns}",
+  "Opening stock is created as a draft adjustment. A person approves and posts it in Inventory.": "期初库存将生成调整草稿，需由人工在库存中审核并过账。",
+  "By warehouse": "按仓库",
+  "{rows} rows, {create} to create, {newRecords} new stock records": "{rows} 行，新建 {create} 行，其中新库存记录 {newRecords} 个",
+  "Draft adjustments": "调整草稿",
+  "Open {number}": "打开 {number}",
+  "Download results": "下载结果",
+  Results: "结果",
+  "Import another file": "导入其他文件",
+  "The import stopped. Rows already imported are kept; check the file again to continue.": "导入已中止。已导入的行会保留；重新检查文件即可继续。",
+  "Some rows hit a conflict with another change. Check the file again and import it to finish them.": "部分行与其他修改冲突，请重新检查文件并导入以完成。",
+  "Could not download the template.": "模板下载失败。",
+  "Could not check the file.": "文件检查失败。",
+  // File-level codes.
+  DATA_IMPORT_FILE_REQUIRED: "请选择 CSV 或 XLSX 文件。",
+  DATA_IMPORT_FILE_TOO_LARGE: "文件超过导入大小上限。",
+  DATA_IMPORT_REQUEST_TOO_LARGE: "文件超过导入大小上限。",
+  DATA_IMPORT_TOO_MANY_ROWS: "文件行数超过单次导入上限，请拆分为较小的文件。",
+  DATA_IMPORT_TOO_MANY_COLUMNS: "文件列数超过导入上限。",
+  DATA_IMPORT_FILE_UNSAFE: "该工作簿超出安全限制，无法读取。",
+  DATA_IMPORT_FILE_TYPE: "请将工作簿另存为 .xlsx 或 .csv 后重新选择。",
+  DATA_IMPORT_FILE_UNREADABLE: "无法读取该文件。请从模板开始填写。",
+  DATA_IMPORT_SHEET_REQUIRED: "请选择要导入的工作表。",
+  DATA_IMPORT_ENCODING_REQUIRED: "无法按 UTF-8 读取该文件。如果是 Windows 中文版 Excel 保存的 CSV，请选择 GB18030 编码。",
+  DATA_IMPORT_HEADER_DUPLICATE: "文件中有两列含义相同，请只保留一列。",
+  DATA_IMPORT_HEADER_MISSING: "文件第一行必须是列标题。",
+  DATA_IMPORT_REQUIRED_COLUMN_MISSING: "文件缺少必填列：{columns}。请从模板开始填写。",
+  DATA_IMPORT_NO_ROWS: "文件只有标题行，没有数据行。",
+  DATA_IMPORT_IN_PROGRESS: "文件的这一部分正在导入中，请稍候再查看结果。",
+  DATA_IMPORT_NOT_ENABLED: "此工作区未启用数据导入。",
+  DATA_IMPORT_OPENING_STOCK_UNAVAILABLE: "期初库存导入需要启用库存操作。",
+  AUTHORIZATION_PERMISSION_DENIED: "你的角色不允许导入此类记录。工作区管理员可在角色与权限中授予。",
+};
+
+// English for the codes the server sends, so a code always has a sentence.
+const english: Record<string, string> = {
+  DATA_IMPORT_FILE_REQUIRED: "Choose a CSV or XLSX file.",
+  DATA_IMPORT_FILE_TOO_LARGE: "The file is larger than the import limit.",
+  DATA_IMPORT_REQUEST_TOO_LARGE: "The file is larger than the import limit.",
+  DATA_IMPORT_TOO_MANY_ROWS: "The file has more rows than one import takes. Split it into smaller files.",
+  DATA_IMPORT_TOO_MANY_COLUMNS: "The file has more columns than the import reads.",
+  DATA_IMPORT_FILE_UNSAFE: "This workbook is outside the safe limits and cannot be read.",
+  DATA_IMPORT_FILE_TYPE: "Save the workbook as .xlsx or .csv, then choose it again.",
+  DATA_IMPORT_FILE_UNREADABLE: "The file could not be read. Start from the template.",
+  DATA_IMPORT_SHEET_REQUIRED: "Choose the sheet to import.",
+  DATA_IMPORT_ENCODING_REQUIRED: "The file could not be read as UTF-8. If Chinese Excel on Windows saved this CSV, choose GB18030.",
+  DATA_IMPORT_HEADER_DUPLICATE: "Two columns in the file mean the same thing. Keep one of them.",
+  DATA_IMPORT_HEADER_MISSING: "The first row of the file must hold the column headers.",
+  DATA_IMPORT_REQUIRED_COLUMN_MISSING: "The file is missing required columns: {columns}. Start from the template.",
+  DATA_IMPORT_NO_ROWS: "The file has a header row but no data rows.",
+  DATA_IMPORT_IN_PROGRESS: "This part of the file is already being imported. Wait a moment, then check the results.",
+  DATA_IMPORT_NOT_ENABLED: "Data import is not enabled in this workspace.",
+  DATA_IMPORT_OPENING_STOCK_UNAVAILABLE: "Opening stock import needs inventory operations to be enabled.",
+  AUTHORIZATION_PERMISSION_DENIED: "Your roles do not allow importing these records. A workspace administrator can grant it in Roles & permissions.",
+};
+
+// Row issue codes: [English, Chinese]. The column is shown next to them.
+const issueText: Record<string, [string, string]> = {
+  NUMBER_FORMAT: ["Write the number with digits and a decimal point only, without thousands separators or currency signs.", "数字只能包含数字和小数点，不能有千位分隔符或货币符号。"],
+  NUMBER_INVALID: ["Enter a number, zero or greater.", "请输入零或正数。"],
+  POSITIVE_NUMBER_REQUIRED: ["Enter a number greater than zero.", "请输入大于零的数字。"],
+  WHOLE_NUMBER_REQUIRED: ["Enter a whole number, zero or greater.", "请输入零或正整数。"],
+  NUMBER_TOO_LARGE: ["This number is too large.", "数字过大。"],
+  YES_NO_INVALID: ["Write Yes or No.", "请填写“是”或“否”。"],
+  STATUS_INVALID: ["Write Active, Inactive or Draft.", "请填写“启用”“停用”或“草稿”。"],
+  SKU_REQUIRED: ["Enter a SKU.", "请填写 SKU。"],
+  SKU_INVALID: ["A SKU has at most 64 characters and no spaces.", "SKU 最多 64 个字符，且不能有空格。"],
+  NAME_REQUIRED: ["Enter a name.", "请填写名称。"],
+  NAME_TOO_LONG: ["A name has at most 200 characters.", "名称最多 200 个字符。"],
+  UNIT_REQUIRED: ["Enter a unit.", "请填写单位。"],
+  CODE_REQUIRED: ["Enter a code.", "请填写编号。"],
+  CODE_TOO_LONG: ["A code has at most 64 characters.", "编号最多 64 个字符。"],
+  EMAIL_INVALID: ["Enter a valid email address.", "请填写有效邮箱。"],
+  CURRENCY_INVALID: ["Use a three-letter currency code, such as USD.", "请填写三位币种代码，例如 USD。"],
+  WORKSPACE_CURRENCY_MISSING: ["Enter a currency; the workspace has none to use.", "请填写币种；工作区未设置本位币。"],
+  PAYMENT_TERM_NOT_FOUND: ["No payment term has this code. Add it under Payment terms first.", "没有此编码的付款条款，请先在付款条款中添加。"],
+  SUPPLIER_NOT_FOUND: ["No supplier has this code. Import or create the supplier first.", "没有此编号的供应商，请先导入或新建供应商。"],
+  SUPPLIER_INACTIVE: ["This supplier is not active.", "该供应商未启用。"],
+  ITEM_NOT_FOUND: ["No item has this SKU. Import or create the item first.", "没有此 SKU 的物料，请先导入或新建物料。"],
+  ITEM_INACTIVE: ["This item is not active.", "该物料未启用。"],
+  WAREHOUSE_REQUIRED: ["Enter a warehouse code.", "请填写仓库编码。"],
+  WAREHOUSE_NOT_FOUND: ["No warehouse has this code.", "没有此编码的仓库。"],
+  WAREHOUSE_INACTIVE: ["This warehouse is not active.", "该仓库未启用。"],
+  WAREHOUSE_SCOPE_DENIED: ["You cannot record stock in this warehouse. A workspace administrator can grant access.", "你无权在此仓库录入库存，可请工作区管理员授权。"],
+  LOCATION_REQUIRED: ["Enter a location.", "请填写库位。"],
+  LOCATION_TOO_LONG: ["A location has at most 120 characters.", "库位最多 120 个字符。"],
+  QUANTITY_REQUIRED: ["Enter a quantity.", "请填写数量。"],
+  QUANTITY_POSITIVE: ["Opening stock must be greater than zero.", "期初库存必须大于零。"],
+  QUANTITY_PRECISION: ["A quantity has at most four decimal places.", "数量最多保留四位小数。"],
+  UNIT_MISMATCH: ["This item is kept in {unit}. Convert the quantity before importing.", "该物料的单位是 {unit}，请先换算数量再导入。"],
+  ADJUSTMENT_OPENING_BALANCE_EXISTS: ["This location already has stock history. Correct it with another adjustment reason in Inventory.", "该库位已有库存记录历史，请在库存中用其他调整原因更正。"],
+  DUPLICATE_ROW: ["Another row in this file has the same key. Keep one of them.", "文件中另有一行的关键字段相同，请只保留一行。"],
+  PREFERRED_DUPLICATE: ["Only one supplier per item can be preferred.", "每个物料只能有一个首选供应商。"],
+  VERSION_CONFLICT: ["Another change got there first. Import again to finish this row.", "该记录刚被其他操作修改，请再次导入以完成此行。"],
+};
+
+function fill(text: string, vars: Record<string, string | number> = {}) {
+  return Object.entries(vars).reduce((out, [name, value]) => out.replaceAll(`{${name}}`, String(value)), text);
+}
+
+export function dataImportCopy(language: string, label: string, vars?: Record<string, string | number>) {
+  const text = language === "en-US" ? english[label] || label : chinese[label] || english[label] || label;
+  return fill(text, vars);
+}
+
+export function dataImportIssueText(language: string, issue: { code: string; message: string; params?: Record<string, string> }) {
+  const pair = issueText[issue.code];
+  if (!pair) return issue.message;
+  return fill(language === "en-US" ? pair[0] : pair[1], issue.params || {});
+}
+
+export function useDataImportCopy() {
+  const { language } = useI18n();
+  return useMemo(() => ({
+    language,
+    copy: (label: string, vars?: Record<string, string | number>) => dataImportCopy(language, label, vars),
+    issueText: (issue: { code: string; message: string; params?: Record<string, string> }) => dataImportIssueText(language, issue),
+  }), [language]);
+}
