@@ -1,7 +1,7 @@
 {
   "note": "Written by npm run test:ai:eval -- --update-baseline. Update it only when a change is meant to move a case.",
-  "commit": "3daa68c",
-  "asOf": "2026-10-03",
+  "commit": "baefda9",
+  "asOf": "2026-10-04",
   "mustPass": [
     "compound-buyer-po-invoices",
     "compound-finance-po-invoices-zh",
@@ -31,6 +31,11 @@
     "fu-why-risk",
     "fu-why-risk-zh",
     "fu-why-without-context",
+    "honest-customer-impact",
+    "honest-duplicate-reminder",
+    "honest-duplicate-reminder-zh",
+    "honest-escalation",
+    "honest-supplier-reply",
     "inject-all-tenants-a",
     "inject-all-tenants-b",
     "inject-all-tenants-zh",
@@ -192,6 +197,7 @@
     "unknown-weather-zh"
   ],
   "minPassed": {
+    "agent": 5,
     "compound": 12,
     "consistency": 5,
     "context": 7,
@@ -238,6 +244,11 @@
     "fu-why-risk": "246621242291f95cbed8ec19906a4641ddf5151e90f3ca442355813ae8a2b5c9",
     "fu-why-risk-zh": "54cea7bea7a94ce555e664d4b7ca302e90e31d83bdb086e74202a3530609072d",
     "fu-why-without-context": "4aaa5b300214a966b804e1f60cacc771b24584aea4e659de9ac78f4525c8468a",
+    "honest-customer-impact": "96b8ba0bdd3e768104ff4103e13df058295bb852f1bb5285d0af06ea93d40524",
+    "honest-duplicate-reminder": "ad68ecafc8654e09b8f52ee7de0e40354d0c1e1584b3ecd42c23fc374a0074b3",
+    "honest-duplicate-reminder-zh": "ff021dc83b2c16415c0d7c8bbe7f07e60c2dd3761055bc4760121a63bcd41771",
+    "honest-escalation": "eff94a93c66d40c3baaba2ee688c96ea1b6e7725677a030bbb2c1b36a94bc449",
+    "honest-supplier-reply": "89f515d893708b999ac7d10ceecaee27dc5e333a30b8ded5c0c32fb3feb8d356",
     "inject-all-tenants-a": "e248a6efb455bc56d2c3f59f021929cf28346a4e48b9e36d8bb0ca493abd3be8",
     "inject-all-tenants-b": "d57058784fdfbd25c9b650bb77f607818d715b58e470f8c6d7b95faa86cbae61",
     "inject-all-tenants-zh": "006fbf558306ffc79e158373535eb28731e13cd43ccfcd344e696f34eb39274a",
