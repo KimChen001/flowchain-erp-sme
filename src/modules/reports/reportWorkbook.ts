@@ -3,6 +3,14 @@ import { formatMetric } from './currencyFormatting.mjs';
 import { reportStatusCopy } from './analyticsCopy.ts';
 import { chartTable } from './charts/chartTable.ts';
 
+// A report's date range in words: both ends, one end, or all dates.
+export function dateRangeLabel(from: string | null | undefined, to: string | null | undefined, copy: (value: string) => string) {
+  if (from && to) return `${from} — ${to}`;
+  if (from) return `${copy('From')} ${from}`;
+  if (to) return `${copy('Through')} ${to}`;
+  return copy('All dates');
+}
+
 export function reportWorkbook(report: GovernedReport, filters: Record<string, string>, copy: (value: string) => string, limitations: string[], format: { locale?: string; language?: string } = {}) {
   const scope = report.dataScope;
   const row = (entries: Record<string, unknown>) => Object.fromEntries(Object.entries(entries).map(([key, value]) => [copy(key), value]));
@@ -21,10 +29,10 @@ export function reportWorkbook(report: GovernedReport, filters: Record<string, s
     return table.rows.flatMap(entry => table.columns.map((column, index) => row({ Chart: copy(chart.title), Dimension: entry.label, Series: column.label, Value: entry.values[index] })));
   });
   const sheets: Array<{ name: string; rows: Record<string, unknown>[] }> = [
-    { name: copy('Metric summary'), rows: report.kpis.map(item => { const currency = metricCurrency(item); return { ...currencyMetadata(currency.code, currency.label, currency.status), ...row({ Metric: copy(item.label), 'Current value': copy(metricValue(item, item.currentValue, currency.status, currency.code)), 'Baseline value': item.comparisonValue === null ? copy('Not compared') : formatMetric(item.comparisonValue, item.unit, currency.code, format), Definition: copy(item.description), 'Data range': `${scope.from} — ${scope.to}` }) }; }) },
+    { name: copy('Metric summary'), rows: report.kpis.map(item => { const currency = metricCurrency(item); return { ...currencyMetadata(currency.code, currency.label, currency.status), ...row({ Metric: copy(item.label), 'Current value': copy(metricValue(item, item.currentValue, currency.status, currency.code)), 'Baseline value': item.comparisonValue === null ? copy('Not compared') : formatMetric(item.comparisonValue, item.unit, currency.code, format), Definition: copy(item.description), 'Data range': dateRangeLabel(scope.from, scope.to, copy) }) }; }) },
     { name: copy('Chart data'), rows: chartRows.map(item => ({ ...metadata, ...item })) },
     { name: copy('Detail data'), rows: report.exportRows.map(item => ({ ...metadata, ...Object.fromEntries(report.columnDefinitions.map(column => [copy(column.label), column.key === 'status' || column.key === 'stockStatus' ? copy(reportStatusCopy(String(item[column.key] ?? '—'), format.language || 'en-US')) : item[column.key] ?? '—'])) })) },
-    { name: copy('Filters'), rows: [{ ...metadata, ...row({ '开始日期': scope.from, '结束日期': scope.to, '公司': scope.company, '供应商': filters.supplier || copy('全部供应商'), '客户': filters.customer || copy('全部客户'), '比较方式': copy(filters.comparison === 'year_over_year' ? '同比' : filters.comparison === 'previous_period' ? '上期' : '不比较') }) }] },
+    { name: copy('Filters'), rows: [{ ...metadata, ...row({ '开始日期': scope.from || '—', '结束日期': scope.to || '—', '供应商': filters.supplier || copy('全部供应商'), '客户': filters.customer || copy('全部客户'), '比较方式': copy(filters.comparison === 'year_over_year' ? '同比' : filters.comparison === 'previous_period' ? '上期' : '不比较') }) }] },
     { name: copy('指标口径'), rows: report.kpis.map(item => row({ Metric: copy(item.label), Definition: copy(item.description), Calculation: copy(item.calculationLabel), 'Date field': copy('Record date'), 'Metric version': item.version, 'Data limitations': limitations.map(copy).join('; ') || copy('None') })) },
   ];
   return sheets.map(sheet => ({ ...sheet, rows: sheet.rows.length ? sheet.rows : [row({ Definition: copy('No records in the selected range.') })] }));

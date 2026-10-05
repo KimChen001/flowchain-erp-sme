@@ -411,13 +411,13 @@ function fulfillmentGaugeVisual(id, orders) {
 // is the shortage the "SKUs short now" KPI counts: open demand that available
 // stock does not cover, before incoming purchase orders (those are in ATP).
 function stockPositionVisual(id, balances) {
-  const rows = balances.filter(row => row.quantity !== null).map(row => ({ name: row.sku, Available: Math.max(0, known(row.available) ?? 0), 'Reserved quantity': Math.max(0, known(row.reserved) ?? 0), 'Short now': Math.max(0, known(row.shortage) ?? 0) }))
+  const rows = balances.filter(row => row.quantity !== null).map(row => ({ name: row.id, Available: Math.max(0, known(row.available) ?? 0), 'Reserved quantity': Math.max(0, known(row.reserved) ?? 0), 'Short now': Math.max(0, known(row.shortage) ?? 0) }))
     .sort((a, b) => b['Short now'] - a['Short now'] || (b.Available + b['Reserved quantity']) - (a.Available + a['Reserved quantity']) || a.name.localeCompare(b.name)).slice(0, 12)
   return visual(id, 'Stock position by SKU', 'stacked_bar', rows, { seriesKeys: ['Available', 'Reserved quantity', 'Short now'], colors: ['#16a34a', '#2563eb', '#dc2626'], orientation: 'horizontal', drilldownPath: '/app/inventory', description: 'Each SKU in its own unit. Shortage is open demand that available stock does not cover; incoming purchase orders are not counted.' })
 }
 
 function atpVisual(id, balances) {
-  const rows = balances.filter(row => known(row.availableToPromise) !== null).map(row => ({ name: row.sku, value: known(row.availableToPromise) }))
+  const rows = balances.filter(row => known(row.availableToPromise) !== null).map(row => ({ name: row.id, value: known(row.availableToPromise) }))
   return rankingVisual(id, 'Available to promise by SKU', rows, { drilldownPath: '/app/inventory', description: 'On hand plus incoming, less reservations and open demand, in each SKU\'s unit. Negative values cannot be promised.', ascending: true, limit: 12 })
 }
 
@@ -506,7 +506,7 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
   if (subject === 'inventory') {
     const balances = all.inventory_balances
     return [
-      rankingVisual('inventory_on_hand_by_sku', 'On hand by SKU', balances.filter(row => row.quantity !== null).map(row => ({ name: row.sku, value: row.quantity })), { drilldownPath: '/app/inventory', description: 'Recorded on-hand quantity, in each SKU\'s unit.', limit: 15 }),
+      rankingVisual('inventory_on_hand_by_sku', 'On hand by SKU', balances.filter(row => row.quantity !== null).map(row => ({ name: row.id, value: row.quantity })), { drilldownPath: '/app/inventory', description: 'Recorded on-hand quantity, in each SKU\'s unit.', limit: 15 }),
       stockPositionVisual('inventory_stock_position', balances),
       atpVisual('inventory_available_to_promise', balances),
       visual('inventory_stock_status', 'Stock status', 'donut', grouped(balances, row => row.stockStatus, () => 1), { drilldownPath: '/app/inventory', statusLabels: true }),

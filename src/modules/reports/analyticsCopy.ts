@@ -133,6 +133,10 @@ const chinese: Record<string, string> = {
   'Select a row to filter the dashboard.': '点击行可筛选当前看板。', 'Chart image downloaded': '图表图片已下载', 'Chart data downloaded': '图表数据已下载', 'Could not download the chart': '图表下载失败',
   'Select the chart to filter this dashboard': '点击图形可筛选当前看板', 'View business details': '查看业务明细',
   'Key insights': '关键洞察', 'Generated from the figures on this page.': '根据本页数据自动生成。', 'Monthly trend': '月度趋势',
+  'From': '自', 'Through': '截至', 'Risk': '风险', 'Could not load': '加载失败',
+  'Warehouse locations are not shown in this report.': '本报表不显示仓库库位。', 'Storage bins are not shown in this report.': '本报表不显示库位明细。',
+  'Some figures may be incomplete for this range.': '部分数据可能不完整。',
+  'No business records in this range. Adjust the filters or add business data.': '当前范围暂无业务记录，可调整筛选或录入业务数据。',
   'Date range': '日期范围', 'This month': '本月', 'Last 3 months': '近 3 个月', 'Year to date': '今年至今', 'Last 12 months': '近 12 个月', 'All dates': '全部日期',
 };
 const english = Object.fromEntries(Object.entries(chinese).map(([en, zh]) => [zh, en]));

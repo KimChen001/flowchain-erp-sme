@@ -134,19 +134,19 @@ test('inventory report shows translated stock status codes in English and Chines
     const dashboard = page.getByTestId('bi-dashboard');
     await expect(dashboard.getByRole('columnheader', { name: labels.header, exact: true })).toBeVisible();
     const ldm1 = dashboard.locator('tr', { hasText: 'LDM-001' });
-    await expect(ldm1.locator('td').nth(6)).toHaveText('3');
-    await expect(ldm1.locator('td').nth(7)).toHaveText(labels.belowSafety);
-    await expect(ldm1.locator('td').nth(8)).toHaveText(labels.high);
+    await expect(ldm1.locator('td').nth(7)).toHaveText('3');
+    await expect(ldm1.locator('td').nth(8)).toHaveText(labels.belowSafety);
+    await expect(ldm1.locator('td').nth(9)).toHaveText(labels.high);
     const ldm3 = dashboard.locator('tr', { hasText: 'LDM-003' });
-    await expect(ldm3.locator('td').nth(7)).toHaveText(labels.outOfStock);
-    await expect(ldm3.locator('td').nth(8)).toHaveText(labels.medium);
+    await expect(ldm3.locator('td').nth(8)).toHaveText(labels.outOfStock);
+    await expect(ldm3.locator('td').nth(9)).toHaveText(labels.medium);
     await expect(dashboard).not.toContainText(/below_safety_stock|out_of_stock|below_reorder_point/);
     if (language === 'en-US') {
       const pending = page.waitForEvent('download');
       await dashboard.getByRole('button', { name: 'Export', exact: true }).click();
       const workbook = XLSX.read(await readFile((await (await pending).path())!), { type: 'buffer' });
       const details = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets['Detail data']);
-      expect(details.map(row => [row.SKU, row['Stock status'], row.Status])).toEqual([['LDM-001', 'Below safety stock', 'High'], ['LDM-003', 'Out of stock', 'Medium']]);
+      expect(details.map(row => [row.SKU, row['Item name'], row.Unit, row['Stock status'], row.Risk])).toEqual([['LDM-001', 'Flow Controller', 'pcs', 'Below safety stock', 'High'], ['LDM-003', 'Shipping Carton', 'pcs', 'Out of stock', 'Medium']]);
     }
   }
 });
