@@ -51,6 +51,7 @@ test('the action detector refuses instructions but not questions about them', ()
   ]) assert.equal(detectAiActionRequest(prompt), false, prompt)
   // A draft request that mentions sending is a draft, not a refusal.
   assert.equal(routeSkill({ message: 'Prepare a draft I can send to Acme' }).skillId, 'prepare_action_draft')
+  assert.equal(routeSkill({ message: 'Prepare follow-up drafts for our late orders' }).skillId, 'prepare_action_draft')
   // A focus of an unsupported type is dropped rather than passed through.
   assert.equal(routeSkill({ message: 'What should I handle first today?', focusTarget: { entityType: 'tenant', entityId: 'x' } }).focus, null)
 })

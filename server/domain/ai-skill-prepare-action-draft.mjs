@@ -10,6 +10,10 @@ import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
 //   shortage no open PO or pending request covers                      -> purchase_request_draft
 //   invoice variance                                                    -> supplier_followup_draft
 //   request awaiting approval, RFQ ready to award                       -> a link only
+// A supplier tier the question names ("follow-ups for our Tier 1 suppliers")
+// keeps the drafts and links to that tier's suppliers, in the same order: a
+// follow-up on one of their orders or invoices. A shortage that none of their
+// orders covers belongs to no supplier and is left out.
 
 export const AI_SKILL_DRAFT_TYPES = Object.freeze(['po_followup_draft', 'supplier_followup_draft', 'purchase_request_draft'])
 const MAX_CARDS = 3
@@ -37,9 +41,13 @@ function candidates(facts, ranked) {
   return out
 }
 
-export function runPrepareActionDraft(facts, { focus = null } = {}) {
+const candidateSupplier = (candidate) => candidate.po?.supplierId || candidate.item.supplierId || null
+
+export function runPrepareActionDraft(facts, { focus = null, route = null } = {}) {
+  const tier = route?.tier || null
+  const tierIds = tier?.supplierIds ? new Set(tier.supplierIds) : null
   const ranked = rankAiSkillItems(buildAiSkillSignals(facts)).filter((item) => matchesAiSkillFocus(item, focus))
-  const all = candidates(facts, ranked)
+  const all = candidates(facts, ranked).filter((candidate) => !tierIds || tierIds.has(candidateSupplier(candidate)))
   const seen = new Set()
   const drafts = []
   const take = (candidate) => { if (drafts.length < MAX_CARDS && !seen.has(candidate.key)) { seen.add(candidate.key); drafts.push(candidate) } }
@@ -49,7 +57,7 @@ export function runPrepareActionDraft(facts, { focus = null } = {}) {
   drafts.sort((a, b) => a.item.rank - b.item.rank)
   const canDraft = Boolean(facts.visibility?.canDraft)
   return {
-    skillId: 'prepare_action_draft', focus, canDraft,
+    skillId: 'prepare_action_draft', focus, canDraft, tier,
     drafts: canDraft ? drafts : [],
     links: all.filter((candidate) => candidate.kind === 'link').slice(0, 3).map((candidate) => candidate.item),
     items: [...(canDraft ? drafts : all.filter((candidate) => candidate.kind !== 'link').slice(0, MAX_CARDS)).map((candidate) => candidate.item), ...all.filter((candidate) => candidate.kind === 'link').slice(0, 2).map((candidate) => candidate.item)]
@@ -103,8 +111,11 @@ export function presentPrepareActionDraft(result, facts, { skill, language, quer
   const extraLimitations = result.canDraft ? [] : [{ code: 'draft_permission', label: aiSkillText('limitation.draft_permission.label', language), description: aiSkillText('draft.no_permission', language), severity: 'warning', missingData: [] }]
   return presentAiSkillAnswer({
     skill, facts, language, query,
-    title: !result.canDraft ? aiSkillText('draft.title_blocked', language) : result.focus ? focusTitle(result.focus.entityId, reviewCards.length, fmt, language) : aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }),
-    summary: aiSkillText(!result.canDraft ? 'draft.no_permission' : reviewCards.length ? 'draft.summary' : 'draft.none_summary', language),
+    title: !result.canDraft ? aiSkillText('draft.title_blocked', language)
+      : result.focus ? focusTitle(result.focus.entityId, reviewCards.length, fmt, language)
+        : result.tier?.supplierIds ? aiSkillCountText('draft.tier_title', reviewCards.length, language, { count: fmt.number(reviewCards.length), group: aiSkillText(`tier.group_${result.tier.tier}`, language) })
+          : aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }),
+    summary: [aiSkillText(!result.canDraft ? 'draft.no_permission' : reviewCards.length ? 'draft.summary' : 'draft.none_summary', language), result.tier && !result.tier.supplierIds ? aiSkillText('tier.unavailable', language) : ''].filter(Boolean).join(language === 'zh-CN' ? '' : ' '),
     severity: result.items[0]?.severity || 'info',
     items: result.items,
     navigation: [...result.drafts.map((candidate) => candidate.item), ...result.links].slice(0, 4).map((item) => aiSkillNavigation(item, language)),
