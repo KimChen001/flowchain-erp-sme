@@ -35,6 +35,8 @@ export function runPrepareActionDraft(facts, { focus = null, route = null } = {}
   const canDraft = Boolean(facts.visibility?.canDraft)
   return {
     skillId: 'prepare_action_draft', focus, canDraft, tier,
+    // Asked to draft for one order that is not yet issued: say so, not "no draft needed".
+    focusNotSent: Boolean(focus) && !drafts.length && all.some((candidate) => candidate.kind === 'link' && candidate.notSent),
     drafts: canDraft ? drafts : [],
     links: all.filter((candidate) => candidate.kind === 'link').slice(0, 3).map((candidate) => candidate.item),
     items: [...(canDraft ? drafts : all.filter((candidate) => candidate.kind !== 'link').slice(0, MAX_CARDS)).map((candidate) => candidate.item), ...all.filter((candidate) => candidate.kind === 'link').slice(0, 2).map((candidate) => candidate.item)]
@@ -56,10 +58,11 @@ export function presentPrepareActionDraft(result, facts, { skill, language, quer
   return presentAiSkillAnswer({
     skill, facts, language, query,
     title: !result.canDraft ? aiSkillText('draft.title_blocked', language)
-      : result.focus ? focusTitle(result.focus.entityId, reviewCards.length, fmt, language)
-        : result.tier?.supplierIds ? aiSkillCountText('draft.tier_title', reviewCards.length, language, { count: fmt.number(reviewCards.length), group: aiSkillText(`tier.group_${result.tier.tier}`, language) })
-          : aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }),
-    summary: [aiSkillText(!result.canDraft ? 'draft.no_permission' : reviewCards.length ? 'draft.summary' : 'draft.none_summary', language), result.tier && !result.tier.supplierIds ? aiSkillText('tier.unavailable', language) : ''].filter(Boolean).join(language === 'zh-CN' ? '' : ' '),
+      : result.focusNotSent ? aiSkillText('draft.focus_not_sent', language, { id: result.focus.entityId })
+        : result.focus ? focusTitle(result.focus.entityId, reviewCards.length, fmt, language)
+          : result.tier?.supplierIds ? aiSkillCountText('draft.tier_title', reviewCards.length, language, { count: fmt.number(reviewCards.length), group: aiSkillText(`tier.group_${result.tier.tier}`, language) })
+            : aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }),
+    summary: [aiSkillText(!result.canDraft ? 'draft.no_permission' : reviewCards.length ? 'draft.summary' : result.focusNotSent ? 'draft.not_sent_summary' : 'draft.none_summary', language), result.tier && !result.tier.supplierIds ? aiSkillText('tier.unavailable', language) : ''].filter(Boolean).join(language === 'zh-CN' ? '' : ' '),
     severity: result.items[0]?.severity || 'info',
     items: result.items,
     navigation: [...result.drafts.map((candidate) => candidate.item), ...result.links].slice(0, 4).map((item) => aiSkillNavigation(item, language)),
