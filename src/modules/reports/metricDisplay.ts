@@ -15,7 +15,7 @@ export function metricCurrency(item: MetricDefinition, dataScope: GovernedReport
 export function metricDisplayValue(item: MetricDefinition, dataScope: GovernedReport['dataScope'], format: MetricFormat) {
   const currency = metricCurrency(item, dataScope);
   if (item.limitations?.includes('inventory_units_mixed') || item.limitations?.includes('sales_demand_units_mixed')) return 'Mixed units';
-  if (item.limitations?.includes('sales_demand_skus_mixed')) return 'Multiple SKUs';
+  if (item.limitations?.includes('sales_demand_skus_mixed') || item.limitations?.includes('inventory_skus_mixed')) return 'Multiple SKUs';
   if (item.dataStatus === 'restricted') return 'Restricted';
   if (item.limitations?.includes('insufficient_sample')) return 'Fewer than 5 lines';
   if (item.limitations?.includes('receipts_truncated')) return 'Not measured';
@@ -24,7 +24,7 @@ export function metricDisplayValue(item: MetricDefinition, dataScope: GovernedRe
   if (item.unit === 'currency' && currency.status === 'multi_currency_unconverted') return '请选择币种';
   if (item.unit === 'currency' && currency.status === 'currency_unknown') return 'Missing or invalid currency';
   if (item.dataStatus === 'incomplete') return '数据不足';
-  // An open-quantity total is of one SKU in one unit, and says which unit.
+  // A quantity total is of one SKU in one unit, and says which unit.
   if (item.quantityUnit && item.currentValue !== null) return `${formatMetric(item.currentValue, item.unit, currency.code, format)} ${item.quantityUnit}`;
   return formatMetric(item.currentValue, item.unit, currency.code, format);
 }

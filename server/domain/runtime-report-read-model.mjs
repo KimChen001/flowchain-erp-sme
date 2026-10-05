@@ -64,6 +64,19 @@ function salesDemandTotal(demandLines) {
   if (unit === 'multiple_skus') return { total: null, unit: null, limitation: 'sales_demand_skus_mixed' }
   return { total: total ?? 0, unit: unit || null, limitation: null }
 }
+
+// On hand over the inventory rows: a total only while they are one SKU in one
+// unit, else null with the reason, as for open sales demand. The "On hand by
+// SKU" chart shows each SKU in its own unit. No rows is an empty inventory, 0.
+function inventoryOnHandTotal(rows, inventoryUnits) {
+  if (inventoryUnits.length > 1) return { total: null, unit: null, limitation: 'inventory_units_mixed' }
+  if (!rows.length) return { total: 0, unit: null, limitation: null }
+  if (rows.some(row => row.quantity === null)) return { total: null, unit: null, limitation: 'inventory_on_hand_incomplete' }
+  const { total, unit } = oneItemTotal(rows.map(row => ({ sku: row.id, unit: row.unit, onHand: row.quantity })), 'onHand')
+  if (unit === 'mixed') return { total: null, unit: null, limitation: 'inventory_units_mixed' }
+  if (unit === 'multiple_skus') return { total: null, unit: null, limitation: 'inventory_skus_mixed' }
+  return { total, unit: unit || null, limitation: null }
+}
 // Spend totals count committed documents only. A purchase order is committed
 // once approved (see isCommittedPurchaseOrder). A supplier invoice is committed
 // once submitted: the statuses that hold receipt lines against double
@@ -85,7 +98,7 @@ const metricDefinitions = {
   open_sales_demand: ['未履约销售需求', 'sales_orders', 'number', 'Ordered less fulfilled quantity on confirmed sales order lines, before inventory reservations. Shown only while every line with demand left is the same SKU in the same unit.', '/app/sales/orders'],
   purchase_order_amount: ['Committed PO amount', 'purchase_orders', 'currency', '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，不含草稿、待审批、驳回和取消的订单；有订单缺少金额时不显示合计。', '/app/procurement/orders'],
   open_po_count: ['开放 PO', 'purchase_orders', 'number', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/procurement/orders'],
-  inventory_on_hand: ['在手库存', 'inventory_balances', 'number', 'Inventory Runtime 已记录的在手数量。', '/app/inventory'],
+  inventory_on_hand: ['在手库存', 'inventory_balances', 'number', 'On-hand quantity recorded in inventory. Shown only while all inventory is the same SKU in the same unit.', '/app/inventory'],
   inventory_risk_sku: ['SKUs short now', 'inventory_balances', 'number', 'SKUs whose open sales demand, less its reservations, is more than the available stock. Incoming purchase orders are not counted.', '/app/inventory?risk=high'],
   invoice_amount: ['供应商发票金额', 'supplier_invoices', 'currency', '已提交供应商发票（已提交、匹配中、有差异、已匹配、已批准或暂挂）的金额合计，不含草稿、驳回和取消的发票；有发票缺少金额时不显示合计。', '/app/finance/invoices'],
   supplier_count: ['供应商数量', 'suppliers', 'number', '当前供应商主数据记录数。', '/app/master-data/suppliers'],
@@ -165,12 +178,7 @@ function value(id, all, inventory, facts) {
   if (id === 'sales_order_count') return all.sales_orders.length
   if (id === 'open_sales_demand') return facts.salesDemandTotal.total
   if (id === 'open_po_count') return all.purchase_orders.filter(row => row.isOpen).length
-  if (id === 'inventory_on_hand') {
-    if (inventory.units?.length > 1) return null
-    if (!inventory.availability.length) return 0
-    if (inventory.availability.some(row => row.onHand === null)) return null
-    return inventory.availability.reduce((total, row) => total + row.onHand, 0)
-  }
+  if (id === 'inventory_on_hand') return facts.inventoryOnHand.total
   if (id === 'inventory_risk_sku') return inventory.availability.filter(isInventoryRiskSku).length
   if (id === 'supplier_count') return all.suppliers.length
   if (id === 'overdue_open_po_count') return facts.overdueOpenPurchaseOrders
@@ -248,7 +256,8 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
   const money = unit === 'currency' ? currencySummary(all[subject].filter(committed[subject]), query) : null
   const currentValue = money ? money.total : value(id, all, inventory, facts)
   const unconverted = money?.currencyAggregationStatus === 'multi_currency_unconverted'
-  const demand = id === 'open_sales_demand' ? facts.salesDemandTotal : null
+  // A quantity KPI totals one SKU in one unit and names that unit.
+  const demand = id === 'open_sales_demand' ? facts.salesDemandTotal : id === 'inventory_on_hand' ? facts.inventoryOnHand : null
   // Fewer PO lines than the scorecard's minimum sample give no on-time rate,
   // and neither does a receipt list that was not loaded in full.
   const smallSample = id === 'on_time_receipt_rate' && currentValue === null && facts.onTimeLines > 0
@@ -256,7 +265,7 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
   const incomplete = money ? currentValue === null : (['inventory_on_hand', 'open_sales_demand'].includes(id) && currentValue === null) || smallSample || receiptsCut
   // A rate with nothing to divide by has no records, not a rate of zero.
   const dataStatus = incomplete ? 'incomplete' : id === 'inventory_on_hand' && !inventory.availability.length ? 'empty' : unit === 'percentage' && currentValue === null ? 'no_records' : 'complete'
-  const limitations = money ? money.limitations : demand ? (demand.limitation ? [demand.limitation] : []) : receiptsCut ? ['receipts_truncated'] : smallSample ? ['insufficient_sample'] : id === 'inventory_on_hand' && inventory.units?.length > 1 ? ['inventory_units_mixed'] : incomplete ? ['inventory_on_hand_incomplete'] : []
+  const limitations = money ? money.limitations : demand ? (demand.limitation ? [demand.limitation] : []) : receiptsCut ? ['receipts_truncated'] : smallSample ? ['insufficient_sample'] : []
   const currency = money ? { currencyCode: money.currencyCode, currencyLabel: money.currencyLabel, currencies: money.currencies, currencyAggregationStatus: money.currencyAggregationStatus, currencyAmounts: money.currencyAmounts } : {}
   return { id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, ...(demand ? { quantityUnit: demand.unit } : {}), comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, trend: metricTrend(id, all, money), generatedAt: new Date().toISOString() }
 }
@@ -313,7 +322,7 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   // warehouses, as on the supplier scorecard.
   const onTimeWithheld = restriction.subjects.has('receipts') || restriction.subjects.has('purchase_orders') ? 'restricted' : array(context.truncatedSubjects).some(entry => entry?.subject === 'receipts') ? 'truncated' : null
   const promiseOptions = { graceDays: query.graceDays, warehouseIds: Array.isArray(options.warehouseIds) ? options.warehouseIds : null }
-  const facts = { ...buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand, onTimeWithheld, promiseOptions }), salesDemandTotal: salesDemandTotal(salesDemand) }
+  const facts = { ...buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand, onTimeWithheld, promiseOptions }), salesDemandTotal: salesDemandTotal(salesDemand), inventoryOnHand: inventoryOnHandTotal(source.inventory_balances, inventory.units) }
   const visuals = buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts, today, timeZone, salesDemand, onTimeWithheld, promiseOptions })
   const inventoryLabels = primaryKey === 'inventory_balances' ? { id: 'SKU', itemName: '物料名称', status: 'Risk' } : {}
   const columns = [...new Set(details.flatMap(row => Object.keys(row)))].map(key => ({ key, label: inventoryLabels[key] || ({ id: '业务编号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', unit: '单位', fulfilled: '已履约', reserved: 'Reserved quantity', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: 'Short now', availableToPromise: 'Available to promise', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'fulfilled', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
@@ -321,7 +330,7 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   const moneyLimitations = ['multi_currency_unconverted', 'currency_missing_or_invalid', 'amount_missing', 'amount_restricted', 'subject_restricted']
   const limitations = [...new Set([...array(context.dataLimitations), ...inventory.dataLimitations, ...(inventory.availability.length && inventory.availability.some(row => row.onHand === null) ? ['inventory_on_hand_incomplete'] : []), ...scopeMoney.limitations, ...kpis.flatMap(item => item.limitations.filter(code => moneyLimitations.includes(code)))])].filter(code => noteApplies(code, query.subject))
   const distinct = values => [...new Set(values.map(text).filter(Boolean))]
-  const dataScope = { label: '当前工作区 runtime 数据', company: null, currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from, to: query.to, activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => ['from', 'to'].includes(key) ? text(input.filters?.[key]) : query[key]).length, sourceLabel: 'BusinessReadContext', completenessLabel: details.length ? `已读取 ${details.length} 条真实记录` : '当前范围无真实业务记录', filterOptions: { companies: [], suppliers: distinct(array(context.suppliers).map(row => row.supplierName || row.name)), customers: distinct(array(context.customers).map(row => row.name || row.customerName)), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_orders, ...source.supplier_invoices].map(row => row.currency)) } }
+  const dataScope = { label: '当前工作区数据', company: null, currencyCode: scopeMoney.currencyCode, currencyLabel: scopeMoney.currencyLabel, currencies: scopeMoney.currencies, currencyAggregationStatus: aggregationStatus, currencyAmounts: scopeMoney.currencyAmounts, fxConverted: false, from: query.from, to: query.to, activeFilterCount: ['from', 'to', 'supplier', 'customer', 'currency', 'status'].filter(key => ['from', 'to'].includes(key) ? text(input.filters?.[key]) : query[key]).length, sourceLabel: '业务记录', completenessLabel: details.length ? `已读取 ${details.length} 条真实记录` : '当前范围无真实业务记录', filterOptions: { companies: [], suppliers: distinct(array(context.suppliers).map(row => row.supplierName || row.name)), customers: distinct(array(context.customers).map(row => row.name || row.customerName)), warehouses: distinct(array(context.warehouses).map(row => row.name || row.warehouseName)), categories: distinct(array(context.items).map(row => row.category || row.categoryName)), currencies: distinct([...source.purchase_orders, ...source.sales_orders, ...source.supplier_invoices].map(row => row.currency)) } }
   const overview = query.subject === 'overview' ? buildBusinessOverview(all, { salesDemand }) : null
   // Subjects the read context could not load in full; totals over them may be low.
   const truncatedSubjects = array(context.truncatedSubjects).filter(entry => text(entry?.subject) && Number.isFinite(Number(entry?.limit))).map(entry => ({ subject: text(entry.subject), limit: Number(entry.limit) }))
