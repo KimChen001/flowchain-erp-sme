@@ -236,10 +236,14 @@ function validateCases(list) {
       if (!text(entry.pending)) problems.push(`${where}: pending must give a reason`)
       if (ORIGINAL_CASE_IDS.has(id)) problems.push(`${where}: is one of the original cases (a792e2f) and may not be pending`)
     }
-    for (const field of ['skill', 'skills', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'mentions', 'absent']) {
+    for (const field of ['skill', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'mentions', 'absent']) {
       const value = entry?.expect?.[field]
       if (value !== undefined && (!Array.isArray(value) || !value.length || value.some((item) => typeof item !== 'string' || !item))) problems.push(`${where}: expect.${field} must be a non-empty list of strings`)
     }
+    // expect.skills: one entry per part, a skill or a list of skills that each answer it.
+    const skills = entry?.expect?.skills
+    const skillEntry = (item) => (typeof item === 'string' && item) || (Array.isArray(item) && item.length > 1 && item.every((id) => typeof id === 'string' && id))
+    if (skills !== undefined && (!Array.isArray(skills) || !skills.length || !skills.every(skillEntry))) problems.push(`${where}: expect.skills must be a non-empty list of skills, or of lists of skills that each answer the part`)
     const sections = entry?.expect?.sections
     if (sections !== undefined && (!Number.isInteger(sections) || sections < 0)) problems.push(`${where}: expect.sections must be a whole number`)
   }
@@ -591,7 +595,8 @@ function scoreCase(entry, runs, context) {
   const sectionSkills = array(payload.sections).map((section) => section?.skillId)
   // The answer came from agent planning (P2): the planner chose its skills.
   if (expect.agent) add('routing', answered && payload.skillRouting?.source === 'model' && payload.skillRouting?.modelStatus === 'planned', `skills chosen by ${payload.skillRouting ? `${payload.skillRouting.source} (${payload.skillRouting.modelStatus})` : 'the rules'}, expected agent planning`)
-  if (expect.skills) add('routing', answered && payload.intent === 'compound' && expect.skills.every((id) => sectionSkills.includes(id)), `answered by ${payload.intent || 'nothing'}${sectionSkills.length ? ` (sections ${sectionSkills.join(', ')})` : ''}, expected sections for ${expect.skills.join(', ')}`)
+  // An entry may list skills that each answer that part: one of them must.
+  if (expect.skills) add('routing', answered && payload.intent === 'compound' && expect.skills.every((entry) => [entry].flat().some((id) => sectionSkills.includes(id))), `answered by ${payload.intent || 'nothing'}${sectionSkills.length ? ` (sections ${sectionSkills.join(', ')})` : ''}, expected sections for ${expect.skills.map((entry) => [entry].flat().join(' or ')).join(', ')}`)
   if (expect.sections !== undefined) add('sections', answered && sectionSkills.length === expect.sections, `${sectionSkills.length} section(s), expected ${expect.sections}`)
   if (expect.notSkill) add('not routed to', !(answered && expect.notSkill.includes(payload.intent)), `answered by ${payload.intent}, which must not answer this question`)
 
