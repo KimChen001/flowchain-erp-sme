@@ -276,6 +276,26 @@ export async function handleMasterDataRoute(ctx) {
     return true
   }
 
+  // One supplier's purchase records and open issues for its detail page, with
+  // the reader's access (supplier-insights.mjs readActivity).
+  const supplierActivityMatch = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/activity$/)
+  if (req.method === 'GET' && supplierActivityMatch) {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read supplier activity.' })
+      return true
+    }
+    try {
+      const service = ctx.supplierInsightsService || createSupplierInsightsReadService({
+        prisma: await getPrismaClient(ctx.env || process.env),
+        listPurchaseOrders: ctx.repositories?.procurementRuntime?.listForReport,
+      })
+      send(res, 200, await service.readActivity(ctx, decodeURIComponent(supplierActivityMatch[1])))
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'SUPPLIER_ACTIVITY_UNAVAILABLE', message: error.status ? error.message : 'Supplier activity is unavailable. Try again.' })
+    }
+    return true
+  }
+
   // The people a supplier can be assigned to. Only those who may change a
   // supplier pick an owner, so listing them needs no user administration.
   if (req.method === 'GET' && url.pathname === '/api/master-data/supplier-owners') {
