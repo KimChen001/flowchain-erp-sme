@@ -75,6 +75,7 @@
 - [AI response latency notes](ai-response-latency-notes.md)
 - [AI chat copilot plan](ai-chat-copilot-v1-plan.md)
 - [AI provider baseline, 2026-10-04](ai-provider-baseline-2026-10-04.md)
+- [Assistant actions: propose, confirm, execute (track C, proposal)](ai-confirmed-actions-design.md)
 
 ## UI
 

@@ -81,6 +81,11 @@ The confirm button is visible but disabled. Real confirmation, submit, send, pos
 - Future confirmation actions must be explicit and type-specific.
 - Autonomous execution is not allowed.
 
+Planned change (proposal, 2026-10-05): the assistant may create a draft purchase
+request, or a draft RFQ from an approved request, when the user confirms its preview in
+the chat. It never submits, approves, sends or pays. Until that is built, this section
+describes main. See [Assistant actions: propose, confirm, execute](ai-confirmed-actions-design.md).
+
 ## Audit Boundary
 
 Current database-mode draft events use:
