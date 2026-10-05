@@ -47,6 +47,9 @@ const chinese: Record<string, string> = {
   Created: "已创建",
   "Not imported": "未导入",
   "Not sent: fix the file and upload it again": "未提交：请修改文件后重新上传",
+  "Not sent: the import stopped": "未提交：导入已中止",
+  "This row could not be imported ({code}). Check the file again, then import it.": "此行未能导入（{code}）。请重新检查文件后再导入。",
+  "{n} rows were not sent because the import stopped. Check the file again and import it to send them.": "导入中止，有 {n} 行未提交。请重新检查文件并导入以提交这些行。",
   "New stock record": "新库存记录",
   "Existing stock record": "已有库存记录",
   "Already in draft {number}": "已在调整草稿 {number} 中",
@@ -84,12 +87,21 @@ const chinese: Record<string, string> = {
   DATA_IMPORT_ENCODING_REQUIRED: "无法按 UTF-8 读取该文件。如果是 Windows 中文版 Excel 保存的 CSV，请选择 GB18030 编码。",
   DATA_IMPORT_HEADER_DUPLICATE: "文件中有两列含义相同，请只保留一列。",
   DATA_IMPORT_HEADER_MISSING: "文件第一行必须是列标题。",
+  DATA_IMPORT_HEADER_BLANK: "第 {column} 列没有列标题。请填写标题或删除该列。",
   DATA_IMPORT_REQUIRED_COLUMN_MISSING: "文件缺少必填列：{columns}。请从模板开始填写。",
   DATA_IMPORT_NO_ROWS: "文件只有标题行，没有数据行。",
   DATA_IMPORT_IN_PROGRESS: "文件的这一部分正在导入中，请稍候再查看结果。",
   DATA_IMPORT_NOT_ENABLED: "此工作区未启用数据导入。",
   DATA_IMPORT_OPENING_STOCK_UNAVAILABLE: "期初库存导入需要启用库存操作。",
+  DATA_IMPORT_CHUNK_INVALID: "导入请求无效。请重新检查文件后再导入。",
+  DATA_IMPORT_JSON_INVALID: "导入请求无效。请重新检查文件后再导入。",
+  DATA_IMPORT_FAILED: "导入失败。请重试；已导入的行会跳过。",
   AUTHORIZATION_PERMISSION_DENIED: "你的角色不允许导入此类记录。工作区管理员可在角色与权限中授予。",
+  AUTHORIZATION_ROLE_INACTIVE: "你的角色已停用。请联系工作区管理员。",
+  AUTHORIZATION_WAREHOUSE_SCOPE_DENIED: "你无权操作此仓库。工作区管理员可以授权。",
+  AUTHORIZATION_TENANT_MISMATCH: "此操作不属于当前工作区。请重新登录后再试。",
+  AUTHORIZATION_CONTEXT_INCOMPLETE: "无法确认你的权限。请重新登录后再试。",
+  AUTHORIZATION_CAPABILITY_DISABLED: "此工作区未启用该功能。",
 };
 
 // English for the codes the server sends, so a code always has a sentence.
@@ -106,12 +118,21 @@ const english: Record<string, string> = {
   DATA_IMPORT_ENCODING_REQUIRED: "The file could not be read as UTF-8. If Chinese Excel on Windows saved this CSV, choose GB18030.",
   DATA_IMPORT_HEADER_DUPLICATE: "Two columns in the file mean the same thing. Keep one of them.",
   DATA_IMPORT_HEADER_MISSING: "The first row of the file must hold the column headers.",
+  DATA_IMPORT_HEADER_BLANK: "Column {column} has no header. Give it a header or delete the column.",
   DATA_IMPORT_REQUIRED_COLUMN_MISSING: "The file is missing required columns: {columns}. Start from the template.",
   DATA_IMPORT_NO_ROWS: "The file has a header row but no data rows.",
   DATA_IMPORT_IN_PROGRESS: "This part of the file is already being imported. Wait a moment, then check the results.",
   DATA_IMPORT_NOT_ENABLED: "Data import is not enabled in this workspace.",
   DATA_IMPORT_OPENING_STOCK_UNAVAILABLE: "Opening stock import needs inventory operations to be enabled.",
+  DATA_IMPORT_CHUNK_INVALID: "The import request was not valid. Check the file again, then import it.",
+  DATA_IMPORT_JSON_INVALID: "The import request was not valid. Check the file again, then import it.",
+  DATA_IMPORT_FAILED: "The import failed. Try again; rows already imported are skipped.",
   AUTHORIZATION_PERMISSION_DENIED: "Your roles do not allow importing these records. A workspace administrator can grant it in Roles & permissions.",
+  AUTHORIZATION_ROLE_INACTIVE: "Your role is inactive. Ask a workspace administrator.",
+  AUTHORIZATION_WAREHOUSE_SCOPE_DENIED: "You cannot work in this warehouse. A workspace administrator can grant access.",
+  AUTHORIZATION_TENANT_MISMATCH: "This does not belong to your workspace. Sign in again, then try again.",
+  AUTHORIZATION_CONTEXT_INCOMPLETE: "Your access could not be confirmed. Sign in again, then try again.",
+  AUTHORIZATION_CAPABILITY_DISABLED: "This feature is not enabled in this workspace.",
 };
 
 // Row issue codes: [English, Chinese]. The column is shown next to them.
@@ -151,8 +172,18 @@ const issueText: Record<string, [string, string]> = {
   ADJUSTMENT_OPENING_BALANCE_EXISTS: ["This location already has stock history. Correct it with another adjustment reason in Inventory.", "该库位已有库存记录历史，请在库存中用其他调整原因更正。"],
   DUPLICATE_ROW: ["Another row in this file has the same key. Keep one of them.", "文件中另有一行的关键字段相同，请只保留一行。"],
   PREFERRED_DUPLICATE: ["Only one supplier per item can be preferred.", "每个物料只能有一个首选供应商。"],
+  PREFERRED_EXISTS: ["This item already prefers {supplierCode}. Change the preferred supplier on the item, or write No.", "该物料的首选供应商已是 {supplierCode}。请在物料中更改首选供应商，或填写“否”。"],
   VERSION_CONFLICT: ["Another change got there first. Import again to finish this row.", "该记录刚被其他操作修改，请再次导入以完成此行。"],
+  INVENTORY_OPERATIONS_CONCURRENT_TRANSACTION_CONFLICT: ["Another inventory change ran at the same time. Import again to finish this row.", "另一项库存操作同时进行，请再次导入以完成此行。"],
+  COMMAND_EXECUTION_IN_PROGRESS: ["This draft is still being created. Import again in a moment to finish this row.", "该草稿仍在创建中，请稍后再次导入以完成此行。"],
+  ADJUSTMENT_NUMBER_CONFLICT: ["An adjustment with this number already exists. Check the file again, then import it.", "已有相同编号的调整单，请重新检查文件后再导入。"],
+  IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD: ["This part of the file was already imported with other rows. Check the file again, then import it.", "文件的这一部分已用其他行导入过，请重新检查文件后再导入。"],
+  AUTHORIZATION_PERMISSION_DENIED: ["Your roles do not allow this. A workspace administrator can grant it in Roles & permissions.", "你的角色不允许此操作，工作区管理员可在角色与权限中授予。"],
+  AUTHORIZATION_WAREHOUSE_SCOPE_DENIED: ["You cannot work in this warehouse. A workspace administrator can grant access.", "你无权操作此仓库，可请工作区管理员授权。"],
+  AUTHORIZATION_ROLE_INACTIVE: ["Your role is inactive. Ask a workspace administrator.", "你的角色已停用，请联系工作区管理员。"],
 };
+
+const UNTRANSLATED_ISSUE = "This row could not be imported ({code}). Check the file again, then import it.";
 
 function fill(text: string, vars: Record<string, string | number> = {}) {
   return Object.entries(vars).reduce((out, [name, value]) => out.replaceAll(`{${name}}`, String(value)), text);
@@ -163,9 +194,11 @@ export function dataImportCopy(language: string, label: string, vars?: Record<st
   return fill(text, vars);
 }
 
+// A code with no sentence here keeps the server's English message in
+// English; in Chinese the row gets a translated sentence with the code.
 export function dataImportIssueText(language: string, issue: { code: string; message: string; params?: Record<string, string> }) {
   const pair = issueText[issue.code];
-  if (!pair) return issue.message;
+  if (!pair) return language === "en-US" ? issue.message : dataImportCopy(language, UNTRANSLATED_ISSUE, { code: issue.code || "—" });
   return fill(language === "en-US" ? pair[0] : pair[1], issue.params || {});
 }
 

@@ -40,7 +40,7 @@ type Preview = {
   chunkSize: number;
   warehouses?: WarehouseGroup[];
 };
-type ResultRow = Existing & { rowNumber: number; key: string; outcome: "created" | "skipped_existing" | "error"; issues: Issue[] };
+type ResultRow = Existing & { rowNumber: number; key: string; outcome: "created" | "skipped_existing" | "error" | "not_sent"; issues: Issue[] };
 type CommitResult = { rows: ResultRow[]; documents: Array<{ id: string; number: string }> };
 
 const TYPES: Array<{ type: DataImportType; label: string }> = [
@@ -102,11 +102,14 @@ export default function DataImportPage() {
   const issueLine = (issue: Issue) => [columnLabel(issue.field), issueText(issue)].filter(Boolean).join(": ");
   const errorText = (cause: unknown, fallback: string) => {
     if (!(cause instanceof ApiError)) return copy(fallback);
-    const details = (cause.payload as { details?: { columns?: Array<{ en: string; zh: string }> } }).details;
+    const details = (cause.payload as { details?: { columns?: Array<{ en: string; zh: string }>; column?: number } }).details;
     const missing = (details?.columns || []).map((entry) => (language === "en-US" ? entry.en : entry.zh)).join(", ");
     const code = cause.code || "";
-    const translated = copy(code, { columns: missing });
-    return translated !== code ? translated : cause.message || copy(fallback);
+    const translated = copy(code, { columns: missing, column: details?.column ?? "" });
+    // A code with no sentence of its own: the server's English message, or
+    // the translated fallback in Chinese.
+    if (translated !== code) return translated;
+    return language === "en-US" ? cause.message || copy(fallback) : copy(fallback);
   };
 
   const reset = () => {
@@ -184,6 +187,10 @@ export default function DataImportPage() {
       const stopped = copy("The import stopped. Rows already imported are kept; check the file again to continue.");
       setError(cause instanceof ApiError ? `${errorText(cause, stopped)} ${stopped}` : stopped);
     } finally {
+      // Rows never sent because the import stopped are listed as such, so
+      // the counts add up to the file and the results file names them.
+      const answered = new Set(collected.rows.map((row) => row.rowNumber));
+      for (const row of rows) if (!answered.has(row.rowNumber)) collected.rows.push({ rowNumber: row.rowNumber, key: preview.rows.find((entry) => entry.rowNumber === row.rowNumber)?.key || "", outcome: "not_sent", issues: [] });
       setResults({ ...collected });
       if (collected.rows.some((row) => row.issues.some((issue) => RETRY_CODES.has(issue.code)))) setNotice(copy("Some rows hit a conflict with another change. Check the file again and import it to finish them."));
       setBusy("");
@@ -191,7 +198,7 @@ export default function DataImportPage() {
   };
 
   const actionLabel = (row: PreviewRow) => (row.action === "create" ? copy("Create") : row.action === "skip_existing" ? copy("Skipped — already exists") : copy("Error"));
-  const outcomeLabel = (row: ResultRow) => (row.outcome === "created" ? copy("Created") : row.outcome === "skipped_existing" ? copy("Skipped — already exists") : copy("Not imported"));
+  const outcomeLabel = (row: ResultRow) => (row.outcome === "created" ? copy("Created") : row.outcome === "skipped_existing" ? copy("Skipped — already exists") : row.outcome === "not_sent" ? copy("Not sent: the import stopped") : copy("Not imported"));
   const existingNote = (existing?: Existing) => {
     if (!existing) return "";
     if (existing.reason === "IN_OPENING_DRAFT" && existing.document) return copy("Already in draft {number}", { number: existing.document.number });
@@ -364,6 +371,11 @@ export default function DataImportPage() {
               error: results.rows.filter((row) => row.outcome === "error").length + preview.counts.error,
             })}
           </p>
+          {results.rows.some((row) => row.outcome === "not_sent") ? (
+            <p className="text-xs text-amber-700" data-testid="data-import-not-sent">
+              {copy("{n} rows were not sent because the import stopped. Check the file again and import it to send them.", { n: results.rows.filter((row) => row.outcome === "not_sent").length })}
+            </p>
+          ) : null}
           {notice ? <p className="text-xs text-amber-700">{notice}</p> : null}
           {results.documents.length ? (
             <div className="text-xs" data-testid="data-import-documents">
