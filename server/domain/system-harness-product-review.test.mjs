@@ -251,7 +251,7 @@ test('system harness validates evidence and navigation compatibility surfaces', 
   const cockpit = buildTodayCockpit(createDb())
 
   assert.match(helper, /pr: \{ entityType: "purchase_request", moduleId: "procurement:requests"/)
-  assert.match(helper, /threeWayMatch: \{ entityType: "supplier_invoice", moduleId: "finance:invoices"/)
+  assert.match(helper, /threeWayMatch: \{ entityType: "supplier_invoice", moduleId: "procurement:bills"/)
   assert.match(helper, /focusTarget: clickable \? \{ entityType: normalizedEntityType, entityId \}/)
   assert.match(app, /navigationIntentFromGlobalSearchResult\(result, \{ returnTo: active \}\)/)
   assert.ok(cockpit.recommendedActions.every((item) => Array.isArray(item.evidence)))
