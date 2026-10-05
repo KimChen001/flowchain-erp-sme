@@ -63,11 +63,27 @@ function pendingBalance({
   };
 }
 
+// Movements at a stock key that only ever touch the quarantine record there,
+// never the available stock record that opening stock lands on.
+const QUARANTINE_ONLY_MOVEMENT_TYPES = [
+  "customer_return_quarantine_in",
+  "customer_return_receipt_reversal",
+  "quarantine_release_out",
+  "quarantine_release_reversal_in",
+];
+// Supplier returns leave from, and reversals restore to, either record; the
+// movement's metadata.balanceType records which one.
+const EITHER_RECORD_MOVEMENT_TYPES = [
+  "supplier_return_out",
+  "supplier_return_reversal",
+];
+
 // Opening stock is for a stock record with no history. A record that receipts,
 // transfers, shipments or other entries have touched may not take an opening
-// entry, even after it has been emptied. The one exception is an opening entry
-// that was itself reversed: that pair of movements does not count, so the
-// location can be opened again.
+// entry, even after it has been emptied. Two kinds of movement do not count:
+// an opening entry that was itself reversed (with its reversal), so the
+// location can be opened again, and movements of the quarantine record at the
+// same key, which never touched the available stock record.
 export async function inventoryStockRecordHasHistory(
   prisma,
   tenantId,
@@ -93,9 +109,26 @@ export async function inventoryStockRecordHasHistory(
     row.reversedByMovementId,
   ]);
   const others = await prisma.inventoryMovement.count({
-    where: excluded.length ? { ...where, id: { notIn: excluded } } : where,
+    where: {
+      ...where,
+      ...(excluded.length ? { id: { notIn: excluded } } : {}),
+      movementType: {
+        notIn: [
+          ...QUARANTINE_ONLY_MOVEMENT_TYPES,
+          ...EITHER_RECORD_MOVEMENT_TYPES,
+        ],
+      },
+    },
   });
-  return others > 0;
+  if (others > 0) return true;
+  // A supplier return without a recorded balance type counts as history.
+  const supplierReturns = await prisma.inventoryMovement.findMany({
+    where: { ...where, movementType: { in: EITHER_RECORD_MOVEMENT_TYPES } },
+    select: { id: true, metadata: true },
+  });
+  return supplierReturns.some(
+    (row) => row.metadata?.balanceType !== "quarantine",
+  );
 }
 
 function aggregateBalanceImpacts(

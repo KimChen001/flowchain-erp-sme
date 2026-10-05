@@ -619,7 +619,7 @@ const blankAdjustmentLine = (reasonCode: string): AdjustmentLine => ({
 });
 
 function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
-  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
+  const { copy, inventoryCodeLabel, errorText } = useInventoryOperationsCopy();
   const warehouseName = useWarehouseNames();
   const navigate = useNavigate(),
     [number, setNumber] = useState(`ADJ-${Date.now()}`),
@@ -701,7 +701,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
         `/app/inventory/adjustments/${encodeURIComponent(data.adjustment.id)}`,
       );
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : copy("创建失败"));
+      setError(errorText(reason, "创建失败"));
     }
   };
   return (
@@ -895,6 +895,23 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                   {copy("This item already has a stock record here. Choose it under Existing stock record.")}
                 </p>
               )}
+              {match && reasonCode === "opening_balance" && (
+                <p
+                  className="text-xs text-amber-700 md:col-span-2"
+                  data-testid={`adjustment-line-existing-${n}`}
+                >
+                  {Number(match.onHandQuantity) !== 0
+                    ? copy(
+                        "This item already holds {qty} here. Opening stock cannot be added on top of it. Choose another reason to correct it.",
+                        {
+                          qty: `${match.onHandQuantity}${match.unit ? ` ${match.unit}` : ""}`,
+                        },
+                      )
+                    : copy(
+                        "This item already has a stock record here. Opening stock is refused if the record has any history. Choose another reason to correct it.",
+                      )}
+                </p>
+              )}
               {line.mode === "existing" && (
                 <p className="text-xs text-amber-700 md:col-span-2">
                   {copy("减少库存不会影响已预留数量；调整后 On Hand 不得低于 Reserved。")}
@@ -932,7 +949,8 @@ function OperationDetail({
   entry: Entry;
   refresh: () => void;
 }) {
-  const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
+  const { copy, inventoryCodeLabel, errorText, issueText } =
+    useInventoryOperationsCopy();
   const warehouseName = useWarehouseNames();
   const config = {
     transfer: {
@@ -1004,7 +1022,7 @@ function OperationDetail({
       await load();
       refresh();
     } catch (reasonValue) {
-      setError(reasonValue instanceof Error ? reasonValue.message : copy("操作失败"));
+      setError(errorText(reasonValue, "操作失败"));
     }
   };
   // The preview remembers which button opened it; confirming runs exactly
@@ -1017,7 +1035,7 @@ function OperationDetail({
       );
       setPreview({ ...plan, action });
     } catch (reasonValue) {
-      setError(reasonValue instanceof Error ? reasonValue.message : copy("预览失败"));
+      setError(errorText(reasonValue, "预览失败"));
     }
   };
   const saveCounts = async () => {
@@ -1246,7 +1264,9 @@ function OperationDetail({
               {preview.allowed ? copy("Preview 允许执行") : copy("Preview 阻止执行")}
             </div>
             <div className="mt-2 text-xs">
-              {preview.blockingIssues?.map((item: any) => item.code).join(", ")}
+              {preview.blockingIssues
+                ?.map((item: any) => issueText(item.code) || item.code)
+                .join(", ")}
             </div>
             {preview.allowed && (
               <button
