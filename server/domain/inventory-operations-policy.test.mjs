@@ -362,6 +362,94 @@ test("opening stock is refused on an emptied stock record that has history", asy
   assert.equal(reversedOpening.allowed, true);
 });
 
+test("quarantine movements at the same key are not history of the stock record", async () => {
+  const emptied = balance({
+    id: "balance-b",
+    warehouseId: "wh-b",
+    warehouseKey: "wh-b",
+    location: "OPEN-01",
+    locationKey: "open-01",
+    onHandQuantity: "0",
+    availableQuantity: "0",
+  });
+  const plan = (movements) =>
+    buildInventoryAdjustmentPostingPlan({
+      prisma: fakePrisma({
+        balances: [emptied],
+        movements,
+        adjustment: adjustmentWith("opening_balance", [
+          { inventoryBalanceId: "balance-b", adjustmentQuantity: "5" },
+        ]),
+      }),
+      tenantId,
+      adjustmentId: "adjustment-1",
+    });
+  const reversedOpening = [
+    movement({
+      id: "open-1",
+      movementType: "inventory_adjustment",
+      reason: "opening_balance",
+      reversedByMovementId: "open-1-reversal",
+    }),
+    movement({
+      id: "open-1-reversal",
+      movementType: "inventory_adjustment_reversal",
+    }),
+  ];
+  const quarantine = { balanceType: "quarantine", balanceId: "quarantine-b" };
+  // A reversed opening plus a customer return received into quarantine and
+  // sent back to the supplier from quarantine: the location may be opened.
+  const quarantineOnly = await plan([
+    ...reversedOpening,
+    movement({
+      id: "return-in-1",
+      movementType: "customer_return_quarantine_in",
+      metadata: quarantine,
+    }),
+    movement({
+      id: "supplier-out-1",
+      movementType: "supplier_return_out",
+      metadata: quarantine,
+    }),
+  ]);
+  assert.equal(quarantineOnly.allowed, true);
+  // Released from quarantine into available stock: the available side counts.
+  const released = await plan([
+    ...reversedOpening,
+    movement({
+      id: "release-out-1",
+      movementType: "quarantine_release_out",
+      metadata: quarantine,
+    }),
+    movement({
+      id: "release-in-1",
+      movementType: "quarantine_release_available_in",
+      metadata: { balanceType: "available", balanceId: "balance-b" },
+    }),
+  ]);
+  assert.equal(released.allowed, false);
+  assert.equal(
+    released.blockingIssues[0].code,
+    "ADJUSTMENT_OPENING_BALANCE_EXISTS",
+  );
+  // A supplier return from available stock, or one with no recorded balance
+  // type, counts as history.
+  for (const metadata of [
+    { balanceType: "available", balanceId: "balance-b" },
+    null,
+  ]) {
+    const returned = await plan([
+      ...reversedOpening,
+      movement({
+        id: "supplier-out-1",
+        movementType: "supplier_return_out",
+        metadata,
+      }),
+    ]);
+    assert.equal(returned.allowed, false);
+  }
+});
+
 test("reverse preview of an unposted line without a stock record is a state refusal", async () => {
   const plan = await buildInventoryAdjustmentReversalPlan({
     prisma: fakePrisma({

@@ -160,11 +160,17 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
   await expect(page.getByLabel("调整数量 1")).toHaveValue("-1.0000");
 
   // Opening stock for a location with no stock record: posting creates it.
+  // A key that already has a stock record is flagged before saving.
   await page.goto("/app/inventory/adjustments/new");
   await page.getByLabel("调整原因").selectOption({ label: "期初库存" });
   await page.getByLabel("调整物料 1").selectOption("inventory-browser-item");
   await page.getByLabel("调整仓库 1").selectOption("inventory-browser-b");
+  await page.getByLabel("调整库位 1").fill("B-01");
+  await expect(page.getByTestId("adjustment-line-existing-1")).toContainText(
+    "期初库存",
+  );
   await page.getByLabel("调整库位 1").fill("OPEN-01");
+  await expect(page.getByTestId("adjustment-line-existing-1")).toHaveCount(0);
   await page.getByLabel("调整数量 1").fill("5.0000");
   await page.getByTestId("create-adjustment").click();
   await expect(page.getByTestId("adjustment-line-new-record")).toBeVisible();
