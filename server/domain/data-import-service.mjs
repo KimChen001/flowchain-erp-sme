@@ -41,12 +41,15 @@ import { saveSupplierMaster, supplierCurrencyIssue, supplierInputIssues } from '
 // Create only: a row whose key already exists is skipped, never updated.
 // Uploading the same file again cannot duplicate anything: the commands
 // refuse duplicate keys, and each chunk is a BusinessCommandExecution whose
-// completed result is replayed.
+// completed result is replayed while it still holds.
 
 export const DATA_IMPORT_CHUNK_SIZE = 200
 export const DATA_IMPORT_MAX_COLUMNS = 50
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024
 const DEFAULT_MAX_ROWS = 2000
+// An XLSX file unpacks to at most this many times its size; a plain export
+// of 2,000 rows stays well inside it.
+const MAX_UNPACKED_RATIO = 8
 // A chunk still pending after this long was left by a crash and may be run
 // again; rows it already wrote are skipped as existing.
 const STALE_EXECUTION_MS = 5 * 60 * 1000
@@ -127,13 +130,20 @@ export async function parseDataImportFile({ fileName, contentBase64, sheetName, 
   if (zip && name && !/\.(xlsx|xlsm)$/i.test(name)) fail('DATA_IMPORT_FILE_TYPE', 'Save the workbook as .xlsx or .csv, then choose it again.', 415)
   let parsed
   try {
+    // Only the chosen sheet is read; a column with no header and no values
+    // is left out; the row limit applies while the file is read.
+    const shared = { dropEmptyColumns: true, maximumRecordCount: limits.maxRows }
     parsed = zip
-      ? await parseXlsxArtifact(bytes, { sheetName: text(sheetName) || undefined })
-      : parseCsvArtifact(bytes, { encoding: text(encoding) || undefined })
+      ? await parseXlsxArtifact(bytes, { ...shared, sheetName: text(sheetName) || undefined, readSelectedSheetOnly: true, maximumUncompressedBytes: limits.maxFileBytes * MAX_UNPACKED_RATIO })
+      : parseCsvArtifact(bytes, { ...shared, encoding: text(encoding) || undefined })
   } catch (error) {
     if (error?.name !== 'IntakeError') throw error
+    const details = { ...(error.details && typeof error.details === 'object' ? error.details : {}), reason: error.code }
+    // A column with values but no header is named by its position.
+    if (error.code === 'INTAKE_HEADER_MISSING' && Number.isInteger(details.column)) fail('DATA_IMPORT_HEADER_BLANK', `Column ${details.column} has no header. Give it a header or delete the column.`, 422, details)
+    if (error.code === 'INTAKE_RECORD_COUNT_LIMIT') fail('DATA_IMPORT_TOO_MANY_ROWS', 'The file has more rows than one import takes. Split it into smaller files.', 413, { ...details, limit: limits.maxRows })
     const [code, status] = PARSER_ERRORS[error.code] || ['DATA_IMPORT_FILE_UNREADABLE', 422]
-    fail(code, error.message, status, { ...(error.details && typeof error.details === 'object' ? error.details : {}), reason: error.code })
+    fail(code, error.message, status, details)
   }
   if (parsed.headers.length > limits.maxColumns) fail('DATA_IMPORT_TOO_MANY_COLUMNS', 'The file has more columns than the import reads.', 413, { limit: limits.maxColumns })
   if (parsed.records.length > limits.maxRows) fail('DATA_IMPORT_TOO_MANY_ROWS', 'The file has more rows than one import takes. Split it into smaller files.', 413, { limit: limits.maxRows })
@@ -295,6 +305,12 @@ function checkItemSupplier(values, lookups) {
   if (!text(values.supplierCode)) issues.push(issue('supplierCode', 'CODE_REQUIRED', 'Enter a supplier code.'), ...toColumnIssues('item-suppliers', fieldIssues.filter((row) => row.field !== 'supplierId')))
   else issues.push(...toColumnIssues('item-suppliers', fieldIssues))
   const existing = item && supplier ? lookups.itemSupplierKeys.get(`${item.id}::${supplier.id}`) : null
+  // Saving a preferred link moves the item's preferred supplier, which the
+  // import never changes: the person does that on the item.
+  const current = item ? (lookups.preferredSuppliersByItemId.get(item.id) || []).find((entry) => entry.id !== supplier?.id) : null
+  if (!existing && input.preferred && current) {
+    issues.push(issue('preferred', 'PREFERRED_EXISTS', `This item already prefers ${current.code}. Change the preferred supplier on the item, or write No.`, { supplierCode: current.code }))
+  }
   return {
     input,
     itemRef: item?.id || item?.sku || '',
@@ -313,10 +329,11 @@ function checkOpeningStock(values, lookups, actor) {
   else if (text(item.status || 'active') !== 'active') issues.push(issue('sku', 'ITEM_INACTIVE', 'This item is not active.'))
   const code = text(values.warehouseCode)
   const warehouse = lookups.warehousesByCode.get(code)
+  const denied = Boolean(warehouse) && !hasWarehouseAccess(actor, [warehouse.id], 'operate')
   if (!code) issues.push(issue('warehouseCode', 'WAREHOUSE_REQUIRED', 'Enter a warehouse code.'))
   else if (!warehouse) issues.push(issue('warehouseCode', 'WAREHOUSE_NOT_FOUND', 'No warehouse has this code.'))
   else if (text(warehouse.status || 'active') !== 'active') issues.push(issue('warehouseCode', 'WAREHOUSE_INACTIVE', 'This warehouse is not active.'))
-  else if (!hasWarehouseAccess(actor, [warehouse.id], 'operate')) issues.push(issue('warehouseCode', 'WAREHOUSE_SCOPE_DENIED', 'You cannot record stock in this warehouse. A workspace administrator can grant access.'))
+  else if (denied) issues.push(issue('warehouseCode', 'WAREHOUSE_SCOPE_DENIED', 'You cannot record stock in this warehouse. A workspace administrator can grant access.'))
   const location = text(values.location)
   if (!location) issues.push(issue('location', 'LOCATION_REQUIRED', 'Enter a location.'))
   else if (location.length > 120) issues.push(issue('location', 'LOCATION_TOO_LONG', 'A location has at most 120 characters.'))
@@ -331,7 +348,9 @@ function checkOpeningStock(values, lookups, actor) {
   // Nothing is ever converted: a unit, when given, must be the item's own.
   const unit = text(values.unit)
   if (unit && item && unit !== text(item.unit)) issues.push(issue('unit', 'UNIT_MISMATCH', `This item is kept in ${text(item.unit) || 'no unit'}. Convert the quantity before importing.`, { unit: text(item.unit) }))
-  const key = item && warehouse && location ? `${item.sku}|${warehouse.id}|${locationKey(location)}` : ''
+  // Nothing about the stock in a warehouse the person cannot operate is
+  // looked up or shown.
+  const key = item && warehouse && location && !denied ? `${item.sku}|${warehouse.id}|${locationKey(location)}` : ''
   const balance = key ? lookups.balancesByKey.get(key) : null
   const draft = key ? lookups.openingDraftsByKey.get(key) : null
   let existing = null
@@ -349,7 +368,7 @@ function checkOpeningStock(values, lookups, actor) {
       warehouseName: warehouse?.name || null,
       location,
       quantity: quantity ?? null,
-      stockRecord: balance ? 'existing' : 'new',
+      stockRecord: denied || !item || !warehouse ? null : balance ? 'existing' : 'new',
     },
     existing,
   }
@@ -395,17 +414,18 @@ export function createDataImportService({
   }
 
   // The existing keys and lookups for a set of rows, one query each, always
-  // in the session's workspace.
-  async function loadLookups(type, rows, tenantId) {
+  // in the session's workspace. Stock is looked up only in the warehouses
+  // the person can operate.
+  async function loadLookups(type, rows, tenantId, actor) {
     const distinct = (key) => [...new Set(rows.map((row) => text(row.values[key])).filter(Boolean))]
     const lookups = {
       itemsBySku: new Map(), suppliersByCode: new Map(), customersByCode: new Map(), paymentTermsByCode: new Map(),
-      itemSupplierKeys: new Map(), warehousesByCode: new Map(), balancesByKey: new Map(), openingDraftsByKey: new Map(),
+      itemSupplierKeys: new Map(), preferredSuppliersByItemId: new Map(), warehousesByCode: new Map(), balancesByKey: new Map(), openingDraftsByKey: new Map(),
       workspaceCurrency: null,
     }
     const skus = ['items', 'item-suppliers', 'opening-stock'].includes(type) ? distinct('sku') : []
     if (skus.length) {
-      const items = await prisma.item.findMany({ where: { tenantId, sku: { in: skus } }, select: { id: true, sku: true, name: true, unit: true, status: true } })
+      const items = await prisma.item.findMany({ where: { tenantId, sku: { in: skus } }, select: { id: true, sku: true, name: true, unit: true, status: true, preferredSupplierId: true } })
       for (const item of items) lookups.itemsBySku.set(item.sku, item)
     }
     const supplierCodes = ['suppliers', 'item-suppliers'].includes(type) ? distinct('supplierCode') : []
@@ -439,6 +459,27 @@ export function createDataImportService({
         const records = await prisma.runtimeRecord.findMany({ where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE, recordKey: { in: keys } }, select: { id: true, recordKey: true } })
         for (const record of records) lookups.itemSupplierKeys.set(record.recordKey, record)
       }
+      // The current preferred suppliers of each item a row marks preferred:
+      // the item's own and any link marked preferred, all of which saving
+      // a preferred link would change.
+      const preferredItems = [...new Set(rows.filter((row) => DATA_IMPORT_YES.includes(text(row.values.preferred).toLocaleLowerCase('en-US')))
+        .map((row) => lookups.itemsBySku.get(text(row.values.sku))?.id).filter(Boolean))]
+      if (preferredItems.length) {
+        const preferredIds = new Map(preferredItems.map((id) => [id, new Set()]))
+        for (const item of lookups.itemsBySku.values()) if (preferredIds.has(item.id) && text(item.preferredSupplierId)) preferredIds.get(item.id).add(text(item.preferredSupplierId))
+        const links = await prisma.runtimeRecord.findMany({
+          where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE, OR: preferredItems.map((id) => ({ recordKey: { startsWith: `${id}::` } })) },
+          select: { id: true, recordKey: true, payload: true },
+        })
+        for (const link of links) {
+          const itemId = text(link.payload?.itemId)
+          if (link.payload?.preferred && preferredIds.has(itemId) && text(link.payload.supplierId)) preferredIds.get(itemId).add(text(link.payload.supplierId))
+        }
+        const known = new Map([...lookups.suppliersByCode.values()].map((supplier) => [supplier.id, supplier]))
+        const missing = [...new Set([...preferredIds.values()].flatMap((ids) => [...ids]))].filter((id) => !known.has(id))
+        if (missing.length) for (const supplier of await prisma.supplier.findMany({ where: { tenantId, id: { in: missing } }, select: { id: true, code: true } })) known.set(supplier.id, supplier)
+        for (const [itemId, ids] of preferredIds) lookups.preferredSuppliersByItemId.set(itemId, [...ids].map((id) => ({ id, code: text(known.get(id)?.code) || id })))
+      }
     }
     if (type === 'opening-stock') {
       const codes = distinct('warehouseCode')
@@ -446,7 +487,7 @@ export function createDataImportService({
         const warehouses = await prisma.warehouse.findMany({ where: { tenantId, code: { in: codes } }, select: { id: true, code: true, name: true, status: true } })
         for (const warehouse of warehouses) lookups.warehousesByCode.set(warehouse.code, warehouse)
       }
-      const warehouseIds = [...lookups.warehousesByCode.values()].map((row) => row.id)
+      const warehouseIds = [...lookups.warehousesByCode.values()].map((row) => row.id).filter((id) => hasWarehouseAccess(actor, [id], 'operate'))
       const knownSkus = [...lookups.itemsBySku.keys()]
       if (warehouseIds.length && knownSkus.length) {
         const balances = await prisma.inventoryBalance.findMany({
@@ -528,7 +569,7 @@ export function createDataImportService({
     const { actor, tenantId } = await authorize(type, context)
     const parsed = await parseDataImportFile(body, limits)
     const { rows, ignoredColumns, columns } = rowsFromFile(type, parsed)
-    const lookups = await loadLookups(type, rows, tenantId)
+    const lookups = await loadLookups(type, rows, tenantId, actor)
     const checked = checkRows(type, rows, lookups, actor)
     const previewRows = checked.map((entry) => ({
       rowNumber: entry.row.rowNumber,
@@ -593,27 +634,37 @@ export function createDataImportService({
   }
 
   // Claims the chunk's execution row, or returns the stored result of a
-  // completed one. A second commit of the same chunk while the first runs
-  // gets 409; a chunk left pending by a crash can be claimed again.
-  async function claimExecution(tenantId, commandType, idempotencyKey, requestHash) {
+  // completed one while it still holds (stillCurrent). A stored result that
+  // no longer holds is dropped and the chunk runs again under a new row. A
+  // second commit of the same chunk while the first runs gets 409; a chunk
+  // left pending by a crash can be claimed again.
+  async function claimExecution(tenantId, commandType, idempotencyKey, requestHash, stillCurrent) {
     const where = { tenantId_commandType_idempotencyKey: { tenantId, commandType, idempotencyKey } }
-    try {
-      const execution = await prisma.businessCommandExecution.create({ data: { id: idFactory(), tenantId, commandType, idempotencyKey, requestHash, status: 'pending' } })
-      return { execution }
-    } catch (error) {
-      if (error?.code !== 'P2002') throw error
-    }
-    const existing = await prisma.businessCommandExecution.findUnique({ where })
-    if (existing?.status === 'completed' && existing.resultPayload) return { replay: { ...existing.resultPayload, idempotentReplay: true } }
-    if (existing && existing.status === 'pending' && new Date(existing.createdAt).getTime() < now().getTime() - STALE_EXECUTION_MS) {
-      const taken = await prisma.businessCommandExecution.updateMany({ where: { id: existing.id, status: 'pending', createdAt: existing.createdAt }, data: { createdAt: now() } })
-      if (taken.count === 1) return { execution: existing }
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const execution = await prisma.businessCommandExecution.create({ data: { id: idFactory(), tenantId, commandType, idempotencyKey, requestHash, status: 'pending' } })
+        return { execution }
+      } catch (error) {
+        if (error?.code !== 'P2002') throw error
+      }
+      const existing = await prisma.businessCommandExecution.findUnique({ where })
+      if (!existing && attempt === 0) continue
+      if (existing?.status === 'completed' && existing.resultPayload) {
+        if (await stillCurrent(existing.resultPayload)) return { replay: { ...existing.resultPayload, idempotentReplay: true } }
+        if (attempt > 0) break
+        await prisma.businessCommandExecution.deleteMany({ where: { id: existing.id, status: 'completed' } })
+        continue
+      }
+      if (existing && existing.status === 'pending' && new Date(existing.createdAt).getTime() < now().getTime() - STALE_EXECUTION_MS) {
+        const taken = await prisma.businessCommandExecution.updateMany({ where: { id: existing.id, status: 'pending', createdAt: existing.createdAt }, data: { createdAt: now() } })
+        if (taken.count === 1) return { execution: existing }
+      }
+      break
     }
     fail('DATA_IMPORT_IN_PROGRESS', 'This part of the file is already being imported. Wait a moment, then check the results.', 409)
   }
 
   const DUPLICATE_CODES = new Set(['DUPLICATE_SKU', 'DUPLICATE_CODE', 'RELATIONSHIP_EXISTS'])
-  const RETRYABLE_CODES = new Set(['VERSION_CONFLICT', 'INVENTORY_OPERATIONS_CONCURRENT_TRANSACTION_CONFLICT', 'COMMAND_EXECUTION_IN_PROGRESS'])
   const knownError = (error) => Number(error?.status) >= 400 && Number(error?.status) < 500 && text(error?.code)
 
   async function runMasterDataRow(type, entry, actorId, scope) {
@@ -635,12 +686,12 @@ export function createDataImportService({
     } catch (error) {
       if (DUPLICATE_CODES.has(error?.code)) return { outcome: 'skipped_existing' }
       if (error?.code === 'VALIDATION_ERROR') return { outcome: 'error', issues: toColumnIssues(type, (error.details || []).map((row) => ({ field: row.field, code: row.code || 'VALIDATION_ERROR', message: row.message }))) }
-      if (knownError(error)) return { outcome: 'error', retryable: RETRYABLE_CODES.has(error.code), issues: [issue('', error.code, error.message)] }
+      if (knownError(error)) return { outcome: 'error', issues: [issue('', error.code, error.message)] }
       throw error
     }
   }
 
-  async function runOpeningStock(entries, { fileSha256, chunkIndex, identity }) {
+  async function runOpeningStock(entries, { fileSha256, executionId, identity }) {
     const results = new Map()
     const groups = new Map()
     for (const entry of entries) {
@@ -650,11 +701,14 @@ export function createDataImportService({
     for (const [warehouseId, group] of groups) {
       const warehouse = group[0].details
       const rowNumbers = group.map((entry) => entry.row.rowNumber)
-      // The same file, chunk and warehouse always give the same key and
-      // number, so uploading the file again returns the same draft.
-      const groupKey = sha256(`${fileSha256}|${chunkIndex}|${warehouseId}`)
+      // Keyed by the chunk's execution and the lines sent: a chunk resumed
+      // after a crash finds its draft again, while a later run of the same
+      // file (other rows, or after the first draft was cancelled) makes a
+      // new one.
+      const lines = group.map((entry) => [entry.row.rowNumber, entry.input])
+      const groupKey = sha256(`${executionId}|${warehouseId}|${JSON.stringify(lines)}`)
       const input = {
-        adjustmentNumber: `OB-${fileSha256.slice(0, 8).toUpperCase()}-${chunkIndex + 1}-${text(warehouse.warehouseCode).slice(0, 24)}`,
+        adjustmentNumber: `OB-${groupKey.slice(0, 10).toUpperCase()}-${text(warehouse.warehouseCode).slice(0, 24)}`,
         reasonCode: 'opening_balance',
         notes: `Opening stock imported from a file (SHA-256 ${fileSha256.slice(0, 12)}), rows ${Math.min(...rowNumbers)}–${Math.max(...rowNumbers)}.`,
         idempotencyKey: `data-import:opening:${groupKey}`,
@@ -667,7 +721,7 @@ export function createDataImportService({
         for (const entry of group) results.set(entry.row.rowNumber, { outcome: 'created', document })
       } catch (error) {
         if (!knownError(error)) throw error
-        for (const entry of group) results.set(entry.row.rowNumber, { outcome: 'error', retryable: RETRYABLE_CODES.has(error.code), issues: [issue('', error.code, error.message)] })
+        for (const entry of group) results.set(entry.row.rowNumber, { outcome: 'error', issues: [issue('', error.code, error.message)] })
       }
     }
     return results
@@ -680,13 +734,23 @@ export function createDataImportService({
     const rowsHash = sha256(JSON.stringify(rows.map((row) => [row.rowNumber, Object.keys(row.values).sort().map((key) => [key, row.values[key]])])))
     const commandType = commandTypeFor(type)
     const idempotencyKey = sha256(`${type}|${fileSha256}|${chunkIndex}|${rowsHash}`)
-    const claim = await claimExecution(tenantId, commandType, idempotencyKey, rowsHash)
+    const recheck = async () => checkRows(type, rows, await loadLookups(type, rows, tenantId, actor), actor)
+    // A stored result holds while none of its rows can be created: once a
+    // record or draft it reported is gone (a cancelled or reversed opening
+    // draft, a removed link), the chunk runs again.
+    const claim = await claimExecution(tenantId, commandType, idempotencyKey, rowsHash, async (stored) => {
+      const current = new Map((await recheck()).map((entry) => [entry.row.rowNumber, entry]))
+      return [...current.values()].every((entry) => entry.action !== 'create') && (stored.rows || []).every((row) => {
+        // A draft it reported is still the one holding that row.
+        if (row.outcome !== 'created' || !row.document) return true
+        return current.get(row.rowNumber)?.existing?.document?.id === row.document.id
+      })
+    })
     if (claim.replay) return claim.replay
     const { execution } = claim
     try {
       // Checked again: the data may have changed since the preview.
-      const lookups = await loadLookups(type, rows, tenantId)
-      const checked = checkRows(type, rows, lookups, actor)
+      const checked = await recheck()
       const scope = { tenantId }
       const outcomes = new Map()
       for (const entry of checked) {
@@ -695,14 +759,11 @@ export function createDataImportService({
       }
       const toCreate = checked.filter((entry) => entry.action === 'create')
       if (type === 'opening-stock') {
-        for (const [rowNumber, outcome] of await runOpeningStock(toCreate, { fileSha256, chunkIndex, identity })) outcomes.set(rowNumber, outcome)
+        for (const [rowNumber, outcome] of await runOpeningStock(toCreate, { fileSha256, executionId: execution.id, identity })) outcomes.set(rowNumber, outcome)
       } else {
         for (const entry of toCreate) outcomes.set(entry.row.rowNumber, await runMasterDataRow(type, entry, actorId, scope))
       }
-      const resultRows = checked.map((entry) => {
-        const { retryable, ...outcome } = outcomes.get(entry.row.rowNumber)
-        return { rowNumber: entry.row.rowNumber, key: entry.key, issues: [], ...outcome }
-      })
+      const resultRows = checked.map((entry) => ({ rowNumber: entry.row.rowNumber, key: entry.key, issues: [], ...outcomes.get(entry.row.rowNumber) }))
       const counts = { rows: resultRows.length, created: 0, skipped_existing: 0, error: 0 }
       for (const row of resultRows) counts[row.outcome] += 1
       const documents = [...new Map(resultRows.filter((row) => row.document).map((row) => [row.document.id, row.document])).values()]
@@ -721,10 +782,11 @@ export function createDataImportService({
           metadata: { type, fileSha256, chunkIndex, counts, documentIds: documents.map((row) => row.id) },
         },
       })
-      // A row that hit a conflict another write caused can succeed when the
-      // chunk is committed again, so its result is not stored for replay.
-      const retryable = [...outcomes.values()].some((outcome) => outcome.retryable)
-      if (retryable) await prisma.businessCommandExecution.deleteMany({ where: { id: execution.id, status: 'pending' } })
+      // Only a chunk whose rows were all created or skipped is stored for
+      // replay. A row refused at commit (a conflict with another write, or
+      // data that changed since the check) is tried again when the chunk is
+      // committed again, after the person fixes what was wrong.
+      if (counts.error) await prisma.businessCommandExecution.deleteMany({ where: { id: execution.id, status: 'pending' } })
       else await prisma.businessCommandExecution.update({ where: { id: execution.id }, data: { status: 'completed', entityType: 'data_import', entityId: fileSha256, resultPayload: result, completedAt: now() } })
       return { ...result, idempotentReplay: false }
     } catch (error) {

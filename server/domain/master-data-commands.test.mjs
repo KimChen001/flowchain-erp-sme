@@ -4,6 +4,7 @@ import {
   customerInputIssues,
   itemInputIssues,
   itemSupplierInputIssues,
+  listItemSupplierRecords,
   saveCustomerMaster,
   saveItemMaster,
   saveItemSupplier,
@@ -121,4 +122,29 @@ test('saveItemSupplier still refuses with the same fields and messages', async (
     { field: 'supplierId', message: 'Choose a supplier of this workspace.' },
     { field: 'leadTimeDays', message: 'Lead time must be a whole number, zero or greater.' },
   ])
+})
+
+test("one item's or supplier's links are filtered in the database, past any cap", async () => {
+  // 2,500 links of other items sort before the one asked for.
+  const stored = [
+    ...Array.from({ length: 2500 }, (_, index) => ({ id: `ISR-${index}`, recordKey: `ITEM-A${String(index).padStart(4, '0')}::SUP-1`, payload: { itemId: `ITEM-A${String(index).padStart(4, '0')}`, supplierId: 'SUP-1' } })),
+    { id: 'ISR-X', recordKey: 'ITEM-Z::SUP-2', payload: { itemId: 'ITEM-Z', supplierId: 'SUP-2', preferred: true } },
+  ]
+  const calls = []
+  const prisma = {
+    runtimeRecord: {
+      findMany: async (args) => {
+        calls.push(args)
+        const key = args.where.recordKey
+        const rows = stored.filter((row) => !key || (typeof key === 'string' ? row.recordKey === key : key.startsWith ? row.recordKey.startsWith(key.startsWith) : row.recordKey.endsWith(key.endsWith)))
+        return args.take ? rows.slice(0, args.take) : rows
+      },
+    },
+  }
+  assert.deepEqual((await listItemSupplierRecords(prisma, 'tenant-a', { itemId: 'ITEM-Z' })).map((row) => row.id), ['ISR-X'])
+  assert.deepEqual([calls[0].where.recordKey, calls[0].take], [{ startsWith: 'ITEM-Z::' }, undefined])
+  assert.deepEqual((await listItemSupplierRecords(prisma, 'tenant-a', { supplierId: 'SUP-2' })).map((row) => row.id), ['ISR-X'])
+  assert.deepEqual(calls[1].where.recordKey, { endsWith: '::SUP-2' })
+  assert.equal((await listItemSupplierRecords(prisma, 'tenant-a', { supplierId: 'SUP-1' })).length, 2500)
+  assert.equal(calls[2].where.tenantId, 'tenant-a')
 })

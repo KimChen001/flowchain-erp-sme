@@ -234,8 +234,16 @@ export function mapItemSupplierRecord(record = {}, item = null) {
   }
 }
 
+// The record key is "<itemId>::<supplierId>", so one item's or one
+// supplier's links are found in the database, however many the workspace
+// holds; only the unfiltered list is capped.
 export async function listItemSupplierRecords(prisma, tenantId, { itemId = '', supplierId = '' } = {}) {
-  const rows = await prisma.runtimeRecord.findMany({ where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE }, orderBy: [{ recordKey: 'asc' }], take: 2000 })
+  const recordKey = itemId && supplierId ? `${itemId}::${supplierId}` : itemId ? { startsWith: `${itemId}::` } : supplierId ? { endsWith: `::${supplierId}` } : undefined
+  const rows = await prisma.runtimeRecord.findMany({
+    where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE, ...(recordKey ? { recordKey } : {}) },
+    orderBy: [{ recordKey: 'asc' }],
+    ...(recordKey ? {} : { take: 2000 }),
+  })
   return rows.filter((row) => (!itemId || text(row.payload?.itemId) === itemId) && (!supplierId || text(row.payload?.supplierId) === supplierId))
 }
 

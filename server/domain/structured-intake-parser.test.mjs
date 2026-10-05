@@ -100,3 +100,22 @@ test("XLSX parser rejects corrupt archives and excessive columns", async () => {
   XLSX.utils.book_append_sheet(wideBook, wide, "Wide");
   await assert.rejects(() => parseXlsxArtifact(XLSX.write(wideBook, { type: "buffer", bookType: "xlsx" })), error => error.code === "INTAKE_COLUMN_LIMIT");
 });
+
+test("row numbers count blank lines and rows, and an empty header is located", async () => {
+  const parsed = parseCsvArtifact(Buffer.from("\n SKU,Item name,Unit\nA-1,Valve,EA\n\n,,\nA-2,,EA\n"), {});
+  assert.deepEqual(parsed.records.map(record => [record.rowNumber, record.source.SKU]), [[3, "A-1"], [6, "A-2"]]);
+  assert.equal(parsed.records[0].sourceLocator.headerRowNumber, 2);
+  assert.throws(() => parseCsvArtifact(Buffer.from("SKU,Item name,Unit\nA-1,Valve\n"), { delimiter: "comma" }), error => error.code === "INTAKE_CSV_PARSE_FAILED");
+  // A trailing column with no header and no values is left out on request;
+  // one with values is refused with its position.
+  assert.deepEqual(parseCsvArtifact(Buffer.from("SKU,Unit,\nA-1,EA,\n"), { dropEmptyColumns: true }).headers, ["SKU", "Unit"]);
+  assert.throws(() => parseCsvArtifact(Buffer.from("SKU,,Unit\nA-1,x,EA\n"), { dropEmptyColumns: true }), error => error.code === "INTAKE_HEADER_MISSING" && error.details.column === 2);
+  assert.throws(() => parseCsvArtifact(Buffer.from("SKU,Unit\nA,EA\nB,EA\nC,EA\n"), { maximumRecordCount: 2 }), error => error.code === "INTAKE_RECORD_COUNT_LIMIT");
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([["SKU", "Unit"], ["A-1", "EA"], [], ["A-2", "EA"]]), "Items");
+  const bytes = XLSX.write(book, { type: "buffer", bookType: "xlsx" });
+  for (const options of [{}, { readSelectedSheetOnly: true }]) {
+    assert.deepEqual((await parseXlsxArtifact(bytes, options)).records.map(record => record.rowNumber), [2, 4]);
+  }
+  await assert.rejects(() => parseXlsxArtifact(bytes, { maximumUncompressedBytes: 1000 }), error => error.code === "INTAKE_XLSX_ZIP_BOMB");
+});

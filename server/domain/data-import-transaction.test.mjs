@@ -144,6 +144,11 @@ if (!gate.enabled) {
       assert.equal((await prisma.item.findFirst({ where: { tenantId: tenantA, sku: 'IMP-1' } })).preferredSupplierId, supplier.id)
       const relationships = await prisma.runtimeRecord.findMany({ where: { tenantId: tenantA, namespace: 'master-data.item-suppliers' }, orderBy: { recordKey: 'asc' } })
       assert.deepEqual(relationships.map((row) => row.payload.currency).sort(), ['EUR', 'USD'])
+      // A second preferred supplier for IMP-1 is refused in the check, and
+      // the item keeps the one it has.
+      const another = await preview('item-suppliers', ['SKU,Supplier code,Preferred', 'IMP-1,IMP-SUP-2,Yes'])
+      assert.deepEqual([another.rows[0].action, another.rows[0].issues.map((entry) => [entry.code, entry.params])], ['error', [['PREFERRED_EXISTS', { supplierCode: 'IMP-SUP-1' }]]])
+      assert.equal((await prisma.item.findFirst({ where: { tenantId: tenantA, sku: 'IMP-1' } })).preferredSupplierId, supplier.id)
 
       // Opening stock: one draft adjustment per warehouse, nothing posted.
       const openingLines = ['SKU,Warehouse code,Location,Quantity,Unit', 'IMP-1,MAIN,A-01,12,EA', 'IMP-4,MAIN,A-02,3.5,', 'IMP-1,EAST,E-01,4,', 'IMP-1,WEST,W-01,9,', 'IMP-4,MAIN,A-03,2,PCS', 'IMP-2,MAIN,A-04,1,']
@@ -175,6 +180,29 @@ if (!gate.enabled) {
       assert.equal(reupload.rows[0].existing.reason, 'IN_OPENING_DRAFT')
       assert.ok(drafts.some((draft) => draft.id === reupload.rows[0].existing.document.id))
       assert.equal(await prisma.inventoryAdjustmentDocument.count({ where: { tenantId: tenantA } }), 2)
+
+      // A row refused for a missing item is imported from the same file once
+      // the item exists, into a draft of its own.
+      const laterLines = ['SKU,Warehouse code,Location,Quantity', 'IMP-1,MAIN,B-01,1', 'IMP-5,MAIN,B-02,2']
+      const laterFirst = await preview('opening-stock', laterLines)
+      assert.deepEqual(laterFirst.rows[1].issues.map((entry) => entry.code), ['ITEM_NOT_FOUND'])
+      const laterFirstCommit = await commitAll('opening-stock', laterFirst)
+      assert.deepEqual(laterFirstCommit.rows.map((row) => row.outcome), ['created'])
+      assert.deepEqual((await commitAll('items', await preview('items', ['SKU,Item name,Unit', 'IMP-5,Late valve,EA']))).rows.map((row) => row.outcome), ['created'])
+      const laterSecond = await preview('opening-stock', laterLines)
+      assert.deepEqual(laterSecond.rows.map((row) => row.action), ['skip_existing', 'create'])
+      const laterSecondCommit = await commitAll('opening-stock', laterSecond)
+      assert.deepEqual(laterSecondCommit.rows.map((row) => row.outcome), ['skipped_existing', 'created'], JSON.stringify(laterSecondCommit.rows))
+      const lateDraft = laterSecondCommit.rows[1].document
+      assert.notEqual(lateDraft.id, laterFirstCommit.rows[0].document.id)
+      // Once that draft is cancelled, the same file makes a new one instead
+      // of replaying the cancelled draft.
+      await prisma.inventoryAdjustmentDocument.update({ where: { id: lateDraft.id }, data: { workflowStatus: 'cancelled' } })
+      const afterCancel = await commitAll('opening-stock', await preview('opening-stock', laterLines))
+      assert.equal(afterCancel.idempotentReplay, false)
+      assert.deepEqual(afterCancel.rows.map((row) => row.outcome), ['skipped_existing', 'created'])
+      assert.ok(![lateDraft.id, laterFirstCommit.rows[0].document.id].includes(afterCancel.rows[1].document.id))
+      assert.equal(await prisma.inventoryAdjustmentDocument.count({ where: { tenantId: tenantA, workflowStatus: 'draft' } }), 4)
 
       // A user without the permission is refused before anything is read.
       const viewer = await signIn('viewer-a@example.com')

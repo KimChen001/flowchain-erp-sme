@@ -25,13 +25,14 @@ function actorWith({ permissions = allPermissions, operate = ['WH-A'] } = {}) {
 const seed = () => ({
   tenant: [{ id: TENANT, currency: 'CNY' }, { id: OTHER, currency: 'EUR' }],
   item: [
-    { id: 'ITEM-1', tenantId: TENANT, sku: 'VALVE-100', name: 'Ball valve', unit: 'EA', status: 'active' },
+    { id: 'ITEM-1', tenantId: TENANT, sku: 'VALVE-100', name: 'Ball valve', unit: 'EA', status: 'active', preferredSupplierId: 'SUP-1' },
     { id: 'ITEM-2', tenantId: TENANT, sku: 'PIPE-200', name: 'Pipe', unit: 'm', status: 'active' },
     { id: 'ITEM-OLD', tenantId: TENANT, sku: 'OLD-1', name: 'Retired', unit: 'EA', status: 'inactive' },
     { id: 'ITEM-B', tenantId: OTHER, sku: 'FOREIGN-1', name: 'Other workspace item', unit: 'EA', status: 'active' },
   ],
   supplier: [
     { id: 'SUP-1', tenantId: TENANT, code: 'SUP-001', status: 'active', metadata: { defaultCurrency: 'USD' } },
+    { id: 'SUP-5', tenantId: TENANT, code: 'SUP-005', status: 'active', metadata: { defaultCurrency: 'USD' } },
     { id: 'SUP-B', tenantId: OTHER, code: 'SUP-FOREIGN', status: 'active', metadata: { defaultCurrency: 'EUR' } },
   ],
   paymentTerm: [{ id: 'TERM-30', tenantId: TENANT, code: 'NET30' }, { id: 'TERM-B', tenantId: OTHER, code: 'NET60' }],
@@ -47,22 +48,27 @@ const seed = () => ({
   inventoryBalance: [
     { id: 'BAL-1', tenantId: TENANT, sku: 'VALVE-100', warehouseId: 'WH-A', warehouseKey: 'WH-A', location: 'A-01', locationKey: 'a-01', onHandQuantity: '4' },
     { id: 'BAL-0', tenantId: TENANT, sku: 'PIPE-200', warehouseId: 'WH-A', warehouseKey: 'WH-A', location: 'B-01', locationKey: 'b-01', onHandQuantity: '0' },
+    // In East, which the importer cannot operate.
+    { id: 'BAL-EAST', tenantId: TENANT, sku: 'VALVE-100', warehouseId: 'WH-X', warehouseKey: 'WH-X', location: 'A-01', locationKey: 'a-01', onHandQuantity: '9' },
   ],
   inventoryMovement: [],
   inventoryAdjustmentLine: [
     { sku: 'PIPE-200', warehouseId: 'WH-A', locationKey: 'c-01', adjustment: { id: 'ADJ-1', tenantId: TENANT, adjustmentNumber: 'OB-1', reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: 'draft' } },
+    { sku: 'PIPE-200', warehouseId: 'WH-X', locationKey: 'e-01', adjustment: { id: 'ADJ-EAST', tenantId: TENANT, adjustmentNumber: 'OB-EAST', reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: 'draft' } },
   ],
   businessCommandExecution: [],
   auditLog: [],
 })
 
 // Matches the where clauses the service uses: equality, { in }, { not },
-// { lt } and a nested relation filter.
+// { lt }, { startsWith }, OR and a nested relation filter.
 function matches(row, where = {}) {
   return Object.entries(where).every(([key, condition]) => {
+    if (key === 'OR') return condition.some((entry) => matches(row, entry))
     const value = row[key]
     if (condition && typeof condition === 'object' && !(condition instanceof Date)) {
       if ('in' in condition) return condition.in.includes(value)
+      if ('startsWith' in condition) return String(value).startsWith(condition.startsWith)
       if ('not' in condition) return condition.not === null ? value !== null && value !== undefined : value !== condition.not
       if ('notIn' in condition) return !condition.notIn.includes(value)
       if ('lt' in condition) return value < condition.lt
@@ -96,8 +102,10 @@ function fakePrisma(data = seed()) {
 }
 
 const csv = (lines) => Buffer.from(`﻿${lines.join('\r\n')}\r\n`, 'utf8').toString('base64')
+// Ids stay unique across service instances, as random ones would.
+let nextId = 0
 const service = (prisma, { actor = actorWith(), env = {}, commands } = {}) =>
-  createDataImportService({ prisma, env: { FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: 'true', ...env }, resolveActor: async () => actor, commands, idFactory: (() => { let id = 0; return () => `id-${++id}` })() })
+  createDataImportService({ prisma, env: { FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: 'true', ...env }, resolveActor: async () => actor, commands, idFactory: () => `id-${++nextId}` })
 const byRow = (result) => Object.fromEntries(result.rows.map((row) => [row.rowNumber, row]))
 const codes = (row) => row.issues.map((entry) => entry.code)
 
@@ -194,7 +202,8 @@ test('opening stock never converts units and shows the item unit, new records an
   // Already in an opening draft: the same document, not a second one.
   assert.deepEqual([rows[6].action, rows[6].existing.reason, rows[6].existing.document.id], ['skip_existing', 'IN_OPENING_DRAFT', 'ADJ-1'])
   assert.deepEqual(codes(rows[7]), ['ITEM_INACTIVE'])
-  assert.deepEqual(codes(rows[8]), ['WAREHOUSE_SCOPE_DENIED'])
+  // Nothing about the stock in a warehouse the importer cannot operate.
+  assert.deepEqual([codes(rows[8]), rows[8].existing, rows[8].details.stockRecord], [['WAREHOUSE_SCOPE_DENIED'], undefined, null])
   assert.deepEqual(codes(rows[9]), ['WAREHOUSE_NOT_FOUND'])
   assert.deepEqual(codes(rows[10]), ['ITEM_NOT_FOUND'])
   assert.deepEqual(codes(rows[11]), ['QUANTITY_POSITIVE'])
@@ -296,9 +305,13 @@ test('a committed chunk replays its results and a running one answers 409', asyn
   const commands = {
     saveItemMaster: async (_prisma, id, input) => {
       assert.equal(id, null)
-      if (input.sku === 'TAKEN') throw Object.assign(new Error('This SKU is already in use.'), { status: 409, code: 'DUPLICATE_SKU' })
-      if (input.sku === 'BAD') throw Object.assign(new Error('Check the highlighted fields.'), { status: 422, code: 'VALIDATION_ERROR', details: [{ field: 'baseUnit', code: 'UNIT_REQUIRED', message: 'Enter a unit.' }] })
+      if (input.sku === 'TAKEN') {
+        // Another import created it after the check.
+        prisma.data.item.push({ id: 'ITEM-TAKEN', tenantId: TENANT, sku: 'TAKEN', name: 'Raced', unit: 'EA', status: 'active' })
+        throw Object.assign(new Error('This SKU is already in use.'), { status: 409, code: 'DUPLICATE_SKU' })
+      }
       created.push(input.sku)
+      prisma.data.item.push({ id: `ITEM-${input.sku}`, tenantId: TENANT, sku: input.sku, name: input.itemName, unit: input.baseUnit, status: 'active' })
       return { id: `ITEM-${input.sku}`, sku: input.sku }
     },
   }
@@ -309,19 +322,22 @@ test('a committed chunk replays its results and a running one answers 409', asyn
       { rowNumber: 2, values: { sku: 'NEW-1', itemName: 'Valve', unit: 'EA' } },
       { rowNumber: 3, values: { sku: 'VALVE-100', itemName: 'Existing', unit: 'EA' } },
       { rowNumber: 4, values: { sku: 'TAKEN', itemName: 'Raced', unit: 'EA' } },
-      { rowNumber: 5, values: { sku: 'BAD', itemName: 'Broken', unit: 'EA' } },
     ],
   }
   const first = await service(prisma, { commands }).commit('items', body, context)
-  assert.deepEqual(first.rows.map((row) => row.outcome), ['created', 'skipped_existing', 'skipped_existing', 'error'])
-  assert.deepEqual(first.rows[3].issues, [{ field: 'unit', code: 'UNIT_REQUIRED', message: 'Enter a unit.' }])
-  assert.deepEqual(first.counts, { rows: 4, created: 1, skipped_existing: 2, error: 1 })
+  assert.deepEqual(first.rows.map((row) => row.outcome), ['created', 'skipped_existing', 'skipped_existing'])
+  assert.deepEqual(first.counts, { rows: 3, created: 1, skipped_existing: 2, error: 0 })
   assert.equal(first.idempotentReplay, false)
   const audit = prisma.data.auditLog.filter((row) => row.action === 'data_import_chunk_committed')
   assert.deepEqual([audit.length, audit[0].metadata.type, audit[0].metadata.fileSha256, audit[0].actorId, audit[0].tenantId], [1, 'items', 'b'.repeat(64), 'user-a', TENANT])
   const replay = await service(prisma, { commands }).commit('items', body, context)
   assert.deepEqual([replay.idempotentReplay, replay.rows], [true, first.rows])
   assert.deepEqual(created, ['NEW-1'])
+  // A stored result whose record is gone no longer holds: the chunk runs again.
+  prisma.data.item = prisma.data.item.filter((row) => row.sku !== 'NEW-1')
+  const rerun = await service(prisma, { commands }).commit('items', body, context)
+  assert.deepEqual([rerun.idempotentReplay, rerun.rows[0].outcome], [false, 'created'])
+  assert.deepEqual(created, ['NEW-1', 'NEW-1'])
   // A second commit while the first still runs.
   prisma.data.businessCommandExecution.push({ id: 'running', tenantId: TENANT, commandType: 'data_import_items', idempotencyKey: 'x', status: 'pending', createdAt: new Date() })
   const running = prisma.data.businessCommandExecution.find((row) => row.id === 'running')
@@ -333,4 +349,143 @@ test('a committed chunk replays its results and a running one answers 409', asyn
   running.createdAt = new Date(Date.now() - 60 * 60 * 1000)
   const resumed = await service(prisma, { commands }).commit('items', pendingBody, context)
   assert.equal(resumed.idempotentReplay, false)
+})
+
+test('a chunk with a row refused at commit is not stored, so it runs again once the data is fixed', async () => {
+  const prisma = fakePrisma()
+  let fixed = false
+  const commands = {
+    saveItemMaster: async (_prisma, _id, input) => {
+      if (input.sku === 'BAD' && !fixed) throw Object.assign(new Error('Check the highlighted fields.'), { status: 422, code: 'VALIDATION_ERROR', details: [{ field: 'baseUnit', code: 'UNIT_REQUIRED', message: 'Enter a unit.' }] })
+      prisma.data.item.push({ id: `ITEM-${input.sku}`, tenantId: TENANT, sku: input.sku, name: input.itemName, unit: input.baseUnit, status: 'active' })
+      return { id: `ITEM-${input.sku}`, sku: input.sku }
+    },
+  }
+  const body = { fileSha256: 'c'.repeat(64), chunkIndex: 0, rows: [{ rowNumber: 2, values: { sku: 'OK-1', itemName: 'Valve', unit: 'EA' } }, { rowNumber: 3, values: { sku: 'BAD', itemName: 'Broken', unit: 'EA' } }] }
+  const first = await service(prisma, { commands }).commit('items', body, context)
+  assert.deepEqual(first.rows.map((row) => row.outcome), ['created', 'error'])
+  assert.deepEqual(first.rows[1].issues, [{ field: 'unit', code: 'UNIT_REQUIRED', message: 'Enter a unit.' }])
+  assert.equal(prisma.data.businessCommandExecution.length, 0)
+  fixed = true
+  const again = await service(prisma, { commands }).commit('items', body, context)
+  assert.deepEqual([again.idempotentReplay, again.rows.map((row) => row.outcome)], [false, ['skipped_existing', 'created']])
+  assert.equal(prisma.data.businessCommandExecution[0].status, 'completed')
+})
+
+test('opening stock drafts follow the rows sent: a fixed row and a cancelled draft both make a new draft', async () => {
+  const prisma = fakePrisma()
+  const inputs = []
+  const commands = {
+    createInventoryAdjustment: async (input) => {
+      // The real command refuses a reused key with other lines, and a used number.
+      if (inputs.some((entry) => entry.idempotencyKey === input.idempotencyKey)) throw Object.assign(new Error('The idempotency key was already used with a different payload.'), { status: 409, code: 'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD' })
+      if (inputs.some((entry) => entry.adjustmentNumber === input.adjustmentNumber)) throw Object.assign(new Error('Number in use.'), { status: 409, code: 'ADJUSTMENT_NUMBER_CONFLICT' })
+      inputs.push(input)
+      const adjustment = { id: `ADJ-NEW-${inputs.length}`, tenantId: TENANT, adjustmentNumber: input.adjustmentNumber, reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: 'draft' }
+      for (const line of input.lines) {
+        const item = prisma.data.item.find((row) => row.id === line.itemId)
+        prisma.data.inventoryAdjustmentLine.push({ sku: item.sku, warehouseId: line.warehouseId, locationKey: line.location.toLowerCase(), adjustment })
+      }
+      return { adjustment }
+    },
+  }
+  const file = { fileName: 'opening.csv', contentBase64: csv(['SKU,Warehouse code,Location,Quantity', 'VALVE-100,MAIN,A-02,5', 'LATER-1,MAIN,A-03,2']) }
+  const commitChecked = async () => {
+    const checked = await service(prisma, { commands }).preview('opening-stock', file, context)
+    const rows = checked.rows.filter((row) => row.action !== 'error').map(({ rowNumber, values }) => ({ rowNumber, values }))
+    return { checked, result: await service(prisma, { commands }).commit('opening-stock', { fileSha256: checked.fileSha256, chunkIndex: 0, rows }, context) }
+  }
+  const first = await commitChecked()
+  assert.deepEqual(codes(first.checked.rows[1]), ['ITEM_NOT_FOUND'])
+  assert.deepEqual(first.result.rows.map((row) => row.outcome), ['created'])
+  // The missing item is created and the same file is imported again.
+  prisma.data.item.push({ id: 'ITEM-LATER', tenantId: TENANT, sku: 'LATER-1', name: 'Later', unit: 'EA', status: 'active' })
+  const second = await commitChecked()
+  assert.deepEqual(second.checked.rows.map((row) => row.action), ['skip_existing', 'create'])
+  assert.deepEqual(second.result.rows.map((row) => row.outcome), ['skipped_existing', 'created'])
+  assert.deepEqual(inputs.map((input) => input.lines.map((line) => line.itemId)), [['ITEM-1'], ['ITEM-LATER']])
+  assert.notEqual(inputs[0].adjustmentNumber, inputs[1].adjustmentNumber)
+  // The same rows again: the stored result is replayed while its drafts stand.
+  assert.equal((await commitChecked()).result.idempotentReplay, true)
+  // Both drafts are cancelled: the same file makes a new draft rather than
+  // reporting the cancelled ones as created.
+  for (const line of prisma.data.inventoryAdjustmentLine) if (line.adjustment.id.startsWith('ADJ-NEW')) line.adjustment.workflowStatus = 'cancelled'
+  const afterCancel = await commitChecked()
+  assert.equal(afterCancel.result.idempotentReplay, false)
+  assert.deepEqual(afterCancel.result.rows.map((row) => row.outcome), ['created', 'created'])
+  assert.deepEqual(afterCancel.result.documents.map((document) => document.id), ['ADJ-NEW-3'])
+  // That draft is cancelled too and another draft now holds both locations:
+  // the stored result is not replayed, the rows point at the other draft.
+  for (const line of prisma.data.inventoryAdjustmentLine) if (line.adjustment.id === 'ADJ-NEW-3') line.adjustment.workflowStatus = 'cancelled'
+  const other = { id: 'ADJ-OTHER', tenantId: TENANT, adjustmentNumber: 'OB-OTHER', reasonCode: 'opening_balance', postingStatus: 'unposted', workflowStatus: 'draft' }
+  prisma.data.inventoryAdjustmentLine.push({ sku: 'VALVE-100', warehouseId: 'WH-A', locationKey: 'a-02', adjustment: other }, { sku: 'LATER-1', warehouseId: 'WH-A', locationKey: 'a-03', adjustment: other })
+  const moved = await commitChecked()
+  assert.deepEqual([moved.result.idempotentReplay, moved.result.rows.map((row) => [row.outcome, row.document?.id])], [false, [['skipped_existing', 'ADJ-OTHER'], ['skipped_existing', 'ADJ-OTHER']]])
+  assert.equal(inputs.length, 3)
+})
+
+test('row numbers count blank rows, and an empty column is left out', async () => {
+  const prisma = fakePrisma()
+  const result = await service(prisma).preview('items', { fileName: 'items.csv', contentBase64: csv(['SKU,Item name,Unit,', 'A-1,Valve,EA,', ',,,', 'A-2,,EA,', '', 'A-3,Pump,EA,']) }, context)
+  assert.deepEqual(result.rows.map((row) => [row.rowNumber, row.key]), [[2, 'A-1'], [4, 'A-2'], [6, 'A-3']])
+  assert.deepEqual(codes(byRow(result)[4]), ['NAME_REQUIRED'])
+  assert.deepEqual(result.columns.map((column) => column.header), ['SKU', 'Item name', 'Unit'])
+  // A column with values but no header is named by its position.
+  await assert.rejects(service(prisma).preview('items', { fileName: 'items.csv', contentBase64: csv(['SKU,Item name,,Unit', 'A-1,Valve,note,EA']) }, context),
+    (error) => error.code === 'DATA_IMPORT_HEADER_BLANK' && error.details.column === 3)
+  // A workbook with a blank spacer row.
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['SKU', 'Item name', 'Unit'], ['X-1', 'Valve', 'EA'], [], ['X-2', 'Pump', 'EA']]), 'Items')
+  const xlsx = await service(prisma).preview('items', { fileName: 'items.xlsx', contentBase64: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }).toString('base64') }, context)
+  assert.deepEqual(xlsx.rows.map((row) => row.rowNumber), [2, 4])
+})
+
+test('a workbook is read one sheet at a time, within a grid limit', async () => {
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['SKU', 'Item name', 'Unit'], ['S-1', 'Valve', 'EA']]), 'Items')
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['note']]), 'Notes')
+  // The second sheet declares the whole Excel grid as its used range.
+  const archive = XLSX.CFB.read(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer' })
+  const part = archive.FileIndex[archive.FullPaths.indexOf('Root Entry/xl/worksheets/sheet2.xml')]
+  part.content = Buffer.from(Buffer.from(part.content).toString('utf8').replace(/<dimension ref="[^"]*"/, '<dimension ref="A1:XFD1048576"'))
+  part.size = part.content.length
+  const contentBase64 = Buffer.from(XLSX.CFB.write(archive, { fileType: 'zip', type: 'buffer' })).toString('base64')
+  const items = await service(fakePrisma()).preview('items', { fileName: 'w.xlsx', contentBase64, sheetName: 'Items' }, context)
+  assert.deepEqual(items.rows.map((row) => row.key), ['S-1'])
+  await assert.rejects(service(fakePrisma()).preview('items', { fileName: 'w.xlsx', contentBase64, sheetName: 'Notes' }, context), (error) => error.status === 413 && error.code === 'DATA_IMPORT_FILE_UNSAFE')
+})
+
+test('a preferred link never moves the preferred supplier an item already has', async () => {
+  const prisma = fakePrisma()
+  // PIPE-200 prefers SUP-001 through a link only.
+  prisma.data.runtimeRecord.push({ id: 'ISR-P', tenantId: TENANT, namespace: 'master-data.item-suppliers', recordKey: 'ITEM-2::SUP-1', payload: { itemId: 'ITEM-2', supplierId: 'SUP-1', preferred: true } })
+  const result = await service(prisma).preview('item-suppliers', { fileName: 'l.csv', contentBase64: csv(['SKU,Supplier code,Preferred', 'VALVE-100,SUP-005,Yes', 'PIPE-200,SUP-005,Yes', 'OLD-1,SUP-005,Yes']) }, context)
+  const rows = byRow(result)
+  assert.deepEqual([codes(rows[2]), rows[2].issues[0].params], [['PREFERRED_EXISTS'], { supplierCode: 'SUP-001' }])
+  assert.deepEqual(codes(rows[3]), ['PREFERRED_EXISTS'])
+  // An item with no preferred supplier can take one.
+  assert.equal(rows[4].action, 'create')
+  const notPreferred = await service(prisma).preview('item-suppliers', { fileName: 'l.csv', contentBase64: csv(['SKU,Supplier code,Preferred', 'VALVE-100,SUP-005,No']) }, context)
+  assert.equal(notPreferred.rows[0].action, 'create')
+  // The item's own preferred supplier is the row's, but a link prefers
+  // another one: saving would demote that link, so the row is refused too.
+  prisma.data.item.find((row) => row.id === 'ITEM-2').preferredSupplierId = 'SUP-5'
+  const mixed = await service(prisma).preview('item-suppliers', { fileName: 'l.csv', contentBase64: csv(['SKU,Supplier code,Preferred', 'PIPE-200,SUP-005,Yes']) }, context)
+  assert.deepEqual([codes(mixed.rows[0]), mixed.rows[0].issues[0].params], [['PREFERRED_EXISTS'], { supplierCode: 'SUP-001' }])
+})
+
+test('an XLSX file that unpacks to more than eight times the file limit is refused', async () => {
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['SKU', 'Item name', 'Unit'], ['S-1', 'Valve', 'EA']]), 'Items')
+  // About 400 KB of sheet XML that packs into a few KB.
+  const archive = XLSX.CFB.read(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer' })
+  const part = archive.FileIndex[archive.FullPaths.indexOf('Root Entry/xl/worksheets/sheet1.xml')]
+  part.content = Buffer.from(Buffer.from(part.content).toString('utf8').replace('</worksheet>', `${' '.repeat(400000)}</worksheet>`))
+  part.size = part.content.length
+  const bytes = Buffer.from(XLSX.CFB.write(archive, { fileType: 'zip', type: 'buffer', compression: true }))
+  assert.ok(bytes.length < 20000, String(bytes.length))
+  const body = { fileName: 'w.xlsx', contentBase64: bytes.toString('base64') }
+  await assert.rejects(service(fakePrisma(), { env: { FLOWCHAIN_DATA_IMPORT_MAX_FILE_BYTES: '20000' } }).preview('items', body, context), (error) => error.status === 413 && error.code === 'DATA_IMPORT_FILE_UNSAFE')
+  // Under the default limit the same file is read.
+  assert.deepEqual((await service(fakePrisma()).preview('items', body, context)).rows.map((row) => row.key), ['S-1'])
 })
