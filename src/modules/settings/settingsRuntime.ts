@@ -10,7 +10,7 @@ export type SettingsRuntime = {
     quantityTolerance: string; pricePercentageTolerance: string; priceAbsoluteTolerance: string; amountTolerance: string;
   };
   modules: { defaultModule: string; items: Array<{ id: string; label: string; enabled: boolean; order: number; roles: string[] }> };
-  ai: { capabilities: Array<{ id: string; label: string; level: string }>; evidenceRequired: boolean; retainDays: number };
+  ai: { modelAssistEnabled?: boolean; capabilities: Array<{ id: string; label: string; level: string }>; evidenceRequired: boolean; retainDays: number };
   advanced: { sessionTimeoutMinutes: number; exportLimit: number; dateFormat: string; negativeInventoryBlocked: boolean; maintenanceNotice: string };
 };
 
@@ -28,3 +28,11 @@ export async function saveSettingsSection<K extends keyof SettingsRuntime>(secti
 }
 
 export const fetchSettingsAudit = () => apiJson<SettingsAuditEntry[]>('/api/audit-log?limit=200');
+
+// The workspace's AI status (server/domain/ai-workspace-access.mjs).
+export type AiWorkspaceStatus = {
+  status: 'no_provider' | 'on' | 'off' | 'over_cap';
+  providerConfigured: boolean; optInRequired: boolean; enabled: boolean;
+  month: string; calls: number; costUsd: number; capUsd: number;
+};
+export const fetchAiWorkspaceStatus = () => apiJson<AiWorkspaceStatus>('/api/settings-runtime/ai-status');

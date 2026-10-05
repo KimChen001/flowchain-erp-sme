@@ -23,6 +23,7 @@ model Tenant {
   updatedAt              DateTime  @updatedAt
 
   knowledgeDocuments                    AiKnowledgeDocument[]
+  aiUsageMonthly                        AiUsageMonthly[]
   users                                 User[]
   suppliers                             Supplier[]
   items                                 Item[]
@@ -3415,4 +3416,20 @@ model AiKnowledgeChunk {
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   @@unique([documentId, position])
   @@index([embeddingModel, embeddingDimensions])
+}
+
+// Model calls per workspace and calendar month (UTC, YYYY-MM), for the AI
+// spend cap (server/domain/ai-usage-meter.mjs). costMicros is millionths of a
+// US dollar at the configured token prices.
+model AiUsageMonthly {
+  tenantId    String
+  month       String
+  calls       Int      @default(0)
+  inputUnits  Int      @default(0)
+  outputUnits Int      @default(0)
+  costMicros  Int      @default(0)
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, month])
 }

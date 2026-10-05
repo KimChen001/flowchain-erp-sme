@@ -70,15 +70,16 @@ const serverSources = () => {
   return files.map(path => ({ path: relative(serverRoot, path).replaceAll('\\', '/'), source: readFileSync(path, 'utf8') }))
 }
 
-test('only the four invoice matching tolerances are read from the operational settings the UI edits', () => {
+test('only the four invoice matching tolerances and the AI switch are read from the operational settings the UI edits', () => {
   assert.deepEqual(REVIEW_TOLERANCE_FIELDS, ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance'])
-  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: [], advanced: [] })
+  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [] })
 
   const sources = serverSources()
   // Every server reader of tenant.operationalSettings. The settlement services
   // read settlementPolicy, which the settings UI never edits; Mobile Sync reads
   // module visibility but is outside the US trial capability set.
   assert.deepEqual(sources.filter(file => /operationalSettings/.test(file.source)).map(file => file.path).sort(), [
+    'domain/ai-workspace-access.mjs',
     'domain/internal-settlement-command-service.mjs',
     'domain/internal-settlement-read-service.mjs',
     'domain/mobile-sync-entity-policy.mjs',
@@ -87,6 +88,9 @@ test('only the four invoice matching tolerances are read from the operational se
     'domain/workspace-settings-contract.mjs',
     'routes/settings-runtime.routes.mjs',
   ])
+  // The assistant reads only the AI switch (ai-workspace-access.mjs).
+  const access = sources.find(file => file.path === 'domain/ai-workspace-access.mjs').source
+  assert.deepEqual([...new Set([...access.matchAll(/\.ai\.([A-Za-z]+)/g)].map(match => match[1]))], ['modelAssistEnabled'])
   const finance = sources.find(file => file.path === 'domain/operational-finance-policy.mjs').source
   assert.deepEqual([...new Set([...finance.matchAll(/review\.([A-Za-z]+)/g)].map(match => match[1]))].sort(), [...REVIEW_TOLERANCE_FIELDS].sort())
 
