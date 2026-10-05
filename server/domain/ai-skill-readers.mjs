@@ -251,7 +251,7 @@ export async function readAiSkillFacts(skillContext) {
     // Every purchase order, whatever its status, by the open purchase orders
     // report's line rules (scope all), for questions about one order. Open
     // orders carry the same figures as the rows above.
-    const allOrders = buildOpenPurchaseOrdersReport(reportRows, { export: 'true', scope: 'all' }, now)
+    const allOrders = buildOpenPurchaseOrdersReport(reportRows, { export: 'true', scope: 'all' }, now, { timeZone: tenant.timezone })
     facts.purchaseOrders.index = array(allOrders.exportRows).map((row) => ({
       id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: purchaseOrderStatus(row.status),
       createdDate: row.createdDate || null, dueDate: row.dueDate || null, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received,
