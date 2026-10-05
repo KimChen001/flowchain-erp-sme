@@ -1,6 +1,7 @@
 import { AI_MODEL_POLICIES } from './ai-model-router.mjs'
 import { callConfiguredProvider, canCallConfiguredProvider, providerRuntimeConfig } from './ai-runtime-provider-adapter-v2.mjs'
 import { toolsFor } from './ai-skill-registry.mjs'
+import { aiAgentBusinessQueryTool } from './ai-agent-business-query.mjs'
 
 // Agent mode P2: model tool planning (docs/ai-agent-mode-design.md sections 3
 // and 6, docs/ai-assistant-plan.md section 7; policy agent_planning, approved
@@ -13,8 +14,9 @@ import { toolsFor } from './ai-skill-registry.mjs'
 // lists, workspace names or the conversation.
 //
 // What the model may say: which skills, the inventory mode (overview or
-// short), and which records each call is about, written as the question
-// writes them. The deterministic record step (refineAiSkillRoute) resolves
+// short), which records each call is about, written as the question writes
+// them, and the goals of a supplier business query (ai-agent-business-query.mjs).
+// The business query's suppliers and filters come from the question. The deterministic record step (refineAiSkillRoute) resolves
 // those words against the actor's own records and sets the mode, so a record
 // the actor cannot see answers exactly as one that does not exist. A record
 // the question does not contain, an unknown tool, an unknown argument or a
@@ -23,6 +25,20 @@ import { toolsFor } from './ai-skill-registry.mjs'
 export const AI_AGENT_LIMITS = Object.freeze({ maxTools: 3, maxRecords: 10, timeoutMs: 2500, maxTimeoutMs: 5000 })
 // Providers whose adapter sends native tool calls (chat completions).
 const TOOL_CALLING_KINDS = new Set(['deepseek_chat', 'doubao_chat', 'qwen_chat', 'parley_chat'])
+// Providers asked for a tool call and no text (tool_choice "required"):
+// verified on Parley through both kinds on 2026-10-05, and documented by
+// DeepSeek. With it the model declines by calling AI_AGENT_NO_SKILL alone: a
+// written refusal took 2.1 to 3.0 s to generate and was thrown away.
+const REQUIRED_TOOL_CHOICE_KINDS = new Set(['deepseek_chat', 'parley_chat'])
+export const AI_AGENT_NO_SKILL = 'no_matching_skill'
+const noSkillTool = Object.freeze({
+  type: 'function',
+  function: Object.freeze({
+    name: AI_AGENT_NO_SKILL,
+    description: 'Call this alone when no other tool answers any part of the question, or the question is not about this workspace.',
+    parameters: Object.freeze({ type: 'object', additionalProperties: false, properties: Object.freeze({}), required: Object.freeze([]) }),
+  }),
+})
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
 
@@ -45,9 +61,15 @@ const RECORDS = Object.freeze({
   description: 'Record numbers, SKUs or supplier names this call is about, written exactly as in the question. Leave empty for the whole workspace.',
 })
 
-// The actor's skills as native tool definitions. capability_overview is the
-// fallback, not a tool.
-export function aiAgentTools(actor) {
+// The actor's skills as native tool definitions, plus the supplier business
+// query for a question the business query path would take, when the actor may
+// read one of its goals. capability_overview is the fallback, not a tool.
+export function aiAgentTools(actor, { businessQuery = true } = {}) {
+  const query = businessQuery ? aiAgentBusinessQueryTool(actor) : null
+  return [...aiAgentSkillTools(actor), ...(query ? [query] : [])]
+}
+
+function aiAgentSkillTools(actor) {
   return toolsFor(actor).filter((entry) => entry.id !== 'capability_overview').map((entry) => {
     const modes = REQUESTABLE_MODES[entry.id]
     return {
@@ -76,7 +98,7 @@ function parseArguments(raw) {
 }
 
 // The calls the runtime may run, and the ones it dropped with their reasons.
-export function validateAiAgentToolCalls(toolCalls, { message, tools }) {
+export function validateAiAgentToolCalls(toolCalls, { message, tools, maxTools = AI_AGENT_LIMITS.maxTools }) {
   const known = new Map(array(tools).map((tool) => [tool.function.name, tool.function.parameters]))
   const question = normalized(message)
   const calls = []
@@ -96,11 +118,18 @@ export function validateAiAgentToolCalls(toolCalls, { message, tools }) {
     if (!Array.isArray(records) || records.length > AI_AGENT_LIMITS.maxRecords || records.some((record) => typeof record !== 'string')) { drop('invalid_arguments'); continue }
     const named = [...new Set(records.map(text).filter(Boolean))]
     if (named.some((record) => !question.includes(normalized(record)))) { drop('record_not_in_question'); continue }
+    // Goals: a required list of the tool's own values (the business query).
+    const goalSchema = parameters.properties.goals
+    const goals = goalSchema ? args.goals : undefined
+    if (goalSchema && (!Array.isArray(goals) || !goals.length || goals.length > goalSchema.maxItems || new Set(goals).size !== goals.length || goals.some((goal) => !goalSchema.items.enum.includes(goal)))) { drop('invalid_arguments'); continue }
+    // One business query per answer: a second one's goals join the first.
+    const joined = goalSchema ? calls.find((entry) => entry.tool === tool) : null
+    if (joined) { joined.goals = [...new Set([...joined.goals, ...goals])].slice(0, 8); joined.records = [...new Set([...joined.records, ...named])].slice(0, AI_AGENT_LIMITS.maxRecords); continue }
     const key = `${tool}|${mode || ''}|${named.map(normalized).sort().join(',')}`
     if (seen.has(key)) continue
     seen.add(key)
-    if (calls.length >= AI_AGENT_LIMITS.maxTools) { drop('over_limit'); continue }
-    calls.push({ tool, mode, records: named })
+    if (calls.length >= maxTools) { drop('over_limit'); continue }
+    calls.push({ tool, mode, records: named, ...(goalSchema ? { goals: [...goals] } : {}) })
   }
   return { calls, dropped }
 }
@@ -113,23 +142,31 @@ function withTimeout(promise, ms, onTimeout) {
 // One planning call. { status: 'planned', calls, dropped } when at least one
 // call may run; 'declined' when the model called no tool; 'degraded' on a
 // timeout, an error or a plan with no valid call; 'disabled' when off.
-export async function planAiAgentTools({ message, actor, env = {}, excluded = [], provider = callConfiguredProvider, fetchImpl = globalThis.fetch } = {}) {
+// `parts` is how many parts the question has (splitAiCompoundQuestion): the
+// model may call at most one skill per part, and three in all.
+// `businessQuery`: offer the supplier business query (a question the business
+// query path would take, sent here first by the gateway).
+export async function planAiAgentTools({ message, actor, env = {}, parts = 1, businessQuery = false, excluded = [], provider = callConfiguredProvider, fetchImpl = globalThis.fetch } = {}) {
   if (!aiAgentPlanningEnabled(env)) return { status: 'disabled' }
   const started = Date.now()
   // A skill a rule excluded for this question (purchase order skills for a
   // sales order question, for example) is not offered.
-  const tools = aiAgentTools(actor).filter((tool) => !excluded.includes(tool.function.name))
+  const tools = aiAgentTools(actor, { businessQuery }).filter((tool) => !excluded.includes(tool.function.name))
   const base = () => ({ provider: providerRuntimeConfig(env).kind, latencyMs: Date.now() - started, toolCount: tools.length })
   if (!tools.length) return { status: 'declined', reason: 'no_tools', calls: [], dropped: [], ...base() }
   const controller = new AbortController()
   const abortable = (url, init = {}) => fetchImpl(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal })
-  const input = { task: { type: 'agent_planning', question: text(message).slice(0, 1200) }, tools, modelPolicy: AI_MODEL_POLICIES.agentPlanning }
+  const maxTools = Math.min(AI_AGENT_LIMITS.maxTools, Math.max(1, Number(parts) || 1))
+  const required = REQUIRED_TOOL_CHOICE_KINDS.has(providerRuntimeConfig(env).kind)
+  const input = { task: { type: 'agent_planning', question: text(message).slice(0, 1200), parts: maxTools }, tools: required ? [...tools, noSkillTool] : tools, ...(required ? { toolChoice: 'required' } : {}), modelPolicy: AI_MODEL_POLICIES.agentPlanning }
   let response
   try { response = await withTimeout(Promise.resolve(provider(input, env, abortable)), aiAgentTimeout(env), () => controller.abort()) } catch { response = { ok: false, reason: 'provider_error' } }
   const usage = response?.usage || null
   if (!response?.ok) return { status: 'degraded', reason: text(response?.reason) || 'provider_unavailable', calls: [], dropped: [], usage, ...base() }
-  if (!array(response.toolCalls).length) return { status: 'declined', reason: 'no_tool_call', calls: [], dropped: [], usage, ...base() }
-  const { calls, dropped } = validateAiAgentToolCalls(response.toolCalls, { message, tools })
+  // The no-skill tool is a way to decline, never a lookup.
+  const skillCalls = array(response.toolCalls).filter((call) => text(call?.name) !== AI_AGENT_NO_SKILL)
+  if (!skillCalls.length) return { status: 'declined', reason: 'no_tool_call', calls: [], dropped: [], usage, ...base() }
+  const { calls, dropped } = validateAiAgentToolCalls(skillCalls, { message, tools, maxTools })
   if (!calls.length) return { status: 'degraded', reason: 'invalid_plan', calls, dropped, usage, ...base() }
   return { status: 'planned', calls, dropped, usage, ...base() }
 }
@@ -146,9 +183,9 @@ export function aiAgentAudit(plan, { entry, served = [] } = {}) {
     provider: plan.provider || null,
     latencyMs: plan.latencyMs ?? null,
     modelCalls: 1,
-    calls: array(plan.calls).map((call) => ({ tool: call.tool, mode: call.mode || null, records: call.records.length, served: served.includes(call.tool) })),
+    calls: array(plan.calls).map((call) => ({ tool: call.tool, mode: call.mode || null, records: call.records.length, ...(call.goals ? { goals: call.goals } : {}), served: served.includes(call.tool) })),
     dropped: array(plan.dropped).map((row) => ({ tool: row.tool, reason: row.reason })),
-    inputTokens: plan.usage?.inputTokens ?? null,
-    outputTokens: plan.usage?.outputTokens ?? null,
+    // Key names without "token": the audit store redacts those as secrets.
+    usage: { input: plan.usage?.inputTokens ?? null, output: plan.usage?.outputTokens ?? null },
   }
 }

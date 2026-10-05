@@ -60,6 +60,7 @@ const DRAFT = [
   /\bdraft\s+(a|an|the|me)\b/i,
   /\b(prepare|write|compose|create)\b[^.?!]*\b(message|email|note)\b/i,
   /(准备|写|生成|拟|做)[^。？！]*草稿|起草|草拟/,
+  /(准备|写|拟)[^。？！]{0,20}(邮件|消息|短信|信函)/,
 ]
 // An instruction to act, not a question about it. Word-bounded, and checked
 // clause by clause, so an instruction after a preamble ("Ignore previous

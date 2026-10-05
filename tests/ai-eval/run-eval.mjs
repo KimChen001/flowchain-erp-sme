@@ -736,8 +736,11 @@ function scoreCase(entry, runs, context) {
   }
 
   if (runs.length > 1) {
-    const signature = (run) => JSON.stringify({ status: run.status, intent: run.payload?.intent, metrics: run.payload?.metrics ?? null, numbers: statedNumbers(visibleStrings(run.payload, { answerOnly: true })), ids: array(run.payload?.keyEvidence).map((item) => item.entityId), cards: array(run.payload?.reviewCards).map((card) => card.targetEntityId) })
-    add('same answer twice', runs.every((run) => signature(run) === signature(first)), 'the repeated question gave different numbers or records', { numeric: true })
+    const parts = (run) => ({ status: run.status, intent: run.payload?.intent, metrics: run.payload?.metrics ?? null, numbers: statedNumbers(visibleStrings(run.payload, { answerOnly: true })), ids: array(run.payload?.keyEvidence).map((item) => item.entityId), cards: array(run.payload?.reviewCards).map((card) => card.targetEntityId) })
+    const signature = (run) => JSON.stringify(parts(run))
+    // Which fields differ, so a failure says what changed between runs.
+    const differing = [...new Set(runs.flatMap((run) => Object.keys(parts(first)).filter((key) => JSON.stringify(parts(run)[key]) !== JSON.stringify(parts(first)[key]))))]
+    add('same answer twice', runs.every((run) => signature(run) === signature(first)), `the repeated question gave different numbers or records (${differing.join(', ')}: ${differing.map((key) => runs.map((run) => JSON.stringify(parts(run)[key])).join(' / ')).join('; ').slice(0, 600)})`, { numeric: true })
   }
 
   for (const run of runs) add('no business writes', !run.wrote, `changed ${run.wrote}`, { safety: true })
@@ -1003,14 +1006,14 @@ try {
     if (provider.agent || plans.length) {
       const count = (key, value) => plans.filter((plan) => plan[key] === value).length
       const planLatencies = plans.map((plan) => plan.latencyMs).filter((value) => typeof value === 'number')
-      const sum = (key) => plans.reduce((total, plan) => total + (Number(plan[key]) || 0), 0)
+      const sum = (key) => plans.reduce((total, plan) => total + (Number(plan.usage?.[key]) || 0), 0)
       report.scores.agentPlanning = {
         consulted: plans.length, planned: count('status', 'planned'), declined: count('status', 'declined'), degraded: count('status', 'degraded'),
         entries: { unmatched: count('entry', 'unmatched'), multiPart: count('entry', 'multi_part') },
         reasons: Object.fromEntries([...new Set(plans.map((plan) => plan.reason).filter(Boolean))].map((reason) => [reason, count('reason', reason)])),
         droppedCalls: plans.reduce((total, plan) => total + (plan.dropped?.length || 0), 0),
         latencyMs: { p50: percentile(planLatencies, 50), p95: percentile(planLatencies, 95), max: planLatencies.length ? Math.max(...planLatencies) : null },
-        tokens: { input: sum('inputTokens'), output: sum('outputTokens') },
+        tokens: { input: sum('input'), output: sum('output') },
       }
     }
   }
