@@ -27,7 +27,6 @@ export const operationsEnglish: Record<string, string> = {
   'PO 状态': 'PO status', 'PO 行金额': 'PO line amount', '已收': 'Received', '已开票': 'Invoiced', '待收': 'Outstanding',
   '关联 GRN / Invoice': 'Linked GRN / invoice', 'SKU 待补齐': 'SKU missing',
   '采购申请数据加载失败': 'Could not load purchase requests',
-  '由库存补货入口预填；保存前请人工复核数量、供应商和需求日期。': 'Prefilled from inventory replenishment. Review quantity, supplier, and required date before saving.',
   '供应商关系读取失败': 'Could not load supplier relationships', '采购申请已提交': 'Purchase request submitted',
   '采购申请草稿已保存': 'Purchase request draft saved', '保存失败': 'Could not save',
   '请输入拒绝原因': 'Enter a reason for rejection', '返回采购申请列表': 'Back to purchase requests',

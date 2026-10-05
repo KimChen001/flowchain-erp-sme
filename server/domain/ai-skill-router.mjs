@@ -118,6 +118,18 @@ const TODAY = [
   /值得(?:我|我们|你)?(?:分享|注意|关注|一提|说)|有(?:什么|啥)(?:新情况|新消息|新动态|动态|进展|要注意|需要注意|要关注|事)|最近(?:怎么样|如何|有什么)|跟我说说|汇报一下/,
 ]
 
+// A general question about suppliers: "供应商数据给我呢", "How are our
+// suppliers doing?", "Which suppliers need follow-up?". It names suppliers and
+// a general or attention cue, and no particular record, document type or
+// payment, and does not point at an earlier answer's suppliers ("these").
+const SUPPLIER = [/\b(?:suppliers?|vendors?)\b/i, /供应商|供方/]
+const SUPPLIER_CUE = [
+  /\b(?:data|info|information|summary|overview|status|snapshot|show|list|tell me about|give me|how (?:are|is)|doing|attention|follow.?ups?|priorit\w*|urgent|issues?|problems?|anything)\b/i,
+  /情况|概况|概览|数据|资料|信息|汇总|总结|状况|看看|给我|列出|怎么样|如何|注意|关注|跟进|优先|问题|要处理|需要处理/,
+]
+const PREVIOUS_RESULT = [/\b(?:these|those|them)\b/i, /这些|上述|刚才|上一轮|它们|这几家/]
+const SPECIFIC_ASPECT = [/\b(?:invoices?|payments?|payables?|pay|paid|rfqs?|quotes?|quotations?|receipts?|receiving|grns?|stock|inventory|skus?|purchase orders?|pos?|orders?|approvals?)\b/i, /发票|付款|应付|询价|报价|收货|到货|库存|物料|采购订单|订单|审批/]
+
 // Questions about the world outside the workspace. A question that also names
 // a workspace record type is about the workspace.
 const OUTSIDE = [
@@ -183,8 +195,10 @@ function focusOf(focusTarget) {
 }
 
 const matches = (patterns, message) => patterns.some((pattern) => pattern.test(message))
+// "tier-1" is a supplier tier, not a record number.
+const TIER_ID = /^TIER-[123]$/
 const recordIds = (message) => {
-  const ids = (message.match(RECORD_ID) || []).map((id) => id.toUpperCase())
+  const ids = (message.match(RECORD_ID) || []).map((id) => id.toUpperCase()).filter((id) => !TIER_ID.test(id))
   for (const match of message.replace(RECORD_ID, ' ').matchAll(SPACED_PO)) ids.push(`PO-${match[1]}`)
   return [...new Set(ids)]
 }
@@ -203,10 +217,34 @@ export function detectAiActionRequest(message) {
   })
 }
 
+// The supplier tier a question filters by (docs/supplier-tiers-design.md §6):
+// 1, 2 or 3, 'none' for suppliers nobody has tiered, or null. "Tier 1",
+// "tier-2", "strategic suppliers", 一级供应商, 战略供应商, "not tiered". The
+// tier word must sit next to a supplier word unless it says "tier": "core",
+// 一级 and 一般 mean other things elsewhere.
+const TIER_NUMBER = { 1: 1, one: 1, 2: 2, two: 2, 3: 3, three: 3, 一: 1, 二: 2, 三: 3, strategic: 1, core: 2, transactional: 3, 战略: 1, 核心: 2 }
+const TIER = [
+  /\btier[\s-]?(1|2|3|one|two|three)\b/i,
+  /\b(strategic|core|transactional)\s+(?:suppliers?|vendors?)\b/i,
+  /([一二三123])\s*级\s*(?:[·・]\s*)?(?:战略|核心|一般)?\s*(?:供应商|供方)/,
+  /(战略|核心)\s*(?:型)?\s*(?:供应商|供方)/,
+]
+const UNTIERED = [/\b(?:untiered|not (?:yet )?tiered|without a tier)\b/i, /未分级/]
+export function aiSkillTierOf(message) {
+  const raw = text(message)
+  if (matches(UNTIERED, raw)) return 'none'
+  for (const pattern of TIER) {
+    const found = raw.match(pattern)
+    if (found) return TIER_NUMBER[found[1].toLowerCase()] || null
+  }
+  return null
+}
+
 // Signals the entity step reads: a question about late orders or about
-// shortages narrows the records it answers with.
+// shortages narrows the records it answers with, and a supplier tier filters
+// them.
 function signalsOf(intent) {
-  return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent), orders: matches(ORDER_NOUN, intent) }
+  return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent), orders: matches(ORDER_NOUN, intent), tier: aiSkillTierOf(intent) }
 }
 
 // Skills a rule knows cannot answer this question, whichever skill is asked
@@ -232,7 +270,10 @@ function intentRoute(intent, base) {
   const otherRecord = matches(OTHER_RECORD, intent)
   if (matches(APPROVAL, intent) && matches(REQUEST_NOUN, intent) && !otherRecord) return route('pending_approvals')
   const late = matches(LATE, intent) && !matches(DELIVERED, intent)
-  if (late && matches(ORDER_NOUN, intent) && !otherRecord && !matches(COUNT_QUESTION, intent)) return route('purchase_orders')
+  // A count of one tier's late orders is the purchase orders answer for that
+  // tier; the workspace metrics count every supplier.
+  const tier = aiSkillTierOf(intent)
+  if (late && matches(ORDER_NOUN, intent) && !otherRecord && (!matches(COUNT_QUESTION, intent) || tier)) return route('purchase_orders')
   if (matches(INVOICE, intent) && matches(INVOICE_QUESTION, intent) && !matches(PAYMENT, intent)) return route('invoice_summary')
   // A record number goes to the entity step, which looks it up or says it
   // cannot ("What's the status of RFQ-003?").
@@ -240,6 +281,8 @@ function intentRoute(intent, base) {
   if (!base.ids.length && matches(RECEIVING, intent) && !matches(NOT_RECEIPT, intent) && !matches(PAYMENT, intent)) return route('receiving_issues')
   if (matches(STOCK, intent) || (matches(AVAILABLE, intent) && (base.ids.length || matches(AVAILABLE_CONTEXT, intent)))) return route('inventory_availability')
   if (matches(METRICS, intent) || (late && matches(ORDER_NOUN, intent) && !otherRecord)) return route('workspace_metrics')
+  // A tier ("Which Tier 1 suppliers do we have?") is cue enough.
+  if (matches(SUPPLIER, intent) && (matches(SUPPLIER_CUE, intent) || tier) && !base.ids.length && !matches(SPECIFIC_ASPECT, intent) && !matches(PREVIOUS_RESULT, intent)) return route('supplier_attention')
   if (matches(TODAY, intent)) return route('today_priorities')
   return null
 }

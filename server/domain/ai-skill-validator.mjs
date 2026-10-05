@@ -27,12 +27,13 @@ export function aiSkillKnownValues(facts) {
   if (!facts) return { ids, stored }
   for (const row of array(facts.purchaseOrders?.rows)) { add(row.id, row.orderNumber, row.supplierId); keep(row.supplier, row.orderNumber, row.sku, row.unit) }
   for (const row of array(facts.purchaseOrders?.index)) { add(row.id, row.orderNumber, row.supplierId); keep(row.supplier, row.orderNumber, row.unit) }
+  for (const row of [...array(facts.purchaseOrders?.rows), ...array(facts.purchaseOrders?.index)]) for (const line of array(row.openLines)) keep(line.sku, line.itemName, line.unit)
   for (const row of array(facts.suppliers)) { add(row.id, row.code); keep(row.name, row.code) }
   for (const row of array(facts.inventory?.rows)) { add(row.itemId, row.sku, ...array(row.purchaseOrderIds)); keep(row.sku, row.itemName, row.unit) }
   for (const row of array(facts.invoices?.variances)) { add(row.id, row.invoiceNumber, row.supplierId, row.poId); keep(row.supplier, row.invoiceNumber) }
   for (const row of array(facts.purchaseRequests?.awaitingApproval)) { add(row.id); keep(row.sku, row.unit) }
   for (const row of [...array(facts.rfqs?.readyToAward), ...array(facts.rfqs?.open)]) { add(row.id); keep(row.title) }
-  for (const row of [...array(facts.receipts?.rejected), ...array(facts.receipts?.unposted)]) { add(row.id, row.documentNumber, row.poId); keep(row.supplier, row.documentNumber, row.unit) }
+  for (const row of [...array(facts.receipts?.rejected), ...array(facts.receipts?.unposted)]) { add(row.id, row.documentNumber, row.poId, row.supplierId); keep(row.supplier, row.documentNumber, row.unit) }
   for (const row of array(facts.records)) { add(row.entityId); keep(row.label) }
   for (const value of ids) stored.add(value)
   return { ids, stored }

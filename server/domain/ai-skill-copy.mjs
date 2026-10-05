@@ -96,6 +96,8 @@ const entries = {
   'skill.rfq_followups.description': ['Lists open RFQs without an award: those with quotes waiting for a supplier to be selected, those with no quote yet, and those past their quote due date.', '列出尚未授标的询价单：已有报价待选定供应商的、还没有报价的，以及已过报价截止日的。'],
   'skill.receiving_issues.title': ['Receiving issues', '收货问题'],
   'skill.receiving_issues.description': ['Lists receipts with rejected quantities on open purchase orders and receipts not yet posted to inventory.', '列出未结采购订单上有拒收数量的收货单，以及尚未过账到库存的收货单。'],
+  'skill.supplier_attention.title': ['Suppliers needing attention', '需要注意的供应商'],
+  'skill.supplier_attention.description': ['Lists the suppliers with open work, ordered by date: overdue purchase orders, orders due within 7 days, receipts with rejected quantities or not posted, and invoice variances, each with its most urgent record; and the suppliers with new orders, receipts or invoices in the last 7 days. Answers general questions about suppliers.', '按日期列出有待处理事项的供应商：逾期采购订单、7 天内到期的订单、有拒收或未过账的收货单、有差异的发票，并说明每家最急的一条；以及最近 7 天有新下单、到货或发票的供应商。用于回答关于供应商的笼统问题。'],
   'skill.capability_overview.title': ['What I can help with', '我可以帮你做什么'],
   'skill.capability_overview.description': ['Explains what the assistant can answer from workspace data.', '说明助手能基于工作区数据回答哪些问题。'],
 
@@ -165,6 +167,10 @@ const entries = {
   'draft.po_followup.title': ['Follow up with {supplier} on {po}', '就 {po} 跟进 {supplier}'],
   'draft.po_followup.message': ['Please confirm a delivery date for the remaining {remaining} {unit} of {sku} on {po}.', '请确认 {po} 上 {sku} 剩余 {remaining} {unit} 的交货日期。'],
   'draft.po_followup.message_generic': ['Please confirm a delivery date for the remaining quantity on {po}.', '请确认 {po} 剩余数量的交货日期。'],
+  // An order with several lines still to receive: {lines} lists each with its
+  // own remaining quantity ("40 pcs of LDM-002 and 10 pcs of LDM-003").
+  'draft.po_followup.message_lines': ['Please confirm delivery dates for the remaining quantities on {po}: {lines}.', '请确认 {po} 上以下剩余数量的交货日期：{lines}。'],
+  'draft.po_followup.line': ['{quantity} of {sku}', '{sku} 剩余 {quantity}'],
   'draft.invoice.title': ['Ask {supplier} about the variance on {invoice}', '就 {invoice} 的差异联系 {supplier}'],
   'draft.invoice.message': ['Invoice {invoice} differs from the purchase order by {amount}. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单相差 {amount}。请提供更正后的发票或差异原因。'],
   'draft.invoice.message_hidden': ['Invoice {invoice} differs from the purchase order. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单存在差异。请提供更正后的发票或差异原因。'],
@@ -200,6 +206,68 @@ const entries = {
   'signal.grn_rejected_qty.reason': ['{rejected} rejected on receipt from {supplier}.', '收货时拒收 {rejected}（{supplier}）。'],
   'signal.grn_received_unposted.reason': ['Received but not yet posted to inventory.', '已收货，尚未过账到库存。'],
   'signal.covered': ['Covered by open purchase orders.', '已有在途采购订单覆盖。'],
+  // supplier_attention
+  'suppliers.title': ['{count} suppliers have open work; the most urgent is {supplier} ({lead})', '{count} 家供应商有待处理的事，最急的是 {supplier}（{lead}）'],
+  'suppliers.title_one': ['1 supplier has open work: {supplier} ({lead})', '1 家供应商有待处理的事：{supplier}（{lead}）'],
+  'suppliers.title_none': ['No supplier has open work (as of {date})', '截至 {date}，没有供应商有待处理的事'],
+  'suppliers.title_named_none': ['{supplier} has no open work (as of {date})', '截至 {date}，{supplier} 没有待处理的事'],
+  'suppliers.title_hidden': ['Your role cannot see supplier orders, receipts or invoices', '你的角色无法查看供应商的订单、收货或发票'],
+  'suppliers.lead.overdue': ['{days} days overdue', '逾期 {days} 天'],
+  'suppliers.lead.overdue_one': ['1 day overdue', '逾期 1 天'],
+  'suppliers.lead.due': ['due {date}', '{date} 到期'],
+  'suppliers.lead.open': ['open {days} days', '已挂起 {days} 天'],
+  'suppliers.lead.open_one': ['open 1 day', '已挂起 1 天'],
+  'suppliers.lead.open_none': ['since today', '今天发生'],
+  'suppliers.part.po_overdue': ['{count} overdue purchase orders', '{count} 张逾期采购订单'],
+  'suppliers.part.po_overdue_one': ['1 overdue purchase order', '1 张逾期采购订单'],
+  'suppliers.part.po_due_7d': ['{count} purchase orders due within 7 days', '{count} 张 7 天内到期的采购订单'],
+  'suppliers.part.po_due_7d_one': ['1 purchase order due within 7 days', '1 张 7 天内到期的采购订单'],
+  'suppliers.part.grn_rejected_qty': ['{count} receipts with rejected quantities', '{count} 张有拒收的收货单'],
+  'suppliers.part.grn_rejected_qty_one': ['1 receipt with rejected quantities', '1 张有拒收的收货单'],
+  'suppliers.part.grn_received_unposted': ['{count} receipts not posted', '{count} 张未过账的收货单'],
+  'suppliers.part.grn_received_unposted_one': ['1 receipt not posted', '1 张未过账的收货单'],
+  'suppliers.part.invoice_variance': ['{count} invoice variances', '{count} 张有差异的发票'],
+  'suppliers.part.invoice_variance_one': ['1 invoice variance', '1 张有差异的发票'],
+  'suppliers.issues': ['{parts}.', '{parts}。'],
+  'suppliers.most_urgent': ['Most urgent: {id}. {reason}', '最急的是 {id}：{reason}'],
+  'suppliers.totals': ['In all: {parts}.', '合计：{parts}。'],
+  'suppliers.quiet': ['{count} other suppliers have nothing open.', '另外 {count} 家供应商目前没有待处理的事。'],
+  'suppliers.quiet_one': ['1 other supplier has nothing open.', '另外 1 家供应商目前没有待处理的事。'],
+  'suppliers.more': ['{count} more suppliers have open work; open the supplier scorecard to see all of them.', '还有 {count} 家供应商有待处理的事，可打开供应商评分卡查看全部。'],
+  'suppliers.more_one': ['1 more supplier has open work; open the supplier scorecard to see all of them.', '还有 1 家供应商有待处理的事，可打开供应商评分卡查看全部。'],
+  'suppliers.recent': ['In the last {days} days: {list}.', '最近 {days} 天有往来：{list}。'],
+  'suppliers.recent_none': ['No new orders, receipts or invoices in the last {days} days.', '最近 {days} 天没有新的下单、到货或发票。'],
+  'suppliers.activity.entry': ['{supplier} ({parts})', '{supplier}（{parts}）'],
+  'suppliers.activity.orders': ['{count} new orders', '新下单 {count} 张'],
+  'suppliers.activity.orders_one': ['1 new order', '新下单 1 张'],
+  'suppliers.activity.receipts': ['{count} receipts', '到货 {count} 张'],
+  'suppliers.activity.receipts_one': ['1 receipt', '到货 1 张'],
+  'suppliers.activity.invoices': ['{count} invoices', '发票 {count} 张'],
+  'suppliers.activity.invoices_one': ['1 invoice', '发票 1 张'],
+  'suppliers.view_all': ['View all suppliers (scorecard)', '查看全部供应商（评分卡）'],
+  'suppliers.tier_title': ['{count} {group} have open work; the most urgent is {supplier} ({lead})', '{group}中有 {count} 家有待处理的事，最急的是 {supplier}（{lead}）'],
+  'suppliers.tier_title_one': ['1 of the {group} has open work: {supplier} ({lead})', '{group}中有 1 家有待处理的事：{supplier}（{lead}）'],
+  'suppliers.tier_title_none': ['None of the {group} has open work (as of {date})', '截至 {date}，{group}都没有待处理的事'],
+  'suppliers.tier_empty': ['There are no {group} yet', '目前还没有{group}'],
+  // Supplier tiers (docs/supplier-tiers-design.md): labels and filters only.
+  'tier.1': ['Tier 1', '一级'],
+  'tier.2': ['Tier 2', '二级'],
+  'tier.3': ['Tier 3', '三级'],
+  'tier.supplier': ['{name} ({tier})', '{name}（{tier}）'],
+  'tier.group_1': ['Tier 1 suppliers', '一级供应商'],
+  'tier.group_2': ['Tier 2 suppliers', '二级供应商'],
+  'tier.group_3': ['Tier 3 suppliers', '三级供应商'],
+  'tier.group_none': ['suppliers not yet tiered', '未分级供应商'],
+  'tier.unavailable': ['Supplier tiers are not visible with your access, so this list is not narrowed by tier.', '你的权限看不到供应商层级，因此这份清单没有按层级筛选。'],
+  // The date a line is ordered by (aiSkillWhenText).
+  'signal.when.overdue': ['{days} days past {date}.', '已超过 {date} {days} 天。'],
+  'signal.when.overdue_one': ['1 day past {date}.', '已超过 {date} 1 天。'],
+  'signal.when.due': ['Due {date}, in {days} days.', '{date} 到期，还有 {days} 天。'],
+  'signal.when.due_one': ['Due {date}, tomorrow.', '{date}（明天）到期。'],
+  'signal.when.due_none': ['Due today ({date}).', '今天（{date}）到期。'],
+  'signal.when.open': ['Open {days} days, since {date}.', '已挂起 {days} 天（自 {date}）。'],
+  'signal.when.open_one': ['Open 1 day, since {date}.', '已挂起 1 天（自 {date}）。'],
+  'signal.when.open_none': ['Since today ({date}).', '今天（{date}）发生。'],
   'signal.supplier_exposure.status': ['Supplier exposure', '供应商风险'],
   'signal.supplier_exposure.reason': ['{count} open issues with {supplier}: {issues}.', '{supplier} 有 {count} 个待处理问题：{issues}。'],
 
@@ -343,6 +411,9 @@ const entries = {
   'po.overdue_title': ['{count} purchase orders are overdue (as of {date})', '截至 {date}，逾期采购订单 {count} 张'],
   'po.overdue_title_one': ['1 purchase order is overdue (as of {date})', '截至 {date}，逾期采购订单 1 张'],
   'po.overdue_title_none': ['No purchase order is overdue (as of {date})', '截至 {date}，没有逾期采购订单'],
+  'po.tier_overdue_title': ['{count} purchase orders from {group} are overdue (as of {date})', '截至 {date}，{group}的逾期采购订单 {count} 张'],
+  'po.tier_overdue_title_one': ['1 purchase order from {group} is overdue (as of {date})', '截至 {date}，{group}的逾期采购订单 1 张'],
+  'po.tier_overdue_title_none': ['No purchase order from {group} is overdue (as of {date})', '截至 {date}，{group}没有逾期采购订单'],
   'po.overdue_summary': ['Most overdue first: {list}.', '按逾期天数排列：{list}。'],
   'po.overdue_item': ['{po} ({days} days)', '{po}（{days} 天）'],
   'po.not_found_title': ["I couldn't find {id} in this workspace", '当前工作区中找不到 {id}'],
@@ -480,6 +551,8 @@ const entries = {
   'followup.invoices.prompt': ['What is the total of our committed supplier invoices?', '已提交的供应商发票金额是多少？'],
   'followup.rfqs.label': ['Open RFQs', '未授标询价'],
   'followup.rfqs.prompt': ['Which RFQs are still open?', '哪些询价单还没授标？'],
+  'followup.suppliers.label': ['Suppliers needing attention', '需要注意的供应商'],
+  'followup.suppliers.prompt': ['Which suppliers need attention?', '哪些供应商需要注意？'],
   'followup.receiving.label': ['Receiving issues', '收货问题'],
   'followup.receiving.prompt': ['Which receipts need attention?', '哪些收货单需要处理？'],
 
@@ -518,7 +591,8 @@ export function aiSkillSentences(parts, language) {
 export function aiSkillList(parts, language, { or = false } = {}) {
   const items = parts.filter(Boolean)
   if (items.length <= 1) return items.join('')
-  if (aiSkillLanguage(language) === 'zh-CN') return `${items.slice(0, -1).join('、')}${or ? ' 还是 ' : '和'}${items.at(-1)}`
+  // 和 takes a space before a number or a Latin name: 收货单和 1 张发票, ……和 Northstar.
+  if (aiSkillLanguage(language) === 'zh-CN') return `${items.slice(0, -1).join('、')}${or ? ' 还是 ' : /^[0-9A-Za-z]/.test(items.at(-1)) ? '和 ' : '和'}${items.at(-1)}`
   const word = or ? 'or' : 'and'
   return items.length === 2 ? `${items[0]} ${word} ${items[1]}` : `${items.slice(0, -1).join(', ')} ${word} ${items.at(-1)}`
 }

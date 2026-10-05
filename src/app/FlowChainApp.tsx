@@ -92,6 +92,7 @@ import {
   type ActionDraftPreview,
   type ActionDraftPreviewRequest,
 } from "../modules/action-drafts/ActionDraftReviewShell";
+import { isStructuredDraftType, structuredDraftTarget } from "../modules/action-drafts/structuredDraftHandoff";
 import ExceptionCasesPage from "../modules/exception-cases/Page";
 import SalesDemandPage from "../modules/sales/Page";
 import CollaborationDraftsPage from "../modules/collaboration-drafts/Page";
@@ -953,22 +954,9 @@ export default function FlowChainApp() {
   }
 
   async function openActionDraftReview(request: ActionDraftPreviewRequest) {
-    if (request.type === "purchase_request_draft" || request.type === "rfq_draft" || request.type === "task_draft") {
-      const payload = request.payload || {};
-      const query = Object.fromEntries(Object.entries({
-        mode: "create",
-        itemId: payload.itemIdOrSku,
-        sku: payload.itemIdOrSku,
-        quantity: payload.quantity,
-        reason: payload.reason,
-        suppliers: Array.isArray(payload.supplierCandidates) ? payload.supplierCandidates.join(",") : payload.supplierCandidates,
-        due: payload.quotationDeadline || payload.requestedDeliveryDate,
-      }).filter(([, value]) => value !== undefined && value !== null && String(value) !== "").map(([key, value]) => [key, String(value)]));
-      navigateTo(
-        request.type === "rfq_draft" ? "procurement:rfq" : request.type === "task_draft" ? "mobile-operations:tasks" : "procurement:requests",
-        null,
-        { returnTo: "ai", entityLabel: request.title, source: "ai", query },
-      );
+    if (isStructuredDraftType(request.type)) {
+      const target = structuredDraftTarget(request.type, request.payload, request.source);
+      navigateTo(target.moduleId, null, { returnTo: "ai", entityLabel: request.title, source: "ai", query: target.query });
       return;
     }
     setDraftShellOpen(true);

@@ -115,6 +115,23 @@ test('items, customers and item suppliers can be created and edited in PostgreSQ
     const customers = await call('GET', '/api/master-data/customers')
     assert.deepEqual(customers.payload.customers.map((row) => row.code), ['CUST-RED'])
 
+    // The supplier list filters by search text and category in the database.
+    // Search matches code or name, ignoring case; a category matches any of a
+    // supplier's categories, not only the first one stored in the column.
+    await prisma.supplier.update({ where: { id: 'SUP-A' }, data: { category: 'Electronics' } })
+    await prisma.supplier.update({ where: { id: 'SUP-A2' }, data: { category: 'Packaging', metadata: { defaultCurrency: 'EUR', version: 1, categories: ['Packaging', 'Fasteners'] } } })
+    const supplierIds = async (query) => (await call('GET', `/api/master-data/suppliers?${query}`)).payload.suppliers.map((row) => row.id)
+    assert.deepEqual(await supplierIds('query=second'), ['SUP-A2'])
+    assert.deepEqual(await supplierIds('query=sup-a2'), ['SUP-A2'])
+    assert.deepEqual(await supplierIds('query=SUPPLIER'), ['SUP-A2', 'SUP-A'])
+    assert.deepEqual(await supplierIds('query=Supplier%20B'), [])
+    assert.deepEqual(await supplierIds('query=%25'), [])
+    assert.deepEqual(await supplierIds('query=_'), [])
+    assert.deepEqual(await supplierIds('category=Electronics'), ['SUP-A'])
+    assert.deepEqual(await supplierIds('category=Fasteners'), ['SUP-A2'])
+    assert.deepEqual(await supplierIds('query=supplier&category=Packaging&status=active'), ['SUP-A2'])
+    assert.deepEqual(await supplierIds('query=supplier&status=inactive'), [])
+
     // Item suppliers: link two suppliers, move the preferred one, and the
     // item and its approved sources follow.
     const first = await call('POST', `/api/master-data/items/${item.itemId}/suppliers`, { supplierId: 'SUP-A', preferred: true, leadTimeDays: 5, minimumOrderQuantity: 20, referencePrice: 12.5 })
