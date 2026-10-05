@@ -1,6 +1,7 @@
 import { SupplierForm } from "./SupplierForm";
 import { supplierCopy } from "./supplierCopy";
 import { SupplierPerformancePanel, supplierPerformanceTabLabel } from "./supplierPerformance";
+import { SupplierTierPanel, TierChip, type Tier, type TierHistoryRow } from "./SupplierTier";
 import { useEffect, useState, useRef } from "react";
 import { Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -36,7 +37,25 @@ type Supplier = {
   internalComment: string;
   version: number;
   updatedAt: string;
+  tier: Tier;
+  tierReason: string | null;
+  tierSetAt: string | null;
+  tierSetBy: { id: string; name: string | null } | null;
+  businessOwner: { id: string; name: string | null } | null;
+  tierHistory?: TierHistoryRow[];
 };
+// The list's tabs: everything, the signed-in user's suppliers, each tier, and
+// suppliers nobody has tiered yet. Counts come from the server.
+type ListTab = "all" | "mine" | "1" | "2" | "3" | "none";
+type TabCounts = { all: number; mine: number; tier1: number; tier2: number; tier3: number; untiered: number };
+const LIST_TABS: Array<{ tab: ListTab; label: string; count: keyof TabCounts }> = [
+  { tab: "all", label: "All", count: "all" },
+  { tab: "mine", label: "Managed by me", count: "mine" },
+  { tab: "1", label: "Tier 1", count: "tier1" },
+  { tab: "2", label: "Tier 2", count: "tier2" },
+  { tab: "3", label: "Tier 3", count: "tier3" },
+  { tab: "none", label: "Not tiered", count: "untiered" },
+];
 type Relationship = {
   relationshipId: string;
   itemId: string;
@@ -82,6 +101,8 @@ const empty = (currency = "") => ({
   internalComment: "",
 });
 const statusLabel = { draft: "草稿", active: "启用", inactive: "停用" };
+// The list filters sit side by side instead of a full-width row each.
+const filterStyle = { ...inputStyle, width: "auto", minWidth: 160 };
 
 function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): Supplier {
   const text = (candidate: unknown, fallback = "") => String(candidate ?? "").trim() || fallback;
@@ -113,6 +134,12 @@ function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): 
     internalComment: text(value.internalComment),
     version: Number(value.version || 1),
     updatedAt: text(value.updatedAt),
+    tier: ([1, 2, 3].includes(Number(value.tier)) ? Number(value.tier) : null) as Tier,
+    tierReason: text(value.tierReason) || null,
+    tierSetAt: text(value.tierSetAt) || null,
+    tierSetBy: (value.tierSetBy as Supplier["tierSetBy"]) || null,
+    businessOwner: (value.businessOwner as Supplier["businessOwner"]) || null,
+    tierHistory: Array.isArray(value.tierHistory) ? (value.tierHistory as TierHistoryRow[]) : [],
   };
 }
 
@@ -141,7 +168,12 @@ export default function SupplierMasterPage({
     [error, setError] = useState(""),
     [query, setQuery] = useState(""),
     [status, setStatus] = useState(""),
-    [category, setCategory] = useState("");
+    [category, setCategory] = useState(""),
+    [tab, setTab] = useState<ListTab>("all"),
+    [owner, setOwner] = useState(""),
+    [counts, setCounts] = useState<TabCounts | null>(null);
+  // Every owner seen so far, for the owner filter.
+  const [knownOwners, setKnownOwners] = useState<Array<{ id: string; name: string | null }>>([]);
   const [detailTab, setDetailTab] = useState<"details" | "performance">("details");
   const [selected, setSelected] = useState<Supplier | null>(null),
     [editing, setEditing] = useState<Supplier | null>(null),
@@ -172,13 +204,21 @@ export default function SupplierMasterPage({
     setLoading(true);
     setError("");
     try {
-      const data = await request<{ suppliers: Supplier[] }>(
-        `/api/master-data/suppliers?query=${encodeURIComponent(query)}&status=${status}&category=${encodeURIComponent(category)}`,
+      const tabFilter = tab === "mine" ? "&owner=me" : tab === "all" ? "" : `&tier=${tab}`;
+      const ownerFilter = tab !== "mine" && owner ? `&owner=${encodeURIComponent(owner)}` : "";
+      const data = await request<{ suppliers: Supplier[]; counts?: TabCounts }>(
+        `/api/master-data/suppliers?query=${encodeURIComponent(query)}&status=${status}&category=${encodeURIComponent(category)}${tabFilter}${ownerFilter}`,
       );
       if (sequence !== loadSequence.current) return;
       const next = (data.suppliers || []).map((supplier) => normalizeSupplier(supplier));
       setRows(next);
+      setCounts(data.counts || null);
       setKnownCategories((current) => [...new Set([...current, ...next.flatMap((r) => r.categories || [])])]);
+      setKnownOwners((current) => {
+        const byId = new Map(current.map((person) => [person.id, person]));
+        for (const row of next) if (row.businessOwner) byId.set(row.businessOwner.id, row.businessOwner);
+        return [...byId.values()].sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
+      });
     } catch (e: any) {
       if (sequence === loadSequence.current) setError(e.message || "供应商数据加载失败");
     } finally {
@@ -190,7 +230,7 @@ export default function SupplierMasterPage({
     const timer = setTimeout(load, loadedOnce.current ? 300 : 0);
     loadedOnce.current = true;
     return () => clearTimeout(timer);
-  }, [query, status, category]);
+  }, [query, status, category, tab, owner]);
   useEffect(() => {
     if (focus?.entityType === "supplier" && focus.entityId)
       openDetail(focus.entityId);
@@ -285,10 +325,12 @@ export default function SupplierMasterPage({
             "POST",
             body,
           );
-      setShowForm(false);
       toast.success(copy("Supplier saved"));
-      await load();
+      // Open the saved supplier before closing the form, so the list does not
+      // flash between the two.
       await openDetail(result.supplier.id);
+      setShowForm(false);
+      await load();
     } catch (e: unknown) {
       setFieldErrors(
         e instanceof ApiError && e.details.length
@@ -380,7 +422,10 @@ export default function SupplierMasterPage({
         </div>
         {detailTab === "performance" ? <SupplierPerformancePanel supplierId={selected.id} /> : <>
         <Card className="p-5">
-          <h1 className="text-lg font-semibold">{selected.supplierName}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-lg font-semibold">{selected.supplierName}</h1>
+            <TierChip tier={selected.tier} />
+          </div>
           <div className="mt-1 text-xs" style={{ color: A.sub }}>
             {selected.supplierCode} · {copy(statusLabel[selected.status])}
           </div>
@@ -412,6 +457,7 @@ export default function SupplierMasterPage({
             ))}
           </div>
         </Card>
+        <SupplierTierPanel supplier={selected} canEdit={writes.suppliers} onChanged={async () => { await openDetail(selected.id); await load(); }} />
         <Card className="p-5">
           <h2 className="text-sm font-semibold">{copy("可供应物料")}</h2>
           {relationshipLimitation && <p role="alert" className="mt-2 text-xs text-amber-700">{copy("Supplied-item links are currently unavailable.")}</p>}
@@ -565,7 +611,7 @@ export default function SupplierMasterPage({
             aria-label={copy("状态筛选")}
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            style={inputStyle}
+            style={filterStyle}
           >
             <option value="">{copy("全部状态")}</option>
             <option value="active">{copy("启用")}</option>
@@ -576,11 +622,24 @@ export default function SupplierMasterPage({
             aria-label={copy("经营品类筛选")}
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            style={inputStyle}
+            style={filterStyle}
           >
             <option value="">{copy("全部品类")}</option>
             {categories.map((c) => (
               <option key={c}>{c}</option>
+            ))}
+          </select>
+          <select
+            aria-label={copy("Owner filter")}
+            value={tab === "mine" ? "" : owner}
+            disabled={tab === "mine"}
+            onChange={(e) => setOwner(e.target.value)}
+            style={filterStyle}
+          >
+            <option value="">{copy("All owners")}</option>
+            <option value="none">{copy("No owner")}</option>
+            {knownOwners.map((person) => (
+              <option key={person.id} value={person.id}>{person.name || person.id}</option>
             ))}
           </select>
           <button
@@ -601,6 +660,14 @@ export default function SupplierMasterPage({
           )}
         </div>
       </Card>
+      <div role="tablist" aria-label={copy("Supplier tiers")} className="flex flex-wrap gap-1 border-b" style={{ borderColor: A.border }}>
+        {LIST_TABS.map((item) => (
+          <button key={item.tab} type="button" role="tab" aria-selected={tab === item.tab} data-testid={`supplier-list-tab-${item.tab}`} onClick={() => setTab(item.tab)}
+            className="px-3 py-2 text-xs font-semibold" style={{ color: tab === item.tab ? A.blue : A.gray1, borderBottom: tab === item.tab ? `2px solid ${A.blue}` : "2px solid transparent" }}>
+            {copy(item.label)}{counts ? <span className="ml-1 font-normal tabular-nums" style={{ color: A.sub }}>{counts[item.count]}</span> : null}
+          </button>
+        ))}
+      </div>
       {error ? (
         <Card className="p-8 text-center">
           <div className="text-sm text-red-700">{copy("供应商数据加载失败")}</div>
@@ -610,7 +677,7 @@ export default function SupplierMasterPage({
         </Card>
       ) : loading && rows.length === 0 ? (
         <Card className="p-8 text-center text-xs">{copy("加载中")}</Card>
-      ) : rows.length === 0 && (query || status || category) ? (
+      ) : rows.length === 0 && (query || status || category || owner || tab !== "all") ? (
         <Card className="py-14 text-center text-sm" style={{ color: A.sub }}>
           {copy("没有符合筛选条件的供应商")}
         </Card>
@@ -630,14 +697,10 @@ export default function SupplierMasterPage({
                 {[
                   "供应商编号",
                   "供应商名称",
-                  "联系人",
-                  "联系电话",
                   "经营品类",
-                  "默认币种",
-                  "付款条款",
-                  "送货周期",
+                  "Tier",
+                  "Business owner",
                   "状态",
-                  "更新时间",
                   ...(writes.suppliers ? ["操作"] : []),
                 ].map((h) => (
                   <th key={copy(h)} className="p-3 text-left">
@@ -655,16 +718,12 @@ export default function SupplierMasterPage({
                     </EntityLink>
                   </td>
                   <td className="p-3">{row.supplierName}</td>
-                  <td className="p-3">{row.contactName || "-"}</td>
-                  <td className="p-3">{row.telephone || "-"}</td>
                   <td className="p-3">
                     {(row.categories || []).join(listSeparator) || "-"}
                   </td>
-                  <td className="p-3">{row.defaultCurrency}</td>
-                  <td className="p-3">{row.paymentTermsId}</td>
-                  <td className="p-3">{row.deliveryCycleDays || "-"}</td>
+                  <td className="p-3" title={row.tierReason || undefined}><TierChip tier={row.tier} short /></td>
+                  <td className="p-3">{row.businessOwner?.name || "-"}</td>
                   <td className="p-3">{copy(statusLabel[row.status])}</td>
-                  <td className="p-3">{row.updatedAt?.slice(0, 10)}</td>
                   {writes.suppliers && <td className="p-3 space-x-2">
                     <button onClick={() => startEdit(row)}>{copy("编辑")}</button>
                     <button onClick={() => toggle(row)}>

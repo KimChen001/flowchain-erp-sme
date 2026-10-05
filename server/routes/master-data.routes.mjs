@@ -237,7 +237,41 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/suppliers') {
-    send(res, 200, { suppliers: await suppliersFor(await repository.listSuppliers(tenantScope({ query:url.searchParams.get('query')||'', status:url.searchParams.get('status')||'', category:url.searchParams.get('category')||'' }))) })
+    // Search, status and category narrow every tab; tier (1, 2, 3, none) and
+    // owner (a user id, me, none) pick the tab. The counts cover each tab.
+    const filters = tenantScope({
+      query: url.searchParams.get('query') || '',
+      status: url.searchParams.get('status') || '',
+      category: url.searchParams.get('category') || '',
+      tier: url.searchParams.get('tier') || '',
+      owner: url.searchParams.get('owner') || '',
+      currentUserId: ctx.identity?.userId || '',
+    })
+    const [suppliers, counts] = await Promise.all([
+      repository.listSuppliers(filters),
+      typeof repository.supplierTabCounts === 'function' ? repository.supplierTabCounts(filters) : null,
+    ])
+    send(res, 200, { suppliers: await suppliersFor(suppliers), ...(counts ? { counts } : {}) })
+    return true
+  }
+
+  // The people a supplier can be assigned to. Only those who may change a
+  // supplier pick an owner, so listing them needs no user administration.
+  if (req.method === 'GET' && url.pathname === '/api/master-data/supplier-owners') {
+    if (!(await authorizeWrite('supplier-master'))) return true
+    send(res, 200, { owners: await repository.listSupplierOwners(tenantScope()) })
+    return true
+  }
+
+  const supplierTierMatch = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/(tier|owner)$/)
+  if (req.method === 'PATCH' && supplierTierMatch) {
+    if (!(await authorizeWrite('supplier-master'))) return true
+    const change = supplierTierMatch[2] === 'tier' ? repository.setSupplierTier : repository.setSupplierOwner
+    try {
+      send(res, 200, { supplier: await supplierFor(await change(supplierTierMatch[1], await readBody(req), actor(), tenantScope())) })
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
+    }
     return true
   }
 
@@ -280,7 +314,8 @@ export async function handleMasterDataRoute(ctx) {
       send(res, 404, { error: 'Supplier not found' })
       return true
     }
-    send(res, 200, { supplier: await supplierFor(supplier) })
+    const tierHistory = typeof repository.supplierTierHistory === 'function' ? await repository.supplierTierHistory(supplier.id, tenantScope()) : []
+    send(res, 200, { supplier: { ...(await supplierFor(supplier)), tierHistory } })
     return true
   }
 
