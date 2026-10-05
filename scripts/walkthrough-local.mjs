@@ -69,6 +69,7 @@ const env = {
   FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: "true",
   FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
   FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "true",
+  FLOWCHAIN_ENABLE_DATA_IMPORT: "true",
   // No model provider: the assistant answers from workspace data only.
   OPENAI_API_KEY: "",
   FLOWCHAIN_KNOWLEDGE_PROVIDER: "",

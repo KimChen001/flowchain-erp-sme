@@ -6,13 +6,15 @@ import { capabilityRegistry, capabilityRegistryForEnvironment } from "./capabili
 
 // The documented US trial set: receiving posting (desktop receiving), outbound
 // posting, inventory operations, operational finance and mobile operations,
-// which stays available but is not needed to receive. Everything else stays off.
+// which stays available but is not needed to receive, and the CSV import of
+// master data and opening stock. Everything else stays off.
 const US_TRIAL_FLAGS = [
   "FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING",
   "FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING",
   "FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS",
   "FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE",
   "FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS",
+  "FLOWCHAIN_ENABLE_DATA_IMPORT",
 ];
 
 const parseExample = (relativePath) => Object.fromEntries(
@@ -51,6 +53,7 @@ for (const example of ["deploy/env.production.example", ".env.example", ".env.lo
       "customer-invoice",
       "receivable-obligation",
       "mobile-operations",
+      "data-import",
     ]) assert.ok(enabled.includes(id), `${example} ${id}`);
 
     const trialFlags = new Set(US_TRIAL_FLAGS);
