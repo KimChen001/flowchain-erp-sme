@@ -125,7 +125,8 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
       // step reads it exactly as it reads the question.
       const named = call.records.map((record) => `${spelledAsAsked(message, record)},`).join(' ')
       const base = routeSkill({ message: named }) || {}
-      const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short' }, skillId: call.tool }, named, facts)
+      // A tier the call names filters as the question's own tier does.
+      const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short', tier: call.tier ?? null }, skillId: call.tool }, named, facts)
       if (!partRoute || partRoute.capability || !partRoute.skillId || !allowed.has(partRoute.skillId)) return null
       return { question: aiSkillById(partRoute.skillId)?.title?.[titleKey] || partRoute.skillId, route: partRoute }
     }))).filter(Boolean).sort((a, b) => agentSectionRank(a) - agentSectionRank(b))

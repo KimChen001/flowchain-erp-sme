@@ -293,6 +293,10 @@ never reach it.
   - `records`: the record numbers, SKUs or supplier names a call is about, as the
     question writes them;
   - `mode`: only `overview` or `short` for stock;
+  - `tier`, for `purchase_orders` and `supplier_attention` only: `1`, `2`, `3` or
+    `none`. It must be the tier the question itself names (`aiSkillTierOf`), or
+    the call is dropped (`tier_not_in_question`); it then filters as a tier in a
+    rule-routed question does, without changing the order;
   - `goals`, for `supplier_business_query` only: the business query goals the
     actor may read (`server/domain/ai-agent-business-query.mjs`). Its `records`
     are supplier names from the question; they set the scope through the

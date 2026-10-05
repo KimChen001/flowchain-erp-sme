@@ -22,8 +22,9 @@ const ACME = "Check Acme's outstanding orders, explain which need follow-up unde
 const ACME_ZH = '查一下 Acme 的未完成订单，按我们的采购政策说明哪些需要跟进，并准备一封询问部分交货的邮件。'
 const UNMATCHED = 'is there anything I should chase with the warehouse folks'
 
-function harness({ env = AGENT_ENV, provider, roleKey } = {}) {
+function harness({ env = AGENT_ENV, provider, roleKey, tiers = null } = {}) {
   const scenario = aiSkillScenario(roleKey ? { roleKey } : {})
+  if (tiers) for (const supplier of scenario.data.suppliers) supplier.tier = tiers[supplier.id] ?? null
   const audits = []
   const sent = []
   const plans = []
@@ -179,6 +180,39 @@ test('the supplier business query is not offered outside the business query path
   const run = harness({ provider: calls(['purchase_orders', { records: ['Acme'] }], ['prepare_action_draft', { records: ['Acme'] }]) })
   await run.ask(ACME)
   assert.equal(run.plans[0].tools.some((tool) => tool.function.name === 'supplier_business_query'), false)
+})
+
+test('a tier is an argument of the purchase orders and supplier tools, kept only when the question names it', () => {
+  const tools = aiAgentTools(aiSkillActor())
+  const tierOf = (name) => tools.find((tool) => tool.function.name === name).function.parameters.properties.tier
+  assert.deepEqual(tierOf('purchase_orders').enum, ['1', '2', '3', 'none'])
+  assert.deepEqual(tierOf('supplier_attention').enum, ['1', '2', '3', 'none'])
+  assert.equal(tierOf('inventory_availability'), undefined)
+  const message = 'What is late from our Tier 1 suppliers?'
+  const { calls: kept, dropped } = validateAiAgentToolCalls([
+    { name: 'purchase_orders', arguments: '{"tier":"1"}' },
+    { name: 'supplier_attention', arguments: { tier: 1 } },
+    { name: 'supplier_attention', arguments: '{"tier":"2"}' },
+    { name: 'purchase_orders', arguments: '{"tier":"4"}' },
+    { name: 'inventory_availability', arguments: '{"tier":"1"}' },
+  ], { message, tools })
+  assert.deepEqual(kept, [{ tool: 'purchase_orders', mode: null, records: [], tier: 1 }, { tool: 'supplier_attention', mode: null, records: [], tier: 1 }])
+  assert.deepEqual(dropped.map((row) => row.reason), ['tier_not_in_question', 'invalid_arguments', 'invalid_arguments'])
+  // A question with no tier gets none, whatever the model adds.
+  assert.deepEqual(validateAiAgentToolCalls([{ name: 'purchase_orders', arguments: '{"tier":"1"}' }], { message: 'What is late?', tools }).dropped.map((row) => row.reason), ['tier_not_in_question'])
+})
+
+test("a planned call's tier narrows its answer as the question's own tier does", async () => {
+  const question = 'Check what is late from our Tier 1 suppliers and prepare a message to them.'
+  const run = harness({ tiers: { 'SUP-001': 1, 'SUP-002': 2 }, provider: calls(['purchase_orders', { tier: '1' }], ['prepare_action_draft', {}]) })
+  const payload = await run.ask(question)
+  assert.equal(run.plans.length, 1)
+  assert.equal(payload.intent, 'compound')
+  const orders = payload.sections.find((section) => section.skillId === 'purchase_orders')
+  assert.match(orders.title, /from Tier 1 suppliers/)
+  const evidence = payload.keyEvidence.filter((item) => orders.evidenceIds.includes(item.id))
+  assert.ok(evidence.length > 0 && evidence.every((item) => item.summary.includes('Acme Components (Tier 1)')))
+  assert.deepEqual(agentAudit(run).calls.map((call) => [call.tool, call.tier ?? null]), [['purchase_orders', 1], ['prepare_action_draft', null]])
 })
 
 test('a question no rule matched is answered by the planned skill, without the one-skill pick', async () => {

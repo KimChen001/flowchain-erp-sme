@@ -1,6 +1,7 @@
 import { AI_MODEL_POLICIES } from './ai-model-router.mjs'
 import { callConfiguredProvider, canCallConfiguredProvider, providerRuntimeConfig } from './ai-runtime-provider-adapter-v2.mjs'
 import { toolsFor } from './ai-skill-registry.mjs'
+import { aiSkillTierOf } from './ai-skill-router.mjs'
 import { aiAgentBusinessQueryTool } from './ai-agent-business-query.mjs'
 
 // Agent mode P2: model tool planning (docs/ai-agent-mode-design.md sections 3
@@ -51,6 +52,17 @@ export function aiAgentTimeout(env = {}) {
   return Math.min(AI_AGENT_LIMITS.maxTimeoutMs, Math.max(100, Number(env.FLOWCHAIN_AI_AGENT_TIMEOUT_MS) || AI_AGENT_LIMITS.timeoutMs))
 }
 
+// The supplier tier the purchase orders and supplier answers can be narrowed
+// to (docs/supplier-tiers-design.md §6): "1", "2", "3", or "none" for
+// suppliers not yet tiered. Like a record, it must be written in the question
+// (aiSkillTierOf reads the same tier), so the model never adds a filter.
+const TIER_SKILLS = new Set(['purchase_orders', 'supplier_attention'])
+const TIER = Object.freeze({
+  type: 'string',
+  enum: ['1', '2', '3', 'none'],
+  description: 'Only suppliers of this tier, when the question names one: Tier 1 or strategic suppliers (1), Tier 2 or core (2), Tier 3 or transactional (3), suppliers not yet tiered (none).',
+})
+
 // The modes a model may ask for. Other skill modes (single, supplier, sku,
 // not_found, hidden, ambiguous) follow from the records the question names.
 const REQUESTABLE_MODES = Object.freeze({ inventory_availability: Object.freeze(['overview', 'short']) })
@@ -77,7 +89,7 @@ function aiAgentSkillTools(actor) {
       function: {
         name: entry.id,
         description: entry.description.en,
-        parameters: { type: 'object', additionalProperties: false, properties: { ...(modes ? { mode: { type: 'string', enum: [...modes] } } : {}), records: RECORDS }, required: [] },
+        parameters: { type: 'object', additionalProperties: false, properties: { ...(modes ? { mode: { type: 'string', enum: [...modes] } } : {}), records: RECORDS, ...(TIER_SKILLS.has(entry.id) ? { tier: TIER } : {}) }, required: [] },
       },
     }
   })
@@ -118,6 +130,12 @@ export function validateAiAgentToolCalls(toolCalls, { message, tools, maxTools =
     if (!Array.isArray(records) || records.length > AI_AGENT_LIMITS.maxRecords || records.some((record) => typeof record !== 'string')) { drop('invalid_arguments'); continue }
     const named = [...new Set(records.map(text).filter(Boolean))]
     if (named.some((record) => !question.includes(normalized(record)))) { drop('record_not_in_question'); continue }
+    // A tier: one of the tool's values (a number is read as its digit), and
+    // the tier the question itself names.
+    const asked = args.tier === undefined || args.tier === null || args.tier === '' ? null : text(args.tier).toLowerCase()
+    if (asked !== null && !array(parameters.properties.tier?.enum).includes(asked)) { drop('invalid_arguments'); continue }
+    const tier = asked === null ? null : asked === 'none' ? 'none' : Number(asked)
+    if (tier !== null && aiSkillTierOf(message) !== tier) { drop('tier_not_in_question'); continue }
     // Goals: a required list of the tool's own values (the business query).
     const goalSchema = parameters.properties.goals
     const goals = goalSchema ? args.goals : undefined
@@ -125,11 +143,11 @@ export function validateAiAgentToolCalls(toolCalls, { message, tools, maxTools =
     // One business query per answer: a second one's goals join the first.
     const joined = goalSchema ? calls.find((entry) => entry.tool === tool) : null
     if (joined) { joined.goals = [...new Set([...joined.goals, ...goals])].slice(0, 8); joined.records = [...new Set([...joined.records, ...named])].slice(0, AI_AGENT_LIMITS.maxRecords); continue }
-    const key = `${tool}|${mode || ''}|${named.map(normalized).sort().join(',')}`
+    const key = `${tool}|${mode || ''}|${tier ?? ''}|${named.map(normalized).sort().join(',')}`
     if (seen.has(key)) continue
     seen.add(key)
     if (calls.length >= maxTools) { drop('over_limit'); continue }
-    calls.push({ tool, mode, records: named, ...(goalSchema ? { goals: [...goals] } : {}) })
+    calls.push({ tool, mode, records: named, ...(tier !== null ? { tier } : {}), ...(goalSchema ? { goals: [...goals] } : {}) })
   }
   return { calls, dropped }
 }
@@ -183,7 +201,7 @@ export function aiAgentAudit(plan, { entry, served = [] } = {}) {
     provider: plan.provider || null,
     latencyMs: plan.latencyMs ?? null,
     modelCalls: 1,
-    calls: array(plan.calls).map((call) => ({ tool: call.tool, mode: call.mode || null, records: call.records.length, ...(call.goals ? { goals: call.goals } : {}), served: served.includes(call.tool) })),
+    calls: array(plan.calls).map((call) => ({ tool: call.tool, mode: call.mode || null, records: call.records.length, ...(call.tier !== undefined ? { tier: call.tier } : {}), ...(call.goals ? { goals: call.goals } : {}), served: served.includes(call.tool) })),
     dropped: array(plan.dropped).map((row) => ({ tool: row.tool, reason: row.reason })),
     // Key names without "token": the audit store redacts those as secrets.
     usage: { input: plan.usage?.inputTokens ?? null, output: plan.usage?.outputTokens ?? null },
