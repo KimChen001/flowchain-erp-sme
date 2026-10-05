@@ -41,7 +41,11 @@ type TransferLine = {
   destinationLocation: string;
 };
 type AdjustmentLine = {
+  mode: "existing" | "new";
   inventoryBalanceId: string;
+  itemId: string;
+  warehouseId: string;
+  location: string;
   adjustmentQuantity: string;
 };
 
@@ -444,6 +448,9 @@ function TransferCreate({ entry }: { entry: Entry; refresh: () => void }) {
             )}
           </div>
         ))}
+        <p className="text-xs text-slate-600">
+          {copy("If the target location has no stock record yet, posting creates it.")}
+        </p>
         <div className="flex gap-2">
           <button
             className={secondary}
@@ -595,17 +602,73 @@ function CountCreate({ entry }: { entry: Entry; refresh: () => void }) {
   );
 }
 
+// Opening stock and found stock may name an item, warehouse and location
+// that has no stock record yet; posting creates the record. Every other
+// reason adjusts an existing stock record.
+const newRecordReasons = new Set(["opening_balance", "found_stock"]);
+const blankAdjustmentLine = (reasonCode: string): AdjustmentLine => ({
+  mode: reasonCode === "opening_balance" ? "new" : "existing",
+  inventoryBalanceId: "",
+  itemId: "",
+  warehouseId: "",
+  location: "",
+  adjustmentQuantity:
+    reasonCode === "opening_balance" || reasonCode === "found_stock"
+      ? "1.0000"
+      : "-1.0000",
+});
+
 function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
   const { copy, inventoryCodeLabel } = useInventoryOperationsCopy();
   const warehouseName = useWarehouseNames();
   const navigate = useNavigate(),
     [number, setNumber] = useState(`ADJ-${Date.now()}`),
-    [reasonCode, setReason] = useState("damage"),
+    [reasonCode, setReasonCode] = useState("damage"),
     [notes, setNotes] = useState(""),
     [lines, setLines] = useState<AdjustmentLine[]>([
-      { inventoryBalanceId: "", adjustmentQuantity: "-1.0000" },
+      blankAdjustmentLine("damage"),
     ]),
     [error, setError] = useState("");
+  const update = (index: number, patch: Partial<AdjustmentLine>) =>
+    setLines((rows) =>
+      rows.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, ...patch } : row,
+      ),
+    );
+  const setReason = (value: string) => {
+    setReasonCode(value);
+    setLines((rows) =>
+      rows.map((row) => {
+        const mode: AdjustmentLine["mode"] =
+          value === "opening_balance"
+            ? "new"
+            : newRecordReasons.has(value)
+              ? row.mode
+              : "existing";
+        return {
+          ...row,
+          mode,
+          adjustmentQuantity:
+            value === "opening_balance" && row.adjustmentQuantity === "-1.0000"
+              ? "1.0000"
+              : row.adjustmentQuantity,
+        };
+      }),
+    );
+  };
+  const operateWarehouses = entry.warehouses.filter((row) => row.canOperate);
+  const existingRecord = (line: AdjustmentLine) => {
+    const item = entry.items.find((row) => row.id === line.itemId);
+    const locationKey = line.location.trim().toLowerCase();
+    return item && line.warehouseId
+      ? entry.balances.find(
+          (row) =>
+            row.sku === item.sku &&
+            row.warehouseId === line.warehouseId &&
+            row.locationKey === locationKey,
+        )
+      : undefined;
+  };
   const submit = async () => {
     try {
       const data = await apiJson<any>("/api/inventory/adjustments", {
@@ -615,7 +678,19 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
           reasonCode,
           notes,
           idempotencyKey: key("adjust-create"),
-          lines,
+          lines: lines.map((line) =>
+            line.mode === "new"
+              ? {
+                  itemId: line.itemId,
+                  warehouseId: line.warehouseId,
+                  location: line.location,
+                  adjustmentQuantity: line.adjustmentQuantity,
+                }
+              : {
+                  inventoryBalanceId: line.inventoryBalanceId,
+                  adjustmentQuantity: line.adjustmentQuantity,
+                },
+          ),
         }),
       });
       navigate(
@@ -653,6 +728,7 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
                 "found_stock",
                 "data_correction",
                 "quality_disposition",
+                "opening_balance",
                 "other",
               ].map((value) => (
                 <option key={value} value={value}>{inventoryCodeLabel(value)}</option>
@@ -669,60 +745,160 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
             />
           </label>
         </div>
-        {lines.map((line, index) => (
-          <div
-            key={index}
-            className="grid gap-3 rounded-lg border p-4 md:grid-cols-2"
+        {reasonCode === "opening_balance" && (
+          <p
+            className="text-xs text-slate-600"
+            data-testid="adjustment-opening-hint"
           >
-            <label className="grid gap-1 text-xs">
-              {copy("库存余额")}
-              <select
-                aria-label={copy("调整余额 {n}", { n: index + 1 })}
-                className={field}
-                value={line.inventoryBalanceId}
-                onChange={(event) =>
-                  setLines((rows) =>
-                    rows.map((row, rowIndex) =>
-                      rowIndex === index
-                        ? { ...row, inventoryBalanceId: event.target.value }
-                        : row,
-                    ),
+            {copy("Opening stock records what you already hold on go-live day. Posting creates the stock record. No cost is recorded.")}
+          </p>
+        )}
+        {lines.map((line, index) => {
+          const n = index + 1,
+            match = line.mode === "new" ? existingRecord(line) : undefined,
+            locations = [
+              ...new Set(
+                entry.balances
+                  .filter(
+                    (row) =>
+                      row.warehouseId === line.warehouseId && row.location,
                   )
-                }
-              >
-                <option value="">{copy("请选择")}</option>
-                {entry.balances
-                  .filter((row) => row.canOperate)
-                  .map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.sku} · {warehouseName(row.warehouseId)} · {row.location} ·{" "}
-                      {row.onHandQuantity}
+                  .map((row) => row.location),
+              ),
+            ];
+          return (
+            <div
+              key={index}
+              className="grid gap-3 rounded-lg border p-4 md:grid-cols-2"
+            >
+              {reasonCode === "found_stock" && (
+                <label className="grid gap-1 text-xs md:col-span-2">
+                  {copy("Stock record for line {n}", { n })}
+                  <select
+                    aria-label={copy("Stock record for line {n}", { n })}
+                    data-testid={`adjustment-line-mode-${n}`}
+                    className={field}
+                    value={line.mode}
+                    onChange={(event) =>
+                      update(index, {
+                        mode: event.target.value as AdjustmentLine["mode"],
+                      })
+                    }
+                  >
+                    <option value="existing">{copy("Existing stock record")}</option>
+                    <option value="new">
+                      {copy("Item at a location with no stock record")}
                     </option>
-                  ))}
-              </select>
-            </label>
-            <label className="grid gap-1 text-xs">
-              {copy("调整数量")}
-              <input
-                aria-label={copy("调整数量 {n}", { n: index + 1 })}
-                className={field}
-                value={line.adjustmentQuantity}
-                onChange={(event) =>
-                  setLines((rows) =>
-                    rows.map((row, rowIndex) =>
-                      rowIndex === index
-                        ? { ...row, adjustmentQuantity: event.target.value }
-                        : row,
-                    ),
-                  )
-                }
-              />
-            </label>
-            <p className="text-xs text-amber-700 md:col-span-2">
-              {copy("减少库存不会影响已预留数量；调整后 On Hand 不得低于 Reserved。")}
-            </p>
-          </div>
-        ))}
+                  </select>
+                </label>
+              )}
+              {line.mode === "existing" ? (
+                <label className="grid gap-1 text-xs">
+                  {copy("库存余额")}
+                  <select
+                    aria-label={copy("调整余额 {n}", { n })}
+                    className={field}
+                    value={line.inventoryBalanceId}
+                    onChange={(event) =>
+                      update(index, { inventoryBalanceId: event.target.value })
+                    }
+                  >
+                    <option value="">{copy("请选择")}</option>
+                    {entry.balances
+                      .filter((row) => row.canOperate)
+                      .map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {row.sku} · {warehouseName(row.warehouseId)} · {row.location} ·{" "}
+                          {row.onHandQuantity}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label className="grid gap-1 text-xs">
+                    {copy("物料")}
+                    <select
+                      aria-label={copy("Adjustment item {n}", { n })}
+                      className={field}
+                      value={line.itemId}
+                      onChange={(event) =>
+                        update(index, { itemId: event.target.value })
+                      }
+                    >
+                      <option value="">{copy("请选择")}</option>
+                      {entry.items.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.sku} · {item.name}
+                          {item.unit ? ` · ${item.unit}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-1 text-xs">
+                    {copy("仓库")}
+                    <select
+                      aria-label={copy("Adjustment warehouse {n}", { n })}
+                      className={field}
+                      value={line.warehouseId}
+                      onChange={(event) =>
+                        update(index, { warehouseId: event.target.value })
+                      }
+                    >
+                      <option value="">{copy("请选择")}</option>
+                      {operateWarehouses.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {row.code} · {row.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="grid gap-1 text-xs">
+                    {copy("Location")}
+                    <input
+                      aria-label={copy("Adjustment location {n}", { n })}
+                      className={field}
+                      list={`adjustment-locations-${n}`}
+                      value={line.location}
+                      onChange={(event) =>
+                        update(index, { location: event.target.value })
+                      }
+                    />
+                    <datalist id={`adjustment-locations-${n}`}>
+                      {locations.map((value) => (
+                        <option key={value} value={value} />
+                      ))}
+                    </datalist>
+                  </label>
+                </div>
+              )}
+              <label className="grid gap-1 text-xs">
+                {copy("调整数量")}
+                <input
+                  aria-label={copy("调整数量 {n}", { n })}
+                  className={field}
+                  value={line.adjustmentQuantity}
+                  onChange={(event) =>
+                    update(index, { adjustmentQuantity: event.target.value })
+                  }
+                />
+              </label>
+              {match && reasonCode === "found_stock" && (
+                <p
+                  className="text-xs text-amber-700 md:col-span-2"
+                  data-testid={`adjustment-line-existing-${n}`}
+                >
+                  {copy("This item already has a stock record here. Choose it under Existing stock record.")}
+                </p>
+              )}
+              {line.mode === "existing" && (
+                <p className="text-xs text-amber-700 md:col-span-2">
+                  {copy("减少库存不会影响已预留数量；调整后 On Hand 不得低于 Reserved。")}
+                </p>
+              )}
+            </div>
+          );
+        })}
         <button
           data-testid="create-adjustment"
           className={button}
@@ -971,6 +1147,17 @@ function OperationDetail({
                   {line.destination
                     ? `${warehouseName(line.destination.warehouseId)} / ${line.destination.location}`
                     : line.location}
+                  {kind === "adjustment" &&
+                    !line.inventoryBalanceId &&
+                    document.postingStatus === "unposted" && (
+                      <span className="ml-2" data-testid="adjustment-line-new-record">
+                        <Chip
+                          label={copy("New stock record")}
+                          color={A.blue}
+                          bg="#eef5ff"
+                        />
+                      </span>
+                    )}
                 </td>
                 <td className="px-3 py-2">{line.varianceQuantity ?? "—"}</td>
               </tr>

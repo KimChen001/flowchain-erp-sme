@@ -29,6 +29,40 @@ function routeKey(row) {
   return `${text(row.warehouseId)}|${text(row.locationKey)}`;
 }
 
+const balanceKey = (sku, warehouseId, locationKey) =>
+  `${text(sku)}|${text(warehouseId)}|${text(locationKey)}`;
+
+// A stock record (InventoryBalance row) that posting will create. Preview
+// runs outside the posting transaction, so a missing transfer destination or
+// a new opening/found-stock location is planned against a zero row instead
+// of blocking. Posting creates the real row first and then plans again.
+function pendingBalance({
+  itemId,
+  sku,
+  itemName,
+  unit,
+  warehouseId,
+  location,
+  locationKey,
+}) {
+  return {
+    id: `new:${balanceKey(sku, warehouseId, locationKey)}`,
+    pending: true,
+    itemId,
+    sku,
+    itemName,
+    unit,
+    warehouseId,
+    warehouseKey: warehouseId,
+    location,
+    locationKey,
+    onHandQuantity: "0",
+    reservedQuantity: "0",
+    availableQuantity: "0",
+    version: 0,
+  };
+}
+
 function aggregateBalanceImpacts(
   entries,
   blockingIssues,
@@ -95,7 +129,8 @@ function aggregateBalanceImpacts(
       continue;
     }
     impacts.push({
-      balanceId: aggregate.balance.id,
+      balanceId: aggregate.balance.pending ? null : aggregate.balance.id,
+      createsBalance: Boolean(aggregate.balance.pending),
       roles: [...aggregate.roles].sort(),
       version: aggregate.balance.version,
       onHandBefore: fixed(onHand),
@@ -241,9 +276,27 @@ export async function buildStockTransferPostingPlan({
     const sourceBalance = balanceMap.get(
       `${line.sku}|${source.warehouseId}|${source.locationKey}`,
     );
-    const destinationBalance = balanceMap.get(
-      `${line.sku}|${destination.warehouseId}|${destination.locationKey}`,
+    // A destination with no stock record yet is created on posting, the way
+    // receiving creates one. The source must already hold the stock.
+    const destinationKey = balanceKey(
+      line.sku,
+      destination.warehouseId,
+      destination.locationKey,
     );
+    if (!balanceMap.has(destinationKey))
+      balanceMap.set(
+        destinationKey,
+        pendingBalance({
+          itemId: line.itemId,
+          sku: line.sku,
+          itemName: line.itemName,
+          unit: line.unit,
+          warehouseId: destination.warehouseId,
+          location: destination.location,
+          locationKey: destination.locationKey,
+        }),
+      );
+    const destinationBalance = balanceMap.get(destinationKey);
     if (!sourceBalance)
       blockingIssues.push(
         issue(
@@ -252,15 +305,7 @@ export async function buildStockTransferPostingPlan({
           409,
         ),
       );
-    if (!destinationBalance)
-      blockingIssues.push(
-        issue(
-          "TRANSFER_DESTINATION_BALANCE_NOT_FOUND",
-          `Destination balance for ${line.sku} was not found.`,
-          409,
-        ),
-      );
-    if (!sourceBalance || !destinationBalance) continue;
+    if (!sourceBalance) continue;
     if (quantity <= 0n)
       blockingIssues.push(
         issue(
@@ -305,7 +350,8 @@ export async function buildStockTransferPostingPlan({
         movementType: "stock_transfer_in",
         lineId: line.id,
         legId: destination.id,
-        balanceId: destinationBalance.id,
+        balanceId: destinationBalance.pending ? null : destinationBalance.id,
+        createsBalance: Boolean(destinationBalance.pending),
         itemId: line.itemId,
         sku: line.sku,
         itemName: line.itemName,
@@ -784,17 +830,69 @@ export async function buildInventoryAdjustmentPostingPlan({
         409,
       ),
     );
+  const opening = adjustment.reasonCode === "opening_balance";
+  const keyLines = adjustment.lines.filter((line) => !line.inventoryBalanceId);
   const balances = await prisma.inventoryBalance.findMany({
     where: {
       tenantId,
-      id: { in: adjustment.lines.map((line) => line.inventoryBalanceId) },
+      OR: [
+        {
+          id: {
+            in: adjustment.lines
+              .map((line) => line.inventoryBalanceId)
+              .filter(Boolean),
+          },
+        },
+        ...keyLines.map((line) => ({
+          sku: line.sku,
+          warehouseKey: line.warehouseId,
+          locationKey: line.locationKey,
+        })),
+      ],
     },
   });
   const balanceMap = new Map(balances.map((row) => [row.id, row])),
+    keyMap = new Map(
+      balances.map((row) => [
+        balanceKey(row.sku, row.warehouseKey, row.locationKey),
+        row,
+      ]),
+    ),
     rawBalanceImpacts = [],
     movementFacts = [];
   for (const line of adjustment.lines) {
-    const balance = balanceMap.get(line.inventoryBalanceId);
+    const delta = decimalUnits(line.adjustmentQuantity);
+    // A line without a stock record names item, warehouse and location. It
+    // only adds stock, and posting creates the record when none exists yet.
+    let balance;
+    if (line.inventoryBalanceId)
+      balance = balanceMap.get(line.inventoryBalanceId);
+    else {
+      const key = balanceKey(line.sku, line.warehouseId, line.locationKey);
+      if (!keyMap.has(key))
+        keyMap.set(
+          key,
+          pendingBalance({
+            itemId: line.itemId,
+            sku: line.sku,
+            itemName: line.itemName,
+            unit: line.unit,
+            warehouseId: line.warehouseId,
+            location: line.location,
+            locationKey: line.locationKey,
+          }),
+        );
+      balance = keyMap.get(key);
+    }
+    if ((opening || !line.inventoryBalanceId) && delta <= 0n)
+      blockingIssues.push(
+        issue(
+          "ADJUSTMENT_NEGATIVE_INVENTORY",
+          `Opening and found stock for ${line.sku} must be greater than zero.`,
+          422,
+          { lineId: line.id },
+        ),
+      );
     if (!balance) {
       blockingIssues.push(
         issue(
@@ -805,7 +903,6 @@ export async function buildInventoryAdjustmentPostingPlan({
       );
       continue;
     }
-    const delta = decimalUnits(line.adjustmentQuantity);
     rawBalanceImpacts.push({
       balance,
       delta,
@@ -814,7 +911,8 @@ export async function buildInventoryAdjustmentPostingPlan({
     movementFacts.push({
       movementType: "inventory_adjustment",
       lineId: line.id,
-      balanceId: balance.id,
+      balanceId: balance.pending ? null : balance.id,
+      createsBalance: Boolean(balance.pending),
       itemId: line.itemId,
       sku: line.sku,
       itemName: line.itemName,
@@ -827,6 +925,24 @@ export async function buildInventoryAdjustmentPostingPlan({
       unit: line.unit,
     });
   }
+  // Opening stock is recorded once per stock record: it may not land on top
+  // of stock that receipts or earlier entries already put there.
+  if (opening)
+    for (const balance of new Map(
+      rawBalanceImpacts.map((row) => [row.balance.id, row.balance]),
+    ).values())
+      if (decimalUnits(balance.onHandQuantity || 0) !== 0n)
+        blockingIssues.push(
+          issue(
+            "ADJUSTMENT_OPENING_BALANCE_EXISTS",
+            `${balance.sku} already has stock at this location. Use another reason to correct it.`,
+            409,
+            {
+              balanceId: balance.id,
+              onHand: fixed(balance.onHandQuantity),
+            },
+          ),
+        );
   const balanceImpacts = aggregateBalanceImpacts(
     rawBalanceImpacts,
     blockingIssues,

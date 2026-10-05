@@ -143,6 +143,22 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
     page.getByTestId("operation-movement-inventory_adjustment_reversal"),
   ).toBeVisible();
 
+  // Opening stock for a location with no stock record: posting creates it.
+  await page.goto("/app/inventory/adjustments/new");
+  await page.getByLabel("调整原因").selectOption({ label: "期初库存" });
+  await page.getByLabel("调整物料 1").selectOption("inventory-browser-item");
+  await page.getByLabel("调整仓库 1").selectOption("inventory-browser-b");
+  await page.getByLabel("调整库位 1").fill("OPEN-01");
+  await page.getByLabel("调整数量 1").fill("5.0000");
+  await page.getByTestId("create-adjustment").click();
+  await expect(page.getByTestId("adjustment-line-new-record")).toBeVisible();
+  await page.getByTestId("operation-ready").click();
+  await page.getByTestId("operation-preview-post").click();
+  await page.getByTestId("confirm-inventory-operation").click();
+  await expect(
+    page.getByTestId("operation-movement-inventory_adjustment"),
+  ).toContainText("入 5.0000");
+
   const viewer = await login(request, "viewer@example.com");
   const denied = await request.post("/api/inventory/counts", {
     headers: { Authorization: `Bearer ${viewer.token}` },

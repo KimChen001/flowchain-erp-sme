@@ -93,12 +93,24 @@ const english: Record<string, string> = {
 const chinese: Record<string, string> = {
   Ready: "标记就绪", Submit: "提交", Review: "复核", "Post Preview": "预览过账", "Reverse Preview": "预览冲销", Cancel: "取消",
   "Movement Evidence": "库存流水证据", "Reconciliation：": "对账：",
+  "Stock record for line {n}": "第 {n} 行库存记录",
+  "Existing stock record": "已有库存记录",
+  "Item at a location with no stock record": "无库存记录的库位",
+  "Adjustment item {n}": "调整物料 {n}",
+  "Adjustment warehouse {n}": "调整仓库 {n}",
+  "Adjustment location {n}": "调整库位 {n}",
+  Location: "库位",
+  "New stock record": "新库存记录",
+  "This item already has a stock record here. Choose it under Existing stock record.": "该物料在此库位已有库存记录，请在“已有库存记录”中选择。",
+  "Opening stock records what you already hold on go-live day. Posting creates the stock record. No cost is recorded.": "期初库存用于录入上线当天已有的数量，过账时创建库存记录，不记录成本。",
+  "If the target location has no stock record yet, posting creates it.": "目标库位还没有库存记录时，过账会创建它。",
+  opening_balance: "期初库存",
   damage: "损坏", shrinkage: "损耗", found_stock: "盘盈", data_correction: "数据更正", quality_disposition: "质量处置", other: "其他",
 };
 
 const englishCodes: Record<string, string> = {
   damage: "Damage", shrinkage: "Shrinkage", found_stock: "Found stock", data_correction: "Data correction",
-  quality_disposition: "Quality disposition", other: "Other",
+  quality_disposition: "Quality disposition", opening_balance: "Opening stock", other: "Other",
   ready: "Ready", counting: "Counting", counted: "Counted", reviewed: "Reviewed",
 };
 const chineseCodes: Record<string, string> = { ready: "已就绪", counting: "盘点中", counted: "已盘点", reviewed: "已复核" };
@@ -108,8 +120,14 @@ function translate(language: string, label: string, vars: Record<string, string 
   return Object.entries(vars).reduce((out, [name, value]) => out.replaceAll(`{${name}}`, String(value)), text);
 }
 
+// Reason codes whose wording on this page differs from the shared status
+// labels: the movement type "opening_balance" reads "Opening balance"
+// elsewhere, while the adjustment reason reads "Opening stock".
+const ownCodes = new Set(["opening_balance"]);
+
 // Reason and status codes shown as labels; the code itself is what is stored.
 function codeLabel(language: string, code: string): string {
+  if (ownCodes.has(code)) return (language === "en-US" ? englishCodes[code] : chinese[code]) || code;
   return statusCodeLabel(code, language) || (language === "en-US" ? englishCodes[code] : chineseCodes[code] || chinese[code]) || code;
 }
 
