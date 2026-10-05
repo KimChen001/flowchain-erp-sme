@@ -22,8 +22,8 @@ const ROUTES = [
   "/app/procurement/receiving",
   "/app/procurement/receiving/new",
   "/app/procurement/order-lines",
-  "/app/procurement/invoices",
-  "/app/procurement/invoices/LOCAL-DEMO-INV-001",
+  "/app/procurement/bills",
+  "/app/procurement/bills/LOCAL-DEMO-INV-001",
   "/app/procurement/three-way-match",
   "/app/inventory/stock",
   "/app/inventory/movements",
@@ -128,7 +128,7 @@ for (const path of [
   "/app/procurement/requests/LOCAL-DEMO-PR-001",
   "/app/procurement/rfq/LOCAL-DEMO-RFQ-AWARD-001",
   "/app/procurement/receiving/LOCAL-DEMO-GRN-001",
-  "/app/procurement/invoices/LOCAL-DEMO-INV-001",
+  "/app/procurement/bills/LOCAL-DEMO-INV-001",
   "/app/procurement/three-way-match/MATCH-LOCAL-DEMO-INV-001",
 ]) {
   test(`detail page ${path} shows labels, not stored status or type codes`, async ({ page }) => {
@@ -234,7 +234,7 @@ for (const path of [
   "/app/procurement/orders",
   "/app/procurement/orders/LOCAL-DEMO-PO-001",
   "/app/procurement/receiving",
-  "/app/procurement/invoices",
+  "/app/procurement/bills",
   "/app/procurement/three-way-match",
   "/app/inventory/stock",
   "/app/inventory/movements",
