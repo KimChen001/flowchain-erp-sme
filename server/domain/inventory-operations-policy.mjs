@@ -63,6 +63,41 @@ function pendingBalance({
   };
 }
 
+// Opening stock is for a stock record with no history. A record that receipts,
+// transfers, shipments or other entries have touched may not take an opening
+// entry, even after it has been emptied. The one exception is an opening entry
+// that was itself reversed: that pair of movements does not count, so the
+// location can be opened again.
+export async function inventoryStockRecordHasHistory(
+  prisma,
+  tenantId,
+  { sku, warehouseId, locationKey },
+) {
+  const where = {
+    tenantId,
+    sku: text(sku),
+    warehouseId: text(warehouseId),
+    locationKey: text(locationKey),
+  };
+  const reversedOpenings = await prisma.inventoryMovement.findMany({
+    where: {
+      ...where,
+      movementType: "inventory_adjustment",
+      reason: "opening_balance",
+      reversedByMovementId: { not: null },
+    },
+    select: { id: true, reversedByMovementId: true },
+  });
+  const excluded = reversedOpenings.flatMap((row) => [
+    row.id,
+    row.reversedByMovementId,
+  ]);
+  const others = await prisma.inventoryMovement.count({
+    where: excluded.length ? { ...where, id: { notIn: excluded } } : where,
+  });
+  return others > 0;
+}
+
 function aggregateBalanceImpacts(
   entries,
   blockingIssues,
@@ -819,10 +854,10 @@ export async function buildInventoryAdjustmentPostingPlan({
       issue("ADJUSTMENT_NOT_FOUND", "Inventory adjustment was not found.", 404),
     ]);
   const blockingIssues = [];
-  if (
-    adjustment.workflowStatus !== "ready" ||
-    adjustment.postingStatus !== "unposted"
-  )
+  const postable =
+    adjustment.workflowStatus === "ready" &&
+    adjustment.postingStatus === "unposted";
+  if (!postable)
     blockingIssues.push(
       issue(
         "ADJUSTMENT_INVALID_STATE",
@@ -926,16 +961,22 @@ export async function buildInventoryAdjustmentPostingPlan({
     });
   }
   // Opening stock is recorded once per stock record: it may not land on top
-  // of stock that receipts or earlier entries already put there.
+  // of stock, or of a history, that receipts or earlier entries left there.
+  // Posting runs this again after the row lock.
   if (opening)
     for (const balance of new Map(
       rawBalanceImpacts.map((row) => [row.balance.id, row.balance]),
     ).values())
-      if (decimalUnits(balance.onHandQuantity || 0) !== 0n)
+      if (
+        decimalUnits(balance.onHandQuantity || 0) !== 0n ||
+        (!balance.pending &&
+          postable &&
+          (await inventoryStockRecordHasHistory(prisma, tenantId, balance)))
+      )
         blockingIssues.push(
           issue(
             "ADJUSTMENT_OPENING_BALANCE_EXISTS",
-            `${balance.sku} already has stock at this location. Use another reason to correct it.`,
+            `${balance.sku} already has stock or stock history at this location. Use another reason to correct it.`,
             409,
             {
               balanceId: balance.id,
@@ -1008,10 +1049,15 @@ export async function buildInventoryAdjustmentReversalPlan({
     rows.push(movement);
     movementGroups.set(movement.sourceDocumentLineId, rows);
   }
+  // An unposted opening or found-stock line has no stock record yet.
   const balances = await prisma.inventoryBalance.findMany({
     where: {
       tenantId,
-      id: { in: adjustment.lines.map((line) => line.inventoryBalanceId) },
+      id: {
+        in: adjustment.lines
+          .map((line) => line.inventoryBalanceId)
+          .filter(Boolean),
+      },
     },
   });
   const balanceMap = new Map(balances.map((row) => [row.id, row])),

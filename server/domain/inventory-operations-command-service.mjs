@@ -16,6 +16,7 @@ import {
   buildStockTransferReversalPlan,
   inventoryOperationDecimalString as fixed,
   inventoryOperationDecimalUnits as units,
+  inventoryStockRecordHasHistory,
 } from "./inventory-operations-policy.mjs";
 
 export class InventoryOperationsError extends Error {
@@ -156,8 +157,10 @@ async function lockBalanceIds(tx, tenantId, ids) {
 // transfers to a new location need, with the same key receiving uses. The
 // zero row starts at version 0; the posting update then takes it to 1. A
 // concurrent create of the same key fails the unique index and the
-// transaction returns a refresh-and-retry conflict.
-async function ensureBalanceRows(tx, actor, idFactory, rows) {
+// transaction returns a refresh-and-retry conflict. A new record is only
+// created while its item and warehouse are still active; `inactive` is the
+// refusal used when one was retired after the document was readied.
+async function ensureBalanceRows(tx, actor, idFactory, rows, inactive) {
   const byKey = new Map();
   for (const row of rows)
     byKey.set(balanceKey(row.sku, row.warehouseId, row.locationKey), row);
@@ -176,6 +179,26 @@ async function ensureBalanceRows(tx, actor, idFactory, rows) {
       },
     });
     if (!balance) {
+      const [item, warehouse] = await Promise.all([
+        tx.item.findFirst({
+          where: {
+            tenantId: actor.tenantId,
+            id: text(row.itemId),
+            status: "active",
+          },
+          select: { id: true },
+        }),
+        tx.warehouse.findFirst({
+          where: {
+            tenantId: actor.tenantId,
+            id: text(row.warehouseId),
+            status: "active",
+          },
+          select: { id: true },
+        }),
+      ]);
+      if (!item || !warehouse)
+        fail(inactive.code, inactive.message, inactive.status);
       balance = await tx.inventoryBalance.create({
         data: {
           id: idFactory(),
@@ -738,6 +761,12 @@ export function createInventoryOperationsCommandService({
                 locationKey: leg.locationKey,
               })),
           ),
+          {
+            code: "TRANSFER_INVALID_ROUTE",
+            message:
+              "Transfer items and warehouses must be active in the signed tenant.",
+            status: 422,
+          },
         );
         await lockBalanceIds(tx, actor.tenantId, [
           ...first.balanceImpacts
@@ -1549,6 +1578,20 @@ export function createInventoryOperationsCommandService({
     const itemMap = new Map(),
       keyBalances = new Map();
     if (keyLines.length) {
+      if (!newBalanceReasonCodes.has(reasonCode))
+        fail(
+          "ADJUSTMENT_BALANCE_REQUIRED",
+          "Choose an existing stock record. Only opening stock and found stock can add an item at a location with no stock record.",
+          422,
+        );
+      if (
+        keyLines.some((line) => !text(line.itemId) || !text(line.warehouseId))
+      )
+        fail(
+          "ADJUSTMENT_BALANCE_REQUIRED",
+          "Choose an item and a warehouse for each line.",
+          422,
+        );
       const itemIds = [...new Set(keyLines.map((line) => text(line.itemId)))],
         warehouseIds = [
           ...new Set(keyLines.map((line) => text(line.warehouseId))),
@@ -1579,12 +1622,6 @@ export function createInventoryOperationsCommandService({
           404,
         );
       assertWarehouseAccess(actor, warehouseIds, "operate");
-      if (!newBalanceReasonCodes.has(reasonCode))
-        fail(
-          "ADJUSTMENT_BALANCE_REQUIRED",
-          "Choose an existing stock record. Only opening stock and found stock can add an item at a location with no stock record.",
-          422,
-        );
       for (const row of items) itemMap.set(row.id, row);
       for (const line of keyLines) {
         const item = itemMap.get(text(line.itemId)),
@@ -1609,73 +1646,80 @@ export function createInventoryOperationsCommandService({
           );
       }
     }
+    const lines = [];
+    for (const line of payload.lines) {
+      const delta = units(line.adjustmentQuantity);
+      if (delta === 0n)
+        fail(
+          "ADJUSTMENT_NEGATIVE_INVENTORY",
+          "Adjustment quantity cannot be zero.",
+          422,
+        );
+      let balance, normalized;
+      if (text(line.inventoryBalanceId)) {
+        balance = map.get(text(line.inventoryBalanceId));
+        normalized = {
+          id: line.id,
+          inventoryBalanceId: balance.id,
+          itemId: balance.itemId,
+          sku: balance.sku,
+          itemName: balance.itemName,
+          warehouseId: balance.warehouseId,
+          location: balance.location,
+          locationKey: balance.locationKey,
+          adjustmentQuantity: fixed(delta),
+          unit: balance.unit,
+        };
+      } else {
+        if (delta < 0n)
+          fail(
+            "ADJUSTMENT_NEGATIVE_INVENTORY",
+            "Stock added at a location with no stock record must be greater than zero.",
+            422,
+          );
+        const item = itemMap.get(text(line.itemId));
+        balance =
+          keyBalances.get(
+            balanceKey(item.sku, line.warehouseId, locationKey(line.location)),
+          ) || null;
+        normalized = {
+          id: line.id,
+          inventoryBalanceId: balance?.id || null,
+          itemId: item.id,
+          sku: item.sku,
+          itemName: item.name,
+          warehouseId: text(line.warehouseId),
+          location: balance ? balance.location : text(line.location) || null,
+          locationKey: locationKey(line.location),
+          adjustmentQuantity: fixed(delta),
+          unit: balance?.unit || item.unit,
+        };
+      }
+      // Opening stock always adds stock, once, to a stock record that holds
+      // nothing and has no history yet (a reversed opening entry aside).
+      if (opening && delta < 0n)
+        fail(
+          "ADJUSTMENT_NEGATIVE_INVENTORY",
+          "Opening stock must be greater than zero.",
+          422,
+        );
+      if (
+        opening &&
+        balance &&
+        (units(balance.onHandQuantity || 0) !== 0n ||
+          (await inventoryStockRecordHasHistory(tx, actor.tenantId, balance)))
+      )
+        fail(
+          "ADJUSTMENT_OPENING_BALANCE_EXISTS",
+          `${normalized.sku} already has stock or stock history at this location. Use another reason to correct it.`,
+          409,
+        );
+      lines.push(normalized);
+    }
     return {
       reasonCode,
       notes: text(payload.notes) || null,
-      lines: payload.lines.map((line) => {
-        const delta = units(line.adjustmentQuantity);
-        if (delta === 0n)
-          fail(
-            "ADJUSTMENT_NEGATIVE_INVENTORY",
-            "Adjustment quantity cannot be zero.",
-            422,
-          );
-        let balance, normalized;
-        if (text(line.inventoryBalanceId)) {
-          balance = map.get(text(line.inventoryBalanceId));
-          normalized = {
-            id: line.id,
-            inventoryBalanceId: balance.id,
-            itemId: balance.itemId,
-            sku: balance.sku,
-            itemName: balance.itemName,
-            warehouseId: balance.warehouseId,
-            location: balance.location,
-            locationKey: balance.locationKey,
-            adjustmentQuantity: fixed(delta),
-            unit: balance.unit,
-          };
-        } else {
-          if (delta < 0n)
-            fail(
-              "ADJUSTMENT_NEGATIVE_INVENTORY",
-              "Stock added at a location with no stock record must be greater than zero.",
-              422,
-            );
-          const item = itemMap.get(text(line.itemId));
-          balance =
-            keyBalances.get(
-              balanceKey(item.sku, line.warehouseId, locationKey(line.location)),
-            ) || null;
-          normalized = {
-            id: line.id,
-            inventoryBalanceId: balance?.id || null,
-            itemId: item.id,
-            sku: item.sku,
-            itemName: item.name,
-            warehouseId: text(line.warehouseId),
-            location: balance ? balance.location : text(line.location) || null,
-            locationKey: locationKey(line.location),
-            adjustmentQuantity: fixed(delta),
-            unit: balance?.unit || item.unit,
-          };
-        }
-        // Opening stock always adds stock, once, to a stock record that
-        // holds nothing yet.
-        if (opening && delta < 0n)
-          fail(
-            "ADJUSTMENT_NEGATIVE_INVENTORY",
-            "Opening stock must be greater than zero.",
-            422,
-          );
-        if (opening && balance && units(balance.onHandQuantity || 0) !== 0n)
-          fail(
-            "ADJUSTMENT_OPENING_BALANCE_EXISTS",
-            `${normalized.sku} already has stock at this location. Use another reason to correct it.`,
-            409,
-          );
-        return normalized;
-      }),
+      lines,
     };
   }
 
@@ -1919,6 +1963,11 @@ export function createInventoryOperationsCommandService({
           actor,
           idFactory,
           keyLines,
+          {
+            code: "ADJUSTMENT_NOT_FOUND",
+            message: "The item or warehouse was not found or is not active.",
+            status: 404,
+          },
         );
         for (const line of keyLines)
           await tx.inventoryAdjustmentLine.update({

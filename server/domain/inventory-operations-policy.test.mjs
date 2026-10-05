@@ -2,19 +2,33 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildInventoryAdjustmentPostingPlan,
+  buildInventoryAdjustmentReversalPlan,
   buildStockTransferPostingPlan,
 } from "./inventory-operations-policy.mjs";
 
 const tenantId = "tenant-1";
 
-// Just enough of Prisma for the posting plans: documents by id and stock
-// records by id or by (sku, warehouseKey, locationKey).
-function fakePrisma({ balances = [], transfer = null, adjustment = null }) {
+// Just enough of Prisma for the posting plans: documents by id, stock
+// records by id or by (sku, warehouseKey, locationKey), and movements. Like
+// Prisma, a null inside an `in` list is a validation error.
+function fakePrisma({
+  balances = [],
+  movements = [],
+  transfer = null,
+  adjustment = null,
+}) {
   const matches = (row, where) =>
     Object.entries(where).every(([field, value]) => {
       if (field === "OR") return value.some((part) => matches(row, part));
-      if (value && typeof value === "object" && Array.isArray(value.in))
+      if (value && typeof value === "object" && Array.isArray(value.in)) {
+        if (value.in.some((entry) => entry == null))
+          throw new Error("Argument `in`: Invalid value provided.");
         return value.in.includes(row[field]);
+      }
+      if (value && typeof value === "object" && Array.isArray(value.notIn))
+        return !value.notIn.includes(row[field]);
+      if (value && typeof value === "object" && "not" in value)
+        return row[field] !== value.not && row[field] !== undefined;
       return row[field] === value;
     });
   return {
@@ -23,6 +37,12 @@ function fakePrisma({ balances = [], transfer = null, adjustment = null }) {
     inventoryBalance: {
       findMany: async ({ where }) =>
         balances.filter((row) => matches(row, where)),
+    },
+    inventoryMovement: {
+      findMany: async ({ where }) =>
+        movements.filter((row) => matches(row, where)),
+      count: async ({ where }) =>
+        movements.filter((row) => matches(row, where)).length,
     },
   };
 }
@@ -269,4 +289,90 @@ test("opening stock lines for the same key are combined into one new record", as
     "adj-line-2",
   ]);
   assert.equal(plan.movementFacts.length, 2);
+});
+
+const movement = (overrides = {}) => ({
+  id: "movement-1",
+  tenantId,
+  sku: "SKU-1",
+  warehouseId: "wh-b",
+  locationKey: "open-01",
+  movementType: "stock_transfer_in",
+  reason: null,
+  reversedByMovementId: null,
+  ...overrides,
+});
+
+test("opening stock is refused on an emptied stock record that has history", async () => {
+  const emptied = balance({
+    id: "balance-b",
+    warehouseId: "wh-b",
+    warehouseKey: "wh-b",
+    location: "OPEN-01",
+    locationKey: "open-01",
+    onHandQuantity: "0",
+    availableQuantity: "0",
+  });
+  const plan = (movements) =>
+    buildInventoryAdjustmentPostingPlan({
+      prisma: fakePrisma({
+        balances: [emptied],
+        movements,
+        adjustment: adjustmentWith("opening_balance", [
+          { inventoryBalanceId: "balance-b", adjustmentQuantity: "5" },
+        ]),
+      }),
+      tenantId,
+      adjustmentId: "adjustment-1",
+    });
+  // Stock came in by transfer and went out again.
+  const traded = await plan([
+    movement({ id: "in-1" }),
+    movement({ id: "out-1", movementType: "stock_transfer_out" }),
+  ]);
+  assert.equal(traded.allowed, false);
+  assert.equal(
+    traded.blockingIssues[0].code,
+    "ADJUSTMENT_OPENING_BALANCE_EXISTS",
+  );
+  // An earlier opening entry that was posted and later emptied by trading.
+  const openedBefore = await plan([
+    movement({
+      id: "open-1",
+      movementType: "inventory_adjustment",
+      reason: "opening_balance",
+    }),
+    movement({ id: "out-1", movementType: "shipment_posting" }),
+  ]);
+  assert.equal(openedBefore.allowed, false);
+  // The only history is a reversed opening entry: the location may be
+  // opened again.
+  const reversedOpening = await plan([
+    movement({
+      id: "open-1",
+      movementType: "inventory_adjustment",
+      reason: "opening_balance",
+      reversedByMovementId: "open-1-reversal",
+    }),
+    movement({
+      id: "open-1-reversal",
+      movementType: "inventory_adjustment_reversal",
+    }),
+  ]);
+  assert.equal(reversedOpening.allowed, true);
+});
+
+test("reverse preview of an unposted line without a stock record is a state refusal", async () => {
+  const plan = await buildInventoryAdjustmentReversalPlan({
+    prisma: fakePrisma({
+      adjustment: adjustmentWith("opening_balance", [
+        { adjustmentQuantity: "5" },
+      ]),
+    }),
+    tenantId,
+    adjustmentId: "adjustment-1",
+  });
+  assert.equal(plan.allowed, false);
+  assert.equal(plan.blockingIssues[0].code, "ADJUSTMENT_ALREADY_POSTED");
+  assert.equal(plan.blockingIssues[0].status, 409);
 });

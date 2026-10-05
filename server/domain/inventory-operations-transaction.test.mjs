@@ -1461,6 +1461,24 @@ if (!realPostgres) {
       (error) =>
         error.code === "ADJUSTMENT_BALANCE_REQUIRED" && error.status === 422,
     );
+    // A decrease with no stock record picked asks for the record, not for a
+    // missing item or warehouse.
+    await assert.rejects(
+      () => attempt("damage-blank", "damage", { adjustmentQuantity: "-1" }),
+      (error) =>
+        error.code === "ADJUSTMENT_BALANCE_REQUIRED" &&
+        /existing stock record/.test(error.message),
+    );
+    await assert.rejects(
+      () =>
+        attempt("found-blank", "found_stock", {
+          location: "OPEN-01",
+          adjustmentQuantity: "1",
+        }),
+      (error) =>
+        error.code === "ADJUSTMENT_BALANCE_REQUIRED" &&
+        /item and a warehouse/.test(error.message),
+    );
     // Found stock posted first puts stock on the key, so the opening entry
     // that was readied earlier is refused at posting.
     const opening = await readyNewAdjustment(service, ctx, "opening-late", {
@@ -1497,6 +1515,209 @@ if (!realPostgres) {
       (await keyBalance(ids, ids.warehouseB, "open-01")).onHandQuantity.toString(),
       "2",
     );
+  });
+
+  async function postNewTransfer(service, ctx, tag, from, to, quantity) {
+    const created = await service.createTransfer(
+      {
+        transferNumber: `TR-${tag}-${randomUUID()}`,
+        idempotencyKey: `${tag}-create`,
+        lines: [
+          {
+            itemId: from.itemId,
+            quantity,
+            source: { warehouseId: from.warehouseId, location: from.location },
+            destination: { warehouseId: to.warehouseId, location: to.location },
+          },
+        ],
+      },
+      ctx,
+    );
+    const ready = await service.readyTransfer(
+      created.transfer.id,
+      {
+        expectedTransferVersion: created.transfer.version,
+        idempotencyKey: `${tag}-ready`,
+      },
+      ctx,
+    );
+    return service.postTransfer(
+      created.transfer.id,
+      {
+        expectedTransferVersion: ready.transfer.version,
+        idempotencyKey: `${tag}-post`,
+      },
+      ctx,
+    );
+  }
+
+  test("opening stock is refused on a stock record emptied by trading, when saved and when posted", async () => {
+    const ids = await seed(),
+      service = createInventoryOperationsCommandService({ prisma, env }),
+      ctx = identity(ids.tenantId, ids.managerId);
+    const a01 = {
+        itemId: ids.itemId,
+        warehouseId: ids.warehouseA,
+        location: "A-01",
+      },
+      at = (location) => ({
+        itemId: ids.itemId,
+        warehouseId: ids.warehouseB,
+        location,
+      });
+    // Go-live: 5 opened at OPEN-01, then all 5 moved out by a transfer.
+    const opened = await readyNewAdjustment(service, ctx, "golive", {
+      reasonCode: "opening_balance",
+      lines: [openingLine(ids)],
+    });
+    await service.postAdjustment(
+      opened.created.adjustment.id,
+      {
+        expectedAdjustmentVersion: opened.ready.adjustment.version,
+        idempotencyKey: "golive-post",
+      },
+      ctx,
+    );
+    await postNewTransfer(service, ctx, "empty-open", at("OPEN-01"), a01, "5");
+    assert.equal(
+      (await keyBalance(ids, ids.warehouseB, "open-01")).onHandQuantity.toString(),
+      "0",
+    );
+    await assert.rejects(
+      () =>
+        service.createAdjustment(
+          {
+            adjustmentNumber: `ADJ-again-${randomUUID()}`,
+            reasonCode: "opening_balance",
+            idempotencyKey: "opening-again-create",
+            lines: [openingLine(ids)],
+          },
+          ctx,
+        ),
+      (error) =>
+        error.code === "ADJUSTMENT_OPENING_BALANCE_EXISTS" &&
+        error.status === 409,
+    );
+    // An opening entry readied for a new location that trading then creates
+    // and empties before the entry is posted.
+    const late = await readyNewAdjustment(service, ctx, "late-open", {
+      reasonCode: "opening_balance",
+      lines: [openingLine(ids, { location: "OPEN-02" })],
+    });
+    await postNewTransfer(service, ctx, "fill-02", a01, at("OPEN-02"), "2");
+    await postNewTransfer(service, ctx, "drain-02", at("OPEN-02"), a01, "2");
+    await assert.rejects(
+      () =>
+        service.postAdjustment(
+          late.created.adjustment.id,
+          {
+            expectedAdjustmentVersion: late.ready.adjustment.version,
+            idempotencyKey: "late-open-post",
+          },
+          ctx,
+        ),
+      (error) =>
+        error.code === "ADJUSTMENT_OPENING_BALANCE_EXISTS" &&
+        error.status === 409,
+    );
+    assert.equal(
+      (await keyBalance(ids, ids.warehouseB, "open-02")).onHandQuantity.toString(),
+      "0",
+    );
+    assert.equal(
+      await prisma.inventoryMovement.count({
+        where: {
+          tenantId: ids.tenantId,
+          sourceDocumentId: late.created.adjustment.id,
+        },
+      }),
+      0,
+    );
+  });
+
+  test("posting does not create a stock record for an item or warehouse retired after ready", async () => {
+    const ids = await seed(),
+      service = createInventoryOperationsCommandService({ prisma, env }),
+      ctx = identity(ids.tenantId, ids.managerId);
+    const opening = await readyNewAdjustment(service, ctx, "retired-wh", {
+      reasonCode: "opening_balance",
+      lines: [openingLine(ids)],
+    });
+    const transfer = await service.createTransfer(
+      {
+        transferNumber: `TR-RETIRED-${randomUUID()}`,
+        idempotencyKey: "retired-transfer-create",
+        lines: [
+          {
+            itemId: ids.itemId,
+            quantity: "1",
+            source: { warehouseId: ids.warehouseA, location: "A-01" },
+            destination: { warehouseId: ids.warehouseB, location: "RETIRED-BIN" },
+          },
+        ],
+      },
+      ctx,
+    );
+    const readyTransfer = await service.readyTransfer(
+      transfer.transfer.id,
+      {
+        expectedTransferVersion: transfer.transfer.version,
+        idempotencyKey: "retired-transfer-ready",
+      },
+      ctx,
+    );
+    await prisma.warehouse.update({
+      where: { id: ids.warehouseB },
+      data: { status: "inactive" },
+    });
+    await assert.rejects(
+      () =>
+        service.postAdjustment(
+          opening.created.adjustment.id,
+          {
+            expectedAdjustmentVersion: opening.ready.adjustment.version,
+            idempotencyKey: "retired-wh-post",
+          },
+          ctx,
+        ),
+      (error) => error.code === "ADJUSTMENT_NOT_FOUND" && error.status === 404,
+    );
+    await assert.rejects(
+      () =>
+        service.postTransfer(
+          transfer.transfer.id,
+          {
+            expectedTransferVersion: readyTransfer.transfer.version,
+            idempotencyKey: "retired-transfer-post",
+          },
+          ctx,
+        ),
+      (error) => error.code === "TRANSFER_INVALID_ROUTE" && error.status === 422,
+    );
+    assert.equal(await keyBalance(ids, ids.warehouseB, "open-01"), null);
+    assert.equal(await keyBalance(ids, ids.warehouseB, "retired-bin"), null);
+    // A retired item is refused the same way once the warehouse is back.
+    await prisma.warehouse.update({
+      where: { id: ids.warehouseB },
+      data: { status: "active" },
+    });
+    await prisma.item.update({
+      where: { id: ids.itemId },
+      data: { status: "inactive" },
+    });
+    await assert.rejects(
+      () =>
+        service.postAdjustment(
+          opening.created.adjustment.id,
+          {
+            expectedAdjustmentVersion: opening.ready.adjustment.version,
+            idempotencyKey: "retired-item-post",
+          },
+          ctx,
+        ),
+      (error) => error.code === "ADJUSTMENT_NOT_FOUND",
+    );
+    assert.equal(await keyBalance(ids, ids.warehouseB, "open-01"), null);
   });
 
   test("two opening entries for the same new location posted together create one record", async () => {
