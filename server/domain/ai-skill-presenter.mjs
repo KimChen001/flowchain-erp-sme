@@ -123,9 +123,14 @@ export function aiSkillSignalReason(item, facts, language) {
     grn_received_unposted: {},
     supplier_exposure: { count: fmt.number(data.count), supplier: item.label, issues: aiSkillList(array(data.types).map((type) => aiSkillText(`signal.${type}.status`, language).toLowerCase()), language) },
   }[item.type] || {}
+  // An order not yet issued to the supplier is to be sent, not chased (decision V5).
   // An order without one total (several SKUs or units) names what it still has to receive.
   const partialByLine = item.type === 'po_partially_received' && (data.ordered === null || data.ordered === undefined) && fmt.remaining(data) !== null
-  const reason = aiSkillText(item.type === 'invoice_variance' && data.variance === null ? 'signal.invoice_variance.reason_hidden' : partialByLine ? 'signal.po_partially_received.reason_lines' : `signal.${item.type}.reason`, language, { ...values, ...(partialByLine ? { remaining } : {}) })
+  const reasonKey = item.type === 'invoice_variance' && data.variance === null ? 'signal.invoice_variance.reason_hidden'
+    : partialByLine ? 'signal.po_partially_received.reason_lines'
+      : data.notSent && SELF_DATED.has(item.type) ? `signal.${item.type}.reason_not_sent` : `signal.${item.type}.reason`
+  const reasonValues = { ...values, ...(partialByLine ? { remaining } : {}) }
+  const reason = item.type === 'po_overdue' ? aiSkillCountText(reasonKey, data.days === 1 ? 1 : 2, language, reasonValues) : aiSkillText(reasonKey, language, reasonValues)
   return aiSkillSentences([reason, aiSkillWhenText(item, facts, language), data.covered && item.type.startsWith('stock_') ? aiSkillText('signal.covered', language) : ''], language)
 }
 

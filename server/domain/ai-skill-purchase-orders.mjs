@@ -1,5 +1,6 @@
 import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillNavigation, aiSkillRecordEvidence, aiSkillRecordImpact, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
+import { aiSkillPurchaseOrderNotSent } from './ai-skill-signals.mjs'
 
 // Purchase orders the question names: one order, the orders of the named
 // suppliers or of a SKU, or every overdue order. Figures are the open purchase
@@ -107,6 +108,9 @@ function singleTitle(row, fmt, language) {
   return aiSkillText('po.single_status', language, { po, status })
 }
 
+// An overdue order in a list; one not yet issued says so (decision V5).
+const overdueItem = (row, fmt, language) => aiSkillCountText(aiSkillPurchaseOrderNotSent(row) ? 'po.overdue_item_not_sent' : 'po.overdue_item', row.overdueDays === 1 ? 1 : 2, language, { po: row.orderNumber || row.id, days: fmt.number(row.overdueDays) })
+
 function singleSentences(row, fmt, language, amountsVisible) {
   const sentences = []
   sentences.push(row.ordered !== null && row.received !== null
@@ -115,6 +119,7 @@ function singleSentences(row, fmt, language, amountsVisible) {
   if (row.isOpen) {
     if (row.overdueDays > 0) sentences.push(aiSkillCountText('po.due_overdue', row.overdueDays === 1 ? 1 : 2, language, { date: fmt.day(row.dueDate), days: fmt.number(row.overdueDays) }))
     else sentences.push(row.dueDate ? aiSkillText('po.due_on', language, { date: fmt.day(row.dueDate) }) : aiSkillText('po.due_missing', language))
+    if (aiSkillPurchaseOrderNotSent(row)) sentences.push(aiSkillText('po.not_sent', language))
   }
   if (amountsVisible && row.amount !== null && row.amount !== undefined) sentences.push(aiSkillText('po.amount', language, { amount: fmt.money(row.amount, row.currency) }))
   if (row.dataIncomplete) sentences.push(aiSkillText('po.incomplete', language))
@@ -168,7 +173,7 @@ export function presentPurchaseOrders(result, facts, { skill, language, query })
       ? aiSkillText(!first.open ? `${key}_title_none` : first.open === 1 ? `${key}_title_one` : `${key}_title`, language, { name: name(first), open: fmt.number(first.open), overdue: fmt.number(first.overdue.length) })
       : aiSkillText('po.many_title', language, { count: fmt.number(result.groups.length), open: fmt.number(open), overdue: fmt.number(overdue) })
     const sentences = result.groups.length > 1 ? result.groups.map((group) => aiSkillText('po.group_sentence', language, { name: name(group), open: fmt.number(group.open), overdue: fmt.number(group.overdue.length) })) : []
-    const lateList = result.groups.flatMap((group) => group.overdue).sort(byLateness).slice(0, 5).map((row) => aiSkillText('po.overdue_item', language, { po: row.orderNumber || row.id, days: fmt.number(row.overdueDays) }))
+    const lateList = result.groups.flatMap((group) => group.overdue).sort(byLateness).slice(0, 5).map((row) => overdueItem(row, fmt, language))
     if (lateList.length) sentences.push(aiSkillText('po.overdue_summary', language, { list: aiSkillList(lateList, language) }))
     sentences.push(asOf)
     const shown = result.groups.flatMap((group) => result.late ? group.overdue : group.rows).sort(byLateness)
@@ -178,7 +183,7 @@ export function presentPurchaseOrders(result, facts, { skill, language, query })
     return answer(title, aiSkillSentences(sentences, language), overdue ? 'risk' : 'info', records(shown), figures)
   }
   const count = result.overdue.length
-  const list = result.overdue.slice(0, 5).map((row) => aiSkillText('po.overdue_item', language, { po: row.orderNumber || row.id, days: fmt.number(row.overdueDays) }))
+  const list = result.overdue.slice(0, 5).map((row) => overdueItem(row, fmt, language))
   // One tier's overdue orders: its own title and count; the workspace's open
   // count stays as it is.
   if (result.tier?.supplierIds) {
