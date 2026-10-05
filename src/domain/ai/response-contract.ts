@@ -105,6 +105,10 @@ export type AiResponseV2ReviewCard = {
   // Which payload fields were suggested, and from where (record, default, template).
   prefill?: Record<string, { source: "record" | "default" | "template" | "history" | "workspace_history" | "model"; ref?: string; value: string }>;
   originEvidence?: Record<string, unknown>[];
+  // Set on the cards of an order the assistant was asked to start
+  // (prepare_action_draft, mode order): true opens the card's form as the
+  // answer arrives. Their allowedNextStep names the SKU and is the button label.
+  autoOpen?: boolean;
 };
 
 export type AiRuntimeContextBreadcrumb = {
