@@ -202,8 +202,14 @@ test('opening stock never converts units and shows the item unit, new records an
   // Already in an opening draft: the same document, not a second one.
   assert.deepEqual([rows[6].action, rows[6].existing.reason, rows[6].existing.document.id], ['skip_existing', 'IN_OPENING_DRAFT', 'ADJ-1'])
   assert.deepEqual(codes(rows[7]), ['ITEM_INACTIVE'])
-  // Nothing about the stock in a warehouse the importer cannot operate.
+  // Nothing about a warehouse the importer cannot operate, or the stock in
+  // it, beyond the code in the file.
   assert.deepEqual([codes(rows[8]), rows[8].existing, rows[8].details.stockRecord], [['WAREHOUSE_SCOPE_DENIED'], undefined, null])
+  assert.deepEqual([rows[8].details.warehouseId, rows[8].details.warehouseCode, rows[8].details.warehouseName], [null, 'EAST', null])
+  assert.deepEqual(result.warehouses.find((group) => group.warehouseCode === 'EAST'), { warehouseId: null, warehouseCode: 'EAST', warehouseName: null, rows: 1, create: 0, newStockRecords: 0 })
+  assert.ok(!JSON.stringify(result).includes('WH-X') && !JSON.stringify(result).includes('"East"'))
+  // Codes that match no warehouse are grouped by the code in the file.
+  assert.deepEqual(result.warehouses.find((group) => group.warehouseCode === 'FOREIGN'), { warehouseId: null, warehouseCode: 'FOREIGN', warehouseName: null, rows: 1, create: 0, newStockRecords: 0 })
   assert.deepEqual(codes(rows[9]), ['WAREHOUSE_NOT_FOUND'])
   assert.deepEqual(codes(rows[10]), ['ITEM_NOT_FOUND'])
   assert.deepEqual(codes(rows[11]), ['QUANTITY_POSITIVE'])
@@ -221,7 +227,7 @@ test('the same key twice fails both rows and nothing is added together', async (
   const stock = await service(fakePrisma()).preview('opening-stock', { fileName: 'o.csv', contentBase64: csv(['SKU,Warehouse code,Location,Quantity', 'VALVE-100,MAIN,a-09,5', 'VALVE-100,MAIN,A-09 ,7']) }, context)
   assert.deepEqual(stock.rows.map(codes), [['DUPLICATE_ROW'], ['DUPLICATE_ROW']])
   assert.ok(stock.rows.every((row) => row.details.quantity !== '12'))
-  const links = await service(fakePrisma()).preview('item-suppliers', { fileName: 'l.csv', contentBase64: csv(['SKU,Supplier code,Preferred', 'VALVE-100,SUP-001,Yes', 'VALVE-100,SUP-001,No']) }, context)
+  const links = await service(fakePrisma()).preview('item-suppliers', { fileName: 'l.csv', contentBase64: csv(['SKU,Supplier code,Preferred', 'PIPE-200,SUP-001,Yes', 'PIPE-200,SUP-001,No']) }, context)
   assert.deepEqual(links.rows.map(codes), [['DUPLICATE_ROW'], ['DUPLICATE_ROW']])
 })
 
@@ -488,4 +494,109 @@ test('an XLSX file that unpacks to more than eight times the file limit is refus
   await assert.rejects(service(fakePrisma(), { env: { FLOWCHAIN_DATA_IMPORT_MAX_FILE_BYTES: '20000' } }).preview('items', body, context), (error) => error.status === 413 && error.code === 'DATA_IMPORT_FILE_UNSAFE')
   // Under the default limit the same file is read.
   assert.deepEqual((await service(fakePrisma()).preview('items', body, context)).rows.map((row) => row.key), ['S-1'])
+})
+
+// A one-row items workbook as a ZIP archive whose parts a test can change.
+function itemsArchive() {
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['SKU', 'Item name', 'Unit'], ['S-1', 'Valve', 'EA']]), 'Items')
+  return XLSX.CFB.read(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer' })
+}
+const archivePart = (archive, name) => archive.FileIndex[archive.FullPaths.indexOf(`Root Entry/${name}`)]
+function setArchivePart(archive, name, text) {
+  const part = archivePart(archive, name)
+  part.content = Buffer.from(text)
+  part.size = part.content.length
+}
+const zipBytes = (archive) => Buffer.from(XLSX.CFB.write(archive, { fileType: 'zip', type: 'buffer', compression: true }))
+// Writes a smaller uncompressed size for one entry into both its local and
+// central headers, as a crafted archive would.
+function misdeclare(bytes, name, size) {
+  const end = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]))
+  let offset = bytes.readUInt32LE(end + 16)
+  for (let index = 0; index < bytes.readUInt16LE(end + 10); index += 1) {
+    const nameLength = bytes.readUInt16LE(offset + 28)
+    if (bytes.subarray(offset + 46, offset + 46 + nameLength).toString() === name) {
+      bytes.writeUInt32LE(size, offset + 24)
+      bytes.writeUInt32LE(size, bytes.readUInt32LE(offset + 42) + 22)
+    }
+    offset += 46 + nameLength + bytes.readUInt16LE(offset + 30) + bytes.readUInt16LE(offset + 32)
+  }
+  return bytes
+}
+// Moves the Items sheet to another part name, through the relationships.
+function renameSheetPart(archive, target, transform = (xml) => xml) {
+  const xml = Buffer.from(archivePart(archive, 'xl/worksheets/sheet1.xml').content).toString('utf8')
+  XLSX.CFB.utils.cfb_del(archive, '/xl/worksheets/sheet1.xml')
+  XLSX.CFB.utils.cfb_add(archive, `/xl/worksheets/${target}`, Buffer.from(transform(xml)))
+  for (const name of ['xl/_rels/workbook.xml.rels', '[Content_Types].xml']) {
+    setArchivePart(archive, name, Buffer.from(archivePart(archive, name).content).toString('utf8').replaceAll('worksheets/sheet1.xml', `worksheets/${target}`))
+  }
+  return archive
+}
+
+test('an XLSX part larger than it declares is refused before it is unpacked', async () => {
+  const archive = itemsArchive()
+  // 8 MB of XML declared as 4 KB, in a part the importer does not use.
+  XLSX.CFB.utils.cfb_add(archive, '/xl/pad.xml', Buffer.alloc(8 * 1024 * 1024, 0x20))
+  const bytes = misdeclare(zipBytes(archive), 'xl/pad.xml', 4096)
+  assert.ok(bytes.length < 2 * 1024 * 1024, String(bytes.length))
+  await assert.rejects(service(fakePrisma()).preview('items', { fileName: 'w.xlsx', contentBase64: bytes.toString('base64') }, context),
+    (error) => error.status === 422 && error.code === 'DATA_IMPORT_FILE_UNREADABLE')
+  // Declared truthfully, the same part counts against the unpacked limit.
+  const honest = zipBytes(archive)
+  await assert.rejects(service(fakePrisma(), { env: { FLOWCHAIN_DATA_IMPORT_MAX_FILE_BYTES: String(honest.length + 1) } }).preview('items', { fileName: 'w.xlsx', contentBase64: honest.toString('base64') }, context),
+    (error) => error.status === 413 && error.code === 'DATA_IMPORT_FILE_UNSAFE')
+})
+
+test('the grid limit applies to the sheet part the relationships name', async () => {
+  const preview = (archive) => service(fakePrisma()).preview('items', { fileName: 'w.xlsx', contentBase64: zipBytes(archive).toString('base64') }, context)
+  const unsafe = (error) => error.status === 413 && error.code === 'DATA_IMPORT_FILE_UNSAFE'
+  // A sheet part with another name is found and read.
+  assert.deepEqual((await preview(renameSheetPart(itemsArchive(), 'data.xml'))).rows.map((row) => row.key), ['S-1'])
+  // Its declared used range counts, whatever the part is called.
+  for (const ref of ['A1:Z120000', 'A1:XFD1048576']) {
+    await assert.rejects(preview(renameSheetPart(itemsArchive(), 'data.xml', (xml) => xml.replace(/<dimension ref="[^"]*"/, `<dimension ref="${ref}"`))), unsafe)
+  }
+  // A small decoy at sheet1.xml does not stand in for the real part.
+  const decoy = renameSheetPart(itemsArchive(), 'sheet2.xml', (xml) => xml.replace(/<dimension ref="[^"]*"/, '<dimension ref="A1:Z120000"'))
+  XLSX.CFB.utils.cfb_add(decoy, '/xl/worksheets/sheet1.xml', Buffer.from(archivePart(itemsArchive(), 'xl/worksheets/sheet1.xml').content))
+  await assert.rejects(preview(decoy), unsafe)
+  // A namespace prefix or an encoded reference does not hide a cell.
+  await assert.rejects(preview(renameSheetPart(itemsArchive(), 'data.xml', (xml) => xml.replace('</sheetData>', '<row r="3"><x:c xmlns:x="urn:x" r="&#88;FD1048576"/></row></sheetData>'))), unsafe)
+  // A sheet whose part is missing from the archive is refused.
+  const missing = itemsArchive()
+  XLSX.CFB.utils.cfb_del(missing, '/xl/worksheets/sheet1.xml')
+  await assert.rejects(preview(missing), (error) => error.status === 422 && error.code === 'DATA_IMPORT_FILE_UNREADABLE')
+})
+
+test("a new link for the item's own preferred supplier never clears it", async () => {
+  // VALVE-100 prefers SUP-001 on the item, with no link.
+  const prisma = fakePrisma()
+  const result = await service(prisma).preview('item-suppliers', { fileName: 'l.csv', contentBase64: csv(['SKU,Supplier code,Preferred', 'VALVE-100,SUP-001,']) }, context)
+  assert.deepEqual([result.rows[0].action, result.rows[0].details.preferred, result.rows[0].details.preferredSource], ['create', true, 'item'])
+  const no = await service(prisma).preview('item-suppliers', { fileName: 'l.csv', contentBase64: csv(['SKU,Supplier code,Preferred', 'VALVE-100,SUP-001,No']) }, context)
+  assert.deepEqual([codes(no.rows[0]), no.rows[0].issues[0].params], [['PREFERRED_WOULD_CLEAR'], { supplierCode: 'SUP-001' }])
+  // Without a Preferred column, the same.
+  const noColumn = await service(prisma).preview('item-suppliers', { fileName: 'l.csv', contentBase64: csv(['SKU,Supplier code', 'VALVE-100,SUP-001']) }, context)
+  assert.deepEqual([noColumn.rows[0].action, noColumn.rows[0].details.preferredSource], ['create', 'item'])
+  // Yes is the file's own value; another supplier is not affected.
+  const yes = await service(prisma).preview('item-suppliers', { fileName: 'l.csv', contentBase64: csv(['SKU,Supplier code,Preferred', 'VALVE-100,SUP-001,Yes', 'PIPE-200,SUP-005,']) }, context)
+  assert.deepEqual(yes.rows.map((row) => [row.action, row.details.preferred, row.details.preferredSource]), [['create', true, 'file'], ['create', null, null]])
+  // The command is asked to keep the supplier preferred.
+  let received
+  const commands = { saveItemSupplier: async (_prisma, _item, _id, input) => { received = input; return { relationshipId: 'ISR-NEW' } } }
+  await service(prisma, { commands }).commit('item-suppliers', { fileSha256: 'b'.repeat(64), chunkIndex: 0, rows: [{ rowNumber: 2, values: { sku: 'VALVE-100', supplierCode: 'SUP-001', preferred: '' } }] }, context)
+  assert.equal(received.preferred, true)
+  // A link preferring another supplier still stops the row.
+  prisma.data.runtimeRecord.push({ id: 'ISR-5', tenantId: TENANT, namespace: 'master-data.item-suppliers', recordKey: 'ITEM-1::SUP-5', payload: { itemId: 'ITEM-1', supplierId: 'SUP-5', preferred: true } })
+  const conflicting = await service(prisma).preview('item-suppliers', { fileName: 'l.csv', contentBase64: csv(['SKU,Supplier code', 'VALVE-100,SUP-001']) }, context)
+  assert.deepEqual(codes(conflicting.rows[0]), ['PREFERRED_EXISTS'])
+})
+
+test('an inactive warehouse the importer cannot operate is reported as out of scope', async () => {
+  const prisma = fakePrisma()
+  prisma.data.warehouse.push({ id: 'WH-N', tenantId: TENANT, code: 'NORTH', name: 'North', status: 'inactive' })
+  const result = await service(prisma).preview('opening-stock', { fileName: 'o.csv', contentBase64: csv(['SKU,Warehouse code,Location,Quantity', 'VALVE-100,NORTH,A-01,1']) }, context)
+  assert.deepEqual([codes(result.rows[0]), result.rows[0].details.warehouseName], [['WAREHOUSE_SCOPE_DENIED'], null])
 })

@@ -23,7 +23,7 @@ type PreviewRow = {
   action: "create" | "skip_existing" | "error";
   issues: Issue[];
   values: Record<string, string>;
-  details?: Record<string, string | null>;
+  details?: Record<string, string | boolean | null>;
   existing?: Existing;
 };
 type WarehouseGroup = { warehouseId: string | null; warehouseCode: string; warehouseName: string | null; rows: number; create: number; newStockRecords: number };
@@ -40,7 +40,9 @@ type Preview = {
   chunkSize: number;
   warehouses?: WarehouseGroup[];
 };
-type ResultRow = Existing & { rowNumber: number; key: string; outcome: "created" | "skipped_existing" | "error" | "not_sent"; issues: Issue[] };
+// not_sent: never requested; unknown: in the request that failed, which the
+// server may have written in part or in full.
+type ResultRow = Existing & { rowNumber: number; key: string; outcome: "created" | "skipped_existing" | "error" | "not_sent" | "unknown"; issues: Issue[] };
 type CommitResult = { rows: ResultRow[]; documents: Array<{ id: string; number: string }> };
 
 const TYPES: Array<{ type: DataImportType; label: string }> = [
@@ -169,17 +171,22 @@ export default function DataImportPage() {
     const rows = preview.rows.filter((row) => row.action !== "error").map(({ rowNumber, values }) => ({ rowNumber, values }));
     const size = preview.chunkSize || 200;
     const collected: CommitResult = { rows: [], documents: [] };
+    // The rows of the request in flight: when it fails, the server may still
+    // have written some or all of them.
+    let inFlight = new Set<number>();
     setBusy("importing");
     setError("");
     setProgress({ done: 0, total: rows.length });
     try {
       for (let index = 0; index * size < rows.length; index += 1) {
         const chunk = rows.slice(index * size, (index + 1) * size);
+        inFlight = new Set(chunk.map((row) => row.rowNumber));
         const result = await apiJson<CommitResult>(`/api/data-import/${type}/commit`, {
           method: "POST",
           body: JSON.stringify({ fileSha256: preview.fileSha256, chunkIndex: index, rows: chunk }),
         });
         collected.rows.push(...result.rows);
+        inFlight = new Set();
         for (const document of result.documents || []) if (!collected.documents.some((row) => row.id === document.id)) collected.documents.push(document);
         setProgress({ done: Math.min(rows.length, (index + 1) * size), total: rows.length });
       }
@@ -187,10 +194,15 @@ export default function DataImportPage() {
       const stopped = copy("The import stopped. Rows already imported are kept; check the file again to continue.");
       setError(cause instanceof ApiError ? `${errorText(cause, stopped)} ${stopped}` : stopped);
     } finally {
-      // Rows never sent because the import stopped are listed as such, so
-      // the counts add up to the file and the results file names them.
+      // Rows with no answer because the import stopped are listed, so the
+      // counts add up to the file and the results file names them: unknown
+      // for the request that failed, not sent for the ones never made.
       const answered = new Set(collected.rows.map((row) => row.rowNumber));
-      for (const row of rows) if (!answered.has(row.rowNumber)) collected.rows.push({ rowNumber: row.rowNumber, key: preview.rows.find((entry) => entry.rowNumber === row.rowNumber)?.key || "", outcome: "not_sent", issues: [] });
+      for (const row of rows) {
+        if (answered.has(row.rowNumber)) continue;
+        const key = preview.rows.find((entry) => entry.rowNumber === row.rowNumber)?.key || "";
+        collected.rows.push({ rowNumber: row.rowNumber, key, outcome: inFlight.has(row.rowNumber) ? "unknown" : "not_sent", issues: [] });
+      }
       setResults({ ...collected });
       if (collected.rows.some((row) => row.issues.some((issue) => RETRY_CODES.has(issue.code)))) setNotice(copy("Some rows hit a conflict with another change. Check the file again and import it to finish them."));
       setBusy("");
@@ -198,14 +210,18 @@ export default function DataImportPage() {
   };
 
   const actionLabel = (row: PreviewRow) => (row.action === "create" ? copy("Create") : row.action === "skip_existing" ? copy("Skipped — already exists") : copy("Error"));
-  const outcomeLabel = (row: ResultRow) => (row.outcome === "created" ? copy("Created") : row.outcome === "skipped_existing" ? copy("Skipped — already exists") : row.outcome === "not_sent" ? copy("Not sent: the import stopped") : copy("Not imported"));
+  const outcomeLabel = (row: ResultRow) => (row.outcome === "created" ? copy("Created")
+    : row.outcome === "skipped_existing" ? copy("Skipped — already exists")
+    : row.outcome === "not_sent" ? copy("Not sent: the import stopped")
+    : row.outcome === "unknown" ? copy("Unknown: the import stopped while these rows were being sent; check the file again")
+    : copy("Not imported"));
   const existingNote = (existing?: Existing) => {
     if (!existing) return "";
     if (existing.reason === "IN_OPENING_DRAFT" && existing.document) return copy("Already in draft {number}", { number: existing.document.number });
     if (existing.reason === "STOCK_RECORD_HAS_STOCK") return copy("This location already holds stock.");
     return existing.entity?.label || "";
   };
-  const currencyNote = (details?: Record<string, string | null>) => {
+  const currencyNote = (details?: Record<string, string | boolean | null>) => {
     if (!details || !("currency" in details)) return "";
     if (!details.currency) return copy("Not recorded");
     const source = details.currencySource === "workspace" ? copy("Workspace currency") : details.currencySource === "supplier" ? copy("Supplier's default currency") : copy("From the file");
@@ -330,6 +346,7 @@ export default function DataImportPage() {
                     <td className="px-3 py-2">
                       <Chip label={actionLabel(row)} color={row.action === "error" ? A.red : row.action === "create" ? A.green : A.gray1} bg={row.action === "error" ? "#fff1f0" : row.action === "create" ? "#edf9f2" : "#f4f5f7"} />
                       {row.existing ? <div className="mt-1 text-slate-500">{existingNote(row.existing)}</div> : null}
+                      {row.action === "create" && row.details?.preferredSource === "item" ? <div className="mt-1 text-slate-500">{copy("Stays the item's preferred supplier")}</div> : null}
                     </td>
                     {opening ? (
                       <>
@@ -371,6 +388,11 @@ export default function DataImportPage() {
               error: results.rows.filter((row) => row.outcome === "error").length + preview.counts.error,
             })}
           </p>
+          {results.rows.some((row) => row.outcome === "unknown") ? (
+            <p className="text-xs text-amber-700" data-testid="data-import-unknown">
+              {copy("{n} rows may or may not have been imported: the import stopped while they were being sent. Check the file again to see which already exist.", { n: results.rows.filter((row) => row.outcome === "unknown").length })}
+            </p>
+          ) : null}
           {results.rows.some((row) => row.outcome === "not_sent") ? (
             <p className="text-xs text-amber-700" data-testid="data-import-not-sent">
               {copy("{n} rows were not sent because the import stopped. Check the file again and import it to send them.", { n: results.rows.filter((row) => row.outcome === "not_sent").length })}

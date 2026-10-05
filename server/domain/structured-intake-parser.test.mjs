@@ -119,3 +119,26 @@ test("row numbers count blank lines and rows, and an empty header is located", a
   }
   await assert.rejects(() => parseXlsxArtifact(bytes, { maximumUncompressedBytes: 1000 }), error => error.code === "INTAKE_XLSX_ZIP_BOMB");
 });
+
+test("XLSX parser reads the sheet part the relationships name and checks every part it reads", async () => {
+  // The archive helpers are on the CommonJS default export.
+  const { CFB } = XLSX.default;
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([["SKU", "Unit"], ["A-1", "EA"]]), "Items");
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([["Note"], ["x"]]), "Notes");
+  const archive = CFB.read(XLSX.write(book, { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
+  const part = name => archive.FileIndex[archive.FullPaths.indexOf(`Root Entry/${name}`)];
+  // The Notes sheet moves to data.xml and declares the whole Excel grid.
+  const notes = Buffer.from(part("xl/worksheets/sheet2.xml").content).toString("utf8").replace(/<dimension ref="[^"]*"/, "<dimension ref=\"A1:XFD1048576\"");
+  CFB.utils.cfb_del(archive, "/xl/worksheets/sheet2.xml");
+  CFB.utils.cfb_add(archive, "/xl/worksheets/data.xml", Buffer.from(notes));
+  const rels = part("xl/_rels/workbook.xml.rels");
+  rels.content = Buffer.from(Buffer.from(rels.content).toString("utf8").replace("worksheets/sheet2.xml", "worksheets/data.xml"));
+  rels.size = rels.content.length;
+  const bytes = Buffer.from(CFB.write(archive, { fileType: "zip", type: "buffer" }));
+  // Read alone, Items is not held up by the other sheet.
+  assert.deepEqual((await parseXlsxArtifact(bytes, { sheetName: "Items", readSelectedSheetOnly: true })).records.map(record => record.source.SKU), ["A-1"]);
+  await assert.rejects(() => parseXlsxArtifact(bytes, { sheetName: "Notes", readSelectedSheetOnly: true }), error => error.code === "INTAKE_XLSX_ZIP_BOMB");
+  // Reading the whole workbook reads Notes too, so the file is refused.
+  await assert.rejects(() => parseXlsxArtifact(bytes, { sheetName: "Items" }), error => error.code === "INTAKE_XLSX_ZIP_BOMB");
+});

@@ -305,6 +305,17 @@ function checkItemSupplier(values, lookups) {
   if (!text(values.supplierCode)) issues.push(issue('supplierCode', 'CODE_REQUIRED', 'Enter a supplier code.'), ...toColumnIssues('item-suppliers', fieldIssues.filter((row) => row.field !== 'supplierId')))
   else issues.push(...toColumnIssues('item-suppliers', fieldIssues))
   const existing = item && supplier ? lookups.itemSupplierKeys.get(`${item.id}::${supplier.id}`) : null
+  // An item's preferred supplier can be set on the item with no link. Saving
+  // a link for that supplier that is not preferred would clear it, which the
+  // import never does: a blank cell keeps it preferred, and No is refused.
+  const itemPrefers = !existing && Boolean(supplier) && text(item?.preferredSupplierId) === supplier.id
+  let preferredSource = input.preferred === undefined ? null : 'file'
+  if (itemPrefers && input.preferred === undefined) {
+    input.preferred = true
+    preferredSource = 'item'
+  } else if (itemPrefers && input.preferred === false) {
+    issues.push(issue('preferred', 'PREFERRED_WOULD_CLEAR', `${supplier.code} is this item's preferred supplier. Leave Preferred blank or write Yes, or change the preferred supplier on the item.`, { supplierCode: supplier.code }))
+  }
   // Saving a preferred link moves the item's preferred supplier, which the
   // import never changes: the person does that on the item.
   const current = item ? (lookups.preferredSuppliersByItemId.get(item.id) || []).find((entry) => entry.id !== supplier?.id) : null
@@ -315,7 +326,7 @@ function checkItemSupplier(values, lookups) {
     input,
     itemRef: item?.id || item?.sku || '',
     issues,
-    details: { currency: checked.currency || null, currencySource: currency ? 'file' : 'supplier' },
+    details: { currency: checked.currency || null, currencySource: currency ? 'file' : 'supplier', preferred: input.preferred ?? null, preferredSource },
     existing: existing ? { entity: { type: 'item_supplier', id: existing.id, label: `${item.sku} · ${supplier.code}` } } : null,
   }
 }
@@ -332,8 +343,8 @@ function checkOpeningStock(values, lookups, actor) {
   const denied = Boolean(warehouse) && !hasWarehouseAccess(actor, [warehouse.id], 'operate')
   if (!code) issues.push(issue('warehouseCode', 'WAREHOUSE_REQUIRED', 'Enter a warehouse code.'))
   else if (!warehouse) issues.push(issue('warehouseCode', 'WAREHOUSE_NOT_FOUND', 'No warehouse has this code.'))
-  else if (text(warehouse.status || 'active') !== 'active') issues.push(issue('warehouseCode', 'WAREHOUSE_INACTIVE', 'This warehouse is not active.'))
   else if (denied) issues.push(issue('warehouseCode', 'WAREHOUSE_SCOPE_DENIED', 'You cannot record stock in this warehouse. A workspace administrator can grant access.'))
+  else if (text(warehouse.status || 'active') !== 'active') issues.push(issue('warehouseCode', 'WAREHOUSE_INACTIVE', 'This warehouse is not active.'))
   const location = text(values.location)
   if (!location) issues.push(issue('location', 'LOCATION_REQUIRED', 'Enter a location.'))
   else if (location.length > 120) issues.push(issue('location', 'LOCATION_TOO_LONG', 'A location has at most 120 characters.'))
@@ -348,8 +359,8 @@ function checkOpeningStock(values, lookups, actor) {
   // Nothing is ever converted: a unit, when given, must be the item's own.
   const unit = text(values.unit)
   if (unit && item && unit !== text(item.unit)) issues.push(issue('unit', 'UNIT_MISMATCH', `This item is kept in ${text(item.unit) || 'no unit'}. Convert the quantity before importing.`, { unit: text(item.unit) }))
-  // Nothing about the stock in a warehouse the person cannot operate is
-  // looked up or shown.
+  // Nothing about a warehouse the person cannot operate, or the stock in
+  // it, is looked up or shown beyond the code in the file.
   const key = item && warehouse && location && !denied ? `${item.sku}|${warehouse.id}|${locationKey(location)}` : ''
   const balance = key ? lookups.balancesByKey.get(key) : null
   const draft = key ? lookups.openingDraftsByKey.get(key) : null
@@ -363,9 +374,9 @@ function checkOpeningStock(values, lookups, actor) {
     warehouseId: warehouse?.id || '',
     details: {
       unit: text(item?.unit) || null,
-      warehouseId: warehouse?.id || null,
-      warehouseCode: warehouse?.code || code,
-      warehouseName: warehouse?.name || null,
+      warehouseId: denied ? null : warehouse?.id || null,
+      warehouseCode: denied ? code : warehouse?.code || code,
+      warehouseName: denied ? null : warehouse?.name || null,
       location,
       quantity: quantity ?? null,
       stockRecord: denied || !item || !warehouse ? null : balance ? 'existing' : 'new',
@@ -459,11 +470,18 @@ export function createDataImportService({
         const records = await prisma.runtimeRecord.findMany({ where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE, recordKey: { in: keys } }, select: { id: true, recordKey: true } })
         for (const record of records) lookups.itemSupplierKeys.set(record.recordKey, record)
       }
-      // The current preferred suppliers of each item a row marks preferred:
-      // the item's own and any link marked preferred, all of which saving
-      // a preferred link would change.
-      const preferredItems = [...new Set(rows.filter((row) => DATA_IMPORT_YES.includes(text(row.values.preferred).toLocaleLowerCase('en-US')))
-        .map((row) => lookups.itemsBySku.get(text(row.values.sku))?.id).filter(Boolean))]
+      // The current preferred suppliers of each item a row makes preferred
+      // (marked Yes, or blank for the item's own preferred supplier): the
+      // item's own and any link marked preferred, all of which saving a
+      // preferred link would change.
+      const makesPreferred = (row) => {
+        const cell = text(row.values.preferred).toLocaleLowerCase('en-US')
+        if (DATA_IMPORT_YES.includes(cell)) return true
+        const item = lookups.itemsBySku.get(text(row.values.sku))
+        const supplier = lookups.suppliersByCode.get(text(row.values.supplierCode))
+        return !cell && Boolean(item && supplier) && text(item.preferredSupplierId) === supplier.id
+      }
+      const preferredItems = [...new Set(rows.filter(makesPreferred).map((row) => lookups.itemsBySku.get(text(row.values.sku))?.id).filter(Boolean))]
       if (preferredItems.length) {
         const preferredIds = new Map(preferredItems.map((id) => [id, new Set()]))
         for (const item of lookups.itemsBySku.values()) if (preferredIds.has(item.id) && text(item.preferredSupplierId)) preferredIds.get(item.id).add(text(item.preferredSupplierId))
@@ -595,12 +613,14 @@ export function createDataImportService({
     }
     if (type === 'opening-stock') {
       // Grouped by warehouse with row counts only: quantities of different
-      // items are never added together.
+      // items are never added together. A warehouse that is not found, or
+      // that the person cannot operate, is grouped by the code in the file.
       const groups = new Map()
       for (const row of previewRows) {
         const id = row.details?.warehouseId || ''
-        if (!groups.has(id)) groups.set(id, { warehouseId: id || null, warehouseCode: row.details?.warehouseCode || '', warehouseName: row.details?.warehouseName || null, rows: 0, create: 0, newStockRecords: 0 })
-        const group = groups.get(id)
+        const groupKey = id ? `id:${id}` : `code:${row.details?.warehouseCode || ''}`
+        if (!groups.has(groupKey)) groups.set(groupKey, { warehouseId: id || null, warehouseCode: row.details?.warehouseCode || '', warehouseName: row.details?.warehouseName || null, rows: 0, create: 0, newStockRecords: 0 })
+        const group = groups.get(groupKey)
         group.rows += 1
         if (row.action === 'create') { group.create += 1; if (row.details?.stockRecord === 'new') group.newStockRecords += 1 }
       }
