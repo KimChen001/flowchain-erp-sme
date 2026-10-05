@@ -138,6 +138,40 @@ test('focus narrows an answer to the record and the records tied to it', async (
   assert.deepEqual(none.keyEvidence, [])
 })
 
+test('a narrowed answer names a supplier by its name and an item by its SKU in its title', async () => {
+  const { answer } = await answers()
+  const supplier = { entityType: 'supplier', entityId: 'SUP-001' }
+  assert.equal(answer('today_priorities', 'en-US', { focus: supplier }).conclusion.title, 'Why Acme Components needs attention')
+  assert.equal(answer('today_priorities', 'zh-CN', { focus: supplier }).conclusion.title, 'Acme Components 需要关注的原因')
+  assert.match(answer('highest_risk_items', 'en-US', { focus: supplier }).conclusion.title, /^Risk on Acme Components: /)
+  for (const skillId of ['records_needing_data', 'prepare_action_draft']) {
+    assert.doesNotMatch(answer(skillId, 'en-US', { focus: supplier }).conclusion.title, /SUP-001/, skillId)
+  }
+  // The answer's records keep their ids; only the title names the supplier.
+  const today = answer('today_priorities', 'en-US', { focus: supplier })
+  assert.ok(today.keyEvidence.some((item) => item.entityId === 'PO-001'))
+  assert.equal(answer('today_priorities', 'en-US', { focus: { entityType: 'item', entityId: 'ITEM-001' } }).conclusion.title, 'Why LDM-001 needs attention')
+})
+
+test('why a supplier needs attention is said about that supplier, with the supplier answer\'s counts', async () => {
+  const { answer } = await answers()
+  const supplier = { entityType: 'supplier', entityId: 'SUP-001' }
+  const why = answer('today_priorities', 'en-US', { focus: supplier })
+  assert.equal(why.conclusion.summary, 'Acme Components has 2 overdue purchase orders, 1 purchase order due within 7 days, 1 receipt with rejected quantities, 1 receipt not posted and 1 invoice variance. Most urgent: PO-001. 4 days past the promised date; 30 pcs still to receive from Acme Components.')
+  // Not the workspace's totals, which say nothing about this supplier.
+  assert.doesNotMatch(why.conclusion.summary, /open purchase orders|Committed/)
+  // The same records the supplier answer counted.
+  const counted = answer('supplier_attention', 'en-US', { focus: supplier }).conclusion.summary.match(/^In all: (.+?)\./)[1]
+  assert.ok(why.conclusion.summary.startsWith(`Acme Components has ${counted}.`))
+  assert.equal(answer('today_priorities', 'zh-CN', { focus: supplier }).conclusion.summary, 'Acme Components 有 2 张逾期采购订单、1 张 7 天内到期的采购订单、1 张有拒收的收货单、1 张未过账的收货单和 1 张有差异的发票。最急的是 PO-001：已超过承诺日期 4 天；Acme Components 仍有 30 pcs 未交。')
+  // A supplier with nothing open gets the title alone.
+  const quiet = answer('today_priorities', 'en-US', { focus: { entityType: 'supplier', entityId: 'SUP-002' } })
+  assert.equal(quiet.conclusion.title, 'Summit Packaging has no open issue in the workspace data')
+  assert.equal(quiet.conclusion.summary, '')
+  // A purchase order's answer keeps the workspace summary.
+  assert.match(answer('today_priorities', 'en-US', { focus: { entityType: 'purchase_order', entityId: 'PO-001' } }).conclusion.summary, /open purchase orders/)
+})
+
 test('the refusal offers a draft and never acts', async () => {
   const { answer } = await answers()
   const refusal = answer('capability_overview', 'en-US', { refusal: true })

@@ -1,5 +1,5 @@
 import { aiSkillCountText, aiSkillList, aiSkillText } from './ai-skill-copy.mjs'
-import { AI_SKILL_MODULES, aiSkillFormatter, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
+import { AI_SKILL_MODULES, aiSkillFocusLabel, aiSkillFormatter, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 
 const TOP = 8
 const SOURCE_AREA = { items: 'master_data', inventory: 'inventory', purchase_orders: 'purchasing', purchase_requests: 'purchasing', supplier_invoices: 'finance', receipts: 'receiving' }
@@ -23,7 +23,7 @@ export function presentRecordsNeedingData(result, facts, { skill, language, quer
   return presentAiSkillAnswer({
     skill, facts, language, query,
     title: result.focus
-      ? aiSkillText(result.total ? 'records.focus_title' : 'records.focus_none', language, { id: result.focus.entityId })
+      ? aiSkillText(result.total ? 'records.focus_title' : 'records.focus_none', language, { id: aiSkillFocusLabel(result.focus, facts) })
       : aiSkillCountText('records.title', result.total, language, { count: fmt.number(result.total) }),
     summary: aiSkillText('records.summary', language, { checked: fmt.number(result.checked), sources: fmt.number(result.sources) }),
     severity: result.total ? 'warning' : 'success',

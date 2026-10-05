@@ -25,6 +25,25 @@ export const AI_SKILL_MODULES = Object.freeze({
 })
 const SOURCE_OF = { purchase_order: 'purchase_orders', item: 'inventory', supplier: 'purchase_orders', supplier_invoice: 'supplier_invoices', purchase_request: 'purchase_requests', rfq: 'rfqs', receiving_doc: 'receipts' }
 
+// How a title names the record an answer is narrowed to, as the answers list
+// it: a supplier by its name, an item by its SKU, any other record by its id.
+// A supplier the supplier list does not hold is named from its orders,
+// invoices or receipts; the id stays when nothing names the record.
+export function aiSkillFocusLabel(focus, facts) {
+  const id = String(focus?.entityId ?? '').trim()
+  if (focus?.entityType === 'supplier') {
+    const supplier = array(facts?.suppliers).find((row) => row.id === id || row.code === id)
+    if (supplier) return supplier.name || supplier.code || id
+    const rows = [...array(facts?.purchaseOrders?.rows), ...array(facts?.purchaseOrders?.index), ...array(facts?.invoices?.variances), ...array(facts?.receipts?.rejected), ...array(facts?.receipts?.unposted)]
+    return rows.find((row) => row.supplierId === id && row.supplier)?.supplier || id
+  }
+  if (focus?.entityType === 'item') {
+    const item = [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)].find((row) => row.itemId === id || row.sku === id)
+    return item?.sku || id
+  }
+  return id
+}
+
 export function aiSkillFormatter(facts, language) {
   const locale = facts.locale || 'en-US'
   const numberFormat = new Intl.NumberFormat(locale, { maximumFractionDigits: 4 })

@@ -84,6 +84,13 @@ question words, particles and pronouns), not by the names it carries: "How many
 Chinese. Supplier, item and record names are shown as stored. The original
 `answerLanguage` from the client is kept as `interfaceLanguage`.
 
+Checked in both languages in the browser (product recovery suite): the
+assistant's scope line, input placeholder and answer on a purchase order's
+page, its refusal of an instruction to act, the action draft review dialog's
+field labels, the purchase request form an assistant draft prefills (banner
+and source labels), and the sales order evidence graph. Follow-ups and
+compound answers are checked in the browser in English only.
+
 Checked in both languages: the workspace skill answers (every skill, both
 languages, the same ids, counts and amounts) and the business query labels the
 assistant evaluation reaches. Knowledge answers depend on the configured provider

@@ -85,6 +85,19 @@ function partsText(counts, fmt, language) {
   return aiSkillList(OPEN_WORK.filter((type) => counts[type]).map((type) => aiSkillCountText(`suppliers.part.${type}`, counts[type], language, { count: fmt.number(counts[type]) })), language)
 }
 
+// What one supplier has open, counted as the supplier answer counts it, so a
+// "Why?" about that supplier repeats its numbers: "2 overdue purchase orders
+// and 1 receipt with rejected quantities". Empty when nothing of this kind is open.
+// A ranked record counts its other signals too (`also`): a receipt with rejected
+// quantities that is not posted yet is one of each, as the supplier answer says.
+export function aiSkillSupplierOpenWork(items, facts, language) {
+  const counts = {}
+  for (const item of items) {
+    for (const type of new Set([item.type, ...array(item.also)])) if (OPEN_WORK.includes(type)) counts[type] = (counts[type] || 0) + 1
+  }
+  return partsText(counts, aiSkillFormatter(facts, language), language)
+}
+
 function activityText(row, fmt, language) {
   const parts = ['orders', 'receipts', 'invoices'].filter((kind) => row[kind]).map((kind) => aiSkillCountText(`suppliers.activity.${kind}`, row[kind], language, { count: fmt.number(row[kind]) }))
   return aiSkillText('suppliers.activity.entry', language, { supplier: row.name, parts: aiSkillList(parts, language) })

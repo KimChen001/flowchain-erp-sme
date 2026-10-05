@@ -134,6 +134,7 @@ const entries = {
   'today.title_none': ['Nothing needs attention today (as of {date})', '今天没有需要优先处理的事项（截至 {date}）'],
   'today.focus_title': ['Why {id} needs attention', '{id} 需要关注的原因'],
   'today.focus_none': ['{id} has no open issue in the workspace data', '工作区数据中 {id} 没有待处理问题'],
+  'today.focus_supplier_work': ['{supplier} has {parts}.', '{supplier} 有 {parts}。'],
 
   // highest_risk_items
   'risk.title': ['Highest risk: {first}', '风险最高：{first}'],

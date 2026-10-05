@@ -71,6 +71,7 @@ const ZH: Record<string, string> = {
   "This draft still needs human review. After confirmation only safe internal records within the allowed scope are kept.": "该草稿仍需人工复核；用户确认后也只保留允许范围内的安全内部记录。",
   "Audit preview:": "审计预览：", "Draft preview prepared. No business record was created or submitted.": "草稿预览已生成；未创建或提交业务记录。",
   "No draft preview": "暂无草稿预览",
+  "Purchase order": "采购订单", "Invoice": "发票", "Open lines": "未到货明细", "Draft language": "草稿语言",
 };
 const EN = Object.fromEntries(Object.entries(ZH).map(([english, chinese]) => [chinese, english]));
 type Tr = (value: string, params?: Record<string, string>) => string;
@@ -115,6 +116,8 @@ const PAYLOAD_LABELS: Record<string, string> = {
   relatedDocumentType: "Related document type", relatedDocumentId: "Related document", followupReason: "Follow-up reason",
   messageDraft: "Message draft", message: "Message draft", severity: "Priority", urgency: "Urgency", dueDate: "Due date",
   availableQuantity: "Available stock", reorderPoint: "Reorder point", safetyStock: "Safety stock",
+  poId: "Purchase order", invoiceId: "Invoice",
+  lines: "Open lines", language: "Draft language",
 };
 
 function payloadLabel(key: string, tr: Tr) {

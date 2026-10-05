@@ -1,5 +1,5 @@
 import { aiSkillCountText, aiSkillList, aiSkillText } from './ai-skill-copy.mjs'
-import { AI_SKILL_MODULES, aiSkillFormatter, aiSkillNavigation, aiSkillSignalReason, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
+import { AI_SKILL_MODULES, aiSkillFocusLabel, aiSkillFormatter, aiSkillNavigation, aiSkillSignalReason, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
 import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
 
@@ -103,7 +103,7 @@ export function presentPrepareActionDraft(result, facts, { skill, language, quer
   const extraLimitations = result.canDraft ? [] : [{ code: 'draft_permission', label: aiSkillText('limitation.draft_permission.label', language), description: aiSkillText('draft.no_permission', language), severity: 'warning', missingData: [] }]
   return presentAiSkillAnswer({
     skill, facts, language, query,
-    title: !result.canDraft ? aiSkillText('draft.title_blocked', language) : result.focus ? focusTitle(result.focus.entityId, reviewCards.length, fmt, language) : aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }),
+    title: !result.canDraft ? aiSkillText('draft.title_blocked', language) : result.focus ? focusTitle(aiSkillFocusLabel(result.focus, facts), reviewCards.length, fmt, language) : aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }),
     summary: aiSkillText(!result.canDraft ? 'draft.no_permission' : reviewCards.length ? 'draft.summary' : 'draft.none_summary', language),
     severity: result.items[0]?.severity || 'info',
     items: result.items,
