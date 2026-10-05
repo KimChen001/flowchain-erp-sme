@@ -66,9 +66,24 @@ const movementTypes: Record<string, [string, string]> = {
   quarantine_release_available_in: ["Quarantine release in", "隔离释放入可用"],
 };
 
-export function movementTypeLabel(code: string, language: string): string {
+// Reasons an inventory adjustment movement records, so opening stock does not
+// read the same as a damage or shrinkage write-off.
+const adjustmentReasons: Record<string, [string, string]> = {
+  opening_balance: ["Opening stock", "期初库存"],
+  found_stock: ["Found stock", "盘盈"],
+  damage: ["Damage", "损坏"],
+  shrinkage: ["Shrinkage", "损耗"],
+  data_correction: ["Data correction", "数据更正"],
+  quality_disposition: ["Quality disposition", "质量处置"],
+  other: ["Other", "其他"],
+};
+
+export function movementTypeLabel(code: string, language: string, reason?: string | null): string {
+  const index = language === "en-US" ? 0 : 1;
   const pair = movementTypes[String(code || "").trim()];
-  return pair ? pair[language === "en-US" ? 0 : 1] : language === "en-US" ? "Inventory movement" : "库存移动";
+  const label = pair ? pair[index] : language === "en-US" ? "Inventory movement" : "库存移动";
+  const reasonPair = String(code || "").trim() === "inventory_adjustment" ? adjustmentReasons[String(reason || "").trim()] : undefined;
+  return reasonPair ? `${label} · ${reasonPair[index]}` : label;
 }
 
 export function statusCodeLabel(code: string, language: string): string | undefined {

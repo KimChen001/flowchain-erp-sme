@@ -143,6 +143,22 @@ test("inventory operations workbench closes transfer, count, and adjustment thro
     page.getByTestId("operation-movement-inventory_adjustment_reversal"),
   ).toBeVisible();
 
+  // Found stock: the default quantity adds, a key that already has a stock
+  // record points to it, and switching back to Damage restores the picker
+  // and a decrease.
+  await page.goto("/app/inventory/adjustments/new");
+  await expect(page.getByLabel("调整数量 1")).toHaveValue("-1.0000");
+  await page.getByLabel("调整原因").selectOption({ label: "盘盈" });
+  await expect(page.getByLabel("调整数量 1")).toHaveValue("1.0000");
+  await page.getByTestId("adjustment-line-mode-1").selectOption("new");
+  await page.getByLabel("调整物料 1").selectOption("inventory-browser-item");
+  await page.getByLabel("调整仓库 1").selectOption("inventory-browser-b");
+  await page.getByLabel("调整库位 1").fill("B-01");
+  await expect(page.getByTestId("adjustment-line-existing-1")).toBeVisible();
+  await page.getByLabel("调整原因").selectOption({ label: "损坏" });
+  await expect(page.getByLabel("调整余额 1")).toBeVisible();
+  await expect(page.getByLabel("调整数量 1")).toHaveValue("-1.0000");
+
   // Opening stock for a location with no stock record: posting creates it.
   await page.goto("/app/inventory/adjustments/new");
   await page.getByLabel("调整原因").selectOption({ label: "期初库存" });

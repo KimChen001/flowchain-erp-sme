@@ -645,13 +645,17 @@ function AdjustmentCreate({ entry }: { entry: Entry; refresh: () => void }) {
             : newRecordReasons.has(value)
               ? row.mode
               : "existing";
+        // An untouched default quantity follows the reason: opening and found
+        // stock add, every other reason starts as a decrease.
+        const untouched =
+          row.adjustmentQuantity === "1.0000" ||
+          row.adjustmentQuantity === "-1.0000";
         return {
           ...row,
           mode,
-          adjustmentQuantity:
-            value === "opening_balance" && row.adjustmentQuantity === "-1.0000"
-              ? "1.0000"
-              : row.adjustmentQuantity,
+          adjustmentQuantity: untouched
+            ? blankAdjustmentLine(value).adjustmentQuantity
+            : row.adjustmentQuantity,
         };
       }),
     );
@@ -1149,7 +1153,8 @@ function OperationDetail({
                     : line.location}
                   {kind === "adjustment" &&
                     !line.inventoryBalanceId &&
-                    document.postingStatus === "unposted" && (
+                    document.postingStatus === "unposted" &&
+                    document.workflowStatus !== "cancelled" && (
                       <span className="ml-2" data-testid="adjustment-line-new-record">
                         <Chip
                           label={copy("New stock record")}

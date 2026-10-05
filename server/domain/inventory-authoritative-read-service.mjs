@@ -180,6 +180,8 @@ function movementModel(row) {
     locationKey: row.locationKey,
     movementType: row.movementType,
     movementLabel: row.movementLabel || row.movementType,
+    // Inventory adjustments record their reason code here, e.g. opening_balance.
+    reason: row.reason || null,
     quantityIn: decimal(row.quantityIn),
     quantityOut: decimal(row.quantityOut),
     adjustmentQty: decimal(row.adjustmentQty),
