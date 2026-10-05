@@ -3,6 +3,7 @@ import { selectMasterData } from '../domain/master-data-selectors.mjs'
 import { maskReferencePrice, maskSupplier, masterDataReadAccess } from '../domain/master-data-read-access.mjs'
 import { PilotIdentityError, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
+import { createSupplierInsightsReadService } from '../domain/supplier-insights.mjs'
 
 // Writes are decided by Roles & permissions, never by the legacy User.role, so
 // an administrator who narrows someone's roles narrows what they can change.
@@ -237,7 +238,81 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/suppliers') {
-    send(res, 200, { suppliers: await suppliersFor(await repository.listSuppliers(tenantScope({ query:url.searchParams.get('query')||'', status:url.searchParams.get('status')||'', category:url.searchParams.get('category')||'' }))) })
+    // Search, status and category narrow every tab; tier (1, 2, 3, none) and
+    // owner (a user id, me, none) pick the tab. The counts cover each tab.
+    const filters = tenantScope({
+      query: url.searchParams.get('query') || '',
+      status: url.searchParams.get('status') || '',
+      category: url.searchParams.get('category') || '',
+      tier: url.searchParams.get('tier') || '',
+      owner: url.searchParams.get('owner') || '',
+      currentUserId: ctx.identity?.userId || '',
+    })
+    const [suppliers, counts] = await Promise.all([
+      repository.listSuppliers(filters),
+      typeof repository.supplierTabCounts === 'function' ? repository.supplierTabCounts(filters) : null,
+    ])
+    send(res, 200, { suppliers: await suppliersFor(suppliers), ...(counts ? { counts } : {}) })
+    return true
+  }
+
+  // Every supplier's list metrics and tier suggestion, for the signed-in
+  // reader: what they may not see comes back null. Read once per list load,
+  // not per search.
+  if (req.method === 'GET' && url.pathname === '/api/master-data/supplier-insights') {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read supplier metrics.' })
+      return true
+    }
+    try {
+      const service = ctx.supplierInsightsService || createSupplierInsightsReadService({
+        prisma: await getPrismaClient(ctx.env || process.env),
+        listPurchaseOrders: ctx.repositories?.procurementRuntime?.listForReport,
+      })
+      send(res, 200, await service.read(ctx))
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'SUPPLIER_INSIGHTS_UNAVAILABLE', message: error.status ? error.message : 'Supplier metrics are unavailable. Try again.' })
+    }
+    return true
+  }
+
+  // One supplier's purchase records and open issues for its detail page, with
+  // the reader's access (supplier-insights.mjs readActivity).
+  const supplierActivityMatch = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/activity$/)
+  if (req.method === 'GET' && supplierActivityMatch) {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read supplier activity.' })
+      return true
+    }
+    try {
+      const service = ctx.supplierInsightsService || createSupplierInsightsReadService({
+        prisma: await getPrismaClient(ctx.env || process.env),
+        listPurchaseOrders: ctx.repositories?.procurementRuntime?.listForReport,
+      })
+      send(res, 200, await service.readActivity(ctx, decodeURIComponent(supplierActivityMatch[1])))
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'SUPPLIER_ACTIVITY_UNAVAILABLE', message: error.status ? error.message : 'Supplier activity is unavailable. Try again.' })
+    }
+    return true
+  }
+
+  // The people a supplier can be assigned to. Only those who may change a
+  // supplier pick an owner, so listing them needs no user administration.
+  if (req.method === 'GET' && url.pathname === '/api/master-data/supplier-owners') {
+    if (!(await authorizeWrite('supplier-master'))) return true
+    send(res, 200, { owners: await repository.listSupplierOwners(tenantScope()) })
+    return true
+  }
+
+  const supplierTierMatch = url.pathname.match(/^\/api\/master-data\/suppliers\/([^/]+)\/(tier|owner)$/)
+  if (req.method === 'PATCH' && supplierTierMatch) {
+    if (!(await authorizeWrite('supplier-master'))) return true
+    const change = supplierTierMatch[2] === 'tier' ? repository.setSupplierTier : repository.setSupplierOwner
+    try {
+      send(res, 200, { supplier: await supplierFor(await change(supplierTierMatch[1], await readBody(req), actor(), tenantScope())) })
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
+    }
     return true
   }
 
@@ -280,7 +355,8 @@ export async function handleMasterDataRoute(ctx) {
       send(res, 404, { error: 'Supplier not found' })
       return true
     }
-    send(res, 200, { supplier: await supplierFor(supplier) })
+    const tierHistory = typeof repository.supplierTierHistory === 'function' ? await repository.supplierTierHistory(supplier.id, tenantScope()) : []
+    send(res, 200, { supplier: { ...(await supplierFor(supplier)), tierHistory } })
     return true
   }
 

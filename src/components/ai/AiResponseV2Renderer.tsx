@@ -4,6 +4,7 @@ import { BusinessQueryPresentation } from "./BusinessQueryPresentation";
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import type { ActionDraftPreviewRequest } from "../../modules/action-drafts/ActionDraftReviewShell";
+import { structuredDraftTarget } from "../../modules/action-drafts/structuredDraftHandoff";
 import type { AiResponseV2, AiResponseV2EvidenceItem, AiResponseV2NavigationLink, AiResponseV2ReviewCard, AiResponseV2Section } from "../../domain/ai/response-contract";
 import { isAiCapabilityAnswer, toAiFocusedResponse, type AiFocusedAction } from "../../domain/ai/focused-response";
 import { businessEntityRouteRegistry, type BusinessEntityType } from "../business/businessEntityRoutes";
@@ -76,7 +77,7 @@ function EvidenceLink({ item, children, onNavigate }: { item: AiResponseV2Eviden
 
 function reviewRequest(card: AiResponseV2ReviewCard): ActionDraftPreviewRequest | null {
   if (!card.draftType || !["supplier_followup_draft", "po_followup_draft", "exception_note", "inventory_exception_closure_draft"].includes(card.draftType)) return null;
-  return { type: card.draftType, title: card.draftTitle || card.title, source: "ai_assistant", originEvidence: card.originEvidence || [], payload: { ...(card.payload || {}), reason: card.payload?.reason || card.description || card.allowedNextStep } };
+  return { type: card.draftType, title: card.draftTitle || card.title, source: "ai_assistant", originEvidence: card.originEvidence || [], payload: { ...(card.payload || {}), reason: card.payload?.reason || card.description || card.allowedNextStep } , ...(card.prefill ? { prefill: card.prefill } : {}) };
 }
 
 function NavigationAction({ link, primary = false, onNavigate }: { link: AiResponseV2NavigationLink; primary?: boolean; onNavigate?: Navigate }) {
@@ -92,26 +93,10 @@ function NavigationAction({ link, primary = false, onNavigate }: { link: AiRespo
   return <button type="button" data-testid="ai-business-navigation-action" data-action-kind="view_business_object" data-business-id={link.entityId || ""} className={className} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }} onClick={() => onNavigate(link.moduleId, focusTarget, { returnTo: "ai", entityLabel: link.label, source: "ai", returnContext: link.returnContext })}>{link.label}<ChevronRight size={13} /></button>;
 }
 
-function structuredDraftTarget(card: AiResponseV2ReviewCard) {
-  const payload = card.payload || {};
-  const query = Object.fromEntries(Object.entries({
-    mode: "create",
-    itemId: payload.itemIdOrSku,
-    sku: payload.itemIdOrSku,
-    quantity: payload.quantity,
-    reason: payload.reason,
-    suppliers: Array.isArray(payload.supplierCandidates) ? payload.supplierCandidates.join(",") : payload.supplierCandidates,
-    due: payload.quotationDeadline || payload.requestedDeliveryDate,
-  }).filter(([, value]) => value !== undefined && value !== null && String(value) !== "").map(([key, value]) => [key, String(value)]));
-  if (card.draftType === "rfq_draft") return { moduleId: "procurement:rfq", query };
-  if (card.draftType === "task_draft") return { moduleId: "mobile-operations:tasks", query };
-  return { moduleId: "procurement:requests", query };
-}
-
 function Action({ action, primary, onNavigate, onReviewActionDraft, language }: { action: AiFocusedAction; primary?: boolean; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; language: Language }) {
   if (action.kind === "navigation") return <NavigationAction link={action.link} primary={primary} onNavigate={onNavigate} />;
   if (action.kind === "structured_draft") {
-    const target = structuredDraftTarget(action.card);
+    const target = structuredDraftTarget(action.card.draftType || "", action.card.payload, "ai_assistant");
     if (!onNavigate) return null;
     return <button type="button" onClick={() => onNavigate(target.moduleId, null, { returnTo: "ai", entityLabel: action.label, source: "ai", query: target.query })} data-testid="ai-structured-draft-action" data-action-kind="create_formal_business_draft" className={primary ? "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold"} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{action.label}</button>;
   }

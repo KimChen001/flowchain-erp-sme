@@ -1,6 +1,6 @@
 import { aiSkillCountText, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
-import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
+import { buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 
 // Receipts that need attention: a rejected quantity while the purchase order
 // is still open (the supplier owes a return or a replacement), and goods
@@ -13,7 +13,7 @@ const RECEIVING_SIGNALS = new Set(['grn_rejected_qty', 'grn_received_unposted'])
 
 export function runReceivingIssues(facts) {
   if (!facts?.receipts) return { skillId: 'receiving_issues', hidden: true }
-  const items = rankAiSkillItems(buildAiSkillSignals(facts).filter((item) => RECEIVING_SIGNALS.has(item.type)))
+  const items = rankAiSkillItemsByDate(buildAiSkillSignals(facts).filter((item) => RECEIVING_SIGNALS.has(item.type)))
   return { skillId: 'receiving_issues', items, rejected: array(facts.receipts.rejected).length, unposted: array(facts.receipts.unposted).length }
 }
 

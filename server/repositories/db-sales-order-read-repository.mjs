@@ -1,3 +1,4 @@
+import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
@@ -140,7 +141,8 @@ export function createDbSalesOrderReadRepository({ env = process.env, prisma } =
   async function listOrders(filters = {}) {
     const where = { tenantId: requireTenantId(filters) }
     const db = await client()
-    const search = text(filters.q || filters.search)
+    // Escaped, so "%" or "_" is searched for as itself and does not match every order.
+    const search = escapeLikePattern(text(filters.q || filters.search))
     if (search) where.OR = [
       { id: { contains: search, mode: 'insensitive' } },
       { orderNumber: { contains: search, mode: 'insensitive' } },

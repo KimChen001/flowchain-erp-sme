@@ -70,9 +70,12 @@ function actions(response: AiResponseV2, language: Language) {
   const navigation = (response.navigationLinks || []).filter((link) => Boolean(link.moduleId)).map<AiFocusedAction>((link) => ({ kind: "navigation", label: link.label, link }));
   const drafts = (response.reviewCards || []).map<AiFocusedAction>((card) => {
     const structured = ["purchase_request_draft", "rfq_draft", "task_draft"].includes(card.draftType || "");
+    // An order card names its SKU ("Open request: 12 pcs of LDM-001"), so
+    // several of them can be told apart.
+    const named = typeof card.autoOpen === "boolean" && card.allowedNextStep;
     return {
       kind: structured ? "structured_draft" : "text_draft",
-      label: structured
+      label: named ? card.allowedNextStep : structured
         ? card.draftType === "rfq_draft" ? focusedCopy[language].rfqDraft : card.draftType === "task_draft" ? focusedCopy[language].taskDraft : focusedCopy[language].prDraft
         : card.allowedNextStep || focusedCopy[language].textDraft,
       card,

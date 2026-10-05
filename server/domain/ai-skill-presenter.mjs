@@ -113,7 +113,21 @@ export function aiSkillSignalReason(item, facts, language) {
     supplier_exposure: { count: fmt.number(data.count), supplier: item.label, issues: aiSkillList(array(data.types).map((type) => aiSkillText(`signal.${type}.status`, language).toLowerCase()), language) },
   }[item.type] || {}
   const reason = aiSkillText(item.type === 'invoice_variance' && data.variance === null ? 'signal.invoice_variance.reason_hidden' : `signal.${item.type}.reason`, language, values)
-  return data.covered && item.type.startsWith('stock_') ? aiSkillSentences([reason, aiSkillText('signal.covered', language)], language) : reason
+  return aiSkillSentences([reason, aiSkillWhenText(item, facts, language), data.covered && item.type.startsWith('stock_') ? aiSkillText('signal.covered', language) : ''], language)
+}
+
+// The date a line is ordered by, as a sentence ("Open 12 days, since Sep 21."),
+// so the reader can check the order. The overdue and due-soon order reasons
+// already state theirs.
+const SELF_DATED = new Set(['po_overdue', 'po_due_7d'])
+export function aiSkillWhenText(item, facts, language) {
+  const when = item.when
+  if (!when || when.kind === 'undated' || when.days === null || SELF_DATED.has(item.type)) return ''
+  const fmt = aiSkillFormatter(facts, language)
+  const values = { days: fmt.number(when.days), date: fmt.day(when.date) }
+  if (when.kind === 'overdue') return aiSkillCountText('signal.when.overdue', when.days, language, values)
+  if (when.kind === 'due') return aiSkillCountText('signal.when.due', when.days, language, values)
+  return aiSkillCountText('signal.when.open', when.days, language, values)
 }
 
 export function aiSkillEvidence(item, facts, language) {
@@ -186,7 +200,7 @@ function limitationEntries(facts, language, { money: includeMoney = true } = {})
 }
 
 function followUps(ids, language) {
-  const key = { today_priorities: 'today', highest_risk_items: 'risk', records_needing_data: 'records', prepare_action_draft: 'draft', workspace_metrics: 'metrics', purchase_orders: 'orders', pending_approvals: 'approvals', inventory_availability: 'stock', invoice_summary: 'invoices', rfq_followups: 'rfqs', receiving_issues: 'receiving' }
+  const key = { today_priorities: 'today', highest_risk_items: 'risk', records_needing_data: 'records', prepare_action_draft: 'draft', workspace_metrics: 'metrics', purchase_orders: 'orders', pending_approvals: 'approvals', inventory_availability: 'stock', invoice_summary: 'invoices', rfq_followups: 'rfqs', receiving_issues: 'receiving', supplier_attention: 'suppliers' }
   return ids.map((id) => ({ label: aiSkillText(`followup.${key[id]}.label`, language), prompt: aiSkillText(`followup.${key[id]}.prompt`, language), intentHint: id, skillHint: id, requiresReview: id === 'prepare_action_draft' }))
 }
 

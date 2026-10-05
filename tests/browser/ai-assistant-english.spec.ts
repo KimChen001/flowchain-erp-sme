@@ -75,6 +75,23 @@ test("the assistant answers every prompt chip in English from the workspace data
   await expect(page.getByTestId("ai-assistant-panel")).toHaveCount(0);
 });
 
+test("a prepared draft opens as a supplier message for the user's own mail app", async ({ page }) => {
+  await signIn(page);
+  const panel = await openAssistant(page);
+  const answer = await askChip(panel, "Prepare an action draft");
+  await answer.getByTestId("ai-action-draft-preview").first().click();
+  const shell = page.getByTestId("action-draft-review-shell");
+  await expect(shell.getByTestId("action-draft-message")).toContainText("Supplier message");
+  await expect(shell.getByTestId("action-draft-message-body")).not.toHaveValue("");
+  await shell.getByTestId("action-draft-subject").fill("Delivery date");
+  await expect(page.getByTestId("action-draft-open-email")).toHaveAttribute("href", /^mailto:[^?]*\?subject=Delivery%20date&body=\S+/);
+  // FlowChain sends nothing: the link hands the text to the user's mail app.
+  await expect(shell).toContainText("FlowChain does not send anything.");
+  expect(await chineseLines(shell), "draft review").toEqual([]);
+  await page.getByRole("button", { name: "Discard draft" }).click();
+  await expect(shell).toHaveCount(0);
+});
+
 test("a failed or slow answer shows an English recovery message", async ({ page }) => {
   await signIn(page);
   const panel = await openAssistant(page);
