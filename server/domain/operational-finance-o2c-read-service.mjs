@@ -1,7 +1,9 @@
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { can } from "../auth/authorization-service.mjs";
+import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 import { OperationalFinanceReadError } from "./operational-finance-read-service.mjs";
 import { financeFixed as fixed, financeUnits as units } from "./operational-finance-policy.mjs";
+import { paymentRecordsView } from "./payment-record-command-service.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const decimal = (value) =>
@@ -60,6 +62,9 @@ function invoiceActions(actor, capability, row) {
 function receivableActions(actor, capability, row) {
   if (!capability?.enabled) return [];
   const result = can({ actor, permission: "finance.receivable.record_external_reference", tenantId: actor.tenantId }) ? ["record_external_reference"] : [];
+  // A payment can be recorded until nothing is outstanding, but not while
+  // the customer disputes the invoice.
+  if (["open", "overdue", "partially_settled"].includes(row.status) && row.disputeStatus !== "open" && Number(row.outstandingAmount) > 0 && can({ actor, permission: "finance.receivable.record_payment", tenantId: actor.tenantId })) result.unshift("record_payment");
   if (["open", "overdue"].includes(row.status) && can({ actor, permission: "finance.receivable.dispute", tenantId: actor.tenantId })) result.unshift("dispute");
   if (row.disputeStatus === "open" && can({ actor, permission: "finance.receivable.resolve_dispute", tenantId: actor.tenantId })) result.unshift("resolve_dispute");
   return result;
@@ -84,7 +89,7 @@ function protectFinanceFields(model, actor) {
   const amountsVisible = can({ actor, permission: "finance.amounts.read", tenantId: actor.tenantId });
   const partnerVisible = can({ actor, permission: "finance.partner_snapshot.read", tenantId: actor.tenantId });
   const output = { ...model, fieldVisibility: { ...(model.fieldVisibility || {}) } };
-  for (const key of ["subtotalAmount", "enteredTaxAmount", "totalAmount", "originalAmount", "outstandingAmount", "approvedCreditAmount", "unitPrice", "lineAmount"]) if (key in output) { if (!amountsVisible) output[key] = null; output.fieldVisibility[key] = { visible: amountsVisible, reasonCode: amountsVisible ? null : "FIELD_PERMISSION_DENIED", permission: "finance.amounts.read" }; }
+  for (const key of ["subtotalAmount", "enteredTaxAmount", "totalAmount", "originalAmount", "outstandingAmount", "approvedCreditAmount", "paidAmount", "unitPrice", "lineAmount"]) if (key in output) { if (!amountsVisible) output[key] = null; output.fieldVisibility[key] = { visible: amountsVisible, reasonCode: amountsVisible ? null : "FIELD_PERMISSION_DENIED", permission: "finance.amounts.read" }; }
   for (const key of ["customerName", "customerNameSnapshot"]) if (key in output) { if (!partnerVisible) output[key] = null; output.fieldVisibility[key] = { visible: partnerVisible, reasonCode: partnerVisible ? null : "FIELD_PERMISSION_DENIED", permission: "finance.partner_snapshot.read" }; }
   return output;
 }
@@ -126,6 +131,9 @@ function receivableSummary(row, actor, capabilities) {
     originalAmount: decimal(row.originalAmount),
     outstandingAmount: decimal(row.outstandingAmount),
     approvedCreditAmount: decimal(row.approvedCreditAmount),
+    // What the customer paid so far: the original amount less approved
+    // credits and what is still outstanding.
+    paidAmount: fixed(units(row.originalAmount) - units(row.approvedCreditAmount || 0) - units(row.outstandingAmount)),
     currency: row.currency,
     dueDate: serial(row.dueDate),
     status: row.status,
@@ -222,7 +230,7 @@ export function createOperationalFinanceO2cReadService({
     const current = await actor(context);
     assertRead(current, "finance.customer_invoice.read");
     const paging = page(query);
-    const search = text(query.search);
+    const search = escapeLikePattern(text(query.search));
     const where = {
       tenantId: current.tenantId,
       ...(text(query.status) ? { status: text(query.status) } : {}),
@@ -271,7 +279,7 @@ export function createOperationalFinanceO2cReadService({
         salesOrder: true,
         shipment: true,
         lines: { orderBy: { lineNumber: "asc" } },
-        receivableObligation: true,
+        receivableObligation: { include: { paymentRecords: true } },
         creditNotes: {
           include: { returnPosting: true },
           orderBy: { createdAt: "desc" },
@@ -300,7 +308,13 @@ export function createOperationalFinanceO2cReadService({
         totalAmount: decimal(line.totalAmount),
       }, current)),
       receivable: row.receivableObligation && can({ actor: current, permission: "finance.receivable.read", tenantId: current.tenantId })
-        ? receivableSummary(row.receivableObligation, current, capabilities)
+        ? {
+            ...receivableSummary(row.receivableObligation, current, capabilities),
+            payments: paymentRecordsView(row.receivableObligation.paymentRecords, {
+              amountsVisible,
+              canRecord: Boolean(capabilities["receivable-obligation"]?.enabled) && can({ actor: current, permission: "finance.receivable.record_payment", tenantId: current.tenantId }),
+            }),
+          }
         : null,
       customerCreditNotes: (can({ actor: current, permission: "finance.customer_credit.read", tenantId: current.tenantId }) ? row.creditNotes : []).map((note) =>
         creditSummary(note, current, capabilities),
@@ -587,7 +601,7 @@ export function createOperationalFinanceO2cReadService({
       prisma.payableObligation.count({
         where: {
           tenantId: current.tenantId,
-          status: { in: ["approved", "export_ready", "held"] },
+          status: { in: ["approved", "export_ready", "held", "partially_settled"] },
         },
       }),
       prisma.customerInvoice.count({

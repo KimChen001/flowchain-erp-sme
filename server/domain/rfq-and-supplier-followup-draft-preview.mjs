@@ -1,4 +1,5 @@
 import { buildInventoryItems } from './inventory-read.mjs'
+import { sanitizePrefillMap } from '../../shared/prefill-suggestions.mjs'
 import { findMasterItem, findMasterSupplier, listMasterSuppliers } from './master-data.mjs'
 import { toActionDraftEvidence } from './action-draft-boundary.mjs'
 
@@ -189,8 +190,9 @@ export function buildSupplierFollowupDraftPreview(input = {}, options = {}) {
     }
   }
   const supplier = findMasterSupplier(db, supplierKey) || { id: supplierKey, name: supplierKey, status: '', source: 'payload_fallback' }
-  const relatedDocumentType = text(payloadInput.relatedDocumentType || payloadInput.documentType)
-  const relatedDocumentId = text(payloadInput.relatedDocumentId || payloadInput.documentId || payloadInput.poId || payloadInput.rfqId)
+  // An invoice variance query is about the invoice, not its purchase order.
+  const relatedDocumentType = text(payloadInput.relatedDocumentType || payloadInput.documentType || (payloadInput.invoiceId ? 'supplier_invoice' : ''))
+  const relatedDocumentId = text(payloadInput.relatedDocumentId || payloadInput.documentId || payloadInput.invoiceId || payloadInput.poId || payloadInput.rfqId)
   const reason = text(payloadInput.followupReason || payloadInput.reason)
   const messageDraft = text(payloadInput.message || payloadInput.messageDraft, defaultFollowupMessage({
     supplierName: supplier.name,
@@ -201,10 +203,18 @@ export function buildSupplierFollowupDraftPreview(input = {}, options = {}) {
   const draftPayload = cleanObject({
     supplierId: supplier.id,
     supplierName: supplier.name,
+    // Recipient and subject when the request carries them (supplier master
+    // data, prefilled by the assistant); the user can change both.
+    to: text(payloadInput.to),
+    contactName: text(payloadInput.contactName),
+    subject: text(payloadInput.subject),
     relatedDocumentType,
     relatedDocumentId,
     followupReason: reason,
     messageDraft,
+    ...(Array.isArray(payloadInput.lines) && payloadInput.lines.length ? { lines: payloadInput.lines.slice(0, 50) } : {}),
+    // The purchase order stays named when the related document is another one.
+    poId: text(payloadInput.poId) !== relatedDocumentId ? text(payloadInput.poId) : '',
     severity: text(payloadInput.severity, 'medium'),
     dueDate: text(payloadInput.dueDate),
     requiresConfirmation: true,
@@ -215,6 +225,9 @@ export function buildSupplierFollowupDraftPreview(input = {}, options = {}) {
     ...(relatedDocumentId ? [{ type: relatedDocumentType || 'procurement_document', id: relatedDocumentId, summary: reason || messageDraft }] : []),
   ].map(toActionDraftEvidence).filter((entry) => entry.id || entry.label || entry.summary).slice(0, 6)
 
+  // The message is stored as messageDraft here, so its suggestion is too.
+  const suggested = sanitizePrefillMap(input.prefill)
+  const prefill = suggested && Object.fromEntries(Object.entries(suggested).map(([field, entry]) => [field === 'message' ? 'messageDraft' : field, entry]))
   return {
     ok: true,
     draft: {
@@ -228,6 +241,7 @@ export function buildSupplierFollowupDraftPreview(input = {}, options = {}) {
       requiresConfirmation: true,
       originEvidence,
       payload: draftPayload,
+      ...(prefill ? { prefill } : {}),
       validation: validateSupplierFollowupDraftPayload(draftPayload),
       auditTrail: [{ action: 'supplier_followup_draft_previewed', source: 'draft_preview', timestamp: input.createdAt || now.toISOString(), summary: 'Supplier follow-up draft preview prepared. No message was sent.' }],
       confirmationBoundary: { previewOnly: true, submitted: false, requiresUserReview: true, futureConfirmation: 'send_or_record_supplier_followup' },

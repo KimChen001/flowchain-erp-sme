@@ -12,7 +12,7 @@ const routeFor: Record<EntityKind, (id: string) => string> = {
   supplier: (id) => `/app/master-data/suppliers/${encodeURIComponent(id)}`,
   customer: (id) => `/app/master-data/customers/${encodeURIComponent(id)}`,
   receiving_doc: (id) => `/app/procurement/receiving/${encodeURIComponent(id)}`,
-  supplier_invoice: (id) => `/app/finance/invoices/${encodeURIComponent(id)}`,
+  supplier_invoice: (id) => `/app/procurement/bills/${encodeURIComponent(id)}`,
 };
 
 export function EntityLink({ kind, id, children, className = "" }: { kind: EntityKind; id?: string | null; children?: ReactNode; className?: string }) {

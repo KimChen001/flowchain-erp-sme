@@ -1,5 +1,6 @@
 import { aiSkillById, attachAiSkillHandlers } from './ai-skill-registry.mjs'
 import { assertValidAiSkillResponse } from './ai-skill-validator.mjs'
+import { attachAiSkillNextSteps } from './ai-skill-next-steps.mjs'
 import { presentTodayPriorities, runTodayPriorities } from './ai-skill-today-priorities.mjs'
 import { presentHighestRisk, runHighestRisk } from './ai-skill-highest-risk.mjs'
 import { presentRecordsNeedingData, runRecordsNeedingData } from './ai-skill-records-needing-data.mjs'
@@ -11,6 +12,7 @@ import { presentInventoryAvailability, runInventoryAvailability } from './ai-ski
 import { presentInvoiceSummary, runInvoiceSummary } from './ai-skill-invoice-summary.mjs'
 import { presentRfqFollowups, runRfqFollowups } from './ai-skill-rfq-followups.mjs'
 import { presentReceivingIssues, runReceivingIssues } from './ai-skill-receiving-issues.mjs'
+import { presentSupplierAttention, runSupplierAttention } from './ai-skill-supplier-attention.mjs'
 
 // Attaches each skill's run and present to its registry entry. Import this
 // module (or anything that imports it) before calling a skill.
@@ -26,6 +28,7 @@ attachAiSkillHandlers('inventory_availability', { run: runInventoryAvailability,
 attachAiSkillHandlers('invoice_summary', { run: runInvoiceSummary, present: presentInvoiceSummary })
 attachAiSkillHandlers('rfq_followups', { run: runRfqFollowups, present: presentRfqFollowups })
 attachAiSkillHandlers('receiving_issues', { run: runReceivingIssues, present: presentReceivingIssues })
+attachAiSkillHandlers('supplier_attention', { run: runSupplierAttention, present: presentSupplierAttention })
 
 export { aiSkillById, AI_SKILL_REGISTRY, toolsFor } from './ai-skill-registry.mjs'
 
@@ -35,6 +38,8 @@ export function answerAiSkill({ skillId, facts = null, language, query, focus = 
   const skill = aiSkillById(skillId)
   if (!skill?.run) throw Object.assign(new Error(`Unknown AI skill: ${skillId}`), { code: 'AI_SKILL_UNKNOWN', status: 500 })
   const result = skill.run(facts, { focus, refusal, outOfDomain, actor, route })
-  const response = skill.present(result, facts, { skill, language, query })
+  // Each line that names a record needing attention states its next step
+  // and offers the review-only draft for it (ai-skill-next-steps.mjs).
+  const response = attachAiSkillNextSteps(skill.present(result, facts, { skill, language, query }), facts)
   return { result, response: assertValidAiSkillResponse(response, facts) }
 }

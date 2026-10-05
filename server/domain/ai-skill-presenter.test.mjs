@@ -65,8 +65,14 @@ test('today priorities states the report figures with tenant formatting', async 
   assert.equal(english.conclusion.title, '8 items need attention today (as of Sep 29, 2026)')
   assert.equal(english.conclusion.summary, '4 open purchase orders, 2 overdue. Committed PO spend: €500.00 and $17,920.00. Committed supplier invoices: $7,381.50. 1 SKU is short against open sales orders: LDM-001.')
   assert.deepEqual(english.metrics, { asOf: '2026-09-29', openPurchaseOrders: 4, overduePurchaseOrders: 2, committedSpend: [{ currency: 'EUR', amount: 500 }, { currency: 'USD', amount: 17920 }], committedInvoices: [{ currency: 'USD', amount: 7381.5 }], atRiskSkus: ['LDM-001'], atRiskSkuCount: 1 })
-  assert.deepEqual(english.keyEvidence.map((item) => item.entityLabel), ['LDM-001', 'PO-001', 'PO-008', 'INV-001', 'GRN-002'])
-  assert.equal(english.keyEvidence[1].summary, '4 days past the promised date; 30 pcs still to receive from Acme Components.')
+  // By date: the longest overdue first (PO-001 4 days, PO-008 2 days), then due
+  // soonest (PO-002 in 4 days), then the oldest open problems. The undated
+  // stock shortage (LDM-001) comes after every dated item.
+  assert.deepEqual(english.keyEvidence.map((item) => item.entityLabel), ['PO-001', 'PO-008', 'PO-002', 'INV-001', 'GRN-002'])
+  assert.equal(english.keyEvidence[0].summary, '4 days past the promised date; 30 pcs still to receive from Acme Components.')
+  // Each line states the date it is ordered by.
+  assert.equal(english.keyEvidence[3].summary, 'Invoice variance of $200.00 from Acme Components. Open 5 days, since Sep 24, 2026.')
+  assert.equal(answer('today_priorities', 'zh-CN').keyEvidence[4].summary, '已收货，尚未过账到库存。已挂起 1 天（自 Sep 28, 2026）。')
   assert.equal(english.checkedLabel, 'Checked: purchase orders, purchase requests, RFQs, inventory balances, supplier invoices and receipts')
   assert.ok(english.dataLimitations.some((item) => item.code === 'multi_currency'))
   const chinese = answer('today_priorities', 'zh-CN')
@@ -96,9 +102,12 @@ test('drafts are review-only cards for the top signals, and need purchasing edit
     assert.equal(card.requiresHumanReview, true)
     assert.equal(card.payload.language, 'en-US')
   }
-  assert.equal(english.reviewCards[0].payload.message, 'Please confirm a delivery date for the remaining 30 pcs of LDM-001 on PO-001.')
-  assert.equal(english.reviewCards[2].payload.message, 'Invoice INV-001 differs from the purchase order by $200.00. Please send a corrected invoice or the reason for the difference.')
-  assert.equal(answer('prepare_action_draft', 'zh-CN').reviewCards[0].payload.message, '请确认 PO-001 上 LDM-001 剩余 30 pcs 的交货日期。')
+  assert.match(english.reviewCards[0].payload.message, /^Please confirm a delivery date for the open line on PO-001:\n- LDM-001: 30 pcs still to deliver, promised /m)
+  assert.equal(english.reviewCards[2].payload.message, 'Hello Acme Components,\n\nInvoice INV-001 differs from the purchase order by $200.00. Please send a corrected invoice or the reason for the difference.\n\nThank you.')
+  assert.equal(english.reviewCards[2].payload.subject, 'Invoice INV-001: difference from the purchase order')
+  assert.match(answer('prepare_action_draft', 'zh-CN').reviewCards[0].payload.message, /^- LDM-001：仍有 30 pcs 未交，承诺日期 /m)
+  // Each suggested field says where it came from: templates filled from the record.
+  assert.deepEqual(Object.fromEntries(Object.entries(english.reviewCards[0].prefill).map(([field, entry]) => [field, `${entry.source}:${entry.ref}`])), { subject: 'template:draft.po_followup.subject', message: 'template:draft.po_followup.message' })
   // A read-only viewer gets links and a limitation, no cards.
   const viewer = (await answers({ roleKey: 'read-only-viewer' })).answer('prepare_action_draft', 'en-US')
   assert.deepEqual(viewer.reviewCards, [])
@@ -125,7 +134,8 @@ test('focus narrows an answer to the record and the records tied to it', async (
   const { answer } = await answers()
   const po = answer('today_priorities', 'en-US', { focus: { entityType: 'purchase_order', entityId: 'PO-001' } })
   assert.equal(po.conclusion.title, 'Why PO-001 needs attention')
-  assert.deepEqual(po.keyEvidence.map((item) => item.entityId), ['ITEM-001', 'PO-001', 'INV-001'])
+  // Dated records first; the item's own stock line has no date.
+  assert.deepEqual(po.keyEvidence.map((item) => item.entityId), ['PO-001', 'INV-001', 'ITEM-001'])
   const none = answer('today_priorities', 'en-US', { focus: { entityType: 'purchase_order', entityId: 'PO-003' } })
   assert.equal(none.conclusion.title, 'PO-003 has no open issue in the workspace data')
   assert.deepEqual(none.keyEvidence, [])

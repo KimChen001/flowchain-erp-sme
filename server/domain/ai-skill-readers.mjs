@@ -1,12 +1,13 @@
 import { readBusinessContext } from '../services/runtime-business-read-service.mjs'
 import { reportReadAccessFor, scopeBusinessContext } from './report-read-access.mjs'
-import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs'
+import { buildOpenPurchaseOrdersReport, purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
 import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-inventory-allocation-read-model.mjs'
 import { PURCHASE_ORDER_STATUS, RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 import { classifyBusinessRecord } from './ai-business-record-validity.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
+import { AI_SKILL_RECENT_DAYS, aiSkillDaysBetween } from './ai-skill-signals.mjs'
 
 // The facts every workspace skill reads, through the same definitions the
 // reports use, so an answer can never disagree with a report:
@@ -28,6 +29,18 @@ import { aiSkillVisibility } from './ai-skill-registry.mjs'
 const array = (value) => Array.isArray(value) ? value : []
 const text = (value) => String(value ?? '').trim()
 const amount = (value) => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
+// A stored date as its YYYY-MM-DD day, or null.
+const dayOf = (value) => {
+  const raw = value instanceof Date ? (Number.isNaN(value.getTime()) ? '' : value.toISOString()) : text(value)
+  return /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : null
+}
+// Within the last AI_SKILL_RECENT_DAYS days of the report day, today included.
+const isRecent = (day, asOf) => {
+  if (!day || !asOf) return false
+  const age = aiSkillDaysBetween(day, asOf)
+  return age >= 0 && age < AI_SKILL_RECENT_DAYS
+}
+const UNCOMMITTED_INVOICE_STATUSES = new Set(['draft', 'cancelled', 'canceled', 'void', 'voided'])
 const RAW_LIMIT = 500
 const committedInvoiceStatuses = new Set(RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES)
 const SUBJECT_SOURCE = { purchase_orders: 'purchase_orders', purchase_requests: 'purchase_requests', rfqs: 'rfqs', receipts: 'receipts', supplier_invoices: 'supplier_invoices', inventory_balances: 'inventory', items: 'inventory', suppliers: 'suppliers' }
@@ -198,15 +211,34 @@ export async function readAiSkillFacts(skillContext) {
   // The report and the assistant share one day; say so if they ever differ.
   if (visible.purchase_orders && openReport.asOf !== today) limitations.push({ code: 'report_day', date: openReport.asOf })
 
-  // Suppliers by id, code and name, to resolve a supplier named in a question:
+  // Suppliers by id, code and name, to resolve a supplier named in a question,
+  // with their tier (1 to 3, null when not tiered) to label and filter by:
   // for readers of purchase orders, or of invoices with the partner snapshot.
   if (visible.purchase_orders || (visible.supplier_invoices && visibility.partner)) {
-    facts.suppliers = array(business.suppliers).map((row) => ({ id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName) })).filter((row) => row.id && row.name)
+    // The contact a draft is addressed to, from master data, only for readers
+    // who may prepare drafts.
+    const tierOf = (value) => ([1, 2, 3].includes(Number(value)) ? Number(value) : null)
+    facts.suppliers = array(business.suppliers).map((row) => ({
+      id: text(row.id || row.supplierId), code: text(row.supplierCode || row.code) || null, name: text(row.name || row.supplierName), tier: tierOf(row.tier),
+      ...(visibility.canDraft ? { email: text(row.email) || null, contactName: text(row.contactName) || null } : {}),
+    })).filter((row) => row.id && row.name)
   }
 
   if (visible.purchase_orders) {
     const lineById = new Map(reportRows.map((po) => [text(po.id), array(po.lines)[0] || null]))
     const skusById = new Map(reportRows.map((po) => [text(po.id), [...new Set(array(po.lines).map((line) => text(line.sku)).filter(Boolean))]]))
+    // The lines still to receive, by the report's line rules, each with its
+    // own remaining quantity, unit and promised day. The order's sku is its
+    // first line, which may be fully received, and its remaining quantity is
+    // the order total: a follow-up names these lines instead. Quantities and
+    // dates only, no prices.
+    const openLinesById = new Map(reportRows.map((po) => [text(po.id), array(po.lines).flatMap((line) => {
+      const read = purchaseOrderReportLine(line, po)
+      return read.open ? [{
+        lineId: text(line.id) || null, sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName || line.itemNameSnapshot) || null,
+        remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
+      }] : []
+    })]))
     const rawStatusById = new Map(reportRows.map((po) => [text(po.id), text(po.status)]))
     facts.purchaseOrders = {
       open: openReport.summary.open,
@@ -218,6 +250,7 @@ export async function readAiSkillFacts(skillContext) {
         dueDate: row.dueDate, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received, remaining: row.remaining, unit: row.unit,
         amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency, dataIncomplete: row.dataIncomplete,
         sku: text(lineById.get(row.id)?.sku) || null, itemId: text(lineById.get(row.id)?.itemId) || null, skus: skusById.get(row.id) || [],
+        openLines: openLinesById.get(row.id) || [],
       })),
     }
     // Every purchase order, whatever its status, by the open purchase orders
@@ -228,7 +261,7 @@ export async function readAiSkillFacts(skillContext) {
       id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: purchaseOrderStatus(row.status),
       createdDate: row.createdDate || null, dueDate: row.dueDate || null, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received,
       remaining: row.remaining, unit: row.unit, amount: visibility.amounts.purchase_order_amounts ? row.amount : null, currency: row.currency,
-      isOpen: row.isOpen, dataIncomplete: row.dataIncomplete, skus: skusById.get(row.id) || [],
+      isOpen: row.isOpen, dataIncomplete: row.dataIncomplete, skus: skusById.get(row.id) || [], openLines: openLinesById.get(row.id) || [],
     }))
     // The stored status after alias normalisation ("待审批" is
     // pending_approval), the way the purchase orders list filters it.
@@ -268,7 +301,12 @@ export async function readAiSkillFacts(skillContext) {
       matchCounts: committed.reduce((counts, row) => { counts[aiSkillInvoiceMatch(row)] += 1; return counts }, { matched: 0, exception: 0, pending: 0 }),
       variances: committed
         .filter((row) => (amount(row.varianceAmount) ?? 0) !== 0 || text(row.matchStatus) === 'variance')
-        .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: visibility.partner ? text(row.supplierId) : '', supplier: visibility.partner ? text(row.supplierName || row.supplierId) : null, poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null })),
+        .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: visibility.partner ? text(row.supplierId) : '', supplier: visibility.partner ? text(row.supplierName || row.supplierId) : null, poId: text(row.poId || row.relatedPo) || null, status: text(row.status), matchStatus: text(row.matchStatus) || null, variance: visibility.amounts.invoice_amounts ? amount(row.varianceAmount) : null, currency: text(row.currency) || null, invoiceDate: dayOf(row.invoiceDate || row.createdAt) })),
+      // Invoices dated in the last AI_SKILL_RECENT_DAYS days, for recent
+      // supplier activity. Without the partner snapshot they name no supplier.
+      recent: array(business.supplierInvoices)
+        .filter((row) => !UNCOMMITTED_INVOICE_STATUSES.has(text(row.status).toLowerCase()) && isRecent(dayOf(row.invoiceDate || row.createdAt), facts.asOf))
+        .map((row) => ({ id: text(row.id), invoiceNumber: text(row.invoiceNumber || row.id), supplierId: visibility.partner ? text(row.supplierId) : '', invoiceDate: dayOf(row.invoiceDate || row.createdAt) })),
     }
   }
 
@@ -276,7 +314,7 @@ export async function readAiSkillFacts(skillContext) {
     facts.purchaseRequests = {
       awaitingApproval: array(business.purchaseRequests).filter((row) => text(row.status) === 'submitted').map((row) => {
         const line = array(row.lines)[0] || {}
-        return { id: text(row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, skus: [...new Set(array(row.lines).map((entry) => text(entry.sku)).filter(Boolean))], quantity: amount(line.quantity), unit: text(line.unit) || null }
+        return { id: text(row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, skus: [...new Set(array(row.lines).map((entry) => text(entry.sku)).filter(Boolean))], itemIds: [...new Set(array(row.lines).map((entry) => text(entry.itemId)).filter(Boolean))], quantity: amount(line.quantity), unit: text(line.unit) || null }
       }),
     }
   }
@@ -289,15 +327,15 @@ export async function readAiSkillFacts(skillContext) {
     facts.rfqs = {
       // Every open RFQ without an award, with or without quotes.
       open: rows.filter((row) => !row.awarded),
-      readyToAward: rows.filter((row) => row.responses > 0 && !row.awarded).map(({ id, title, responses, awarded }) => ({ id, title, responses, awarded })),
+      readyToAward: rows.filter((row) => row.responses > 0 && !row.awarded).map(({ id, title, responses, awarded, due }) => ({ id, title, responses, awarded, due })),
     }
   }
 
   if (visible.receipts) {
     const openPoIds = new Set(reportRows.filter(isOpenPurchaseOrder).map((po) => text(po.id)))
     const receipts = array(business.receipts).map((row) => ({
-      id: text(row.id), documentNumber: text(row.documentNumber || row.id), poId: text(row.poId) || null, supplier: text(row.supplierName || row.supplierId),
-      postingStatus: text(row.postingStatus) || null, arrivedDay: text(row.arrivedAt).slice(0, 10) || null,
+      id: text(row.id), documentNumber: text(row.documentNumber || row.id), poId: text(row.poId) || null, supplierId: text(row.supplierId) || null, supplier: text(row.supplierName || row.supplierId),
+      postingStatus: text(row.postingStatus) || null, arrivedDay: dayOf(row.arrivedAt),
       rejected: array(row.lines).reduce((sum, line) => sum + (amount(line.rejectedQty) ?? 0), 0),
       unit: [...new Set(array(row.lines).map((line) => text(line.unit)).filter(Boolean))].join('/') || null,
       poOpen: openPoIds.has(text(row.poId)),
@@ -306,6 +344,8 @@ export async function readAiSkillFacts(skillContext) {
       // A rejection is still actionable while its purchase order is open.
       rejected: receipts.filter((row) => row.rejected > 0 && row.poOpen),
       unposted: receipts.filter((row) => row.postingStatus === 'unposted'),
+      // Arrived in the last AI_SKILL_RECENT_DAYS days, for recent supplier activity.
+      recent: receipts.filter((row) => isRecent(row.arrivedDay, facts.asOf)).map(({ id, documentNumber, supplierId, supplier, arrivedDay }) => ({ id, documentNumber, supplierId, supplier, arrivedDay })),
     }
   }
 

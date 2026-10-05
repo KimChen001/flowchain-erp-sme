@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, FilePlus2, RefreshCw } from "lucide-react";
-import { A, Card, Chip } from "../../components/ui";
+import { FilePlus2, RefreshCw } from "lucide-react";
+import { A, Card } from "../../components/ui";
+import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { Notice, StatusChip, TwoStepAction, button, field, message } from "./FinanceControls";
+import { PaymentRecords } from "./PaymentRecords";
 
 // The supplier invoice screens of the trial's procure-to-pay chain: enter an
 // invoice against a posted receipt, then submit, match, review exceptions,
@@ -12,7 +14,6 @@ import { createSecureClientMutationId } from "../../lib/client-id";
 // the server's plan first and confirms exactly that operation; the server
 // checks permissions, versions and the three-way rules.
 
-type TranslationKey = Parameters<ReturnType<typeof useI18n>["t"]>[0];
 type Issue = { code?: string; message?: string };
 type Plan = { allowed: boolean; blockingIssues?: Issue[]; invoice?: { totalAmount?: string; currency?: string }; nextStatus?: string };
 type EntryData = {
@@ -22,22 +23,6 @@ type EntryData = {
   capabilities: Record<string, { enabled?: boolean }>;
 };
 
-const field = "rounded-lg border border-slate-200 px-3 py-2 text-sm";
-const button = "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50";
-const STATUS_KEYS: Record<string, TranslationKey> = {
-  draft: "finance.status.draft",
-  submitted: "finance.status.submitted",
-  matched: "finance.status.matched",
-  exception: "finance.status.exception",
-  approved: "finance.status.approved",
-  held: "finance.status.held",
-  export_ready: "finance.status.export_ready",
-  open: "finance.status.open",
-  resolved: "finance.status.resolved",
-  cancelled: "finance.status.cancelled",
-  issued: "finance.status.issued",
-  disputed: "finance.status.disputed",
-};
 
 const money = (amount: unknown, currency: unknown, locale: string) => {
   if (amount === null || amount === undefined || amount === "") return "—";
@@ -49,22 +34,9 @@ const money = (amount: unknown, currency: unknown, locale: string) => {
     : `${amount} ${code}`.trim();
 };
 const fixed = (value: number) => (Number.isFinite(value) ? value.toFixed(4) : "0.0000");
-const message = (reason: unknown, fallback: string) => (reason instanceof Error ? reason.message : fallback);
-
-function Notice({ children, tone = "warning" }: { children: ReactNode; tone?: "warning" | "success" }) {
-  const colors = tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900";
-  return (
-    <div role={tone === "warning" ? "alert" : "status"} className={`flex gap-2 rounded-xl border p-3 text-sm ${colors}`}>
-      {tone === "success" ? <CheckCircle2 className="mt-0.5 shrink-0" size={16} /> : <AlertTriangle className="mt-0.5 shrink-0" size={16} />}
-      <span>{children}</span>
-    </div>
-  );
-}
-
-export function StatusChip({ status }: { status: string }) {
-  const { t } = useI18n();
-  return <Chip label={STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status || "—"} color={A.blue} bg="#eff6ff" />;
-}
+// Each line of a receipt starts at its accepted quantity; the user can lower it.
+const receivedQuantities = (receipt: EntryData["receivingDocuments"][number]) =>
+  Object.fromEntries(receipt.lines.map((line) => [line.id, { quantity: String(Number(line.acceptedQuantity)) }]));
 
 // -------------------------------------------------------------- new invoice
 
@@ -80,12 +52,48 @@ export function NewSupplierInvoice() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  // Set when the form was opened from a purchase order: only its receipts.
+  const [poFilter, setPoFilter] = useState("");
+  const [sourceNotice, setSourceNotice] = useState("");
   useEffect(() => {
     void apiJson<EntryData>("/api/finance/entry-data")
       .then(setEntry)
       .catch((reason) => setNotice(message(reason, t("finance.loadFailed"))));
   }, []);
-  const receipts = useMemo(() => (entry?.receivingDocuments || []).filter((row) => !supplierId || row.supplierId === supplierId), [entry, supplierId]);
+  // Opened from a receipt (?receipt=) or a purchase order (?po=): choose the
+  // supplier and receipt and offer each received quantity. A bill only covers
+  // received goods, so a PO without a posted receipt is explained, not billed.
+  useEffect(() => {
+    if (!entry) return;
+    const params = new URLSearchParams(window.location.search);
+    const receiptParam = params.get("receipt");
+    const poParam = params.get("po");
+    if (receiptParam) {
+      const found = entry.receivingDocuments.find((row) => row.id === receiptParam || row.documentNumber === receiptParam);
+      if (!found) { setSourceNotice(`${receiptParam}: ${t("finance.receiptNotBillable")}`); return; }
+      setSupplierId(found.supplierId);
+      setReceiptId(found.id);
+      setLines(receivedQuantities(found));
+    } else if (poParam) {
+      const forPo = entry.receivingDocuments.filter((row) => row.poId === poParam);
+      const order = entry.purchaseOrders.find((row) => row.id === poParam);
+      if (!forPo.length) {
+        if (order) setSupplierId(order.supplierId);
+        setSourceNotice(`${poParam}: ${t("finance.noPostedReceipt")}`);
+        return;
+      }
+      setSupplierId(forPo[0].supplierId);
+      setPoFilter(poParam);
+      if (forPo.length === 1) {
+        setReceiptId(forPo[0].id);
+        setLines(receivedQuantities(forPo[0]));
+      }
+    }
+  }, [entry]);
+  const receipts = useMemo(
+    () => (entry?.receivingDocuments || []).filter((row) => (!supplierId || row.supplierId === supplierId) && (!poFilter || row.poId === poFilter)),
+    [entry, supplierId, poFilter],
+  );
   const receipt = receipts.find((row) => row.id === receiptId) || null;
   const order = entry?.purchaseOrders.find((row) => row.id === receipt?.poId) || null;
   const poLine = (id: string | null) => order?.lines.find((line) => line.id === id) || null;
@@ -128,7 +136,7 @@ export function NewSupplierInvoice() {
         method: "POST",
         body: JSON.stringify({ ...body(), idempotencyKey: createSecureClientMutationId("p2p") }),
       });
-      window.location.assign(`/app/finance/invoices/${encodeURIComponent(result.entityId)}`);
+      window.location.assign(`/app/procurement/bills/${encodeURIComponent(result.entityId)}`);
     } catch (reason) {
       setNotice(message(reason, t("finance.loadFailed")));
     } finally {
@@ -141,16 +149,23 @@ export function NewSupplierInvoice() {
     <div className="space-y-4" data-testid="new-supplier-invoice">
       {!enabled && <Notice>{t("finance.capabilityDisabled")}</Notice>}
       {notice && <Notice>{notice}</Notice>}
+      {sourceNotice && <Notice>{sourceNotice}</Notice>}
       <Card className="space-y-4 p-5">
+        {poFilter && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600" data-testid="supplier-invoice-po-filter">
+            <span>{t("finance.receiptsForPo")} <strong>{poFilter}</strong></span>
+            <button type="button" className="font-semibold text-blue-600" onClick={() => setPoFilter("")}>{t("finance.showAllReceipts")}</button>
+          </div>
+        )}
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-xs">{t("finance.supplier")}
-            <select data-testid="supplier-invoice-supplier" className={`${field} mt-1 w-full`} value={supplierId} onChange={(event) => { setSupplierId(event.target.value); setReceiptId(""); setLines({}); reset(); }}>
+            <select data-testid="supplier-invoice-supplier" className={`${field} mt-1 w-full`} value={supplierId} onChange={(event) => { setSupplierId(event.target.value); setPoFilter(""); setReceiptId(""); setLines({}); reset(); }}>
               <option value="">—</option>
               {entry.suppliers.map((row) => <option key={row.id} value={row.id}>{row.name}{row.code ? ` · ${row.code}` : ""}</option>)}
             </select>
           </label>
           <label className="text-xs">{t("finance.postedReceipt")}
-            <select data-testid="supplier-invoice-receipt" className={`${field} mt-1 w-full`} value={receiptId} onChange={(event) => { setReceiptId(event.target.value); setLines({}); reset(); }}>
+            <select data-testid="supplier-invoice-receipt" className={`${field} mt-1 w-full`} value={receiptId} onChange={(event) => { const next = receipts.find((row) => row.id === event.target.value); setReceiptId(event.target.value); setLines(next ? receivedQuantities(next) : {}); reset(); }}>
               <option value="">—</option>
               {receipts.map((row) => <option key={row.id} value={row.id}>{row.documentNumber || row.id} · {row.poId || "—"}{row.supplierName ? ` · ${row.supplierName}` : ""}</option>)}
             </select>
@@ -201,75 +216,47 @@ export function NewSupplierInvoice() {
   );
 }
 
-// -------------------------------------------------------------- actions
-
-// One operation: an optional reason, a preview of the server's plan, then a
-// confirm that runs exactly the previewed operation. The customer invoice
-// screen uses it too.
-export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, onDone, tone = "primary" }: {
-  label: string; testId: string; previewUrl: string; runUrl: string; payload: () => Record<string, unknown>;
-  reasonLabel?: string; onDone: () => void; tone?: "primary" | "secondary";
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
-  const [plan, setPlan] = useState<Plan | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const body = () => ({ ...payload(), ...(reasonLabel ? { reason, resolution: reason } : {}) });
-  const preview = async () => {
-    setError("");
-    try { setPlan(await apiJson<Plan>(previewUrl, { method: "POST", body: JSON.stringify(body()) })); } catch (reason) { setError(message(reason, t("finance.loadFailed"))); }
-  };
-  const confirm = async () => {
-    setError("");
-    setBusy(true);
-    try {
-      await apiJson(runUrl, { method: "POST", body: JSON.stringify({ ...body(), idempotencyKey: createSecureClientMutationId("p2p") }) });
-      setOpen(false);
-      setPlan(null);
-      setReason("");
-      onDone();
-    } catch (cause) {
-      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : t("finance.loadFailed"));
-    } finally {
-      setBusy(false);
-    }
-  };
-  if (!open) return <button type="button" data-testid={testId} className={`${button} ${tone === "primary" ? "text-white" : "border border-slate-200"}`} style={tone === "primary" ? { background: A.blue } : undefined} onClick={() => setOpen(true)}>{label}</button>;
-  return (
-    <div className="w-full space-y-2 rounded-xl border border-slate-200 p-3" data-testid={`${testId}-panel`}>
-      <div className="text-sm font-semibold">{label}</div>
-      {reasonLabel && (
-        <label className="block text-xs">{reasonLabel}
-          <input data-testid={`${testId}-reason`} className={`${field} mt-1 w-full`} value={reason} onChange={(event) => { setReason(event.target.value); setPlan(null); }} />
-        </label>
-      )}
-      <div className="flex flex-wrap gap-2">
-        <button type="button" data-testid={`${testId}-preview`} className={`${button} border border-slate-200`} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
-        <button type="button" data-testid={`${testId}-confirm`} className={`${button} text-white`} style={{ background: A.blue }} disabled={!plan?.allowed || busy} onClick={() => void confirm()}>{t("finance.confirm")}</button>
-        <button type="button" className={`${button} text-slate-600`} onClick={() => { setOpen(false); setPlan(null); setError(""); }}>{t("finance.close")}</button>
-      </div>
-      {plan && (plan.allowed ? <Notice tone="success">{t("finance.previewAllowed")}</Notice> : <Notice>{(plan.blockingIssues || []).map((issue) => issue.message).join(" · ")}</Notice>)}
-      {error && <Notice>{error}</Notice>}
-    </div>
-  );
-}
-
 // -------------------------------------------------------------- detail
+
+type BillReadFailure = "notFound" | "unauthenticated" | "forbidden" | "error";
+
+function billReadFailure(reason: unknown): BillReadFailure {
+  if (!(reason instanceof ApiError)) return "error";
+  if (reason.status === 404) return "notFound";
+  if (reason.status === 401) return "unauthenticated";
+  if (reason.status === 403) return "forbidden";
+  return "error";
+}
 
 export function SupplierInvoiceDetail() {
   const { t, locale } = useI18n();
   const id = decodeURIComponent(window.location.pathname.split("/").filter(Boolean).at(-1) || "");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
+  // Why the first read failed; a failed reload after an action keeps the bill
+  // on screen and shows the error above it instead.
+  const [failure, setFailure] = useState<BillReadFailure | null>(null);
   const load = useCallback(() => {
+    setFailure(null);
     void apiJson(`/api/finance/supplier-invoices/${encodeURIComponent(id)}`)
       .then((next) => { setData(next); setError(""); })
-      .catch((reason) => setError(message(reason, t("finance.loadFailed"))));
+      .catch((reason) => {
+        setError(message(reason, t("finance.loadFailed")));
+        setFailure(billReadFailure(reason));
+      });
   }, [id]);
   useEffect(() => { load(); }, [load]);
-  if (error && !data) return <Notice>{error}</Notice>;
+  if (failure && !data) {
+    const testId = { notFound: "supplier-invoice-not-found", unauthenticated: "supplier-invoice-unauthenticated", forbidden: "supplier-invoice-forbidden", error: "supplier-invoice-read-error" }[failure];
+    const text = { notFound: t("finance.billNotFound"), unauthenticated: t("finance.billSignedOut"), forbidden: t("finance.billForbidden"), error: t("finance.billReadError") }[failure];
+    return (
+      <Card className="py-16 text-center" data-testid={testId}>
+        <div className="text-sm font-semibold">{text}</div>
+        <div className="mt-2 text-xs text-slate-500">{id}</div>
+        {failure === "error" && <button type="button" onClick={load} className="mt-3 text-sm font-semibold text-blue-600">{t("finance.retry")}</button>}
+      </Card>
+    );
+  }
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const base = `/api/finance/supplier-invoices/${encodeURIComponent(data.id)}`;
   const actions: string[] = Array.isArray(data.availableActions) ? data.availableActions : [];
@@ -284,7 +271,12 @@ export function SupplierInvoiceDetail() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="font-semibold">{data.invoiceNumber}</h2>
-            <p className="mt-1 text-sm text-slate-500">{data.supplierName || "—"} · {data.relatedPoId || "—"} · {data.relatedGrnId || "—"}</p>
+            <p className="mt-1 text-sm text-slate-500" data-testid="supplier-invoice-sources">
+              {data.supplierName || "—"}
+              {" · "}{t("finance.purchaseOrder")} {data.relatedPoId ? <BusinessEntityLink entityType="purchase_order" entityId={data.relatedPoId} /> : "—"}
+              {" · "}{t("finance.receipt")} {data.relatedGrnId ? <BusinessEntityLink entityType="receiving_doc" entityId={data.relatedGrnId} /> : "—"}
+              {data.relatedPoId && <>{" · "}<BusinessEntityLink entityType="three_way_match" entityId={`MATCH-${data.id}`}>{t("finance.threeWayMatch")}</BusinessEntityLink></>}
+            </p>
           </div>
           <div className="text-right">
             <strong>{money(data.totalAmount, data.currency, locale)}</strong>
@@ -340,9 +332,9 @@ export function SupplierInvoiceDetail() {
             <h3 className="font-semibold">{t("finance.payables")} · {payable.obligationNumber || payable.id}</h3>
             <div className="flex items-center gap-2"><strong>{money(payable.outstandingAmount, payable.currency, locale)}</strong><StatusChip status={payable.status} /></div>
           </div>
-          <Notice>{t("finance.notPaid")}</Notice>
+          <PaymentRecords kind="payable" obligation={payable} onDone={load} />
           <div className="flex flex-wrap gap-2">
-            {payableActions.map((action) => (
+            {payableActions.filter((action) => action !== "record_payment").map((action) => (
               <TwoStepAction
                 key={action}
                 label={t(action === "hold" ? "finance.action.hold" : action === "release" ? "finance.action.release" : "finance.action.mark_export_ready")}

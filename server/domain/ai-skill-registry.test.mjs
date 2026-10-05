@@ -27,12 +27,15 @@ test('every skill copy key has an English and a Chinese text', () => {
   assert.equal(aiSkillCountText('records.title', 0, 'en-US'), 'No records are missing required fields')
   assert.equal(aiSkillCountText('records.title', 1, 'en-US'), '1 record needs more data')
   assert.equal(aiSkillList(['a', 'b', 'c'], 'en-US'), 'a, b and c')
-  assert.equal(aiSkillList(['a', 'b'], 'zh-CN'), 'a和b')
+  assert.equal(aiSkillList(['发票', '订单'], 'zh-CN'), '发票和订单')
+  // A number or a Latin name after 和 gets a space.
+  assert.equal(aiSkillList(['2 张订单', '1 张发票'], 'zh-CN'), '2 张订单和 1 张发票')
+  assert.equal(aiSkillList(['甲', 'b'], 'zh-CN'), '甲和 b')
   assert.throws(() => aiSkillText('not.a.key', 'en-US'), /Unknown AI skill copy key/)
 })
 
 test('every registry entry is read-only, bilingual and uses known permission codes', () => {
-  assert.deepEqual(AI_SKILL_IDS, ['today_priorities', 'highest_risk_items', 'records_needing_data', 'prepare_action_draft', 'workspace_metrics', 'purchase_orders', 'pending_approvals', 'inventory_availability', 'invoice_summary', 'rfq_followups', 'receiving_issues', 'capability_overview'])
+  assert.deepEqual(AI_SKILL_IDS, ['today_priorities', 'highest_risk_items', 'records_needing_data', 'prepare_action_draft', 'workspace_metrics', 'purchase_orders', 'pending_approvals', 'inventory_availability', 'invoice_summary', 'rfq_followups', 'receiving_issues', 'supplier_attention', 'capability_overview'])
   // None contains "missing", which the client reads as an insufficient-data answer.
   for (const id of AI_SKILL_IDS) assert.doesNotMatch(id, /missing/)
   assert.match(AI_SKILL_IDS.find((id) => id.includes('draft')), /draft/)
@@ -86,6 +89,7 @@ test('tool descriptors are stable, read-only and filtered by the actor', () => {
     { name: 'invoice_summary', mode: 'read', writesBusinessData: false, requiresUserReview: false, sensitivityGroups: ['finance_amounts'] },
     { name: 'rfq_followups', mode: 'read', writesBusinessData: false, requiresUserReview: false, sensitivityGroups: [] },
     { name: 'receiving_issues', mode: 'read', writesBusinessData: false, requiresUserReview: false, sensitivityGroups: [] },
+    { name: 'supplier_attention', mode: 'read', writesBusinessData: false, requiresUserReview: false, sensitivityGroups: ['finance_amounts'] },
     { name: 'capability_overview', mode: 'read', writesBusinessData: false, requiresUserReview: false, sensitivityGroups: [] },
   ])
   for (const descriptor of descriptors) assert.doesNotMatch(descriptor.description, CJK)
