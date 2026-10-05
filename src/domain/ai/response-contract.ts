@@ -41,6 +41,8 @@ export type AiResponseV2EvidenceItem = {
   // status code. `status` is then the label in the answer language.
   rank?: number | null;
   statusCode?: string;
+  // What to do next about this record, in the answer language.
+  nextStep?: string;
 };
 
 export type AiResponseV2BusinessImpactItem = {
@@ -102,7 +104,15 @@ export type AiResponseV2ReviewCard = {
   draftType?: string;
   draftTitle?: string;
   payload?: Record<string, unknown>;
+  // The answer line (evidence id) this draft belongs to, when it was offered on a line.
+  lineEvidenceId?: string;
+  // Which payload fields were suggested, and from where (record, default, template).
+  prefill?: Record<string, { source: "record" | "default" | "template" | "history" | "workspace_history" | "model"; ref?: string; value: string }>;
   originEvidence?: Record<string, unknown>[];
+  // Set on the cards of an order the assistant was asked to start
+  // (prepare_action_draft, mode order): true opens the card's form as the
+  // answer arrives. Their allowedNextStep names the SKU and is the button label.
+  autoOpen?: boolean;
 };
 
 export type AiRuntimeContextBreadcrumb = {

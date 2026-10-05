@@ -107,6 +107,9 @@ const definitions = [
   ["finance.payable.hold", "finance", "payable", "hold", "high"],
   ["finance.payable.release", "finance", "payable", "release", "high"],
   ["finance.payable.mark_export_ready", "finance", "payable", "mark_export_ready", "critical"],
+  // Recording (or voiding) a payment made outside FlowChain. It lowers what is
+  // outstanding and never moves money.
+  ["finance.payable.record_payment", "finance", "payable", "record_payment", "high"],
   ["finance.supplier_credit.read", "finance", "supplier_credit", "read", "low"],
   ["finance.supplier_credit.create", "finance", "supplier_credit", "create", "medium"],
   ["finance.supplier_credit.approve", "finance", "supplier_credit", "approve", "critical"],
@@ -119,6 +122,7 @@ const definitions = [
   ["finance.receivable.dispute", "finance", "receivable", "dispute", "high"],
   ["finance.receivable.resolve_dispute", "finance", "receivable", "resolve_dispute", "high"],
   ["finance.receivable.record_external_reference", "finance", "receivable", "record_external_reference", "high"],
+  ["finance.receivable.record_payment", "finance", "receivable", "record_payment", "high"],
   ["finance.customer_credit.read", "finance", "customer_credit", "read", "low"],
   ["finance.customer_credit.create", "finance", "customer_credit", "create", "medium"],
   ["finance.customer_credit.approve", "finance", "customer_credit", "approve", "critical"],
