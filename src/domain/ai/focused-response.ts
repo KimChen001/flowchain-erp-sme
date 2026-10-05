@@ -18,6 +18,9 @@ export type AiFocusedPrimaryItem = {
   status: string;
   severity: AiResponseV2Severity;
   evidence: AiResponseV2EvidenceItem;
+  // The line's next step and the draft offered for it, when there is one.
+  nextStep: string;
+  draft: AiFocusedAction | null;
 };
 
 export type AiFocusedAction =
@@ -66,20 +69,35 @@ function answerMode(response: AiResponseV2): AiFocusedAnswerMode {
   return "diagnosis";
 }
 
-function actions(response: AiResponseV2, language: Language) {
+function draftAction(card: AiResponseV2ReviewCard, language: Language): AiFocusedAction {
+  const structured = ["purchase_request_draft", "rfq_draft", "task_draft"].includes(card.draftType || "");
+  // An order card names its SKU ("Open request: 12 pcs of LDM-001"), so
+  // several of them can be told apart.
+  const named = typeof card.autoOpen === "boolean" && card.allowedNextStep;
+  return {
+    kind: structured ? "structured_draft" : "text_draft",
+    label: named ? card.allowedNextStep : structured
+      ? card.draftType === "rfq_draft" ? focusedCopy[language].rfqDraft : card.draftType === "task_draft" ? focusedCopy[language].taskDraft : focusedCopy[language].prDraft
+      : card.allowedNextStep || focusedCopy[language].textDraft,
+    card,
+  };
+}
+
+// A draft belongs to the line it was offered on, else to the line about the
+// record it was drafted for.
+function draftForLine(item: AiResponseV2EvidenceItem, cards: AiResponseV2ReviewCard[], used: Set<AiResponseV2ReviewCard>) {
+  return cards.find((card) => !used.has(card) && card.lineEvidenceId === item.id)
+    || cards.find((card) => !used.has(card) && !card.lineEvidenceId && (card.originEvidence || []).some((origin) => origin.entityId === item.entityId && (!origin.entityType || origin.entityType === item.entityType)))
+    || null;
+}
+
+// Every answer is an entry point: drafts are offered whatever the question's
+// wording (owner decision 2, docs/ai-prefill-autocomplete-design.md). A draft
+// shown on its line is not repeated among the answer's actions.
+function actions(response: AiResponseV2, language: Language, onLines: Set<AiResponseV2ReviewCard>) {
   const navigation = (response.navigationLinks || []).filter((link) => Boolean(link.moduleId)).map<AiFocusedAction>((link) => ({ kind: "navigation", label: link.label, link }));
-  const drafts = (response.reviewCards || []).map<AiFocusedAction>((card) => {
-    const structured = ["purchase_request_draft", "rfq_draft", "task_draft"].includes(card.draftType || "");
-    return {
-      kind: structured ? "structured_draft" : "text_draft",
-      label: structured
-        ? card.draftType === "rfq_draft" ? focusedCopy[language].rfqDraft : card.draftType === "task_draft" ? focusedCopy[language].taskDraft : focusedCopy[language].prDraft
-        : card.allowedNextStep || focusedCopy[language].textDraft,
-      card,
-    };
-  });
-  const explicitDraftRequest = /草稿|draft|消息|备注|说明|新建|创建/i.test(`${response.query || ""} ${response.intent || ""}`);
-  return explicitDraftRequest ? [...drafts, ...navigation] : navigation;
+  const drafts = (response.reviewCards || []).filter((card) => !onLines.has(card)).map((card) => draftAction(card, language));
+  return [...drafts, ...navigation];
 }
 
 // The help answer ("Here is what I can help with"): it reads no records.
@@ -96,16 +114,25 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
   // The server's rank, when it gives one, is the order; otherwise a heuristic.
   const ranked = (response.keyEvidence || []).every((item) => typeof item.rank === "number");
   const evidence = [...(response.keyEvidence || [])].sort((a, b) => ranked ? (a.rank as number) - (b.rank as number) : priorityScore(b) - priorityScore(a));
-  const primaryItems = evidence.slice(0, 3).map((item, index) => ({
-    id: item.id || `${item.entityType}-${item.entityId}-${index}`,
-    title: item.entityLabel || item.label || item.entityId,
-    reason: item.summary || copy.reason,
-    impact: impacts[index]?.explanation || impacts[index]?.impact || "",
-    status: item.status || "",
-    severity: item.severity || impacts[index]?.severity || "info",
-    evidence: item,
-  }));
-  const availableActions = actions(response, language);
+  // A compound answer shows sections, not lines, so its drafts stay actions.
+  const lineCards = new Set<AiResponseV2ReviewCard>();
+  const compound = (response.sections || []).filter((section) => Boolean(section?.title)).length > 1;
+  const primaryItems = evidence.slice(0, 3).map((item, index) => {
+    const card = compound ? null : draftForLine(item, response.reviewCards || [], lineCards);
+    if (card) lineCards.add(card);
+    return {
+      id: item.id || `${item.entityType}-${item.entityId}-${index}`,
+      title: item.entityLabel || item.label || item.entityId,
+      reason: item.summary || copy.reason,
+      impact: impacts[index]?.explanation || impacts[index]?.impact || "",
+      status: item.status || "",
+      severity: item.severity || impacts[index]?.severity || "info",
+      evidence: item,
+      nextStep: item.nextStep || "",
+      draft: card ? draftAction(card, language) : null,
+    };
+  });
+  const availableActions = actions(response, language, lineCards);
   // The help answer has no records to show, so its suggestions are the answer:
   // all four of them. Any other answer offers two next questions.
   const followUps = (response.followUpSuggestions || [])

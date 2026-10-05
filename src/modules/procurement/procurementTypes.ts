@@ -239,6 +239,8 @@ export type RfqSupplierResponseCommandInput = {
   paymentTerms?: string | null;
   lines: RfqResponseLineInput[];
   idempotencyKey: string;
+  // Which prefilled values the user kept (codes only); not part of the command's meaning.
+  suggestionTrail?: { origin: string; fields: { field: string; source: string; ref?: string; outcome: string }[] } | null;
 };
 export type RfqSupplierResponseCommandResult = {
   entityType: "SupplierQuotation";

@@ -249,7 +249,7 @@ export function buildInvoiceEvidence(item: SupplierInvoice): EvidenceDetail {
     priority,
     object: item.invoiceNumber,
     module: "供应商发票",
-    moduleId: "procurement:invoices",
+    moduleId: "procurement:bills",
     businessReason: "供应商发票需要与采购订单和收货单一致后，才能进入审批复核、AP 可见性和结算资料准备状态。",
     evidence: [
       { label: "发票号码", value: item.invoiceNumber },

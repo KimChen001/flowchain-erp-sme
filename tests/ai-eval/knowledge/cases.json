@@ -82,6 +82,7 @@
       "id": "unknown-price",
       "question": "What is the price of FC-DEMO-SENSOR-100?",
       "scope": "knowledge",
+      "modes": ["generated", "no_answer"],
       "knownGaps": { "scope": "Automatic mode keeps price questions with business data. Choosing between documents and records is left to model tool planning (P2)." },
       "sources": ["product-guide.md"],
       "sections": ["FC-DEMO-SENSOR-100"],
@@ -94,6 +95,7 @@
       "id": "unknown-certification",
       "question": "Is FC-DEMO-SENSOR-100 certified for food-contact use?",
       "scope": "knowledge",
+      "modes": ["generated", "no_answer"],
       "sources": ["product-guide.md"],
       "sections": ["FC-DEMO-SENSOR-100"],
       "firstSection": "FC-DEMO-SENSOR-100",
@@ -159,6 +161,13 @@
       "expect": "Business data answers the orders; the purchasing policy is cited alongside."
     },
     {
+      "id": "acme-follow-up-policy-zh",
+      "language": "zh-CN",
+      "question": "查一下 Acme 的未完成订单，按我们的采购政策说明哪些需要跟进，并准备一封询问部分交货的邮件。",
+      "scope": "mixed",
+      "expect": "The Chinese twin of the demo request takes the same mixed route, so the purchasing policy is searched alongside the orders. Offline, keyword search cannot match a Chinese question to the English policy, so only the route is scored."
+    },
+    {
       "id": "isolation-other-tenant",
       "tenant": "D",
       "question": "What is the operating range of FC-DEMO-SENSOR-100 in degrees Celsius?",
@@ -173,6 +182,7 @@
       "role": "buyer",
       "question": "What is our policy for approving supplier invoices above 5,000 USD?",
       "scope": "knowledge",
+      "modes": ["generated", "no_answer"],
       "notSources": ["finance-limits"],
       "openDenied": "finance-limits",
       "answer": {"mustNotMatch": ["second (finance )?approver"]},

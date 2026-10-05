@@ -157,16 +157,19 @@ test('with a provider, every document is embedded', { skip: !providerFile && 'of
   assert.deepEqual([...indexStatus].filter(([, status]) => status !== 'semantic'), [])
 })
 
-// Why a model reply was not used, in the order answerKnowledgeQuery checks it.
+// Why a model reply was not used as a generated answer, in the order
+// answerKnowledgeQuery checks it.
 function rejectionReason(response, citations) {
   if (!response.ok) return `provider ${response.reason || response.status || 'error'}`
   let output = response.rawOutput?.conclusion?.summary || response.rawOutput
   try { if (typeof output === 'string') output = JSON.parse(output.replace(/^```(?:json)?\s*|\s*```$/g, '')) } catch { return 'reply is not JSON' }
-  if (typeof output?.answer !== 'string' || !output.answer.trim()) return 'reply has no answer'
+  if (!Array.isArray(output?.citationIds)) return 'reply has no citationIds'
+  if (!output.citationIds.length) return output.answer == null || typeof output.answer === 'string' ? `reply cites nothing (a no-answer): "${String(output.answer || '').slice(0, 160)}"` : 'reply cites nothing and its answer is not text'
+  if (typeof output.answer !== 'string' || !output.answer.trim()) return 'reply has no answer'
   if (output.answer.length > 2400) return 'answer longer than 2,400 characters'
-  if (!Array.isArray(output.citationIds) || !output.citationIds.length) return `reply cites nothing: "${output.answer.slice(0, 160)}"`
-  if (!output.citationIds.every(id => citations.some(c => c.id === id))) return 'reply cites an id that was not retrieved'
-  return 'an inline [n] reference names a source the reply did not cite'
+  const named = reference => citations.some(c => c.id === reference || c.sourceNumber === Number(String(reference).match(/^\s*\[?\s*(\d+)\s*\]?\s*$/)?.[1]))
+  if (!output.citationIds.every(named)) return 'reply names a passage that was not retrieved'
+  return 'an inline [n] reference names a passage that was not retrieved'
 }
 
 async function ask(entry) {
@@ -223,12 +226,19 @@ async function ask(entry) {
     check('open', denied === 'KNOWLEDGE_NOT_FOUND', `opening ${entry.openDenied} returned ${denied || 'the document'}`)
   }
 
-  // The answer itself is scored only when a model wrote it.
+  // The answer itself is scored only when a model wrote it. A case lists the
+  // modes it accepts in `modes`; by default only a generated answer. A
+  // no-answer ("the documents do not answer this") is right only where the
+  // documents the reader can see really are silent.
   if (providerFile) {
-    check('generation', result.mode === 'generated', `answer mode is ${result.mode}${raw ? `: ${rejectionReason(raw, result.citations)}` : ''}`)
-    if (result.mode === 'generated') {
-      for (const pattern of entry.answer?.matches || []) check('answer', new RegExp(pattern, 'iu').test(result.answer), `does not match /${pattern}/`)
-      for (const pattern of entry.answer?.mustNotMatch || []) check('answer', !new RegExp(pattern, 'iu').test(result.answer), `matches /${pattern}/`)
+    const modes = entry.modes || ['generated']
+    check('generation', modes.includes(result.mode), `answer mode is ${result.mode}, expected ${modes.join(' or ')}${raw && result.mode !== 'generated' ? `: ${rejectionReason(raw, result.citations)}` : ''}`)
+    if (result.mode === 'generated' || result.mode === 'no_answer') {
+      // A no-answer is a fixed server sentence: only its language is scored.
+      if (result.mode === 'generated') {
+        for (const pattern of entry.answer?.matches || []) check('answer', new RegExp(pattern, 'iu').test(result.answer), `does not match /${pattern}/`)
+        for (const pattern of entry.answer?.mustNotMatch || []) check('answer', !new RegExp(pattern, 'iu').test(result.answer), `matches /${pattern}/`)
+      }
       const chinese = /\p{Script=Han}/u.test(result.answer)
       check('language', (entry.language || 'en-US') === 'zh-CN' ? chinese : !chinese, (entry.language || 'en-US') === 'zh-CN' ? 'the answer is not in Chinese' : 'the English answer contains Chinese')
     }
