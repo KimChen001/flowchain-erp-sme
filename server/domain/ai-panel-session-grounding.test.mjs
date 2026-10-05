@@ -58,6 +58,20 @@ test('R111 minimize and navigation preserve messages input evidence and actions'
   assert.doesNotMatch(panelSource, /useEffect\(\(\) => \{[\s\S]*?setMessages\(\[\]\)[\s\S]*?\}, \[moduleId\]\)/)
 })
 
+test('an order answer opens its form once, as it arrives, and the assistant stays open', () => {
+  // In askAi, after the stale-request check: never from a render or an
+  // effect, so a restored or re-opened conversation does not open it again.
+  const arrival = panelSource.slice(panelSource.indexOf('if (requestSeqRef.current !== requestId) return;'), panelSource.indexOf('} catch (error) {', panelSource.indexOf('async function askAi')))
+  assert.match(arrival, /setMessages\([\s\S]*const opening = autoOpenDraftCard\(\(response as unknown as AiResponseV2\)\.reviewCards\);/)
+  // The same handoff as the answer's button, without minimizing: the user
+  // reads first why the page changed and what is already on order.
+  assert.match(arrival, /const target = structuredDraftTarget\(opening\.draftType, opening\.payload, "ai_assistant"\);\s*onNavigate\?\.\(target\.moduleId, null, \{ source: "ai", returnTo: "ai", entityLabel: opening\.allowedNextStep, query: target\.query \}\);\s*\}/)
+  assert.doesNotMatch(arrival, /minimize/i)
+  // A new answer is shown from its first line, not scrolled to its end.
+  assert.match(panelSource, /const latest = !asking && messages\.at\(-1\)\?\.role === "assistant" \? answers\[answers\.length - 1\] : null;/)
+  assert.equal(panelSource.split('autoOpenDraftCard(').length - 1, 1)
+})
+
 test('R112 panel sends compact session grounding without full chat transcript', () => {
   assert.match(panelSource, /type AiSessionGrounding = \{/)
   assert.match(panelSource, /lastPrimaryEntity/)
