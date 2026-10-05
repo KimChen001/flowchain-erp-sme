@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { useRouteAvailability } from "../../../app/routeAvailability";
 import { apiJson } from "../../../lib/api-client";
 import { useI18n } from "../../../i18n/I18n";
+import { usePermissionSet } from "../../../lib/usePermissionSet";
 
 type WorkflowAction = "submit" | "approve" | "reject" | "issue" | "cancel" | "close";
 
@@ -44,19 +45,6 @@ const COPY: Record<string, [string, string]> = {
   receiveNote: ["Record goods that arrived against this PO.", "登记该采购订单的到货。"],
 };
 
-// The effective permission codes of the signed-in user; empty when they
-// cannot be read, so no command is offered.
-function usePermissionSet() {
-  const [permissions, setPermissions] = useState<Set<string> | null>(null);
-  useEffect(() => {
-    let alive = true;
-    apiJson<{ effectivePermissions?: string[] }>("/api/authorization/context")
-      .then((context) => { if (alive) setPermissions(new Set(context.effectivePermissions || [])); })
-      .catch(() => { if (alive) setPermissions(new Set()); });
-    return () => { alive = false; };
-  }, []);
-  return permissions;
-}
 
 export function PurchaseOrderWorkflowActions({
   poId,

@@ -34,9 +34,9 @@ test('asked for the order, a shortage open orders cover is explained, open order
   // Chasing the late order first, then a request one click away.
   assert.deepEqual(cards(response), [['po_followup_draft', 'PO-001', null, null], ['purchase_request_draft', 'ITEM-001', 12, false]])
   assert.deepEqual(response.reviewCards.map((card) => card.allowedNextStep), ['Draft a follow-up on PO-001', 'Open a request for LDM-001 anyway'])
-  // The follow-up is worded as the drafts word it: each open line, with the lines for the review form.
+  // The follow-up is the drafts' own: greeting, each open line, and the lines for the review form.
   const followUp = response.reviewCards[0].payload
-  assert.equal(followUp.message, 'Please confirm a delivery date for the remaining 30 pcs of LDM-001 on PO-001.')
+  assert.match(followUp.message, /^Hello Acme Components,\n\nPlease confirm a delivery date for the open line on PO-001:\n- LDM-001: 30 pcs still to deliver/)
   assert.deepEqual(followUp.lines.map((line) => [line.sku, line.remaining]), [['LDM-001', 30]])
   const chinese = await ask('帮我下单')
   assert.equal(chinese.conclusion.title, 'LDM-001 已有在途订单')
@@ -47,7 +47,9 @@ test('asked for the order, a shortage open orders cover is explained, open order
 test('a named SKU, or "anyway", opens its request on top of what is on order, and says what is on order first', async () => {
   for (const message of ['Create a purchase order for LDM-001', 'Place an order anyway', '仍然帮我下单']) {
     const response = await ask(message)
-    assert.deepEqual(cards(response), [['purchase_request_draft', 'ITEM-001', 12, true]], message)
+    // The request opens; the LDM-001 line still offers its own next step,
+    // chasing the late PO (owner decision 2), which never opens by itself.
+    assert.deepEqual(cards(response), [['purchase_request_draft', 'ITEM-001', 12, true], ['po_followup_draft', 'PO-001', null, null]], message)
     assert.equal(response.reviewCards[0].payload.itemIdOrSku, 'LDM-001', message)
   }
   const english = await ask('Create a purchase order for LDM-001')
@@ -75,7 +77,7 @@ test('a quantity the question names wins, and a SKU without stock levels opens w
 test('asking whether or what to order gets the request without opening it', async () => {
   const response = await ask('Should I reorder LDM-001?')
   assert.equal(response.conclusion.title, 'LDM-001 is covered by what is already on order')
-  assert.deepEqual(cards(response), [['purchase_request_draft', 'ITEM-001', 12, false]])
+  assert.deepEqual(cards(response), [['purchase_request_draft', 'ITEM-001', 12, false], ['po_followup_draft', 'PO-001', null, null]])
   const yes = order(uncovered(await facts()), 'en-US', { advice: true })
   assert.equal(yes.conclusion.title, 'LDM-001 needs ordering: 12 pcs')
   assert.deepEqual(cards(yes), [['purchase_request_draft', 'ITEM-001', 12, false]])

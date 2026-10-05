@@ -29,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 164);
+  assert.equal(routes.length, 170);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -46,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    164,
+    170,
   );
   assert.throws(
     () =>
@@ -178,13 +178,30 @@ test("capability and permission metadata remain declarative boundaries", () => {
     routes.find((route) => route.id === "procurement:order-lines").requiredPermission,
     "procurement.purchase_order.read",
   );
+  for (const id of ["procurement:bills", "procurement:bill-new", "procurement:bill-detail"])
+    assert.equal(
+      routes.find((route) => route.id === id).requiredPermission,
+      "finance.supplier_invoice.read",
+      id,
+    );
+  for (const id of ["sales:invoices", "sales:invoice-new", "sales:invoice-detail"])
+    assert.equal(
+      routes.find((route) => route.id === id).requiredPermission,
+      "finance.customer_invoice.read",
+      id,
+    );
+  // Recording a bill or an invoice is a transaction; reading one is not.
   assert.equal(
-    routes.find((route) => route.id === "procurement:invoices").requiredPermission,
-    "finance.supplier_invoice.read",
+    routes.find((route) => route.id === "procurement:bill-new").requiredCapability,
+    "supplier-invoice",
   );
   assert.equal(
-    routes.find((route) => route.id === "procurement:invoice-detail").requiredPermission,
-    "finance.supplier_invoice.read",
+    routes.find((route) => route.id === "sales:invoice-new").requiredCapability,
+    "customer-invoice",
+  );
+  assert.equal(
+    routes.find((route) => route.id === "procurement:bills").requiredCapability,
+    undefined,
   );
   assert.equal(
     routes.find((route) => route.id === "procurement:match-detail").requiredPermission,
@@ -302,8 +319,16 @@ test("legacy redirects and canonical operational deep links remain exact", () =>
     "procurement:receiving-detail",
   );
   assert.equal(
-    registry.routeByPath("/app/procurement/invoices/INV-001").id,
-    "procurement:invoice-detail",
+    registry.routeByPath("/app/procurement/bills/INV-001").id,
+    "procurement:bill-detail",
+  );
+  assert.equal(
+    registry.routeByPath("/app/procurement/bills/new").id,
+    "procurement:bill-new",
+  );
+  assert.equal(
+    registry.routeByPath("/app/sales/invoices/new").id,
+    "sales:invoice-new",
   );
   assert.equal(
     registry.routeByPath("/app/procurement/three-way-match/MATCH-INV-001").id,
@@ -326,7 +351,19 @@ test("read and write maturity are independent from CORE classification", () => {
   }
   assert.equal(byId("procurement:requests").writeMaturity, "AUTHORITATIVE");
   assert.equal(byId("settings:audit").writeMaturity, "UNAVAILABLE");
-  for (const id of ["procurement:invoice-detail", "procurement:match-detail"]) {
+  // Sales pages also need the sales module capability, like the sales order
+  // pages next to them.
+  for (const [id, access] of [
+    ["procurement:bill-detail", "PERMISSION_REQUIRED"],
+    ["sales:invoice-detail", "CAPABILITY_REQUIRED"],
+  ]) {
+    assert.equal(byId(id).classification, "CORE", id);
+    assert.equal(byId(id).readMaturity, "AUTHORITATIVE", id);
+    assert.equal(byId(id).writeMaturity, "CAPABILITY_GATED", id);
+    assert.equal(byId(id).navigationVisibility, "CONTEXTUAL", id);
+    assert.equal(byId(id).directAccessBehavior, access, id);
+  }
+  for (const id of ["procurement:match-detail"]) {
     assert.equal(byId(id).classification, "CORE", id);
     assert.equal(byId(id).readMaturity, "AUTHORITATIVE", id);
     assert.equal(byId(id).writeMaturity, "UNAVAILABLE", id);
@@ -483,6 +520,50 @@ test("procurement details use canonical single-document reads and preserve statu
   assert.doesNotMatch(detailSource, /执行匹配|批准发票|发票过账|付款/);
 });
 
+test("moved bill and invoice routes redirect to their new pages", () => {
+  const byId = (id) => routes.find((route) => route.id === id);
+  for (const [id, replacement] of [
+    ["procurement:invoices", "procurement:bills"],
+    ["procurement:invoice-detail", "procurement:bill-detail"],
+    ["finance:invoices", "procurement:bills"],
+    ["finance:invoice-new", "procurement:bill-new"],
+    ["finance:invoice-detail", "procurement:bill-detail"],
+    ["finance:three-way-match", "procurement:bills"],
+    ["finance:customer-invoices", "sales:invoices"],
+    ["finance:customer-invoice-new", "sales:invoice-new"],
+    ["finance:customer-invoice-detail", "sales:invoice-detail"],
+  ]) {
+    assert.equal(byId(id).classification, "LEGACY", id);
+    assert.equal(byId(id).navigationVisibility, "HIDDEN", id);
+    assert.equal(byId(id).directAccessBehavior, "LEGACY_REDIRECT", id);
+    assert.equal(byId(id).canonicalReplacement, replacement, id);
+    assert.equal(registry.currentRouteFor(byId(id)).id, replacement, id);
+  }
+  // Parameters survive the move; the visited query string is kept unless the
+  // redirect names its own.
+  for (const [from, search, to] of [
+    ["/app/finance/invoices", "?status=matched", "/app/procurement/bills?status=matched"],
+    ["/app/finance/invoices/new", "", "/app/procurement/bills/new"],
+    ["/app/finance/invoices/inv 1", "", "/app/procurement/bills/inv%201"],
+    ["/app/procurement/invoices/LOCAL-DEMO-INV-001", "", "/app/procurement/bills/LOCAL-DEMO-INV-001"],
+    ["/app/finance/three-way-match", "?status=open", "/app/procurement/bills?status=exception"],
+    ["/app/finance/customer-invoices/CI-7", "", "/app/sales/invoices/CI-7"],
+  ])
+    assert.equal(registry.redirectTargetForPath(from, search), to, from);
+  assert.equal(registry.redirectTargetForPath("/app/procurement/bills"), null);
+  assert.equal(registry.routePathForId("finance:invoices"), "/app/procurement/bills");
+  // Bills sit under Purchasing next to three-way match; Receiving keeps receipts.
+  const tabs = (rootId) =>
+    routes
+      .filter((route) => route.parentId === rootId && route.navigationVisibility === "SECONDARY")
+      .map((route) => route.id);
+  assert.ok(tabs("procurement").includes("procurement:bills"));
+  assert.ok(tabs("procurement").includes("procurement:match"));
+  assert.deepEqual(tabs("procurement:receiving"), ["procurement:order-lines"]);
+  assert.ok(tabs("sales").includes("sales:invoices"));
+  assert.ok(!tabs("finance").includes("finance:invoices"));
+});
+
 test("human-readable route authority matrix covers the executable manifest", () => {
   const matrix = readFileSync(
     new URL("../../docs/frontend-route-authority-matrix.md", import.meta.url),
@@ -495,5 +576,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /164\/164 frontend route stability audit/);
+  assert.match(matrix, /170\/170 frontend route stability audit/);
 });
