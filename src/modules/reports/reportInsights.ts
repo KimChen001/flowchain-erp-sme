@@ -64,14 +64,14 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
   }
 
   if (view === "procurement" || view === "suppliers") {
-    if (onTime) insights.push({ id: "on_time", tone: "neutral", text: zh ? `当前范围内 ${format(onTime.currentValue, "percentage")} 的收货在预计日期当天或之前到达。` : `${format(onTime.currentValue, "percentage")} of receipts in range arrived on or before the expected date.` });
+    if (onTime) insights.push({ id: "on_time", tone: "neutral", text: zh ? `按原承诺日期计，当前范围内 ${format(onTime.currentValue, "percentage")} 的采购订单行准时到货。` : `${format(onTime.currentValue, "percentage")} of PO lines first promised in range arrived by their original promise.` });
   }
 
   if (view === "procurement" && overdue) {
     const count = overdue.currentValue ?? 0;
     insights.push(count
-      ? { id: "overdue", tone: "attention", text: zh ? `${count} 张未完成采购订单已超过预计日期。` : `${count} open purchase ${plural(count, "order is", "orders are")} past the expected date.` }
-      : { id: "overdue", tone: "positive", text: zh ? "没有超过预计日期的未完成采购订单。" : "No open purchase order is past its expected date." });
+      ? { id: "overdue", tone: "attention", text: zh ? `${count} 张未完成采购订单有未收货行已过承诺日期。` : `${count} open purchase ${plural(count, "order has", "orders have")} a line past its promised date.` }
+      : { id: "overdue", tone: "positive", text: zh ? "没有未收货行已过承诺日期的未完成采购订单。" : "No open purchase order has a line past its promised date." });
   }
 
   if (view === "finance") {
@@ -104,7 +104,7 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
     if (out && out.currentValue) insights.push({ id: "out", tone: "attention", text: zh ? `${out.currentValue} 个 SKU 已缺货。` : `${out.currentValue} ${plural(out.currentValue, "SKU is", "SKUs are")} out of stock.` });
     const atp = chartById(report, "inventory_available_to_promise")?.data?.[0];
     const short = num(atp?.value);
-    if (atp && short !== null && short < 0) insights.push({ id: "atp", tone: "attention", text: zh ? `${atp.name} 相对未履约需求短缺 ${format(-short, "number")}。` : `${atp.name} is short by ${format(-short, "number")} against open demand.` });
+    if (atp && short !== null && short < 0) insights.push({ id: "atp", tone: "attention", text: zh ? `${atp.name} 计入在途采购后仍短缺 ${format(-short, "number")}。` : `${atp.name} is short by ${format(-short, "number")} even after incoming purchase orders.` });
     const risk = kpiById(report, "inventory_risk_sku");
     if (risk && !risk.currentValue) insights.push({ id: "risk", tone: "positive", text: zh ? "当前没有存在短缺的 SKU。" : "No SKU has a shortage against open demand." });
   }
@@ -114,13 +114,13 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
     if (ranking.length > 1) {
       const best = ranking[0];
       const worst = ranking[ranking.length - 1];
-      insights.push({ id: "spread", tone: "neutral", text: zh ? `${best.name} 的准时收货率最高（${format(num(best.value), "percentage")}），${worst.name} 最低（${format(num(worst.value), "percentage")}）。` : `${best.name} has the best on-time receipts (${format(num(best.value), "percentage")}); ${worst.name} has the lowest (${format(num(worst.value), "percentage")}).` });
+      insights.push({ id: "spread", tone: "neutral", text: zh ? `${best.name} 的准时行占比最高（${format(num(best.value), "percentage")}），${worst.name} 最低（${format(num(worst.value), "percentage")}）。` : `${best.name} has the most lines on time (${format(num(best.value), "percentage")}); ${worst.name} has the fewest (${format(num(worst.value), "percentage")}).` });
     }
     const matrix = chartById(report, "supplier_performance_matrix");
     if (matrix?.guides && matrix.guides.x !== null && matrix.guides.y !== null) {
       const xKey = matrix.measures?.find(item => item.axis === "x")?.key || "";
-      const watch = (matrix.data || []).filter(row => (num(row[xKey]) ?? 0) >= matrix.guides!.x! && (num(row["On-time receipts"]) ?? 100) < matrix.guides!.y!).map(row => category(matrix, String(row.name)));
-      if (watch.length) insights.push({ id: "watch", tone: "attention", text: zh ? `${watch.join("、")} 的${xKey === "Committed amount" ? "采购额" : "订单数"}不低于中位数，但准时收货率低于平均值。` : `${watch.join(", ")} ${plural(watch.length, "combines", "combine")} at least median ${xKey === "Committed amount" ? "spend" : "order count"} with below-average on-time receipts.` });
+      const watch = (matrix.data || []).filter(row => (num(row[xKey]) ?? 0) >= matrix.guides!.x! && (num(row["On-time lines"]) ?? 100) < matrix.guides!.y!).map(row => category(matrix, String(row.name)));
+      if (watch.length) insights.push({ id: "watch", tone: "attention", text: zh ? `${watch.join("、")} 的${xKey === "Committed amount" ? "采购额" : "订单数"}不低于中位数，但准时行占比低于平均值。` : `${watch.join(", ")} ${plural(watch.length, "combines", "combine")} at least median ${xKey === "Committed amount" ? "spend" : "order count"} with a below-average share of lines on time.` });
     }
   }
 

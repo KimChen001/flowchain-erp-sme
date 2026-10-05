@@ -76,14 +76,14 @@ const unknownCurrencyLabel = '币种缺失或无效'
 const metricDefinitions = {
   sales_order_count: ['销售订单数量', 'sales_orders', 'number', '当前范围内真实销售订单记录数。', '/app/sales/orders'],
   open_sales_demand: ['未履约销售需求', 'sales_orders', 'number', 'Ordered less fulfilled quantity on confirmed sales order lines, before inventory reservations. Shown only while every line with demand left uses the same unit.', '/app/sales/orders'],
-  purchase_order_amount: ['采购订单金额', 'purchase_orders', 'currency', '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，不含草稿、待审批、驳回和取消的订单；有订单缺少金额时不显示合计。', '/app/procurement/orders'],
+  purchase_order_amount: ['Committed PO amount', 'purchase_orders', 'currency', '已承诺采购订单（已批准、已下达、部分收货或全部收货）的金额合计，不含草稿、待审批、驳回和取消的订单；有订单缺少金额时不显示合计。', '/app/procurement/orders'],
   open_po_count: ['开放 PO', 'purchase_orders', 'number', '已承诺（已批准、已下达或部分收货）且仍有待收数量的采购订单数。', '/app/procurement/orders'],
   inventory_on_hand: ['在手库存', 'inventory_balances', 'number', 'Inventory Runtime 已记录的在手数量。', '/app/inventory'],
-  inventory_risk_sku: ['库存风险 SKU', 'inventory_balances', 'number', '按统一 availability 口径存在 shortage 的 SKU 数。', '/app/inventory?risk=high'],
+  inventory_risk_sku: ['SKUs short now', 'inventory_balances', 'number', 'SKUs whose open sales demand, less its reservations, is more than the available stock. Incoming purchase orders are not counted.', '/app/inventory?risk=high'],
   invoice_amount: ['供应商发票金额', 'supplier_invoices', 'currency', '已提交供应商发票（已提交、匹配中、有差异、已匹配、已批准或暂挂）的金额合计，不含草稿、驳回和取消的发票；有发票缺少金额时不显示合计。', '/app/finance/invoices'],
   supplier_count: ['供应商数量', 'suppliers', 'number', '当前供应商主数据记录数。', '/app/master-data/suppliers'],
-  overdue_open_po_count: ['Overdue open POs', 'purchase_orders', 'number', 'Open purchase orders whose expected date is before today in the workspace timezone.', '/app/reports/procurement?status=open'],
-  on_time_receipt_rate: ['On-time receipts', 'receipts', 'percentage', "Share of receipts in range that arrived on or before the purchase order's expected date. Receipts without an expected date are left out.", '/app/procurement/receiving'],
+  overdue_open_po_count: ['Overdue open POs', 'purchase_orders', 'number', "Open purchase orders whose earliest line still to receive was due before today in the workspace timezone (the line's promised date, else the order's expected date).", '/app/reports/procurement?scope=overdue'],
+  on_time_receipt_rate: ['On-time lines (original promise)', 'receipts', 'percentage', 'PO lines first promised in range whose first posted receipt arrived by that date. Needs at least 5 lines.', '/app/reports/suppliers'],
   active_supplier_count: ['Suppliers with committed orders', 'purchase_orders', 'number', 'Suppliers with at least one committed purchase order in range.', '/app/master-data/suppliers'],
   invoice_match_rate: ['Invoices matched', 'supplier_invoices', 'percentage', 'Share of submitted supplier invoices whose three-way match passed.', '/app/finance/three-way-match'],
   invoices_awaiting_match: ['Invoices awaiting match', 'supplier_invoices', 'number', 'Submitted supplier invoices without a three-way match result yet.', '/app/finance/three-way-match'],
@@ -91,7 +91,7 @@ const metricDefinitions = {
   sales_order_amount: ['Sales order amount', 'sales_orders', 'currency', 'Total of sales orders in the current range, without drafts and cancellations. No total is shown across currencies.', '/app/sales/orders'],
   order_fulfillment_rate: ['Orders shipped in full', 'sales_orders', 'percentage', 'Share of confirmed sales orders whose every line has shipped its ordered quantity.', '/app/sales/orders'],
   out_of_stock_sku: ['Out-of-stock SKUs', 'inventory_balances', 'number', 'SKUs with no available stock under the shared availability calculation.', '/app/inventory?risk=high'],
-  negative_atp_sku: ['SKUs short against demand', 'inventory_balances', 'number', 'SKUs whose available-to-promise quantity is below zero.', '/app/inventory?risk=high'],
+  negative_atp_sku: ['SKUs short after incoming', 'inventory_balances', 'number', 'SKUs whose available-to-promise quantity (available stock plus incoming purchase orders, less open demand) is below zero.', '/app/inventory?risk=high'],
 }
 
 const dashboardMetrics = {
@@ -239,10 +239,12 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
   const currentValue = money ? money.total : value(id, all, inventory, facts)
   const unconverted = money?.currencyAggregationStatus === 'multi_currency_unconverted'
   const demand = id === 'open_sales_demand' ? facts.salesDemandTotal : null
-  const incomplete = money ? currentValue === null : ['inventory_on_hand', 'open_sales_demand'].includes(id) && currentValue === null
+  // Fewer PO lines than the scorecard's minimum sample give no on-time rate.
+  const smallSample = id === 'on_time_receipt_rate' && currentValue === null && facts.onTimeLines > 0
+  const incomplete = money ? currentValue === null : (['inventory_on_hand', 'open_sales_demand'].includes(id) && currentValue === null) || smallSample
   // A rate with nothing to divide by has no records, not a rate of zero.
   const dataStatus = incomplete ? 'incomplete' : id === 'inventory_on_hand' && !inventory.availability.length ? 'empty' : unit === 'percentage' && currentValue === null ? 'no_records' : 'complete'
-  const limitations = money ? money.limitations : demand ? (demand.limitation ? [demand.limitation] : []) : id === 'inventory_on_hand' && inventory.units?.length > 1 ? ['inventory_units_mixed'] : incomplete ? ['inventory_on_hand_incomplete'] : []
+  const limitations = money ? money.limitations : demand ? (demand.limitation ? [demand.limitation] : []) : smallSample ? ['insufficient_sample'] : id === 'inventory_on_hand' && inventory.units?.length > 1 ? ['inventory_units_mixed'] : incomplete ? ['inventory_on_hand_incomplete'] : []
   const currency = money ? { currencyCode: money.currencyCode, currencyLabel: money.currencyLabel, currencies: money.currencies, currencyAggregationStatus: money.currencyAggregationStatus, currencyAmounts: money.currencyAmounts } : {}
   return { id, label, subject, unit, format: unit, aggregation: description, numerator: description, denominator: null, dateField: 'date', applicableFilters: applicableFilters(subject, primaryKey), drilldownPath, emptyValue: 0, version: '3.0.0-runtime', description, value: currentValue, currentValue, dataStatus, limitations, ...currency, ...(demand ? { quantityUnit: demand.unit } : {}), comparisonValue: null, comparisonDelta: null, comparisonRate: null, comparisonDirection: 'flat', comparisonLabel: unconverted ? '多币种，未折算' : incomplete ? '数据不足' : '未比较', comparisonUnit: unit, calculationLabel: description, trend: metricTrend(id, all, money), generatedAt: new Date().toISOString() }
 }
@@ -279,7 +281,7 @@ export function buildRuntimeGovernedReport(context, input = {}, options = {}) {
   })
   const facts = { ...buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand }), salesDemandTotal: salesDemandTotal(salesDemand) }
   const visuals = buildDashboardVisuals({ subject: query.subject, context, all, query, purchaseOrderIdsAnyDate, restrictedAmounts: restriction.amounts, today, timeZone, salesDemand })
-  const columns = [...new Set(details.flatMap(row => Object.keys(row)))].map(key => ({ key, label: ({ id: '业务编号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', unit: '单位', fulfilled: '已履约', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: '缺口', availableToPromise: 'ATP', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'fulfilled', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
+  const columns = [...new Set(details.flatMap(row => Object.keys(row)))].map(key => ({ key, label: ({ id: '业务编号', date: '业务日期', supplier: '供应商', customer: '客户', amount: '金额', quantity: '数量', unit: '单位', fulfilled: '已履约', status: '状态', currency: '币种', sku: 'SKU', available: '可用量', shortage: 'Short now', availableToPromise: 'Available to promise', stockStatus: '库存状态', isOpen: '未结' })[key] || key, type: ['amount'].includes(key) ? 'currency' : key === 'isOpen' ? 'boolean' : ['quantity', 'fulfilled', 'available', 'shortage', 'availableToPromise'].includes(key) ? 'number' : key === 'date' ? 'date' : key === 'id' ? 'business_link' : 'text', subject: primaryKey }))
   const kpis = metricIds.map(id => metric(id, all, inventory, query, primaryKey, facts, restriction))
   const moneyLimitations = ['multi_currency_unconverted', 'currency_missing_or_invalid', 'amount_missing', 'amount_restricted', 'subject_restricted']
   const limitations = [...new Set([...array(context.dataLimitations), ...inventory.dataLimitations, ...(inventory.availability.length && inventory.availability.some(row => row.onHand === null) ? ['inventory_on_hand_incomplete'] : []), ...scopeMoney.limitations, ...kpis.flatMap(item => item.limitations.filter(code => moneyLimitations.includes(code)))])]

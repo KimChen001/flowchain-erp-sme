@@ -159,7 +159,7 @@ test('workbook metric summary formats each money metric in its own currency', ()
   }), { subject: 'sales', measures: ['sales_order_count', 'purchase_order_amount'] })
   const copy = value => analyticsCopy(value, 'en-US')
   const summary = reportWorkbook(report, {}, copy, [], { locale: 'en-US', language: 'en-US' })[0].rows
-  const row = summary.find(item => item.Metric === 'Purchase order amount' || item.Metric === '采购订单金额')
+  const row = summary.find(item => item.Metric === 'Committed PO amount')
   assert.match(String(row['Current value']), /€300/)
   assert.equal(row['Currency code'], 'EUR')
 })

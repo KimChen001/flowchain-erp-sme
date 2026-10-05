@@ -1,3 +1,4 @@
+import { analyticsCopy } from './analyticsCopy';
 // Presentation copy only: report names and other user-owned values stay intact.
 const english: Record<string, string> = {
   '标准报表': 'Standard reports', '我的报表': 'My reports', '团队共享': 'Team reports', '最近使用': 'Recently opened',
@@ -24,5 +25,6 @@ const english: Record<string, string> = {
 };
 
 export function reportLibraryCopy(value: string, language: string) {
-  return language === 'en-US' ? english[value] || value : value;
+  // Metric labels the server writes in English take their Chinese from the analytics copy.
+  return language === 'en-US' ? english[value] || value : analyticsCopy(value, language);
 }

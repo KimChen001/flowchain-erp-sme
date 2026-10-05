@@ -137,6 +137,18 @@ test('the supplier scorecard is measured against the original promise, per tenan
       const graced = (await scorecard(prisma, users.admin, '?from=2026-09-01&to=2026-09-30&graceDays=5')).payload
       assert.equal(graced.suppliers[0].metrics.onTime.count, 6)
     })
+
+    await t.test('a line approved but never issued is measured against the promise recorded at approval', async () => {
+      // Approved for Aug 20, received Aug 22 without being issued in FlowChain.
+      await prisma.purchaseOrder.create({ data: { id: 'SC-PO-APPROVED', tenantId: tenantA, status: 'pending_approval', supplierId: 'SC-SUP-A', supplierName: 'Scorecard Supplier', currency: 'USD', amount: 500, lines: { create: [{ id: 'SC-PO-APPROVED-L1', sku: 'SC-SKU', itemName: 'Sensor', orderedQuantity: 10, receivedQuantity: 0, unit: 'pcs', unitPrice: 50, amount: 500, metadata: { promisedDate: '2026-08-20' } }] } } })
+      await service.approvePurchaseOrder('SC-PO-APPROVED', { expectedVersion: 0, idempotencyKey: 'SC-PO-APPROVED-approve' }, { identity: identityOf(users.admin) })
+      await prisma.receivingDocument.create({ data: { id: 'SC-PO-APPROVED-GRN', tenantId: tenantA, poId: 'SC-PO-APPROVED', supplierId: 'SC-SUP-A', postingStatus: 'posted', arrivedAt: at('2026-08-22', '15:00:00'), lines: { create: [{ id: 'SC-PO-APPROVED-GRNL', purchaseOrderLineId: 'SC-PO-APPROVED-L1', acceptedQty: 10, rejectedQty: 0 }] } } })
+      const { payload } = await scorecard(prisma, users.admin, '?from=2026-08-01&to=2026-08-31')
+      const [supplier] = payload.suppliers
+      assert.equal(supplier.originalNotRecordedCount, 0)
+      assert.deepEqual(supplier.lines.map((line) => [line.purchaseOrderId, line.originalPromisedDate, line.firstReceiptDay, line.onTime, line.daysLate]), [['SC-PO-APPROVED', '2026-08-20', '2026-08-22', false, 2]])
+      assert.equal(supplier.sampleStatus, 'insufficient_sample')
+    })
   } finally {
     await prisma.$disconnect()
   }

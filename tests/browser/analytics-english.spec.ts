@@ -39,7 +39,7 @@ test('overview exposes actionable charts and preserves date scope when drilling'
   await page.goto('/app/reports/overview?from=2026-01-01&to=2026-12-31');
   await expect(page.getByRole('heading', { name: 'Record activity by month' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Purchase order status' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Purchasing by supplier' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Committed purchase orders by supplier' })).toBeVisible();
   await page.getByTestId('overview-attention').getByRole('button', { name: /Open purchase orders/ }).click();
   await expect(page).toHaveURL(/reports\/procurement\?status=open/);
   const url = new URL(page.url());

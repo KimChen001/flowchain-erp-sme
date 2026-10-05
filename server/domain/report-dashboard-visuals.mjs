@@ -1,6 +1,9 @@
 import { isCommittedPurchaseOrder, isOpenPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
+import { purchaseOrderDueDay } from './open-purchase-orders-report.mjs'
+import { ALL_PURCHASE_ORDERS } from './business-overview.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
+import { evaluatePromiseLine, summarizeScorecardLines } from './supplier-scorecard.mjs'
 import { instantCalendarDay } from './tenant-calendar-day.mjs'
 
 // The analytics visuals of each report dashboard. Every visual aggregates the
@@ -122,9 +125,9 @@ function paretoVisual(id, title, rows, scope, keyOf, { otherLabel, drilldownPath
   return visual(id, title, 'pareto', paretoRows(values, otherLabel), { unit: scope.ok ? 'currency' : 'number', currencyCode: scope.currencyCode, measures: [{ key: 'value', kind: 'bar', unit: scope.ok ? 'currency' : 'number', axis: 0, label: scope.ok ? 'Committed amount' : countLabel }, { key: 'Cumulative share', kind: 'line', unit: 'percentage', axis: 1 }], drilldownPath, crossFilter, description: scope.ok ? 'Sorted by amount. The line is the running share of the total; A, B and C classes split at 80% and 95%.' : 'Amounts need one currency, so documents are counted. The line is the running share of the total.', limitations: moneyLimitations(scope, rows) })
 }
 
-function statusVisual(id, title, rows, drilldownPath) {
+function statusVisual(id, title, rows, drilldownPath, description) {
   const counts = grouped(rows, row => row.status, () => 1)
-  return visual(id, title, 'donut', counts, { drilldownPath, crossFilter: 'status' })
+  return visual(id, title, 'donut', counts, { drilldownPath, crossFilter: 'status', ...(description ? { description } : {}) })
 }
 
 // Committed purchase orders in scope, with their receipt and invoice progress.
@@ -137,15 +140,14 @@ function purchaseOrderFacts(context, all, receiptsByPo, invoicesByPo, timeZone) 
       const received = known(line.receivedQuantity)
       const unitPrice = known(line.unitPrice)
       const amount = known(line.amount) ?? (ordered !== null && unitPrice !== null ? ordered * unitPrice : null)
-      return { item: text(line.itemName || line.itemNameSnapshot || line.sku), ordered, received, unitPrice, amount, receivedValue: received !== null && unitPrice !== null ? received * unitPrice : null, promised: reportCalendarDay(line.promisedDate || line.metadata?.promisedDate) }
+      return { item: text(line.itemName || line.itemNameSnapshot || line.sku), ordered, received, unitPrice, amount, receivedValue: received !== null && unitPrice !== null ? received * unitPrice : null }
     })
     const amount = known(row.totalAmount ?? row.amount)
     const invoices = invoicesByPo.get(id) || []
     const fullyReceived = !isOpenPurchaseOrder(row)
-    const promised = lines.map(line => line.promised).filter(Boolean).sort()
     return {
       id, supplier: poSupplier(row), date: purchaseOrderBusinessDate(row, timeZone), amount, currency: reportCurrencyCode(row.currency || row.lines?.[0]?.currency),
-      due: reportCalendarDay(row.expectedDate) || promised[0] || '', open: !fullyReceived, lines,
+      due: purchaseOrderDueDay(row), open: !fullyReceived, lines,
       receivingStarted: fullyReceived || lines.some(line => line.received > 0) || receiptsByPo.has(id),
       fullyReceived, invoiced: invoices.length > 0,
       matched: invoices.length > 0 && invoices.every(invoice => invoiceMatchOutcome(invoice) === 'matched'),
@@ -223,11 +225,40 @@ function receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone)
   return array(context.receipts).filter(row => !voidReceiptStatuses.has(text(row.status).toLowerCase())).map(row => {
     const po = poById.get(text(row.poId))
     const day = instantCalendarDay(row.arrivedAt || row.postedAt || row.createdAt, timeZone)
-    const promised = array(po?.lines).map(line => reportCalendarDay(line.promisedDate || line.metadata?.promisedDate)).filter(Boolean).sort()
-    const due = po ? reportCalendarDay(po.expectedDate) || promised[0] || '' : ''
     const lines = array(row.lines).map(line => ({ accepted: known(line.acceptedQty), rejected: known(line.rejectedQty) }))
-    return { id: text(row.id), poId: text(row.poId), po, supplier: text(row.supplierName || row.supplierId) || poSupplier(po), date: day, due, onTime: day && due ? day <= due : null, lines }
+    return { id: text(row.id), poId: text(row.poId), po, supplier: text(row.supplierName || row.supplierId) || poSupplier(po), date: day, lines }
   }).filter(row => inRange(row.date, query) && (row.po ? !purchaseOrderIdsAnyDate || purchaseOrderIdsAnyDate.has(row.poId) : (!query.supplier || row.supplier === query.supplier) && !query.currency && !query.status))
+}
+
+// On time is measured by the supplier scorecard's rules (supplier-scorecard.mjs),
+// so a page never shows two on-time figures: each PO line of a committed order
+// that passes every filter but the date range is judged against the date the
+// supplier ORIGINALLY promised, by its first POSTED receipt, in the workspace
+// timezone. A line counts when its original promise falls in the date range;
+// a line past its promise with nothing received is late. A rate needs at
+// least SUPPLIER_SCORECARD_RULES.minimumSample (5) lines.
+export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone) {
+  const receiptLines = new Map()
+  for (const document of array(context.receipts)) {
+    if (text(document.postingStatus).toLowerCase() !== 'posted') continue
+    const day = instantCalendarDay(document.arrivedAt || document.postedAt, timeZone) || null
+    for (const line of array(document.lines)) {
+      const lineId = text(line.purchaseOrderLineId)
+      if (lineId) receiptLines.set(lineId, [...(receiptLines.get(lineId) || []), { receivingDocumentId: document.id, day, accepted: line.acceptedQty, rejected: line.rejectedQty }])
+    }
+  }
+  const from = query.from || '0001-01-01'
+  const to = query.to || '9999-12-31'
+  return array(context.purchaseOrders)
+    .filter(po => isCommittedPurchaseOrder(po) && (!purchaseOrderIdsAnyDate || purchaseOrderIdsAnyDate.has(text(po.id || po.po))))
+    .flatMap(po => array(po.lines).map(line => ({ ...evaluatePromiseLine({ line, purchaseOrder: { ...po, id: text(po.id || po.po) }, receipts: receiptLines.get(text(line.id)) || [], asOfDay: today || null }), supplier: poSupplier(po) })))
+    .filter(line => line.status === 'evaluated' && line.originalPromisedDate >= from && line.originalPromisedDate <= to)
+}
+
+// The on-time rate of evaluated lines as a percentage, null below the minimum sample.
+const onTimePercent = lines => {
+  const rate = summarizeScorecardLines({ lines }).metrics.onTime.rate
+  return rate === null ? null : Math.round(rate * 1000) / 10
 }
 
 function receiptCalendarVisual(id, receipts, query) {
@@ -237,12 +268,13 @@ function receiptCalendarVisual(id, receipts, query) {
   return visual(id, 'Receiving activity by day', 'calendar', days, { range: [first, last], drilldownPath: '/app/procurement/receiving', description: 'Receipts per arrival day.' })
 }
 
-function supplierPerformance(pos, receipts, invoices, scope) {
+function supplierPerformance(pos, receipts, invoices, scope, promiseLines = []) {
   const suppliers = new Map()
   const entry = name => {
-    if (!suppliers.has(name)) suppliers.set(name, { name, amount: 0, amountKnown: true, orders: 0, receipts: 0, timed: 0, onTime: 0, lines: 0, accepted: 0, decided: 0, matched: 0 })
+    if (!suppliers.has(name)) suppliers.set(name, { name, amount: 0, amountKnown: true, orders: 0, receipts: 0, promised: [], lines: 0, accepted: 0, decided: 0, matched: 0 })
     return suppliers.get(name)
   }
+  for (const line of promiseLines) entry(line.supplier || 'Unspecified').promised.push(line)
   for (const po of pos) {
     const row = entry(po.supplier || 'Unspecified')
     row.orders += 1
@@ -252,7 +284,6 @@ function supplierPerformance(pos, receipts, invoices, scope) {
   for (const receipt of receipts) {
     const row = entry(receipt.supplier || 'Unspecified')
     row.receipts += 1
-    if (receipt.onTime !== null) { row.timed += 1; if (receipt.onTime) row.onTime += 1 }
     for (const line of receipt.lines) if (line.rejected !== null) { row.lines += 1; if (line.rejected === 0) row.accepted += 1 }
   }
   for (const invoice of invoices) {
@@ -264,30 +295,33 @@ function supplierPerformance(pos, receipts, invoices, scope) {
   }
   const totalAmount = [...suppliers.values()].reduce((sum, row) => sum + row.amount, 0)
   const totalOrders = pos.length
-  return [...suppliers.values()].map(row => ({
+  return [...suppliers.values()].map(({ promised, ...row }) => ({
     ...row,
     spend: scope.ok && row.amountKnown ? row.amount : null,
-    onTimeRate: share(row.onTime, row.timed),
+    promisedLines: promised.length,
+    onTimeRate: onTimePercent(promised),
     acceptedRate: share(row.accepted, row.lines),
     matchRate: share(row.matched, row.decided),
     spendShare: scope.ok ? share(row.amount, totalAmount) : share(row.orders, totalOrders),
   }))
 }
 
-// Suppliers placed by spend (or order count) and on-time receipts. The guides
+// Suppliers placed by spend (or order count) and on-time lines. The guides
 // are the median of the horizontal measure and the average on-time rate, so
 // the quadrants come from the data, not from an assumed target.
 function performanceMatrixVisual(id, performance, scope) {
   const xKey = scope.ok ? 'Committed amount' : 'Purchase orders'
-  const rows = performance.filter(row => row.onTimeRate !== null && row.name !== 'Unspecified' && (scope.ok ? row.spend !== null : true)).map(row => ({ name: row.name, [xKey]: scope.ok ? row.spend : row.orders, 'On-time receipts': row.onTimeRate, Receipts: row.receipts, filterValue: row.name }))
+  const rows = performance.filter(row => row.onTimeRate !== null && row.name !== 'Unspecified' && (scope.ok ? row.spend !== null : true)).map(row => ({ name: row.name, [xKey]: scope.ok ? row.spend : row.orders, 'On-time lines': row.onTimeRate, 'PO lines': row.promisedLines, filterValue: row.name }))
   const xs = rows.map(row => row[xKey]).sort((a, b) => a - b)
   const median = xs.length ? (xs.length % 2 ? xs[(xs.length - 1) / 2] : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2) : null
-  const average = rows.length ? Math.round(rows.reduce((sum, row) => sum + row['On-time receipts'], 0) / rows.length * 10) / 10 : null
-  return visual(id, 'Supplier performance matrix', 'scatter', rows, { unit: scope.ok ? 'currency' : 'number', currencyCode: scope.currencyCode, measures: [{ key: xKey, unit: scope.ok ? 'currency' : 'number', axis: 'x' }, { key: 'On-time receipts', unit: 'percentage', axis: 'y' }, { key: 'Receipts', unit: 'number', axis: 'size' }], guides: { x: median, y: average }, seriesKeys: [xKey, 'On-time receipts', 'Receipts'], drilldownPath: '/app/master-data/suppliers', crossFilter: 'supplier', description: 'Bubble size is the number of receipts. The guides are the median spend and the average on-time rate.', emptyState: 'No receipts with an expected date in the selected range.', limitations: moneyLimitations(scope, []) })
+  const average = rows.length ? Math.round(rows.reduce((sum, row) => sum + row['On-time lines'], 0) / rows.length * 10) / 10 : null
+  return visual(id, 'Supplier performance matrix', 'scatter', rows, { unit: scope.ok ? 'currency' : 'number', currencyCode: scope.currencyCode, measures: [{ key: xKey, unit: scope.ok ? 'currency' : 'number', axis: 'x' }, { key: 'On-time lines', unit: 'percentage', axis: 'y' }, { key: 'PO lines', unit: 'number', axis: 'size' }], guides: { x: median, y: average }, seriesKeys: [xKey, 'On-time lines', 'PO lines'], drilldownPath: '/app/master-data/suppliers', crossFilter: 'supplier', description: 'On time against the original promise. Bubble size is the number of PO lines measured. The guides are the median spend and the average on-time rate.', emptyState: ON_TIME_EMPTY, limitations: moneyLimitations(scope, []) })
 }
 
+const ON_TIME_EMPTY = 'No supplier has 5 or more PO lines first promised in the selected range.'
+
 function scorecardVisual(id, performance, scope) {
-  const indicators = [['On-time receipts', 'onTimeRate'], ['Lines accepted in full', 'acceptedRate'], ['Invoices matched', 'matchRate'], [scope.ok ? 'Share of spend' : 'Share of orders', 'spendShare']]
+  const indicators = [['On-time lines', 'onTimeRate'], ['Lines accepted in full', 'acceptedRate'], ['Invoices matched', 'matchRate'], [scope.ok ? 'Share of spend' : 'Share of orders', 'spendShare']]
   const size = row => scope.ok ? row.spend ?? -1 : row.orders
   const candidates = performance.filter(row => row.name !== 'Unspecified').sort((a, b) => size(b) - size(a) || a.name.localeCompare(b.name)).slice(0, 5)
   const used = indicators.filter(([, key]) => candidates.some(row => row[key] !== null))
@@ -373,11 +407,13 @@ function fulfillmentGaugeVisual(id, orders) {
   return visual(id, 'Orders shipped in full', 'gauge', active.length ? [{ name: 'Orders shipped in full', value: share(full, active.length) }] : [], { unit: 'percentage', detail: { count: full, total: active.length }, drilldownPath: '/app/sales/orders', description: 'Share of confirmed sales orders whose every line has shipped its ordered quantity.' })
 }
 
-// Stock position per SKU. Quantities are never added across SKUs.
+// Stock position per SKU. Quantities are never added across SKUs. "Short now"
+// is the shortage the "SKUs short now" KPI counts: open demand that available
+// stock does not cover, before incoming purchase orders (those are in ATP).
 function stockPositionVisual(id, balances) {
-  const rows = balances.filter(row => row.quantity !== null).map(row => ({ name: row.sku, Available: Math.max(0, known(row.available) ?? 0), 'Reserved quantity': Math.max(0, known(row.reserved) ?? 0), Shortage: Math.max(0, known(row.shortage) ?? 0) }))
-    .sort((a, b) => b.Shortage - a.Shortage || (b.Available + b['Reserved quantity']) - (a.Available + a['Reserved quantity']) || a.name.localeCompare(b.name)).slice(0, 12)
-  return visual(id, 'Stock position by SKU', 'stacked_bar', rows, { seriesKeys: ['Available', 'Reserved quantity', 'Shortage'], colors: ['#16a34a', '#2563eb', '#dc2626'], orientation: 'horizontal', drilldownPath: '/app/inventory', description: 'Each SKU in its own unit. Shortage is demand that available stock and incoming receipts do not cover.' })
+  const rows = balances.filter(row => row.quantity !== null).map(row => ({ name: row.sku, Available: Math.max(0, known(row.available) ?? 0), 'Reserved quantity': Math.max(0, known(row.reserved) ?? 0), 'Short now': Math.max(0, known(row.shortage) ?? 0) }))
+    .sort((a, b) => b['Short now'] - a['Short now'] || (b.Available + b['Reserved quantity']) - (a.Available + a['Reserved quantity']) || a.name.localeCompare(b.name)).slice(0, 12)
+  return visual(id, 'Stock position by SKU', 'stacked_bar', rows, { seriesKeys: ['Available', 'Reserved quantity', 'Short now'], colors: ['#16a34a', '#2563eb', '#dc2626'], orientation: 'horizontal', drilldownPath: '/app/inventory', description: 'Each SKU in its own unit. Shortage is open demand that available stock does not cover; incoming purchase orders are not counted.' })
 }
 
 function atpVisual(id, balances) {
@@ -413,7 +449,8 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
   const poScope = lazy(() => restrictedAmounts.purchase_orders ? RESTRICTED_SCOPE : moneyScope(pos(), query))
   const receipts = lazy(() => receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone))
   const invoices = lazy(() => invoiceFacts(context, all, timeZone))
-  const performance = lazy(() => supplierPerformance(pos(), receipts(), invoices().map(row => row.raw), poScope()))
+  const promiseLines = lazy(() => promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone))
+  const performance = lazy(() => supplierPerformance(pos(), receipts(), invoices().map(row => row.raw), poScope(), promiseLines()))
 
   if (subject === 'overview') return [
     trendVisual('overview_spend_trend', 'Committed spend by month', pos(), poScope(), { countKey: 'Purchase orders', amountKey: 'Committed amount', drilldownPath: '/app/reports/procurement?view=analytics', description: 'Committed purchase orders by order date. Bars are amounts, the line is the number of orders.' }),
@@ -426,7 +463,7 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
     paretoVisual('procurement_supplier_pareto', 'Spend concentration by supplier', pos(), poScope(), po => po.supplier, { otherLabel: OTHER_SUPPLIERS, drilldownPath: '/app/procurement/orders', crossFilter: 'supplier', countLabel: 'Purchase orders' }),
     valueBridgeVisual('procurement_value_bridge', pos(), poScope()),
     spendTreemapVisual('procurement_spend_treemap', pos(), poScope()),
-    statusVisual('procurement_po_status', 'Purchase order status', all.purchase_orders, '/app/procurement/orders'),
+    statusVisual('procurement_po_status', 'Purchase order status', all.purchase_orders, '/app/procurement/orders', ALL_PURCHASE_ORDERS),
     receiptCalendarVisual('procurement_receipt_calendar', receipts(), query),
   ]
 
@@ -483,7 +520,7 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
     return [
       performanceMatrixVisual('supplier_performance_matrix', performance(), scope),
       scorecardVisual('supplier_scorecard', performance(), scope),
-      rankingVisual('supplier_on_time', 'On-time receipts by supplier', onTime, { unit: 'percentage', drilldownPath: '/app/procurement/receiving', crossFilter: 'supplier', description: 'Receipts that arrived on or before the purchase order\'s expected date.', emptyState: 'No receipts with an expected date in the selected range.' }),
+      rankingVisual('supplier_on_time', 'On-time lines by supplier', onTime, { unit: 'percentage', drilldownPath: '/app/procurement/receiving', crossFilter: 'supplier', description: 'PO lines first promised in range whose first posted receipt arrived by that date. Each supplier needs at least 5 lines.', emptyState: ON_TIME_EMPTY }),
       spendTreemapVisual('supplier_spend_treemap', pos(), scope),
       activityHeatmapVisual('supplier_activity_heatmap', pos()),
     ]
@@ -496,20 +533,19 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
 // scope as the visuals.
 export function buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand = [] }) {
   const poById = new Map(array(context.purchaseOrders).map(row => [text(row.id || row.po), row]))
-  const receipts = receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone)
-  const timed = receipts.filter(row => row.onTime !== null)
+  const promiseLines = promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone)
   const invoices = invoiceFacts(context, all, timeZone)
   const orders = salesFacts(context, all, salesDemand).filter(row => row.active)
   const openPurchaseOrders = all.purchase_orders.filter(row => row.isOpen)
+  // The open purchase orders report's rule: due on the earliest promised day of
+  // the lines still to receive, overdue once that day is before today.
   const overdue = openPurchaseOrders.filter(row => {
-    const po = poById.get(row.id)
-    const promised = array(po?.lines).map(line => reportCalendarDay(line.promisedDate || line.metadata?.promisedDate)).filter(Boolean).sort()
-    const due = reportCalendarDay(po?.expectedDate) || promised[0] || ''
+    const due = purchaseOrderDueDay(poById.get(row.id))
     return Boolean(due && today && due < today)
   })
   return {
-    onTimeReceiptRate: share(timed.filter(row => row.onTime).length, timed.length),
-    receiptsTimed: timed.length,
+    onTimeReceiptRate: onTimePercent(promiseLines),
+    onTimeLines: promiseLines.length,
     overdueOpenPurchaseOrders: overdue.length,
     invoiceMatchRate: share(invoices.filter(row => row.outcome === 'matched').length, invoices.length),
     invoicesAwaitingMatch: invoices.filter(row => row.outcome === 'pending').length,

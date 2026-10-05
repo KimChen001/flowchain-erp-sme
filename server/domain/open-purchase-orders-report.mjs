@@ -22,6 +22,17 @@ export function purchaseOrderReportLine(line, po) {
   return { ordered, received, remaining, open: remaining === null || remaining > 0, unit: text(line.unit || line.unitSnapshot), due: day(line.promisedDate || line.metadata?.promisedDate || po?.expectedDate) }
 }
 
+// The day a purchase order is due, shared by this report and the dashboards'
+// overdue KPI: the earliest promised day of its lines still to receive (each
+// line's own date, else the order's expected date), or the expected date of an
+// order without lines. A received line's date no longer counts. '' when no
+// open line has a date.
+export function purchaseOrderDueDay(po) {
+  const lines = (po?.lines || []).map(line => purchaseOrderReportLine(line, po))
+  const dates = lines.filter(line => line.open).map(line => line.due).filter(Boolean).sort()
+  return dates[0] || (!lines.length ? day(po?.expectedDate) : '')
+}
+
 // Overdue days count to the tenant's calendar day (options.timeZone, the
 // workspace timezone), so an order due today is not late in the evening
 // merely because UTC has moved on to tomorrow.
@@ -39,8 +50,7 @@ export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {},
     const isOpen = isOpenPurchaseOrder(po)
     const units = [...new Set(lines.map(line => line.unit))]
     const sameUnit = units.length === 1 && Boolean(units[0])
-    const dates = openLines.map(line => line.due).filter(Boolean).sort()
-    const dueDate = dates[0] || (!lines.length ? day(po.expectedDate) : '')
+    const dueDate = purchaseOrderDueDay(po)
     const overdueDays = isOpen ? daysLate(dueDate, asOf) : 0
     const dataIncomplete = !lines.length || lines.some(line => line.ordered === null || line.received === null) || (isOpen && (!dueDate || openLines.some(line => !line.due)))
     return {

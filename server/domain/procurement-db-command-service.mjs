@@ -223,11 +223,13 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
         const receivingBaseStatus = [APPROVED, ISSUED].includes(nextStatus) ? nextStatus : row.receivingBaseStatus;
         // FlowChain records the issue; the buyer sends the PO to the supplier.
         const issued = action === "issue" ? { transmissionStatus: "issued_outside_flowchain", issuedAt: serial(now()), issuedById: actor.user.id } : {};
-        // Issuing fixes each dated line's original promise, which supplier
-        // scorecards measure against.
-        const originalPromisesRecorded = action === "issue" ? await recordOriginalPromises(tx, { purchaseOrder: row }) : [];
+        // Approval fixes each dated line's original promise, which supplier
+        // scorecards and the on-time KPI measure against. Issuing records it
+        // for a line dated since; a line that has one keeps it.
+        const recordsPromises = action === "approve" || action === "issue";
+        const originalPromisesRecorded = recordsPromises ? await recordOriginalPromises(tx, { purchaseOrder: row }) : [];
         await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus, version: { increment: 1 }, metadata: { ...(row.metadata || {}), ...issued, ...closed, approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } } });
-        return { action: `purchase_order_${action}`, summary: `${action} purchase order ${row.id}.`, metadata: { reason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null, ...(action === "issue" ? { originalPromisesRecorded } : {}), ...(action === "close" ? { closedOpenQuantities } : {}) } };
+        return { action: `purchase_order_${action}`, summary: `${action} purchase order ${row.id}.`, metadata: { reason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null, ...(recordsPromises ? { originalPromisesRecorded } : {}), ...(action === "close" ? { closedOpenQuantities } : {}) } };
       },
     });
   }

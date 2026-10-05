@@ -1,4 +1,12 @@
+import { isCommittedPurchaseOrder } from './open-purchase-order.mjs';
+
+// What a status chart or detail table of purchase orders covers.
+export const ALL_PURCHASE_ORDERS = 'All purchase orders in range, every status.';
+
 // Aggregate the loaded, permission-scoped records before applying the detail limit.
+// Each chart says which purchase orders it covers: the supplier chart counts
+// committed orders, like the committed PO amount next to it; the activity and
+// status charts cover every status, drafts and cancellations included.
 // salesDemand holds the open demand of each sales order line in scope
 // ({ orderId, open }); an order is unfulfilled while any of its lines has
 // demand left, so lines in different units are never added to decide it.
@@ -24,9 +32,9 @@ export function buildBusinessOverview(all, { salesDemand = null } = {}) {
   const common = { unit: 'number', valueFormat: 'number', categoryKey: 'name', valueKey: 'value', tooltip: true, legend: true, emptyState: 'No records in the selected range.' };
   return {
     charts: [
-      { ...common, id: 'overview_activity', title: 'Record activity by month', type: 'bar', data: [...months.values()].sort((a, b) => a.name.localeCompare(b.name)), seriesKeys: ['Purchase orders', 'Sales orders'], colors: ['#2563eb', '#14b8a6'], drilldownPath: '/app/reports/procurement', crossFilter: 'period' },
-      { ...common, id: 'overview_status', title: 'Purchase order status', type: 'donut', data: groups(purchases, 'status'), drilldownPath: '/app/reports/procurement', crossFilter: 'status' },
-      { ...common, id: 'overview_suppliers', title: 'Purchasing by supplier', type: 'horizontal_bar', data: groups(purchases, 'supplier').slice(0, 8), drilldownPath: '/app/reports/procurement', crossFilter: 'supplier' },
+      { ...common, id: 'overview_activity', title: 'Record activity by month', type: 'bar', data: [...months.values()].sort((a, b) => a.name.localeCompare(b.name)), seriesKeys: ['Purchase orders', 'Sales orders'], colors: ['#2563eb', '#14b8a6'], drilldownPath: '/app/reports/procurement', crossFilter: 'period', description: 'Purchase and sales orders in range by order date, every status, drafts included.' },
+      { ...common, id: 'overview_status', title: 'Purchase order status', type: 'donut', data: groups(purchases, 'status'), drilldownPath: '/app/reports/procurement', crossFilter: 'status', description: ALL_PURCHASE_ORDERS },
+      { ...common, id: 'overview_suppliers', title: 'Committed purchase orders by supplier', type: 'horizontal_bar', data: groups(purchases.filter(isCommittedPurchaseOrder), 'supplier').slice(0, 8), drilldownPath: '/app/reports/procurement', crossFilter: 'supplier', description: 'Committed purchase orders in range (approved, issued or received), counted per supplier.' },
     ],
     attention: [
       // isOpen is set once per purchase order by the report read model from the
