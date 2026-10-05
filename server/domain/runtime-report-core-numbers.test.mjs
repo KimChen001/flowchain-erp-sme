@@ -164,6 +164,26 @@ test('workbook metric summary formats each money metric in its own currency', ()
   assert.equal(row['Currency code'], 'EUR')
 })
 
+test('workbook metric summary reads each KPI as the dashboard shows it', () => {
+  const copy = value => analyticsCopy(value, 'en-US')
+  const valueOf = (salesOrders, language = 'en-US') => {
+    const report = buildRuntimeGovernedReport(context({ salesOrders }), { subject: 'sales', measures: ['open_sales_demand'] })
+    const tr = value => analyticsCopy(value, language)
+    return reportWorkbook(report, {}, tr, [], { locale: language, language })[0].rows[0][tr('Current value')]
+  }
+  const order = (id, lines) => ({ id, status: 'confirmed', currency: 'USD', totalAmount: 10, lines })
+  // One SKU in one unit: the total carries its unit, as on the KPI card.
+  assert.equal(valueOf([order('SO-1', [{ sku: 'A', unit: 'pcs', orderedQuantity: 14, fulfilledQuantity: 0 }])]), '14 pcs')
+  // Two units, or two SKUs: no total, and the reason instead of a blank.
+  assert.equal(valueOf([order('SO-2', [{ sku: 'A', unit: 'pcs', orderedQuantity: 1, fulfilledQuantity: 0 }, { sku: 'B', unit: 'ft', orderedQuantity: 5, fulfilledQuantity: 0 }])]), copy('Mixed units'))
+  assert.equal(valueOf([order('SO-3', [{ sku: 'A', unit: 'pcs', orderedQuantity: 9, fulfilledQuantity: 0 }, { sku: 'B', unit: 'pcs', orderedQuantity: 5, fulfilledQuantity: 0 }])]), 'Multiple SKUs')
+  assert.equal(valueOf([order('SO-4', [{ sku: 'A', unit: 'pcs', orderedQuantity: 9, fulfilledQuantity: 0 }, { sku: 'B', unit: 'pcs', orderedQuantity: 5, fulfilledQuantity: 0 }])], 'zh-CN'), '多个 SKU')
+  // Too few promised lines for an on-time rate.
+  const line = id => ({ id, sku: 'A', unit: 'pcs', orderedQuantity: 1, receivedQuantity: 0, originalPromisedDate: '2026-09-10' })
+  const onTime = buildRuntimeGovernedReport(context({ purchaseOrders: [po('PO-1', 'issued', 10, { lines: [line('L1'), line('L2')] })] }), { subject: 'procurement', measures: ['on_time_receipt_rate'] }, { now: new Date('2026-10-05T16:00:00.000Z') })
+  assert.equal(reportWorkbook(onTime, {}, copy, [], { locale: 'en-US', language: 'en-US' })[0].rows[0]['Current value'], 'Fewer than 5 lines')
+})
+
 // Filters and business dates.
 const filterContext = () => context({
   purchaseOrders: [

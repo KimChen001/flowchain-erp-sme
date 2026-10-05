@@ -2,6 +2,7 @@ import type { GovernedReport } from './governedReports';
 import { formatMetric } from './currencyFormatting.mjs';
 import { reportStatusCopy } from './analyticsCopy.ts';
 import { chartTable } from './charts/chartTable.ts';
+import { metricDisplayValue } from './metricDisplay.ts';
 
 // A report's date range in words: both ends, one end, or all dates.
 export function dateRangeLabel(from: string | null | undefined, to: string | null | undefined, copy: (value: string) => string) {
@@ -19,7 +20,9 @@ export function reportWorkbook(report: GovernedReport, filters: Record<string, s
   const metadata = currencyMetadata(scope.currencyCode, scope.currencyLabel, scope.currencyAggregationStatus);
   // A money metric is described and formatted in its own currency, which can differ from the dashboard's.
   const metricCurrency = (item: GovernedReport['kpis'][number]) => item.unit === 'currency' && item.currencyAggregationStatus ? { code: item.currencyCode ?? null, label: item.currencyLabel || scope.currencyLabel, status: item.currencyAggregationStatus } : { code: scope.currencyCode, label: scope.currencyLabel, status: scope.currencyAggregationStatus };
-  const metricValue = (item: GovernedReport['kpis'][number], value: number | null, status: keyof typeof aggregation, code: string | null) => item.unit === 'currency' && status === 'no_currency_data' ? '暂无金额数据' : item.unit === 'currency' && (status === 'multi_currency_unconverted' || status === 'currency_unknown') ? aggregation[status] : formatMetric(value, item.unit, code, format);
+  // The value as the dashboard shows it (unit, mixed units, too few lines),
+  // except that an export names the currency mix instead of asking to pick one.
+  const metricValue = (item: GovernedReport['kpis'][number], status: keyof typeof aggregation) => item.dataStatus !== 'restricted' && item.unit === 'currency' && (status === 'multi_currency_unconverted' || status === 'currency_unknown') ? aggregation[status] : metricDisplayValue(item, scope, format);
   // The same table each visual shows under "Show data", one row per value.
   const language = format.language || 'en-US';
   const category = (chart: GovernedReport['charts'][number], name: string) => chart.statusLabels || chart.id.endsWith('_status') ? reportStatusCopy(name, language) : copy(name);
@@ -29,7 +32,7 @@ export function reportWorkbook(report: GovernedReport, filters: Record<string, s
     return table.rows.flatMap(entry => table.columns.map((column, index) => row({ Chart: copy(chart.title), Dimension: entry.label, Series: column.label, Value: entry.values[index] })));
   });
   const sheets: Array<{ name: string; rows: Record<string, unknown>[] }> = [
-    { name: copy('Metric summary'), rows: report.kpis.map(item => { const currency = metricCurrency(item); return { ...currencyMetadata(currency.code, currency.label, currency.status), ...row({ Metric: copy(item.label), 'Current value': copy(metricValue(item, item.currentValue, currency.status, currency.code)), 'Baseline value': item.comparisonValue === null ? copy('Not compared') : formatMetric(item.comparisonValue, item.unit, currency.code, format), Definition: copy(item.description), 'Data range': dateRangeLabel(scope.from, scope.to, copy) }) }; }) },
+    { name: copy('Metric summary'), rows: report.kpis.map(item => { const currency = metricCurrency(item); return { ...currencyMetadata(currency.code, currency.label, currency.status), ...row({ Metric: copy(item.label), 'Current value': copy(metricValue(item, currency.status)), 'Baseline value': item.comparisonValue === null ? copy('Not compared') : formatMetric(item.comparisonValue, item.unit, currency.code, format), Definition: copy(item.description), 'Data range': dateRangeLabel(scope.from, scope.to, copy) }) }; }) },
     { name: copy('Chart data'), rows: chartRows.map(item => ({ ...metadata, ...item })) },
     { name: copy('Detail data'), rows: report.exportRows.map(item => ({ ...metadata, ...Object.fromEntries(report.columnDefinitions.map(column => [copy(column.label), column.key === 'status' || column.key === 'stockStatus' ? copy(reportStatusCopy(String(item[column.key] ?? '—'), format.language || 'en-US')) : item[column.key] ?? '—'])) })) },
     { name: copy('Filters'), rows: [{ ...metadata, ...row({ '开始日期': scope.from || '—', '结束日期': scope.to || '—', '供应商': filters.supplier || copy('全部供应商'), '客户': filters.customer || copy('全部客户'), '比较方式': copy(filters.comparison === 'year_over_year' ? '同比' : filters.comparison === 'previous_period' ? '上期' : '不比较') }) }] },

@@ -71,8 +71,11 @@ test('reports API and KPI UI preserve null and present data insufficiency withou
   const dashboard = await readFile(join(root, 'src/modules/reports/BiDashboard.tsx'), 'utf8')
   const currencyFormatting = await readFile(join(root, 'src/modules/reports/currencyFormatting.mjs'), 'utf8')
   assert.match(currencyFormatting, /if \(value === null\) return '—'/)
-  assert.match(dashboard, /import \{ formatMetric \} from "\.\/currencyFormatting\.mjs"/)
-  assert.match(dashboard, /if \(item\.dataStatus === "incomplete"\) return "数据不足"/)
+  // KPI values read the same on the dashboard and in the export (metricDisplay.ts).
+  const metricDisplay = await readFile(join(root, 'src/modules/reports/metricDisplay.ts'), 'utf8')
+  assert.match(metricDisplay, /import \{ formatMetric \} from '\.\/currencyFormatting\.mjs'/)
+  assert.match(metricDisplay, /if \(item\.dataStatus === 'incomplete'\) return '数据不足'/)
+  assert.match(dashboard, /import \{ metricCurrency, metricDisplayValue \} from "\.\/metricDisplay"/)
   assert.match(dashboard, /item\.dataStatus === "incomplete" \? copy\([^;]*"库存数据不完整"\)/)
   // A chart value that is not recorded stays empty in the visual and its data table; it never becomes 0.
   const { chartTable } = await import('../../src/modules/reports/charts/chartTable.ts')

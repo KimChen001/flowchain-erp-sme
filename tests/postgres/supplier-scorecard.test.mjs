@@ -5,6 +5,8 @@ import { createDbProcurementCommandService } from '../../server/domain/procureme
 import { createSupplierScorecardReadService } from '../../server/domain/supplier-scorecard.mjs'
 import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 import { handleReportsAnalyticsRoute } from '../../server/routes/reports-analytics.routes.mjs'
+import { buildRuntimeGovernedReport } from '../../server/domain/runtime-report-read-model.mjs'
+import { createDbProcurementRuntimeRepository } from '../../server/repositories/db-procurement-runtime-repository.mjs'
 
 // The supplier scorecard read through GET /api/reports/supplier-scorecard,
 // against PostgreSQL: POs issued and revised through the PO commands, posted
@@ -148,6 +150,30 @@ test('the supplier scorecard is measured against the original promise, per tenan
       assert.equal(supplier.originalNotRecordedCount, 0)
       assert.deepEqual(supplier.lines.map((line) => [line.purchaseOrderId, line.originalPromisedDate, line.firstReceiptDay, line.onTime, line.daysLate]), [['SC-PO-APPROVED', '2026-08-20', '2026-08-22', false, 2]])
       assert.equal(supplier.sampleStatus, 'insufficient_sample')
+    })
+
+    await t.test('an order approved and then cancelled is not late on the scorecard or on the dashboard', async () => {
+      // Five lines promised for Jul 10: approval records the promise, and the
+      // buyer cancels before issue with nothing received.
+      const identity = { identity: identityOf(users.admin) }
+      for (const n of [1, 2, 3, 4, 5]) {
+        const id = `SC-PO-CANCEL-${n}`
+        await prisma.purchaseOrder.create({ data: { id, tenantId: tenantA, status: 'pending_approval', supplierId: 'SC-SUP-A', supplierName: 'Scorecard Supplier', currency: 'USD', amount: 500, lines: { create: [{ id: `${id}-L1`, sku: 'SC-SKU', itemName: 'Sensor', orderedQuantity: 10, receivedQuantity: 0, unit: 'pcs', unitPrice: 50, amount: 500, metadata: { promisedDate: '2026-07-10' } }] } } })
+        await service.approvePurchaseOrder(id, { expectedVersion: 0, idempotencyKey: `${id}-approve` }, identity)
+        await service.cancelPurchaseOrder(id, { expectedVersion: 1, idempotencyKey: `${id}-cancel`, reason: 'No longer needed' }, identity)
+      }
+      const cancelled = await prisma.purchaseOrderLine.findMany({ where: { purchaseOrderId: { startsWith: 'SC-PO-CANCEL-' } } })
+      assert.ok(cancelled.every((line) => line.originalPromisedDate))
+      const { payload } = await scorecard(prisma, users.admin, '?from=2026-07-01&to=2026-07-31')
+      assert.deepEqual(payload.suppliers.map((row) => row.sampleSize), [])
+      // The dashboard reads the same orders through the report snapshot.
+      const snapshot = await createDbProcurementRuntimeRepository({ prisma }).snapshot({ tenantId: tenantA })
+      const report = buildRuntimeGovernedReport({ ...snapshot, salesOrders: [], suppliers: [], inventoryItems: [], items: [] }, { subject: 'suppliers', filters: { from: '2026-07-01', to: '2026-07-31' } }, { now: NOW, timeZone: 'America/New_York' })
+      const onTime = report.kpis.find((row) => row.id === 'on_time_receipt_rate')
+      assert.deepEqual([onTime.currentValue, onTime.dataStatus], [null, 'no_records'])
+      // September, where the scorecard measures six lines at 66.7%, agrees too.
+      const september = buildRuntimeGovernedReport({ ...snapshot, salesOrders: [], suppliers: [], inventoryItems: [], items: [] }, { subject: 'suppliers', filters: { from: '2026-09-01', to: '2026-09-30' } }, { now: NOW, timeZone: 'America/New_York' })
+      assert.equal(september.kpis.find((row) => row.id === 'on_time_receipt_rate').currentValue, 66.7)
     })
   } finally {
     await prisma.$disconnect()

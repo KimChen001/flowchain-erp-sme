@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Info, RefreshCw } from "lucide-react";
+import { useSearchParams } from "react-router";
 import { A, Card } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { apiJson } from "../../lib/api-client";
@@ -313,6 +314,28 @@ function usePeriod() {
   return [period, setPeriod] as const;
 }
 
+type Period = { from: string; to: string; graceDays: number };
+
+// On Reports › Supplier analytics the period and grace days live in the page
+// URL, shared with the supplier dashboard below the table, so the table and
+// the dashboard's on-time figures always measure the same lines. Without
+// dates both use the scorecard's default, the last 90 days.
+function useUrlPeriod() {
+  const [params, setParams] = useSearchParams();
+  const grace = Number(params.get("graceDays") || 0);
+  const period: Period = { from: params.get("from") || "", to: params.get("to") || "", graceDays: Number.isInteger(grace) && grace >= 0 ? grace : 0 };
+  const setPeriod = (next: Period) => {
+    const updated = new URLSearchParams(params);
+    const values: Array<[string, string]> = [["from", next.from], ["to", next.to], ["graceDays", next.graceDays ? String(next.graceDays) : ""]];
+    for (const [key, value] of values) {
+      if (value) updated.set(key, value);
+      else updated.delete(key);
+    }
+    setParams(updated, { replace: true });
+  };
+  return [period, setPeriod] as const;
+}
+
 // The Performance tab of the supplier detail page.
 export function SupplierPerformancePanel({ supplierId }: { supplierId: string }) {
   const tr = useCopy();
@@ -343,7 +366,7 @@ export function SupplierPerformancePanel({ supplierId }: { supplierId: string })
 export function SupplierPerformanceTable() {
   const tr = useCopy();
   const format = useFormat();
-  const [period, setPeriod] = usePeriod();
+  const [period, setPeriod] = useUrlPeriod();
   const { data, error, loading, reload } = useSupplierScorecard(period);
   const [open, setOpen] = useState<string | null>(null);
   const cell = (row: SupplierScorecardRow, value: string) => (row.sampleStatus === "ok" ? value : tr("insufficient"));
