@@ -85,6 +85,7 @@ flag the same wording.
 | `pending` | A reason, such as `"new case"`. The case is scored and listed under "Pending cases". It is left out of the safety failures, the exit code, the category table, the scores and the quality gate. The 100 original cases (`ORIGINAL_CASE_IDS` in `run-eval.mjs`, the cases at a792e2f) may not be pending. |
 | `note` | Free text for readers. Not scored. |
 | `expect.status`, `expect.code` | The expected HTTP status and error code. The default status is 200. |
+| `expect.agent` | The answer came from agent planning: `skillRouting` is `{ source: 'model', modelStatus: 'planned' }`. Only meaningful in a `--agent` run. |
 | `expect.skill` | Acceptable answering skills (`intent`). Used for routing accuracy. List only the skills that should answer. Do not widen the list to fit what the router currently does. |
 | `expect.notSkill` | Skills (`intent`) that must not answer, for questions that look like another skill's (sales orders vs purchase orders, invoice approval vs PO approval). Counted in routing accuracy. |
 | `expect.skills` | For a question with several parts: the answer must be a compound answer (`intent: compound`) with a section answered by each listed skill. Counted in routing accuracy. |
@@ -259,6 +260,56 @@ Measured on 2026-10-03 with MIT Parley (`claude-haiku-4-5`), 164 cases:
 
 Both runs: no safety failures, no blocked connections, no Chinese in English
 answers, and no regression against the baseline.
+
+## Agent planning (P2)
+
+`FLOWCHAIN_AI_AGENT_MODE=plan` (policy `agent_planning`, off by default, approved
+by the owner on 2026-10-03, local only; `docs/ai-agent-mode-design.md` sections
+3 and 6) lets one model call choose up to three of the actor's skills. It needs a
+provider whose adapter sends native tool calls (`deepseek_chat`, `doubao_chat`,
+`qwen_chat`, `parley_chat`). It runs in two cases, and the rules still run first:
+
+- **unmatched**: no rule and no named record chose a skill. Agent planning then
+  replaces the one-skill pick above, so the question makes one model call, not two.
+- **multi_part**: the question has several parts and the compound rules could not
+  answer them part by part. A draft request among the parts is the usual reason;
+  the Acme request is one.
+
+Chips, follow-ups, greetings, instructions and questions about the outside world
+never reach it.
+
+- **What the model sees and returns.** It sees the question and the actor's
+  skills as tool definitions, nothing from the workspace. It returns tool calls
+  with at most two arguments:
+  - `records`: the record numbers, SKUs or supplier names a call is about, as the
+    question writes them;
+  - `mode`: only `overview` or `short` for stock.
+- **How a call is checked.** A record the question does not contain, an unknown
+  tool or argument, or a fourth call is dropped. The record step resolves the
+  records in the actor's own facts and sets each skill's mode, exactly as for a
+  rule.
+- **The answer.** One planned skill answers on its own; two or three give a
+  compound answer with `skillRouting: { source: 'model', modelStatus: 'planned' }`.
+- **When it fails.** On a timeout (`FLOWCHAIN_AI_AGENT_TIMEOUT_MS`, 2500 by
+  default, 5000 at most), an error or a plan with no valid call, the rules
+  answer. The answer then carries `agentPlanning: { status: 'degraded' }`, and the
+  panel shows the limited-mode note. A model that calls no tool also leaves the
+  rules' answer, without the note.
+- **The audit row** gets an `agent` block with codes and counts only: entry,
+  status, reason, tools and modes, record counts, dropped calls, latency and the
+  tokens the provider reported.
+
+```
+npm run test:ai:eval -- --provider-env=<env file> --agent
+```
+
+`--agent` needs `--provider-env` and also sets `FLOWCHAIN_AI_AGENT_MODE=plan` on
+the servers. The run prints the planner's entries, results, call time and tokens.
+The `multi_tool` cases, the Acme request (`expect.agent`: the planner chose the
+skills) and the paraphrases are pending and scored only in such a run. The gate is
+the P2 column of `docs/ai-agent-mode-design.md` section 9. Scripted planner
+failures (timeouts, invalid plans, dropped records) are unit tests in
+`server/domain/ai-agent-planning.test.mjs`, not cases here.
 
 ## Compound answers
 

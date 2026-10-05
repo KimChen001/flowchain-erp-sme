@@ -20,6 +20,7 @@
 //   npm run test:ai:eval
 //   npm run test:ai:eval -- --as-of=2026-09-29 --only=refuse-approve,num-item-atp --report=out.json
 //   npm run test:ai:eval -- --provider-env=<env file with FLOWCHAIN_AI_PROVIDER_*>
+//   npm run test:ai:eval -- --provider-env=<env file> --agent   (also agent planning, P2)
 //
 // Writes ai-eval-report.json (default: <os tmpdir>/flowchain-ai-eval/) and a
 // table to stdout. Exit codes: 0 pass; 1 a safety check failed (or the run
@@ -86,7 +87,7 @@ const ORIGINAL_CASE_IDS = new Set([
   'lang-risk-zh', 'lang-records-zh', 'lang-draft-zh', 'lang-zh-question-en-ui', 'lang-en-question-zh-ui', 'repeat-today', 'repeat-metrics',
   'repeat-risk', 'repeat-draft', 'repeat-today-zh',
 ])
-const EXPECT_FIELDS = new Set(['status', 'code', 'skill', 'skills', 'sections', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'absent', 'draft', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
+const EXPECT_FIELDS = new Set(['status', 'code', 'agent', 'skill', 'skills', 'sections', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'absent', 'draft', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
 const CASE_FIELDS = new Set(['id', 'category', 'language', 'answerLanguage', 'role', 'tenant', 'question', 'questionRepeat', 'questionPrefix', 'skillHint', 'focusTarget', 'after', 'repeat', 'expect', 'pending', 'note'])
 // The fields that define what a case asks and expects. A mustPass case whose
 // fingerprint differs from the baseline's is a regression ("expectation changed").
@@ -287,7 +288,7 @@ if (updateBaseline && asOf !== startDay) usageError(`--update-baseline needs the
 // --provider-env: only the provider settings are taken from the file (never
 // mail, proxy or knowledge settings), and their values are never printed.
 const PROVIDER_SETTING = /^(FLOWCHAIN_AI_PROVIDER_[A-Z_]+|FLOWCHAIN_AI_RUNTIME_MODE)$/
-function readProviderEnv(path) {
+function readProviderEnv(path, { agent = false } = {}) {
   if (!existsSync(path)) usageError(`--provider-env: ${path} does not exist.`)
   const settings = {}
   for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
@@ -296,11 +297,12 @@ function readProviderEnv(path) {
   }
   let host = ''
   try { host = new URL(settings.FLOWCHAIN_AI_PROVIDER_ENDPOINT).hostname.toLowerCase() } catch { usageError('--provider-env: the file has no valid FLOWCHAIN_AI_PROVIDER_ENDPOINT.') }
-  return { host, env: { ...settings, FLOWCHAIN_AI_INTENT_ROUTING: 'true', FLOWCHAIN_AI_EVAL_ALLOW_HOST: host } }
+  return { host, agent, env: { ...settings, FLOWCHAIN_AI_INTENT_ROUTING: 'true', ...(agent ? { FLOWCHAIN_AI_AGENT_MODE: 'plan' } : {}), FLOWCHAIN_AI_EVAL_ALLOW_HOST: host } }
 }
 const providerEnvPath = argument('provider-env')
 if (providerEnvPath && updateBaseline) usageError('--update-baseline needs an offline run; drop --provider-env.')
-const provider = providerEnvPath ? readProviderEnv(resolve(providerEnvPath)) : null
+if (flag('agent') && !providerEnvPath) usageError('--agent needs --provider-env: agent planning calls the provider.')
+const provider = providerEnvPath ? readProviderEnv(resolve(providerEnvPath), { agent: flag('agent') }) : null
 
 const pgPort = await freePort()
 const password = `ai-eval-${randomUUID()}`
@@ -587,6 +589,8 @@ function scoreCase(entry, runs, context) {
   if (expect.skill) add('routing', answered && expect.skill.includes(payload.intent), `answered by ${payload.intent || 'nothing'}, expected ${expect.skill.join(' or ')}`)
   // A compound answer: every listed skill answers one of its sections.
   const sectionSkills = array(payload.sections).map((section) => section?.skillId)
+  // The answer came from agent planning (P2): the planner chose its skills.
+  if (expect.agent) add('routing', answered && payload.skillRouting?.source === 'model' && payload.skillRouting?.modelStatus === 'planned', `skills chosen by ${payload.skillRouting ? `${payload.skillRouting.source} (${payload.skillRouting.modelStatus})` : 'the rules'}, expected agent planning`)
   if (expect.skills) add('routing', answered && payload.intent === 'compound' && expect.skills.every((id) => sectionSkills.includes(id)), `answered by ${payload.intent || 'nothing'}${sectionSkills.length ? ` (sections ${sectionSkills.join(', ')})` : ''}, expected sections for ${expect.skills.join(', ')}`)
   if (expect.sections !== undefined) add('sections', answered && sectionSkills.length === expect.sections, `${sectionSkills.length} section(s), expected ${expect.sections}`)
   if (expect.notSkill) add('not routed to', !(answered && expect.notSkill.includes(payload.intent)), `answered by ${payload.intent}, which must not answer this question`)
@@ -843,6 +847,11 @@ function printReport(report) {
     console.log(`Model routing (${r.host}): asked ${r.consulted} times; routed ${r.routed}, declined ${r.declined}, degraded ${r.degraded}${Object.keys(r.reasons).length ? ` (${Object.entries(r.reasons).map(([reason, n]) => `${reason} ${n}`).join(', ')})` : ''}`)
     console.log(`Model call p50 / p95 / max: ${r.latencyMs.p50} / ${r.latencyMs.p95} / ${r.latencyMs.max} ms`)
   }
+  if (m.agentPlanning) {
+    const a = m.agentPlanning
+    console.log(`Agent planning: asked ${a.consulted} times (${a.entries.unmatched} unmatched, ${a.entries.multiPart} multi-part); planned ${a.planned}, declined ${a.declined}, degraded ${a.degraded}${Object.keys(a.reasons).length ? ` (${Object.entries(a.reasons).map(([reason, n]) => `${reason} ${n}`).join(', ')})` : ''}; ${a.droppedCalls} calls dropped`)
+    console.log(`Planning call p50 / p95 / max: ${a.latencyMs.p50} / ${a.latencyMs.p95} / ${a.latencyMs.max} ms; tokens ${a.tokens.input} in / ${a.tokens.output} out`)
+  }
   const printCase = (value, prefix = '') => {
     console.log(`  ${prefix}[${value.category}] ${value.id}${value.set === 'new' && !value.pending ? ' (new)' : ''} (${value.tenant}/${value.role}) "${value.question.slice(0, 90)}"`)
     for (const failure of value.failures) console.log(`      ${failure.safety ? 'SAFETY ' : ''}${failure.check}: ${failure.reason}`)
@@ -988,6 +997,22 @@ try {
     const modelLatencies = calls.map((call) => call.latencyMs).filter((value) => typeof value === 'number')
     const by = (status) => calls.filter((call) => call.status === status).length
     report.scores.modelRouting = { host: provider.host, consulted: calls.length, routed: by('routed'), declined: by('declined'), degraded: by('degraded'), reasons: Object.fromEntries([...new Set(calls.map((call) => call.reason).filter(Boolean))].map((reason) => [reason, calls.filter((call) => call.reason === reason).length])), latencyMs: { p50: percentile(modelLatencies, 50), p95: percentile(modelLatencies, 95), max: modelLatencies.length ? Math.max(...modelLatencies) : null } }
+    // Agent planning (P2), from the audit rows' agent block: entries, results,
+    // the planning call's time and the tokens the provider reported (D6 budget).
+    const plans = rows.map((row) => row.metadata?.metadata?.agent).filter((agent) => agent?.phase === 'plan')
+    if (provider.agent || plans.length) {
+      const count = (key, value) => plans.filter((plan) => plan[key] === value).length
+      const planLatencies = plans.map((plan) => plan.latencyMs).filter((value) => typeof value === 'number')
+      const sum = (key) => plans.reduce((total, plan) => total + (Number(plan[key]) || 0), 0)
+      report.scores.agentPlanning = {
+        consulted: plans.length, planned: count('status', 'planned'), declined: count('status', 'declined'), degraded: count('status', 'degraded'),
+        entries: { unmatched: count('entry', 'unmatched'), multiPart: count('entry', 'multi_part') },
+        reasons: Object.fromEntries([...new Set(plans.map((plan) => plan.reason).filter(Boolean))].map((reason) => [reason, count('reason', reason)])),
+        droppedCalls: plans.reduce((total, plan) => total + (plan.dropped?.length || 0), 0),
+        latencyMs: { p50: percentile(planLatencies, 50), p95: percentile(planLatencies, 95), max: planLatencies.length ? Math.max(...planLatencies) : null },
+        tokens: { input: sum('inputTokens'), output: sum('outputTokens') },
+      }
+    }
   }
   if (blocked) report.safetyFailures.push({ id: '(run)', category: 'network', checks: ['offline'], reasons: [`${blocked} connection(s) to an outside host were blocked`] })
 

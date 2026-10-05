@@ -205,6 +205,10 @@ export type AiResponseV2 = {
   skill?: { id: string; version: string; asOf?: string | null; timezone?: string | null; signalVersion?: string };
   // A compound answer has a section per part; a one-part answer has none.
   sections?: AiResponseV2Section[];
+  // Which path chose the skills: rules, or a model (pick-one routing or agent planning).
+  skillRouting?: { source: "rules" | "model"; modelStatus: string };
+  // Set only when agent planning was tried and failed: the rules answered.
+  agentPlanning?: { status: "degraded"; entry?: "unmatched" | "multi_part" | null };
   metrics?: {
     asOf?: string;
     openPurchaseOrders: number | null;

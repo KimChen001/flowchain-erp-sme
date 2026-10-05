@@ -28,6 +28,7 @@ const rendererCopy = {
     evidenceDetails: "View key evidence ({count})",
     impactDetails: "View business impact",
     limitationDetails: "View data limitations",
+    limitedMode: "AI planning was unavailable, so this answer comes from the standard rules and may not cover every part of your question.",
   },
   "zh-CN": {
     severity: { info: "信息", warning: "提醒", risk: "风险", success: "正常" },
@@ -43,6 +44,7 @@ const rendererCopy = {
     evidenceDetails: "查看关键证据（{count}）",
     impactDetails: "查看业务影响",
     limitationDetails: "查看数据限制",
+    limitedMode: "AI 规划暂不可用，本回答来自标准规则，可能没有覆盖问题的每个部分。",
   },
 } as const;
 const fill = (template: string, values: Record<string, string | number>) => template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
@@ -136,6 +138,8 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   return (
     <div data-testid="ai-response-v2" data-answer-mode={focused.answerMode} data-answer-source={response.answerSource || undefined} className="space-y-3 rounded-xl p-3" style={{ background: A.white, border: `1px solid ${A.border}` }}>
       {response.answerSourceLabel ? <div data-testid="ai-answer-source" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" style={{ color: A.gray2 }}><span className="inline-flex rounded-full px-2 py-0.5 font-semibold" style={{ background: A.gray6, color: A.gray1 }}>{response.answerSourceLabel}</span>{response.checkedLabel ? <span data-testid="ai-answer-checked">{response.checkedLabel}</span> : null}</div> : null}
+      {/* A model step was tried and failed; the rules answered (limited mode). */}
+      {response.agentPlanning?.status === "degraded" ? <p data-testid="ai-limited-mode" role="status" className="rounded-md px-2 py-1 text-[11px]" style={{ background: "#FDF1E3", color: "#92400E" }}>{copy.limitedMode}</p> : null}
       <section data-testid="ai-focused-conclusion">
         <div className="flex items-start justify-between gap-2"><div lang={response.language || undefined}><h3 className="text-sm font-semibold leading-5" style={{ color: A.label }}>{focused.headline}</h3>{focused.summary && !compound ? <p className="mt-1 text-xs leading-5" style={{ color: A.gray1 }}>{focused.summary}</p> : null}</div><Chip tone={focused.severity}>{copy.severity[focused.severity]}</Chip></div>
         {/* The help answer reads no records, so "0 records" would read as a failed lookup. */}
