@@ -26,8 +26,9 @@ async function loadClient() {
     import { AiResponseV2Renderer } from './src/components/ai/AiResponseV2Renderer.tsx'
     import { aiRecoveryReason, displaySafeAssistantRecoveryMessage } from './src/modules/ai-assistant/Panel.tsx'
     import { ApiError } from './src/lib/api-client.ts'
+    import { autoOpenDraftCard, structuredDraftTarget } from './src/modules/action-drafts/structuredDraftHandoff.ts'
     export const render = (response) => renderToStaticMarkup(createElement(AiResponseV2Renderer, { response, onNavigate: () => {}, onReviewActionDraft: () => {}, onFollowUp: () => {} }))
-    export { aiRecoveryReason, displaySafeAssistantRecoveryMessage, ApiError }
+    export { aiRecoveryReason, displaySafeAssistantRecoveryMessage, ApiError, autoOpenDraftCard, structuredDraftTarget }
   `
   const result = await build({
     stdin: { contents: entry, resolveDir: root, loader: 'tsx', sourcefile: 'renderer-entry.tsx' },
@@ -78,6 +79,28 @@ test('an English skill answer renders with no Chinese, the source badge and the 
   assert.match(displaySafeAssistantRecoveryMessage('q', 'en-US', aiRecoveryReason(new ApiError(401, { code: 'AUTHENTICATION_REQUIRED' }, ''), false)), /Sign in again/)
   assert.match(displaySafeAssistantRecoveryMessage('q', 'en-US', aiRecoveryReason(new ApiError(400, { code: 'AI_QUESTION_TOO_SHORT', error: 'Enter a question of at least two characters.' }, ''), false)), /Enter a question of at least two characters\./)
   assert.match(displaySafeAssistantRecoveryMessage('q', 'zh-CN', aiRecoveryReason(new ApiError(503, {}, ''), false)), /当前工作区数据暂时未能完整读取/)
+})
+
+test('an order answer names each request button, and only a clear choice is opened on arrival', async () => {
+  const client = await loadClient()
+  const scenario = aiSkillScenario()
+  const covered = await runAiSkillRuntime({ ...scenario.ctx, env: {} }, { message: 'can you help me generate the order?', answerLanguage: 'en-US' })
+  const markup = client.render(covered)
+  assert.doesNotMatch(markup, CJK)
+  assert.match(markup, /data-action-kind="generate_text_draft"[^>]*>Draft a follow-up on PO-001</)
+  assert.match(markup, /data-action-kind="create_formal_business_draft"[^>]*>Open a request for LDM-001 anyway</)
+  assert.equal(client.autoOpenDraftCard(covered.reviewCards), null)
+  const named = await runAiSkillRuntime({ ...scenario.ctx, env: {} }, { message: 'Create a purchase order for LDM-001', answerLanguage: 'en-US' })
+  const card = client.autoOpenDraftCard(named.reviewCards)
+  assert.equal(card.draftType, 'purchase_request_draft')
+  // The same handoff the button makes: the request form, filled in.
+  assert.deepEqual(client.structuredDraftTarget(card.draftType, card.payload, 'ai_assistant'), {
+    moduleId: 'procurement:requests',
+    query: { mode: 'create', itemId: 'LDM-001', sku: 'LDM-001', quantity: '12', reason: '28 available against a target of 40; this is on top of what is already on order.', origin: 'ai_assistant' },
+  })
+  assert.match(client.render(named), /data-action-kind="create_formal_business_draft"[^>]*>Open request: 12 pcs of LDM-001</)
+  // A text draft is never opened on arrival.
+  assert.equal(client.autoOpenDraftCard([{ draftType: 'po_followup_draft', autoOpen: true }]), null)
 })
 
 test('a compound answer renders a section per part in place of the summary and the priorities', async () => {

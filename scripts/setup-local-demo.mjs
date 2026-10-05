@@ -1,5 +1,6 @@
 import { getPrismaClient, disconnectPrismaClient } from '../server/persistence/prisma-client.mjs'
 import { assertLocalDevelopment } from '../server/domain/local-development-contract.mjs'
+import { applySupplierTierChange } from '../server/domain/supplier-tier-command.mjs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -37,6 +38,21 @@ export function localDemoSupplier(id) {
   }
   return supplier
 }
+// The tiers the walkthrough starts with: what the suggestion rules give on its
+// scenario (docs/supplier-tiers-design.md, section 7). They are set once, with
+// an audit row each; a tier someone has since changed is kept on a rerun.
+const supplierTiers = [
+  ['LOCAL-DEMO-SUP-005', 1, 'The largest share of committed spend in the walkthrough, about a quarter.'],
+  ['LOCAL-DEMO-SUP-001', 1, 'Preferred source of LDM-001, LDM-002 and LDM-005, and about a quarter of committed spend.'],
+  ['LOCAL-DEMO-SUP-006', 1, 'One of the suppliers that together make up half of committed spend.'],
+  ['LOCAL-DEMO-SUP-002', 2, 'Regular purchase orders; preferred source of LDM-003 and LDM-006.'],
+  ['LOCAL-DEMO-SUP-003', 2, 'Regular purchase orders; preferred source of LDM-004.'],
+  ['LOCAL-DEMO-SUP-007', 2, 'Regular purchase orders in the last 12 months.'],
+  ['LOCAL-DEMO-SUP-004', 3, 'No purchase orders in the last 12 months.'],
+  ['LOCAL-DEMO-SUP-008', 3, 'No purchase orders in the last 12 months.'],
+  ['LOCAL-DEMO-SUP-009', 3, 'No purchase orders in the last 12 months.'],
+  ['LOCAL-DEMO-SUP-010', 3, 'No purchase orders in the last 12 months.'],
+]
 const items = [
   // The walkthrough keeps Flow Controller short: its planning thresholds are higher.
   ['LOCAL-DEMO-ITEM-001', 'LDM-001', 'Flow Controller', 'Electronic components', 'pcs', 'LOCAL-DEMO-SUP-001', { safetyStock: 30, reorderPoint: 40 }],
@@ -133,6 +149,18 @@ export async function seedLocalDemo(prisma, env = process.env) {
       })
       await tx.aiKnowledgeChunk.deleteMany({ where: { documentId: document.id } })
       await tx.aiKnowledgeChunk.create({ data: { id: `${document.id}-CHUNK-001`, documentId: document.id, position: 0, content: document.content, contentHash: createHash('sha256').update(document.content).digest('hex') } })
+    }
+    // Tier 1 suppliers get the first active user, by email, as their owner.
+    const owner = await tx.user.findFirst({ where: { tenantId, status: 'active' }, orderBy: { email: 'asc' }, select: { id: true } })
+    for (const [id, tier, reason] of supplierTiers) {
+      const supplier = await tx.supplier.findUnique({ where: { id } })
+      if (supplier.tier === null && !await tx.auditLog.findFirst({ where: { tenantId, entityType: 'supplier', entityId: id, action: 'tier_change' } })) {
+        await applySupplierTierChange(tx, supplier, { tier, reason, source: 'local-walkthrough-setup' })
+      }
+      if (tier === 1 && !supplier.businessOwnerId && !await tx.auditLog.findFirst({ where: { tenantId, entityType: 'supplier', entityId: id, action: 'owner_change' } })) {
+        await tx.supplier.update({ where: { id }, data: { businessOwnerId: owner.id } })
+        await tx.auditLog.create({ data: { id: `LOCAL-DEMO-OWNER-${id}`, tenantId, source: 'local-walkthrough-setup', module: 'srm', action: 'owner_change', entityType: 'supplier', entityId: id, summary: 'Supplier business owner changed', metadata: { fromOwnerId: null, toOwnerId: owner.id } } })
+      }
     }
     return LOCAL_DEMO_COUNTS
   })

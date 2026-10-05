@@ -16,14 +16,17 @@ test('R134 AI assistant empty state exposes business prompt chips', () => {
 
 test('R135 the placeholder offers the page record next to the whole workspace, and the context can be cleared', () => {
   assert.match(panelSource, /export function getAiInputPlaceholder/)
-  assert.match(panelSource, /moduleId === "overview"/)
+  assert.doesNotMatch(panelSource, /moduleId === "overview"/)
   for (const phrase of ['这个 PO', '这个 SKU', '这个 RFQ', '这个供应商']) assert.match(panelSource, new RegExp(phrase))
   assert.match(panelSource, /Ask anything about your workspace, or about \$\{phrase\}/)
   // The record's chips are added to the workspace chips, never replace them.
   assert.match(panelSource, /\[\.\.\.recordPrompts\.slice\(0, 2\), \.\.\.workspacePrompts\.slice\(0, 2\)\]/)
   assert.match(panelSource, /data-testid="ai-context-chip"/)
   assert.match(panelSource, /data-testid="ai-context-clear"/)
-  assert.match(panelSource, /当前上下文：/)
+  // The scope is the whole workspace on every page; a record's page only adds the record.
+  assert.match(panelSource, /范围：/)
+  assert.match(panelSource, /Whole workspace/)
+  assert.doesNotMatch(panelSource, /routeById\(moduleId\)\?\.moduleLabel/)
 })
 
 test('R136 follow-up chips are distinct from review-first recommended actions', () => {

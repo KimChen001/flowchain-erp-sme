@@ -54,3 +54,47 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   expect(issued.totalAmount).toBe('51.0000')
   expect(issued.currency).toBe('USD')
 })
+
+test('a purchase request opened from the assistant arrives prefilled, labels each value, and saves only when asked', async ({ page, request }) => {
+  const login = await request.post('/api/auth/login', { data: { company: 'Browser Company', name: 'Kim', email: 'kim@example.com' } })
+  expect(login.ok()).toBeTruthy()
+  const session = await login.json()
+  await page.addInitScript(({ token, user }) => {
+    localStorage.setItem('flowchain:auth-token', token)
+    localStorage.setItem('flowchain:current-user', JSON.stringify(user))
+  }, session)
+  const api = async (path: string) => (await request.get(path, { headers: { Authorization: `Bearer ${session.token}` } })).json()
+  const before = new Set((await api('/api/procurement/requests')).map((pr: { id: string }) => pr.id))
+
+  // The query the assistant's purchase request draft opens the form with.
+  const reason = '3 available against a reorder point of 20; nothing incoming covers it.'
+  await page.goto(`/app/procurement/requests?mode=create&itemId=browser-pr-item&sku=browser-pr-item&quantity=17&reason=${encodeURIComponent(reason)}&origin=ai_assistant`)
+  await expect(page.getByTestId('prefill-banner')).toContainText('Prefilled from the assistant')
+  await expect(page.getByLabel('SKU 1')).toHaveValue('browser-pr-item')
+  await expect(page.getByLabel('Suppliers 1')).toHaveValue('browser-supplier')
+  await expect(field(page, 'Quantity').locator('input')).toHaveValue('17')
+  await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('4.25')
+  await expect(field(page, 'Destination warehouse or service location').locator('select')).toHaveValue('browser-warehouse')
+  await expect(page.getByLabel('Internal line notes 1')).toHaveValue(reason)
+  await expect(page.getByTestId('prefill-source-quantity')).toHaveText('From the stock check')
+  await expect(page.getByTestId('prefill-source-supplierId')).toHaveText('Preferred supplier')
+  await expect(page.getByTestId('prefill-source-estimatedUnitPrice')).toHaveText('Reference price')
+  await expect(page.getByTestId('prefill-source-targetWarehouseId')).toHaveText('Item default warehouse')
+  await expect(page.getByTestId('prefill-source-internalLineComment')).toHaveText('Reason from the assistant')
+  // Opening the form saves nothing.
+  expect((await api('/api/procurement/requests')).filter((pr: { id: string }) => !before.has(pr.id))).toHaveLength(0)
+
+  // A changed value is no longer the suggestion, so it loses its label.
+  await field(page, 'Quantity').locator('input').fill('20')
+  await expect(page.getByTestId('prefill-source-quantity')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Save draft' }).click()
+  await expect(page.getByText('Purchase request draft saved')).toBeVisible()
+  await expect(page.getByTestId('prefill-banner')).toHaveCount(0)
+
+  const saved = (await api('/api/procurement/requests')).filter((pr: { id: string }) => !before.has(pr.id))
+  expect(saved).toHaveLength(1)
+  expect(saved[0].status).toBe('draft')
+  expect(Number(saved[0].lines[0].quantity)).toBe(20)
+  expect(saved[0].lines[0].supplierId).toBe('browser-supplier')
+  expect(saved[0].lines[0].internalLineComment).toBe(reason)
+})
