@@ -102,9 +102,12 @@ test('drafts are review-only cards for the top signals, and need purchasing edit
     assert.equal(card.requiresHumanReview, true)
     assert.equal(card.payload.language, 'en-US')
   }
-  assert.equal(english.reviewCards[0].payload.message, 'Please confirm a delivery date for the remaining 30 pcs of LDM-001 on PO-001.')
-  assert.equal(english.reviewCards[2].payload.message, 'Invoice INV-001 differs from the purchase order by $200.00. Please send a corrected invoice or the reason for the difference.')
-  assert.equal(answer('prepare_action_draft', 'zh-CN').reviewCards[0].payload.message, '请确认 PO-001 上 LDM-001 剩余 30 pcs 的交货日期。')
+  assert.match(english.reviewCards[0].payload.message, /^Please confirm a delivery date for the open line on PO-001:\n- LDM-001: 30 pcs still to deliver, promised /m)
+  assert.equal(english.reviewCards[2].payload.message, 'Hello Acme Components,\n\nInvoice INV-001 differs from the purchase order by $200.00. Please send a corrected invoice or the reason for the difference.\n\nThank you.')
+  assert.equal(english.reviewCards[2].payload.subject, 'Invoice INV-001: difference from the purchase order')
+  assert.match(answer('prepare_action_draft', 'zh-CN').reviewCards[0].payload.message, /^- LDM-001：仍有 30 pcs 未交，承诺日期 /m)
+  // Each suggested field says where it came from: templates filled from the record.
+  assert.deepEqual(Object.fromEntries(Object.entries(english.reviewCards[0].prefill).map(([field, entry]) => [field, `${entry.source}:${entry.ref}`])), { subject: 'template:draft.po_followup.subject', message: 'template:draft.po_followup.message' })
   // A read-only viewer gets links and a limitation, no cards.
   const viewer = (await answers({ roleKey: 'read-only-viewer' })).answer('prepare_action_draft', 'en-US')
   assert.deepEqual(viewer.reviewCards, [])

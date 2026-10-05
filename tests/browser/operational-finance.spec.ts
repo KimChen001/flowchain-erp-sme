@@ -367,8 +367,8 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
 
   await page.goto("/app/finance/overview");
   await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
-  await expect(page.getByText("应付义务不代表已付款。")).toBeVisible();
-  await expect(page.getByText("应收义务不代表已收款。")).toBeVisible();
+  await expect(page.getByText("应付款不代表已付款。")).toBeVisible();
+  await expect(page.getByText("应收款不代表已收款。")).toBeVisible();
   await expect(page.getByTestId("finance-currency-limitation")).toContainText(
     "多币种，未折算",
   );
@@ -379,24 +379,26 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
     "USD",
   );
 
+  // Bills live under Purchasing; the old Finance address still lands there.
   await page.goto("/app/finance/invoices?status=approved");
+  await expect(page).toHaveURL(/\/app\/procurement\/bills\?status=approved$/);
   await expect(page.getByTestId("operational-finance-invoice-list")).toContainText(
     "SUP-INV-BROWSER-EXACT",
   );
-  await page.goto("/app/finance/three-way-match?status=approved");
-  await expect(page.getByTestId("operational-finance-match-list")).toContainText(
-    "price",
-  );
+  // Match exceptions are reviewed on the bill they belong to.
+  await page.goto("/app/procurement/bills");
+  await page.getByRole("link", { name: "SUP-INV-BROWSER-VARIANCE", exact: true }).click();
+  await expect(page.getByTestId("supplier-invoice-match")).toContainText("price");
   await page.goto("/app/finance/payables");
   await expect(page.getByTestId("operational-finance-payable-list")).toContainText(
     "AP-BROWSER-EXACT",
   );
-  await expect(page.getByText("应付义务不代表已付款。")).toBeVisible();
+  await expect(page.getByText("应付款不代表已付款。")).toBeVisible();
   await page.goto("/app/finance/credits");
   await expect(page.getByTestId("operational-finance-credit-list")).toContainText(
     "SUP-CREDIT-BROWSER-001",
   );
-  await page.goto("/app/finance/customer-invoices");
+  await page.goto("/app/sales/invoices");
   await expect(page.getByTestId("customer-invoice-workbench")).toContainText(
     "CUS-INV-BROWSER-CNY",
   );
@@ -416,20 +418,29 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   });
   const viewerPage = await viewerContext.newPage();
   await session(viewerPage, viewer);
+  // Customer invoices live under Sales; the old Finance address lands there.
   await viewerPage.goto("/app/finance/customer-invoices");
+  await expect(viewerPage).toHaveURL(/\/app\/sales\/invoices$/);
   await expect(viewerPage.getByTestId("customer-invoice-workbench")).toBeVisible();
+  const salesTabs = viewerPage.getByTestId("module-subnav");
   await expect(
-    viewerPage.getByRole("link", { name: "Operational Finance Overview" }),
-  ).toBeVisible();
+    salesTabs.getByRole("link", { name: "Invoices", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await expect(
-    viewerPage.getByRole("link", { name: "Supplier Invoices" }),
-  ).toBeVisible();
-  await expect(
-    viewerPage.getByRole("link", { name: "供应商发票" }),
-  ).toHaveCount(0);
-  await expect(
-    viewerPage.getByRole("link", { name: "New Customer Invoice" }),
+    viewerPage.getByRole("link", { name: "New invoice" }),
   ).toHaveAttribute("aria-disabled", "true");
+  await viewerPage.goto("/app/finance/overview");
+  const financeTabs = viewerPage.getByTestId("module-subnav");
+  await expect(
+    financeTabs.getByRole("link", { name: "Overview", exact: true }),
+  ).toBeVisible();
+  await expect(
+    financeTabs.getByRole("link", { name: "Bills to pay", exact: true }),
+  ).toBeVisible();
+  // Bills and invoices are not repeated under Payables & receivables.
+  await expect(financeTabs.getByRole("link", { name: "Bills", exact: true })).toHaveCount(0);
+  await expect(financeTabs.getByRole("link", { name: "Invoices", exact: true })).toHaveCount(0);
+  await expect(viewerPage.getByRole("link", { name: "采购发票" })).toHaveCount(0);
   const viewerWrite = await request.post("/api/finance/customer-invoices", {
     headers: { Authorization: `Bearer ${viewer.token}` },
     data: {

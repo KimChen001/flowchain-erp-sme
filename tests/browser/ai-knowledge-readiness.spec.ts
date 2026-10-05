@@ -63,3 +63,26 @@ test('cited passage is highlighted and mixed results keep business evidence visi
   await page.keyboard.press('Escape');
   await expect(source).not.toBeVisible();
 });
+
+test('a no-answer says the documents do not answer and lists the searched passages, not as cited', async ({ page }) => {
+  await page.route('**/api/ai-runtime/respond', route => route.fulfill({ json: {
+    version: 'v2', intent: 'knowledge_retrieval', query: 'What is our approval limit for supplier invoices?', scope: { module: 'ai', dataScopeLabel: 'Accessible workspace documents' },
+    conclusion: { title: 'Not answered by your documents', summary: 'The documents you can access do not answer this question. The passages that were searched are listed below.', severity: 'info', confidence: 'medium' },
+    keyEvidence: [], businessImpact: [], recommendedActions: [], navigationLinks: [], dataLimitations: [], reviewCards: [], followUpQuestions: [],
+    rag: { mode: 'no_answer', citations: [{ id: 'p2', documentId: 'guide', title: 'Company policy', heading: 'Company Policy › Supplier records', position: 1, sourceNumber: 1, excerpt: 'Supplier contacts are required.' }] },
+  } }));
+  await page.route('**/api/ai-runtime/knowledge/guide', route => route.fulfill({ json: { title: 'Company policy', chunks: [{ id: 'p1', position: 0, content: 'Introduction.', heading: 'Company Policy' }, { id: 'p2', position: 1, content: 'Supplier contacts are required.', heading: 'Company Policy › Supplier records' }] } }));
+  await openAssistant(page);
+  await page.getByTestId('ai-assistant-input').fill('What is our approval limit for supplier invoices?');
+  await page.getByTestId('ai-assistant-send').click();
+  const answer = page.getByTestId('ai-knowledge-answer');
+  await expect(answer).toContainText('Not answered by your documents');
+  await expect(answer).toContainText('do not answer this question');
+  // Not the "model unavailable" excerpt banner: a model answered, and said the documents are silent.
+  await expect(answer).not.toContainText('A model is not configured');
+  await answer.locator('summary').click();
+  await answer.getByRole('button', { name: 'Open passage', exact: true }).click();
+  const source = page.getByRole('dialog', { name: 'Source document' });
+  await expect(source.locator('[data-cited="true"]')).toContainText('Passage 2 · Company Policy › Supplier records · Searched passage');
+  await expect(source).not.toContainText('Cited passage');
+});

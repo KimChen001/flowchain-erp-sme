@@ -186,8 +186,8 @@ export function makeInvoiceInsight(input: {
     evidence: evidenceSummaries(evidenceBundle, [`Supplier ${input.supplier}`, `PO ${input.po || "missing"}`, `GRN ${input.grn || "missing"}`]),
     impact: input.varianceAmount ? ["Do not approve, pay, or post until PO/GRN/invoice variance is resolved."] : ["Keep standard AP review before posting or payment."],
     recommendedActions: [
-      buildContextualAiAction({ intent: "trace_invoice_matching_failure", sourceModule: "finance", sourceEntityType: "supplier_invoice", sourceEntityId: input.invoiceNumber, sourceRoute: "finance:invoices", linkedRecords: records }),
-      buildContextualAiAction({ intent: "preview_invoice_resolution_note", sourceModule: "finance", sourceEntityType: "supplier_invoice", sourceEntityId: input.invoiceNumber, sourceRoute: "finance:invoices", linkedRecords: records, allowedOutputType: "draft_preview" }),
+      buildContextualAiAction({ intent: "trace_invoice_matching_failure", sourceModule: "finance", sourceEntityType: "supplier_invoice", sourceEntityId: input.invoiceNumber, sourceRoute: "procurement:bills", linkedRecords: records }),
+      buildContextualAiAction({ intent: "preview_invoice_resolution_note", sourceModule: "finance", sourceEntityType: "supplier_invoice", sourceEntityId: input.invoiceNumber, sourceRoute: "procurement:bills", linkedRecords: records, allowedOutputType: "draft_preview" }),
     ],
     linkedRecords: records,
     limitations: limitationMessages(evidenceBundle, records.length === 2 ? ["Variance depends on available PO and GRN line fields."] : ["Missing PO or GRN link limits variance explanation."]),

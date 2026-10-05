@@ -263,6 +263,17 @@ function withPageRecord(found, focus, facts) {
   return found
 }
 
+// The suppliers of the tier a question filters by, among the reader's own
+// (supplierIds null when the reader cannot see suppliers, so the answer says
+// it could not filter). The tier filters and labels; it never changes the
+// order (docs/supplier-tiers-design.md §6, decision 8).
+const TIER_SKILLS = new Set(['purchase_orders', 'supplier_attention'])
+function tierFilter(tier, facts) {
+  if (!tier) return null
+  if (!Array.isArray(facts.suppliers)) return { tier, supplierIds: null }
+  return { tier, supplierIds: facts.suppliers.filter((row) => (tier === 'none' ? !row.tier : row.tier === tier)).map((row) => row.id) }
+}
+
 // The route after the named records are looked up. A prompt chip or a
 // follow-up's hint keeps its skill and takes a focus only from the page or a
 // record number. A question about orders, stock or approvals is narrowed by
@@ -276,7 +287,9 @@ export function refineAiSkillRoute(route, message, facts) {
   const found = FOCUS_SKILLS.has(route.skillId) ? named : withPageRecord(named, route.focus, facts)
   const short = Boolean(route.signals?.short)
   const orders = Boolean(route.signals?.orders)
-  const as = (skillId, mode, entities = found) => ({ ...route, skillId, mode, entities })
+  // Chips and follow-up hints carry no tier.
+  const tier = route.explicit ? null : tierFilter(route.signals?.tier, facts)
+  const as = (skillId, mode, entities = found) => ({ ...route, skillId, mode, entities, ...(tier && TIER_SKILLS.has(skillId) ? { tier } : {}) })
   const skill = route.skillId
   if (route.explicit) {
     const idsOnly = { ...found, suppliers: [], skus: found.skus.filter((row) => !found.viaName.includes(row.sku)), viaName: [] }

@@ -5,7 +5,7 @@ import { executeBusinessQueryPlan } from './ai-business-query-executor.mjs'
 import { buildBusinessQueryResponseV2, buildLegacyBusinessQueryChatResponse } from './ai-business-query-response.mjs'
 import { isComplexBusinessQuery, planBusinessQuery } from './ai-semantic-query-planner.mjs'
 import { isTechnicalProviderDiagnosticPrompt } from './ai-business-intent-router.mjs'
-import { routeSkill } from './ai-skill-router.mjs'
+import { aiSkillTierOf, routeSkill } from './ai-skill-router.mjs'
 import { aiSkillQuestionLanguage } from './ai-skill-copy.mjs'
 
 const text = (value) => String(value ?? '').trim()
@@ -21,6 +21,9 @@ const SKILL_FIRST = new Set(['invoice_summary', 'inventory_availability', 'pendi
 function shouldUseSemanticBusinessQuery(message, body = {}) {
   const input = text(message).toLowerCase()
   if (!isComplexBusinessQuery({ message })) return false
+  // A supplier tier ("Tier 1 suppliers") is read by the skills; the business
+  // query plan has no tier scope, and would answer for every supplier.
+  if (aiSkillTierOf(message)) return false
   const hasPaymentSignal = /付款|应付|付钱|payment|payable|pay\b|paid\b/.test(input)
   const route = routeSkill({ message })
   if (!hasPaymentSignal && (SKILL_FIRST.has(route?.skillId) || route?.ids?.length)) return false
