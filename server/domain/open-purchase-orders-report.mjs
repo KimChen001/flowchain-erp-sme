@@ -11,6 +11,17 @@ const round = value => Math.round(value * 10000) / 10000
 const sumKnown = values => values.length && values.every(value => value !== null) ? round(values.reduce((a, b) => a + b, 0)) : null
 const daysLate = (due, today) => due && Number.isFinite(Date.parse(due)) ? Math.max(0, Math.floor((Date.parse(today) - Date.parse(due)) / 86400000)) : null
 
+// One purchase order line by this report's rules: its quantities, its unit and
+// the promised day the report counts lateness from (the line's, else the
+// order's expected date). A line is still to receive when its remaining
+// quantity is above zero or unknown.
+export function purchaseOrderReportLine(line, po) {
+  const ordered = numeric(line.orderedQuantity ?? line.quantity)
+  const received = numeric(line.receivedQuantity)
+  const remaining = purchaseOrderLineRemaining(line)
+  return { ordered, received, remaining, open: remaining === null || remaining > 0, unit: text(line.unit || line.unitSnapshot), due: day(line.promisedDate || line.metadata?.promisedDate || po?.expectedDate) }
+}
+
 // Overdue days count to the tenant's calendar day (options.timeZone, the
 // workspace timezone), so an order due today is not late in the evening
 // merely because UTC has moved on to tomorrow.
@@ -21,12 +32,8 @@ export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {},
   const timezone = text(timeZone) || DEFAULT_TENANT_TIMEZONE
   const asOf = tenantCalendarDay(now, timezone)
   const source = purchaseOrders.map(po => {
-    const lines = (po.lines || []).map(line => {
-      const ordered = numeric(line.orderedQuantity ?? line.quantity)
-      const received = numeric(line.receivedQuantity)
-      return { ordered, received, remaining: purchaseOrderLineRemaining(line), unit: text(line.unit || line.unitSnapshot), due: day(line.promisedDate || line.metadata?.promisedDate || po.expectedDate) }
-    })
-    const openLines = lines.filter(line => line.remaining === null || line.remaining > 0)
+    const lines = (po.lines || []).map(line => purchaseOrderReportLine(line, po))
+    const openLines = lines.filter(line => line.open)
     // One definition shared with the overview card, the analytics KPI, the
     // supplier risk table and saved views: committed and still to receive.
     const isOpen = isOpenPurchaseOrder(po)

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
 import { assertAuthorized } from '../auth/authorization-service.mjs'
+import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { outboundRequestHash } from './outbound-posting-command-service.mjs'
 import { outboundDecimalString as fixed, outboundDecimalUnits as units } from './outbound-transaction-policy.mjs'
 
@@ -149,9 +150,9 @@ export function createSalesOrderReadService({ prisma, lifecycleCapability = { en
     assertAuthorized({ actor, permission: 'sales_order.read', tenantId: actor.tenantId })
     const page = Math.max(1, Number(query.page) || 1), pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
     const where = { tenantId: actor.tenantId }
-    const search = text(query.search); if (search) where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }]
+    const search = escapeLikePattern(text(query.search)); if (search) where.OR = [{ orderNumber: { contains: search, mode: 'insensitive' } }, { customerName: { contains: search, mode: 'insensitive' } }]
     for (const key of ['workflowStatus', 'reservationStatus', 'fulfillmentStatus', 'currency']) if (text(query[key])) where[key] = text(query[key])
-    if (text(query.customer)) where.customerName = { contains: text(query.customer), mode: 'insensitive' }
+    if (text(query.customer)) where.customerName = { contains: escapeLikePattern(text(query.customer)), mode: 'insensitive' }
     const sort = ['promisedDate', 'orderNumber'].includes(query.sort) ? query.sort : 'updatedAt', direction = query.direction === 'asc' ? 'asc' : 'desc'
     const [total, rows] = await Promise.all([prisma.salesOrder.count({ where }), prisma.salesOrder.findMany({ where, include: { lines: true }, orderBy: [{ [sort]: direction }, { id: 'asc' }], skip: (page - 1) * pageSize, take: pageSize } )])
     return { dataSource: 'Authoritative PostgreSQL', page, pageSize, total, capabilities: { salesOrderLifecycle: lifecycleCapability }, orders: rows.map((row) => { const order = publicOrder(row); return { ...order, totalLines: row.lines.length, orderedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.orderedQuantity), 0n)), reservedQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.reservedQuantity), 0n)), fulfilledQuantity: fixed(row.lines.reduce((sum, line) => sum + units(line.fulfilledQuantity), 0n)) } }) }

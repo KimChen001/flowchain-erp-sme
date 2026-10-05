@@ -102,7 +102,13 @@ export type AiResponseV2ReviewCard = {
   draftType?: string;
   draftTitle?: string;
   payload?: Record<string, unknown>;
+  // Which payload fields were suggested, and from where (record, default, template).
+  prefill?: Record<string, { source: "record" | "default" | "template" | "history" | "workspace_history" | "model"; ref?: string; value: string }>;
   originEvidence?: Record<string, unknown>[];
+  // Set on the cards of an order the assistant was asked to start
+  // (prepare_action_draft, mode order): true opens the card's form as the
+  // answer arrives. Their allowedNextStep names the SKU and is the button label.
+  autoOpen?: boolean;
 };
 
 export type AiRuntimeContextBreadcrumb = {
@@ -174,8 +180,8 @@ export type AiResponseV2Section = {
 };
 
 export type AiResponseV2 = {
-  supplementalKnowledge?: { title: string; summary: string; rag: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> } };
-  rag?: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> };
+  supplementalKnowledge?: { title: string; summary: string; rag: { mode: string; citations: Array<{ id: string; documentId: string; title: string; heading?: string | null; position: number; excerpt: string; sourceNumber?: number }> } };
+  rag?: { mode: string; citations: Array<{ id: string; documentId: string; title: string; heading?: string | null; position: number; excerpt: string; sourceNumber?: number }> };
   version: "v2";
   query: string;
   intent: string;

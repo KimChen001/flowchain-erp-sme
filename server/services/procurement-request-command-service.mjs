@@ -14,6 +14,7 @@ import {
 import { receivingDecimalString, receivingDecimalUnits } from "../domain/receiving-transaction-policy.mjs";
 import { applyPromisedDateChanges } from "../domain/purchase-order-promise-dates.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { sanitizeSuggestionTrail } from "../../shared/prefill-suggestions.mjs";
 import { mapPurchaseOrder, mapPurchaseRequest, mapRfq } from "../repositories/db-procurement-read-repository.mjs";
 
 // The permission catalog has no purchase-request codes, and adding one means
@@ -207,6 +208,10 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
     const needBy = dateOnly(input.defaultNeedByDate, "defaultNeedByDate");
     const persisted = persistableLines(lines, currency);
     const id = documentId("PR");
+    // Which values a prefilled form suggested and what the user did with
+    // them: codes and ids only. It goes to the audit row, outside the
+    // idempotency payload, so it never changes what the request means.
+    const suggestions = sanitizeSuggestionTrail(input.suggestionTrail);
     return runCommand({
       context,
       permission: PURCHASE_REQUEST_PERMISSIONS.create,
@@ -226,7 +231,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           },
         });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, commandActor.tenantId, created.id));
-        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: created.id, audit: { action: "purchase_request_created", summary: `Created purchase request ${created.id}.`, metadata: { version: 1, amount: persisted.amount, currency } } };
+        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: created.id, audit: { action: "purchase_request_created", summary: `Created purchase request ${created.id}.`, metadata: { version: 1, amount: persisted.amount, currency, ...(suggestions ? { suggestions } : {}) } } };
       },
     });
   }

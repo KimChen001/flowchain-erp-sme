@@ -2,6 +2,7 @@ import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { can } from "../auth/authorization-service.mjs";
 import { paymentRecordsView } from "./payment-record-command-service.mjs";
 import { financeFixed, financeUnits } from "./operational-finance-policy.mjs";
+import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 
 export class OperationalFinanceReadError extends Error {
   constructor(code, message, status = 400, details) {
@@ -185,7 +186,7 @@ export function createOperationalFinanceReadService({
     const current = await actor(context);
     assertRead(current, "finance.supplier_invoice.read");
     const { page, pageSize, skip } = pageQuery(query);
-    const search = text(query.search);
+    const search = escapeLikePattern(text(query.search));
     const where = {
       tenantId: current.tenantId,
       ...(text(query.status) ? { status: text(query.status) } : {}),

@@ -4,10 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Maximize2, MessageCircle, Minimize2, Plus, RotateCcw, Send, Square, Sparkles, X } from "lucide-react";
 import type { CanonicalFocusTarget } from "../../lib/evidenceLinks";
 import { A } from "../../components/ui";
-import { routeById } from "../../app/routeRegistry";
 import { AiResponseV2Renderer } from "../../components/ai/AiResponseV2Renderer";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import type { AiResponseV2 } from "../../domain/ai/response-contract";
+import { autoOpenDraftCard, structuredDraftTarget } from "../action-drafts/structuredDraftHandoff";
 import { focusTargetFromActiveContext, postAiRuntimeResponse } from "./aiRuntimeGateway";
 import { ApiError } from "../../lib/api-client";
 import { looksLikeRawJson, sanitizeAiMessage } from "./presentation";
@@ -108,7 +108,7 @@ function requestScopeLabel(message: string, language: "en-US" | "zh-CN") {
   if (/库存|SKU|补货|可用量|inventory|replenish/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：库存余额和关联订单" : "Checking inventory balances and related orders";
   if (/供应商|RFQ|报价|supplier|quote/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：供应商和询报价记录" : "Checking supplier and sourcing records";
   if (/今天|重点|风险|待办|today|risk|priority/i.test(message)) return language === "zh-CN" ? "正在查询业务数据：当前工作区重点事项" : "Checking current workspace priorities";
-  return language === "zh-CN" ? "正在查询业务数据：当前页面相关记录" : "Checking records related to the current page";
+  return language === "zh-CN" ? "正在查询业务数据：当前工作区记录" : "Checking your workspace records";
 }
 
 const CONTEXT_ENTITY_LABELS: Record<string, { "en-US": string; "zh-CN": string }> = {
@@ -119,22 +119,14 @@ const CONTEXT_ENTITY_LABELS: Record<string, { "en-US": string; "zh-CN": string }
   purchase_request: { "en-US": "Purchase request", "zh-CN": "采购申请" },
   sales_order: { "en-US": "Sales order", "zh-CN": "客户订单" },
 };
-const MODULE_LABELS_EN: Record<string, string> = {
-  "首页": "Home", "基础资料": "Master data", "采购管理": "Purchasing", "销售管理": "Sales", "库存管理": "Inventory",
-  "结算管理": "Finance", "报表中心": "Reports", "预测与 MRP": "Forecasting & MRP", "异常处理工单": "Exception cases",
-  "行动草稿与人工复核": "Action drafts & review", "财务协同": "Finance collaboration", "系统管理": "System settings",
-  "业务审计与历史": "Business audit & history", "数据接入与质量": "Data intake & quality", "移动作业": "Mobile operations",
-  "协同通知草稿": "Collaboration drafts", "试点准备度": "Pilot readiness",
-};
-
-export function getAiContextLabel(moduleId: string, activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
-  if (activeContext?.entityId) {
-    const label = CONTEXT_ENTITY_LABELS[activeContext.entityType || ""]?.[language] || (language === "zh-CN" ? "业务对象" : "Business record");
-    return `${label} ${activeContext.entityLabel || activeContext.entityId}`;
-  }
-  const routeLabel = routeById(moduleId)?.moduleLabel;
-  if (!routeLabel) return language === "zh-CN" ? "当前页面" : "Current page";
-  return language === "zh-CN" ? routeLabel : MODULE_LABELS_EN[routeLabel] || routeLabel;
+// What the assistant answers about: always the whole workspace, which page or
+// module is open does not change it. On a record's page the record is named
+// too, since "this PO" then means it; the chip's clear button sets it aside.
+export function getAiContextLabel(activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
+  const workspace = language === "zh-CN" ? "整个工作区" : "Whole workspace";
+  if (!activeContext?.entityId) return workspace;
+  const label = CONTEXT_ENTITY_LABELS[activeContext.entityType || ""]?.[language] || (language === "zh-CN" ? "业务对象" : "Business record");
+  return `${workspace} · ${language === "zh-CN" ? "本页：" : "this page: "}${label} ${activeContext.entityLabel || activeContext.entityId}`;
 }
 
 // How the placeholder names the page's record. The assistant answers about the
@@ -148,11 +140,11 @@ const CONTEXT_ENTITY_PHRASES: Record<string, { "en-US": string; "zh-CN": string 
   purchase_request: { "en-US": "this purchase request", "zh-CN": "这个采购申请" },
 };
 
-export function getAiInputPlaceholder(moduleId: string, activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
+// The same on every page; a record's page only offers the record as well.
+export function getAiInputPlaceholder(activeContext?: ActiveContext | null, language: "en-US" | "zh-CN" = "en-US") {
   const zh = language === "zh-CN";
   const phrase = CONTEXT_ENTITY_PHRASES[activeContext?.entityType || ""]?.[language];
   if (phrase) return zh ? `问工作区的任何问题，或问${phrase}` : `Ask anything about your workspace, or about ${phrase}`;
-  if (moduleId === "overview") return zh ? "问我：今天先看什么？哪些风险最高？" : "Ask what to review today or which risks are highest";
   return zh ? "问工作区的任何问题" : "Ask anything about your workspace";
 }
 
@@ -620,9 +612,17 @@ export default function FloatingAiAssistant({
     minimizeAssistant();
   };
 
+  // A new answer is shown from its first line, where it says what matters
+  // most (for an order, what is already on order), not scrolled to its end.
+  // Anything else (a question, the loading line) scrolls to the end.
   useEffect(() => {
     if (!open) return;
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    const area = scrollRef.current;
+    if (!area) return;
+    const answers = area.querySelectorAll<HTMLElement>('[data-testid="ai-message-assistant"]');
+    const latest = !asking && messages.at(-1)?.role === "assistant" ? answers[answers.length - 1] : null;
+    const top = latest ? area.scrollTop + latest.getBoundingClientRect().top - area.getBoundingClientRect().top - 12 : area.scrollHeight;
+    area.scrollTo({ top, behavior: "smooth" });
   }, [messages, open, asking]);
 
   useEffect(() => {
@@ -668,8 +668,8 @@ export default function FloatingAiAssistant({
   const pageContextKey = pageContext ? `${pageContext.entityType}:${pageContext.entityId}` : null;
   const currentContext = pageContext && pageContextKey !== dismissedContextKey ? pageContext : null;
   const sessionGrounding = useMemo(() => buildSessionGrounding(messages, currentContext), [messages, currentContext]);
-  const contextLabel = getAiContextLabel(moduleId, currentContext, language);
-  const inputPlaceholder = getAiInputPlaceholder(moduleId, currentContext, language);
+  const contextLabel = getAiContextLabel(currentContext, language);
+  const inputPlaceholder = getAiInputPlaceholder(currentContext, language);
   // On a PO or SKU page: two questions about the record, then two about the
   // workspace, so the assistant never turns into a single-record bot.
   const workspacePrompts = AI_EMPTY_STATE_PROMPT_CHIPS.map((item) => language === "zh-CN" ? item.zhPrompt : item.prompt);
@@ -751,6 +751,15 @@ export default function FloatingAiAssistant({
         ...current,
         { role: "assistant", content, cards: [{ type: "ai_response_v2", data: response as unknown as Record<string, unknown> }] },
       ]);
+      // Asked for an order with a clear choice: open its form, filled in, as
+      // the answer's own button would. Nothing is saved. The assistant stays
+      // open, so the user reads first why the page changed and what is
+      // already on order; the answer keeps the button to open it again.
+      const opening = autoOpenDraftCard((response as unknown as AiResponseV2).reviewCards);
+      if (opening?.draftType) {
+        const target = structuredDraftTarget(opening.draftType, opening.payload, "ai_assistant");
+        onNavigate?.(target.moduleId, null, { source: "ai", returnTo: "ai", entityLabel: opening.allowedNextStep, query: target.query });
+      }
     } catch (error) {
       if (requestSeqRef.current !== requestId || abortReasonRef.current === "unmount" || abortReasonRef.current === "superseded") return;
       if (import.meta.env.DEV) {
@@ -799,7 +808,7 @@ export default function FloatingAiAssistant({
                 {language === "zh-CN" ? "AI 助手" : "AI assistant"}
               </div>
               <div data-testid="ai-context-chip" className="flex min-w-0 items-center gap-1 text-[11px]" style={{ color: A.gray2 }}>
-                <span className="truncate">{language === "zh-CN" ? "当前上下文：" : "Context: "}{contextLabel}</span>
+                <span className="truncate">{language === "zh-CN" ? "范围：" : "Scope: "}{contextLabel}</span>
                 {currentContext && pageContextKey ? (
                   <button
                     type="button"
