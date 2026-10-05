@@ -29,6 +29,12 @@ const REF_LABELS: Record<string, readonly [string, string]> = {
   "item_supplier:reference_price": ["Reference price", "参考价"],
   "item:default_warehouse": ["Item default warehouse", "物料默认仓库"],
   "supplier:email": ["Supplier contact", "供应商联系人"],
+  "purchase_order:warehouse": ["Purchase order warehouse", "采购订单仓库"],
+  "user:default_warehouse": ["Your default warehouse", "你的默认仓库"],
+  "workspace:only_warehouse": ["Your only warehouse", "你唯一可用的仓库"],
+  "clock:now": ["Now", "当前时间"],
+  "rfq:quantity": ["From the RFQ", "来自询价单"],
+  "rfq:required_date": ["Required date from the RFQ", "询价单的需求日期"],
 };
 
 const ORIGIN_LABELS: Record<PrefillOrigin, readonly [string, string]> = {
