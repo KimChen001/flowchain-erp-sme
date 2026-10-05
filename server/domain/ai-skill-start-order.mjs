@@ -1,6 +1,7 @@
 import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillEvidence, aiSkillFormatter, aiSkillNavigation, aiSkillRecordEvidence, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
+import { poFollowupMessage } from './ai-skill-prepare-action-draft.mjs'
 
 // Starting an order: prepare_action_draft in mode `order`, for "can you help
 // me generate the order?", "create a PO for LDM-001", 帮我下单 (the router's
@@ -125,18 +126,18 @@ function blankCard(language) {
   }
 }
 
+// The PO follow-up, worded as the drafts word it: each open line with its own
+// remaining quantity, and the open lines in the payload for the review form.
 function followUpCard(po, facts, language) {
   const fmt = aiSkillFormatter(facts, language)
-  const message = po.sku && po.remaining !== null
-    ? aiSkillText('draft.po_followup.message', language, { remaining: fmt.number(po.remaining), unit: po.unit && po.unit !== 'mixed' ? po.unit : '', sku: po.sku, po: po.orderNumber }).replace(/\s{2,}/g, ' ')
-    : aiSkillText('draft.po_followup.message_generic', language, { po: po.orderNumber })
+  const message = poFollowupMessage(po, fmt, language)
   const title = aiSkillText('draft.po_followup.title', language, { supplier: po.supplier || po.supplierId, po: po.orderNumber })
   const reason = po.overdueDays > 0 ? aiSkillCountText('order.late', po.overdueDays, language, { po: po.orderNumber, days: fmt.number(po.overdueDays) }) : title
   return {
     previewOnly: true, reviewRequired: true, requiresHumanReview: true, prohibitedActions: PROHIBITED,
     allowedNextStep: aiSkillText('order.action.follow_up', language, { po: po.orderNumber }), title, draftTitle: title, description: reason,
     draftType: 'po_followup_draft', targetModule: AI_SKILL_MODULES.purchase_order, targetEntityType: 'purchase_order', targetEntityId: po.id,
-    payload: { poId: po.id, supplierId: po.supplierId, supplierName: po.supplier, message, language, reason }, originEvidence: [{ entityType: 'purchase_order', entityId: po.id }],
+    payload: { poId: po.id, supplierId: po.supplierId, supplierName: po.supplier, message, lines: (po.openLines || []).map((line) => ({ ...line })), language, reason }, originEvidence: [{ entityType: 'purchase_order', entityId: po.id }],
   }
 }
 

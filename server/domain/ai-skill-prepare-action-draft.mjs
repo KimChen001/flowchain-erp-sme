@@ -64,7 +64,8 @@ export function runPrepareActionDraft(facts, { focus = null, route = null } = {}
 // Names each line still to receive with its own remaining quantity, never the
 // first line's SKU with the order total. When the open lines are unknown (no
 // lines, or one without a SKU or a known quantity) the message names none.
-function poFollowupMessage(po, fmt, language) {
+// Starting an order (ai-skill-start-order.mjs) words its follow-up the same way.
+export function poFollowupMessage(po, fmt, language) {
   const lines = array(po.openLines)
   if (!lines.length || lines.some((line) => !line.sku || line.remaining === null)) return aiSkillText('draft.po_followup.message_generic', language, { po: po.orderNumber })
   if (lines.length === 1) return aiSkillText('draft.po_followup.message', language, { remaining: fmt.number(lines[0].remaining), unit: lines[0].unit || '', sku: lines[0].sku, po: po.orderNumber }).replace(/\s{2,}/g, ' ')

@@ -34,6 +34,10 @@ test('asked for the order, a shortage open orders cover is explained, open order
   // Chasing the late order first, then a request one click away.
   assert.deepEqual(cards(response), [['po_followup_draft', 'PO-001', null, null], ['purchase_request_draft', 'ITEM-001', 12, false]])
   assert.deepEqual(response.reviewCards.map((card) => card.allowedNextStep), ['Draft a follow-up on PO-001', 'Open a request for LDM-001 anyway'])
+  // The follow-up is worded as the drafts word it: each open line, with the lines for the review form.
+  const followUp = response.reviewCards[0].payload
+  assert.equal(followUp.message, 'Please confirm a delivery date for the remaining 30 pcs of LDM-001 on PO-001.')
+  assert.deepEqual(followUp.lines.map((line) => [line.sku, line.remaining]), [['LDM-001', 30]])
   const chinese = await ask('帮我下单')
   assert.equal(chinese.conclusion.title, 'LDM-001 已有在途订单')
   assert.match(chinese.conclusion.summary, /^在途订单 PO-001和 PO-008 共 70 pcs。/)
