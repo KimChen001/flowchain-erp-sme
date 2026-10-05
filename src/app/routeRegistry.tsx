@@ -391,11 +391,60 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     order: 33,
   }),
   page({
+    id: "procurement:bills",
+    path: "/app/procurement/bills",
+    moduleId: "procurement",
+    moduleLabel: "采购管理",
+    label: "采购发票",
+    description: "记录供应商发来的发票，并与采购订单和收货核对。",
+    parentId: "procurement",
+    pageType: "list",
+    panelId: "finance",
+    viewId: "invoices",
+    entityType: "supplier_invoice",
+    order: 33.5,
+  }),
+  {
+    id: "procurement:bill-new",
+    path: "/app/procurement/bills/new",
+    moduleId: "procurement",
+    moduleLabel: "采购管理",
+    label: "新建采购发票",
+    parentId: "procurement:bills",
+    pageType: "create",
+    currentActiveMenuId: "procurement:bills",
+    panelId: "finance",
+    viewId: "supplier-invoice-new",
+    showInSidebar: false,
+    showInModuleNav: false,
+    showInBreadcrumb: true,
+    order: 33.51,
+  },
+  {
+    id: "procurement:bill-detail",
+    path: "/app/procurement/bills/:id",
+    moduleId: "procurement",
+    moduleLabel: "采购管理",
+    label: "采购发票详情",
+    parentId: "procurement:bills",
+    pageType: "detail",
+    currentActiveMenuId: "procurement:bills",
+    panelId: "finance",
+    viewId: "supplier-invoice-detail",
+    entityType: "supplier_invoice",
+    entityIdParam: "id",
+    returnListRouteId: "procurement:bills",
+    showInSidebar: false,
+    showInModuleNav: false,
+    showInBreadcrumb: true,
+    order: 33.52,
+  },
+  page({
     id: "procurement:receiving",
     path: "/app/procurement/receiving",
     moduleId: "procurement",
     moduleLabel: "采购管理",
-    label: "采购收货",
+    label: "收货记录",
     description: "管理采购到货、质检与入库记录。",
     parentId: "procurement",
     pageType: "list",
@@ -436,10 +485,10 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     moduleLabel: "采购管理",
     label: "三单匹配",
     description: "比对采购订单、收货单和发票。",
-    parentId: "procurement:receiving",
+    parentId: "procurement",
     pageType: "analysis",
     viewId: "match",
-    order: 36,
+    order: 33.6,
   }),
   {
     id: "procurement:receiving:new",
@@ -656,6 +705,55 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     viewId: "orders",
     order: 41,
   }),
+  page({
+    id: "sales:invoices",
+    path: "/app/sales/invoices",
+    moduleId: "sales",
+    moduleLabel: "销售管理",
+    label: "销售发票",
+    description: "按已发货数量给客户开票，并跟踪开出状态。",
+    parentId: "sales",
+    pageType: "list",
+    panelId: "finance",
+    viewId: "customer-invoices",
+    entityType: "customer_invoice",
+    order: 41.5,
+  }),
+  {
+    id: "sales:invoice-new",
+    path: "/app/sales/invoices/new",
+    moduleId: "sales",
+    moduleLabel: "销售管理",
+    label: "新建销售发票",
+    parentId: "sales:invoices",
+    pageType: "create",
+    currentActiveMenuId: "sales:invoices",
+    panelId: "finance",
+    viewId: "customer-invoice-new",
+    showInSidebar: false,
+    showInModuleNav: false,
+    showInBreadcrumb: true,
+    order: 41.51,
+  },
+  {
+    id: "sales:invoice-detail",
+    path: "/app/sales/invoices/:id",
+    moduleId: "sales",
+    moduleLabel: "销售管理",
+    label: "销售发票详情",
+    parentId: "sales:invoices",
+    pageType: "detail",
+    currentActiveMenuId: "sales:invoices",
+    panelId: "finance",
+    viewId: "customer-invoice-detail",
+    entityType: "customer_invoice",
+    entityIdParam: "id",
+    returnListRouteId: "sales:invoices",
+    showInSidebar: false,
+    showInModuleNav: false,
+    showInBreadcrumb: true,
+    order: 41.52,
+  },
   {
     id: "sales:order-new",
     path: "/app/sales/orders/new",
@@ -1290,9 +1388,9 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance",
     path: "/app/finance",
     moduleId: "finance",
-    moduleLabel: "结算管理",
-    label: "结算管理",
-    description: "管理费用、发票、对账和结算。",
+    moduleLabel: "应付与应收",
+    label: "应付与应收",
+    description: "查看该付给供应商和客户欠款的金额、到期与账龄。",
     icon: Users,
     defaultChildId: "finance:overview",
     entryBehavior: "redirect-to-default-child",
@@ -1303,8 +1401,8 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:overview",
     path: "/app/finance/overview",
     moduleId: "finance",
-    moduleLabel: "结算管理",
-    label: "运营财务总览",
+    moduleLabel: "应付与应收",
+    label: "概览",
     description: "查看 P2P 与 O2C 运营财务待办和币种边界。",
     parentId: "finance",
     pageType: "module-overview",
@@ -1315,7 +1413,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:invoices",
     path: "/app/finance/invoices",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "供应商发票",
     description: "查看供应商发票及匹配状态。",
     parentId: "finance",
@@ -1327,8 +1425,8 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:payables",
     path: "/app/finance/payables",
     moduleId: "finance",
-    moduleLabel: "结算管理",
-    label: "费用单 / 应付",
+    moduleLabel: "应付与应收",
+    label: "应付款",
     description: "查看费用和应付项目。",
     parentId: "finance",
     pageType: "list",
@@ -1339,7 +1437,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:customer-invoices",
     path: "/app/finance/customer-invoices",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "客户发票",
     description: "查看基于正式发货单的客户发票。",
     parentId: "finance",
@@ -1351,8 +1449,8 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:receivables",
     path: "/app/finance/receivables",
     moduleId: "finance",
-    moduleLabel: "结算管理",
-    label: "应收义务",
+    moduleLabel: "应付与应收",
+    label: "应收款",
     description: "查看应收义务、争议和未核实外部引用。",
     parentId: "finance",
     pageType: "list",
@@ -1363,7 +1461,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:aging",
     path: "/app/finance/aging",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "应收账龄",
     description: "按工作区时区和原币种查看应收账龄。",
     parentId: "finance",
@@ -1375,7 +1473,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:customer-credit-notes",
     path: "/app/finance/customer-credit-notes",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "客户贷项通知单",
     description: "查看基于正式客户退货收货的贷项通知单。",
     parentId: "finance",
@@ -1387,8 +1485,8 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:credits",
     path: "/app/finance/credits",
     moduleId: "finance",
-    moduleLabel: "结算管理",
-    label: "预付款 / 贷项",
+    moduleLabel: "应付与应收",
+    label: "供应商贷项",
     description: "查看预付款和贷项记录。",
     parentId: "finance",
     pageType: "list",
@@ -1399,7 +1497,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:reconciliation",
     path: "/app/finance/reconciliation",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "对账单",
     description: "核对业务往来和差异。",
     parentId: "finance",
@@ -1437,7 +1535,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:settlement",
     path: "/app/finance/settlement",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "结算单",
     description: "查看结算与核销状态。",
     parentId: "finance",
@@ -1450,7 +1548,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:three-way-match",
     path: "/app/finance/three-way-match",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "三单匹配",
     description: "比对采购订单、收货单和发票。",
     parentId: "finance",
@@ -1463,7 +1561,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:invoice-new",
     path: "/app/finance/invoices/new",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "新建供应商发票",
     parentId: "finance:invoices",
     pageType: "create",
@@ -1478,7 +1576,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:invoice-detail",
     path: "/app/finance/invoices/:id",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "供应商发票详情",
     parentId: "finance:invoices",
     pageType: "detail",
@@ -1496,7 +1594,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:customer-invoice-new",
     path: "/app/finance/customer-invoices/new",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "新建客户发票",
     parentId: "finance:customer-invoices",
     pageType: "create",
@@ -1511,7 +1609,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:customer-invoice-detail",
     path: "/app/finance/customer-invoices/:id",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "客户发票详情",
     parentId: "finance:customer-invoices",
     pageType: "detail",
@@ -1529,7 +1627,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:match-detail",
     path: "/app/finance/three-way-match/:id",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "三单匹配详情",
     parentId: "finance:three-way-match",
     pageType: "detail",
@@ -1546,7 +1644,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:reconciliation-detail",
     path: "/app/finance/reconciliation/:id",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "供应商对账详情",
     parentId: "finance:reconciliation",
     pageType: "detail",
@@ -1563,7 +1661,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:settlement-detail",
     path: "/app/finance/settlement/:id",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "结算单详情",
     parentId: "finance:settlement",
     pageType: "detail",
@@ -1582,7 +1680,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     id: "finance:credit-memo-detail",
     path: "/app/finance/credit-memos/:id",
     moduleId: "finance",
-    moduleLabel: "结算管理",
+    moduleLabel: "应付与应收",
     label: "贷项通知详情",
     parentId: "finance:credits",
     pageType: "detail",
@@ -2300,7 +2398,46 @@ export function routeById(id: string) {
 }
 
 export function routePathForId(id: string) {
-  return routeById(id)?.path || "/app/overview";
+  return currentRouteFor(routeById(id))?.path || "/app/overview";
+}
+
+// A retired route that moved resolves to its replacement; any other route
+// resolves to itself.
+export function currentRouteFor(
+  route: GovernedAppRouteDefinition | undefined,
+): GovernedAppRouteDefinition | undefined {
+  if (
+    route?.directAccessBehavior === "LEGACY_REDIRECT" &&
+    route.canonicalReplacement
+  )
+    return routeById(route.canonicalReplacement) || route;
+  return route;
+}
+
+// Where a visit to a moved path lands: the replacement path with the same
+// parameters, and the redirect's own query string or else the visited one.
+export function redirectTargetForPath(
+  pathname: string,
+  search = "",
+  hash = "",
+) {
+  const route = routeByPath(pathname);
+  if (
+    route?.directAccessBehavior !== "LEGACY_REDIRECT" ||
+    !route.canonicalReplacement
+  )
+    return null;
+  const destination = routeById(route.canonicalReplacement);
+  if (!destination) return null;
+  const params = routeParamsForPath(route, pathname) || {};
+  const segments = destination.path.split("/").map((segment) => {
+    if (!segment.startsWith(":")) return segment;
+    const value = params[segment.slice(1)];
+    return value === undefined ? null : encodeURIComponent(value);
+  });
+  if (segments.includes(null)) return null;
+  const query = route.canonicalSearch ? `?${route.canonicalSearch}` : search;
+  return `${segments.join("/")}${query}${hash}`;
 }
 
 export function moduleRoute(moduleId: string) {

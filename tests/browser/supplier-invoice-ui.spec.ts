@@ -16,7 +16,7 @@ async function signIn(page: Page, email: string) {
 }
 
 async function enterInvoice(page: Page, number: string, quantity: string, unitPrice?: string) {
-  await page.goto("/app/finance/invoices");
+  await page.goto("/app/procurement/bills");
   await page.getByTestId("supplier-invoice-new").click();
   await expect(page.getByTestId("new-supplier-invoice")).toBeVisible();
   await page.getByTestId("supplier-invoice-supplier").selectOption({ index: 1 });
@@ -29,7 +29,7 @@ async function enterInvoice(page: Page, number: string, quantity: string, unitPr
   await page.getByTestId("supplier-invoice-preview").click();
   await expect(page.getByTestId("supplier-invoice-create")).toBeEnabled();
   await page.getByTestId("supplier-invoice-create").click();
-  await expect(page).toHaveURL(/\/app\/finance\/invoices\/[0-9a-f-]{36}$/);
+  await expect(page).toHaveURL(/\/app\/procurement\/bills\/[0-9a-f-]{36}$/);
   await expect(page.getByTestId("supplier-invoice-detail")).toContainText(number);
 }
 

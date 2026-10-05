@@ -75,6 +75,38 @@ test("the assistant answers every prompt chip in English from the workspace data
   await expect(page.getByTestId("ai-assistant-panel")).toHaveCount(0);
 });
 
+test("a prepared draft opens as a supplier message for the user's own mail app", async ({ page }) => {
+  await signIn(page);
+  const panel = await openAssistant(page);
+  const answer = await askChip(panel, "Prepare an action draft");
+  await answer.getByTestId("ai-action-draft-preview").first().click();
+  const shell = page.getByTestId("action-draft-review-shell");
+  await expect(shell.getByTestId("action-draft-message")).toContainText("Supplier message");
+  // Prefilled from the record and supplier master data, each field with its source.
+  await expect(shell.getByTestId("action-draft-to")).toHaveValue(/^[^@\s]+@[^@\s]+$/);
+  await expect(shell.getByTestId("action-draft-source-to")).toHaveText("Supplier contact");
+  await expect(shell.getByTestId("action-draft-subject")).not.toHaveValue("");
+  await expect(shell.getByTestId("action-draft-message-body")).toHaveValue(/^Hello [^\n]+,\n\nPlease confirm/);
+  await expect(shell.getByTestId("action-draft-source-message")).toHaveText("Template");
+  await shell.getByTestId("action-draft-subject").fill("Delivery date");
+  await expect(page.getByTestId("action-draft-open-email")).toHaveAttribute("href", /^mailto:[^?]*\?subject=Delivery%20date&body=\S+/);
+  // FlowChain sends nothing: the link hands the text to the user's mail app.
+  await expect(shell).toContainText("FlowChain does not send anything.");
+  expect(await chineseLines(shell), "draft review").toEqual([]);
+  await page.getByRole("button", { name: "Discard draft" }).click();
+  await expect(shell).toHaveCount(0);
+});
+
+test("every line that needs attention states its next step and offers its draft there", async ({ page }) => {
+  await signIn(page);
+  const panel = await openAssistant(page);
+  const answer = await askChip(panel, "What should I handle first today?");
+  const step = answer.getByTestId("ai-focused-primary-items").getByTestId("ai-line-next-step").first();
+  await expect(step).toContainText(/^Next: /);
+  await expect(step.locator('[data-action-kind="generate_text_draft"], [data-action-kind="create_formal_business_draft"]')).toHaveCount(1);
+  expect(await chineseLines(answer)).toEqual([]);
+});
+
 test("a failed or slow answer shows an English recovery message", async ({ page }) => {
   await signIn(page);
   const panel = await openAssistant(page);
