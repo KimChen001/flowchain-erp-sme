@@ -1,4 +1,4 @@
-import { aiSkillCountText, aiSkillText } from './ai-skill-copy.mjs'
+import { aiSkillCountText, aiSkillList, aiSkillText } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillFormatter, aiSkillNavigation, aiSkillSignalReason, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
 import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
@@ -18,6 +18,7 @@ export const AI_SKILL_DRAFT_TYPES = Object.freeze(['po_followup_draft', 'supplie
 const MAX_CARDS = 3
 const STOCK = new Set(['stock_shortage', 'stock_below_safety', 'stock_below_reorder'])
 const PO = new Set(['po_overdue', 'po_due_7d', 'po_partially_received'])
+const array = (value) => Array.isArray(value) ? value : []
 
 function candidates(facts, ranked) {
   const poRows = new Map((facts.purchaseOrders?.rows || []).map((row) => [row.id, row]))
@@ -60,18 +61,28 @@ export function runPrepareActionDraft(facts, { focus = null, route = null } = {}
   }
 }
 
+// Names each line still to receive with its own remaining quantity, never the
+// first line's SKU with the order total. When the open lines are unknown (no
+// lines, or one without a SKU or a known quantity) the message names none.
+function poFollowupMessage(po, fmt, language) {
+  const lines = array(po.openLines)
+  if (!lines.length || lines.some((line) => !line.sku || line.remaining === null)) return aiSkillText('draft.po_followup.message_generic', language, { po: po.orderNumber })
+  if (lines.length === 1) return aiSkillText('draft.po_followup.message', language, { remaining: fmt.number(lines[0].remaining), unit: lines[0].unit || '', sku: lines[0].sku, po: po.orderNumber }).replace(/\s{2,}/g, ' ')
+  const parts = lines.map((line) => aiSkillText('draft.po_followup.line', language, { quantity: fmt.quantity(line.remaining, line.unit), sku: line.sku }))
+  return aiSkillText('draft.po_followup.message_lines', language, { po: po.orderNumber, lines: aiSkillList(parts, language) })
+}
+
 function card(candidate, facts, language) {
   const fmt = aiSkillFormatter(facts, language)
   const { item } = candidate
   const base = { previewOnly: true, reviewRequired: true, requiresHumanReview: true, prohibitedActions: ['send', 'approve', 'pay', 'issue', 'cancel', 'delete'], allowedNextStep: aiSkillText('draft.review', language) }
   if (candidate.kind === 'po_followup_draft') {
     const po = candidate.po
-    const message = po.sku && po.remaining !== null
-      ? aiSkillText('draft.po_followup.message', language, { remaining: fmt.number(po.remaining), unit: po.unit && po.unit !== 'mixed' ? po.unit : '', sku: po.sku, po: po.orderNumber }).replace(/\s{2,}/g, ' ')
-      : aiSkillText('draft.po_followup.message_generic', language, { po: po.orderNumber })
+    const message = poFollowupMessage(po, fmt, language)
     const title = aiSkillText('draft.po_followup.title', language, { supplier: po.supplier || po.supplierId, po: po.orderNumber })
+    // The open lines travel with the message, for the review form to show.
     return { ...base, title, draftTitle: title, description: aiSkillSignalReason(item, facts, language), draftType: 'po_followup_draft', targetModule: AI_SKILL_MODULES.purchase_order, targetEntityType: 'purchase_order', targetEntityId: po.id,
-      payload: { poId: po.id, supplierId: po.supplierId, supplierName: po.supplier, message, language, reason: aiSkillSignalReason(item, facts, language) }, originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
+      payload: { poId: po.id, supplierId: po.supplierId, supplierName: po.supplier, message, lines: array(po.openLines).map((line) => ({ ...line })), language, reason: aiSkillSignalReason(item, facts, language) }, originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
   }
   if (candidate.kind === 'supplier_followup_draft') {
     const title = aiSkillText('draft.invoice.title', language, { supplier: item.supplier || item.supplierId, invoice: item.label })

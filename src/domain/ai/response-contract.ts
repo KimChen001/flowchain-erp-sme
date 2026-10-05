@@ -178,8 +178,8 @@ export type AiResponseV2Section = {
 };
 
 export type AiResponseV2 = {
-  supplementalKnowledge?: { title: string; summary: string; rag: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> } };
-  rag?: { mode: string; citations: Array<{ id: string; documentId: string; title: string; position: number; excerpt: string; sourceNumber?: number }> };
+  supplementalKnowledge?: { title: string; summary: string; rag: { mode: string; citations: Array<{ id: string; documentId: string; title: string; heading?: string | null; position: number; excerpt: string; sourceNumber?: number }> } };
+  rag?: { mode: string; citations: Array<{ id: string; documentId: string; title: string; heading?: string | null; position: number; excerpt: string; sourceNumber?: number }> };
   version: "v2";
   query: string;
   intent: string;

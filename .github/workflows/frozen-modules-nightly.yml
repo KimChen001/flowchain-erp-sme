@@ -1,0 +1,54 @@
+name: Frozen modules (nightly)
+
+# Browser suites for modules that are frozen (decision of 2026-09-30): kept,
+# not invested in, and off in the US trial. They run nightly and on demand
+# instead of on every pull request, so pull request CI stays short. Their node
+# tests, which keep the modules' flags off, still run on every pull request in
+# receiving-postgres.yml.
+on:
+  schedule:
+    - cron: '17 7 * * *' # 03:17 in New York (EDT)
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run db:generate
+        env:
+          DATABASE_URL: postgresql://generate_only:generate_only@127.0.0.1:55432/flowchain_generate_only?schema=public
+      - id: browser-setup
+        run: npx playwright install --with-deps chromium
+      # Each suite runs even after an earlier one fails, so one failure cannot
+      # hide others; the job still fails.
+      - run: npm run test:browser:internal-settlement
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:settlement-workflow
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:mobile-sync-controls
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:bank-reconciliation
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:bank-security-hardening
+        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frozen-modules-browser-evidence
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            playwright-report
+            test-results

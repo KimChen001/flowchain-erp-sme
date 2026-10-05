@@ -252,8 +252,10 @@ function focusOf(focusTarget) {
 }
 
 const matches = (patterns, message) => patterns.some((pattern) => pattern.test(message))
+// "tier-1" is a supplier tier, not a record number.
+const TIER_ID = /^TIER-[123]$/
 const recordIds = (message) => {
-  const ids = (message.match(RECORD_ID) || []).map((id) => id.toUpperCase())
+  const ids = (message.match(RECORD_ID) || []).map((id) => id.toUpperCase()).filter((id) => !TIER_ID.test(id))
   for (const match of message.replace(RECORD_ID, ' ').matchAll(SPACED_PO)) ids.push(`PO-${match[1]}`)
   return [...new Set(ids)]
 }
@@ -272,10 +274,34 @@ export function detectAiActionRequest(message) {
   })
 }
 
+// The supplier tier a question filters by (docs/supplier-tiers-design.md §6):
+// 1, 2 or 3, 'none' for suppliers nobody has tiered, or null. "Tier 1",
+// "tier-2", "strategic suppliers", 一级供应商, 战略供应商, "not tiered". The
+// tier word must sit next to a supplier word unless it says "tier": "core",
+// 一级 and 一般 mean other things elsewhere.
+const TIER_NUMBER = { 1: 1, one: 1, 2: 2, two: 2, 3: 3, three: 3, 一: 1, 二: 2, 三: 3, strategic: 1, core: 2, transactional: 3, 战略: 1, 核心: 2 }
+const TIER = [
+  /\btier[\s-]?(1|2|3|one|two|three)\b/i,
+  /\b(strategic|core|transactional)\s+(?:suppliers?|vendors?)\b/i,
+  /([一二三123])\s*级\s*(?:[·・]\s*)?(?:战略|核心|一般)?\s*(?:供应商|供方)/,
+  /(战略|核心)\s*(?:型)?\s*(?:供应商|供方)/,
+]
+const UNTIERED = [/\b(?:untiered|not (?:yet )?tiered|without a tier)\b/i, /未分级/]
+export function aiSkillTierOf(message) {
+  const raw = text(message)
+  if (matches(UNTIERED, raw)) return 'none'
+  for (const pattern of TIER) {
+    const found = raw.match(pattern)
+    if (found) return TIER_NUMBER[found[1].toLowerCase()] || null
+  }
+  return null
+}
+
 // Signals the entity step reads: a question about late orders or about
-// shortages narrows the records it answers with.
+// shortages narrows the records it answers with, and a supplier tier filters
+// them.
 function signalsOf(intent) {
-  return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent), orders: matches(ORDER_NOUN, intent) }
+  return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent), orders: matches(ORDER_NOUN, intent), tier: aiSkillTierOf(intent) }
 }
 
 // Skills a rule knows cannot answer this question, whichever skill is asked
@@ -301,7 +327,10 @@ function intentRoute(intent, base) {
   const otherRecord = matches(OTHER_RECORD, intent)
   if (matches(APPROVAL, intent) && matches(REQUEST_NOUN, intent) && !otherRecord) return route('pending_approvals')
   const late = matches(LATE, intent) && !matches(DELIVERED, intent)
-  if (late && matches(ORDER_NOUN, intent) && !otherRecord && !matches(COUNT_QUESTION, intent)) return route('purchase_orders')
+  // A count of one tier's late orders is the purchase orders answer for that
+  // tier; the workspace metrics count every supplier.
+  const tier = aiSkillTierOf(intent)
+  if (late && matches(ORDER_NOUN, intent) && !otherRecord && (!matches(COUNT_QUESTION, intent) || tier)) return route('purchase_orders')
   if (matches(INVOICE, intent) && matches(INVOICE_QUESTION, intent) && !matches(PAYMENT, intent)) return route('invoice_summary')
   // A record number goes to the entity step, which looks it up or says it
   // cannot ("What's the status of RFQ-003?").
@@ -309,7 +338,8 @@ function intentRoute(intent, base) {
   if (!base.ids.length && matches(RECEIVING, intent) && !matches(NOT_RECEIPT, intent) && !matches(PAYMENT, intent)) return route('receiving_issues')
   if (matches(STOCK, intent) || (matches(AVAILABLE, intent) && (base.ids.length || matches(AVAILABLE_CONTEXT, intent)))) return route('inventory_availability')
   if (matches(METRICS, intent) || (late && matches(ORDER_NOUN, intent) && !otherRecord)) return route('workspace_metrics')
-  if (matches(SUPPLIER, intent) && matches(SUPPLIER_CUE, intent) && !base.ids.length && !matches(SPECIFIC_ASPECT, intent) && !matches(PREVIOUS_RESULT, intent)) return route('supplier_attention')
+  // A tier ("Which Tier 1 suppliers do we have?") is cue enough.
+  if (matches(SUPPLIER, intent) && (matches(SUPPLIER_CUE, intent) || tier) && !base.ids.length && !matches(SPECIFIC_ASPECT, intent) && !matches(PREVIOUS_RESULT, intent)) return route('supplier_attention')
   if (matches(TODAY, intent)) return route('today_priorities')
   return null
 }

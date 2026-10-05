@@ -79,7 +79,7 @@ export function buildAiSkillSignals(facts) {
   const asOf = facts.asOf
   for (const po of array(facts.purchaseOrders?.rows)) {
     const common = { supplierId: po.supplierId, supplier: po.supplier, when: aiSkillWhenDue(po.dueDate, asOf) }
-    const lineData = { remaining: po.remaining, unit: po.unit, sku: po.sku, itemId: po.itemId, dueDate: po.dueDate, supplier: po.supplier }
+    const lineData = { remaining: po.remaining, unit: po.unit, sku: po.sku, itemId: po.itemId, openLines: po.openLines, dueDate: po.dueDate, supplier: po.supplier }
     // The report's own overdue days decide lateness, as in the reports.
     if (po.overdueDays > 0) signals.push(signal('po_overdue', 'purchase_order', po.id, po.orderNumber, { ...lineData, days: po.overdueDays }, { ...common, bonus: Math.min(OVERDUE_BONUS_CAP, po.overdueDays), when: { kind: 'overdue', days: po.overdueDays, date: po.dueDate || null } }))
     else if (po.dueDate && asOf && daysBetween(asOf, po.dueDate) >= 0 && daysBetween(asOf, po.dueDate) <= DUE_SOON_DAYS) signals.push(signal('po_due_7d', 'purchase_order', po.id, po.orderNumber, { ...lineData, days: daysBetween(asOf, po.dueDate) }, common))
@@ -96,7 +96,7 @@ export function buildAiSkillSignals(facts) {
     signals.push(signal('invoice_variance', 'supplier_invoice', invoice.id, invoice.invoiceNumber, { variance: invoice.variance, currency: invoice.currency, supplier: invoice.supplier, poId: invoice.poId, status: invoice.status }, { supplierId: invoice.supplierId, supplier: invoice.supplier, money: invoice.variance === null ? null : { amount: Math.abs(invoice.variance), currency: invoice.currency }, when: aiSkillWhenOpen(invoice.invoiceDate, asOf) }))
   }
   for (const request of array(facts.purchaseRequests?.awaitingApproval)) {
-    signals.push(signal('pr_awaiting_approval', 'purchase_request', request.id, request.id, { priority: request.priority, sku: request.sku, quantity: request.quantity, unit: request.unit, requiredDate: request.requiredDate }, { bonus: request.priority === 'high' ? HIGH_PRIORITY_BONUS : 0, when: aiSkillWhenDue(request.requiredDate, asOf) }))
+    signals.push(signal('pr_awaiting_approval', 'purchase_request', request.id, request.id, { priority: request.priority, sku: request.sku, skus: request.skus, itemIds: request.itemIds, quantity: request.quantity, unit: request.unit, requiredDate: request.requiredDate }, { bonus: request.priority === 'high' ? HIGH_PRIORITY_BONUS : 0, when: aiSkillWhenDue(request.requiredDate, asOf) }))
   }
   for (const rfq of array(facts.rfqs?.readyToAward)) signals.push(signal('rfq_ready_to_award', 'rfq', rfq.id, rfq.id, { responses: rfq.responses, title: rfq.title }, { when: aiSkillWhenDue(rfq.due, asOf) }))
   for (const receipt of array(facts.receipts?.rejected)) signals.push(signal('grn_rejected_qty', 'receiving_doc', receipt.id, receipt.documentNumber, { rejected: receipt.rejected, unit: receipt.unit, supplier: receipt.supplier, poId: receipt.poId }, { supplierId: receipt.supplierId || null, supplier: receipt.supplier, when: aiSkillWhenOpen(receipt.arrivedDay, asOf) }))
