@@ -16,12 +16,12 @@ backend-authorized.
 
 ## Classification summary
 
-- Core: 69
+- Core: 70
 - Extension: 50
 - Internal: 18
 - Frozen: 19
 - Legacy: 14
-- Total: 170
+- Total: 171
 
 ## Default SME navigation
 
@@ -40,7 +40,7 @@ and Internal surfaces remain outside normal navigation.
 The classification summary and the executable route matrix below are
 regenerated with `node scripts/generate-route-authority-matrix.mjs`.
 
-The 170/170 frontend route stability audit verifies
+The 171/171 frontend route stability audit verifies
 resolution, shell rendering, no route-level 404 recovery, no render crash, and
 no observed API 5xx. It does not prove business semantics, data authority,
 permission correctness, capability correctness, or complete functionality.
@@ -157,6 +157,7 @@ classification and navigation metadata.
 | `inventory:count:new` | `/app/inventory/counts/new` | 新建循环盘点 | `inventory` | EXTENSION | CONTEXTUAL | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | cycle-count | inventory.count.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `inventory:count-detail` | `/app/inventory/counts/:id` | 循环盘点工作台 | `inventory` | EXTENSION | CONTEXTUAL | no | cycle_count | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | cycle-count | inventory.count.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `inventory:warnings` | `/app/inventory/warnings` | 库存预警 | `inventory` | CORE | SECONDARY | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | inventory.balance.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `inventory:reorder` | `/app/inventory/reorder` | 补货清单 | `inventory` | CORE | SECONDARY | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | inventory.balance.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `inventory:transfer` | `/app/inventory/transfers` | 库存调拨 | `inventory` | EXTENSION | SECONDARY | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | stock-transfer | inventory.transfer.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `inventory:transfer:new` | `/app/inventory/transfers/new` | 新建库存调拨 | `inventory` | EXTENSION | CONTEXTUAL | no | inventory | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | stock-transfer | inventory.transfer.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `inventory:transfer-detail` | `/app/inventory/transfers/:id` | 库存调拨工作台 | `inventory` | EXTENSION | CONTEXTUAL | no | stock_transfer | `src/modules/inventory` | /api/inventory-* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | stock-transfer | inventory.transfer.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |

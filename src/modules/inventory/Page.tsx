@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, RefreshCw } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
@@ -9,6 +9,7 @@ import { useI18n } from "../../i18n/I18n";
 import { A, Card, Chip } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { useReorderListCopy } from "./reorderListCopy";
 
 const copy = (label: string) =>
   workspaceCopy(
@@ -142,6 +143,7 @@ export default function InventoryPage({
   const view = endpointFor[initialView] ? initialView : "empty";
   const warehouseName = useWarehouseNames();
   const { language, locale, timezone } = useI18n();
+  const reorderCopy = useReorderListCopy();
   const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState<any[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -260,6 +262,11 @@ export default function InventoryPage({
           <RefreshCw size={16} />
         </button>
       </div>
+      {view === "warnings" && (
+        <Link to="/app/inventory/reorder" data-testid="inventory-warnings-reorder-link" className="block text-xs font-semibold" style={{ color: A.blue }}>
+          {reorderCopy("fromWarnings")}
+        </Link>
+      )}
       {activeFilters.length > 0 && (
         <Card className="p-4" data-testid="inventory-active-filters">
           <div className="flex flex-wrap items-center gap-2 text-xs">

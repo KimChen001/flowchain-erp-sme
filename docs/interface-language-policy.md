@@ -56,6 +56,12 @@ names, or supplier names in place. Translate their presentation where appropriat
 - The receiving form (warehouse, arrival time, accepted quantities) and the RFQ supplier
   response dialog (quantities and delivery dates from the RFQ lines) label their prefilled
   values in English and Chinese.
+- The inventory reorder list (`/app/inventory/reorder`) has English and Chinese copy
+  (`src/modules/inventory/reorderListCopy.ts`): headings, the scope and rule notes, row
+  flags, empty states and its "Create purchase request" action. The purchase request it
+  opens is labelled "Prefilled from the reorder list" / 已根据补货清单预填, and the reason
+  it suggests is written in the interface language. SKUs, units, supplier names and
+  purchase order numbers stay as stored; order-by dates are workspace days.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.
