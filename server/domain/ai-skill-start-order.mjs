@@ -1,6 +1,6 @@
 import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillEvidence, aiSkillFormatter, aiSkillNavigation, aiSkillRecordEvidence, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
-import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
+import { aiSkillPurchaseOrderNotSent, buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
 import { aiSkillDraftCard } from './ai-skill-drafts.mjs'
 import { aiSkillOtherUnitLines } from './ai-skill-inventory-availability.mjs'
 
@@ -160,7 +160,7 @@ function onOrderSentences(target, facts, language) {
   }
   if (plan?.pending > 0) parts.push(aiSkillText(plan.incoming > 0 ? 'order.pending' : 'order.pending_only', language, { sku, quantity: fmt.quantity(plan.pending, row.unit) }))
   const late = supplying.find((po) => po.overdueDays > 0)
-  if (late) parts.push(aiSkillCountText('order.late', late.overdueDays, language, { po: late.orderNumber, days: fmt.number(late.overdueDays) }))
+  if (late) parts.push(aiSkillCountText(aiSkillPurchaseOrderNotSent(late) ? 'order.late_not_sent' : 'order.late', late.overdueDays, language, { po: late.orderNumber, days: fmt.number(late.overdueDays) }))
   return parts
 }
 
@@ -205,17 +205,21 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
   const otherUnit = aiSkillOtherUnitLines(target.row, fmt, language)
   const otherUnitSentences = otherUnit ? [aiSkillText('order.other_unit', language, { sku, lines: otherUnit })] : []
   if (result.outcome === 'covered' && !result.anyway) {
-    // Open orders already bring enough. The answer says so first; chasing the
-    // latest order comes next, and a request is one click away, not opened.
-    const latest = target.supplying[0]
+    // Open orders already bring enough. The answer says so first; then the
+    // latest issued order is chased, and a request is one click away, not
+    // opened. An order not yet issued to its supplier is not chased (decision
+    // V5): it is sent first, from its page.
+    const latest = target.supplying.find((po) => !aiSkillPurchaseOrderNotSent(po))
+    const unsent = latest ? null : target.supplying[0] || null
     const cards = [...(latest ? [followUpCard(target, latest, facts, language)] : []), requestCard(target, result, facts, language, { autoOpen: false, anyway: true })]
+    const next = latest ? 'order.covered_next' : unsent ? 'order.covered_next_not_sent' : 'order.covered_next_no_po'
     return answer(aiSkillText(plan.incoming > 0 ? 'order.title_covered' : 'order.title_covered_requested', language, { sku }), [
       ...onOrderSentences(target, facts, language),
       ...otherUnitSentences,
       aiSkillText('order.covered_why', language),
       aiSkillText('order.position', language, { available: fmt.number(plan.available), target: fmt.number(plan.target) }),
-      aiSkillText(latest ? 'order.covered_next' : 'order.covered_next_no_po', language, { po: latest?.orderNumber }),
-    ], cards)
+      aiSkillText(next, language, { po: (latest || unsent)?.orderNumber }),
+    ], cards, unsent ? { navigation: [aiSkillNavigation({ label: unsent.orderNumber, entityType: 'purchase_order', entityId: unsent.id }, language), ...navigation].slice(0, 3) } : {})
   }
   // One SKU: named, the only one that needs ordering, or ordered anyway. With
   // open lines in another unit it is answered as advice, nothing opened.

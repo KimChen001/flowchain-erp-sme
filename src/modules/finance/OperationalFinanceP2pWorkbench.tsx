@@ -65,6 +65,7 @@ const tokenKeys: Record<string, TranslationKey> = {
   mark_export_ready: "finance.action.mark_export_ready",
   release: "finance.action.release",
   record_payment: "finance.action.record_payment",
+  link_receipt: "finance.action.link_receipt",
 };
 
 function Warning({ children }: { children: ReactNode }) {
@@ -239,6 +240,11 @@ function FinanceList({
                       color={A.blue}
                       bg="#eff6ff"
                     />
+                    {row.awaitingReceipt && (
+                      <span className="ml-1" data-testid="bill-awaiting-receipt">
+                        <Chip label={t("finance.awaitingReceipt")} color="#b45309" bg="#fffbeb" />
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {actionLabels.join(" · ") || "—"}

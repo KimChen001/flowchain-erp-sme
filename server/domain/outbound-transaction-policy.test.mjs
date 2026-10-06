@@ -91,16 +91,41 @@ test('posting decreases on-hand and reserved together so available is unchanged'
   assert.deepEqual([plan.reservationImpacts[0].allocatedAfter, plan.reservationImpacts[0].consumedAfter], ['0.0000', '4.0000'])
 })
 
-test('reversal restores reserved inventory without reallocation or changing available', async () => {
+// A posted shipment ready to reverse, plus the customer invoices that bill it.
+// The invoice lookup honours the tenant, shipment and status filter, so a test
+// fails if the guard stops filtering on status.
+const reversalPrisma = (invoices = []) => {
   const posted = shipment('posted', 'consumed'); posted.salesOrder.lines[0].reservedQuantity = '0.0000'; posted.salesOrder.lines[0].fulfilledQuantity = '4.0000'
-  const prisma = {
+  return {
     shipmentDocument: { findFirst: async () => posted },
     item: itemApi,
     inventoryMovement: { findMany: async () => [{ id: 'mov-1', tenantId: 'tenant-1', movementType: 'shipment_posting', sourceDocumentType: 'ShipmentDocument', sourceDocumentId: 'ship-1', sourceDocumentLineId: 'alloc-1', relatedSalesOrderId: 'so-1', quantityIn: '0', quantityOut: '4.0000', sku: 'SKU-1', itemId: 'item-1', warehouseId: 'wh-1', locationKey: 'a-01', unit: 'EA', reversedByMovementId: null }] },
     inventoryBalance: { findUnique: async () => balance({ itemId: 'item-1', onHandQuantity: '6.0000', reservedQuantity: '0.0000', availableQuantity: '6.0000' }) },
+    customerInvoice: { findFirst: async ({ where }) => invoices.find((row) => row.tenantId === where.tenantId && row.shipmentId === where.shipmentId && where.status.in.includes(row.status)) || null },
   }
-  const plan = await buildShipmentReversalPlan({ prisma, tenantId: 'tenant-1', shipmentId: 'ship-1', reason: 'Customer correction' })
+}
+const invoice = (status, overrides = {}) => ({ id: `inv-${status}`, tenantId: 'tenant-1', shipmentId: 'ship-1', invoiceNumber: `INV-${status}`, status, ...overrides })
+
+test('reversal restores reserved inventory without reallocation or changing available', async () => {
+  const plan = await buildShipmentReversalPlan({ prisma: reversalPrisma(), tenantId: 'tenant-1', shipmentId: 'ship-1', reason: 'Customer correction' })
   assert.equal(plan.allowed, true)
   assert.deepEqual([plan.balanceImpacts[0].onHandAfter, plan.balanceImpacts[0].reservedAfter, plan.balanceImpacts[0].availableAfter], ['10.0000', '4.0000', '6.0000'])
   assert.deepEqual([plan.reservationImpacts[0].consumedAfter, plan.reservationImpacts[0].allocatedAfter, plan.reservationImpacts[0].statusAfter], ['0.0000', '0.0000', 'active'])
+})
+
+test('reversal is refused while a submitted, approved, issued or disputed customer invoice bills the shipment', async () => {
+  for (const status of ['submitted', 'approved', 'issued', 'disputed']) {
+    const plan = await buildShipmentReversalPlan({ prisma: reversalPrisma([invoice(status)]), tenantId: 'tenant-1', shipmentId: 'ship-1', reason: 'Customer correction' })
+    assert.equal(plan.allowed, false, status)
+    const blocked = plan.blockingIssues.find((issue) => issue.code === 'SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE')
+    assert.ok(blocked, status)
+    assert.equal(blocked.status, 409)
+    assert.deepEqual(blocked.details, { customerInvoiceId: `inv-${status}`, invoiceNumber: `INV-${status}`, invoiceStatus: status })
+  }
+})
+
+test('a draft or cancelled invoice, or an invoice for another shipment or tenant, does not block reversal', async () => {
+  const invoices = [invoice('draft'), invoice('cancelled'), invoice('issued', { id: 'inv-other', shipmentId: 'ship-2' }), invoice('issued', { id: 'inv-tenant', tenantId: 'tenant-2' })]
+  const plan = await buildShipmentReversalPlan({ prisma: reversalPrisma(invoices), tenantId: 'tenant-1', shipmentId: 'ship-1', reason: 'Customer correction' })
+  assert.equal(plan.allowed, true)
 })

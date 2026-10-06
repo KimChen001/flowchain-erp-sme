@@ -75,6 +75,7 @@ type Line = {
   remainingToReserve: string | null;
   remainingToFulfill: string | null;
   unit: string;
+  unitPrice?: string | null;
   version: number;
 };
 type Balance = {
@@ -270,6 +271,9 @@ function useStamp() {
   return (value?: string | null) =>
     value && !Number.isNaN(new Date(value).getTime()) ? formatDateTime(value) : value || "—";
 }
+// Shown both as a preview blocking issue and as a command error.
+const SHIPMENT_INVOICE_BLOCK =
+  "已有客户发票对此发货开票，不能再冲销。如需收回货物，请使用客户退货和贷项通知单。";
 // The message for an error, kept in its source form and translated where it
 // is shown, so it follows a language change made after the error occurred.
 function message(error: unknown) {
@@ -295,6 +299,7 @@ function errorMessage(error: unknown) {
     COMMAND_EXECUTION_IN_PROGRESS: "该操作正在处理中，请稍后重试。",
     RESERVATION_INSUFFICIENT_AVAILABLE: "可用库存不足，请调整数量。",
     SHIPMENT_REVERSAL_NOT_SAFE: "历史出库事实不一致，系统已阻止冲销。",
+    SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE: SHIPMENT_INVOICE_BLOCK,
     SHIPMENT_NUMBER_CONFLICT: "发货单号已存在，请更换号码。",
     SALES_ORDER_NUMBER_CONFLICT: "销售订单号已存在，请更换号码。",
     SALES_ORDER_INVALID_STATE: "当前订单状态不允许此操作。",
@@ -663,6 +668,7 @@ function OrderEntry() {
     [currency, setCurrency] = useState(""),
     [itemId, setItemId] = useState(""),
     [quantity, setQuantity] = useState("1.0000"),
+    [unitPrice, setUnitPrice] = useState(""),
     [capability, setCapability] = useState<LifecycleCapability | null>(null),
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");
@@ -693,6 +699,7 @@ function OrderEntry() {
       currency,
       itemId,
       quantity,
+      unitPrice,
     });
     if (intent.current.fingerprint !== fingerprint)
       intent.current = { fingerprint, idempotencyKey: key() };
@@ -707,7 +714,7 @@ function OrderEntry() {
           customerName,
           currency,
           idempotencyKey: intent.current.idempotencyKey,
-          lines: [{ itemId, quantity }],
+          lines: [{ itemId, quantity, unitPrice: unitPrice.trim() }],
         }),
       });
       intent.current = { fingerprint: "", idempotencyKey: "" };
@@ -812,11 +819,27 @@ function OrderEntry() {
               onChange={(e) => setQuantity(e.target.value)}
             />
           </label>
+          <label className="text-sm">
+            {say("Unit price", "单价")}
+            <input
+              aria-label={say("Unit price", "单价")}
+              inputMode="decimal"
+              className="mt-1 w-full rounded-lg border p-2"
+              value={unitPrice}
+              onChange={(e) => setUnitPrice(e.target.value)}
+            />
+            <span className="mt-1 block text-xs text-slate-500">
+              {say(
+                "Required to invoice the customer. Enter 0 for free goods.",
+                "开客户发票需要单价。赠品请填 0。",
+              )}
+            </span>
+          </label>
         </div>
         <div className="mt-4 flex gap-2">
           <Button
             testId="create-sales-order"
-            disabled={saving || !itemId || !customerName || !currency.trim()}
+            disabled={saving || !itemId || !customerName || !currency.trim() || !unitPrice.trim()}
             onClick={() => void save()}
           >
             {saving ? copy("保存中…") : copy("保存草稿")}
@@ -850,6 +873,7 @@ function OrderDetail({ id }: { id: string }) {
     [shipmentNumber, setShipmentNumber] = useState(`SHIP-${Date.now()}`),
     [editCustomer, setEditCustomer] = useState(""),
     [editQuantity, setEditQuantity] = useState("1.0000"),
+    [editUnitPrice, setEditUnitPrice] = useState(""),
     [cancelReason, setCancelReason] = useState(""),
     [cancelPreview, setCancelPreview] = useState<CancellationPreview | null>(null),
     [saving, setSaving] = useState(false);
@@ -892,6 +916,7 @@ function OrderDetail({ id }: { id: string }) {
       setSelectedLineId(data.lines[0]?.id || "");
       setEditCustomer(data.order.customerName);
       setEditQuantity(data.lines[0]?.orderedQuantity || "1.0000");
+      setEditUnitPrice(data.lines[0]?.unitPrice ?? "");
     }
   }
   // Cancelling: the server's plan first, then the command with the same reason.
@@ -964,7 +989,13 @@ function OrderDetail({ id }: { id: string }) {
             currency: data.order.currency,
             promisedDate: data.order.promisedDate,
           },
-          lines: [{ itemId: selectedLine.itemId, quantity: editQuantity }],
+          lines: [
+            {
+              itemId: selectedLine.itemId,
+              quantity: editQuantity,
+              unitPrice: editUnitPrice.trim(),
+            },
+          ],
         }),
       });
       setIntent("");
@@ -1290,6 +1321,14 @@ function OrderDetail({ id }: { id: string }) {
                       <div className="text-xs text-slate-500">
                         {line.itemName}
                       </div>
+                      <div
+                        className={`text-xs ${line.unitPrice == null ? "text-amber-700" : "text-slate-500"}`}
+                        data-testid="sales-order-line-price"
+                      >
+                        {line.unitPrice == null
+                          ? say("No unit price, cannot be invoiced", "未定价，无法开票")
+                          : `${say("Unit price", "单价")} ${formatQuantity(line.unitPrice)} ${data.order.currency}`}
+                      </div>
                     </td>
                     {[
                       line.orderedQuantity,
@@ -1495,8 +1534,21 @@ function OrderDetail({ id }: { id: string }) {
                   }}
                 />
               </label>
+              <label className="mt-3 block text-sm">
+                {say("Unit price", "单价")}
+                <input
+                  aria-label={say("Edit unit price", "编辑单价")}
+                  inputMode="decimal"
+                  className="mt-1 w-full rounded-lg border p-2"
+                  value={editUnitPrice}
+                  onChange={(e) => {
+                    setEditUnitPrice(e.target.value);
+                    setIntentKey(key());
+                  }}
+                />
+              </label>
               <div className="mt-4">
-                <Button disabled={saving} onClick={() => void reviseDraft()}>
+                <Button disabled={saving || !editUnitPrice.trim()} onClick={() => void reviseDraft()}>
                   {saving ? "保存中…" : "保存修订"}
                 </Button>
               </div>
@@ -1975,7 +2027,7 @@ function PreviewView({ preview }: { preview: Preview }) {
       </div>
       {preview.blockingIssues.map((x) => (
         <div className="mt-1 text-red-700" key={x.code}>
-          {x.message}
+          {x.code === "SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE" ? copy(SHIPMENT_INVOICE_BLOCK) : x.message}
         </div>
       ))}
       <div className="mt-2">
