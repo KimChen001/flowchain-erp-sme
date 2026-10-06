@@ -203,6 +203,18 @@ export function agingBucket(days) {
   return "90_plus";
 }
 
+// An overdue receivable is past its due date with money still owed. The stored
+// status says "overdue" only after a dispute is resolved, so overdue is derived
+// from the due date instead. The landing count and the receivables list's
+// "overdue" filter both use this rule, so the count and the list agree.
+export function overdueReceivableWhere(asOf) {
+  return {
+    dueDate: { lt: asOf },
+    outstandingAmount: { gt: 0 },
+    status: { in: ["open", "partially_settled", "overdue"] },
+  };
+}
+
 export function createOperationalFinanceO2cReadService({
   prisma,
   capabilities = {},
@@ -336,9 +348,14 @@ export function createOperationalFinanceO2cReadService({
     const current = await actor(context);
     assertRead(current, "finance.receivable.read");
     const paging = page(query);
+    const status = text(query.status);
     const where = {
       tenantId: current.tenantId,
-      ...(text(query.status) ? { status: text(query.status) } : {}),
+      ...(status === "overdue"
+        ? overdueReceivableWhere(now())
+        : status
+          ? { status }
+          : {}),
       ...(text(query.disputeStatus)
         ? { disputeStatus: text(query.disputeStatus) }
         : {}),
@@ -591,12 +608,7 @@ export function createOperationalFinanceO2cReadService({
         where: { tenantId: current.tenantId, status: "approved" },
       }),
       prisma.receivableObligation.count({
-        where: {
-          tenantId: current.tenantId,
-          dueDate: { lt: asOf },
-          outstandingAmount: { gt: 0 },
-          status: { in: ["open", "partially_settled", "overdue"] },
-        },
+        where: { tenantId: current.tenantId, ...overdueReceivableWhere(asOf) },
       }),
       prisma.receivableObligation.count({
         where: {

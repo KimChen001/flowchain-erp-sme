@@ -102,7 +102,8 @@ const button =
   "inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50";
 const queryString = () => {
   const params = new URLSearchParams(window.location.search);
-  const allowed = ["status", "currency", "search", "page", "pageSize"];
+  // disputeStatus carries the landing page's "disputed receivables" link.
+  const allowed = ["status", "disputeStatus", "currency", "search", "page", "pageSize"];
   const next = new URLSearchParams();
   for (const key of allowed)
     if (params.get(key)) next.set(key, params.get(key) as string);
@@ -308,12 +309,19 @@ function Receivables() {
   const { t, locale } = useI18n();
   const [data, setData] = useState<ListPayload<Receivable> | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => {
+  const load = () => {
+    setError("");
     void apiJson<ListPayload<Receivable>>(
       `/api/finance/receivables?${queryString()}`,
     )
       .then(setData)
       .catch((reason) => setError(reason instanceof Error ? reason.message : t("finance.loadFailed")));
+  };
+  useEffect(load, []);
+  // The filters change the query string and announce it with popstate.
+  useEffect(() => {
+    window.addEventListener("popstate", load);
+    return () => window.removeEventListener("popstate", load);
   }, []);
   if (error) return <Notice>{error}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
