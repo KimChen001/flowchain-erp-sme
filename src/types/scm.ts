@@ -88,6 +88,8 @@ export type PurchaseOrder = {
   created: string;
   // When the PO was issued to the supplier (an instant); null when not recorded.
   issuedAt?: string | null;
+  // The status receiving started from: "approved" means received without being issued.
+  receivingBaseStatus?: string | null;
   eta: string;
   owner: string;
   amount: number;

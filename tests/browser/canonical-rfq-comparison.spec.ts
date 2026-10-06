@@ -122,7 +122,7 @@ test("a quoted price in another currency than the item's PO history says it is n
   await login(page, request);
   await page.route("**/api/procurement/price-history**", (route) => route.fulfill({ json: { timeZone: "America/New_York", priceLabel: "purchase_order_price", histories: new URL(route.request().url()).searchParams.getAll("key").map((key) => ({ key, itemId: key.split("|")[0], unit: "pcs", unitSource: "entered", currency: key.split("|")[2], status: "none", latest: null, earlier: [], average: null, otherCurrencies: ["EUR"], otherUnits: [], unitNotRecordedCount: 0 })) } }));
   await page.goto(`/app/procurement/rfq/${encodeURIComponent(RFQ_ID)}/comparison`);
-  await expect(page.getByTestId("rfq-comparison-history-LOCAL-DEMO-RFQL-001-LOCAL-DEMO-SUP-001")).toHaveText("无法比较：EUR");
+  await expect(page.getByTestId("rfq-comparison-history-LOCAL-DEMO-RFQL-001-LOCAL-DEMO-SUP-001")).toHaveText("无法比较：以往采购订单以 EUR 计");
   await expect(page.getByTestId("rfq-comparison-copy-note-LOCAL-DEMO-SUP-001")).toHaveCount(0);
 });
 

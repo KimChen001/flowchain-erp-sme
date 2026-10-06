@@ -71,7 +71,7 @@ All Evidence Graph routes are GET-only and do not create drafts, write audit eve
 | `GET` | `/api/procurement/links` | Read | procurement link read model | None | Document relationship graph. |
 | `GET` | `/api/procurement/followups` | Read | procurement follow-up read model | None | Open follow-up signals. |
 | `GET` | `/api/procurement/summary` | Read | procurement summary read model | None | Stable top-level counts and amounts. |
-| `GET` | `/api/procurement/price-history` | Read | issued purchase order lines, items | None | `key=itemId\|unit\|currency` (repeated, at most 50; a PO page adds `excludePurchaseOrder`): the latest PO price and up to 2 earlier ones in the same unit and currency, the weighted average of the last 3, and other units and currencies named, not compared. Prices need `procurement.prices.read`; never fills a price. |
+| `GET` | `/api/procurement/price-history` | Read | issued purchase order lines, items | None | `key=itemId\|unit\|currency` (repeated, at most 50; a PO page adds `excludePurchaseOrder`, which leaves that PO out and, once it is issued, every PO dated after it): the latest PO price and up to 2 earlier ones in the same unit and currency, the weighted average of the last 3, and other units and currencies named, not compared. Prices need `procurement.prices.read`; never fills a price. |
 
 ## Inventory Read APIs
 

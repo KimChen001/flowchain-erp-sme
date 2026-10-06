@@ -71,6 +71,7 @@ export function usePriceFactText() {
   const price = usePoPrice();
   const date = (fact: PriceFact) => {
     const day = fact.date || copy("dateNotRecorded");
+    if (fact.dateSource === "order_date_not_issued") return copy("orderedNotIssued", { date: day });
     return fact.dateSource === "order_date" ? copy("orderedNoIssueDate", { date: day }) : day;
   };
   return {
@@ -100,8 +101,10 @@ export function PriceHistoryFacts({
   const copy = usePriceHistoryCopy();
   const text = usePriceFactText();
   if (state === "hidden" || state === "idle") return null;
+  // A named group, so the heading is announced; the compact form keeps the
+  // note on what these prices are as a tooltip.
   const box = (children: React.ReactNode) => (
-    <div className="mt-1 space-y-0.5 text-[11px] leading-4" style={{ color: A.sub }} data-testid={testId} data-price-history-status={history?.status || state}>
+    <div role="group" aria-label={copy("title")} title={compact ? copy("poPriceNote") : undefined} className="mt-1 space-y-0.5 text-[11px] leading-4" style={{ color: A.sub }} data-testid={testId} data-price-history-status={history?.status || state}>
       {children}
     </div>
   );
@@ -122,6 +125,7 @@ export function PriceHistoryFacts({
           <div className="font-medium" style={{ color: A.label }} data-testid={testId ? `${testId}-latest` : undefined}>{text.fact("lastPoPrice", history.latest)}</div>
           {!compact && history.earlier.map((fact) => <div key={fact.lineId}>{text.fact("earlierPo", fact)}</div>)}
           {history.average?.unitPrice && <div>{copy("averageOf", { n: history.average.n, price: text.price(history.average.unitPrice, history.currency) })}</div>}
+          {!compact && <div className="italic" data-testid={testId ? `${testId}-note` : undefined}>{copy("poPriceNote")}</div>}
         </>
       ) : notes.length ? null : (
         <div>{copy("noIssuedPo")}</div>
@@ -148,8 +152,13 @@ export function useQuoteComparisonText() {
         return copy("zeroBase");
       case "hidden":
         return copy("quoteHidden");
+      case "no_quote_price":
+        return copy("noQuotePrice");
       case "not_comparable":
-        return copy("notComparable", { what: comparison.reason === "unit_not_recorded" ? copy("unitNotRecordedShort") : (comparison.values || []).join(", ") });
+        // Says what the earlier POs were in, not only a code beside the quote.
+        return comparison.reason === "unit_not_recorded"
+          ? copy("notComparable", { what: copy("unitNotRecordedShort") })
+          : copy("notComparableEarlierIn", { list: (comparison.values || []).join(", ") });
       default:
         return copy("noEarlierPo");
     }

@@ -76,6 +76,8 @@ import { PurchaseOrderPromiseDates } from "./components/PurchaseOrderPromiseDate
 const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 // Statuses in which some goods were received, so a bill can be recorded.
 const BILLABLE_PO_STATUSES = new Set(["partially_received", "received", "fully_received", "closed"]);
+// Statuses a PO reaches once issued (or received), with the legacy labels older rows carry.
+const ISSUED_PO_STATUSES = new Set(["issued", "partially_received", "fully_received", "closed", "已发出", "部分到货", "已完成"]);
 
 type PurchaseOrderViewMode = "list" | "detail";
 type NavigateFn = (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null, options?: { returnTo?: string; entityLabel?: string; returnContext?: WorkflowContext | null; source?: string }) => void;
@@ -639,8 +641,9 @@ export default function PurchasingOrdersPage({
   });
   const selectedPO = orders.find((order) => order.po === selectedId) ?? null;
   const selectedPOTotals = poTotals(selectedPO);
-  // Earlier PO prices for each line's item, unit and currency, leaving this
-  // PO out, in one request. Display only.
+  // Earlier PO prices for each line's item, unit and currency, in one
+  // request. The server leaves this PO out and, once it is issued, every PO
+  // dated after it. Display only.
   const poLineHistoryKeys = new Map((viewMode === "detail" && selectedPO?.lines ? selectedPO.lines : []).map((line) => [line.poLineId, priceHistoryKey({ itemId: line.itemId, unit: line.unit, currency: line.currency || selectedPO?.currency })]));
   const poPriceHistory = usePriceHistory([...poLineHistoryKeys.values()], { excludePurchaseOrderId: selectedPO?.po });
   const sourceOptions = Array.from(new Set(orders.map((order) => order.source || "manual"))).sort();
@@ -749,9 +752,15 @@ export default function PurchasingOrdersPage({
   }
 
   // The day the PO was issued to the supplier, in the workspace timezone.
+  // "Issue date not recorded" only for a PO that was issued; a PO not issued
+  // yet, or received straight from approval, says so instead.
   const issueDateField = (po: PurchaseOrder) => {
     const day = instantDayInTimeZone(po.issuedAt, timezone);
-    return { label: priceCopy("issued"), value: day || priceCopy("issueDateNotRecorded") };
+    const value = day
+      || (!ISSUED_PO_STATUSES.has(String(po.status)) ? priceCopy("notIssued")
+        : String(po.status) !== "issued" && po.receivingBaseStatus === "approved" ? priceCopy("notIssuedInFlowChain")
+          : priceCopy("issueDateNotRecorded"));
+    return { label: priceCopy("issued"), value };
   };
 
   const detailContent = selectedPO && (() => {
@@ -842,7 +851,7 @@ export default function PurchasingOrdersPage({
             rows={poLines}
             currency={selectedPO.currency}
             priceHistory={(poLineId) => poLineHistoryKeys.get(poLineId) ? (
-              <div className="mt-2" aria-label={priceCopy("title")}>
+              <div className="mt-2">
                 <PriceHistoryFacts history={poPriceHistory.histories.get(poLineHistoryKeys.get(poLineId) || "")} state={poPriceHistory.state} testId={`po-line-price-history-${poLineId}`} />
               </div>
             ) : null}

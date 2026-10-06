@@ -97,6 +97,30 @@ test('lines are dated by issue date, else by order date with its label, in the w
   assert.deepEqual(history.earlier.map((fact) => [fact.purchaseOrderId, fact.date, fact.dateSource]), [['PO-A', '2026-09-14', 'issue_date'], ['PO-C', null, 'order_date']])
 })
 
+test('a PO received straight from approval is dated by its order date and labelled as never issued', () => {
+  const lines = [
+    line({ purchaseOrderId: 'PO-RECEIVED', issuedAt: null, createdAt: '2026-09-20T15:00:00Z', status: 'fully_received', receivingBaseStatus: 'approved' }),
+    line({ purchaseOrderId: 'PO-LEGACY', issuedAt: null, createdAt: '2026-09-18T15:00:00Z', status: 'fully_received', receivingBaseStatus: 'issued' }),
+    line({ purchaseOrderId: 'PO-SEEDED', issuedAt: null, createdAt: '2026-09-16T15:00:00Z', status: 'issued', receivingBaseStatus: null }),
+  ]
+  const history = priceHistoryForKey(lines, key, { dayOf: newYork })
+  assert.deepEqual([history.latest, ...history.earlier].map((fact) => [fact.purchaseOrderId, fact.date, fact.dateSource]), [
+    ['PO-RECEIVED', '2026-09-20', 'order_date_not_issued'],
+    ['PO-LEGACY', '2026-09-18', 'order_date'],
+    ['PO-SEEDED', '2026-09-16', 'order_date'],
+  ])
+})
+
+test('the count of lines without a unit comes from the query, which keeps only 3 lines of each unit', () => {
+  // The query returns 3 of 8 unit-less USD lines and carries the full count.
+  const unitless = Array.from({ length: 3 }, (_, index) => line({ unit: index ? '' : null, unitNotRecordedCount: 8, issuedAt: `2026-09-0${index + 1}T15:00:00Z` }))
+  const lines = [line({ unitNotRecordedCount: 8 }), ...unitless, line({ currency: 'EUR', unit: null, unitNotRecordedCount: 1 })]
+  assert.equal(priceHistoryForKey(lines, key).unitNotRecordedCount, 8)
+  assert.equal(priceHistoryForKey(lines, { ...key, currency: 'EUR' }).unitNotRecordedCount, 1)
+  // Without the carried count (lines from elsewhere), the lines are counted.
+  assert.equal(priceHistoryForKey(lines.map(({ unitNotRecordedCount: _count, ...rest }) => rest), key).unitNotRecordedCount, 3)
+})
+
 test('ties on the date are broken by PO id, then line id; every line is its own fact', () => {
   const at = '2026-09-14T15:00:00Z'
   const lines = [
@@ -155,6 +179,20 @@ test('a quote is compared with the last PO price as a signed percentage with one
   assert.equal(compareQuote({ unitPrice: '1', history: zero }).status, 'zero_base')
 })
 
+test('a quote line without a price says no price was quoted, not that prices are hidden', () => {
+  const history = priceHistoryForKey([line({ purchaseOrderId: 'PO-0031', unitPrice: '4.20' })], key)
+  for (const unitPrice of [null, undefined, '']) {
+    const result = compareQuote({ unitPrice, history })
+    assert.equal(result.status, 'no_quote_price')
+    assert.equal(result.lastPo.unitPrice, '4.2000')
+    assert.equal(result.percent, undefined)
+  }
+  // Only a masked PO price is hidden for the reader's role, quoted or not.
+  const masked = maskPriceHistory(history)
+  assert.equal(compareQuote({ unitPrice: '4.5', history: masked }).status, 'hidden')
+  assert.equal(compareQuote({ unitPrice: null, history: masked }).status, 'hidden')
+})
+
 test('masking hides every price, the average and the percentage, and keeps the facts around them', () => {
   const history = priceHistoryForKey([line({ purchaseOrderId: 'PO-1' }), line({ purchaseOrderId: 'PO-2', issuedAt: '2026-08-01T00:00:00Z' })], key, { dayOf: newYork })
   const masked = maskPriceHistory(history)
@@ -201,6 +239,10 @@ test('the read service asks once for every key, in the reader\'s workspace only'
   assert.deepEqual(queries[0].params.slice(0, 2), ['tenant-a', ['ITEM-1', 'ITEM-2']])
   assert.equal(queries[0].params[4], null, 'no PO is left out unless a PO page asks')
   assert.match(queries[0].sql, /po\."tenantId" = \$1/)
+  // An issued PO page sees only POs dated before it; the count of unit-less
+  // lines is taken over all lines, before the 3-line cut.
+  assert.match(queries[0].sql, /NOT EXISTS \(SELECT 1 FROM bound WHERE COALESCE\(po\."issuedAt", po\."createdAt"\) >= bound\."before"\)/)
+  assert.match(queries[0].sql, /COUNT\(\*\) FILTER \(WHERE btrim\(COALESCE\(line\.unit, ''\)\) = ''\) OVER \(\s*PARTITION BY line\."itemId", upper\(btrim\(po\.currency\)\)\s*\)/)
   assert.deepEqual(database.calls.find((call) => call.items).items.where, { tenantId: 'tenant-a', id: { in: ['ITEM-1', 'ITEM-2'] } })
   assert.deepEqual(result.histories.map((history) => [history.key, history.status, history.latest?.purchaseOrderId, history.latest?.unitPrice]), [
     ['ITEM-1|pcs|USD', 'found', 'PO-1', '4.2000'],

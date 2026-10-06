@@ -5,8 +5,9 @@ import { getPrismaClient } from "../persistence/prisma-client.mjs";
 // GET /api/procurement/price-history?key=itemId|unit|currency (repeated, at
 // most 50): each item's latest prices on the workspace's own issued purchase
 // orders, for the forms where a person enters or reviews a price. A PO page
-// passes excludePurchaseOrder=<its id>. Display only: no form fills a price
-// from it.
+// passes excludePurchaseOrder=<its id>: its own PO is left out and, once it
+// is issued, so is every PO dated after it. Display only: no form fills a
+// price from it.
 
 function knownError(error) {
   return error instanceof PriceHistoryError ||

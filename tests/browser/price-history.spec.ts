@@ -44,7 +44,7 @@ test('a supplied item shows its last PO price in the link currency, labelled as 
   await page.goto(`/app/master-data/suppliers/${supplierId}`);
   const facts = page.getByTestId(`supplied-item-price-history-${itemId}`);
   await expect(facts.getByTestId(`supplied-item-price-history-${itemId}-latest`)).toHaveText('Last PO price USD 4.20 / EA · PO-0031 · 2026-09-14 · Acme');
-  await expect(facts).toContainText('Average of 2: USD 4.30');
+  await expect(facts).toContainText('Average PO price of 2 (by quantity): USD 4.30');
   await expect(facts).toContainText('Earlier purchases in EUR, not compared');
   // Compact: earlier lines are left to the forms.
   await expect(facts).not.toContainText('PO-0020');
@@ -79,4 +79,32 @@ test('the facts read in Chinese, and a hidden price is never shown as 0', async 
   await expect(facts.getByTestId(`supplied-item-price-history-${itemId}-latest`)).toHaveText('上次采购订单价对当前角色隐藏 · PO-0031 · 2026-09-10（下单日期 · 未记录下达日期） · Acme');
   await expect(facts).toContainText('以往采购以 CASE 计，未比较');
   await expect(facts).not.toContainText('0.00');
+});
+
+test('linking a new item shows its last PO price under the reference price, and leaves the price empty', async ({ page }) => {
+  const headers = await login(page);
+  const { supplierId } = await supplierWithItem(page, headers);
+  const stamp = Date.now();
+  const created = await page.request.post('/api/master-data/items', { headers, data: { sku: `PH-NEW-${stamp}`, itemName: `Bracket ${stamp}`, baseUnit: 'EA' } });
+  expect(created.status()).toBe(201);
+  const item = (await created.json()).item;
+  const newItemId = String(item.itemId || item.id);
+  const requests: string[][] = [];
+  await page.route('**/api/procurement/price-history**', (route) => {
+    const keys = new URL(route.request().url()).searchParams.getAll('key');
+    requests.push(keys);
+    return route.fulfill({ json: { timeZone: 'America/New_York', priceLabel: 'purchase_order_price', histories: keys.map((key) => ({
+      key, itemId: key.split('|')[0], unit: 'EA', unitSource: 'item', currency: 'USD', status: 'found',
+      latest: fact({}), earlier: [], average: null, otherCurrencies: [], otherUnits: [], unitNotRecordedCount: 0,
+    })) } });
+  });
+  await page.goto(`/app/master-data/suppliers/${supplierId}`);
+  await page.getByRole('combobox', { name: 'Select SKU' }).selectOption(newItemId);
+  const facts = page.getByTestId('supplied-item-form-price-history');
+  await expect(facts.getByTestId('supplied-item-form-price-history-latest')).toHaveText('Last PO price USD 4.20 / EA · PO-0031 · 2026-09-14 · Acme');
+  await expect(facts).toContainText('not invoiced or paid prices');
+  await expect(facts).toHaveAttribute('role', 'group');
+  await expect(page.getByRole('textbox', { name: 'Reference price' })).toHaveValue('');
+  // One request holds the linked items and the item being linked.
+  expect(requests.at(-1)).toContain(`${newItemId}||USD`);
 });

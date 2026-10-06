@@ -6,7 +6,9 @@
 //                 (or received without being issued). Drafts, pending,
 //                 rejected and cancelled POs never count.
 //   which date    the PO's issue date; without one, its order (creation) date,
-//                 labelled as such. Days are workspace days.
+//                 labelled as such: issued with the date not recorded, or
+//                 received without being issued in FlowChain (received from
+//                 "approved"). Days are workspace days.
 //   order         date, newest first; then PO id, then line id. Each line is
 //                 its own fact, also when several are on one PO.
 //   what matches  the same item, the same unit (trimmed, case-insensitive)
@@ -74,11 +76,16 @@ export function priceHistoryKeyString({ itemId, unit, currency } = {}) {
   return `${text(itemId)}|${text(unit)}|${currencyKey(currency)}`
 }
 
+// Received straight from "approved": the PO was never issued in FlowChain.
+const receivedWithoutIssue = (line) =>
+  text(line.status) !== 'issued' && text(line.receivingBaseStatus).toLowerCase() === 'approved'
+
 // A stored line as a dated fact. `dayOf` turns an instant into a workspace day.
 export function priceFact(line, dayOf = (instant) => instant.toISOString().slice(0, 10)) {
   const issued = instantOf(line.issuedAt)
   const ordered = instantOf(line.createdAt)
   const instant = issued || ordered
+  const dateSource = issued ? 'issue_date' : receivedWithoutIssue(line) ? 'order_date_not_issued' : 'order_date'
   return {
     purchaseOrderId: text(line.purchaseOrderId),
     orderNumber: text(line.orderNumber) || text(line.purchaseOrderId),
@@ -90,7 +97,7 @@ export function priceFact(line, dayOf = (instant) => instant.toISOString().slice
     unitPrice: decimalString(decimalUnits(line.unitPrice)),
     orderedQuantity: decimalString(decimalUnits(line.orderedQuantity)),
     date: instant ? dayOf(instant) : null,
-    dateSource: issued ? 'issue_date' : 'order_date',
+    dateSource,
     instant: instant ? instant.toISOString() : null,
   }
 }
@@ -130,13 +137,20 @@ export function priceHistoryForKey(lines, key, { dayOf, itemUnit = '' } = {}) {
   const itemId = text(key?.itemId)
   const currency = currencyKey(key?.currency)
   const unit = text(key?.unit) || text(itemUnit)
-  const facts = (Array.isArray(lines) ? lines : [])
+  const itemLines = (Array.isArray(lines) ? lines : [])
     .filter((line) => text(line.itemId) === itemId && itemId && decimalUnits(line.unitPrice) !== null)
+  const facts = itemLines
     .map((line) => priceFact(line, dayOf))
     .sort(comparePriceFacts)
   const sameCurrency = facts.filter((fact) => fact.currency === currency)
   const matching = unit ? sameCurrency.filter((fact) => fact.unit && unitKey(fact.unit) === unitKey(unit)) : []
   const distinct = (values) => [...new Set(values)].sort()
+  // The query keeps only the latest lines of each unit, so it also carries
+  // the full count of lines without a unit for the item and currency.
+  const carriedUnitless = itemLines
+    .filter((line) => currencyKey(line.currency) === currency)
+    .map((line) => Number(line.unitNotRecordedCount))
+    .filter((count) => Number.isInteger(count) && count >= 0)
   const result = {
     key: priceHistoryKeyString({ itemId, unit: text(key?.unit), currency }),
     itemId,
@@ -151,7 +165,7 @@ export function priceHistoryForKey(lines, key, { dayOf, itemUnit = '' } = {}) {
     // unit in this currency, or no unit recorded.
     otherCurrencies: distinct(facts.filter((fact) => fact.currency && fact.currency !== currency).map((fact) => fact.currency)),
     otherUnits: unit ? distinct(sameCurrency.filter((fact) => fact.unit && unitKey(fact.unit) !== unitKey(unit)).map((fact) => fact.unit)) : distinct(sameCurrency.filter((fact) => fact.unit).map((fact) => fact.unit)),
-    unitNotRecordedCount: sameCurrency.filter((fact) => !fact.unit).length,
+    unitNotRecordedCount: Math.max(sameCurrency.filter((fact) => !fact.unit).length, ...carriedUnitless),
   }
   return result
 }
@@ -185,7 +199,10 @@ export function compareQuote({ unitPrice, history } = {}) {
   }
   const base = decimalUnits(history.latest.unitPrice)
   const average = history.average
-  if (quote === null || base === null) return { status: 'hidden', lastPo: history.latest, average }
+  // A masked PO price is hidden for the reader's role; a quote line without
+  // a price simply has nothing to compare.
+  if (base === null) return { status: 'hidden', lastPo: history.latest, average }
+  if (quote === null) return { status: 'no_quote_price', lastPo: history.latest, average }
   if (base === 0n) return { status: 'zero_base', lastPo: history.latest, average }
   // Tenths of a percent, rounded half away from zero.
   const tenths = divideRounded((quote - base) * 1000n, base)

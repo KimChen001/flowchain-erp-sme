@@ -431,6 +431,8 @@ export function mapPurchaseOrder(record = {}) {
     // The instant the PO was issued to the supplier; null when it was not
     // recorded. Pages show it as a workspace day.
     issuedAt: record.issuedAt ? isoDateTime(record.issuedAt) : null,
+    // "approved" when the PO was received without being issued in FlowChain.
+    receivingBaseStatus: text(record.receivingBaseStatus) || null,
     priority: text(record.priority),
     sourceRequest: text(record.sourceRequestId),
     sourceRfq: text(record.sourceRfqId),

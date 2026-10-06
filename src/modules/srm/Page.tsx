@@ -464,8 +464,11 @@ export default function SupplierMasterPage({
   };
   // Earlier PO prices of each supplied item in the link currency and the
   // item's unit, in one request. Display only.
+  // The item being linked gets the same facts under its reference price, in
+  // the currency the link will be saved in. Never fills the price.
   const relationshipHistoryKey = (r: Relationship) => (selected ? priceHistoryKey({ itemId: r.itemId, currency: r.currency }) : "");
-  const relationshipHistory = usePriceHistory(relationships.map(relationshipHistoryKey));
+  const relationFormHistoryKey = selected && writes.items ? priceHistoryKey({ itemId: relationForm.itemId, currency: relationForm.currency || selected.defaultCurrency }) : "";
+  const relationshipHistory = usePriceHistory([...relationships.map(relationshipHistoryKey), relationFormHistoryKey]);
   if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
   if (selected)
     return (
@@ -577,18 +580,21 @@ export default function SupplierMasterPage({
               />{" "}
               Preferred
             </label>
-            <input
-              aria-label={copy("参考价格")}
-              placeholder={copy("参考价格")}
-              value={relationForm.referencePrice}
-              onChange={(e) =>
-                setRelationForm({
-                  ...relationForm,
-                  referencePrice: e.target.value,
-                })
-              }
-              style={inputStyle}
-            />
+            <div>
+              <input
+                aria-label={copy("参考价格")}
+                placeholder={copy("参考价格")}
+                value={relationForm.referencePrice}
+                onChange={(e) =>
+                  setRelationForm({
+                    ...relationForm,
+                    referencePrice: e.target.value,
+                  })
+                }
+                style={inputStyle}
+              />
+              {relationFormHistoryKey && <PriceHistoryFacts history={relationshipHistory.histories.get(relationFormHistoryKey)} state={relationshipHistory.state} testId="supplied-item-form-price-history" />}
+            </div>
             <button
               onClick={addRelationship}
               className="rounded bg-blue-600 px-3 py-2 text-xs text-white"

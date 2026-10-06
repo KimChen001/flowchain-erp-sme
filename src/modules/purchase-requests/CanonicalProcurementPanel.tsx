@@ -15,7 +15,6 @@ import { createClientTemporaryId } from "../../lib/client-id";
 import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin } from "../../lib/prefill";
 import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
-import { usePriceHistoryCopy } from "../procurement/priceHistoryCopy";
 
 type Item = {
   itemId: string;
@@ -124,7 +123,6 @@ export default function CanonicalProcurementPanel({
   focus?: { entityType: string; entityId: string; at: number } | null;
 }) {
   const copy = useWorkspaceCopy();
-  const priceCopy = usePriceHistoryCopy();
   const { timezone, locale } = useI18n();
   const warehouseName = useWarehouseNames();
   // Amounts use the document currency; without one they stay a plain number.
@@ -805,7 +803,7 @@ export default function CanonicalProcurementPanel({
               </div>
               {/* Earlier PO prices for the item, beside the estimated unit price. Display only. */}
               {line.lineBasis === "quantity" && priceHistoryKeyOf(line) && (
-                <div className="mt-2" aria-label={priceCopy("title")}>
+                <div className="mt-2">
                   <PriceHistoryFacts history={priceHistory.histories.get(priceHistoryKeyOf(line))} state={priceHistory.state} testId={`pr-line-price-history-${index + 1}`} />
                 </div>
               )}

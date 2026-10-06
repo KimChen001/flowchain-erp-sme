@@ -226,6 +226,30 @@ test('the price history query returns at most 3 lines per item, unit and currenc
       const { histories: [history] } = await service.read(['PH-ITEM|pcs|USD'], contextOf(people.otherBuyer))
       assert.deepEqual([history.latest.unitPrice, history.earlier.length, history.otherCurrencies], ['0.0100', 0, []])
     })
+
+    await t.test('an issued PO page sees only POs dated before it; a draft sees the latest', async () => {
+      // PH-PO-004 was issued on Sep 13: Sep 17 and the Sep 20 receipt come after it.
+      const { histories: [issuedPage] } = await service.read(['PH-ITEM|pcs|USD'], contextOf(people.buyer), { excludePurchaseOrderId: 'PH-PO-004' })
+      assert.deepEqual([issuedPage.latest.orderNumber, ...issuedPage.earlier.map((fact) => fact.orderNumber)], ['PO-0003', 'PO-0002', 'PO-0001'])
+      assert.deepEqual([issuedPage.otherCurrencies, issuedPage.otherUnits], [['EUR'], ['CASE']])
+      // PH-PO-007 is a draft: nothing issued is later than a PO not issued yet.
+      const { histories: [draftPage] } = await service.read(['PH-ITEM|pcs|USD'], contextOf(people.buyer), { excludePurchaseOrderId: 'PH-PO-007' })
+      assert.equal(draftPage.latest.orderNumber, 'PO-0006')
+      // Another workspace's PO id sets no bound.
+      const { histories: [foreign] } = await service.read(['PH-ITEM|pcs|USD'], contextOf(people.buyer), { excludePurchaseOrderId: 'PH-PO-013' })
+      assert.equal(foreign.latest.orderNumber, 'PO-0006')
+    })
+
+    await t.test('every line without a unit is counted, beyond the 3 lines kept; a PO received from approval says it was not issued', async () => {
+      const create = (id, data, lines) => prisma.purchaseOrder.create({ data: { id, tenantId: tenantA, supplierId: 'sup-a', supplierName: 'Acme', currency: 'USD', metadata: { orderNumber: id }, ...data, lines: { create: lines.map((line, index) => ({ id: `${id}-L${index + 1}`, itemId: 'PH-ITEM-2', sku: 'PH-2', itemName: 'Bracket', orderedQuantity: 5, receivedQuantity: 0, unitPrice: 2, amount: 10, ...line })) } } })
+      for (let index = 1; index <= 5; index += 1) await create(`PH2-UNITLESS-${index}`, { status: 'issued', issuedAt: new Date(`2026-09-0${index}T15:00:00Z`) }, [{ unit: index % 2 ? null : '' }, { unit: ' ' }])
+      await create('PH2-RECEIVED', { status: 'fully_received', receivingBaseStatus: 'approved', createdAt: new Date('2026-09-20T15:00:00Z') }, [{ unit: 'pcs', unitPrice: 2.5 }])
+      const rows = await readPriceHistoryLines(prisma, { tenantId: tenantA, itemIds: ['PH-ITEM-2'] })
+      assert.equal(rows.filter((row) => !String(row.unit || '').trim()).length, 6, 'the null, blank and space partitions keep 3 lines each at most')
+      const { histories: [history] } = await service.read(['PH-ITEM-2|pcs|USD'], contextOf(people.buyer))
+      assert.equal(history.unitNotRecordedCount, 10)
+      assert.deepEqual([history.latest.orderNumber, history.latest.date, history.latest.dateSource], ['PH2-RECEIVED', '2026-09-20', 'order_date_not_issued'])
+    })
   } finally {
     await prisma.$disconnect()
   }

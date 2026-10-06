@@ -20,7 +20,13 @@ import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay } from './tenant-calendar-d
 // One query answers every key: the latest 3 lines of each item, unit and
 // currency, scoped to the reader's workspace. Every other unit and currency an
 // item was bought in has its own latest line in the result, so "in EUR, not
-// compared" needs no second query. Reading needs procurement.purchase_order.read;
+// compared" needs no second query. Each row also carries the full count of
+// the item's lines without a unit in its currency, which the 3-line cut would
+// otherwise truncate.
+//
+// A PO page leaves its own PO out. An issued PO (or one received) sees only
+// POs dated before it, so a later purchase is never shown as "earlier"; a PO
+// not issued yet sees the latest history. Reading needs procurement.purchase_order.read;
 // prices need procurement.prices.read, else they come back null.
 
 export class PriceHistoryError extends Error {
@@ -35,7 +41,15 @@ export class PriceHistoryError extends Error {
 const text = (value) => String(value ?? '').trim()
 
 const LINES_SQL = `
-WITH counted AS (
+WITH bound AS (
+  SELECT COALESCE(self."issuedAt", self."createdAt") AS "before"
+  FROM "PurchaseOrder" AS self
+  WHERE $5::text IS NOT NULL
+    AND self.id = $5::text
+    AND self."tenantId" = $1
+    AND self.status = ANY($3::text[])
+),
+counted AS (
   SELECT
     line.id AS "lineId",
     po.id AS "purchaseOrderId",
@@ -49,6 +63,11 @@ WITH counted AS (
     line."orderedQuantity"::text AS "orderedQuantity",
     po."issuedAt" AS "issuedAt",
     po."createdAt" AS "createdAt",
+    po.status AS status,
+    po."receivingBaseStatus" AS "receivingBaseStatus",
+    (COUNT(*) FILTER (WHERE btrim(COALESCE(line.unit, '')) = '') OVER (
+      PARTITION BY line."itemId", upper(btrim(po.currency))
+    ))::int AS "unitNotRecordedCount",
     ROW_NUMBER() OVER (
       PARTITION BY line."itemId", lower(btrim(line.unit)), upper(btrim(po.currency))
       ORDER BY COALESCE(po."issuedAt", po."createdAt") DESC, po.id ASC, line.id ASC
@@ -60,14 +79,16 @@ WITH counted AS (
     AND line."unitPrice" IS NOT NULL
     AND po.status = ANY($3::text[])
     AND ($5::text IS NULL OR po.id <> $5::text)
+    AND NOT EXISTS (SELECT 1 FROM bound WHERE COALESCE(po."issuedAt", po."createdAt") >= bound."before")
 )
-SELECT "lineId", "purchaseOrderId", "orderNumber", "supplierId", "supplierName", "itemId", unit, currency, "unitPrice", "orderedQuantity", "issuedAt", "createdAt"
+SELECT "lineId", "purchaseOrderId", "orderNumber", "supplierId", "supplierName", "itemId", unit, currency, "unitPrice", "orderedQuantity", "issuedAt", "createdAt", status, "receivingBaseStatus", "unitNotRecordedCount"
 FROM counted
 WHERE position <= $4::int
 ORDER BY "itemId" ASC, "purchaseOrderId" ASC, "lineId" ASC`
 
 // The latest lines per item, unit and currency for these items in one
-// workspace. A PO page leaves its own PO out, so it is not its own history.
+// workspace. A PO page leaves its own PO out, so it is not its own history,
+// and an issued PO sees only POs dated before it.
 export async function readPriceHistoryLines(prisma, { tenantId, itemIds, excludePurchaseOrderId = null }) {
   const scopedTenantId = requireTenantId({ tenantId })
   if (!itemIds.length) return []
