@@ -18,7 +18,8 @@ const array = (value) => Array.isArray(value) ? value : []
 // (supplier_attention) unless it is about payments.
 const SKILL_FIRST = new Set(['invoice_summary', 'inventory_availability', 'pending_approvals', 'supplier_attention'])
 
-function shouldUseSemanticBusinessQuery(message, body = {}) {
+// Whether the business query path takes this question before the skills.
+export function shouldUseSemanticBusinessQuery(message, body = {}) {
   const input = text(message).toLowerCase()
   if (!isComplexBusinessQuery({ message })) return false
   // A supplier tier ("Tier 1 suppliers") is read by the skills; the business
@@ -42,30 +43,43 @@ function currentContext(body = {}) {
   return null
 }
 
+// The tenant's business query context: the actor, its suppliers, the read
+// service and the timezone. Null outside database mode or when signed out.
+export async function loadBusinessQueryContext(ctx) {
+  const env = ctx.env || process.env
+  if (!(ctx.repositories?.mode === 'database' || text(env.FLOWCHAIN_PERSISTENCE_MODE).toLowerCase() === 'database')) return null
+  if (!ctx.aiBusinessQueryActor && !ctx.identity?.authenticated) return null
+  const prisma = ctx.aiBusinessQueryPrisma || await getPrismaClient(env)
+  const actor = ctx.aiBusinessQueryActor || await resolveProvisionedActor(prisma, ctx.identity, { allowMissingTestActor: true })
+  const tenant = await prisma.tenant.findUnique({ where: { id: actor.tenantId }, select: { timezone: true } })
+  const timezone = text(tenant?.timezone || env.FLOWCHAIN_WORKSPACE_TIMEZONE || env.TZ || 'America/New_York')
+  // The planner keeps only complete supplier records, which carry their
+  // tenant; without tenantId no named supplier ever resolved.
+  const suppliers = await prisma.supplier.findMany({ where: { tenantId: actor.tenantId }, select: { id: true, tenantId: true, name: true, code: true }, orderBy: [{ id: 'asc' }] })
+  const summaryService = ctx.aiBusinessQuerySummaryService || createSupplierActionSummaryReadService({ prisma, env })
+  return { actor, suppliers, summaryService, timezone }
+}
+
+// What the planners read besides the question: the page record, the previous
+// answer's records, the timezone and the tenant's suppliers.
+export function businessQueryPlanInput(body, bq) {
+  return { message: text(body.message || body.question), moduleId: body.activeModuleId || body.moduleId, currentContext: currentContext(body), previousResult: previousResult(body), timezone: bq.timezone, suppliers: bq.suppliers }
+}
+
+// Runs a validated plan for the actor and answers in the question's language,
+// as the skills do.
+export async function answerBusinessQueryPlan(ctx, body, planner, bq) {
+  const message = text(body.message || body.question)
+  const pack = await executeBusinessQueryPlan(planner.plan, { summaryService: bq.summaryService, actor: bq.actor, identity: ctx.identity, timezone: bq.timezone, now: new Date(), message })
+  return buildBusinessQueryResponseV2(pack, planner, { ...body, answerLanguage: aiSkillQuestionLanguage(message, body.answerLanguage) })
+}
+
 export async function runBusinessQueryRuntime(ctx, db, body, { responseMode = 'runtime' } = {}) {
   const message = text(body.message || body.question)
   if (message.length > 1200 || !message || isTechnicalProviderDiagnosticPrompt(message) || !shouldUseSemanticBusinessQuery(message, body)) return null
-  const env = ctx.env || process.env
-  let timezone = text(env.FLOWCHAIN_WORKSPACE_TIMEZONE || env.TZ || 'America/New_York')
-  let actor
-  let suppliers
-  let summaryService
-  if (ctx.repositories?.mode === 'database' || text(env.FLOWCHAIN_PERSISTENCE_MODE).toLowerCase() === 'database') {
-    if (!ctx.aiBusinessQueryActor && !ctx.identity?.authenticated) return null
-    const prisma = ctx.aiBusinessQueryPrisma || await getPrismaClient(env)
-    actor = ctx.aiBusinessQueryActor || await resolveProvisionedActor(prisma, ctx.identity, { allowMissingTestActor: true })
-    const tenant = await prisma.tenant.findUnique({ where: { id: actor.tenantId }, select: { timezone: true } })
-    timezone = text(tenant?.timezone || timezone)
-    // The planner keeps only complete supplier records, which carry their
-    // tenant; without tenantId no named supplier ever resolved.
-    suppliers = await prisma.supplier.findMany({ where: { tenantId: actor.tenantId }, select: { id: true, tenantId: true, name: true, code: true }, orderBy: [{ id: 'asc' }] })
-    summaryService = ctx.aiBusinessQuerySummaryService || createSupplierActionSummaryReadService({ prisma, env })
-  } else {
-    return null
-  }
-  const planner = await planBusinessQuery({ message, moduleId: body.activeModuleId || body.moduleId, currentContext: currentContext(body), previousResult: previousResult(body), timezone, suppliers }, { env, providerPlanner: ctx.aiSemanticProviderPlanner, fetchImpl: ctx.aiSemanticFetch })
-  const pack = await executeBusinessQueryPlan(planner.plan, { summaryService, actor, identity: ctx.identity, timezone, now: new Date(), message })
-  // Answer in the question's language, as the skills do.
-  const response = buildBusinessQueryResponseV2(pack, planner, { ...body, answerLanguage: aiSkillQuestionLanguage(message, body.answerLanguage) })
+  const bq = await loadBusinessQueryContext(ctx)
+  if (!bq) return null
+  const planner = await planBusinessQuery(businessQueryPlanInput(body, bq), { env: ctx.env || process.env, providerPlanner: ctx.aiSemanticProviderPlanner, fetchImpl: ctx.aiSemanticFetch })
+  const response = await answerBusinessQueryPlan(ctx, body, planner, bq)
   return responseMode === 'chat' ? buildLegacyBusinessQueryChatResponse(response, planner) : response
 }
