@@ -182,11 +182,12 @@ test('the supplier business query is not offered outside the business query path
   assert.equal(run.plans[0].tools.some((tool) => tool.function.name === 'supplier_business_query'), false)
 })
 
-test('a tier is an argument of the purchase orders and supplier tools, kept only when the question names it', () => {
+test('a tier is an argument of the purchase orders, supplier and draft tools, kept only when the question names it', () => {
   const tools = aiAgentTools(aiSkillActor())
   const tierOf = (name) => tools.find((tool) => tool.function.name === name).function.parameters.properties.tier
   assert.deepEqual(tierOf('purchase_orders').enum, ['1', '2', '3', 'none'])
   assert.deepEqual(tierOf('supplier_attention').enum, ['1', '2', '3', 'none'])
+  assert.deepEqual(tierOf('prepare_action_draft').enum, ['1', '2', '3', 'none'])
   assert.equal(tierOf('inventory_availability'), undefined)
   const message = 'What is late from our Tier 1 suppliers?'
   const { calls: kept, dropped } = validateAiAgentToolCalls([
@@ -204,7 +205,7 @@ test('a tier is an argument of the purchase orders and supplier tools, kept only
 
 test("a planned call's tier narrows its answer as the question's own tier does", async () => {
   const question = 'Check what is late from our Tier 1 suppliers and prepare a message to them.'
-  const run = harness({ tiers: { 'SUP-001': 1, 'SUP-002': 2 }, provider: calls(['purchase_orders', { tier: '1' }], ['prepare_action_draft', {}]) })
+  const run = harness({ tiers: { 'SUP-001': 1, 'SUP-002': 2 }, provider: calls(['purchase_orders', { tier: '1' }], ['prepare_action_draft', { tier: '1' }]) })
   const payload = await run.ask(question)
   assert.equal(run.plans.length, 1)
   assert.equal(payload.intent, 'compound')
@@ -212,7 +213,10 @@ test("a planned call's tier narrows its answer as the question's own tier does",
   assert.match(orders.title, /from Tier 1 suppliers/)
   const evidence = payload.keyEvidence.filter((item) => orders.evidenceIds.includes(item.id))
   assert.ok(evidence.length > 0 && evidence.every((item) => item.summary.includes('Acme Components (Tier 1)')))
-  assert.deepEqual(agentAudit(run).calls.map((call) => [call.tool, call.tier ?? null]), [['purchase_orders', 1], ['prepare_action_draft', null]])
+  // The drafts are narrowed to the same tier's suppliers.
+  const drafts = payload.sections.find((section) => section.skillId === 'prepare_action_draft')
+  assert.match(drafts.title, /for Tier 1 suppliers/)
+  assert.deepEqual(agentAudit(run).calls.map((call) => [call.tool, call.tier ?? null]), [['purchase_orders', 1], ['prepare_action_draft', 1]])
 })
 
 test('a question no rule matched is answered by the planned skill, without the one-skill pick', async () => {

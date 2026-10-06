@@ -2,6 +2,7 @@ import { AI_MODEL_POLICIES } from './ai-model-router.mjs'
 import { callConfiguredProvider, canCallConfiguredProvider, providerRuntimeConfig } from './ai-runtime-provider-adapter-v2.mjs'
 import { toolsFor } from './ai-skill-registry.mjs'
 import { aiSkillTierOf } from './ai-skill-router.mjs'
+import { AI_SKILL_TIER_SKILLS } from './ai-skill-entities.mjs'
 import { aiAgentBusinessQueryTool } from './ai-agent-business-query.mjs'
 
 // Agent mode P2: model tool planning (docs/ai-agent-mode-design.md sections 3
@@ -52,11 +53,12 @@ export function aiAgentTimeout(env = {}) {
   return Math.min(AI_AGENT_LIMITS.maxTimeoutMs, Math.max(100, Number(env.FLOWCHAIN_AI_AGENT_TIMEOUT_MS) || AI_AGENT_LIMITS.timeoutMs))
 }
 
-// The supplier tier the purchase orders and supplier answers can be narrowed
-// to (docs/supplier-tiers-design.md §6): "1", "2", "3", or "none" for
-// suppliers not yet tiered. Like a record, it must be written in the question
+// The supplier tier the purchase orders, supplier and draft answers can be
+// narrowed to (docs/supplier-tiers-design.md §6): "1", "2", "3", or "none"
+// for suppliers not yet tiered. The same skills as a rule-routed tier question
+// (ai-skill-entities.mjs). Like a record, it must be written in the question
 // (aiSkillTierOf reads the same tier), so the model never adds a filter.
-const TIER_SKILLS = new Set(['purchase_orders', 'supplier_attention'])
+const TIER_SKILLS = AI_SKILL_TIER_SKILLS
 const TIER = Object.freeze({
   type: 'string',
   enum: ['1', '2', '3', 'none'],
