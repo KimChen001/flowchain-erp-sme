@@ -19,15 +19,19 @@ export function addCalendarDays(day, days) {
   return date.toISOString().slice(0, 10)
 }
 
+// Values a handoff computed carry a reference to it: the assistant's, or the
+// reorder list's. Values from elsewhere stay generic.
+const HANDOFF_REF_PREFIX = Object.freeze({ ai_assistant: 'assistant', reorder_list: 'reorder_list' })
+
 // query: itemId, sku, quantity, reason, due, suppliers, origin, intent.
 // suppliers: the item's approved sources, preferred first, as the item
 // supplier API returns them (prices already masked for the reader).
 export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = [], today, defaultDate } = {}) {
   const origin = prefillOrigin(query.origin)
-  // Assistant values name the assistant; values from elsewhere stay generic.
-  const tag = (ref) => (origin === 'ai_assistant' ? { ref } : {})
+  const prefix = HANDOFF_REF_PREFIX[origin]
+  const tag = (ref) => (prefix ? { ref: `${prefix}:${ref}` } : {})
   const itemId = text(item.itemId || item.id)
-  const fields = { itemId: { source: 'record', ...tag('assistant:item'), value: itemId } }
+  const fields = { itemId: { source: 'record', ...tag('item'), value: itemId } }
 
   const wanted = text(query.suppliers).split(',')[0]?.trim() || ''
   const named = wanted ? suppliers.find((row) => [row.id, row.supplierCode, row.name, row.supplierName].map(text).includes(wanted)) : undefined
@@ -35,7 +39,7 @@ export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = 
   const chosen = named || preferred || suppliers[0]
   if (chosen) {
     fields.supplierId = named
-      ? { source: 'record', ...tag('assistant:supplier'), value: chosen.id }
+      ? { source: 'record', ...tag('supplier'), value: chosen.id }
       : { source: 'default', ref: chosen === preferred ? 'item_supplier:preferred' : 'item_supplier:first_approved', value: chosen.id }
   }
 
@@ -46,7 +50,7 @@ export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = 
   const gap = asked ?? 1
   const quantity = String(moq && moq > gap ? moq : gap)
   if (moq && moq > gap) fields.quantity = { source: 'default', ref: 'item_supplier:moq', value: quantity }
-  else if (asked) fields.quantity = { source: 'record', ...tag('assistant:gap'), value: quantity }
+  else if (asked) fields.quantity = { source: 'record', ...tag('gap'), value: quantity }
 
   // Prices come only from master data, never from history (owner decision 6).
   const price = chosen?.referencePrice ? String(chosen.referencePrice) : ''
@@ -62,11 +66,11 @@ export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = 
     ? addCalendarDays(text(today), leadTime)
     : null
   const needByDate = isDay(due) ? due : leadDate || text(defaultDate)
-  if (isDay(due)) fields.needByDate = { source: 'record', ...tag('assistant:due'), value: needByDate }
+  if (isDay(due)) fields.needByDate = { source: 'record', ...tag('due'), value: needByDate }
   else if (leadDate) fields.needByDate = { source: 'default', ref: 'item_supplier:lead_time', value: needByDate }
 
   const reason = text(query.reason).slice(0, 500)
-  if (reason) fields.internalLineComment = { source: 'template', ...tag('assistant:reason'), value: reason }
+  if (reason) fields.internalLineComment = { source: 'template', ...tag('reason'), value: reason }
 
   return {
     origin,

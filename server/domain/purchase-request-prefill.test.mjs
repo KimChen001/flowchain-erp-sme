@@ -53,6 +53,24 @@ test('without a quantity the line starts at 1, unlabelled, and an RFQ handoff sa
   assert.deepEqual(plan.fields.itemId, { source: 'record', value: 'item-1' })
 })
 
+test('a reorder list handoff labels its shortfall, supplier and reason with the reorder list', () => {
+  const plan = planPurchaseRequestPrefill({ ...base, query: { itemId: 'item-1', quantity: '12.5', suppliers: 'sup-pref', reason: 'Order by 2026-10-05.', origin: 'reorder_list' } })
+  assert.equal(plan.origin, 'reorder_list')
+  assert.deepEqual(Object.fromEntries(Object.entries(plan.fields).map(([field, entry]) => [field, `${entry.source}:${entry.ref || ''}`])), {
+    itemId: 'record:reorder_list:item',
+    supplierId: 'record:reorder_list:supplier',
+    quantity: 'record:reorder_list:gap',
+    estimatedUnitPrice: 'default:item_supplier:reference_price',
+    targetWarehouseId: 'default:item:default_warehouse',
+    needByDate: 'default:item_supplier:lead_time',
+    internalLineComment: 'template:reorder_list:reason',
+  })
+  assert.equal(plan.values.quantity, '12.5')
+  // The shortfall still rises to the supplier's minimum order quantity.
+  const raised = planPurchaseRequestPrefill({ ...base, query: { itemId: 'item-1', quantity: '20', suppliers: 'sup-other', origin: 'reorder_list' } })
+  assert.deepEqual(raised.fields.quantity, { source: 'default', ref: 'item_supplier:moq', value: '50' })
+})
+
 test('an item with no approved supplier leaves the supplier and price empty', () => {
   const plan = planPurchaseRequestPrefill({ ...base, suppliers: [], query: { itemId: 'item-1', quantity: '5' } })
   assert.equal(plan.values.supplierId, '')

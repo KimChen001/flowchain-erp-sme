@@ -5,7 +5,7 @@ import { planPurchaseRequestPrefill as planRequest } from "../../shared/purchase
 
 export type PrefillSource = "record" | "default" | "template" | "history" | "workspace_history" | "model";
 export type PrefillOutcome = "accepted" | "edited" | "cleared";
-export type PrefillOrigin = "ai_assistant" | "today_cockpit" | "form";
+export type PrefillOrigin = "ai_assistant" | "today_cockpit" | "reorder_list" | "form";
 // A suggested value, where it came from, and an id that lets anyone recompute it.
 export type PrefillEntry = { source: PrefillSource; ref?: string; value: string };
 export type SuggestionTrail = { origin: PrefillOrigin; fields: { field: string; source: PrefillSource; ref?: string; outcome: PrefillOutcome }[] };

@@ -14,7 +14,7 @@
 export const PREFILL_SOURCES = Object.freeze(['record', 'default', 'template', 'history', 'workspace_history', 'model'])
 export const PREFILL_OUTCOMES = Object.freeze(['accepted', 'edited', 'cleared'])
 // Where a prefilled form was opened from.
-export const PREFILL_ORIGINS = Object.freeze(['ai_assistant', 'today_cockpit', 'form'])
+export const PREFILL_ORIGINS = Object.freeze(['ai_assistant', 'today_cockpit', 'reorder_list', 'form'])
 
 const MAX_FIELDS = 40
 const FIELD_PATTERN = /^[a-z][A-Za-z0-9_.]{0,63}$/
