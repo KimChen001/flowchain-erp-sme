@@ -2,7 +2,9 @@ import { withoutUnavailableProductLinks } from '../../shared/unavailable-product
 import { withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
 import { handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
 import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
-import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs'
+import { runBusinessQueryRuntime, shouldUseSemanticBusinessQuery } from '../domain/ai-business-query-runtime.mjs'
+import { aiAgentPlanningEnabled } from '../domain/ai-agent-planning.mjs'
+import { splitAiCompoundQuestion } from '../domain/ai-skill-compound.mjs'
 import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
 import { isLegacyAiTemplateGatewayEnabled, runAiSkillRuntime } from '../domain/ai-skill-runtime.mjs'
 import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
@@ -130,11 +132,23 @@ async function handleGatewayRequest(ctx) {
         send(res, validation.status, errorBody(tooLong ? 'AI_QUESTION_TOO_LONG' : 'AI_QUESTION_TOO_SHORT', body))
         return true
       }
-      const businessQuery = actionRequest ? null : await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
+      // Agent planning (P2) on: a question with several parts that the
+      // business query path would take goes to the planner first, which has
+      // the supplier business query among its tools. When the planner does not
+      // answer it, the business query path answers as before.
+      const question = String(body.message || body.question || '')
+      const attempt = !actionRequest && aiAgentPlanningEnabled(ctx.env || process.env) && splitAiCompoundQuestion(question).length >= 2 && shouldUseSemanticBusinessQuery(question, body) ? {} : null
+      if (attempt) {
+        const planned = await runAiSkillRuntime(ctx, body, { agentFirst: attempt })
+        if (planned) { send(res, 200, await addKnowledgeContext(ctx, body, planned)); return true }
+      }
+      const answered = actionRequest ? null : await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
+      // A planner that failed leaves this answer, with the limited-mode label.
+      const businessQuery = answered && attempt?.degraded ? { ...answered, agentPlanning: { status: 'degraded', entry: 'multi_part' } } : answered
       if (businessQuery) {
         // The same audit row as a skill answer: the plan's intent, the
         // records it cited and a hash of the question, never its text.
-        await recordAiSkillAudit(ctx, { response: { ...businessQuery, answerSource: businessQuery.answerSource || 'business_query', language: businessQuery.language || body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started })
+        await recordAiSkillAudit(ctx, { response: { ...businessQuery, answerSource: businessQuery.answerSource || 'business_query', language: businessQuery.language || body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, agent: attempt?.agent || null })
         send(res, 200, await addKnowledgeContext(ctx, body, businessQuery))
         return true
       }
@@ -148,7 +162,7 @@ async function handleGatewayRequest(ctx) {
         send(res, result.status, await addKnowledgeContext(ctx, body, withoutUnavailableProductLinks(result.body)))
         return true
       }
-      send(res, 200, await addKnowledgeContext(ctx, body, await runAiSkillRuntime(ctx, body)))
+      send(res, 200, await addKnowledgeContext(ctx, body, await runAiSkillRuntime(ctx, body, { skipAgent: Boolean(attempt) })))
     } catch (error) {
       if (isKnowledgeQuestion(body)) {
         send(res, error.status || 503, { code: error.code || 'KNOWLEDGE_UNAVAILABLE', error: error.status ? error.message : (body.answerLanguage === 'zh-CN' ? '知识库暂时不可用，请稍后重试。' : 'Knowledge is temporarily unavailable. Please try again.') })
