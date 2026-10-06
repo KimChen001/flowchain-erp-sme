@@ -15,7 +15,7 @@ import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 // Run with: node scripts/run-postgres-test-files.mjs tests/postgres/purchase-order-original-promise.test.mjs
 
 const migrationName = '20260930010000_purchase_order_original_promise'
-const backfillName = '20261005010000_purchase_order_original_promise_backfill'
+const backfillName = '20261005210000_purchase_order_original_promise_backfill'
 const migrationsRoot = new URL('../../prisma/migrations/', import.meta.url)
 const migrationSql = (name) => readFileSync(new URL(`${name}/migration.sql`, migrationsRoot), 'utf8')
 

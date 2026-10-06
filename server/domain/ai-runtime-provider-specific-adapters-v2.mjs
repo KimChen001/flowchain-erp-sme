@@ -171,10 +171,20 @@ function extractString(value) {
     value.conclusion?.summary,
   )
 }
+// Tokens the provider reports for the call (chat completions or responses
+// shape), for the workspace spend cap; null when it reports none.
+function extractUsage(raw) {
+  const usage = raw?.usage
+  if (!usage || typeof usage !== 'object') return null
+  const number = (value) => (Number.isFinite(Number(value)) ? Number(value) : null)
+  return { inputTokens: number(usage.prompt_tokens ?? usage.input_tokens), outputTokens: number(usage.completion_tokens ?? usage.output_tokens) }
+}
 export function extractCandidateFromProviderResponse(rawResponse) {
   const candidate = extractString(rawResponse)
-  if (!candidate) return { ok: false, reason: 'malformed_output' }
-  return { ok: true, rawOutput: { conclusion: { summary: candidate } } }
+  const usage = extractUsage(rawResponse)
+  const reported = usage ? { usage } : {}
+  if (!candidate) return { ok: false, reason: 'malformed_output', ...reported }
+  return { ok: true, ...reported, rawOutput: { conclusion: { summary: candidate } } }
 }
 async function parseResponse(response, config) {
   if (!response.ok) return { ok: false, reason: 'non_success_status' }
@@ -224,6 +234,10 @@ function createChatAdapter(kind, label) {
         ...(kind === 'qwen_chat' ? { enable_thinking: false, max_tokens: 1200,
           ...(input.task?.type === 'knowledge_rag' ? { response_format: { type: 'json_object' } } : {}),
         } : {}),
+        // Anthropic's OpenAI-compatible endpoint (claude-haiku-4-5): it needs
+        // max_tokens and ignores response_format, so none is sent; replies are
+        // validated here as for every provider.
+        ...(kind === 'anthropic_chat' ? { max_tokens: 1200 } : {}),
         // Parley's JSON mode is best-effort on Claude and strips a fenced reply; replies are still validated here.
         ...(kind === 'parley_chat' ? { max_tokens: 1200,
           ...(['knowledge_rag', 'business_query_planning'].includes(input.task?.type) ? { response_format: { type: 'json_object' } } : {}),
@@ -264,8 +278,9 @@ export const deepseekChatAdapter = createChatAdapter('deepseek_chat', 'server-si
 export const doubaoChatAdapter = createChatAdapter('doubao_chat', 'server-side chat adapter')
 export const qwenChatAdapter = createChatAdapter('qwen_chat', 'server-side chat adapter')
 export const parleyChatAdapter = createChatAdapter('parley_chat', 'server-side chat adapter')
+export const anthropicChatAdapter = createChatAdapter('anthropic_chat', 'server-side chat adapter')
 
-export const providerSpecificAdapters = [openaiResponsesAdapter, deepseekChatAdapter, doubaoChatAdapter, qwenChatAdapter, parleyChatAdapter]
+export const providerSpecificAdapters = [openaiResponsesAdapter, deepseekChatAdapter, doubaoChatAdapter, qwenChatAdapter, parleyChatAdapter, anthropicChatAdapter]
 
 export function selectProviderSpecificAdapter(kind = '') {
   return providerSpecificAdapters.find((adapter) => adapter.kind === kind) || null

@@ -27,6 +27,7 @@
     "test:db:master-data-writes": "node scripts/run-postgres-test-files.mjs tests/postgres/master-data-writes.test.mjs",
     "test:db:supplier-tiers": "node scripts/run-postgres-test-files.mjs tests/postgres/supplier-tiers.test.mjs",
     "test:db:supplier-insights": "node scripts/run-postgres-test-files.mjs tests/postgres/supplier-insights.test.mjs",
+    "test:db:ai-workspace-access": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-workspace-access.test.mjs",
     "test:db:report-truncation": "node scripts/run-postgres-test-files.mjs tests/postgres/report-truncation.test.mjs",
     "test:db:inventory-allocation": "node scripts/run-postgres-test-files.mjs tests/postgres/inventory-allocation-walkthrough.test.mjs",
     "test:db:reorder-list": "node scripts/run-postgres-test-files.mjs tests/postgres/reorder-list.test.mjs",
