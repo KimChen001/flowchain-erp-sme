@@ -6,8 +6,10 @@ import { getPrismaClient } from "../persistence/prisma-client.mjs";
 // most 50): each item's latest prices on the workspace's own issued purchase
 // orders, for the forms where a person enters or reviews a price. A PO page
 // passes excludePurchaseOrder=<its id>: its own PO is left out and, once it
-// is issued, so is every PO dated after it. Display only: no form fills a
-// price from it.
+// is issued, so is every PO dated after it. A supplier's page reads that
+// supplier's POs only: each key may end in |supplierId, or supplierId=<id>
+// names the supplier for every key without one (answered under the key
+// with |supplierId appended). Display only: no form fills a price from it.
 
 function knownError(error) {
   return error instanceof PriceHistoryError ||
@@ -30,7 +32,8 @@ export async function handlePriceHistoryRoute(ctx) {
   try {
     const service = await priceHistoryService(ctx);
     const excludePurchaseOrderId = ctx.url.searchParams.get("excludePurchaseOrder") || null;
-    ctx.send(ctx.res, 200, await service.read(ctx.url.searchParams.getAll("key"), { identity: ctx.identity }, { excludePurchaseOrderId }));
+    const supplierId = ctx.url.searchParams.get("supplierId") || null;
+    ctx.send(ctx.res, 200, await service.read(ctx.url.searchParams.getAll("key"), { identity: ctx.identity }, { excludePurchaseOrderId, supplierId }));
   } catch (error) {
     if (knownError(error)) {
       ctx.send(ctx.res, error.status || 400, { code: error.code || "PRICE_HISTORY_FAILED", message: error.message });

@@ -1,7 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 
 // Earlier purchase order prices beside a price (shared/price-history.mjs, S1):
-// the supplied items of a supplier. Display only; nothing is filled in.
+// the supplied items of a supplier, from that supplier's POs only. Display
+// only; nothing is filled in.
 async function login(page: Page, language = 'en-US', role = 'manager') {
   const response = await page.request.post('/api/auth/login', { data: { email: `${role}@example.com`, name: 'Ignored', company: 'Ignored' } });
   expect(response.ok()).toBeTruthy();
@@ -29,14 +30,14 @@ async function supplierWithItem(page: Page, headers: Record<string, string>) {
   return { supplierId, itemId };
 }
 
-test('a supplied item shows its last PO price in the link currency, labelled as a PO price', async ({ page }) => {
+test('a supplied item shows its last PO price from this supplier in the link currency, labelled as a PO price', async ({ page }) => {
   const headers = await login(page);
   const { supplierId, itemId } = await supplierWithItem(page, headers);
   const requests: string[] = [];
   await page.route('**/api/procurement/price-history**', (route) => {
     requests.push(route.request().url());
     return route.fulfill({ json: { timeZone: 'America/New_York', priceLabel: 'purchase_order_price', histories: [{
-      key: `${itemId}||USD`, itemId, unit: 'EA', unitSource: 'item', currency: 'USD', status: 'found',
+      key: `${itemId}||USD|${supplierId}`, itemId, supplierId, unit: 'EA', unitSource: 'item', currency: 'USD', status: 'found',
       latest: fact({}), earlier: [fact({ purchaseOrderId: 'PO-0020', orderNumber: 'PO-0020', lineId: 'PO-0020-L1', unitPrice: '4.4000', date: '2026-08-01' })],
       average: { unitPrice: '4.3000', n: 2 }, otherCurrencies: ['EUR'], otherUnits: [], unitNotRecordedCount: 0,
     }] } });
@@ -49,17 +50,18 @@ test('a supplied item shows its last PO price in the link currency, labelled as 
   // Compact: earlier lines are left to the forms.
   await expect(facts).not.toContainText('PO-0020');
   expect(requests).toHaveLength(1);
-  expect(new URL(requests[0]).searchParams.getAll('key')).toEqual([`${itemId}||USD`]);
+  // The key names the supplier: other suppliers' prices are not read here.
+  expect(new URL(requests[0]).searchParams.getAll('key')).toEqual([`${itemId}||USD|${supplierId}`]);
 });
 
-test('without an issued PO the item says so, and a role without purchase orders sees no block', async ({ page }) => {
+test('without an issued PO from this supplier the item says so, and a role without purchase orders sees no block', async ({ page }) => {
   const headers = await login(page);
   const { supplierId, itemId } = await supplierWithItem(page, headers);
   await page.route('**/api/procurement/price-history**', route => route.fulfill({ json: { timeZone: 'America/New_York', priceLabel: 'purchase_order_price', histories: [{
-    key: `${itemId}||USD`, itemId, unit: 'EA', unitSource: 'item', currency: 'USD', status: 'none', latest: null, earlier: [], average: null, otherCurrencies: [], otherUnits: [], unitNotRecordedCount: 0,
+    key: `${itemId}||USD|${supplierId}`, itemId, supplierId, unit: 'EA', unitSource: 'item', currency: 'USD', status: 'none', latest: null, earlier: [], average: null, otherCurrencies: [], otherUnits: [], unitNotRecordedCount: 0,
   }] } }));
   await page.goto(`/app/master-data/suppliers/${supplierId}`);
-  await expect(page.getByTestId(`supplied-item-price-history-${itemId}`)).toHaveText('No issued PO for this item yet');
+  await expect(page.getByTestId(`supplied-item-price-history-${itemId}`)).toHaveText('No issued PO from this supplier yet');
 
   await page.unroute('**/api/procurement/price-history**');
   await page.route('**/api/procurement/price-history**', route => route.fulfill({ status: 403, json: { code: 'AUTHORIZATION_PERMISSION_DENIED', message: 'Denied' } }));
@@ -72,7 +74,7 @@ test('the facts read in Chinese, and a hidden price is never shown as 0', async 
   const headers = await login(page, 'zh-CN');
   const { supplierId, itemId } = await supplierWithItem(page, headers);
   await page.route('**/api/procurement/price-history**', route => route.fulfill({ json: { timeZone: 'America/New_York', priceLabel: 'purchase_order_price', restrictedFields: ['unitPrice'], histories: [{
-    key: `${itemId}||USD`, itemId, unit: 'EA', unitSource: 'item', currency: 'USD', status: 'found', latest: fact({ unitPrice: null, dateSource: 'order_date', date: '2026-09-10' }), earlier: [], average: null, otherCurrencies: [], otherUnits: ['CASE'], unitNotRecordedCount: 0, restrictedFields: ['unitPrice'],
+    key: `${itemId}||USD|${supplierId}`, itemId, supplierId, unit: 'EA', unitSource: 'item', currency: 'USD', status: 'found', latest: fact({ unitPrice: null, dateSource: 'order_date', date: '2026-09-10' }), earlier: [], average: null, otherCurrencies: [], otherUnits: ['CASE'], unitNotRecordedCount: 0, restrictedFields: ['unitPrice'],
   }] } }));
   await page.goto(`/app/master-data/suppliers/${supplierId}`);
   const facts = page.getByTestId(`supplied-item-price-history-${itemId}`);
@@ -94,7 +96,7 @@ test('linking a new item shows its last PO price under the reference price, and 
     const keys = new URL(route.request().url()).searchParams.getAll('key');
     requests.push(keys);
     return route.fulfill({ json: { timeZone: 'America/New_York', priceLabel: 'purchase_order_price', histories: keys.map((key) => ({
-      key, itemId: key.split('|')[0], unit: 'EA', unitSource: 'item', currency: 'USD', status: 'found',
+      key, itemId: key.split('|')[0], supplierId: key.split('|')[3] || null, unit: 'EA', unitSource: 'item', currency: 'USD', status: 'found',
       latest: fact({}), earlier: [], average: null, otherCurrencies: [], otherUnits: [], unitNotRecordedCount: 0,
     })) } });
   });
@@ -106,5 +108,5 @@ test('linking a new item shows its last PO price under the reference price, and 
   await expect(facts).toHaveAttribute('role', 'group');
   await expect(page.getByRole('textbox', { name: 'Reference price' })).toHaveValue('');
   // One request holds the linked items and the item being linked.
-  expect(requests.at(-1)).toContain(`${newItemId}||USD`);
+  expect(requests.at(-1)).toContain(`${newItemId}||USD|${supplierId}`);
 });

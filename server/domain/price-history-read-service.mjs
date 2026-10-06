@@ -24,6 +24,13 @@ import { DEFAULT_TENANT_TIMEZONE, instantCalendarDay } from './tenant-calendar-d
 // the item's lines without a unit in its currency, which the 3-line cut would
 // otherwise truncate.
 //
+// A key may name a supplier (a supplier's page): that item is then read for
+// that supplier's POs only, in the same query. Each (item, supplier) pair is
+// its own scope, '' meaning any supplier, and every row carries the scope it
+// was read for, so one item read for any supplier and for one supplier never
+// mixes. A supplierId query parameter names the supplier for every key that
+// does not name one.
+//
 // A PO page leaves its own PO out. An issued PO (or one received) sees only
 // POs dated before it, so a later purchase is never shown as "earlier"; a PO
 // not issued yet sees the latest history. Reading needs procurement.purchase_order.read;
@@ -49,8 +56,13 @@ WITH bound AS (
     AND self."tenantId" = $1
     AND self.status = ANY($3::text[])
 ),
+scope AS (
+  SELECT DISTINCT pair."itemId", pair."supplierId"
+  FROM unnest($2::text[], $6::text[]) AS pair("itemId", "supplierId")
+),
 counted AS (
   SELECT
+    scope."supplierId" AS "scopeSupplierId",
     line.id AS "lineId",
     po.id AS "purchaseOrderId",
     po.metadata->>'orderNumber' AS "orderNumber",
@@ -66,58 +78,75 @@ counted AS (
     po.status AS status,
     po."receivingBaseStatus" AS "receivingBaseStatus",
     (COUNT(*) FILTER (WHERE btrim(COALESCE(line.unit, '')) = '') OVER (
-      PARTITION BY line."itemId", upper(btrim(po.currency))
+      PARTITION BY scope."supplierId", line."itemId", upper(btrim(po.currency))
     ))::int AS "unitNotRecordedCount",
     ROW_NUMBER() OVER (
-      PARTITION BY line."itemId", lower(btrim(line.unit)), upper(btrim(po.currency))
+      PARTITION BY scope."supplierId", line."itemId", lower(btrim(line.unit)), upper(btrim(po.currency))
       ORDER BY COALESCE(po."issuedAt", po."createdAt") DESC, po.id ASC, line.id ASC
     ) AS position
-  FROM "PurchaseOrderLine" AS line
+  FROM scope
+  JOIN "PurchaseOrderLine" AS line ON line."itemId" = scope."itemId"
   JOIN "PurchaseOrder" AS po ON po.id = line."purchaseOrderId"
   WHERE po."tenantId" = $1
-    AND line."itemId" = ANY($2::text[])
+    AND (scope."supplierId" = '' OR po."supplierId" = scope."supplierId")
     AND line."unitPrice" IS NOT NULL
     AND po.status = ANY($3::text[])
     AND ($5::text IS NULL OR po.id <> $5::text)
     AND NOT EXISTS (SELECT 1 FROM bound WHERE COALESCE(po."issuedAt", po."createdAt") >= bound."before")
 )
-SELECT "lineId", "purchaseOrderId", "orderNumber", "supplierId", "supplierName", "itemId", unit, currency, "unitPrice", "orderedQuantity", "issuedAt", "createdAt", status, "receivingBaseStatus", "unitNotRecordedCount"
+SELECT "scopeSupplierId", "lineId", "purchaseOrderId", "orderNumber", "supplierId", "supplierName", "itemId", unit, currency, "unitPrice", "orderedQuantity", "issuedAt", "createdAt", status, "receivingBaseStatus", "unitNotRecordedCount"
 FROM counted
 WHERE position <= $4::int
-ORDER BY "itemId" ASC, "purchaseOrderId" ASC, "lineId" ASC`
+ORDER BY "scopeSupplierId" ASC, "itemId" ASC, "purchaseOrderId" ASC, "lineId" ASC`
 
 // The latest lines per item, unit and currency for these items in one
-// workspace. A PO page leaves its own PO out, so it is not its own history,
-// and an issued PO sees only POs dated before it.
-export async function readPriceHistoryLines(prisma, { tenantId, itemIds, excludePurchaseOrderId = null }) {
+// workspace, for any supplier (`itemIds`) or per (item, supplier) scope
+// (`scopes`, supplierId '' for any supplier). A PO page leaves its own PO
+// out, so it is not its own history, and an issued PO sees only POs dated
+// before it.
+export async function readPriceHistoryLines(prisma, { tenantId, itemIds = [], scopes = [], excludePurchaseOrderId = null }) {
   const scopedTenantId = requireTenantId({ tenantId })
-  if (!itemIds.length) return []
-  return prisma.$queryRawUnsafe(LINES_SQL, scopedTenantId, itemIds, [...PRICE_HISTORY_STATUSES], PRICE_HISTORY_AVERAGE_LIMIT, text(excludePurchaseOrderId) || null)
+  const pairs = [...itemIds.map((itemId) => ({ itemId, supplierId: '' })), ...scopes]
+    .map((pair) => ({ itemId: text(pair.itemId), supplierId: text(pair.supplierId) }))
+    .filter((pair, index, list) => pair.itemId && list.findIndex((other) => other.itemId === pair.itemId && other.supplierId === pair.supplierId) === index)
+  if (!pairs.length) return []
+  return prisma.$queryRawUnsafe(
+    LINES_SQL,
+    scopedTenantId,
+    pairs.map((pair) => pair.itemId),
+    [...PRICE_HISTORY_STATUSES],
+    PRICE_HISTORY_AVERAGE_LIMIT,
+    text(excludePurchaseOrderId) || null,
+    pairs.map((pair) => pair.supplierId),
+  )
 }
 
-export function parsePriceHistoryKeys(values) {
+// The keys asked for; a supplierId given apart applies to every key that
+// does not name a supplier itself.
+export function parsePriceHistoryKeys(values, { supplierId = null } = {}) {
   const keys = (Array.isArray(values) ? values : [values]).filter((value) => text(value))
   if (!keys.length) throw new PriceHistoryError('PRICE_HISTORY_KEY_REQUIRED', 'Name at least one item as key=itemId|unit|currency.', 422)
   if (keys.length > PRICE_HISTORY_MAX_KEYS) throw new PriceHistoryError('PRICE_HISTORY_TOO_MANY_KEYS', `Ask for at most ${PRICE_HISTORY_MAX_KEYS} items at a time.`, 422)
   return keys.map((value) => {
     const key = parsePriceHistoryKey(value)
     if (!key.itemId || !key.currency) throw new PriceHistoryError('PRICE_HISTORY_KEY_INVALID', 'Each key needs an item and a currency: itemId|unit|currency.', 422)
-    return key
+    return key.supplierId || !text(supplierId) ? key : { ...key, supplierId: text(supplierId) }
   })
 }
 
 export function createPriceHistoryReadService({ prisma, env = process.env, resolveActor = resolveProvisionedActor } = {}) {
   const db = async () => prisma || getPrismaClient(env)
   return {
-    async read(keyValues, context, { excludePurchaseOrderId = null } = {}) {
-      const keys = parsePriceHistoryKeys(keyValues)
+    async read(keyValues, context, { excludePurchaseOrderId = null, supplierId = null } = {}) {
+      const keys = parsePriceHistoryKeys(keyValues, { supplierId })
       const client = await db()
       const actor = await resolveActor(client, context?.identity || context)
       assertAuthorized({ actor, permission: 'procurement.purchase_order.read', tenantId: actor.tenantId })
       const prices = can({ actor, permission: 'procurement.prices.read', tenantId: actor.tenantId })
       const itemIds = [...new Set(keys.map((key) => key.itemId))]
+      const scopes = keys.map((key) => ({ itemId: key.itemId, supplierId: key.supplierId }))
       const [lines, items, tenant] = await Promise.all([
-        readPriceHistoryLines(client, { tenantId: actor.tenantId, itemIds, excludePurchaseOrderId }),
+        readPriceHistoryLines(client, { tenantId: actor.tenantId, scopes, excludePurchaseOrderId }),
         client.item.findMany({ where: { tenantId: actor.tenantId, id: { in: itemIds } }, select: { id: true, unit: true } }),
         client.tenant.findUnique({ where: { id: actor.tenantId }, select: { timezone: true } }),
       ])

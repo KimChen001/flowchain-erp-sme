@@ -250,6 +250,33 @@ test('the price history query returns at most 3 lines per item, unit and currenc
       assert.equal(history.unitNotRecordedCount, 10)
       assert.deepEqual([history.latest.orderNumber, history.latest.date, history.latest.dateSource], ['PH2-RECEIVED', '2026-09-20', 'order_date_not_issued'])
     })
+
+    await t.test("a supplier's page reads that supplier's POs only, in the same query as any-supplier keys", async () => {
+      const create = (id, tenantId, supplierId, issuedAt, unitPrice, line = {}) => prisma.purchaseOrder.create({ data: { id, tenantId, status: 'issued', supplierId, supplierName: supplierId, currency: 'USD', issuedAt: new Date(issuedAt), metadata: { orderNumber: id }, lines: { create: [{ id: `${id}-L1`, itemId: 'PH-ITEM-3', sku: 'PH-3', itemName: 'Clamp', orderedQuantity: 10, receivedQuantity: 0, unit: 'pcs', unitPrice, amount: 0, ...line }] } } })
+      await create('PH3-ACME-1', tenantA, 'sup-acme', '2026-09-01T15:00:00Z', 2.0)
+      // Four later lines from another supplier, the last in CASE: they fill the any-supplier cut.
+      for (let index = 1; index <= 4; index += 1) await create(`PH3-BOLT-${index}`, tenantA, 'sup-bolt', `2026-09-1${index}T15:00:00Z`, 3 + index / 10, index === 4 ? { unit: 'CASE' } : {})
+      // The same supplier id in another workspace is not this supplier.
+      await create('PH3-OTHER', tenantB, 'sup-acme', '2026-09-30T15:00:00Z', 0.01)
+
+      const rows = await readPriceHistoryLines(prisma, { tenantId: tenantA, scopes: [{ itemId: 'PH-ITEM-3', supplierId: '' }, { itemId: 'PH-ITEM-3', supplierId: 'sup-acme' }, { itemId: 'PH-ITEM-3', supplierId: 'sup-new' }] })
+      const byScope = Object.groupBy(rows, (row) => row.scopeSupplierId)
+      assert.deepEqual(Object.keys(byScope).sort(), ['', 'sup-acme'])
+      assert.deepEqual(byScope['sup-acme'].map((row) => row.purchaseOrderId), ['PH3-ACME-1'])
+      assert.deepEqual(byScope[''].filter((row) => row.unit === 'pcs').map((row) => row.purchaseOrderId).sort(), ['PH3-BOLT-1', 'PH3-BOLT-2', 'PH3-BOLT-3'])
+
+      const { histories: [anySupplier, acme, newSupplier, again] } = await service.read(['PH-ITEM-3|pcs|USD', 'PH-ITEM-3|pcs|USD|sup-acme', 'PH-ITEM-3|pcs|USD|sup-new', 'PH-ITEM-3|pcs|USD|sup-acme'], contextOf(people.buyer))
+      assert.deepEqual([anySupplier.supplierId, anySupplier.latest.orderNumber, anySupplier.latest.supplierName, anySupplier.otherUnits], [null, 'PH3-BOLT-3', 'sup-bolt', ['CASE']])
+      assert.deepEqual([acme.key, acme.latest.orderNumber, acme.latest.unitPrice, acme.earlier, acme.average, acme.otherUnits], ['PH-ITEM-3|pcs|USD|sup-acme', 'PH3-ACME-1', '2.0000', [], null, []])
+      assert.deepEqual([newSupplier.status, newSupplier.latest, newSupplier.otherUnits, newSupplier.otherCurrencies], ['none', null, [], []])
+      assert.equal(again.latest.orderNumber, 'PH3-ACME-1', 'a key asked twice is read once and answered twice')
+      // A supplierId given apart scopes the keys that name none.
+      const { histories: [given] } = await service.read(['PH-ITEM-3|pcs|USD'], contextOf(people.buyer), { supplierId: 'sup-bolt' })
+      assert.deepEqual([given.key, given.latest.orderNumber, given.earlier.map((fact) => fact.orderNumber), given.otherUnits], ['PH-ITEM-3|pcs|USD|sup-bolt', 'PH3-BOLT-3', ['PH3-BOLT-2', 'PH3-BOLT-1'], ['CASE']])
+      // Another workspace's buyer sees its own sup-acme PO only.
+      const { histories: [foreign] } = await service.read(['PH-ITEM-3|pcs|USD|sup-acme'], contextOf(people.otherBuyer))
+      assert.equal(foreign.latest.orderNumber, 'PH3-OTHER')
+    })
   } finally {
     await prisma.$disconnect()
   }

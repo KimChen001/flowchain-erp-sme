@@ -54,3 +54,9 @@ test('counts use the singular form for 1', () => {
   assert.equal(priceHistoryCount('en-US', 'unitNotRecordedLines', 8), '8 earlier lines have no unit recorded, not compared')
   assert.equal(priceHistoryCount('zh-CN', 'unitNotRecordedLines', 8), '8 个以往采购行未记录单位，未比较')
 })
+
+test("a supplier's page says when nothing was issued to this supplier, apart from the item's own history", () => {
+  assert.equal(priceHistoryText('en-US', 'noIssuedPoFromSupplier'), 'No issued PO from this supplier yet')
+  assert.equal(priceHistoryText('zh-CN', 'noIssuedPoFromSupplier'), '尚无向该供应商下达的采购订单')
+  assert.equal(priceHistoryText('en-US', 'noIssuedPo'), 'No issued PO for this item yet')
+})

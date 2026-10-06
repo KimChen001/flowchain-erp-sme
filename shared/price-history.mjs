@@ -14,6 +14,10 @@
 //   what matches  the same item, the same unit (trimmed, case-insensitive)
 //                 and the same currency. Prices in another unit or currency
 //                 are named, never converted or compared.
+//   which supplier any supplier, each fact naming its supplier (the purchase
+//                 request and PO forms); or, when the key names a supplier,
+//                 that supplier's POs only (a supplier's page): other
+//                 suppliers' lines are not read, named or counted.
 //   average       quantity-weighted (sum of price x quantity / sum of
 //                 quantity) over the last 3 matching lines with an ordered
 //                 quantity above 0; shown only when 2 or more lines count.
@@ -66,14 +70,17 @@ const instantOf = (value) => {
   return Number.isFinite(date.getTime()) ? date : null
 }
 
-// One key per item, unit and currency, as the forms send it: "itemId|unit|currency".
+// One key per item, unit and currency, as the forms send it:
+// "itemId|unit|currency", or "itemId|unit|currency|supplierId" for one
+// supplier's POs only. `supplierId` is '' for any supplier.
 export function parsePriceHistoryKey(value) {
-  const [itemId = '', unit = '', currency = ''] = String(value ?? '').split('|')
-  return { itemId: text(itemId), unit: text(unit), currency: currencyKey(currency) }
+  const [itemId = '', unit = '', currency = '', supplierId = ''] = String(value ?? '').split('|')
+  return { itemId: text(itemId), unit: text(unit), currency: currencyKey(currency), supplierId: text(supplierId) }
 }
 
-export function priceHistoryKeyString({ itemId, unit, currency } = {}) {
-  return `${text(itemId)}|${text(unit)}|${currencyKey(currency)}`
+export function priceHistoryKeyString({ itemId, unit, currency, supplierId } = {}) {
+  const base = `${text(itemId)}|${text(unit)}|${currencyKey(currency)}`
+  return text(supplierId) ? `${base}|${text(supplierId)}` : base
 }
 
 // Received straight from "approved": the PO was never issued in FlowChain.
@@ -130,15 +137,23 @@ export function weightedAverage(facts, limit = PRICE_HISTORY_AVERAGE_LIMIT) {
   return { unitPrice: decimalString(divideRounded(amount, quantity)), n }
 }
 
+// A line read for a supplier scope carries it as `scopeSupplierId` ('' for
+// any supplier), so one query can answer both; a line without it is plain.
+const inSupplierScope = (line, supplierId) =>
+  (line.scopeSupplierId === undefined || line.scopeSupplierId === null || text(line.scopeSupplierId) === supplierId) &&
+  (!supplierId || text(line.supplierId) === supplierId)
+
 // The history for one item, unit and currency from purchase order lines
 // (any lines; those of other items are ignored). `itemUnit` is the unit
-// recorded on the item, used when the key names none.
+// recorded on the item, used when the key names none. A key with a
+// supplierId reads only that supplier's lines.
 export function priceHistoryForKey(lines, key, { dayOf, itemUnit = '' } = {}) {
   const itemId = text(key?.itemId)
   const currency = currencyKey(key?.currency)
   const unit = text(key?.unit) || text(itemUnit)
+  const supplierId = text(key?.supplierId)
   const itemLines = (Array.isArray(lines) ? lines : [])
-    .filter((line) => text(line.itemId) === itemId && itemId && decimalUnits(line.unitPrice) !== null)
+    .filter((line) => text(line.itemId) === itemId && itemId && inSupplierScope(line, supplierId) && decimalUnits(line.unitPrice) !== null)
   const facts = itemLines
     .map((line) => priceFact(line, dayOf))
     .sort(comparePriceFacts)
@@ -152,8 +167,10 @@ export function priceHistoryForKey(lines, key, { dayOf, itemUnit = '' } = {}) {
     .map((line) => Number(line.unitNotRecordedCount))
     .filter((count) => Number.isInteger(count) && count >= 0)
   const result = {
-    key: priceHistoryKeyString({ itemId, unit: text(key?.unit), currency }),
+    key: priceHistoryKeyString({ itemId, unit: text(key?.unit), currency, supplierId }),
     itemId,
+    // The one supplier these prices are from, or null for any supplier.
+    supplierId: supplierId || null,
     unit: unit || null,
     unitSource: text(key?.unit) ? 'entered' : unit ? 'item' : 'not_recorded',
     currency: currency || null,

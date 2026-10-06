@@ -40,8 +40,18 @@ test("the route passes every key and the signed identity to the service", async 
     service: { read: async (keys, context, options) => { observed = { keys, tenantId: context.identity.tenantId, ...options }; return payload; } },
   });
   await handlePriceHistoryRoute(route.ctx);
-  assert.deepEqual(observed, { keys: ["ITEM-1|pcs|USD", "ITEM-2||EUR"], tenantId: "signed-tenant", excludePurchaseOrderId: "PO-9" });
+  assert.deepEqual(observed, { keys: ["ITEM-1|pcs|USD", "ITEM-2||EUR"], tenantId: "signed-tenant", excludePurchaseOrderId: "PO-9", supplierId: null });
   assert.deepEqual(route.sent, [{ status: 200, payload }]);
+});
+
+test("a supplierId parameter reaches the service for the keys that name no supplier", async () => {
+  let observed;
+  const route = routeContext({
+    path: "/api/procurement/price-history?key=ITEM-1%7Cpcs%7CUSD&key=ITEM-2%7C%7CUSD%7CSUP-2&supplierId=SUP-1",
+    service: { read: async (keys, _context, options) => { observed = { keys, ...options }; return { histories: [] }; } },
+  });
+  await handlePriceHistoryRoute(route.ctx);
+  assert.deepEqual(observed, { keys: ["ITEM-1|pcs|USD", "ITEM-2||USD|SUP-2"], excludePurchaseOrderId: null, supplierId: "SUP-1" });
 });
 
 test("the route maps permission and key errors, and hides unexpected ones", async (t) => {

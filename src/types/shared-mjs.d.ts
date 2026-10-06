@@ -36,6 +36,7 @@ declare module '../../../shared/price-history.mjs' {
   export type PriceHistory = {
     key: string;
     itemId: string;
+    supplierId: string | null;
     unit: string | null;
     unitSource: 'entered' | 'item' | 'not_recorded';
     currency: string | null;
@@ -54,6 +55,6 @@ declare module '../../../shared/price-history.mjs' {
     | { status: 'not_comparable'; reason: 'currency' | 'unit' | 'unit_not_recorded'; values?: string[] }
     | { status: 'no_earlier_po' };
   export const PRICE_HISTORY_MAX_KEYS: number;
-  export function priceHistoryKeyString(key: { itemId?: string | null; unit?: string | null; currency?: string | null }): string;
+  export function priceHistoryKeyString(key: { itemId?: string | null; unit?: string | null; currency?: string | null; supplierId?: string | null }): string;
   export function compareQuote(input: { unitPrice: string | number | null | undefined; history: PriceHistory | null | undefined }): QuoteComparison;
 }

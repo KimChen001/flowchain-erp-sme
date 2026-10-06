@@ -207,8 +207,8 @@ test('masking hides every price, the average and the percentage, and keeps the f
 })
 
 test('keys are itemId|unit|currency; at most 50 and each needs an item and a currency', () => {
-  assert.deepEqual(parsePriceHistoryKey('ITEM-1| pcs |usd'), { itemId: 'ITEM-1', unit: 'pcs', currency: 'USD' })
-  assert.deepEqual(parsePriceHistoryKeys(['ITEM-1||USD']), [{ itemId: 'ITEM-1', unit: '', currency: 'USD' }])
+  assert.deepEqual(parsePriceHistoryKey('ITEM-1| pcs |usd'), { itemId: 'ITEM-1', unit: 'pcs', currency: 'USD', supplierId: '' })
+  assert.deepEqual(parsePriceHistoryKeys(['ITEM-1||USD']), [{ itemId: 'ITEM-1', unit: '', currency: 'USD', supplierId: '' }])
   assert.throws(() => parsePriceHistoryKeys([]), (error) => error.code === 'PRICE_HISTORY_KEY_REQUIRED' && error.status === 422)
   assert.throws(() => parsePriceHistoryKeys(['|pcs|USD']), (error) => error.code === 'PRICE_HISTORY_KEY_INVALID')
   assert.throws(() => parsePriceHistoryKeys(['ITEM-1|pcs|']), (error) => error.code === 'PRICE_HISTORY_KEY_INVALID')
@@ -242,7 +242,8 @@ test('the read service asks once for every key, in the reader\'s workspace only'
   // An issued PO page sees only POs dated before it; the count of unit-less
   // lines is taken over all lines, before the 3-line cut.
   assert.match(queries[0].sql, /NOT EXISTS \(SELECT 1 FROM bound WHERE COALESCE\(po\."issuedAt", po\."createdAt"\) >= bound\."before"\)/)
-  assert.match(queries[0].sql, /COUNT\(\*\) FILTER \(WHERE btrim\(COALESCE\(line\.unit, ''\)\) = ''\) OVER \(\s*PARTITION BY line\."itemId", upper\(btrim\(po\.currency\)\)\s*\)/)
+  assert.match(queries[0].sql, /COUNT\(\*\) FILTER \(WHERE btrim\(COALESCE\(line\.unit, ''\)\) = ''\) OVER \(\s*PARTITION BY scope\."supplierId", line\."itemId", upper\(btrim\(po\.currency\)\)\s*\)/)
+  assert.deepEqual(queries[0].params[5], ['', ''], 'every key reads any supplier unless it names one')
   assert.deepEqual(database.calls.find((call) => call.items).items.where, { tenantId: 'tenant-a', id: { in: ['ITEM-1', 'ITEM-2'] } })
   assert.deepEqual(result.histories.map((history) => [history.key, history.status, history.latest?.purchaseOrderId, history.latest?.unitPrice]), [
     ['ITEM-1|pcs|USD', 'found', 'PO-1', '4.2000'],
@@ -269,4 +270,68 @@ test('a reader without purchase order rights is refused before anything is read'
   const service = createPriceHistoryReadService({ prisma: database.prisma, resolveActor: actorWith('procurement.prices.read') })
   await assert.rejects(service.read(['ITEM-1|pcs|USD'], { identity: { authenticated: true } }), (error) => error.name === 'AuthorizationError' && error.status === 403)
   assert.deepEqual(database.calls, [])
+})
+
+// A supplier's page: a key ending in |supplierId (or a supplierId given for
+// every key) reads that supplier's POs only. Other suppliers' prices are not
+// shown, named as other currencies or units, or counted.
+test("a key naming a supplier reads only that supplier's lines; without one every supplier is read, each named", () => {
+  const lines = [
+    line({ purchaseOrderId: 'PO-0040', supplierId: 'SUP-BOLT', supplierName: 'Bolt Co', unitPrice: '3.9', issuedAt: '2026-09-20T15:00:00Z' }),
+    line({ purchaseOrderId: 'PO-0031', unitPrice: '4.2', issuedAt: '2026-09-14T15:00:00Z' }),
+    line({ purchaseOrderId: 'PO-0041', supplierId: 'SUP-BOLT', supplierName: 'Bolt Co', currency: 'EUR', issuedAt: '2026-09-21T15:00:00Z' }),
+    line({ purchaseOrderId: 'PO-0042', supplierId: 'SUP-BOLT', supplierName: 'Bolt Co', unit: 'CASE', issuedAt: '2026-09-22T15:00:00Z' }),
+    line({ purchaseOrderId: 'PO-0043', supplierId: 'SUP-BOLT', supplierName: 'Bolt Co', unit: null, issuedAt: '2026-09-23T15:00:00Z', unitNotRecordedCount: 4 }),
+  ]
+  const any = priceHistoryForKey(lines, key, { dayOf: newYork })
+  assert.deepEqual([any.key, any.supplierId, any.latest.purchaseOrderId, any.latest.supplierName], ['ITEM-1|pcs|USD', null, 'PO-0040', 'Bolt Co'])
+  const acme = priceHistoryForKey(lines, { ...key, supplierId: 'SUP-ACME' }, { dayOf: newYork })
+  assert.deepEqual([acme.key, acme.supplierId, acme.latest.purchaseOrderId, acme.earlier.length], ['ITEM-1|pcs|USD|SUP-ACME', 'SUP-ACME', 'PO-0031', 0])
+  assert.deepEqual([acme.otherCurrencies, acme.otherUnits, acme.unitNotRecordedCount, acme.average], [[], [], 0, null])
+  const none = priceHistoryForKey(lines, { ...key, supplierId: 'SUP-NEW' })
+  assert.deepEqual([none.status, none.latest, none.supplierId, none.otherCurrencies, none.unitNotRecordedCount], ['none', null, 'SUP-NEW', [], 0])
+  // Rows read for a scope answer only that scope, also for the same item.
+  const scoped = [line({ purchaseOrderId: 'PO-0050', supplierId: 'SUP-BOLT', issuedAt: '2026-09-20T15:00:00Z', scopeSupplierId: '' }), line({ purchaseOrderId: 'PO-0031', scopeSupplierId: 'SUP-ACME' }), line({ purchaseOrderId: 'PO-0031', scopeSupplierId: '' })]
+  assert.deepEqual(priceHistoryForKey(scoped, key).latest.purchaseOrderId, 'PO-0050')
+  assert.equal(priceHistoryForKey(scoped, { ...key, supplierId: 'SUP-ACME' }).earlier.length, 0)
+  assert.equal(priceHistoryForKey(scoped, { ...key, supplierId: 'SUP-BOLT' }).latest, null)
+})
+
+test('a supplier is named in the key, or given once for every key that names none', () => {
+  assert.deepEqual(parsePriceHistoryKey('ITEM-1|pcs|usd| SUP-1 '), { itemId: 'ITEM-1', unit: 'pcs', currency: 'USD', supplierId: 'SUP-1' })
+  assert.deepEqual(parsePriceHistoryKeys(['ITEM-1||USD', 'ITEM-2||USD|SUP-2'], { supplierId: 'SUP-1' }).map((parsed) => parsed.supplierId), ['SUP-1', 'SUP-2'])
+  assert.deepEqual(parsePriceHistoryKeys(['ITEM-1||USD'], { supplierId: '  ' }).map((parsed) => parsed.supplierId), [''])
+})
+
+test('items for any supplier and for one supplier are read in the same single query', async () => {
+  const database = fakeDatabase([
+    line({ purchaseOrderId: 'PO-B', supplierId: 'SUP-BOLT', supplierName: 'Bolt Co', issuedAt: '2026-09-20T15:00:00Z', scopeSupplierId: '' }),
+    line({ purchaseOrderId: 'PO-A', scopeSupplierId: '' }),
+    line({ purchaseOrderId: 'PO-A', scopeSupplierId: 'SUP-ACME' }),
+  ])
+  const service = createPriceHistoryReadService({ prisma: database.prisma, resolveActor: actorWith('procurement.purchase_order.read', 'procurement.prices.read') })
+  const result = await service.read(['ITEM-1|pcs|USD', 'ITEM-1|pcs|USD|SUP-ACME', 'ITEM-2||USD|SUP-ACME', 'ITEM-1|pcs|USD|SUP-ACME'], { identity: { authenticated: true } })
+  const queries = database.calls.filter((call) => call.sql)
+  assert.equal(queries.length, 1)
+  // One (item, supplier) pair per scope, '' for any supplier.
+  assert.deepEqual([queries[0].params[1], queries[0].params[5]], [['ITEM-1', 'ITEM-1', 'ITEM-2'], ['', 'SUP-ACME', 'SUP-ACME']])
+  assert.match(queries[0].sql, /unnest\(\$2::text\[\], \$6::text\[\]\)/)
+  assert.match(queries[0].sql, /scope\."supplierId" = '' OR po\."supplierId" = scope\."supplierId"/)
+  assert.match(queries[0].sql, /ROW_NUMBER\(\) OVER \(\s*PARTITION BY scope\."supplierId", line\."itemId"/)
+  assert.deepEqual(result.histories.map((history) => [history.key, history.supplierId, history.status, history.latest?.purchaseOrderId ?? null]), [
+    ['ITEM-1|pcs|USD', null, 'found', 'PO-B'],
+    ['ITEM-1|pcs|USD|SUP-ACME', 'SUP-ACME', 'found', 'PO-A'],
+    ['ITEM-2||USD|SUP-ACME', 'SUP-ACME', 'none', null],
+    ['ITEM-1|pcs|USD|SUP-ACME', 'SUP-ACME', 'found', 'PO-A'],
+  ])
+})
+
+test('a supplierId given apart scopes every key that names no supplier, in the same query', async () => {
+  const database = fakeDatabase([])
+  const service = createPriceHistoryReadService({ prisma: database.prisma, resolveActor: actorWith('procurement.purchase_order.read', 'procurement.prices.read') })
+  const result = await service.read(['ITEM-1|pcs|USD', 'ITEM-2||USD|SUP-2'], { identity: { authenticated: true } }, { supplierId: 'SUP-1' })
+  const queries = database.calls.filter((call) => call.sql)
+  assert.equal(queries.length, 1)
+  assert.deepEqual([queries[0].params[1], queries[0].params[5]], [['ITEM-1', 'ITEM-2'], ['SUP-1', 'SUP-2']])
+  assert.deepEqual(result.histories.map((history) => [history.key, history.status]), [['ITEM-1|pcs|USD|SUP-1', 'none'], ['ITEM-2||USD|SUP-2', 'none']])
 })

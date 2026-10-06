@@ -10,7 +10,9 @@ import { usePriceHistoryCopy } from "./priceHistoryCopy";
 // orders, shown beside a price a person enters or reviews. Display only:
 // nothing here writes to an input. Rules in shared/price-history.mjs.
 
-export type PriceHistoryKeyInput = { itemId?: string | null; unit?: string | null; currency?: string | null };
+// A supplierId reads that supplier's POs only (a supplier's page); without
+// one, every supplier's, each named.
+export type PriceHistoryKeyInput = { itemId?: string | null; unit?: string | null; currency?: string | null; supplierId?: string | null };
 type LoadState = "idle" | "loading" | "loaded" | "hidden" | "error";
 
 // The key the server answers under, or "" when the line names no item or currency.
@@ -128,7 +130,7 @@ export function PriceHistoryFacts({
           {!compact && <div className="italic" data-testid={testId ? `${testId}-note` : undefined}>{copy("poPriceNote")}</div>}
         </>
       ) : notes.length ? null : (
-        <div>{copy("noIssuedPo")}</div>
+        <div>{copy(history.supplierId ? "noIssuedPoFromSupplier" : "noIssuedPo")}</div>
       )}
       {notes.map((note) => <div key={note}>{note}</div>)}
     </>,

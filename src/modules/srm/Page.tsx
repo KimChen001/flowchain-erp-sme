@@ -462,12 +462,12 @@ export default function SupplierMasterPage({
     if (accepted) toast.success(`${copy("Accepted")}: ${accepted}`);
     await Promise.all([load(), loadInsights()]);
   };
-  // Earlier PO prices of each supplied item in the link currency and the
-  // item's unit, in one request. Display only.
+  // Earlier PO prices of each supplied item from this supplier only, in the
+  // link currency and the item's unit, in one request. Display only.
   // The item being linked gets the same facts under its reference price, in
   // the currency the link will be saved in. Never fills the price.
-  const relationshipHistoryKey = (r: Relationship) => (selected ? priceHistoryKey({ itemId: r.itemId, currency: r.currency }) : "");
-  const relationFormHistoryKey = selected && writes.items ? priceHistoryKey({ itemId: relationForm.itemId, currency: relationForm.currency || selected.defaultCurrency }) : "";
+  const relationshipHistoryKey = (r: Relationship) => (selected ? priceHistoryKey({ itemId: r.itemId, currency: r.currency, supplierId: selected.id }) : "");
+  const relationFormHistoryKey = selected && writes.items ? priceHistoryKey({ itemId: relationForm.itemId, currency: relationForm.currency || selected.defaultCurrency, supplierId: selected.id }) : "";
   const relationshipHistory = usePriceHistory([...relationships.map(relationshipHistoryKey), relationFormHistoryKey]);
   if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
   if (selected)
