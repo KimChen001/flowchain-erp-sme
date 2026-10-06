@@ -39,6 +39,14 @@ test('generic supplier prompt clarifies instead of selecting the first supplier'
   assert.deepEqual(plan.scope.entityIds, [])
 })
 
+test('supplier bills, quotes and deliveries are not supplier names', () => {
+  for (const message of ['Are any supplier bills off?', 'Have the supplier quotes come back, and which are late?', 'Is any supplier delivery stuck at the dock?']) {
+    const plan = buildDeterministicBusinessQueryPlan({ message, suppliers })
+    assert.deepEqual(plan.scope.entityNames, [], message)
+    assert.equal(plan.ambiguities.some((ambiguity) => ambiguity.startsWith('supplier_not_found')), false, message)
+  }
+})
+
 test('unknown English supplier before Chinese business wording remains a not-found entity', () => {
   const plan = buildDeterministicBusinessQueryPlan({ message: '为什么 Supplier Missing 暂时不能付款？', suppliers })
   assert.equal(plan.clarificationNeeded, true)

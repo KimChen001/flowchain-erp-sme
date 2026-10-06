@@ -267,7 +267,8 @@ function withPageRecord(found, focus, facts) {
 // (supplierIds null when the reader cannot see suppliers, so the answer says
 // it could not filter). The tier filters and labels; it never changes the
 // order (docs/supplier-tiers-design.md §6, decision 8).
-const TIER_SKILLS = new Set(['purchase_orders', 'supplier_attention', 'prepare_action_draft'])
+export const AI_SKILL_TIER_SKILLS = new Set(['purchase_orders', 'supplier_attention', 'prepare_action_draft'])
+const TIER_SKILLS = AI_SKILL_TIER_SKILLS
 function tierFilter(tier, facts) {
   if (!tier) return null
   if (!Array.isArray(facts.suppliers)) return { tier, supplierIds: null }
