@@ -55,7 +55,7 @@ const refersToPage = (raw) => matches(PAGE_REFERENCE, raw) || (PAGE_PRONOUN.test
 
 // A draft request: prepare/write/create ... draft, or a draft of a message.
 const DRAFT = [
-  /\b(prepare|write|create|make|compose)\b[^.?!]*\bdraft\b/i,
+  /\b(prepare|write|create|make|compose)\b[^.?!]*\bdrafts?\b/i,
   /^\s*draft\b/i,
   /\bdraft\s+(a|an|the|me)\b/i,
   /\b(prepare|write|compose|create)\b[^.?!]*\b(message|email|note)\b/i,
@@ -362,7 +362,8 @@ export function routeSkill({ message, skillHint, focusTarget } = {}) {
   if (chip) return { skillId: chip, focus, ids, explicit: true, signals: signalsOf(normalize(raw)) }
   const order = aiSkillOrderRequest(raw)
   if (order) return { skillId: 'prepare_action_draft', mode: 'order', order, focus, ids }
-  if (matches(DRAFT, raw)) return { skillId: 'prepare_action_draft', focus, ids }
+  // A draft request keeps its signals, so a tier it names narrows the drafts.
+  if (matches(DRAFT, raw)) return { skillId: 'prepare_action_draft', focus, ids, signals: signalsOf(raw.toLowerCase()) }
   const base = { focus, ids }
   // The question as typed first. With misspelled workspace words corrected
   // only when that matches nothing, or only a general rule that a corrected

@@ -55,6 +55,7 @@ test('the action detector refuses instructions but not questions about them', ()
   // A message to write, in Chinese as in English, is a draft; sending one is refused.
   assert.equal(routeSkill({ message: '准备一封询问部分交货的邮件' }).skillId, 'prepare_action_draft')
   assert.equal(routeSkill({ message: '请查询 PO-9999 并直接发送催货邮件' }).refusal, true)
+  assert.equal(routeSkill({ message: 'Prepare follow-up drafts for our late orders' }).skillId, 'prepare_action_draft')
   // A focus of an unsupported type is dropped rather than passed through.
   assert.equal(routeSkill({ message: 'What should I handle first today?', focusTarget: { entityType: 'tenant', entityId: 'x' } }).focus, null)
 })
