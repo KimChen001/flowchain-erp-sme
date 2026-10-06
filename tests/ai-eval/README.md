@@ -90,9 +90,10 @@ flag the same wording.
 | `pending` | A reason, such as `"new case"`. The case is scored and listed under "Pending cases". It is left out of the safety failures, the exit code, the category table, the scores and the quality gate. The 100 original cases (`ORIGINAL_CASE_IDS` in `run-eval.mjs`, the cases at a792e2f) may not be pending. |
 | `note` | Free text for readers. Not scored. |
 | `expect.status`, `expect.code` | The expected HTTP status and error code. The default status is 200. |
+| `expect.agent` | The answer came from agent planning: `skillRouting` is `{ source: 'model', modelStatus: 'planned' }`. Only meaningful in a `--agent` run. |
 | `expect.skill` | Acceptable answering skills (`intent`). Used for routing accuracy. List only the skills that should answer. Do not widen the list to fit what the router currently does. |
 | `expect.notSkill` | Skills (`intent`) that must not answer, for questions that look like another skill's (sales orders vs purchase orders, invoice approval vs PO approval). Counted in routing accuracy. |
-| `expect.skills` | For a question with several parts: the answer must be a compound answer (`intent: compound`) with a section answered by each listed skill. Counted in routing accuracy. |
+| `expect.skills` | For a question with several parts: the answer must be a compound answer (`intent: compound`) with a section answered by each listed skill. An entry may be a list of skills that each answer that part, one of which must (the owner accepted `supplier_attention` beside `purchase_orders` for "late from suppliers" on 2026-10-05). Counted in routing accuracy. |
 | `expect.sections` | The number of sections the answer must have. `0` means a one-skill answer, for questions that look compound but ask one thing ("PO-012 and PO-030", a part that narrows the one before it). |
 | `expect.numbers` | Truth keys whose values must appear in the answer text: `open_po_count`, `overdue_po_count`, `committed_spend_usd`, `committed_invoices_usd`, `pending_approval_po_count`, `invoice_variance_count`, `atp:<SKU>`, `available:<SKU>`, `supplier_open_po:<id>`, `supplier_overdue_po:<id>`, `po_remaining:<id>`. |
 | `expect.figures` | Truth keys that must appear in the answer's structured `figures` (`[{ key, code, entityId, value, unit?, currency? }]`), with `\|value − truth\| < 0.005`. A figure `key` is the truth key, except that a currency total uses `committed_invoices:USD` for `committed_invoices_usd`. The text check `expect.numbers` is separate, and a case can use both. |
@@ -264,6 +265,91 @@ Measured on 2026-10-03 with MIT Parley (`claude-haiku-4-5`), 164 cases:
 
 Both runs: no safety failures, no blocked connections, no Chinese in English
 answers, and no regression against the baseline.
+
+## Agent planning (P2)
+
+`FLOWCHAIN_AI_AGENT_MODE=plan` (policy `agent_planning`, off by default, approved
+by the owner on 2026-10-03, local only; `docs/ai-agent-mode-design.md` sections
+3 and 6) lets one model call choose up to three of the actor's skills, or the
+supplier business query. It needs a provider whose adapter sends native tool
+calls (`deepseek_chat`, `doubao_chat`, `qwen_chat`, `parley_chat`). It runs in
+these cases, and the rules still run first:
+
+- **unmatched**: no rule and no named record chose a skill. Agent planning then
+  replaces the one-skill pick above, so the question makes one model call, not two.
+- **multi_part**: the question has several parts and the compound rules could not
+  answer them part by part: a draft request among the parts (the Acme request),
+  or a part no section answers (`aiCompoundGaps` in `ai-skill-compound.mjs`).
+  Parts the rules read together on purpose ("Which POs are overdue and which are
+  from Atlas Industrial Supply?") stay with the rules.
+- **multi_part, before the business query path**: a question with several parts
+  that the supplier business query path would take ("Did anything arrive damaged
+  or short, and do the supplier invoices line up?") goes to the planner first,
+  from the gateway. If the planner does not answer it, the business query path
+  answers as before, with the planner's audit block and, after a failure, the
+  limited-mode note.
+
+Chips, follow-ups, greetings, instructions and questions about the outside world
+never reach it.
+
+- **What the model sees and returns.** It sees the question and the actor's
+  skills as tool definitions, nothing from the workspace. It returns tool calls
+  with these arguments:
+  - `records`: the record numbers, SKUs or supplier names a call is about, as the
+    question writes them;
+  - `mode`: only `overview` or `short` for stock;
+  - `tier`, for `purchase_orders` and `supplier_attention` only: `1`, `2`, `3` or
+    `none`. It must be the tier the question itself names (`aiSkillTierOf`), or
+    the call is dropped (`tier_not_in_question`); it then filters as a tier in a
+    rule-routed question does, without changing the order;
+  - `goals`, for `supplier_business_query` only: the business query goals the
+    actor may read (`server/domain/ai-agent-business-query.mjs`). Its `records`
+    are supplier names from the question; they set the scope through the
+    deterministic plan's own supplier step, so an unknown supplier asks which one
+    is meant. The time window and filters come from the deterministic plan of the
+    question, and `validateBusinessQueryPlan` checks the plan as for the business
+    query planner. Alone, the call keeps the deterministic plan's goals too; beside
+    other calls it answers its own part. A second business query call joins the
+    first.
+- **Declining.** With `deepseek_chat` and `parley_chat` the request sets
+  `tool_choice: "required"` and adds a `no_matching_skill` tool, so a question no
+  tool answers costs one short call (about 0.7 s on Parley) rather than a written
+  refusal (2 to 3 s, thrown away). Output is capped at 300 tokens.
+- **How a call is checked.** The model may make one call per part of the
+  question (`task.parts`, three at most), so a question that asks one thing gets
+  one skill. A record the question does not contain, an unknown tool or argument,
+  or a call over that limit is dropped. The record step resolves the
+  records in the actor's own facts and sets each skill's mode, exactly as for a
+  rule.
+- **The answer.** One planned skill answers on its own, and a business query
+  alone answers as the business query does. Two or three give a compound answer
+  with `skillRouting: { source: 'model', modelStatus: 'planned' }`; a business
+  query section comes last, and the answer carries its `businessQuery` panel. The
+  answer is validated with the business query's own record ids; one that fails is
+  not served, and the rules answer (`reason: invalid_answer`).
+- **When it fails.** On a timeout (`FLOWCHAIN_AI_AGENT_TIMEOUT_MS`, 2500 by
+  default, 5000 at most), an error or a plan with no valid call, the rules
+  answer. The answer then carries `agentPlanning: { status: 'degraded' }`, and the
+  panel shows the limited-mode note. A model that calls no tool also leaves the
+  rules' answer, without the note.
+- **The audit row** gets an `agent` block with codes and counts only: entry,
+  status, reason, tools and modes, record counts, dropped calls, latency and the
+  tokens the provider reported, as `usage: { input, output }` (the audit store
+  redacts keys containing "token").
+
+```
+npm run test:ai:eval -- --provider-env=<env file> --agent
+```
+
+`--agent` needs `--provider-env` and also sets `FLOWCHAIN_AI_AGENT_MODE=plan` on
+the servers. The run prints the planner's entries, results, call time and tokens.
+The `multi_tool` cases, the Acme request (`expect.agent`: the planner chose the
+skills) and the paraphrases are pending and scored only in such a run. Four of
+them repeat three times (`repeat: 3`), for the gate's same-figures-and-records
+check. The gate is
+the P2 column of `docs/ai-agent-mode-design.md` section 9. Scripted planner
+failures (timeouts, invalid plans, dropped records) are unit tests in
+`server/domain/ai-agent-planning.test.mjs`, not cases here.
 
 ## Compound answers
 

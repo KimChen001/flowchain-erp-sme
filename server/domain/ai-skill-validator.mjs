@@ -59,9 +59,13 @@ function visibleTexts(response) {
   return out.filter(([, value]) => value !== undefined && value !== null && value !== '').map(([path, value]) => [path, String(value)])
 }
 
-export function validateAiSkillResponse(response, facts) {
+// `extra` adds the ids and stored names another read service returned for this
+// answer: the supplier business query's records in an agent planning answer.
+export function validateAiSkillResponse(response, facts, extra = {}) {
   const errors = []
   const { ids, stored } = aiSkillKnownValues(facts)
+  for (const value of array(extra.ids)) if (text(value).trim()) { ids.add(text(value).trim()); stored.add(text(value).trim()) }
+  for (const value of array(extra.stored)) if (text(value).trim()) stored.add(text(value).trim())
   const known = (id) => ids.has(text(id).trim())
   for (const item of array(response.keyEvidence)) if (item.entityId && !known(item.entityId)) errors.push(`evidence id not read: ${item.entityId}`)
   for (const link of array(response.navigationLinks)) {
@@ -86,8 +90,8 @@ export function validateAiSkillResponse(response, facts) {
   return { ok: errors.length === 0, errors }
 }
 
-export function assertValidAiSkillResponse(response, facts) {
-  const result = validateAiSkillResponse(response, facts)
+export function assertValidAiSkillResponse(response, facts, extra = {}) {
+  const result = validateAiSkillResponse(response, facts, extra)
   if (!result.ok) throw Object.assign(new Error('The assistant answer failed validation.'), { code: 'AI_SKILL_ANSWER_INVALID', status: 503, details: result.errors })
   return response
 }
