@@ -49,6 +49,9 @@ export const operationalSettingsSeed = {
     ].map(([id, label], index) => ({ id, label, enabled: true, order: index + 1, roles: ['admin', 'manager'] })),
   },
   ai: {
+    // Off by default: the workspace calls no model until an administrator
+    // switches AI features on (ai-workspace-access.mjs).
+    modelAssistEnabled: false,
     capabilities: [
       { id: 'answer', label: '业务问答与解释', level: 'allow' },
       { id: 'draft', label: '生成业务草稿', level: 'review_required' },
@@ -72,7 +75,7 @@ export const operationalSettingsSeed = {
 // reads the other sections yet, so the settings UI shows them read-only as
 // "Not in effect yet" and keeps their stored values.
 export const REVIEW_TOLERANCE_FIELDS = ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance']
-export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: [], advanced: [] })
+export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [] })
 const TOLERANCE_PATTERN = /^\d+(\.\d{1,4})?$/
 
 const clone = value => structuredClone(value)
@@ -144,6 +147,9 @@ export function validateOperationalSection(section, value) {
       next[field] = raw
     }
     return next
+  }
+  if (section === 'ai' && value.modelAssistEnabled !== undefined && typeof value.modelAssistEnabled !== 'boolean') {
+    throw Object.assign(new Error('modelAssistEnabled must be true or false.'), { code: 'AI_SETTINGS_INVALID', status: 400, details: { field: 'modelAssistEnabled' } })
   }
   if (section === 'modules') {
     const items = Array.isArray(value.items) ? value.items : []
