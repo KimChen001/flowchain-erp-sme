@@ -27,6 +27,7 @@ const text = value => String(value ?? '').trim()
 const known = value => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
 const money = value => Math.round(value * 100) / 100
 const share = (part, whole) => whole ? Math.round(part / whole * 1000) / 10 : null
+const sampledShare = (part, whole) => whole >= SUPPLIER_SCORECARD_RULES.minimumSample ? share(part, whole) : null
 const monthOf = day => day ? day.slice(0, 7) : 'Undated'
 const inRange = (day, query) => (!query.from || Boolean(day && day >= query.from)) && (!query.to || Boolean(day && day <= query.to))
 const sumKnown = values => values.some(value => value === null) ? null : money(values.reduce((total, value) => total + value, 0))
@@ -307,8 +308,9 @@ function supplierPerformance(pos, receipts, invoices, scope, promiseLines = []) 
     spend: scope.ok && row.amountKnown ? row.amount : null,
     promisedLines: promised.length,
     onTimeRate: onTimePercent(promised),
-    acceptedRate: share(row.accepted, row.lines),
-    matchRate: share(row.matched, row.decided),
+    // Rates only from the scorecard's minimum sample (5), as on-time is.
+    acceptedRate: sampledShare(row.accepted, row.lines),
+    matchRate: sampledShare(row.matched, row.decided),
     spendShare: scope.ok ? share(row.amount, totalAmount) : share(row.orders, totalOrders),
   }))
 }
