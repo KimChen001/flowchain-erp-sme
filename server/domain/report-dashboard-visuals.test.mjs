@@ -104,9 +104,11 @@ test('a missing line price hides the value bridge instead of counting it as zero
   assert.deepEqual(bridge.limitations, ['amount_missing'])
 })
 
-// Six Acme lines first promised for 09-20: four arrived on time, one late, and
-// one only has an unposted receipt, so it is still undelivered past its
-// promise. Bolt has two lines, below the five-line minimum sample.
+// Six Acme lines on one PO first promised for 09-20: four arrived on time, one
+// late, and one only has an unposted receipt, so it is still undelivered past
+// its promise. The scorecard counts deliveries (one PO, one promised date), so
+// they are one late delivery. Bolt has two lines, one delivery. Both are below
+// the five-delivery minimum sample.
 const promiseLine = (id, extra = {}) => ({ id, sku: 'A', itemName: 'A item', unit: 'pcs', orderedQuantity: 10, receivedQuantity: 0, unitPrice: 10, amount: 100, originalPromisedDate: '2026-09-20', ...extra })
 const postedReceipt = (id, poId, supplierName, arrivedAt, lineIds, postingStatus = 'posted') => ({ id, poId, supplierName, status: 'received', postingStatus, arrivedAt, lines: lineIds.map(lineId => ({ purchaseOrderLineId: lineId, acceptedQty: 10, rejectedQty: 0 })) })
 const scorecardContext = () => context({
@@ -122,33 +124,67 @@ const scorecardContext = () => context({
     postedReceipt('GRN-B', 'PO-B', 'Bolt', '2026-09-19T15:00:00.000Z', ['B1', 'B2']),
   ],
 })
+// Six Acme deliveries first promised for 09-20, on six POs of one or two
+// lines: four on time; PO-A3 late, its second line two days after the
+// promise; PO-A5 only has an unposted receipt, so it is still undelivered past
+// its promise. Bolt has one delivery, below the minimum sample.
+const deliveriesContext = () => context({
+  purchaseOrders: [
+    po('PO-A1', 'Acme', 'issued', ['A1a', 'A1b'].map(id => promiseLine(id)), { supplierId: 'SUP-ACME', expectedDate: '2026-09-25T00:00:00.000Z' }),
+    po('PO-A2', 'Acme', 'issued', [promiseLine('A2')], { supplierId: 'SUP-ACME' }),
+    po('PO-A3', 'Acme', 'issued', ['A3a', 'A3b'].map(id => promiseLine(id)), { supplierId: 'SUP-ACME' }),
+    po('PO-A4', 'Acme', 'issued', [promiseLine('A4')], { supplierId: 'SUP-ACME' }),
+    po('PO-A5', 'Acme', 'issued', [promiseLine('A5')], { supplierId: 'SUP-ACME' }),
+    po('PO-A6', 'Acme', 'partially_received', ['A6a', 'A6b'].map(id => promiseLine(id)), { supplierId: 'SUP-ACME' }),
+    po('PO-B', 'Bolt', 'approved', ['B1', 'B2'].map(id => promiseLine(id)), { supplierId: 'SUP-BOLT' }),
+    po('PO-DRAFT', 'Acme', 'draft', ['D1', 'D2', 'D3', 'D4', 'D5'].map(id => promiseLine(id)), { supplierId: 'SUP-ACME' }),
+  ],
+  receipts: [
+    postedReceipt('GRN-A1', 'PO-A1', 'Acme', '2026-09-18T15:00:00.000Z', ['A1a', 'A1b']),
+    postedReceipt('GRN-A2', 'PO-A2', 'Acme', '2026-09-18T15:00:00.000Z', ['A2']),
+    postedReceipt('GRN-A3a', 'PO-A3', 'Acme', '2026-09-18T15:00:00.000Z', ['A3a']),
+    postedReceipt('GRN-A3b', 'PO-A3', 'Acme', '2026-09-22T15:00:00.000Z', ['A3b']),
+    postedReceipt('GRN-A4', 'PO-A4', 'Acme', '2026-09-19T15:00:00.000Z', ['A4']),
+    postedReceipt('GRN-A5', 'PO-A5', 'Acme', '2026-09-18T15:00:00.000Z', ['A5'], 'unposted'),
+    postedReceipt('GRN-A6', 'PO-A6', 'Acme', '2026-09-18T15:00:00.000Z', ['A6a', 'A6b']),
+    postedReceipt('GRN-B', 'PO-B', 'Bolt', '2026-09-19T15:00:00.000Z', ['B1', 'B2']),
+  ],
+})
 const asOf = { now: new Date('2026-10-05T16:00:00.000Z'), timeZone: 'America/New_York' }
+// The share of a scorecard's deliveries on time, as a percentage.
+const onTimeShare = deliveries => Math.round(deliveries.filter(row => row.onTime).length / deliveries.length * 1000) / 10
 
-test('on time follows the supplier scorecard: the original promise, posted receipts and at least five lines', () => {
-  const report = buildRuntimeGovernedReport(scorecardContext(), { subject: 'procurement' }, asOf)
+test('on time follows the supplier scorecard: deliveries against the original promise, posted receipts and at least five deliveries', () => {
+  // The six Acme lines on PO-A are one late delivery, Bolt's two lines one on
+  // time: two deliveries, below the minimum, so no rate and the reason.
+  const few = buildRuntimeGovernedReport(scorecardContext(), { subject: 'procurement' }, asOf)
+  assert.deepEqual(['currentValue', 'dataStatus', 'limitations'].map(key => kpi(few, 'on_time_receipt_rate')[key]), [null, 'incomplete', ['insufficient_sample']])
+  const fewScorecard = buildSupplierScorecard({ purchaseOrders: scorecardContext().purchaseOrders, receipts: scorecardContext().receipts.filter(row => row.postingStatus === 'posted'), period: { from: '2026-09-01', to: '2026-09-30' }, asOfDay: '2026-10-05', timeZone: 'America/New_York' })
+  assert.deepEqual(fewScorecard.suppliers.map(row => [row.supplierId, row.sampleSize, row.lineCount, row.metrics.onTime.count]), [['SUP-ACME', 1, 6, 0], ['SUP-BOLT', 1, 2, 1]])
+
+  const report = buildRuntimeGovernedReport(deliveriesContext(), { subject: 'procurement' }, asOf)
   const onTime = kpi(report, 'on_time_receipt_rate')
-  // 4 of the 6 Acme lines and both Bolt lines: 6 of 8. The unposted receipt does not count.
-  assert.equal(onTime.currentValue, 75)
-  assert.equal(onTime.label, 'On-time lines (original promise)')
+  // 4 of the 6 Acme deliveries and Bolt's one: 5 of 7. The unposted receipt does not count.
+  assert.equal(onTime.currentValue, 71.4)
+  assert.equal(onTime.label, 'On-time deliveries (date on the PO)')
   assert.equal(onTime.unit, 'percentage')
-  // The same lines on the supplier scorecard give the same rate.
-  const data = scorecardContext()
+  // The same deliveries on the supplier scorecard give the same rate.
+  const data = deliveriesContext()
   const scorecard = buildSupplierScorecard({ purchaseOrders: data.purchaseOrders.filter(row => row.status !== 'draft'), receipts: data.receipts.filter(row => row.postingStatus === 'posted'), period: { from: '2026-09-01', to: '2026-09-30' }, asOfDay: '2026-10-05', timeZone: 'America/New_York' })
-  const lines = scorecard.suppliers.flatMap(row => row.lines)
-  assert.equal(onTime.currentValue, Math.round(lines.filter(line => line.onTime).length / lines.length * 1000) / 10)
+  assert.equal(onTime.currentValue, onTimeShare(scorecard.suppliers.flatMap(row => row.obligations)))
   assert.equal(kpi(buildRuntimeGovernedReport(data, { subject: 'procurement', filters: { supplier: 'Acme' } }, asOf), 'on_time_receipt_rate').currentValue, Math.round(scorecard.suppliers.find(row => row.supplierId === 'SUP-ACME').metrics.onTime.rate * 1000) / 10)
 
-  // Two lines are below the minimum sample: no rate, and the reason.
-  const bolt = kpi(buildRuntimeGovernedReport(scorecardContext(), { subject: 'procurement', filters: { supplier: 'Bolt' } }, asOf), 'on_time_receipt_rate')
+  // One delivery is below the minimum sample: no rate, and the reason.
+  const bolt = kpi(buildRuntimeGovernedReport(deliveriesContext(), { subject: 'procurement', filters: { supplier: 'Bolt' } }, asOf), 'on_time_receipt_rate')
   assert.equal(bolt.currentValue, null)
   assert.deepEqual(bolt.limitations, ['insufficient_sample'])
   assert.equal(bolt.dataStatus, 'incomplete')
   // The date range applies to the original promise, not the order date.
-  const october = kpi(buildRuntimeGovernedReport(scorecardContext(), { subject: 'procurement', filters: { from: '2026-10-01', to: '2026-10-31' } }, asOf), 'on_time_receipt_rate')
+  const october = kpi(buildRuntimeGovernedReport(deliveriesContext(), { subject: 'procurement', filters: { from: '2026-10-01', to: '2026-10-31' } }, asOf), 'on_time_receipt_rate')
   assert.equal(october.currentValue, null)
   assert.equal(october.dataStatus, 'no_records')
   // Receipts per arrival day still show every receipt that is not void.
-  assert.deepEqual(chart(report, 'procurement_receipt_calendar').data, [{ name: '2026-09-18', value: 2 }, { name: '2026-09-19', value: 1 }, { name: '2026-09-22', value: 1 }])
+  assert.deepEqual(chart(few, 'procurement_receipt_calendar').data, [{ name: '2026-09-18', value: 2 }, { name: '2026-09-19', value: 1 }, { name: '2026-09-22', value: 1 }])
 })
 
 test('a line without an original promise is not measured', () => {
@@ -159,41 +195,55 @@ test('a line without an original promise is not measured', () => {
   assert.equal(kpi(report, 'on_time_receipt_rate').dataStatus, 'no_records')
 })
 
+test('a delivery with a line not yet due waits on the dashboard as on the scorecard', () => {
+  // Five on-time Acme deliveries promised 09-20 and a sixth promised 10-06 with
+  // one line in early and one not yet due: the sixth is not judged yet.
+  const data = deliveriesContext()
+  data.receipts = data.receipts.map(row => row.id === 'GRN-A5' ? { ...row, postingStatus: 'posted' } : row.id === 'GRN-A3b' ? { ...row, arrivedAt: '2026-09-20T15:00:00.000Z' } : row)
+  data.purchaseOrders.push(po('PO-A7', 'Acme', 'issued', ['A7a', 'A7b'].map(id => promiseLine(id, { originalPromisedDate: '2026-10-06' })), { supplierId: 'SUP-ACME' }))
+  data.receipts.push(postedReceipt('GRN-A7', 'PO-A7', 'Acme', '2026-10-01T15:00:00.000Z', ['A7a']))
+  const report = buildRuntimeGovernedReport(data, { subject: 'suppliers', filters: { from: '2026-09-01', to: '2026-10-31' } }, asOf)
+  const scorecard = buildSupplierScorecard({ purchaseOrders: data.purchaseOrders, receipts: data.receipts.filter(row => row.postingStatus === 'posted'), period: { from: '2026-09-01', to: '2026-10-31' }, asOfDay: '2026-10-05', timeZone: 'America/New_York' })
+  const acme = scorecard.suppliers.find(row => row.supplierId === 'SUP-ACME')
+  assert.deepEqual([acme.sampleSize, acme.metrics.onTime.count], [6, 6])
+  assert.deepEqual(chart(report, 'supplier_on_time').data, [{ name: 'Acme', value: 100, filterValue: 'Acme' }])
+  assert.equal(chart(report, 'supplier_performance_matrix').data[0].Deliveries, 6)
+})
+
 // The supplier page shows the scorecard table and the dashboard together, so
-// both measure the same lines: the same period (the scorecard's 90 days to
+// both measure the same deliveries: the same period (the scorecard's 90 days to
 // today when none is chosen), grace days, purchase orders and receipts.
-test('the supplier dashboard and the scorecard measure the same lines for the same period', () => {
-  const data = scorecardContext()
+test('the supplier dashboard and the scorecard measure the same deliveries for the same period', () => {
+  const data = deliveriesContext()
   // Approved, given its original promise at approval, then cancelled before
   // issue: the buyer called it off, so its lines are not late on either side.
   data.purchaseOrders.push(po('PO-CANCELLED', 'Acme', 'cancelled', ['C1', 'C2', 'C3', 'C4', 'C5'].map(id => promiseLine(id, { originalPromisedDate: '2026-09-10' })), { supplierId: 'SUP-ACME' }))
   const scorecardFor = (query, receipts = data.receipts) => buildSupplierScorecard({ purchaseOrders: data.purchaseOrders, receipts: receipts.filter(row => row.postingStatus === 'posted'), ...scorecardParameters(query, '2026-10-05'), asOfDay: '2026-10-05', timeZone: 'America/New_York' })
   const rateOf = (scorecard, supplierId) => Math.round(scorecard.suppliers.find(row => row.supplierId === supplierId).metrics.onTime.rate * 1000) / 10
-  const overall = scorecard => {
-    const lines = scorecard.suppliers.flatMap(row => row.lines)
-    return Math.round(lines.filter(line => line.onTime).length / lines.length * 1000) / 10
-  }
+  const overall = scorecard => onTimeShare(scorecard.suppliers.flatMap(row => row.obligations))
 
   const report = buildRuntimeGovernedReport(data, { subject: 'suppliers' }, asOf)
   assert.deepEqual([report.dataScope.from, report.dataScope.to], ['2026-07-08', '2026-10-05'])
   assert.deepEqual(scorecardFor({}).period, { from: '2026-07-08', to: '2026-10-05' })
   assert.equal(kpi(report, 'on_time_receipt_rate').currentValue, overall(scorecardFor({})))
-  assert.equal(kpi(report, 'on_time_receipt_rate').currentValue, 75)
+  assert.equal(kpi(report, 'on_time_receipt_rate').currentValue, 71.4)
   assert.deepEqual(chart(report, 'supplier_on_time').data, [{ name: 'Acme', value: rateOf(scorecardFor({}), 'SUP-ACME'), filterValue: 'Acme' }])
+  assert.equal(chart(report, 'supplier_on_time').data[0].value, 66.7)
 
-  // Grace days from the page move both: L5 arrived two days after its promise.
+  // Grace days from the page move both: PO-A3's second line arrived two days after its promise.
   const grace = buildRuntimeGovernedReport(data, { subject: 'suppliers', filters: { graceDays: '3' } }, asOf)
   assert.equal(chart(grace, 'supplier_on_time').data[0].value, rateOf(scorecardFor({ graceDays: '3' }), 'SUP-ACME'))
   assert.equal(chart(grace, 'supplier_on_time').data[0].value, 83.3)
 
   // A reader limited to one warehouse counts the receipts there, as the scorecard does.
-  data.receipts = data.receipts.map(row => ({ ...row, warehouseId: row.id === 'GRN-2' ? 'WH-2' : 'WH-1' }))
+  data.receipts = data.receipts.map(row => ({ ...row, warehouseId: row.id === 'GRN-A4' ? 'WH-2' : 'WH-1' }))
   const scoped = buildRuntimeGovernedReport(data, { subject: 'suppliers' }, { ...asOf, warehouseIds: ['WH-1'] })
   assert.equal(chart(scoped, 'supplier_on_time').data[0].value, rateOf(scorecardFor({}, data.receipts.filter(row => row.warehouseId === 'WH-1')), 'SUP-ACME'))
+  assert.equal(chart(scoped, 'supplier_on_time').data[0].value, 50)
 
   // The scorecard has no currency filter, so a currency picked on the page
-  // leaves the on-time figures alone: five more Acme lines, in EUR, all late.
-  const euro = scorecardContext()
+  // leaves the on-time figures alone: one more Acme delivery of five lines, in EUR, late.
+  const euro = deliveriesContext()
   euro.purchaseOrders.push(po('PO-EUR', 'Acme', 'issued', ['E1', 'E2', 'E3', 'E4', 'E5'].map(id => promiseLine(id)), { supplierId: 'SUP-ACME', currency: 'EUR' }))
   euro.receipts.push(postedReceipt('GRN-EUR', 'PO-EUR', 'Acme', '2026-09-28T15:00:00.000Z', ['E1', 'E2', 'E3', 'E4', 'E5']))
   const euroScorecard = buildSupplierScorecard({ purchaseOrders: euro.purchaseOrders, receipts: euro.receipts.filter(row => row.postingStatus === 'posted'), ...scorecardParameters({}, '2026-10-05'), asOfDay: '2026-10-05', timeZone: 'America/New_York' })
@@ -202,7 +252,7 @@ test('the supplier dashboard and the scorecard measure the same lines for the sa
     assert.equal(chart(filtered, 'supplier_on_time').data.find(row => row.name === 'Acme').value, rateOf(euroScorecard, 'SUP-ACME'), currency)
     assert.equal(kpi(filtered, 'on_time_receipt_rate').currentValue, overall(euroScorecard), currency)
   }
-  assert.equal(rateOf(euroScorecard, 'SUP-ACME'), 36.4)
+  assert.equal(rateOf(euroScorecard, 'SUP-ACME'), 57.1)
 })
 
 test('on time is not measured from receipts the reader cannot see or that were not all loaded', () => {
@@ -213,7 +263,7 @@ test('on time is not measured from receipts the reader cannot see or that were n
     assert.deepEqual(chart(restricted, id).data, [])
     assert.equal(chart(restricted, id).emptyState, 'Your role cannot view receipts.')
   }
-  assert.ok(!chart(restricted, 'supplier_scorecard').seriesKeys.includes('On-time lines'))
+  assert.ok(!chart(restricted, 'supplier_scorecard').seriesKeys.includes('On-time deliveries'))
 
   // Receipts are read newest first up to a limit: an older receipt left out
   // would make its line late, so the rate is withheld and says why.
@@ -236,9 +286,9 @@ test('the supplier dashboard does not measure on time over a range the scorecard
   }
   // The longest range the scorecard accepts is still measured, and other
   // dashboards keep any range.
-  const longest = buildRuntimeGovernedReport(scorecardContext(), { subject: 'suppliers', filters: { from: '2024-10-05', to: '2026-10-05' } }, asOf)
-  assert.equal(kpi(longest, 'on_time_receipt_rate').currentValue, 75)
-  assert.equal(kpi(buildRuntimeGovernedReport(scorecardContext(), { subject: 'procurement', filters: { from: '2023-01-01', to: '2026-10-05' } }, asOf), 'on_time_receipt_rate').currentValue, 75)
+  const longest = buildRuntimeGovernedReport(deliveriesContext(), { subject: 'suppliers', filters: { from: '2024-10-05', to: '2026-10-05' } }, asOf)
+  assert.equal(kpi(longest, 'on_time_receipt_rate').currentValue, 71.4)
+  assert.equal(kpi(buildRuntimeGovernedReport(deliveriesContext(), { subject: 'procurement', filters: { from: '2023-01-01', to: '2026-10-05' } }, asOf), 'on_time_receipt_rate').currentValue, 71.4)
 })
 
 test('overdue open purchase orders count to the workspace calendar day', () => {
@@ -322,17 +372,21 @@ test('inventory visuals keep each SKU in its own unit and sort short SKUs first'
   assert.deepEqual(chart(unknown, 'inventory_risk_matrix').data, [{ name: 'unknown', unknown: 1 }])
 })
 
-test('the supplier matrix and scorecard use only suppliers with enough promised lines', () => {
-  const report = buildRuntimeGovernedReport(scorecardContext(), { subject: 'suppliers' }, asOf)
+test('the supplier matrix and scorecard use only suppliers with enough deliveries', () => {
+  const report = buildRuntimeGovernedReport(deliveriesContext(), { subject: 'suppliers' }, asOf)
   const matrix = chart(report, 'supplier_performance_matrix')
-  // Bolt has two lines, below the minimum sample, so only Acme is placed.
-  assert.deepEqual(matrix.data, [{ name: 'Acme', 'Committed amount': 600, 'On-time lines': 66.7, 'PO lines': 6, filterValue: 'Acme' }])
-  assert.deepEqual(matrix.guides, { x: 600, y: 66.7 })
+  // Bolt has one delivery, below the minimum sample, so only Acme is placed.
+  assert.deepEqual(matrix.data, [{ name: 'Acme', 'Committed amount': 900, 'On-time deliveries': 66.7, Deliveries: 6, filterValue: 'Acme' }])
+  assert.deepEqual(matrix.guides, { x: 900, y: 66.7 })
   assert.deepEqual(chart(report, 'supplier_on_time').data, [{ name: 'Acme', value: 66.7, filterValue: 'Acme' }])
   assert.equal(kpi(report, 'active_supplier_count').currentValue, 2)
   const scorecard = chart(report, 'supplier_scorecard')
-  assert.deepEqual(scorecard.seriesKeys, ['On-time lines', 'Lines accepted in full', 'Share of spend'])
-  assert.deepEqual(scorecard.data, [{ name: 'Acme', 'On-time lines': 66.7, 'Lines accepted in full': 100, 'Share of spend': 75 }])
+  assert.deepEqual(scorecard.seriesKeys, ['On-time deliveries', 'Lines accepted in full', 'Share of spend'])
+  assert.deepEqual(scorecard.data, [{ name: 'Acme', 'On-time deliveries': 66.7, 'Lines accepted in full': 100, 'Share of spend': 81.8 }])
+  // On one PO the six Acme lines are one delivery: no supplier has enough.
+  const few = buildRuntimeGovernedReport(scorecardContext(), { subject: 'suppliers' }, asOf)
+  assert.deepEqual(chart(few, 'supplier_performance_matrix').data, [])
+  assert.equal(chart(few, 'supplier_on_time').emptyState, 'No supplier has 5 or more deliveries first promised in the selected range.')
 })
 
 test('overdue counts the earliest open line, as the open purchase orders report does', () => {

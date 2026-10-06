@@ -16,7 +16,8 @@ import { SUPPLIER_SCORECARD_READ_PERMISSIONS, createSupplierScorecardReadService
 //                added across currencies;
 //   open/overdue the open purchase orders report;
 //   on time      the supplier scorecard against the original promise, 90 days,
-//                no rate under its minimum sample;
+//                counted in deliveries (one PO, one promised date), no rate
+//                under its minimum sample of 5 deliveries;
 //   open issues  the assistant's signals (overdue orders, rejected or unposted
 //                receipts, invoice variances), read through its masked facts.
 // Each is computed with the reader's own access and is null when the reader
@@ -164,7 +165,7 @@ export function buildSupplierInsights({ suppliers = [], totals = new Map(), open
       orders12m: visibility.orders ? total?.orders || 0 : null,
       openPos: visibility.orders ? open.get(supplier.id)?.open || 0 : null,
       overduePos: visibility.orders ? open.get(supplier.id)?.overdue || 0 : null,
-      onTime: visibility.onTime ? { rate: score?.metrics?.onTime?.rate ?? null, count: score?.metrics?.onTime?.count ?? 0, of: score?.metrics?.onTime?.of ?? 0, sampleStatus: score?.sampleStatus || 'no_lines' } : null,
+      onTime: visibility.onTime ? { rate: score?.metrics?.onTime?.rate ?? null, count: score?.metrics?.onTime?.count ?? 0, of: score?.metrics?.onTime?.of ?? 0, sampleStatus: score?.sampleStatus || 'no_obligations' } : null,
       openIssues: visibility.issues ? issues.get(supplier.id) || 0 : null,
       suggestion: suggestions.get(supplier.id) || null,
     }]

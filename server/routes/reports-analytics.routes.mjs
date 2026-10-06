@@ -55,7 +55,7 @@ async function routeReports(ctx) {
     }
     return true
   }
-  // Overdue counts use the workspace's calendar day. On-time lines count the
+  // Overdue counts use the workspace's calendar day. On-time deliveries count the
   // receipts in the reader's warehouses, as the supplier scorecard does.
   const reportOptions = async (allocationContext, warehouseIds) => ({ now: ctx.reportNow || new Date(), timeZone: await readTenantTimezone(ctx), allocationContext, warehouseIds })
 
