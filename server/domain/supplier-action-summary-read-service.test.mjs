@@ -110,6 +110,66 @@ test('rejected quantities are kept per SKU and unit, never added together', () =
   assert.deepEqual(item.priority.reasons, [{ code: 'receiving_exception', since: '2026-07-12', count: 2 }])
 })
 
+test('date-only fields keep their own day in a US workspace timezone', () => {
+  // An invoice dated Jul 1 and a payable due Jul 10 are stored at 00:00 UTC.
+  // Read in New York time they would move to Jun 30 and Jul 9.
+  const aInvoice = invoice('a', 'a', { matchStatus: 'exception', invoiceDate: new Date('2026-07-01T00:00:00.000Z') })
+  const line = { orderedQuantity: 10, receivedQuantity: 0, metadata: { promisedDate: '2026-06-30' } }
+  const result = buildSupplierActionSummaries({
+    actor,
+    now: new Date('2026-07-24T16:00:00.000Z'),
+    timeZone: 'America/New_York',
+    records: {
+      suppliers: [supplier('a'), supplier('b')],
+      invoices: [aInvoice], payables: [payable('pay-a', 'a', aInvoice, { dueDate: new Date('2026-07-10T00:00:00.000Z') })], settlements: [], receiving: [], rfqs: [], bankExceptions: [],
+      purchaseOrders: [{ tenantId: 't1', id: 'PO-B', supplierId: 'b', status: 'issued', currency: 'CNY', expectedDate: new Date('2026-06-30T12:00:00.000Z'), lines: [line] }],
+    },
+  })
+  const a = result.items.find((row) => row.supplier.id === 'a')
+  assert.deepEqual(a.priority.reasons.map((row) => [row.code, row.since]), [['invoice_exception', '2026-07-01'], ['payment_blocked', '2026-07-01'], ['payment_overdue', '2026-07-10']])
+  // B's order was promised Jun 30, before A's invoice: B comes first.
+  assert.deepEqual(result.items.map((row) => [row.supplier.id, row.priority.since]), [['b', '2026-06-30'], ['a', '2026-07-01']])
+})
+
+test('a blocked payment is dated by when the block began, never by a due date still ahead', () => {
+  const now = new Date('2026-10-06T12:00:00.000Z')
+  const held = invoice('h', 'a')
+  const disputed = invoice('d', 'b', { status: 'disputed', disputedAt: new Date('2026-09-20T15:00:00.000Z'), invoiceDate: new Date('2026-09-01T00:00:00.000Z') })
+  const result = buildSupplierActionSummaries({
+    actor, now,
+    records: {
+      suppliers: [supplier('a'), supplier('b'), supplier('c')], settlements: [], purchaseOrders: [], receiving: [], rfqs: [], bankExceptions: [],
+      invoices: [held, disputed, invoice('n', 'c')],
+      payables: [
+        payable('pay-held', 'a', held, { status: 'held', heldAt: new Date('2026-09-28T14:00:00.000Z'), dueDate: new Date('2026-11-15T00:00:00.000Z') }),
+        payable('pay-disputed', 'b', disputed, { dueDate: new Date('2026-11-01T00:00:00.000Z') }),
+        // Held with no hold time or entry date recorded: the block has no date.
+        { ...payable('pay-undated', 'c', invoice('n', 'c'), { status: 'held', dueDate: new Date('2026-12-01T00:00:00.000Z') }) },
+      ],
+    },
+  })
+  const since = (id) => result.items.find((row) => row.supplier.id === id).priority.reasons.find((row) => row.code === 'payment_blocked').since
+  assert.equal(since('a'), '2026-09-28')
+  assert.equal(since('b'), '2026-09-20')
+  assert.equal(since('c'), null)
+  for (const row of result.items) assert.ok(!row.priority.since || row.priority.since <= '2026-10-06', `${row.supplier.id} since ${row.priority.since}`)
+})
+
+test('rejected lines without a SKU or unit are listed one by one, never added together', () => {
+  const result = buildSupplierActionSummaries({
+    actor,
+    now: new Date('2026-07-24T12:00:00.000Z'),
+    records: { suppliers: [supplier('a')], invoices: [], payables: [], settlements: [], purchaseOrders: [], rfqs: [], bankExceptions: [], receiving: [
+      { tenantId: 't1', id: 'GRN-1', supplierId: 'a', poId: 'PO-A', documentNumber: 'GRN-1', status: 'posted', arrivedAt: '2026-07-15T09:00:00.000Z', lines: [{ id: 'l1', sku: null, unit: null, rejectedQty: 2 }, { id: 'l2', rejectedQty: 3 }, { id: 'l3', sku: 'BOLT', unit: 'pcs', rejectedQty: 1 }] },
+    ] },
+  })
+  assert.deepEqual(result.items[0].receiving.rejectedQuantities, [
+    { sku: null, unit: null, quantity: 2 },
+    { sku: null, unit: null, quantity: 3 },
+    { sku: 'BOLT', unit: 'pcs', quantity: 1 },
+  ])
+})
+
 test('mixed currencies never produce a combined payable amount', () => {
   const cny = invoice('cny', 'a')
   const usd = invoice('usd', 'a', { currency: 'USD' })

@@ -1,4 +1,4 @@
-import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
+import { isOpenPurchaseOrder, reportCalendarDay } from './open-purchase-order.mjs'
 import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs'
 import { can } from '../auth/authorization-service.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
@@ -30,7 +30,8 @@ const date = (value) => { const parsed = value instanceof Date ? value : new Dat
 const unique = (items) => [...new Set(items.filter(Boolean))]
 const permission = (actor, code) => Boolean(actor?.permissionCodes?.has(code))
 const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ''))
-// The calendar day of a record's date, in the workspace timezone when known.
+// The calendar day of an instant (an arrival, a hold, a detection, a creation
+// time), in the workspace timezone when known.
 function dayOf(value, timeZone) {
   if (isDay(value)) return value
   const parsed = value ? date(value) : null
@@ -40,6 +41,11 @@ function dayOf(value, timeZone) {
   }
   return parsed.toISOString().slice(0, 10)
 }
+// A date-only field (a payable's due date, an invoice date) is stored at 00:00
+// UTC and is its own calendar day: it is never moved by the workspace
+// timezone, which would put it a day earlier in US timezones (see
+// tenant-calendar-day.mjs), as the open purchase orders report reads it.
+const calendarDay = (value) => reportCalendarDay(serial(value)) || null
 const earliestDay = (days) => days.filter(isDay).sort()[0] || null
 // Dated before undated; earlier dates first.
 const compareDays = (left, right) => left && right ? (left < right ? -1 : left > right ? 1 : 0) : left ? -1 : right ? 1 : 0
@@ -86,6 +92,25 @@ function payableSupplierId(row) {
   return text(row?.supplierId || row?.supplierInvoice?.supplierId)
 }
 
+const INVOICE_BLOCKS = new Set(['three_way_match_difference', 'supplier_mismatch', 'currency_mismatch', 'missing_receiving_evidence'])
+
+// The day a payable's block began: a hold from when it was held, a dispute
+// from when it was disputed, an invoice problem from the invoice date, any
+// other block from the day the payable was entered. Never its due date, which
+// may still be ahead, and never after today.
+function blockedSinceFor(payable, reasons, records, timeZone, today) {
+  const invoice = payable.supplierInvoice || records.invoices.find((row) => row.id === payable.supplierInvoiceId)
+  const days = reasons.map((reason) => {
+    const day = reason === 'payment_hold' ? earliestDay([dayOf(payable.heldAt, timeZone), dayOf(invoice?.heldAt, timeZone)])
+      : reason === 'invoice_disputed' ? dayOf(invoice?.disputedAt, timeZone) || calendarDay(invoice?.invoiceDate)
+        : INVOICE_BLOCKS.has(reason) ? calendarDay(invoice?.invoiceDate)
+          : null
+    return day || dayOf(payable.createdAt, timeZone)
+  })
+  const day = earliestDay(days)
+  return day && today && day > today ? today : day
+}
+
 function blockReasonsForPayable(payable, records) {
   const reasons = new Set()
   const invoice = payable.supplierInvoice || records.invoices.find((row) => row.id === payable.supplierInvoiceId)
@@ -108,13 +133,15 @@ function blockReasonsForPayable(payable, records) {
 
 // Why a supplier needs attention and since when, with no score or weight
 // (owner decision 2026-10-03). Each reason is dated by its oldest open record:
-//   payment_overdue / payment_blocked   the payable's due date
+//   payment_overdue                     the payable's due date
+//   payment_blocked                     the day the block began (blockedSinceFor)
 //   purchase_order_overdue              the date promised on the report
 //   invoice_exception                   the invoice date
 //   receiving_exception                 the arrival, else the day it was entered
 //   bank_reconciliation_exception       the day it was detected
 //   data_incomplete                     no date
 // `since` is the oldest of those dates. Reasons are listed oldest first.
+// dateOf returns a calendar day, or an instant read in the workspace timezone.
 export function supplierAttentionFor(groups, timeZone) {
   const reasons = []
   for (const [code, rows, dateOf] of groups) {
@@ -195,6 +222,7 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
     }
     const scopedPayables = windowPayables.filter(matchesDueState)
     const blocks = scopedPayables.flatMap((payable) => blockReasonsForPayable(payable, safeRecords).map((reason) => ({ payableId: payable.id, reason, supplierId: id })))
+    const blockedSince = new Map(scopedPayables.map((payable) => [payable.id, blockedSinceFor(payable, blocks.filter((row) => row.payableId === payable.id).map((row) => row.reason), safeRecords, timeZone, dayOf(current, timeZone))]))
     const blockedIds = new Set(blocks.map((row) => row.payableId))
     const ready = scopedPayables.filter((row) => !blockedIds.has(row.id))
     const overdue = scopedPayables.filter((row) => isOverdue(row.dueDate, current))
@@ -218,12 +246,16 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
       return ordered > receivedQty
     })
     const receivingExceptions = receiving.filter((row) => /exception|reject|异常|拒收/.test(text(row.status).toLowerCase()) || array(row.lines).some((line) => (decimal(line.rejectedQty) || 0) > 0))
-    // Rejected quantities per SKU and unit, never one total across them.
+    // Rejected quantities per SKU and unit, never one total across them. A
+    // line without its SKU or unit stays on its own: it may be another item
+    // or unit than the next such line.
     const rejectedBySkuUnit = new Map()
-    for (const line of receivingExceptions.flatMap((row) => array(row.lines))) {
+    for (const [receiptIndex, row] of receivingExceptions.entries()) for (const [lineIndex, line] of array(row.lines).entries()) {
       const quantity = decimal(line.rejectedQty) || 0
       if (quantity <= 0) continue
-      const key = JSON.stringify([text(line.sku) || null, text(line.unit) || null])
+      const sku = text(line.sku) || null
+      const unit = text(line.unit) || null
+      const key = JSON.stringify(sku && unit ? [sku, unit] : [sku, unit, text(line.id) || `${text(row.id) || receiptIndex}:${lineIndex}`])
       rejectedBySkuUnit.set(key, (rejectedBySkuUnit.get(key) || 0) + quantity)
     }
     const rejectedQuantities = [...rejectedBySkuUnit.entries()].map(([key, quantity]) => { const [sku, unit] = JSON.parse(key); return { sku, unit, quantity } })
@@ -308,10 +340,10 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
     const invoiceExceptions = [...new Set([...mismatchInvoices, ...disputedInvoices])]
     const blockingBank = bankExceptions.filter((row) => ['open', 'acknowledged'].includes(text(row.status).toLowerCase()) && text(row.severity).toLowerCase() === 'blocking')
     result.priority = supplierAttentionFor([
-      ['payment_overdue', shown('payables') ? overdue : [], (row) => row.dueDate],
-      ['payment_blocked', shown('payables') ? blockedPayables : [], (row) => row.dueDate],
-      ['purchase_order_overdue', shown('purchaseOrders') ? overdueReportRows : [], (row) => row.dueDate],
-      ['invoice_exception', shown('invoices') ? invoiceExceptions : [], (row) => row.invoiceDate],
+      ['payment_overdue', shown('payables') ? overdue : [], (row) => calendarDay(row.dueDate)],
+      ['payment_blocked', shown('payables') ? blockedPayables : [], (row) => blockedSince.get(row.id)],
+      ['purchase_order_overdue', shown('purchaseOrders') ? overdueReportRows : [], (row) => calendarDay(row.dueDate)],
+      ['invoice_exception', shown('invoices') ? invoiceExceptions : [], (row) => calendarDay(row.invoiceDate)],
       ['receiving_exception', shown('receiving') ? receivingExceptions : [], (row) => row.arrivedAt || row.createdAt],
       ['bank_reconciliation_exception', shown('bankReconciliation') ? blockingBank : [], (row) => row.detectedAt || row.createdAt],
       ['data_incomplete', incompleteRecords, () => null],
