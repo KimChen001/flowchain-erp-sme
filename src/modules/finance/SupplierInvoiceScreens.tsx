@@ -15,7 +15,7 @@ import { PaymentRecords } from "./PaymentRecords";
 // the server's plan first and confirms exactly that operation; the server
 // checks permissions, versions and the three-way rules.
 
-type Issue = { code?: string; message?: string };
+type Issue = { code?: string; message?: string; details?: unknown };
 type Plan = { allowed: boolean; blockingIssues?: Issue[]; invoice?: { totalAmount?: string; currency?: string }; nextStatus?: string };
 type EntryData = {
   suppliers: Array<{ id: string; code?: string | null; name: string }>;
@@ -315,10 +315,14 @@ function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: numb
 
 // ------------------------------------------------------- duplicate checks
 
-type DuplicateBill = { id: string; invoiceNumber: string; invoiceDate: string | null; totalAmount: string | null; currency: string; status: string };
+type DuplicateBill = { id: string; invoiceNumber: string; invoiceDate: string | null; totalAmount: string | null; currency: string; status: string; version?: number | null };
 type DuplicateReview = { id: string; otherInvoiceId: string; otherInvoice: DuplicateBill | null; kind: "likely" | "possible"; reason: string; dismissedByName: string; dismissedAt: string; stale: boolean };
-type DuplicateFlag = { kind: "likely" | "possible"; otherInvoiceId: string; otherInvoice: DuplicateBill | null; daysApart: number | null; windowDays: number; status: "open" | "dismissed"; dismissal: DuplicateReview | null };
+type DuplicateFlag = { kind: "likely" | "possible"; otherInvoiceId: string; otherInvoice: DuplicateBill | null; daysApart: number | null; windowDays: number; status: "open" | "dismissed" | "closed"; dismissal: DuplicateReview | null; otherSideDismissal?: DuplicateReview | null };
 type DuplicateChecksData = { windowDays: number; notChecked: string[]; possibleHidden: boolean; openCount: number; flags: DuplicateFlag[]; reviews: DuplicateReview[] };
+type DuplicateIssueFlag = Pick<DuplicateFlag, "kind" | "otherInvoiceId" | "otherInvoice" | "daysApart">;
+type Translate = ReturnType<typeof useI18n>["t"];
+
+const DUPLICATE_REASON_MAX = 500;
 
 // A bill date is a calendar date (YYYY-MM-DD), shown as entered with no
 // timezone shift.
@@ -327,11 +331,55 @@ const billDate = (value: string | null | undefined, locale: string) =>
     ? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(`${value}T00:00:00.000Z`))
     : value || "—";
 
+const duplicateFlagLabel = (flag: Pick<DuplicateFlag, "kind" | "daysApart">, t: Translate) =>
+  flag.kind === "likely" ? t("finance.duplicates.likely")
+    : flag.daysApart === 0 ? t("finance.duplicates.possibleSameDay")
+    : flag.daysApart === 1 ? t("finance.duplicates.possibleOneDay")
+    : t("finance.duplicates.possibleDays", { days: flag.daysApart ?? "—" });
+
+// The other bill as the approver reads it: number (a link), date, amount and
+// status. The amount is blank for a reader who cannot see amounts.
+function DuplicateOtherBill({ other, id }: { other: DuplicateBill | null; id: string }) {
+  const { locale } = useI18n();
+  if (!other) return <span>{id}</span>;
+  return <><a className="font-medium text-blue-600 hover:underline" href={`/app/procurement/bills/${encodeURIComponent(other.id)}`}>{other.invoiceNumber}</a>{" · "}{billDate(other.invoiceDate, locale)}{" · "}{money(other.totalAmount, other.currency, locale)}{" "}<StatusChip status={other.status} /></>;
+}
+
+// The translated text of the duplicate issues the server returns.
+const duplicateIssueText = (t: Translate) => (code: string | undefined) =>
+  code === "DUPLICATE_REVIEW_REQUIRED" ? t("finance.duplicates.reviewRequired")
+    : code === "DUPLICATE_REVIEW_HIDDEN" ? t("finance.duplicates.reviewHidden")
+    : code === "DUPLICATE_FLAG_NOT_FOUND" ? t("finance.duplicates.flagNotFound")
+    : code === "DUPLICATE_FLAG_CHANGED" ? t("finance.duplicates.flagChanged")
+    : code === "DUPLICATE_DISMISS_REASON_REQUIRED" ? t("finance.duplicates.reasonRequired")
+    : code === "DUPLICATE_DISMISS_REASON_TOO_LONG" ? t("finance.duplicates.reasonTooLong", { max: DUPLICATE_REASON_MAX })
+    : undefined;
+
+// At the approval step: each open flag the approver can see, with the other
+// bill, so they need not look for it on the page.
+function DuplicateApprovalDetail({ issue }: { issue: Issue }) {
+  const { t } = useI18n();
+  if (issue.code !== "DUPLICATE_REVIEW_REQUIRED") return null;
+  const flags = (issue.details as { flags?: DuplicateIssueFlag[] } | undefined)?.flags || [];
+  if (!flags.length) return null;
+  return (
+    <ul className="space-y-1 text-sm" data-testid="invoice-approve-duplicates">
+      {flags.map((flag) => (
+        <li key={`${flag.kind}-${flag.otherInvoiceId}`} className="flex flex-wrap items-center gap-1 rounded-lg bg-amber-50 p-2" data-testid="invoice-approve-duplicate" data-kind={flag.kind}>
+          <span className="font-medium">{duplicateFlagLabel(flag, t)}</span>
+          {" · "}{t("finance.duplicates.otherBill")}: <DuplicateOtherBill other={flag.otherInvoice} id={flag.otherInvoiceId} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 // Another bill of the same supplier that may be the same invoice (plan item
 // C1): the same number once format is set aside, or the same amount in the
 // same currency within the printed number of days. The approver dismisses a
-// flag with a reason or cancels this bill; nothing is held on its own.
-function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { id: string; version: number }; checks: DuplicateChecksData; canDismiss: boolean; onDone: () => void }) {
+// flag with a reason or cancels this bill; nothing is held on its own. Once
+// this bill is approved or cancelled its flags are shown for information.
+function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { id: string; version: number; invoiceNumber?: string }; checks: DuplicateChecksData; canDismiss: boolean; onDone: () => void }) {
   const { t, locale } = useI18n();
   const base = `/api/finance/supplier-invoices/${encodeURIComponent(invoice.id)}`;
   const notCheckedText: Record<string, string> = {
@@ -340,19 +388,21 @@ function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { i
     no_number: t("finance.duplicates.noNumber"),
     no_amount: t("finance.duplicates.noAmount"),
   };
-  const flagLabel = (flag: DuplicateFlag) =>
-    flag.kind === "likely" ? t("finance.duplicates.likely")
-      : flag.daysApart === 0 ? t("finance.duplicates.possibleSameDay")
-      : flag.daysApart === 1 ? t("finance.duplicates.possibleOneDay")
-      : t("finance.duplicates.possibleDays", { days: flag.daysApart ?? "—" });
-  const otherBill = (other: DuplicateBill | null, id: string) => other
-    ? <><a className="font-medium text-blue-600 hover:underline" href={`/app/procurement/bills/${encodeURIComponent(other.id)}`}>{other.invoiceNumber}</a>{" · "}{billDate(other.invoiceDate, locale)}{" · "}{money(other.totalAmount, other.currency, locale)}{" "}<StatusChip status={other.status} /></>
-    : <span>{id}</span>;
   const dismissedText = (review: DuplicateReview) => t("finance.duplicates.dismissed", { name: review.dismissedByName, date: formatDateTimeInTimeZone(review.dismissedAt, locale), reason: review.reason });
+  const otherSideText = (review: DuplicateReview) => t("finance.duplicates.otherSideDismissed", { name: review.dismissedByName, date: formatDateTimeInTimeZone(review.dismissedAt, locale), reason: review.reason });
+  const baseIssueText = duplicateIssueText(t);
   const issueText = (code: string | undefined) =>
-    code === "DUPLICATE_FLAG_NOT_FOUND" ? t("finance.duplicates.flagNotFound")
-      : code === "DUPLICATE_DISMISS_REASON_REQUIRED" ? t("finance.duplicates.reasonRequired")
-      : undefined;
+    code === "SUPPLIER_INVOICE_STATUS_INVALID" ? t("finance.duplicates.pastApproval")
+      : code === "FINANCE_VALIDATION_FAILED" ? t("finance.duplicates.nameFlag")
+      : baseIssueText(code);
+  const statusText = (flag: DuplicateFlag) =>
+    flag.status === "open" ? t("finance.status.open")
+      : flag.status === "dismissed" ? t("finance.duplicates.statusDismissed")
+      : t("finance.duplicates.statusClosed");
+  // "None" is said only of the checks that were run and are shown.
+  const numberChecked = !checks.notChecked.includes("no_number");
+  const amountChecked = !checks.possibleHidden && !checks.notChecked.some((code) => code === "no_date" || code === "no_amount");
+  const showNone = !checks.flags.length && !checks.notChecked.includes("no_supplier");
   const stale = checks.reviews.filter((review) => review.stale);
   return (
     <Card className="space-y-3 p-5" data-testid="supplier-invoice-duplicates">
@@ -362,15 +412,18 @@ function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { i
       </div>
       {checks.notChecked.map((code) => <p key={code} className="text-xs text-amber-700" data-testid={`duplicate-not-checked-${code}`}>{notCheckedText[code] || code}</p>)}
       {checks.possibleHidden && <p className="text-xs text-slate-500" data-testid="duplicate-amount-hidden">{t("finance.duplicates.amountHidden")}</p>}
-      {!checks.flags.length && !checks.notChecked.includes("no_supplier") && <p className="text-sm text-slate-500" data-testid="duplicate-none">{t("finance.duplicates.none", { days: checks.windowDays })}</p>}
+      {showNone && numberChecked && <p className="text-sm text-slate-500" data-testid="duplicate-none-number">{t("finance.duplicates.noneNumber")}</p>}
+      {showNone && amountChecked && <p className="text-sm text-slate-500" data-testid="duplicate-none-amount">{t("finance.duplicates.noneAmount", { days: checks.windowDays })}</p>}
       {checks.flags.map((flag) => (
         <div key={`${flag.kind}-${flag.otherInvoiceId}`} className={`space-y-2 rounded-xl p-3 text-sm ${flag.status === "open" ? "border border-amber-200 bg-amber-50" : "bg-slate-50"}`} data-testid="duplicate-flag" data-kind={flag.kind} data-status={flag.status}>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-medium">{flagLabel(flag)}</span>
-            <span className="text-xs text-slate-600">{flag.status === "open" ? t("finance.status.open") : t("finance.duplicates.statusDismissed")}</span>
+            <span className="font-medium">{duplicateFlagLabel(flag, t)}</span>
+            <span className="text-xs text-slate-600" data-testid="duplicate-flag-status">{statusText(flag)}</span>
           </div>
-          <div className="flex flex-wrap items-center gap-1 text-slate-600">{t("finance.duplicates.otherBill")}: {otherBill(flag.otherInvoice, flag.otherInvoiceId)}</div>
+          {flag.kind === "likely" && invoice.invoiceNumber && <div className="text-slate-600">{t("finance.duplicates.thisBill")}: <span className="font-medium">{invoice.invoiceNumber}</span></div>}
+          <div className="flex flex-wrap items-center gap-1 text-slate-600">{t("finance.duplicates.otherBill")}: <DuplicateOtherBill other={flag.otherInvoice} id={flag.otherInvoiceId} /></div>
           {flag.dismissal && <div className="text-xs text-slate-600" data-testid="duplicate-dismissal">{dismissedText(flag.dismissal)}</div>}
+          {flag.otherSideDismissal && <div className="text-xs text-slate-600" data-testid="duplicate-other-side-dismissal">{otherSideText(flag.otherSideDismissal)}</div>}
           {flag.status === "open" && canDismiss && (
             <div className="flex flex-wrap gap-2">
               <TwoStepAction
@@ -379,8 +432,9 @@ function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { i
                 tone="secondary"
                 previewUrl={`${base}/duplicate-dismiss-preview`}
                 runUrl={`${base}/duplicate-dismiss`}
-                payload={() => ({ expectedVersion: invoice.version, otherInvoiceId: flag.otherInvoiceId, kind: flag.kind })}
+                payload={() => ({ expectedVersion: invoice.version, otherInvoiceId: flag.otherInvoiceId, otherVersion: flag.otherInvoice?.version, kind: flag.kind })}
                 reasonLabel={t("finance.duplicates.dismissReason")}
+                reasonMaxLength={DUPLICATE_REASON_MAX}
                 issueText={issueText}
                 onDone={onDone}
               />
@@ -393,7 +447,7 @@ function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { i
           <h4 className="text-xs font-semibold text-slate-500">{t("finance.duplicates.history")}</h4>
           {stale.map((review) => (
             <div key={review.id} className="rounded-lg bg-slate-50 p-2 text-xs text-slate-500" data-testid="duplicate-stale-review">
-              <div>{review.kind === "likely" ? t("finance.duplicates.likely") : t("finance.duplicates.possible")} · {otherBill(review.otherInvoice, review.otherInvoiceId)}</div>
+              <div>{review.kind === "likely" ? t("finance.duplicates.likely") : t("finance.duplicates.possible")} · <DuplicateOtherBill other={review.otherInvoice} id={review.otherInvoiceId} /></div>
               <div>{dismissedText(review)}</div>
               <div className="font-medium">{t("finance.duplicates.stale")}</div>
             </div>
@@ -478,7 +532,7 @@ export function SupplierInvoiceDetail() {
         <div className="mt-4 flex flex-wrap gap-2" data-testid="supplier-invoice-actions">
           {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="invoice-submit" previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={() => version} onDone={load} />}
           {actions.includes("match") && <TwoStepAction label={t("finance.action.match")} testId="invoice-match" previewUrl={`${base}/match-preview`} runUrl={`${base}/match`} payload={() => version} onDone={load} />}
-          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="invoice-approve" previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={() => version} issueText={(code) => (code === "DUPLICATE_REVIEW_REQUIRED" ? t("finance.duplicates.reviewRequired") : undefined)} onDone={load} />}
+          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="invoice-approve" previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={() => version} issueText={duplicateIssueText(t)} issueDetail={(issue) => <DuplicateApprovalDetail issue={issue} />} onDone={load} />}
           {actions.includes("cancel") && <TwoStepAction label={t("finance.action.cancel")} testId="invoice-cancel" tone="secondary" previewUrl={`${base}/cancel-preview`} runUrl={`${base}/cancel`} payload={() => version} reasonLabel={t("finance.cancelReason")} onDone={load} />}
           {!actions.filter((action) => !["link_receipt", "revise", "dismiss_duplicate"].includes(action)).length && <span className="text-xs text-slate-500">{t("finance.noActions")}</span>}
         </div>

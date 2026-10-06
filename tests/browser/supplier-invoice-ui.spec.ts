@@ -82,7 +82,8 @@ test("a second bill numbered as a format variant is flagged, dismissed with a re
   const original = page.url().split("/").at(-1);
   await enterInvoice(page, "ui dup 7", "1");
   const checks = page.getByTestId("supplier-invoice-duplicates");
-  await expect(checks).toContainText(/Likely duplicate: same invoice number|疑似重复：发票号相同/);
+  await expect(checks).toContainText(/Likely duplicate: same invoice number|疑似重复：.*发票号相同/);
+  await expect(checks).toContainText("ui dup 7");
   await expect(checks).toContainText("UI-DUP-007");
   await expect(checks.getByRole("link", { name: "UI-DUP-007" })).toHaveAttribute("href", `/app/procurement/bills/${original}`);
   await expect(page.getByTestId("duplicate-window")).toContainText("7");
@@ -94,6 +95,9 @@ test("a second bill numbered as a format variant is flagged, dismissed with a re
   await page.getByTestId("invoice-approve-preview").click();
   await expect(page.getByTestId("invoice-approve-panel")).toContainText(/Dismiss each open duplicate flag with a reason|批准前请逐条填写原因排除重复标记/);
   await expect(page.getByTestId("invoice-approve-confirm")).toBeDisabled();
+  // The flag is listed at the approval step with the other bill.
+  await expect(page.getByTestId("invoice-approve-duplicate")).toHaveAttribute("data-kind", "likely");
+  await expect(page.getByTestId("invoice-approve-duplicates").getByRole("link", { name: "UI-DUP-007" })).toHaveAttribute("href", `/app/procurement/bills/${original}`);
   await page.getByTestId("invoice-approve-panel").getByRole("button", { name: /^(Close|关闭)$/ }).click();
 
   // A reason is required; the dismissal shows who and why.
