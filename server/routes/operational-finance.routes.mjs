@@ -419,6 +419,17 @@ export async function handleOperationalFinanceRoute(ctx) {
         );
         return true;
       }
+      if (ctx.req.method === "POST" && (action === "link-receipt-preview" || action === "link-receipt")) {
+        if (!ensureCapability(ctx, "supplier-invoice")) return true;
+        ctx.send(
+          ctx.res,
+          200,
+          action === "link-receipt-preview"
+            ? await command.previewLinkReceipt(invoiceId, body, ctx)
+            : await command.linkReceipt(invoiceId, body, ctx),
+        );
+        return true;
+      }
       if (ctx.req.method === "POST" && action === "submit-preview") {
         if (!ensureCapability(ctx, "supplier-invoice")) return true;
         ctx.send(

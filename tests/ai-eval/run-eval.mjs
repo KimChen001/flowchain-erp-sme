@@ -23,8 +23,8 @@
 //
 // Writes ai-eval-report.json (default: <os tmpdir>/flowchain-ai-eval/) and a
 // table to stdout. Exit codes: 0 pass; 1 a safety check failed (or the run
-// itself failed); 2 a usage or environment problem, or the run crossed UTC
-// midnight and must be rerun; 3 the quality gate failed (a regression against
+// itself failed); 2 a usage or environment problem, or the run crossed
+// midnight in the workspace timezone and must be rerun; 3 the quality gate failed (a regression against
 // baseline.json, no baseline.json under CI, or a refused --update-baseline).
 // Cases marked `pending` are scored and reported but never change the exit code.
 import './offline-guard.mjs'
@@ -40,6 +40,7 @@ import { promisify } from 'node:util'
 import { isDeepStrictEqual } from 'node:util'
 import EmbeddedPostgres from 'embedded-postgres'
 import { AI_ANSWER_ACTION_CLAIMS } from '../../server/domain/ai-answer-claims.mjs'
+import { tenantCalendarDay } from '../../server/domain/tenant-calendar-day.mjs'
 import { OFFLINE_GUARD_MARKER } from './offline-guard.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -123,7 +124,9 @@ const percentile = (values, p) => {
   const sorted = [...values].sort((a, b) => a - b)
   return Math.round(sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)])
 }
-const utcDay = (instant) => instant.toISOString().slice(0, 10)
+// The workspace's calendar day, the day the server counts "today" and
+// "overdue" in (tenant-calendar-day.mjs).
+const workspaceDay = (instant) => tenantCalendarDay(instant, TIME_ZONE)
 const money2 = (value) => Math.round(value * 100) / 100
 
 // JSON with sorted object keys, so a fingerprint does not depend on key order.
@@ -272,11 +275,13 @@ if (unknownOnly.length) usageError(`--only names unknown case(s): ${unknownOnly.
 const comparedWith = (entry) => [entry.expect?.sameAs, entry.expect?.sameAnswerAs, entry.after].filter(Boolean)
 const selected = only.length ? cases.filter((entry) => only.includes(entry.id) || cases.some((other) => only.includes(other.id) && comparedWith(other).includes(entry.id))) : cases
 const reportPath = resolve(argument('report') || process.env.AI_EVAL_REPORT || join(tmpdir(), 'flowchain-ai-eval', 'ai-eval-report.json'))
-// The as-of day is a UTC calendar day, the same day the expected values and
-// the open purchase orders report use; it defaults to today. Every answer must
-// fall on the run day: the day the run started, which is asOf unless an
-// explicit --as-of names another day. Otherwise the run crossed UTC midnight.
-const startDay = utcDay(new Date())
+// The as-of day is the workspace's calendar day (TIME_ZONE), the same day the
+// server, the expected values and the open purchase orders report count in;
+// it defaults to today. A UTC day would be one ahead in the hours after UTC
+// midnight, when an order due "yesterday" is not yet late. Every answer must fall on
+// the run day: the day the run started, which is asOf unless an explicit
+// --as-of names another day. Otherwise the run crossed midnight.
+const startDay = workspaceDay(new Date())
 const asOf = argument('as-of') || process.env.AI_EVAL_AS_OF || startDay
 if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) usageError(`--as-of must be YYYY-MM-DD, not ${asOf}`)
 const runDay = startDay
@@ -284,7 +289,7 @@ const updateBaseline = flag('update-baseline')
 const allowDrop = new Set(text(argument('allow-drop')).split(',').map(text).filter(Boolean))
 const inCi = Boolean(process.env.CI) && !['false', '0'].includes(String(process.env.CI).toLowerCase())
 if (updateBaseline && only.length) usageError('--update-baseline needs a full run; drop --only.')
-if (updateBaseline && asOf !== startDay) usageError(`--update-baseline needs the walkthrough as of today (UTC ${startDay}), not ${asOf}.`)
+if (updateBaseline && asOf !== startDay) usageError(`--update-baseline needs the walkthrough as of today (${TIME_ZONE} ${startDay}), not ${asOf}.`)
 
 // --provider-env: only the provider settings are taken from the file (never
 // mail, proxy or knowledge settings), and their values are never printed.
@@ -459,9 +464,9 @@ async function loadTruthSources() {
   const kpiAmounts = (report, id) => array(report.kpis.find((row) => row.id === id)?.currencyAmounts).map(({ currencyCode, amount }) => ({ currency: currencyCode, amount }))
   const cache = new Map()
 
-  // The truth for one UTC report day, as the reports state it.
+  // The truth for one workspace day, as the reports state it.
   async function truthFor(now) {
-    const key = now.toISOString().slice(0, 10)
+    const key = workspaceDay(now)
     if (cache.has(key)) return cache.get(key)
     const [overview, finance, inventory] = await Promise.all(['overview', 'finance', 'inventory'].map((subject) => routeJson(handleReportsAnalyticsRoute, reportCtx(TENANT_A), `/api/reports/${subject}`)))
     const open = buildOpenPurchaseOrdersReport(await repositories.procurementRuntime.listForReport({ tenantId: TENANT_A }), { export: 'true' }, now)
@@ -843,10 +848,10 @@ function baselineUpdate(report, previous) {
   const after = new Set(next.mustPass)
   const removed = [...before].filter((id) => !after.has(id)).sort()
   const blockedDrops = removed.filter((id) => !allowDrop.has(id))
-  const today = utcDay(new Date())
+  const today = workspaceDay(new Date())
   const refused = []
   if (report.safetyFailures.length) refused.push(`${report.safetyFailures.length} safety failure(s)`)
-  if (report.asOf !== today) refused.push(`the walkthrough is as of ${report.asOf}, not today (UTC ${today})`)
+  if (report.asOf !== today) refused.push(`the walkthrough is as of ${report.asOf}, not today (${TIME_ZONE} ${today})`)
   if (blockedDrops.length) refused.push(`it would drop mustPass case(s) ${blockedDrops.join(', ')}; pass --allow-drop=${blockedDrops.join(',')} to drop them on purpose`)
   return {
     update: true,
@@ -865,7 +870,7 @@ function printReport(report) {
   const ratio = (value) => (value?.cases ? `${value.passed}/${value.cases}` : '-')
   const { original, new: added, pending } = report.sets
   console.log(`\nFlowChain assistant evaluation: original set: ${original.passed}/${original.cases} (${original.rate}%), new cases: ${added.passed}/${added.cases} (${added.rate}%), pending: ${pending.passed}/${pending.cases} passing`)
-  console.log(`${report.cases.length} cases, walkthrough as of ${report.asOf} (UTC day), commit ${report.commit}`)
+  console.log(`${report.cases.length} cases, walkthrough as of ${report.asOf} (${TIME_ZONE} day), commit ${report.commit}`)
   console.log(row(['Category', 'Original', 'New', 'All', 'Rate'], widths))
   for (const [category, value] of Object.entries(report.categories)) console.log(row([`${category}${SAFETY_CATEGORIES.has(category) ? ' *' : ''}`, ratio(value.original), ratio(value.new), ratio(value), `${value.rate}%`], widths))
   console.log(row(['total', ratio(original), ratio(added), ratio(report.totals), `${report.totals.rate}%`], widths))
@@ -918,7 +923,7 @@ function printReport(report) {
     if (gate.newlyPassing.length) console.log(`  Newly passing (not yet in the baseline): ${gate.newlyPassing.join(', ')}`)
   }
   console.log(`Report: ${report.reportPath}`)
-  if (report.crossedMidnight) console.log('rerun: the run crossed UTC midnight')
+  if (report.crossedMidnight) console.log(`rerun: the run crossed midnight in ${TIME_ZONE}`)
 }
 
 // ---------------------------------------------------------------- run
@@ -968,7 +973,7 @@ try {
     results.set(entry.id, { entry, runs })
   }
 
-  const report = { generatedAt: new Date().toISOString(), asOf: scenario.asOf, asOfBasis: 'UTC day', runDay, crossedMidnight: null, timeZone: TIME_ZONE, commit: '', reportPath, sets: {}, cases: [], categories: {}, totals: {}, scores: {}, safetyFailures: [], pendingSafetyFailures: [], truth: { asOf: initialTruth.asOf, values: initialTruth.values } }
+  const report = { generatedAt: new Date().toISOString(), asOf: scenario.asOf, asOfBasis: `workspace day (${TIME_ZONE})`, runDay, crossedMidnight: null, timeZone: TIME_ZONE, commit: '', reportPath, sets: {}, cases: [], categories: {}, totals: {}, scores: {}, safetyFailures: [], pendingSafetyFailures: [], truth: { asOf: initialTruth.asOf, values: initialTruth.values } }
   try { report.commit = (await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], { cwd: root })).stdout.trim() } catch { report.commit = 'unknown' }
   const allChecks = []
   for (const entry of selected) {
@@ -1036,7 +1041,7 @@ try {
 
   // Every answer must fall on the run day; otherwise the walkthrough and the
   // expected values describe different days for different cases.
-  const answerDays = [...new Set(allRuns.map((run) => utcDay(run.requestedAt)))].sort()
+  const answerDays = [...new Set(allRuns.map((run) => workspaceDay(run.requestedAt)))].sort()
   if (answerDays.some((day) => day !== runDay)) report.crossedMidnight = answerDays
 
   if (report.crossedMidnight) report.gate = { skipped: 'crossed' }
@@ -1055,7 +1060,7 @@ try {
   await mkdir(dirname(reportPath), { recursive: true })
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`)
   printReport(report)
-  // 2: rerun (crossed UTC midnight). 1: a gated safety failure. 3: the quality
+  // 2: rerun (crossed midnight in the workspace timezone). 1: a gated safety failure. 3: the quality
   // gate failed or a baseline update was refused. Pending cases never count.
   const gate = report.gate
   if (report.crossedMidnight) exitCode = 2
