@@ -78,6 +78,20 @@ function Status({ value }: { value: string }) {
 // follows the active language, which can arrive after the request failed.
 type Failure = { reason: unknown; fallback: string };
 
+// A preview or confirm that fails is shown in the preview card with the
+// server's code, so the user sees why instead of the button just resetting.
+function failedPreview(
+  copy: ReturnType<typeof useReturnsCopy>,
+  cause: unknown,
+  fallback: string,
+  code = "ACTION_FAILED",
+) {
+  return {
+    allowed: false,
+    blockingIssues: [{ code: copy.errorCode(cause) || code, message: copy.errorText(cause, fallback), localized: true }],
+  };
+}
+
 function ErrorState({
   failure,
   retry,
@@ -85,10 +99,12 @@ function ErrorState({
   failure: Failure;
   retry?: () => void;
 }) {
-  const { copy, errorText } = useReturnsCopy();
+  const { copy, errorText, errorCode } = useReturnsCopy();
+  const code = errorCode(failure.reason);
   return (
     <Card className="p-8 text-sm text-red-700" data-testid="returns-error">
       <div>{errorText(failure.reason, failure.fallback)}</div>
+      {code ? <div className="text-xs opacity-70">{code}</div> : null}
       {retry ? (
         <button className={`${secondary} mt-4`} onClick={retry}>
           {copy("Retry")}
@@ -286,7 +302,7 @@ function GovernanceList({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">{config.title}</h2>
-          <p className="mt-1 text-xs text-slate-500">{copy("{n} records", { n: data.total })}</p>
+          <p className="mt-1 text-xs text-slate-500">{copy("Records: {n}", { n: data.total })}</p>
         </div>
         {kind === "requests" ? (
           <Link to="/app/inventory/returns/requests/new" className={primary}>
@@ -571,7 +587,8 @@ function useWorkbench(url: string) {
 }
 
 function RequestDetail({ id }: { id: string }) {
-  const { copy, codeLabel, errorText, errorLabel, listSeparator } = useReturnsCopy();
+  const returnsCopy = useReturnsCopy();
+  const { copy, codeLabel, errorLabel, listSeparator } = returnsCopy;
   const { data, error, refresh } = useWorkbench(`/api/returns/requests/${encodeURIComponent(id)}/workbench`);
   const [preview, setPreview] = useState<any>(null);
   const [action, setAction] = useState("");
@@ -602,7 +619,7 @@ function RequestDetail({ id }: { id: string }) {
     try {
       setPreview(await apiJson(`/api/returns/requests/${id}/${suffix}`, json("POST", body)));
     } catch (cause) {
-      setPreview({ allowed: false, blockingIssues: [{ code: "PREVIEW_FAILED", message: errorText(cause, "Could not load the preview"), localized: true }] });
+      setPreview(failedPreview(returnsCopy, cause, "Could not load the preview", "PREVIEW_FAILED"));
     }
   };
   const confirm = async () => {
@@ -627,6 +644,8 @@ function RequestDetail({ id }: { id: string }) {
       await apiJson(`/api/returns/requests/${id}/${action === "authorize" ? "authorize" : action}`, json("POST", body));
       setPreview(null);
       refresh();
+    } catch (cause) {
+      setPreview(failedPreview(returnsCopy, cause, "The action could not be completed"));
     } finally {
       setBusy(false);
     }
@@ -696,7 +715,8 @@ function RelatedAuthorizations({ rows }: { rows: any[] }) {
 }
 
 function AuthorizationDetail({ id }: { id: string }) {
-  const { copy, codeLabel } = useReturnsCopy();
+  const returnsCopy = useReturnsCopy();
+  const { copy, codeLabel } = returnsCopy;
   const navigate = useNavigate();
   const { data, error, refresh } = useWorkbench(`/api/returns/authorizations/${encodeURIComponent(id)}/workbench`);
   const [balances, setBalances] = useState<Record<string, { available: BalanceOption[]; quarantine: BalanceOption[] }>>({});
@@ -731,7 +751,11 @@ function AuthorizationDetail({ id }: { id: string }) {
     };
   });
   const runPreview = async () => {
-    setPreview(await apiJson(`/api/returns/authorizations/${id}/postings/preview`, json("POST", { lines: postingLines })));
+    try {
+      setPreview(await apiJson(`/api/returns/authorizations/${id}/postings/preview`, json("POST", { lines: postingLines })));
+    } catch (cause) {
+      setPreview(failedPreview(returnsCopy, cause, "Could not load the preview", "PREVIEW_FAILED"));
+    }
   };
   const create = async () => {
     setBusy(true);
@@ -743,6 +767,8 @@ function AuthorizationDetail({ id }: { id: string }) {
         idempotencyKey: key("create-return-posting"),
       }));
       navigate(`/app/inventory/returns/postings/${result.entityId}`);
+    } catch (cause) {
+      setPreview(failedPreview(returnsCopy, cause, "The action could not be completed"));
     } finally {
       setBusy(false);
     }
@@ -818,7 +844,8 @@ function BalanceSelect({
 }
 
 function PostingDetail({ id }: { id: string }) {
-  const { copy, codeLabel, linkLabel } = useReturnsCopy();
+  const returnsCopy = useReturnsCopy();
+  const { copy, codeLabel, linkLabel } = returnsCopy;
   const warehouseName = useWarehouseNames();
   const { data, error, refresh } = useWorkbench(`/api/returns/postings/${encodeURIComponent(id)}/workbench`);
   const [preview, setPreview] = useState<any>(null);
@@ -830,7 +857,11 @@ function PostingDetail({ id }: { id: string }) {
   const posting = data.posting;
   const runPreview = async (next: "ready" | "post" | "reverse") => {
     setAction(next);
-    setPreview(await apiJson(`/api/returns/postings/${id}/${next}-preview`, json("POST", {})));
+    try {
+      setPreview(await apiJson(`/api/returns/postings/${id}/${next}-preview`, json("POST", {})));
+    } catch (cause) {
+      setPreview(failedPreview(returnsCopy, cause, "Could not load the preview", "PREVIEW_FAILED"));
+    }
   };
   const confirm = async () => {
     setBusy(true);
@@ -844,6 +875,8 @@ function PostingDetail({ id }: { id: string }) {
       }));
       setPreview(null);
       refresh();
+    } catch (cause) {
+      setPreview(failedPreview(returnsCopy, cause, "The action could not be completed"));
     } finally {
       setBusy(false);
     }
@@ -857,7 +890,7 @@ function PostingDetail({ id }: { id: string }) {
           <div className="mt-2 flex gap-2"><Status value={posting.postingType} /><Status value={posting.workflowStatus} /><Status value={posting.postingStatus} /></div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button className={secondary} disabled={!data.availableActions.ready} onClick={() => runPreview("ready")}>{copy("Preview ready")}</button>
+          <button className={secondary} disabled={!data.availableActions.ready} onClick={() => runPreview("ready")}>{copy("Preview: mark ready to post")}</button>
           <button className={secondary} disabled={!data.availableActions.post} onClick={() => runPreview("post")} data-testid="preview-post-return">{copy("Preview posting")}</button>
           <button className={secondary} disabled={!data.availableActions.reverse} onClick={() => runPreview("reverse")} data-testid="preview-reverse-return">{copy("Preview reversal")}</button>
         </div>
@@ -877,7 +910,7 @@ function PostingDetail({ id }: { id: string }) {
         </table>
       </Card>
       {action === "reverse" ? <input aria-label={copy("Reversal reason")} className={`${field} w-full`} placeholder={copy("Reversal reason (required)")} value={reason} onChange={(event) => setReason(event.target.value)} /> : null}
-      <Preview value={preview} confirm={confirm} confirmLabel={action === "ready" ? copy("Confirm ready") : action === "post" ? copy("Confirm posting") : copy("Confirm reversal")} busy={busy} />
+      <Preview value={preview} confirm={confirm} confirmLabel={action === "ready" ? copy("Confirm ready to post") : action === "post" ? copy("Confirm posting") : copy("Confirm reversal")} busy={busy} />
       <Reconciliation value={data.reconciliation} />
       <Card className="p-5">
         <h3 className="mb-3 font-semibold">{copy("Related records")}</h3>
@@ -889,7 +922,7 @@ function PostingDetail({ id }: { id: string }) {
 }
 
 function Reconciliation({ value }: { value: any }) {
-  const { copy, codeLabel, ruleLabel } = useReturnsCopy();
+  const { copy, codeLabel, ruleLabel, checkValue } = useReturnsCopy();
   return (
     <Card className="p-5" data-testid="return-reconciliation">
       <div className="flex items-center justify-between">
@@ -906,7 +939,7 @@ function Reconciliation({ value }: { value: any }) {
                 <div key={check.rule} className="rounded-lg bg-slate-50 p-3 text-xs">
                   <div className="font-semibold">{ruleLabel(check.rule)} · {codeLabel(check.status)}</div>
                   <div className="mt-1 break-all text-slate-400">{check.rule}</div>
-                  <div className="mt-1 text-slate-500">{copy("Calculated {calculated} / recorded {recorded}", { calculated: check.calculated || "—", recorded: check.recorded || "—" })}</div>
+                  <div className="mt-1 text-slate-500">{copy("Calculated {calculated} / recorded {recorded}", { calculated: checkValue(check.calculated), recorded: checkValue(check.recorded) })}</div>
                 </div>
               ))}
             </div>

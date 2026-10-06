@@ -2,11 +2,14 @@ import { useMemo } from "react";
 import { useI18n } from "../../i18n/I18n";
 import { movementTypeLabel, statusCodeLabel } from "../../i18n/statusLabels";
 import {
+  returnsCheckValueLabels,
   returnsChinese,
   returnsCodeLabels,
   returnsErrorLabels,
+  returnsFieldLabels,
   returnsLinkLabels,
   returnsRuleLabels,
+  returnsServerWordedCodes,
   salesReturnStatusLabels,
 } from "./returnsCopyData";
 
@@ -58,19 +61,30 @@ function ruleLabel(english: boolean, language: string, rule: string): string {
   return rule;
 }
 
-// A known code gets its label in the active language. Otherwise English shows
-// the server message, and Chinese shows the localized fallback with the code.
+// A known code gets its label in the active language. Codes the server sends
+// for several causes keep the server's English message in English, and a
+// "<field> is required." message names the field when it is one the user
+// fills in. Otherwise English shows the server message and Chinese the
+// localized fallback. Callers show the raw code next to this text.
 function codeMessage(english: boolean, code: string, message: string, fallbackKey: string): string {
+  if (english && message && returnsServerWordedCodes.includes(code)) return message;
+  const field = /^(\w+) is required\.$/.exec(message)?.[1];
+  if (field && returnsFieldLabels[field] && /_VALIDATION_FAILED$/.test(code))
+    return translate(english, "Enter the {field}.", { field: pick(returnsFieldLabels[field], english) });
   const pair = code ? returnsErrorLabels[code] : undefined;
   if (pair) return pick(pair, english);
   if (english) return message || fallbackKey;
-  const text = returnsChinese[fallbackKey] ?? fallbackKey;
-  return code ? `${text}（${code}）` : text;
+  return returnsChinese[fallbackKey] ?? fallbackKey;
+}
+
+function errorCode(reason: unknown): string {
+  const code = (reason as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : "";
 }
 
 function errorText(english: boolean, reason: unknown, fallbackKey: string): string {
-  const error = reason as { code?: unknown; message?: unknown } | null;
-  const code = typeof error?.code === "string" ? error.code : "";
+  const error = reason as { message?: unknown } | null;
+  const code = errorCode(reason);
   const message = reason instanceof Error && typeof error?.message === "string" ? error.message : "";
   return codeMessage(english, code, message, fallbackKey);
 }
@@ -87,6 +101,12 @@ export function useReturnsCopy() {
       codeLabel: (code: unknown) => codeLabel(english, language, code),
       ruleLabel: (rule: string) => ruleLabel(english, language, rule),
       errorText: (reason: unknown, fallbackKey: string) => errorText(english, reason, fallbackKey),
+      errorCode,
+      checkValue: (value: unknown) => {
+        const text = String(value ?? "").trim();
+        const pair = returnsCheckValueLabels[text];
+        return pair ? pick(pair, english) : text || "—";
+      },
       errorLabel: (code: string) => {
         const pair = returnsErrorLabels[code];
         return pair ? pick(pair, english) : code;

@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  returnsCheckValueLabels,
   returnsChinese,
   returnsCodeLabels,
   returnsErrorLabels,
+  returnsFieldLabels,
   returnsLinkLabels,
   returnsRuleLabels,
+  returnsServerWordedCodes,
   salesReturnStatusLabels,
 } from "../../src/modules/inventory/returnsCopyData.ts";
 
@@ -51,6 +54,7 @@ test("every returns UI string has a Chinese translation", async () => {
       ...literals(source, /\bcopy\("((?:[^"\\]|\\.)*)"/g),
       ...literals(source, /\b(?:errorText|issueText)\([^()]*(?:\([^()]*\))?[^()]*?,\s*"((?:[^"\\]|\\.)*)"\)/g),
       ...literals(source, /\bfallback: "((?:[^"\\]|\\.)*)"/g),
+      ...literals(source, /\bfailedPreview\([^,]+,\s*[^,]+,\s*"((?:[^"\\]|\\.)*)"/g),
     ];
     assert.ok(keys.length > 0, `${file} has no copy() strings`);
     for (const key of keys) if (!returnsChinese[key]) missing.push(`${file}: ${key}`);
@@ -72,7 +76,15 @@ test("English copy keys are English and Chinese values are filled in", () => {
 });
 
 test("every code label has both languages", () => {
-  const tables = { returnsCodeLabels, returnsRuleLabels, returnsErrorLabels, returnsLinkLabels, salesReturnStatusLabels };
+  const tables = {
+    returnsCodeLabels,
+    returnsRuleLabels,
+    returnsErrorLabels,
+    returnsLinkLabels,
+    salesReturnStatusLabels,
+    returnsCheckValueLabels,
+    returnsFieldLabels,
+  };
   for (const [table, entries] of Object.entries(tables))
     for (const [code, pair] of Object.entries(entries)) {
       assert.equal(pair.length, 2, `${table}.${code}`);
@@ -90,8 +102,25 @@ test("every code the returns API sends has an error label", async () => {
       if (!notUserCodes.has(match[1])) codes.add(match[1]);
   }
   assert.ok(codes.size > 50, `only ${codes.size} codes found; check the extraction`);
+  // The route also passes through role-check and workspace-identity errors.
+  const authorization = await read("server/auth/authorization-service.mjs");
+  const reasons = /AUTHORIZATION_REASON = Object\.freeze\(\{([^}]*)\}/.exec(authorization)?.[1] || "";
+  const identity = await read("server/domain/pilot-identity.mjs");
+  const passedThrough = [
+    ...[...reasons.matchAll(/"([A-Z_]+)"/g)].map((match) => match[1]),
+    ...[...identity.matchAll(/fail\('([A-Z_]+)'/g)].map((match) => match[1]),
+  ];
+  assert.ok(passedThrough.length >= 10, `only ${passedThrough.length} role and identity codes found`);
+  for (const code of passedThrough) codes.add(code);
   const missing = [...codes].filter((code) => !returnsErrorLabels[code]).sort();
   assert.deepEqual(missing, []);
+});
+
+test("codes shown with the server's English message have a label that fits every cause", () => {
+  for (const code of returnsServerWordedCodes) assert.ok(returnsErrorLabels[code], code);
+  // The server sends this code for "must be positive" and for "at most four decimal places".
+  assert.match(returnsErrorLabels.RETURN_QUANTITY_INVALID[0], /positive.*four decimal places/);
+  assert.match(returnsErrorLabels.RETURN_QUANTITY_INVALID[1], /大于零.*四位小数/);
 });
 
 test("returns screens have no Chinese text outside copy()", async () => {
@@ -122,7 +151,7 @@ test("Chinese labels the returns browser spec relies on stay unchanged", () => {
     "Available balance {sku}": "可用库存余额 {sku}",
     "Destination available balance {sku}": "目标可用库存余额 {sku}",
     "Reversal reason": "冲销原因",
-    "Preview ready": "预览就绪",
+    "Preview: mark ready to post": "预览就绪",
     "Return requests": "退货申请",
     "Quarantined inventory": "隔离库存",
     "Quarantine release authorization": "隔离库存释放授权",

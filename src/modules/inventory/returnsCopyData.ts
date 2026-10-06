@@ -38,7 +38,7 @@ export const returnsChinese: Record<string, string> = {
 
   // Lists
   "Could not load returns": "退货列表读取失败",
-  "{n} records": "共 {n} 条正式记录",
+  "Records: {n}": "共 {n} 条正式记录",
   "New return request": "新建退货申请",
   "Search returns": "搜索退货记录",
   "Number, partner, source document, SKU": "单号、伙伴、来源单据、SKU",
@@ -130,7 +130,7 @@ export const returnsChinese: Record<string, string> = {
 
   // Posting workbench
   "← Back to return execution": "← 返回退货执行",
-  "Preview ready": "预览就绪",
+  "Preview: mark ready to post": "预览就绪",
   "Preview posting": "预览过账",
   "Preview reversal": "预览冲销",
   "Request {number}": "申请 {number}",
@@ -144,7 +144,7 @@ export const returnsChinese: Record<string, string> = {
   "Warehouse / location": "仓库 / 库位",
   "Reversal reason": "冲销原因",
   "Reversal reason (required)": "必须填写冲销原因",
-  "Confirm ready": "确认就绪",
+  "Confirm ready to post": "确认就绪",
   "Confirm posting": "确认过账",
   "Confirm reversal": "确认冲销",
   "Related records": "智能链接",
@@ -152,6 +152,7 @@ export const returnsChinese: Record<string, string> = {
   "Each return line is checked on its own. Lines never offset each other to show a match.":
     "不同退货行独立核对，不允许通过总量正负抵消显示一致。",
   "Calculated {calculated} / recorded {recorded}": "计算 {calculated} / 记录 {recorded}",
+  "The action could not be completed": "操作未能完成",
   "Evidence and activity log": "证据与操作日志",
   "No evidence yet.": "暂无证据记录。",
   "System": "系统",
@@ -183,7 +184,7 @@ export const returnsChinese: Record<string, string> = {
   "Search sales returns": "搜索销售退货单",
   "Search by return number, customer or order": "搜索退货单号、客户、订单",
   "Return status": "退货状态",
-  "{n} sales returns": "{n} 张退货单",
+  "Sales returns: {n}": "{n} 张退货单",
   "Return number": "退货单号",
   "Customer": "客户",
   "Sales order number": "销售订单号",
@@ -222,9 +223,11 @@ export const returnsChinese: Record<string, string> = {
   "Party": "业务对象",
   "Customer, supplier or warehouse": "客户、供应商或仓库",
   "Cancel": "取消",
-  "Save draft": "保存草稿",
-  "This draft is not stored.": "此草稿未保存。",
-  "Customer returns are requested under Inventory › Returns.": "客户退货请在“库存管理 › 退货管理”中申请。",
+  "This form does not store anything. Customer returns are requested under Inventory › Returns.":
+    "此表单不保存任何内容。客户退货请在“库存管理 › 退货管理”中申请。",
+
+  // Error text built from a server field name
+  "Enter the {field}.": "请填写{field}。",
 };
 
 // Status, type, route, balance, movement and audit action codes as the
@@ -308,8 +311,35 @@ export const returnsRuleLabels: Record<string, [string, string]> = {
   "movement_{type}_identity": ["Movement matches the line: {type}", "库存流水与行一致：{type}"],
   "movement_{type}_quantity_direction": ["Movement quantity and direction: {type}", "库存流水数量与方向：{type}"],
   "balance_{type}": ["Balance change: {type}", "余额变动：{type}"],
-  "reversal_{id}": ["One reversal per movement", "冲销补偿"],
+  // Passes when an unreversed posting has no compensating movement, or a
+  // reversed posting has exactly one.
+  "reversal_{id}": ["Reversal matches posting status", "冲销补偿与状态一致"],
 };
+
+// Fixed words the server puts in a check's calculated / recorded values.
+// Other values are identifiers or numbers and are shown as sent.
+export const returnsCheckValueLabels: Record<string, [string, string]> = {
+  "no compensation": ["no compensation", "无补偿"],
+  "one exact compensation": ["one exact compensation", "一条完全对应的补偿"],
+  none: ["none", "无"],
+  missing: ["missing", "缺失"],
+};
+
+// Server field names that "<field> is required." errors name and that a
+// user fills in. Identifier fields fall back to the generic label.
+export const returnsFieldLabels: Record<string, [string, string]> = {
+  reason: ["reason", "原因"],
+  authorizationNumber: ["authorization number", "授权单号"],
+  postingNumber: ["posting number", "执行单号"],
+};
+
+// Codes the server sends for more than one cause. In English the server's
+// own message names the cause, so it is shown instead of the label.
+export const returnsServerWordedCodes = [
+  "RETURN_QUANTITY_INVALID",
+  "RETURN_REVERSAL_NOT_SAFE",
+  "RETURN_AUTHORIZATION_ALREADY_ACTIVE",
+];
 
 // Error and blocking codes that the returns API and previews show to users.
 export const returnsErrorLabels: Record<string, [string, string]> = {
@@ -322,6 +352,18 @@ export const returnsErrorLabels: Record<string, [string, string]> = {
   IDEMPOTENCY_KEY_REQUIRED: ["The request is missing its command key. Reload the page and try again.", "请求缺少命令标识，请刷新页面后重试。"],
   IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD: ["This command was already sent with different values. Reload the page and try again.", "该命令已用不同内容提交过，请刷新页面后重试。"],
   COMMAND_EXECUTION_IN_PROGRESS: ["This action is already in progress. Wait a moment, then refresh.", "该操作正在执行中，请稍后刷新。"],
+  // Role and sign-in checks (authorization service, workspace identity)
+  AUTHORIZATION_PERMISSION_DENIED: ["Your role does not allow this action.", "当前角色无权执行此操作。"],
+  AUTHORIZATION_WAREHOUSE_SCOPE_DENIED: ["This warehouse is outside your access.", "该仓库不在您的访问范围内。"],
+  AUTHORIZATION_ROLE_INACTIVE: ["Your role is inactive. Ask an administrator to activate it.", "您的角色已停用，请联系管理员启用。"],
+  AUTHORIZATION_CONTEXT_INCOMPLETE: ["Your sign-in is incomplete. Sign in again.", "登录信息不完整，请重新登录。"],
+  AUTHORIZATION_TENANT_MISMATCH: ["This record belongs to another workspace.", "该记录属于其他工作区。"],
+  AUTHORIZATION_CAPABILITY_DISABLED: ["This feature is not enabled for this workspace.", "此工作区尚未启用该功能。"],
+  TENANT_CONTEXT_REQUIRED: ["Your workspace could not be identified. Sign in again.", "无法识别您的工作区，请重新登录。"],
+  ACTOR_NOT_PROVISIONED: ["Your account is not set up for this workspace. Ask an administrator.", "您的账户尚未在此工作区开通，请联系管理员。"],
+  USER_DISABLED: ["Your account in this workspace is disabled.", "您在此工作区的账户已停用。"],
+  SESSION_STALE: ["Your access changed. Sign in again.", "您的权限已变更，请重新登录。"],
+  RECEIVING_NOT_FOUND: ["Receiving document not found.", "未找到收货单。"],
   // Capabilities
   RETURN_GOVERNANCE_CAPABILITY_NOT_AVAILABLE: ["Returns are not enabled for this workspace.", "此工作区尚未启用退货。"],
   RETURN_REQUEST_CAPABILITY_NOT_AVAILABLE: ["Return requests are not enabled for this workspace.", "此工作区尚未启用退货申请。"],
@@ -338,7 +380,7 @@ export const returnsErrorLabels: Record<string, [string, string]> = {
   RETURN_TYPE_INVALID: ["Choose customer return or supplier return.", "请选择客户退货或供应商退货。"],
   RETURN_REASON_REQUIRED: ["Enter a return reason.", "请填写退货原因。"],
   RETURN_LINES_REQUIRED: ["Select at least one line.", "请至少选择一行。"],
-  RETURN_QUANTITY_INVALID: ["Enter a positive quantity.", "请输入大于零的数量。"],
+  RETURN_QUANTITY_INVALID: ["Enter a positive quantity with at most four decimal places.", "请输入大于零且最多四位小数的数量。"],
   RETURN_REQUEST_NUMBER_REQUIRED: ["Enter a request number.", "请填写申请单号。"],
   RETURN_REQUEST_NUMBER_CONFLICT: ["This request number is already in use.", "该申请单号已被使用。"],
   RETURN_AUTHORIZATION_NUMBER_REQUIRED: ["Enter an authorization number.", "请填写授权单号。"],
@@ -369,7 +411,7 @@ export const returnsErrorLabels: Record<string, [string, string]> = {
   // Authorization lifecycle
   RETURN_AUTHORIZATION_NOT_FOUND: ["Return authorization not found.", "未找到退货授权。"],
   RETURN_AUTHORIZATION_VERSION_CONFLICT: ["The return authorization changed. Refresh and try again.", "退货授权已变更，请刷新后重试。"],
-  RETURN_AUTHORIZATION_ALREADY_ACTIVE: ["This request already has an active authorization.", "该申请已有有效授权。"],
+  RETURN_AUTHORIZATION_ALREADY_ACTIVE: ["This request has an active authorization, so it cannot be authorized again or cancelled.", "该申请已有有效授权，不能再次授权或取消。"],
   RETURN_AUTHORIZATION_LINES_REQUIRED: ["Authorize at least one line.", "请至少授权一行。"],
   RETURN_AUTHORIZATION_LINE_DUPLICATE: ["A request line can be authorized only once.", "同一申请行只能授权一次。"],
   RETURN_AUTHORIZATION_LINE_INVALID: ["Every authorized line must belong to this request.", "授权行必须属于本申请。"],
@@ -405,7 +447,7 @@ export const returnsErrorLabels: Record<string, [string, string]> = {
   RETURN_QUARANTINE_INVENTORY_INSUFFICIENT: ["There is not enough quarantined stock for this action.", "隔离库存不足。"],
   RETURN_INVENTORY_BALANCE_INTEGRITY_FAILED: ["The available balance is inconsistent. Contact an administrator.", "可用库存余额不一致，请联系管理员。"],
   QUARANTINE_LINEAGE_INTEGRITY_FAILED: ["The quarantine balance does not reconcile with its receipts. Contact an administrator.", "隔离库存余额与收货记录无法核对，请联系管理员。"],
-  RETURN_REVERSAL_NOT_SAFE: ["This posting cannot be reversed safely because stock has changed since.", "库存已发生变化，无法安全冲销此执行单。"],
+  RETURN_REVERSAL_NOT_SAFE: ["This posting cannot be reversed safely. It may not be posted, may already be reversed, or its stock has changed since.", "无法安全冲销此执行单：执行单可能未过账、已被冲销，或其库存已发生变化。"],
 };
 
 // Smart links on the return posting workbench, keyed by link id.
