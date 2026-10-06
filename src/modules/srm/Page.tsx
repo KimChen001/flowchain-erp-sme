@@ -417,7 +417,9 @@ export default function SupplierMasterPage({
   const onTimeCell = (insight?: SupplierInsight) => {
     if (!insight || insight.onTime === null) return hiddenCell;
     if (insight.onTime.rate === null) return <span title={copy("Fewer than 5 deliveries in 90 days")} style={{ color: A.sub }}>—</span>;
-    return <span className="tabular-nums" title={`${insight.onTime.count} / ${insight.onTime.of}`}>{new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 }).format(insight.onTime.rate)}</span>;
+    // Deliveries measured against the date on the PO, which may be the buyer's need date.
+    const detail = copy("{count} of {of} deliveries on time against the date on the PO, which may be the buyer's need date").replace("{count}", String(insight.onTime.count)).replace("{of}", String(insight.onTime.of));
+    return <span className="tabular-nums" title={detail}>{new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 }).format(insight.onTime.rate)}</span>;
   };
   // The reader chooses the order; it never comes from a hidden weight. Spend
   // sorts by currency, then amount, and never compares across currencies.
@@ -833,7 +835,7 @@ export default function SupplierMasterPage({
                   "Spend, 12 months",
                   "Open POs",
                   "Overdue POs",
-                  "On time, 90 days",
+                  "On time (PO date), 90 days",
                   "Open issues",
                   "状态",
                   ...(writes.suppliers ? ["操作"] : []),

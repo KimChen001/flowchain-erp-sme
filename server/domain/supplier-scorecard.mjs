@@ -44,18 +44,19 @@ import { currentPromisedDay, promiseDay } from './purchase-order-promise-dates.m
 //                   by the original promised date + grace days
 //   rejection rate  rejected quantity / received quantity (accepted +
 //                   rejected) over the lines of the sample deliveries; none when
-//                   the lines use different units, which cannot be added
+//                   the lines are for more than one SKU or use different units,
+//                   whose quantities cannot be added
 //   average delay   mean, over the late deliveries, of the days from the
-//                   original promise to the last line's first receipt (today
-//                   for a line with none)
+//                   original promise to the last line's first receipt (for a
+//                   line with none, today, or the day it was closed)
 //   price variances supplier invoices dated in the period with a price
 //                   variance
 // In full and OTIF are three-valued over the lines: false when any line is
 // false, true when all are true, otherwise undecided.
 // "vs current date" repeats on time and OTIF against each line's current
 // expected date, with the same grace days. A line not yet due against its
-// current date counts as on time (and OTIF) against it, so the current-date
-// rates are upper bounds; the gap to the original-promise rates shows what the
+// current date counts as on time (and OTIF) against it, unless it was closed
+// with nothing received; so the current-date rates are upper bounds; the gap to the original-promise rates shows what the
 // revisions hide.
 // Rates carry Wilson 95% intervals over deliveries. Days are calendar days in
 // the workspace timezone. Every figure lists the deliveries, lines or invoices
@@ -188,8 +189,10 @@ export function evaluatePromiseLine({ line, purchaseOrder, receipts = [], asOfDa
     // Past the original promise plus the grace days with nothing received:
     // late and not OTIF, as the standard definition counts it. In full stays
     // pending while the line is open, as for a partial delivery. A line
-    // closed since stopped being awaited on its closing day.
+    // closed since stopped being awaited on its closing day, so its delay runs
+    // to that day; it never arrived, so it is late against the current date too.
     const stoppedDay = base.closed && base.closedDay && base.closedDay < asOfDay ? base.closedDay : asOfDay
+    const currentOk = base.closed ? false : asOfDay <= currentCutoff
     return {
       ...base,
       status: 'evaluated',
@@ -197,11 +200,11 @@ export function evaluatePromiseLine({ line, purchaseOrder, receipts = [], asOfDa
       onTime: false,
       early: false,
       daysLate: daysBetween(originalDay, stoppedDay),
-      onTimeCurrent: stoppedDay <= currentCutoff,
+      onTimeCurrent: currentOk,
       inFull: base.closed ? false : null,
       inFullPending: !base.closed,
       otif: false,
-      otifCurrent: stoppedDay <= currentCutoff,
+      otifCurrent: currentOk,
     }
   }
   const onTime = firstReceiptDay <= cutoff
@@ -272,8 +275,8 @@ export function groupDeliveryObligations(lines = []) {
       inFullPending: !waiting && inFull === null,
       otif: waiting ? null : allOf(rows.map((line) => line.otif)),
       otifCurrent: !waiting && rows.every((line) => line.otifCurrent === true),
-      // From the promise to the last line's first receipt, or to today for a
-      // line with none.
+      // From the promise to the last line's first receipt, or, for a line with
+      // none, to today or the day it was closed.
       daysLate: onTime || waiting ? 0 : Math.max(0, ...rows.map((line) => line.daysLate || 0)),
       overdueUndelivered: rows.some((line) => line.overdueUndelivered === true),
       revised: rows.some((line) => line.revised),
@@ -313,17 +316,22 @@ const byCurrency = (rows) => {
 // into deliveries (groupDeliveryObligations); the rates count deliveries.
 export function summarizeScorecardLines({ lines = [], invoices = [], lineAmounts = true, invoiceAmounts = true }) {
   const { minimumSample } = SUPPLIER_SCORECARD_RULES
-  const sample = groupDeliveryObligations(lines).filter((obligation) => obligation.status === 'evaluated')
+  const obligations = groupDeliveryObligations(lines)
+  const sample = obligations.filter((obligation) => obligation.status === 'evaluated')
   const sampleLines = sample.flatMap((obligation) => obligation.lines)
   const sufficient = sample.length >= minimumSample
   const late = sample.filter((obligation) => !obligation.onTime)
   const units = [...new Set(sampleLines.map((line) => line.unit || ''))]
+  const skus = [...new Set(sampleLines.map((line) => text(line.sku)))]
   const receivedQuantity = sampleLines.reduce((sum, line) => sum + quantity(line.receivedQuantity), 0)
   const rejectedQuantity = sampleLines.reduce((sum, line) => sum + quantity(line.rejectedQuantity), 0)
-  // Quantities in different units cannot be added into one rate.
+  // Quantities of different SKUs, or in different units, cannot be added into
+  // one rate or one total.
   const mixedUnits = units.length > 1
+  const multipleSkus = skus.length > 1
+  const addable = !mixedUnits && !multipleSkus
   const wholeUnits = Number.isInteger(receivedQuantity) && Number.isInteger(rejectedQuantity)
-  const rejectionRate = sufficient && !mixedUnits ? rate(rejectedQuantity, receivedQuantity) : null
+  const rejectionRate = sufficient && addable ? rate(rejectedQuantity, receivedQuantity) : null
   const variances = invoices === null ? null : [...invoices].sort((a, b) => text(a.invoiceDate).localeCompare(text(b.invoiceDate)) || text(a.supplierInvoiceId).localeCompare(text(b.supplierInvoiceId)))
   const pending = sample.filter((obligation) => obligation.inFullPending)
   const overdue = sample.filter((obligation) => obligation.overdueUndelivered)
@@ -331,6 +339,9 @@ export function summarizeScorecardLines({ lines = [], invoices = [], lineAmounts
     sampleSize: sample.length,
     lineCount: sampleLines.length,
     sampleStatus: !sample.length ? 'no_obligations' : sufficient ? 'ok' : 'insufficient_sample',
+    // Deliveries in the period with a line not received and not yet due: not
+    // judged yet, so outside every figure.
+    waitingCount: obligations.length - sample.length,
     // Lines whose promised date was revised after issue.
     revisedCount: sampleLines.filter((line) => line.revised).length,
     // Deliveries with a line still open with a shortfall: in the sample, not
@@ -347,10 +358,11 @@ export function summarizeScorecardLines({ lines = [], invoices = [], lineAmounts
       otif: sampleRate(sample, 'otif', { decided: (obligation) => obligation.otif !== null }),
       otifCurrent: sampleRate(sample, 'otifCurrent'),
       rejection: {
-        rejectedQuantity: round(rejectedQuantity),
-        receivedQuantity: round(receivedQuantity),
-        unit: mixedUnits ? null : units[0] || null,
+        rejectedQuantity: addable ? round(rejectedQuantity) : null,
+        receivedQuantity: addable ? round(receivedQuantity) : null,
+        unit: addable ? units[0] || null : null,
         mixedUnits,
+        multipleSkus,
         rate: rejectionRate,
         // Each unit counts as one trial, so the interval is narrower than the
         // real uncertainty when rejections come in batches.

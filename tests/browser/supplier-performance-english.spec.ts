@@ -29,6 +29,8 @@ test("the supplier Performance tab shows on time against the date on the PO and 
   await page.getByTestId("supplier-tab-performance").click();
   const panel = page.getByTestId("supplier-performance-panel");
   await expect(panel.getByRole("heading", { name: "Supplier performance" })).toBeVisible();
+  // Until suppliers confirm dates, the measure names the date on the PO.
+  await expect(panel.getByTestId("supplier-performance-basis")).toContainText("Measured against the date on the PO, which may be the buyer's need date.");
   const onTime = panel.getByTestId("supplier-performance-on-time");
   await expect(onTime).toContainText("On time vs the date on the PO · vs current date");
   await expect(onTime).toContainText("57.1% · 85.7%");
@@ -52,6 +54,7 @@ test("the supplier Performance tab shows on time against the date on the PO and 
   // The definition explains the rule in plain English.
   await panel.getByTestId("supplier-performance-definition-toggle").click();
   await expect(panel.getByTestId("supplier-performance-definition")).toContainText("original promised date");
+  await expect(panel.getByTestId("supplier-performance-definition")).toContainText("may be the buyer's need date");
 
   // A shorter period has too few deliveries for percentages.
   await panel.getByRole("button", { name: "Last 30 days" }).click();
@@ -66,6 +69,7 @@ test("Reports › Supplier analytics lists every supplier's performance for the 
   await signIn(page);
   await page.goto("/app/reports/suppliers");
   const table = page.getByTestId("supplier-performance-table");
+  await expect(table.getByTestId("supplier-performance-basis")).toContainText("may be the buyer's need date");
   const northstar = table.getByTestId("supplier-performance-row-LOCAL-DEMO-SUP-005");
   await expect(northstar).toContainText("57.1%");
   await expect(northstar).toContainText("85.7%");
@@ -83,6 +87,7 @@ test("the Performance tab reads in Chinese with the same figures and number form
   await page.getByTestId("supplier-tab-performance").click();
   const panel = page.getByTestId("supplier-performance-panel");
   await expect(panel.getByRole("heading", { name: "供应商绩效" })).toBeVisible();
+  await expect(panel.getByTestId("supplier-performance-basis")).toContainText("采购方的需求日期");
   const onTime = panel.getByTestId("supplier-performance-on-time");
   await expect(onTime).toContainText("按采购订单日期准时率 · 按当前日期");
   // Language changes the copy, not the workspace's number format.
@@ -90,6 +95,7 @@ test("the Performance tab reads in Chinese with the same figures and number form
   await expect(panel.getByTestId("supplier-performance-otif")).toContainText("按采购订单日期 OTIF");
   await panel.getByTestId("supplier-performance-definition-toggle").click();
   await expect(panel.getByTestId("supplier-performance-definition")).toContainText("原始承诺交期");
+  await expect(panel.getByTestId("supplier-performance-definition")).toContainText("采购方的需求日期");
   await expect(panel).not.toContainText("On time vs the date on the PO");
 });
 

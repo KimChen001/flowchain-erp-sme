@@ -114,13 +114,13 @@ export function reportInsights(view: DashboardView, report: GovernedReport, { la
     if (ranking.length > 1) {
       const best = ranking[0];
       const worst = ranking[ranking.length - 1];
-      insights.push({ id: "spread", tone: "neutral", text: zh ? `${best.name} 的准时行占比最高（${format(num(best.value), "percentage")}），${worst.name} 最低（${format(num(worst.value), "percentage")}）。` : `${best.name} has the most lines on time (${format(num(best.value), "percentage")}); ${worst.name} has the fewest (${format(num(worst.value), "percentage")}).` });
+      insights.push({ id: "spread", tone: "neutral", text: zh ? `${best.name} 的准时交付占比最高（${format(num(best.value), "percentage")}），${worst.name} 最低（${format(num(worst.value), "percentage")}）。` : `${best.name} has the highest share of deliveries on time (${format(num(best.value), "percentage")}); ${worst.name} the lowest (${format(num(worst.value), "percentage")}).` });
     }
     const matrix = chartById(report, "supplier_performance_matrix");
     if (matrix?.guides && matrix.guides.x !== null && matrix.guides.y !== null) {
       const xKey = matrix.measures?.find(item => item.axis === "x")?.key || "";
       const watch = (matrix.data || []).filter(row => (num(row[xKey]) ?? 0) >= matrix.guides!.x! && (num(row["On-time deliveries"]) ?? 100) < matrix.guides!.y!).map(row => category(matrix, String(row.name)));
-      if (watch.length) insights.push({ id: "watch", tone: "attention", text: zh ? `${watch.join("、")} 的${xKey === "Committed amount" ? "采购额" : "订单数"}不低于中位数，但准时行占比低于平均值。` : `${watch.join(", ")} ${plural(watch.length, "combines", "combine")} at least median ${xKey === "Committed amount" ? "spend" : "order count"} with a below-average share of lines on time.` });
+      if (watch.length) insights.push({ id: "watch", tone: "attention", text: zh ? `${watch.join("、")} 的${xKey === "Committed amount" ? "采购额" : "订单数"}不低于中位数，但准时交付占比低于平均值。` : `${watch.join(", ")} ${plural(watch.length, "combines", "combine")} at least median ${xKey === "Committed amount" ? "spend" : "order count"} with a below-average share of deliveries on time.` });
     }
   }
 

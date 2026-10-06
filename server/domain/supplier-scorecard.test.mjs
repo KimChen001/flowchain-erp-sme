@@ -327,6 +327,9 @@ test('a delivery waits until every line is received or the promise plus grace da
   assert.deepEqual([due.sampleSize, due.obligations[0].onTime, due.obligations[0].overdueUndelivered, due.obligations[0].daysLate, due.overdueUndeliveredCount], [1, false, true, 6, 1])
   const [delivered] = suppliersOf([po(lines)], [...receipts, grn('GRN-2', '2026-10-02', ['B'])], { graceDays: 5, asOfDay: '2026-10-04' })
   assert.deepEqual([delivered.obligations[0].onTime, delivered.obligations[0].otif], [true, true])
+  // The waiting delivery is counted apart, so the panel can say it is waiting.
+  assert.equal(waiting.waitingCount, 1)
+  assert.equal(due.waitingCount, 0)
   // A supplier whose only lines are not due yet is not on the scorecard.
   assert.deepEqual(suppliersOf([po(lines)], [], { graceDays: 5 }), [])
 })
@@ -349,4 +352,41 @@ test('two promised dates on one PO are two deliveries', () => {
     ['PO-1:2026-08-10', 2, true, 0],
     ['PO-1:2026-08-20', 1, false, 2],
   ])
+})
+
+test('a line revised later and then closed with nothing received is late against the current date too', () => {
+  // Promised 09-01, revised to 09-20, closed short on 09-10 with nothing received; read on 09-30.
+  const row = line('A', '2026-09-01', { current: '2026-09-20', metadata: { closedAt: '2026-09-10' } })
+  const evaluated = evaluate(row, [])
+  assert.deepEqual(['onTime', 'onTimeCurrent', 'inFull', 'otif', 'otifCurrent', 'daysLate'].map((key) => evaluated[key]), [false, false, false, false, false, 9])
+  const [supplier] = suppliersOf([po([row])], [], { period: { from: '2026-08-01', to: '2026-09-30' } })
+  assert.deepEqual(['onTime', 'onTimeCurrent', 'otif', 'otifCurrent'].map((key) => supplier.obligations[0][key]), [false, false, false, false])
+  assert.deepEqual([supplier.metrics.onTimeCurrent.count, supplier.metrics.otifCurrent.count], [0, 0])
+  // Still open and not yet due against its revised date: on time against it, as before.
+  const open = evaluate(line('B', '2026-09-01', { current: '2026-10-05' }), [])
+  assert.deepEqual([open.onTime, open.onTimeCurrent, open.otifCurrent], [false, true, true])
+})
+
+test('the rejection rate never adds quantities across SKUs', () => {
+  // 5 one-line deliveries in pcs: 4 of bolts (2,500 received each, none rejected) and 1 of motors (10 received, 5 rejected).
+  const orders = Array.from({ length: 5 }, (_, index) => po([line(`L${index}`, '2026-08-10', { sku: index === 4 ? 'MOTOR' : 'BOLT', orderedQuantity: index === 4 ? 10 : 2500 })], { id: `PO-${index}` }))
+  const receipts = [...orders.slice(0, 4).map((order) => grn(`GRN-${order.id}`, '2026-08-10', [order.lines[0].id], 2500, 0)), grn('GRN-PO-4', '2026-08-10', ['L4'], 5, 5)]
+  const [supplier] = suppliersOf(orders, receipts)
+  assert.equal(supplier.sampleStatus, 'ok')
+  assert.deepEqual(supplier.metrics.rejection, { rejectedQuantity: null, receivedQuantity: null, unit: null, mixedUnits: false, multipleSkus: true, rate: null, interval: null })
+  // Each line keeps its own quantities for the drilldown.
+  assert.deepEqual(supplier.lines.filter((row) => row.rejectedQuantity).map((row) => [row.sku, row.rejectedQuantity, row.receivedQuantity]), [['MOTOR', 5, 10]])
+  // One SKU in one unit: a single rate with its quantities.
+  const [single] = suppliersOf(orders.slice(0, 4).concat(po([line('L5', '2026-08-10', { sku: 'BOLT', orderedQuantity: 2500 })], { id: 'PO-5' })), [...receipts.slice(0, 4), grn('GRN-PO-5', '2026-08-10', ['L5'], 2495, 5)])
+  assert.deepEqual([single.metrics.rejection.multipleSkus, single.metrics.rejection.rejectedQuantity, single.metrics.rejection.receivedQuantity, single.metrics.rejection.unit, pct(single.metrics.rejection.rate)], [false, 5, 12500, 'pcs', 0])
+})
+
+test('with 5 or more deliveries, a rate can still lack 5 settled deliveries of its own', () => {
+  // 7 one-line deliveries arrived on time; 3 are still open short, so in full has 4 settled.
+  const orders = Array.from({ length: 7 }, (_, index) => po([line(`L${index}`, '2026-08-10')], { id: `PO-${index}` }))
+  const receipts = orders.map((order, index) => grn(`GRN-${order.id}`, '2026-08-10', [order.lines[0].id], index < 3 ? 60 : 100))
+  const [supplier] = suppliersOf(orders, receipts)
+  assert.deepEqual([supplier.sampleStatus, supplier.sampleSize, supplier.inFullPendingCount], ['ok', 7, 3])
+  assert.deepEqual([supplier.metrics.inFull.count, supplier.metrics.inFull.of, supplier.metrics.inFull.rate], [4, 4, null])
+  assert.equal(supplier.metrics.onTime.rate, 1)
 })
