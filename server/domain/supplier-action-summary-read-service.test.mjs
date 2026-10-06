@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSupplierActionSummaries, SUPPLIER_ACTION_PRIORITY_VERSION } from './supplier-action-summary-read-service.mjs'
+import { buildSupplierActionSummaries } from './supplier-action-summary-read-service.mjs'
 
 const allPermissions = new Set([
   'finance.payable.read', 'finance.supplier_invoice.read', 'finance.settlement.read', 'finance.cashbook.read',
@@ -66,16 +66,49 @@ test('unavailable sources return null facts instead of fabricated zeroes', () =>
   assert.equal(item.reconciliation.blockingExceptionCount, null)
 })
 
-test('priority ranking is deterministic and independent of input order', () => {
-  const po = (id, supplierId) => ({ tenantId: 't1', id, supplierId, status: 'issued', expectedDate: '2026-07-01T00:00:00.000Z', lines: [] })
-  const input = { actor, now: new Date('2026-07-24T00:00:00.000Z'), records: { suppliers: [supplier('a'), supplier('b')], payables: [], invoices: [], settlements: [], purchaseOrders: [po('PO-B', 'b')], receiving: [], rfqs: [], bankExceptions: [] } }
+test('suppliers are ordered by their oldest open reason, dated, without a score', () => {
+  const line = (ordered, received, promisedDate) => ({ orderedQuantity: ordered, receivedQuantity: received, metadata: { promisedDate } })
+  const po = (id, supplierId, promisedDate) => ({ tenantId: 't1', id, supplierId, status: 'issued', expectedDate: new Date(`${promisedDate}T12:00:00.000Z`), currency: 'USD', lines: [line(10, 0, promisedDate)] })
+  const aInvoice = invoice('a', 'a')
+  const input = {
+    actor,
+    now: new Date('2026-07-24T12:00:00.000Z'),
+    records: {
+      suppliers: [supplier('a'), supplier('b'), supplier('c'), supplier('d')],
+      // a: a payable overdue since Jul 20. b: an order promised Jul 1. c and d: nothing open.
+      invoices: [aInvoice], payables: [payable('pay-a', 'a', aInvoice)], settlements: [], purchaseOrders: [po('PO-B', 'b', '2026-07-01')], receiving: [], rfqs: [], bankExceptions: [],
+    },
+  }
   const first = buildSupplierActionSummaries(input)
-  const second = buildSupplierActionSummaries({ ...input, records: { ...input.records, suppliers: [...input.records.suppliers].reverse(), purchaseOrders: [...input.records.purchaseOrders].reverse() } })
-  assert.deepEqual(first.items.map((row) => row.supplier.id), ['b', 'a'])
-  assert.deepEqual(first.items.map((row) => [row.supplier.id, row.priority.score]), second.items.map((row) => [row.supplier.id, row.priority.score]))
-  assert.equal(first.items[0].priority.algorithmVersion, SUPPLIER_ACTION_PRIORITY_VERSION)
+  const second = buildSupplierActionSummaries({ ...input, records: { ...input.records, suppliers: [...input.records.suppliers].reverse() } })
+  assert.deepEqual(first.items.map((row) => [row.supplier.id, row.priority.since]), [['b', '2026-07-01'], ['a', '2026-07-20'], ['c', null], ['d', null]])
+  assert.deepEqual(second.items.map((row) => row.supplier.id), first.items.map((row) => row.supplier.id))
+  assert.deepEqual(first.items[0].priority, { since: '2026-07-01', reasons: [{ code: 'purchase_order_overdue', since: '2026-07-01', count: 1 }] })
+  assert.deepEqual(first.items[1].priority.reasons, [{ code: 'payment_overdue', since: '2026-07-20', count: 1 }])
+  for (const row of first.items) assert.deepEqual(Object.keys(row.priority).sort(), ['reasons', 'since'])
 })
 
+test('rejected quantities are kept per SKU and unit, never added together', () => {
+  const receipt = (id, lines, extra = {}) => ({ tenantId: 't1', id, supplierId: 'a', poId: 'PO-A', documentNumber: id, status: 'posted', arrivedAt: '2026-07-15T09:00:00.000Z', createdAt: '2026-07-15T10:00:00.000Z', lines, ...extra })
+  const result = buildSupplierActionSummaries({
+    actor,
+    now: new Date('2026-07-24T12:00:00.000Z'),
+    records: { suppliers: [supplier('a')], invoices: [], payables: [], settlements: [], purchaseOrders: [], rfqs: [], bankExceptions: [], receiving: [
+      receipt('GRN-1', [{ sku: 'BOLT', unit: 'pcs', rejectedQty: 2 }, { sku: 'CABLE', unit: 'm', rejectedQty: 3 }]),
+      receipt('GRN-2', [{ sku: 'BOLT', unit: 'pcs', rejectedQty: 1 }, { sku: 'BOLT', unit: 'box', rejectedQty: 1 }], { arrivedAt: null, createdAt: '2026-07-12T10:00:00.000Z' }),
+    ] },
+  })
+  const item = result.items[0]
+  assert.equal(item.receiving.exceptionCount, 2)
+  assert.equal('rejectedQuantity' in item.receiving, false)
+  assert.deepEqual(item.receiving.rejectedQuantities, [
+    { sku: 'BOLT', unit: 'box', quantity: 1 },
+    { sku: 'BOLT', unit: 'pcs', quantity: 3 },
+    { sku: 'CABLE', unit: 'm', quantity: 3 },
+  ])
+  // Without an arrival time the receipt is dated by the day it was entered.
+  assert.deepEqual(item.priority.reasons, [{ code: 'receiving_exception', since: '2026-07-12', count: 2 }])
+})
 
 test('mixed currencies never produce a combined payable amount', () => {
   const cny = invoice('cny', 'a')
