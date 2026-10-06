@@ -59,20 +59,24 @@ export function validateDirectPo(pr, policy = {}, permission = true) {
 
 // A catalog line whose supplier is not the item's preferred supplier, while
 // one is preferred, needs a reason from the fixed list; nothing else does
-// (shared/supplier-override-reasons.mjs). The stored value names the
-// preferred supplier as it was when the line was saved. Anything sent for a
+// (shared/supplier-override-reasons.mjs). Master data can mark more than one
+// approved source preferred (the item's default supplier and a link flagged
+// preferred); choosing any of them needs no reason, and the stored value
+// names them all as they were when the line was saved. Anything sent for a
 // line that needs no reason is dropped.
 const OVERRIDE_ISSUE_MESSAGES = Object.freeze({
   REASON_REQUIRED: 'Choose a reason',
   REASON_UNKNOWN: 'Choose a reason',
   NOTE_LENGTH: 'Add a note of 3 to 500 characters',
 })
-function supplierOverrideFor(line, index, supplierId, preferred) {
-  const needed = overrideNeeded({ supplierId, preferredId: preferred?.id })
+const supplierLabel = (row) => row.name || row.supplierName || row.id
+function supplierOverrideFor(line, index, supplierId, approved) {
+  const preferred = approved.filter((row) => row.preferred)
+  const needed = overrideNeeded({ supplierId, preferredIds: preferred.map((row) => row.id) })
   const { value, issues } = validateSupplierOverride(line.supplierOverride, needed)
+  const name = preferred.map(supplierLabel).join(', ')
   if (!value) {
     if (!issues.length) return null
-    const name = preferred.name || preferred.supplierName || preferred.id
     throw procurementError(
       'SUPPLIER_OVERRIDE_REASON_REQUIRED',
       `Line ${index + 1} does not use the item's preferred supplier (${name}). Choose a reason from the list; Other needs a note.`,
@@ -80,7 +84,7 @@ function supplierOverrideFor(line, index, supplierId, preferred) {
       400,
     )
   }
-  return { ...value, preferredSupplierId: preferred.id, preferredSupplierName: preferred.name || preferred.supplierName || preferred.id }
+  return { ...value, preferredSupplierId: preferred[0].id, preferredSupplierName: name }
 }
 
 // Validates and snapshots purchase request lines against master data. The
@@ -184,7 +188,7 @@ export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) 
         const approved = await itemRepository.approvedSuppliersForItem(item.itemId);
         if (!approved.length) throw procurementError("ITEM_HAS_NO_APPROVED_SUPPLIER", "该 SKU 尚未维护可采购供应商，请先维护 SKU–供应商关系。", [{ field: `lines.${index}.supplierId` }], 400);
         if (!approved.some(row => row.id === supplierId)) throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "所选供应商不是该 SKU 的已批准供应商", [{ field: `lines.${index}.supplierId` }], 400);
-        supplierOverride = supplierOverrideFor(line, index, supplierId, approved.find((row) => row.preferred));
+        supplierOverride = supplierOverrideFor(line, index, supplierId, approved);
       } else if (item.defaultSupplierId && supplierId !== item.defaultSupplierId) {
         throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "所选供应商不是该 SKU 的已批准供应商", [{ field: `lines.${index}.supplierId` }], 400);
       }

@@ -134,6 +134,26 @@ test('the preferred supplier, or an item with none preferred, needs no reason an
   assert.equal(audit.metadata.supplierOverrides, undefined)
 })
 
+// The item form's default supplier and a link flagged preferred can name two
+// suppliers; either is preferred, so neither needs a reason.
+test('when the default supplier and a flagged link differ, both count as preferred', async () => {
+  const strap = { id: 'choice-item-strap', sku: 'CHOICE-STRAP', name: 'Strapping' }
+  await prisma.item.create({ data: { ...strap, tenantId: tenantA, unit: 'EA', metadata: { defaultWarehouseId: warehouseA, purchasable: true } } })
+  for (const [supplierId, preferred] of [[bolt.id, true], [acme.id, false]]) {
+    const link = await api(tokens.managerA, 'POST', `/api/master-data/items/${strap.id}/suppliers`, { supplierId, preferred, currency: 'USD' })
+    assert.ok([200, 201].includes(link.status), describe(link))
+  }
+  // The item form then sets Default supplier = Acme; Bolt's link keeps its flag.
+  await prisma.item.update({ where: { id: strap.id }, data: { preferredSupplierId: acme.id } })
+  const sources = await api(tokens.managerA, 'GET', `/api/master-data/items/${strap.id}/suppliers`)
+  assert.deepEqual(sources.body.suppliers.map((row) => row.preferred), [true, true])
+  for (const supplierId of [acme.id, bolt.id]) {
+    const created = await api(tokens.managerA, 'POST', '/api/procurement/requests', prBody({ itemId: strap.id, sku: strap.sku, itemNameSnapshot: strap.name, supplierId }))
+    assert.equal(created.status, 201, describe(created))
+    assert.equal(created.body.lines[0].supplierOverride, null)
+  }
+})
+
 test('a reason is stored with the line, audited, read back, carried onto the PO line and read with the PO', async () => {
   const created = await api(tokens.managerA, 'POST', '/api/procurement/requests', prBody({ supplierOverride: { reasonCode: 'lead_time', note: 'Acme is out until November', preferredSupplierName: 'not trusted' } }))
   assert.equal(created.status, 201, describe(created))

@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
 import { SUPPLIER_OVERRIDE_REASONS, overrideNeeded, validateSupplierOverride } from '../../shared/supplier-override-reasons.mjs'
 import { canonicalPurchaseRequestLines } from './procurement-workflow.mjs'
 
@@ -11,6 +13,13 @@ test('a reason is needed only when a preferred supplier exists and another one i
   assert.equal(overrideNeeded({ supplierId: 'sup-b', preferredId: null }), false)
   assert.equal(overrideNeeded({ supplierId: 'sup-b' }), false)
   assert.equal(overrideNeeded(), false)
+})
+
+test('when master data marks two sources preferred, choosing either needs no reason', () => {
+  assert.equal(overrideNeeded({ supplierId: 'sup-a', preferredIds: ['sup-a', 'sup-b'] }), false)
+  assert.equal(overrideNeeded({ supplierId: 'sup-b', preferredIds: ['sup-a', 'sup-b'] }), false)
+  assert.equal(overrideNeeded({ supplierId: 'sup-c', preferredIds: ['sup-a', 'sup-b'] }), true)
+  assert.equal(overrideNeeded({ supplierId: 'sup-c', preferredIds: [] }), false)
 })
 
 test('the reason list is fixed and in its agreed order', () => {
@@ -28,7 +37,9 @@ test('a needed reason must be a known code; Other needs a note of 3 to 500 chara
   assert.deepEqual(validateSupplierOverride({ reasonCode: 'other', note: 'ok' }, true).issues, [{ field: 'note', code: 'NOTE_LENGTH' }])
   assert.deepEqual(validateSupplierOverride({ reasonCode: 'other', note: 'x'.repeat(501) }, true).issues, [{ field: 'note', code: 'NOTE_LENGTH' }])
   assert.equal(validateSupplierOverride({ reasonCode: 'other', note: 'x'.repeat(500) }, true).issues.length, 0)
-  // An optional note, when given, follows the same length rule.
+  // An optional note is never refused for being short, only for passing 500 characters.
+  assert.deepEqual(validateSupplierOverride({ reasonCode: 'price', note: 'ok' }, true), { value: { reasonCode: 'price', note: 'ok' }, issues: [] })
+  assert.deepEqual(validateSupplierOverride({ reasonCode: 'lead_time', note: '2d' }, true).value, { reasonCode: 'lead_time', note: '2d' })
   assert.deepEqual(validateSupplierOverride({ reasonCode: 'quality', note: 'x'.repeat(501) }, true).issues, [{ field: 'note', code: 'NOTE_LENGTH' }])
   assert.deepEqual(validateSupplierOverride('lead_time', true).issues, [{ field: 'reasonCode', code: 'REASON_REQUIRED' }])
 })
@@ -64,6 +75,33 @@ test('a line with a non-preferred supplier and no reason is refused with the fie
 test('a given reason is stored with the preferred supplier as it was at save time', async () => {
   const [saved] = await canonicalPurchaseRequestLines([line({ supplierOverride: { reasonCode: 'lead_time', note: 'Needed this week', preferredSupplierName: 'spoofed' } })], repository(withPreferred))
   assert.deepEqual(saved.supplierOverride, { reasonCode: 'lead_time', note: 'Needed this week', preferredSupplierId: 'sup-a', preferredSupplierName: 'Acme Supply' })
+})
+
+test('with two sources marked preferred, neither needs a reason and a third names both', async () => {
+  const twoPreferred = [{ id: 'sup-a', name: 'Acme Supply', preferred: true }, { id: 'sup-b', name: 'Bolt Parts', preferred: true }, { id: 'sup-c', name: 'Crane', preferred: false }]
+  const [bolt] = await canonicalPurchaseRequestLines([line({ supplierId: 'sup-b' })], repository(twoPreferred))
+  assert.equal(bolt.supplierOverride, null)
+  const [acme] = await canonicalPurchaseRequestLines([line({ supplierId: 'sup-a' })], repository(twoPreferred))
+  assert.equal(acme.supplierOverride, null)
+  await assert.rejects(canonicalPurchaseRequestLines([line({ supplierId: 'sup-c' })], repository(twoPreferred)), (error) => {
+    assert.match(error.message, /preferred supplier \(Acme Supply, Bolt Parts\)/)
+    return true
+  })
+  const [crane] = await canonicalPurchaseRequestLines([line({ supplierId: 'sup-c', supplierOverride: { reasonCode: 'price', note: 'ok' } })], repository(twoPreferred))
+  assert.deepEqual(crane.supplierOverride, { reasonCode: 'price', note: 'ok', preferredSupplierId: 'sup-a', preferredSupplierName: 'Acme Supply, Bolt Parts' })
+})
+
+// The approver's flag names the preferred supplier the line does not use;
+// the Chinese must say "not used", never call that supplier non-preferred.
+test('the approver flag and count say which supplier was skipped, in both languages', () => {
+  const source = fs.readFileSync(path.join(path.resolve(import.meta.dirname, '..', '..'), 'src', 'components', 'procurement', 'SupplierOverrideReason.tsx'), 'utf8')
+  assert.match(source, /flag: "Not preferred \(\{name\}\)\. Reason: \{reason\}"/)
+  assert.match(source, /flag: "未使用首选供应商（\{name\}）。原因：\{reason\}"/)
+  assert.match(source, /flagNoName: "未使用首选供应商。原因：\{reason\}"/)
+  assert.match(source, /countOne: "1 行未使用首选供应商"/)
+  assert.match(source, /countMany: "\{n\} 行未使用首选供应商"/)
+  assert.match(source, /countOne: "1 line skips the preferred supplier"/)
+  assert.doesNotMatch(source, /非首选/)
 })
 
 test('choosing the preferred supplier, an item with none preferred, or a non-catalog line stores no reason', async () => {

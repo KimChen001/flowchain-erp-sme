@@ -63,6 +63,6 @@ declare module '../../../shared/supplier-override-reasons.mjs' {
   export type SupplierOverrideIssue = { field: 'reasonCode' | 'note'; code: 'REASON_REQUIRED' | 'REASON_UNKNOWN' | 'NOTE_LENGTH' };
   export const SUPPLIER_OVERRIDE_REASONS: readonly SupplierOverrideReasonCode[];
   export const SUPPLIER_OVERRIDE_NOTE_LIMITS: { readonly min: number; readonly max: number };
-  export function overrideNeeded(input: { supplierId?: string | null; preferredId?: string | null }): boolean;
+  export function overrideNeeded(input: { supplierId?: string | null; preferredId?: string | null; preferredIds?: readonly (string | null | undefined)[] }): boolean;
   export function validateSupplierOverride(raw: unknown, needed: boolean): { value: { reasonCode: SupplierOverrideReasonCode; note: string | null } | null; issues: SupplierOverrideIssue[] };
 }
