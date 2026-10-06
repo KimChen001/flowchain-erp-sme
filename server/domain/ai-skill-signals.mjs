@@ -9,8 +9,9 @@
 // has no date (stock below its levels); then what falls due later. Every
 // answer line states that date, so the reader can check the order.
 //
-// Every list built from the signals uses that order: today's priorities, the
-// supplier list, the open problems list and the drafts. No signal carries a
+// Today's priorities, the supplier list and the drafts use that order. The
+// open problems list (ai-skill-highest-risk.mjs) is ordered by the date it
+// prints alone, the oldest first (compareSignalsByPrintedDate). No signal carries a
 // score or weight (owner decision 2026-10-03). Each signal type has one fixed
 // label (risk, warning or info) that says what kind of problem it is; the
 // label never orders a list. Ties break by record id so the order never
@@ -122,7 +123,8 @@ export function buildAiSkillSignals(facts) {
 
 // Undated signals in a fixed order of what they mean: demand that cannot be
 // met, then stock under its safety level, then at its reorder point.
-const UNDATED_ORDER = ['stock_shortage', 'stock_below_safety', 'stock_below_reorder']
+export const UNDATED_ORDER = Object.freeze(['stock_shortage', 'stock_below_safety', 'stock_below_reorder'])
+const undatedRank = (type) => UNDATED_ORDER.includes(type) ? UNDATED_ORDER.indexOf(type) : 99
 function dateBucket(when) {
   if (when?.kind === 'overdue') return 0
   if (when?.kind === 'due' && when.days <= DUE_SOON_DAYS) return 1
@@ -138,8 +140,18 @@ export function compareSignalsByDate(a, b) {
   const kind = a.when?.kind
   const days = kind === 'overdue' || kind === 'open' ? (b.when.days ?? 0) - (a.when.days ?? 0)
     : kind === 'due' ? (a.when.days ?? 0) - (b.when.days ?? 0)
-      : (UNDATED_ORDER.includes(a.type) ? UNDATED_ORDER.indexOf(a.type) : 99) - (UNDATED_ORDER.includes(b.type) ? UNDATED_ORDER.indexOf(b.type) : 99)
+      : undatedRank(a.type) - undatedRank(b.type)
   return days || a.entityId.localeCompare(b.entityId) || a.type.localeCompare(b.type)
+}
+
+// By the date a line prints and nothing else: the earliest date first,
+// whatever kind of date it is (a promised date passed, an invoice date, an
+// arrival day); then the undated lines in UNDATED_ORDER. Ties by record id.
+export function compareSignalsByPrintedDate(a, b) {
+  const left = a.when?.date || null
+  const right = b.when?.date || null
+  if (left !== right) return !left ? 1 : !right ? -1 : left < right ? -1 : 1
+  return (left ? 0 : undatedRank(a.type) - undatedRank(b.type)) || a.entityId.localeCompare(b.entityId) || a.type.localeCompare(b.type)
 }
 
 // One entry per record, by date: its most urgent signal, with the others it

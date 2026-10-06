@@ -1,12 +1,16 @@
 import { aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
-import { buildAiSkillSignals, compareSignalsByDate, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
+import { buildAiSkillSignals, compareSignalsByPrintedDate, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
 
 const TOP = 5
 // The open problems this list names: late orders, stock below its levels,
-// invoice variances and rejected receipts. Ordered by date
-// (compareSignalsByDate), oldest first, never by a score or an amount.
+// invoice variances and rejected receipts. Ordered by the date each line
+// prints, the oldest first (compareSignalsByPrintedDate): a late order by its
+// promised date, an invoice variance by its invoice date, a rejected receipt
+// by its arrival day; the undated stock problems last. Never by a score, an
+// amount or the kind of problem, so a late order does not jump ahead of an
+// older invoice variance.
 const EXPOSURE_TYPES = new Set(['po_overdue', 'stock_shortage', 'stock_below_safety', 'stock_below_reorder', 'invoice_variance', 'grn_rejected_qty'])
 const SUPPLIER_TYPES = new Set(['po_overdue', 'invoice_variance', 'grn_rejected_qty'])
 
@@ -18,7 +22,7 @@ function supplierExposure(signals) {
     bySupplier.set(item.supplierId, [...(bySupplier.get(item.supplierId) || []), item])
   }
   return [...bySupplier.entries()].filter(([, items]) => items.length > 1).map(([supplierId, items]) => {
-    const first = [...items].sort(compareSignalsByDate)[0]
+    const first = [...items].sort(compareSignalsByPrintedDate)[0]
     return {
       id: `supplier_exposure:${supplierId}`, type: 'supplier_exposure', severity: first.severity, entityType: 'supplier', entityId: supplierId,
       label: first.supplier || supplierId, area: 'purchasing', supplierId, supplier: first.supplier, money: null, when: first.when,
@@ -32,7 +36,7 @@ export function runHighestRisk(facts, { focus = null } = {}) {
   const exposure = signals.filter((item) => EXPOSURE_TYPES.has(item.type))
   const ranked = [...rankAiSkillItemsByDate(exposure), ...supplierExposure(exposure)]
     .filter((item) => matchesAiSkillFocus(item, focus))
-    .sort(compareSignalsByDate)
+    .sort(compareSignalsByPrintedDate)
     .map((item, index) => ({ ...item, also: item.also || [], rank: index + 1 }))
   return { skillId: 'highest_risk_items', focus, total: ranked.length, items: ranked.slice(0, TOP) }
 }

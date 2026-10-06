@@ -141,7 +141,7 @@ const entries = {
   'risk.title_none': ['No open problems found (as of {date})', '未发现未解决的问题（截至 {date}）'],
   'risk.focus_title': ['Open problems on {id}: {first}', '{id} 的未解决问题：{first}'],
   'risk.focus_none': ['No open problems found for {id} (as of {date})', '{id} 没有发现未解决的问题（截至 {date}）'],
-  'risk.summary': ['{count} open problems, oldest first; each line shows its date.', '共 {count} 个未解决问题，按日期从早到晚排列，每行列出日期。'],
+  'risk.summary': ['{count} open problems, oldest first by the date on each line; stock problems have no date and come last.', '共 {count} 个未解决问题，按每行列出的日期从早到晚排列；库存问题没有日期，排在最后。'],
 
   // records_needing_data
   'records.title': ['{count} records need more data', '{count} 条记录需要补齐'],
