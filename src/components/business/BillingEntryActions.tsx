@@ -4,15 +4,17 @@ import { useRouteAvailability } from "../../app/routeAvailability";
 import { useI18n } from "../../i18n/I18n";
 import { usePermissionSet } from "../../lib/usePermissionSet";
 
-// A bill starts from goods that were received and an invoice from goods that
-// were shipped (docs/bills-invoices-and-accounting-handoff.md). These buttons
-// open the entry form with the source document already chosen; the server
-// checks quantities, prices and permissions again.
+// A bill is recorded against a purchase order, before or after its goods are
+// received, and an invoice against goods that were shipped
+// (docs/bills-invoices-and-accounting-handoff.md). These buttons open the
+// entry form with the source document already chosen; the server checks
+// quantities, prices and permissions again, and a bill is paid only after the
+// three-way match.
 
 // English source copy with its Chinese translation.
 const COPY = {
   recordBill: ["Record bill", "录入采购发票"],
-  recordBillNote: ["For goods already received", "按已收到的货物录入"],
+  recordBillNote: ["Paid only after the three-way match", "三单匹配后才能付款"],
   createInvoice: ["Create invoice", "开销售发票"],
   createInvoiceNote: ["For goods already shipped", "按已发出的货物开票"],
 } as const;
