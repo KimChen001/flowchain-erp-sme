@@ -166,13 +166,13 @@ test('with several approved sources and none preferred, the supplier stays empty
   await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('')
   await expect(page.getByTestId('prefill-source-needByDate')).toHaveCount(0)
   const choices = page.getByTestId('pr-supplier-choices')
-  await expect(choices).toContainText('Approved sources, most recent PO first')
+  await expect(choices).toContainText('Approved sources, most recent issued PO first')
   const options = choices.getByTestId('pr-supplier-choices-option')
   await expect(options).toHaveCount(2)
   await expect(options.nth(0)).toHaveAttribute('data-supplier-id', ids.crane)
-  await expect(options.nth(0)).toContainText('Last PO 2026-09-14 · PO-0031')
+  await expect(options.nth(0)).toContainText('Last issued PO 2026-09-14 · PO-0031')
   await expect(options.nth(1)).toHaveAttribute('data-supplier-id', ids.bolt)
-  await expect(options.nth(1)).toContainText('No PO yet')
+  await expect(options.nth(1)).toContainText('No issued PO yet')
   // Choosing one sets the supplier only.
   await options.nth(1).click()
   await expect(page.getByLabel('Suppliers 1')).toHaveValue(ids.bolt)
@@ -185,7 +185,7 @@ test('with several approved sources and none preferred, the supplier stays empty
   await page.goto(`/app/procurement/requests?mode=create&itemId=${encodeURIComponent(ids.nonePreferred)}&quantity=5&origin=ai_assistant&again=1`)
   await expect(page.getByTestId('pr-supplier-choices-no-dates')).toHaveText('PO dates not available')
   await expect(page.getByTestId('pr-supplier-choices')).toContainText('Approved sources, A–Z')
-  await expect(page.getByTestId('pr-supplier-choices')).not.toContainText('No PO yet')
+  await expect(page.getByTestId('pr-supplier-choices')).not.toContainText('No issued PO yet')
   await expect(page.getByTestId('pr-supplier-choices-option').nth(0)).toHaveAttribute('data-supplier-id', ids.bolt)
 })
 
@@ -213,6 +213,13 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   await picker.getByTestId('supplier-override-reason-1-code').selectOption('other')
   await page.getByRole('button', { name: 'Save and submit' }).click()
   await expect(picker.getByRole('alert')).toHaveText('Add a note of 3 to 500 characters')
+  // A reason belongs to the supplier it was given for: switching away and
+  // back asks again.
+  await picker.getByTestId('supplier-override-reason-1-code').selectOption('stock_now')
+  await page.getByLabel('Suppliers 1').selectOption(ids.acme)
+  await expect(picker).toHaveCount(0)
+  await page.getByLabel('Suppliers 1').selectOption(ids.bolt)
+  await expect(picker.getByTestId('supplier-override-reason-1-code')).toHaveValue('')
   await picker.getByTestId('supplier-override-reason-1-code').selectOption('lead_time')
   await picker.getByTestId('supplier-override-reason-1-note').fill('Acme is out until November')
   await page.getByRole('button', { name: 'Save and submit' }).click()
@@ -221,9 +228,10 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   const submitted = (await api('/api/procurement/requests')).find((pr: { id: string }) => !before.has(pr.id))
   expect(submitted.lines[0].supplierOverride).toMatchObject({ reasonCode: 'lead_time', note: 'Acme is out until November', preferredSupplierId: ids.acme })
   const flag = `Not preferred (Acme ${ids.stamp}). Reason: Lead time — Acme is out until November`
-  // The list row's approve button skips the detail, so the row says it too.
+  // The list row's approve button skips the detail, so the row shows the reason too.
   const row = page.locator('tr', { hasText: submitted.id })
-  await expect(row.getByTestId('pr-row-supplier-overrides')).toHaveText('1 line not preferred')
+  await expect(row.getByTestId('pr-row-supplier-overrides')).toHaveText('1 line skips the preferred supplier')
+  await expect(row.getByTestId('pr-row-supplier-override')).toHaveText(`SC-Wrap-${ids.stamp} · Bolt ${ids.stamp}: ${flag}`)
   await row.getByText(submitted.id).click()
   await expect(page.getByTestId('pr-line-supplier-override')).toHaveText(flag)
 

@@ -331,13 +331,25 @@ export default function CanonicalProcurementPanel({
       : itemSuppliers[line.itemId || ""] || [];
   // A catalog line whose supplier is not the item's preferred one, while one
   // is preferred, asks why (shared/supplier-override-reasons.mjs). Nothing
-  // else does.
-  const preferredFor = (line: Line) =>
-    line.sourceType === "catalog_item" ? supplierOptions(line).find((option) => option.preferred) : undefined;
-  const needsReason = (line: Line) => {
-    const preferred = preferredFor(line);
-    return Boolean(line.supplierId && preferred) && overrideNeeded({ supplierId: line.supplierId, preferredId: preferred?.id });
+  // else does. Master data can mark more than one source preferred; any of
+  // them needs no reason, the same rule as the server.
+  const preferredOf = (line: Line, options = supplierOptions(line)) =>
+    line.sourceType === "catalog_item" ? options.filter((option) => option.preferred) : [];
+  const preferredNames = (line: Line) =>
+    preferredOf(line).map((option) => option.name || option.supplierName || option.id).join(", ");
+  const needsReason = (line: Line) =>
+    Boolean(line.supplierId) && overrideNeeded({ supplierId: line.supplierId, preferredIds: preferredOf(line).map((option) => option.id) });
+  // A reason given while another supplier was preferred is asked again.
+  const keepOverride = (line: Line, options: SupplierOption[]) => {
+    const stamped = line.supplierOverride?.preferredSupplierId;
+    if (!line.supplierOverride || !stamped) return line.supplierOverride || null;
+    return preferredOf(line, options).some((option) => option.id === stamped) ? line.supplierOverride : null;
   };
+  const hasOverrideIssue = (index: number) =>
+    errors.some((error) => {
+      const match = OVERRIDE_FIELD.exec(error.field || "");
+      return Boolean(match) && Number(match?.[1]) === index;
+    });
   const overrideIssues = (index: number) =>
     Object.fromEntries(errors.flatMap((error) => {
       const match = OVERRIDE_FIELD.exec(error.field || "");
@@ -390,7 +402,8 @@ export default function CanonicalProcurementPanel({
               : Number(l.quantity) * Number(l.estimatedUnitPrice),
           unitSnapshot: l.lineBasis === "amount" ? null : l.unitSnapshot,
           currency: l.currency || currency,
-          supplierOverride: needsReason(l) && l.supplierOverride
+          // The server keeps a reason only where one is needed.
+          supplierOverride: l.sourceType === "catalog_item" && l.supplierOverride?.reasonCode
             ? { reasonCode: l.supplierOverride.reasonCode, note: String(l.supplierOverride.note || "").trim() || null }
             : null,
         })),
@@ -425,9 +438,50 @@ export default function CanonicalProcurementPanel({
           ? details
           : [{ message: error instanceof Error ? error.message : "保存失败" }],
       );
-      toast.error(copy(error instanceof Error ? error.message : "保存失败"));
+      // The server asked for a reason the form did not: the item's preferred
+      // supplier changed since the form read it. Read the sources again so
+      // the picker shows, and say it in the interface language.
+      const overrideErrors = (details as FieldError[]).flatMap((detail) => {
+        const match = OVERRIDE_FIELD.exec(detail.field || "");
+        return match ? [{ index: Number(match[1]), code: detail.code }] : [];
+      });
+      if (overrideErrors.length) {
+        const first = overrideErrors[0];
+        toast.error(`${copy("采购行")} ${first.index + 1}: ${supplierOverrideIssueText(first.code, language)}`);
+        await reloadSuppliers([...new Set(overrideErrors.map(({ index }) => lines[index]?.itemId).filter(Boolean))] as string[]);
+      } else {
+        toast.error(copy(error instanceof Error ? error.message : "保存失败"));
+      }
     } finally {
       setSaving(false);
+    }
+  };
+  const readSuppliers = (itemIds: string[]) =>
+    Promise.all(
+      itemIds.map(
+        async (itemId) =>
+          [
+            itemId,
+            (
+              await request<{ suppliers: SupplierOption[] }>(
+                `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
+              )
+            ).suppliers,
+          ] as const,
+      ),
+    );
+  const reloadSuppliers = async (itemIds: string[]) => {
+    if (!itemIds.length) return;
+    try {
+      const fresh: Record<string, SupplierOption[]> = Object.fromEntries(await readSuppliers(itemIds));
+      setItemSuppliers((current) => ({ ...current, ...fresh }));
+      setLines((current) =>
+        current.map((line) =>
+          line.itemId && fresh[line.itemId] ? { ...line, supplierOverride: keepOverride(line, fresh[line.itemId]) } : line,
+        ),
+      );
+    } catch {
+      // The picker still shows for the refused line (hasOverrideIssue).
     }
   };
   const act = async (pr: PR, action: string) => {
@@ -454,22 +508,10 @@ export default function CanonicalProcurementPanel({
     const itemIds = [
       ...new Set(pr.lines.map((line) => line.itemId).filter(Boolean)),
     ] as string[];
-    const payloads = await Promise.all(
-      itemIds.map(
-        async (itemId) =>
-          [
-            itemId,
-            (
-              await request<{ suppliers: SupplierOption[] }>(
-                `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
-              )
-            ).suppliers,
-          ] as const,
-      ),
-    );
+    const payloads: Record<string, SupplierOption[]> = Object.fromEntries(await readSuppliers(itemIds));
     setItemSuppliers((current) => ({
       ...current,
-      ...Object.fromEntries(payloads),
+      ...payloads,
     }));
     setEditing(pr);
     setDepartmentId(pr.departmentId);
@@ -481,6 +523,8 @@ export default function CanonicalProcurementPanel({
         quantity: String(l.quantity ?? ""),
         estimatedUnitPrice: String(l.estimatedUnitPrice ?? ""),
         estimatedAmount: String(l.estimatedAmount ?? ""),
+        // A reason given while another supplier was preferred is asked again.
+        supplierOverride: l.itemId && payloads[l.itemId] ? keepOverride(l, payloads[l.itemId]) : l.supplierOverride || null,
       })),
     );
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -724,7 +768,8 @@ export default function CanonicalProcurementPanel({
                     aria-label={`${copy("供应商")} ${index + 1}`}
                     value={line.supplierId}
                     onChange={(e) =>
-                      patchLine(index, { supplierId: e.target.value })
+                      // A reason belongs to the supplier it was given for.
+                      patchLine(index, { supplierId: e.target.value, supplierOverride: null })
                     }
                     style={inputStyle}
                   >
@@ -741,16 +786,24 @@ export default function CanonicalProcurementPanel({
                     <SupplierChoices
                       choices={prefill.supplierChoices}
                       selectedId={line.supplierId}
-                      onChoose={(supplierId) => patchLine(index, { supplierId })}
+                      onChoose={(supplierId) => patchLine(index, supplierId === line.supplierId ? {} : { supplierId, supplierOverride: null })}
                     />
                   ) : null}
-                  {needsReason(line) ? (
+                  {needsReason(line) || (line.sourceType === "catalog_item" && hasOverrideIssue(index)) ? (
                     <SupplierOverrideReason
                       testId={`supplier-override-reason-${index + 1}`}
-                      preferredName={preferredFor(line)?.name || preferredFor(line)?.supplierName || preferredFor(line)?.id || ""}
+                      preferredName={preferredNames(line)}
                       value={line.supplierOverride}
                       issues={overrideIssues(index)}
-                      onChange={(supplierOverride) => patchLine(index, { supplierOverride })}
+                      onChange={(supplierOverride) =>
+                        patchLine(index, {
+                          supplierOverride: {
+                            ...supplierOverride,
+                            preferredSupplierId: preferredOf(line)[0]?.id || null,
+                            preferredSupplierName: preferredNames(line) || null,
+                          },
+                        })
+                      }
                     />
                   ) : null}
                   {line.sourceType === "catalog_item" &&
@@ -935,6 +988,19 @@ export default function CanonicalProcurementPanel({
                     <td className="p-3">
                       {copy(pr.status)}
                       <SupplierOverrideCount count={pr.lines.filter((line) => line.supplierOverride?.reasonCode).length} testId="pr-row-supplier-overrides" />
+                      {/* Approve on this row skips the detail, so the row shows each reason too. */}
+                      {pr.lines.some((line) => line.supplierOverride?.reasonCode) ? (
+                        <div className="mt-1 flex flex-col items-start gap-1">
+                          {pr.lines.filter((line) => line.supplierOverride?.reasonCode).map((line, lineIndex) => (
+                            <SupplierOverrideFlag
+                              key={line.lineId || lineIndex}
+                              override={line.supplierOverride}
+                              prefix={`${line.sku || line.itemNameSnapshot} · ${line.supplierSnapshot?.supplierName || line.supplierId}`}
+                              testId="pr-row-supplier-override"
+                            />
+                          ))}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="p-3">{amount(pr.totalAmount, pr.defaultCurrency)}</td>
                     <td className="p-3 space-x-2">

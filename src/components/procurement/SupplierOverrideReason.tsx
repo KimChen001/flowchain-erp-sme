@@ -25,32 +25,37 @@ const REASON_LABELS: Record<SupplierOverrideReasonCode, readonly [string, string
   other: ["Other", "其他"],
 };
 
-const COPY = {
+// The name in the flag is the preferred supplier the line does NOT use; the
+// Chinese says so ("未使用首选供应商") so it cannot be read as calling that
+// supplier non-preferred.
+export const SUPPLIER_OVERRIDE_COPY = {
   "en-US": {
     question: "Why not the preferred supplier ({name})?",
+    questionNoName: "Why not the preferred supplier?",
     choose: "Choose a reason",
     note: "Note (required for Other)",
     reasonRequired: "Choose a reason",
     noteLength: "Add a note of 3 to 500 characters",
     flag: "Not preferred ({name}). Reason: {reason}",
     flagNoName: "Not preferred. Reason: {reason}",
-    countOne: "1 line not preferred",
-    countMany: "{n} lines not preferred",
+    countOne: "1 line skips the preferred supplier",
+    countMany: "{n} lines skip the preferred supplier",
   },
   "zh-CN": {
     question: "为什么不选首选供应商（{name}）？",
+    questionNoName: "为什么不选首选供应商？",
     choose: "请选择原因",
     note: "备注（选择“其他”时必填）",
     reasonRequired: "请选择原因",
     noteLength: "请填写 3 到 500 个字符的备注",
-    flag: "非首选供应商（{name}）。原因：{reason}",
-    flagNoName: "非首选供应商。原因：{reason}",
-    countOne: "1 行非首选供应商",
-    countMany: "{n} 行非首选供应商",
+    flag: "未使用首选供应商（{name}）。原因：{reason}",
+    flagNoName: "未使用首选供应商。原因：{reason}",
+    countOne: "1 行未使用首选供应商",
+    countMany: "{n} 行未使用首选供应商",
   },
 } as const;
 
-const copyFor = (language: string) => COPY[language === "zh-CN" ? "zh-CN" : "en-US"];
+const copyFor = (language: string) => SUPPLIER_OVERRIDE_COPY[language === "zh-CN" ? "zh-CN" : "en-US"];
 
 export function supplierOverrideReasonLabel(code: string, language: string) {
   const pair = REASON_LABELS[code as SupplierOverrideReasonCode];
@@ -74,13 +79,15 @@ export function supplierOverrideText(override: SupplierOverride, language: strin
   return note ? `${head} — ${note}` : head;
 }
 
-export function SupplierOverrideFlag({ override, testId = "supplier-override-flag" }: { override?: SupplierOverride | null; testId?: string }) {
+// prefix: what the line is, where the flag stands apart from it (a list row).
+export function SupplierOverrideFlag({ override, prefix, testId = "supplier-override-flag" }: { override?: SupplierOverride | null; prefix?: string; testId?: string }) {
   const { language } = useI18n();
   if (!override?.reasonCode) return null;
+  const text = supplierOverrideText(override, language);
   return (
     <span data-testid={testId} data-reason-code={override.reasonCode} className="inline-flex max-w-full items-start gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-4" style={{ background: "#fff8f0", color: A.orange }}>
       <AlertTriangle size={11} className="mt-0.5 shrink-0" aria-hidden />
-      <span className="break-words">{supplierOverrideText(override, language)}</span>
+      <span className="break-words">{prefix ? `${prefix}: ${text}` : text}</span>
     </span>
   );
 }
@@ -117,12 +124,13 @@ export function SupplierOverrideReason({
   const copy = copyFor(language);
   const reasonCode = value?.reasonCode || "";
   const note = value?.note || "";
+  const question = preferredName ? copy.question.replace("{name}", preferredName) : copy.questionNoName;
   return (
     <div data-testid={testId} className="mt-2 rounded-md px-2 py-2 text-xs" style={{ background: "#fff8f0", border: `0.5px solid ${A.orange}40` }}>
       <label className="block font-medium" style={{ color: A.label }}>
-        {copy.question.replace("{name}", preferredName)}
+        {question}
         <select
-          aria-label={copy.question.replace("{name}", preferredName)}
+          aria-label={question}
           data-testid={`${testId}-code`}
           value={reasonCode}
           onChange={(event) => onChange({ ...(value || {}), reasonCode: event.target.value, note })}
