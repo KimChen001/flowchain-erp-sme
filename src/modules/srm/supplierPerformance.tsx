@@ -7,9 +7,10 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { ReportDateInput } from "../reports/ReportDateInput";
 
-// Supplier delivery performance, measured against each PO line's original
-// promised date (server/domain/supplier-scorecard.mjs). Shown on the supplier
-// detail page and in Reports › Supplier analytics.
+// Supplier delivery performance per delivery (the lines of one PO with one
+// original promised date), measured against that date
+// (server/domain/supplier-scorecard.mjs). Shown on the supplier detail page and
+// in Reports › Supplier analytics.
 
 type Interval = { low: number; high: number } | null;
 type LineRate = { count: number; of: number; rate: number | null; interval: Interval };
@@ -18,13 +19,19 @@ export type ScorecardLine = {
   purchaseOrderId: string; purchaseOrderLineId: string; sku: string; itemName: string; unit: string;
   orderedQuantity: number; receivedQuantity: number; rejectedQuantity: number; acceptedByPromise?: number;
   originalPromisedDate: string | null; currentPromisedDate: string | null; revised: boolean;
-  firstReceiptDay: string | null; fullDay: string | null; closed: boolean; acceptedQuantity: number; receipts: Array<{ receivingDocumentId: string; day: string; accepted: number; rejected: number }>;
+  firstReceiptDay: string | null; fullDay: string | null; closed: boolean; closedDay?: string | null; acceptedQuantity: number; receipts: Array<{ receivingDocumentId: string; day: string; accepted: number; rejected: number }>;
   onTime?: boolean; onTimeCurrent?: boolean; early?: boolean; inFull?: boolean | null; inFullPending?: boolean; otif?: boolean | null; otifCurrent?: boolean; daysLate?: number; overdueUndelivered?: boolean;
   currency: string | null; amount: number | null;
 };
+// One delivery: the lines of one PO with one original promised date, judged together.
+export type ScorecardObligation = {
+  obligationId: string; purchaseOrderId: string; originalPromisedDate: string; lines: ScorecardLine[];
+  onTime: boolean; onTimeCurrent: boolean; early: boolean; inFull: boolean | null; inFullPending: boolean; otif: boolean | null; otifCurrent: boolean;
+  daysLate: number; overdueUndelivered: boolean; revised: boolean; lastFirstReceiptDay: string | null; fullDay: string | null;
+};
 type ScorecardInvoice = { supplierInvoiceId: string; invoiceNumber: string; invoiceDate: string; purchaseOrderId: string | null; currency: string | null; varianceAmount: number | null };
 export type SupplierScorecardRow = {
-  supplierId: string; supplierName: string; sampleSize: number; sampleStatus: "ok" | "insufficient_sample" | "no_lines";
+  supplierId: string; supplierName: string; sampleSize: number; lineCount: number; sampleStatus: "ok" | "insufficient_sample" | "no_obligations";
   inFullPendingCount: number; overdueUndeliveredCount?: number; originalNotRecordedCount: number; revisedCount: number;
   metrics: {
     onTime: LineRate; onTimeCurrent: LineRate; early: LineRate; inFull: LineRate; otif: LineRate; otifCurrent: LineRate;
@@ -32,16 +39,18 @@ export type SupplierScorecardRow = {
     averageDelayDays: { value: number | null; lateCount: number };
     priceVariances: { count: number | null; visible: boolean; amounts: MoneyByCurrency };
   };
-  orderedValue: MoneyByCurrency; lines: ScorecardLine[]; pendingLines: ScorecardLine[]; originalNotRecordedLines: ScorecardLine[]; invoices: ScorecardInvoice[];
+  orderedValue: MoneyByCurrency; obligations: ScorecardObligation[]; lines: ScorecardLine[]; pendingObligations: ScorecardObligation[]; originalNotRecordedLines: ScorecardLine[]; invoices: ScorecardInvoice[];
 };
-export type SupplierScorecard = { version: string; asOf: string; timeZone: string; period: { from: string; to: string }; rules: { graceDays: number; earlyDays: number; minimumSample: number }; limitations: string[]; suppliers: SupplierScorecardRow[] };
+// promiseBasis "po_date": the original promise is the date on the PO at approval.
+export type SupplierScorecard = { version: string; asOf: string; timeZone: string; period: { from: string; to: string }; rules: { graceDays: number; earlyDays: number; minimumSample: number; promiseBasis?: string }; limitations: string[]; suppliers: SupplierScorecardRow[] };
 
 // English source copy with its Chinese translation.
 const COPY: Record<string, [string, string]> = {
   performance: ["Performance", "绩效"],
   details: ["Details", "资料"],
   title: ["Supplier performance", "供应商绩效"],
-  subtitle: ["Delivery measured against the date each PO line was first promised.", "按每个采购订单行最初承诺的交期衡量交付表现。"],
+  subtitle: ["Each delivery (the lines of one PO due on one date) measured against the date first on the PO.", "按交付（同一采购订单、同一日期到期的各行）衡量，对照采购订单上最初的日期。"],
+  basisNote: ["Measured against the date on the PO, which may be the buyer's need date.", "按采购订单上的日期衡量，该日期可能是采购方的需求日期。"],
   from: ["From", "开始日期"], to: ["To", "结束日期"], graceDays: ["Grace days", "宽限天数"],
   last30: ["Last 30 days", "最近 30 天"], last90: ["Last 90 days", "最近 90 天"], last180: ["Last 180 days", "最近 180 天"], last365: ["Last 12 months", "最近 12 个月"],
   refresh: ["Refresh", "刷新"], loading: ["Loading supplier performance…", "正在加载供应商绩效…"],
@@ -49,32 +58,33 @@ const COPY: Record<string, [string, string]> = {
   periodInvalid: ["Enter the period as calendar dates, starting on or before its end.", "请按日历日期输入统计期，开始日期不得晚于结束日期。"],
   periodTooLong: ["The period can cover at most {n} days. Choose a shorter range.", "统计期最多 {n} 天，请选择更短的范围。"],
   graceInvalid: ["Grace days must be a whole number from 0 to {n}.", "宽限天数必须是 0 到 {n} 之间的整数。"],
-  supplier: ["Supplier", "供应商"], lines: ["Lines", "行数"],
-  onTime: ["On time", "准时率"], onTimeOriginal: ["On time vs original promise", "按原始承诺准时率"], onTimeCurrent: ["vs current date", "按当前日期"], onTimeCurrentFull: ["On time vs current date", "按当前日期准时率"],
-  overdueCount: ["{n} overdue, nothing received", "{n} 行逾期未到货"],
-  inFull: ["In full", "足量率"], otif: ["OTIF", "OTIF"], otifOriginal: ["OTIF vs original promise", "按原始承诺 OTIF"], otifCurrentFull: ["OTIF vs current date", "按当前日期 OTIF"], pendingCount: ["{n} not in full yet", "{n} 行尚未足量"], pendingLines: ["Not in full yet", "尚未足量"], early: ["Early", "过早到货"], rejection: ["Rejection rate", "拒收率"],
+  supplier: ["Supplier", "供应商"], lines: ["Deliveries", "交付次数"], delivery: ["Delivery", "交付"],
+  onTime: ["On time", "准时率"], onTimeOriginal: ["On time vs the date on the PO", "按采购订单日期准时率"], onTimeCurrent: ["vs current date", "按当前日期"], onTimeCurrentFull: ["On time vs current date", "按当前日期准时率"],
+  overdueCount: ["{n} overdue with a line not received", "{n} 次交付逾期，有行未到货"],
+  inFull: ["In full", "足量率"], otif: ["OTIF", "OTIF"], otifOriginal: ["OTIF vs the date on the PO", "按采购订单日期 OTIF"], otifCurrentFull: ["OTIF vs current date", "按当前日期 OTIF"], pendingCount: ["{n} not in full yet", "{n} 次交付尚未足量"], pendingLines: ["Not in full yet", "尚未足量"], early: ["Early", "过早到货"], rejection: ["Rejection rate", "拒收率"],
   averageDelay: ["Average delay", "平均延迟"], priceVariances: ["Price variances", "价格差异"],
-  insufficient: ["Insufficient sample", "样本不足"], noLines: ["No received lines with an original promise in this period", "本期没有带原始承诺交期的已收货订单行"],
-  linesCount: ["{n} lines", "{n} 行"], days: ["{n} days", "{n} 天"], lateLines: ["{n} late", "迟到 {n} 行"],
+  insufficient: ["Fewer than 5 deliveries", "交付少于 5 次"], noDeliveries: ["No deliveries due in this period with a date on the PO", "本期没有按采购订单日期应交付的记录"],
+  linesCount: ["{n} deliveries", "{n} 次交付"], days: ["{n} days", "{n} 天"], lateLines: ["{n} late", "迟到 {n} 次"],
   interval: ["95% range {low}–{high}", "95% 区间 {low}–{high}"],
   hidden: ["Hidden", "无权查看"], mixedUnits: ["Mixed units", "单位不同"],
   notRecorded: ["{n} received lines have no original promise recorded and are not counted.", "有 {n} 个已收货订单行没有记录原始承诺交期，未计入统计。"],
-  pending: ["{n} lines are still open with a shortfall: not in full yet, and left out of the in-full rate until they are fully received or closed.", "有 {n} 个订单行仍未收齐且未关闭：尚未足量，在收齐或关闭前不计入足量率。"],
+  pending: ["{n} deliveries still have a line open with a shortfall: not in full yet, and left out of the in-full rate until every line is fully received or closed.", "有 {n} 次交付仍有订单行未收齐且未关闭：尚未足量，在各行收齐或关闭前不计入足量率。"],
   revisedNote: ["{n} lines had their promised date revised after the PO was issued.", "有 {n} 个订单行在下达后修改过承诺交期。"],
   hiddenInvoices: ["Price variances are hidden: you cannot view supplier invoices.", "价格差异已隐藏：你没有查看供应商发票的权限。"],
   warehouseScoped: ["Only receipts in your warehouses are counted.", "仅统计你有权限的仓库的收货。"],
   definitionTitle: ["How these figures are calculated", "指标口径"],
   definition: [
-    "Each figure counts PO lines whose original promised date falls in the period and that have a posted receipt or are overdue. A line with nothing received past its original promised date plus the grace days is overdue: late, not OTIF, and not in full yet; a line not yet due with nothing received is left out. On time: the line's first receipt arrived by the original promised date plus the grace days. A first receipt more than 3 days early counts as early, not as a failure. In full: the accepted quantity eventually reached the ordered quantity. A line still open with a shortfall is not in full yet; it is listed as pending and left out of the in-full rate until it is fully received or closed. OTIF: the accepted quantity reached the ordered quantity by the original promised date plus the grace days; a line still short inside that window is undecided and left out of the OTIF rate. Rejection rate: rejected ÷ received quantity; it is not shown when the lines use different units. Average delay: mean days from the original promised date to the first receipt, or to today for an overdue line, over the late lines. Price variances: supplier invoices dated in the period with a price variance. \"vs current date\" repeats on time and OTIF against the current expected date, with the same grace days; a line not yet due against its current date counts as on time against it. The current date moves when a supplier revises, so the gap shows how much the revisions hide. Fewer than 5 lines is an insufficient sample. Ranges are Wilson 95% intervals.",
-    "统计单位是原始承诺交期在统计期内、已过账收货或已逾期的采购订单行。超过原始承诺交期加宽限天数仍未收货的订单行为逾期：记为迟到、非 OTIF，并列为尚未足量；尚未到期且未收货的订单行不计入。准时：该行第一次收货在原始承诺交期加宽限天数之内到货；第一次收货提前超过 3 天记为过早到货，不算违约。足量：累计合格收货最终达到订购数量；仍未收齐且未关闭的订单行记为尚未足量，列为待定，在收齐或关闭前不计入足量率。OTIF：截至原始承诺交期加宽限天数，累计合格收货已达到订购数量；仍在该期限内且尚未收齐的订单行暂不判定，不计入 OTIF。拒收率：拒收数量 ÷ 收货数量；各行单位不同时不显示。平均延迟：迟到行从原始承诺交期到第一次收货（逾期未收货的行算到今天）的平均天数。价格差异：统计期内开具且存在价格差异的供应商发票张数。“按当前日期”用当前预计交期和相同宽限天数重复准时和 OTIF 判断；按当前日期尚未到期的订单行视为准时。供应商改期时当前日期会随之变化，两者的差距就是改期掩盖的延迟。少于 5 行为样本不足。区间为 Wilson 95% 置信区间。",
+    "Each figure counts deliveries: the lines of one PO that share an original promised date, the date on the PO when it was approved. That date may be the buyer's need date rather than a date the supplier confirmed. A delivery counts when its original promised date falls in the period and every line has a posted receipt, or that date plus the grace days has passed; a delivery with a line not yet due and not received waits. A line ordered at zero, or closed with nothing received before it was due, is left out. A delivery past its original promised date plus the grace days with a line not received is overdue: late, not OTIF, and not in full yet. On time: every line's first receipt arrived by the original promised date plus the grace days; a partial first receipt counts. When the last line's first receipt is more than 3 days early, the delivery counts as early, not as a failure. In full: every line's accepted quantity eventually reached its ordered quantity. A delivery with a line still open with a shortfall is not in full yet; it is listed as pending and left out of the in-full rate until every line is fully received or closed. OTIF: every line's accepted quantity reached its ordered quantity by the original promised date plus the grace days; a delivery still short inside that window is undecided and left out of the OTIF rate. Rejection rate: rejected ÷ received quantity over the lines of these deliveries; it is not shown when the lines use different units. Average delay: mean days from the original promised date to the last line's first receipt, or to today for a line not received, over the late deliveries. Price variances: supplier invoices dated in the period with a price variance. \"vs current date\" repeats on time and OTIF against each line's current expected date, with the same grace days; a line not yet due against its current date counts as on time against it. The current date moves when a supplier revises, so the gap shows how much the revisions hide. Fewer than 5 deliveries is an insufficient sample. Ranges are Wilson 95% intervals over deliveries.",
+    "统计单位是交付：同一采购订单中原始承诺交期相同的各行。原始承诺交期是采购订单审批时的日期，可能是采购方的需求日期，而非供应商确认的日期。原始承诺交期在统计期内、且每一行都已过账收货或已超过该日期加宽限天数的交付计入统计；仍有行未到期且未收货的交付暂不判定。订购数量为 0 的行，以及到期前关闭且未收货的行不计入。超过原始承诺交期加宽限天数仍有行未收货的交付为逾期：记为迟到、非 OTIF，并列为尚未足量。准时：每一行第一次收货都在原始承诺交期加宽限天数之内到货，部分到货也算；最后一行的第一次收货提前超过 3 天记为过早到货，不算违约。足量：每一行累计合格收货最终达到订购数量；仍有行未收齐且未关闭的交付记为尚未足量，列为待定，在各行收齐或关闭前不计入足量率。OTIF：截至原始承诺交期加宽限天数，每一行累计合格收货都已达到订购数量；仍在该期限内且尚未收齐的交付暂不判定，不计入 OTIF。拒收率：这些交付各行的拒收数量 ÷ 收货数量；各行单位不同时不显示。平均延迟：迟到交付从原始承诺交期到最后一行第一次收货（有行未收货的算到今天）的平均天数。价格差异：统计期内开具且存在价格差异的供应商发票张数。“按当前日期”用每一行的当前预计交期和相同宽限天数重复准时和 OTIF 判断；按当前日期尚未到期的行视为准时。供应商改期时当前日期会随之变化，两者的差距就是改期掩盖的延迟。少于 5 次交付为样本不足。区间为按交付计算的 Wilson 95% 置信区间。",
   ],
-  drilldown: ["Lines behind {metric}", "{metric} 对应的订单行"], allLines: ["All lines", "全部订单行"], close: ["Close", "关闭"],
-  po: ["PO", "采购订单"], sku: ["SKU", "SKU"], original: ["Original promise", "原始承诺交期"], current: ["Current date", "当前交期"],
+  drilldown: ["Deliveries behind {metric}", "{metric} 对应的交付"], allLines: ["All deliveries", "全部交付"], close: ["Close", "关闭"],
+  deliveryLines: ["{n} lines", "{n} 行"],
+  po: ["PO", "采购订单"], sku: ["SKU", "SKU"], original: ["Date on the PO", "采购订单日期"], current: ["Current date", "当前交期"],
   arrived: ["First receipt", "首次到货"], fullOn: ["In full on", "足量日期"], otifShort: ["OTIF", "OTIF"], received: ["Received", "收货"], rejected: ["Rejected", "拒收"], lateBy: ["Days late", "迟到天数"],
   result: ["Result", "结果"], resultOnTime: ["On time", "准时"], resultLate: ["Late", "迟到"], resultEarly: ["Early", "过早"],
   inFullYes: ["In full", "足量"], inFullNo: ["Short", "不足量"], inFullNotYet: ["Not in full yet", "尚未足量"], yes: ["Yes", "是"], no: ["No", "否"], revised: ["Revised", "已改期"], amount: ["Amount", "金额"],
   invoice: ["Invoice", "发票"], invoiceDate: ["Invoice date", "发票日期"], variance: ["Variance", "差异金额"],
-  noDrilldown: ["No lines for this figure.", "该指标没有对应的订单行。"],
+  noDrilldown: ["No deliveries for this figure.", "该指标没有对应的交付。"],
   noSuppliers: ["No supplier deliveries in this period.", "本期没有供应商交付记录。"],
   view: ["View lines", "查看订单行"],
 };
@@ -197,17 +207,18 @@ function Definition() {
 }
 
 type MetricKey = "onTime" | "onTimeCurrent" | "early" | "inFull" | "pending" | "otif" | "otifCurrent" | "rejection" | "averageDelay" | "priceVariances" | "all";
-const LINE_FILTERS: Record<Exclude<MetricKey, "priceVariances">, (line: ScorecardLine) => boolean> = {
+// The deliveries behind each figure; the result is the delivery's, not a line's.
+const DELIVERY_FILTERS: Record<Exclude<MetricKey, "priceVariances">, (delivery: ScorecardObligation) => boolean> = {
   all: () => true,
-  onTime: (line) => Boolean(line.onTime),
-  onTimeCurrent: (line) => Boolean(line.onTimeCurrent),
-  early: (line) => Boolean(line.early),
-  inFull: (line) => line.inFull === true,
-  pending: (line) => Boolean(line.inFullPending),
-  otif: (line) => Boolean(line.otif),
-  otifCurrent: (line) => Boolean(line.otifCurrent),
-  rejection: (line) => line.rejectedQuantity > 0,
-  averageDelay: (line) => line.onTime === false,
+  onTime: (delivery) => delivery.onTime,
+  onTimeCurrent: (delivery) => delivery.onTimeCurrent,
+  early: (delivery) => delivery.early,
+  inFull: (delivery) => delivery.inFull === true,
+  pending: (delivery) => delivery.inFullPending,
+  otif: (delivery) => delivery.otif === true,
+  otifCurrent: (delivery) => delivery.otifCurrent,
+  rejection: (delivery) => delivery.lines.some((line) => line.rejectedQuantity > 0),
+  averageDelay: (delivery) => !delivery.onTime,
 };
 
 function rateText(metric: LineRate | { rate: number | null }, sampleStatus: string, format: ReturnType<typeof useFormat>, tr: ReturnType<typeof useCopy>) {
@@ -225,7 +236,7 @@ function Tile({ label, value, detail, onClick, testId }: { label: string; value:
   );
 }
 
-// The lines (or invoices) behind one figure.
+// The deliveries, each with its lines (or the invoices), behind one figure.
 function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric: MetricKey; onClose: () => void }) {
   const tr = useCopy();
   const format = useFormat();
@@ -249,30 +260,50 @@ function Drilldown({ row, metric, onClose }: { row: SupplierScorecardRow; metric
       </div>
     );
   }
-  const lines = row.lines.filter(LINE_FILTERS[metric]);
-  const result = (line: ScorecardLine) => line.onTime ? (line.early ? tr("resultEarly") : tr("resultOnTime")) : tr("resultLate");
-  const inFullText = (line: ScorecardLine) => line.inFullPending ? tr("inFullNotYet") : line.inFull ? tr("inFullYes") : tr("inFullNo");
+  const deliveries = (row.obligations || []).filter(DELIVERY_FILTERS[metric]);
+  const result = (item: { onTime?: boolean; early?: boolean }) => item.onTime ? (item.early ? tr("resultEarly") : tr("resultOnTime")) : tr("resultLate");
+  const inFullText = (item: { inFull?: boolean | null; inFullPending?: boolean }) => item.inFullPending ? tr("inFullNotYet") : item.inFull ? tr("inFullYes") : tr("inFullNo");
+  const otifText = (value: boolean | null | undefined) => value === null || value === undefined ? "—" : value ? tr("yes") : tr("no");
   return (
     <div className="mt-3 rounded-lg border p-3" style={{ borderColor: A.border }} data-testid="supplier-performance-drilldown">
       <div className="flex items-center justify-between"><h3 className="text-xs font-semibold">{heading}</h3><button type="button" onClick={onClose} className="text-xs" style={{ color: A.blue }}>{tr("close")}</button></div>
-      {lines.length ? (
+      {deliveries.length ? (
         <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[860px] text-xs"><thead><tr>{[tr("po"), tr("sku"), tr("original"), tr("current"), tr("arrived"), tr("lateBy"), tr("result"), tr("received"), tr("rejected"), tr("fullOn"), tr("inFull"), tr("otifShort"), tr("amount")].map((header) => <th key={header} className="p-2 text-left" style={{ color: A.gray1 }}>{header}</th>)}</tr></thead>
-          <tbody>{lines.map((line) => (
-            <tr key={line.purchaseOrderLineId} className="border-t" data-testid={`supplier-performance-line-${line.purchaseOrderLineId}`}>
-              <td className="p-2"><EntityLink kind="purchase_order" id={line.purchaseOrderId} /></td>
-              <td className="p-2">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
-              <td className="p-2">{format.day(line.originalPromisedDate)}</td>
-              <td className="p-2">{format.day(line.currentPromisedDate)}{line.revised && <span className="ml-1 rounded bg-amber-50 px-1 text-[11px] text-amber-700">{tr("revised")}</span>}</td>
-              <td className="p-2">{format.day(line.firstReceiptDay)}</td>
-              <td className="p-2 tabular-nums">{line.daysLate ? format.number(line.daysLate) : "—"}</td>
-              <td className="p-2">{result(line)}</td>
-              <td className="p-2 tabular-nums">{format.number(line.acceptedQuantity)} / {format.number(line.orderedQuantity)} {line.unit}</td>
-              <td className="p-2 tabular-nums">{format.number(line.rejectedQuantity)}</td>
-              <td className="p-2">{format.day(line.fullDay)}</td>
-              <td className="p-2">{inFullText(line)}</td>
-              <td className="p-2">{line.otif === null || line.otif === undefined ? "—" : line.otif ? tr("yes") : tr("no")}</td>
-              <td className="p-2 tabular-nums">{format.money(line.amount, line.currency)}</td>
-            </tr>
+          <tbody>{deliveries.map((delivery) => (
+            <Fragment key={delivery.obligationId}>
+              <tr className="border-t font-medium" style={{ background: A.gray6 }} data-testid={`supplier-performance-delivery-${delivery.obligationId}`}>
+                <td className="p-2"><EntityLink kind="purchase_order" id={delivery.purchaseOrderId} /></td>
+                <td className="p-2">{tr("delivery")} · {tr("deliveryLines", { n: delivery.lines.length })}</td>
+                <td className="p-2">{format.day(delivery.originalPromisedDate)}</td>
+                <td className="p-2">{delivery.revised && <span className="rounded bg-amber-50 px-1 text-[11px] text-amber-700">{tr("revised")}</span>}</td>
+                <td className="p-2">{format.day(delivery.lastFirstReceiptDay)}</td>
+                <td className="p-2 tabular-nums">{delivery.daysLate ? format.number(delivery.daysLate) : "—"}</td>
+                <td className="p-2">{result(delivery)}</td>
+                <td className="p-2" />
+                <td className="p-2" />
+                <td className="p-2">{format.day(delivery.fullDay)}</td>
+                <td className="p-2">{inFullText(delivery)}</td>
+                <td className="p-2">{otifText(delivery.otif)}</td>
+                <td className="p-2" />
+              </tr>
+              {delivery.lines.map((line) => (
+                <tr key={line.purchaseOrderLineId} className="border-t" style={{ color: A.gray1 }} data-testid={`supplier-performance-line-${line.purchaseOrderLineId}`}>
+                  <td className="p-2 pl-5" />
+                  <td className="p-2">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</td>
+                  <td className="p-2">{format.day(line.originalPromisedDate)}</td>
+                  <td className="p-2">{format.day(line.currentPromisedDate)}{line.revised && <span className="ml-1 rounded bg-amber-50 px-1 text-[11px] text-amber-700">{tr("revised")}</span>}</td>
+                  <td className="p-2">{format.day(line.firstReceiptDay)}</td>
+                  <td className="p-2 tabular-nums">{line.daysLate ? format.number(line.daysLate) : "—"}</td>
+                  <td className="p-2">{result(line)}</td>
+                  <td className="p-2 tabular-nums">{format.number(line.acceptedQuantity)} / {format.number(line.orderedQuantity)} {line.unit}</td>
+                  <td className="p-2 tabular-nums">{format.number(line.rejectedQuantity)}</td>
+                  <td className="p-2">{format.day(line.fullDay)}</td>
+                  <td className="p-2">{inFullText(line)}</td>
+                  <td className="p-2">{otifText(line.otif)}</td>
+                  <td className="p-2 tabular-nums">{format.money(line.amount, line.currency)}</td>
+                </tr>
+              ))}
+            </Fragment>
           ))}</tbody></table></div>
       ) : <p className="mt-2 text-xs" style={{ color: A.sub }}>{tr("noDrilldown")}</p>}
     </div>
@@ -302,7 +333,7 @@ function SupplierFigures({ row, limitations }: { row: SupplierScorecardRow; limi
   const format = useFormat();
   const [metric, setMetric] = useState<MetricKey | null>(null);
   const m = row.metrics;
-  if (row.sampleStatus === "no_lines") return <><p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("noLines")}</p><Notes row={row} limitations={limitations} /></>;
+  if (row.sampleStatus === "no_obligations") return <><p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("noDeliveries")}</p><Notes row={row} limitations={limitations} /></>;
   const status = row.sampleStatus;
   const rejectionValue = status !== "ok" ? tr("insufficient") : m.rejection.mixedUnits ? tr("mixedUnits") : format.percent(m.rejection.rate);
   return (
@@ -316,7 +347,7 @@ function SupplierFigures({ row, limitations }: { row: SupplierScorecardRow; limi
         <Tile testId="supplier-performance-rejection" label={tr("rejection")} value={rejectionValue} detail={m.rejection.mixedUnits ? undefined : `${format.number(m.rejection.rejectedQuantity)} / ${format.number(m.rejection.receivedQuantity)}${m.rejection.unit ? ` ${m.rejection.unit}` : ""}`} onClick={() => setMetric("rejection")} />
         <Tile testId="supplier-performance-delay" label={tr("averageDelay")} value={m.averageDelayDays.value === null ? "—" : tr("days", { n: format.number(m.averageDelayDays.value) })} detail={tr("lateLines", { n: m.averageDelayDays.lateCount })} onClick={() => setMetric("averageDelay")} />
         <Tile testId="supplier-performance-price-variances" label={tr("priceVariances")} value={m.priceVariances.visible ? format.number(m.priceVariances.count) : tr("hidden")} detail={m.priceVariances.amounts.map((item) => format.money(item.amount, item.currency)).join(" · ") || undefined} onClick={() => setMetric("priceVariances")} />
-        <Tile testId="supplier-performance-lines" label={tr("lines")} value={format.number(row.sampleSize)} detail={row.orderedValue.map((item) => format.money(item.amount, item.currency)).join(" · ") || undefined} onClick={() => setMetric("all")} />
+        <Tile testId="supplier-performance-lines" label={tr("lines")} value={format.number(row.sampleSize)} detail={[tr("deliveryLines", { n: format.number(row.lineCount) }), ...row.orderedValue.map((item) => format.money(item.amount, item.currency))].join(" · ")} onClick={() => setMetric("all")} />
       </div>
       {status === "ok" && <p className="mt-2 text-[11px]" style={{ color: A.gray1 }} data-testid="supplier-performance-on-time-interval">{tr("onTimeOriginal")}: {intervalText(m.onTime.interval, status, format, tr)} · {tr("onTimeCurrent")}: {intervalText(m.onTimeCurrent.interval, status, format, tr)}<br />{tr("inFull")}: {intervalText(m.inFull.interval, status, format, tr) || tr("insufficient")} · {tr("otifOriginal")}: {intervalText(m.otif.interval, status, format, tr)}</p>}
       {metric && <Drilldown row={row} metric={metric} onClose={() => setMetric(null)} />}
@@ -363,7 +394,7 @@ export function SupplierPerformancePanel({ supplierId }: { supplierId: string })
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-1 text-sm font-semibold">{tr("title")}<Definition /></h2>
-          <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("subtitle")}</p>
+          <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("subtitle")}{data?.rules.promiseBasis === "po_date" && <span data-testid="supplier-performance-basis"> {tr("basisNote")}</span>}</p>
           {data && <p className="mt-1 text-[11px]" style={{ color: A.gray1 }} data-testid="supplier-performance-scope">{data.period.from} — {data.period.to} · {tr("graceDays")}: {data.rules.graceDays}</p>}
         </div>
         <PeriodFilter from={period.from || data?.period.from || ""} to={period.to || data?.period.to || ""} graceDays={period.graceDays} asOf={data?.asOf} onChange={setPeriod} onReload={reload} />
@@ -372,7 +403,7 @@ export function SupplierPerformancePanel({ supplierId }: { supplierId: string })
         {loading ? <p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("loading")}</p>
           : error ? <div role="alert" className="rounded-lg bg-red-50 p-3 text-xs text-red-800"><ScorecardError failure={error} onRetry={reload} /></div>
           : row ? <SupplierFigures row={row} limitations={data?.limitations || []} />
-          : <p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("noLines")}</p>}
+          : <p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("noDeliveries")}</p>}
       </div>
     </Card>
   );
@@ -391,7 +422,7 @@ export function SupplierPerformanceTable() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-1 text-sm font-semibold">{tr("title")}<Definition /></h2>
-          <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("subtitle")}</p>
+          <p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("subtitle")}{data?.rules.promiseBasis === "po_date" && <span data-testid="supplier-performance-basis"> {tr("basisNote")}</span>}</p>
           {data && <p className="mt-1 text-[11px]" style={{ color: A.gray1 }}>{data.period.from} — {data.period.to} · {tr("graceDays")}: {data.rules.graceDays}</p>}
         </div>
         <PeriodFilter from={period.from || data?.period.from || ""} to={period.to || data?.period.to || ""} graceDays={period.graceDays} asOf={data?.asOf} onChange={setPeriod} onReload={reload} />

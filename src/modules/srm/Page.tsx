@@ -416,7 +416,7 @@ export default function SupplierMasterPage({
   };
   const onTimeCell = (insight?: SupplierInsight) => {
     if (!insight || insight.onTime === null) return hiddenCell;
-    if (insight.onTime.rate === null) return <span title={copy("Fewer than 5 lines in 90 days")} style={{ color: A.sub }}>—</span>;
+    if (insight.onTime.rate === null) return <span title={copy("Fewer than 5 deliveries in 90 days")} style={{ color: A.sub }}>—</span>;
     return <span className="tabular-nums" title={`${insight.onTime.count} / ${insight.onTime.of}`}>{new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 }).format(insight.onTime.rate)}</span>;
   };
   // The reader chooses the order; it never comes from a hidden weight. Spend
