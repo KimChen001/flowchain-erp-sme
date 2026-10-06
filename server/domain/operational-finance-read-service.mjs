@@ -1,7 +1,8 @@
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { can } from "../auth/authorization-service.mjs";
 import { paymentRecordsView } from "./payment-record-command-service.mjs";
-import { financeFixed, financeUnits } from "./operational-finance-policy.mjs";
+import { awaitingReceipt, financeFixed, financeUnits } from "./operational-finance-policy.mjs";
+import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
 import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 
 export class OperationalFinanceReadError extends Error {
@@ -44,9 +45,14 @@ function actions(actor, capability, row, type) {
   if (!capability?.enabled) return [];
   if (type === "invoice") {
     const values = [];
+    const waiting = awaitingReceipt(row);
     if (can({ actor, permission: "finance.supplier_invoice.revise", tenantId: actor.tenantId }) && row.status === "draft")
       values.push("revise", "submit");
-    if (can({ actor, permission: "finance.three_way_match.execute", tenantId: actor.tenantId }) && row.status === "submitted")
+    // A bill recorded before the goods arrived is linked to its receipt
+    // before it can be matched.
+    if (can({ actor, permission: "finance.supplier_invoice.revise", tenantId: actor.tenantId }) && waiting)
+      values.push("link_receipt");
+    if (can({ actor, permission: "finance.three_way_match.execute", tenantId: actor.tenantId }) && row.status === "submitted" && !waiting)
       values.push("match");
     // An exception invoice can be approved only once every match exception
     // is approved; until then the list must not offer Approve.
@@ -111,6 +117,7 @@ function invoiceSummary(row, actor, capabilities) {
     status: row.status,
     matchStatus: row.matchStatus,
     varianceAmount: decimal(row.varianceAmount),
+    awaitingReceipt: awaitingReceipt(row),
     version: row.version,
     availableActions: actions(
       actor,
@@ -258,6 +265,16 @@ export function createOperationalFinanceReadService({
       .flatMap((run) => run.exceptions || [])
       .filter((entry) => ["open", "rejected"].includes(entry.status)).length;
     const summary = invoiceSummary({ ...invoice, blockingExceptionCount }, current, capabilities);
+    // Posted receipts of the purchase order that a waiting bill can be linked
+    // to, newest first.
+    const receiptCandidates = summary.availableActions.includes("link_receipt")
+      ? await prisma.receivingDocument.findMany({
+          where: { tenantId: current.tenantId, poId: invoice.relatedPoId, postingStatus: "posted", reversedAt: null },
+          select: { id: true, documentNumber: true, postedAt: true },
+          orderBy: { postedAt: "desc" },
+          take: 20,
+        })
+      : [];
     const partner = protectFinanceFields({ supplierSnapshot: invoice.supplierSnapshot }, current);
     // The match result is part of the three-way match, which has its own read
     // permission; without it the invoice shows no match lines or variances.
@@ -282,6 +299,7 @@ export function createOperationalFinanceReadService({
         enteredTaxAmount: decimal(line.enteredTaxAmount ?? 0),
         totalAmount: decimal(line.amount),
       }, current)),
+      receiptCandidates: receiptCandidates.map((row) => ({ id: row.id, documentNumber: row.documentNumber, postedAt: serial(row.postedAt) })),
       matchVisible,
       match: match
         ? {
@@ -529,6 +547,18 @@ export function createOperationalFinanceReadService({
           take: 100,
         }),
       ]);
+    // What other bills already claim on each order line, so a bill recorded
+    // before the goods arrive starts at what is left to bill.
+    const billedRows = await prisma.supplierInvoiceLine.findMany({
+      where: {
+        purchaseOrderLineId: { in: purchaseOrders.flatMap((row) => row.lines.map((line) => line.id)) },
+        supplierInvoice: { tenantId: current.tenantId, status: { in: [...RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES] } },
+      },
+      select: { purchaseOrderLineId: true, quantity: true },
+    });
+    const billed = new Map();
+    for (const row of billedRows)
+      billed.set(row.purchaseOrderLineId, (billed.get(row.purchaseOrderLineId) || 0n) + financeUnits(row.quantity || 0));
     return {
       suppliers,
       purchaseOrders: purchaseOrders.map((row) => ({
@@ -536,12 +566,14 @@ export function createOperationalFinanceReadService({
         supplierId: row.supplierId,
         supplierName: row.supplierName,
         currency: row.currency,
+        status: row.status,
         lines: row.lines.map((line) => ({
           id: line.id,
           itemId: line.itemId,
           sku: line.sku,
           itemName: line.itemName,
           orderedQuantity: decimal(line.orderedQuantity),
+          billedQuantity: financeFixed(billed.get(line.id) || 0n),
           unit: line.unit,
           unitPrice: pricesVisible ? decimal(line.unitPrice) : null,
         })),
