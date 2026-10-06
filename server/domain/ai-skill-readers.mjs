@@ -280,6 +280,10 @@ export async function readAiSkillFacts(skillContext) {
       // quantity is part of available to promise, which inventory shows.
       // Sales order ids only for readers of sales orders.
       stockStatus: row.stockStatus, riskLevel: row.riskLevel, purchaseOrderIds: visible.purchase_orders ? row.purchaseOrderIds : [], salesOrderIds: access.collections.salesOrders ? row.salesOrderIds : [],
+      // Open purchase order lines in another unit than the item's stock unit:
+      // not counted as incoming, but still on order, so the answers name them.
+      // The order number only for readers of purchase orders.
+      incomingOtherUnit: array(row.incomingExcluded).map((line) => ({ purchaseOrderId: visible.purchase_orders ? text(line.purchaseOrderId) || null : null, orderNumber: visible.purchase_orders ? text(line.orderNumber) || null : null, unit: text(line.unit) || null, remaining: line.remaining ?? null })),
     }))
     // Master items with no stock, sales or purchase line: known items the
     // allocation has no row for, so a question about one is not "not found".

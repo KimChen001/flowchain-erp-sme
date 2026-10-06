@@ -2,6 +2,7 @@ import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './
 import { AI_SKILL_MODULES, aiSkillEvidence, aiSkillFormatter, aiSkillNavigation, aiSkillRecordEvidence, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
 import { aiSkillDraftCard } from './ai-skill-drafts.mjs'
+import { aiSkillOtherUnitLines } from './ai-skill-inventory-availability.mjs'
 
 // Starting an order: prepare_action_draft in mode `order`, for "can you help
 // me generate the order?", "create a PO for LDM-001", 帮我下单 (the router's
@@ -19,6 +20,9 @@ import { aiSkillDraftCard } from './ai-skill-drafts.mjs'
 //                                                 order and a request card, none opened
 //                                                 unless the question says "anyway"
 //   nothing needs ordering                      -> a blank request card, not opened
+//   the SKU is on open PO lines in another unit -> those lines named first, and the
+//                                                 card not opened: they are not
+//                                                 counted as incoming, but are on order
 // A question that asks whether or what to order ("should I reorder LDM-001?")
 // gets the same cards, none opened.
 //
@@ -196,6 +200,10 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
   const [target] = result.targets
   const plan = target.plan
   const sku = target.row.sku
+  // Open lines in another unit are not counted as incoming, yet they are on
+  // order: the answer names them before anything else and opens nothing.
+  const otherUnit = aiSkillOtherUnitLines(target.row, fmt, language)
+  const otherUnitSentences = otherUnit ? [aiSkillText('order.other_unit', language, { sku, lines: otherUnit })] : []
   if (result.outcome === 'covered' && !result.anyway) {
     // Open orders already bring enough. The answer says so first; chasing the
     // latest order comes next, and a request is one click away, not opened.
@@ -203,13 +211,16 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
     const cards = [...(latest ? [followUpCard(target, latest, facts, language)] : []), requestCard(target, result, facts, language, { autoOpen: false, anyway: true })]
     return answer(aiSkillText(plan.incoming > 0 ? 'order.title_covered' : 'order.title_covered_requested', language, { sku }), [
       ...onOrderSentences(target, facts, language),
+      ...otherUnitSentences,
       aiSkillText('order.covered_why', language),
       aiSkillText('order.position', language, { available: fmt.number(plan.available), target: fmt.number(plan.target) }),
       aiSkillText(latest ? 'order.covered_next' : 'order.covered_next_no_po', language, { po: latest?.orderNumber }),
     ], cards)
   }
-  // One SKU: named, the only one that needs ordering, or ordered anyway.
-  const card = requestCard(target, result, facts, language, { autoOpen: ask })
+  // One SKU: named, the only one that needs ordering, or ordered anyway. With
+  // open lines in another unit it is answered as advice, nothing opened.
+  const open = ask && !otherUnit
+  const card = requestCard(target, result, facts, language, { autoOpen: open })
   const quantity = card.payload.quantity ? fmt.quantity(card.payload.quantity, target.row.unit) : ''
   // Asked whether to order: yes (the gap), covered by what is on order, not
   // needed, or no stock levels to judge by.
@@ -218,10 +229,11 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
   // say what is already on order.
   const onTop = plan?.gap <= 0 && onOrder(plan)
   const opening = !quantity ? 'order.title_open_no_quantity' : onTop ? 'order.title_open_on_top' : 'order.title_open'
-  const title = aiSkillText(ask ? opening : advice, language, { sku, quantity })
+  const title = aiSkillText(open ? opening : advice, language, { sku, quantity })
   return answer(title, [
+    ...otherUnitSentences,
     ...(onTop ? onOrderSentences(target, facts, language) : []),
     card.description,
-    aiSkillText(ask ? 'order.open_summary' : 'order.advice_summary', language),
+    aiSkillText(open ? 'order.open_summary' : 'order.advice_summary', language),
   ], [card])
 }
