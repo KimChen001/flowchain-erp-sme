@@ -229,3 +229,48 @@ test('another order still competes for the stock left after a reservation', () =
   assert.equal(row.riskLevel, 'high')
   assert.equal(model.summary.highRiskSkuCount, 1)
 })
+
+const unitPo = (id, lines, extra = {}) => ({ id, orderNumber: id, status: 'issued', lines, ...extra })
+const unitPoLine = (id, sku, orderedQuantity, unit, extra = {}) => ({ id, sku, itemId: `ITEM-${sku}`, orderedQuantity, receivedQuantity: 0, unit, ...extra })
+
+test('incoming counts only purchase order lines in the item stock unit; other units are listed, not added', () => {
+  const model = buildRuntimeInventoryAllocation(context({
+    items: [{ sku: 'SKU-A', itemId: 'ITEM-SKU-A', unit: 'pcs' }],
+    inventoryItems: [balance('SKU-A', 10)],
+    purchaseOrders: [
+      unitPo('PO-0039', [unitPoLine('L39', 'SKU-A', 30, 'PCS', { promisedDate: '2026-10-20' })], { expectedDate: '2026-10-25T00:00:00.000Z' }),
+      unitPo('PO-0040', [unitPoLine('L40', 'SKU-A', 5, 'CASE')]),
+      unitPo('PO-0041', [unitPoLine('L41', 'SKU-A', 7, 'pcs')], { expectedDate: '2026-11-02T00:00:00.000Z' }),
+    ],
+  }))
+  const a = getRuntimeSkuAvailability(model, 'SKU-A')
+  // Units compare without case: PCS is pcs. The 5 CASE are never added to pieces.
+  assert.equal(a.incomingApprovedPo, 37)
+  assert.equal(a.availableToPromise, 47)
+  assert.deepEqual(a.purchaseOrderIds, ['PO-0039', 'PO-0041'])
+  assert.ok(!a.evidence.some(row => row.entityId === 'PO-0040'))
+  assert.deepEqual(a.incomingExcluded, [{ purchaseOrderId: 'PO-0040', orderNumber: 'PO-0040', lineId: 'L40', unit: 'CASE', remaining: 5 }])
+  // The promised date wins over the order's expected date.
+  assert.deepEqual(a.incomingLines, [
+    { purchaseOrderId: 'PO-0039', orderNumber: 'PO-0039', lineId: 'L39', remaining: 30, dueDay: '2026-10-20' },
+    { purchaseOrderId: 'PO-0041', orderNumber: 'PO-0041', lineId: 'L41', remaining: 7, dueDay: '2026-11-02' },
+  ])
+  assert.deepEqual(a.dataLimitations, ['po_line_unit_mismatch:SKU-A'])
+  assert.equal(model.summary.incomingPurchaseQty, 37)
+})
+
+test('a purchase order line counts when its unit or the item unit is not recorded, and says so', () => {
+  const model = buildRuntimeInventoryAllocation(context({
+    items: [{ sku: 'SKU-A', unit: 'pcs' }, { sku: 'SKU-B', unit: '' }],
+    inventoryItems: [balance('SKU-A', 0), balance('SKU-B', 0)],
+    purchaseOrders: [unitPo('PO-1', [unitPoLine('L1', 'SKU-A', 4, ''), unitPoLine('L2', 'SKU-B', 6, 'CASE')])],
+  }))
+  const a = getRuntimeSkuAvailability(model, 'SKU-A')
+  const b = getRuntimeSkuAvailability(model, 'SKU-B')
+  assert.equal(a.incomingApprovedPo, 4)
+  assert.equal(b.incomingApprovedPo, 6)
+  assert.deepEqual(a.incomingExcluded, [])
+  assert.deepEqual(a.incomingLines.map(line => line.dueDay), [''])
+  assert.ok(a.dataLimitations.includes('po_line_unit_not_recorded:SKU-A'))
+  assert.ok(b.dataLimitations.includes('po_line_unit_not_recorded:SKU-B'))
+})

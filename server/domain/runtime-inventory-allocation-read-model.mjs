@@ -1,4 +1,4 @@
-import { purchaseOrderLineRemaining } from './open-purchase-order.mjs'
+import { purchaseOrderLineRemaining, reportCalendarDay } from './open-purchase-order.mjs'
 import { isPurchaseOrderReceivable } from './procurement-status-authority.mjs'
 
 const rows = value => Array.isArray(value) ? value : []
@@ -15,6 +15,11 @@ const lineInTransit = line => purchaseOrderLineRemaining({
   orderedQuantity: line.orderedQuantity ?? line.quantityOrdered ?? line.orderedQty ?? line.quantity ?? line.qty,
   receivedQuantity: line.receivedQuantity ?? line.receivedQty,
 })
+// The unit an item's stock is kept in, from the item master. Inventory balance
+// rows are not used: they fill a missing unit with a placeholder.
+const stockUnitOf = master => text(master?.unit || master?.baseUom || master?.baseUnit)
+const poLineUnit = line => text(line.unit || line.unitSnapshot)
+const sameUnit = (a, b) => a.toLowerCase() === b.toLowerCase()
 const salesOrderIsOpen = row => !['draft', 'cancelled', 'canceled'].includes(text(row.workflowStatus || row.status))
 
 // Sales demand is booked per order line on that line's SKU. The order-level sku
@@ -85,9 +90,29 @@ export function buildRuntimeInventoryAllocation(context) {
     const skuDemand = demandLines.filter(line => line.sku === sku && salesOrderIsOpen(line.order))
     const salesOrders = [...new Set(skuDemand.map(line => line.order))]
     const committedPos = rows(context.purchaseOrders).filter(po => isPurchaseOrderReceivable(po.status))
-    // A fully received line is no longer supply; an unknown remainder stays so it is reported.
-    const poLines = committedPos.flatMap(po => rows(po.lines).filter(line => lineKey(line) === sku && lineInTransit(line) !== 0).map(line => ({ po, line })))
+    const master = rows(context.items).find(row => itemKey(row) === sku)
+    const stockUnit = stockUnitOf(master)
     const dataLimitations = []
+    // A fully received line is no longer supply; an unknown remainder stays so it is reported.
+    // Incoming counts only lines in the item's stock unit: a line recorded in
+    // another unit (a CASE line on an item kept in pcs) is listed in
+    // incomingExcluded and never added. A line whose unit, or whose item's
+    // unit, is not recorded is counted and the limitation says so.
+    const poLines = []
+    const incomingExcluded = []
+    for (const po of committedPos) {
+      for (const line of rows(po.lines)) {
+        if (lineKey(line) !== sku || lineInTransit(line) === 0) continue
+        const unit = poLineUnit(line)
+        if (unit && stockUnit && !sameUnit(unit, stockUnit)) {
+          incomingExcluded.push({ purchaseOrderId: text(po.id || po.po), orderNumber: text(po.orderNumber || po.po || po.id), lineId: text(line.id), unit, remaining: lineInTransit(line) })
+          continue
+        }
+        if (!unit || !stockUnit) dataLimitations.push(limitation('po_line_unit_not_recorded', sku))
+        poLines.push({ po, line })
+      }
+    }
+    if (incomingExcluded.length) dataLimitations.push(limitation('po_line_unit_mismatch', sku))
 
     const onHandParts = inventoryRows.map(row => quantity(row.onHandQuantity ?? row.onHand ?? row.currentStock))
     const explicitReserved = inventoryRows.map(row => quantity(row.reservedQuantity ?? row.reservedQty))
@@ -127,7 +152,6 @@ export function buildRuntimeInventoryAllocation(context) {
     const availableToPromise = available === null || unreservedSalesDemand === null || incomingApprovedPo === null
       ? null
       : available + incomingApprovedPo - unreservedSalesDemand
-    const master = rows(context.items).find(row => itemKey(row) === sku)
     const safetyStock = stockThreshold(master?.safetyStock, inventoryRows, 'safetyStock')
     const reorderPoint = stockThreshold(master?.reorderPoint, inventoryRows, 'reorderPoint')
     const stockStatus = stockStatusFor({ available, availableToPromise, safetyStock, reorderPoint })
@@ -141,6 +165,11 @@ export function buildRuntimeInventoryAllocation(context) {
       openSalesDemand,
       unreservedSalesDemand,
       incomingApprovedPo,
+      // The lines incomingApprovedPo adds up, each with the day it is due
+      // (the line's promised date, else the order's expected date; '' when
+      // neither is recorded), and the lines left out for their unit.
+      incomingLines: poLines.map(({ po, line }) => ({ purchaseOrderId: text(po.id || po.po), orderNumber: text(po.orderNumber || po.po || po.id), lineId: text(line.id), remaining: lineInTransit(line), dueDay: reportCalendarDay(line.promisedDate || po.expectedDate) })),
+      incomingExcluded,
       shortage,
       availableToPromise,
       safetyStock,

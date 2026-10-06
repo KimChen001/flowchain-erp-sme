@@ -150,6 +150,18 @@ test('the assistant states the same open POs, committed spend and at-risk SKUs a
       assert.match(row.metadata.metadata.queryHash, /^[0-9a-f]{32}$/)
       assert.doesNotMatch(JSON.stringify(row), /What should I handle|How many open purchase orders|今天先处理/)
     }
+
+    // A purchase order line in another unit is never added to the item's
+    // incoming stock: 12 CASE on LDM-002, which is kept in pcs, leaves its
+    // available to promise where it was, in the report and in the answer.
+    const atpOf = (report) => report.details.find((row) => row.id === 'LDM-002').availableToPromise
+    const atpBefore = atpOf(inventory)
+    await prisma.purchaseOrder.create({ data: { id: 'AGREEMENT-CASE-PO', tenantId, supplierId: 'LOCAL-DEMO-SUP-001', supplierName: 'Acme Components', status: 'issued', currency: 'USD', amount: 1200, expectedDate: new Date('2026-10-10T12:00:00Z'), lines: { create: [{ id: 'AGREEMENT-CASE-PO-L1', sku: 'LDM-002', itemId: 'LOCAL-DEMO-ITEM-002', orderedQuantity: 12, receivedQuantity: 0, unit: 'CASE', unitPrice: 100, amount: 1200 }] } } })
+    const inventoryAfter = (await routeJson(handleReportsAnalyticsRoute, reportCtx, 'GET', '/api/reports/inventory')).payload
+    assert.equal(atpOf(inventoryAfter), atpBefore)
+    const promise = (await routeJson(handleAiRuntimeGatewayRoute, aiCtx('admin', users.admin), 'POST', '/api/ai-runtime/respond', { message: 'How much LDM-002 can I promise?', answerLanguage: 'en-US' })).payload
+    assert.equal(promise.intent, 'inventory_availability')
+    assert.equal(promise.figures.find((row) => row.key === 'atp:LDM-002').value, atpBefore)
   } finally {
     await prisma.$disconnect()
   }
