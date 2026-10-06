@@ -213,6 +213,8 @@ export type AiResponseV2 = {
   checked?: string[];
   checkedLabel?: string;
   skill?: { id: string; version: string; asOf?: string | null; timezone?: string | null; signalVersion?: string };
+  // Set when the workspace reached this month's AI limit: the answer comes from workspace rules.
+  aiModelAccess?: { status: "over_cap" };
   // A compound answer has a section per part; a one-part answer has none.
   sections?: AiResponseV2Section[];
   metrics?: {
