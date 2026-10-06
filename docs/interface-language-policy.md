@@ -72,10 +72,19 @@ remaining potential display literals; the report is deliberately heuristic becau
 Chinese business values and API status enums must not be rewritten as UI copy.
 
 This is not yet a claim of complete English coverage. Supplier details, other
-purchasing detail views, receiving, returns/quarantine, and some AI response surfaces are the
+purchasing detail views, receiving, and some AI response surfaces are the
 largest remaining areas. Translate them at their presentation boundary with both
 English and Chinese acceptance scenarios. A regression test requires every Chinese
 route, module, breadcrumb, and primary-navigation label to have an English mapping.
+
+- The returns and quarantine screens (`/app/inventory/returns/**`,
+  `/app/inventory/quarantine`, `/app/sales/returns` and its form) have English and
+  Chinese copy in `src/modules/inventory/returnsCopyData.ts`, including statuses,
+  disposition routes, reconciliation rules, audit actions and the error codes the
+  returns API sends; raw codes stay visible next to their labels. A node test
+  (`server/domain/returns-copy.test.mjs`) requires both languages for every string and
+  code. The browser spec still runs in Chinese only; an English browser check is
+  pending. The module stays off for the trial.
 
 The global search dropdown still shows Chinese literals for its heading, loading,
 empty and overflow states, and the server builds the search source hint and the
