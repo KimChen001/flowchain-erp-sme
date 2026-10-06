@@ -18,3 +18,42 @@ declare module '../../shared/purchase-request-prefill.mjs' {
   export function planPurchaseRequestPrefill(input: unknown): any;
   export function addCalendarDays(day: string, days: number): string;
 }
+declare module '../../../shared/price-history.mjs' {
+  export type PriceFact = {
+    purchaseOrderId: string;
+    orderNumber: string;
+    lineId: string;
+    supplierId: string | null;
+    supplierName: string | null;
+    unit: string | null;
+    currency: string | null;
+    unitPrice: string | null;
+    orderedQuantity: string | null;
+    date: string | null;
+    dateSource: 'issue_date' | 'order_date';
+    instant: string | null;
+  };
+  export type PriceHistory = {
+    key: string;
+    itemId: string;
+    unit: string | null;
+    unitSource: 'entered' | 'item' | 'not_recorded';
+    currency: string | null;
+    status: 'found' | 'none' | 'unit_not_recorded';
+    latest: PriceFact | null;
+    earlier: PriceFact[];
+    average: { unitPrice: string | null; n: number } | null;
+    otherCurrencies: string[];
+    otherUnits: string[];
+    unitNotRecordedCount: number;
+    restrictedFields?: string[];
+  };
+  export type QuoteComparison =
+    | { status: 'compared'; lastPo: PriceFact; percent: string; average: PriceHistory['average'] }
+    | { status: 'zero_base' | 'hidden'; lastPo: PriceFact; average: PriceHistory['average'] }
+    | { status: 'not_comparable'; reason: 'currency' | 'unit' | 'unit_not_recorded'; values?: string[] }
+    | { status: 'no_earlier_po' };
+  export const PRICE_HISTORY_MAX_KEYS: number;
+  export function priceHistoryKeyString(key: { itemId?: string | null; unit?: string | null; currency?: string | null }): string;
+  export function compareQuote(input: { unitPrice: string | number | null | undefined; history: PriceHistory | null | undefined }): QuoteComparison;
+}

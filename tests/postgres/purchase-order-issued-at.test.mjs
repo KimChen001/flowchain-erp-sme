@@ -5,6 +5,7 @@ import test from 'node:test'
 import pg from 'pg'
 import { backfillTenantAuthorization } from '../../server/auth/authorization-backfill.mjs'
 import { createDbProcurementCommandService } from '../../server/domain/procurement-db-command-service.mjs'
+import { createPriceHistoryReadService, readPriceHistoryLines } from '../../server/domain/price-history-read-service.mjs'
 import { createPrismaClient } from '../../server/persistence/prisma-client.mjs'
 
 // A purchase order keeps the instant it was issued to the supplier. The Issue
@@ -21,6 +22,8 @@ const tenantB = 'tenant-issued-at-b'
 const people = {
   buyer: { id: 'issued-buyer-a', tenantId: tenantA, email: 'buyer@issued-at.invalid', name: 'Blake Buyer', role: 'buyer' },
   manager: { id: 'issued-manager-a', tenantId: tenantA, email: 'manager@issued-at.invalid', name: 'Morgan Manager', role: 'admin' },
+  viewer: { id: 'issued-viewer-a', tenantId: tenantA, email: 'viewer@issued-at.invalid', name: 'Vic Viewer', role: 'viewer' },
+  finance: { id: 'issued-finance-a', tenantId: tenantA, email: 'finance@issued-at.invalid', name: 'Fin Finance', role: 'finance-specialist' },
   otherBuyer: { id: 'issued-buyer-b', tenantId: tenantB, email: 'buyer@other-issued-at.invalid', name: 'Other Buyer', role: 'buyer' },
 }
 const contextOf = (user) => ({ identity: { authenticated: true, tenantId: user.tenantId, userId: user.id, role: user.role } })
@@ -151,6 +154,74 @@ test('issuing writes the issue date once; a replay keeps it and nothing overwrit
       await po('ISSUED-AT-3', 'approved')
       await assert.rejects(service.issuePurchaseOrder('ISSUED-AT-3', { expectedVersion: 0, idempotencyKey: 'issue-at-3-other' }, contextOf(people.otherBuyer)), (error) => error.code === 'PURCHASE_ORDER_NOT_FOUND')
       assert.equal((await prisma.purchaseOrder.findUnique({ where: { id: 'ISSUED-AT-3' } })).issuedAt, null)
+    })
+  } finally {
+    await prisma.$disconnect()
+  }
+})
+
+test('the price history query returns at most 3 lines per item, unit and currency, from this workspace only', async (t) => {
+  // Runs after the test above, which created the tenants and users.
+  const prisma = await createPrismaClient(process.env)
+  const service = createPriceHistoryReadService({ prisma, env: process.env })
+  let sequence = 0
+  const po = async (tenantId, status, { issuedAt = null, createdAt = '2026-08-01T12:00:00Z', currency = 'USD', lines }) => {
+    sequence += 1
+    const id = `PH-PO-${String(sequence).padStart(3, '0')}`
+    await prisma.purchaseOrder.create({
+      data: { id, tenantId, status, supplierId: `sup-${tenantId}`, supplierName: tenantId === tenantA ? 'Acme' : 'Other Co', currency, issuedAt: issuedAt ? new Date(issuedAt) : null, createdAt: new Date(createdAt), metadata: { orderNumber: `PO-${String(sequence).padStart(4, '0')}` },
+        lines: { create: lines.map((line, index) => ({ id: `${id}-L${index + 1}`, itemId: 'PH-ITEM', sku: 'PH-1', itemName: 'Widget', orderedQuantity: line.quantity ?? 10, receivedQuantity: 0, unit: line.unit ?? 'pcs', unitPrice: line.price, amount: 0 })) } },
+    })
+    return id
+  }
+  try {
+    await prisma.item.create({ data: { id: 'PH-ITEM', tenantId: tenantA, sku: 'PH-1', name: 'Widget', unit: 'pcs' } })
+    // Five issued lines in pcs/USD; the oldest two must not come back.
+    for (const [day, price] of [['2026-09-01', 4.0], ['2026-09-05', 4.1], ['2026-09-09', 4.2], ['2026-09-13', 4.3], ['2026-09-17', 4.4]]) await po(tenantA, 'issued', { issuedAt: `${day}T15:00:00Z`, lines: [{ price }] })
+    // Received without being issued: dated by its order date.
+    await po(tenantA, 'fully_received', { createdAt: '2026-09-20T15:00:00Z', lines: [{ price: 4.5, quantity: 30 }] })
+    // Never counted: draft, approved, cancelled, and a line without a price.
+    await po(tenantA, 'draft', { issuedAt: null, createdAt: '2026-09-30T15:00:00Z', lines: [{ price: 1 }] })
+    await po(tenantA, 'approved', { createdAt: '2026-09-30T15:00:00Z', lines: [{ price: 1 }] })
+    await po(tenantA, 'cancelled', { createdAt: '2026-09-30T15:00:00Z', lines: [{ price: 1 }] })
+    await po(tenantA, 'issued', { issuedAt: '2026-09-30T15:00:00Z', lines: [{ price: null }] })
+    // Other units and currencies are named.
+    await po(tenantA, 'closed', { issuedAt: '2026-09-02T15:00:00Z', currency: 'EUR', lines: [{ price: 3.9 }] })
+    await po(tenantA, 'issued', { issuedAt: '2026-09-03T15:00:00Z', lines: [{ price: 40, unit: 'CASE' }] })
+    // Another workspace bought the same item id.
+    await po(tenantB, 'issued', { issuedAt: '2026-10-01T15:00:00Z', lines: [{ price: 0.01 }] })
+
+    await t.test('the query keeps the latest 3 of each partition and leaves out other workspaces', async () => {
+      const rows = await readPriceHistoryLines(prisma, { tenantId: tenantA, itemIds: ['PH-ITEM'] })
+      const byPartition = Object.groupBy(rows, (row) => `${row.unit.toLowerCase()}|${row.currency}`)
+      assert.deepEqual(Object.fromEntries(Object.entries(byPartition).map(([partition, list]) => [partition, list.map((row) => row.unitPrice).sort()])), {
+        'case|USD': ['40.0000'],
+        'pcs|EUR': ['3.9000'],
+        'pcs|USD': ['4.3000', '4.4000', '4.5000'],
+      })
+      assert.ok(rows.every((row) => row.supplierName === 'Acme'))
+      assert.deepEqual(await readPriceHistoryLines(prisma, { tenantId: tenantB, itemIds: ['PH-ITEM'] }).then((list) => list.map((row) => row.unitPrice)), ['0.0100'])
+    })
+
+    await t.test('a buyer reads the latest PO price, two earlier ones and the average of 3', async () => {
+      const { histories: [history] } = await service.read(['PH-ITEM||USD'], contextOf(people.buyer))
+      assert.deepEqual([history.latest.orderNumber, history.latest.unitPrice, history.latest.date, history.latest.dateSource], ['PO-0006', '4.5000', '2026-09-20', 'order_date'])
+      assert.deepEqual(history.earlier.map((fact) => [fact.orderNumber, fact.date, fact.dateSource]), [['PO-0005', '2026-09-17', 'issue_date'], ['PO-0004', '2026-09-13', 'issue_date']])
+      // (4.5 x 30 + 4.4 x 10 + 4.3 x 10) / 50 = 4.44
+      assert.deepEqual(history.average, { unitPrice: '4.4400', n: 3 })
+      assert.deepEqual([history.unit, history.unitSource, history.otherCurrencies, history.otherUnits], ['pcs', 'item', ['EUR'], ['CASE']])
+    })
+
+    await t.test('a viewer gets the facts without prices; a role without purchase orders is refused', async () => {
+      const result = await service.read(['PH-ITEM|pcs|USD'], contextOf(people.viewer))
+      assert.deepEqual(result.restrictedFields, ['unitPrice'])
+      assert.deepEqual([result.histories[0].latest.unitPrice, result.histories[0].average.unitPrice, result.histories[0].latest.orderNumber], [null, null, 'PO-0006'])
+      await assert.rejects(service.read(['PH-ITEM|pcs|USD'], contextOf(people.finance)), (error) => error.status === 403)
+    })
+
+    await t.test('another workspace sees only its own purchase', async () => {
+      const { histories: [history] } = await service.read(['PH-ITEM|pcs|USD'], contextOf(people.otherBuyer))
+      assert.deepEqual([history.latest.unitPrice, history.earlier.length, history.otherCurrencies], ['0.0100', 0, []])
     })
   } finally {
     await prisma.$disconnect()

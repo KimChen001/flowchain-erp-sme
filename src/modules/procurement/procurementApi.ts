@@ -1,7 +1,14 @@
 import { apiJson } from "../../lib/api-client";
+import type { PriceHistory } from "../../../shared/price-history.mjs";
 import type { ProcurementDocument, ProcurementDocumentType, ProcurementRfqDocument, PurchaseOrder, PurchaseRequestSummary, RfqAwardDecision, RfqAwardDecisionInput, RfqSupplierComparison, RfqSupplierResponseCommandInput, RfqSupplierResponseCommandResult } from "./procurementTypes";
 
+// The price history of items on the workspace's own issued purchase orders:
+// one request for every item, unit and currency a page shows.
+export type PriceHistoryResponse = { histories: PriceHistory[]; timeZone: string; priceLabel: "purchase_order_price"; restrictedFields?: string[] };
+
 export const procurementApi = {
+  priceHistory: (keys: string[]) =>
+    apiJson<PriceHistoryResponse>(`/api/procurement/price-history?${keys.map((key) => `key=${encodeURIComponent(key)}`).join("&")}`),
   listRequests: () => apiJson<PurchaseRequestSummary[]>("/api/procurement/requests"),
   listOrders: () => apiJson<PurchaseOrder[]>("/api/procurement/orders"),
   listDocuments: (type: string) => apiJson<{ documents: ProcurementDocument[] }>(`/api/procurement/documents?type=${encodeURIComponent(type)}`).then((payload) => payload.documents || []),

@@ -32,6 +32,7 @@ import { handlePilotImportRoute } from "../routes/pilot-import.routes.mjs";
 import { handlePilotOperationsRoute } from "../routes/pilot-operations.routes.mjs";
 import { handlePilotReadinessGovernanceRoute } from "../routes/pilot-readiness-governance.routes.mjs";
 import { handlePilotWorkspaceRoute } from "../routes/pilot-workspace.routes.mjs";
+import { handlePriceHistoryRoute } from "../routes/price-history.routes.mjs";
 import { handleProcurementReadRoute } from "../routes/procurement-read.routes.mjs";
 import { handleProcurementWorkflowRoute } from "../routes/procurement-workflow.routes.mjs";
 import { handleRfqSupplierResponseRoute } from "../routes/rfq-supplier-response.routes.mjs";
@@ -108,6 +109,7 @@ const orderedRouteHandlers = Object.freeze([
   handleRfqAwardDecisionRoute,
   handleRfqSupplierComparisonRoute,
   handleRfqSupplierResponseRoute,
+  handlePriceHistoryRoute,
   handleProcurementReadRoute,
   handleCapabilitiesRoute,
   handleIntakeRoute,
