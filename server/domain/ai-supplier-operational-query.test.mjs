@@ -332,6 +332,13 @@ test('SRM module prompts return local read-only supplier risk and scoring cards'
     assert.ok(route.response.payload.cards.some((card) => card.type === cardType), message)
     assert.ok(route.response.payload.cards.some((card) => card.type === 'supplier_boundary_notice'), message)
     assert.ok(route.response.payload.cards.some((card) => card.type === 'recommended_actions'), message)
+    // Suppliers are listed A-Z with their counts, never with a score.
+    for (const card of route.response.payload.cards.filter((entry) => Array.isArray(entry.data?.topSuppliers))) {
+      const names = card.data.topSuppliers.map((row) => row.supplierName)
+      assert.deepEqual(names, [...names].sort((left, right) => left.localeCompare(right)), message)
+      assert.ok(card.data.topSuppliers.every((row) => !('score' in row) && !('signalScore' in row)), message)
+    }
+    assert.doesNotMatch(JSON.stringify(route.response.payload.cards), /signalScore|scoredSupplierCount|准时率和质量率估算/, message)
     assert.deepEqual(businessSnapshot(db), before, message)
   }
 })

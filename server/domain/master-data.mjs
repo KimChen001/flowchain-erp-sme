@@ -79,17 +79,13 @@ function normalizeRisk(value) {
   return raw || 'medium'
 }
 
+// Only a score someone recorded on the supplier. Rates are never turned into a
+// grade here (owner decision 2026-10-03); the scorecard shows them as rates.
 function supplierScoreFor(supplier = {}) {
   if (supplier.score || supplier.rating || supplier.grade) {
     return { score: String(supplier.score || supplier.rating || supplier.grade), scoreSource: 'explicit' }
   }
-  const onTime = toNumber(supplier.onTimeRate, 0)
-  const quality = toNumber(supplier.qualityRate, 0)
-  if (!onTime && !quality) return { score: '', scoreSource: 'missing' }
-  const average = onTime || quality ? (onTime + quality) / (onTime && quality ? 2 : 1) : 0
-  const score = average >= 90 ? 'A' : average >= 80 ? 'B+' : average >= 70 ? 'B' : 'C'
-  // Master Data exposes fallback source metadata only; official scoring belongs to SRM snapshots.
-  return { score, scoreSource: 'derived_performance_fallback' }
+  return { score: '', scoreSource: 'missing' }
 }
 
 export function normalizeMasterItem(item = {}, index = 0, suppliers = []) {
