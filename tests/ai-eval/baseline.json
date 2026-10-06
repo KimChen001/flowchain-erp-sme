@@ -1,6 +1,6 @@
 {
   "note": "Written by npm run test:ai:eval -- --update-baseline. Update it only when a change is meant to move a case.",
-  "commit": "7993cc0a",
+  "commit": "6c8af655",
   "asOf": "2026-10-05",
   "mustPass": [
     "compound-buyer-po-invoices",
@@ -190,6 +190,8 @@
     "tenant-b-today",
     "tier-attention-en",
     "tier-count-en",
+    "tier-drafts-en",
+    "tier-drafts-zh",
     "tier-labels-en",
     "tier-none-zh",
     "tier-overdue-en",
@@ -229,7 +231,7 @@
     "prefill": 5,
     "refusal": 20,
     "robustness": 12,
-    "routing": 39,
+    "routing": 41,
     "tenant": 10,
     "unknown": 16
   },
@@ -422,6 +424,8 @@
     "tenant-b-today": "de44544575fb9d8e7033552002086aad46e57e590c63c2c3f797e29275887779",
     "tier-attention-en": "8467f3a3828c7030badce1bd2fa0044f21cee43942148cb114874a96f6631f33",
     "tier-count-en": "7aee0336eab8390a96bbc10eed7937c34cd23542293f50ce86e175cf7cc0ec97",
+    "tier-drafts-en": "660427774a835e025abf2ae2c2872268e283d946803809dcef0342387f0f366a",
+    "tier-drafts-zh": "c8d19302c83ae302ebc60e33c2bb0846d7eb6463c9eaaa45edf017a60f788ee4",
     "tier-labels-en": "a8fa323ed85f058180d8ef9adfdba42fcfc4e431b57c7d9b8944870c503cbce0",
     "tier-none-zh": "a923ee82bfb39a986a9362e3ad80581349fa5474fdfb8295c874768cbde00c9a",
     "tier-overdue-en": "ec380948dd45c1654088956ca0d6471320e16f8a6a59de878444d0d02845d647",
