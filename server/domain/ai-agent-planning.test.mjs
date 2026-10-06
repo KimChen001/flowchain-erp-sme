@@ -4,6 +4,7 @@ import { aiSkillActor, aiSkillScenario } from './test-fixtures/ai-skill-scenario
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 import { AI_AGENT_KNOWLEDGE, AI_AGENT_LIMITS, AI_AGENT_NO_SKILL, aiAgentPlanningEnabled, aiAgentTools, planAiAgentTools, validateAiAgentToolCalls } from './ai-agent-planning.mjs'
 import { knowledgeResponse } from './ai-knowledge-service.mjs'
+import { aiSkillDraftOrders } from './ai-skill-drafts.mjs'
 import { parleyChatAdapter } from './ai-runtime-provider-specific-adapters-v2.mjs'
 
 // Placeholder provider settings: the provider is a scripted stub, so nothing
@@ -112,6 +113,14 @@ test('the Acme request goes to the planner and gets one answer: its orders and d
   assert.match(orders, /PO-008/)
   assert.ok(payload.reviewCards.length > 0)
   assert.ok(payload.reviewCards.every((card) => card.payload?.supplierId === 'SUP-001'), 'drafts follow the supplier the question names')
+  // One message to Acme about both overdue orders, not one per order, asking
+  // about partial delivery as the question does. PO-002 is due soon, not
+  // overdue: no draft.
+  const followUps = payload.reviewCards.filter((card) => card.draftType === 'po_followup_draft')
+  assert.equal(followUps.length, 1)
+  assert.deepEqual(followUps[0].payload.poIds, ['PO-001', 'PO-008'])
+  assert.match(followUps[0].payload.message, /could you ship what is ready now/)
+  assert.ok(!payload.reviewCards.some((card) => aiSkillDraftOrders(card).includes('PO-002')))
   // The model saw the question and the tools, never business data.
   const seen = JSON.stringify(run.plans[0])
   assert.equal(run.plans[0].task.type, 'agent_planning')

@@ -181,6 +181,13 @@ const asSentence = (value, language) => {
 // figures, links, limitations and review cards are the sections' own,
 // without repeats; the conclusion lists the section titles. Each section
 // keeps its title, summary and the evidence it cited.
+// A follow-up about one order is left out when a message to its supplier
+// about several orders, from another section, covers it.
+function withoutCoveredOrders(cards) {
+  const covered = new Set(cards.filter((card) => array(card.payload?.poIds).length).flatMap((card) => card.payload.poIds))
+  return cards.filter((card) => !(card.draftType === 'po_followup_draft' && !array(card.payload?.poIds).length && covered.has(card.payload?.poId)))
+}
+
 export function composeAiCompoundAnswer({ sections, facts, language: requested, query, skipped = 0 }) {
   const language = aiSkillLanguage(requested)
   const answers = sections.map((section) => section.response)
@@ -232,7 +239,7 @@ export function composeAiCompoundAnswer({ sections, facts, language: requested, 
     recommendedActions: [],
     navigationLinks: unique(answers.flatMap((answer) => array(answer.navigationLinks)), (link) => `${link.moduleId}|${link.entityId || ''}|${link.label}`).slice(0, 6),
     dataLimitations,
-    reviewCards: unique(answers.flatMap((answer) => array(answer.reviewCards)), (card) => `${card.draftType}|${card.targetEntityId || ''}|${card.title}`),
+    reviewCards: withoutCoveredOrders(unique(answers.flatMap((answer) => array(answer.reviewCards)), (card) => `${card.draftType}|${card.targetEntityId || ''}|${card.title}`)),
     followUpQuestions: [],
     followUpSuggestions: unique(answers.flatMap((answer) => array(answer.followUpSuggestions)), (item) => item.prompt).slice(0, 3),
     contextBreadcrumbs: [],

@@ -2,7 +2,8 @@ import { aiSkillQuestionLanguage } from './ai-skill-copy.mjs'
 import { refineAiSkillRoute } from './ai-skill-entities.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
-import { routeSkill } from './ai-skill-router.mjs'
+import { aiSkillAsksPartialDelivery, routeSkill } from './ai-skill-router.mjs'
+import { aiSkillDraftBasis } from './ai-skill-drafts.mjs'
 import { resolveAiSkillFollowUp } from './ai-skill-follow-up.mjs'
 import { answerAiSkill, toolsFor } from './ai-skills.mjs'
 import { aiKnowledgeAuditBlock, recordAiSkillAudit } from './ai-skill-audit.mjs'
@@ -135,7 +136,7 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
       const named = call.records.map((record) => `${spelledAsAsked(message, record)},`).join(' ')
       const base = routeSkill({ message: named }) || {}
       // A tier the call names filters as the question's own tier does.
-      const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short', tier: call.tier ?? null }, skillId: call.tool }, named, facts)
+      const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short', tier: call.tier ?? null, partial: aiSkillAsksPartialDelivery(message) }, skillId: call.tool }, named, facts)
       if (!partRoute || partRoute.capability || !partRoute.skillId || !allowed.has(partRoute.skillId)) return null
       return { question: aiSkillById(partRoute.skillId)?.title?.[titleKey] || partRoute.skillId, route: partRoute }
     }))).filter(Boolean).sort((a, b) => agentSectionRank(a) - agentSectionRank(b))
@@ -203,7 +204,7 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   if (agentResult && !agentServed && agentResult.status === 'degraded') response = { ...response, agentPlanning: { status: 'degraded', entry: agentEntry } }
   // The passages the planner's search found go with a planned answer from
   // records as its knowledge supplement; the gateway then adds none.
-  if (found && agentServed && response.intent !== 'knowledge_retrieval') response = { ...response, supplementalKnowledge: { title: found.conclusion.title, summary: found.conclusion.summary, rag: found.rag } }
+  if (found && agentServed && response.intent !== 'knowledge_retrieval') response = aiSkillDraftBasis({ ...response, supplementalKnowledge: { title: found.conclusion.title, summary: found.conclusion.summary, rag: found.rag } })
   const routingAudit = aiSkillIntentRoutingAudit(intentRouting)
   const agent = agentResult ? aiAgentAudit(agentResult, { entry: agentEntry, served: agentServed ? [...agentSections.map((section) => section.route.skillId), ...(found ? [AI_AGENT_KNOWLEDGE] : [])] : [] }) : compound ? aiCompoundAudit(compound) : null
   const audited = skillId === 'business_query' ? { ...response, answerSource: 'business_query' } : skillId === 'knowledge_retrieval' ? { ...response, answerSource: 'knowledge', language } : response
