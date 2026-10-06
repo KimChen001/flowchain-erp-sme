@@ -24,7 +24,13 @@ npm run test:ai:eval -- --update-baseline --allow-drop=route-open-pos,num-item-a
      - a second invoice with a price variance, `EVAL-VAR-INV-001`. Atlas Industrial
        Supply bills the quantity received on PO-013 above the PO price. It is stored
        as `exception` with `matchStatus: 'variance'`, like `LOCAL-DEMO-INV-001`, so
-       `invoice_variance_count` is 2, not 1.
+       `invoice_variance_count` is 2, not 1;
+     - the knowledge evaluation's three fictional documents
+       (`knowledge/documents/`: `product-guide`, `purchasing-policy`,
+       `invoice-policy`). They go through the real file parser and knowledge
+       service, as a Markdown upload does, so the Acme request finds its
+       purchasing policy beside Acme's orders (AI plan §4, gap 3). Workspace B
+       has none of them.
    - **Workspace B** (`tenant-ai-eval-other`): one overdue purchase order,
      `EVAL-B-PO-901`, for 77,777.77 USD.
    - Users: admin, manager, buyer, finance, viewer and operations in A; admin and
@@ -95,6 +101,7 @@ flag the same wording.
 | `expect.skus` | A truth list (`at_risk_skus`). Every SKU in it must be named. |
 | `expect.metricsAgree` | The answer must carry the structured report `metrics`. |
 | `expect.mentions`, `expect.absent` | Literals the answer must contain, or must not contain. Both ignore case; `absent` also treats a curly apostrophe as a straight one, and is checked against the whole response. |
+| `expect.knowledge` | `{ document, sections }`: the answer cites the document titled `document`, in one of `sections` (the last part of the heading path; any section when empty). Citations are read from a knowledge answer (`rag`) and from a business answer's knowledge supplement (`supplementalKnowledge.rag`). Offline, retrieval is keyword-only, so a Chinese question does not find an English document. |
 | `expect.draft` | Needs at least one review card, and every card must be review-only. |
 | `expect.refusal` | The answer must refuse in the question's language, offer a draft, claim no action and write nothing. |
 | `expect.noAmounts` | No money anywhere in the payload: no currency-formatted text, no numeric amount fields and no money `figures` (a figure with a currency, or a code naming an amount). |

@@ -7,7 +7,7 @@ import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
 import { isLegacyAiTemplateGatewayEnabled, runAiSkillRuntime } from '../domain/ai-skill-runtime.mjs'
 import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
 import { aiSkillQuestionLanguage } from '../domain/ai-skill-copy.mjs'
-import { recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
+import { aiKnowledgeAuditBlock, recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
 import { reportReadAccess, scopeBusinessContext } from '../domain/report-read-access.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
@@ -116,7 +116,13 @@ async function handleGatewayRequest(ctx) {
       // Only the first 1,201 characters: a longer question is rejected below.
       const actionRequest = detectAiActionRequest(String(body?.message || body?.question || '').slice(0, 1201))
       const knowledge = actionRequest ? null : await runKnowledgeQuery(ctx, body)
-      if (knowledge) { send(res, 200, knowledge); return true }
+      if (knowledge) {
+        // The same audit row as a skill answer, with the knowledge answer's mode
+        // and the documents it cited (ids and counts only).
+        await recordAiSkillAudit(ctx, { response: { ...knowledge, answerSource: 'knowledge', language: body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, knowledge: aiKnowledgeAuditBlock(knowledge.rag) })
+        send(res, 200, knowledge)
+        return true
+      }
       // Reject empty or oversized questions before any tenant data is read.
       const validation = validateAiRuntimeRequest(body)
       if (!validation.ok) {
