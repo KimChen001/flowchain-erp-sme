@@ -211,15 +211,20 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
       assert.ok(dataScope.currencyAmounts[0].amount > 0, `${subject} report amount is not zero`)
     }
 
-    // Issued orders keep their first promised date; orders never issued have none.
+    // Committed orders (approved, issued or received) keep their first promised
+    // date, as the approve and issue commands record it, and so do cancelled
+    // orders that were sent first; drafts, pending approvals and orders
+    // cancelled before they were sent have none.
     for (const po of purchaseOrders) {
-      const issued = ['issued', 'partially_received', 'fully_received'].includes(po.status) || po.metadata.transmissionStatus === 'sent'
-      for (const line of po.lines) assert.equal(Boolean(line.originalPromisedDate), issued, `${line.id} original promise`)
+      const committed = ['approved', 'issued', 'partially_received', 'fully_received'].includes(po.status) || po.metadata.transmissionStatus === 'sent'
+      for (const line of po.lines) assert.equal(Boolean(line.originalPromisedDate), committed, `${line.id} original promise`)
     }
     // Two Northstar orders were re-promised after issue, with a reason, and
     // delivered on the new date. Its scorecard is late against the original
-    // promise and on time against the current date: on time 4 of 6 against 6
-    // of 6, OTIF 3 of 6 against 5 of 6.
+    // promise and on time against the current date. PO-023, approved and
+    // promised for yesterday, has nothing received: overdue, late on both.
+    // Seven deliveries of one PO line each: on time 4 of 7 against 6 of 7,
+    // OTIF 3 of 7 against 5 of 7.
     const revisions = await prisma.purchaseOrderPromiseRevision.findMany({ where: { tenantId }, orderBy: { id: 'asc' } })
     assert.deepEqual(revisions.map((row) => [row.purchaseOrderId, row.previousDate.toISOString().slice(0, 10), row.newDate.toISOString().slice(0, 10), Boolean(row.reason)]), [
       ['LOCAL-DEMO-PO-033', shiftDay(AS_OF, -45), shiftDay(AS_OF, -40), true],
@@ -229,8 +234,9 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
     const scorecard = await createSupplierScorecardReadService({ prisma, now: () => new Date(`${AS_OF}T17:00:00Z`) }).read({}, { identity: { authenticated: true, tenantId, userId: `${tenantId}-admin`, role: 'admin' } })
     const northstar = scorecard.suppliers.find((row) => row.supplierId === 'LOCAL-DEMO-SUP-005')
     assert.equal(northstar.sampleStatus, 'ok')
-    assert.deepEqual([northstar.metrics.onTime.count, northstar.metrics.onTimeCurrent.count, northstar.sampleSize], [4, 6, 6])
+    assert.deepEqual([northstar.metrics.onTime.count, northstar.metrics.onTimeCurrent.count, northstar.sampleSize, northstar.lineCount], [4, 6, 7, 7])
     assert.deepEqual([northstar.metrics.otif.count, northstar.metrics.otifCurrent.count], [3, 5])
+    assert.deepEqual([northstar.overdueUndeliveredCount, northstar.obligations.find((row) => row.overdueUndelivered).purchaseOrderId], [1, 'LOCAL-DEMO-PO-023'])
     assert.ok(northstar.metrics.onTime.rate < northstar.metrics.onTimeCurrent.rate)
 
     // Stored business values are English codes and names, not Chinese values.

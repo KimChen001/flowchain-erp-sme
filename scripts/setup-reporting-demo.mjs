@@ -1,6 +1,7 @@
 import { getPrismaClient, disconnectPrismaClient } from '../server/persistence/prisma-client.mjs';
 import { assertLocalDevelopment } from '../server/domain/local-development-contract.mjs';
-import { ISSUED_PURCHASE_ORDER_STATUSES, recordOriginalPromises } from '../server/domain/purchase-order-promise-dates.mjs';
+import { recordOriginalPromises } from '../server/domain/purchase-order-promise-dates.mjs';
+import { isCommittedPurchaseOrder } from '../server/domain/open-purchase-order.mjs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
@@ -80,8 +81,8 @@ export async function seedReportingDemo(prisma, env = process.env, anchor = new 
         const lineId = `${id}-L1`;
         const lineMeta = { ...marker, targetWarehouseId: warehouse.id, promisedDate: expectedDate.toISOString().slice(0, 10), requestedDate: expectedDate.toISOString().slice(0, 10) };
         const created = await insert('purchaseOrder', { id, supplierId: vendor.id, supplierName: vendor.name, status, expectedDate, amount, currency: 'USD', owner: ['Kim', 'Alex Morgan', 'Jordan Lee'][n % 3], priority: n % 4 === 0 ? 'high' : 'medium', metadata: { ...marker, targetWarehouseId: warehouse.id, transmissionStatus: ['issued', 'partially_received', 'fully_received'].includes(status) ? 'sent' : 'not_sent' }, createdAt, updatedAt: createdAt, lines: { create: [{ id: lineId, itemId: item.id, sku: item.sku, itemName: item.name, orderedQuantity, receivedQuantity, unit: item.unit, unitPrice, amount, metadata: lineMeta }] } });
-        // An issued order keeps its first promised date, as the issue command records it.
-        if (created && ISSUED_PURCHASE_ORDER_STATUSES.includes(status)) await recordOriginalPromises(tx, { purchaseOrder: await tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { lines: true } }) });
+        // A committed order keeps its first promised date, as the approve and issue commands record it.
+        if (created && isCommittedPurchaseOrder({ status })) await recordOriginalPromises(tx, { purchaseOrder: await tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { lines: true } }) });
         if (!created || !receivedQuantity) continue;
         const receivedAt = new Date(Math.min(day(createdAt, 1).getTime(), today.getTime()));
         const grnId = `DEMO-RPT-GRN-${suffix(n)}`;
