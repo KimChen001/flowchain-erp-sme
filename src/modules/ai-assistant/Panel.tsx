@@ -83,7 +83,7 @@ type SafeConversationContext = {
 
 export const AI_EMPTY_STATE_PROMPT_CHIPS = [
   { label: "What should I handle first today?", prompt: "What should I handle first today?", zhLabel: "今天先处理什么？", zhPrompt: "今天先处理什么？" },
-  { label: "Which items have the highest risk?", prompt: "Which items have the highest risk?", zhLabel: "哪些事项风险最高？", zhPrompt: "哪些事项风险最高？" },
+  { label: "What is at risk right now?", prompt: "What is at risk right now?", zhLabel: "现在有哪些风险？", zhPrompt: "现在有哪些风险？" },
   { label: "Which records need more data?", prompt: "Which records need more data?", zhLabel: "哪些数据需要补齐？", zhPrompt: "哪些数据需要补齐？" },
   { label: "Prepare an action draft", prompt: "Prepare an action draft", zhLabel: "帮我准备一个处理草稿", zhPrompt: "帮我准备一个处理草稿" },
 ];

@@ -1,13 +1,13 @@
 import { aiSkillCountText, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillNavigation, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
-import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
+import { buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
 import { AI_SKILL_DRAFT_TYPES, aiSkillDraftCandidate, aiSkillDraftCard } from './ai-skill-drafts.mjs'
 import { presentStartOrder, runStartOrder } from './ai-skill-start-order.mjs'
 
-// Review-only drafts for the top signals: the best candidate of each draft
-// type, then the rest by rank, at most three. The candidates and cards are
-// shared with the draft each answer line offers (ai-skill-drafts.mjs). A
+// Review-only drafts for the signals in date order (compareSignalsByDate):
+// the first candidate of each draft type, then the rest in that order, at
+// most three. The candidates and cards are shared with the draft each answer line offers (ai-skill-drafts.mjs). A
 // request to start an order (route mode order) is answered by
 // ai-skill-start-order.mjs.
 // A supplier tier the question names ("follow-ups for our Tier 1 suppliers")
@@ -21,14 +21,14 @@ const candidateSupplier = (candidate) => candidate.po?.supplierId || candidate.i
 
 export function runPrepareActionDraft(facts, { focus = null, route = null } = {}) {
   if (route?.mode === 'order') return runStartOrder(facts, { focus, route, canDraft: Boolean(facts.visibility?.canDraft) })
-  const ranked = rankAiSkillItems(buildAiSkillSignals(facts)).filter((item) => matchesAiSkillFocus(item, focus))
+  const ranked = rankAiSkillItemsByDate(buildAiSkillSignals(facts)).filter((item) => matchesAiSkillFocus(item, focus))
   const tier = route?.tier || null
   const tierIds = tier?.supplierIds ? new Set(tier.supplierIds) : null
   const all = ranked.map((item) => aiSkillDraftCandidate(item, facts)).filter((candidate) => !tierIds || tierIds.has(candidateSupplier(candidate)))
   const seen = new Set()
   const drafts = []
   const take = (candidate) => { if (drafts.length < MAX_CARDS && !seen.has(candidate.key)) { seen.add(candidate.key); drafts.push(candidate) } }
-  // The best candidate of each draft type first, then the rest by rank.
+  // The first candidate of each draft type, then the rest, all by date.
   for (const kind of AI_SKILL_DRAFT_TYPES) { const first = all.find((candidate) => candidate.kind === kind); if (first) take(first) }
   for (const candidate of all.filter((entry) => entry.kind !== 'link')) take(candidate)
   drafts.sort((a, b) => a.item.rank - b.item.rank)

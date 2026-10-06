@@ -1,6 +1,6 @@
 import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillEvidence, aiSkillFormatter, aiSkillNavigation, aiSkillRecordEvidence, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
-import { aiSkillPurchaseOrderNotSent, buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
+import { aiSkillPurchaseOrderNotSent, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { aiSkillDraftCard } from './ai-skill-drafts.mjs'
 
 // Starting an order: prepare_action_draft in mode `order`, for "can you help
@@ -68,7 +68,7 @@ export function runStartOrder(facts, { focus = null, route = null, canDraft = fa
   const request = route?.order || {}
   const base = { skillId: 'prepare_action_draft', mode: 'order', canDraft, advice: Boolean(request.advice), quantity: request.quantity ?? null }
   if (!facts.inventory) return { ...base, outcome: 'no_stock', targets: [] }
-  const stockItems = rankAiSkillItems(buildAiSkillSignals(facts)).filter((item) => STOCK.has(item.type))
+  const stockItems = rankAiSkillItemsByDate(buildAiSkillSignals(facts)).filter((item) => STOCK.has(item.type))
   const rowOf = (item) => facts.inventory.rows.find((row) => row.itemId === item.entityId || row.sku === item.label)
   const named = focusRow(facts, focus)
   if (named) {

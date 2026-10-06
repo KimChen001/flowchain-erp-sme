@@ -94,10 +94,10 @@ test('follow-ups answer through the usual skills, in the language they are asked
   const next = await ask({ message: '第二个呢？', answerLanguage: 'en-US', conversationContext: contextOf(why, first) })
   assert.notEqual(next.intent, 'capability_overview')
   assert.ok(next.keyEvidence.some((item) => item.entityId === first.keyEvidence[1].entityId), next.conclusion.title)
-  // Another order for the same skill: its risk, not the page's or the list's.
+  // Another order for the same skill: its open problems, not the page's or the list's.
   const other = await ask({ message: 'What about PO-008?', answerLanguage: 'en-US', conversationContext: contextOf(first) })
   assert.equal(other.intent, 'highest_risk_items')
-  assert.match(other.conclusion.title, /^(Risk on PO-008|No risk found for PO-008)/)
+  assert.match(other.conclusion.title, /^(Open problems on PO-008|No open problems found for PO-008)/)
   // The second record of a purchase order list: that order's card.
   const orders = await ask({ message: 'Which purchase orders are late?', answerLanguage: 'en-US' })
   const second = await ask({ message: 'the second one', answerLanguage: 'en-US', conversationContext: contextOf(orders) })
