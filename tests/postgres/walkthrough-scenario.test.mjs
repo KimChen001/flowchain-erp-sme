@@ -211,10 +211,16 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
       assert.ok(dataScope.currencyAmounts[0].amount > 0, `${subject} report amount is not zero`)
     }
 
-    // Issued orders keep their first promised date; orders never issued have none.
+    // Issued orders keep their first promised date and their issue date, on
+    // their order day; orders never issued have neither.
     for (const po of purchaseOrders) {
       const issued = ['issued', 'partially_received', 'fully_received'].includes(po.status) || po.metadata.transmissionStatus === 'sent'
       for (const line of po.lines) assert.equal(Boolean(line.originalPromisedDate), issued, `${line.id} original promise`)
+      assert.equal(Boolean(po.issuedAt), issued, `${po.id} issue date`)
+      if (issued) {
+        assert.equal(po.metadata.issuedAt, po.issuedAt.toISOString(), `${po.id} issue date in metadata`)
+        assert.ok(po.issuedAt > po.createdAt, `${po.id} issued after it was created`)
+      }
     }
     // Two Northstar orders were re-promised after issue, with a reason, and
     // delivered on the new date. Its scorecard is late against the original
