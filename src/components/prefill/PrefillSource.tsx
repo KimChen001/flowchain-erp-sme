@@ -27,6 +27,7 @@ const REF_LABELS: Record<string, readonly [string, string]> = {
   "reorder_list:due": ["Date from the reorder list", "来自补货清单的日期"],
   "reorder_list:supplier": ["Preferred supplier from the reorder list", "来自补货清单的首选供应商"],
   "reorder_list:item": ["Item from the reorder list", "来自补货清单的物料"],
+  "reorder_list:enter_quantity": ["Enter the quantity: the reorder list has no shortfall in this unit", "请填写数量：补货清单在此单位下没有缺口"],
   "item_supplier:moq": ["Raised to the minimum order quantity", "已提高到最小起订量"],
   "item_supplier:lead_time": ["Today plus the supplier lead time", "今天加供应商提前期"],
   "item_supplier:preferred": ["Preferred supplier", "首选供应商"],

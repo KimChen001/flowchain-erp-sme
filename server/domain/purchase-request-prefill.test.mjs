@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { addCalendarDays, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
+import { mapItemSupplierRecord } from './master-data-commands.mjs'
 
 const item = { itemId: 'item-1', defaultWarehouseId: 'wh-main' }
 const preferred = { id: 'sup-pref', supplierCode: 'SUP-P', name: 'Preferred Supply', preferred: true, referencePrice: '4.25', currency: 'USD', leadTimeDays: 10, minimumOrderQuantity: null }
@@ -69,6 +70,32 @@ test('a reorder list handoff labels its shortfall, supplier and reason with the 
   // The shortfall still rises to the supplier's minimum order quantity.
   const raised = planPurchaseRequestPrefill({ ...base, query: { itemId: 'item-1', quantity: '20', suppliers: 'sup-other', origin: 'reorder_list' } })
   assert.deepEqual(raised.fields.quantity, { source: 'default', ref: 'item_supplier:moq', value: '50' })
+})
+
+test('a reorder list row without a shortfall opens with the quantity empty and says to enter it', () => {
+  const plan = planPurchaseRequestPrefill({ ...base, query: { itemId: 'item-1', suppliers: 'sup-other', origin: 'reorder_list' } })
+  assert.equal(plan.values.quantity, '')
+  assert.deepEqual(plan.fields.quantity, { source: 'template', ref: 'reorder_list:enter_quantity', value: '' })
+  // Elsewhere a handoff without a quantity still starts at 1, unlabelled.
+  assert.equal(planPurchaseRequestPrefill({ ...base, query: { itemId: 'item-1' } }).values.quantity, '1')
+})
+
+test('a link with no lead time or minimum order quantity recorded fills neither, from the reorder list or the assistant', () => {
+  // As the item supplier API returns a link saved with both fields blank.
+  const link = mapItemSupplierRecord({ id: 'rel-1', payload: { itemId: 'item-1', supplierId: 'sup-blank', preferred: true, leadTimeDays: null, minimumOrderQuantity: null } })
+  assert.equal(link.leadTimeDays, null)
+  assert.equal(link.minimumOrderQuantity, null)
+  // Older links without the keys read the same way; a recorded 0 stays 0.
+  assert.equal(mapItemSupplierRecord({ payload: {} }).leadTimeDays, null)
+  assert.equal(mapItemSupplierRecord({ payload: { leadTimeDays: 0, minimumOrderQuantity: 6 } }).leadTimeDays, 0)
+  const suppliers = [{ ...link, id: 'sup-blank', name: 'Blank Supply' }]
+  for (const origin of ['reorder_list', 'ai_assistant']) {
+    const plan = planPurchaseRequestPrefill({ ...base, suppliers, query: { itemId: 'item-1', quantity: '0.5', origin } })
+    assert.equal(plan.values.quantity, '0.5', origin)
+    assert.equal(plan.fields.quantity.ref, `${origin === 'ai_assistant' ? 'assistant' : 'reorder_list'}:gap`)
+    assert.equal(plan.fields.needByDate, undefined, origin)
+    assert.equal(plan.values.needByDate, base.defaultDate)
+  }
 })
 
 test('an item with no approved supplier leaves the supplier and price empty', () => {

@@ -191,6 +191,8 @@ export async function saveCustomerMaster(prisma, id, input = {}, actorId, scope)
 
 // ---------------------------------------------------------------- item suppliers
 
+const recordedNumber = (value) => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value))
+
 export function mapItemSupplierRecord(record = {}, item = null) {
   const payload = isObject(record.payload) ? record.payload : {}
   return {
@@ -201,8 +203,10 @@ export function mapItemSupplierRecord(record = {}, item = null) {
     active: payload.active !== false,
     approved: payload.approved !== false,
     preferred: Boolean(payload.preferred),
-    leadTimeDays: Number(payload.leadTimeDays || 0),
-    minimumOrderQuantity: Number(payload.minimumOrderQuantity || 1),
+    // Null when none was recorded: never a same-day lead time or an MOQ of 1
+    // nobody entered.
+    leadTimeDays: recordedNumber(payload.leadTimeDays),
+    minimumOrderQuantity: recordedNumber(payload.minimumOrderQuantity),
     // Null when no price was recorded, never 0.
     referencePrice: payload.referencePrice === null || payload.referencePrice === undefined || payload.referencePrice === '' ? null : Number(payload.referencePrice),
     currency: text(payload.currency),
@@ -241,8 +245,9 @@ export async function saveItemSupplier(prisma, itemIdOrSku, relationshipId, inpu
     if (has(input, 'supplierSku')) next.supplierSku = text(input.supplierSku)
     for (const key of ['active', 'approved', 'preferred']) if (has(input, key)) next[key] = Boolean(input[key])
     if (!old) { next.active = next.active !== false; next.approved = next.approved !== false; next.preferred = Boolean(next.preferred) }
-    if (leadTime !== undefined) next.leadTimeDays = leadTime ?? 0
-    if (moq !== undefined) next.minimumOrderQuantity = moq ?? 1
+    // A blank field is stored as not recorded (null), never as 0 days or 1.
+    if (leadTime !== undefined) next.leadTimeDays = leadTime
+    if (moq !== undefined) next.minimumOrderQuantity = moq
     // The form sends 0 for an empty price field: a zero reference price is
     // "not recorded", never a price of $0.
     if (price !== undefined) next.referencePrice = price === 0 ? null : price

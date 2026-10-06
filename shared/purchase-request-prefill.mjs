@@ -44,13 +44,21 @@ export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = 
   }
 
   // The shortfall the handoff computed, raised to the supplier's minimum
-  // order quantity. Without a quantity the line starts at 1, unlabelled.
+  // order quantity. Without a quantity the line starts at 1, unlabelled;
+  // a reorder list row without a shortfall (above its reorder point, or a
+  // purchase unit other than the stock unit) leaves it empty and says so.
   const asked = positive(query.quantity)
   const moq = positive(chosen?.minimumOrderQuantity)
-  const gap = asked ?? 1
-  const quantity = String(moq && moq > gap ? moq : gap)
-  if (moq && moq > gap) fields.quantity = { source: 'default', ref: 'item_supplier:moq', value: quantity }
-  else if (asked) fields.quantity = { source: 'record', ...tag('gap'), value: quantity }
+  let quantity
+  if (asked === null && origin === 'reorder_list') {
+    quantity = ''
+    fields.quantity = { source: 'template', ref: 'reorder_list:enter_quantity', value: quantity }
+  } else {
+    const gap = asked ?? 1
+    quantity = String(moq && moq > gap ? moq : gap)
+    if (moq && moq > gap) fields.quantity = { source: 'default', ref: 'item_supplier:moq', value: quantity }
+    else if (asked) fields.quantity = { source: 'record', ...tag('gap'), value: quantity }
+  }
 
   // Prices come only from master data, never from history (owner decision 6).
   const price = chosen?.referencePrice ? String(chosen.referencePrice) : ''
