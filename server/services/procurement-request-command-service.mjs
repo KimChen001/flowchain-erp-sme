@@ -126,6 +126,8 @@ function persistableLines(lines, headerCurrency) {
         specificationSnapshot: text(line.specificationSnapshot) || null,
         commodityId: text(line.commodityId) || null,
         internalLineComment: text(line.internalLineComment) || null,
+        // Why a supplier other than the item's preferred one was chosen.
+        ...(line.supplierOverride ? { supplierOverride: line.supplierOverride } : {}),
       },
     };
   });
@@ -137,6 +139,18 @@ function persistableLines(lines, headerCurrency) {
     supplierName: suppliers.length === 1 ? text(rows[0].metadata.supplierSnapshot?.supplierName) || null : null,
   };
 }
+
+// The audit row's list of lines that use a supplier other than the item's
+// preferred one, with the reason given.
+function supplierOverrideAudit(rows, extra = () => ({})) {
+  return rows
+    .filter((row) => row.metadata?.supplierOverride)
+    .map((row) => {
+      const override = row.metadata.supplierOverride;
+      return { clientLineId: row.metadata.clientLineId || null, ...extra(row), itemId: row.itemId || null, supplierId: row.metadata.supplierId, preferredSupplierId: override.preferredSupplierId || null, reasonCode: override.reasonCode, note: override.note || null };
+    });
+}
+const withOverrides = (list) => (list.length ? { supplierOverrides: list } : {});
 
 export function createProcurementRequestCommandService({ prisma, masterData, env = process.env, idFactory = randomUUID, now = () => new Date() } = {}) {
   const db = async () => prisma || getPrismaClient(env);
@@ -231,7 +245,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           },
         });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, commandActor.tenantId, created.id));
-        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: created.id, audit: { action: "purchase_request_created", summary: `Created purchase request ${created.id}.`, metadata: { version: 1, amount: persisted.amount, currency, ...(suggestions ? { suggestions } : {}) } } };
+        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: created.id, audit: { action: "purchase_request_created", summary: `Created purchase request ${created.id}.`, metadata: { version: 1, amount: persisted.amount, currency, ...withOverrides(supplierOverrideAudit(persisted.rows)), ...(suggestions ? { suggestions } : {}) } } };
       },
     });
   }
@@ -269,7 +283,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           },
         });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, commandActor.tenantId, row.id));
-        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_updated", summary: `Updated purchase request ${row.id}.`, metadata: { expectedVersion, version } } };
+        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_updated", summary: `Updated purchase request ${row.id}.`, metadata: { expectedVersion, version, ...(persisted ? withOverrides(supplierOverrideAudit(persisted.rows)) : {}) } } };
       },
     });
   }
@@ -419,6 +433,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           groups.get(groupKey).lines.push(line);
         }
         const purchaseOrderIds = [];
+        const carriedOverrides = [];
         for (const group of groups.values()) {
           const poId = documentId("PO");
           purchaseOrderIds.push(poId);
@@ -429,8 +444,12 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
             // An amount-basis line (a service) is ordered as one unit at its amount.
             const quantity = line.quantity === null ? "1.0000" : decimalText(line.quantity);
             const unitPrice = line.unitPrice === null ? receivingDecimalString(amount) : decimalText(line.unitPrice);
-            return { id: idFactory(), itemId: line.itemId, sku: line.sku, itemName: line.itemName, orderedQuantity: quantity, receivedQuantity: "0.0000", unit: line.unit, unitPrice, amount: receivingDecimalString(amount), metadata: { sourcePurchaseRequestLineId: line.id, targetWarehouseId: group.warehouseId, requestedDate: line.metadata?.needByDate || null } };
+            // The reason for a non-preferred supplier travels with the line as
+            // recorded: the PO approver sees what the requester gave.
+            const supplierOverride = line.metadata?.supplierOverride || null;
+            return { id: idFactory(), itemId: line.itemId, sku: line.sku, itemName: line.itemName, orderedQuantity: quantity, receivedQuantity: "0.0000", unit: line.unit, unitPrice, amount: receivingDecimalString(amount), metadata: { sourcePurchaseRequestLineId: line.id, targetWarehouseId: group.warehouseId, requestedDate: line.metadata?.needByDate || null, ...(supplierOverride ? { supplierOverride } : {}) } };
           });
+          carriedOverrides.push(...supplierOverrideAudit(group.lines, (line) => ({ purchaseOrderId: poId, purchaseRequestLineId: line.id })));
           const dates = group.lines.map((line) => line.metadata?.needByDate).filter(Boolean).sort();
           await tx.purchaseOrder.create({ data: {
             id: poId, tenantId: actor.tenantId, status: PURCHASE_ORDER_STATUS.DRAFT, supplierId: group.supplierId, supplierName: group.supplierName,
@@ -452,7 +471,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         await tx.purchaseRequest.update({ where: { id: row.id }, data: sourcedRequest(row, actor, "create_purchase_orders", { status: PURCHASE_REQUEST_STATUS.CONVERTED, linkedPoId: purchaseOrderIds[0], metadata: { procurementPath: "direct_po", linkedPurchaseOrderIds: purchaseOrderIds } }) });
         const orders = await tx.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, id: { in: purchaseOrderIds } }, include: { lines: true }, orderBy: { id: "asc" } });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, actor.tenantId, row.id));
-        return { result: { purchaseRequestId: row.id, purchaseRequest, createdPurchaseOrders: orders.map(mapPurchaseOrder) }, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_converted_to_purchase_orders", summary: `Created ${purchaseOrderIds.length} purchase order(s) from purchase request ${row.id}.`, metadata: { expectedVersion, purchaseOrderIds } } };
+        return { result: { purchaseRequestId: row.id, purchaseRequest, createdPurchaseOrders: orders.map(mapPurchaseOrder) }, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_converted_to_purchase_orders", summary: `Created ${purchaseOrderIds.length} purchase order(s) from purchase request ${row.id}.`, metadata: { expectedVersion, purchaseOrderIds, ...withOverrides(carriedOverrides) } } };
       },
     });
   }

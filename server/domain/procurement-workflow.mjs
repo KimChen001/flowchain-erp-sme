@@ -4,6 +4,7 @@ import {
   PURCHASE_REQUEST_STATUS,
   RFQ_STATUS,
 } from './procurement-status-authority.mjs'
+import { overrideNeeded, validateSupplierOverride } from '../../shared/supplier-override-reasons.mjs'
 
 export const PR_TRANSITIONS = PROCUREMENT_STATUS_TRANSITIONS.purchaseRequest
 export const PO_TRANSITIONS = PROCUREMENT_STATUS_TRANSITIONS.purchaseOrderWorkflow
@@ -54,6 +55,32 @@ export function validateDirectPo(pr, policy = {}, permission = true) {
   if (Number(pr.totalAmount) >= Number(policy.rfqRequiredAboveAmount ?? Infinity) && policy.allowManagerOverride === false) details.push({ field:'totalAmount', message:'公司策略要求询价且不可覆盖' })
   if (details.length) throw procurementError('DIRECT_PO_NOT_ALLOWED','当前采购申请不能直接创建采购订单',details)
   return true
+}
+
+// A catalog line whose supplier is not the item's preferred supplier, while
+// one is preferred, needs a reason from the fixed list; nothing else does
+// (shared/supplier-override-reasons.mjs). The stored value names the
+// preferred supplier as it was when the line was saved. Anything sent for a
+// line that needs no reason is dropped.
+const OVERRIDE_ISSUE_MESSAGES = Object.freeze({
+  REASON_REQUIRED: 'Choose a reason',
+  REASON_UNKNOWN: 'Choose a reason',
+  NOTE_LENGTH: 'Add a note of 3 to 500 characters',
+})
+function supplierOverrideFor(line, index, supplierId, preferred) {
+  const needed = overrideNeeded({ supplierId, preferredId: preferred?.id })
+  const { value, issues } = validateSupplierOverride(line.supplierOverride, needed)
+  if (!value) {
+    if (!issues.length) return null
+    const name = preferred.name || preferred.supplierName || preferred.id
+    throw procurementError(
+      'SUPPLIER_OVERRIDE_REASON_REQUIRED',
+      `Line ${index + 1} does not use the item's preferred supplier (${name}). Choose a reason from the list; Other needs a note.`,
+      issues.map((issue) => ({ field: `lines.${index}.supplierOverride.${issue.field}`, code: issue.code, message: OVERRIDE_ISSUE_MESSAGES[issue.code] })),
+      400,
+    )
+  }
+  return { ...value, preferredSupplierId: preferred.id, preferredSupplierName: preferred.name || preferred.supplierName || preferred.id }
 }
 
 // Validates and snapshots purchase request lines against master data. The
@@ -108,11 +135,13 @@ export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) 
           unitSnapshot: line.unitSnapshot || line.unit,
           specificationSnapshot:
             line.specificationSnapshot || line.specification || "",
+          supplierOverride: null,
         };
       }
   if (!itemRepository)
     return {
       ...structuredClone(line),
+          supplierOverride: null,
           itemNameSnapshot: line.itemNameSnapshot || line.itemName || "",
           unitSnapshot: line.unitSnapshot || line.unit || "",
           specificationSnapshot:
@@ -150,10 +179,12 @@ export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) 
           [{ field: `lines.${index}.sku` }],
           400,
         );
+      let supplierOverride = null;
       if (itemRepository?.approvedSuppliersForItem) {
         const approved = await itemRepository.approvedSuppliersForItem(item.itemId);
         if (!approved.length) throw procurementError("ITEM_HAS_NO_APPROVED_SUPPLIER", "该 SKU 尚未维护可采购供应商，请先维护 SKU–供应商关系。", [{ field: `lines.${index}.supplierId` }], 400);
         if (!approved.some(row => row.id === supplierId)) throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "所选供应商不是该 SKU 的已批准供应商", [{ field: `lines.${index}.supplierId` }], 400);
+        supplierOverride = supplierOverrideFor(line, index, supplierId, approved.find((row) => row.preferred));
       } else if (item.defaultSupplierId && supplierId !== item.defaultSupplierId) {
         throw procurementError("ITEM_SUPPLIER_RELATIONSHIP_INVALID", "所选供应商不是该 SKU 的已批准供应商", [{ field: `lines.${index}.supplierId` }], 400);
       }
@@ -168,6 +199,7 @@ export const canonicalPurchaseRequestLines = async (lines = [], itemRepository) 
         unitSnapshot: item.purchaseUnit || item.baseUnit,
         specificationSnapshot: item.specification || "",
         warehouseId: line.warehouseId || item.defaultWarehouseId || "",
+        supplierOverride,
       };
     }),
   );
