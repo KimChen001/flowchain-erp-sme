@@ -7,8 +7,8 @@ import type { ProcurementDocument, ProcurementDocumentType, ProcurementRfqDocume
 export type PriceHistoryResponse = { histories: PriceHistory[]; timeZone: string; priceLabel: "purchase_order_price"; restrictedFields?: string[] };
 
 export const procurementApi = {
-  priceHistory: (keys: string[]) =>
-    apiJson<PriceHistoryResponse>(`/api/procurement/price-history?${keys.map((key) => `key=${encodeURIComponent(key)}`).join("&")}`),
+  priceHistory: (keys: string[], excludePurchaseOrderId?: string | null) =>
+    apiJson<PriceHistoryResponse>(`/api/procurement/price-history?${[...keys.map((key) => `key=${encodeURIComponent(key)}`), ...(excludePurchaseOrderId ? [`excludePurchaseOrder=${encodeURIComponent(excludePurchaseOrderId)}`] : [])].join("&")}`),
   listRequests: () => apiJson<PurchaseRequestSummary[]>("/api/procurement/requests"),
   listOrders: () => apiJson<PurchaseOrder[]>("/api/procurement/orders"),
   listDocuments: (type: string) => apiJson<{ documents: ProcurementDocument[] }>(`/api/procurement/documents?type=${encodeURIComponent(type)}`).then((payload) => payload.documents || []),

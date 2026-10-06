@@ -59,17 +59,19 @@ WITH counted AS (
     AND line."itemId" = ANY($2::text[])
     AND line."unitPrice" IS NOT NULL
     AND po.status = ANY($3::text[])
+    AND ($5::text IS NULL OR po.id <> $5::text)
 )
 SELECT "lineId", "purchaseOrderId", "orderNumber", "supplierId", "supplierName", "itemId", unit, currency, "unitPrice", "orderedQuantity", "issuedAt", "createdAt"
 FROM counted
 WHERE position <= $4::int
 ORDER BY "itemId" ASC, "purchaseOrderId" ASC, "lineId" ASC`
 
-// The latest lines per item, unit and currency for these items in one workspace.
-export async function readPriceHistoryLines(prisma, { tenantId, itemIds }) {
+// The latest lines per item, unit and currency for these items in one
+// workspace. A PO page leaves its own PO out, so it is not its own history.
+export async function readPriceHistoryLines(prisma, { tenantId, itemIds, excludePurchaseOrderId = null }) {
   const scopedTenantId = requireTenantId({ tenantId })
   if (!itemIds.length) return []
-  return prisma.$queryRawUnsafe(LINES_SQL, scopedTenantId, itemIds, [...PRICE_HISTORY_STATUSES], PRICE_HISTORY_AVERAGE_LIMIT)
+  return prisma.$queryRawUnsafe(LINES_SQL, scopedTenantId, itemIds, [...PRICE_HISTORY_STATUSES], PRICE_HISTORY_AVERAGE_LIMIT, text(excludePurchaseOrderId) || null)
 }
 
 export function parsePriceHistoryKeys(values) {
@@ -86,7 +88,7 @@ export function parsePriceHistoryKeys(values) {
 export function createPriceHistoryReadService({ prisma, env = process.env, resolveActor = resolveProvisionedActor } = {}) {
   const db = async () => prisma || getPrismaClient(env)
   return {
-    async read(keyValues, context) {
+    async read(keyValues, context, { excludePurchaseOrderId = null } = {}) {
       const keys = parsePriceHistoryKeys(keyValues)
       const client = await db()
       const actor = await resolveActor(client, context?.identity || context)
@@ -94,7 +96,7 @@ export function createPriceHistoryReadService({ prisma, env = process.env, resol
       const prices = can({ actor, permission: 'procurement.prices.read', tenantId: actor.tenantId })
       const itemIds = [...new Set(keys.map((key) => key.itemId))]
       const [lines, items, tenant] = await Promise.all([
-        readPriceHistoryLines(client, { tenantId: actor.tenantId, itemIds }),
+        readPriceHistoryLines(client, { tenantId: actor.tenantId, itemIds, excludePurchaseOrderId }),
         client.item.findMany({ where: { tenantId: actor.tenantId, id: { in: itemIds } }, select: { id: true, unit: true } }),
         client.tenant.findUnique({ where: { id: actor.tenantId }, select: { timezone: true } }),
       ])

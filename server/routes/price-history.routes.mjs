@@ -4,8 +4,9 @@ import { getPrismaClient } from "../persistence/prisma-client.mjs";
 
 // GET /api/procurement/price-history?key=itemId|unit|currency (repeated, at
 // most 50): each item's latest prices on the workspace's own issued purchase
-// orders, for the forms where a person enters or reviews a price. Display
-// only: no form fills a price from it.
+// orders, for the forms where a person enters or reviews a price. A PO page
+// passes excludePurchaseOrder=<its id>. Display only: no form fills a price
+// from it.
 
 function knownError(error) {
   return error instanceof PriceHistoryError ||
@@ -27,7 +28,8 @@ export async function handlePriceHistoryRoute(ctx) {
   }
   try {
     const service = await priceHistoryService(ctx);
-    ctx.send(ctx.res, 200, await service.read(ctx.url.searchParams.getAll("key"), { identity: ctx.identity }));
+    const excludePurchaseOrderId = ctx.url.searchParams.get("excludePurchaseOrder") || null;
+    ctx.send(ctx.res, 200, await service.read(ctx.url.searchParams.getAll("key"), { identity: ctx.identity }, { excludePurchaseOrderId }));
   } catch (error) {
     if (knownError(error)) {
       ctx.send(ctx.res, error.status || 400, { code: error.code || "PRICE_HISTORY_FAILED", message: error.message });

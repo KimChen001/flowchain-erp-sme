@@ -210,6 +210,9 @@ test('the price history query returns at most 3 lines per item, unit and currenc
       // (4.5 x 30 + 4.4 x 10 + 4.3 x 10) / 50 = 4.44
       assert.deepEqual(history.average, { unitPrice: '4.4400', n: 3 })
       assert.deepEqual([history.unit, history.unitSource, history.otherCurrencies, history.otherUnits], ['pcs', 'item', ['EUR'], ['CASE']])
+      // A PO page leaves its own PO out of the history.
+      const { histories: [withoutOwn] } = await service.read(['PH-ITEM||USD'], contextOf(people.buyer), { excludePurchaseOrderId: 'PH-PO-006' })
+      assert.deepEqual([withoutOwn.latest.orderNumber, ...withoutOwn.earlier.map((fact) => fact.orderNumber)], ['PO-0005', 'PO-0004', 'PO-0003'])
     })
 
     await t.test('a viewer gets the facts without prices; a role without purchase orders is refused', async () => {

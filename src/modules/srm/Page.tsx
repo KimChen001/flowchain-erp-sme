@@ -13,6 +13,7 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
+import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 
 type Supplier = {
   id: string;
@@ -461,6 +462,10 @@ export default function SupplierMasterPage({
     if (accepted) toast.success(`${copy("Accepted")}: ${accepted}`);
     await Promise.all([load(), loadInsights()]);
   };
+  // Earlier PO prices of each supplied item in the link currency and the
+  // item's unit, in one request. Display only.
+  const relationshipHistoryKey = (r: Relationship) => (selected ? priceHistoryKey({ itemId: r.itemId, currency: r.currency }) : "");
+  const relationshipHistory = usePriceHistory(relationships.map(relationshipHistoryKey));
   if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
   if (selected)
     return (
@@ -627,6 +632,7 @@ export default function SupplierMasterPage({
                     <td className="p-2">{r.minimumOrderQuantity ?? "—"}</td>
                     <td className="p-2">
                       {r.currency} {r.referencePrice}
+                      {relationshipHistoryKey(r) && <PriceHistoryFacts compact history={relationshipHistory.histories.get(relationshipHistoryKey(r))} state={relationshipHistory.state} testId={`supplied-item-price-history-${r.itemId}`} />}
                     </td>
                     <td className="p-2">{copy(r.active ? "启用" : "停用")}</td>
                     {writes.items && <td className="p-2 space-x-2">

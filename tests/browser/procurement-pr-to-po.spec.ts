@@ -20,6 +20,9 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   await expect(supplier.locator('option[value="browser-supplier"]')).toHaveCount(1)
   await expect(supplier).toHaveValue('browser-supplier')
   await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('4.25')
+  // Earlier PO prices show beside the price; the item has none yet, and the
+  // price stays the supplier's reference price.
+  await expect(page.getByTestId('pr-line-price-history-1')).toHaveText('No issued PO for this item yet')
   await field(page, 'Quantity').locator('input').fill('12')
   await field(page, 'Destination warehouse or service location').locator('select').selectOption('browser-warehouse')
   await page.getByRole('button', { name: 'Save and submit' }).click()
@@ -41,18 +44,30 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   expect(po.currency).toBe('USD')
 
   await page.goto(`/app/procurement/orders/${encodeURIComponent(po.id)}`)
+  const issuedField = page.locator('div.min-w-0', { has: page.getByText('Issue date', { exact: true }) }).last()
+  await expect(issuedField).toContainText('Issue date not recorded')
+  // The PO's own line is not its own history.
+  await expect(page.locator('[data-testid^="po-line-price-history-"]').first()).toContainText('No issued PO for this item yet')
   await page.getByTestId('po-action-submit').click()
   await expect(page.getByTestId('po-action-approve')).toBeVisible()
   await page.getByTestId('po-action-approve').click()
   await expect(page.getByTestId('po-action-issue')).toBeVisible()
   await page.getByTestId('po-action-issue').click()
   await expect(page.getByTestId('po-workflow-actions')).toHaveCount(0)
+  await expect(issuedField).toContainText(/\d{4}-\d{2}-\d{2}/)
 
   const issued = await api(`/api/procurement/orders/${encodeURIComponent(po.id)}`)
   expect(issued.status).toBe('issued')
   expect(issued.version).toBe(3)
   expect(issued.totalAmount).toBe('51.0000')
   expect(issued.currency).toBe('USD')
+
+  // The next request for the item shows this PO's price as the last PO price,
+  // and still does not fill the price from it.
+  await page.goto('/app/procurement/requests')
+  await page.getByLabel('SKU 1').selectOption('browser-pr-item')
+  await expect(page.getByTestId('pr-line-price-history-1-latest')).toContainText(`Last PO price USD 4.25 / EA · ${po.id}`)
+  await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('4.25')
 })
 
 test('a purchase request opened from the assistant arrives prefilled, labels each value, and saves only when asked', async ({ page, request }) => {

@@ -21,6 +21,7 @@ import { BusinessEntityLink } from "../../components/business/BusinessEntityLink
 import { formatCurrencyAmount, instantDayInTimeZone, todayInTimeZone } from "../../lib/format";
 import { useI18n } from "../../i18n/I18n";
 import { usePriceHistoryCopy } from "../procurement/priceHistoryCopy";
+import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import type { PurchaseOrder, ReceivingDoc, SupplierInvoice } from "../../types/scm";
 import {
@@ -189,7 +190,7 @@ function statusChip(status: string) {
   return <Chip label={copy(status)} color={statusTone(status) === "danger" ? A.red : statusTone(status) === "warning" ? A.orange : statusTone(status) === "success" ? A.green : A.blue} bg={statusTone(status) === "danger" ? "#fff1f0" : statusTone(status) === "warning" ? "#fff8f0" : statusTone(status) === "success" ? "#f0faf4" : "#f0f6ff"} />;
 }
 
-function PurchaseOrderLineCards({ rows, currency }: { rows: PoEvidenceRow[]; currency?: string }) {
+function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvidenceRow[]; currency?: string; priceHistory?: (poLineId: string) => React.ReactNode }) {
   const copy = useWorkspaceCopy();
   if (!rows.length) {
     return <Card className="p-8 text-center text-xs" style={{ color: A.gray2 }}>{copy("当前采购订单没有明细行。")}</Card>;
@@ -242,6 +243,7 @@ function PurchaseOrderLineCards({ rows, currency }: { rows: PoEvidenceRow[]; cur
                 <Chip label={line.risk} color={statusTone(line.risk) === "warning" ? A.orange : A.green} bg={statusTone(line.risk) === "warning" ? "#fff8f0" : "#f0faf4"} />
               </div>
             </div>
+            {priceHistory?.(line.poLineId)}
             <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {groups.map((group) => (
                 <div key={group.title} className="rounded-lg bg-slate-50 p-3">
@@ -637,6 +639,10 @@ export default function PurchasingOrdersPage({
   });
   const selectedPO = orders.find((order) => order.po === selectedId) ?? null;
   const selectedPOTotals = poTotals(selectedPO);
+  // Earlier PO prices for each line's item, unit and currency, leaving this
+  // PO out, in one request. Display only.
+  const poLineHistoryKeys = new Map((viewMode === "detail" && selectedPO?.lines ? selectedPO.lines : []).map((line) => [line.poLineId, priceHistoryKey({ itemId: line.itemId, unit: line.unit, currency: line.currency || selectedPO?.currency })]));
+  const poPriceHistory = usePriceHistory([...poLineHistoryKeys.values()], { excludePurchaseOrderId: selectedPO?.po });
   const sourceOptions = Array.from(new Set(orders.map((order) => order.source || "manual"))).sort();
   const statusOptions = ["全部", "草稿", "待审批", "已审批", "已发出", "部分到货", "已完成", "已驳回", "已取消"] as const;
 
@@ -832,7 +838,15 @@ export default function PurchasingOrdersPage({
 
         <div>
           <SectionTitle title={copy("PO 明细行")} right={<Chip label={`${poLines.length} ${copy(poLines.length === 1 ? "单行" : "行")}`} color={A.blue} bg="#f0f6ff" />} />
-          <PurchaseOrderLineCards rows={poLines} currency={selectedPO.currency} />
+          <PurchaseOrderLineCards
+            rows={poLines}
+            currency={selectedPO.currency}
+            priceHistory={(poLineId) => poLineHistoryKeys.get(poLineId) ? (
+              <div className="mt-2" aria-label={priceCopy("title")}>
+                <PriceHistoryFacts history={poPriceHistory.histories.get(poLineHistoryKeys.get(poLineId) || "")} state={poPriceHistory.state} testId={`po-line-price-history-${poLineId}`} />
+              </div>
+            ) : null}
+          />
         </div>
 
         <PurchaseOrderPromiseDates poId={selectedPO.po} onChanged={loadWorkbench} />

@@ -63,6 +63,7 @@ export type ApprovalSnapshot = {
 export type PurchaseOrderLine = {
   poLineId: string;
   poId?: string;
+  itemId?: string;
   sku: string;
   itemName: string;
   quantityOrdered: number;

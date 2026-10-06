@@ -199,6 +199,7 @@ test('the read service asks once for every key, in the reader\'s workspace only'
   const queries = database.calls.filter((call) => call.sql)
   assert.equal(queries.length, 1)
   assert.deepEqual(queries[0].params.slice(0, 2), ['tenant-a', ['ITEM-1', 'ITEM-2']])
+  assert.equal(queries[0].params[4], null, 'no PO is left out unless a PO page asks')
   assert.match(queries[0].sql, /po\."tenantId" = \$1/)
   assert.deepEqual(database.calls.find((call) => call.items).items.where, { tenantId: 'tenant-a', id: { in: ['ITEM-1', 'ITEM-2'] } })
   assert.deepEqual(result.histories.map((history) => [history.key, history.status, history.latest?.purchaseOrderId, history.latest?.unitPrice]), [
