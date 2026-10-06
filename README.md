@@ -110,6 +110,7 @@ The datasets are public and stay outside the repository.
 - [Docs index](docs/README.md)
 - [Architecture overview](docs/architecture-overview-v1.md) and [backend route map](docs/backend-route-map-v1.md)
 - [Receiving](docs/receiving-posting-workbench.md) and [outbound](docs/outbound-posting-workbench.md) posting workbenches
+- [AI assistant plan](docs/ai-assistant-plan.md): decisions, state and roadmap for the assistant and knowledge work
 - [AI safety and draft-first actions](docs/ai-safety-and-draft-first-explainer-v1.md)
 
 ## 中文简介
