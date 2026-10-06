@@ -31,6 +31,9 @@ const REF_LABELS: Record<string, readonly [string, string]> = {
   "item_supplier:moq": ["Raised to the minimum order quantity", "已提高到最小起订量"],
   "item_supplier:lead_time": ["Today plus the supplier lead time", "今天加供应商提前期"],
   "item_supplier:preferred": ["Preferred supplier", "首选供应商"],
+  "item_supplier:only_approved": ["Only approved source", "唯一已批准供应来源"],
+  "item_supplier:choose": ["Choose a supplier: several approved sources, none preferred", "请选择供应商：有多个已批准供应来源，均未设为首选"],
+  // No longer suggested; kept because earlier suggestion trails name it.
   "item_supplier:first_approved": ["First approved supplier", "第一个已批准供应商"],
   "item_supplier:reference_price": ["Reference price", "参考价"],
   "item:default_warehouse": ["Item default warehouse", "物料默认仓库"],

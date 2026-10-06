@@ -13,7 +13,8 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { tableLinkClass } from "../../components/ui/workbenchTable";
 import { createClientTemporaryId } from "../../lib/client-id";
 import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
-import { buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin } from "../../lib/prefill";
+import { buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
+import { SupplierChoices } from "../../components/procurement/SupplierChoices";
 import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 
 type Item = {
@@ -85,7 +86,7 @@ type PR = {
 type FieldError = { field?: string; message?: string };
 // The line fields a handoff (the assistant's purchase request draft) can fill.
 type PrefillLineField = "itemId" | "supplierId" | "quantity" | "estimatedUnitPrice" | "targetWarehouseId" | "needByDate" | "internalLineComment";
-type LinePrefill = { origin: PrefillOrigin; intent: string | null; lineId: string; fields: Partial<Record<PrefillLineField, PrefillEntry>> };
+type LinePrefill = { origin: PrefillOrigin; intent: string | null; lineId: string; fields: Partial<Record<PrefillLineField, PrefillEntry>>; supplierChoices: SupplierChoice[] };
 // Today in the workspace timezone (America/New_York when unknown), not UTC.
 const today = (timeZone?: string) => todayInTimeZone(timeZone);
 const makeLine = (date = today()): Line => ({
@@ -220,10 +221,20 @@ export default function CanonicalProcurementPanel({
     if (!item) return;
     prefilled.current = handoff;
     const itemId = item.itemId || item.id || "";
-    request<{ suppliers: SupplierOption[] }>(
-      `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
-    )
-      .then((result) => {
+    // The last PO date of each source orders the list a person chooses from
+    // when none is preferred; without them (no PO read rights, or an error)
+    // the list is A-Z and says the dates are not available.
+    Promise.all([
+      request<{ suppliers: SupplierOption[] }>(
+        `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
+      ),
+      request<{ lastOrders: (SupplierLastOrder & { supplierId: string })[] }>(
+        `/api/procurement/item-supplier-orders?itemId=${encodeURIComponent(itemId)}`,
+      )
+        .then((payload) => Object.fromEntries(payload.lastOrders.map((row) => [row.supplierId, row])))
+        .catch(() => null),
+    ])
+      .then(([result, lastOrders]) => {
         setItemSuppliers((current) => ({
           ...current,
           [itemId]: result.suppliers,
@@ -234,6 +245,7 @@ export default function CanonicalProcurementPanel({
           suppliers: result.suppliers,
           today: today(timezone),
           defaultDate,
+          lastOrders,
         });
         const line: Line = {
           ...makeLine(defaultDate),
@@ -252,7 +264,7 @@ export default function CanonicalProcurementPanel({
           internalLineComment: plan.values.internalLineComment,
         };
         setLines([line]);
-        setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields });
+        setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: plan.supplierChoices });
       })
       .catch((error) => toast.error(copy(error.message || "供应商关系读取失败")));
   }, [items, searchParams, location.key]);
@@ -683,6 +695,13 @@ export default function CanonicalProcurementPanel({
                     ))}
                   </select>
                   {prefillChip(line, "supplierId")}
+                  {prefill && !editing && line.lineId === prefill.lineId && line.itemId && line.itemId === prefill.fields.itemId?.value ? (
+                    <SupplierChoices
+                      choices={prefill.supplierChoices}
+                      selectedId={line.supplierId}
+                      onChoose={(supplierId) => patchLine(index, { supplierId })}
+                    />
+                  ) : null}
                   {line.sourceType === "catalog_item" &&
                     line.itemId &&
                     supplierOptions(line).length === 0 && (
