@@ -53,10 +53,13 @@ export function StatusChip({ status }: { status: string }) {
 }
 
 // One operation: an optional reason, a preview of the server's plan, then a
-// confirm that runs exactly the previewed operation.
-export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, onDone, tone = "primary" }: {
+// confirm that runs exactly the previewed operation. The server words its
+// issues in English; issueText gives the translated text for the codes a
+// screen knows, and the server's message is kept for the rest.
+export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, onDone, tone = "primary", issueText }: {
   label: string; testId: string; previewUrl: string; runUrl: string; payload: () => Record<string, unknown>;
   reasonLabel?: string; onDone: () => void; tone?: "primary" | "secondary";
+  issueText?: (code: string | undefined) => string | undefined;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -64,6 +67,7 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const describe = (issue: Issue) => issueText?.(issue.code) || issue.message;
   const body = () => ({ ...payload(), ...(reasonLabel ? { reason, resolution: reason } : {}) });
   const preview = async () => {
     setError("");
@@ -79,7 +83,7 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       setReason("");
       onDone();
     } catch (cause) {
-      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : t("finance.loadFailed"));
+      setError(cause instanceof ApiError ? issueText?.(cause.code) || cause.message : cause instanceof Error ? cause.message : t("finance.loadFailed"));
     } finally {
       setBusy(false);
     }
@@ -98,7 +102,7 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
         <button type="button" data-testid={`${testId}-confirm`} className={`${button} text-white`} style={{ background: A.blue }} disabled={!plan?.allowed || busy} onClick={() => void confirm()}>{t("finance.confirm")}</button>
         <button type="button" className={`${button} text-slate-600`} onClick={() => { setOpen(false); setPlan(null); setError(""); }}>{t("finance.close")}</button>
       </div>
-      {plan && (plan.allowed ? <Notice tone="success">{t("finance.previewAllowed")}</Notice> : <Notice>{(plan.blockingIssues || []).map((issue) => issue.message).join(" · ")}</Notice>)}
+      {plan && (plan.allowed ? <Notice tone="success">{t("finance.previewAllowed")}</Notice> : <Notice>{(plan.blockingIssues || []).map(describe).join(" · ")}</Notice>)}
       {error && <Notice>{error}</Notice>}
     </div>
   );
