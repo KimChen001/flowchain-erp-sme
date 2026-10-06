@@ -277,6 +277,20 @@ test('the dashboards leave out an approved order never sent to the supplier, as 
   assert.equal(chart(issued, 'supplier_on_time').data[0].value, 57.1)
 })
 
+// A posted receipt in a warehouse the reader cannot see still means the
+// supplier got the order, even when every unit was rejected: the order is a
+// delivery for every reader, judged on the receipts each may see.
+test('an approved order with a fully rejected receipt in another warehouse is measured for every reader', () => {
+  const data = deliveriesContext()
+  data.purchaseOrders.push(po('PO-X', 'Acme', 'approved', [promiseLine('X1')], { supplierId: 'SUP-ACME', metadata: { transmissionStatus: 'not_sent' } }))
+  data.receipts.push({ ...postedReceipt('GRN-X', 'PO-X', 'Acme', '2026-09-28T15:00:00.000Z', []), warehouseId: 'WH-2', lines: [{ purchaseOrderLineId: 'X1', acceptedQty: 0, rejectedQty: 10 }] })
+  for (const options of [asOf, { ...asOf, warehouseIds: ['WH-1'] }]) {
+    const report = buildRuntimeGovernedReport(data, { subject: 'suppliers' }, options)
+    assert.equal(kpi(report, 'on_time_receipt_rate').currentValue, 62.5, JSON.stringify(options.warehouseIds))
+    assert.equal(chart(report, 'supplier_on_time').data[0].value, 57.1, JSON.stringify(options.warehouseIds))
+  }
+})
+
 test('on time is not measured from receipts the reader cannot see or that were not all loaded', () => {
   const restricted = buildRuntimeGovernedReport({ ...scorecardContext(), receipts: [], restrictedSubjects: ['receipts'] }, { subject: 'suppliers' }, asOf)
   assert.equal(kpi(restricted, 'on_time_receipt_rate').dataStatus, 'restricted')

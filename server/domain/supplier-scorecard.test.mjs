@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  SUPPLIER_SCORECARD_READ_PERMISSIONS,
   buildSupplierScorecard,
+  createSupplierScorecardReadService,
   evaluatePromiseLine,
   groupDeliveryObligations,
   isIssuedToSupplier,
@@ -438,4 +440,28 @@ test('a PO counts as issued by its status, its transmission status or a recorded
   // An issued order counts on the scorecard.
   const [supplier] = suppliersOf([po([line('S1', '2026-09-10')], { id: 'PO-S', status: 'approved', metadata: { transmissionStatus: 'sent' } })], [])
   assert.deepEqual([supplier.sampleSize, supplier.notSentCount, supplier.obligations[0].overdueUndelivered], [1, 0, true])
+})
+
+// A posted receipt is a fact about the PO: a delivery to a warehouse the
+// reader cannot see, fully rejected so no quantity was received, still means
+// the supplier got the order.
+test('an approved PO with a fully rejected receipt in another warehouse stays measured, not counted as not sent', async () => {
+  const purchaseOrder = po([line('X1', '2026-09-20', { receivedQuantity: 0 })], { id: 'PO-X', status: 'approved', metadata: { orderNumber: 'PO-X', transmissionStatus: 'not_sent' } })
+  const document = { ...grn('GRN-X', '2026-09-25', ['X1'], 0, 10), poId: 'PO-X', warehouseId: 'WH-B', postingStatus: 'posted' }
+  const matches = (row, where) => row.poId && where.poId.in.includes(row.poId) && row.postingStatus === where.postingStatus && (!where.OR || where.OR.some((clause) => clause.warehouseId === null ? !row.warehouseId : clause.warehouseId.in.includes(row.warehouseId)))
+  const prisma = {
+    tenant: { findUnique: async () => ({ timezone: 'America/New_York' }) },
+    purchaseOrder: { findMany: async () => [purchaseOrder] },
+    receivingDocument: { findMany: async ({ where, select }) => [document].filter((row) => matches(row, where)).map((row) => select ? { poId: row.poId } : row) },
+    supplierInvoice: { findMany: async () => [] },
+    supplier: { findMany: async () => [{ id: 'SUP-1', name: 'Summit Supply' }] },
+  }
+  const actor = (warehouses) => ({ complete: true, authenticated: true, tenantId: 'T-1', permissionCodes: new Set(SUPPLIER_SCORECARD_READ_PERMISSIONS), ...warehouses })
+  const read = async (warehouses) => (await createSupplierScorecardReadService({ prisma, now: () => new Date('2026-09-30T16:00:00Z') }).read({}, { actor: actor(warehouses) })).suppliers[0]
+  // An admin sees the receipt: late, nothing accepted.
+  const admin = await read({ allWarehouses: true })
+  assert.deepEqual([admin.sampleSize, admin.notSentCount, admin.obligations[0].onTime], [1, 0, false])
+  // A buyer reading only WH-A does not see the receipt, but the order is still a delivery, not "not sent".
+  const buyer = await read({ allWarehouses: false, readWarehouseIds: new Set(['WH-A']) })
+  assert.deepEqual([buyer.sampleSize, buyer.notSentCount, buyer.obligations[0].onTime, buyer.lines[0].receipts], [1, 0, false, []])
 })

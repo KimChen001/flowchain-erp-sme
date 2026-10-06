@@ -455,9 +455,13 @@ function notSentPurchaseOrder(purchaseOrder, { inPeriod, lineAmounts }) {
 //   invoices        supplier invoices with lines and matchRuns.exceptions, or
 //                   null when the reader may not see invoices
 //   visibility      { lineAmounts, invoiceAmounts }
+//   receivedPurchaseOrderIds  POs with a posted receipt in any warehouse, so
+//                   an order the supplier delivered is measured even when the
+//                   reader cannot see the receipt
 export function buildSupplierScorecard({
   purchaseOrders = [],
   receipts = [],
+  receivedPurchaseOrderIds: receivedAnyWarehouse = [],
   invoices = null,
   suppliers = [],
   period,
@@ -472,7 +476,7 @@ export function buildSupplierScorecard({
   const { earlyDays, minimumSample, promiseBasis } = SUPPLIER_SCORECARD_RULES
   const inPeriod = (day) => Boolean(day) && day >= period.from && day <= period.to
   const receiptLines = new Map()
-  const receivedPurchaseOrderIds = new Set()
+  const receivedPurchaseOrderIds = new Set([...receivedAnyWarehouse].map(text).filter(Boolean))
   for (const document of receipts) {
     const day = localDay(document.arrivedAt || document.postedAt, timeZone)
     if (text(document.poId)) receivedPurchaseOrderIds.add(text(document.poId))
@@ -587,6 +591,13 @@ export function createSupplierScorecardReadService({ prisma, now = () => new Dat
       const receipts = purchaseOrders.length
         ? await prisma.receivingDocument.findMany({ where: { tenantId, poId: { in: purchaseOrders.map((row) => row.id) }, postingStatus: 'posted', ...warehouseFilter }, include: { lines: true }, orderBy: [{ id: 'asc' }] })
         : []
+      // Whether a PO was delivered is a fact about the PO, not about the
+      // receipts this reader may see: an order with a posted receipt in any
+      // warehouse was sent to the supplier, so it is measured, not listed as
+      // not sent. Only the PO ids are read here.
+      const receivedPurchaseOrderIds = purchaseOrders.length && !actor.allWarehouses
+        ? (await prisma.receivingDocument.findMany({ where: { tenantId, poId: { in: purchaseOrders.map((row) => row.id) }, postingStatus: 'posted' }, select: { poId: true } })).map((row) => row.poId)
+        : []
       const invoices = allowed('finance.supplier_invoice.read')
         ? await prisma.supplierInvoice.findMany({ where: { tenantId, ...supplierWhere }, include: { lines: true, matchRuns: { include: { exceptions: true } } }, orderBy: [{ id: 'asc' }] })
         : null
@@ -596,7 +607,7 @@ export function createSupplierScorecardReadService({ prisma, now = () => new Dat
       if (invoices === null) limitations.push('price_variances_hidden_by_permission')
       if (!actor.allWarehouses) limitations.push('receipts_limited_to_your_warehouses')
       return buildSupplierScorecard({
-        purchaseOrders, receipts, invoices, suppliers, period, asOfDay, timeZone, graceDays, supplierId,
+        purchaseOrders, receipts, receivedPurchaseOrderIds, invoices, suppliers, period, asOfDay, timeZone, graceDays, supplierId,
         visibility: { lineAmounts: allowed('procurement.prices.read'), invoiceAmounts: allowed('finance.amounts.read') },
         generatedAt: instant.toISOString(),
         limitations,

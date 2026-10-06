@@ -244,7 +244,8 @@ function receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone)
 // back. A rate needs at least SUPPLIER_SCORECARD_RULES.minimumSample (5)
 // deliveries.
 // warehouseIds, when the reader is limited to some warehouses, leaves out
-// receipts in other warehouses, as the scorecard does. purchaseOrderIds, when
+// receipts in other warehouses from the on-time judgement, as the scorecard
+// does; a posted receipt anywhere still marks its order as measured. purchaseOrderIds, when
 // given, are the orders measured in place of purchaseOrderIdsAnyDate.
 export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone, { graceDays = SUPPLIER_SCORECARD_RULES.graceDays, warehouseIds = null, purchaseOrderIds = null } = {}) {
   const measured = purchaseOrderIds || purchaseOrderIdsAnyDate
@@ -253,8 +254,9 @@ export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today,
   const receivedPurchaseOrderIds = new Set()
   for (const document of array(context.receipts)) {
     if (text(document.postingStatus).toLowerCase() !== 'posted') continue
-    if (readable && text(document.warehouseId) && !readable.has(text(document.warehouseId))) continue
+    // A posted receipt in any warehouse means the supplier got the order.
     if (text(document.poId)) receivedPurchaseOrderIds.add(text(document.poId))
+    if (readable && text(document.warehouseId) && !readable.has(text(document.warehouseId))) continue
     const day = instantCalendarDay(document.arrivedAt || document.postedAt, timeZone) || null
     for (const line of array(document.lines)) {
       const lineId = text(line.purchaseOrderLineId)

@@ -30,6 +30,10 @@ KPIs and the detail table; the client renders it in `src/modules/reports/charts/
   received it is late, and while a line is not yet due it waits. The original
   promise is the date on the PO at approval, which may be the buyer's need date
   until suppliers confirm dates. A rate needs at least 5 deliveries.
+  Only orders the supplier got are measured: issued, with a sent transmission
+  status or an issue time, or with a posted receipt in any warehouse. An order
+  approved but not sent, with nothing received, is left out and listed on the
+  scorecard as "Not sent to supplier" (owner decision 2026-10-06).
 
 ## Visuals
 
