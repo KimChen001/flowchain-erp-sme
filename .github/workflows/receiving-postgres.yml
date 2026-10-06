@@ -93,6 +93,7 @@ jobs:
       - run: npm run test:api:mobile-sync-controls
       - run: npm run test:db:po-command-atomicity
       - run: npm run test:db:procurement-flow
+      - run: npm run test:db:supplier-choice
       - run: npm run test:db:original-promise
       - run: npm run test:db:supplier-scorecard
       - run: npm run test:db:finance-read-permissions
