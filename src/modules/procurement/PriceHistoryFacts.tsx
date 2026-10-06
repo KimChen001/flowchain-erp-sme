@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { A } from "../../components/ui";
 import { ApiError } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
-import { PRICE_HISTORY_MAX_KEYS, priceHistoryKeyString, type PriceFact, type PriceHistory } from "../../../shared/price-history.mjs";
+import { PRICE_HISTORY_MAX_KEYS, compareQuote, priceHistoryKeyString, type PriceFact, type PriceHistory, type QuoteComparison } from "../../../shared/price-history.mjs";
 import { procurementApi } from "./procurementApi";
 import { usePriceHistoryCopy } from "./priceHistoryCopy";
 
@@ -129,4 +129,36 @@ export function PriceHistoryFacts({
       {notes.map((note) => <div key={note}>{note}</div>)}
     </>,
   );
+}
+
+// A quoted price set against the same item's last PO price and the average of
+// up to 3 in the same currency and unit, as plain text: "vs last PO USD 4.20
+// (PO-0031, 2026-09-14): +7.1%; average of 3: USD 4.31". No colour, ranking
+// or action.
+export function useQuoteComparisonText() {
+  const copy = usePriceHistoryCopy();
+  const text = usePriceFactText();
+  return (comparison: QuoteComparison) => {
+    switch (comparison.status) {
+      case "compared": {
+        const last = copy("vsLastPo", { price: text.price(comparison.lastPo.unitPrice, comparison.lastPo.currency), po: comparison.lastPo.orderNumber, date: text.date(comparison.lastPo), pct: `${comparison.percent}%` });
+        return comparison.average?.unitPrice ? copy("withAverage", { last, average: copy("averageShort", { n: comparison.average.n, price: text.price(comparison.average.unitPrice, comparison.lastPo.currency) }) }) : last;
+      }
+      case "zero_base":
+        return copy("zeroBase");
+      case "hidden":
+        return copy("quoteHidden");
+      case "not_comparable":
+        return copy("notComparable", { what: comparison.reason === "unit_not_recorded" ? copy("unitNotRecordedShort") : (comparison.values || []).join(", ") });
+      default:
+        return copy("noEarlierPo");
+    }
+  };
+}
+
+export function QuoteVsHistory({ unitPrice, history, state, testId }: { unitPrice: string | null | undefined; history: PriceHistory | null | undefined; state: LoadState; testId?: string }) {
+  const describe = useQuoteComparisonText();
+  if (state !== "loaded") return null;
+  const comparison = compareQuote({ unitPrice, history });
+  return <div className="text-[11px] leading-4" style={{ color: A.sub }} data-testid={testId} data-quote-comparison={comparison.status}>{describe(comparison)}</div>;
 }

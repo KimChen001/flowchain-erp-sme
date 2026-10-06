@@ -78,6 +78,54 @@ test("RFQ detail opens authoritative comparison and preserves history without wr
   expect(issues).toEqual([]);
 });
 
+test("each quoted price is set against the item's own PO history as plain text, and a note is only copied", async ({ page, request }) => {
+  await login(page, request);
+  const historyRequests: string[][] = [];
+  const writes: string[] = [];
+  page.on("request", (outgoing) => {
+    const url = new URL(outgoing.url());
+    if (outgoing.method() !== "GET" && url.pathname.startsWith("/api/")) writes.push(`${outgoing.method()} ${url.pathname}`);
+  });
+  // Every key gets a last PO price of 90 and an average of 2 in its own currency.
+  await page.route("**/api/procurement/price-history**", (route) => {
+    const keys = new URL(route.request().url()).searchParams.getAll("key");
+    historyRequests.push(keys);
+    const fact = (currency: string, overrides: Record<string, unknown>) => ({ purchaseOrderId: "PO-0031", orderNumber: "PO-0031", lineId: "PO-0031-L1", supplierId: "s", supplierName: "Acme", unit: "pcs", currency, unitPrice: "90.0000", orderedQuantity: "10.0000", date: "2026-09-14", dateSource: "issue_date", instant: "2026-09-14T15:00:00.000Z", ...overrides });
+    return route.fulfill({ json: { timeZone: "America/New_York", priceLabel: "purchase_order_price", histories: keys.map((key) => {
+      const [itemId, unit, currency] = key.split("|");
+      return { key, itemId, unit: unit || "pcs", unitSource: unit ? "entered" : "item", currency, status: "found", latest: fact(currency, {}), earlier: [fact(currency, { purchaseOrderId: "PO-0020", orderNumber: "PO-0020", lineId: "PO-0020-L1", unitPrice: "92.0000" })], average: { unitPrice: "91.0000", n: 2 }, otherCurrencies: [], otherUnits: [], unitNotRecordedCount: 0 };
+    }) } });
+  });
+  await page.goto(`/app/procurement/rfq/${encodeURIComponent(RFQ_ID)}/comparison`);
+  const row = page.getByTestId("rfq-comparison-line-LOCAL-DEMO-RFQL-001");
+  // 98 against 90 is +8.9%; 97.5 against 90 is +8.3%. Text only, in the
+  // server's supplier order. The session reads Chinese.
+  await expect(row).toContainText("对比上次采购订单 CNY 90.00（PO-0031，2026-09-14）：+8.9%；2 笔平均：CNY 91.00");
+  await expect(row).toContainText("对比上次采购订单 CNY 90.00（PO-0031，2026-09-14）：+8.3%；2 笔平均：CNY 91.00");
+  await expect(row.locator("[data-quote-comparison]")).toHaveCount(2);
+  const responseRows = await page.getByTestId("rfq-comparison-responses").locator("tbody > tr").allTextContents();
+  expect(responseRows[0]).toContain("Acme Components");
+  expect(responseRows[1]).toContain("Summit Packaging");
+  expect(historyRequests).toEqual([["LOCAL-DEMO-ITEM-001|pcs|CNY"]]);
+  // The note is drafted for a person to send; FlowChain sends nothing.
+  const note = page.getByTestId("rfq-comparison-copy-note-LOCAL-DEMO-SUP-001");
+  const drafted = String(await note.getAttribute("data-note"));
+  expect(drafted).toContain(RFQ_ID);
+  expect(drafted).toContain("我们上次采购订单 CNY 90.00（PO-0031，2026-09-14）；2 笔平均：CNY 91.00");
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => undefined);
+  await note.click();
+  await expect(page.getByRole("status").filter({ hasText: /Note copied|备注已复制|could not be copied|复制失败/ })).toBeVisible();
+  expect(writes).toEqual([]);
+});
+
+test("a quoted price in another currency than the item's PO history says it is not comparable", async ({ page, request }) => {
+  await login(page, request);
+  await page.route("**/api/procurement/price-history**", (route) => route.fulfill({ json: { timeZone: "America/New_York", priceLabel: "purchase_order_price", histories: new URL(route.request().url()).searchParams.getAll("key").map((key) => ({ key, itemId: key.split("|")[0], unit: "pcs", unitSource: "entered", currency: key.split("|")[2], status: "none", latest: null, earlier: [], average: null, otherCurrencies: ["EUR"], otherUnits: [], unitNotRecordedCount: 0 })) } }));
+  await page.goto(`/app/procurement/rfq/${encodeURIComponent(RFQ_ID)}/comparison`);
+  await expect(page.getByTestId("rfq-comparison-history-LOCAL-DEMO-RFQL-001-LOCAL-DEMO-SUP-001")).toHaveText("无法比较：EUR");
+  await expect(page.getByTestId("rfq-comparison-copy-note-LOCAL-DEMO-SUP-001")).toHaveCount(0);
+});
+
 test("multi-currency comparison keeps every response visible without FX or ranking", async ({ page, request }) => {
   await login(page, request);
   const businessRequests: Array<{ method: string; path: string }> = [];
