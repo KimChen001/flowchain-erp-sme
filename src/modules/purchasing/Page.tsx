@@ -23,7 +23,8 @@ import { useI18n } from "../../i18n/I18n";
 import { usePriceHistoryCopy } from "../procurement/priceHistoryCopy";
 import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
-import type { PurchaseOrder, ReceivingDoc, SupplierInvoice } from "../../types/scm";
+import { SupplierOverrideFlag } from "../../components/procurement/SupplierOverrideReason";
+import type { PurchaseOrder, PurchaseOrderLine, ReceivingDoc, SupplierInvoice } from "../../types/scm";
 import {
   A,
   Card,
@@ -124,6 +125,7 @@ type PoEvidenceRow = {
   uninvoicedQty: number;
   status: string;
   risk: string;
+  supplierOverride?: PurchaseOrderLine["supplierOverride"];
 };
 
 type GrnEvidenceRow = {
@@ -240,6 +242,7 @@ function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvid
               <div className="min-w-0">
                 <div className="text-xs font-semibold tabular-nums" style={{ color: A.blue }}>{line.poLineId}</div>
                 <div className="mt-1 text-sm font-semibold" style={{ color: A.label }}>{line.sku} · {line.itemName}</div>
+                {line.supplierOverride ? <div className="mt-1"><SupplierOverrideFlag override={line.supplierOverride} testId="po-line-supplier-override" /></div> : null}
               </div>
               <div className="flex flex-wrap gap-2">
                 {statusChip(line.status)}
@@ -397,6 +400,7 @@ function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): PoE
       uninvoicedQty: Math.max(0, ordered - invoiceQty),
       status: ["cancelled", "已取消"].includes(po.status) ? "已取消" : lineStatusLabel(line.status),
       risk: ["cancelled", "已取消"].includes(po.status) ? "无需收货" : remaining > 0 && invoiceQty > received ? "已票未收风险" : remaining > 0 ? "未收货风险" : invoiceQty < received ? "已收未票风险" : "低风险",
+      supplierOverride: line.supplierOverride || null,
     };
   });
 }

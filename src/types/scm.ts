@@ -78,6 +78,9 @@ export type PurchaseOrderLine = {
   requiredDate?: string;
   promisedDate?: string;
   status?: string;
+  // Why the purchase request chose a supplier other than the item's preferred
+  // one, carried from its line; null when none was needed.
+  supplierOverride?: { reasonCode: string; note?: string | null; preferredSupplierId?: string | null; preferredSupplierName?: string | null } | null;
 };
 
 export type PurchaseOrder = {

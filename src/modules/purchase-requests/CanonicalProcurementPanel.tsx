@@ -15,6 +15,8 @@ import { createClientTemporaryId } from "../../lib/client-id";
 import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
 import { SupplierChoices } from "../../components/procurement/SupplierChoices";
+import { SupplierOverrideCount, SupplierOverrideFlag, SupplierOverrideReason, supplierOverrideIssueText, type SupplierOverride } from "../../components/procurement/SupplierOverrideReason";
+import { overrideNeeded, validateSupplierOverride } from "../../../shared/supplier-override-reasons.mjs";
 import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 
 type Item = {
@@ -70,6 +72,8 @@ type Line = {
   serviceStartDate: string;
   serviceEndDate: string;
   internalLineComment: string;
+  // Why the line's supplier is not the item's preferred one; null when not needed.
+  supplierOverride?: SupplierOverride | null;
 };
 type PR = {
   id: string;
@@ -83,7 +87,8 @@ type PR = {
   lines: Line[];
   linkedPurchaseOrderIds?: string[];
 };
-type FieldError = { field?: string; message?: string };
+type FieldError = { field?: string; code?: string; message?: string };
+const OVERRIDE_FIELD = /^lines\.(\d+)\.supplierOverride\.(reasonCode|note)$/;
 // The line fields a handoff (the assistant's purchase request draft) can fill.
 type PrefillLineField = "itemId" | "supplierId" | "quantity" | "estimatedUnitPrice" | "targetWarehouseId" | "needByDate" | "internalLineComment";
 type LinePrefill = { origin: PrefillOrigin; intent: string | null; lineId: string; fields: Partial<Record<PrefillLineField, PrefillEntry>>; supplierChoices: SupplierChoice[] };
@@ -109,6 +114,7 @@ const makeLine = (date = today()): Line => ({
   serviceStartDate: "",
   serviceEndDate: "",
   internalLineComment: "",
+  supplierOverride: null,
 });
 const request = <T,>(url: string, method = "GET", body?: unknown) =>
   apiJson<T>(url, {
@@ -124,7 +130,7 @@ export default function CanonicalProcurementPanel({
   focus?: { entityType: string; entityId: string; at: number } | null;
 }) {
   const copy = useWorkspaceCopy();
-  const { timezone, locale } = useI18n();
+  const { timezone, locale, language } = useI18n();
   const warehouseName = useWarehouseNames();
   // Amounts use the document currency; without one they stay a plain number.
   const amount = (value: unknown, currencyCode?: string | null) =>
@@ -303,6 +309,7 @@ export default function CanonicalProcurementPanel({
       commodityId: item.category || "",
       targetWarehouseId: item.defaultWarehouseId || "",
       estimatedUnitPrice: "",
+      supplierOverride: null,
     });
     const result = await request<{ suppliers: SupplierOption[] }>(
       `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
@@ -322,6 +329,20 @@ export default function CanonicalProcurementPanel({
     line.sourceType === "non_catalog_item"
       ? suppliers
       : itemSuppliers[line.itemId || ""] || [];
+  // A catalog line whose supplier is not the item's preferred one, while one
+  // is preferred, asks why (shared/supplier-override-reasons.mjs). Nothing
+  // else does.
+  const preferredFor = (line: Line) =>
+    line.sourceType === "catalog_item" ? supplierOptions(line).find((option) => option.preferred) : undefined;
+  const needsReason = (line: Line) => {
+    const preferred = preferredFor(line);
+    return Boolean(line.supplierId && preferred) && overrideNeeded({ supplierId: line.supplierId, preferredId: preferred?.id });
+  };
+  const overrideIssues = (index: number) =>
+    Object.fromEntries(errors.flatMap((error) => {
+      const match = OVERRIDE_FIELD.exec(error.field || "");
+      return match && Number(match[1]) === index ? [[match[2], error.code || (match[2] === "note" ? "NOTE_LENGTH" : "REASON_REQUIRED")]] : [];
+    })) as { reasonCode?: string; note?: string };
   const total = useMemo(
     () =>
       lines.reduce(
@@ -344,6 +365,16 @@ export default function CanonicalProcurementPanel({
     setSaving(true);
     setErrors([]);
     try {
+      // The same rule the server applies, so the person sees it before saving.
+      const missingReasons: FieldError[] = lines.flatMap((line, index) =>
+        needsReason(line)
+          ? validateSupplierOverride(line.supplierOverride, true).issues.map((issue) => ({ field: `lines.${index}.supplierOverride.${issue.field}`, code: issue.code }))
+          : [],
+      );
+      if (missingReasons.length) {
+        setErrors(missingReasons);
+        return;
+      }
       const body = {
         departmentId,
         defaultCurrency: currency,
@@ -359,6 +390,9 @@ export default function CanonicalProcurementPanel({
               : Number(l.quantity) * Number(l.estimatedUnitPrice),
           unitSnapshot: l.lineBasis === "amount" ? null : l.unitSnapshot,
           currency: l.currency || currency,
+          supplierOverride: needsReason(l) && l.supplierOverride
+            ? { reasonCode: l.supplierOverride.reasonCode, note: String(l.supplierOverride.note || "").trim() || null }
+            : null,
         })),
       };
       // What became of each prefilled value: codes only, for the audit row.
@@ -489,8 +523,9 @@ export default function CanonicalProcurementPanel({
               >
                 <span>{line.sku || "Other"}</span>
                 <span>{line.itemNameSnapshot}</span>
-                <span>
-                  {line.supplierSnapshot?.supplierName || line.supplierId}
+                <span className="flex flex-col gap-1">
+                  <span>{line.supplierSnapshot?.supplierName || line.supplierId}</span>
+                  <SupplierOverrideFlag override={line.supplierOverride} testId="pr-line-supplier-override" />
                 </span>
                 <span>
                   {line.lineBasis === "quantity"
@@ -596,9 +631,16 @@ export default function CanonicalProcurementPanel({
             role="alert"
             className="mt-3 rounded-md bg-red-50 p-3 text-xs text-red-700"
           >
-            {errors.map((e, i) => (
-              <div key={i}>{copy(e.message || e.field)}</div>
-            ))}
+            {errors.map((e, i) => {
+              const override = OVERRIDE_FIELD.exec(e.field || "");
+              return (
+                <div key={i}>
+                  {override
+                    ? `${copy("采购行")} ${Number(override[1]) + 1}: ${supplierOverrideIssueText(e.code, language)}`
+                    : copy(e.message || e.field)}
+                </div>
+              );
+            })}
           </div>
         )}
         <div className="mt-4 space-y-3">
@@ -700,6 +742,15 @@ export default function CanonicalProcurementPanel({
                       choices={prefill.supplierChoices}
                       selectedId={line.supplierId}
                       onChoose={(supplierId) => patchLine(index, { supplierId })}
+                    />
+                  ) : null}
+                  {needsReason(line) ? (
+                    <SupplierOverrideReason
+                      testId={`supplier-override-reason-${index + 1}`}
+                      preferredName={preferredFor(line)?.name || preferredFor(line)?.supplierName || preferredFor(line)?.id || ""}
+                      value={line.supplierOverride}
+                      issues={overrideIssues(index)}
+                      onChange={(supplierOverride) => patchLine(index, { supplierOverride })}
                     />
                   ) : null}
                   {line.sourceType === "catalog_item" &&
@@ -881,7 +932,10 @@ export default function CanonicalProcurementPanel({
                       </EntityLink>
                     </td>
                     <td className="p-3">{pr.requesterId}</td>
-                    <td className="p-3">{copy(pr.status)}</td>
+                    <td className="p-3">
+                      {copy(pr.status)}
+                      <SupplierOverrideCount count={pr.lines.filter((line) => line.supplierOverride?.reasonCode).length} testId="pr-row-supplier-overrides" />
+                    </td>
                     <td className="p-3">{amount(pr.totalAmount, pr.defaultCurrency)}</td>
                     <td className="p-3 space-x-2">
                       {pr.status === "draft" && (
