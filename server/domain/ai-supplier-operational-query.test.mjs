@@ -332,15 +332,32 @@ test('SRM module prompts return local read-only supplier risk and scoring cards'
     assert.ok(route.response.payload.cards.some((card) => card.type === cardType), message)
     assert.ok(route.response.payload.cards.some((card) => card.type === 'supplier_boundary_notice'), message)
     assert.ok(route.response.payload.cards.some((card) => card.type === 'recommended_actions'), message)
-    // Suppliers are listed A-Z with their counts, never with a score.
+    // Suppliers are listed by their oldest open problem's date, then A-Z,
+    // with their counts, never with a score.
     for (const card of route.response.payload.cards.filter((entry) => Array.isArray(entry.data?.topSuppliers))) {
-      const names = card.data.topSuppliers.map((row) => row.supplierName)
-      assert.deepEqual(names, [...names].sort((left, right) => left.localeCompare(right)), message)
+      const order = card.data.topSuppliers.map((row) => [row.since || '9999', row.supplierName])
+      assert.deepEqual(order, [...order].sort((left, right) => left[0].localeCompare(right[0]) || left[1].localeCompare(right[1])), message)
       assert.ok(card.data.topSuppliers.every((row) => !('score' in row) && !('signalScore' in row)), message)
     }
     assert.doesNotMatch(JSON.stringify(route.response.payload.cards), /signalScore|scoredSupplierCount|准时率和质量率估算/, message)
     assert.deepEqual(businessSnapshot(db), before, message)
   }
+})
+
+test('a supplier late in the alphabet with a late order is not left out of the follow-ups', () => {
+  const names = ['Alpha Parts', 'Beta Supply', 'Cobalt Works', 'Delta Goods', 'Echo Trading', 'Zenith Metals']
+  const db = {
+    suppliers: names.map((name, index) => ({ id: `SUP-Z${index}`, name, category: 'General' })),
+    purchaseOrders: [{ po: 'PO-Z1', supplier: 'Zenith Metals', supplierId: 'SUP-Z5', eta: '2026-06-01', status: '已发出', amount: 100 }],
+    supplierInvoices: [{ id: 'SI-Z1', invoiceNumber: 'INV-Z1', supplier: 'Zenith Metals', supplierCode: 'SUP-Z5', invoiceDate: '2026-06-10', status: '存在差异', matchStatus: '差异待处理', varianceType: '价格差异', varianceAmount: 50 }],
+  }
+  const response = buildAiSupplierOperationalResponse(db, { moduleId: 'srm', question: '下一步跟进' }, { now: new Date('2026-07-01T12:00:00.000Z') })
+  const next = response.cards.find((card) => card.type === 'supplier_next_actions')
+  assert.deepEqual(next.data.topSuppliers.map((row) => [row.supplierName, row.since]), [['Zenith Metals', '2026-06-01']])
+  assert.ok(next.data.actions.includes('先跟进逾期或 7 天内到期 PO 的承诺交期。'))
+  assert.ok(next.data.actions.every((action) => !/评分/.test(action)))
+  const high = response.cards.find((card) => card.type === 'supplier_high_risk_summary')
+  assert.equal(high.data.topSuppliers[0].supplierName, 'Zenith Metals')
 })
 
 test('multi-supplier comparison resolves two names and returns comparison card', async () => {
