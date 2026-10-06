@@ -64,6 +64,7 @@ jobs:
       - run: npm run test:db:master-data-writes
       - run: npm run test:db:supplier-tiers
       - run: npm run test:db:supplier-insights
+      - run: npm run test:db:ai-workspace-access
       - run: npm run test:db:report-truncation
       - run: npm run test:db:inventory-allocation
       - run: npm run test:db:ai-knowledge
@@ -96,6 +97,7 @@ jobs:
       - run: npm run test:db:supplier-scorecard
       - run: npm run test:db:finance-read-permissions
       - run: npm run test:db:payment-records
+      - run: npm run test:db:bill-before-receipt
       - run: npm run test:db:sales-read-permissions
       - run: npm run test:db:search-wildcards
       - run: npm run test:db:inventory-warehouse-scope

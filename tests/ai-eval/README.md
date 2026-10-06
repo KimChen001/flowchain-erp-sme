@@ -44,14 +44,19 @@ Before anything starts, `questions.json` is validated. A run with a duplicate
 id, an unknown field, a role with no seeded user, a `sameAs` or `sameAnswerAs`
 naming no case, or a `pending` original case stops with exit code 2.
 
-**The as-of day is a UTC calendar day.** `--as-of` (or `AI_EVAL_AS_OF`) defaults
-to today in UTC (`new Date().toISOString().slice(0, 10)`). That is the same day
-the expected values and the open purchase orders report use. The workspace
-time zone stays America/New_York. Every answer must fall on the run day: asOf
-when it is today, or the day the run started when `--as-of` names another day.
-If any answer falls on a different UTC day, the run crossed UTC midnight. It
-prints the report, skips the quality gate, prints
-`rerun: the run crossed UTC midnight` and exits 2.
+**The as-of day is the workspace's calendar day.**
+- **Default.** `--as-of` (or `AI_EVAL_AS_OF`) defaults to today in the
+  workspace time zone, America/New_York (`tenantCalendarDay`).
+- **Why not UTC.** The server, the expected values and the open purchase orders
+  report all count "today" and "overdue" in that day. A UTC day would be one
+  ahead in the hours after UTC midnight. An order due "yesterday" would then
+  not be late yet, and day counts would be one short.
+- **The run day.** Every answer must fall on it: asOf when it is today, or the
+  day the run started when `--as-of` names another day.
+- **Crossing midnight.** If any answer falls on a different workspace day, the
+  run crossed midnight in that time zone. The runner prints the report, skips the
+  quality gate, prints `rerun: the run crossed midnight in America/New_York` and
+  exits 2.
 
 **No external calls.** The runner and both servers load `offline-guard.mjs`,
 which refuses any connection to a host other than this machine and reports it.
@@ -64,7 +69,7 @@ below), which lets the servers reach a single provider host.
 **Expected numbers are never hard-coded.** They are computed at run time from
 the same database, through:
 - the report routes (`/api/reports/overview`, `finance`, `inventory`);
-- `buildOpenPurchaseOrdersReport` over `listForReport`, using the answer's own UTC day;
+- `buildOpenPurchaseOrdersReport` over `listForReport`, using the answer's own workspace day;
 - direct Prisma reads (pending-approval count, invoice variances).
 
 **One action-claim list.** The "no action claimed" check uses
@@ -167,7 +172,7 @@ plus the leak, claim, write and network checks that run on every case.
 | --- | --- |
 | 0 | No gated safety failure and no quality-gate failure. |
 | 1 | A safety check failed in a case that is not pending, or the run itself failed. |
-| 2 | A usage or environment problem: invalid `questions.json`, `.env` present, a bad `--as-of`, `--update-baseline` with `--only` or with an as-of other than today. Also returned when the run crossed UTC midnight: rerun. |
+| 2 | A usage or environment problem: invalid `questions.json`, `.env` present, a bad `--as-of`, `--update-baseline` with `--only` or with an as-of other than today. Also returned when the run crossed midnight in the workspace time zone: rerun. |
 | 3 | The quality gate failed: a regression against `baseline.json`, no `baseline.json` under CI, or a refused `--update-baseline`. |
 
 Pending cases never change the exit code.
@@ -198,9 +203,9 @@ Under CI (`CI` set and not `false` or `0`), a missing `baseline.json` exits 3.
 
 `--update-baseline` rewrites `baseline.json` from this run. It refuses, without
 writing, in these cases:
-- with `--only`, or with an as-of other than today's UTC day (exit 2, before the run);
+- with `--only`, or with an as-of other than today's workspace day (exit 2, before the run);
 - when a case that is not pending has a safety failure (exit 1);
-- when the run crossed UTC midnight (exit 2);
+- when the run crossed midnight in the workspace time zone (exit 2);
 - when the update would remove a `mustPass` id that is not listed in
   `--allow-drop=<id,id>` (exit 3).
 

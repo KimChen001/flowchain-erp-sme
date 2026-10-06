@@ -1,4 +1,5 @@
 import { withoutUnavailableProductLinks } from '../../shared/unavailable-product-routes.mjs'
+import { withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
 import { handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
 import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
 import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs'
@@ -72,7 +73,19 @@ export async function loadAiRuntimeFacts(repositories = {}, tenantId = '', acces
   }
 }
 
+// Every assistant request (answers, knowledge, readiness) runs with the model
+// access its workspace has (ai-workspace-access.mjs). A workspace over this
+// month's cap is answered without a model, and its answers say so.
 export async function handleAiRuntimeGatewayRoute(ctx) {
+  if (!ctx.url?.pathname?.startsWith('/api/ai-runtime/')) return false
+  return withAiWorkspaceAccess(ctx, (scoped) => handleGatewayRequest(scoped.aiModelAccess === 'over_cap' ? { ...scoped, send: overCapSend(scoped.send) } : scoped))
+}
+
+function overCapSend(send) {
+  return (res, status, payload) => send(res, status, status === 200 && payload && typeof payload === 'object' && !Array.isArray(payload) && payload.version === 'v2' ? { ...payload, aiModelAccess: { status: 'over_cap' } } : payload)
+}
+
+async function handleGatewayRequest(ctx) {
   if (await handleKnowledgeRoute(ctx)) return true
   const { req, res, url, db, send, readBody, repositories, identity } = ctx
 

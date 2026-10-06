@@ -267,7 +267,7 @@ function withPageRecord(found, focus, facts) {
 // (supplierIds null when the reader cannot see suppliers, so the answer says
 // it could not filter). The tier filters and labels; it never changes the
 // order (docs/supplier-tiers-design.md §6, decision 8).
-const TIER_SKILLS = new Set(['purchase_orders', 'supplier_attention'])
+const TIER_SKILLS = new Set(['purchase_orders', 'supplier_attention', 'prepare_action_draft'])
 function tierFilter(tier, facts) {
   if (!tier) return null
   if (!Array.isArray(facts.suppliers)) return { tier, supplierIds: null }
@@ -323,6 +323,7 @@ export function refineAiSkillRoute(route, message, facts) {
     if (!skill && found.unsupported.length) return { capability: true, skillId: 'capability_overview', unsupportedIds: found.unsupported.map((entry) => entry.id), entities: found }
     return skill ? { ...route, entities: found } : null
   }
-  if (FOCUS_SKILLS.has(skill) && !route.focus && focusFromIds(found)) return { ...route, focus: focusFromIds(found), entities: found }
-  return { ...route, entities: found }
+  const tiered = tier && TIER_SKILLS.has(skill) ? { tier } : {}
+  if (FOCUS_SKILLS.has(skill) && !route.focus && focusFromIds(found)) return { ...route, focus: focusFromIds(found), entities: found, ...tiered }
+  return { ...route, entities: found, ...tiered }
 }

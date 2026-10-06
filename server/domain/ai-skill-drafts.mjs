@@ -1,15 +1,19 @@
 import { aiSkillText } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillFormatter, aiSkillSignalReason } from './ai-skill-presenter.mjs'
+import { aiSkillPurchaseOrderNotSent } from './ai-skill-signals.mjs'
 
 // Review-only drafts for attention signals, shared by the "prepare a draft"
 // answer and the draft offered on each answer line (ai-skill-next-steps.mjs).
 // A draft is never sent, approved or saved by the assistant: each card opens
 // the action draft review or a creation form, and there is never a purchase
 // order draft (the draft boundary has no PO type).
-//   overdue, due or partially received PO, or a shortage an open PO covers -> po_followup_draft
+//   overdue, due or partially received PO issued to its supplier,
+//   or a shortage such a PO covers                                      -> po_followup_draft
 //   shortage no open PO or pending request covers                      -> purchase_request_draft
 //   invoice variance                                                    -> supplier_followup_draft
+//   PO approved but not yet issued, or a shortage only such a PO covers -> a link, to send it first
 //   anything else                                                       -> a link only
+// Only an order the supplier has received is chased (decision V5).
 //
 // Every value a card fills is a record field, master data or a fixed
 // template filled from them, and the card's prefill map names which
@@ -30,11 +34,17 @@ function poRowsOf(facts) {
 // What a signal calls for: a draft of some kind, or only a link.
 export function aiSkillDraftCandidate(item, facts) {
   const poRows = poRowsOf(facts)
-  if (PO.has(item.type) && poRows.has(item.entityId)) return { kind: 'po_followup_draft', key: `po:${item.entityId}`, item, po: poRows.get(item.entityId) }
+  if (PO.has(item.type) && poRows.has(item.entityId)) {
+    const po = poRows.get(item.entityId)
+    return aiSkillPurchaseOrderNotSent(po) ? { kind: 'link', key: `link:${item.id}`, item, po, notSent: true } : { kind: 'po_followup_draft', key: `po:${item.entityId}`, item, po }
+  }
   if (STOCK.has(item.type)) {
-    // Prefer the most overdue open PO that brings this SKU.
+    // Prefer the most overdue open PO that brings this SKU and was issued.
     const supplying = array(item.data.purchaseOrderIds).map((id) => poRows.get(id)).filter(Boolean).sort((a, b) => b.overdueDays - a.overdueDays || a.id.localeCompare(b.id))
-    if (supplying.length) return { kind: 'po_followup_draft', key: `po:${supplying[0].id}`, item, po: supplying[0], chases: true }
+    const issued = supplying.filter((po) => !aiSkillPurchaseOrderNotSent(po))
+    if (issued.length) return { kind: 'po_followup_draft', key: `po:${issued[0].id}`, item, po: issued[0], chases: true }
+    // Only orders not yet issued bring it: send them; a new request would order it twice.
+    if (supplying.length) return { kind: 'link', key: `link:${item.id}`, item, po: supplying[0], notSent: true }
     if (!item.data.pendingRequests) {
       const target = Math.max(item.data.reorder ?? 0, item.data.safety ?? 0, (item.data.demand ?? 0))
       const quantity = Math.max(1, Math.ceil(target - (item.data.available ?? 0) - (item.data.incoming ?? 0) - (item.data.pendingRequests ?? 0)))
@@ -129,6 +139,7 @@ export function aiSkillNextStepText(candidate, facts, language) {
   if (candidate.kind === 'po_followup_draft') return aiSkillText('next.po_followup', language, { supplier: candidate.po.supplier || supplier })
   if (candidate.kind === 'purchase_request_draft') return aiSkillText('next.raise_pr', language, { quantity: fmt.number(candidate.quantity) })
   if (candidate.kind === 'supplier_followup_draft') return aiSkillText('next.invoice_query', language, { supplier })
+  if (candidate.notSent) return aiSkillText('next.send_po', language, { po: candidate.po.orderNumber || candidate.po.id })
   if (candidate.pendingRequest) return aiSkillText('next.await_pr', language)
   const key = { grn_rejected_qty: 'next.rejected', grn_received_unposted: 'next.post_receipt', pr_awaiting_approval: 'next.review_request', rfq_ready_to_award: 'next.compare_quotes' }[item.type]
   return key ? aiSkillText(key, language, { supplier }) : ''
