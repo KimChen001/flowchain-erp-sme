@@ -8,6 +8,9 @@ import { createInventoryAuthoritativeReadService } from "../domain/inventory-aut
 import { capabilityForEnvironment } from "../domain/capability-registry.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { reportReadAccess, scopeBusinessContext, sendReadAccessError } from "../domain/report-read-access.mjs";
+import { createReorderListReadService } from "../domain/reorder-list-read-service.mjs";
+import { readTenantTimezone } from "../domain/tenant-timezone.mjs";
+import { tenantCalendarDay } from "../domain/tenant-calendar-day.mjs";
 
 function query(url) {
   return {
@@ -321,6 +324,38 @@ export async function handleInventoryRoute(ctx) {
           }
         : { error: "Purchase order not found" },
     );
+    return true;
+  }
+
+  // The items to reorder, ranked by the day each one's stock position reaches
+  // its recorded reorder point (server/domain/reorder-list.mjs). Stock and
+  // incoming are the allocation model's, in the reader's warehouses. Purchase
+  // order numbers in the flags need procurement.purchase_order.read.
+  if (req.method === "GET" && url.pathname === "/api/inventory/reorder-list") {
+    const env = ctx.env || process.env;
+    const injected = ctx.inventoryPrisma || ctx.outboundPrisma;
+    if (!injected && !env.DATABASE_URL) {
+      send(res, 409, {
+        error: "The reorder list requires database persistence.",
+        code: "REORDER_LIST_NOT_AVAILABLE",
+      });
+      return true;
+    }
+    const prisma = injected || (await getPrismaClient(env));
+    const context = await scopedContext();
+    const model = buildRuntimeInventoryAllocation(context);
+    const timeZone = await readTenantTimezone(ctx);
+    const now = ctx.reorderListNow instanceof Date ? ctx.reorderListNow : new Date();
+    const list = await createReorderListReadService({ prisma }).read({
+      tenantId: ctx.identity.tenantId,
+      warehouseIds: access?.warehouseIds ?? null,
+      today: tenantCalendarDay(now, timeZone),
+      timeZone,
+      allocationRows: model.availability,
+      showPurchaseOrders: Boolean(access?.collections.purchaseOrders),
+      truncatedSubjects: context.truncatedSubjects || [],
+    });
+    send(res, 200, { ...list, generatedAt: now.toISOString() });
     return true;
   }
 
