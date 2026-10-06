@@ -1,6 +1,7 @@
 import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
 import { isCommittedPurchaseOrder } from './open-purchase-order.mjs'
+import { PURCHASE_ORDER_STATUS, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 import { currentPromisedDay, promiseDay } from './purchase-order-promise-dates.mjs'
 
 // Supplier scorecard: delivery statistics per supplier, measured against the
@@ -14,6 +15,12 @@ import { currentPromisedDay, promiseDay } from './purchase-order-promise-dates.m
 // Until suppliers confirm dates in FlowChain, the original promise is the date
 // on the PO when it was approved, which may be the buyer's need date
 // (rules.promiseBasis 'po_date').
+//
+// Only orders the supplier actually got are measured (owner decision of
+// 2026-10-06, as decision V5 chases only issued orders): a PO issued to the
+// supplier, or one with a posted receipt. A PO approved but never issued, with
+// nothing received, is left out of every rate and count and listed apart as
+// not sent to the supplier (notSentCount, notSentPurchaseOrders).
 //
 // Definitions, per supplier and period (the standard OTIF decomposition, so the
 // three measures are distinct):
@@ -120,6 +127,39 @@ export function wilsonInterval(successes, trials, z = WILSON_Z) {
 // promise, so cancelled orders are left out explicitly.
 export const isPromiseMeasuredPurchaseOrder = (purchaseOrder) => isCommittedPurchaseOrder(purchaseOrder)
 const PROMISE_UNMEASURED_PO_STATUSES = ['draft', 'pending_approval', 'rejected', 'cancelled']
+
+// Issued to the supplier: the PO's status is issued or later, or its
+// transmission status says it was sent, or an issue time is recorded (the
+// PurchaseOrder.issuedAt column where it exists, else metadata.issuedAt, which
+// the Issue command writes). The read models' default transmission status is
+// not read here: they show 'sent' for any PO past draft.
+const ISSUED_OR_LATER_PO_STATUSES = [PURCHASE_ORDER_STATUS.ISSUED, PURCHASE_ORDER_STATUS.PARTIALLY_RECEIVED, PURCHASE_ORDER_STATUS.FULLY_RECEIVED, PURCHASE_ORDER_STATUS.CLOSED]
+const SENT_TRANSMISSION_STATUSES = ['sent', 'issued', 'issued_outside_flowchain', 'transmitted', 'acknowledged', 'confirmed']
+export function isIssuedToSupplier(purchaseOrder) {
+  let status = text(purchaseOrder?.status)
+  try { status = normalizeProcurementAuthorityStatus('purchaseOrder', status) } catch { /* an unknown status stays as stored */ }
+  if (ISSUED_OR_LATER_PO_STATUSES.includes(status)) return true
+  if (SENT_TRANSMISSION_STATUSES.includes(text(purchaseOrder?.metadata?.transmissionStatus).toLowerCase())) return true
+  return Boolean(text(purchaseOrder?.issuedAt instanceof Date ? purchaseOrder.issuedAt.toISOString() : purchaseOrder?.issuedAt) || text(purchaseOrder?.metadata?.issuedAt))
+}
+
+// A posted receipt against the PO: a receipt line on one of its lines
+// (receiptLinesByLine, posted receipts by PO line id), a posted receiving
+// document for the PO (receivedPurchaseOrderIds), or a received quantity on a
+// line, which only posting a receipt records.
+export function hasPostedReceipt(purchaseOrder, { receiptLinesByLine = new Map(), receivedPurchaseOrderIds = new Set() } = {}) {
+  if (receivedPurchaseOrderIds.has(text(purchaseOrder?.id))) return true
+  return (purchaseOrder?.lines || []).some((line) => (receiptLinesByLine.get(text(line.id)) || []).length > 0 || quantity(line.receivedQuantity) > 0)
+}
+
+// How the scorecard treats a PO: 'measured' when the supplier got it (issued
+// to the supplier, or something received against it); 'not_sent' when it is
+// committed but was never issued and nothing was received; null when it is not
+// measured at all (drafts, pending approvals, rejections, cancellations).
+export function scorecardPurchaseOrderStanding(purchaseOrder, receipts = {}) {
+  if (!isPromiseMeasuredPurchaseOrder(purchaseOrder)) return null
+  return isIssuedToSupplier(purchaseOrder) || hasPostedReceipt(purchaseOrder, receipts) ? 'measured' : 'not_sent'
+}
 
 // A line is closed when nothing more will be received against it: its PO is
 // fully received or cancelled, or the buyer closed the line short
@@ -380,6 +420,35 @@ export function summarizeScorecardLines({ lines = [], invoices = [], lineAmounts
   }
 }
 
+// A PO approved but not sent to the supplier, for the "not sent" list: its
+// lines promised in the period (the original promise, else the current date),
+// or null when none is.
+function notSentPurchaseOrder(purchaseOrder, { inPeriod, lineAmounts }) {
+  const lines = (purchaseOrder.lines || []).map((line) => {
+    const originalPromisedDate = promiseDay(line.originalPromisedDate)
+    return {
+      purchaseOrderLineId: line.id,
+      sku: text(line.sku),
+      itemName: text(line.itemName),
+      unit: text(line.unit),
+      orderedQuantity: quantity(line.orderedQuantity),
+      originalPromisedDate,
+      currentPromisedDate: currentPromisedDay(line, purchaseOrder) || originalPromisedDate,
+      currency: text(purchaseOrder.currency) || null,
+      amount: lineAmounts ? round(quantity(line.amount), 2) : null,
+    }
+  }).filter((line) => inPeriod(line.originalPromisedDate || line.currentPromisedDate))
+    .sort((a, b) => text(a.purchaseOrderLineId).localeCompare(text(b.purchaseOrderLineId)))
+  if (!lines.length) return null
+  return {
+    purchaseOrderId: purchaseOrder.id,
+    orderNumber: text(purchaseOrder.orderNumber || purchaseOrder.metadata?.orderNumber) || purchaseOrder.id,
+    status: text(purchaseOrder.status),
+    promisedDate: lines.map((line) => line.originalPromisedDate || line.currentPromisedDate).sort()[0],
+    lines,
+  }
+}
+
 // Builds the scorecard from rows already read for one tenant.
 //   purchaseOrders  with lines
 //   receipts        posted receiving documents with lines
@@ -403,8 +472,10 @@ export function buildSupplierScorecard({
   const { earlyDays, minimumSample, promiseBasis } = SUPPLIER_SCORECARD_RULES
   const inPeriod = (day) => Boolean(day) && day >= period.from && day <= period.to
   const receiptLines = new Map()
+  const receivedPurchaseOrderIds = new Set()
   for (const document of receipts) {
     const day = localDay(document.arrivedAt || document.postedAt, timeZone)
+    if (text(document.poId)) receivedPurchaseOrderIds.add(text(document.poId))
     for (const line of document.lines || []) {
       if (!line.purchaseOrderLineId) continue
       if (!receiptLines.has(line.purchaseOrderLineId)) receiptLines.set(line.purchaseOrderLineId, [])
@@ -414,7 +485,7 @@ export function buildSupplierScorecard({
   const names = new Map(suppliers.map((row) => [row.id, text(row.name)]))
   const bySupplier = new Map()
   const entry = (id, name) => {
-    if (!bySupplier.has(id)) bySupplier.set(id, { supplierId: id, supplierName: names.get(id) || text(name) || id, lines: [], notRecorded: [], invoices: [] })
+    if (!bySupplier.has(id)) bySupplier.set(id, { supplierId: id, supplierName: names.get(id) || text(name) || id, lines: [], notRecorded: [], notSent: [], invoices: [] })
     return bySupplier.get(id)
   }
   if (supplierId) entry(supplierId)
@@ -423,7 +494,16 @@ export function buildSupplierScorecard({
   const notDue = new Map()
   for (const purchaseOrder of purchaseOrders) {
     const id = text(purchaseOrder.supplierId)
-    if (!id || (supplierId && id !== supplierId) || !isPromiseMeasuredPurchaseOrder(purchaseOrder)) continue
+    if (!id || (supplierId && id !== supplierId)) continue
+    const standing = scorecardPurchaseOrderStanding(purchaseOrder, { receiptLinesByLine: receiptLines, receivedPurchaseOrderIds })
+    if (!standing) continue
+    // Approved but never sent, with nothing received: listed apart when a line
+    // is promised in the period, and measured nowhere.
+    if (standing === 'not_sent') {
+      const unsent = notSentPurchaseOrder(purchaseOrder, { inPeriod, lineAmounts: visibility.lineAmounts })
+      if (unsent) entry(id, purchaseOrder.supplierName).notSent.push(unsent)
+      continue
+    }
     for (const line of purchaseOrder.lines || []) {
       const evaluated = evaluatePromiseLine({ line, purchaseOrder, receipts: receiptLines.get(line.id) || [], asOfDay, graceDays, earlyDays, timeZone })
       const withMoney = { ...evaluated, currency: text(purchaseOrder.currency) || null, amount: visibility.lineAmounts ? round(quantity(line.amount), 2) : null }
@@ -453,6 +533,8 @@ export function buildSupplierScorecard({
     ...summarizeScorecardLines({ lines: [...supplier.lines, ...(notDue.get(supplier.supplierId) || [])], invoices: invoices === null ? null : supplier.invoices, lineAmounts: visibility.lineAmounts, invoiceAmounts: visibility.invoiceAmounts }),
     originalNotRecordedCount: supplier.notRecorded.length,
     originalNotRecordedLines: supplier.notRecorded,
+    notSentCount: supplier.notSent.length,
+    notSentPurchaseOrders: [...supplier.notSent].sort((a, b) => text(a.promisedDate).localeCompare(text(b.promisedDate)) || a.purchaseOrderId.localeCompare(b.purchaseOrderId)),
   })).sort((a, b) => b.sampleSize - a.sampleSize || a.supplierName.localeCompare(b.supplierName))
 
   return {

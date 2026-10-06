@@ -255,6 +255,28 @@ test('the supplier dashboard and the scorecard measure the same deliveries for t
   assert.equal(rateOf(euroScorecard, 'SUP-ACME'), 57.1)
 })
 
+// Owner decision 2026-10-06: an order approved but never sent to the supplier,
+// with nothing received, is not measured on the dashboards either, so they
+// keep the scorecard's figures. Bolt's approved PO-B has a posted receipt, so
+// it counts.
+test('the dashboards leave out an approved order never sent to the supplier, as the scorecard does', () => {
+  const data = deliveriesContext()
+  data.purchaseOrders.push(po('PO-UNSENT', 'Acme', 'approved', [promiseLine('U1')], { supplierId: 'SUP-ACME', metadata: { transmissionStatus: 'not_sent' } }))
+  const scorecard = buildSupplierScorecard({ purchaseOrders: data.purchaseOrders, receipts: data.receipts.filter(row => row.postingStatus === 'posted'), ...scorecardParameters({}, '2026-10-05'), asOfDay: '2026-10-05', timeZone: 'America/New_York' })
+  const acme = scorecard.suppliers.find(row => row.supplierId === 'SUP-ACME')
+  assert.deepEqual([acme.sampleSize, acme.metrics.onTime.count, acme.notSentCount, acme.notSentPurchaseOrders[0].purchaseOrderId], [6, 4, 1, 'PO-UNSENT'])
+  assert.deepEqual(scorecard.suppliers.find(row => row.supplierId === 'SUP-BOLT').sampleSize, 1)
+  const report = buildRuntimeGovernedReport(data, { subject: 'suppliers' }, asOf)
+  assert.equal(kpi(report, 'on_time_receipt_rate').currentValue, 71.4)
+  assert.equal(chart(report, 'supplier_on_time').data[0].value, 66.7)
+  assert.equal(kpi(buildRuntimeGovernedReport(data, { subject: 'procurement' }, asOf), 'on_time_receipt_rate').currentValue, 71.4)
+  // Once issued it is a delivery like any other: past its promise with nothing received, late.
+  data.purchaseOrders.at(-1).metadata = { transmissionStatus: 'issued_outside_flowchain', issuedAt: '2026-09-10T14:00:00.000Z' }
+  const issued = buildRuntimeGovernedReport(data, { subject: 'suppliers' }, asOf)
+  assert.equal(kpi(issued, 'on_time_receipt_rate').currentValue, 62.5)
+  assert.equal(chart(issued, 'supplier_on_time').data[0].value, 57.1)
+})
+
 test('on time is not measured from receipts the reader cannot see or that were not all loaded', () => {
   const restricted = buildRuntimeGovernedReport({ ...scorecardContext(), receipts: [], restrictedSubjects: ['receipts'] }, { subject: 'suppliers' }, asOf)
   assert.equal(kpi(restricted, 'on_time_receipt_rate').dataStatus, 'restricted')

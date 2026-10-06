@@ -71,6 +71,9 @@ test("the on-time KPI definition names the buyer's need date in both languages",
   const [, definition] = source('server/domain/runtime-report-read-model.mjs').match(/on_time_receipt_rate: \['On-time deliveries \(date on the PO\)', 'receipts', 'percentage', "([^"]+)"/)
   assert.match(definition, /buyer's need date/)
   assert.match(analytics.analyticsCopy(definition, 'zh-CN'), /采购方的需求日期/)
+  // Orders approved but never sent are not measured, in both languages.
+  assert.match(definition, /not sent to the supplier are left out/)
+  assert.match(analytics.analyticsCopy(definition, 'zh-CN'), /已审批但未发给供应商的采购订单不计入/)
 })
 
 test("the supplier performance panel and table show the PO-date basis in both languages", () => {
@@ -80,9 +83,12 @@ test("the supplier performance panel and table show the PO-date basis in both la
   assert.match(zh, /采购方的需求日期/)
   // Rendered on the Performance tab and in Reports › Supplier analytics.
   assert.equal(panel.match(/data\?\.rules\.promiseBasis === "po_date" && <span data-testid="supplier-performance-basis"> \{tr\("basisNote"\)\}<\/span>/g)?.length, 2)
-  // An approved PO counts before it is sent; a closed line never received is late.
-  assert.match(panel, /an approved PO counts from approval even before it is sent to the supplier/)
-  assert.match(panel, /采购订单自审批起计入，即使尚未发送给供应商/)
+  // Only POs the supplier got count (owner decision 2026-10-06); a PO approved
+  // but not sent is listed apart. A closed line never received is late.
+  assert.match(panel, /only POs the supplier actually got count: issued to the supplier, or with a posted receipt/)
+  assert.match(panel, /已审批但未发给供应商且没有收货的采购订单不计入任何指标/)
+  assert.doesNotMatch(panel, /even before it is sent|即使尚未发送给供应商/)
+  assert.deepEqual(copy('notSent'), ['Not sent to supplier: {n}', '未发给供应商：{n} 张'])
   assert.match(panel, /a line closed with nothing received counts as late/)
   // Settled-sample and waiting copy is distinct from "Fewer than 5 deliveries".
   assert.deepEqual(copy('fewerSettled'), ['Fewer than 5 settled deliveries', '已判定的交付少于 5 次'])

@@ -76,8 +76,9 @@ test('supplier metrics agree with the reports and suggestions state their facts,
     // Some issues are not overdue orders: rejected or unposted receipts, invoice variances.
     assert.ok(Object.values(admin.suppliers).some((row) => row.openIssues > row.overduePos))
     // On time against the original promise, in deliveries, as the scorecard
-    // reports it: PO-023, approved and due yesterday, is overdue.
-    assert.deepEqual(admin.suppliers[SUP(5)].onTime, { rate: 4 / 7, count: 4, of: 7, sampleStatus: 'ok' })
+    // reports it: PO-023, approved and due yesterday but never sent to the
+    // supplier, is not measured (owner decision 2026-10-06).
+    assert.deepEqual(admin.suppliers[SUP(5)].onTime, { rate: 4 / 6, count: 4, of: 6, sampleStatus: 'ok' })
     assert.equal(admin.suppliers[SUP(1)].onTime.rate, null)
     assert.equal(admin.suppliers[SUP(1)].onTime.sampleStatus, 'insufficient_sample')
 

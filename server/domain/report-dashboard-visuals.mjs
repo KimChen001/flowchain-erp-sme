@@ -3,7 +3,7 @@ import { purchaseOrderDueDay } from './open-purchase-orders-report.mjs'
 import { ALL_PURCHASE_ORDERS } from './business-overview.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
-import { SUPPLIER_SCORECARD_RULES, evaluatePromiseLine, isPromiseMeasuredPurchaseOrder, summarizeScorecardLines } from './supplier-scorecard.mjs'
+import { SUPPLIER_SCORECARD_RULES, evaluatePromiseLine, scorecardPurchaseOrderStanding, summarizeScorecardLines } from './supplier-scorecard.mjs'
 import { instantCalendarDay } from './tenant-calendar-day.mjs'
 
 // The analytics visuals of each report dashboard. Every visual aggregates the
@@ -232,8 +232,10 @@ function receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone)
 
 // On time is measured by the supplier scorecard's rules (supplier-scorecard.mjs),
 // so a page never shows two on-time figures: the PO lines of the orders the
-// scorecard measures (committed, not cancelled; isPromiseMeasuredPurchaseOrder)
-// that pass every filter but the date range are grouped into deliveries (the
+// scorecard measures (committed, not cancelled, and issued to the supplier or
+// with a posted receipt; scorecardPurchaseOrderStanding: an approved order
+// never sent is not measured) that pass every filter but the date range are
+// grouped into deliveries (the
 // lines of one PO with one original promised date) and judged against that
 // date, plus the grace days, by each line's first POSTED receipt, in the
 // workspace timezone. A delivery counts when its original promise falls in the
@@ -248,9 +250,11 @@ export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today,
   const measured = purchaseOrderIds || purchaseOrderIdsAnyDate
   const readable = Array.isArray(warehouseIds) ? new Set(warehouseIds.map(text)) : null
   const receiptLines = new Map()
+  const receivedPurchaseOrderIds = new Set()
   for (const document of array(context.receipts)) {
     if (text(document.postingStatus).toLowerCase() !== 'posted') continue
     if (readable && text(document.warehouseId) && !readable.has(text(document.warehouseId))) continue
+    if (text(document.poId)) receivedPurchaseOrderIds.add(text(document.poId))
     const day = instantCalendarDay(document.arrivedAt || document.postedAt, timeZone) || null
     for (const line of array(document.lines)) {
       const lineId = text(line.purchaseOrderLineId)
@@ -260,7 +264,7 @@ export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today,
   const from = query.from || '0001-01-01'
   const to = query.to || '9999-12-31'
   return array(context.purchaseOrders)
-    .filter(po => isPromiseMeasuredPurchaseOrder(po) && (!measured || measured.has(text(po.id || po.po))))
+    .filter(po => (!measured || measured.has(text(po.id || po.po))) && scorecardPurchaseOrderStanding({ ...po, id: text(po.id || po.po) }, { receiptLinesByLine: receiptLines, receivedPurchaseOrderIds }) === 'measured')
     .flatMap(po => array(po.lines).map(line => ({ ...evaluatePromiseLine({ line, purchaseOrder: { ...po, id: text(po.id || po.po) }, receipts: receiptLines.get(text(line.id)) || [], asOfDay: today || null, graceDays, timeZone }), supplier: poSupplier(po) })))
     .filter(line => ['evaluated', 'not_received'].includes(line.status) && line.originalPromisedDate && line.originalPromisedDate >= from && line.originalPromisedDate <= to)
 }
@@ -541,7 +545,7 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
     return [
       performanceMatrixVisual('supplier_performance_matrix', performance(), scope, onTimeEmpty),
       scorecardVisual('supplier_scorecard', performance(), scope),
-      rankingVisual('supplier_on_time', 'On-time deliveries by supplier', onTime, { unit: 'percentage', drilldownPath: '/app/procurement/receiving', crossFilter: 'supplier', description: 'Deliveries (the lines of one PO with one date) first promised in range whose every line had a posted receipt by the date on the PO. Each supplier needs at least 5 deliveries.', emptyState: onTimeEmpty }),
+      rankingVisual('supplier_on_time', 'On-time deliveries by supplier', onTime, { unit: 'percentage', drilldownPath: '/app/procurement/receiving', crossFilter: 'supplier', description: 'Deliveries (the lines of one PO with one date) first promised in range whose every line had a posted receipt by the date on the PO. Orders approved but not sent to the supplier are left out. Each supplier needs at least 5 deliveries.', emptyState: onTimeEmpty }),
       spendTreemapVisual('supplier_spend_treemap', pos(), scope),
       activityHeatmapVisual('supplier_activity_heatmap', pos()),
     ]

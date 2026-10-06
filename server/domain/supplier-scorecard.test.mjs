@@ -4,7 +4,9 @@ import {
   buildSupplierScorecard,
   evaluatePromiseLine,
   groupDeliveryObligations,
+  isIssuedToSupplier,
   scorecardParameters,
+  scorecardPurchaseOrderStanding,
   summarizeScorecardLines,
   wilsonInterval,
 } from './supplier-scorecard.mjs'
@@ -389,4 +391,51 @@ test('with 5 or more deliveries, a rate can still lack 5 settled deliveries of i
   assert.deepEqual([supplier.sampleStatus, supplier.sampleSize, supplier.inFullPendingCount], ['ok', 7, 3])
   assert.deepEqual([supplier.metrics.inFull.count, supplier.metrics.inFull.of, supplier.metrics.inFull.rate], [4, 4, null])
   assert.equal(supplier.metrics.onTime.rate, 1)
+})
+
+// Owner decision 2026-10-06: the scorecard measures only orders the supplier
+// got. An approved PO never issued, with nothing received, is outside every
+// rate and count and listed as not sent to the supplier.
+test('an approved PO never sent to the supplier is not measured and is counted as not sent', () => {
+  const unsent = po([line('U1', '2026-09-20')], { id: 'PO-U', status: 'approved', metadata: { orderNumber: 'PO-U', transmissionStatus: 'not_sent' } })
+  const issued = po([line('I1', '2026-09-20')], { id: 'PO-I', status: 'issued', metadata: { transmissionStatus: 'issued_outside_flowchain' } })
+  const [supplier] = suppliersOf([unsent, issued], [])
+  // Only the issued order is a delivery: overdue, late.
+  assert.deepEqual(supplier.obligations.map((row) => [row.purchaseOrderId, row.onTime, row.overdueUndelivered]), [['PO-I', false, true]])
+  assert.deepEqual([supplier.sampleSize, supplier.lineCount, supplier.overdueUndeliveredCount, supplier.waitingCount, supplier.metrics.onTime.of, supplier.metrics.averageDelayDays.lateCount], [1, 1, 1, 0, 1, 1])
+  assert.equal(supplier.lines.some((row) => row.purchaseOrderId === 'PO-U'), false)
+  assert.equal(supplier.notSentCount, 1)
+  assert.deepEqual(supplier.notSentPurchaseOrders.map((row) => [row.purchaseOrderId, row.orderNumber, row.status, row.promisedDate, row.lines.map((item) => [item.purchaseOrderLineId, item.originalPromisedDate, item.orderedQuantity])]), [['PO-U', 'PO-U', 'approved', '2026-09-20', [['U1', '2026-09-20', 100]]]])
+  // A not-sent order alone still puts its supplier on the scorecard, with no deliveries.
+  const [alone] = suppliersOf([unsent], [])
+  assert.deepEqual([alone.sampleStatus, alone.sampleSize, alone.notSentCount], ['no_obligations', 0, 1])
+  // Outside the period it is not listed.
+  assert.deepEqual(suppliersOf([unsent], [], { period: { from: '2026-10-01', to: '2026-10-31' } }), [])
+})
+
+test('an approved PO with a posted receipt counts even though it was never issued', () => {
+  const received = po([line('R1', '2026-09-10')], { id: 'PO-R', status: 'approved', metadata: { transmissionStatus: 'not_sent' } })
+  const [supplier] = suppliersOf([received], [{ ...grn('GRN-R', '2026-09-09', ['R1']), poId: 'PO-R' }])
+  assert.deepEqual([supplier.sampleSize, supplier.notSentCount, supplier.obligations[0].onTime], [1, 0, true])
+  // A received quantity on the line, from a receipt the reader cannot see, counts too.
+  const [hidden] = suppliersOf([po([line('R1', '2026-09-10', { receivedQuantity: 40 })], { id: 'PO-R', status: 'approved' })], [])
+  assert.deepEqual([hidden.sampleSize, hidden.notSentCount], [1, 0])
+})
+
+test('a PO counts as issued by its status, its transmission status or a recorded issue time', () => {
+  for (const status of ['issued', 'partially_received', 'fully_received', 'closed', '已下发']) assert.equal(isIssuedToSupplier({ status }), true, status)
+  assert.equal(isIssuedToSupplier({ status: 'approved' }), false)
+  assert.equal(isIssuedToSupplier({ status: 'approved', metadata: { transmissionStatus: 'sent' } }), true)
+  assert.equal(isIssuedToSupplier({ status: 'approved', metadata: { transmissionStatus: 'issued_outside_flowchain' } }), true)
+  assert.equal(isIssuedToSupplier({ status: 'approved', metadata: { transmissionStatus: 'not_sent' } }), false)
+  assert.equal(isIssuedToSupplier({ status: 'approved', metadata: { issuedAt: '2026-09-01T14:00:00.000Z' } }), true)
+  assert.equal(isIssuedToSupplier({ status: 'approved', issuedAt: new Date('2026-09-01T14:00:00Z') }), true)
+  // The read models' transmissionStatus defaults to 'sent' past draft; only the stored metadata is read.
+  assert.equal(isIssuedToSupplier({ status: 'approved', transmissionStatus: 'sent', metadata: {} }), false)
+  assert.equal(scorecardPurchaseOrderStanding({ status: 'approved', lines: [] }), 'not_sent')
+  assert.equal(scorecardPurchaseOrderStanding({ status: 'approved', metadata: { transmissionStatus: 'sent' }, lines: [] }), 'measured')
+  for (const status of ['draft', 'pending_approval', 'rejected', 'cancelled']) assert.equal(scorecardPurchaseOrderStanding({ status, metadata: { transmissionStatus: 'sent' }, lines: [] }), null, status)
+  // An issued order counts on the scorecard.
+  const [supplier] = suppliersOf([po([line('S1', '2026-09-10')], { id: 'PO-S', status: 'approved', metadata: { transmissionStatus: 'sent' } })], [])
+  assert.deepEqual([supplier.sampleSize, supplier.notSentCount, supplier.obligations[0].overdueUndelivered], [1, 0, true])
 })
