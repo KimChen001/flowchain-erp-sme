@@ -22,26 +22,46 @@ import {
 export const DUPLICATE_WINDOW_DAYS = 7;
 export const DUPLICATE_EXCLUDED_STATUSES = Object.freeze(["cancelled", "rejected"]);
 export const DUPLICATE_KINDS = Object.freeze(["likely", "possible"]);
+// A bill in one of these statuses is past approval: its flags are shown for
+// information and can no longer be dismissed on it.
+export const DUPLICATE_CLOSED_STATUSES = Object.freeze(["approved", "cancelled"]);
 const DAY_MS = 86_400_000;
 
 const text = (value) => String(value ?? "").trim();
 
-// Normalizes an invoice number for comparison, in this order: Unicode NFKC
-// (so full-width characters become plain ones), trim and lowercase, leading
-// zeros dropped from every run of digits (an all-zero run keeps one 0), then
-// whitespace, dashes, dots and slashes removed. The zeros go before the
-// separators, so "INV-2024-001" and "inv 2024/1" both become "inv20241".
-// An empty result is null, which means no number check.
-export function normalizeInvoiceNumber(value) {
-  if (value === null || value === undefined) return null;
-  const key = String(value)
-    .normalize("NFKC")
-    .trim()
-    .toLowerCase()
-    .replace(/\d+/g, (run) => run.replace(/^0+(?=\d)/, ""))
-    .replace(/[\s\-‐-―./]/g, "");
-  return key || null;
+// Normalizes an invoice number for comparison. Both readings of "leading
+// zeros of a numeric part" are kept, and a likely duplicate is any shared key:
+//
+// - by part: leading zeros dropped from every run of digits first, then the
+//   separators removed, so "INV-2024-001" and "inv 2024/1" both give
+//   "inv20241";
+// - joined: the separators removed first, then the leading zeros of each
+//   remaining run of digits, so "INV-2024-001" and "INV2024001" both give
+//   "inv2024001", and "A 0 1" and "A01" both give "a1".
+//
+// Before either: Unicode NFKC (so full-width characters become plain ones),
+// trim and lowercase. Separators are whitespace, dashes (also U+2010 to
+// U+2015), dots and slashes. An all-zero run keeps one 0. Because inner
+// separators are removed, "INV-1-23" and "INV-12-3" share a key; the label
+// says the numbers match once formatting is ignored, and both are printed.
+// An empty number has no keys, which means no number check.
+const SEPARATORS = /[\s\-‐-―./]/g;
+const dropLeadingZeros = (value) => value.replace(/\d+/g, (run) => run.replace(/^0+(?=\d)/, ""));
+
+export function invoiceNumberKeys(value) {
+  if (value === null || value === undefined) return [];
+  const prepared = String(value).normalize("NFKC").trim().toLowerCase();
+  const byPart = dropLeadingZeros(prepared).replace(SEPARATORS, "");
+  const joined = dropLeadingZeros(prepared.replace(SEPARATORS, ""));
+  return [...new Set([byPart, joined].filter(Boolean))];
 }
+
+// The by-part key, or null when the number is empty.
+export function normalizeInvoiceNumber(value) {
+  return invoiceNumberKeys(value)[0] ?? null;
+}
+
+const sharedKey = (left, right) => left.find((key) => right.includes(key)) ?? null;
 
 // The total as a 4-decimal string, so "100" and "100.0000" agree. A total
 // that is missing or not a decimal is null and is not compared.
@@ -93,7 +113,7 @@ export function invoiceDayKey(value, timezone) {
 // still have the basis it was given for; editing a draft reopens the flag.
 export function duplicateBasis(invoice, timezone) {
   return {
-    numberKey: normalizeInvoiceNumber(invoice?.invoiceNumber),
+    numberKeys: invoiceNumberKeys(invoice?.invoiceNumber),
     currency: text(invoice?.currency).toUpperCase() || null,
     total: invoiceTotalKey(invoice),
     day: invoiceDayKey(invoice?.invoiceDate, timezone),
@@ -102,7 +122,7 @@ export function duplicateBasis(invoice, timezone) {
 
 const basisText = (basis) =>
   JSON.stringify({
-    numberKey: basis?.numberKey ?? null,
+    numberKeys: basis?.numberKeys ?? [],
     currency: basis?.currency ?? null,
     total: basis?.total ?? null,
     day: basis?.day ?? null,
@@ -125,10 +145,10 @@ export function findDuplicateFlags({ invoice, candidates = [], timezone }) {
   if (!text(invoice?.supplierId)) return { flags: [], notChecked: ["no_supplier"], windowDays: DUPLICATE_WINDOW_DAYS };
   const self = duplicateBasis(invoice, timezone);
   const selfDay = invoiceDayNumber(invoice.invoiceDate, timezone);
-  if (!self.numberKey) notChecked.push("no_number");
+  if (!self.numberKeys.length) notChecked.push("no_number");
   if (selfDay === null) notChecked.push("no_date");
   if (!self.total) notChecked.push("no_amount");
-  const flags = [];
+  const found = [];
   const seen = new Set();
   for (const candidate of candidates) {
     if (!candidate || seen.has(candidate.id)) continue;
@@ -141,9 +161,28 @@ export function findDuplicateFlags({ invoice, candidates = [], timezone }) {
     const otherDay = invoiceDayNumber(candidate.invoiceDate, timezone);
     const daysApart =
       selfDay === null || otherDay === null ? null : Math.round(Math.abs(selfDay - otherDay) / DAY_MS);
-    const basis = { self, other };
-    if (self.numberKey && other.numberKey === self.numberKey) {
-      flags.push({ kind: "likely", otherInvoiceId: candidate.id, daysApart, windowDays: DUPLICATE_WINDOW_DAYS, basis });
+    const flag = {
+      otherInvoiceId: candidate.id,
+      // What the approver is shown of the other bill. The total is a
+      // four-decimal string and is left out by callers whose reader cannot
+      // see amounts.
+      otherInvoice: {
+        id: candidate.id,
+        invoiceNumber: text(candidate.invoiceNumber) || candidate.id,
+        invoiceDate: other.day,
+        totalAmount: other.total,
+        currency: other.currency,
+        status: text(candidate.status),
+        version: candidate.version ?? null,
+      },
+      daysApart,
+      windowDays: DUPLICATE_WINDOW_DAYS,
+      basis: { self, other },
+    };
+    const order = { day: otherDay, number: text(candidate.invoiceNumber) };
+    const numberKey = sharedKey(self.numberKeys, other.numberKeys);
+    if (numberKey) {
+      found.push({ flag: { kind: "likely", ...flag, numberKey }, order });
       continue;
     }
     if (
@@ -154,36 +193,54 @@ export function findDuplicateFlags({ invoice, candidates = [], timezone }) {
       daysApart !== null &&
       daysApart <= DUPLICATE_WINDOW_DAYS
     )
-      flags.push({ kind: "possible", otherInvoiceId: candidate.id, daysApart, windowDays: DUPLICATE_WINDOW_DAYS, basis });
+      found.push({ flag: { kind: "possible", ...flag }, order });
   }
-  // Likely before possible, then the closest dates, then by id, so the order
-  // is the same on every read.
-  flags.sort(
+  // Likely before possible; within a kind by the other bill's invoice date,
+  // oldest first (undated last), then by its printed number. The id only
+  // breaks a full tie, so the order is the same on every read.
+  found.sort(
     (left, right) =>
-      DUPLICATE_KINDS.indexOf(left.kind) - DUPLICATE_KINDS.indexOf(right.kind) ||
-      (left.daysApart ?? Infinity) - (right.daysApart ?? Infinity) ||
-      left.otherInvoiceId.localeCompare(right.otherInvoiceId),
+      DUPLICATE_KINDS.indexOf(left.flag.kind) - DUPLICATE_KINDS.indexOf(right.flag.kind) ||
+      (left.order.day ?? Infinity) - (right.order.day ?? Infinity) ||
+      left.order.number.localeCompare(right.order.number) ||
+      left.flag.otherInvoiceId.localeCompare(right.flag.otherInvoiceId),
   );
-  return { flags, notChecked, windowDays: DUPLICATE_WINDOW_DAYS };
+  return { flags: found.map((entry) => entry.flag), notChecked, windowDays: DUPLICATE_WINDOW_DAYS };
 }
 
+// A review kept on the other bill, turned round to read from this bill.
+const fromThisSide = (review) => ({
+  ...review,
+  otherInvoiceId: review.supplierInvoiceId,
+  basis: { self: review.basis?.other, other: review.basis?.self },
+});
+
+const latest = (reviews) =>
+  [...reviews].sort((left, right) => new Date(right.dismissedAt) - new Date(left.dismissedAt))[0] || null;
+
+const covers = (review, flag) =>
+  review.otherInvoiceId === flag.otherInvoiceId && review.kind === flag.kind && sameBasis(review.basis, flag.basis);
+
 // A flag is dismissed while a review for the same other bill and kind was
-// given on the same basis. Reviews whose basis no longer holds stay on
-// record and are marked stale ("no longer applies").
-export function applyDuplicateReviews(flags, reviews = []) {
+// given on this bill on the same basis. Reviews whose basis no longer holds
+// stay on record and are marked stale ("no longer applies").
+//
+// A dismissal given on the other bill does not clear this bill's flag: each
+// approver looks at their own bill. It is shown as otherSideDismissal while
+// its basis holds. An approved or cancelled bill is past the step where a
+// flag is dismissed, so an undismissed flag there is "closed", shown for
+// information, never "open".
+export function applyDuplicateReviews(flags, reviews = [], { otherSideReviews = [], closed = false } = {}) {
+  const turned = otherSideReviews.map(fromThisSide);
   const withReviews = flags.map((flag) => {
-    const dismissal =
-      reviews
-        .filter((review) => review.otherInvoiceId === flag.otherInvoiceId && review.kind === flag.kind && sameBasis(review.basis, flag.basis))
-        .sort((left, right) => new Date(right.dismissedAt) - new Date(left.dismissedAt))[0] || null;
-    return { ...flag, status: dismissal ? "dismissed" : "open", dismissal };
+    const dismissal = latest(reviews.filter((review) => covers(review, flag)));
+    const otherSideDismissal = latest(turned.filter((review) => covers(review, flag)));
+    return { ...flag, status: dismissal ? "dismissed" : closed ? "closed" : "open", dismissal, otherSideDismissal };
   });
   const current = new Set(withReviews.map((flag) => flag.dismissal?.id).filter(Boolean));
   const history = reviews.map((review) => ({
     ...review,
-    stale: !withReviews.some(
-      (flag) => flag.otherInvoiceId === review.otherInvoiceId && flag.kind === review.kind && sameBasis(review.basis, flag.basis),
-    ),
+    stale: !withReviews.some((flag) => covers(review, flag)),
     current: current.has(review.id),
   }));
   return { flags: withReviews, reviews: history, openFlags: withReviews.filter((flag) => flag.status === "open") };
@@ -199,6 +256,7 @@ const CANDIDATE_SELECT = {
   amount: true,
   currency: true,
   status: true,
+  version: true,
 };
 
 // Reads the candidates for one bill and applies the rules. One query reads the
@@ -218,7 +276,7 @@ export async function loadDuplicateFlags(db, { tenantId, invoice, timezone }) {
   const self = duplicateBasis(invoice, timezone);
   const day = invoiceDayNumber(invoice.invoiceDate, timezone);
   const [numbered, sameAmount] = await Promise.all([
-    self.numberKey
+    self.numberKeys.length
       ? db.supplierInvoice.findMany({ where: { ...base, invoiceNumber: { not: null } }, select: CANDIDATE_SELECT })
       : [],
     day !== null && self.total && self.currency
@@ -239,14 +297,18 @@ export async function loadDuplicateFlags(db, { tenantId, invoice, timezone }) {
   return findDuplicateFlags({ invoice: { ...invoice, tenantId }, candidates: [...numbered, ...sameAmount], timezone });
 }
 
-// The flags of one bill with its reviews applied.
+// The flags of one bill with its reviews applied: the dismissals given on
+// this bill, and those given on the other bills against this one.
 export async function loadDuplicateChecks(db, { tenantId, invoice, timezone }) {
   const result = await loadDuplicateFlags(db, { tenantId, invoice, timezone });
-  const reviews = await db.supplierInvoiceDuplicateReview.findMany({
-    where: { tenantId, supplierInvoiceId: invoice.id },
+  const rows = await db.supplierInvoiceDuplicateReview.findMany({
+    where: { tenantId, OR: [{ supplierInvoiceId: invoice.id }, { otherInvoiceId: invoice.id }] },
     orderBy: [{ dismissedAt: "desc" }, { id: "asc" }],
   });
-  return { ...result, ...applyDuplicateReviews(result.flags, reviews) };
+  const reviews = rows.filter((row) => row.supplierInvoiceId === invoice.id);
+  const otherSideReviews = rows.filter((row) => row.supplierInvoiceId !== invoice.id);
+  const closed = DUPLICATE_CLOSED_STATUSES.includes(text(invoice.status));
+  return { ...result, ...applyDuplicateReviews(result.flags, reviews, { otherSideReviews, closed }) };
 }
 
 export async function workspaceTimezone(db, tenantId) {

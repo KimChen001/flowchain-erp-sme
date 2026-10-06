@@ -5,6 +5,7 @@ import {
   duplicateBasis,
   findDuplicateFlags,
   invoiceDayKey,
+  invoiceNumberKeys,
   invoiceTotalKey,
   loadDuplicateFlags,
   normalizeInvoiceNumber,
@@ -43,6 +44,43 @@ test("invoice numbers are compared without case, spacing, separators or leading 
   assert.equal(normalizeInvoiceNumber(" - / . "), null);
   assert.equal(normalizeInvoiceNumber(null), null);
   assert.equal(normalizeInvoiceNumber(undefined), null);
+});
+
+test("each number has a by-part key and a joined key", () => {
+  // By part drops zeros per run, then separators; joined drops separators,
+  // then zeros. A number without separators has one key.
+  assert.deepEqual(invoiceNumberKeys("INV-2024-001"), ["inv20241", "inv2024001"]);
+  assert.deepEqual(invoiceNumberKeys("INV2024001"), ["inv2024001"]);
+  assert.deepEqual(invoiceNumberKeys("A 0 1"), ["a01", "a1"]);
+  assert.deepEqual(invoiceNumberKeys("A01"), ["a1"]);
+  assert.deepEqual(invoiceNumberKeys(" "), []);
+  assert.deepEqual(invoiceNumberKeys(null), []);
+});
+
+test("the same number with or without separators is a likely duplicate", () => {
+  const pairs = [
+    ["INV-2024-001", "INV2024001"],
+    ["2024/001", "2024001"],
+    ["A 0 1", "A01"],
+    ["INV-2024-001", "inv 2024/1"],
+    ["inv.0042", "INV42"],
+  ];
+  for (const [left, right] of pairs) {
+    assert.deepEqual(flagsOf(bill("B2", { invoiceNumber: left, totalAmount: "1" }), [bill("B1", { invoiceNumber: right })]), [["likely", "B1", 0]], `${left} / ${right}`);
+    assert.deepEqual(flagsOf(bill("B2", { invoiceNumber: right, totalAmount: "1" }), [bill("B1", { invoiceNumber: left })]), [["likely", "B1", 0]], `${right} / ${left}`);
+  }
+  // Different numbers stay apart.
+  assert.deepEqual(flagsOf(bill("B2", { invoiceNumber: "INV-2024-002", totalAmount: "1" }), [bill("B1", { invoiceNumber: "INV2024001" })]), []);
+  // The flag names the key the two numbers share.
+  const [flag] = findDuplicateFlags({ invoice: bill("B2", { invoiceNumber: "INV2024001" }), candidates: [bill("B1", { invoiceNumber: "INV-2024-001" })], timezone: tz }).flags;
+  assert.equal(flag.numberKey, "inv2024001");
+});
+
+test("numbers that differ only where separators were are flagged, and both are printed", () => {
+  // Inner separators are removed by rule, so INV-1-23 and INV-12-3 share a
+  // key. The flag is shown with both numbers for the approver to judge.
+  const { flags } = findDuplicateFlags({ invoice: bill("B2", { invoiceNumber: "INV-1-23", totalAmount: "1" }), candidates: [bill("B1", { invoiceNumber: "INV-12-3" })], timezone: tz });
+  assert.deepEqual(flags.map((flag) => [flag.kind, flag.otherInvoice.invoiceNumber]), [["likely", "INV-12-3"]]);
 });
 
 test("totals are compared as four-decimal amounts", () => {
@@ -99,7 +137,33 @@ test("the same amount within seven calendar days is a possible duplicate, eight 
     bill("BM8", { invoiceDate: new Date("2026-09-02") }),
     bill("BS", { invoiceDate: new Date("2026-09-10") }),
   ]);
-  assert.deepEqual(flags, [["possible", "BS", 0], ["possible", "B7", 7], ["possible", "BM7", 7]]);
+  assert.deepEqual(flags, [["possible", "BM7", 7], ["possible", "BS", 0], ["possible", "B7", 7]]);
+});
+
+test("flags are listed by kind, then by the other bill's date, oldest first, then its number", () => {
+  const self = bill("B0", { invoiceNumber: "INV-50" });
+  const flags = findDuplicateFlags({
+    invoice: self,
+    candidates: [
+      bill("Z1", { invoiceNumber: "X-2", invoiceDate: new Date("2026-09-16") }),
+      bill("Z2", { invoiceNumber: "X-9", invoiceDate: new Date("2026-09-03") }),
+      bill("Z3", { invoiceNumber: "X-1", invoiceDate: new Date("2026-09-16") }),
+      bill("Z4", { invoiceNumber: "X-3", invoiceDate: null }),
+      bill("Z5", { invoiceNumber: "inv50", invoiceDate: new Date("2026-09-12") }),
+      bill("Z6", { invoiceNumber: "INV 050", invoiceDate: new Date("2026-08-01") }),
+    ],
+    timezone: tz,
+  }).flags;
+  assert.deepEqual(
+    flags.map((flag) => [flag.kind, flag.otherInvoice.invoiceNumber, flag.otherInvoice.invoiceDate]),
+    [
+      ["likely", "INV 050", "2026-08-01"],
+      ["likely", "inv50", "2026-09-12"],
+      ["possible", "X-9", "2026-09-03"],
+      ["possible", "X-1", "2026-09-16"],
+      ["possible", "X-2", "2026-09-16"],
+    ],
+  );
 });
 
 test("a likely duplicate is not repeated as a possible one", () => {
@@ -157,7 +221,37 @@ test("a dismissal holds only while both bills keep the basis it was given for", 
 
   // A dismissal of another kind does not cover this flag.
   assert.equal(applyDuplicateReviews(flags, [{ ...review, kind: "likely" }]).openFlags.length, 1);
-  assert.deepEqual(duplicateBasis(self, tz), { numberKey: "b2", currency: "USD", total: "100.0000", day: "2026-09-10" });
+  assert.deepEqual(duplicateBasis(self, tz), { numberKeys: ["b2"], currency: "USD", total: "100.0000", day: "2026-09-10" });
+});
+
+test("a dismissal on the other bill is shown but does not clear this bill's flag", () => {
+  const self = bill("B2");
+  const other = bill("B1");
+  const { flags } = findDuplicateFlags({ invoice: self, candidates: [other], timezone: tz });
+  // B1's approver dismissed its flag against B2; the basis reads from B1.
+  const otherSide = { id: "R9", supplierInvoiceId: "B1", otherInvoiceId: "B2", kind: "possible", basis: { self: flags[0].basis.other, other: flags[0].basis.self }, reason: "Two deliveries", dismissedAt: new Date("2026-09-12") };
+  const applied = applyDuplicateReviews(flags, [], { otherSideReviews: [otherSide] });
+  assert.equal(applied.flags[0].status, "open");
+  assert.equal(applied.flags[0].otherSideDismissal.id, "R9");
+  assert.equal(applied.openFlags.length, 1);
+  assert.deepEqual(applied.reviews, []);
+  // Once B1 changes, the other side's dismissal is no longer shown.
+  const moved = findDuplicateFlags({ invoice: self, candidates: [{ ...other, invoiceDate: new Date("2026-09-11") }], timezone: tz }).flags;
+  assert.equal(applyDuplicateReviews(moved, [], { otherSideReviews: [otherSide] }).flags[0].otherSideDismissal, null);
+});
+
+test("an approved or cancelled bill's undismissed flags are closed, not open", () => {
+  const { flags } = findDuplicateFlags({ invoice: bill("B2", { status: "approved" }), candidates: [bill("B1")], timezone: tz });
+  const closed = applyDuplicateReviews(flags, [], { closed: true });
+  assert.deepEqual(closed.flags.map((flag) => flag.status), ["closed"]);
+  assert.equal(closed.openFlags.length, 0);
+  const review = { id: "R1", otherInvoiceId: "B1", kind: "possible", basis: flags[0].basis, reason: "Two deliveries", dismissedAt: new Date("2026-09-11") };
+  assert.deepEqual(applyDuplicateReviews(flags, [review], { closed: true }).flags.map((flag) => flag.status), ["dismissed"]);
+});
+
+test("a flag carries the other bill's number, date, total, status and version", () => {
+  const { flags } = findDuplicateFlags({ invoice: bill("B2"), candidates: [bill("B1", { invoiceNumber: "C-7", status: "approved", version: 3, totalAmount: "100" })], timezone: tz });
+  assert.deepEqual(flags[0].otherInvoice, { id: "B1", invoiceNumber: "C-7", invoiceDate: "2026-09-10", totalAmount: "100.0000", currency: "USD", status: "approved", version: 3 });
 });
 
 test("the loader asks for the supplier's bills in the workspace and the window", async () => {

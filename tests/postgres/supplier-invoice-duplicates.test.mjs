@@ -87,7 +87,7 @@ test('likely and possible duplicate bills are flagged, dismissed with a reason, 
     assert.deepEqual(checks.flags.map((flag) => [flag.kind, flag.otherInvoiceId, flag.daysApart, flag.status]), [['likely', b, 19, 'open'], ['possible', c, 4, 'open']])
     assert.deepEqual(
       { ...checks.flags[1].otherInvoice, fieldVisibility: undefined },
-      { id: c, invoiceNumber: 'C-77', invoiceDate: '2026-09-05', totalAmount: '50', currency: 'USD', status: 'draft', fieldVisibility: undefined },
+      { id: c, invoiceNumber: 'C-77', invoiceDate: '2026-09-05', totalAmount: '50', currency: 'USD', status: 'draft', version: 0, fieldVisibility: undefined },
     )
     assert.ok(detail.body.availableActions.includes('dismiss_duplicate'))
 
@@ -114,19 +114,27 @@ test('likely and possible duplicate bills are flagged, dismissed with a reason, 
     assert.equal(early.body.code, 'DUPLICATE_REVIEW_REQUIRED')
     assert.equal(await prisma.payableObligation.count({ where: { tenantId } }), 0)
 
-    // A dismissal needs a reason, the approve permission and a flag that holds.
-    const dismiss = (key, body, idempotencyKey) => call(prisma, key, 'POST', `/api/finance/supplier-invoices/${a}/duplicate-dismiss`, { expectedVersion: 2, idempotencyKey, ...body })
+    // A dismissal needs a reason, the approve permission, a flag that holds
+    // and the other bill's version as it was shown (B and C are drafts at 0).
+    const dismiss = (key, body, idempotencyKey) => call(prisma, key, 'POST', `/api/finance/supplier-invoices/${a}/duplicate-dismiss`, { expectedVersion: 2, otherVersion: 0, idempotencyKey, ...body })
     const blank = await dismiss('finance', { otherInvoiceId: b, kind: 'likely', reason: '  ' }, 'dup-dismiss-blank')
     assert.equal(blank.status, 422)
     assert.equal(blank.body.code, 'DUPLICATE_DISMISS_REASON_REQUIRED')
-    const blankPreview = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${a}/duplicate-dismiss-preview`, { expectedVersion: 2, otherInvoiceId: b, kind: 'likely', reason: '' })
+    const blankPreview = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${a}/duplicate-dismiss-preview`, { expectedVersion: 2, otherInvoiceId: b, otherVersion: 0, kind: 'likely', reason: '' })
     assert.equal(blankPreview.body.allowed, false)
     assert.equal(blankPreview.body.blockingIssues[0].code, 'DUPLICATE_DISMISS_REASON_REQUIRED')
     assert.equal((await dismiss('viewer', { otherInvoiceId: b, kind: 'likely', reason: 'Not mine' }, 'dup-dismiss-viewer')).status, 403)
     const wrongKind = await dismiss('finance', { otherInvoiceId: b, kind: 'possible', reason: 'No' }, 'dup-dismiss-wrong')
     assert.equal(wrongKind.status, 409)
     assert.equal(wrongKind.body.code, 'DUPLICATE_FLAG_NOT_FOUND')
-    const okPreview = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${a}/duplicate-dismiss-preview`, { expectedVersion: 2, otherInvoiceId: b, kind: 'likely', reason: 'Supplier reissued under a new number' })
+    // A dismissal is never recorded against a state of the other bill the
+    // approver did not see.
+    const changedPreview = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${a}/duplicate-dismiss-preview`, { expectedVersion: 2, otherInvoiceId: b, otherVersion: 4, kind: 'likely', reason: 'Seen before' })
+    assert.deepEqual(changedPreview.body.blockingIssues.map((entry) => entry.code), ['DUPLICATE_FLAG_CHANGED'])
+    const changed = await dismiss('finance', { otherInvoiceId: b, otherVersion: 4, kind: 'likely', reason: 'Seen before' }, 'dup-dismiss-changed')
+    assert.equal(changed.status, 409)
+    assert.equal(changed.body.code, 'DUPLICATE_FLAG_CHANGED')
+    const okPreview = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${a}/duplicate-dismiss-preview`, { expectedVersion: 2, otherInvoiceId: b, otherVersion: 0, kind: 'likely', reason: 'Supplier reissued under a new number' })
     assert.equal(okPreview.body.allowed, true, JSON.stringify(okPreview.body.blockingIssues))
     assert.equal(okPreview.body.openFlagsAfter, 1)
 
@@ -151,7 +159,9 @@ test('likely and possible duplicate bills are flagged, dismissed with a reason, 
     assert.equal(audits[0].metadata.evidence.reason, 'Supplier reissued under a new number')
     assert.equal(audits[0].metadata.evidence.otherInvoiceId, b)
     assert.equal(audits[0].metadata.evidence.kind, 'likely')
-    assert.equal(audits[0].metadata.evidence.basis.other.numberKey, 'inv20241')
+    assert.equal(audits[0].metadata.evidence.otherVersion, 0)
+    assert.equal(audits[0].metadata.evidence.numberKey, 'inv20241')
+    assert.deepEqual(audits[0].metadata.evidence.basis.other.numberKeys, ['inv20241'])
 
     detail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${a}`)
     checks = detail.body.duplicateChecks
@@ -165,26 +175,40 @@ test('likely and possible duplicate bills are flagged, dismissed with a reason, 
     const approved = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${a}/approve`, { expectedVersion: 2, idempotencyKey: 'dup-approve-a' })
     assert.equal(approved.status, 200, JSON.stringify(approved.body))
 
-    // The flags are symmetric: B's approver still has to look at A.
+    // The flags are symmetric: B's approver still has to look at A, and sees
+    // A's dismissal beside the open flag.
     const bDetail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${b}`)
     assert.deepEqual(bDetail.body.duplicateChecks.flags.map((flag) => [flag.kind, flag.otherInvoiceId, flag.status, flag.otherInvoice.status]), [['likely', a, 'open', 'approved']])
+    assert.equal(bDetail.body.duplicateChecks.flags[0].dismissal, null)
+    assert.equal(bDetail.body.duplicateChecks.flags[0].otherSideDismissal.reason, 'Supplier reissued under a new number')
+    assert.equal(bDetail.body.duplicateChecks.flags[0].otherSideDismissal.dismissedByName, 'Frank Finance')
+    assert.deepEqual(bDetail.body.duplicateChecks.reviews, [])
+    const approvedVersion = bDetail.body.duplicateChecks.flags[0].otherInvoice.version
+    // On the approved bill, A, the flags are settled: dismissed, never open.
+    detail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${a}`)
+    assert.deepEqual(detail.body.duplicateChecks.flags.map((flag) => flag.status), ['dismissed', 'dismissed'])
     // An approved bill's flags can no longer be dismissed.
     const late = await dismiss('finance', { otherInvoiceId: b, kind: 'likely', reason: 'Late', expectedVersion: 3 }, 'dup-dismiss-late')
     assert.equal(late.body.code, 'SUPPLIER_INVOICE_STATUS_INVALID')
 
     // Revising a draft after its dismissal reopens the flag: C dismisses its
     // flag against A, then moves its date by a day.
-    const cDismiss = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${c}/duplicate-dismiss`, { expectedVersion: 0, otherInvoiceId: a, kind: 'possible', reason: 'Separate delivery', idempotencyKey: 'dup-dismiss-c-a' })
+    const cDismiss = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${c}/duplicate-dismiss`, { expectedVersion: 0, otherInvoiceId: a, otherVersion: approvedVersion, kind: 'possible', reason: 'Separate delivery', idempotencyKey: 'dup-dismiss-c-a' })
     assert.equal(cDismiss.status, 200, JSON.stringify(cDismiss.body))
+    detail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${a}`)
+    assert.equal(detail.body.duplicateChecks.flags[1].otherSideDismissal.reason, 'Separate delivery')
     const revised = await call(prisma, 'finance', 'PATCH', `/api/finance/supplier-invoices/${c}`, { ...bill('DUP-GRN-3', 'C-77', '2026-09-06'), expectedVersion: 0, idempotencyKey: 'dup-revise-c' })
     assert.equal(revised.status, 200, JSON.stringify(revised.body))
     let cDetail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${c}`)
     assert.deepEqual(cDetail.body.duplicateChecks.flags.map((flag) => [flag.kind, flag.otherInvoiceId, flag.daysApart, flag.status]), [['possible', a, 5, 'open']])
     assert.equal(cDetail.body.duplicateChecks.reviews.length, 1)
     assert.equal(cDetail.body.duplicateChecks.reviews[0].stale, true)
-    // A's own dismissal of C no longer applies either.
+    // A's own dismissal of C no longer applies either. A is approved, so the
+    // flag is closed (shown for information), not open.
     detail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${a}`)
-    assert.deepEqual(detail.body.duplicateChecks.flags.map((flag) => [flag.kind, flag.status]), [['likely', 'dismissed'], ['possible', 'open']])
+    assert.deepEqual(detail.body.duplicateChecks.flags.map((flag) => [flag.kind, flag.status]), [['likely', 'dismissed'], ['possible', 'closed']])
+    assert.equal(detail.body.duplicateChecks.flags[1].otherSideDismissal, null)
+    assert.equal(detail.body.duplicateChecks.openCount, 0)
 
     // Cancelling the original clears the flag of the bill that matched it.
     const d = await create(bill('DUP-GRN-4', 'C 0077', '2026-09-28', '4.0000'), 'dup-create-d')

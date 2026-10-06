@@ -13,6 +13,7 @@ import {
 } from "./operational-finance-policy.mjs";
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
 import {
+  DUPLICATE_CLOSED_STATUSES,
   DUPLICATE_KINDS,
   loadDuplicateChecks,
   workspaceTimezone,
@@ -414,27 +415,45 @@ const isSupplierCreditMemoNumberConflict = (error) =>
 // An open flag asks the approver to dismiss it with a reason, or to cancel the
 // bill, before approval; nothing is held on its own and payments are not
 // touched. A same-amount flag reveals that two totals are equal, so a role
-// that cannot read finance amounts is told that such flags are hidden from
-// it, never which ones or how many.
+// that cannot read finance amounts is not shown which bill or how many; it is
+// told that a same-amount check waits for someone who can see amounts.
 const DUPLICATE_REASON_MAX = 500;
-const duplicateFlagView = (flag) => ({
+const duplicateFlagView = (flag, amountsVisible) => ({
   kind: flag.kind,
   otherInvoiceId: flag.otherInvoiceId,
+  otherInvoice: flag.otherInvoice
+    ? { ...flag.otherInvoice, totalAmount: amountsVisible ? flag.otherInvoice.totalAmount : null }
+    : null,
   daysApart: flag.daysApart,
   windowDays: flag.windowDays,
 });
 
-function duplicateReviewIssue(openFlags, amountsVisible) {
+// The issues that hold approval while flags are open: the flags this approver
+// can see, each with the other bill, and a separate issue when only someone
+// who can see amounts can review the rest.
+function duplicateReviewIssues(openFlags, amountsVisible) {
   const shown = openFlags.filter((flag) => amountsVisible || flag.kind !== "possible");
-  return {
-    code: "DUPLICATE_REVIEW_REQUIRED",
-    message: "This bill may duplicate another bill from the same supplier. Dismiss each open duplicate flag with a reason, or cancel the bill, before approving it.",
-    status: 409,
-    details: {
-      flags: shown.map(duplicateFlagView),
-      possibleHidden: !amountsVisible,
-    },
-  };
+  const hidden = shown.length < openFlags.length;
+  const issues = [];
+  if (shown.length)
+    issues.push({
+      code: "DUPLICATE_REVIEW_REQUIRED",
+      message: "This bill may duplicate another bill from the same supplier. Dismiss each open duplicate flag with a reason, or cancel the bill, before approving it.",
+      status: 409,
+      details: {
+        flags: shown.map((flag) => duplicateFlagView(flag, amountsVisible)),
+        possibleHidden: !amountsVisible,
+        hiddenOpen: hidden,
+      },
+    });
+  if (hidden)
+    issues.push({
+      code: "DUPLICATE_REVIEW_HIDDEN",
+      message: "A same-amount duplicate check on this bill needs review by someone who can see amounts before approval.",
+      status: 409,
+      details: { flags: [], possibleHidden: true, hiddenOpen: true },
+    });
+  return issues;
 }
 
 const duplicateFlagNotFound = () => ({
@@ -443,9 +462,15 @@ const duplicateFlagNotFound = () => ({
   status: 409,
 });
 
+const duplicateFlagChanged = () => ({
+  code: "DUPLICATE_FLAG_CHANGED",
+  message: "The other bill changed after this flag was shown. Reload the bill and review the flag again.",
+  status: 409,
+});
+
 function dismissDuplicateIssues(invoice, version, input) {
   const issues = [];
-  if (["approved", "cancelled"].includes(invoice.status))
+  if (DUPLICATE_CLOSED_STATUSES.includes(invoice.status))
     issues.push({
       code: "SUPPLIER_INVOICE_STATUS_INVALID",
       message: "Duplicate flags are dismissed before approval; this bill is already approved or cancelled.",
@@ -1599,8 +1624,7 @@ export function createOperationalFinanceCommandService({
         status: 409,
       });
     const { openFlags } = await duplicateChecks(prisma, actor.tenantId, invoice);
-    if (openFlags.length)
-      blockingIssues.push(duplicateReviewIssue(openFlags, amountsVisible(actor)));
+    blockingIssues.push(...duplicateReviewIssues(openFlags, amountsVisible(actor)));
     const typedNumber = text(input.obligationNumber);
     if (typedNumber && (await payableNumberTaken(prisma, actor.tenantId, typedNumber)))
       blockingIssues.push(payableNumberDuplicate(typedNumber));
@@ -1678,10 +1702,8 @@ export function createOperationalFinanceCommandService({
         // Recomputed here, so a bill entered or edited after the preview is
         // seen. Not retryable: the approver has to look at the flag.
         const { openFlags } = await duplicateChecks(tx, actor.tenantId, current);
-        if (openFlags.length) {
-          const issue = duplicateReviewIssue(openFlags, amountsVisible(actor));
-          fail(issue.code, issue.message, issue.status, issue.details);
-        }
+        const [issue] = duplicateReviewIssues(openFlags, amountsVisible(actor));
+        if (issue) fail(issue.code, issue.message, issue.status, issue.details);
         const typedNumber = normalized.obligationNumber;
         if (typedNumber && (await payableNumberTaken(tx, actor.tenantId, typedNumber))) {
           const duplicate = payableNumberDuplicate(typedNumber);
@@ -1763,7 +1785,9 @@ export function createOperationalFinanceCommandService({
   // The approver dismisses one duplicate flag of this bill with a reason. The
   // flag is recomputed, so only a flag that still holds can be dismissed, and
   // the dismissal keeps the basis it was given on: editing either bill later
-  // reopens it. The bill's version is checked but not changed.
+  // reopens it. The bill's version is checked but not changed. The request
+  // names the other bill's version as shown, so a dismissal is never recorded
+  // against a state of the other bill the approver did not see.
   async function previewDismissDuplicate(invoiceId, input, context) {
     assertEnabled(env);
     const actor = await resolveProvisionedActor(prisma, assertIdentity(context));
@@ -1774,16 +1798,18 @@ export function createOperationalFinanceCommandService({
     if (!invoice)
       fail("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404);
     const version = expectedVersion(input.expectedVersion);
+    const otherVersion = expectedVersion(input.otherVersion, "otherVersion");
     const blockingIssues = dismissDuplicateIssues(invoice, version, input);
     const checks = await duplicateChecks(prisma, actor.tenantId, invoice);
     const flag = openFlagNamed(checks, actor, text(input.otherInvoiceId), text(input.kind));
     if (!flag) blockingIssues.push(duplicateFlagNotFound());
+    else if (flag.otherInvoice?.version !== otherVersion) blockingIssues.push(duplicateFlagChanged());
     return {
       operation: "dismiss_supplier_invoice_duplicate",
       allowed: blockingIssues.length === 0,
       blockingIssues,
       expectedVersion: version,
-      flag: flag ? duplicateFlagView(flag) : null,
+      flag: flag ? duplicateFlagView(flag, amountsVisible(actor)) : null,
       openFlagsAfter: visibleOpenFlags(checks, actor).length - (flag ? 1 : 0),
       paymentExecution: false,
       ledgerMutation: false,
@@ -1795,6 +1821,7 @@ export function createOperationalFinanceCommandService({
       invoiceId: required(invoiceId, "invoiceId"),
       expectedVersion: expectedVersion(input.expectedVersion),
       otherInvoiceId: text(input.otherInvoiceId),
+      otherVersion: expectedVersion(input.otherVersion, "otherVersion"),
       kind: text(input.kind),
       reason: text(input.reason),
     };
@@ -1821,6 +1848,10 @@ export function createOperationalFinanceCommandService({
         if (!flag) {
           const missing = duplicateFlagNotFound();
           fail(missing.code, missing.message, missing.status);
+        }
+        if (flag.otherInvoice?.version !== normalized.otherVersion) {
+          const changed = duplicateFlagChanged();
+          fail(changed.code, changed.message, changed.status);
         }
         const review = await tx.supplierInvoiceDuplicateReview.create({
           data: {
@@ -1861,7 +1892,9 @@ export function createOperationalFinanceCommandService({
             evidence: {
               reviewId: review.id,
               otherInvoiceId: flag.otherInvoiceId,
+              otherVersion: normalized.otherVersion,
               kind: flag.kind,
+              numberKey: flag.numberKey ?? null,
               daysApart: flag.daysApart,
               windowDays: flag.windowDays,
               basis: flag.basis,
