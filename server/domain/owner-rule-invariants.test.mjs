@@ -8,7 +8,9 @@ import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { answerAiSkill } from './ai-skills.mjs'
 import { aiSkillFormatter } from './ai-skill-presenter.mjs'
-import { compareSignalsByDate } from './ai-skill-signals.mjs'
+import { buildAiResponseContractV2 } from './ai-response-contract-v2.mjs'
+import { buildAiSupplierOperationalResponse } from './ai-supplier-operational-query.mjs'
+import { createAiUserScenarioDb } from './test-fixtures/ai-user-scenario.mjs'
 import { analyticsCopy, analyticsCopyPairs } from '../../src/modules/reports/analyticsCopy.ts'
 import { reportWorkbook } from '../../src/modules/reports/reportWorkbook.ts'
 import { metricDisplayValue } from '../../src/modules/reports/metricDisplay.ts'
@@ -104,13 +106,14 @@ test('rule 1: quantities are never added across SKUs or units, in English and Ch
 
 test('rule 1: the supplier summary keeps rejected quantities per SKU and unit', () => {
   const actor = { tenantId: 't1', permissionCodes: new Set(['receiving.read', 'procurement.purchase_order.read', 'finance.partner_snapshot.read']) }
-  const lines = [{ sku: 'BOLT', unit: 'pcs', rejectedQty: 2 }, { sku: 'BOLT', unit: 'box', rejectedQty: 1 }, { sku: 'CABLE', unit: 'm', rejectedQty: 3 }]
+  // The last two lines have no SKU or unit: they may be different items.
+  const lines = [{ sku: 'BOLT', unit: 'pcs', rejectedQty: 2 }, { sku: 'BOLT', unit: 'box', rejectedQty: 1 }, { sku: 'CABLE', unit: 'm', rejectedQty: 3 }, { id: 'n1', rejectedQty: 4 }, { id: 'n2', sku: null, unit: null, rejectedQty: 5 }]
   const result = buildSupplierActionSummaries({
     actor, now: new Date('2026-07-24T12:00:00.000Z'),
     records: { suppliers: [{ tenantId: 't1', id: 'a', name: 'Acme' }], payables: [], invoices: [], settlements: [], purchaseOrders: [], rfqs: [], bankExceptions: [], receiving: [{ tenantId: 't1', id: 'GRN-1', documentNumber: 'GRN-1', supplierId: 'a', poId: 'PO-1', status: 'posted', arrivedAt: '2026-07-20T10:00:00.000Z', lines }] },
   })
   const receiving = result.items[0].receiving
-  assert.deepEqual(receiving.rejectedQuantities.map((row) => [row.sku, row.unit, row.quantity]), [['BOLT', 'box', 1], ['BOLT', 'pcs', 2], ['CABLE', 'm', 3]])
+  assert.deepEqual(receiving.rejectedQuantities.map((row) => [row.sku, row.unit, row.quantity]), [[null, null, 4], [null, null, 5], ['BOLT', 'box', 1], ['BOLT', 'pcs', 2], ['CABLE', 'm', 3]])
   assert.ok(Object.values(receiving).every((value) => typeof value !== 'number' || value === receiving.exceptionCount || value === receiving.pendingEvidenceCount), 'no single rejected total')
 })
 
@@ -131,6 +134,27 @@ const rankedLists = {
   supplier_attention: (result) => result.suppliers.map((group) => ({ ...group.items[0], lineId: `supplier_attention:${group.supplierId}` })),
 }
 
+// The documented order, written out here rather than taken from the code
+// under test: the groups in this order, and within a group the printed date
+// never goes back. Today's priorities and the supplier list: past due (the
+// longest late first), due within 7 days, open problems (the oldest first),
+// undated, due later. The open problems list: by the printed date alone, the
+// undated stock problems last.
+const DOCUMENTED_GROUPS = ['overdue', 'due_soon', 'open', 'undated', 'due_later']
+const groupOf = (when) => when?.kind === 'due' ? (when.days <= 7 ? 'due_soon' : 'due_later') : when?.kind || 'undated'
+const orderKey = {
+  today_priorities: (line) => [DOCUMENTED_GROUPS.indexOf(groupOf(line.when)), line.when?.date || ''],
+  supplier_attention: (line) => [DOCUMENTED_GROUPS.indexOf(groupOf(line.when)), line.when?.date || ''],
+  highest_risk_items: (line) => [line.when?.date ? 0 : 1, line.when?.date || ''],
+}
+function assertDocumentedOrder(skillId, lines) {
+  for (let index = 1; index < lines.length; index += 1) {
+    const [previousGroup, previousDate] = orderKey[skillId](lines[index - 1])
+    const [group, day] = orderKey[skillId](lines[index])
+    assert.ok(previousGroup < group || (previousGroup === group && previousDate <= day), `${skillId}: line ${index + 1} (${lines[index].id} ${day || 'undated'}) comes after ${lines[index - 1].id} ${previousDate || 'undated'}`)
+  }
+}
+
 test('rule 2: ranked assistant lists are ordered by date and every dated line prints its date', async () => {
   const { facts, answer } = await skillAnswers()
   for (const [skillId, linesOf] of Object.entries(rankedLists)) {
@@ -138,7 +162,7 @@ test('rule 2: ranked assistant lists are ordered by date and every dated line pr
       const { result, response } = answer(skillId, language)
       const lines = linesOf(result)
       assert.ok(lines.length >= 2, `${skillId} has a list to check`)
-      for (let index = 1; index < lines.length; index += 1) assert.ok(compareSignalsByDate(lines[index - 1], lines[index]) <= 0, `${skillId} line ${index + 1} is out of date order`)
+      assertDocumentedOrder(skillId, lines)
       const day = aiSkillFormatter(facts, language).day
       for (const line of lines.filter((entry) => entry.when?.date)) {
         const evidence = response.keyEvidence.find((item) => item.id === (line.lineId || line.id))
@@ -147,6 +171,10 @@ test('rule 2: ranked assistant lists are ordered by date and every dated line pr
       }
     }
   }
+  // The open problems list on the scenario: INV-001 (open since Sep 24) is
+  // older than PO-001 (promised Sep 25), so it comes first.
+  const risk = answer('highest_risk_items', 'en-US').result.items.map((item) => [item.id, item.when.date])
+  assert.ok(risk.findIndex(([id]) => id === 'invoice_variance:INV-001') < risk.findIndex(([id]) => id === 'po_overdue:PO-001'), JSON.stringify(risk))
   // Overdue purchase orders: the longest late first, each with its promised date.
   for (const language of LANGUAGES) {
     const { result, response } = answer('purchase_orders', language)
@@ -189,6 +217,15 @@ test('rule 3: assistant and supplier payloads carry no weight or score', async (
     records: { suppliers: [{ tenantId: 't1', id: 'a', name: 'Acme' }, { tenantId: 't1', id: 'b', name: 'Beta' }], invoices: [invoice], payables: [{ tenantId: 't1', id: 'pay', supplierId: 'a', supplierInvoiceId: 'inv', supplierInvoice: invoice, currency: 'USD', outstandingAmount: 100, dueDate: '2026-07-10T00:00:00.000Z', status: 'approved' }], settlements: [], purchaseOrders: [], receiving: [], rfqs: [], bankExceptions: [] },
   })
   assert.deepEqual(forbiddenKeys(summaries), [])
+  // The older supplier answers: the response contract and the SRM module cards.
+  const db = createAiUserScenarioDb()
+  for (const question of ['哪些供应商有潜在风险？', '这个供应商最近有什么问题？', '今天有什么需要我处理？']) {
+    const contract = buildAiResponseContractV2(db, { moduleId: 'overview', question }).cards[0].data
+    assert.deepEqual(forbiddenKeys(contract.keyEvidence), [], question)
+  }
+  for (const question of ['查看高风险供应商', '解释评分规则', '下一步跟进']) {
+    assert.deepEqual(forbiddenKeys(buildAiSupplierOperationalResponse(db, { moduleId: 'srm', question }).cards), [], question)
+  }
   // Ordered by the oldest open reason, each dated.
   assert.deepEqual(summaries.items.map((row) => [row.supplier.id, row.priority.since]), [['a', '2026-07-01'], ['b', null]])
 })
@@ -200,16 +237,20 @@ test('rule 4: no supplier rate is shown below the minimum sample of 5', () => {
   const five = summarizeScorecardLines({ lines: Array.from({ length: 5 }, (_, index) => line(index)) }).metrics
   assert.equal(five.onTime.rate, 1)
 
-  // On the supplier dashboard: Acme has 6 promised lines (a rate) but only 4
-  // received lines and 2 decided invoices, so no accepted or matched rate;
-  // Bolt has 2 promised lines, so no on-time rate.
+  // On the supplier dashboard: Acme has 6 orders of one line each, each with
+  // its own promised date (6 deliveries, so a rate) but only 4 received lines
+  // and 2 decided invoices, so no accepted or matched rate; Bolt has 2, so no
+  // on-time rate.
   const promised = (id) => ({ id, sku: 'A', itemName: 'A', unit: 'pcs', orderedQuantity: 10, receivedQuantity: 0, unitPrice: 10, amount: 100, originalPromisedDate: '2026-09-20' })
-  const order = (id, supplierName, ids) => ({ id, supplierName, status: 'issued', currency: 'USD', totalAmount: ids.length * 100, createdAt: '2026-09-02T12:00:00.000Z', expectedDate: '2026-09-20T00:00:00.000Z', lines: ids.map(promised) })
-  const receipt = (id, poId, supplierName, ids) => ({ id, poId, supplierName, status: 'received', postingStatus: 'posted', arrivedAt: '2026-09-18T15:00:00.000Z', lines: ids.map((lineId) => ({ purchaseOrderLineId: lineId, acceptedQty: 10, rejectedQty: 0 })) })
+  const order = (id, supplierName, lineId, day) => ({ id, supplierName, status: 'issued', currency: 'USD', totalAmount: 100, createdAt: '2026-09-02T12:00:00.000Z', expectedDate: `${day}T00:00:00.000Z`, lines: [{ ...promised(lineId), originalPromisedDate: day }] })
+  const receipt = (poId, supplierName, lineId) => ({ id: `GRN-${lineId}`, poId, supplierName, status: 'received', postingStatus: 'posted', arrivedAt: '2026-09-09T15:00:00.000Z', lines: [{ purchaseOrderLineId: lineId, acceptedQty: 10, rejectedQty: 0 }] })
+  const acme = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6'].map((lineId, index) => order(`PO-${lineId}`, 'Acme', lineId, `2026-09-1${index}`))
+  const bolt = ['B1', 'B2'].map((lineId, index) => order(`PO-${lineId}`, 'Bolt', lineId, `2026-09-1${index}`))
+  const received = (count) => [...acme.slice(0, count).map((po) => receipt(po.id, 'Acme', po.lines[0].id)), ...bolt.map((po) => receipt(po.id, 'Bolt', po.lines[0].id))]
   const matched = (id, poId) => ({ id, invoiceNumber: id, poId, supplierName: 'Acme', status: 'approved', matchStatus: 'matched', totalAmount: 100, amount: 100, currency: 'USD', invoiceDate: '2026-09-21T12:00:00.000Z', lines: [{ amount: 100 }] })
   const thin = context({
-    purchaseOrders: [order('PO-A', 'Acme', ['A1', 'A2', 'A3', 'A4', 'A5', 'A6']), order('PO-B', 'Bolt', ['B1', 'B2'])],
-    receipts: [receipt('GRN-A', 'PO-A', 'Acme', ['A1', 'A2', 'A3', 'A4']), receipt('GRN-B', 'PO-B', 'Bolt', ['B1', 'B2'])],
+    purchaseOrders: [...acme, ...bolt],
+    receipts: received(4),
     supplierInvoices: [matched('INV-1', 'PO-A'), matched('INV-2', 'PO-A')],
   })
   const report = buildRuntimeGovernedReport(thin, { subject: 'suppliers', filters: { from: '2026-09-01', to: '2026-09-30' } }, asOf)
@@ -219,7 +260,7 @@ test('rule 4: no supplier rate is shown below the minimum sample of 5', () => {
   assert.ok(!chart('supplier_scorecard').seriesKeys.includes('Invoices matched'))
   assert.ok(chart('supplier_performance_matrix').data.every((row) => row.name !== 'Bolt'))
   // With a fifth received line, Acme's accepted rate is shown.
-  const enough = { ...thin, receipts: [receipt('GRN-A', 'PO-A', 'Acme', ['A1', 'A2', 'A3', 'A4', 'A5']), receipt('GRN-B', 'PO-B', 'Bolt', ['B1', 'B2'])] }
+  const enough = { ...thin, receipts: received(5) }
   const shown = buildRuntimeGovernedReport(enough, { subject: 'suppliers', filters: { from: '2026-09-01', to: '2026-09-30' } }, asOf)
   assert.ok(shown.charts.find((item) => item.id === 'supplier_scorecard').seriesKeys.includes('Lines accepted in full'))
 })
@@ -253,7 +294,8 @@ test('rule 5: the reports and supplier copy have English and Chinese for every e
   ].map((item) => metricDisplayValue(item, scope, { locale: 'en-US', language: 'en-US' }))
   assert.equal(new Set(labels).size, labels.length)
   const english = [...labels, 'Single currency', 'Filtered currency'].filter((label) => !CJK.test(label))
-  assert.ok(english.includes('Mixed units') && english.includes('Multiple SKUs') && english.includes('Fewer than 5 lines'))
+  // The too-few label is taken from the display code, whatever its wording.
+  assert.ok(english.includes('Mixed units') && english.includes('Multiple SKUs') && english.includes(labels[3]))
   for (const label of english) {
     assert.match(analyticsCopy(label, 'zh-CN'), CJK, `"${label}" in Chinese`)
     assert.equal(analyticsCopy(label, 'en-US'), label)
