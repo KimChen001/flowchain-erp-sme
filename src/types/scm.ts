@@ -85,6 +85,8 @@ export type PurchaseOrder = {
   po: string;
   supplier: string;
   created: string;
+  // When the PO was issued to the supplier (an instant); null when not recorded.
+  issuedAt?: string | null;
   eta: string;
   owner: string;
   amount: number;

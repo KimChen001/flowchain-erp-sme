@@ -18,7 +18,9 @@ import { apiJson } from "../../lib/api-client";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
-import { formatCurrencyAmount, todayInTimeZone } from "../../lib/format";
+import { formatCurrencyAmount, instantDayInTimeZone, todayInTimeZone } from "../../lib/format";
+import { useI18n } from "../../i18n/I18n";
+import { usePriceHistoryCopy } from "../procurement/priceHistoryCopy";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import type { PurchaseOrder, ReceivingDoc, SupplierInvoice } from "../../types/scm";
 import {
@@ -542,6 +544,8 @@ export default function PurchasingOrdersPage({
   onActiveContextChange?: (context: ActiveContext | null) => void;
 }) {
   const copy = useWorkspaceCopy();
+  const priceCopy = usePriceHistoryCopy();
+  const { timezone } = useI18n();
   const warehouseName = useWarehouseNames();
   const canOpenRoute = useRouteAvailability();
   const location = useLocation();
@@ -738,6 +742,12 @@ export default function PurchasingOrdersPage({
     window.setTimeout(() => setHighlightedArea(""), 5000);
   }
 
+  // The day the PO was issued to the supplier, in the workspace timezone.
+  const issueDateField = (po: PurchaseOrder) => {
+    const day = instantDayInTimeZone(po.issuedAt, timezone);
+    return { label: priceCopy("issued"), value: day || priceCopy("issueDateNotRecorded") };
+  };
+
   const detailContent = selectedPO && (() => {
     const fmt = (value: number) => formatCurrencyAmount(value, selectedPO.currency);
     const poLines = buildPoLineRows(selectedPO, facts).map((row) => ({ ...row, warehouse: warehouseName(row.warehouse) }));
@@ -805,6 +815,7 @@ export default function PurchasingOrdersPage({
               { label: "供应商", value: selectedPO.supplier },
               { label: "采购负责人", value: selectedPO.owner },
               { label: "创建日期", value: selectedPO.created },
+              issueDateField(selectedPO),
               { label: "预计到货", value: selectedPO.eta },
               { label: "目标仓库", value: poLines[0]?.warehouse || warehouseName(selectedPO.warehouseId) || "目标仓库待补齐" },
               { label: "订单金额", value: fmt(poAmount(selectedPO)), tone: "info" },
