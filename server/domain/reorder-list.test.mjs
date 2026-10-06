@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildReorderList, dailyDemand, orderByDay, preferredSupplierFor, recordedReorderPoint } from './reorder-list.mjs'
+import { NO_REORDER_POINT_LISTED, buildReorderList, dailyDemand, orderByDay, preferredSupplierFor, recordedReorderPoint } from './reorder-list.mjs'
 
 const TODAY = '2026-10-05'
 const TZ = 'America/New_York'
@@ -135,7 +135,12 @@ test('only a recorded reorder point is judged: none, 0 and safety stock alone ar
     allocationRows: [allocation('NONE', { onHand: 0 }), allocation('ZERO', { onHand: 0 }), allocation('OFF', { onHand: 0 }), allocation('SET', { onHand: 0 })],
   })
   assert.deepEqual(list.rows.map((row) => row.sku), ['SET'])
-  assert.deepEqual(list.noReorderPoint, { count: 2, href: '/app/master-data/items' })
+  // Each item to set a reorder point on is named, to link to its record.
+  assert.deepEqual(list.noReorderPoint, { count: 2, href: '/app/master-data/items', items: [{ itemId: 'ITEM-NONE', sku: 'NONE', itemName: 'Item NONE' }, { itemId: 'ITEM-ZERO', sku: 'ZERO', itemName: 'Item ZERO' }] })
+  const many = build({ items: Array.from({ length: NO_REORDER_POINT_LISTED + 5 }, (_, index) => item(`N-${String(index).padStart(3, '0')}`, { reorderPoint: null })) })
+  assert.equal(many.noReorderPoint.count, NO_REORDER_POINT_LISTED + 5)
+  assert.equal(many.noReorderPoint.items.length, NO_REORDER_POINT_LISTED)
+  assert.equal(many.noReorderPoint.items[0].sku, 'N-000')
 })
 
 test('incomplete stock is not judged', () => {
@@ -184,21 +189,65 @@ test('the preferred supplier shows its lead time and minimum order quantity only
     { id: 'r3', payload: { itemId: 'ITEM-C', supplierId: 'SUP-3', approved: false, preferred: true } },
     { id: 'r4', payload: { itemId: 'ITEM-D', supplierId: 'SUP-3', minimumOrderQuantity: 24, leadTimeDays: 0 } },
   ]
-  assert.deepEqual(preferredSupplierFor(item('A'), links, suppliers), { id: 'SUP-1', code: 'S1', name: 'Acme', leadTimeDays: 7, minimumOrderQuantity: null })
+  assert.deepEqual(preferredSupplierFor(item('A'), links, suppliers), { id: 'SUP-1', code: 'S1', name: 'Acme', leadTimeDays: 7, minimumOrderQuantity: null, moqUnit: null })
   assert.equal(preferredSupplierFor(item('B'), links, suppliers), null, 'an inactive supplier is not a source')
   assert.equal(preferredSupplierFor(item('C'), links, suppliers), null, 'an unapproved link is not a source')
   assert.equal(preferredSupplierFor(item('D'), links, suppliers), null, 'a link that is not preferred, for an item with no preferred supplier')
-  assert.deepEqual(preferredSupplierFor(item('D', { preferredSupplierId: 'SUP-3' }), links, suppliers), { id: 'SUP-3', code: '', name: 'Gamma', leadTimeDays: 0, minimumOrderQuantity: 24 })
+  assert.deepEqual(preferredSupplierFor(item('D', { preferredSupplierId: 'SUP-3' }), links, suppliers, { moqUnit: 'CASE' }), { id: 'SUP-3', code: '', name: 'Gamma', leadTimeDays: 0, minimumOrderQuantity: 24, moqUnit: 'CASE' })
 
   const list = build({ items: [item('A')], allocationRows: [allocation('A', { onHand: 0 })], supplierLinks: links, suppliers: [...suppliers.values()] })
   assert.equal(rowOf(list, 'A').purchaseRequest.supplierId, 'SUP-1')
+  // The minimum order quantity is in the purchase unit, the stock unit when none is recorded.
+  const caseItem = build({ items: [item('D', { preferredSupplierId: 'SUP-3', metadata: { purchaseUnit: 'CASE' } }), item('E', { preferredSupplierId: 'SUP-3' })], allocationRows: [allocation('D', { onHand: 0 }), allocation('E', { onHand: 0 })], supplierLinks: [...links, { id: 'r5', payload: { itemId: 'ITEM-E', supplierId: 'SUP-3', minimumOrderQuantity: 2 } }], suppliers: [...suppliers.values()] })
+  assert.equal(rowOf(caseItem, 'D').supplier.moqUnit, 'CASE')
+  assert.equal(rowOf(caseItem, 'E').supplier.moqUnit, 'pcs')
   assert.deepEqual(list.suppliers, [{ id: 'SUP-1', code: 'S1', name: 'Acme' }])
 })
 
-test('the scope says whose warehouses the position covers', () => {
-  assert.deepEqual(build({}).scope, { kind: 'all_warehouses', warehouseCount: null })
-  assert.deepEqual(build({ scope: { warehouseIds: ['WH-1', 'WH-2'] } }).scope, { kind: 'reader_warehouses', warehouseCount: 2 })
+test('a reader of only some warehouses gets no position: the reorder point covers every warehouse', () => {
+  assert.deepEqual(build({ scope: { totalWarehouses: 3 } }).scope, { kind: 'all_warehouses', warehouseCount: null, totalWarehouseCount: 3 })
+  const list = build({
+    items: [item('A'), item('B', { reorderPoint: null })],
+    allocationRows: [allocation('A', { onHand: 0 })],
+    scope: { warehouseIds: ['WH-1'], totalWarehouses: 2 },
+  })
+  assert.deepEqual(list.scope, { kind: 'reader_warehouses', warehouseCount: 1, totalWarehouseCount: 2 })
+  // A at 0 against 20 would be "order now" over every warehouse; for this
+  // reader it is not checked, and no quantity is shown.
+  assert.deepEqual(list.rows, [])
+  assert.deepEqual(list.notJudged, [{ itemId: 'ITEM-A', sku: 'A', itemName: 'Item A', reason: 'warehouse_scope' }])
+  assert.equal(list.noReorderPoint.count, 1)
   assert.throws(() => buildReorderList({ today: '' }), /calendar day/)
+})
+
+test('an item with no stock unit recorded is not checked, and shipments in two units are never added', () => {
+  const list = build({
+    items: [item('NOUNIT', { unit: '', reorderPoint: 20 })],
+    allocationRows: [allocation('NOUNIT', { onHand: 0 })],
+    shipmentLines: [...shipments('NOUNIT', 8, 10, 'pcs'), ...shipments('NOUNIT', 2, 3, 'CASE')],
+  })
+  assert.deepEqual(list.rows, [])
+  assert.deepEqual(list.notJudged.map((row) => [row.sku, row.reason]), [['NOUNIT', 'stock_unit_not_recorded']])
+  // The rules alone: without a stock unit, pcs and CASE are never summed.
+  const mixed = dailyDemand({ lines: [...shipments('X', 8, 10, 'pcs'), ...shipments('X', 2, 3, 'CASE')], stockUnit: '', today: TODAY, timeZone: TZ })
+  assert.equal(mixed.averageDailyDemand, null)
+  assert.equal(mixed.shippedQuantity, 0)
+  assert.deepEqual(mixed.unitsMixed, ['pcs', 'CASE'])
+  // One unit throughout is still one quantity.
+  const single = dailyDemand({ lines: shipments('X', 8, 9, 'pcs'), stockUnit: '', today: TODAY, timeZone: TZ })
+  assert.equal(single.averageDailyDemand, 0.8)
+  assert.deepEqual(single.unitsMixed, [])
+})
+
+test('shipment lines with no unit are counted in the stock unit and flagged, one by one', () => {
+  const list = build({
+    items: [item('A')],
+    allocationRows: [allocation('A', { onHand: 30 })],
+    shipmentLines: [...shipments('A', 8, 9), { itemId: 'ITEM-A', unit: '', quantity: 18, postedAt: '2026-09-01T15:00:00Z' }],
+  })
+  const a = rowOf(list, 'A')
+  assert.equal(a.demand.shippedQuantity, 90)
+  assert.deepEqual(a.flags.filter((flag) => flag.code.startsWith('shipment_')), [{ code: 'shipment_unit_not_recorded', count: 1 }])
 })
 
 test('order-by day arithmetic runs on whole ten-thousandths', () => {

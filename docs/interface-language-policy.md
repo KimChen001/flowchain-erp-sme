@@ -61,7 +61,10 @@ names, or supplier names in place. Translate their presentation where appropriat
   flags, empty states and its "Create purchase request" action. The purchase request it
   opens is labelled "Prefilled from the reorder list" / 已根据补货清单预填, and the reason
   it suggests is written in the interface language. SKUs, units, supplier names and
-  purchase order numbers stay as stored; order-by dates are workspace days.
+  purchase order numbers stay as stored; order-by dates are workspace days. The note
+  that a purchase order line in another unit than the item's stock unit is not counted
+  as incoming is in both languages on the reports page and in the assistant's stock and
+  order answers.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.

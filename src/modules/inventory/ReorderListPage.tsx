@@ -14,12 +14,12 @@ import { useReorderListCopy, type ReorderListCopyKey } from "./reorderListCopy";
 // is ordered from here.
 
 type Flag = { code: string; orderNumber?: string | null; unit?: string; dueDay?: string; count?: number };
-type Supplier = { id: string; code: string; name: string; leadTimeDays: number | null; minimumOrderQuantity: number | null };
+type Supplier = { id: string; code: string; name: string; leadTimeDays: number | null; minimumOrderQuantity: number | null; moqUnit: string | null };
 type ReorderRow = {
   itemId: string;
   sku: string;
   itemName: string;
-  unit: string | null;
+  unit: string;
   orderByDate: string;
   orderNow: boolean;
   daysUntilOrderBy: number;
@@ -34,19 +34,34 @@ type ReorderRow = {
   flags: Flag[];
   purchaseRequest: { itemId: string; supplierId: string | null; quantity: number | null };
 };
+type ItemRef = { itemId: string; sku: string; itemName: string };
+type NotChecked = ItemRef & { reason: "stock_incomplete" | "stock_unit_not_recorded" | "warehouse_scope" };
 type ReorderList = {
   today: string;
   timeZone: string;
-  scope: { kind: "all_warehouses" | "reader_warehouses"; warehouseCount: number | null };
+  scope: { kind: "all_warehouses" | "reader_warehouses"; warehouseCount: number | null; totalWarehouseCount: number | null };
   rule: { windowDays: number; minShipmentDays: number };
   rows: ReorderRow[];
-  notJudged: { itemId: string; sku: string; itemName: string; reason: string }[];
-  noReorderPoint: { count: number; href: string };
+  notJudged: NotChecked[];
+  noReorderPoint: { count: number; href: string; items: ItemRef[] };
   summary: { listed: number; orderNow: number; notJudged: number; noReorderPoint: number; aboveReorderPointWithoutHistory: number };
   suppliers: { id: string; code: string; name: string }[];
+  truncatedSubjects?: { subject: string; limit: number }[];
 };
 
 const NO_SUPPLIER = "__none__";
+const NOT_CHECKED_SECTIONS: { reason: NotChecked["reason"]; title: ReorderListCopyKey; body: ReorderListCopyKey }[] = [
+  { reason: "warehouse_scope", title: "checkScopeTitle", body: "checkScopeBody" },
+  { reason: "stock_unit_not_recorded", title: "checkNoUnitTitle", body: "checkNoUnitBody" },
+  { reason: "stock_incomplete", title: "checkStockIncompleteTitle", body: "checkStockIncompleteBody" },
+];
+const SUBJECT_KEYS: Record<string, ReorderListCopyKey> = {
+  items: "subjectItems",
+  shipment_lines: "subjectShipmentLines",
+  purchase_orders: "subjectPurchaseOrders",
+  inventory_items: "subjectStockBalances",
+  sales_orders: "subjectSalesOrders",
+};
 
 // A workspace calendar day (YYYY-MM-DD) in the interface locale. The day is
 // already the workspace's, so it is formatted as a date, not an instant.
@@ -70,22 +85,24 @@ function flagText(flag: Flag, t: ReturnType<typeof useReorderListCopy>) {
     po_line_no_due_day: () => t(hidden ? "poNoDueDayHidden" : "poNoDueDay", { po: flag.orderNumber || "" }),
     po_line_unit_not_recorded: () => t("poUnitNotRecorded"),
     all_incoming_counted: () => t("allIncomingCounted"),
-    shipment_other_unit: () => t("shipmentOtherUnit", { count: flag.count ?? 0, unit: flag.unit || "" }),
-    shipment_unit_not_recorded: () => t("shipmentUnitNotRecorded", { count: flag.count ?? 0 }),
-    stock_unit_not_recorded: () => t("stockUnitNotRecorded"),
+    shipment_other_unit: () => t.count("shipmentOtherUnit", flag.count ?? 0, { unit: flag.unit || "" }),
+    shipment_unit_not_recorded: () => t.count("shipmentUnitNotRecorded", flag.count ?? 0),
     purchase_unit_differs: () => t("purchaseUnitDiffers", { unit: flag.unit || "" }),
   };
   return (byCode[flag.code] || (() => flag.code))();
 }
 
 // The purchase request form, prefilled from the row (shared/purchase-request-prefill.mjs).
-// The quantity is left out when the request line's unit would differ.
+// Without a shortfall in the request line's unit the quantity is left for the
+// person to enter.
 function purchaseRequestHref(row: ReorderRow, reason: string) {
   const params = new URLSearchParams({ itemId: row.purchaseRequest.itemId, origin: "reorder_list", reason });
   if (row.purchaseRequest.quantity !== null) params.set("quantity", String(row.purchaseRequest.quantity));
   if (row.purchaseRequest.supplierId) params.set("suppliers", row.purchaseRequest.supplierId);
   return `/app/procurement/requests?${params.toString()}`;
 }
+
+const itemHref = (itemId: string) => `/app/master-data/items/${encodeURIComponent(itemId)}`;
 
 export default function ReorderListPage() {
   const t = useReorderListCopy();
@@ -120,7 +137,9 @@ export default function ReorderListPage() {
     setSearchParams(next, { replace: true });
   };
 
-  const scopeLabel = list?.scope.kind === "reader_warehouses" ? t("scopeReader", { n: list.scope.warehouseCount ?? 0 }) : t("scopeAll");
+  const total = list?.scope.totalWarehouseCount ?? list?.scope.warehouseCount ?? 0;
+  const scopeLabel = list?.scope.kind === "reader_warehouses" ? t.count("scopeReader", list.scope.warehouseCount ?? 0, { total }) : t("scopeAll");
+  const truncated = (list?.truncatedSubjects || []).map((entry) => t(SUBJECT_KEYS[entry.subject] || "subjectOther"));
   const columns: ReorderListCopyKey[] = ["colOrderBy", "colItem", "colOnHand", "colReserved", "colIncoming", "colPosition", "colReorderPoint", "colDemand", "colShortfall", "colSupplier", "colAction"];
 
   return (
@@ -148,16 +167,28 @@ export default function ReorderListPage() {
             <p style={{ color: A.sub }}>{t("rule", { window: list.rule.windowDays, min: list.rule.minShipmentDays })}</p>
             <p style={{ color: A.sub }} data-testid="reorder-list-horizon">{t("horizon")}</p>
             <p style={{ color: A.sub }}>{t("units")}</p>
+            {truncated.length > 0 && (
+              <p data-testid="reorder-list-truncated" style={{ color: A.orange }}>{t("truncated", { subjects: truncated.join(", ") })}</p>
+            )}
             {list.noReorderPoint.count > 0 && (
-              <p data-testid="reorder-list-no-reorder-point">
-                {list.noReorderPoint.count === 1 ? t("noReorderPointOne") : t("noReorderPoint", { n: list.noReorderPoint.count })}{" "}
-                <Link to={list.noReorderPoint.href} className="font-semibold" style={{ color: A.blue }}>{t("setIt")}</Link>
-              </p>
+              <div data-testid="reorder-list-no-reorder-point">
+                <p>{t.count("noReorderPoint", list.noReorderPoint.count)}</p>
+                <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                  {list.noReorderPoint.items.map((item) => (
+                    <li key={item.itemId}>
+                      <Link to={itemHref(item.itemId)} className="font-semibold" style={{ color: A.blue }}>{item.sku}</Link>
+                    </li>
+                  ))}
+                  {list.noReorderPoint.count > list.noReorderPoint.items.length && (
+                    <li>
+                      <Link to={list.noReorderPoint.href} style={{ color: A.blue }}>{t("noReorderPointMore", { n: list.noReorderPoint.count - list.noReorderPoint.items.length })}</Link>
+                    </li>
+                  )}
+                </ul>
+              </div>
             )}
             {list.summary.aboveReorderPointWithoutHistory > 0 && (
-              <p style={{ color: A.sub }}>
-                {list.summary.aboveReorderPointWithoutHistory === 1 ? t("aboveWithoutHistoryOne") : t("aboveWithoutHistory", { n: list.summary.aboveReorderPointWithoutHistory })}
-              </p>
+              <p style={{ color: A.sub }}>{t.count("aboveWithoutHistory", list.summary.aboveReorderPointWithoutHistory)}</p>
             )}
           </Card>
 
@@ -184,7 +215,8 @@ export default function ReorderListPage() {
             <Card className="p-10 text-center" data-testid="reorder-list-empty">
               <ClipboardList className="mx-auto mb-3" size={28} color={A.gray2} />
               <div className="text-sm font-semibold">{list.rows.length ? t("filteredEmpty") : t("emptyTitle")}</div>
-              {!list.rows.length && <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("emptyBody")}</p>}
+              {!list.rows.length && list.scope.kind === "all_warehouses" && <p className="mt-2 text-xs" style={{ color: A.sub }}>{t("emptyBody")}</p>}
+              {!list.rows.length && list.notJudged.length > 0 && <p className="mt-1 text-xs" style={{ color: A.sub }}>{t.count("emptyNotChecked", list.notJudged.length)}</p>}
             </Card>
           ) : (
             <Card className="overflow-x-auto">
@@ -225,10 +257,10 @@ export default function ReorderListPage() {
                           {row.demand.enough ? (
                             <>
                               <div>{withUnit(row.demand.averageDailyDemand, row.unit)}</div>
-                              <div style={{ color: A.sub }}>{t("demandDays", { n: row.demand.shipmentDays, window: row.demand.windowDays })}</div>
+                              <div style={{ color: A.sub }}>{t.count("demandDays", row.demand.shipmentDays, { window: row.demand.windowDays })}</div>
                             </>
                           ) : (
-                            <div style={{ color: A.sub }}>{t("notEnoughHistory", { n: row.demand.shipmentDays })}</div>
+                            <div style={{ color: A.sub }}>{t.count("notEnoughHistory", row.demand.shipmentDays)}</div>
                           )}
                         </td>
                         <td className="px-3 py-3">{withUnit(row.shortfall, row.unit)}</td>
@@ -236,8 +268,12 @@ export default function ReorderListPage() {
                           {row.supplier ? (
                             <>
                               <div className="font-semibold">{row.supplier.name}</div>
-                              <div style={{ color: A.sub }}>{row.supplier.leadTimeDays === null ? t("leadTimeNotRecorded") : t("leadTime", { n: row.supplier.leadTimeDays })}</div>
-                              <div style={{ color: A.sub }}>{row.supplier.minimumOrderQuantity === null ? t("moqNotRecorded") : t("moq", { n: formatQuantity(row.supplier.minimumOrderQuantity) })}</div>
+                              <div style={{ color: A.sub }}>{row.supplier.leadTimeDays === null ? t("leadTimeNotRecorded") : t.count("leadTime", row.supplier.leadTimeDays)}</div>
+                              <div style={{ color: A.sub }}>
+                                {row.supplier.minimumOrderQuantity === null
+                                  ? t("moqNotRecorded")
+                                  : t(row.supplier.moqUnit ? "moq" : "moqNoUnit", { n: formatQuantity(row.supplier.minimumOrderQuantity), unit: row.supplier.moqUnit || "" })}
+                              </div>
                             </>
                           ) : (
                             <span style={{ color: A.sub }}>{t("notRecorded")}</span>
@@ -261,15 +297,24 @@ export default function ReorderListPage() {
             </Card>
           )}
 
-          {list.notJudged.length > 0 && (
-            <Card className="p-4 text-xs" data-testid="reorder-list-not-judged">
-              <div className="font-semibold">{t("notJudgedTitle")}</div>
-              <p className="mt-1" style={{ color: A.sub }}>{t("notJudgedBody")}</p>
-              <ul className="mt-2 flex flex-wrap gap-2">
-                {list.notJudged.map((row) => <li key={row.itemId} className="rounded-md px-2 py-1" style={{ background: A.gray6 }}>{row.sku} · {row.itemName}</li>)}
-              </ul>
-            </Card>
-          )}
+          {NOT_CHECKED_SECTIONS.map((section) => {
+            const items = list.notJudged.filter((row) => row.reason === section.reason);
+            if (!items.length) return null;
+            const body = section.reason === "warehouse_scope" ? t.count("checkScopeBody", list.scope.warehouseCount ?? 0, { total }) : t(section.body);
+            return (
+              <Card key={section.reason} className="p-4 text-xs" data-testid={`reorder-list-not-checked-${section.reason}`}>
+                <div className="font-semibold">{t(section.title)}</div>
+                <p className="mt-1" style={{ color: A.sub }}>{body}</p>
+                <ul className="mt-2 flex flex-wrap gap-2">
+                  {items.map((row) => (
+                    <li key={row.itemId} className="rounded-md px-2 py-1" style={{ background: A.gray6 }}>
+                      <Link to={itemHref(row.itemId)} style={{ color: A.blue }}>{row.sku}</Link> · {row.itemName}
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            );
+          })}
         </>
       )}
     </div>

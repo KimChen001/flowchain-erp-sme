@@ -329,8 +329,9 @@ export async function handleInventoryRoute(ctx) {
 
   // The items to reorder, ranked by the day each one's stock position reaches
   // its recorded reorder point (server/domain/reorder-list.mjs). Stock and
-  // incoming are the allocation model's, in the reader's warehouses. Purchase
-  // order numbers in the flags need procurement.purchase_order.read.
+  // incoming are the allocation model's over every warehouse; a reader of only
+  // some warehouses gets the items as not checked. Purchase order numbers in
+  // the flags need procurement.purchase_order.read.
   if (req.method === "GET" && url.pathname === "/api/inventory/reorder-list") {
     const env = ctx.env || process.env;
     const injected = ctx.inventoryPrisma || ctx.outboundPrisma;
@@ -353,7 +354,10 @@ export async function handleInventoryRoute(ctx) {
       timeZone,
       allocationRows: model.availability,
       showPurchaseOrders: Boolean(access?.collections.purchaseOrders),
-      truncatedSubjects: context.truncatedSubjects || [],
+      // The context's subjects the list depends on: stock balances, sales
+      // orders (reservations) and purchase orders (incoming). It reads the
+      // items and shipments itself and adds its own.
+      truncatedSubjects: (context.truncatedSubjects || []).filter((entry) => ["inventory_items", "sales_orders", "purchase_orders"].includes(entry?.subject)),
     });
     send(res, 200, { ...list, generatedAt: now.toISOString() });
     return true;
