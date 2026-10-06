@@ -40,6 +40,8 @@ export const AI_AGENT_NO_SKILL = 'no_matching_skill'
 export const AI_AGENT_KNOWLEDGE = 'knowledge_search'
 const LANGUAGE_NAMES = Object.freeze({ 'en-US': 'English', 'zh-CN': 'Chinese' })
 const QUERY_LENGTH = Object.freeze({ min: 2, max: 200 })
+// The languages each knowledge search tool was offered with.
+const SEARCH_LANGUAGES = new WeakMap()
 const noSkillTool = Object.freeze({
   type: 'function',
   function: Object.freeze({
@@ -93,15 +95,21 @@ export function aiAgentTools(actor, { businessQuery = true, knowledge = null } =
 }
 
 function aiAgentKnowledgeTool(languages) {
-  const written = array(languages).map((code) => LANGUAGE_NAMES[code] || code).join(' and ')
-  return {
+  const codes = array(languages)
+  const written = codes.map((code) => LANGUAGE_NAMES[code] || code).join(' and ')
+  // English documents only: a Chinese question's terms must be translated, or
+  // keyword search finds nothing (seen on Parley, 2026-10-06).
+  const translate = !codes.includes('zh-CN') ? ' Write the query in English even when the question is in Chinese, translating its terms (采购政策 → purchasing policy, 逾期 → overdue, 跟进 → follow-up).' : ''
+  const definition = {
     type: 'function',
     function: {
       name: AI_AGENT_KNOWLEDGE,
-      description: `Search this workspace's own documents (policies, procedures, product guides) for the part of the question about what the rules or the documents say. The documents are written in ${written}.`,
-      parameters: { type: 'object', additionalProperties: false, properties: { query: { type: 'string', minLength: QUERY_LENGTH.min, maxLength: QUERY_LENGTH.max, description: `A few search words for that part, in ${written}, as the documents would word it. Not a sentence and not record numbers.` } }, required: ['query'] },
+      description: `Search this workspace's own documents (policies, procedures, product guides) for the part of the question about what the rules or the documents say. The documents are written in ${written}.${translate}`,
+      parameters: { type: 'object', additionalProperties: false, properties: { query: { type: 'string', minLength: QUERY_LENGTH.min, maxLength: QUERY_LENGTH.max, description: `${written} search words for that part, as the documents would word it: a few words, not a sentence and not record numbers.` } }, required: ['query'] },
     },
   }
+  SEARCH_LANGUAGES.set(definition.function, codes)
+  return definition
 }
 
 function aiAgentSkillTools(actor) {
@@ -133,8 +141,11 @@ function parseArguments(raw) {
 }
 
 // The calls the runtime may run, and the ones it dropped with their reasons.
+// `maxTools` counts the calls that answer parts of the question; one
+// knowledge search may come on top of them, three calls in all.
 export function validateAiAgentToolCalls(toolCalls, { message, tools, maxTools = AI_AGENT_LIMITS.maxTools }) {
   const known = new Map(array(tools).map((tool) => [tool.function.name, tool.function.parameters]))
+  const searchLanguages = new Map(array(tools).map((tool) => [tool.function.name, SEARCH_LANGUAGES.get(tool.function)]))
   const question = normalized(message)
   const calls = []
   const dropped = []
@@ -165,6 +176,8 @@ export function validateAiAgentToolCalls(toolCalls, { message, tools, maxTools =
     const query = querySchema ? (typeof args.query === 'string' ? args.query.replace(/\s+/g, ' ').trim() : null) : undefined
     if (querySchema && (!query || query.length < QUERY_LENGTH.min || query.length > QUERY_LENGTH.max)) { drop('invalid_arguments'); continue }
     if (querySchema && calls.some((entry) => entry.tool === tool)) continue
+    // Words in a language none of the documents is written in find nothing.
+    if (querySchema && /[\u3400-\u9fff]/u.test(query) && !array(searchLanguages.get(tool)).includes('zh-CN')) { drop('query_language'); continue }
     // Goals: a required list of the tool's own values (the business query).
     const goalSchema = parameters.properties.goals
     const goals = goalSchema ? args.goals : undefined
@@ -175,7 +188,8 @@ export function validateAiAgentToolCalls(toolCalls, { message, tools, maxTools =
     const key = `${tool}|${mode || ''}|${tier ?? ''}|${named.map(normalized).sort().join(',')}`
     if (seen.has(key)) continue
     seen.add(key)
-    if (calls.length >= maxTools) { drop('over_limit'); continue }
+    const answering = calls.filter((entry) => entry.query === undefined).length
+    if (querySchema ? calls.length >= AI_AGENT_LIMITS.maxTools : answering >= maxTools || calls.length >= AI_AGENT_LIMITS.maxTools) { drop('over_limit'); continue }
     calls.push({ tool, mode, records: named, ...(tier !== null ? { tier } : {}), ...(goalSchema ? { goals: [...goals] } : {}), ...(querySchema ? { query } : {}) })
   }
   return { calls, dropped }
@@ -205,8 +219,7 @@ export async function planAiAgentTools({ message, actor, env = {}, parts = 1, bu
   if (!tools.length) return { status: 'declined', reason: 'no_tools', calls: [], dropped: [], ...base() }
   const controller = new AbortController()
   const abortable = (url, init = {}) => fetchImpl(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal })
-  const searches = tools.some((tool) => tool.function.name === AI_AGENT_KNOWLEDGE) ? 1 : 0
-  const maxTools = Math.min(AI_AGENT_LIMITS.maxTools, Math.max(1, Number(parts) || 1) + searches)
+  const maxTools = Math.min(AI_AGENT_LIMITS.maxTools, Math.max(1, Number(parts) || 1))
   const required = REQUIRED_TOOL_CHOICE_KINDS.has(providerRuntimeConfig(env).kind)
   const input = { task: { type: 'agent_planning', question: text(message).slice(0, 1200), parts: maxTools }, tools: required ? [...tools, noSkillTool] : tools, ...(required ? { toolChoice: 'required' } : {}), modelPolicy: AI_MODEL_POLICIES.agentPlanning }
   let response

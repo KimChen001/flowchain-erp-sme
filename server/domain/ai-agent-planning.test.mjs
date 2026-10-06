@@ -294,6 +294,7 @@ test('the knowledge search is offered only over documents the actor may read, wi
   const tools = aiAgentTools(actor, { knowledge: ['en-US'] })
   const search = tools.find((tool) => tool.function.name === AI_AGENT_KNOWLEDGE).function
   assert.match(search.description, /written in English/)
+  assert.match(search.description, /in English even when the question is in Chinese/)
   assert.deepEqual(search.parameters.required, ['query'])
   const message = 'Which of Acme\'s overdue orders need follow-up under our purchasing policy?'
   const { calls: kept, dropped } = validateAiAgentToolCalls([
@@ -307,6 +308,14 @@ test('the knowledge search is offered only over documents the actor may read, wi
   // One search per answer; a second is left out, not counted as a call.
   assert.deepEqual(kept, [{ tool: AI_AGENT_KNOWLEDGE, mode: null, records: [], query: 'overdue follow-up' }])
   assert.deepEqual(dropped.map((row) => row.reason), ['invalid_arguments', 'invalid_arguments', 'invalid_arguments', 'invalid_arguments'])
+  // Chinese words find nothing in English documents: the call is left out.
+  assert.deepEqual(validateAiAgentToolCalls([{ name: AI_AGENT_KNOWLEDGE, arguments: { query: '采购政策 跟进' } }], { message, tools }).dropped, [{ tool: AI_AGENT_KNOWLEDGE, reason: 'query_language' }])
+  const both = aiAgentTools(actor, { knowledge: ['en-US', 'zh-CN'] })
+  assert.equal(validateAiAgentToolCalls([{ name: AI_AGENT_KNOWLEDGE, arguments: { query: '采购政策 跟进' } }], { message, tools: both }).calls.length, 1)
+  // The search comes on top of one call per part; a second skill does not.
+  const one = validateAiAgentToolCalls([{ name: 'purchase_orders', arguments: { records: ['Acme'] } }, { name: 'supplier_attention', arguments: {} }, { name: AI_AGENT_KNOWLEDGE, arguments: { query: 'overdue follow-up' } }], { message, tools, maxTools: 1 })
+  assert.deepEqual(one.calls.map((call) => call.tool), ['purchase_orders', AI_AGENT_KNOWLEDGE])
+  assert.deepEqual(one.dropped, [{ tool: 'supplier_attention', reason: 'over_limit' }])
 })
 
 test('a Chinese question about orders and policy finds the English policy through the planner\'s search words', async () => {
@@ -314,8 +323,8 @@ test('a Chinese question about orders and policy finds the English policy throug
   const run = harness({ knowledge, provider: calls(['purchase_orders', { records: ['Acme'] }], [AI_AGENT_KNOWLEDGE, { query: POLICY_QUERY }]) })
   const payload = await run.ask(POLICY_ZH, 'zh-CN')
   assert.equal(run.plans.length, 1)
-  // Two parts, plus the search.
-  assert.equal(run.plans[0].task.parts, 3)
+  // Two parts; the search comes on top.
+  assert.equal(run.plans[0].task.parts, 2)
   assert.ok(run.plans[0].tools.some((tool) => tool.function.name === AI_AGENT_KNOWLEDGE))
   assert.deepEqual(knowledge.searched, [{ query: POLICY_QUERY, question: POLICY_ZH, language: 'zh-CN' }])
   assert.deepEqual(payload.skillRouting, { source: 'model', modelStatus: 'planned' })
@@ -336,8 +345,8 @@ test('a one-part question about orders and policy goes to the planner only when 
   const run = harness({ knowledge, provider: calls(['purchase_orders', { records: ['Acme'] }], [AI_AGENT_KNOWLEDGE, { query: POLICY_QUERY }]) })
   const payload = await run.ask(POLICY_EN)
   assert.equal(run.plans.length, 1)
-  // One part, plus the search.
-  assert.equal(run.plans[0].task.parts, 2)
+  // One part; the search comes on top.
+  assert.equal(run.plans[0].task.parts, 1)
   assert.equal(run.audits.at(-1).metadata.agent.entry, 'mixed')
   assert.equal(payload.intent, 'purchase_orders')
   assert.equal(payload.supplementalKnowledge.rag.citations.length, 2)
