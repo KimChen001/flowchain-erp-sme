@@ -274,3 +274,40 @@ test('a purchase order line counts when its unit or the item unit is not recorde
   assert.ok(a.dataLimitations.includes('po_line_unit_not_recorded:SKU-A'))
   assert.ok(b.dataLimitations.includes('po_line_unit_not_recorded:SKU-B'))
 })
+
+test('the stock unit comes from the recorded units, never from a truncated item list or the pcs placeholder', () => {
+  // ZZ-100 is past the item list the context read (no master); its unit comes
+  // from itemUnits, so 12 CASE are not added to pieces.
+  const truncated = buildRuntimeInventoryAllocation(context({
+    items: [],
+    itemUnits: [{ sku: 'ZZ-100', itemId: 'ITEM-ZZ-100', unit: 'pcs' }],
+    inventoryItems: [balance('ZZ-100', 10)],
+    purchaseOrders: [unitPo('PO-0040', [unitPoLine('L40', 'ZZ-100', 12, 'CASE')])],
+  }))
+  const zz = getRuntimeSkuAvailability(truncated, 'ZZ-100')
+  assert.equal(zz.incomingApprovedPo, 0)
+  assert.deepEqual(zz.incomingExcluded.map(line => [line.orderNumber, line.unit, line.remaining]), [['PO-0040', 'CASE', 12]])
+  assert.deepEqual(zz.dataLimitations, ['po_line_unit_mismatch:ZZ-100'])
+
+  // An item read through the master data repository with no unit recorded:
+  // baseUom is the 'pcs' placeholder, recordedUnit is ''. The EA line counts,
+  // with the limitation, and is never set against the placeholder.
+  const unitless = buildRuntimeInventoryAllocation(context({
+    items: [{ sku: 'NU-1', itemId: 'ITEM-NU-1', baseUom: 'pcs', baseUnit: 'pcs', recordedUnit: '' }],
+    inventoryItems: [balance('NU-1', 0)],
+    purchaseOrders: [unitPo('PO-9', [unitPoLine('L9', 'NU-1', 50, 'EA')])],
+  }))
+  const nu = getRuntimeSkuAvailability(unitless, 'NU-1')
+  assert.equal(nu.incomingApprovedPo, 50)
+  assert.deepEqual(nu.incomingExcluded, [])
+  assert.ok(nu.dataLimitations.includes('po_line_unit_not_recorded:NU-1'))
+
+  // itemUnits wins over the master, and a line keyed by item id finds it too.
+  const byId = buildRuntimeInventoryAllocation(context({
+    items: [{ sku: 'K-1', itemId: 'ITEM-K-1', baseUom: 'pcs', recordedUnit: 'pcs' }],
+    itemUnits: [{ sku: 'K-1', itemId: 'ITEM-K-1', unit: 'kg' }],
+    inventoryItems: [balance('K-1', 0)],
+    purchaseOrders: [unitPo('PO-K', [unitPoLine('LK', 'K-1', 5, 'KG'), unitPoLine('LK2', 'K-1', 2, 'pcs')])],
+  }))
+  assert.equal(getRuntimeSkuAvailability(byId, 'K-1').incomingApprovedPo, 5)
+})

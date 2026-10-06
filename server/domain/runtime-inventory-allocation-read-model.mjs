@@ -15,9 +15,24 @@ const lineInTransit = line => purchaseOrderLineRemaining({
   orderedQuantity: line.orderedQuantity ?? line.quantityOrdered ?? line.orderedQty ?? line.quantity ?? line.qty,
   receivedQuantity: line.receivedQuantity ?? line.receivedQty,
 })
-// The unit an item's stock is kept in, from the item master. Inventory balance
-// rows are not used: they fill a missing unit with a placeholder.
-const stockUnitOf = master => text(master?.unit || master?.baseUom || master?.baseUnit)
+// The unit an item's stock is kept in, as recorded on the item master: from
+// the read context's itemUnits (every item a purchase order line names, read
+// apart from the bounded item list), else the master's recordedUnit, else a
+// plain item's unit fields. mapItem's baseUom and inventory balance rows fill
+// a missing unit with the 'pcs' placeholder, so they are never read when a
+// recorded unit is available.
+function recordedUnitsOf(context) {
+  const units = new Map()
+  for (const row of rows(context.itemUnits)) {
+    for (const key of [text(row.sku), text(row.itemId)]) if (key && !units.has(key)) units.set(key, text(row.unit))
+  }
+  return units
+}
+function stockUnitOf(units, sku, master) {
+  if (units.has(sku)) return units.get(sku)
+  if (master && Object.hasOwn(master, 'recordedUnit')) return text(master.recordedUnit)
+  return text(master?.unit || master?.baseUom || master?.baseUnit)
+}
 const poLineUnit = line => text(line.unit || line.unitSnapshot)
 const sameUnit = (a, b) => a.toLowerCase() === b.toLowerCase()
 const salesOrderIsOpen = row => !['draft', 'cancelled', 'canceled'].includes(text(row.workflowStatus || row.status))
@@ -84,6 +99,7 @@ export function buildRuntimeInventoryAllocation(context) {
     ...demandLines.map(line => line.sku),
     ...rows(context.purchaseOrders).flatMap(po => rows(po.lines).map(lineKey)),
   ].filter(Boolean))
+  const recordedUnits = recordedUnitsOf(context)
 
   const availability = [...keys].map(sku => {
     const inventoryRows = rows(context.inventoryItems).filter(row => itemKey(row) === sku)
@@ -91,7 +107,7 @@ export function buildRuntimeInventoryAllocation(context) {
     const salesOrders = [...new Set(skuDemand.map(line => line.order))]
     const committedPos = rows(context.purchaseOrders).filter(po => isPurchaseOrderReceivable(po.status))
     const master = rows(context.items).find(row => itemKey(row) === sku)
-    const stockUnit = stockUnitOf(master)
+    const stockUnit = stockUnitOf(recordedUnits, sku, master)
     const dataLimitations = []
     // A fully received line is no longer supply; an unknown remainder stays so it is reported.
     // Incoming counts only lines in the item's stock unit: a line recorded in
