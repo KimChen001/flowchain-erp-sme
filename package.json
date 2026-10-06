@@ -143,6 +143,7 @@
     "test:db:finance-read-permissions": "node scripts/run-postgres-test-files.mjs tests/postgres/finance-read-permissions.test.mjs",
     "test:db:payment-records": "node scripts/run-postgres-test-files.mjs tests/postgres/payment-records.test.mjs",
     "test:db:bill-before-receipt": "node scripts/run-postgres-test-files.mjs tests/postgres/bill-before-receipt.test.mjs",
+    "test:db:supplier-invoice-duplicates": "node scripts/run-postgres-test-files.mjs tests/postgres/supplier-invoice-duplicates.test.mjs",
     "test:db:sales-read-permissions": "node scripts/run-postgres-test-files.mjs tests/postgres/sales-read-permissions.test.mjs",
     "test:db:search-wildcards": "node scripts/run-postgres-test-files.mjs tests/postgres/search-wildcards.test.mjs",
     "test:db:inventory-warehouse-scope": "node scripts/run-postgres-test-files.mjs tests/postgres/inventory-warehouse-scope.test.mjs",
