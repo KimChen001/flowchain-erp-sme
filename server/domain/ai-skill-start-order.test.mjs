@@ -149,3 +149,21 @@ test('the order cards stay review-only and never claim the order was placed', as
     assert.doesNotMatch(`${response.conclusion.title} ${response.conclusion.summary}`, /\bplaced\b|已下单|已下达/)
   }
 })
+
+test('an order not yet issued to its supplier is sent first, never chased (decision V5)', async () => {
+  // PO-001 and PO-008 bring LDM-001; approved but never issued, neither is chased.
+  const unsent = await facts()
+  for (const row of unsent.purchaseOrders.rows.filter((entry) => ['PO-001', 'PO-008'].includes(entry.id))) row.status = 'approved'
+  const response = order(unsent)
+  assert.deepEqual(cards(response), [['purchase_request_draft', 'ITEM-001', 12, false]])
+  assert.match(response.conclusion.summary, /PO-001 is 4 days past its promised date and has not been issued yet\./)
+  assert.match(response.conclusion.summary, /PO-001 has not been issued to the supplier yet: send it first, or open a request anyway\.$/)
+  assert.deepEqual([response.navigationLinks[0].entityType, response.navigationLinks[0].entityId], ['purchase_order', 'PO-001'])
+  assert.match(order(unsent, 'zh-CN').conclusion.summary, /PO-001 尚未发给供应商：请先发出订单，或仍然新建申请。$/)
+  // Only PO-001 unissued: the issued PO-008 is the one chased.
+  const mixed = await facts()
+  mixed.purchaseOrders.rows.find((entry) => entry.id === 'PO-001').status = 'approved'
+  const chased = order(mixed)
+  assert.deepEqual(cards(chased), [['po_followup_draft', 'PO-008', null, null], ['purchase_request_draft', 'ITEM-001', 12, false]])
+  assert.match(chased.conclusion.summary, /Chase PO-008 first, or open a request anyway\.$/)
+})

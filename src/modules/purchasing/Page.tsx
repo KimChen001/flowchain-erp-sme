@@ -74,8 +74,9 @@ import { RecordBillAction } from "../../components/business/BillingEntryActions"
 import { PurchaseOrderPromiseDates } from "./components/PurchaseOrderPromiseDates";
 
 const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
-// Statuses in which some goods were received, so a bill can be recorded.
-const BILLABLE_PO_STATUSES = new Set(["partially_received", "received", "fully_received", "closed"]);
+// Statuses in which a bill can be recorded: a supplier's bill can arrive
+// before the goods (it then waits for the receipt) or after them.
+const BILLABLE_PO_STATUSES = new Set(["approved", "issued", "partially_received", "received", "fully_received", "closed"]);
 // Statuses a PO reaches once issued (or received), with the legacy labels older rows carry.
 const ISSUED_PO_STATUSES = new Set(["issued", "partially_received", "fully_received", "closed", "已发出", "部分到货", "已完成"]);
 

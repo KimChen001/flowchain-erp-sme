@@ -2,12 +2,14 @@ import { withoutUnavailableProductLinks } from '../../shared/unavailable-product
 import { withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
 import { handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
 import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
-import { runBusinessQueryRuntime } from '../domain/ai-business-query-runtime.mjs'
+import { runBusinessQueryRuntime, shouldUseSemanticBusinessQuery } from '../domain/ai-business-query-runtime.mjs'
+import { aiAgentPlanningEnabled } from '../domain/ai-agent-planning.mjs'
+import { splitAiCompoundQuestion } from '../domain/ai-skill-compound.mjs'
 import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
 import { isLegacyAiTemplateGatewayEnabled, runAiSkillRuntime } from '../domain/ai-skill-runtime.mjs'
 import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
 import { aiSkillQuestionLanguage } from '../domain/ai-skill-copy.mjs'
-import { recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
+import { aiKnowledgeAuditBlock, recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
 import { reportReadAccess, scopeBusinessContext } from '../domain/report-read-access.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
@@ -116,7 +118,13 @@ async function handleGatewayRequest(ctx) {
       // Only the first 1,201 characters: a longer question is rejected below.
       const actionRequest = detectAiActionRequest(String(body?.message || body?.question || '').slice(0, 1201))
       const knowledge = actionRequest ? null : await runKnowledgeQuery(ctx, body)
-      if (knowledge) { send(res, 200, knowledge); return true }
+      if (knowledge) {
+        // The same audit row as a skill answer, with the knowledge answer's mode
+        // and the documents it cited (ids and counts only).
+        await recordAiSkillAudit(ctx, { response: { ...knowledge, answerSource: 'knowledge', language: body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, knowledge: aiKnowledgeAuditBlock(knowledge.rag) })
+        send(res, 200, knowledge)
+        return true
+      }
       // Reject empty or oversized questions before any tenant data is read.
       const validation = validateAiRuntimeRequest(body)
       if (!validation.ok) {
@@ -124,11 +132,23 @@ async function handleGatewayRequest(ctx) {
         send(res, validation.status, errorBody(tooLong ? 'AI_QUESTION_TOO_LONG' : 'AI_QUESTION_TOO_SHORT', body))
         return true
       }
-      const businessQuery = actionRequest ? null : await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
+      // Agent planning (P2) on: a question with several parts that the
+      // business query path would take goes to the planner first, which has
+      // the supplier business query among its tools. When the planner does not
+      // answer it, the business query path answers as before.
+      const question = String(body.message || body.question || '')
+      const attempt = !actionRequest && aiAgentPlanningEnabled(ctx.env || process.env) && splitAiCompoundQuestion(question).length >= 2 && shouldUseSemanticBusinessQuery(question, body) ? {} : null
+      if (attempt) {
+        const planned = await runAiSkillRuntime(ctx, body, { agentFirst: attempt })
+        if (planned) { send(res, 200, await addKnowledgeContext(ctx, body, planned)); return true }
+      }
+      const answered = actionRequest ? null : await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
+      // A planner that failed leaves this answer, with the limited-mode label.
+      const businessQuery = answered && attempt?.degraded ? { ...answered, agentPlanning: { status: 'degraded', entry: 'multi_part' } } : answered
       if (businessQuery) {
         // The same audit row as a skill answer: the plan's intent, the
         // records it cited and a hash of the question, never its text.
-        await recordAiSkillAudit(ctx, { response: { ...businessQuery, answerSource: businessQuery.answerSource || 'business_query', language: businessQuery.language || body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started })
+        await recordAiSkillAudit(ctx, { response: { ...businessQuery, answerSource: businessQuery.answerSource || 'business_query', language: businessQuery.language || body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, agent: attempt?.agent || null })
         send(res, 200, await addKnowledgeContext(ctx, body, businessQuery))
         return true
       }
@@ -142,7 +162,7 @@ async function handleGatewayRequest(ctx) {
         send(res, result.status, await addKnowledgeContext(ctx, body, withoutUnavailableProductLinks(result.body)))
         return true
       }
-      send(res, 200, await addKnowledgeContext(ctx, body, await runAiSkillRuntime(ctx, body)))
+      send(res, 200, await addKnowledgeContext(ctx, body, await runAiSkillRuntime(ctx, body, { skipAgent: Boolean(attempt) })))
     } catch (error) {
       if (isKnowledgeQuestion(body)) {
         send(res, error.status || 503, { code: error.code || 'KNOWLEDGE_UNAVAILABLE', error: error.status ? error.message : (body.answerLanguage === 'zh-CN' ? '知识库暂时不可用，请稍后重试。' : 'Knowledge is temporarily unavailable. Please try again.') })
