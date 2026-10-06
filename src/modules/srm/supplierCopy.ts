@@ -12,7 +12,7 @@ const zh: Record<string, string> = {
   'Enter a supplier code.': '请填写供应商编号。', 'Enter a supplier name.': '请填写供应商名称。', 'Enter a valid email address.': '请填写有效邮箱。',
   'Lead time must be a whole number of days, zero or greater.': '送货周期必须为零或正整数天。', 'Choose a valid currency.': '请选择有效币种。',
   'Check the highlighted fields.': '请检查标记的字段。', 'This supplier code is already in use.': '该供应商编号已被使用。',
-  'This supplier changed. Reopen it and try again.': '供应商已被修改，请重新打开后再试。', 'Could not save supplier. Please try again.': '保存失败，请重试。',
+  'This supplier changed. Reopen it and try again.': '供应商已被修改，请重新打开后再试。', 'Could not save supplier. Please try again.': '供应商保存失败，请重试。',
   'Could not load workspace currency. Choose a currency before saving.': '无法读取工作区币种，请在保存前选择币种。', 'Choose currency': '选择币种',
   'Back to suppliers': '返回供应商列表', 'Edit': '编辑', 'Supplied items': '可供应物料', 'Select SKU': '选择 SKU', 'Reference price': '参考价格',
   'Add supplied item': '新增供应商关系', 'No supplied items yet': '暂无可供应物料', 'Set as preferred': '设为首选', 'Yes': '是', 'No': '否',
@@ -46,4 +46,6 @@ const zh: Record<string, string> = {
   'Every supplier is tiered.': '所有供应商都已分级。', 'Not saved': '未保存', 'No suggestion': '无建议',
 };
 const en = Object.fromEntries(Object.entries(zh).map(([key, value]) => [value, key]));
+// The English to Chinese pairs, read by the owner-rule tests.
+export const supplierCopyPairs: Readonly<Record<string, string>> = zh;
 export const supplierCopy = (value: string, language: string) => language === 'en-US' ? en[value] || value : zh[value] || value;
