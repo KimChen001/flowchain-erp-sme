@@ -63,6 +63,29 @@ test('missing values are null, never a default currency, payment terms or contac
   assert.equal(build({ order: order({ status: 'issued', issuedAt: '2026-10-02T14:05:00.000Z', metadata: {} }) }).issuedAt, '2026-10-02T14:05:00.000Z')
 })
 
+test('the PO prints the supplier\'s recorded payment terms, by their recorded name, and none when none were recorded', () => {
+  assert.equal(build().paymentTerms, null, 'nothing recorded: left off, never NET30')
+  const withTerms = { ...supplier, metadata: { ...supplier.metadata, paymentTermsId: 'LOCAL-DEMO-NET45' } }
+  assert.equal(build({ supplier: withTerms }).paymentTerms, 'LOCAL-DEMO-NET45', 'no payment term names it: as stored')
+  assert.equal(build({ supplier: withTerms, paymentTerms: [{ id: 'LOCAL-DEMO-NET45', code: 'NET45', name: 'Net 45' }] }).paymentTerms, 'Net 45')
+  assert.equal(build({ supplier: { ...supplier, metadata: { paymentTerms: 'NET15' } }, paymentTerms: [{ id: 'PT-15', code: 'NET15', name: 'Net 15 days' }] }).paymentTerms, 'Net 15 days', 'by code')
+  assert.equal(build({ supplier: null }).paymentTerms, null)
+})
+
+test('the PO read service looks up only the payment term the supplier records, in the PO\'s workspace', async () => {
+  const calls = []
+  const prisma = {
+    tenant: { findUnique: async () => ({ name: 'Harbor Goods', legalName: null, operationalSettings: {} }) },
+    supplier: { findFirst: async () => ({ ...supplier, metadata: { ...supplier.metadata, paymentTermsId: 'NET45' } }) },
+    warehouse: { findFirst: async () => null },
+    runtimeRecord: { findMany: async () => [] },
+    paymentTerm: { findMany: async (args) => { calls.push(args.where); return [{ id: 'PT-45', code: 'NET45', name: 'Net 45 days' }] } },
+  }
+  const document = await createPurchaseOrderDocumentReadService({ prisma }).readPurchaseOrderDocument({ tenantId: 'tenant-doc', order: order(), access: { prices: true } })
+  assert.deepEqual(calls, [{ tenantId: 'tenant-doc', OR: [{ id: 'NET45' }, { code: 'NET45' }] }])
+  assert.equal(document.paymentTerms, 'Net 45 days')
+})
+
 test('a supplier\'s tax and bank details are never part of the document', () => {
   const serialized = JSON.stringify(build())
   for (const secret of ['TAX-998877', '000111222333', 'Coastal Bank', 'CC-1', 'taxIdentificationNumber', 'bankAccount', 'creditCode']) assert.equal(serialized.includes(secret), false, secret)

@@ -48,6 +48,8 @@ function PurchaseOrderSheet({ doc, language }: { doc: PurchaseOrderDocument; lan
             {doc.issuedAt && <><dt>{c("issueDate")}</dt><dd data-testid="po-document-issue-date">{formatInstantDay(doc.issuedAt, locale, timezone)}</dd></>}
             <dt>{c("expectedDelivery")}</dt><dd data-testid="po-document-expected-date">{formatCalendarDay(doc.expectedDate, locale)}</dd>
             <dt>{c("currency")}</dt><dd data-testid="po-document-currency">{dash(doc.currency)}</dd>
+            {/* The supplier's recorded payment terms; left off when none were recorded. */}
+            {doc.paymentTerms && <><dt>{c("paymentTerms")}</dt><dd data-testid="po-document-payment-terms">{doc.paymentTerms}</dd></>}
           </dl>
         </div>
       </header>

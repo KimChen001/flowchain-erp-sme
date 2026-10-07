@@ -1,4 +1,5 @@
 import { buildPurchaseOrderDocument } from "../../shared/business-documents.mjs";
+import { readPaymentTerms } from "./customer-invoice-document-read-service.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { listItemSupplierRecords, mapItemSupplierRecord } from "./master-data-commands.mjs";
 import { mergeOperationalSettings } from "./workspace-settings-contract.mjs";
@@ -9,7 +10,8 @@ const text = (value) => String(value ?? "").trim();
 // themselves. The caller has already read the PO through readPurchaseOrder,
 // with the detail route's permission, tenant and price masking; this reads
 // the rest in the same workspace: the stored supplier row (not the master
-// data view, which defaults a currency and payment terms nobody recorded),
+// data view, which defaults a currency and payment terms nobody recorded) and
+// the payment term its recorded terms name,
 // the supplier's item links for supplier SKUs, the delivery warehouse, and
 // the workspace's letterhead and PO template. Addresses are read live, so a
 // reprint shows the supplier's current address.
@@ -30,9 +32,11 @@ export function createPurchaseOrderDocumentReadService({ prisma, env = process.e
       supplierId ? listItemSupplierRecords(client, tenantId, { supplierId }) : [],
     ]);
     const settings = mergeOperationalSettings(tenant?.operationalSettings).documents;
+    const supplierTerms = text(supplier?.metadata?.paymentTermsId) || text(supplier?.metadata?.paymentTerms);
     return buildPurchaseOrderDocument({
       order,
       supplier,
+      paymentTerms: await readPaymentTerms(client, tenantId, supplierTerms),
       warehouse,
       supplierSkus: links.map((row) => mapItemSupplierRecord(row)),
       letterhead: settings.letterhead,
