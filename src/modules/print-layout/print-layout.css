@@ -61,23 +61,40 @@
 .print-unsaved-dialog button { height: 34px; padding: 0 12px; border: 1px solid #d8dee8; border-radius: 8px; background: white; color: #344054; font-size: 12px; }
 .print-unsaved-dialog button.primary { border-color: #0071e3; background: #0071e3; color: white; }
 .print-unsaved-dialog button.danger { border-color: #f4b4b0; color: #d92d20; }
+.print-readonly-note, .print-import-banner { padding: 8px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; border-bottom: 1px solid #d8dee8; background: #fffaeb; color: #93370d; font-size: 12px; line-height: 18px; }
+.print-import-banner { background: #f0f6ff; color: #1d2939; }
+.print-import-banner > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.print-import-banner button { height: 30px; padding: 0 10px; border: 1px solid #d8dee8; border-radius: 7px; background: white; color: #344054; font-size: 12px; cursor: pointer; }
+.print-import-banner button.primary { border-color: #0071e3; background: #0071e3; color: white; }
+.print-import-banner button.danger { border-color: #f4b4b0; color: #d92d20; }
+.print-import-banner button:disabled { opacity: .5; cursor: default; }
+.print-import-dialog { width: min(520px, 100%); }
+.print-import-list { max-height: 280px; overflow-y: auto; margin: 0 0 16px; padding: 0; list-style: none; border: 1px solid #edf0f4; border-radius: 10px; }
+.print-import-list li + li { border-top: 1px solid #edf0f4; }
+.print-import-list label { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-size: 13px; color: #344054; }
+.print-import-list label span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.print-import-list label small { color: #667085; font-size: 11px; }
 
 @media (max-width: 1120px) {
   .print-layout-toolbar { align-items: flex-start; flex-wrap: wrap; }
   .print-layout-workspace { grid-template-columns: minmax(0,1fr) 280px; }
 }
 
+/* Print only the sheet, and only while the editor is open: PrintLayoutEditor
+   puts fc-print-layout-open on the body when it opens and takes it off when
+   it closes. This stylesheet stays loaded after that (the receiving page
+   imports it), so without the class every other page prints as it is. */
 @media print {
-  body * { visibility: hidden !important; }
-  .print-layout-editor, .print-layout-editor .print-canvas-sheet, .print-layout-editor .print-canvas-sheet * { visibility: visible !important; }
-  .print-layout-editor { position: absolute; inset: 0; display: block; background: white; }
-  .print-layout-toolbar, .print-component-toolbar, .print-layout-sidepanels, .print-paper-label, .print-unsaved-backdrop { display: none !important; }
-  .print-layout-workspace, .print-canvas-stage { display: block; padding: 0; overflow: visible; }
-  .print-canvas-scaled { width: auto !important; height: auto !important; }
-  .print-canvas-sheet { position: absolute; left: 0; top: 0; transform: none !important; box-shadow: none; overflow: visible; }
-  .print-layout-element.is-selected { outline: none; }
-  .print-layout-element[data-instance-empty="true"] { display: none !important; }
-  .print-resize-handle { display: none !important; }
-  .print-data-table thead { display: table-header-group; }
-  .print-data-table tr { break-inside: avoid; }
+  body.fc-print-layout-open * { visibility: hidden !important; }
+  body.fc-print-layout-open .print-layout-editor, body.fc-print-layout-open .print-layout-editor .print-canvas-sheet, body.fc-print-layout-open .print-layout-editor .print-canvas-sheet * { visibility: visible !important; }
+  body.fc-print-layout-open .print-layout-editor { position: absolute; inset: 0; display: block; background: white; }
+  body.fc-print-layout-open .print-layout-toolbar, body.fc-print-layout-open .print-component-toolbar, body.fc-print-layout-open .print-layout-sidepanels, body.fc-print-layout-open .print-paper-label, body.fc-print-layout-open .print-unsaved-backdrop, body.fc-print-layout-open .print-readonly-note, body.fc-print-layout-open .print-import-banner { display: none !important; }
+  body.fc-print-layout-open .print-layout-workspace, body.fc-print-layout-open .print-canvas-stage { display: block; padding: 0; overflow: visible; }
+  body.fc-print-layout-open .print-canvas-scaled { width: auto !important; height: auto !important; }
+  body.fc-print-layout-open .print-canvas-sheet { position: absolute; left: 0; top: 0; transform: none !important; box-shadow: none; overflow: visible; }
+  body.fc-print-layout-open .print-layout-element.is-selected { outline: none; }
+  body.fc-print-layout-open .print-layout-element[data-instance-empty="true"] { display: none !important; }
+  body.fc-print-layout-open .print-resize-handle { display: none !important; }
+  body.fc-print-layout-open .print-data-table thead { display: table-header-group; }
+  body.fc-print-layout-open .print-data-table tr { break-inside: avoid; }
 }

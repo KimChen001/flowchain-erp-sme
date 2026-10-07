@@ -2,15 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Eraser, Printer, RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useUnsavedChanges } from "../../components/navigation/UnsavedChangesProvider";
+import { useI18n } from "../../i18n/I18n";
+import { ApiError, apiJson } from "../../lib/api-client";
 import PrintCanvas from "./PrintCanvas";
 import PrintElementInspector from "./PrintElementInspector";
 import PrintInstancePanel, { printInstanceFields } from "./PrintInstancePanel";
+import PrintLayoutImportBanner from "./PrintLayoutImportBanner";
 import { printFieldOptions } from "./printDataAdapters";
 import { clearPrintInstance, loadPrintInstance, savePrintInstance } from "./printInstanceStorage";
 import { defaultPrintTemplate } from "./printLayoutPresets";
-import { loadLastTemplate, restoreDefaultTemplate, savePrintTemplate, savePrintTemplateAs, templatesFor } from "./printLayoutStorage";
+import { fetchWorkspacePrintSettings, loadLastTemplate, restoreDefaultTemplate, savePrintTemplate, savePrintTemplateAs, templatesFor, workspaceLayouts } from "./printLayoutStorage";
 import { PAGE_SIZES, type PrintDocumentData, type PrintDocumentType, type PrintElementType, type PrintLayoutElement, type PrintLayoutTemplate } from "./printLayoutTypes";
 import "./print-layout.css";
+
+// While the editor is open the body carries this class, and only then do the
+// print rules in print-layout.css hide the rest of the page.
+export const PRINT_LAYOUT_BODY_CLASS = "fc-print-layout-open";
 
 function instanceElementId(key: string) { return `instance-${key}`; }
 
@@ -47,6 +54,10 @@ function createElement(type: PrintElementType, index: number): PrintLayoutElemen
   };
 }
 
+type WorkspaceState = "loading" | "ready" | "failed";
+type Access = { tenantId: string; canManage: boolean };
+type FailureDetails = { field?: string; limit?: number };
+
 export default function PrintLayoutEditor({ open, documentType, documentNo, data, onClose }: {
   open: boolean;
   documentType: PrintDocumentType;
@@ -54,6 +65,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
   data: PrintDocumentData;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [template, setTemplate] = useState<PrintLayoutTemplate>(() => withInstanceFields(defaultPrintTemplate(documentType), documentType));
   const [selectedId, setSelectedId] = useState("title");
   const [availableTemplates, setAvailableTemplates] = useState<PrintLayoutTemplate[]>([]);
@@ -61,22 +73,61 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
   const [savedTemplateSnapshot, setSavedTemplateSnapshot] = useState("");
   const [savedInstanceSnapshot, setSavedInstanceSnapshot] = useState("{}");
   const [closePrompt, setClosePrompt] = useState(false);
+  const [workspaceState, setWorkspaceState] = useState<WorkspaceState>("loading");
+  const [companyName, setCompanyName] = useState("");
+  const [access, setAccess] = useState<Access | null>(null);
+  const [saving, setSaving] = useState(false);
 
+  // Scope the print rules to the time the editor is open.
   useEffect(() => {
     if (!open) return;
-    const loaded = withInstanceFields(loadLastTemplate(documentType), documentType);
+    document.body.classList.add(PRINT_LAYOUT_BODY_CLASS);
+    return () => document.body.classList.remove(PRINT_LAYOUT_BODY_CLASS);
+  }, [open]);
+
+  function showTemplate(next: PrintLayoutTemplate) {
+    const withFields = withInstanceFields(next, documentType);
+    setTemplate(withFields);
+    setSavedTemplateSnapshot(JSON.stringify(withFields));
+  }
+
+  // The built-in template first; the workspace's saved templates once read.
+  useEffect(() => {
+    if (!open) return;
     const instance = loadPrintInstance(documentType, documentNo);
-    setTemplate(loaded);
+    showTemplate(defaultPrintTemplate(documentType));
     setInstanceValues(instance.values);
-    setSavedTemplateSnapshot(JSON.stringify(loaded));
     setSavedInstanceSnapshot(JSON.stringify(instance.values));
-    setAvailableTemplates(templatesFor(documentType));
+    setAvailableTemplates(templatesFor(documentType, []));
     setSelectedId("title");
     setClosePrompt(false);
+    setWorkspaceState("loading");
+    let alive = true;
+    Promise.all([
+      fetchWorkspacePrintSettings(),
+      apiJson<{ tenantId?: string; effectivePermissions?: string[] }>("/api/authorization/context").catch(() => null),
+    ]).then(([settings, context]) => {
+      if (!alive) return;
+      const layouts = workspaceLayouts(settings.documents);
+      showTemplate(loadLastTemplate(documentType, layouts));
+      setAvailableTemplates(templatesFor(documentType, layouts));
+      setCompanyName(settings.companyName);
+      setAccess({ tenantId: context?.tenantId || "", canManage: Boolean(context?.effectivePermissions?.includes("settings.workspace.manage")) });
+      setWorkspaceState("ready");
+    }).catch(() => {
+      if (!alive) return;
+      setAccess(null);
+      setWorkspaceState("failed");
+    });
+    return () => { alive = false; };
   }, [documentNo, documentType, open]);
 
+  // The company printed is the recorded one: the letterhead, else the workspace.
+  const printData = useMemo<PrintDocumentData>(() => ({ ...data, companyName: data.companyName || companyName }), [companyName, data]);
+  const canSave = workspaceState === "ready" && Boolean(access?.canManage);
   const selected = useMemo(() => template.elements.find((element) => element.id === selectedId), [selectedId, template.elements]);
-  const templateDirty = Boolean(open && savedTemplateSnapshot && JSON.stringify(template) !== savedTemplateSnapshot);
+  // Someone who cannot save templates may still adjust the layout for one print; that is not an unsaved template.
+  const templateDirty = Boolean(open && canSave && savedTemplateSnapshot && JSON.stringify(template) !== savedTemplateSnapshot);
   const instanceDirty = Boolean(open && JSON.stringify(instanceValues) !== savedInstanceSnapshot);
   const anyDirty = templateDirty || instanceDirty;
 
@@ -110,42 +161,74 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
     }));
   }
 
-  function saveTemplate() {
-    const saved = savePrintTemplate(template.isDefault ? { ...template, id: `${documentType}-custom`, isDefault: false } : template);
-    setTemplate(saved);
-    setSavedTemplateSnapshot(JSON.stringify(saved));
-    setAvailableTemplates(templatesFor(documentType));
-    toast.success("打印模板已保存", { description: "本次打印内容未随模板保存。" });
+  // Why a save failed, from the shared check here or the same check on the server.
+  function describeFailure(error: unknown) {
+    const local = error as { code?: string; details?: unknown; message?: string };
+    const details = (error instanceof ApiError ? error.payload.details : local.details) as FailureDetails | undefined;
+    const code = error instanceof ApiError ? error.code : local.code;
+    if (error instanceof ApiError && error.status === 403) return t("printLayout.saveForbidden");
+    if (code === "DOCUMENT_LAYOUTS_TOO_MANY") return t("printLayout.tooMany", { limit: details?.limit ?? "" });
+    if (code === "DOCUMENT_LAYOUTS_TOO_LARGE") return t("printLayout.tooLarge", { limit: details?.limit ? Math.floor(details.limit / 1024) : "" });
+    if (details && typeof details === "object" && !Array.isArray(details) && details.field) return t("printLayout.invalidValue", { field: details.field });
+    return local.message || "";
+  }
+
+  function afterSave(saved: PrintLayoutTemplate, layouts: PrintLayoutTemplate[]) {
+    showTemplate(saved);
+    setAvailableTemplates(templatesFor(documentType, layouts));
+  }
+
+  async function saveTemplate() {
+    if (!canSave) throw new Error(t("printLayout.saveForbidden"));
+    setSaving(true);
+    try {
+      const { saved, layouts } = await savePrintTemplate(template.isDefault ? { ...template, id: `${documentType}-custom`, isDefault: false } : template);
+      afterSave(saved, layouts);
+      toast.success(t("printLayout.templateSaved"), { description: t("printLayout.templateSavedHelp") });
+    } catch (error) {
+      toast.error(t("printLayout.saveFailed"), { description: describeFailure(error) });
+      throw error;
+    } finally {
+      setSaving(false);
+    }
   }
 
   function saveInstance() {
     const saved = savePrintInstance(documentType, documentNo, instanceValues);
     setSavedInstanceSnapshot(JSON.stringify(saved.values));
-    toast.success("本次打印内容已保存", { description: `仅适用于 ${documentNo}` });
+    toast.success(t("printLayout.instanceSaved"), { description: t("printLayout.instanceSavedHelp", { documentNo }) });
   }
 
-  function saveAll() {
-    if (templateDirty) saveTemplate();
+  async function saveAll() {
+    if (templateDirty) await saveTemplate();
     if (instanceDirty) saveInstance();
   }
 
   useUnsavedChanges({
     key: `print-layout:${documentType}:${documentNo}`,
-    label: `${documentNo} ${[templateDirty ? "模板" : "", instanceDirty ? "本次打印内容" : ""].filter(Boolean).join("和")}`,
+    label: `${documentNo} ${[templateDirty ? t("printLayout.unsavedLabelTemplate") : "", instanceDirty ? t("printLayout.unsavedLabelInstance") : ""].filter(Boolean).join(t("printLayout.unsavedLabelJoin"))}`,
     dirty: anyDirty,
     onSave: saveAll,
   });
 
-  function saveAs() {
-    const saved = savePrintTemplateAs(template);
-    setTemplate(saved); setSavedTemplateSnapshot(JSON.stringify(saved)); setAvailableTemplates(templatesFor(documentType));
-    toast.success("已另存为新模板");
+  async function saveAs() {
+    if (!canSave) return;
+    setSaving(true);
+    try {
+      const { saved, layouts } = await savePrintTemplateAs(template, t("printLayout.copyName", { name: template.name }));
+      afterSave(saved, layouts);
+      toast.success(t("printLayout.savedAs"));
+    } catch (error) {
+      toast.error(t("printLayout.saveFailed"), { description: describeFailure(error) });
+    } finally {
+      setSaving(false);
+    }
   }
 
   function restore() {
-    const restored = withInstanceFields(restoreDefaultTemplate(documentType), documentType);
-    setTemplate(restored); setSavedTemplateSnapshot(JSON.stringify(restored)); setAvailableTemplates(templatesFor(documentType)); setSelectedId("title");
-    toast.success("已恢复默认模板", { description: "当前单据的本次打印内容已保留。" });
+    showTemplate(restoreDefaultTemplate(documentType));
+    setSelectedId("title");
+    toast.success(t("printLayout.restored"), { description: t("printLayout.restoredHelp") });
   }
 
   function addElement(type: PrintElementType | "remark") {
@@ -164,57 +247,63 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
     clearPrintInstance(documentType, documentNo);
     setInstanceValues({});
     setSavedInstanceSnapshot("{}");
-    toast.success("已清除本次打印内容", { description: "打印模板未受影响。" });
+    toast.success(t("printLayout.cleared"), { description: t("printLayout.clearedHelp") });
   }
 
   if (!open) return null;
   const scale = template.page.orientation === "portrait" ? 0.62 : 0.58;
 
   return (
-    <div className="print-layout-editor" data-testid="print-layout-editor" role="dialog" aria-modal="true" aria-label={`${documentNo} 打印版式编辑`}>
+    <div className="print-layout-editor" data-testid="print-layout-editor" role="dialog" aria-modal="true" aria-label={t("printLayout.dialogLabel", { documentNo })}>
       <style>{`@media print { @page { size: A4 ${template.page.orientation}; margin: 0; } }`}</style>
       <header className="print-layout-toolbar">
         <div className="print-toolbar-group">
-          <button type="button" onClick={requestClose}><ArrowLeft size={15} /> 返回单据</button>
+          <button type="button" onClick={requestClose}><ArrowLeft size={15} /> {t("printLayout.back")}</button>
           <strong>{documentNo}</strong>
-          {templateDirty && <span className="print-dirty-chip">模板未保存</span>}
-          {instanceDirty && <span className="print-dirty-chip">本次内容未保存</span>}
+          {templateDirty && <span className="print-dirty-chip">{t("printLayout.templateUnsaved")}</span>}
+          {instanceDirty && <span className="print-dirty-chip">{t("printLayout.instanceUnsaved")}</span>}
         </div>
         <div className="print-toolbar-group print-template-controls">
-          <input aria-label="模板名称" value={template.name} onChange={(event) => setTemplate((current) => ({ ...current, name: event.target.value }))} />
-          <select aria-label="模板选择" value={template.id} onChange={(event) => {
+          <input aria-label={t("printLayout.templateName")} value={template.name} onChange={(event) => setTemplate((current) => ({ ...current, name: event.target.value }))} />
+          <select aria-label={t("printLayout.templateSelect")} data-testid="print-layout-template-select" value={template.id} onChange={(event) => {
             const selectedTemplate = availableTemplates.find((item) => item.id === event.target.value);
-            if (selectedTemplate) {
-              const next = withInstanceFields(structuredClone(selectedTemplate), documentType);
-              setTemplate(next); setSavedTemplateSnapshot(JSON.stringify(next)); setSelectedId("title");
-            }
+            if (selectedTemplate) { showTemplate(structuredClone(selectedTemplate)); setSelectedId("title"); }
           }}>{availableTemplates.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
           <div className="print-orientation-toggle">
-            <button type="button" className={template.page.orientation === "portrait" ? "active" : ""} onClick={() => changeOrientation("portrait")}>A4 竖版</button>
-            <button type="button" className={template.page.orientation === "landscape" ? "active" : ""} onClick={() => changeOrientation("landscape")}>A4 横版</button>
+            <button type="button" className={template.page.orientation === "portrait" ? "active" : ""} onClick={() => changeOrientation("portrait")}>{t("printLayout.portrait")}</button>
+            <button type="button" className={template.page.orientation === "landscape" ? "active" : ""} onClick={() => changeOrientation("landscape")}>{t("printLayout.landscape")}</button>
           </div>
         </div>
         <div className="print-toolbar-group">
-          <button type="button" onClick={saveTemplate}><Save size={14} /> 保存模板</button>
-          <button type="button" onClick={saveAs}>另存为模板</button>
-          <button type="button" onClick={restore}><RotateCcw size={14} /> 恢复默认模板</button>
-          <button type="button" onClick={saveInstance}><Save size={14} /> 保存本次打印内容</button>
-          <button type="button" onClick={clearInstance}><Eraser size={14} /> 清除本次打印内容</button>
-          <button type="button" className="primary" data-testid="print-document-button" onClick={() => window.print()}><Printer size={14} /> 打印</button>
+          {canSave && <button type="button" data-testid="print-layout-save-template" disabled={saving} onClick={() => void saveTemplate().catch(() => undefined)}><Save size={14} /> {t("printLayout.saveTemplate")}</button>}
+          {canSave && <button type="button" disabled={saving} onClick={() => void saveAs()}>{t("printLayout.saveAs")}</button>}
+          <button type="button" onClick={restore}><RotateCcw size={14} /> {t("printLayout.restore")}</button>
+          <button type="button" onClick={saveInstance}><Save size={14} /> {t("printLayout.saveInstance")}</button>
+          <button type="button" onClick={clearInstance}><Eraser size={14} /> {t("printLayout.clearInstance")}</button>
+          <button type="button" className="primary" data-testid="print-document-button" onClick={() => window.print()}><Printer size={14} /> {t("printLayout.print")}</button>
         </div>
       </header>
-      <div className="print-component-toolbar" aria-label="添加打印元素">
-        <button type="button" onClick={() => addElement("text")}>添加文本</button>
-        <button type="button" onClick={() => addElement("comment")}>添加 Comments</button>
-        <button type="button" onClick={() => addElement("remark")}>添加备注</button>
-        <button type="button" onClick={() => addElement("terms")}>添加条款</button>
-        <button type="button" onClick={() => addElement("signature")}>添加签字栏</button>
-        <button type="button" onClick={() => addElement("line")}>添加横线</button>
+      <div className="print-component-toolbar" aria-label={t("printLayout.addElements")}>
+        <button type="button" onClick={() => addElement("text")}>{t("printLayout.addText")}</button>
+        <button type="button" onClick={() => addElement("comment")}>{t("printLayout.addComments")}</button>
+        <button type="button" onClick={() => addElement("remark")}>{t("printLayout.addRemark")}</button>
+        <button type="button" onClick={() => addElement("terms")}>{t("printLayout.addTerms")}</button>
+        <button type="button" onClick={() => addElement("signature")}>{t("printLayout.addSignature")}</button>
+        <button type="button" onClick={() => addElement("line")}>{t("printLayout.addLine")}</button>
       </div>
+      {workspaceState === "loading" && <div className="print-readonly-note" role="status">{t("printLayout.loading")}</div>}
+      {workspaceState === "failed" && <div className="print-readonly-note" role="alert" data-testid="print-layout-load-failed">{t("printLayout.loadFailed")}</div>}
+      {workspaceState === "ready" && access && !access.canManage && <div className="print-readonly-note" role="note" data-testid="print-layout-read-only">{t("printLayout.readOnly")}</div>}
+      {workspaceState === "ready" && access && <PrintLayoutImportBanner
+        tenantId={access.tenantId}
+        canManage={access.canManage}
+        describeFailure={describeFailure}
+        onImported={(layouts) => setAvailableTemplates(templatesFor(documentType, layouts))}
+      />}
       <div className="print-layout-workspace">
         <main className="print-canvas-stage">
-          <div className="print-paper-label">A4 {template.page.orientation === "portrait" ? "竖版" : "横版"} · 拖拽元素或使用右侧数值精确调整</div>
-          <PrintCanvas template={template} data={data} instanceValues={instanceValues} selectedId={selectedId} scale={scale} onSelect={setSelectedId} onElementChange={updateElement} />
+          <div className="print-paper-label">{t("printLayout.paperHint", { orientation: t(template.page.orientation === "portrait" ? "printLayout.portraitShort" : "printLayout.landscapeShort") })}</div>
+          <PrintCanvas template={template} data={printData} instanceValues={instanceValues} selectedId={selectedId} scale={scale} onSelect={setSelectedId} onElementChange={updateElement} />
         </main>
         <aside className="print-layout-sidepanels">
           <PrintInstancePanel documentType={documentType} values={instanceValues} onChange={(key, value) => setInstanceValues((current) => ({ ...current, [instanceElementId(key)]: value }))} />
@@ -236,12 +325,12 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
       </div>
       {closePrompt && <div className="print-unsaved-backdrop" data-testid="print-unsaved-dialog">
         <div className="print-unsaved-dialog">
-          <h2>当前修改尚未保存</h2>
-          <p>{templateDirty ? "打印模板有未保存修改。" : ""}{instanceDirty ? "本次打印内容有未保存修改。" : ""}</p>
+          <h2>{t("printLayout.unsavedTitle")}</h2>
+          <p>{[templateDirty ? t("printLayout.unsavedTemplate") : "", instanceDirty ? t("printLayout.unsavedInstance") : ""].filter(Boolean).join(" ")}</p>
           <div>
-            <button type="button" onClick={() => setClosePrompt(false)}>继续编辑</button>
-            <button type="button" className="danger" onClick={onClose}>放弃修改</button>
-            <button type="button" className="primary" onClick={() => { saveAll(); onClose(); }}>保存并离开</button>
+            <button type="button" onClick={() => setClosePrompt(false)}>{t("printLayout.keepEditing")}</button>
+            <button type="button" className="danger" onClick={onClose}>{t("printLayout.discard")}</button>
+            <button type="button" className="primary" disabled={saving} onClick={() => { void saveAll().then(onClose, () => setClosePrompt(false)); }}>{t("printLayout.saveAndLeave")}</button>
           </div>
         </div>
       </div>}
