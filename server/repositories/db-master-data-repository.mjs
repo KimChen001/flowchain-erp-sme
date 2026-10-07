@@ -4,6 +4,7 @@ import { validateDatabasePersistenceConfig } from '../persistence/persistence-co
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
 import { changeSupplierOwner, changeSupplierTier } from '../domain/supplier-tier-command.mjs'
 import { CUSTOMER_NAMESPACE, listItemSupplierRecords, mapItemSupplierRecord, saveCustomerMaster, saveItemMaster, saveItemSupplier } from '../domain/master-data-commands.mjs'
+import { saveWarehouse, saveWarehouseBin, setWarehouseBinStatus, setWarehouseStatus, warehouseVersion } from '../domain/warehouse-master-commands.mjs'
 import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
 
 function requireDatabaseConfig(env = process.env) {
@@ -167,11 +168,28 @@ function mapWarehouse(record = {}) {
   const meta = metadata(record)
   return {
     id: record.id,
+    code: text(record.code),
     name: record.name || record.code || record.id,
     type: meta.type || 'warehouse',
     status: record.status || 'active',
     parentId: meta.parentId ?? null,
     sourceType: meta.sourceType || 'database',
+    // Warehouses keep their optimistic version in metadata (no column).
+    version: warehouseVersion(record),
+    updatedAt: record.updatedAt ?? null,
+  }
+}
+
+// A bin: one WarehouseLocation row. Edits send updatedAt back as their version.
+function mapWarehouseBin(record = {}) {
+  return {
+    id: record.id,
+    warehouseId: record.warehouseId,
+    code: text(record.code),
+    locationKey: text(record.locationKey),
+    name: record.name ?? null,
+    status: record.status || 'active',
+    updatedAt: record.updatedAt ?? null,
   }
 }
 
@@ -424,6 +442,43 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
         take: safeLimit(filters.limit),
       })
       return records.map(mapWarehouse)
+    },
+    // Warehouse and bin writes (warehouse-master-commands.mjs). Each one is
+    // checked for a tenant before the database is touched.
+    createWarehouse: async (input, actorId, scope) => {
+      tenantWhere(scope)
+      return mapWarehouse(await saveWarehouse(await resolvePrisma({ env, prisma }), null, input, actorId, scope))
+    },
+    updateWarehouse: async (id, input, actorId, scope) => {
+      tenantWhere(scope)
+      return mapWarehouse(await saveWarehouse(await resolvePrisma({ env, prisma }), text(id), input, actorId, scope))
+    },
+    setWarehouseStatus: async (id, input, actorId, scope) => {
+      tenantWhere(scope)
+      const { warehouse, clearedDefaults } = await setWarehouseStatus(await resolvePrisma({ env, prisma }), text(id), input, actorId, scope)
+      return { warehouse: mapWarehouse(warehouse), clearedDefaults }
+    },
+    listWarehouseBins: async (warehouseId = '', options = {}) => {
+      const where = tenantWhere(options)
+      const client = await resolvePrisma({ env, prisma })
+      const records = await client.warehouseLocation.findMany({
+        where: { ...where, warehouseId: text(warehouseId) },
+        orderBy: [{ code: 'asc' }],
+        take: safeLimit(options.limit, 500),
+      })
+      return records.map(mapWarehouseBin)
+    },
+    createWarehouseBin: async (warehouseId, input, actorId, scope) => {
+      tenantWhere(scope)
+      return mapWarehouseBin(await saveWarehouseBin(await resolvePrisma({ env, prisma }), text(warehouseId), null, input, actorId, scope))
+    },
+    updateWarehouseBin: async (warehouseId, binId, input, actorId, scope) => {
+      tenantWhere(scope)
+      return mapWarehouseBin(await saveWarehouseBin(await resolvePrisma({ env, prisma }), text(warehouseId), text(binId), input, actorId, scope))
+    },
+    setWarehouseBinStatus: async (warehouseId, binId, input, actorId, scope) => {
+      tenantWhere(scope)
+      return mapWarehouseBin(await setWarehouseBinStatus(await resolvePrisma({ env, prisma }), text(warehouseId), text(binId), input, actorId, scope))
     },
     listPaymentTerms: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
