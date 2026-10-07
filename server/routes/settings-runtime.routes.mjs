@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { mergeOperationalSettings, validateOperationalSection } from '../domain/workspace-settings-contract.mjs'
@@ -39,7 +40,7 @@ async function getDatabaseSettings(ctx) {
 
 async function updateDatabaseSection(ctx, section, next) {
   const { actor, prisma, tenant } = await getDatabaseSettings(ctx)
-  const permission = ({ company: 'settings.workspace.manage', numbering: 'settings.numbering.manage', review: 'settings.review_policy.manage', modules: 'settings.modules.manage' })[section] || 'settings.workspace.manage'
+  const permission = ({ company: 'settings.workspace.manage', numbering: 'settings.numbering.manage', review: 'settings.review_policy.manage', modules: 'settings.modules.manage', ai: 'settings.workspace.manage' })[section] || 'settings.workspace.manage'
   assertAuthorized({ actor, permission, tenantId: actor.tenantId })
   const validated = validateOperationalSection(section, next)
   return prisma.$transaction(async tx => {
@@ -73,6 +74,19 @@ export async function handleSettingsRuntimeRoute(ctx) {
       send(res, 200, (await getDatabaseSettings(ctx)).settings)
     } catch (error) {
       send(res, error?.status || error?.statusCode || 500, { code: error?.code, message: error?.message || '系统设置读取失败' })
+    }
+    return true
+  }
+
+  // The workspace's AI status for Settings › AI: switched on or not, whether a
+  // model is configured and required to be opted into, and this month's spend
+  // against the cap.
+  if (req.method === 'GET' && url.pathname === '/api/settings-runtime/ai-status') {
+    try {
+      const { actor, prisma } = await getDatabaseSettings(ctx)
+      send(res, 200, await readAiWorkspaceAccess({ prisma, tenantId: actor.tenantId, env: ctx.env || process.env }))
+    } catch (error) {
+      send(res, error?.status || error?.statusCode || 500, { code: error?.code, message: error?.message || 'AI status could not be read.' })
     }
     return true
   }

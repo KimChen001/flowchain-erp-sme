@@ -17,6 +17,7 @@ test("a reserved sales order is cancelled from its workbench", async ({ page, re
   await page.getByRole("link", { name: /New sales order|新建销售订单/ }).click();
   await page.getByLabel(/^(Customer|客户)$/).fill("Cancelling Customer");
   await page.getByLabel(/^(Quantity|数量)$/).fill("2.0000");
+  await page.getByLabel(/^(Unit price|单价)$/).fill("8.0000");
   await page.getByTestId("create-sales-order").click();
   await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();
   const orderId = decodeURIComponent(page.url().split("/").pop() || "");

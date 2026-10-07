@@ -30,7 +30,7 @@ Every change to business data is made by a person: posting, approving and revers
 - **Ask about a specific record.** Name a purchase order, SKU or supplier and the assistant looks it up among the records you are allowed to see. It answers in the language you asked in.
 - **It never acts on your behalf.** Requests to approve, pay, send or change records are refused. The assistant can prepare a draft for a person to review, nothing more.
 - **Knowledge library.** Upload product guides or company policies and ask questions about them. Answers cite the passages used. It works with keyword search alone. With an OpenAI or Qwen key it adds semantic search and generated answers; see [Product and company knowledge](docs/ai-product-knowledge.md).
-- **Measured, not assumed.** An evaluation set of 142 questions in English and Chinese runs in CI against a recorded baseline. All 142 pass, with no permission leaks, no cross-tenant leaks and no business writes. See [tests/ai-eval](tests/ai-eval/README.md).
+- **Measured, not assumed.** An evaluation set of 245 questions in English and Chinese runs in CI against a recorded baseline. All 215 gated questions pass, with no permission leaks, no cross-tenant leaks and no business writes. The other 30 are scored but not yet gated, because they need a language model or semantic search: 13 paraphrases, 14 questions with several parts for agent planning, a Chinese question about an English policy, and one multi-step procurement request asked in both languages. A separate set of 18 knowledge questions checks which documents and sections the answers draw on. See [tests/ai-eval](tests/ai-eval/README.md).
 
 ## Quick start
 
@@ -63,7 +63,7 @@ npm run build
 npm run test:ai:eval # AI assistant evaluation on a disposable PostgreSQL
 ```
 
-Browser tests use Playwright (`tests/browser/`). CI runs the PostgreSQL, browser and production-container suites in [`.github/workflows/receiving-postgres.yml`](.github/workflows/receiving-postgres.yml).
+Browser tests use Playwright (`tests/browser/`). CI runs the PostgreSQL, browser and production-container suites in [`.github/workflows/receiving-postgres.yml`](.github/workflows/receiving-postgres.yml); the browser suites run in three parallel shards. Browser suites for the frozen settlement, bank and mobile sync modules run nightly in [`.github/workflows/frozen-modules-nightly.yml`](.github/workflows/frozen-modules-nightly.yml).
 
 ## Tech stack
 
@@ -110,6 +110,7 @@ The datasets are public and stay outside the repository.
 - [Docs index](docs/README.md)
 - [Architecture overview](docs/architecture-overview-v1.md) and [backend route map](docs/backend-route-map-v1.md)
 - [Receiving](docs/receiving-posting-workbench.md) and [outbound](docs/outbound-posting-workbench.md) posting workbenches
+- [AI assistant plan](docs/ai-assistant-plan.md): decisions, state and roadmap for the assistant and knowledge work
 - [AI safety and draft-first actions](docs/ai-safety-and-draft-first-explainer-v1.md)
 
 ## 中文简介

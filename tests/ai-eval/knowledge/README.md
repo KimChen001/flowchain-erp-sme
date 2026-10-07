@@ -51,6 +51,12 @@ AI_EVAL_PROVIDER_ENV=<env file> AI_EVAL_REPEAT=3 npm run test:ai:eval:knowledge
 - Extra checks per answer: the model wrote it (`generation`; a rejected reply is
   reported with the reason), `answer.matches` and `answer.mustNotMatch` (regular
   expressions, case-insensitive), and the answer language.
+- `modes` lists the answer modes a case accepts; the default is `generated` only.
+  A model reply that cites nothing becomes a `no_answer`: a fixed sentence ("The
+  documents you can access do not answer this question.") with the passages that
+  were searched. The model's own wording is never shown. Only cases where the
+  reader's documents are silent (price, certification, a buyer asking about the
+  finance-only limit) accept it, and only its language is scored.
 - `AI_EVAL_REPEAT` (1 to 5) asks each case that many times. A case passes only
   if every attempt passes.
 - The report adds latency p50/p95 and the token usage the provider reported, and

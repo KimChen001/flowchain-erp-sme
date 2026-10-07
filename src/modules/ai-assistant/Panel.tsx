@@ -7,6 +7,7 @@ import { A } from "../../components/ui";
 import { AiResponseV2Renderer } from "../../components/ai/AiResponseV2Renderer";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import type { AiResponseV2 } from "../../domain/ai/response-contract";
+import { autoOpenDraftCard, structuredDraftTarget } from "../action-drafts/structuredDraftHandoff";
 import { focusTargetFromActiveContext, postAiRuntimeResponse } from "./aiRuntimeGateway";
 import { ApiError } from "../../lib/api-client";
 import { looksLikeRawJson, sanitizeAiMessage } from "./presentation";
@@ -611,9 +612,17 @@ export default function FloatingAiAssistant({
     minimizeAssistant();
   };
 
+  // A new answer is shown from its first line, where it says what matters
+  // most (for an order, what is already on order), not scrolled to its end.
+  // Anything else (a question, the loading line) scrolls to the end.
   useEffect(() => {
     if (!open) return;
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    const area = scrollRef.current;
+    if (!area) return;
+    const answers = area.querySelectorAll<HTMLElement>('[data-testid="ai-message-assistant"]');
+    const latest = !asking && messages.at(-1)?.role === "assistant" ? answers[answers.length - 1] : null;
+    const top = latest ? area.scrollTop + latest.getBoundingClientRect().top - area.getBoundingClientRect().top - 12 : area.scrollHeight;
+    area.scrollTo({ top, behavior: "smooth" });
   }, [messages, open, asking]);
 
   useEffect(() => {
@@ -742,6 +751,15 @@ export default function FloatingAiAssistant({
         ...current,
         { role: "assistant", content, cards: [{ type: "ai_response_v2", data: response as unknown as Record<string, unknown> }] },
       ]);
+      // Asked for an order with a clear choice: open its form, filled in, as
+      // the answer's own button would. Nothing is saved. The assistant stays
+      // open, so the user reads first why the page changed and what is
+      // already on order; the answer keeps the button to open it again.
+      const opening = autoOpenDraftCard((response as unknown as AiResponseV2).reviewCards);
+      if (opening?.draftType) {
+        const target = structuredDraftTarget(opening.draftType, opening.payload, "ai_assistant");
+        onNavigate?.(target.moduleId, null, { source: "ai", returnTo: "ai", entityLabel: opening.allowedNextStep, query: target.query });
+      }
     } catch (error) {
       if (requestSeqRef.current !== requestId || abortReasonRef.current === "unmount" || abortReasonRef.current === "superseded") return;
       if (import.meta.env.DEV) {

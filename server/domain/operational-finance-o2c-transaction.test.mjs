@@ -7,6 +7,7 @@ import {
   agingDays,
   createOperationalFinanceO2cReadService,
 } from "./operational-finance-o2c-read-service.mjs";
+import { buildShipmentReversalPlan } from "./outbound-transaction-policy.mjs";
 
 const databaseUrl =
   process.env.DATABASE_URL_TEST || process.env.DATABASE_URL || "";
@@ -538,6 +539,51 @@ test(
         }),
         14,
       );
+
+      // Overdue is derived from the due date: both receivables are past due on
+      // 2026-07-17, though only the CNY one has the stored status "overdue".
+      // The landing count and the list filter it links to must agree, and a
+      // receivable not yet due stays out of both.
+      const notDue = await shipment(prisma, "NOT-DUE", "CNY");
+      await issueInvoice(
+        command,
+        { ...invoiceInput(notDue, "NOT-DUE"), dueDate: "2026-08-10T00:00:00.000Z" },
+        "NOT-DUE",
+      );
+      const overdueLanding = await read.landing(viewer);
+      assert.equal(overdueLanding.cards.overdueReceivables, 2);
+      const overdueList = await read.listReceivables({ status: "overdue" }, viewer);
+      assert.equal(overdueList.total, overdueLanding.cards.overdueReceivables);
+      assert.deepEqual(
+        overdueList.items.map((row) => row.customerInvoiceNumber).sort(),
+        ["CUS-INV-CNY", "CUS-INV-USD"],
+      );
+      const openList = await read.listReceivables({ status: "open" }, viewer);
+      assert.deepEqual(
+        openList.items.map((row) => row.customerInvoiceNumber).sort(),
+        ["CUS-INV-NOT-DUE", "CUS-INV-USD"],
+      );
+      const disputedList = await read.listReceivables({ disputeStatus: "resolved" }, viewer);
+      assert.deepEqual(disputedList.items.map((row) => row.customerInvoiceNumber), ["CUS-INV-CNY"]);
+
+      // A shipment billed by a submitted-or-later invoice cannot be reversed;
+      // one with only a draft invoice, or none, is not held.
+      const reversalIssues = async (shipmentId) =>
+        (await buildShipmentReversalPlan({ prisma, tenantId, shipmentId, reason: "Correction" }))
+          .blockingIssues.map((issue) => issue.code);
+      const billed = await buildShipmentReversalPlan({ prisma, tenantId, shipmentId: cny.shipmentId, reason: "Correction" });
+      const block = billed.blockingIssues.find((issue) => issue.code === "SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE");
+      assert.equal(block.status, 409);
+      assert.equal(block.details.invoiceNumber, "CUS-INV-CNY");
+      assert.equal(block.details.invoiceStatus, "issued");
+      const draftOnly = await shipment(prisma, "DRAFT-ONLY", "CNY");
+      await command.createCustomerInvoice(
+        { ...invoiceInput(draftOnly, "DRAFT-ONLY"), idempotencyKey: "create-DRAFT-ONLY" },
+        specialist,
+      );
+      assert.ok(!(await reversalIssues(draftOnly.shipmentId)).includes("SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE"));
+      const unbilled = await shipment(prisma, "UNBILLED", "CNY");
+      assert.ok(!(await reversalIssues(unbilled.shipmentId)).includes("SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE"));
 
       const otherRead = await createOperationalFinanceO2cReadService({
         prisma,

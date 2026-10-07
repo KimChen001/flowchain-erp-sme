@@ -88,7 +88,7 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.locator("body")).not.toContainText("price_variance");
   await capture(page, "02-po-001-detail");
 
-  await page.getByRole("button", { name: "查看供应商发票" }).click();
+  await page.getByRole("button", { name: "查看采购发票" }).click();
   await expect(page).toHaveURL(/\/app\/procurement\/orders\/LOCAL-DEMO-PO-001/);
   await expect(page.getByTestId("po-fulfillment-focus")).toContainText("LOCAL-DEMO-INV-001");
   await page.getByRole("button", { name: "查看三单匹配" }).click();
@@ -106,63 +106,51 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   await expect(page.getByTestId("po-fulfillment-focus")).toHaveAttribute("data-focus-highlight", "true");
   await capture(page, "04-ai-po-002-focus");
 
-  documentRequests.length = 0;
+  // The old supplier invoice address opens the bill under Purchasing.
   await page.goto("/app/procurement/invoices/LOCAL-DEMO-INV-001");
-  const invoiceDetail = page.getByTestId("procurement-invoice-detail");
+  await expect(page).toHaveURL(/\/app\/procurement\/bills\/LOCAL-DEMO-INV-001$/);
+  const invoiceDetail = page.getByTestId("supplier-invoice-detail");
   await expect(invoiceDetail).toContainText("LOCAL-DEMO-INV-001");
   await expect(invoiceDetail.getByRole("link", { name: "采购订单 LOCAL-DEMO-PO-001" })).toBeVisible();
   await expect(invoiceDetail.getByRole("link", { name: "收货单 LOCAL-DEMO-GRN-001" })).toBeVisible();
   await expect(invoiceDetail.getByRole("link", { name: "三单匹配 MATCH-LOCAL-DEMO-INV-001" })).toBeVisible();
-  expect(documentRequests).toContain("/api/procurement/documents/invoice/LOCAL-DEMO-INV-001");
-  expect(documentRequests).toContain("/api/procurement/documents/threeWayMatch/MATCH-LOCAL-DEMO-INV-001");
-  expect(documentRequests.some((requestUrl) => requestUrl.includes("?type=invoice"))).toBeFalsy();
-  await expect(page.getByText(/执行匹配|批准发票|发票过账|付款/)).toHaveCount(0);
+  // Operational finance is off in this run, so the bill is read-only.
+  await expect(page.getByTestId("supplier-invoice-actions").getByRole("button")).toHaveCount(0);
 
   documentRequests.length = 0;
   await page.goto("/app/procurement/three-way-match/MATCH-LOCAL-DEMO-INV-001");
   const matchDetail = page.getByTestId("procurement-threeWayMatch-detail");
   await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
-  await expect(matchDetail.getByRole("link", { name: "供应商发票 LOCAL-DEMO-INV-001" })).toBeVisible();
+  await expect(matchDetail.getByRole("link", { name: "采购发票 LOCAL-DEMO-INV-001" })).toBeVisible();
   expect(documentRequests).toContain("/api/procurement/documents/threeWayMatch/MATCH-LOCAL-DEMO-INV-001");
   expect(documentRequests.some((requestUrl) => requestUrl.includes("?type=threeWayMatch"))).toBeFalsy();
   await page.reload();
   await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
   await page.goBack();
-  await expect(page).toHaveURL(/\/app\/procurement\/invoices\/LOCAL-DEMO-INV-001/);
+  await expect(page).toHaveURL(/\/app\/procurement\/bills\/LOCAL-DEMO-INV-001/);
   await page.goForward();
   await expect(matchDetail).toContainText("MATCH-LOCAL-DEMO-INV-001");
   expect(consoleIssues).toEqual([]);
 
-  await page.route("**/api/procurement/documents/invoice/ERROR-404", async (route) => {
-    await route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"Procurement document not found"}' });
-  });
-  await page.goto("/app/procurement/invoices/ERROR-404");
-  await expect(page.getByTestId("procurement-document-not-found")).toContainText("对当前租户不可见");
-
-  await page.route("**/api/procurement/documents/invoice/ERROR-401", async (route) => {
-    await route.fulfill({ status: 401, contentType: "application/json", body: '{"code":"TENANT_CONTEXT_REQUIRED"}' });
-  });
-  await page.goto("/app/procurement/invoices/ERROR-401");
-  await expect(page.getByTestId("procurement-document-unauthenticated")).toContainText("登录状态已失效");
-
-  await page.route("**/api/procurement/documents/invoice/ERROR-403", async (route) => {
-    await route.fulfill({ status: 403, contentType: "application/json", body: '{"code":"FORBIDDEN"}' });
-  });
-  await page.goto("/app/procurement/invoices/ERROR-403");
-  await expect(page.getByTestId("procurement-document-forbidden")).toContainText("没有查看该文档的权限");
-
-  await page.route("**/api/procurement/documents/invoice/ERROR-500", async (route) => {
-    await route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"Internal server error"}' });
-  });
-  await page.goto("/app/procurement/invoices/ERROR-500");
-  await expect(page.getByTestId("procurement-document-read-error")).toContainText("暂时无法读取，可重试");
+  // A bill that cannot be read says why instead of showing an empty page.
+  for (const [id, status, testId, text] of [
+    ["ERROR-404", 404, "supplier-invoice-not-found", "未找到这张采购发票"],
+    ["ERROR-401", 401, "supplier-invoice-unauthenticated", "登录状态已失效"],
+    ["ERROR-403", 403, "supplier-invoice-forbidden", "没有查看这张采购发票的权限"],
+    ["ERROR-500", 500, "supplier-invoice-read-error", "暂时无法读取，可重试"],
+  ] as const) {
+    await page.route(`**/api/finance/supplier-invoices/${id}`, async (route) => {
+      await route.fulfill({ status, contentType: "application/json", body: '{"code":"READ_FAILED"}' });
+    });
+    await page.goto(`/app/procurement/bills/${id}`);
+    await expect(page.getByTestId(testId)).toContainText(text);
+  }
   await expect(page.getByRole("button", { name: "重试", exact: true })).toBeVisible();
-
-  await page.route("**/api/procurement/documents/invoice/ERROR-NETWORK", async (route) => {
+  await page.route("**/api/finance/supplier-invoices/ERROR-NETWORK", async (route) => {
     await route.abort("failed");
   });
-  await page.goto("/app/procurement/invoices/ERROR-NETWORK");
-  await expect(page.getByTestId("procurement-document-read-error")).toContainText("暂时无法读取，可重试");
+  await page.goto("/app/procurement/bills/ERROR-NETWORK");
+  await expect(page.getByTestId("supplier-invoice-read-error")).toContainText("暂时无法读取，可重试");
   await expect(page.getByText("LOCAL-DEMO-INV-001", { exact: true })).toHaveCount(0);
 
   await page.goto("/app/sales/orders");
