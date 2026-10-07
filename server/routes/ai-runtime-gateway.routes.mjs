@@ -1,6 +1,6 @@
 import { withoutUnavailableProductLinks } from '../../shared/unavailable-product-routes.mjs'
 import { withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
-import { handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
+import { aiAgentKnowledge, handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
 import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
 import { runBusinessQueryRuntime, shouldUseSemanticBusinessQuery } from '../domain/ai-business-query-runtime.mjs'
 import { aiAgentPlanningEnabled } from '../domain/ai-agent-planning.mjs'
@@ -31,6 +31,8 @@ function errorBody(code, body = {}) {
 }
 
 async function addKnowledgeContext(ctx, body, response) {
+  // A planned answer that searched the documents itself carries its passages.
+  if (response?.supplementalKnowledge || response?.intent === 'knowledge_retrieval') return response
   if (classifyQueryScope(body) !== 'mixed') return response
   try {
     const knowledge = await runKnowledgeQuery(ctx, body, { force: true })
@@ -137,9 +139,12 @@ async function handleGatewayRequest(ctx) {
       // the supplier business query among its tools. When the planner does not
       // answer it, the business query path answers as before.
       const question = String(body.message || body.question || '')
+      // The actor's documents for the planner's knowledge search (PR-3), read
+      // only when agent planning is on.
+      const agentDocuments = !actionRequest && aiAgentPlanningEnabled(ctx.env || process.env) ? await (ctx.aiAgentKnowledge !== undefined ? ctx.aiAgentKnowledge : aiAgentKnowledge(ctx).catch(() => null)) : null
       const attempt = !actionRequest && aiAgentPlanningEnabled(ctx.env || process.env) && splitAiCompoundQuestion(question).length >= 2 && shouldUseSemanticBusinessQuery(question, body) ? {} : null
       if (attempt) {
-        const planned = await runAiSkillRuntime(ctx, body, { agentFirst: attempt })
+        const planned = await runAiSkillRuntime(ctx, body, { agentFirst: attempt, knowledge: agentDocuments })
         if (planned) { send(res, 200, await addKnowledgeContext(ctx, body, planned)); return true }
       }
       const answered = actionRequest ? null : await runBusinessQueryRuntime(ctx, db, body, { responseMode: 'runtime' })
@@ -162,7 +167,7 @@ async function handleGatewayRequest(ctx) {
         send(res, result.status, await addKnowledgeContext(ctx, body, withoutUnavailableProductLinks(result.body)))
         return true
       }
-      send(res, 200, await addKnowledgeContext(ctx, body, await runAiSkillRuntime(ctx, body, { skipAgent: Boolean(attempt) })))
+      send(res, 200, await addKnowledgeContext(ctx, body, await runAiSkillRuntime(ctx, body, { skipAgent: Boolean(attempt), knowledge: agentDocuments })))
     } catch (error) {
       if (isKnowledgeQuestion(body)) {
         send(res, error.status || 503, { code: error.code || 'KNOWLEDGE_UNAVAILABLE', error: error.status ? error.message : (body.answerLanguage === 'zh-CN' ? '知识库暂时不可用，请稍后重试。' : 'Knowledge is temporarily unavailable. Please try again.') })

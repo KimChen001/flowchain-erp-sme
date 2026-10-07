@@ -35,6 +35,7 @@ const mapPo = (row = {}) => ({
   sourcePrId: row.sourceRequestId,
   sourceRfqId: row.sourceRfqId,
   expectedDate: row.expectedDate?.toISOString?.() || row.expectedDate || null,
+  issuedAt: row.issuedAt?.toISOString?.() || row.issuedAt || null,
   owner: row.owner || '',
   createdAt: row.createdAt?.toISOString?.() || row.createdAt || null,
   updatedAt: row.updatedAt?.toISOString?.() || row.updatedAt || null,

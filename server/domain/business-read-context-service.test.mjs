@@ -87,3 +87,19 @@ test('recent RFQs link to the RFQ detail route, which is /app/procurement/rfq/:i
   const overview = buildHomeOverview({ purchaseRequests: [], purchaseOrders: [], rfqs: [{ id: 'RFQ-1', status: 'open', updatedAt: '2026-07-14T02:00:00.000Z' }], dataLimitations: [] })
   assert.equal(overview.recentDocuments[0].canonicalRoute, '/app/procurement/rfq/RFQ-1')
 })
+
+test('the context carries the recorded unit of every item a purchase order line names, apart from the item list', async () => {
+  const repos = repositories()
+  let asked = null
+  repos.masterData.listRecordedItemUnits = async (filters) => { asked = filters; return [{ sku: 'ZZ-100', itemId: 'ITEM-ZZ', unit: 'pcs' }] }
+  repos.procurementRuntime.snapshot = async () => ({ purchaseOrders: [{ id: 'PO-40', status: 'issued', lines: [{ sku: 'ZZ-100', itemId: 'ITEM-ZZ', unit: 'CASE' }, { sku: '', itemId: 'ITEM-Y' }] }] })
+  const context = await createBusinessReadContextService({ repositories: repos }).read({ tenantId: 'tenant-1' })
+  assert.deepEqual(asked.keys, ['ZZ-100', 'ITEM-ZZ', 'ITEM-Y'])
+  assert.equal(asked.tenantId, 'tenant-1')
+  assert.deepEqual(context.itemUnits, [{ sku: 'ZZ-100', itemId: 'ITEM-ZZ', unit: 'pcs' }])
+  // Without purchase order lines nothing is read.
+  repos.procurementRuntime.snapshot = async () => ({ purchaseOrders: [] })
+  asked = null
+  assert.deepEqual((await createBusinessReadContextService({ repositories: repos }).read({ tenantId: 'tenant-1' })).itemUnits, [])
+  assert.equal(asked, null)
+})

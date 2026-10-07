@@ -539,6 +539,10 @@ test('step 4c: an approved PO is issued to the supplier (POST /api/procurement/o
   assert.equal(row.receivingBaseStatus, 'issued')
   assert.equal(row.version, 1)
   assert.equal(row.metadata.transmissionStatus, 'issued_outside_flowchain')
+  // The issue date is a column, and metadata keeps the same instant.
+  assert.ok(row.issuedAt instanceof Date)
+  assert.equal(row.metadata.issuedAt, row.issuedAt.toISOString())
+  assert.equal(issued.body.purchaseOrder.issuedAt, row.issuedAt.toISOString())
   assert.equal(await audits('PurchaseOrder', id), 1)
   const cancelIssued = await api(tokens.managerA, 'POST', `/api/procurement/orders/${id}/cancel`, { expectedVersion: 1 })
   assert.equal(cancelIssued.status, 409, describe(cancelIssued))

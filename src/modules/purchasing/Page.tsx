@@ -18,9 +18,13 @@ import { apiJson } from "../../lib/api-client";
 import { useRouteAvailability } from "../../app/routeAvailability";
 import { exportRowsToCsv } from "../../lib/data-export";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
-import { formatCurrencyAmount, todayInTimeZone } from "../../lib/format";
+import { formatCurrencyAmount, instantDayInTimeZone, todayInTimeZone } from "../../lib/format";
+import { useI18n } from "../../i18n/I18n";
+import { usePriceHistoryCopy } from "../procurement/priceHistoryCopy";
+import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
-import type { PurchaseOrder, ReceivingDoc, SupplierInvoice } from "../../types/scm";
+import { SupplierOverrideFlag } from "../../components/procurement/SupplierOverrideReason";
+import type { PurchaseOrder, PurchaseOrderLine, ReceivingDoc, SupplierInvoice } from "../../types/scm";
 import {
   A,
   Card,
@@ -74,6 +78,8 @@ const copy = (label: string) => workspaceCopy(label, typeof document === "undefi
 // Statuses in which a bill can be recorded: a supplier's bill can arrive
 // before the goods (it then waits for the receipt) or after them.
 const BILLABLE_PO_STATUSES = new Set(["approved", "issued", "partially_received", "received", "fully_received", "closed"]);
+// Statuses a PO reaches once issued (or received), with the legacy labels older rows carry.
+const ISSUED_PO_STATUSES = new Set(["issued", "partially_received", "fully_received", "closed", "已发出", "部分到货", "已完成"]);
 
 type PurchaseOrderViewMode = "list" | "detail";
 type NavigateFn = (moduleId: string, focusTarget?: { entityType: string; entityId: string } | null, options?: { returnTo?: string; entityLabel?: string; returnContext?: WorkflowContext | null; source?: string }) => void;
@@ -119,6 +125,7 @@ type PoEvidenceRow = {
   uninvoicedQty: number;
   status: string;
   risk: string;
+  supplierOverride?: PurchaseOrderLine["supplierOverride"];
 };
 
 type GrnEvidenceRow = {
@@ -188,7 +195,7 @@ function statusChip(status: string) {
   return <Chip label={copy(status)} color={statusTone(status) === "danger" ? A.red : statusTone(status) === "warning" ? A.orange : statusTone(status) === "success" ? A.green : A.blue} bg={statusTone(status) === "danger" ? "#fff1f0" : statusTone(status) === "warning" ? "#fff8f0" : statusTone(status) === "success" ? "#f0faf4" : "#f0f6ff"} />;
 }
 
-function PurchaseOrderLineCards({ rows, currency }: { rows: PoEvidenceRow[]; currency?: string }) {
+function PurchaseOrderLineCards({ rows, currency, priceHistory }: { rows: PoEvidenceRow[]; currency?: string; priceHistory?: (poLineId: string) => React.ReactNode }) {
   const copy = useWorkspaceCopy();
   if (!rows.length) {
     return <Card className="p-8 text-center text-xs" style={{ color: A.gray2 }}>{copy("当前采购订单没有明细行。")}</Card>;
@@ -235,12 +242,14 @@ function PurchaseOrderLineCards({ rows, currency }: { rows: PoEvidenceRow[]; cur
               <div className="min-w-0">
                 <div className="text-xs font-semibold tabular-nums" style={{ color: A.blue }}>{line.poLineId}</div>
                 <div className="mt-1 text-sm font-semibold" style={{ color: A.label }}>{line.sku} · {line.itemName}</div>
+                {line.supplierOverride ? <div className="mt-1"><SupplierOverrideFlag override={line.supplierOverride} testId="po-line-supplier-override" /></div> : null}
               </div>
               <div className="flex flex-wrap gap-2">
                 {statusChip(line.status)}
                 <Chip label={line.risk} color={statusTone(line.risk) === "warning" ? A.orange : A.green} bg={statusTone(line.risk) === "warning" ? "#fff8f0" : "#f0faf4"} />
               </div>
             </div>
+            {priceHistory?.(line.poLineId)}
             <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {groups.map((group) => (
                 <div key={group.title} className="rounded-lg bg-slate-50 p-3">
@@ -391,6 +400,7 @@ function buildPoLineRows(po: PurchaseOrder, facts: ProcurementRuntimeFacts): PoE
       uninvoicedQty: Math.max(0, ordered - invoiceQty),
       status: ["cancelled", "已取消"].includes(po.status) ? "已取消" : lineStatusLabel(line.status),
       risk: ["cancelled", "已取消"].includes(po.status) ? "无需收货" : remaining > 0 && invoiceQty > received ? "已票未收风险" : remaining > 0 ? "未收货风险" : invoiceQty < received ? "已收未票风险" : "低风险",
+      supplierOverride: line.supplierOverride || null,
     };
   });
 }
@@ -543,6 +553,8 @@ export default function PurchasingOrdersPage({
   onActiveContextChange?: (context: ActiveContext | null) => void;
 }) {
   const copy = useWorkspaceCopy();
+  const priceCopy = usePriceHistoryCopy();
+  const { timezone } = useI18n();
   const warehouseName = useWarehouseNames();
   const canOpenRoute = useRouteAvailability();
   const location = useLocation();
@@ -634,6 +646,11 @@ export default function PurchasingOrdersPage({
   });
   const selectedPO = orders.find((order) => order.po === selectedId) ?? null;
   const selectedPOTotals = poTotals(selectedPO);
+  // Earlier PO prices for each line's item, unit and currency, in one
+  // request. The server leaves this PO out and, once it is issued, every PO
+  // dated after it. Display only.
+  const poLineHistoryKeys = new Map((viewMode === "detail" && selectedPO?.lines ? selectedPO.lines : []).map((line) => [line.poLineId, priceHistoryKey({ itemId: line.itemId, unit: line.unit, currency: line.currency || selectedPO?.currency })]));
+  const poPriceHistory = usePriceHistory([...poLineHistoryKeys.values()], { excludePurchaseOrderId: selectedPO?.po });
   const sourceOptions = Array.from(new Set(orders.map((order) => order.source || "manual"))).sort();
   const statusOptions = ["全部", "草稿", "待审批", "已审批", "已发出", "部分到货", "已完成", "已驳回", "已取消"] as const;
 
@@ -739,6 +756,18 @@ export default function PurchasingOrdersPage({
     window.setTimeout(() => setHighlightedArea(""), 5000);
   }
 
+  // The day the PO was issued to the supplier, in the workspace timezone.
+  // "Issue date not recorded" only for a PO that was issued; a PO not issued
+  // yet, or received straight from approval, says so instead.
+  const issueDateField = (po: PurchaseOrder) => {
+    const day = instantDayInTimeZone(po.issuedAt, timezone);
+    const value = day
+      || (!ISSUED_PO_STATUSES.has(String(po.status)) ? priceCopy("notIssued")
+        : String(po.status) !== "issued" && po.receivingBaseStatus === "approved" ? priceCopy("notIssuedInFlowChain")
+          : priceCopy("issueDateNotRecorded"));
+    return { label: priceCopy("issued"), value };
+  };
+
   const detailContent = selectedPO && (() => {
     const fmt = (value: number) => formatCurrencyAmount(value, selectedPO.currency);
     const poLines = buildPoLineRows(selectedPO, facts).map((row) => ({ ...row, warehouse: warehouseName(row.warehouse) }));
@@ -806,6 +835,7 @@ export default function PurchasingOrdersPage({
               { label: "供应商", value: selectedPO.supplier },
               { label: "采购负责人", value: selectedPO.owner },
               { label: "创建日期", value: selectedPO.created },
+              issueDateField(selectedPO),
               { label: "预计到货", value: selectedPO.eta },
               { label: "目标仓库", value: poLines[0]?.warehouse || warehouseName(selectedPO.warehouseId) || "目标仓库待补齐" },
               { label: "订单金额", value: fmt(poAmount(selectedPO)), tone: "info" },
@@ -822,7 +852,15 @@ export default function PurchasingOrdersPage({
 
         <div>
           <SectionTitle title={copy("PO 明细行")} right={<Chip label={`${poLines.length} ${copy(poLines.length === 1 ? "单行" : "行")}`} color={A.blue} bg="#f0f6ff" />} />
-          <PurchaseOrderLineCards rows={poLines} currency={selectedPO.currency} />
+          <PurchaseOrderLineCards
+            rows={poLines}
+            currency={selectedPO.currency}
+            priceHistory={(poLineId) => poLineHistoryKeys.get(poLineId) ? (
+              <div className="mt-2">
+                <PriceHistoryFacts history={poPriceHistory.histories.get(poLineHistoryKeys.get(poLineId) || "")} state={poPriceHistory.state} testId={`po-line-price-history-${poLineId}`} />
+              </div>
+            ) : null}
+          />
         </div>
 
         <PurchaseOrderPromiseDates poId={selectedPO.po} onChanged={loadWorkbench} />

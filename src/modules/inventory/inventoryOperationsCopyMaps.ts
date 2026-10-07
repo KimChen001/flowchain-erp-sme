@@ -90,11 +90,27 @@ export const chinese: Record<string, string> = {
   Ready: "标记就绪", Submit: "提交", Review: "复核", "Post Preview": "预览过账", "Reverse Preview": "预览冲销", Cancel: "取消",
   "Movement Evidence": "库存流水证据", "Reconciliation：": "对账：",
   damage: "损坏", shrinkage: "损耗", found_stock: "盘盈", data_correction: "数据更正", quality_disposition: "质量处置", other: "其他",
+  "Stock record for line {n}": "第 {n} 行库存记录",
+  "Existing stock record": "已有库存记录",
+  "Item at a location with no stock record": "无库存记录的库位",
+  "Adjustment item {n}": "调整物料 {n}",
+  "Adjustment warehouse {n}": "调整仓库 {n}",
+  "Adjustment location {n}": "调整库位 {n}",
+  Location: "库位",
+  "New stock record": "新库存记录",
+  "This item already has a stock record here. Choose it under Existing stock record.": "该物料在此库位已有库存记录，请在“已有库存记录”中选择。",
+  "Opening stock records what you already hold on go-live day. Posting creates the stock record. No cost is recorded.": "期初库存用于录入上线当天已有的数量，过账时创建库存记录，不记录成本。",
+  "If the target location has no stock record yet, posting creates it.": "目标库位还没有库存记录时，过账会创建它。",
+  "This item already holds {qty} here. Opening stock cannot be added on top of it. Choose another reason to correct it.": "该物料在此库位已有 {qty} 的库存，不能再录入期初库存。请改用其他原因更正。",
+  "This item already has a stock record here. Opening stock is refused if the record has any history. Choose another reason to correct it.": "该物料在此库位已有库存记录；如该记录已有任何库存历史，期初库存将被拒绝。请改用其他原因更正。",
+  "This item already has stock or stock history at this location, so opening stock cannot be recorded. Use another reason to correct it.": "该物料在此库位已有库存或库存历史，不能录入期初库存。请改用其他原因更正。",
+  opening_balance: "期初库存",
 };
 
 export const englishCodes: Record<string, string> = {
   damage: "Damage", shrinkage: "Shrinkage", found_stock: "Found stock", data_correction: "Data correction",
   quality_disposition: "Quality disposition", other: "Other",
   ready: "Ready", counting: "Counting", counted: "Counted", reviewed: "Reviewed",
+  opening_balance: "Opening stock",
 };
 export const chineseCodes: Record<string, string> = { ready: "已就绪", counting: "盘点中", counted: "已盘点", reviewed: "已复核" };

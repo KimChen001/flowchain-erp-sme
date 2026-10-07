@@ -1,48 +1,77 @@
 import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
 import { isCommittedPurchaseOrder } from './open-purchase-order.mjs'
+import { PURCHASE_ORDER_STATUS, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 import { currentPromisedDay, promiseDay } from './purchase-order-promise-dates.mjs'
 
 // Supplier scorecard: delivery statistics per supplier, measured against the
-// date each PO line was ORIGINALLY promised. The current expected date moves
+// date each delivery was ORIGINALLY promised. The current expected date moves
 // with the shipment; an on-time rate computed against it is only an upper
 // bound, so the scorecard shows both and names the gap.
 //
+// The unit is the DELIVERY OBLIGATION: the lines of one purchase order that
+// share one original promised date. A 12-line order promised for one day is
+// one delivery, not twelve, so a large order cannot outweigh many small ones.
+// Until suppliers confirm dates in FlowChain, the original promise is the date
+// on the PO when it was approved, which may be the buyer's need date
+// (rules.promiseBasis 'po_date').
+//
+// Only orders the supplier actually got are measured (owner decision of
+// 2026-10-06, as decision V5 chases only issued orders): a PO issued to the
+// supplier, or one with a posted receipt. A PO approved but never issued, with
+// nothing received, is left out of every rate and count and listed apart as
+// not sent to the supplier (notSentCount, notSentPurchaseOrders).
+//
 // Definitions, per supplier and period (the standard OTIF decomposition, so the
 // three measures are distinct):
-//   unit            a PO line whose original promised date falls in the period
-//                   and that has at least one posted receipt
-//   sample          fewer than 5 lines: "insufficient sample", no percentages;
-//                   each rate also needs 5 lines in its own denominator
-//   on time         the line's FIRST receipt arrived on or before the original
-//                   promised date + grace days (default 0)
-//   early           the first receipt arrived more than 3 days before the
-//                   original promise; still on time, reported apart
-//   in full         the accepted quantity EVENTUALLY reached the ordered
-//                   quantity. A line still open with a shortfall is "not in
-//                   full yet": reported as pending and left out of the in-full
-//                   denominator until it is fully received or closed (its PO
-//                   is fully received or cancelled, or the line is closed short)
-//   OTIF            the accepted quantity reached the ordered quantity by the
-//                   original promised date + grace days
+//   delivery        the lines of one measured PO with the same original
+//                   promised date, when that date falls in the period. A line
+//                   ordered at zero, or closed with nothing received, is left
+//                   out of its delivery (it was called off), unless it was
+//                   closed after the promise plus grace days: then it was
+//                   already late and stays in as late and not in full
+//   judged          once every line has a posted receipt, or once today is past
+//                   the promise plus grace days; until then the delivery waits
+//   sample          fewer than 5 deliveries: "insufficient sample", no
+//                   percentages; each rate also needs 5 deliveries in its own
+//                   denominator
+//   on time         every line's FIRST receipt arrived on or before the
+//                   original promised date + grace days (default 0); a partial
+//                   first receipt counts. Past that day with a line still
+//                   unreceived the delivery is overdue: late and not OTIF
+//   early           the last line's first receipt arrived more than 3 days
+//                   before the original promise; still on time, reported apart
+//   in full         every line's accepted quantity EVENTUALLY reached its
+//                   ordered quantity. A delivery with a line still open with a
+//                   shortfall is "not in full yet": reported as pending and left
+//                   out of the in-full denominator until each line is fully
+//                   received or closed (its PO is fully received or cancelled,
+//                   or the line is closed short)
+//   OTIF            every line's accepted quantity reached its ordered quantity
+//                   by the original promised date + grace days
 //   rejection rate  rejected quantity / received quantity (accepted +
-//                   rejected) over the sample lines; none when the lines use
-//                   different units, which cannot be added
-//   average delay   mean of (first receipt day - original promised day) over
-//                   the late lines
+//                   rejected) over the lines of the sample deliveries; none when
+//                   the lines are for more than one SKU or use different units,
+//                   whose quantities cannot be added
+//   average delay   mean, over the late deliveries, of the days from the
+//                   original promise to the last line's first receipt (for a
+//                   line with none, today, or the day it was closed)
 //   price variances supplier invoices dated in the period with a price
 //                   variance
+// In full and OTIF are three-valued over the lines: false when any line is
+// false, true when all are true, otherwise undecided.
 // "vs current date" repeats on time and OTIF against each line's current
 // expected date, with the same grace days. A line not yet due against its
-// current date counts as on time (and OTIF) against it, so the current-date
-// rates are upper bounds; the gap to the original-promise rates shows what the
+// current date counts as on time (and OTIF) against it, unless it was closed
+// with nothing received; so the current-date rates are upper bounds; the gap to the original-promise rates shows what the
 // revisions hide.
-// Rates carry Wilson 95% intervals. Days are calendar days in the workspace
-// timezone. Every figure lists the lines or invoices behind it. Money stays in
-// its document currency and is never added across currencies.
+// Rates carry Wilson 95% intervals over deliveries. Days are calendar days in
+// the workspace timezone. Every figure lists the deliveries, lines or invoices
+// behind it. Money stays in its document currency and is never added across
+// currencies.
 
-export const SUPPLIER_SCORECARD_VERSION = 'supplier-scorecard-v2'
-export const SUPPLIER_SCORECARD_RULES = Object.freeze({ graceDays: 0, earlyDays: 3, minimumSample: 5, periodDays: 90, maxPeriodDays: 731, maxGraceDays: 30 })
+export const SUPPLIER_SCORECARD_VERSION = 'supplier-scorecard-v3'
+export const SUPPLIER_SCORECARD_RULES = Object.freeze({ graceDays: 0, earlyDays: 3, minimumSample: 5, promiseBasis: 'po_date', periodDays: 90, maxPeriodDays: 731, maxGraceDays: 30 })
 export const SUPPLIER_SCORECARD_READ_PERMISSIONS = Object.freeze(['procurement.purchase_order.read', 'receiving.read'])
 const COMMITTED_INVOICE_STATUSES_EXCLUDED = ['draft', 'cancelled', 'rejected']
 const WILSON_Z = 1.959964
@@ -99,12 +128,53 @@ export function wilsonInterval(successes, trials, z = WILSON_Z) {
 export const isPromiseMeasuredPurchaseOrder = (purchaseOrder) => isCommittedPurchaseOrder(purchaseOrder)
 const PROMISE_UNMEASURED_PO_STATUSES = ['draft', 'pending_approval', 'rejected', 'cancelled']
 
+// Issued to the supplier: the PO's status is issued or later, or its
+// transmission status says it was sent, or an issue time is recorded (the
+// PurchaseOrder.issuedAt column where it exists, else metadata.issuedAt, which
+// the Issue command writes). The read models' default transmission status is
+// not read here: they show 'sent' for any PO past draft.
+const ISSUED_OR_LATER_PO_STATUSES = [PURCHASE_ORDER_STATUS.ISSUED, PURCHASE_ORDER_STATUS.PARTIALLY_RECEIVED, PURCHASE_ORDER_STATUS.FULLY_RECEIVED, PURCHASE_ORDER_STATUS.CLOSED]
+const SENT_TRANSMISSION_STATUSES = ['sent', 'issued', 'issued_outside_flowchain', 'transmitted', 'acknowledged', 'confirmed']
+export function isIssuedToSupplier(purchaseOrder) {
+  let status = text(purchaseOrder?.status)
+  try { status = normalizeProcurementAuthorityStatus('purchaseOrder', status) } catch { /* an unknown status stays as stored */ }
+  if (ISSUED_OR_LATER_PO_STATUSES.includes(status)) return true
+  if (SENT_TRANSMISSION_STATUSES.includes(text(purchaseOrder?.metadata?.transmissionStatus).toLowerCase())) return true
+  return Boolean(text(purchaseOrder?.issuedAt instanceof Date ? purchaseOrder.issuedAt.toISOString() : purchaseOrder?.issuedAt) || text(purchaseOrder?.metadata?.issuedAt))
+}
+
+// A posted receipt against the PO: a receipt line on one of its lines
+// (receiptLinesByLine, posted receipts by PO line id), a posted receiving
+// document for the PO (receivedPurchaseOrderIds), or a received quantity on a
+// line, which only posting a receipt records.
+export function hasPostedReceipt(purchaseOrder, { receiptLinesByLine = new Map(), receivedPurchaseOrderIds = new Set() } = {}) {
+  if (receivedPurchaseOrderIds.has(text(purchaseOrder?.id))) return true
+  return (purchaseOrder?.lines || []).some((line) => (receiptLinesByLine.get(text(line.id)) || []).length > 0 || quantity(line.receivedQuantity) > 0)
+}
+
+// How the scorecard treats a PO: 'measured' when the supplier got it (issued
+// to the supplier, or something received against it); 'not_sent' when it is
+// committed but was never issued and nothing was received; null when it is not
+// measured at all (drafts, pending approvals, rejections, cancellations).
+export function scorecardPurchaseOrderStanding(purchaseOrder, receipts = {}) {
+  if (!isPromiseMeasuredPurchaseOrder(purchaseOrder)) return null
+  return isIssuedToSupplier(purchaseOrder) || hasPostedReceipt(purchaseOrder, receipts) ? 'measured' : 'not_sent'
+}
+
 // A line is closed when nothing more will be received against it: its PO is
 // fully received or cancelled, or the buyer closed the line short
 // (metadata.closedAt; closing a remainder is decision D5, not built yet).
 const CLOSED_PO_STATUSES = ['fully_received', 'closed', 'cancelled']
 export function isLineClosed(line, purchaseOrder) {
   return CLOSED_PO_STATUSES.includes(text(purchaseOrder?.status)) || Boolean(text(line?.metadata?.closedAt))
+}
+
+// The day a closed line was closed, in the workspace timezone: the line's own
+// closedAt, else the close of its PO. null when no closing time is recorded.
+function closedDayOf(line, purchaseOrder, timeZone) {
+  const closedAt = text(line?.metadata?.closedAt) || (text(purchaseOrder?.status) === 'closed' ? text(purchaseOrder?.metadata?.closedAt) : '')
+  if (!closedAt) return null
+  return /^\d{4}-\d{2}-\d{2}$/.test(closedAt) ? promiseDay(closedAt) : localDay(closedAt, timeZone)
 }
 
 // The day the accepted quantity first reached the ordered quantity, or null.
@@ -119,7 +189,8 @@ function fullDayOf(events, ordered) {
 
 // One PO line against its original promise and its current date. receipts are
 // the line's posted receipt lines: { receivingDocumentId, day, accepted, rejected }.
-export function evaluatePromiseLine({ line, purchaseOrder, receipts = [], asOfDay, graceDays = SUPPLIER_SCORECARD_RULES.graceDays, earlyDays = SUPPLIER_SCORECARD_RULES.earlyDays }) {
+// A line is judged with the other lines of its delivery (groupDeliveryObligations).
+export function evaluatePromiseLine({ line, purchaseOrder, receipts = [], asOfDay, graceDays = SUPPLIER_SCORECARD_RULES.graceDays, earlyDays = SUPPLIER_SCORECARD_RULES.earlyDays, timeZone = 'America/New_York' }) {
   const originalDay = promiseDay(line.originalPromisedDate)
   const currentDay = currentPromisedDay(line, purchaseOrder) || originalDay
   const events = [...receipts].filter((entry) => entry.day).sort((a, b) => a.day.localeCompare(b.day) || text(a.receivingDocumentId).localeCompare(text(b.receivingDocumentId)))
@@ -145,29 +216,35 @@ export function evaluatePromiseLine({ line, purchaseOrder, receipts = [], asOfDa
     firstReceiptDay,
     fullDay,
     closed: isLineClosed(line, purchaseOrder),
+    closedDay: isLineClosed(line, purchaseOrder) ? closedDayOf(line, purchaseOrder, timeZone) : null,
     receipts: events.map((entry) => ({ receivingDocumentId: entry.receivingDocumentId, day: entry.day, accepted: quantity(entry.accepted), rejected: quantity(entry.rejected) })),
   }
   if (!originalDay) return { ...base, status: events.length ? 'original_not_recorded' : 'not_received' }
   const cutoff = addDays(originalDay, graceDays)
+  base.cutoffDay = cutoff
   const currentCutoff = addDays(currentDay, graceDays)
   if (!events.length) {
     // Not delivered and not due yet: nothing to judge.
     if (!asOfDay || asOfDay <= cutoff) return { ...base, status: 'not_received' }
     // Past the original promise plus the grace days with nothing received:
     // late and not OTIF, as the standard definition counts it. In full stays
-    // pending while the line is open, as for a partial delivery.
+    // pending while the line is open, as for a partial delivery. A line
+    // closed since stopped being awaited on its closing day, so its delay runs
+    // to that day; it never arrived, so it is late against the current date too.
+    const stoppedDay = base.closed && base.closedDay && base.closedDay < asOfDay ? base.closedDay : asOfDay
+    const currentOk = base.closed ? false : asOfDay <= currentCutoff
     return {
       ...base,
       status: 'evaluated',
       overdueUndelivered: true,
       onTime: false,
       early: false,
-      daysLate: daysBetween(originalDay, asOfDay),
-      onTimeCurrent: asOfDay <= currentCutoff,
+      daysLate: daysBetween(originalDay, stoppedDay),
+      onTimeCurrent: currentOk,
       inFull: base.closed ? false : null,
       inFullPending: !base.closed,
       otif: false,
-      otifCurrent: asOfDay <= currentCutoff,
+      otifCurrent: currentOk,
     }
   }
   const onTime = firstReceiptDay <= cutoff
@@ -191,10 +268,68 @@ export function evaluatePromiseLine({ line, purchaseOrder, receipts = [], asOfDa
   }
 }
 
-// count of lines with the flag set, over the lines where it is decided.
-function lineRate(lines, flag, { minimumSample = SUPPLIER_SCORECARD_RULES.minimumSample, decided = () => true } = {}) {
-  const pool = lines.filter(decided)
-  const count = pool.filter((line) => line[flag] === true).length
+// A line called off before it was due is left out of its delivery: ordered at
+// zero, or closed with nothing received. A line closed only after its promise
+// plus the grace days was already late when it was closed, so it stays in, late
+// and not in full. A closed line with no recorded closing day is left out.
+function calledOff(line) {
+  if (quantity(line.orderedQuantity) <= 0) return true
+  if (!line.closed || line.firstReceiptDay) return false
+  return !(line.closedDay && line.cutoffDay && line.closedDay > line.cutoffDay)
+}
+
+// Three-valued AND: false when any value is false, true when all are true,
+// otherwise undecided (null).
+const allOf = (values) => values.some((value) => value === false) ? false : values.every((value) => value === true) ? true : null
+const latest = (days) => days.every(Boolean) && days.length ? [...days].sort().at(-1) : null
+
+// Delivery obligations from evaluated lines (see evaluatePromiseLine): the
+// lines of one PO with one original promised date. A delivery with a line not
+// yet received and not yet due waits (status 'not_due'); the others are
+// judged (status 'evaluated'). Lines without an original promise are not
+// grouped.
+export function groupDeliveryObligations(lines = []) {
+  const groups = new Map()
+  for (const line of lines) {
+    if (!line.originalPromisedDate || calledOff(line)) continue
+    const key = `${text(line.purchaseOrderId)}:${line.originalPromisedDate}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(line)
+  }
+  return [...groups].map(([obligationId, members]) => {
+    const rows = [...members].sort((a, b) => text(a.purchaseOrderLineId).localeCompare(text(b.purchaseOrderLineId)))
+    const waiting = rows.some((line) => line.status === 'not_received')
+    const onTime = !waiting && rows.every((line) => line.onTime === true)
+    const inFull = waiting ? null : allOf(rows.map((line) => line.inFull))
+    return {
+      obligationId,
+      purchaseOrderId: rows[0].purchaseOrderId,
+      originalPromisedDate: rows[0].originalPromisedDate,
+      status: waiting ? 'not_due' : 'evaluated',
+      lines: rows,
+      onTime,
+      onTimeCurrent: !waiting && rows.every((line) => line.onTimeCurrent === true),
+      // The last line's first receipt was more than the early days ahead.
+      early: !waiting && rows.every((line) => line.early === true),
+      inFull,
+      inFullPending: !waiting && inFull === null,
+      otif: waiting ? null : allOf(rows.map((line) => line.otif)),
+      otifCurrent: !waiting && rows.every((line) => line.otifCurrent === true),
+      // From the promise to the last line's first receipt, or, for a line with
+      // none, to today or the day it was closed.
+      daysLate: onTime || waiting ? 0 : Math.max(0, ...rows.map((line) => line.daysLate || 0)),
+      overdueUndelivered: rows.some((line) => line.overdueUndelivered === true),
+      revised: rows.some((line) => line.revised),
+      lastFirstReceiptDay: latest(rows.map((line) => line.firstReceiptDay)),
+      fullDay: latest(rows.map((line) => line.fullDay)),
+    }
+  }).sort((a, b) => text(a.originalPromisedDate).localeCompare(text(b.originalPromisedDate)) || a.obligationId.localeCompare(b.obligationId))
+}
+
+// count of deliveries with the flag set, over the deliveries where it is decided.
+function sampleRate(obligations, flag, { minimumSample = SUPPLIER_SCORECARD_RULES.minimumSample, decided = () => true } = {}) {
+  const pool = obligations.filter(decided)
+  const count = pool.filter((obligation) => obligation[flag] === true).length
   const sufficient = pool.length >= minimumSample
   return { count, of: pool.length, rate: sufficient ? rate(count, pool.length) : null, interval: sufficient ? wilsonInterval(count, pool.length) : null }
 }
@@ -215,57 +350,102 @@ const byCurrency = (rows) => {
   return [...totals.entries()].sort(([a], [b]) => text(a).localeCompare(text(b))).map(([currency, amount]) => ({ currency, amount: round(amount, 2) }))
 }
 
-// The figures for one supplier from its evaluated sample lines (see
-// evaluatePromiseLine) and its price-variance invoices (null when hidden).
+// The figures for one supplier from its lines (see evaluatePromiseLine: those
+// judged, and those not received and not yet due, which hold their delivery
+// back) and its price-variance invoices (null when hidden). Lines are grouped
+// into deliveries (groupDeliveryObligations); the rates count deliveries.
 export function summarizeScorecardLines({ lines = [], invoices = [], lineAmounts = true, invoiceAmounts = true }) {
   const { minimumSample } = SUPPLIER_SCORECARD_RULES
-  const sample = [...lines].sort((a, b) => text(a.originalPromisedDate).localeCompare(text(b.originalPromisedDate)) || text(a.purchaseOrderLineId).localeCompare(text(b.purchaseOrderLineId)))
+  const obligations = groupDeliveryObligations(lines)
+  const sample = obligations.filter((obligation) => obligation.status === 'evaluated')
+  const sampleLines = sample.flatMap((obligation) => obligation.lines)
   const sufficient = sample.length >= minimumSample
-  const late = sample.filter((line) => !line.onTime)
-  const units = [...new Set(sample.map((line) => line.unit || ''))]
-  const receivedQuantity = sample.reduce((sum, line) => sum + quantity(line.receivedQuantity), 0)
-  const rejectedQuantity = sample.reduce((sum, line) => sum + quantity(line.rejectedQuantity), 0)
-  // Quantities in different units cannot be added into one rate.
+  const late = sample.filter((obligation) => !obligation.onTime)
+  const units = [...new Set(sampleLines.map((line) => line.unit || ''))]
+  const skus = [...new Set(sampleLines.map((line) => text(line.sku)))]
+  const receivedQuantity = sampleLines.reduce((sum, line) => sum + quantity(line.receivedQuantity), 0)
+  const rejectedQuantity = sampleLines.reduce((sum, line) => sum + quantity(line.rejectedQuantity), 0)
+  // Quantities of different SKUs, or in different units, cannot be added into
+  // one rate or one total.
   const mixedUnits = units.length > 1
+  const multipleSkus = skus.length > 1
+  const addable = !mixedUnits && !multipleSkus
   const wholeUnits = Number.isInteger(receivedQuantity) && Number.isInteger(rejectedQuantity)
-  const rejectionRate = sufficient && !mixedUnits ? rate(rejectedQuantity, receivedQuantity) : null
+  const rejectionRate = sufficient && addable ? rate(rejectedQuantity, receivedQuantity) : null
   const variances = invoices === null ? null : [...invoices].sort((a, b) => text(a.invoiceDate).localeCompare(text(b.invoiceDate)) || text(a.supplierInvoiceId).localeCompare(text(b.supplierInvoiceId)))
-  const pending = sample.filter((line) => line.inFullPending)
-  const overdue = sample.filter((line) => line.overdueUndelivered)
+  const pending = sample.filter((obligation) => obligation.inFullPending)
+  const overdue = sample.filter((obligation) => obligation.overdueUndelivered)
   return {
     sampleSize: sample.length,
-    sampleStatus: !sample.length ? 'no_lines' : sufficient ? 'ok' : 'insufficient_sample',
-    revisedCount: sample.filter((line) => line.revised).length,
-    // Open lines with a shortfall: in the sample, not yet in the in-full rate.
+    lineCount: sampleLines.length,
+    sampleStatus: !sample.length ? 'no_obligations' : sufficient ? 'ok' : 'insufficient_sample',
+    // Deliveries in the period with a line not received and not yet due: not
+    // judged yet, so outside every figure.
+    waitingCount: obligations.length - sample.length,
+    // Lines whose promised date was revised after issue.
+    revisedCount: sampleLines.filter((line) => line.revised).length,
+    // Deliveries with a line still open with a shortfall: in the sample, not
+    // yet in the in-full rate.
     inFullPendingCount: pending.length,
-    pendingLines: pending,
-    // Lines past their promise plus the grace days with nothing received.
+    pendingObligations: pending,
+    // Deliveries past their promise plus the grace days with a line not received.
     overdueUndeliveredCount: overdue.length,
     metrics: {
-      onTime: lineRate(sample, 'onTime'),
-      onTimeCurrent: lineRate(sample, 'onTimeCurrent'),
-      early: lineRate(sample, 'early'),
-      inFull: lineRate(sample, 'inFull', { decided: (line) => !line.inFullPending }),
-      otif: lineRate(sample, 'otif', { decided: (line) => line.otif !== null }),
-      otifCurrent: lineRate(sample, 'otifCurrent'),
+      onTime: sampleRate(sample, 'onTime'),
+      onTimeCurrent: sampleRate(sample, 'onTimeCurrent'),
+      early: sampleRate(sample, 'early'),
+      inFull: sampleRate(sample, 'inFull', { decided: (obligation) => !obligation.inFullPending }),
+      otif: sampleRate(sample, 'otif', { decided: (obligation) => obligation.otif !== null }),
+      otifCurrent: sampleRate(sample, 'otifCurrent'),
       rejection: {
-        rejectedQuantity: round(rejectedQuantity),
-        receivedQuantity: round(receivedQuantity),
-        unit: mixedUnits ? null : units[0] || null,
+        rejectedQuantity: addable ? round(rejectedQuantity) : null,
+        receivedQuantity: addable ? round(receivedQuantity) : null,
+        unit: addable ? units[0] || null : null,
         mixedUnits,
+        multipleSkus,
         rate: rejectionRate,
         // Each unit counts as one trial, so the interval is narrower than the
         // real uncertainty when rejections come in batches.
         interval: rejectionRate === null || !wholeUnits ? null : wilsonInterval(rejectedQuantity, receivedQuantity),
       },
-      averageDelayDays: { value: late.length ? round(late.reduce((sum, line) => sum + line.daysLate, 0) / late.length, 1) : null, lateCount: late.length },
+      averageDelayDays: { value: late.length ? round(late.reduce((sum, obligation) => sum + obligation.daysLate, 0) / late.length, 1) : null, lateCount: late.length },
       priceVariances: variances === null
         ? { count: null, visible: false, amounts: [] }
         : { count: variances.length, visible: true, amounts: invoiceAmounts ? byCurrency(variances.map((row) => ({ currency: row.currency, amount: row.varianceAmount }))) : [] },
     },
-    orderedValue: lineAmounts ? byCurrency(sample.map((line) => ({ currency: line.currency, amount: line.amount }))) : [],
-    lines: sample,
+    orderedValue: lineAmounts ? byCurrency(sampleLines.map((line) => ({ currency: line.currency, amount: line.amount }))) : [],
+    obligations: sample,
+    lines: sampleLines,
     invoices: variances || [],
+  }
+}
+
+// A PO approved but not sent to the supplier, for the "not sent" list: its
+// lines promised in the period (the original promise, else the current date),
+// or null when none is.
+function notSentPurchaseOrder(purchaseOrder, { inPeriod, lineAmounts }) {
+  const lines = (purchaseOrder.lines || []).map((line) => {
+    const originalPromisedDate = promiseDay(line.originalPromisedDate)
+    return {
+      purchaseOrderLineId: line.id,
+      sku: text(line.sku),
+      itemName: text(line.itemName),
+      unit: text(line.unit),
+      orderedQuantity: quantity(line.orderedQuantity),
+      originalPromisedDate,
+      currentPromisedDate: currentPromisedDay(line, purchaseOrder) || originalPromisedDate,
+      currency: text(purchaseOrder.currency) || null,
+      amount: lineAmounts ? round(quantity(line.amount), 2) : null,
+    }
+  }).filter((line) => inPeriod(line.originalPromisedDate || line.currentPromisedDate))
+    .sort((a, b) => text(a.purchaseOrderLineId).localeCompare(text(b.purchaseOrderLineId)))
+  if (!lines.length) return null
+  return {
+    purchaseOrderId: purchaseOrder.id,
+    orderNumber: text(purchaseOrder.orderNumber || purchaseOrder.metadata?.orderNumber) || purchaseOrder.id,
+    status: text(purchaseOrder.status),
+    promisedDate: lines.map((line) => line.originalPromisedDate || line.currentPromisedDate).sort()[0],
+    lines,
   }
 }
 
@@ -275,9 +455,13 @@ export function summarizeScorecardLines({ lines = [], invoices = [], lineAmounts
 //   invoices        supplier invoices with lines and matchRuns.exceptions, or
 //                   null when the reader may not see invoices
 //   visibility      { lineAmounts, invoiceAmounts }
+//   receivedPurchaseOrderIds  POs with a posted receipt in any warehouse, so
+//                   an order the supplier delivered is measured even when the
+//                   reader cannot see the receipt
 export function buildSupplierScorecard({
   purchaseOrders = [],
   receipts = [],
+  receivedPurchaseOrderIds: receivedAnyWarehouse = [],
   invoices = null,
   suppliers = [],
   period,
@@ -289,11 +473,13 @@ export function buildSupplierScorecard({
   generatedAt = new Date().toISOString(),
   limitations = [],
 }) {
-  const { earlyDays, minimumSample } = SUPPLIER_SCORECARD_RULES
+  const { earlyDays, minimumSample, promiseBasis } = SUPPLIER_SCORECARD_RULES
   const inPeriod = (day) => Boolean(day) && day >= period.from && day <= period.to
   const receiptLines = new Map()
+  const receivedPurchaseOrderIds = new Set([...receivedAnyWarehouse].map(text).filter(Boolean))
   for (const document of receipts) {
     const day = localDay(document.arrivedAt || document.postedAt, timeZone)
+    if (text(document.poId)) receivedPurchaseOrderIds.add(text(document.poId))
     for (const line of document.lines || []) {
       if (!line.purchaseOrderLineId) continue
       if (!receiptLines.has(line.purchaseOrderLineId)) receiptLines.set(line.purchaseOrderLineId, [])
@@ -303,17 +489,30 @@ export function buildSupplierScorecard({
   const names = new Map(suppliers.map((row) => [row.id, text(row.name)]))
   const bySupplier = new Map()
   const entry = (id, name) => {
-    if (!bySupplier.has(id)) bySupplier.set(id, { supplierId: id, supplierName: names.get(id) || text(name) || id, lines: [], notRecorded: [], invoices: [] })
+    if (!bySupplier.has(id)) bySupplier.set(id, { supplierId: id, supplierName: names.get(id) || text(name) || id, lines: [], notRecorded: [], notSent: [], invoices: [] })
     return bySupplier.get(id)
   }
   if (supplierId) entry(supplierId)
+  // Lines not received and not yet due hold their delivery back. They do not
+  // put a supplier on the scorecard by themselves.
+  const notDue = new Map()
   for (const purchaseOrder of purchaseOrders) {
     const id = text(purchaseOrder.supplierId)
-    if (!id || (supplierId && id !== supplierId) || !isPromiseMeasuredPurchaseOrder(purchaseOrder)) continue
+    if (!id || (supplierId && id !== supplierId)) continue
+    const standing = scorecardPurchaseOrderStanding(purchaseOrder, { receiptLinesByLine: receiptLines, receivedPurchaseOrderIds })
+    if (!standing) continue
+    // Approved but never sent, with nothing received: listed apart when a line
+    // is promised in the period, and measured nowhere.
+    if (standing === 'not_sent') {
+      const unsent = notSentPurchaseOrder(purchaseOrder, { inPeriod, lineAmounts: visibility.lineAmounts })
+      if (unsent) entry(id, purchaseOrder.supplierName).notSent.push(unsent)
+      continue
+    }
     for (const line of purchaseOrder.lines || []) {
-      const evaluated = evaluatePromiseLine({ line, purchaseOrder, receipts: receiptLines.get(line.id) || [], asOfDay, graceDays, earlyDays })
+      const evaluated = evaluatePromiseLine({ line, purchaseOrder, receipts: receiptLines.get(line.id) || [], asOfDay, graceDays, earlyDays, timeZone })
       const withMoney = { ...evaluated, currency: text(purchaseOrder.currency) || null, amount: visibility.lineAmounts ? round(quantity(line.amount), 2) : null }
       if (evaluated.status === 'evaluated' && inPeriod(evaluated.originalPromisedDate)) entry(id, purchaseOrder.supplierName).lines.push(withMoney)
+      else if (evaluated.status === 'not_received' && inPeriod(evaluated.originalPromisedDate)) notDue.set(id, [...(notDue.get(id) || []), withMoney])
       else if (evaluated.status === 'original_not_recorded' && inPeriod(evaluated.currentPromisedDate)) entry(id, purchaseOrder.supplierName).notRecorded.push(withMoney)
     }
   }
@@ -335,9 +534,11 @@ export function buildSupplierScorecard({
   const rows = [...bySupplier.values()].map((supplier) => ({
     supplierId: supplier.supplierId,
     supplierName: supplier.supplierName,
-    ...summarizeScorecardLines({ lines: supplier.lines, invoices: invoices === null ? null : supplier.invoices, lineAmounts: visibility.lineAmounts, invoiceAmounts: visibility.invoiceAmounts }),
+    ...summarizeScorecardLines({ lines: [...supplier.lines, ...(notDue.get(supplier.supplierId) || [])], invoices: invoices === null ? null : supplier.invoices, lineAmounts: visibility.lineAmounts, invoiceAmounts: visibility.invoiceAmounts }),
     originalNotRecordedCount: supplier.notRecorded.length,
     originalNotRecordedLines: supplier.notRecorded,
+    notSentCount: supplier.notSent.length,
+    notSentPurchaseOrders: [...supplier.notSent].sort((a, b) => text(a.promisedDate).localeCompare(text(b.promisedDate)) || a.purchaseOrderId.localeCompare(b.purchaseOrderId)),
   })).sort((a, b) => b.sampleSize - a.sampleSize || a.supplierName.localeCompare(b.supplierName))
 
   return {
@@ -346,7 +547,7 @@ export function buildSupplierScorecard({
     asOf: asOfDay,
     timeZone,
     period,
-    rules: { graceDays, earlyDays, minimumSample },
+    rules: { graceDays, earlyDays, minimumSample, promiseBasis },
     fieldVisibility: { lineAmounts: Boolean(visibility.lineAmounts), invoices: invoices !== null, invoiceAmounts: invoices !== null && Boolean(visibility.invoiceAmounts) },
     limitations,
     suppliers: rows,
@@ -390,6 +591,13 @@ export function createSupplierScorecardReadService({ prisma, now = () => new Dat
       const receipts = purchaseOrders.length
         ? await prisma.receivingDocument.findMany({ where: { tenantId, poId: { in: purchaseOrders.map((row) => row.id) }, postingStatus: 'posted', ...warehouseFilter }, include: { lines: true }, orderBy: [{ id: 'asc' }] })
         : []
+      // Whether a PO was delivered is a fact about the PO, not about the
+      // receipts this reader may see: an order with a posted receipt in any
+      // warehouse was sent to the supplier, so it is measured, not listed as
+      // not sent. Only the PO ids are read here.
+      const receivedPurchaseOrderIds = purchaseOrders.length && !actor.allWarehouses
+        ? (await prisma.receivingDocument.findMany({ where: { tenantId, poId: { in: purchaseOrders.map((row) => row.id) }, postingStatus: 'posted' }, select: { poId: true } })).map((row) => row.poId)
+        : []
       const invoices = allowed('finance.supplier_invoice.read')
         ? await prisma.supplierInvoice.findMany({ where: { tenantId, ...supplierWhere }, include: { lines: true, matchRuns: { include: { exceptions: true } } }, orderBy: [{ id: 'asc' }] })
         : null
@@ -399,7 +607,7 @@ export function createSupplierScorecardReadService({ prisma, now = () => new Dat
       if (invoices === null) limitations.push('price_variances_hidden_by_permission')
       if (!actor.allWarehouses) limitations.push('receipts_limited_to_your_warehouses')
       return buildSupplierScorecard({
-        purchaseOrders, receipts, invoices, suppliers, period, asOfDay, timeZone, graceDays, supplierId,
+        purchaseOrders, receipts, receivedPurchaseOrderIds, invoices, suppliers, period, asOfDay, timeZone, graceDays, supplierId,
         visibility: { lineAmounts: allowed('procurement.prices.read'), invoiceAmounts: allowed('finance.amounts.read') },
         generatedAt: instant.toISOString(),
         limitations,
