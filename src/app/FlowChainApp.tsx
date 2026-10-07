@@ -109,6 +109,7 @@ import {
 } from "../components/business/businessEntityRoutes";
 import OutboundWorkbench from "../modules/sales/OutboundWorkbench";
 import InventoryOperationsWorkbench from "../modules/inventory/InventoryOperationsWorkbench";
+import ReorderListPage from "../modules/inventory/ReorderListPage";
 import MobileOperationsPage from "../modules/mobile/MobileOperationsPage";
 import ReturnQuarantineWorkbench from "../modules/inventory/ReturnQuarantineWorkbench";
 import { useI18n } from "../i18n/I18n";
@@ -1090,6 +1091,7 @@ export default function FlowChainApp() {
     ),
     "outbound-workbench": <OutboundWorkbench />,
     "inventory-operations": <InventoryOperationsWorkbench />,
+    "inventory-reorder": <ReorderListPage />,
     "returns-quarantine": <ReturnQuarantineWorkbench />,
     procurement: (
       <ProcurementPanel

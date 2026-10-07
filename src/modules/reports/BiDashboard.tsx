@@ -78,6 +78,24 @@ const LIMITATION_LABELS: Record<string, string> = {
   currency_missing_or_invalid: "Some records have a missing or invalid currency code, so their amounts are not totaled.",
 };
 
+// Per-SKU incoming notes ("po_line_unit_mismatch:LDM-002") become one line
+// each, naming the SKUs; every other code gets its label or the general note.
+const SKU_LIMITATION_LABELS: Record<string, string> = {
+  po_line_unit_mismatch: "Purchase order lines in another unit than the item's stock unit are not counted as incoming or in available to promise:",
+  po_line_unit_not_recorded: "Purchase order lines with no unit, or for an item with no stock unit recorded, are counted as incoming as recorded:",
+};
+function reportLimitationLabels(codes: string[], copy: (label: string) => string) {
+  const skus = new Map<string, string[]>();
+  const labels: string[] = [];
+  for (const code of codes) {
+    const [prefix, ...rest] = code.split(":");
+    if (SKU_LIMITATION_LABELS[prefix] && rest.length) skus.set(prefix, [...(skus.get(prefix) || []), rest.join(":")]);
+    else labels.push(LIMITATION_LABELS[code] || LIMITATION_FALLBACK);
+  }
+  for (const [prefix, list] of skus) labels.push(`${copy(SKU_LIMITATION_LABELS[prefix])} ${list.join(", ")}`);
+  return [...new Set(labels)];
+}
+
 const isStatusChart = (chart: ReportChart) => Boolean(chart.statusLabels) || chart.id.endsWith("_status");
 // A saved view can show the classic charts as another basic type; the newer
 // visuals keep their own form.
@@ -169,7 +187,7 @@ export function BiDashboard({ view, onNavigate: _onNavigate }: { view: Dashboard
     if (!report || !selectedColumnKeys.length) return report?.columnDefinitions || [];
     return selectedColumnKeys.map((key) => report.columnDefinitions.find((column) => column.key === key)).filter((column): column is NonNullable<typeof column> => Boolean(column));
   }, [report, selectedColumnKeys]);
-  const limitationLabels = useMemo(() => [...new Set((report?.warnings || []).map((code) => LIMITATION_LABELS[code] || LIMITATION_FALLBACK))], [report]);
+  const limitationLabels = useMemo(() => reportLimitationLabels(report?.warnings || [], copy), [report, copy]);
   const visualization = params.get("visualization") || "dashboard";
   const renderedCharts = useMemo(() => orderedCharts.map((chart) => {
     if (!["bar", "line", "stacked_bar", "donut"].includes(visualization) || !SWITCHABLE.has(chart.type)) return chart;

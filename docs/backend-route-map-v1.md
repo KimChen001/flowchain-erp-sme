@@ -93,6 +93,7 @@ All Evidence Graph routes are GET-only and do not create drafts, write audit eve
 | `GET` | `/api/inventory/reservation-preview?sku=:sku&salesOrderId=:id&requestedQty=:qty` | Read | inventory allocation read model | None | Preview-only reservation suggestion; does not lock stock. |
 | `GET` | `/api/inventory/sales-order-impact?salesOrderId=:id` | Read | inventory allocation read model | None | Inventory allocation impact for a customer order. |
 | `GET` | `/api/inventory/po-supply-impact?poId=:id` | Read | inventory allocation read model | None | PO incoming supply impact on SKUs and customer orders. |
+| `GET` | `/api/inventory/reorder-list` | Read | inventory allocation read model, items, posted shipments, item suppliers | None | Items to reorder ranked by order-by date from the recorded reorder point and 90-day shipped demand; prepares purchase requests, orders nothing. |
 | `GET` | `/api/inventory-movements` | Read | legacy movement route | None | Compatibility movement endpoint. |
 
 ## Action Drafts

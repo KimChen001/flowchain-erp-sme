@@ -67,8 +67,8 @@ type Relationship = {
   active: boolean;
   approved: boolean;
   preferred: boolean;
-  leadTimeDays: number;
-  minimumOrderQuantity: number;
+  leadTimeDays: number | null;
+  minimumOrderQuantity: number | null;
   referencePrice: number;
   currency: string;
   version: number;
@@ -206,7 +206,7 @@ export default function SupplierMasterPage({
       approved: true,
       active: true,
       leadTimeDays: "",
-      minimumOrderQuantity: "1",
+      minimumOrderQuantity: "",
       referencePrice: "",
       // Empty means "use the supplier's default currency" when saving.
       currency: "",
@@ -373,8 +373,9 @@ export default function SupplierMasterPage({
         {
           ...relationForm,
           supplierId: selected.id,
-          leadTimeDays: Number(relationForm.leadTimeDays || 0),
-          minimumOrderQuantity: Number(relationForm.minimumOrderQuantity || 1),
+          // A blank lead time or MOQ is sent as not recorded, never 0 or 1.
+          leadTimeDays: String(relationForm.leadTimeDays ?? "").trim() === "" ? null : Number(relationForm.leadTimeDays),
+          minimumOrderQuantity: String(relationForm.minimumOrderQuantity ?? "").trim() === "" ? null : Number(relationForm.minimumOrderQuantity),
           referencePrice: Number(relationForm.referencePrice || 0),
           currency: relationForm.currency || selected.defaultCurrency || undefined,
         },
@@ -623,8 +624,8 @@ export default function SupplierMasterPage({
                     </td>
                     <td className="p-2">{copy(r.preferred ? "是" : "否")}</td>
                     <td className="p-2">{copy(r.approved ? "是" : "否")}</td>
-                    <td className="p-2">{r.leadTimeDays}</td>
-                    <td className="p-2">{r.minimumOrderQuantity}</td>
+                    <td className="p-2">{r.leadTimeDays ?? "—"}</td>
+                    <td className="p-2">{r.minimumOrderQuantity ?? "—"}</td>
                     <td className="p-2">
                       {r.currency} {r.referencePrice}
                     </td>

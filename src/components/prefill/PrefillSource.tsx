@@ -22,6 +22,12 @@ const REF_LABELS: Record<string, readonly [string, string]> = {
   "assistant:due": ["Date from the assistant", "来自助手的日期"],
   "assistant:supplier": ["Supplier from the assistant", "来自助手的供应商"],
   "assistant:item": ["Item from the assistant", "来自助手的物料"],
+  "reorder_list:gap": ["Shortfall from the reorder list", "来自补货清单的缺口"],
+  "reorder_list:reason": ["Reason from the reorder list", "来自补货清单的原因"],
+  "reorder_list:due": ["Date from the reorder list", "来自补货清单的日期"],
+  "reorder_list:supplier": ["Preferred supplier from the reorder list", "来自补货清单的首选供应商"],
+  "reorder_list:item": ["Item from the reorder list", "来自补货清单的物料"],
+  "reorder_list:enter_quantity": ["Enter the quantity: the reorder list has no shortfall in this unit", "请填写数量：补货清单在此单位下没有缺口"],
   "item_supplier:moq": ["Raised to the minimum order quantity", "已提高到最小起订量"],
   "item_supplier:lead_time": ["Today plus the supplier lead time", "今天加供应商提前期"],
   "item_supplier:preferred": ["Preferred supplier", "首选供应商"],
@@ -40,6 +46,7 @@ const REF_LABELS: Record<string, readonly [string, string]> = {
 const ORIGIN_LABELS: Record<PrefillOrigin, readonly [string, string]> = {
   ai_assistant: ["the assistant", "助手"],
   today_cockpit: ["Today", "今日概览"],
+  reorder_list: ["the reorder list", "补货清单"],
   form: ["this form", "本表单"],
 };
 
