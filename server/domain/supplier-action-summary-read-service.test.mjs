@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildSupplierActionSummaries } from './supplier-action-summary-read-service.mjs'
+import { resolveBusinessTimeWindow } from './ai-business-time-window.mjs'
 
 const allPermissions = new Set([
   'finance.payable.read', 'finance.supplier_invoice.read', 'finance.settlement.read', 'finance.cashbook.read',
@@ -212,4 +213,31 @@ test('only committed purchase orders with quantity to receive count as open and 
   assert.equal(procurement.openPoCount, 2)
   assert.equal(procurement.overduePoCount, 1)
   assert.deepEqual(procurement.overduePoIds, ['PO-ISSUED'])
+})
+
+test('a bill due today in a US workspace is due today, not overdue, all evening long', () => {
+  // Due Oct 7, stored at 00:00 UTC (20:00 on Oct 6 in New York). Asked at
+  // 22:00 on Oct 7 in New York, already Oct 8 in UTC.
+  const now = new Date('2026-10-08T02:00:00.000Z')
+  const dueToday = invoice('today', 'a')
+  const dueYesterday = invoice('yesterday', 'a')
+  const dueTomorrow = invoice('tomorrow', 'a')
+  const records = {
+    suppliers: [supplier('a')], invoices: [dueToday, dueYesterday, dueTomorrow], settlements: [], purchaseOrders: [], receiving: [], rfqs: [], bankExceptions: [],
+    payables: [
+      payable('pay-today', 'a', dueToday, { dueDate: new Date('2026-10-07T00:00:00.000Z') }),
+      payable('pay-yesterday', 'a', dueYesterday, { dueDate: new Date('2026-10-06T12:00:00.000Z') }),
+      payable('pay-tomorrow', 'a', dueTomorrow, { dueDate: '2026-10-08' }),
+    ],
+  }
+  const read = (kind, filters = {}) => buildSupplierActionSummaries({ actor, now, timeZone: 'America/New_York', records, filters, timeWindow: resolveBusinessTimeWindow(kind, { now, timezone: 'America/New_York' }) }).items[0].payment
+  const ids = (payment) => payment.dueCount
+  assert.equal(ids(read('today')), 1)
+  assert.equal(read('today').overdueCount, 0)
+  assert.equal(ids(read('overdue')), 1)
+  assert.equal(read('all').overdueCount, 1)
+  assert.equal(ids(read('next_7_days')), 2)
+  assert.equal(ids(read('all', { dueState: ['overdue'] })), 1)
+  assert.equal(ids(read('all', { dueState: ['due_now'] })), 2)
+  assert.equal(ids(read('all', { dueState: ['future_due'] })), 1)
 })
