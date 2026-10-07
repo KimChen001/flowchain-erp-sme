@@ -8,6 +8,7 @@ export function createRouteContext({
   repositories,
   identity,
   sessionStore,
+  approvalNotifier = null,
   dataMode,
   runtime,
   domain,
@@ -25,6 +26,8 @@ export function createRouteContext({
     env,
     identity,
     sessionStore,
+    // Tells approvers a document is waiting (server/notifications).
+    approvalNotifier,
     ...domain,
     ...runtime,
   };

@@ -14,6 +14,8 @@ import {
 } from "../domain/local-signed-session.mjs";
 import { createWorkspaceSessionStore } from "../auth/workspace-sessions.mjs";
 import { createEmailLinkService } from "../auth/email-link-sign-in.mjs";
+import { createLazyMailer } from "../mail/mailer.mjs";
+import { createApprovalNotifier } from "../notifications/approval-notifier.mjs";
 import { checkRuntimeReadiness } from "../domain/runtime-readiness.mjs";
 import { createServerLifecycle, registerShutdownSignals } from "./server-lifecycle.mjs";
 import {
@@ -739,8 +741,9 @@ function supplierRecommendations() {
 // requestLogger enables the one-line-per-request access log. It is off unless
 // supplied, so in-process test servers stay quiet; startScmServer supplies it.
 // Unhandled errors are always logged, to errorLogger or the console.
-// mailer replaces the provider FLOWCHAIN_MAIL_PROVIDER selects; tests and
-// harnesses pass one so they never reach a real mail service.
+// mailer replaces the provider FLOWCHAIN_MAIL_PROVIDER selects for sign-in
+// links and approval emails; tests and harnesses pass one so they never reach
+// a real mail service.
 export function createScmServer({
   readinessCheck = checkRuntimeReadiness,
   requestLogger = null,
@@ -751,7 +754,10 @@ export function createScmServer({
   validateDatabasePersistenceConfig(process.env);
   // Sessions are rows in PostgreSQL, so they outlive this process.
   const sessionStore = createWorkspaceSessionStore({ env: process.env });
-  const emailLinks = createEmailLinkService({ env: process.env, sessionStore, mailer, logger: errorLogger || console });
+  // Sign-in links and approval emails share one provider (or the override).
+  const sharedMailer = mailer || createLazyMailer(process.env);
+  const emailLinks = createEmailLinkService({ env: process.env, sessionStore, mailer: sharedMailer, logger: errorLogger || console });
+  const approvalNotifier = createApprovalNotifier({ env: process.env, mailer: sharedMailer, logger: errorLogger || console });
   const localSessionSecret = createLocalSessionSecret(process.env);
   const handleRequest = createHttpRequestHandler({
     port,
@@ -760,6 +766,7 @@ export function createScmServer({
     readinessCheck,
     sessionStore,
     emailLinks,
+    approvalNotifier,
     localSessionSecret,
     domain: {
       event,
