@@ -51,8 +51,14 @@ Check a configuration without calling the provider: `npm run check:ai-provider-e
   validated as for every provider.
 - **Production status:** Anthropic describes the compatible endpoint as not a
   long-term production solution. A native Messages API adapter is a later step.
-- **Before first use:** verify one real call with the owner's key, in
-  particular `tool_choice: "required"`, which agent planning sends (PR #144).
+- **Agent planning:** on for this kind too. Anthropic documents `tools` and
+  `tool_calls` as supported on that endpoint, but does not list
+  `tool_choice: "required"`. So agent planning asks with `"auto"` and without
+  the `no_matching_skill` tool. A model that declines may then write text, which
+  is ignored and takes longer.
+- **Before first use:** verify one real call with the owner's key. If it
+  confirms `"required"`, add the kind to `REQUIRED_TOOL_CHOICE_KINDS` in
+  `server/domain/ai-agent-planning.mjs`.
 - **No embeddings:** Anthropic has no embeddings endpoint, so knowledge search
   stays keyword search; the answer is written by the model.
 
@@ -67,8 +73,20 @@ Check a configuration without calling the provider: `npm run check:ai-provider-e
     are shown with their sources and are not sent to a model.
 - **Knowledge answers** (a question about the documents alone) also send the
   matching passages of the workspace's own documents.
-- **Business records** (orders, amounts, suppliers) are not sent. Sending them
-  is P3, which is not approved (agent mode decision 4).
+- **The business query planner** (supplier and payment questions) sends:
+  - the question, the workspace time zone and the current time;
+  - the page's record, as type, id and name, when the question is asked on a
+    record's page;
+  - up to 10 records the previous answer cited, as id and name, so "these
+    suppliers" can be planned.
+
+  No amounts, counts or other figures are sent. This is the conversation memory
+  the owner approved on 2026-10-07.
+- **Answer wording (P3)** was approved by the owner on 2026-10-07 (agent mode
+  decisions 4 and 7) and is being built.
+  - With it, the model gets the facts a skill returned for the question,
+    masked to what the asking user may see, and writes the answer from them.
+  - Until it lands, skill answers send no business figures to any model.
 - The switch covers every one of these paths.
 
 ## Turning it on for a trial workspace

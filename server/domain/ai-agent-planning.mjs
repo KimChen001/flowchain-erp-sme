@@ -30,7 +30,11 @@ import { aiAgentBusinessQueryTool } from './ai-agent-business-query.mjs'
 
 export const AI_AGENT_LIMITS = Object.freeze({ maxTools: 3, maxRecords: 10, timeoutMs: 2500, maxTimeoutMs: 5000 })
 // Providers whose adapter sends native tool calls (chat completions).
-const TOOL_CALLING_KINDS = new Set(['deepseek_chat', 'doubao_chat', 'qwen_chat', 'parley_chat'])
+// anthropic_chat is Anthropic's OpenAI-compatible endpoint, the trial provider
+// (direction decision 2). It takes `tools` and returns `tool_calls`; it is
+// asked with tool_choice "auto" until a real call confirms "required"
+// (docs/ai-workspace-access.md).
+const TOOL_CALLING_KINDS = new Set(['deepseek_chat', 'doubao_chat', 'qwen_chat', 'parley_chat', 'anthropic_chat'])
 // Providers asked for a tool call and no text (tool_choice "required"):
 // verified on Parley through both kinds on 2026-10-05, and documented by
 // DeepSeek. With it the model declines by calling AI_AGENT_NO_SKILL alone: a
