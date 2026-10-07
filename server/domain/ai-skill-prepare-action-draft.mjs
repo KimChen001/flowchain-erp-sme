@@ -1,7 +1,7 @@
-import { aiSkillCountText, aiSkillText } from './ai-skill-copy.mjs'
+import { aiSkillCountText, aiSkillList, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillNavigation, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
-import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
+import { aiSkillFocusName, matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
 import { AI_SKILL_DRAFT_TYPES, aiSkillDraftCandidate, aiSkillDraftCard } from './ai-skill-drafts.mjs'
 import { presentStartOrder, runStartOrder } from './ai-skill-start-order.mjs'
 
@@ -21,7 +21,9 @@ const candidateSupplier = (candidate) => candidate.po?.supplierId || candidate.i
 
 export function runPrepareActionDraft(facts, { focus = null, route = null } = {}) {
   if (route?.mode === 'order') return runStartOrder(facts, { focus, route, canDraft: Boolean(facts.visibility?.canDraft) })
-  const ranked = rankAiSkillItems(buildAiSkillSignals(facts)).filter((item) => matchesAiSkillFocus(item, focus))
+  // Several named records (route.focusAny): the drafts for any of them.
+  const any = Array.isArray(route?.focusAny) && route.focusAny.length ? route.focusAny : null
+  const ranked = rankAiSkillItems(buildAiSkillSignals(facts)).filter((item) => matchesAiSkillFocus(item, focus) && (!any || any.some((one) => matchesAiSkillFocus(item, one))))
   const tier = route?.tier || null
   const tierIds = tier?.supplierIds ? new Set(tier.supplierIds) : null
   const all = ranked.map((item) => aiSkillDraftCandidate(item, facts)).filter((candidate) => !tierIds || tierIds.has(candidateSupplier(candidate)))
@@ -34,7 +36,7 @@ export function runPrepareActionDraft(facts, { focus = null, route = null } = {}
   drafts.sort((a, b) => a.item.rank - b.item.rank)
   const canDraft = Boolean(facts.visibility?.canDraft)
   return {
-    skillId: 'prepare_action_draft', focus, canDraft, tier,
+    skillId: 'prepare_action_draft', focus, focusAny: any, canDraft, tier,
     // Asked to draft for one order that is not yet issued: say so, not "no draft needed".
     focusNotSent: Boolean(focus) && !drafts.length && all.some((candidate) => candidate.kind === 'link' && candidate.notSent),
     drafts: canDraft ? drafts : [],
@@ -58,8 +60,9 @@ export function presentPrepareActionDraft(result, facts, { skill, language, quer
   return presentAiSkillAnswer({
     skill, facts, language, query,
     title: !result.canDraft ? aiSkillText('draft.title_blocked', language)
-      : result.focusNotSent ? aiSkillText('draft.focus_not_sent', language, { id: result.focus.entityId })
-        : result.focus ? focusTitle(result.focus.entityId, reviewCards.length, fmt, language)
+      : result.focusNotSent ? aiSkillText('draft.focus_not_sent', language, { id: aiSkillFocusName(result.focus, facts) })
+        : result.focus ? focusTitle(aiSkillFocusName(result.focus, facts), reviewCards.length, fmt, language)
+          : result.focusAny ? focusTitle(aiSkillList(result.focusAny.map((one) => aiSkillFocusName(one, facts)), language), reviewCards.length, fmt, language)
           : result.tier?.supplierIds ? aiSkillCountText('draft.tier_title', reviewCards.length, language, { count: fmt.number(reviewCards.length), group: aiSkillText(`tier.group_${result.tier.tier}`, language) })
             : aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }),
     summary: [aiSkillText(!result.canDraft ? 'draft.no_permission' : reviewCards.length ? 'draft.summary' : result.focusNotSent ? 'draft.not_sent_summary' : 'draft.none_summary', language), result.tier && !result.tier.supplierIds ? aiSkillText('tier.unavailable', language) : ''].filter(Boolean).join(language === 'zh-CN' ? '' : ' '),

@@ -267,13 +267,17 @@ export function verifyAiAnswerComposition(reply, { response, facts, slots, quest
 // template answer with the outcome for the audit row.
 // `resolvedQuestion`: what a follow-up means once the rules have read it with
 // the previous answer ("what about the second one?" is "What about PO-011?").
-export async function composeAiAnswer({ response, facts, message, resolvedQuestion = null, env = {}, provider = callConfiguredProvider, fetchImpl = globalThis.fetch } = {}) {
+// `previousQuestion`: the question asked just before, for a question that
+// follows on from it (conversation memory, ai-conversation-memory.mjs). Its
+// words are not allowed outside the slots: only the question's own are.
+export async function composeAiAnswer({ response, facts, message, resolvedQuestion = null, previousQuestion = null, env = {}, provider = callConfiguredProvider, fetchImpl = globalThis.fetch } = {}) {
   if (!aiAnswerComposeEnabled(env)) return { response, compose: null }
   if (!aiAnswerComposable(response)) return { response, compose: { status: 'skipped', reason: 'not_composable' } }
   const started = Date.now()
   const { slots, groups } = aiAnswerComposeSlots(response, facts)
   const resolved = text(resolvedQuestion) && text(resolvedQuestion) !== text(message) ? text(resolvedQuestion).slice(0, 600) : null
-  const input = { task: { type: 'answer_composition', question: text(message).slice(0, 1200), ...(resolved ? { resolvedQuestion: resolved } : {}), answerLanguage: response.language === 'zh-CN' ? 'zh-CN' : 'en-US' }, facts: { slots, groups } }
+  const previous = text(previousQuestion) && text(previousQuestion) !== text(message) ? text(previousQuestion).slice(0, 300) : null
+  const input = { task: { type: 'answer_composition', question: text(message).slice(0, 1200), ...(resolved ? { resolvedQuestion: resolved } : {}), ...(previous ? { previousQuestion: previous } : {}), answerLanguage: response.language === 'zh-CN' ? 'zh-CN' : 'en-US' }, facts: { slots, groups } }
   const controller = new AbortController()
   const timeoutMs = setting(env, 'FLOWCHAIN_AI_COMPOSE_TIMEOUT_MS', AI_COMPOSE_LIMITS.timeoutMs, AI_COMPOSE_LIMITS.maxTimeoutMs)
   const abortable = (url, init = {}) => fetchImpl(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal })

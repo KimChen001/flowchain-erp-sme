@@ -87,7 +87,9 @@ test('follow-ups answer through the usual skills, in the language they are asked
   const why = await ask({ message: '为什么？', answerLanguage: 'en-US', conversationContext: contextOf(first) })
   assert.equal(why.intent, 'today_priorities')
   assert.equal(why.language, 'zh-CN')
-  assert.equal(why.conclusion.title, `${top} 需要关注的原因`)
+  // The title names the record as the answer showed it (a SKU, not its id).
+  assert.equal(why.conclusion.title, `${first.keyEvidence[0].entityLabel} 需要关注的原因`)
+  assert.notEqual(first.keyEvidence[0].entityLabel, top)
   assert.deepEqual(why.followUp, { kind: 'why' })
   assert.equal(audits.at(-1).metadata.followUp, 'why')
   // Then "the second one" counts in the risk list, not in the one-record why.
