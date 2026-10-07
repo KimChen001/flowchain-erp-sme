@@ -70,9 +70,9 @@ const serverSources = () => {
   return files.map(path => ({ path: relative(serverRoot, path).replaceAll('\\', '/'), source: readFileSync(path, 'utf8') }))
 }
 
-test('only the four invoice matching tolerances and the AI switch are read from the operational settings the UI edits', () => {
+test('only the four invoice matching tolerances, the AI switch and the document settings are read from the operational settings the UI edits', () => {
   assert.deepEqual(REVIEW_TOLERANCE_FIELDS, ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance'])
-  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [] })
+  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder'] })
 
   const sources = serverSources()
   // Every server reader of tenant.operationalSettings. The settlement services
@@ -114,4 +114,46 @@ test('invoice matching tolerances are validated and stored as decimal strings', 
     assert.throws(() => validateOperationalSection('review', { ...review, [field]: value }), error => error.code === 'REVIEW_TOLERANCE_INVALID' && error.status === 400 && error.details.field === field, `${field}=${value}`)
   }
   assert.doesNotThrow(() => validateOperationalSection('review', { policies: [] }), 'older clients that omit tolerances keep the stored defaults')
+})
+
+test('document settings default to English with nothing invented and keep only known fields', () => {
+  const documents = mergeOperationalSettings({}).documents
+  assert.equal(documents.documentLanguage, 'en-US')
+  assert.deepEqual(documents.letterhead, { companyName: null, addressLines: [], phone: null, email: null, taxId: null })
+  assert.equal(documents.purchaseOrder.termsText, '')
+  assert.equal(mergeOperationalSettings({ documents: { documentLanguage: 'zh-CN', letterhead: { companyName: ' Harbor Goods LLC ' } } }).documents.letterhead.companyName, 'Harbor Goods LLC')
+
+  const saved = validateOperationalSection('documents', {
+    documentLanguage: 'zh-CN',
+    surprise: 'dropped',
+    letterhead: { companyName: '  Harbor Goods LLC ', addressLines: ['12 Pier Road', '  ', 'Oakland, CA 94607'], phone: '', email: 'buying@harbor.example', taxId: null, logo: 'dropped' },
+    purchaseOrder: { title: '', columns: { supplierSku: false, requestedDate: true, extra: true }, termsText: ' Net 30 from invoice. ', footerText: '', signatureBlock: true, paymentTerms: 'NET30' },
+  })
+  assert.deepEqual(saved, {
+    version: 1,
+    documentLanguage: 'zh-CN',
+    letterhead: { companyName: 'Harbor Goods LLC', addressLines: ['12 Pier Road', 'Oakland, CA 94607'], phone: null, email: 'buying@harbor.example', taxId: null },
+    purchaseOrder: { title: null, columns: { supplierSku: false, requestedDate: true, promisedDate: true }, termsText: 'Net 30 from invoice.', footerText: '', signatureBlock: true },
+  })
+})
+
+test('document settings over their limits are refused with the field named', () => {
+  const cases = [
+    [{ purchaseOrder: { termsText: 'x'.repeat(4001) } }, 'DOCUMENT_SETTING_TOO_LONG', 'purchaseOrder.termsText'],
+    [{ purchaseOrder: { footerText: 'x'.repeat(501) } }, 'DOCUMENT_SETTING_TOO_LONG', 'purchaseOrder.footerText'],
+    [{ letterhead: { addressLines: ['x'.repeat(121)] } }, 'DOCUMENT_SETTING_TOO_LONG', 'letterhead.addressLines.0'],
+    [{ letterhead: { addressLines: ['1', '2', '3', '4', '5', '6', '7'] } }, 'DOCUMENT_SETTING_TOO_MANY_LINES', 'letterhead.addressLines'],
+    [{ letterhead: { companyName: 42 } }, 'DOCUMENT_SETTING_INVALID', 'letterhead.companyName'],
+    [{ purchaseOrder: { columns: { promisedDate: 'yes' } } }, 'DOCUMENT_SETTING_INVALID', 'purchaseOrder.columns.promisedDate'],
+    [{ documentLanguage: 'fr-FR' }, 'DOCUMENT_LANGUAGE_NOT_SUPPORTED', 'documentLanguage'],
+  ]
+  for (const [value, code, field] of cases) {
+    assert.throws(() => validateOperationalSection('documents', value), (error) => error.code === code && error.status === 400 && error.details.field === field, field)
+  }
+  assert.doesNotThrow(() => validateOperationalSection('documents', { purchaseOrder: { termsText: 'x'.repeat(4000), footerText: 'x'.repeat(500) }, letterhead: { addressLines: ['1', '2', '3', '4', '5', '6'] } }))
+})
+
+test('document settings are saved with the workspace manage permission', () => {
+  const routes = readFileSync(new URL('../routes/settings-runtime.routes.mjs', import.meta.url), 'utf8')
+  assert.match(routes, /documents: 'settings.workspace.manage'/)
 })

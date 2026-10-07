@@ -40,7 +40,7 @@ async function getDatabaseSettings(ctx) {
 
 async function updateDatabaseSection(ctx, section, next) {
   const { actor, prisma, tenant } = await getDatabaseSettings(ctx)
-  const permission = ({ company: 'settings.workspace.manage', numbering: 'settings.numbering.manage', review: 'settings.review_policy.manage', modules: 'settings.modules.manage', ai: 'settings.workspace.manage' })[section] || 'settings.workspace.manage'
+  const permission = ({ company: 'settings.workspace.manage', numbering: 'settings.numbering.manage', review: 'settings.review_policy.manage', modules: 'settings.modules.manage', ai: 'settings.workspace.manage', documents: 'settings.workspace.manage' })[section] || 'settings.workspace.manage'
   assertAuthorized({ actor, permission, tenantId: actor.tenantId })
   const validated = validateOperationalSection(section, next)
   return prisma.$transaction(async tx => {
