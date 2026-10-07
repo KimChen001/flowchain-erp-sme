@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
 import { addCalendarDays, orderSupplierChoices, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
 import { mapItemSupplierRecord } from './master-data-commands.mjs'
 
@@ -182,6 +184,42 @@ test('a named supplier wins among several; a named supplier that is not approved
   // With a preferred supplier among the sources, an unapproved name falls to it.
   const toPreferred = planPurchaseRequestPrefill({ ...base, query: { itemId: 'item-1', suppliers: 'SUP-ZZ' } })
   assert.deepEqual(toPreferred.fields.supplierId, { source: 'default', ref: 'item_supplier:preferred', value: 'sup-pref' })
+})
+
+test('two sources marked preferred: neither is picked, only those two are listed by last PO date, and nothing of theirs is filled', () => {
+  // The item's default supplier and a link flagged preferred, in either record order.
+  const twoPreferred = [{ ...sourceA, preferred: true }, sourceD, { ...sourceB, preferred: true }]
+  for (const suppliers of [twoPreferred, [...twoPreferred].reverse()]) {
+    const plan = planPurchaseRequestPrefill({ ...base, suppliers, lastOrders, query: { itemId: 'item-1', quantity: '10', origin: 'ai_assistant' } })
+    assert.equal(plan.values.supplierId, '')
+    assert.deepEqual(plan.fields.supplierId, { source: 'template', ref: 'item_supplier:choose_preferred', value: '' })
+    assert.deepEqual(plan.supplierChoices.map((row) => [row.id, row.lastOrder?.day ?? null]), [['sup-b', '2026-08-02'], ['sup-a', null]])
+    assert.equal(plan.values.estimatedUnitPrice, '')
+    assert.equal(plan.values.currency, '')
+    assert.equal(plan.values.quantity, '10')
+    assert.equal(plan.fields.needByDate, undefined)
+  }
+  // A supplier the handoff names still wins; one preferred source is still filled.
+  const named = planPurchaseRequestPrefill({ ...base, suppliers: twoPreferred, lastOrders, query: { itemId: 'item-1', suppliers: 'SUP-A', origin: 'reorder_list' } })
+  assert.deepEqual(named.fields.supplierId, { source: 'record', ref: 'reorder_list:supplier', value: 'sup-a' })
+  const one = planPurchaseRequestPrefill({ ...base, suppliers: [sourceD, { ...sourceB, preferred: true }], query: { itemId: 'item-1' } })
+  assert.deepEqual(one.fields.supplierId, { source: 'default', ref: 'item_supplier:preferred', value: 'sup-b' })
+  assert.deepEqual(one.supplierChoices, [])
+})
+
+// The list a person chooses from counts POs received without being issued in
+// FlowChain, so no row may call its PO "issued" (src/components/procurement/SupplierChoices.tsx).
+test('the source list says "PO", and a PO received without being issued says so, in both languages', () => {
+  const source = fs.readFileSync(path.join(path.resolve(import.meta.dirname, '..', '..'), 'src', 'components', 'procurement', 'SupplierChoices.tsx'), 'utf8')
+  const copy = source.slice(source.indexOf('SUPPLIER_CHOICES_COPY'), source.indexOf('} as const'))
+  assert.match(copy, /title: "Approved sources, most recent PO first"/)
+  assert.match(copy, /lastPo: "Last PO \{date\} · \{po\}"/)
+  assert.match(copy, /notIssued: "\(order date; received, not issued in FlowChain\)"/)
+  assert.match(copy, /noPo: "No PO yet"/)
+  assert.match(copy, /titlePreferred: "Several preferred suppliers: choose one\. Most recent PO first"/)
+  assert.match(copy, /lastPo: "最近采购订单 \{date\} · \{po\}"/)
+  assert.match(copy, /notIssued: "（下单日期；已收货，未在 FlowChain 下达）"/)
+  assert.doesNotMatch(copy, /issued PO|已下达的采购订单/)
 })
 
 test('calendar days cross month and year ends', () => {

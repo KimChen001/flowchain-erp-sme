@@ -80,7 +80,8 @@ export type PurchaseOrderLine = {
   status?: string;
   // Why the purchase request chose a supplier other than the item's preferred
   // one, carried from its line; null when none was needed.
-  supplierOverride?: { reasonCode: string; note?: string | null; preferredSupplierId?: string | null; preferredSupplierName?: string | null } | null;
+  // missingReason: saved before a reason was asked; reasonCode is then null.
+  supplierOverride?: { reasonCode: string | null; note?: string | null; missingReason?: boolean; preferredSupplierId?: string | null; preferredSupplierIds?: string[] | null; preferredSupplierName?: string | null } | null;
 };
 
 export type PurchaseOrder = {

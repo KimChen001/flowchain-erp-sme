@@ -5,8 +5,9 @@
 // The approver sees it as "Not preferred (<preferred>). Reason: <reason>".
 //
 //   reasonCode  one of SUPPLIER_OVERRIDE_REASONS
-//   note        required for "other" (3 to 500 characters); otherwise
-//               optional and only kept to 500 characters
+//   note        required for "other" (at least 3 characters); any note is
+//               kept to its first 500 characters and never refused for
+//               its length
 
 export const SUPPLIER_OVERRIDE_REASONS = Object.freeze(['price', 'lead_time', 'stock_now', 'quality', 'moq_fit', 'customer_specified', 'other'])
 export const SUPPLIER_OVERRIDE_NOTE_LIMITS = Object.freeze({ min: 3, max: 500 })
@@ -28,14 +29,13 @@ export function validateSupplierOverride(raw, needed) {
   if (!needed) return { value: null, issues: [] }
   const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
   const reasonCode = text(input.reasonCode)
-  const note = text(input.note)
+  // A note is kept to 500 characters, never refused for its length: the
+  // reason is what is required, the note only explains it.
+  const note = text(input.note).slice(0, SUPPLIER_OVERRIDE_NOTE_LIMITS.max).trim()
   const issues = []
   if (!reasonCode) issues.push({ field: 'reasonCode', code: 'REASON_REQUIRED' })
   else if (!SUPPLIER_OVERRIDE_REASONS.includes(reasonCode)) issues.push({ field: 'reasonCode', code: 'REASON_UNKNOWN' })
-  // Only Other needs a note; an optional note is never refused for being short.
-  const noteFits = reasonCode === 'other'
-    ? note.length >= SUPPLIER_OVERRIDE_NOTE_LIMITS.min && note.length <= SUPPLIER_OVERRIDE_NOTE_LIMITS.max
-    : note.length <= SUPPLIER_OVERRIDE_NOTE_LIMITS.max
-  if (!noteFits) issues.push({ field: 'note', code: 'NOTE_LENGTH' })
+  // Only Other needs a note, of at least 3 characters.
+  if (reasonCode === 'other' && note.length < SUPPLIER_OVERRIDE_NOTE_LIMITS.min) issues.push({ field: 'note', code: 'NOTE_LENGTH' })
   return issues.length ? { value: null, issues } : { value: { reasonCode, note: note || null }, issues }
 }

@@ -64,7 +64,10 @@ export function orderSupplierChoices(suppliers = [], lastOrders = null) {
 // recorded; else the only approved source. With several approved sources and
 // none preferred the supplier stays empty and the sources are listed for a
 // person to choose; no price, lead time or minimum order quantity of a
-// supplier nobody chose is filled.
+// supplier nobody chose is filled. Master data can mark more than one source
+// preferred (the item's default supplier and a link flagged preferred); then
+// none is picked over the other: the supplier stays empty and only the
+// preferred sources are listed, the same way.
 export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = [], today, defaultDate, lastOrders = null } = {}) {
   const origin = prefillOrigin(query.origin)
   const prefix = HANDOFF_REF_PREFIX[origin]
@@ -74,14 +77,18 @@ export function planPurchaseRequestPrefill({ query = {}, item = {}, suppliers = 
 
   const wanted = text(query.suppliers).split(',')[0]?.trim() || ''
   const named = wanted ? suppliers.find((row) => [row.id, row.supplierCode, row.name, row.supplierName].map(text).includes(wanted)) : undefined
-  const preferred = suppliers.find((row) => row.preferred)
+  const preferredRows = suppliers.filter((row) => row.preferred)
+  const preferred = preferredRows.length === 1 ? preferredRows[0] : undefined
   const only = suppliers.length === 1 ? suppliers[0] : undefined
   const chosen = named || preferred || only
   let supplierChoices = []
   if (named) fields.supplierId = { source: 'record', ...tag('supplier'), value: chosen.id }
   else if (preferred) fields.supplierId = { source: 'default', ref: 'item_supplier:preferred', value: chosen.id }
   else if (only) fields.supplierId = { source: 'default', ref: 'item_supplier:only_approved', value: chosen.id }
-  else if (suppliers.length > 1) {
+  else if (preferredRows.length > 1) {
+    fields.supplierId = { source: 'template', ref: 'item_supplier:choose_preferred', value: '' }
+    supplierChoices = orderSupplierChoices(preferredRows, lastOrders)
+  } else if (suppliers.length > 1) {
     fields.supplierId = { source: 'template', ref: 'item_supplier:choose', value: '' }
     supplierChoices = orderSupplierChoices(suppliers, lastOrders)
   }

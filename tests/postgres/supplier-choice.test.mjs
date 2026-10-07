@@ -158,7 +158,7 @@ test('a reason is stored with the line, audited, read back, carried onto the PO 
   const created = await api(tokens.managerA, 'POST', '/api/procurement/requests', prBody({ supplierOverride: { reasonCode: 'lead_time', note: 'Acme is out until November', preferredSupplierName: 'not trusted' } }))
   assert.equal(created.status, 201, describe(created))
   const id = created.body.id
-  const stored = { reasonCode: 'lead_time', note: 'Acme is out until November', preferredSupplierId: acme.id, preferredSupplierName: 'Acme Supply' }
+  const stored = { reasonCode: 'lead_time', note: 'Acme is out until November', preferredSupplierId: acme.id, preferredSupplierIds: [acme.id], preferredSupplierName: 'Acme Supply' }
   const [line] = await prisma.purchaseRequestLine.findMany({ where: { purchaseRequestId: id } })
   assert.deepEqual(line.metadata.supplierOverride, stored)
   const createdAudit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityId: id, action: 'purchase_request_created' } })
@@ -196,6 +196,51 @@ test('a reason is stored with the line, audited, read back, carried onto the PO 
   assert.deepEqual(orders.body.find((row) => (row.po || row.id) === poId).lines[0].supplierOverride, reason)
   // Another workspace reads none of it.
   assert.equal((await api(tokens.managerB, 'GET', `/api/procurement/requests/${id}`)).status, 404)
+})
+
+// A draft saved before the item had a preferred supplier (or before reasons
+// were asked) is never refused: submitting marks the line "no reason
+// recorded" for the approver and the audit row, and the PO made from it
+// carries the mark, even when the request was approved without one.
+test('a draft saved before the item had a preferred supplier is submitted unblocked and marked for the approver', async () => {
+  const glue = { id: 'choice-item-glue', sku: 'CHOICE-GLUE', name: 'Hot-melt glue' }
+  await prisma.item.create({ data: { ...glue, tenantId: tenantA, unit: 'EA', metadata: { defaultWarehouseId: warehouseA, purchasable: true } } })
+  for (const supplierId of [bolt.id, crane.id]) {
+    const link = await api(tokens.managerA, 'POST', `/api/master-data/items/${glue.id}/suppliers`, { supplierId, preferred: false, currency: 'USD' })
+    assert.ok([200, 201].includes(link.status), describe(link))
+  }
+  const created = await api(tokens.managerA, 'POST', '/api/procurement/requests', prBody({ itemId: glue.id, sku: glue.sku, itemNameSnapshot: glue.name, supplierId: bolt.id }))
+  assert.equal(created.status, 201, describe(created))
+  const id = created.body.id
+  assert.equal(created.body.lines[0].supplierOverride, null)
+  // Crane becomes the item's default supplier after the draft was saved.
+  await prisma.item.update({ where: { id: glue.id }, data: { preferredSupplierId: crane.id } })
+
+  const submitted = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/submit`, { expectedVersion: 1 })
+  assert.equal(submitted.status, 200, describe(submitted))
+  const mark = { reasonCode: null, note: null, missingReason: true, preferredSupplierId: crane.id, preferredSupplierIds: [crane.id], preferredSupplierName: 'Crane Trading' }
+  assert.deepEqual(submitted.body.lines[0].supplierOverride, mark)
+  const [line] = await prisma.purchaseRequestLine.findMany({ where: { purchaseRequestId: id } })
+  assert.deepEqual(line.metadata.supplierOverride, mark)
+  const submitAudit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityId: id, action: 'purchase_request_submit' } })
+  assert.deepEqual(submitAudit.metadata.supplierOverridesMissing, [{ clientLineId: line.metadata.clientLineId, itemId: glue.id, supplierId: bolt.id, preferredSupplierId: crane.id, reasonCode: null, note: null, missingReason: true }])
+  const listed = await api(tokens.managerA, 'GET', '/api/procurement/requests')
+  assert.deepEqual(listed.body.find((row) => row.id === id).lines[0].supplierOverride, mark)
+
+  const approved = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/approve`, { expectedVersion: 2 })
+  assert.equal(approved.status, 200, describe(approved))
+  // As if the request had been submitted and approved before reasons were asked.
+  const { supplierOverride: _mark, ...unmarked } = line.metadata
+  await prisma.purchaseRequestLine.update({ where: { id: line.id }, data: { metadata: unmarked } })
+  const converted = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 3 })
+  assert.equal(converted.status, 201, describe(converted))
+  const poId = converted.body.createdPurchaseOrders[0].id
+  const [poLine] = await prisma.purchaseOrderLine.findMany({ where: { purchaseOrderId: poId } })
+  assert.deepEqual(poLine.metadata.supplierOverride, mark)
+  const convertedAudit = await prisma.auditLog.findFirst({ where: { tenantId: tenantA, entityId: id, action: 'purchase_request_converted_to_purchase_orders' } })
+  assert.deepEqual(convertedAudit.metadata.supplierOverrides.map((row) => [row.purchaseOrderId, row.supplierId, row.preferredSupplierId, row.reasonCode, row.missingReason]), [[poId, bolt.id, crane.id, null, true]])
+  const order = await api(tokens.managerA, 'GET', `/api/procurement/orders/${poId}`)
+  assert.deepEqual(order.body.lines[0].supplierOverride, mark)
 })
 
 async function po(id, { tenantId = tenantA, supplier, status = 'issued', issuedAt = null, createdAt, item = tape }) {

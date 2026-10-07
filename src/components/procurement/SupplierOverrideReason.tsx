@@ -8,10 +8,16 @@ import { SUPPLIER_OVERRIDE_REASONS, type SupplierOverrideReasonCode } from "../.
 // line, and the flag an approver sees on the request and on the PO made from
 // it. English with its Chinese translation, chosen by the interface language.
 
+// missingReason: the line skips the item's preferred supplier but was saved
+// before a reason was asked (marked on submit or on conversion to a PO);
+// reasonCode is then null. preferredSupplierIds: every preferred source,
+// when master data marks more than one.
 export type SupplierOverride = {
-  reasonCode: SupplierOverrideReasonCode | string;
+  reasonCode: SupplierOverrideReasonCode | string | null;
   note?: string | null;
+  missingReason?: boolean;
   preferredSupplierId?: string | null;
+  preferredSupplierIds?: string[] | null;
   preferredSupplierName?: string | null;
 };
 
@@ -27,29 +33,40 @@ const REASON_LABELS: Record<SupplierOverrideReasonCode, readonly [string, string
 
 // The name in the flag is the preferred supplier the line does NOT use; the
 // Chinese says so ("未使用首选供应商") so it cannot be read as calling that
-// supplier non-preferred.
+// supplier non-preferred. With more than one preferred source the copy is
+// plural ("one of the preferred suppliers (A, B)").
 export const SUPPLIER_OVERRIDE_COPY = {
   "en-US": {
     question: "Why not the preferred supplier ({name})?",
+    questionMany: "Why not one of the preferred suppliers ({name})?",
     questionNoName: "Why not the preferred supplier?",
     choose: "Choose a reason",
     note: "Note (required for Other)",
     reasonRequired: "Choose a reason",
-    noteLength: "Add a note of 3 to 500 characters",
+    noteLength: "Other needs a note of at least 3 characters",
     flag: "Not preferred ({name}). Reason: {reason}",
+    flagMany: "None of the preferred suppliers ({name}). Reason: {reason}",
     flagNoName: "Not preferred. Reason: {reason}",
+    missing: "Not preferred ({name}). No reason recorded",
+    missingMany: "None of the preferred suppliers ({name}). No reason recorded",
+    missingNoName: "Not preferred. No reason recorded",
     countOne: "1 line skips the preferred supplier",
     countMany: "{n} lines skip the preferred supplier",
   },
   "zh-CN": {
     question: "为什么不选首选供应商（{name}）？",
+    questionMany: "为什么不选任一首选供应商（{name}）？",
     questionNoName: "为什么不选首选供应商？",
     choose: "请选择原因",
     note: "备注（选择“其他”时必填）",
     reasonRequired: "请选择原因",
-    noteLength: "请填写 3 到 500 个字符的备注",
+    noteLength: "选择“其他”时请填写至少 3 个字符的备注",
     flag: "未使用首选供应商（{name}）。原因：{reason}",
+    flagMany: "未使用任一首选供应商（{name}）。原因：{reason}",
     flagNoName: "未使用首选供应商。原因：{reason}",
+    missing: "未使用首选供应商（{name}）。未记录原因",
+    missingMany: "未使用任一首选供应商（{name}）。未记录原因",
+    missingNoName: "未使用首选供应商。未记录原因",
     countOne: "1 行未使用首选供应商",
     countMany: "{n} 行未使用首选供应商",
   },
@@ -69,12 +86,18 @@ export function supplierOverrideIssueText(code: string | undefined, language: st
   return code === "NOTE_LENGTH" ? copy.noteLength : copy.reasonRequired;
 }
 
-// "Not preferred (Acme). Reason: Lead time — note".
+// True when the line has a reason to show, or is marked as having none.
+export const hasSupplierOverride = (override?: SupplierOverride | null) => Boolean(override?.reasonCode || override?.missingReason);
+
+// "Not preferred (Acme). Reason: Lead time — note"; "Not preferred (Acme).
+// No reason recorded" for a line saved before reasons were asked.
 export function supplierOverrideText(override: SupplierOverride, language: string) {
   const copy = copyFor(language);
-  const reason = supplierOverrideReasonLabel(override.reasonCode, language);
   const name = String(override.preferredSupplierName || "").trim();
-  const head = name ? copy.flag.replace("{name}", name).replace("{reason}", reason) : copy.flagNoName.replace("{reason}", reason);
+  const many = (override.preferredSupplierIds?.length || 0) > 1;
+  if (!override.reasonCode) return name ? (many ? copy.missingMany : copy.missing).replace("{name}", name) : copy.missingNoName;
+  const reason = supplierOverrideReasonLabel(override.reasonCode, language);
+  const head = name ? (many ? copy.flagMany : copy.flag).replace("{name}", name).replace("{reason}", reason) : copy.flagNoName.replace("{reason}", reason);
   const note = String(override.note || "").trim();
   return note ? `${head} — ${note}` : head;
 }
@@ -82,10 +105,10 @@ export function supplierOverrideText(override: SupplierOverride, language: strin
 // prefix: what the line is, where the flag stands apart from it (a list row).
 export function SupplierOverrideFlag({ override, prefix, testId = "supplier-override-flag" }: { override?: SupplierOverride | null; prefix?: string; testId?: string }) {
   const { language } = useI18n();
-  if (!override?.reasonCode) return null;
+  if (!override || !hasSupplierOverride(override)) return null;
   const text = supplierOverrideText(override, language);
   return (
-    <span data-testid={testId} data-reason-code={override.reasonCode} className="inline-flex max-w-full items-start gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-4" style={{ background: "#fff8f0", color: A.orange }}>
+    <span data-testid={testId} data-reason-code={override.reasonCode || "none"} className="inline-flex max-w-full items-start gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-4" style={{ background: "#fff8f0", color: A.orange }}>
       <AlertTriangle size={11} className="mt-0.5 shrink-0" aria-hidden />
       <span className="break-words">{prefix ? `${prefix}: ${text}` : text}</span>
     </span>
@@ -109,12 +132,14 @@ export function SupplierOverrideCount({ count, testId = "supplier-override-count
 // server or the form returned for this line's reason and note.
 export function SupplierOverrideReason({
   preferredName,
+  preferredCount = 1,
   value,
   onChange,
   issues = {},
   testId = "supplier-override-reason",
 }: {
   preferredName: string;
+  preferredCount?: number;
   value?: SupplierOverride | null;
   onChange: (next: SupplierOverride) => void;
   issues?: { reasonCode?: string; note?: string };
@@ -124,7 +149,7 @@ export function SupplierOverrideReason({
   const copy = copyFor(language);
   const reasonCode = value?.reasonCode || "";
   const note = value?.note || "";
-  const question = preferredName ? copy.question.replace("{name}", preferredName) : copy.questionNoName;
+  const question = preferredName ? (preferredCount > 1 ? copy.questionMany : copy.question).replace("{name}", preferredName) : copy.questionNoName;
   return (
     <div data-testid={testId} className="mt-2 rounded-md px-2 py-2 text-xs" style={{ background: "#fff8f0", border: `0.5px solid ${A.orange}40` }}>
       <label className="block font-medium" style={{ color: A.label }}>

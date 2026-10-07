@@ -67,24 +67,60 @@ export function validateDirectPo(pr, policy = {}, permission = true) {
 const OVERRIDE_ISSUE_MESSAGES = Object.freeze({
   REASON_REQUIRED: 'Choose a reason',
   REASON_UNKNOWN: 'Choose a reason',
-  NOTE_LENGTH: 'Add a note of 3 to 500 characters',
+  NOTE_LENGTH: 'Other needs a note of at least 3 characters',
 })
 const supplierLabel = (row) => row.name || row.supplierName || row.id
+// The preferred sources a line is measured against, as stored with its
+// reason (or its missing reason): every id and the names joined.
+const preferredStamp = (preferred) => ({
+  preferredSupplierId: preferred[0].id,
+  preferredSupplierIds: preferred.map((row) => row.id),
+  preferredSupplierName: preferred.map(supplierLabel).join(', '),
+})
+const preferredPhrase = (preferred) =>
+  preferred.length > 1 ? `one of the item's preferred suppliers (${preferred.map(supplierLabel).join(', ')})` : `the item's preferred supplier (${supplierLabel(preferred[0])})`
 function supplierOverrideFor(line, index, supplierId, approved) {
   const preferred = approved.filter((row) => row.preferred)
   const needed = overrideNeeded({ supplierId, preferredIds: preferred.map((row) => row.id) })
   const { value, issues } = validateSupplierOverride(line.supplierOverride, needed)
-  const name = preferred.map(supplierLabel).join(', ')
   if (!value) {
     if (!issues.length) return null
+    const fix = issues.some((issue) => issue.field === 'reasonCode') ? 'Choose a reason from the list.' : 'Other needs a note of at least 3 characters.'
     throw procurementError(
       'SUPPLIER_OVERRIDE_REASON_REQUIRED',
-      `Line ${index + 1} does not use the item's preferred supplier (${name}). Choose a reason from the list; Other needs a note.`,
+      `Line ${index + 1} does not use ${preferredPhrase(preferred)}. ${fix}`,
       issues.map((issue) => ({ field: `lines.${index}.supplierOverride.${issue.field}`, code: issue.code, message: OVERRIDE_ISSUE_MESSAGES[issue.code] })),
       400,
     )
   }
-  return { ...value, preferredSupplierId: preferred[0].id, preferredSupplierName: name }
+  return { ...value, ...preferredStamp(preferred) }
+}
+
+// Saved purchase request lines (PurchaseRequestLine rows) that use a
+// supplier other than the item's preferred one, as master data stands now,
+// with no reason recorded: a draft saved before reasons were asked, or before
+// the item had a preferred supplier. Nothing is refused: each such line gets
+// { reasonCode: null, note: null, missingReason: true, preferred... } so the
+// approver sees "No reason recorded"; every other line gets null. A line
+// whose sources cannot be read is left as it is (undefined).
+export async function missingSupplierOverrides(rows = [], itemRepository) {
+  if (!itemRepository?.approvedSuppliersForItem) return rows.map(() => undefined)
+  const cache = new Map()
+  const sourcesOf = (itemId) => {
+    if (!cache.has(itemId)) cache.set(itemId, Promise.resolve().then(() => itemRepository.approvedSuppliersForItem(itemId)).catch(() => null))
+    return cache.get(itemId)
+  }
+  return Promise.all(rows.map(async (row) => {
+    const meta = row.metadata || {}
+    const sourceType = meta.sourceType || (row.itemId ? 'catalog_item' : 'non_catalog_item')
+    if (sourceType !== 'catalog_item' || !row.itemId || !meta.supplierId) return null
+    if (meta.supplierOverride?.reasonCode) return meta.supplierOverride
+    const approved = await sourcesOf(row.itemId)
+    if (!Array.isArray(approved)) return undefined
+    const preferred = approved.filter((source) => source.preferred)
+    if (!overrideNeeded({ supplierId: meta.supplierId, preferredIds: preferred.map((source) => source.id) })) return null
+    return { reasonCode: null, note: null, missingReason: true, ...preferredStamp(preferred) }
+  }))
 }
 
 // Validates and snapshots purchase request lines against master data. The

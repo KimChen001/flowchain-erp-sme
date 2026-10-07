@@ -166,18 +166,26 @@ test('with several approved sources and none preferred, the supplier stays empty
   await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('')
   await expect(page.getByTestId('prefill-source-needByDate')).toHaveCount(0)
   const choices = page.getByTestId('pr-supplier-choices')
-  await expect(choices).toContainText('Approved sources, most recent issued PO first')
+  await expect(choices).toContainText('Approved sources, most recent PO first')
   const options = choices.getByTestId('pr-supplier-choices-option')
   await expect(options).toHaveCount(2)
   await expect(options.nth(0)).toHaveAttribute('data-supplier-id', ids.crane)
-  await expect(options.nth(0)).toContainText('Last issued PO 2026-09-14 · PO-0031')
+  await expect(options.nth(0)).toContainText('Last PO 2026-09-14 · PO-0031')
   await expect(options.nth(1)).toHaveAttribute('data-supplier-id', ids.bolt)
-  await expect(options.nth(1)).toContainText('No issued PO yet')
+  await expect(options.nth(1)).toContainText('No PO yet')
   // Choosing one sets the supplier only.
   await options.nth(1).click()
   await expect(page.getByLabel('Suppliers 1')).toHaveValue(ids.bolt)
   await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('')
   await expect(page.getByTestId('supplier-override-reason-1')).toHaveCount(0)
+
+  // A PO received without being issued in FlowChain shows its order date and
+  // says so; the row never calls it issued.
+  await page.unroute('**/api/procurement/item-supplier-orders**')
+  await page.route('**/api/procurement/item-supplier-orders**', (route) => route.fulfill({ json: { itemId: ids.nonePreferred, timeZone: 'America/New_York', lastOrders: [{ supplierId: ids.crane, purchaseOrderId: 'PO-0040', orderNumber: 'PO-0040', day: '2026-07-01', dateSource: 'order_date_not_issued' }] } }))
+  await page.goto(`/app/procurement/requests?mode=create&itemId=${encodeURIComponent(ids.nonePreferred)}&quantity=5&origin=ai_assistant&received=1`)
+  await expect(page.getByTestId('pr-supplier-choices-option').nth(0)).toContainText('Last PO 2026-07-01 · PO-0040 (order date; received, not issued in FlowChain)')
+  await expect(page.getByTestId('pr-supplier-choices')).not.toContainText('issued PO')
 
   // Without the PO dates the list is A-Z and says the dates are not available.
   await page.unroute('**/api/procurement/item-supplier-orders**')
@@ -185,7 +193,7 @@ test('with several approved sources and none preferred, the supplier stays empty
   await page.goto(`/app/procurement/requests?mode=create&itemId=${encodeURIComponent(ids.nonePreferred)}&quantity=5&origin=ai_assistant&again=1`)
   await expect(page.getByTestId('pr-supplier-choices-no-dates')).toHaveText('PO dates not available')
   await expect(page.getByTestId('pr-supplier-choices')).toContainText('Approved sources, A–Z')
-  await expect(page.getByTestId('pr-supplier-choices')).not.toContainText('No issued PO yet')
+  await expect(page.getByTestId('pr-supplier-choices')).not.toContainText('No PO yet')
   await expect(page.getByTestId('pr-supplier-choices-option').nth(0)).toHaveAttribute('data-supplier-id', ids.bolt)
 })
 
@@ -212,7 +220,7 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   // Other needs a note.
   await picker.getByTestId('supplier-override-reason-1-code').selectOption('other')
   await page.getByRole('button', { name: 'Save and submit' }).click()
-  await expect(picker.getByRole('alert')).toHaveText('Add a note of 3 to 500 characters')
+  await expect(picker.getByRole('alert')).toHaveText('Other needs a note of at least 3 characters')
   // A reason belongs to the supplier it was given for: switching away and
   // back asks again.
   await picker.getByTestId('supplier-override-reason-1-code').selectOption('stock_now')

@@ -33,6 +33,7 @@ const REF_LABELS: Record<string, readonly [string, string]> = {
   "item_supplier:preferred": ["Preferred supplier", "首选供应商"],
   "item_supplier:only_approved": ["Only approved source", "唯一已批准供应来源"],
   "item_supplier:choose": ["Choose a supplier: several approved sources, none preferred", "请选择供应商：有多个已批准供应来源，均未设为首选"],
+  "item_supplier:choose_preferred": ["Several preferred suppliers: choose one", "有多个首选供应商：请选择一个"],
   // No longer suggested; kept because earlier suggestion trails name it.
   "item_supplier:first_approved": ["First approved supplier", "第一个已批准供应商"],
   "item_supplier:reference_price": ["Reference price", "参考价"],

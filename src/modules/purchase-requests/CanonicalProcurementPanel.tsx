@@ -15,7 +15,7 @@ import { createClientTemporaryId } from "../../lib/client-id";
 import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
 import { SupplierChoices } from "../../components/procurement/SupplierChoices";
-import { SupplierOverrideCount, SupplierOverrideFlag, SupplierOverrideReason, supplierOverrideIssueText, type SupplierOverride } from "../../components/procurement/SupplierOverrideReason";
+import { SupplierOverrideCount, SupplierOverrideFlag, SupplierOverrideReason, hasSupplierOverride, supplierOverrideIssueText, type SupplierOverride } from "../../components/procurement/SupplierOverrideReason";
 import { overrideNeeded, validateSupplierOverride } from "../../../shared/supplier-override-reasons.mjs";
 import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 
@@ -315,7 +315,10 @@ export default function CanonicalProcurementPanel({
       `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
     );
     setItemSuppliers((current) => ({ ...current, [itemId]: result.suppliers }));
-    const preferred = result.suppliers.find((s) => s.preferred);
+    // Only one preferred source is filled in; when master data marks more
+    // than one, the person picks (the same rule as the handoff prefill).
+    const preferredSources = result.suppliers.filter((s) => s.preferred);
+    const preferred = preferredSources.length === 1 ? preferredSources[0] : undefined;
     if (preferred)
       patchLine(index, {
         supplierId: preferred.id,
@@ -785,6 +788,7 @@ export default function CanonicalProcurementPanel({
                   {prefill && !editing && line.lineId === prefill.lineId && line.itemId && line.itemId === prefill.fields.itemId?.value ? (
                     <SupplierChoices
                       choices={prefill.supplierChoices}
+                      preferredOnly={prefill.fields.supplierId?.ref === "item_supplier:choose_preferred"}
                       selectedId={line.supplierId}
                       onChoose={(supplierId) => patchLine(index, supplierId === line.supplierId ? {} : { supplierId, supplierOverride: null })}
                     />
@@ -793,13 +797,16 @@ export default function CanonicalProcurementPanel({
                     <SupplierOverrideReason
                       testId={`supplier-override-reason-${index + 1}`}
                       preferredName={preferredNames(line)}
+                      preferredCount={preferredOf(line).length}
                       value={line.supplierOverride}
                       issues={overrideIssues(index)}
                       onChange={(supplierOverride) =>
                         patchLine(index, {
                           supplierOverride: {
                             ...supplierOverride,
+                            missingReason: false,
                             preferredSupplierId: preferredOf(line)[0]?.id || null,
+                            preferredSupplierIds: preferredOf(line).map((option) => option.id),
                             preferredSupplierName: preferredNames(line) || null,
                           },
                         })
@@ -987,11 +994,11 @@ export default function CanonicalProcurementPanel({
                     <td className="p-3">{pr.requesterId}</td>
                     <td className="p-3">
                       {copy(pr.status)}
-                      <SupplierOverrideCount count={pr.lines.filter((line) => line.supplierOverride?.reasonCode).length} testId="pr-row-supplier-overrides" />
+                      <SupplierOverrideCount count={pr.lines.filter((line) => hasSupplierOverride(line.supplierOverride)).length} testId="pr-row-supplier-overrides" />
                       {/* Approve on this row skips the detail, so the row shows each reason too. */}
-                      {pr.lines.some((line) => line.supplierOverride?.reasonCode) ? (
+                      {pr.lines.some((line) => hasSupplierOverride(line.supplierOverride)) ? (
                         <div className="mt-1 flex flex-col items-start gap-1">
-                          {pr.lines.filter((line) => line.supplierOverride?.reasonCode).map((line, lineIndex) => (
+                          {pr.lines.filter((line) => hasSupplierOverride(line.supplierOverride)).map((line, lineIndex) => (
                             <SupplierOverrideFlag
                               key={line.lineId || lineIndex}
                               override={line.supplierOverride}
