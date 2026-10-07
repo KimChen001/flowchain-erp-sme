@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
+import { createTempClusterDirectory } from "./test-support/temp-cluster.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(import.meta.dirname, "..");
@@ -25,7 +25,7 @@ const port = await freePort();
 const password = `phase-5-2c1-${randomUUID()}`;
 const user = "flowchain_phase_5_2c1";
 const database = "flowchain_phase_5_2c1_tests";
-const directory = await mkdtemp(join(tmpdir(), "flowchain-phase-5-2c1-pg-"));
+const directory = await createTempClusterDirectory("flowchain-phase-5-2c1-pg-");
 const storageDirectory = join(directory, "attachments");
 const url = `postgresql://${user}:${encodeURIComponent(password)}@127.0.0.1:${port}/${database}?schema=public`;
 const pg = new EmbeddedPostgres({ databaseDir: directory, user, password, port, persistent: false, onLog: () => {}, onError: () => {} });
