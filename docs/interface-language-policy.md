@@ -65,6 +65,14 @@ names, or supplier names in place. Translate their presentation where appropriat
   that a purchase order line in another unit than the item's stock unit is not counted
   as incoming is in both languages on the reports page and in the assistant's stock and
   order answers.
+- The purchase order document (`/app/procurement/orders/:id/document`) prints its
+  labels in the document language: the workspace default from Settings › Company &
+  workspace › Documents, or the language picked on the page for one print, which is
+  not saved. Numbers, dates, currency codes, PO numbers, SKUs and units stay as
+  recorded and are formatted in the workspace locale and timezone whatever the
+  document language. The page's toolbar and the Documents settings form have English
+  and Chinese copy; a custom document title is the workspace's own text and is printed
+  as entered.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.

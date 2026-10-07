@@ -50,6 +50,8 @@ The current project does not implement:
 - HR/payroll;
 - complex WMS execution;
 - real supplier message sending;
+- sending a purchase order: FlowChain prepares the PO document to print or save as
+  PDF, and a person sends it; marking the PO issued only records that;
 - transaction-document intake, email intake, PDF/OCR, voice/chat extraction, or
   automatic import commit.
 
@@ -64,6 +66,10 @@ The current project does not implement:
 - Mapping activation and review require permissions distinct from upload.
 - Governed business-object commit adapters start in Phase 5.4C; commit requests
   remain blocked in Phase 5.4B.
+- The PO document reads supplier and letterhead details live from master data and
+  settings, so a reprint shows the current address, not the one at approval. It has
+  no logo. Warehouses have no recorded address, so "Ship to" prints the warehouse
+  code and name.
 # Phase 5.4B.1 limitations
 
 - Supplier, Item, and Customer formal commit workflows remain outside this stabilization release.
