@@ -205,6 +205,17 @@ export async function readAiSkillFacts(skillContext) {
 
   const overview = buildRuntimeGovernedReport(business, { subject: 'overview' }, { allocationContext, now, timeZone: tenant.timezone })
   const kpi = (report, id) => array(report.kpis).find((row) => row.id === id)
+  // The procurement dashboard's own report, built from the same scoped read
+  // as the dashboard's route, with the question's period and currency as its
+  // filters: the spend analysis (ai-skill-spend-analysis.mjs) reads its
+  // charts, so its figures are the dashboard's. A function, so only a spend
+  // question builds it, and not enumerable, so it is never read as a fact.
+  if (visible.purchase_orders) {
+    Object.defineProperty(facts, 'procurementReport', {
+      enumerable: false,
+      value: (filters = {}) => buildRuntimeGovernedReport(business, { subject: 'procurement', filters }, { allocationContext, now, timeZone: tenant.timezone, warehouseIds: access.warehouseIds }),
+    })
+  }
   // Overdue days count to the tenant's calendar day, as in the report itself.
   const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now, { timeZone: tenant.timezone })
   facts.asOf = openReport.asOf
