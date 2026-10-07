@@ -150,3 +150,10 @@ test('the planner may call the spend analysis with a view; the period comes from
   assert.match(answer.conclusion.title, /^Committed spend by month/)
   assert.match(answer.conclusion.title, /Jan 1, 2026 – Sep 29, 2026/)
 })
+
+test('spend lines state figures, so they offer no next step or draft', async () => {
+  const { ask } = harness()
+  const answer = await ask('Which suppliers do we spend the most with?')
+  assert.deepEqual(answer.reviewCards, [])
+  assert.ok(answer.keyEvidence.every((item) => !item.nextStep))
+})

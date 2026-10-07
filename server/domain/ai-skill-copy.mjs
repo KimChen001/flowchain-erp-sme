@@ -665,7 +665,7 @@ const entries = {
   'spend.class_a_one': ['1 supplier alone takes 80% of spend or more (class A).', '1 家供应商就占了 80% 以上的花费（A 类）。'],
   'spend.more': ['{count} more suppliers are on the procurement dashboard.', '另外 {count} 家供应商见采购看板。'],
   'spend.more_one': ['1 more supplier is on the procurement dashboard.', '另外 1 家供应商见采购看板。'],
-  'spend.evidence.share': ['Rank {rank}: {share} of committed spend, class {class}.', '排名第 {rank}：占已承诺花费的 {share}，{class} 类。'],
+  'spend.evidence.share': ['Ranked {rank}, with {share} of committed spend, class {class}.', '排名第 {rank}，占已承诺花费的 {share}，属 {class} 类。'],
   'spend.evidence.rank': ['Rank {rank} by committed purchase orders.', '按已承诺采购订单数排名第 {rank}。'],
   'spend.evidence.item': ['Net line value ordered from {supplier}.', '向 {supplier} 订购的订单行净额。'],
   'spend.label_orders': ['Committed orders', '已承诺订单'],
