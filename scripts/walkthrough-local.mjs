@@ -102,7 +102,7 @@ const env = {
   FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: "true",
   FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: "true",
   FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
-  FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "true",
+  FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "false",
   // No model provider: the assistant answers from workspace data only,
   // unless --ai-env opts in.
   OPENAI_API_KEY: "",

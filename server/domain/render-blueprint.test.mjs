@@ -5,6 +5,10 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import { capabilityRegistryForEnvironment } from "./capability-registry.mjs";
+import { canCallEmbeddingProvider } from "./ai-embedding-provider.mjs";
+import { knowledgeProviderEnv } from "./ai-knowledge-config.mjs";
+import { isAiProviderEnabled } from "./ai-provider-safety.mjs";
+import { canCallConfiguredProvider } from "./ai-runtime-provider-adapter-v2.mjs";
 
 const repoFile = (relativePath) => readFileSync(resolve(import.meta.dirname, "../..", relativePath), "utf8");
 
@@ -109,7 +113,11 @@ const IMAGE_ENV = { NODE_ENV: "production", FLOWCHAIN_DEPLOYMENT_PROFILE: "produ
 const RENDER_PLATFORM_ENV = { RENDER: "true", RENDER_GIT_COMMIT: RENDER_SHA, RENDER_GIT_BRANCH: "main" };
 // Keys the guard requires that Render satisfies without a Blueprint entry.
 const PLATFORM_SATISFIED = { FLOWCHAIN_COMMIT_SHA: "RENDER_GIT_COMMIT" };
-const SECRET_KEYS = ["POSTMARK_SERVER_TOKEN", "RESEND_API_KEY", "OPENAI_API_KEY"];
+const SECRET_KEYS = ["POSTMARK_SERVER_TOKEN", "RESEND_API_KEY"];
+// Any setting that would let a deployed site call a model: provider keys and
+// endpoints, the knowledge presets and the model switches. The trial calls no
+// model (decision V4, 2026-10-04), so render.yaml declares none of them.
+const AI_PROVIDER_SETTING = /^(OPENAI_|ARK_|DOUBAO_|DASHSCOPE_|PARLEY_|AI_PROVIDER|FLOWCHAIN_AI_|FLOWCHAIN_KNOWLEDGE_|FLOWCHAIN_PARLEY_|FLOWCHAIN_ENABLE_AI_)/;
 const OPERATOR_KEYS = ["FLOWCHAIN_DEFAULT_TENANT_ID", "FLOWCHAIN_MAIL_PROVIDER", "FLOWCHAIN_MAIL_FROM", "FLOWCHAIN_PUBLIC_BASE_URL"];
 
 // Every key the production guard reports when nothing is configured.
@@ -229,6 +237,16 @@ for (const environment of environments) {
     const byKey = Object.fromEntries(service.envVars.map((entry) => [entry.key, entry]));
     assert.equal(byKey.FLOWCHAIN_LOCAL_SESSION_SECRET.generateValue, true);
     for (const key of [...SECRET_KEYS, ...OPERATOR_KEYS]) assert.equal(byKey[key]?.sync, false, key);
+  });
+
+  test(`${environment.name}: no model provider is configured, so the trial calls no model`, () => {
+    assert.deepEqual(service.envVars.map((entry) => entry.key).filter((key) => AI_PROVIDER_SETTING.test(key)), []);
+    // With every dashboard prompt filled in, nothing can reach a model.
+    const env = simulatedRenderEnv(service, database);
+    assert.equal(canCallConfiguredProvider(env), false, "assistant provider");
+    assert.equal(canCallConfiguredProvider(knowledgeProviderEnv(env)), false, "knowledge answers");
+    assert.equal(canCallEmbeddingProvider(knowledgeProviderEnv(env)), false, "knowledge embeddings");
+    assert.equal(isAiProviderEnabled(env), false, "legacy /api/ai provider path");
   });
 
   test(`${environment.name}: the US trial capability set matches deploy/env.production.example`, () => {

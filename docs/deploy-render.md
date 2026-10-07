@@ -65,7 +65,6 @@ Enter these for both `flowchain-staging` and `flowchain-production`.
 | `FLOWCHAIN_MAIL_FROM` | No | The sender address, for example `FlowChain <no-reply@getflowchain.com>`. Its domain must be verified with the mail provider. Required. |
 | `POSTMARK_SERVER_TOKEN` | **Yes** | Your Postmark server API token. Required if the provider is `postmark`; otherwise leave it empty. |
 | `RESEND_API_KEY` | **Yes** | Your Resend API key. Required if the provider is `resend`; otherwise leave it empty. |
-| `OPENAI_API_KEY` | **Yes** | Your OpenAI API key, or leave it empty to keep the AI assistant off. |
 
 **UNVERIFIED:** whether Render's Blueprint form accepts an empty value. If it
 insists on one, enter the real value if you have it. Otherwise enter any text,
@@ -262,4 +261,4 @@ page mentions 1 GB included.
 
 Other known gaps (see `deploy/README.md` and the release notes):
 
-- The AI assistant's older request path sends OpenAI calls through a local proxy address when no proxy is configured. AI configuration is being consolidated separately. Until then, leave `OPENAI_API_KEY` empty in production.
+- The trial calls no AI model (decision V4, 2026-10-04). The Blueprint declares no AI provider key, and none should be added on the **Environment** page: not `OPENAI_API_KEY`, `AI_PROVIDER_ENABLED`, `FLOWCHAIN_KNOWLEDGE_*` or `FLOWCHAIN_AI_PROVIDER_*`. If an earlier deploy set `OPENAI_API_KEY`, delete it. The assistant answers from workspace data, and knowledge search is keyword-only.
