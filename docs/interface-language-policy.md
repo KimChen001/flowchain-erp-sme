@@ -65,6 +65,14 @@ names, or supplier names in place. Translate their presentation where appropriat
   that a purchase order line in another unit than the item's stock unit is not counted
   as incoming is in both languages on the reports page and in the assistant's stock and
   order answers.
+- Today (`/app/overview/risks`) has English and Chinese copy
+  (`src/modules/overview/todayCopy.ts`): the work rows and their date labels, the
+  status tiles, the first-day checklist and recent documents. The server sends codes,
+  dates and numbers (`GET /api/home/overview`); document numbers, SKUs, units and
+  supplier and customer names stay as stored, and calendar days and change times
+  follow the workspace locale and timezone in both languages. Checked in both
+  languages by `home-overview-language.spec.ts`, `today-work.spec.ts` and
+  `today-first-run.spec.ts`.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.
