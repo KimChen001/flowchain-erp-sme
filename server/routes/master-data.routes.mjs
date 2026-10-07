@@ -434,7 +434,9 @@ export async function handleMasterDataRoute(ctx) {
     send(res, 501, { code: 'ADAPTER_WRITE_UNSUPPORTED', message: 'Warehouse writes are not available in this workspace.' })
     return true
   }
-  const sendWarehouseError = (error) => send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
+  const sendWarehouseError = (error) => error instanceof SyntaxError
+    ? send(res, 400, { code: 'INVALID_JSON', message: 'The request body is not valid JSON.', details: [] })
+    : send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
 
   if (req.method === 'POST' && url.pathname === '/api/master-data/warehouses') {
     if (!(await authorizeWrite('warehouse-master'))) return true
@@ -453,8 +455,8 @@ export async function handleMasterDataRoute(ctx) {
     if (!(await authorizeWrite('warehouse-master'))) return true
     if (!(await requireWarehouseScope(warehouseId, 'operate'))) return true
     if (warehouseWritesUnsupported()) return true
-    const body = await readBody(req)
     try {
+      const body = await readBody(req)
       if (warehouseWriteMatch[2]) {
         const status = warehouseWriteMatch[2] === 'activate' ? 'active' : 'inactive'
         send(res, 200, await repository.setWarehouseStatus(warehouseId, { status, expectedVersion: body.expectedVersion }, actor(), tenantScope()))
@@ -486,8 +488,8 @@ export async function handleMasterDataRoute(ctx) {
       if (!(await authorizeWrite('warehouse-master'))) return true
       if (!(await requireWarehouseScope(warehouseId, 'operate'))) return true
       if (warehouseWritesUnsupported()) return true
-      const body = await readBody(req)
       try {
+        const body = await readBody(req)
         if (kind === 'create') send(res, 201, { bin: await repository.createWarehouseBin(warehouseId, body, actor(), tenantScope()) })
         else if (kind === 'update') send(res, 200, { bin: await repository.updateWarehouseBin(warehouseId, binId, body, actor(), tenantScope()) })
         else send(res, 200, { bin: await repository.setWarehouseBinStatus(warehouseId, binId, { status: statusChange === 'activate' ? 'active' : 'inactive', expectedUpdatedAt: body.expectedUpdatedAt }, actor(), tenantScope()) })

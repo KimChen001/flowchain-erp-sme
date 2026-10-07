@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { RECEIVABLE_PURCHASE_ORDER_INPUTS } from './procurement-status-authority.mjs'
 import { receivingLocationKey } from './receiving-transaction-policy.mjs'
 
 // Writes for warehouses and their bins, in the shape of the other master-data
@@ -102,15 +103,25 @@ export async function saveWarehouse(prisma, id, input = {}, actorId, scope) {
 
 // What still depends on a warehouse, counted from the recorded rows. Each
 // reason with a count above zero blocks setting it inactive.
+// Posting a transfer, adjustment or return does not check the warehouse's
+// status again, so an unposted one would put stock into an inactive warehouse.
 export async function warehouseUsage(tx, tenantId, warehouseId) {
-  const [onHand, quarantine, reservations, counts, receiving] = await Promise.all([
+  const unposted = { postingStatus: 'unposted', workflowStatus: { not: 'cancelled' } }
+  const [onHand, quarantine, reservations, counts, receiving, transfers, adjustments, returns, purchaseOrders] = await Promise.all([
     // Stock rows carry the warehouse id in warehouseKey (and usually warehouseId).
     tx.inventoryBalance.count({ where: { tenantId, OR: [{ warehouseId }, { warehouseKey: warehouseId }], onHandQuantity: { not: 0 } } }),
     tx.quarantineInventoryBalance.count({ where: { tenantId, warehouseId, onHandQuantity: { not: 0 } } }),
     // A reservation stays open until it is fully consumed or released.
     tx.inventoryReservation.count({ where: { tenantId, warehouseId, status: { notIn: ['consumed', 'released'] } } }),
     tx.cycleCountSession.count({ where: { tenantId, warehouseId, workflowStatus: { notIn: ['posted', 'cancelled'] } } }),
-    tx.receivingDocument.count({ where: { tenantId, postingStatus: 'unposted', workflowStatus: { not: 'cancelled' }, OR: [{ warehouseId }, { lines: { some: { warehouseId } } }] } }),
+    tx.receivingDocument.count({ where: { tenantId, ...unposted, OR: [{ warehouseId }, { lines: { some: { warehouseId } } }] } }),
+    // Either leg of a transfer: moving stock out of or into the warehouse.
+    tx.stockTransferDocument.count({ where: { tenantId, ...unposted, lines: { some: { legs: { some: { warehouseId } } } } } }),
+    tx.inventoryAdjustmentDocument.count({ where: { tenantId, ...unposted, lines: { some: { warehouseId } } } }),
+    tx.returnPostingDocument.count({ where: { tenantId, ...unposted, warehouseId } }),
+    // A purchase order still open for receiving whose goods are to arrive
+    // here; receiving opens on its target warehouse.
+    tx.purchaseOrder.count({ where: { tenantId, status: { in: [...RECEIVABLE_PURCHASE_ORDER_INPUTS] }, metadata: { path: ['targetWarehouseId'], equals: warehouseId } } }),
   ])
   return [
     { code: 'INVENTORY_ON_HAND', count: onHand },
@@ -118,6 +129,10 @@ export async function warehouseUsage(tx, tenantId, warehouseId) {
     { code: 'ACTIVE_RESERVATIONS', count: reservations },
     { code: 'OPEN_COUNTS', count: counts },
     { code: 'UNPOSTED_RECEIVING', count: receiving },
+    { code: 'UNPOSTED_TRANSFERS', count: transfers },
+    { code: 'UNPOSTED_ADJUSTMENTS', count: adjustments },
+    { code: 'UNPOSTED_RETURNS', count: returns },
+    { code: 'OPEN_PURCHASE_ORDERS', count: purchaseOrders },
   ].filter((reason) => reason.count > 0)
 }
 

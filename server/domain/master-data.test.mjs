@@ -2,6 +2,7 @@ import test from 'node:test'
 import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 import assert from 'node:assert/strict'
 import { handleMasterDataRoute } from '../routes/master-data.routes.mjs'
+import { createDbMasterDataRepository } from '../repositories/db-master-data-repository.mjs'
 import {
   findMasterItem,
   findMasterSupplier,
@@ -416,6 +417,49 @@ test('warehouse and bin writes need settings.workspace.manage and operate access
     const { route, calls } = writeRoute(method, path, { actor: admin, identity: { authenticated: false } })
     await handleMasterDataRoute(route.ctx)
     assert.deepEqual([route.response.status, route.response.payload.code], [401, 'AUTHENTICATION_REQUIRED'], `${method} ${path}`)
+    assert.deepEqual(calls, [], `${method} ${path}`)
+  }
+})
+
+// The route, the database repository and the bin command together, over a
+// stand-in transaction: a bin is found only inside the warehouse in the path.
+test('a bin of another warehouse is not found through this warehouse', async () => {
+  const env = { FLOWCHAIN_PERSISTENCE_MODE: 'database', DATABASE_URL: 'postgresql://user:pass@localhost:5432/flowchain' }
+  const warehouses = [{ id: 'WH-1', tenantId: 'tenant-a', code: 'ONE', status: 'active' }, { id: 'WH-2', tenantId: 'tenant-a', code: 'TWO', status: 'active' }]
+  const bins = [{ id: 'BIN-2', tenantId: 'tenant-a', warehouseId: 'WH-2', code: 'B-01', locationKey: 'b-01', status: 'active', updatedAt: new Date('2026-10-01T00:00:00Z') }]
+  const writes = []
+  const matches = (row, where) => Object.entries(where).every(([key, value]) => row[key] === value)
+  const tx = {
+    warehouse: { findFirst: async ({ where }) => warehouses.find((row) => matches(row, where)) || null },
+    warehouseLocation: {
+      findFirst: async ({ where }) => bins.find((row) => matches(row, where)) || null,
+      update: async (args) => { writes.push(args); return bins[0] },
+    },
+    auditLog: { create: async (args) => { writes.push(args); return args.data } },
+  }
+  const masterData = createDbMasterDataRepository({ env, prisma: { $transaction: async (work) => work(tx) } })
+  const admin = writer(['settings.workspace.manage'], { readWarehouseIds: new Set(['WH-1', 'WH-2']), operateWarehouseIds: new Set(['WH-1', 'WH-2']) })
+  for (const [method, path, body] of [
+    ['PATCH', '/api/master-data/warehouses/WH-1/bins/BIN-2', { name: 'Moved', expectedUpdatedAt: '2026-10-01T00:00:00.000Z' }],
+    ['POST', '/api/master-data/warehouses/WH-1/bins/BIN-2/deactivate', { expectedUpdatedAt: '2026-10-01T00:00:00.000Z' }],
+  ]) {
+    const route = createRouteContext(method, path, createDb(), { masterData })
+    route.ctx.identity = { authenticated: true, tenantId: 'tenant-a', userId: 'user-a', role: 'admin' }
+    route.ctx.masterDataActor = admin
+    route.ctx.readBody = async () => body
+    await handleMasterDataRoute(route.ctx)
+    assert.deepEqual([route.response.status, route.response.payload.code], [404, 'NOT_FOUND'], `${method} ${path}`)
+  }
+  assert.deepEqual(writes, [])
+})
+
+test('a warehouse write with a body that is not JSON is refused with a structured error', async () => {
+  const admin = writer(['settings.workspace.manage'], { operateWarehouseIds: new Set(['WH-1']) })
+  for (const [method, path] of WAREHOUSE_WRITES) {
+    const { route, calls } = writeRoute(method, path, { actor: admin, role: 'admin' })
+    route.ctx.readBody = async () => JSON.parse('{not json')
+    await handleMasterDataRoute(route.ctx)
+    assert.deepEqual([route.response.status, route.response.payload.code], [400, 'INVALID_JSON'], `${method} ${path}`)
     assert.deepEqual(calls, [], `${method} ${path}`)
   }
 })

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { RECEIVABLE_PURCHASE_ORDER_INPUTS } from './procurement-status-authority.mjs'
 import { receivingLocationKey } from './receiving-transaction-policy.mjs'
 import { saveWarehouse, saveWarehouseBin, setWarehouseBinStatus, setWarehouseStatus } from './warehouse-master-commands.mjs'
 
@@ -50,6 +51,10 @@ function fakePrisma({ warehouses = [], bins = [], users = [], usage = {} } = {})
     inventoryReservation: { count: counter('inventoryReservation') },
     cycleCountSession: { count: counter('cycleCountSession') },
     receivingDocument: { count: counter('receivingDocument') },
+    stockTransferDocument: { count: counter('stockTransferDocument') },
+    inventoryAdjustmentDocument: { count: counter('inventoryAdjustmentDocument') },
+    returnPostingDocument: { count: counter('returnPostingDocument') },
+    purchaseOrder: { count: counter('purchaseOrder') },
   }
   return { state, prisma: { $transaction: async (work, options) => { assert.equal(options?.isolationLevel, 'Serializable'); return work(tx) } } }
 }
@@ -100,6 +105,10 @@ test('setting a warehouse inactive is refused while anything depends on it', asy
     ['inventoryReservation', 'ACTIVE_RESERVATIONS'],
     ['cycleCountSession', 'OPEN_COUNTS'],
     ['receivingDocument', 'UNPOSTED_RECEIVING'],
+    ['stockTransferDocument', 'UNPOSTED_TRANSFERS'],
+    ['inventoryAdjustmentDocument', 'UNPOSTED_ADJUSTMENTS'],
+    ['returnPostingDocument', 'UNPOSTED_RETURNS'],
+    ['purchaseOrder', 'OPEN_PURCHASE_ORDERS'],
   ]) {
     const { prisma, state } = fakePrisma({ warehouses: [warehouse(), warehouse({ id: 'WH-2', code: 'SECOND' })], usage: { [model]: 2 } })
     await assert.rejects(setWarehouseStatus(prisma, 'WH-1', { status: 'inactive', expectedVersion: 3 }, actorId, scope), (error) => error.status === 409 && error.code === 'WAREHOUSE_IN_USE' && assert.deepEqual(error.details, [{ code, count: 2 }]) === undefined, model)
@@ -114,6 +123,28 @@ test('setting a warehouse inactive is refused while anything depends on it', asy
   assert.deepEqual(where.inventoryReservation.status, { notIn: ['consumed', 'released'] })
   assert.deepEqual(where.cycleCountSession.workflowStatus, { notIn: ['posted', 'cancelled'] })
   assert.deepEqual([where.receivingDocument.postingStatus, where.receivingDocument.workflowStatus], ['unposted', { not: 'cancelled' }])
+  // Transfers, adjustments and returns: unposted and not cancelled, in this
+  // warehouse (either leg of a transfer).
+  assert.deepEqual(where.stockTransferDocument, { tenantId: 'tenant-a', postingStatus: 'unposted', workflowStatus: { not: 'cancelled' }, lines: { some: { legs: { some: { warehouseId: 'WH-1' } } } } })
+  assert.deepEqual(where.inventoryAdjustmentDocument, { tenantId: 'tenant-a', postingStatus: 'unposted', workflowStatus: { not: 'cancelled' }, lines: { some: { warehouseId: 'WH-1' } } })
+  assert.deepEqual(where.returnPostingDocument, { tenantId: 'tenant-a', postingStatus: 'unposted', workflowStatus: { not: 'cancelled' }, warehouseId: 'WH-1' })
+  // Purchase orders still open for receiving, in the statuses receiving
+  // offers, whose target warehouse is this one.
+  assert.deepEqual(where.purchaseOrder, { tenantId: 'tenant-a', status: { in: [...RECEIVABLE_PURCHASE_ORDER_INPUTS] }, metadata: { path: ['targetWarehouseId'], equals: 'WH-1' } })
+  for (const closed of ['closed', 'cancelled', 'received', 'draft']) assert.equal(RECEIVABLE_PURCHASE_ORDER_INPUTS.includes(closed), false, closed)
+  for (const open of ['approved', 'issued', 'partially_received']) assert.equal(RECEIVABLE_PURCHASE_ORDER_INPUTS.includes(open), true, open)
+})
+
+test('every reason that blocks a warehouse is reported with its count', async () => {
+  const usage = { inventoryBalance: 1, stockTransferDocument: 2, inventoryAdjustmentDocument: 3, returnPostingDocument: 4, purchaseOrder: 5 }
+  const { prisma } = fakePrisma({ warehouses: [warehouse(), warehouse({ id: 'WH-2', code: 'SECOND' })], usage })
+  await assert.rejects(setWarehouseStatus(prisma, 'WH-1', { status: 'inactive', expectedVersion: 3 }, actorId, scope), (error) => error.code === 'WAREHOUSE_IN_USE' && assert.deepEqual(error.details, [
+    { code: 'INVENTORY_ON_HAND', count: 1 },
+    { code: 'UNPOSTED_TRANSFERS', count: 2 },
+    { code: 'UNPOSTED_ADJUSTMENTS', count: 3 },
+    { code: 'UNPOSTED_RETURNS', count: 4 },
+    { code: 'OPEN_PURCHASE_ORDERS', count: 5 },
+  ]) === undefined)
 })
 
 test('the last active warehouse cannot be set inactive', async () => {
