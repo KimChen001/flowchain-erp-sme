@@ -151,7 +151,8 @@
     "test:db:inventory-warehouse-scope": "node scripts/run-postgres-test-files.mjs tests/postgres/inventory-warehouse-scope.test.mjs",
     "test:db:search-graph-read-scope": "node scripts/run-postgres-test-files.mjs tests/postgres/search-evidence-graph-read-scope.test.mjs",
     "test:db:role-backfill-once": "node scripts/run-postgres-test-files.mjs tests/postgres/role-backfill-once.test.mjs",
-    "test:db:po-close-receipt-cancel": "node scripts/run-postgres-test-files.mjs tests/postgres/po-close-receipt-cancel.test.mjs"
+    "test:db:po-close-receipt-cancel": "node scripts/run-postgres-test-files.mjs tests/postgres/po-close-receipt-cancel.test.mjs",
+    "test:db:business-documents": "node scripts/run-postgres-test-files.mjs tests/postgres/business-documents.test.mjs"
   },
   "dependencies": {
     "@langchain/core": "1.2.9",

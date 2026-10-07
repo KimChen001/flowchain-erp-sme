@@ -75,7 +75,8 @@ test('only the four invoice matching tolerances, the AI switch and the document 
   assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder'] })
 
   const sources = serverSources()
-  // Every server reader of tenant.operationalSettings. The settlement services
+  // Every server reader of tenant.operationalSettings. The PO document reads
+  // the documents section through mergeOperationalSettings. The settlement services
   // read settlementPolicy, which the settings UI never edits; Mobile Sync reads
   // module visibility but is outside the US trial capability set.
   assert.deepEqual(sources.filter(file => /operationalSettings/.test(file.source)).map(file => file.path).sort(), [
@@ -85,6 +86,7 @@ test('only the four invoice matching tolerances, the AI switch and the document 
     'domain/mobile-sync-entity-policy.mjs',
     'domain/mobile-sync-service.mjs',
     'domain/operational-finance-policy.mjs',
+    'domain/purchase-order-document-read-service.mjs',
     'domain/workspace-settings-contract.mjs',
     'routes/settings-runtime.routes.mjs',
   ])
