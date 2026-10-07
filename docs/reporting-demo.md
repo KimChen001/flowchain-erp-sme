@@ -10,4 +10,4 @@ Receipts are recorded but unposted; invoices await review and are not paid or ap
 
 The database procurement snapshot now supplies actual receipts and invoices to report readers. Open-order metrics exclude fully received, rejected and cancelled orders. Draft and cancelled sales are excluded from open demand and inventory demand calculations.
 
-Stock quantities with different recorded units are not combined into a single on-hand total. SKU-level quantities remain visible. The overview uses readable status labels and expands supplier chart spacing for eight suppliers.
+Stock quantities of different SKUs, or with different recorded units, are not combined into a single on-hand total: the KPI reads Multiple SKUs or Mixed units, and On hand by SKU shows each SKU in its own unit. The overview uses readable status labels and expands supplier chart spacing for eight suppliers.
