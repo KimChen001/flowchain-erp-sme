@@ -188,10 +188,10 @@ test('workbook metric summary reads each KPI as the dashboard shows it', () => {
   assert.equal(onHandOf([{ sku: 'A', unit: 'pcs', onHandQuantity: 8 }, { sku: 'B', unit: 'pcs', onHandQuantity: 2 }]), 'Multiple SKUs')
   assert.equal(onHandOf([{ sku: 'A', unit: 'pcs', onHandQuantity: 8 }, { sku: 'B', unit: 'pcs', onHandQuantity: 2 }], 'zh-CN'), '多个 SKU')
   assert.equal(onHandOf([{ sku: 'A', unit: 'pcs', onHandQuantity: 8 }, { sku: 'B', unit: 'ft', onHandQuantity: 2 }]), 'Mixed units')
-  // Too few promised lines for an on-time rate.
+  // Too few promised deliveries for an on-time rate.
   const line = id => ({ id, sku: 'A', unit: 'pcs', orderedQuantity: 1, receivedQuantity: 0, originalPromisedDate: '2026-09-10' })
   const onTime = buildRuntimeGovernedReport(context({ purchaseOrders: [po('PO-1', 'issued', 10, { lines: [line('L1'), line('L2')] })] }), { subject: 'procurement', measures: ['on_time_receipt_rate'] }, { now: new Date('2026-10-05T16:00:00.000Z') })
-  assert.equal(reportWorkbook(onTime, {}, copy, [], { locale: 'en-US', language: 'en-US' })[0].rows[0]['Current value'], 'Fewer than 5 lines')
+  assert.equal(reportWorkbook(onTime, {}, copy, [], { locale: 'en-US', language: 'en-US' })[0].rows[0]['Current value'], 'Fewer than 5 deliveries')
 })
 
 test('workbook detail rows name an order without a quantity total as the dashboard does', () => {

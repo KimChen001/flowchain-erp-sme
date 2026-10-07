@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { addCalendarDays, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
+import fs from 'node:fs'
+import path from 'node:path'
+import { addCalendarDays, orderSupplierChoices, planPurchaseRequestPrefill } from '../../shared/purchase-request-prefill.mjs'
 import { mapItemSupplierRecord } from './master-data-commands.mjs'
 
 const item = { itemId: 'item-1', defaultWarehouseId: 'wh-main' }
@@ -104,6 +106,120 @@ test('an item with no approved supplier leaves the supplier and price empty', ()
   assert.equal(plan.fields.supplierId, undefined)
   assert.equal(plan.values.estimatedUnitPrice, '')
   assert.equal(plan.values.needByDate, '2026-10-03')
+})
+
+// Approved sources with none preferred, as the item supplier API returns them.
+const sourceA = { id: 'sup-a', supplierCode: 'SUP-A', name: 'acme Supply', preferred: false, referencePrice: '3.10', currency: 'USD', leadTimeDays: 7, minimumOrderQuantity: 100 }
+const sourceB = { id: 'sup-b', supplierCode: 'SUP-B', name: 'Bolt Parts', preferred: false, referencePrice: '2.90', currency: 'EUR', leadTimeDays: 3, minimumOrderQuantity: 40 }
+const sourceC = { id: 'sup-c', supplierCode: 'SUP-C', name: 'Acme Supply', preferred: false, referencePrice: null, currency: 'USD', leadTimeDays: null, minimumOrderQuantity: null }
+const sourceD = { id: 'sup-d', supplierCode: 'SUP-D', name: 'Delta Trading', preferred: false, referencePrice: '5.00', currency: 'USD', leadTimeDays: 2, minimumOrderQuantity: null }
+const several = { ...base, suppliers: [sourceD, sourceB, sourceA, sourceC] }
+const lastOrders = {
+  'sup-b': { purchaseOrderId: 'PO-0007', orderNumber: 'PO-0007', day: '2026-08-02', dateSource: 'issue_date' },
+  'sup-d': { purchaseOrderId: 'PO-0031', orderNumber: 'PO-0031', day: '2026-09-14', dateSource: 'order_date' },
+}
+
+test('the only approved source is prefilled and labelled as the only one', () => {
+  const plan = planPurchaseRequestPrefill({ ...base, suppliers: [sourceB], query: { itemId: 'item-1', quantity: '10', origin: 'ai_assistant' } })
+  assert.deepEqual(plan.fields.supplierId, { source: 'default', ref: 'item_supplier:only_approved', value: 'sup-b' })
+  assert.equal(plan.values.supplierId, 'sup-b')
+  // A supplier someone stands behind: its terms fill the line as before.
+  assert.equal(plan.values.quantity, '40')
+  assert.equal(plan.values.estimatedUnitPrice, '2.90')
+  assert.equal(plan.values.currency, 'EUR')
+  assert.equal(plan.values.needByDate, '2026-10-06')
+  assert.deepEqual(plan.supplierChoices, [])
+})
+
+test('several approved sources and none preferred: the supplier stays empty and the sources are listed by last PO date', () => {
+  const plan = planPurchaseRequestPrefill({ ...several, lastOrders, query: { itemId: 'item-1', quantity: '10', origin: 'ai_assistant' } })
+  assert.equal(plan.values.supplierId, '')
+  assert.deepEqual(plan.fields.supplierId, { source: 'template', ref: 'item_supplier:choose', value: '' })
+  // Nothing of a supplier nobody chose: no price, currency, lead time or MOQ.
+  assert.equal(plan.values.estimatedUnitPrice, '')
+  assert.equal(plan.fields.estimatedUnitPrice, undefined)
+  assert.equal(plan.values.currency, '')
+  assert.equal(plan.values.quantity, '10')
+  assert.deepEqual(plan.fields.quantity, { source: 'record', ref: 'assistant:gap', value: '10' })
+  assert.equal(plan.values.needByDate, '2026-10-03')
+  assert.equal(plan.fields.needByDate, undefined)
+  // Most recent PO first, never-ordered last, ties A-Z (case-insensitive), then id.
+  assert.deepEqual(plan.supplierChoices.map((row) => [row.id, row.lastOrder?.day ?? null]), [
+    ['sup-d', '2026-09-14'], ['sup-b', '2026-08-02'], ['sup-a', null], ['sup-c', null],
+  ])
+  assert.deepEqual(plan.supplierChoices[0], { id: 'sup-d', name: 'Delta Trading', lastOrder: { purchaseOrderId: 'PO-0031', orderNumber: 'PO-0031', day: '2026-09-14', dateSource: 'order_date' } })
+  assert.equal(plan.supplierChoices[2].lastOrder, null)
+  // The asked-for date still wins; without a quantity the reorder list leaves it empty.
+  assert.equal(planPurchaseRequestPrefill({ ...several, lastOrders, query: { itemId: 'item-1', due: '2026-11-02' } }).values.needByDate, '2026-11-02')
+  assert.equal(planPurchaseRequestPrefill({ ...several, lastOrders, query: { itemId: 'item-1', origin: 'reorder_list' } }).values.quantity, '')
+  assert.equal(planPurchaseRequestPrefill({ ...several, lastOrders, query: { itemId: 'item-1' } }).values.quantity, '1')
+})
+
+test('two suppliers last ordered the same day are listed A-Z, and a Map works like an object', () => {
+  const sameDay = new Map([
+    ['sup-b', { purchaseOrderId: 'PO-2', day: '2026-09-01', dateSource: 'issue_date' }],
+    ['sup-a', { purchaseOrderId: 'PO-1', day: '2026-09-01', dateSource: 'issue_date' }],
+  ])
+  assert.deepEqual(orderSupplierChoices([sourceB, sourceD, sourceA], sameDay).map((row) => row.id), ['sup-a', 'sup-b', 'sup-d'])
+  // The order number falls back to the PO id.
+  assert.equal(orderSupplierChoices([sourceA], sameDay)[0].lastOrder.orderNumber, 'PO-1')
+})
+
+test('without PO dates the sources are listed A-Z and no date is claimed', () => {
+  for (const unavailable of [null, undefined]) {
+    const plan = planPurchaseRequestPrefill({ ...several, lastOrders: unavailable, query: { itemId: 'item-1' } })
+    assert.deepEqual(plan.supplierChoices.map((row) => row.id), ['sup-a', 'sup-c', 'sup-b', 'sup-d'])
+    assert.ok(plan.supplierChoices.every((row) => !('lastOrder' in row)))
+  }
+})
+
+test('a named supplier wins among several; a named supplier that is not approved falls through', () => {
+  const named = planPurchaseRequestPrefill({ ...several, lastOrders, query: { itemId: 'item-1', quantity: '10', suppliers: 'SUP-B', origin: 'reorder_list' } })
+  assert.deepEqual(named.fields.supplierId, { source: 'record', ref: 'reorder_list:supplier', value: 'sup-b' })
+  assert.equal(named.values.quantity, '40')
+  assert.deepEqual(named.supplierChoices, [])
+  const unknown = planPurchaseRequestPrefill({ ...several, lastOrders, query: { itemId: 'item-1', quantity: '10', suppliers: 'SUP-ZZ', origin: 'ai_assistant' } })
+  assert.deepEqual(unknown.fields.supplierId, { source: 'template', ref: 'item_supplier:choose', value: '' })
+  assert.equal(unknown.values.supplierId, '')
+  // With a preferred supplier among the sources, an unapproved name falls to it.
+  const toPreferred = planPurchaseRequestPrefill({ ...base, query: { itemId: 'item-1', suppliers: 'SUP-ZZ' } })
+  assert.deepEqual(toPreferred.fields.supplierId, { source: 'default', ref: 'item_supplier:preferred', value: 'sup-pref' })
+})
+
+test('two sources marked preferred: neither is picked, only those two are listed by last PO date, and nothing of theirs is filled', () => {
+  // The item's default supplier and a link flagged preferred, in either record order.
+  const twoPreferred = [{ ...sourceA, preferred: true }, sourceD, { ...sourceB, preferred: true }]
+  for (const suppliers of [twoPreferred, [...twoPreferred].reverse()]) {
+    const plan = planPurchaseRequestPrefill({ ...base, suppliers, lastOrders, query: { itemId: 'item-1', quantity: '10', origin: 'ai_assistant' } })
+    assert.equal(plan.values.supplierId, '')
+    assert.deepEqual(plan.fields.supplierId, { source: 'template', ref: 'item_supplier:choose_preferred', value: '' })
+    assert.deepEqual(plan.supplierChoices.map((row) => [row.id, row.lastOrder?.day ?? null]), [['sup-b', '2026-08-02'], ['sup-a', null]])
+    assert.equal(plan.values.estimatedUnitPrice, '')
+    assert.equal(plan.values.currency, '')
+    assert.equal(plan.values.quantity, '10')
+    assert.equal(plan.fields.needByDate, undefined)
+  }
+  // A supplier the handoff names still wins; one preferred source is still filled.
+  const named = planPurchaseRequestPrefill({ ...base, suppliers: twoPreferred, lastOrders, query: { itemId: 'item-1', suppliers: 'SUP-A', origin: 'reorder_list' } })
+  assert.deepEqual(named.fields.supplierId, { source: 'record', ref: 'reorder_list:supplier', value: 'sup-a' })
+  const one = planPurchaseRequestPrefill({ ...base, suppliers: [sourceD, { ...sourceB, preferred: true }], query: { itemId: 'item-1' } })
+  assert.deepEqual(one.fields.supplierId, { source: 'default', ref: 'item_supplier:preferred', value: 'sup-b' })
+  assert.deepEqual(one.supplierChoices, [])
+})
+
+// The list a person chooses from counts POs received without being issued in
+// FlowChain, so no row may call its PO "issued" (src/components/procurement/SupplierChoices.tsx).
+test('the source list says "PO", and a PO received without being issued says so, in both languages', () => {
+  const source = fs.readFileSync(path.join(path.resolve(import.meta.dirname, '..', '..'), 'src', 'components', 'procurement', 'SupplierChoices.tsx'), 'utf8')
+  const copy = source.slice(source.indexOf('SUPPLIER_CHOICES_COPY'), source.indexOf('} as const'))
+  assert.match(copy, /title: "Approved sources, most recent PO first"/)
+  assert.match(copy, /lastPo: "Last PO \{date\} · \{po\}"/)
+  assert.match(copy, /notIssued: "\(order date; received, not issued in FlowChain\)"/)
+  assert.match(copy, /noPo: "No PO yet"/)
+  assert.match(copy, /titlePreferred: "Several preferred suppliers: choose one\. Most recent PO first"/)
+  assert.match(copy, /lastPo: "最近采购订单 \{date\} · \{po\}"/)
+  assert.match(copy, /notIssued: "（下单日期；已收货，未在 FlowChain 下达）"/)
+  assert.doesNotMatch(copy, /issued PO|已下达的采购订单/)
 })
 
 test('calendar days cross month and year ends', () => {
