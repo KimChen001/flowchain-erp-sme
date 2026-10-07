@@ -6,7 +6,7 @@ import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { documentCopy } from "./documentCopy";
-import { formatAmount, formatCalendarDay, formatDecimal } from "./documentFormat";
+import { formatAmount, formatCalendarDay, formatDayOrInstant, formatDecimal } from "./documentFormat";
 import { DocumentShell, type DocumentBlock } from "./DocumentShell";
 
 type ReadState = "loading" | "loaded" | "notFound" | "forbidden" | "error";
@@ -17,12 +17,14 @@ const dash = (value: string | null | undefined) => (value === null || value === 
 // sends to the customer. Everything on it is what the invoice, its receivable
 // and the customer master record: a header field nobody recorded (letterhead,
 // customer contact, payment terms) is left off, and a missing value in the
-// line table prints "—". Calendar days (invoice and due date) print as the
-// day recorded, read in UTC, in any browser time zone. FlowChain
+// line table prints "—". The due date is a calendar day and prints as the day
+// recorded, read in UTC, in any time zone; the invoice date is stored as the
+// moment the invoice was created and prints as that moment's day in the
+// workspace timezone (unless it was stored as a calendar day). FlowChain
 // prepares it and stops there: issuing the invoice stays a step on the
 // invoice page.
 function CustomerInvoiceSheet({ doc, language }: { doc: CustomerInvoiceDocument; language: DocumentLanguage }) {
-  const { locale } = useI18n();
+  const { locale, timezone } = useI18n();
   const c = documentCopy(language);
   const { seller, billTo, columns, paymentSummary } = doc;
   const amount = (value: string | null) => formatAmount(value, doc.currency, locale);
@@ -46,7 +48,7 @@ function CustomerInvoiceSheet({ doc, language }: { doc: CustomerInvoiceDocument;
           <h1 data-testid="invoice-document-title">{doc.title || c("invoice")}</h1>
           <dl>
             <dt>{c("invoiceNumber")}</dt><dd data-testid="invoice-document-number">{dash(doc.number)}</dd>
-            <dt>{c("invoiceDate")}</dt><dd data-testid="invoice-document-date">{formatCalendarDay(doc.invoiceDate, locale)}</dd>
+            <dt>{c("invoiceDate")}</dt><dd data-testid="invoice-document-date">{formatDayOrInstant(doc.invoiceDate, locale, timezone)}</dd>
             <dt>{c("dueDate")}</dt><dd data-testid="invoice-document-due-date">{formatCalendarDay(doc.dueDate, locale)}</dd>
             {doc.salesOrderNumber && <><dt>{c("salesOrder")}</dt><dd data-testid="invoice-document-sales-order">{doc.salesOrderNumber}</dd></>}
             {doc.shipmentNumber && <><dt>{c("shipment")}</dt><dd data-testid="invoice-document-shipment">{doc.shipmentNumber}</dd></>}

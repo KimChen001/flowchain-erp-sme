@@ -2,6 +2,7 @@ import { buildCustomerInvoiceDocument } from "../../shared/business-documents.mj
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { CUSTOMER_NAMESPACE } from "./master-data-commands.mjs";
 import { OperationalFinanceReadError } from "./operational-finance-read-service.mjs";
+import { readPaymentTerms } from "./recorded-payment-terms.mjs";
 import { mergeOperationalSettings } from "./workspace-settings-contract.mjs";
 
 const text = (value) => String(value ?? "").trim();
@@ -23,14 +24,6 @@ export function customerInvoiceDocumentAccess(invoice) {
 function pickCustomer(rows, customerId) {
   const byPayload = rows.find((row) => text(row.payload?.id) === customerId);
   return byPayload || rows.find((row) => row.id === customerId) || rows.find((row) => row.recordKey === customerId) || null;
-}
-
-// The workspace's payment terms a recorded value names (by id or code), so
-// the document prints the recorded name; none when nothing was recorded.
-export async function readPaymentTerms(client, tenantId, value) {
-  const stored = text(value);
-  if (!stored || typeof client.paymentTerm?.findMany !== "function") return [];
-  return client.paymentTerm.findMany({ where: { tenantId, OR: [{ id: stored }, { code: stored }] }, select: { id: true, code: true, name: true }, take: 2 });
 }
 
 // The customer invoice document a person prints or saves as PDF and sends

@@ -25,9 +25,11 @@ export const DOCUMENT_LANGUAGES = Object.freeze(['en-US', 'zh-CN'])
 // A PO is a document to send once it is approved, and stays one afterwards.
 export const PRINTABLE_PURCHASE_ORDER_STATUSES = Object.freeze(['approved', 'issued', 'partially_received', 'fully_received', 'closed'])
 
-// An invoice is a document to send once it is issued (and stays one if the
-// customer disputes it). An approved invoice can be looked over on screen
-// before it is issued, but not printed.
+// An invoice is a document to send once it is issued. A customer's dispute
+// is recorded on the receivable and the invoice stays issued; 'disputed' is
+// listed only so that an invoice ever stored with that status stays
+// printable. An approved invoice can be looked over on screen before it is
+// issued, but not printed.
 export const PRINTABLE_CUSTOMER_INVOICE_STATUSES = Object.freeze(['issued', 'disputed'])
 export const PREVIEW_CUSTOMER_INVOICE_STATUSES = Object.freeze(['approved'])
 
@@ -188,6 +190,19 @@ export function validateDocumentSettings(value) {
   }
 }
 
+// The invoice date: the invoice form stores the moment it was created, so it
+// is printed as the day that moment falls on in the workspace timezone
+// (`instant`); a value stored at exactly 00:00:00.000Z (or as a bare date) is
+// a calendar day and stays that day (`day`). One of the two, or neither.
+export function recordedDayOrInstant(value) {
+  if (value === null || value === undefined || value === '') return { day: null, instant: null }
+  const time = value instanceof Date ? value.getTime() : Date.parse(String(value).trim())
+  if (!Number.isFinite(time)) return { day: null, instant: null }
+  const iso = new Date(time).toISOString()
+  const bareDate = !(value instanceof Date) && /^\d{4}-\d{2}-\d{2}$/.test(String(value).trim())
+  return bareDate || iso.endsWith('T00:00:00.000Z') ? { day: iso.slice(0, 10), instant: null } : { day: null, instant: iso }
+}
+
 // A calendar day, YYYY-MM-DD, from a Date or an ISO string; null otherwise.
 // Dates are stored as UTC instants, so the UTC day is the recorded day.
 function calendarDay(value) {
@@ -307,8 +322,11 @@ export function recordedPaymentTerms(value, terms = []) {
 
 // The recorded customer fields an invoice prints, from the stored customer
 // record (RuntimeRecord payload): the code, contact, phone, email, address and
-// payment terms someone entered, each null when nobody did. The customer's
-// currency and credit standing are not read.
+// payment terms someone entered, each null when nobody did. A customer's
+// payment terms are stored only when someone enters them (no form, import,
+// view or seed fills them in), unlike a supplier's paymentTermsId, which
+// defaults to NET30 and so is never printed. The customer's currency and
+// credit standing are not read.
 function customerParty(customer) {
   const payload = isObject(customer?.payload) ? customer.payload : {}
   return {
@@ -355,16 +373,18 @@ export function buildCustomerInvoiceDocument({ invoice, customer = null, payment
   const currency = recorded(invoice?.currency)
   const receivable = isObject(invoice?.receivable) ? invoice.receivable : null
   // What was paid, credited and is still owed, from the receivable the reader
-  // may see; only in the invoice's own currency, never converted.
-  const paymentSummary = template?.showPaymentSummary !== false && receivable && sameCurrency(recorded(receivable.currency), currency)
+  // may see, with its amounts; only in the invoice's own currency, never
+  // converted. Left off, not printed blank, when the amounts are hidden.
+  const paymentSummary = template?.showPaymentSummary !== false && access.amounts === true && receivable && sameCurrency(recorded(receivable.currency), currency)
     ? { currency, amountPaid: recorded(receivable.paidAmount), creditsApplied: recorded(receivable.approvedCreditAmount), balanceDue: recorded(receivable.outstandingAmount) }
     : null
   return {
     kind: 'customer_invoice',
     invoiceId: recorded(invoice?.id),
-    number: recorded(invoice?.invoiceNumber) || recorded(invoice?.id),
+    // The invoice number as recorded; never the internal id in its place.
+    number: recorded(invoice?.invoiceNumber),
     status,
-    invoiceDate: calendarDay(invoice?.invoiceDate),
+    invoiceDate: recordedDayOrInstant(invoice?.invoiceDate),
     dueDate: calendarDay(invoice?.dueDate),
     salesOrderNumber: recorded(invoice?.salesOrderNumber),
     shipmentNumber: recorded(invoice?.shipmentNumber),

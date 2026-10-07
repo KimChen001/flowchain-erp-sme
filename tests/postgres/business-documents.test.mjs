@@ -144,10 +144,14 @@ test('the invoice document reads as the invoice detail does and prints only what
     // currency and credit standing a document never prints.
     await prisma.runtimeRecord.create({ data: { id: 'rr-bayside', tenantId: invoiceTenantId, namespace: 'master-data.customers', recordKey: 'BAYSIDE', payload: { id: 'CUST-BAYSIDE', code: 'BAYSIDE', name: 'Bayside Retail', status: 'active', contact: 'Lee Park', email: 'ap@bayside.invalid', address: '9 Market St, Oakland', paymentTerms: 'NET45', currency: 'GBP', creditStatus: 'on_hold', version: 1 } } })
     await prisma.paymentTerm.create({ data: { id: 'ID-PT-45', tenantId: invoiceTenantId, code: 'NET45', name: 'Net 45 days', days: 45 } })
+    // A customer whose recorded terms only another workspace's payment term names.
+    await prisma.runtimeRecord.create({ data: { id: 'rr-hill', tenantId: invoiceTenantId, namespace: 'master-data.customers', recordKey: 'HILL', payload: { id: 'CUST-HILL', code: 'HILL', name: 'Hill Stores', status: 'active', paymentTerms: 'NET60', version: 1 } } })
+    await prisma.paymentTerm.create({ data: { id: 'ID-PT-OTHER-60', tenantId: otherInvoiceTenantId, code: 'NET60', name: 'Other workspace net 60', days: 60 } })
     await prisma.customerInvoice.create({ data: { id: 'ID-INV', tenantId: invoiceTenantId, invoiceNumber: 'INV-1001', salesOrderId: 'ID-SO-A', shipmentId: 'ID-SHIP-A', customerId: 'CUST-BAYSIDE', customerNameSnapshot: 'Bayside Retail', invoiceDate: new Date('2026-10-05T00:00:00.000Z'), dueDate: new Date('2026-10-15T00:00:00.000Z'), subtotalAmount: '125.0000', enteredTaxAmount: '10.0000', totalAmount: '135.0000', currency: 'EUR', status: 'issued', lines: { create: { id: 'ID-INVL', lineNumber: 1, shipmentLineId: 'ID-SHIPL-A', salesOrderLineId: 'ID-SOL-A', itemId: 'ID-ITEM-A', sku: 'VAL-10', itemName: 'Brass valve', quantity: '10.0000', unit: 'EA', unitPrice: '12.5000', lineAmount: '125.0000', enteredTaxAmount: '10.0000', totalAmount: '135.0000' } } } })
     await prisma.receivableObligation.create({ data: { id: 'ID-AR', tenantId: invoiceTenantId, customerInvoiceId: 'ID-INV', obligationNumber: 'AR-INV-1001', originalAmount: '135.0000', outstandingAmount: '85.0000', approvedCreditAmount: '10.0000', currency: 'EUR', dueDate: new Date('2026-10-15T00:00:00.000Z'), status: 'partially_settled' } })
     await prisma.customerInvoice.create({ data: { id: 'ID-INV-APPROVED', tenantId: invoiceTenantId, invoiceNumber: 'INV-1002', salesOrderId: 'ID-SO-A', shipmentId: 'ID-SHIP-A', customerId: 'CUST-BAYSIDE', customerNameSnapshot: 'Bayside Retail', invoiceDate: new Date('2026-10-06T00:00:00.000Z'), dueDate: new Date('2026-11-05T00:00:00.000Z'), subtotalAmount: '5.0000', totalAmount: '5.0000', currency: 'EUR', status: 'approved' } })
     await prisma.customerInvoice.create({ data: { id: 'ID-INV-DRAFT', tenantId: invoiceTenantId, invoiceNumber: 'INV-1003', salesOrderId: 'ID-SO-A', shipmentId: 'ID-SHIP-A', customerNameSnapshot: 'Bayside Retail', invoiceDate: new Date('2026-10-06T00:00:00.000Z'), dueDate: new Date('2026-11-05T00:00:00.000Z'), subtotalAmount: '5.0000', totalAmount: '5.0000', currency: 'EUR', status: 'draft' } })
+    await prisma.customerInvoice.create({ data: { id: 'ID-INV-HILL', tenantId: invoiceTenantId, invoiceNumber: 'INV-1004', salesOrderId: 'ID-SO-A', shipmentId: 'ID-SHIP-A', customerId: 'CUST-HILL', customerNameSnapshot: 'Hill Stores', invoiceDate: new Date('2026-10-08T00:30:00.000Z'), dueDate: new Date('2026-11-07T00:00:00.000Z'), subtotalAmount: '7.0000', totalAmount: '7.0000', currency: 'EUR', status: 'issued' } })
     await seedSale(prisma, otherInvoiceTenantId, 'OTHER')
     await prisma.customerInvoice.create({ data: { id: 'ID-INV-OTHER', tenantId: otherInvoiceTenantId, invoiceNumber: 'INV-OTHER', salesOrderId: 'ID-SO-OTHER', shipmentId: 'ID-SHIP-OTHER', customerNameSnapshot: 'Elsewhere Ltd', invoiceDate: new Date('2026-10-06T00:00:00.000Z'), dueDate: new Date('2026-11-05T00:00:00.000Z'), subtotalAmount: '9.0000', totalAmount: '9.0000', currency: 'USD', status: 'issued' } })
 
@@ -167,7 +171,7 @@ test('the invoice document reads as the invoice detail does and prints only what
     assert.equal(status, 200)
     const document = body.document
     assert.deepEqual(document.printable, { ok: true, reason: null })
-    assert.deepEqual([document.number, document.status, document.currency, document.invoiceDate, document.dueDate], ['INV-1001', 'issued', 'EUR', '2026-10-05', '2026-10-15'])
+    assert.deepEqual([document.number, document.status, document.currency, document.invoiceDate, document.dueDate], ['INV-1001', 'issued', 'EUR', { day: '2026-10-05', instant: null }, '2026-10-15'])
     // Linked numbers print as stored.
     assert.deepEqual([document.salesOrderNumber, document.shipmentNumber], ['SO-1791349366771-A', 'SHIP-A'])
     assert.deepEqual(document.seller, { companyName: 'Harbor Goods LLC', addressLines: ['12 Pier Road'], phone: null, email: null, taxId: null })
@@ -179,6 +183,14 @@ test('the invoice document reads as the invoice detail does and prints only what
     assert.equal(document.paymentInstructions, 'Pay by ACH to the account on your vendor form.')
     const serialized = JSON.stringify(body)
     for (const value of ['GBP', 'on_hold', 'creditStatus', 'NET30', '"USD"']) assert.equal(serialized.includes(value), false, value)
+
+    // Another workspace's payment term never names this workspace's recorded
+    // terms: the code prints as stored. The invoice date stored as a moment
+    // comes back as that moment, for the page to print in the workspace timezone.
+    const hill = (await call(as('admin'), '/api/finance/customer-invoices/ID-INV-HILL/document')).body.document
+    assert.equal(hill.paymentTerms, 'NET60')
+    assert.equal(JSON.stringify(hill).includes('Other workspace'), false)
+    assert.deepEqual([hill.invoiceDate, hill.dueDate], [{ day: null, instant: '2026-10-08T00:30:00.000Z' }, '2026-11-07'])
 
     // Approved: shown, not printable. Draft: not a document yet.
     assert.deepEqual((await call(as('admin'), '/api/finance/customer-invoices/ID-INV-APPROVED/document')).body.document.printable, { ok: false, reason: 'not_issued' })

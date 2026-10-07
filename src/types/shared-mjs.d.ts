@@ -78,6 +78,8 @@ declare module '../../../shared/business-documents.mjs' {
   export type DocumentLanguage = 'en-US' | 'zh-CN';
   export type PurchaseOrderColumns = { supplierSku: boolean; requestedDate: boolean; promisedDate: boolean };
   export type CustomerInvoiceColumns = { tax: boolean };
+  // A calendar day (YYYY-MM-DD) or an instant (ISO), as the value was stored.
+  export type RecordedDayOrInstant = { day: string | null; instant: string | null };
   export type DocumentSettings = {
     version: 1;
     documentLanguage: DocumentLanguage;
@@ -114,7 +116,7 @@ declare module '../../../shared/business-documents.mjs' {
     invoiceId: string | null;
     number: string | null;
     status: string | null;
-    invoiceDate: string | null;
+    invoiceDate: RecordedDayOrInstant;
     dueDate: string | null;
     salesOrderNumber: string | null;
     shipmentNumber: string | null;
@@ -145,5 +147,6 @@ declare module '../../../shared/business-documents.mjs' {
   export function validateDocumentSettings(value: unknown): DocumentSettings;
   export function buildPurchaseOrderDocument(input: unknown): PurchaseOrderDocument;
   export function buildCustomerInvoiceDocument(input: unknown): CustomerInvoiceDocument;
+  export function recordedDayOrInstant(value: unknown): RecordedDayOrInstant;
   export function recordedPaymentTerms(value: unknown, terms?: ReadonlyArray<{ id?: string | null; code?: string | null; name?: string | null }>): string | null;
 }

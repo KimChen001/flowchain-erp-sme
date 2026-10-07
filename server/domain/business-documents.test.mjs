@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildCustomerInvoiceDocument, buildPurchaseOrderDocument, documentSettingsSeed, PREVIEW_CUSTOMER_INVOICE_STATUSES, PRINTABLE_CUSTOMER_INVOICE_STATUSES, PRINTABLE_PURCHASE_ORDER_STATUSES, recordedPaymentTerms } from '../../shared/business-documents.mjs'
+import { buildCustomerInvoiceDocument, buildPurchaseOrderDocument, documentSettingsSeed, PREVIEW_CUSTOMER_INVOICE_STATUSES, PRINTABLE_CUSTOMER_INVOICE_STATUSES, PRINTABLE_PURCHASE_ORDER_STATUSES, recordedDayOrInstant, recordedPaymentTerms } from '../../shared/business-documents.mjs'
 import { createPurchaseOrderDocumentReadService } from './purchase-order-document-read-service.mjs'
 import { createCustomerInvoiceDocumentReadService, customerInvoiceDocumentAccess } from './customer-invoice-document-read-service.mjs'
 import { handleOperationalFinanceRoute } from '../routes/operational-finance.routes.mjs'
@@ -276,13 +276,15 @@ test('invoice: missing values are null, never a default currency or payment term
   assert.deepEqual(document.billTo, { name: 'Bayside Retail (as invoiced)', code: 'BAYSIDE', contactName: 'Lee Park', email: 'ap@bayside.example', telephone: null, address: '9 Market St, Oakland' })
   assert.equal(document.paymentTerms, null, 'no terms recorded on the customer: left off, never NET30')
   assert.deepEqual(document.seller, { companyName: 'Harbor Goods LLC', addressLines: [], phone: null, email: null, taxId: null })
-  assert.deepEqual([document.invoiceDate, document.dueDate], ['2026-10-05', '2026-11-04'], 'calendar dates are the recorded UTC days')
+  assert.deepEqual([document.invoiceDate, document.dueDate], [{ day: '2026-10-05', instant: null }, '2026-11-04'], 'dates stored at 00:00 UTC are the recorded calendar days')
   assert.deepEqual([document.number, document.salesOrderNumber, document.shipmentNumber, document.currency], ['INV-2026-0009', 'SO-2026-0001', 'SHIP-2026-0001', 'EUR'])
   assert.deepEqual([document.paymentInstructions, document.termsText, document.footerText, document.title], [null, null, null, null])
   const serialized = JSON.stringify(document)
   for (const invented of ['NET30', 'Net 30', '"USD"', 'GBP', 'on_hold', 'creditStatus', 'creditLimit', '50000']) assert.equal(serialized.includes(invented), false, invented)
   const bare = buildInvoice({ invoice: invoice({ invoiceDate: null, dueDate: '', salesOrderNumber: undefined }), customer: null })
-  assert.deepEqual([bare.invoiceDate, bare.dueDate, bare.salesOrderNumber], [null, null, null])
+  assert.deepEqual([bare.invoiceDate, bare.dueDate, bare.salesOrderNumber], [{ day: null, instant: null }, null, null])
+  assert.equal(buildInvoice({ invoice: invoice({ invoiceNumber: null }) }).number, null, 'no invoice number: none, never the internal id')
+  assert.equal(JSON.stringify(buildInvoice({ invoice: invoice({ invoiceNumber: '' }) })).includes('"number":"CI-9"'), false)
   assert.deepEqual(bare.billTo, { name: 'Bayside Retail (as invoiced)', code: null, contactName: null, email: null, telephone: null, address: null }, 'no customer record: only the name recorded on the invoice')
   assert.equal(bare.paymentTerms, null)
   const withTerms = { ...customerRecord, payload: { ...customerRecord.payload, paymentTerms: 'NET45' } }
@@ -311,11 +313,12 @@ test('payment terms print the recorded name where a payment term names the store
   for (const nothing of [null, undefined, '', '  ']) assert.equal(recordedPaymentTerms(nothing, terms), null)
 })
 
-test('invoice: calendar days print as the day recorded, in any time zone', async () => {
-  const { formatCalendarDay } = await import('../../src/modules/business-documents/documentFormat.ts')
+test('invoice: a midnight-UTC due date prints its own day in any time zone', async () => {
+  const { formatCalendarDay, formatDayOrInstant } = await import('../../src/modules/business-documents/documentFormat.ts')
   // Finance due dates are stored at 00:00 UTC: in New York that instant is still the 14th.
   const document = buildInvoice({ invoice: invoice({ invoiceDate: new Date('2026-10-15T00:00:00.000Z'), dueDate: '2026-10-15T00:00:00.000Z' }) })
-  assert.deepEqual([document.invoiceDate, document.dueDate], ['2026-10-15', '2026-10-15'])
+  assert.deepEqual([document.invoiceDate, document.dueDate], [{ day: '2026-10-15', instant: null }, '2026-10-15'])
+  for (const zone of ['America/Los_Angeles', 'America/New_York', 'Asia/Shanghai']) assert.equal(formatDayOrInstant(document.invoiceDate, 'en-US', zone), 'Oct 15, 2026', `invoice date stored as a calendar day, ${zone}`)
   assert.equal(new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'America/Los_Angeles' }).format(new Date('2026-10-15T00:00:00.000Z')), 'Oct 14, 2026', 'read as an instant it would move a day back')
   const previous = process.env.TZ
   try {
@@ -328,6 +331,20 @@ test('invoice: calendar days print as the day recorded, in any time zone', async
     if (previous === undefined) delete process.env.TZ
     else process.env.TZ = previous
   }
+})
+
+test('invoice: an invoice date stored as a moment prints that moment\'s day in the workspace time zone', async () => {
+  const { formatDayOrInstant } = await import('../../src/modules/business-documents/documentFormat.ts')
+  // Created at 8:30 pm on October 7 in New York: the form stores the moment,
+  // which is already October 8 in UTC.
+  const document = buildInvoice({ invoice: invoice({ invoiceDate: '2026-10-08T00:30:00.000Z', dueDate: '2026-11-06T00:00:00.000Z' }) })
+  assert.deepEqual(document.invoiceDate, { day: null, instant: '2026-10-08T00:30:00.000Z' })
+  assert.equal(formatDayOrInstant(document.invoiceDate, 'en-US', 'America/New_York'), 'Oct 7, 2026', 'the New York day')
+  assert.equal(formatDayOrInstant(document.invoiceDate, 'en-US', 'Asia/Shanghai'), 'Oct 8, 2026', 'a Shanghai workspace\'s day')
+  assert.equal(document.dueDate, '2026-11-06', 'the due date stays a calendar day')
+  assert.equal(formatDayOrInstant({ day: null, instant: null }, 'en-US', 'America/New_York'), '—')
+  assert.deepEqual(recordedDayOrInstant('2026-10-15'), { day: '2026-10-15', instant: null })
+  assert.deepEqual(recordedDayOrInstant('not a date'), { day: null, instant: null })
 })
 
 test('invoice: the tax column is printed only when the template turns it on', () => {
@@ -344,7 +361,7 @@ test('invoice: the payment summary is printed only from a readable receivable in
   assert.equal(buildInvoice({ template: { ...documentSettingsSeed.customerInvoice, showPaymentSummary: false } }).paymentSummary, null, 'turned off in the template')
 })
 
-test('invoice: printable once issued (or disputed), shown but not printable when approved, blocked before', () => {
+test('invoice: printable once issued, shown but not printable when approved, blocked before (a dispute stays on the receivable)', () => {
   assert.deepEqual(PRINTABLE_CUSTOMER_INVOICE_STATUSES, ['issued', 'disputed'])
   assert.deepEqual(PREVIEW_CUSTOMER_INVOICE_STATUSES, ['approved'])
   for (const status of ['issued', 'disputed']) assert.deepEqual(buildInvoice({ invoice: invoice({ status }) }).printable, { ok: true, reason: null }, status)
@@ -363,6 +380,9 @@ test('invoice: hidden amounts or a hidden customer make it not printable, with n
   assert.deepEqual(noAmounts.totals, [{ currency: 'EUR', subtotal: null, tax: null, total: null }])
   assert.deepEqual(noAmounts.lines.map((line) => [line.unitPrice, line.amount, line.tax, line.total]), [[null, null, null, null], [null, null, null, null]])
   for (const amount of ['270.5', '12.5', '135.5', '100.0000']) assert.equal(JSON.stringify(noAmounts).includes(amount), false, amount)
+  // The receivable is readable but its amounts are not: no payment summary at all, not blank rows.
+  assert.equal(noAmounts.paymentSummary, null)
+  assert.equal(buildInvoice({ access: { amounts: false, partner: true } }).paymentSummary, null, 'even if amounts were passed in')
 
   const noPartner = buildInvoice({ invoice: invoice({ customerName: null }), access: { amounts: true, partner: false } })
   assert.deepEqual(noPartner.printable, { ok: false, reason: 'amounts_hidden' })
