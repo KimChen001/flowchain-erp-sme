@@ -3,6 +3,8 @@ const chinese: Record<string, string> = {
   'Mixed units': '混合计量单位',
   'Restricted': '受限', 'Your role cannot view this figure': '你的角色无权查看此数据', 'Your role cannot view amounts.': '你的角色无权查看金额。',
   'Inventory uses different units; quantities are shown by SKU without a combined stock total.': '库存使用不同计量单位，数量按 SKU 展示，不合计在手总量。',
+  "Purchase order lines in another unit than the item's stock unit are not counted as incoming or in available to promise:": '单位与物料库存单位不同的采购订单行，不计入在途和可承诺量：',
+  'Purchase order lines with no unit, or for an item with no stock unit recorded, are counted as incoming as recorded:': '未记录单位的采购订单行，或物料未记录库存单位的采购订单行，按记录数量计入在途：',
   'Undated': '无日期', 'Unspecified': '未指定', 'Status': '状态', 'Quantity': '数量', 'Amount': '金额', 'Available': '可用量', 'Shortage': '缺口',
   'Supplier count': '供应商数量', 'Supplier invoice amount': '供应商发票金额', 'Open POs': '开放 PO',
   'On-hand inventory': '在手库存', 'Unfulfilled sales demand': '未履约销售需求',

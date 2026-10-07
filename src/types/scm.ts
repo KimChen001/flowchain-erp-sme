@@ -63,6 +63,7 @@ export type ApprovalSnapshot = {
 export type PurchaseOrderLine = {
   poLineId: string;
   poId?: string;
+  itemId?: string;
   sku: string;
   itemName: string;
   quantityOrdered: number;
@@ -85,6 +86,10 @@ export type PurchaseOrder = {
   po: string;
   supplier: string;
   created: string;
+  // When the PO was issued to the supplier (an instant); null when not recorded.
+  issuedAt?: string | null;
+  // The status receiving started from: "approved" means received without being issued.
+  receivingBaseStatus?: string | null;
   eta: string;
   owner: string;
   amount: number;

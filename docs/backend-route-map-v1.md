@@ -71,6 +71,7 @@ All Evidence Graph routes are GET-only and do not create drafts, write audit eve
 | `GET` | `/api/procurement/links` | Read | procurement link read model | None | Document relationship graph. |
 | `GET` | `/api/procurement/followups` | Read | procurement follow-up read model | None | Open follow-up signals. |
 | `GET` | `/api/procurement/summary` | Read | procurement summary read model | None | Stable top-level counts and amounts. |
+| `GET` | `/api/procurement/price-history` | Read | issued purchase order lines, items | None | `key=itemId\|unit\|currency` (repeated, at most 50; a PO page adds `excludePurchaseOrder`, which leaves that PO out and, once it is issued, every PO dated after it; a key ending in `\|supplierId`, or `supplierId=` for every key without one, reads that supplier's POs only, in the same query): the latest PO price and up to 2 earlier ones in the same unit and currency, the weighted average of the last 3, and other units and currencies named, not compared. Prices need `procurement.prices.read`; never fills a price. |
 
 ## Inventory Read APIs
 
@@ -93,6 +94,7 @@ All Evidence Graph routes are GET-only and do not create drafts, write audit eve
 | `GET` | `/api/inventory/reservation-preview?sku=:sku&salesOrderId=:id&requestedQty=:qty` | Read | inventory allocation read model | None | Preview-only reservation suggestion; does not lock stock. |
 | `GET` | `/api/inventory/sales-order-impact?salesOrderId=:id` | Read | inventory allocation read model | None | Inventory allocation impact for a customer order. |
 | `GET` | `/api/inventory/po-supply-impact?poId=:id` | Read | inventory allocation read model | None | PO incoming supply impact on SKUs and customer orders. |
+| `GET` | `/api/inventory/reorder-list` | Read | inventory allocation read model, items, posted shipments, item suppliers | None | Items to reorder ranked by order-by date from the recorded reorder point and 90-day shipped demand; prepares purchase requests, orders nothing. |
 | `GET` | `/api/inventory-movements` | Read | legacy movement route | None | Compatibility movement endpoint. |
 
 ## Action Drafts
