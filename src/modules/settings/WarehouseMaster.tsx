@@ -28,17 +28,24 @@ const REASONS: Record<string, Key> = {
   ACTIVE_RESERVATIONS: "settings.warehouseReasonReservations",
   OPEN_COUNTS: "settings.warehouseReasonCounts",
   UNPOSTED_RECEIVING: "settings.warehouseReasonReceiving",
+  UNPOSTED_TRANSFERS: "settings.warehouseReasonTransfers",
+  UNPOSTED_ADJUSTMENTS: "settings.warehouseReasonAdjustments",
+  UNPOSTED_RETURNS: "settings.warehouseReasonReturns",
+  OPEN_PURCHASE_ORDERS: "settings.warehouseReasonPurchaseOrders",
 };
 const ISSUES: Record<string, Key> = {
   CODE_REQUIRED: "settings.warehouseIssueCodeRequired",
   CODE_INVALID: "settings.warehouseIssueCodeInvalid",
-  CODE_TOO_LONG: "settings.warehouseIssueCodeTooLong",
+  CODE_TOO_LONG: "settings.binIssueCodeTooLong",
   CODE_IMMUTABLE: "settings.warehouseIssueCodeImmutable",
   NAME_REQUIRED: "settings.warehouseIssueNameRequired",
   NAME_TOO_LONG: "settings.warehouseIssueNameTooLong",
+  STATUS_INVALID: "settings.warehouseIssueStatusInvalid",
   DUPLICATE_CODE: "settings.warehouseDuplicate",
   DUPLICATE_BIN: "settings.binDuplicate",
 };
+// Server messages are English; a known code is shown in the interface
+// language, anything else as "could not save" with the server's words below.
 const ERRORS: Record<string, Key> = {
   VERSION_CONFLICT: "settings.warehouseChanged",
   LAST_ACTIVE_WAREHOUSE: "settings.warehouseLastActive",
@@ -46,6 +53,8 @@ const ERRORS: Record<string, Key> = {
   WAREHOUSE_INACTIVE: "settings.warehouseInactiveBins",
   DUPLICATE_CODE: "settings.warehouseDuplicate",
   DUPLICATE_BIN: "settings.binDuplicate",
+  PERMISSION_DENIED: "settings.warehouseErrorPermission",
+  NOT_FOUND: "settings.warehouseErrorNotFound",
 };
 
 function StatusChip({ status, testId }: { status: string; testId: string }) {
@@ -70,7 +79,7 @@ export default function WarehouseMaster({ operateIds, onChanged }: { operateIds:
       const payload = await apiJson<{ warehouses: WarehouseRow[] }>("/api/master-data/warehouses");
       setWarehouses(payload.warehouses || []);
     } catch (error) {
-      setNotice({ tone: "alert", title: error instanceof Error ? error.message : t("settings.loadFailed"), lines: [] });
+      setNotice({ tone: "alert", title: t("settings.loadFailed"), lines: error instanceof Error && error.message ? [error.message] : [] });
     }
   }, [t]);
   const loadBins = useCallback(async (warehouseId: string) => {
@@ -81,17 +90,18 @@ export default function WarehouseMaster({ operateIds, onChanged }: { operateIds:
 
   // A refusal in plain words: what blocks a status change, or which field to fix.
   const explain = (error: unknown, subject: string) => {
-    if (!(error instanceof ApiError)) return { tone: "alert" as const, title: error instanceof Error ? error.message : t("settings.saveFailed"), lines: [] };
+    const fallback = (message: string) => ({ tone: "alert" as const, title: t("settings.saveFailed"), lines: message ? [message] : [] });
+    if (!(error instanceof ApiError)) return fallback(error instanceof Error ? error.message : "");
     const details = error.details as Issue[];
     if (error.code === "WAREHOUSE_IN_USE" || error.code === "BIN_IN_USE") {
       return {
         tone: "alert" as const,
         title: t(error.code === "WAREHOUSE_IN_USE" ? "settings.warehouseInUse" : "settings.binInUse", { code: subject }),
-        lines: details.map(detail => REASONS[String(detail.code)] ? t(REASONS[String(detail.code)], { count: Number(detail.count || 0) }) : String(detail.code)),
+        lines: details.map(detail => t(REASONS[String(detail.code)] || "settings.warehouseReasonOther", { count: Number(detail.count || 0) })),
       };
     }
     if (error.code === "VALIDATION_ERROR") return { tone: "alert" as const, title: t("settings.saveFailed"), lines: details.map(detail => ISSUES[String(detail.code)] ? t(ISSUES[String(detail.code)]) : String(detail.message || detail.code)) };
-    return { tone: "alert" as const, title: ERRORS[String(error.code)] ? t(ERRORS[String(error.code)]) : error.message, lines: [] };
+    return ERRORS[String(error.code)] ? { tone: "alert" as const, title: t(ERRORS[String(error.code)]), lines: [] } : fallback(error.message);
   };
   // Every write reloads what it changed, and the page around it, so access
   // and default warehouses show the result.
@@ -222,6 +232,8 @@ export default function WarehouseMaster({ operateIds, onChanged }: { operateIds:
                   <td className="p-2 text-right">{(active || bin.status === "active") && <button type="button" data-testid={`bin-toggle-${warehouse.code}-${bin.code}`} disabled={busy === bin.id} className={small} onClick={() => void setBinStatus(warehouse, bin, bin.status !== "active")}>{bin.status === "active" ? t("settings.warehouseSetInactive") : t("settings.warehouseSetActive")}</button>}</td>
                 </tr>)}
               </tbody></table>
+              {/* Receiving and transfers take a typed location, not a bin from this list. */}
+              <p className="mt-2 text-xs text-slate-500" data-testid={`bin-advisory-${warehouse.code}`}>{t("settings.binsAdvisory")}</p>
             </td></tr>}
           </Fragment>;
         })}

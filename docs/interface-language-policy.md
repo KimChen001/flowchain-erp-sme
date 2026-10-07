@@ -56,6 +56,10 @@ names, or supplier names in place. Translate their presentation where appropriat
 - The receiving form (warehouse, arrival time, accepted quantities) and the RFQ supplier
   response dialog (quantities and delivery dates from the RFQ lines) label their prefilled
   values in English and Chinese.
+- Settings > Warehouse access: the Warehouses and Bins section has English and Chinese
+  copy (`src/modules/settings/WarehouseMaster.tsx`). Server messages for these writes are
+  English; the UI shows each known error, validation and in-use reason code in the
+  active language. Warehouse and bin codes and names stay as recorded.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.
