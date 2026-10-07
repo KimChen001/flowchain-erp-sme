@@ -17,6 +17,10 @@ test('supplier create and edit persist, preserve currency, and reject duplicates
   await expect(form).not.toContainText(/[\u3400-\u9fff]/);
   // Workspace currency is CNY even though the interface is English.
   await expect(form.getByLabel('Default currency', { exact: true })).toHaveValue('CNY');
+  // No payment term is assumed: the empty choice reads "Not recorded".
+  const terms = form.getByLabel('Payment terms', { exact: true });
+  await expect(terms).toHaveValue('');
+  await expect(terms.locator('option:checked')).toHaveText('Not recorded');
   await form.getByRole('button', { name: 'Save supplier' }).click();
   await expect(form.getByText('Enter a supplier code.', { exact: true })).toBeVisible();
   const code = `UAT-${Date.now()}`;
@@ -44,7 +48,7 @@ test('supplier create and edit persist, preserve currency, and reject duplicates
   await form.getByRole('button', { name: 'Save supplier' }).click();
   await expect(form).toHaveCount(0);
   const persisted = await page.request.get(`/api/master-data/suppliers/${supplier.id}`, { headers });
-  expect((await persisted.json()).supplier).toMatchObject({ shortName: 'Boston', defaultCurrency: 'USD', creditCode: 'DEMO-REG-1', categories: [], version: 2 });
+  expect((await persisted.json()).supplier).toMatchObject({ shortName: 'Boston', defaultCurrency: 'USD', paymentTermsId: null, creditCode: 'DEMO-REG-1', categories: [], version: 2 });
   const duplicate = await page.request.post('/api/master-data/suppliers', { headers, data: { supplierCode: code, supplierName: 'Duplicate', defaultCurrency: 'USD' } });
   expect(duplicate.status()).toBe(409);
   const stale = await page.request.patch(`/api/master-data/suppliers/${supplier.id}`, { headers, data: { supplierName: 'Stale', expectedVersion: 1 } });
