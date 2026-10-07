@@ -14,6 +14,7 @@ const statusCodes: Record<string, [string, string]> = {
   issued: ["Issued", "已下达"],
   sent: ["Sent", "已发送"],
   not_sent: ["Not sent", "未发送"],
+  issued_outside_flowchain: ["Sent outside FlowChain", "已在 FlowChain 外发出"],
   open: ["Open", "进行中"],
   closed: ["Closed", "已关闭"],
   completed: ["Completed", "已完成"],

@@ -9,6 +9,7 @@ import { PaymentRecords } from "./PaymentRecords";
 import { useI18n } from "../../i18n/I18n";
 import { A, Card } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 
 type Capability = { enabled?: boolean; maturity?: string; reason?: string };
 type Invoice = {
@@ -631,6 +632,7 @@ function InvoiceDetail() {
       });
   }, [id]);
   useEffect(() => { load(); }, [load]);
+  useDetailCrumb(data?.invoiceNumber);
   if (failure && !data) {
     const testId = { notFound: "customer-invoice-not-found", unauthenticated: "customer-invoice-unauthenticated", forbidden: "customer-invoice-forbidden", error: "customer-invoice-read-error" }[failure];
     const text = { notFound: t("finance.invoiceNotFound"), unauthenticated: t("finance.invoiceSignedOut"), forbidden: t("finance.invoiceForbidden"), error: t("finance.invoiceReadError") }[failure];

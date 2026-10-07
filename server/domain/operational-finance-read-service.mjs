@@ -275,6 +275,13 @@ export function createOperationalFinanceReadService({
           take: 20,
         })
       : [];
+    // The receipt by its GRN number, as the rest of the app names it.
+    const receipt = invoice.relatedGrnId
+      ? await prisma.receivingDocument.findFirst({
+          where: { tenantId: current.tenantId, id: invoice.relatedGrnId },
+          select: { documentNumber: true },
+        })
+      : null;
     const partner = protectFinanceFields({ supplierSnapshot: invoice.supplierSnapshot }, current);
     // The match result is part of the three-way match, which has its own read
     // permission; without it the invoice shows no match lines or variances.
@@ -299,6 +306,7 @@ export function createOperationalFinanceReadService({
         enteredTaxAmount: decimal(line.enteredTaxAmount ?? 0),
         totalAmount: decimal(line.amount),
       }, current)),
+      relatedGrnNumber: receipt?.documentNumber || null,
       receiptCandidates: receiptCandidates.map((row) => ({ id: row.id, documentNumber: row.documentNumber, postedAt: serial(row.postedAt) })),
       matchVisible,
       match: match

@@ -7,6 +7,7 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { Notice, StatusChip, TwoStepAction, button, field, message } from "./FinanceControls";
 import { PaymentRecords } from "./PaymentRecords";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 
 // The supplier invoice screens of the trial's procure-to-pay chain: enter an
 // invoice against a posted receipt, then submit, match, review exceptions,
@@ -340,6 +341,7 @@ export function SupplierInvoiceDetail() {
       });
   }, [id]);
   useEffect(() => { load(); }, [load]);
+  useDetailCrumb(data?.invoiceNumber);
   if (failure && !data) {
     const testId = { notFound: "supplier-invoice-not-found", unauthenticated: "supplier-invoice-unauthenticated", forbidden: "supplier-invoice-forbidden", error: "supplier-invoice-read-error" }[failure];
     const text = { notFound: t("finance.billNotFound"), unauthenticated: t("finance.billSignedOut"), forbidden: t("finance.billForbidden"), error: t("finance.billReadError") }[failure];
@@ -368,7 +370,7 @@ export function SupplierInvoiceDetail() {
             <p className="mt-1 text-sm text-slate-500" data-testid="supplier-invoice-sources">
               {data.supplierName || "—"}
               {" · "}{t("finance.purchaseOrder")} {data.relatedPoId ? <BusinessEntityLink entityType="purchase_order" entityId={data.relatedPoId} /> : "—"}
-              {" · "}{t("finance.receipt")} {data.relatedGrnId ? <BusinessEntityLink entityType="receiving_doc" entityId={data.relatedGrnId} /> : data.awaitingReceipt ? <span className="font-medium text-amber-700">{t("finance.awaitingReceipt")}</span> : "—"}
+              {" · "}{t("finance.receipt")} {data.relatedGrnId ? <BusinessEntityLink entityType="receiving_doc" entityId={data.relatedGrnId}>{data.relatedGrnNumber || data.relatedGrnId}</BusinessEntityLink> : data.awaitingReceipt ? <span className="font-medium text-amber-700">{t("finance.awaitingReceipt")}</span> : "—"}
               {data.relatedPoId && <>{" · "}<BusinessEntityLink entityType="three_way_match" entityId={`MATCH-${data.id}`}>{t("finance.threeWayMatch")}</BusinessEntityLink></>}
             </p>
           </div>
