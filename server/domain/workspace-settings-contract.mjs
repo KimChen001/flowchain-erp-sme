@@ -78,11 +78,12 @@ export const operationalSettingsSeed = {
 // The operational settings FlowChain reads today: three-way match applies the
 // four invoice matching tolerances (operational-finance-policy.mjs), and the
 // PO and invoice documents print the document settings
-// (purchase-order-document-read-service.mjs, customer-invoice-document-read-service.mjs).
+// (purchase-order-document-read-service.mjs, customer-invoice-document-read-service.mjs);
+// the print-layout editor in the browser prints with the saved layouts.
 // Nothing reads the other sections yet, so the settings UI shows them
 // read-only as "Not in effect yet" and keeps their stored values.
 export const REVIEW_TOLERANCE_FIELDS = ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance']
-export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice'] })
+export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
 const TOLERANCE_PATTERN = /^\d+(\.\d{1,4})?$/
 
 const clone = value => structuredClone(value)

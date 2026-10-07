@@ -86,7 +86,22 @@ declare module '../../../shared/business-documents.mjs' {
     letterhead: { companyName: string | null; addressLines: string[]; phone: string | null; email: string | null; taxId: string | null };
     purchaseOrder: { title: string | null; columns: PurchaseOrderColumns; termsText: string; footerText: string; signatureBlock: boolean };
     customerInvoice: { title: string | null; columns: CustomerInvoiceColumns; showPaymentSummary: boolean; paymentInstructions: string; termsText: string; footerText: string };
+    // Saved print layouts; their shape is PrintLayoutTemplate (src/modules/print-layout/printLayoutTypes.ts).
+    layouts: StoredPrintLayout[];
   };
+  export type StoredPrintLayout = {
+    id: string;
+    name: string;
+    documentType: 'receive_sheet' | 'delivery_note' | 'sign_receipt';
+    version: number;
+    page: { paper: 'A4'; orientation: 'portrait' | 'landscape'; width: number; height: number; margin: number };
+    elements: Array<Record<string, unknown> & { id: string; type: string }>;
+    updatedAt?: string;
+  };
+  export const PRINT_LAYOUT_LIMITS: Readonly<{ templates: number; bytes: number; elements: number; columns: number; id: number; name: number; title: number; value: number; field: number; placeholder: number; coordinate: number }>;
+  export const PRINT_LAYOUT_DOCUMENT_TYPES: readonly StoredPrintLayout['documentType'][];
+  export function validatePrintLayout(value: unknown, field?: string): StoredPrintLayout;
+  export function validatePrintLayouts(value: unknown): StoredPrintLayout[];
   // Every value is the recorded one or null; amounts and quantities are decimal strings.
   export type PurchaseOrderDocument = {
     kind: 'purchase_order';

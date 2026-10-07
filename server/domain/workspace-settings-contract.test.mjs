@@ -72,7 +72,7 @@ const serverSources = () => {
 
 test('only the four invoice matching tolerances, the AI switch and the document settings are read from the operational settings the UI edits', () => {
   assert.deepEqual(REVIEW_TOLERANCE_FIELDS, ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance'])
-  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice'] })
+  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
 
   const sources = serverSources()
   // Every server reader of tenant.operationalSettings. The PO and invoice documents read
@@ -138,6 +138,7 @@ test('document settings default to English with nothing invented and keep only k
     letterhead: { companyName: 'Harbor Goods LLC', addressLines: ['12 Pier Road', 'Oakland, CA 94607'], phone: null, email: 'buying@harbor.example', taxId: null },
     purchaseOrder: { title: null, columns: { supplierSku: false, requestedDate: true, promisedDate: false }, termsText: 'Net 30 from invoice.', footerText: '', signatureBlock: true },
     customerInvoice: { title: null, columns: { tax: false }, showPaymentSummary: true, paymentInstructions: '', termsText: '', footerText: '' },
+    layouts: [],
   })
 })
 
@@ -192,4 +193,83 @@ test('invoice template values over their limits are refused with the field named
     assert.throws(() => validateOperationalSection('documents', value), (error) => error.code === code && error.status === 400 && error.details.field === field && (limit === undefined || error.details.limit === limit), field)
   }
   assert.doesNotThrow(() => validateOperationalSection('documents', { customerInvoice: { paymentInstructions: 'x'.repeat(2000), termsText: 'x'.repeat(4000), footerText: 'x'.repeat(500), title: 'x'.repeat(120) } }))
+})
+
+// A saved receive-sheet layout as the print-layout editor builds it.
+const receiveLayout = (overrides = {}) => ({
+  id: 'receive_sheet-custom',
+  name: '  Dock receipt  ',
+  documentType: 'receive_sheet',
+  isDefault: false,
+  version: 2,
+  updatedAt: '2026-10-07T08:00:00.000Z',
+  page: { paper: 'A4', orientation: 'portrait', width: 794, height: 1123, margin: 52, bleed: 3 },
+  elements: [
+    { id: 'company', type: 'field', title: 'Company', field: 'companyName', x: 52, y: 42, width: 690, height: 30, visible: true, draggable: true, resizable: true, required: true, style: { fontSize: 14, bold: true, align: 'center', color: 'red' }, onClick: 'dropped' },
+    { id: 'lines', type: 'table', title: 'Lines', field: 'lines', x: 52, y: 320, width: 690, height: 330, visible: true, draggable: true, resizable: true, style: { fontSize: 11, bordered: true }, tableColumns: [{ key: 'sku', title: 'SKU', visible: true, width: 95, extra: 1 }, { key: 'quantity', title: 'Qty', visible: true, align: 'right' }] },
+    { id: 'instance-receiving-note', type: 'comment', title: 'Receiving note', placeholder: 'Receiving note (this print)', contentMode: 'instance', x: 52, y: 858, width: 690, height: 46, visible: true, draggable: true, resizable: true },
+  ],
+  ...overrides,
+})
+
+test('print layouts are saved in the documents section with their shape checked and unknown keys dropped', () => {
+  assert.deepEqual(mergeOperationalSettings({}).documents.layouts, [], 'no layout is stored until someone saves one')
+  const saved = validateOperationalSection('documents', { layouts: [receiveLayout()] }).layouts
+  assert.equal(saved.length, 1)
+  const [layout] = saved
+  assert.deepEqual(Object.keys(layout), ['id', 'name', 'documentType', 'version', 'page', 'elements', 'updatedAt'])
+  assert.equal(layout.name, 'Dock receipt')
+  assert.equal('isDefault' in layout, false, 'the built-in layouts live in code; whether one was built in is not stored')
+  assert.deepEqual(layout.page, { paper: 'A4', orientation: 'portrait', width: 794, height: 1123, margin: 52 })
+  assert.deepEqual(layout.elements[0], { id: 'company', type: 'field', title: 'Company', field: 'companyName', x: 52, y: 42, width: 690, height: 30, visible: true, draggable: true, resizable: true, required: true, style: { fontSize: 14, bold: true, align: 'center' } })
+  assert.deepEqual(layout.elements[1].tableColumns, [{ key: 'sku', title: 'SKU', visible: true, width: 95 }, { key: 'quantity', title: 'Qty', visible: true, align: 'right' }])
+  assert.equal(layout.elements[2].contentMode, 'instance')
+  assert.equal('value' in layout.elements[2], false, 'what is typed for one print is not part of the layout')
+
+  // Saving what was read stores the same thing, so the settings form sees no change.
+  assert.deepEqual(validateOperationalSection('documents', { layouts: saved }).layouts, saved)
+  assert.deepEqual(mergeOperationalSettings({ documents: { layouts: saved } }).documents.layouts, saved)
+  // The letterhead form sends the layouts back as it read them.
+  const documents = mergeOperationalSettings({ documents: { layouts: saved } }).documents
+  assert.deepEqual(validateOperationalSection('documents', { ...documents, letterhead: { ...documents.letterhead, companyName: 'Harbor Goods LLC' } }).layouts, saved)
+})
+
+test('print layouts with a wrong shape are refused with the field named', () => {
+  const element = receiveLayout().elements[0]
+  const cases = [
+    [{ layouts: 'all' }, 'DOCUMENT_LAYOUT_INVALID', 'layouts'],
+    [{ layouts: [null] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0'],
+    [{ layouts: [receiveLayout({ documentType: 'purchase_order' })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.documentType'],
+    [{ layouts: [receiveLayout({ id: '' })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.id'],
+    [{ layouts: [receiveLayout({ id: 'a b<script>' })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.id'],
+    [{ layouts: [receiveLayout({ name: '   ' })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.name'],
+    [{ layouts: [receiveLayout({ name: 'x'.repeat(121) })] }, 'DOCUMENT_SETTING_TOO_LONG', 'layouts.0.name'],
+    [{ layouts: [receiveLayout({ page: { paper: 'Letter', orientation: 'portrait', width: 794, height: 1123, margin: 52 } })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.page.paper'],
+    [{ layouts: [receiveLayout({ page: { paper: 'A4', orientation: 'sideways', width: 794, height: 1123, margin: 52 } })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.page.orientation'],
+    [{ layouts: [receiveLayout({ elements: 'none' })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.elements'],
+    [{ layouts: [receiveLayout({ elements: [{ ...element, type: 'script' }] })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.elements.0.type'],
+    [{ layouts: [receiveLayout({ elements: [{ ...element, x: '52' }] })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.elements.0.x'],
+    [{ layouts: [receiveLayout({ elements: [{ ...element, width: Number.NaN }] })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.elements.0.width'],
+    [{ layouts: [receiveLayout({ elements: [{ ...element, visible: 'yes' }] })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.elements.0.visible'],
+    [{ layouts: [receiveLayout({ elements: [{ ...element, value: 'x'.repeat(4001) }] })] }, 'DOCUMENT_SETTING_TOO_LONG', 'layouts.0.elements.0.value'],
+    [{ layouts: [receiveLayout({ elements: [element, element] })] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.0.elements.1.id'],
+    [{ layouts: [receiveLayout(), receiveLayout()] }, 'DOCUMENT_LAYOUT_INVALID', 'layouts.1.id'],
+  ]
+  for (const [value, code, field] of cases) {
+    assert.throws(() => validateOperationalSection('documents', value), (error) => error.code === code && error.status === 400 && error.details.field === field, field)
+  }
+})
+
+test('a workspace saves at most 20 print layouts and 64 KB of them', () => {
+  const many = (count) => Array.from({ length: count }, (_, index) => receiveLayout({ id: `receive_sheet-${index}` }))
+  assert.equal(validateOperationalSection('documents', { layouts: many(20) }).layouts.length, 20)
+  assert.throws(() => validateOperationalSection('documents', { layouts: many(21) }), (error) => error.code === 'DOCUMENT_LAYOUTS_TOO_MANY' && error.status === 400 && error.details.field === 'layouts' && error.details.limit === 20)
+
+  // Long fixed text in every layout: each passes on its own, all of them together are over 64 KB.
+  const terms = (index) => receiveLayout({ id: `receive_sheet-terms-${index}`, elements: [{ id: 'terms', type: 'terms', title: 'Terms', value: 'x'.repeat(4000), x: 52, y: 700, width: 690, height: 110, visible: true, draggable: true, resizable: true }] })
+  assert.doesNotThrow(() => validateOperationalSection('documents', { layouts: Array.from({ length: 14 }, (_, index) => terms(index)) }))
+  assert.throws(() => validateOperationalSection('documents', { layouts: Array.from({ length: 17 }, (_, index) => terms(index)) }), (error) => error.code === 'DOCUMENT_LAYOUTS_TOO_LARGE' && error.details.field === 'layouts' && error.details.limit === 65536)
+
+  // A stored layout that no longer passes is skipped when read, never thrown on.
+  assert.deepEqual(mergeOperationalSettings({ documents: { layouts: [receiveLayout({ documentType: 'unknown' }), receiveLayout()] } }).documents.layouts.map((layout) => layout.id), ['receive_sheet-custom'])
 })
