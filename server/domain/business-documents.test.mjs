@@ -57,6 +57,8 @@ test('missing values are null, never a default currency, payment terms or contac
   assert.deepEqual(document.lines.map((line) => [line.requestedDate, line.promisedDate]), [['2026-11-01', '2026-11-03'], [null, null]])
   assert.equal(document.expectedDate, '2026-11-03', 'a calendar date stays the recorded day')
   assert.equal(document.issuedAt, null)
+  assert.equal(build({ order: order({ status: 'issued', metadata: { issuedAt: '2026-10-02T14:05:00.000Z' } }) }).issuedAt, '2026-10-02T14:05:00.000Z')
+  assert.equal(build({ order: order({ status: 'issued', issuedAt: '2026-10-02T14:05:00.000Z', metadata: {} }) }).issuedAt, '2026-10-02T14:05:00.000Z')
 })
 
 test('a supplier\'s tax and bank details are never part of the document', () => {

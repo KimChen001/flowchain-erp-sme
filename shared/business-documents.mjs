@@ -192,7 +192,9 @@ export function buildPurchaseOrderDocument({ order, supplier = null, warehouse =
     orderId: recorded(order?.id),
     number: recorded(order?.orderNumber) || recorded(order?.id),
     status,
-    issuedAt: recorded(meta.issuedAt),
+    // The issue instant: the PO's own field where the read returns one, else
+    // what the Issue action wrote to the metadata; null when never issued.
+    issuedAt: recorded(order?.issuedAt) || recorded(meta.issuedAt),
     expectedDate: calendarDay(order?.expectedDate),
     documentLanguage: DOCUMENT_LANGUAGES.includes(documentLanguage) ? documentLanguage : documentSettingsSeed.documentLanguage,
     printable,
