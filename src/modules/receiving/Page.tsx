@@ -47,6 +47,7 @@ import {
 import PrintLayoutEditor from "../print-layout/PrintLayoutEditor";
 import { adaptReceiveSheet } from "../print-layout/printDataAdapters";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { useI18n } from "../../i18n/I18n";
 
 const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
@@ -439,6 +440,7 @@ function ReceivingOps({
   const [printGrn, setPrintGrn] = useState<ReceivingDoc | null>(null);
   const [grnInsight, setGrnInsight] = useState<ContextualAIInsight | null>(null);
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   useEffect(() => {
     let alive = true;
@@ -944,7 +946,7 @@ function ReceivingOps({
         })()}
       </Modal>
       <QCModal open={qcOpen} onClose={() => setQcOpen(false)} grn={activeGrn} onComplete={completeQC} />
-      {printGrn && <PrintLayoutEditor open documentType="receive_sheet" documentNo={printGrn.grn} data={adaptReceiveSheet(printGrn)} onClose={() => setPrintGrn(null)} />}
+      {printGrn && <PrintLayoutEditor open documentType="receive_sheet" documentNo={printGrn.grn} data={adaptReceiveSheet(printGrn, { rejectedLabel: (qty) => t("printLayout.rejectedQty", { qty }) })} onClose={() => setPrintGrn(null)} />}
     </div>
   );
 }
