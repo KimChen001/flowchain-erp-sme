@@ -1,5 +1,6 @@
 // Provision one production tenant: the workspace, its first administrator,
-// one warehouse and the default roles and permissions. Run by the operator
+// one warehouse, the standard payment terms and the default roles and
+// permissions. Run by the operator
 // against the deployment's own DATABASE_URL, for example in a Render shell:
 //
 //   npm run tenant:provision -- --tenant-id=acme --company-name="Acme Inc." --admin-email=owner@acme.com --admin-name="Pat Lee"
@@ -12,6 +13,7 @@
 import { randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { backfillTenantAuthorization } from '../server/auth/authorization-backfill.mjs'
+import { ensureStandardPaymentTerms } from '../server/domain/standard-payment-terms.mjs'
 import { disconnectPrismaClient, getPrismaClient } from '../server/persistence/prisma-client.mjs'
 
 // New workspaces default to the US trial profile; each value can be overridden.
@@ -142,13 +144,16 @@ export async function provisionTenant(prisma, options) {
       }
     }
 
-    result.changed = [result.tenant, result.warehouse, result.admin].some(state => state !== 'already exists, unchanged')
+    // Only a workspace with no payment terms gets the standard ones.
+    result.paymentTermsCreated = await ensureStandardPaymentTerms(tx, tenantId)
+
+    result.changed = [result.tenant, result.warehouse, result.admin].some(state => state !== 'already exists, unchanged') || result.paymentTermsCreated > 0
     if (result.changed) {
       await tx.auditLog.create({ data: {
         id: randomUUID(), tenantId, actorId: admin.id, source: 'tenant_provision', module: 'settings',
         action: 'tenant_provisioned', entityType: 'Tenant', entityId: tenantId,
-        summary: `Tenant provisioning: tenant ${result.tenant}; warehouse ${warehouseCode} ${result.warehouse}; administrator ${result.admin}.`,
-        metadata: { tenant: result.tenant, warehouseId: warehouse.id, warehouse: result.warehouse, adminUserId: admin.id, admin: result.admin, timestamp: new Date().toISOString() },
+        summary: `Tenant provisioning: tenant ${result.tenant}; warehouse ${warehouseCode} ${result.warehouse}; administrator ${result.admin}; payment terms created ${result.paymentTermsCreated}.`,
+        metadata: { tenant: result.tenant, warehouseId: warehouse.id, warehouse: result.warehouse, adminUserId: admin.id, admin: result.admin, paymentTermsCreated: result.paymentTermsCreated, timestamp: new Date().toISOString() },
       } })
     }
     return { ...result, tenantRecord: tenant, warehouseId: warehouse.id, adminId: admin.id }
@@ -169,6 +174,7 @@ export function formatProvisionReport(options, report, env = process.env) {
     `  country ${tenant.countryCode}, locale ${tenant.locale}, currency ${tenant.currency}, time zone ${tenant.timezone}, language ${tenant.defaultLanguage}`,
     `warehouse ${options.warehouseCode} (${report.warehouseId}): ${report.warehouse}`,
     `administrator ${options.adminEmail} (${report.adminId}): ${report.admin}`,
+    `payment terms created: ${report.paymentTermsCreated}`,
     `roles created: ${report.authorization.createdRoles}, permission grants created: ${report.authorization.createdGrants}, role assignments created: ${report.authorization.createdAssignments}`,
     ...report.notes.map(note => `note: ${note}`),
   ]
