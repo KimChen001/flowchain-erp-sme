@@ -57,9 +57,10 @@ const noSkillTool = Object.freeze({
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
 
-// Off unless FLOWCHAIN_AI_AGENT_MODE=plan and a tool-calling provider is configured.
+// Off unless FLOWCHAIN_AI_AGENT_MODE is plan (P2) or compose (P2 and P3
+// wording, ai-answer-compose.mjs) and a tool-calling provider is configured.
 export function aiAgentPlanningEnabled(env = {}) {
-  return text(env.FLOWCHAIN_AI_AGENT_MODE).toLowerCase() === 'plan' && canCallConfiguredProvider(env) && TOOL_CALLING_KINDS.has(providerRuntimeConfig(env).kind)
+  return ['plan', 'compose'].includes(text(env.FLOWCHAIN_AI_AGENT_MODE).toLowerCase()) && canCallConfiguredProvider(env) && TOOL_CALLING_KINDS.has(providerRuntimeConfig(env).kind)
 }
 
 export function aiAgentTimeout(env = {}) {

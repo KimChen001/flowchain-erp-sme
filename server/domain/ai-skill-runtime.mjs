@@ -14,6 +14,7 @@ import { classifyQueryScope } from './ai-query-scope.mjs'
 import { AI_AGENT_BUSINESS_QUERY, AI_AGENT_BUSINESS_QUERY_TITLE, answerAiAgentBusinessQuery } from './ai-agent-business-query.mjs'
 import { aiSkillById } from './ai-skill-registry.mjs'
 import { assertValidAiSkillResponse } from './ai-skill-validator.mjs'
+import { aiAnswerComposeAudit, composeAiAnswer } from './ai-answer-compose.mjs'
 
 // The assistant's answer path after knowledge and business queries: route the
 // question to a workspace skill, read the facts through the report
@@ -204,10 +205,14 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   // The passages the planner's search found go with a planned answer from
   // records as its knowledge supplement; the gateway then adds none.
   if (found && agentServed && response.intent !== 'knowledge_retrieval') response = { ...response, supplementalKnowledge: { title: found.conclusion.title, summary: found.conclusion.summary, rag: found.rag } }
+  // P3: with compose mode on, the model words the title and summary from this
+  // answer's own facts; the verifier keeps the template on any doubt.
+  const composed = await composeAiAnswer({ response, facts, message, env, ...(ctx.aiComposeProvider ? { provider: ctx.aiComposeProvider } : {}) })
+  response = composed.response
   const routingAudit = aiSkillIntentRoutingAudit(intentRouting)
   const agent = agentResult ? aiAgentAudit(agentResult, { entry: agentEntry, served: agentServed ? [...agentSections.map((section) => section.route.skillId), ...(found ? [AI_AGENT_KNOWLEDGE] : [])] : [] }) : compound ? aiCompoundAudit(compound) : null
   const audited = skillId === 'business_query' ? { ...response, answerSource: 'business_query' } : skillId === 'knowledge_retrieval' ? { ...response, answerSource: 'knowledge', language } : response
-  const audit = (intentShadow = null) => recordAiSkillAudit(ctx, { response: audited, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow, intentRouting: routingAudit, followUp: followUp?.kind || null, agent, knowledge: found && agentServed ? aiKnowledgeAuditBlock(found.rag) : null })
+  const audit = (intentShadow = null) => recordAiSkillAudit(ctx, { response: audited, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow, intentRouting: routingAudit, followUp: followUp?.kind || null, agent, knowledge: found && agentServed ? aiKnowledgeAuditBlock(found.rag) : null, compose: aiAnswerComposeAudit(composed.compose) })
   // With the classifier on, the answer does not wait for it: the audit row
   // is written when its suggestion arrives (best effort, like every audit).
   if (aiSkillIntentShadowEnabled(env) && !route?.capability) {
