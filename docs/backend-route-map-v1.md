@@ -72,6 +72,7 @@ All Evidence Graph routes are GET-only and do not create drafts, write audit eve
 | `GET` | `/api/procurement/followups` | Read | procurement follow-up read model | None | Open follow-up signals. |
 | `GET` | `/api/procurement/summary` | Read | procurement summary read model | None | Stable top-level counts and amounts. |
 | `GET` | `/api/procurement/price-history` | Read | issued purchase order lines, items | None | `key=itemId\|unit\|currency` (repeated, at most 50; a PO page adds `excludePurchaseOrder`, which leaves that PO out and, once it is issued, every PO dated after it; a key ending in `\|supplierId`, or `supplierId=` for every key without one, reads that supplier's POs only, in the same query): the latest PO price and up to 2 earlier ones in the same unit and currency, the weighted average of the last 3, and other units and currencies named, not compared. Prices need `procurement.prices.read`; never fills a price. |
+| `GET` | `/api/procurement/item-supplier-orders` | Read | issued purchase orders and their lines | None | `itemId=<id>`: the last issued (or received) PO of that item with each supplier, as a workspace day with its date source (`issue_date`, `order_date`, `order_date_not_issued`) and the PO number. No prices. Lists an item's approved sources by last PO date on the purchase request form when none is preferred. Needs `procurement.purchase_order.read`. |
 
 ## Inventory Read APIs
 

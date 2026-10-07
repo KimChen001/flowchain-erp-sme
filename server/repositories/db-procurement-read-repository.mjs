@@ -151,6 +151,8 @@ export function mapPurchaseRequest(record = {}) {
       serviceStartDate: text(lineMeta.serviceStartDate),
       serviceEndDate: text(lineMeta.serviceEndDate),
       internalLineComment: text(lineMeta.internalLineComment),
+      // Why a supplier other than the item's preferred one was chosen, or null.
+      supplierOverride: lineMeta.supplierOverride || null,
       metadata: lineMeta,
     }
   })
