@@ -378,7 +378,8 @@ function DuplicateApprovalDetail({ issue }: { issue: Issue }) {
 // C1): the same number once format is set aside, or the same amount in the
 // same currency within the printed number of days. The approver dismisses a
 // flag with a reason or cancels this bill; nothing is held on its own. Once
-// this bill is approved or cancelled its flags are shown for information.
+// this bill is past approval (approved, held or cancelled) its flags are
+// shown for information.
 function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { id: string; version: number; invoiceNumber?: string }; checks: DuplicateChecksData; canDismiss: boolean; onDone: () => void }) {
   const { t, locale } = useI18n();
   const base = `/api/finance/supplier-invoices/${encodeURIComponent(invoice.id)}`;

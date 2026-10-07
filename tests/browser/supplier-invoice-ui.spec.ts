@@ -87,6 +87,7 @@ test("a second bill numbered as a format variant is flagged, dismissed with a re
   await expect(checks).toContainText("UI-DUP-007");
   await expect(checks.getByRole("link", { name: "UI-DUP-007" })).toHaveAttribute("href", `/app/procurement/bills/${original}`);
   await expect(page.getByTestId("duplicate-window")).toContainText("7");
+  await expect(page.getByTestId("duplicate-window")).toContainText(/cancelled bills not compared|已取消的账单不比较/);
   await run(page, "invoice-submit");
   await run(page, "invoice-match");
 

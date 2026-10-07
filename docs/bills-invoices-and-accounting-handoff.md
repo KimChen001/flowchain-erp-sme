@@ -259,8 +259,9 @@ C1, decision 9). The rules are in `server/domain/supplier-invoice-duplicates.mjs
   the earlier bill is already approved, the later one is the one cancelled.
 - Each approver dismisses the flag on their own bill. A dismissal given on
   the other bill is shown beside the flag but does not clear it. Once a bill
-  is approved or cancelled, its undismissed flags are shown for information
-  only ("no action").
+  is past approval (approved, held while its payable is on hold, or
+  cancelled), its undismissed flags are shown for information only ("no
+  action") and can no longer be dismissed on it.
 - A dismissal names the other bill's version as the approver saw it; if the
   other bill changed since, the dismissal is refused and the page asks for a
   reload.

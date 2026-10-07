@@ -19,15 +19,19 @@ import {
 // Cancelled bills are left out. Supplier invoices have no rejected status
 // (rejecting a bill means cancelling it); "rejected" is listed defensively.
 
+const text = (value) => String(value ?? "").trim();
+
 export const DUPLICATE_WINDOW_DAYS = 7;
 export const DUPLICATE_EXCLUDED_STATUSES = Object.freeze(["cancelled", "rejected"]);
 export const DUPLICATE_KINDS = Object.freeze(["likely", "possible"]);
-// A bill in one of these statuses is past approval: its flags are shown for
-// information and can no longer be dismissed on it.
-export const DUPLICATE_CLOSED_STATUSES = Object.freeze(["approved", "cancelled"]);
+// The bill statuses before approval. Flags are dismissed only in these; any
+// other status (approved, held while its payable is on hold, cancelled) is
+// past approval, so its flags are shown for information and can no longer be
+// dismissed on it. An allow-list, so a later status is closed by default.
+export const DUPLICATE_REVIEW_STATUSES = Object.freeze(["draft", "submitted", "matching", "matched", "exception"]);
+export const isDuplicateReviewClosed = (status) => !DUPLICATE_REVIEW_STATUSES.includes(text(status));
 const DAY_MS = 86_400_000;
 
-const text = (value) => String(value ?? "").trim();
 
 // Normalizes an invoice number for comparison. Both readings of "leading
 // zeros of a numeric part" are kept, and a likely duplicate is any shared key:
@@ -246,6 +250,49 @@ export function applyDuplicateReviews(flags, reviews = [], { otherSideReviews = 
   return { flags: withReviews, reviews: history, openFlags: withReviews.filter((flag) => flag.status === "open") };
 }
 
+// What approval waits for while flags are open (used by the approve preview
+// and the approval itself). A same-amount flag reveals that two totals are
+// equal, so a role that cannot read finance amounts is not shown which bill
+// or how many; it is told that a same-amount check waits for someone who can
+// see amounts (DUPLICATE_REVIEW_HIDDEN), never refused without a reason.
+export const duplicateFlagView = (flag, amountsVisible) => ({
+  kind: flag.kind,
+  otherInvoiceId: flag.otherInvoiceId,
+  otherInvoice: flag.otherInvoice
+    ? { ...flag.otherInvoice, totalAmount: amountsVisible ? flag.otherInvoice.totalAmount : null }
+    : null,
+  daysApart: flag.daysApart,
+  windowDays: flag.windowDays,
+});
+
+// The issues that hold approval while flags are open: the flags this approver
+// can see, each with the other bill, and a separate issue when only someone
+// who can see amounts can review the rest.
+export function duplicateReviewIssues(openFlags, amountsVisible) {
+  const shown = openFlags.filter((flag) => amountsVisible || flag.kind !== "possible");
+  const hidden = shown.length < openFlags.length;
+  const issues = [];
+  if (shown.length)
+    issues.push({
+      code: "DUPLICATE_REVIEW_REQUIRED",
+      message: "This bill may duplicate another bill from the same supplier. Dismiss each open duplicate flag with a reason, or cancel the bill, before approving it.",
+      status: 409,
+      details: {
+        flags: shown.map((flag) => duplicateFlagView(flag, amountsVisible)),
+        possibleHidden: !amountsVisible,
+        hiddenOpen: hidden,
+      },
+    });
+  if (hidden)
+    issues.push({
+      code: "DUPLICATE_REVIEW_HIDDEN",
+      message: "A same-amount duplicate check on this bill needs review by someone who can see amounts before approval.",
+      status: 409,
+      details: { flags: [], possibleHidden: true, hiddenOpen: true },
+    });
+  return issues;
+}
+
 const CANDIDATE_SELECT = {
   id: true,
   tenantId: true,
@@ -307,7 +354,7 @@ export async function loadDuplicateChecks(db, { tenantId, invoice, timezone }) {
   });
   const reviews = rows.filter((row) => row.supplierInvoiceId === invoice.id);
   const otherSideReviews = rows.filter((row) => row.supplierInvoiceId !== invoice.id);
-  const closed = DUPLICATE_CLOSED_STATUSES.includes(text(invoice.status));
+  const closed = isDuplicateReviewClosed(invoice.status);
   return { ...result, ...applyDuplicateReviews(result.flags, reviews, { otherSideReviews, closed }) };
 }
 

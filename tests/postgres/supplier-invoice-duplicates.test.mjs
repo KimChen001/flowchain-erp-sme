@@ -19,8 +19,14 @@ const users = {
   finance: { id: 'dup-finance', role: 'finance-specialist', name: 'Frank Finance' },
   viewer: { id: 'dup-viewer', role: 'viewer', name: 'Vera Viewer' },
 }
+// An approver whose custom role leaves out finance.amounts.read; added after
+// the backfill, so it keeps only that role.
+const blindApprover = { id: 'dup-blind-approver', role: 'custom', name: 'Bea Approver' }
 const env = { ...process.env, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: 'true', NODE_ENV: 'test' }
-const identityOf = (key) => ({ authenticated: true, tenantId, userId: users[key].id, role: users[key].role })
+const identityOf = (key) => {
+  const user = key === 'blind' ? blindApprover : users[key]
+  return { authenticated: true, tenantId, userId: user.id, role: user.role }
+}
 
 async function call(prisma, key, method, path, body = {}) {
   let sent
@@ -56,8 +62,15 @@ test('likely and possible duplicate bills are flagged, dismissed with a reason, 
     await prisma.supplier.create({ data: { id: 'DUP-SUP', tenantId, code: 'DUP-SUP', name: 'Harbor Supply' } })
     await prisma.item.create({ data: { id: 'DUP-ITEM', tenantId, sku: 'DUP-SKU', name: 'Valve', unit: 'EA' } })
     await prisma.warehouse.create({ data: { id: 'DUP-WH', tenantId, code: 'DUP-WH', name: 'Main' } })
-    await prisma.purchaseOrder.create({ data: { id: PO, tenantId, status: 'approved', supplierId: 'DUP-SUP', supplierName: 'Harbor Supply', currency: 'USD', amount: '200.0000', lines: { create: { id: `${PO}-L1`, itemId: 'DUP-ITEM', sku: 'DUP-SKU', itemName: 'Valve', orderedQuantity: '20.0000', receivedQuantity: '0.0000', unit: 'EA', unitPrice: '10.0000' } } } })
-    for (const grn of ['DUP-GRN-1', 'DUP-GRN-2', 'DUP-GRN-3', 'DUP-GRN-4']) await receipt(prisma, grn)
+    await prisma.purchaseOrder.create({ data: { id: PO, tenantId, status: 'approved', supplierId: 'DUP-SUP', supplierName: 'Harbor Supply', currency: 'USD', amount: '300.0000', lines: { create: { id: `${PO}-L1`, itemId: 'DUP-ITEM', sku: 'DUP-SKU', itemName: 'Valve', orderedQuantity: '30.0000', receivedQuantity: '0.0000', unit: 'EA', unitPrice: '10.0000' } } } })
+    for (const grn of ['DUP-GRN-1', 'DUP-GRN-2', 'DUP-GRN-3', 'DUP-GRN-4', 'DUP-GRN-5']) await receipt(prisma, grn)
+    const financeRole = await prisma.userRoleAssignment.findFirstOrThrow({ where: { tenantId, userId: users.finance.id } })
+    const financeGrants = await prisma.tenantRolePermission.findMany({ where: { tenantId, roleId: financeRole.roleId } })
+    assert.ok(financeGrants.some((grant) => grant.permissionCode === 'finance.supplier_invoice.approve'))
+    await prisma.user.create({ data: { ...blindApprover, tenantId, email: `${blindApprover.id}@invoice-duplicates.invalid`, rolesAssignedAt: new Date() } })
+    await prisma.tenantRole.create({ data: { id: 'dup-blind-role', tenantId, roleKey: 'dup-blind-approver', name: 'Approver without amounts' } })
+    await prisma.tenantRolePermission.createMany({ data: financeGrants.filter((grant) => grant.permissionCode !== 'finance.amounts.read').map((grant, index) => ({ id: `dup-blind-grant-${index}`, tenantId, roleId: 'dup-blind-role', permissionCode: grant.permissionCode })) })
+    await prisma.userRoleAssignment.create({ data: { id: 'dup-blind-assignment', tenantId, userId: blindApprover.id, roleId: 'dup-blind-role' } })
 
     // Another workspace's bill with the same supplier id, number, amount and
     // date is never compared.
@@ -210,6 +223,27 @@ test('likely and possible duplicate bills are flagged, dismissed with a reason, 
     assert.equal(detail.body.duplicateChecks.flags[1].otherSideDismissal, null)
     assert.equal(detail.body.duplicateChecks.openCount, 0)
 
+    // A payable hold sets the bill to held. It is still past approval: the
+    // undismissed flag stays closed, cannot be dismissed, and reads the same
+    // once the hold is released.
+    const payable = await prisma.payableObligation.findFirstOrThrow({ where: { tenantId, supplierInvoiceId: a } })
+    const held = await call(prisma, 'finance', 'POST', `/api/finance/payables/${payable.id}/hold`, { expectedVersion: payable.version, reason: 'Statement query', idempotencyKey: 'dup-hold-a' })
+    assert.equal(held.status, 200, JSON.stringify(held.body))
+    const heldBill = await prisma.supplierInvoice.findUniqueOrThrow({ where: { id: a } })
+    assert.equal(heldBill.status, 'held')
+    detail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${a}`)
+    assert.deepEqual(detail.body.duplicateChecks.flags.map((flag) => [flag.kind, flag.status]), [['likely', 'dismissed'], ['possible', 'closed']])
+    assert.equal(detail.body.duplicateChecks.openCount, 0)
+    assert.ok(!detail.body.availableActions.includes('dismiss_duplicate'))
+    const heldDismiss = await dismiss('finance', { otherInvoiceId: c, otherVersion: 1, kind: 'possible', reason: 'After the hold', expectedVersion: heldBill.version }, 'dup-dismiss-held')
+    assert.equal(heldDismiss.status, 409)
+    assert.equal(heldDismiss.body.code, 'SUPPLIER_INVOICE_STATUS_INVALID')
+    assert.equal(await prisma.supplierInvoiceDuplicateReview.count({ where: { tenantId, supplierInvoiceId: a } }), 2)
+    const released = await call(prisma, 'finance', 'POST', `/api/finance/payables/${payable.id}/release`, { expectedVersion: payable.version + 1, idempotencyKey: 'dup-release-a' })
+    assert.equal(released.status, 200, JSON.stringify(released.body))
+    detail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${a}`)
+    assert.deepEqual(detail.body.duplicateChecks.flags.map((flag) => [flag.kind, flag.status]), [['likely', 'dismissed'], ['possible', 'closed']])
+
     // Cancelling the original clears the flag of the bill that matched it.
     const d = await create(bill('DUP-GRN-4', 'C 0077', '2026-09-28', '4.0000'), 'dup-create-d')
     let dDetail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${d}`)
@@ -220,6 +254,35 @@ test('likely and possible duplicate bills are flagged, dismissed with a reason, 
     assert.deepEqual(dDetail.body.duplicateChecks.flags, [])
     cDetail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${c}`)
     assert.ok(!cDetail.body.availableActions.includes('dismiss_duplicate'))
+
+    // An approver who cannot see amounts is told why a same-amount flag holds
+    // approval, without being shown which bill; once someone who can see
+    // amounts dismisses it, that approver can approve. E: the same total as
+    // D, two days later.
+    const e = await create(bill('DUP-GRN-5', 'E-1', '2026-09-30', '4.0000'), 'dup-create-e')
+    for (const [step, version] of [['submit', 0], ['match', 1]]) {
+      const done = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${d}/${step}`, { expectedVersion: version, idempotencyKey: `dup-${step}-d` })
+      assert.equal(done.status, 200, JSON.stringify(done.body))
+    }
+    dDetail = await call(prisma, 'finance', 'GET', `/api/finance/supplier-invoices/${d}`)
+    assert.deepEqual(dDetail.body.duplicateChecks.flags.map((flag) => [flag.kind, flag.otherInvoiceId, flag.daysApart, flag.status]), [['possible', e, 2, 'open']])
+    const blindDetail = await call(prisma, 'blind', 'GET', `/api/finance/supplier-invoices/${d}`)
+    assert.equal(blindDetail.status, 200, JSON.stringify(blindDetail.body))
+    assert.equal(blindDetail.body.duplicateChecks.possibleHidden, true)
+    assert.deepEqual(blindDetail.body.duplicateChecks.flags, [])
+    assert.ok(!blindDetail.body.availableActions.includes('dismiss_duplicate'))
+    const blindPreview = await call(prisma, 'blind', 'POST', `/api/finance/supplier-invoices/${d}/approve-preview`, { expectedVersion: 2 })
+    assert.equal(blindPreview.body.allowed, false)
+    const duplicateIssues = blindPreview.body.blockingIssues.filter((entry) => entry.code.startsWith('DUPLICATE_'))
+    assert.deepEqual(duplicateIssues.map((entry) => entry.code), ['DUPLICATE_REVIEW_HIDDEN'])
+    assert.deepEqual(duplicateIssues[0].details.flags, [])
+    const blindApprove = await call(prisma, 'blind', 'POST', `/api/finance/supplier-invoices/${d}/approve`, { expectedVersion: 2, idempotencyKey: 'dup-approve-d-blind' })
+    assert.equal(blindApprove.status, 409)
+    assert.equal(blindApprove.body.code, 'DUPLICATE_REVIEW_HIDDEN')
+    const dDismiss = await call(prisma, 'finance', 'POST', `/api/finance/supplier-invoices/${d}/duplicate-dismiss`, { expectedVersion: 2, otherInvoiceId: e, otherVersion: 0, kind: 'possible', reason: 'Two separate orders of four', idempotencyKey: 'dup-dismiss-d-e' })
+    assert.equal(dDismiss.status, 200, JSON.stringify(dDismiss.body))
+    const blindApproved = await call(prisma, 'blind', 'POST', `/api/finance/supplier-invoices/${d}/approve`, { expectedVersion: 2, idempotencyKey: 'dup-approve-d' })
+    assert.equal(blindApproved.status, 200, JSON.stringify(blindApproved.body))
   } finally {
     await prisma.$disconnect()
   }

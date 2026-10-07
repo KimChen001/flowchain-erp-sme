@@ -4,7 +4,7 @@ import { paymentRecordsView } from "./payment-record-command-service.mjs";
 import { awaitingReceipt, financeFixed, financeUnits } from "./operational-finance-policy.mjs";
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
 import { escapeLikePattern } from "../persistence/like-pattern.mjs";
-import { DUPLICATE_CLOSED_STATUSES, invoiceDayKey, loadDuplicateChecks, workspaceTimezone } from "./supplier-invoice-duplicates.mjs";
+import { invoiceDayKey, isDuplicateReviewClosed, loadDuplicateChecks, workspaceTimezone } from "./supplier-invoice-duplicates.mjs";
 
 export class OperationalFinanceReadError extends Error {
   constructor(code, message, status = 400, details) {
@@ -239,7 +239,7 @@ export function createOperationalFinanceReadService({
 
   // The duplicate flags of one bill (plan item C1): each with the other
   // bill's number, date, amount, status and version; open, dismissed, or
-  // closed once this bill is approved or cancelled; the dismissal given on
+  // closed once this bill is past approval (approved, held or cancelled); the dismissal given on
   // this bill and the one given on the other bill, when their basis still
   // holds; and every dismissal on record, stale ones marked. A same-amount flag would reveal
   // that two totals are equal, so without finance.amounts.read those flags
@@ -342,11 +342,11 @@ export function createOperationalFinanceReadService({
     const summary = invoiceSummary({ ...invoice, blockingExceptionCount }, current, capabilities);
     const duplicateChecks = await duplicateChecksView(invoice, current);
     // An approver dismisses an open flag with a reason before approval; an
-    // approved or cancelled bill is past that step.
+    // approved, held or cancelled bill is past that step.
     if (
       capabilities["supplier-invoice"]?.enabled &&
       can({ actor: current, permission: "finance.supplier_invoice.approve", tenantId: current.tenantId }) &&
-      !DUPLICATE_CLOSED_STATUSES.includes(invoice.status) &&
+      !isDuplicateReviewClosed(invoice.status) &&
       duplicateChecks.openCount > 0
     )
       summary.availableActions = [...summary.availableActions, "dismiss_duplicate"];

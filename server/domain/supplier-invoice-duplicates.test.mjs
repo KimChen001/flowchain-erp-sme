@@ -3,10 +3,13 @@ import test from "node:test";
 import {
   applyDuplicateReviews,
   duplicateBasis,
+  duplicateReviewIssues,
   findDuplicateFlags,
   invoiceDayKey,
   invoiceNumberKeys,
   invoiceTotalKey,
+  isDuplicateReviewClosed,
+  loadDuplicateChecks,
   loadDuplicateFlags,
   normalizeInvoiceNumber,
 } from "./supplier-invoice-duplicates.mjs";
@@ -247,6 +250,51 @@ test("an approved or cancelled bill's undismissed flags are closed, not open", (
   assert.equal(closed.openFlags.length, 0);
   const review = { id: "R1", otherInvoiceId: "B1", kind: "possible", basis: flags[0].basis, reason: "Two deliveries", dismissedAt: new Date("2026-09-11") };
   assert.deepEqual(applyDuplicateReviews(flags, [review], { closed: true }).flags.map((flag) => flag.status), ["dismissed"]);
+});
+
+test("every status after approval, held included, closes the flags", () => {
+  for (const status of ["draft", "submitted", "matching", "matched", "exception"]) assert.equal(isDuplicateReviewClosed(status), false, status);
+  for (const status of ["approved", "held", "cancelled", "rejected", "", undefined]) assert.equal(isDuplicateReviewClosed(status), true, String(status));
+});
+
+test("a held bill's undismissed flags read closed, and read the same once released", async () => {
+  const db = {
+    supplierInvoice: { findMany: async () => [bill("B1", { invoiceNumber: "INV-2024-001" })] },
+    supplierInvoiceDuplicateReview: { findMany: async () => [] },
+  };
+  const read = (status) => loadDuplicateChecks(db, { tenantId: "T1", invoice: bill("B2", { invoiceNumber: "inv 2024/1", status }), timezone: tz });
+  for (const status of ["held", "approved"]) {
+    const checks = await read(status);
+    assert.deepEqual(checks.flags.map((flag) => [flag.kind, flag.status]), [["likely", "closed"]], status);
+    assert.equal(checks.openFlags.length, 0);
+  }
+  assert.deepEqual((await read("matched")).flags.map((flag) => flag.status), ["open"]);
+});
+
+test("approval names the flags an approver can see and says when a same-amount one waits for someone else", () => {
+  const { flags } = findDuplicateFlags({
+    invoice: bill("B3", { invoiceNumber: "INV-9" }),
+    candidates: [bill("B1", { invoiceNumber: "inv 9", invoiceDate: new Date("2026-09-01") }), bill("B2", { invoiceNumber: "X-2" })],
+    timezone: tz,
+  });
+  assert.deepEqual(flags.map((flag) => [flag.kind, flag.otherInvoiceId]), [["likely", "B1"], ["possible", "B2"]]);
+  const open = applyDuplicateReviews(flags).openFlags;
+  // With amounts: both flags, with the other bill's total.
+  const visible = duplicateReviewIssues(open, true);
+  assert.deepEqual(visible.map((issue) => issue.code), ["DUPLICATE_REVIEW_REQUIRED"]);
+  assert.deepEqual(visible[0].details.flags.map((flag) => [flag.kind, flag.otherInvoice.totalAmount]), [["likely", "100.0000"], ["possible", "100.0000"]]);
+  assert.equal(visible[0].details.hiddenOpen, false);
+  // Without amounts: the likely flag without its total, then the hidden issue.
+  const mixed = duplicateReviewIssues(open, false);
+  assert.deepEqual(mixed.map((issue) => issue.code), ["DUPLICATE_REVIEW_REQUIRED", "DUPLICATE_REVIEW_HIDDEN"]);
+  assert.deepEqual(mixed[0].details.flags.map((flag) => [flag.kind, flag.otherInvoice.totalAmount]), [["likely", null]]);
+  assert.equal(mixed[0].details.hiddenOpen, true);
+  assert.deepEqual(mixed[1].details, { flags: [], possibleHidden: true, hiddenOpen: true });
+  // Only a same-amount flag open: the first issue is the hidden one, never an empty refusal.
+  const onlyPossible = duplicateReviewIssues(open.filter((flag) => flag.kind === "possible"), false);
+  assert.deepEqual(onlyPossible.map((issue) => issue.code), ["DUPLICATE_REVIEW_HIDDEN"]);
+  assert.match(onlyPossible[0].message, /someone who can see amounts/);
+  assert.deepEqual(duplicateReviewIssues([], false), []);
 });
 
 test("a flag carries the other bill's number, date, total, status and version", () => {

@@ -13,8 +13,10 @@ import {
 } from "./operational-finance-policy.mjs";
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
 import {
-  DUPLICATE_CLOSED_STATUSES,
   DUPLICATE_KINDS,
+  duplicateFlagView,
+  duplicateReviewIssues,
+  isDuplicateReviewClosed,
   loadDuplicateChecks,
   workspaceTimezone,
 } from "./supplier-invoice-duplicates.mjs";
@@ -414,47 +416,8 @@ const isSupplierCreditMemoNumberConflict = (error) =>
 // Duplicate supplier invoice flags (plan item C1, supplier-invoice-duplicates.mjs).
 // An open flag asks the approver to dismiss it with a reason, or to cancel the
 // bill, before approval; nothing is held on its own and payments are not
-// touched. A same-amount flag reveals that two totals are equal, so a role
-// that cannot read finance amounts is not shown which bill or how many; it is
-// told that a same-amount check waits for someone who can see amounts.
+// touched. duplicateReviewIssues lists what approval waits for.
 const DUPLICATE_REASON_MAX = 500;
-const duplicateFlagView = (flag, amountsVisible) => ({
-  kind: flag.kind,
-  otherInvoiceId: flag.otherInvoiceId,
-  otherInvoice: flag.otherInvoice
-    ? { ...flag.otherInvoice, totalAmount: amountsVisible ? flag.otherInvoice.totalAmount : null }
-    : null,
-  daysApart: flag.daysApart,
-  windowDays: flag.windowDays,
-});
-
-// The issues that hold approval while flags are open: the flags this approver
-// can see, each with the other bill, and a separate issue when only someone
-// who can see amounts can review the rest.
-function duplicateReviewIssues(openFlags, amountsVisible) {
-  const shown = openFlags.filter((flag) => amountsVisible || flag.kind !== "possible");
-  const hidden = shown.length < openFlags.length;
-  const issues = [];
-  if (shown.length)
-    issues.push({
-      code: "DUPLICATE_REVIEW_REQUIRED",
-      message: "This bill may duplicate another bill from the same supplier. Dismiss each open duplicate flag with a reason, or cancel the bill, before approving it.",
-      status: 409,
-      details: {
-        flags: shown.map((flag) => duplicateFlagView(flag, amountsVisible)),
-        possibleHidden: !amountsVisible,
-        hiddenOpen: hidden,
-      },
-    });
-  if (hidden)
-    issues.push({
-      code: "DUPLICATE_REVIEW_HIDDEN",
-      message: "A same-amount duplicate check on this bill needs review by someone who can see amounts before approval.",
-      status: 409,
-      details: { flags: [], possibleHidden: true, hiddenOpen: true },
-    });
-  return issues;
-}
 
 const duplicateFlagNotFound = () => ({
   code: "DUPLICATE_FLAG_NOT_FOUND",
@@ -470,10 +433,10 @@ const duplicateFlagChanged = () => ({
 
 function dismissDuplicateIssues(invoice, version, input) {
   const issues = [];
-  if (DUPLICATE_CLOSED_STATUSES.includes(invoice.status))
+  if (isDuplicateReviewClosed(invoice.status))
     issues.push({
       code: "SUPPLIER_INVOICE_STATUS_INVALID",
-      message: "Duplicate flags are dismissed before approval; this bill is already approved or cancelled.",
+      message: "Duplicate flags are dismissed before approval; this bill is already approved, held or cancelled.",
       status: 409,
     });
   if (invoice.version !== version)
