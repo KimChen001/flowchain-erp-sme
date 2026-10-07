@@ -73,6 +73,12 @@ names, or supplier names in place. Translate their presentation where appropriat
   document language. The page's toolbar and the Documents settings form have English
   and Chinese copy; a custom document title is the workspace's own text and is printed
   as entered.
+- The customer invoice document (`/app/sales/invoices/:id/document`) follows the same
+  rules: labels in the document language, the invoice number, SKUs, units, amounts,
+  currency codes and the invoice and due dates as recorded and formatted in the
+  workspace locale (calendar days read in UTC, so the day entered is the day printed).
+  Customer contact details, payment terms and payment instructions are printed as
+  the workspace recorded them, in whatever language they were entered.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.
