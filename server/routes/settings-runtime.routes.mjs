@@ -93,7 +93,7 @@ export async function handleSettingsRuntimeRoute(ctx) {
 
   const match = url.pathname.match(/^\/api\/settings-runtime\/([a-z-]+)$/)
   // PATCH replaces the whole section with the validated body, as for every
-  // section; for documents that is the language, letterhead and PO template.
+  // section; for documents that is the language, letterhead, PO and invoice templates.
   if (req.method === 'PATCH' && match) {
     try {
       const body = await readBody(req)
