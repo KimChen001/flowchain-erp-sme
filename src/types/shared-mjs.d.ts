@@ -66,3 +66,11 @@ declare module '../../../shared/supplier-override-reasons.mjs' {
   export function overrideNeeded(input: { supplierId?: string | null; preferredId?: string | null; preferredIds?: readonly (string | null | undefined)[] }): boolean;
   export function validateSupplierOverride(raw: unknown, needed: boolean): { value: { reasonCode: SupplierOverrideReasonCode; note: string | null } | null; issues: SupplierOverrideIssue[] };
 }
+
+declare module '../../../shared/data-import-columns.mjs' {
+  export type DataImportColumn = { key: string; en: string; zh: string; required: boolean; example: string; aliases: readonly string[] };
+  export const DATA_IMPORT_TYPES: readonly string[];
+  export const DATA_IMPORT_COLUMNS: Readonly<Record<string, readonly DataImportColumn[]>>;
+  export function dataImportCsv(rows: ReadonlyArray<ReadonlyArray<unknown>>): string;
+  export function dataImportCsvCell(value: unknown): string;
+}

@@ -44,6 +44,7 @@ service creates `IntakeRecord` rows. Legacy `/api/imports*` and
 | XLSX ZIP entries | 2,000 |
 | XLSX uncompressed bytes | 64 MiB |
 | XLSX compression ratio | 100:1 |
+| XLSX sheet grid (rows × columns) | 2,000,000 cells |
 | Profile sample rows | 10 |
 
 CSV supports UTF-8, UTF-8 BOM, and explicitly selected GB18030. Delimiters are
@@ -56,7 +57,11 @@ selected. Merged cells in the selected header/data region fail closed.
 Formulas are never executed: a cached value can be profiled with a warning,
 while an unavailable cached result produces a stable error. ZIP entry,
 uncompressed-size, and compression-ratio limits are checked before workbook
-parsing.
+parsing. The uncompressed size counts the bytes actually inflated from every
+XML part, so a part larger than its declared size fails, and the workbook
+reader is given only those unpacked parts. A sheet is found through
+`xl/_rels/workbook.xml.rels`, whatever its part is called, and every part the
+reader is given must fit the sheet grid limit before it is parsed.
 
 Paste JSON accepts only an object array or `{ "records": [...] }`. Prototype,
 secret, excessive-depth, excessive-field, and internal control keys are

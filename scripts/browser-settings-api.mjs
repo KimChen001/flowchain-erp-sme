@@ -65,6 +65,7 @@ try {
     SCM_API_PORT: String(apiPort),
     NODE_ENV: "test",
     FLOWCHAIN_INTAKE_LOCAL_STORAGE_DIR: artifactDirectory,
+    FLOWCHAIN_ENABLE_DATA_IMPORT: "true",
   });
   await execFileAsync(node, [prismaCli, "migrate", "deploy"], { cwd: root, env: process.env, maxBuffer: 10 * 1024 * 1024 });
   prisma = await createPrismaClient(process.env);

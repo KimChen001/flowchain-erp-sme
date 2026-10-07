@@ -1021,7 +1021,9 @@ export function createInventoryOperationsReadService({
               : "mismatch",
         checks: lineChecks,
       },
-      limitations: ["Adjustments only target existing inventory balances."],
+      limitations: [
+        "Opening stock and found stock can add an item at a location with no stock record; posting creates the record.",
+      ],
     };
   }
 
