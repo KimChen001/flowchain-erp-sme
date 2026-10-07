@@ -157,7 +157,12 @@ export function presentSpendAnalysis(result, facts, { skill, language, query }) 
     ...(row.record ? { linkTarget: { moduleId: AI_SKILL_MODULES.supplier, entityType: 'supplier', entityId: row.record.id } } : {}),
   })
   const dashboard = { label: aiSkillText('spend.view_dashboard', language), moduleId: 'reports:procurement', returnTo: 'ai-assistant', source: 'ai' }
-  const figure = (code, entityId, amount) => ({ key: `${code}:${entityId || result.currency || 'orders'}`, code, entityId: entityId || null, value: amount, unit: result.amounts ? result.currency : 'orders' })
+  // The figures it states, keyed as the evaluation's truth keys: the total as
+  // committed_spend:USD (committed_spend_usd), a supplier by its id. Counts are
+  // named as counts, so they never read as amounts.
+  const figure = (entityId, amount) => result.amounts
+    ? { key: entityId ? `supplier_spend:${entityId}` : `committed_spend:${result.currency}`, code: entityId ? 'supplier_spend' : 'committed_spend', entityId: entityId || null, value: amount, currency: result.currency }
+    : { key: entityId ? `supplier_po_count:${entityId}` : 'committed_po_count', code: entityId ? 'supplier_po_count' : 'committed_po_count', entityId: entityId || null, value: amount, unit: 'orders' }
   const common = { skill, facts, language, query, severity: 'info', moneyLimitations: false }
   // One impact per evidence line: what the figure is.
   const impactsOf = (evidence) => evidence.map((item) => ({ area: aiSkillText('area.purchasing', language), impact: item.status, severity: 'info', explanation: aiSkillText(`spend.impact.${item.evidenceType}`, language), affectedObjects: [item.entityId || item.id] }))
@@ -177,7 +182,7 @@ export function presentSpendAnalysis(result, facts, { skill, language, query }) 
       result.undated ? aiSkillCountText('spend.trend.undated', result.undated, language, { count: fmt.number(result.undated) }) : '',
       ...notes,
     ], language)
-    return presentAiSkillAnswer({ ...common, title, summary, evidence, impacts: impactsOf(evidence), navigation: [dashboard], figures: [figure('spend_total', null, result.total)], followUpIds: ['supplier_attention'] })
+    return presentAiSkillAnswer({ ...common, title, summary, evidence, impacts: impactsOf(evidence), navigation: [dashboard], figures: [figure(null, result.total)], followUpIds: ['supplier_attention'] })
   }
 
   if (result.mode === 'supplier') {
@@ -203,7 +208,7 @@ export function presentSpendAnalysis(result, facts, { skill, language, query }) 
     return presentAiSkillAnswer({
       ...common, title, summary, evidence, impacts: impactsOf(evidence),
       navigation: [aiSkillNavigation({ label: supplier.name, entityType: 'supplier', entityId: supplier.id }, language), dashboard],
-      figures: row ? [figure('spend', supplier.id, row.value)] : [],
+      figures: row ? [figure(supplier.id, row.value)] : [],
       followUpIds: ['supplier_attention'],
     })
   }
@@ -221,7 +226,7 @@ export function presentSpendAnalysis(result, facts, { skill, language, query }) 
   return presentAiSkillAnswer({
     ...common, title, summary, evidence, impacts: impactsOf(evidence),
     navigation: [...result.suppliers.filter((row) => row.record).slice(0, 3).map((row) => aiSkillNavigation({ label: row.record.name, entityType: 'supplier', entityId: row.record.id }, language)), dashboard],
-    figures: [figure('spend_total', null, result.total), ...result.suppliers.filter((row) => row.record).map((row) => figure('spend', row.record.id, row.value))],
+    figures: [figure(null, result.total), ...result.suppliers.filter((row) => row.record).map((row) => figure(row.record.id, row.value))],
     followUpIds: ['supplier_attention'],
   })
 }

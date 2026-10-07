@@ -83,8 +83,9 @@ test('top suppliers show the dashboard\'s figures, one currency at a time', asyn
   assert.deepEqual(answer.keyEvidence.map((item) => [item.entityLabel, item.value]), rows.map((row) => [row.name, money(row.value)]))
   assert.ok(answer.conclusion.title.startsWith(`${money(usd.kpi.currentValue)} of committed spend across 2 suppliers`), answer.conclusion.title)
   assert.match(answer.conclusion.summary, /not added in: €500\.00/)
-  // The figures it states, by supplier id.
-  assert.deepEqual(answer.figures.map((row) => [row.code, row.entityId, row.value, row.unit]), [['spend_total', null, usd.kpi.currentValue, 'USD'], ['spend', 'SUP-001', rows[0].value, 'USD'], ['spend', 'SUP-002', rows[1].value, 'USD']])
+  // The figures it states, keyed as the evaluation's truth keys
+  // (committed_spend_usd is committed_spend:USD) and by supplier id.
+  assert.deepEqual(answer.figures.map((row) => [row.key, row.value, row.currency]), [['committed_spend:USD', usd.kpi.currentValue, 'USD'], ['supplier_spend:SUP-001', rows[0].value, 'USD'], ['supplier_spend:SUP-002', rows[1].value, 'USD']])
   assert.ok(answer.navigationLinks.some((link) => link.moduleId === 'reports:procurement'))
   // Asked in EUR: the EUR filter's figures.
   const eur = await ask('How much did we spend in EUR?')
@@ -126,6 +127,9 @@ test('without access to prices the answer counts orders, as the dashboard does',
   assert.deepEqual(answer.keyEvidence.map((item) => item.value), counted.data.map((row) => `${row.value} purchase orders`))
   assert.match(answer.conclusion.summary, /does not show purchase prices/)
   assert.doesNotMatch(JSON.stringify(answer), /\$|€|12,920|17,920/)
+  // Counts are named as counts, so they never read as amounts.
+  assert.deepEqual(answer.figures.map((row) => row.key), ['committed_po_count', 'supplier_po_count:SUP-001', 'supplier_po_count:SUP-002'])
+  assert.ok(answer.figures.every((row) => !row.currency && /count/.test(row.code)))
 })
 
 test('a role that cannot read purchase orders is not offered the spend analysis', async () => {
