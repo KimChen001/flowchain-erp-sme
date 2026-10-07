@@ -56,6 +56,7 @@ type Serial = {
 type Movement = {
   movementId?: string;
   movementType?: string;
+  reason?: string | null;
   sourceDocumentId?: string;
   relatedGrnId?: string;
   sku?: string;
@@ -438,7 +439,7 @@ export default function InventoryPage({
           ]}
           rows={(visible as Movement[]).map((row) => [
             // The movement's own id is an internal UUID; show what moved it instead.
-            movementTypeLabel(row.movementType || "", language),
+            movementTypeLabel(row.movementType || "", language, row.reason),
             row.relatedGrnId || (row.sourceDocumentId && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(row.sourceDocumentId) ? row.sourceDocumentId : "—"),
             <EntityLink kind="item" id={row.sku}>
               {row.sku}

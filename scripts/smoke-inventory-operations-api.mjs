@@ -459,6 +459,132 @@ try {
   );
   assert.equal(adjustmentReversed.movementIds.length, 1);
 
+  // Opening stock at a location with no stock record, then a transfer to a
+  // new bin. Posting creates both stock records.
+  const openingCreated = await request(base, "/api/inventory/adjustments", {
+    token,
+    method: "POST",
+    body: {
+      adjustmentNumber: "ADJ-API-OPEN-001",
+      reasonCode: "opening_balance",
+      notes: "Go-live stock",
+      idempotencyKey: "open-create",
+      lines: [
+        {
+          itemId: "inventory-item",
+          warehouseId: "warehouse-b",
+          location: "OPEN-01",
+          adjustmentQuantity: "6",
+        },
+      ],
+    },
+  });
+  assert.equal(openingCreated.adjustment.lines[0].inventoryBalanceId, null);
+  const openingReady = await request(
+    base,
+    `/api/inventory/adjustments/${openingCreated.adjustment.id}/ready`,
+    {
+      token,
+      method: "POST",
+      body: {
+        expectedAdjustmentVersion: openingCreated.adjustment.version,
+        idempotencyKey: "open-ready",
+      },
+    },
+  );
+  const openingPreview = await request(
+    base,
+    `/api/inventory/adjustments/${openingCreated.adjustment.id}/post-preview`,
+    { token, method: "POST", body: {} },
+  );
+  assert.equal(openingPreview.allowed, true);
+  assert.equal(openingPreview.balanceImpacts[0].createsBalance, true);
+  const openingPosted = await request(
+    base,
+    `/api/inventory/adjustments/${openingCreated.adjustment.id}/post`,
+    {
+      token,
+      method: "POST",
+      body: {
+        expectedAdjustmentVersion: openingReady.adjustment.version,
+        idempotencyKey: "open-post",
+      },
+    },
+  );
+  assert.equal(openingPosted.movementIds.length, 1);
+  const openingEntry = await request(
+    base,
+    "/api/inventory/operations/entry-data",
+    { token },
+  );
+  const openingRecord = openingEntry.balances.find(
+    (row) => row.warehouseId === "warehouse-b" && row.locationKey === "open-01",
+  );
+  assert.equal(openingRecord.onHandQuantity, "6.0000");
+  assert.equal(openingRecord.unit, "EA");
+  const newBinCreated = await request(base, "/api/inventory/transfers", {
+    token,
+    method: "POST",
+    body: {
+      transferNumber: "TR-API-NEW-BIN",
+      idempotencyKey: "tr-new-bin-create",
+      lines: [
+        {
+          itemId: "inventory-item",
+          quantity: "2",
+          source: { warehouseId: "warehouse-b", location: "OPEN-01" },
+          destination: { warehouseId: "warehouse-b", location: "NEW-BIN" },
+        },
+      ],
+    },
+  });
+  const newBinReady = await request(
+    base,
+    `/api/inventory/transfers/${newBinCreated.transfer.id}/ready`,
+    {
+      token,
+      method: "POST",
+      body: {
+        expectedTransferVersion: newBinCreated.transfer.version,
+        idempotencyKey: "tr-new-bin-ready",
+      },
+    },
+  );
+  const newBinPreview = await request(
+    base,
+    `/api/inventory/transfers/${newBinCreated.transfer.id}/post-preview`,
+    { token, method: "POST", body: {} },
+  );
+  assert.equal(newBinPreview.allowed, true);
+  assert.ok(newBinPreview.balanceImpacts.some((row) => row.createsBalance));
+  await request(
+    base,
+    `/api/inventory/transfers/${newBinCreated.transfer.id}/post`,
+    {
+      token,
+      method: "POST",
+      body: {
+        expectedTransferVersion: newBinReady.transfer.version,
+        idempotencyKey: "tr-new-bin-post",
+      },
+    },
+  );
+  const newBinEntry = await request(
+    base,
+    "/api/inventory/operations/entry-data",
+    { token },
+  );
+  assert.equal(
+    newBinEntry.balances.find((row) => row.locationKey === "new-bin")
+      .onHandQuantity,
+    "2.0000",
+  );
+  assert.equal(
+    newBinEntry.balances.find((row) => row.locationKey === "open-01")
+      .onHandQuantity,
+    "4.0000",
+  );
+
   await stop(api);
   api = start(env);
   await waitFor(`${base}/api/health`);
