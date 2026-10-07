@@ -1,10 +1,11 @@
+import { analyticsCopy } from './analyticsCopy';
 // Presentation copy only: report names and other user-owned values stay intact.
 const english: Record<string, string> = {
   '标准报表': 'Standard reports', '我的报表': 'My reports', '团队共享': 'Team reports', '最近使用': 'Recently opened',
   '报表库': 'Report library', '受控业务主题、标准模板、我的视图与团队共享报表': 'Explore standard reports, personal views, and reports shared with your team',
   '基于模板创建报表': 'Create report', '逾期采购订单': 'Overdue purchase orders', '销售订单履约': 'Sales order fulfillment',
   '库存风险': 'Inventory risk', '供应商概览': 'Supplier overview',
-  '采购分析': 'Procurement analytics', '销售分析': 'Sales analytics', '库存分析': 'Inventory analytics', '结算分析': 'Settlement analytics', '供应商分析': 'Supplier analytics',
+  '采购分析': 'Procurement analytics', '销售分析': 'Sales analytics', '库存分析': 'Inventory analytics', '结算分析': 'Settlement analytics', '发票分析': 'Invoice analytics', '供应商分析': 'Supplier analytics',
   '采购订单': 'Purchase orders', '销售订单': 'Sales orders', '库存余额': 'Inventory balances', '供应商发票': 'Supplier invoices', '供应商': 'Suppliers',
   '采购申请': 'Purchase requests', '询报价': 'RFQs and quotations', '收货': 'Receiving',
   '系统标准报表': 'Standard report', '当前工作区': 'Current workspace', '打开报表': 'Open report',
@@ -24,5 +25,6 @@ const english: Record<string, string> = {
 };
 
 export function reportLibraryCopy(value: string, language: string) {
-  return language === 'en-US' ? english[value] || value : value;
+  // Metric labels the server writes in English take their Chinese from the analytics copy.
+  return language === 'en-US' ? english[value] || value : analyticsCopy(value, language);
 }

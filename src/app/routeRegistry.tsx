@@ -1810,7 +1810,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     path: "/app/reports/finance",
     moduleId: "reports",
     moduleLabel: "报表中心",
-    label: "结算分析",
+    label: "发票分析",
     parentId: "reports",
     pageType: "analysis",
     viewId: "finance",

@@ -60,6 +60,7 @@ const DRAFT = [
   /\bdraft\s+(a|an|the|me)\b/i,
   /\b(prepare|write|compose|create)\b[^.?!]*\b(message|email|note)\b/i,
   /(准备|写|生成|拟|做)[^。？！]*草稿|起草|草拟/,
+  /(准备|写|拟)[^。？！]{0,20}(邮件|消息|短信|信函)/,
 ]
 // A request to start an order: "can you help me generate the order?",
 // "create a PO for LDM-001", "order 50 more LDM-001", "reorder LDM-001",

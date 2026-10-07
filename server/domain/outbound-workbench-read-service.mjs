@@ -65,6 +65,11 @@ function lineModel(line, visibleReservations, partialScope) {
     remainingToFulfill: partialScope ? null : fixed(ordered - fulfilled),
     quantityScope: partialScope ? "visible_warehouses_only" : "full",
     unit: line.unit,
+    // A line without a price cannot be invoiced, so the page shows it.
+    unitPrice:
+      line.unitPrice === null || line.unitPrice === undefined
+        ? null
+        : fixed(units(line.unitPrice)),
     version: line.version,
   };
 }

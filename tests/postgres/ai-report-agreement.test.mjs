@@ -82,7 +82,7 @@ test('the assistant states the same open POs, committed spend and at-risk SKUs a
     const kpi = (report, id) => report.kpis.find((row) => row.id === id)
     const spend = kpi(overview, 'purchase_order_amount').currencyAmounts.map(({ currencyCode, amount }) => ({ currency: currencyCode, amount }))
     const invoices = kpi(finance, 'invoice_amount').currencyAmounts.map(({ currencyCode, amount }) => ({ currency: currencyCode, amount }))
-    const atRisk = inventory.details.filter((row) => row.shortage !== null && row.shortage > 0).map((row) => row.sku).sort()
+    const atRisk = inventory.details.filter((row) => row.shortage !== null && row.shortage > 0).map((row) => row.id).sort()
     // The walkthrough has overdue orders, USD spend and a short SKU to show.
     assert.equal(openReport.summary.overdue, 8)
     assert.ok(openReport.summary.open > openReport.summary.overdue)
