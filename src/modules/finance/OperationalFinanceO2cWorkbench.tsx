@@ -9,6 +9,12 @@ import { PaymentRecords } from "./PaymentRecords";
 import { useI18n } from "../../i18n/I18n";
 import { A, Card } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { useRouteAvailability } from "../../app/routeAvailability";
+import { PREVIEW_CUSTOMER_INVOICE_STATUSES, PRINTABLE_CUSTOMER_INVOICE_STATUSES } from "../../../shared/business-documents.mjs";
+
+// The invoice statuses whose document is worth opening: issued (to send) and
+// approved (to check before issuing).
+const documentStatuses: readonly string[] = [...PREVIEW_CUSTOMER_INVOICE_STATUSES, ...PRINTABLE_CUSTOMER_INVOICE_STATUSES];
 
 type Capability = { enabled?: boolean; maturity?: string; reason?: string };
 type Invoice = {
@@ -617,6 +623,7 @@ function invoiceReadFailure(reason: unknown): InvoiceReadFailure {
 // money. Each step previews the server's plan before it runs.
 function InvoiceDetail() {
   const { t, locale } = useI18n();
+  const canOpenRoute = useRouteAvailability();
   const id = decodeURIComponent(window.location.pathname.split("/").filter(Boolean).at(-1) || "");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
@@ -674,6 +681,12 @@ function InvoiceDetail() {
           {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="customer-invoice-submit" previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={version} onDone={load} />}
           {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="customer-invoice-approve" previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={version} onDone={load} />}
           {actions.includes("issue") && <TwoStepAction label={t("finance.action.issue")} testId="customer-invoice-issue" previewUrl={`${base}/issue-preview`} runUrl={`${base}/issue`} payload={version} onDone={load} />}
+          {/* The invoice as a document to print or save as PDF; a person sends it. An approved invoice opens to be checked before it is issued. */}
+          {documentStatuses.includes(data.status) && canOpenRoute("sales:invoice-document") && (
+            <Link data-testid="customer-invoice-open-document" to={`/app/sales/invoices/${encodeURIComponent(data.id)}/document`} className="rounded-lg border px-3 py-2 text-xs font-semibold text-slate-700">
+              {t("documents.openInvoice")}
+            </Link>
+          )}
           {!actions.length && <span className="text-xs text-slate-500">{t("finance.noActions")}</span>}
         </div>
       </Card>

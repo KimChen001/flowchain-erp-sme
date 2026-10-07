@@ -33,6 +33,23 @@ const COPY = {
   terms: ["Terms", "条款"],
   signature: ["Authorized signature", "授权签字"],
   signatureDate: ["Date", "日期"],
+  // The customer invoice.
+  invoice: ["Invoice", "销售发票"],
+  billTo: ["Bill to", "开票对象"],
+  customerCode: ["Customer code", "客户编号"],
+  paymentTerms: ["Payment terms", "付款条件"],
+  invoiceNumber: ["Invoice number", "发票号"],
+  invoiceDate: ["Invoice date", "开票日期"],
+  dueDate: ["Due date", "到期日"],
+  salesOrder: ["Sales order", "销售订单"],
+  shipment: ["Shipment", "发货单"],
+  tax: ["Tax", "税额"],
+  lineTotal: ["Line total", "行合计"],
+  subtotal: ["Subtotal", "小计"],
+  amountPaid: ["Amount paid", "已收金额"],
+  creditsApplied: ["Credits applied", "已抵扣贷项"],
+  balanceDue: ["Balance due", "应收余额"],
+  paymentInstructions: ["Payment instructions", "付款说明"],
 } as const;
 
 export type DocumentCopyKey = keyof typeof COPY;

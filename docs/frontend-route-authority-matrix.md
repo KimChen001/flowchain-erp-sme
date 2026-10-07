@@ -16,12 +16,12 @@ backend-authorized.
 
 ## Classification summary
 
-- Core: 71
+- Core: 72
 - Extension: 51
 - Internal: 18
 - Frozen: 19
 - Legacy: 14
-- Total: 173
+- Total: 174
 
 ## Default SME navigation
 
@@ -40,7 +40,7 @@ and Internal surfaces remain outside normal navigation.
 The classification summary and the executable route matrix below are
 regenerated with `node scripts/generate-route-authority-matrix.mjs`.
 
-The 173/173 frontend route stability audit verifies
+The 174/174 frontend route stability audit verifies
 resolution, shell rendering, no route-level 404 recovery, no render crash, and
 no observed API 5xx. It does not prove business semantics, data authority,
 permission correctness, capability correctness, or complete functionality.
@@ -125,6 +125,7 @@ classification and navigation metadata.
 | `sales:invoices` | `/app/sales/invoices` | 销售发票 | `sales` | CORE | SECONDARY | no | customer_invoice | `src/modules/sales` | /api/finance/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | CAPABILITY_GATED | sales | finance.customer_invoice.read | CAPABILITY_REQUIRED | — | Reading needs only the read permission; recording, matching, approving and issuing need the operational finance capability, checked by the API. |
 | `sales:invoice-new` | `/app/sales/invoices/new` | 新建销售发票 | `sales` | EXTENSION | CONTEXTUAL | no | sales | `src/modules/sales` | /api/finance/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | customer-invoice | finance.customer_invoice.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `sales:invoice-detail` | `/app/sales/invoices/:id` | 销售发票详情 | `sales` | CORE | CONTEXTUAL | no | customer_invoice | `src/modules/sales` | /api/finance/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | CAPABILITY_GATED | sales | finance.customer_invoice.read | CAPABILITY_REQUIRED | — | Reading needs only the read permission; recording, matching, approving and issuing need the operational finance capability, checked by the API. |
+| `sales:invoice-document` | `/app/sales/invoices/:id/document` | 销售发票文件 | `sales` | CORE | CONTEXTUAL | no | customer_invoice | `src/modules/sales` | /api/finance/customer-invoices/:id/document | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | sales | finance.customer_invoice.read | CAPABILITY_REQUIRED | — | Read-only invoice document to print or save as PDF; printable once issued and only with finance.amounts.read and finance.partner_snapshot.read. FlowChain does not send it. |
 | `sales:order-new` | `/app/sales/orders/new` | 新建销售订单 | `sales` | EXTENSION | CONTEXTUAL | no | sales | `src/modules/sales` | /api/sales-orders/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | sales-order-lifecycle | sales_order.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `sales:delivery` | `/app/sales/deliveries` | 销售出库单 / 发货单 | `sales` | FROZEN | HIDDEN | no | sales | `src/modules/sales` | /api/sales-orders/* | Capability or direct-route boundary | UNAVAILABLE | UNAVAILABLE | sales-shipment-draft | shipment.read | FROZEN_UNAVAILABLE | — | No authoritative enabled product capability is claimed. |
 | `sales:delivery:new` | `/app/sales/deliveries/new` | 新建发货单 | `sales` | FROZEN | HIDDEN | no | sales | `src/modules/sales` | /api/sales-orders/* | Capability or direct-route boundary | UNAVAILABLE | UNAVAILABLE | sales-shipment-draft | shipment.read | FROZEN_UNAVAILABLE | — | No authoritative enabled product capability is claimed. |

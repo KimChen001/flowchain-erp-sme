@@ -33,7 +33,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     inventory:reorder inventory:lots inventory:serials inventory:bins
     inventory:exceptions
     sales sales:orders sales:risks sales:evidence sales:order-detail
-    sales:invoices sales:invoice-detail
+    sales:invoices sales:invoice-detail sales:invoice-document
     reports reports:overview reports:procurement reports:sales
     reports:inventory reports:finance reports:suppliers reports:library
     settings settings:profile settings:warehouse-access settings:readiness
@@ -240,7 +240,7 @@ const mapCapability = (capability: string, routeIds: string) => {
 };
 mapCapability(
   "sales",
-  "sales sales:orders sales:risks sales:evidence sales:order-detail sales:invoices sales:invoice-detail",
+  "sales sales:orders sales:risks sales:evidence sales:order-detail sales:invoices sales:invoice-detail sales:invoice-document",
 );
 mapCapability(
   "stock-transfer",
@@ -369,7 +369,7 @@ mapPermission("finance.overview.read", "finance finance:overview");
 mapPermission("finance.payable.read", "finance:payables");
 mapPermission(
   "finance.customer_invoice.read",
-  "sales:invoices sales:invoice-new sales:invoice-detail",
+  "sales:invoices sales:invoice-new sales:invoice-detail sales:invoice-document",
 );
 mapPermission("finance.receivable.read", "finance:receivables finance:aging");
 mapPermission("finance.customer_credit.read", "finance:customer-credit-notes");
@@ -509,6 +509,8 @@ function limitationFor(
     return "只读展示当前租户 RFQ 的供应商报价比较、Participation 摘要与非有效响应；不排名、不推荐、不授标、不转换 PO，币种不做汇率换算。";
   if (route.id === "procurement:order-document")
     return "Read-only PO document to print or save as PDF; printable from approval on and only with procurement.prices.read. FlowChain does not send it.";
+  if (route.id === "sales:invoice-document")
+    return "Read-only invoice document to print or save as PDF; printable once issued and only with finance.amounts.read and finance.partner_snapshot.read. FlowChain does not send it.";
   if (compatibilityRouteIds.has(route.id))
     return "Compatibility extension; not part of the default SME Core surface.";
   if (route.id === "imports")
@@ -564,6 +566,8 @@ export function authorityForRoute(
             ? "/api/procurement/rfqs/:rfqId/comparison"
           : route.id === "procurement:order-document"
             ? "/api/procurement/orders/:id/document"
+          : route.id === "sales:invoice-document"
+            ? "/api/finance/customer-invoices/:id/document"
           : apiByModule[route.panelId === "finance" ? "finance" : route.moduleId],
     repositoryAuthority:
       classification === "LEGACY"
