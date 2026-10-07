@@ -14,7 +14,7 @@ const STANDARD = [
   { name: "逾期采购订单", subject: "purchase_orders", route: "/app/reports/procurement?scope=overdue", type: "采购分析" },
   { name: "销售订单履约", subject: "sales_orders", route: "/app/reports/sales", type: "销售分析" },
   { name: "库存风险", subject: "inventory_balances", route: "/app/reports/inventory", type: "库存分析" },
-  { name: "供应商发票", subject: "supplier_invoices", route: "/app/reports/finance", type: "结算分析" },
+  { name: "供应商发票", subject: "supplier_invoices", route: "/app/reports/finance", type: "发票分析" },
   { name: "供应商概览", subject: "suppliers", route: "/app/reports/suppliers", type: "供应商分析" },
 ];
 const SUBJECT_LABELS: Record<string, string> = { purchase_orders: "采购订单", sales_orders: "销售订单", inventory_balances: "库存余额", supplier_invoices: "供应商发票", suppliers: "供应商" };

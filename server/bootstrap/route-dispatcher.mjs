@@ -15,6 +15,7 @@ import { handleCollaborationNotificationDraftsRoute } from "../routes/collaborat
 import { handleContextRoute } from "../routes/context.routes.mjs";
 import { handleCustomFieldsRoute } from "../routes/custom-fields.routes.mjs";
 import { handleDataAccessQualityRoute } from "../routes/data-access-quality.routes.mjs";
+import { handleDataImportRoute } from "../routes/data-import.routes.mjs";
 import { handleEvidenceGraphRoute } from "../routes/evidence-graph.routes.mjs";
 import { handleExceptionCasesRoute } from "../routes/exception-cases.routes.mjs";
 import { handleIntakeRoute } from "../routes/intake.routes.mjs";
@@ -32,6 +33,7 @@ import { handlePilotImportRoute } from "../routes/pilot-import.routes.mjs";
 import { handlePilotOperationsRoute } from "../routes/pilot-operations.routes.mjs";
 import { handlePilotReadinessGovernanceRoute } from "../routes/pilot-readiness-governance.routes.mjs";
 import { handlePilotWorkspaceRoute } from "../routes/pilot-workspace.routes.mjs";
+import { handlePriceHistoryRoute } from "../routes/price-history.routes.mjs";
 import { handleProcurementReadRoute } from "../routes/procurement-read.routes.mjs";
 import { handleProcurementWorkflowRoute } from "../routes/procurement-workflow.routes.mjs";
 import { handleRfqSupplierResponseRoute } from "../routes/rfq-supplier-response.routes.mjs";
@@ -108,9 +110,11 @@ const orderedRouteHandlers = Object.freeze([
   handleRfqAwardDecisionRoute,
   handleRfqSupplierComparisonRoute,
   handleRfqSupplierResponseRoute,
+  handlePriceHistoryRoute,
   handleProcurementReadRoute,
   handleCapabilitiesRoute,
   handleIntakeRoute,
+  handleDataImportRoute,
   handleCustomFieldsRoute,
   handleMasterDataRoute,
   handleActionDraftsRoute,

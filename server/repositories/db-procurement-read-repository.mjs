@@ -151,6 +151,8 @@ export function mapPurchaseRequest(record = {}) {
       serviceStartDate: text(lineMeta.serviceStartDate),
       serviceEndDate: text(lineMeta.serviceEndDate),
       internalLineComment: text(lineMeta.internalLineComment),
+      // Why a supplier other than the item's preferred one was chosen, or null.
+      supplierOverride: lineMeta.supplierOverride || null,
       metadata: lineMeta,
     }
   })
@@ -428,6 +430,11 @@ export function mapPurchaseOrder(record = {}) {
     totalReceivedQty: received,
     status: text(record.status, 'draft'),
     transmissionStatus: text(meta.transmissionStatus, record.status === 'draft' ? 'not_sent' : 'sent'),
+    // The instant the PO was issued to the supplier; null when it was not
+    // recorded. Pages show it as a workspace day.
+    issuedAt: record.issuedAt ? isoDateTime(record.issuedAt) : null,
+    // "approved" when the PO was received without being issued in FlowChain.
+    receivingBaseStatus: text(record.receivingBaseStatus) || null,
     priority: text(record.priority),
     sourceRequest: text(record.sourceRequestId),
     sourceRfq: text(record.sourceRfqId),

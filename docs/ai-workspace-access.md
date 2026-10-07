@@ -59,9 +59,14 @@ Check a configuration without calling the provider: `npm run check:ai-provider-e
 ## What leaves the workspace
 
 - **Agent planning and intent routing** send the question and the list of
-  skills only.
-- **Knowledge answers** also send the matching passages of the workspace's own
-  documents.
+  skills.
+  - When the workspace has documents the user may read, agent planning also
+    sends their languages (for example "English"), so the model can write search
+    words in that language.
+  - Those words only search the workspace's own documents. The passages found
+    are shown with their sources and are not sent to a model.
+- **Knowledge answers** (a question about the documents alone) also send the
+  matching passages of the workspace's own documents.
 - **Business records** (orders, amounts, suppliers) are not sent. Sending them
   is P3, which is not approved (agent mode decision 4).
 - The switch covers every one of these paths.

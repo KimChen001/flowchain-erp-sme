@@ -28,11 +28,23 @@ test('inventory_on_hand distinguishes empty, complete, and incomplete runtime da
   assert.equal(metric(empty).dataStatus, 'empty')
 
   const complete = buildRuntimeGovernedReport(context([
-    { sku: 'SKU-4', onHandQuantity: 4 },
-    { sku: 'SKU-6', onHandQuantity: 6 },
+    { sku: 'SKU-4', onHandQuantity: 4, unit: 'pcs' },
+    { sku: 'SKU-4', onHandQuantity: 6, unit: 'pcs' },
   ]), { subject: 'inventory' })
   assert.equal(metric(complete).currentValue, 10)
+  assert.equal(metric(complete).quantityUnit, 'pcs')
   assert.equal(metric(complete).dataStatus, 'complete')
+  assert.deepEqual(metric(complete).limitations, [])
+
+  // Different SKUs are never added, even in one unit: On hand by SKU shows each.
+  const skus = buildRuntimeGovernedReport(context([
+    { sku: 'SKU-4', onHandQuantity: 4, unit: 'pcs' },
+    { sku: 'SKU-6', onHandQuantity: 6, unit: 'pcs' },
+  ]), { subject: 'inventory' })
+  assert.equal(metric(skus).currentValue, null)
+  assert.equal(metric(skus).dataStatus, 'incomplete')
+  assert.deepEqual(metric(skus).limitations, ['inventory_skus_mixed'])
+  assert.deepEqual(skus.charts.find(chart => chart.id === 'inventory_on_hand_by_sku').data, [{ name: 'SKU-6', value: 6 }, { name: 'SKU-4', value: 4 }])
 
   const incompleteContext = context([
     { sku: 'SKU-KNOWN', onHandQuantity: 4 },
@@ -71,8 +83,11 @@ test('reports API and KPI UI preserve null and present data insufficiency withou
   const dashboard = await readFile(join(root, 'src/modules/reports/BiDashboard.tsx'), 'utf8')
   const currencyFormatting = await readFile(join(root, 'src/modules/reports/currencyFormatting.mjs'), 'utf8')
   assert.match(currencyFormatting, /if \(value === null\) return '—'/)
-  assert.match(dashboard, /import \{ formatMetric \} from "\.\/currencyFormatting\.mjs"/)
-  assert.match(dashboard, /if \(item\.dataStatus === "incomplete"\) return "数据不足"/)
+  // KPI values read the same on the dashboard and in the export (metricDisplay.ts).
+  const metricDisplay = await readFile(join(root, 'src/modules/reports/metricDisplay.ts'), 'utf8')
+  assert.match(metricDisplay, /import \{ formatMetric \} from '\.\/currencyFormatting\.mjs'/)
+  assert.match(metricDisplay, /if \(item\.dataStatus === 'incomplete'\) return '数据不足'/)
+  assert.match(dashboard, /import \{ metricCurrency, metricDisplayValue \} from "\.\/metricDisplay"/)
   assert.match(dashboard, /item\.dataStatus === "incomplete" \? copy\([^;]*"库存数据不完整"\)/)
   // A chart value that is not recorded stays empty in the visual and its data table; it never becomes 0.
   const { chartTable } = await import('../../src/modules/reports/charts/chartTable.ts')
