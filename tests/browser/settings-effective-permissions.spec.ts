@@ -187,10 +187,13 @@ test("a workspace administrator adds a warehouse and a bin and sets both inactiv
   await expect(page.getByTestId(`bin-status-${code}-A-01`)).toHaveText("Active");
   await page.getByTestId(`bin-toggle-${code}-A-01`).click();
   await expect(page.getByTestId(`bin-status-${code}-A-01`)).toHaveText("Inactive");
+  // Bins are names only; the page says so.
+  await expect(page.getByTestId(`bin-advisory-${code}`)).toContainText("does not block receiving or transfers");
 
   page.once("dialog", (dialog: any) => dialog.accept());
   await page.getByTestId(`warehouse-toggle-${code}`).click();
   await expect(page.getByTestId(`warehouse-status-${code}`)).toHaveText("Inactive");
+  await expect(page.getByTestId("warehouse-access")).toContainText(`${code} · Playwright Depot · Inactive`);
   const listed = await (await request.get("/api/master-data/warehouses", auth(admin.token))).json();
   expect(listed.warehouses.find((row: any) => row.code === code).status).toBe("inactive");
   const options = (await (await request.get("/api/master-data/warehouses/select", auth(admin.token))).json()).options;

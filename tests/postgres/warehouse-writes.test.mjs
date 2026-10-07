@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { createScmServer } from '../../server/bootstrap/scm-server.mjs'
+import { setWarehouseStatus } from '../../server/domain/warehouse-master-commands.mjs'
 import { createPrismaClient, disconnectPrismaClient } from '../../server/persistence/prisma-client.mjs'
 
 // A workspace administrator adds warehouses and bins, renames them and sets
@@ -216,6 +217,72 @@ test('warehouses and bins are created, renamed and set inactive in PostgreSQL', 
     if (previousTenant === undefined) delete process.env.FLOWCHAIN_DEFAULT_TENANT_ID
     else process.env.FLOWCHAIN_DEFAULT_TENANT_ID = previousTenant
     await disconnectPrismaClient()
+    await prisma.$disconnect()
+  }
+})
+
+// Each kind of open work blocks setting a warehouse inactive until it is
+// cleared, counted from real rows. Called on the command directly: the HTTP
+// path and its authorization are covered above.
+test('quarantine stock, reservations, counts, adjustments and open purchase orders block setting a warehouse inactive', async () => {
+  assert.ok(process.env.DATABASE_URL_TEST, 'Run with scripts/run-postgres-test-files.mjs')
+  const prisma = await createPrismaClient(process.env)
+  const tenantId = 'tenant-warehouse-writes-blockers'
+  const scope = { tenantId }
+  const actorId = `${tenantId}-admin`
+  const warehouseId = 'WH-BLOCK-1'
+  try {
+    await prisma.tenant.create({ data: { id: tenantId, name: 'Blockers workspace', currency: 'USD' } })
+    await prisma.user.create({ data: { id: actorId, tenantId, email: 'admin@blockers.example.com', name: 'Blockers admin', role: 'admin' } })
+    await prisma.warehouse.create({ data: { id: warehouseId, tenantId, code: 'BLOCK-1', name: 'Blocked' } })
+    // A second active warehouse, so "last active warehouse" never applies.
+    await prisma.warehouse.create({ data: { id: 'WH-BLOCK-2', tenantId, code: 'BLOCK-2', name: 'Other' } })
+    await prisma.item.create({ data: { id: 'ITEM-BLOCK', tenantId, sku: 'SKU-BLOCK', name: 'Blocked item', unit: 'EA' } })
+    const refusedFor = async (code) => {
+      await assert.rejects(setWarehouseStatus(prisma, warehouseId, { status: 'inactive', expectedVersion: 1 }, actorId, scope), (error) => {
+        assert.equal(error.status, 409, code)
+        assert.equal(error.code, 'WAREHOUSE_IN_USE', code)
+        assert.deepEqual(error.details, [{ code, count: 1 }], code)
+        return true
+      })
+      assert.equal((await prisma.warehouse.findUnique({ where: { id: warehouseId } })).status, 'active', code)
+    }
+
+    // Quarantined stock with quantity; then released to zero.
+    await prisma.quarantineInventoryBalance.create({ data: { id: 'QB-BLOCK', tenantId, itemId: 'ITEM-BLOCK', sku: 'SKU-BLOCK', warehouseId, onHandQuantity: '3' } })
+    await refusedFor('QUARANTINE_ON_HAND')
+    await prisma.quarantineInventoryBalance.update({ where: { id: 'QB-BLOCK' }, data: { onHandQuantity: '0' } })
+
+    // A reservation still active for a sales order; then released.
+    await prisma.salesOrder.create({ data: { id: 'SO-BLOCK', tenantId, orderNumber: 'SO-BLOCK', customerName: 'Customer', currency: 'USD' } })
+    await prisma.salesOrderLine.create({ data: { id: 'SOL-BLOCK', salesOrderId: 'SO-BLOCK', itemId: 'ITEM-BLOCK', sku: 'SKU-BLOCK', itemName: 'Blocked item', orderedQuantity: '1', unit: 'EA' } })
+    await prisma.inventoryReservation.create({ data: { id: 'RES-BLOCK', tenantId, salesOrderId: 'SO-BLOCK', salesOrderLineId: 'SOL-BLOCK', itemId: 'ITEM-BLOCK', sku: 'SKU-BLOCK', warehouseId, reservedQuantity: '1', reservedById: actorId } })
+    await refusedFor('ACTIVE_RESERVATIONS')
+    await prisma.inventoryReservation.update({ where: { id: 'RES-BLOCK' }, data: { status: 'released', releasedQuantity: '1' } })
+
+    // A cycle count not yet posted; then cancelled.
+    await prisma.cycleCountSession.create({ data: { id: 'CC-BLOCK', tenantId, countNumber: 'CC-BLOCK', warehouseId } })
+    await refusedFor('OPEN_COUNTS')
+    await prisma.cycleCountSession.update({ where: { id: 'CC-BLOCK' }, data: { workflowStatus: 'cancelled' } })
+
+    // An unposted inventory adjustment with a line in the warehouse; then cancelled.
+    await prisma.inventoryAdjustmentDocument.create({ data: { id: 'ADJ-BLOCK', tenantId, adjustmentNumber: 'ADJ-BLOCK', reasonCode: 'count_correction', lines: { create: [{ id: 'ADJL-BLOCK', inventoryBalanceId: 'BAL-BLOCK', sku: 'SKU-BLOCK', warehouseId, adjustmentQuantity: '1' }] } } })
+    await refusedFor('UNPOSTED_ADJUSTMENTS')
+    await prisma.inventoryAdjustmentDocument.update({ where: { id: 'ADJ-BLOCK' }, data: { workflowStatus: 'cancelled' } })
+
+    // A purchase order still open for receiving into the warehouse; a
+    // cancelled one aimed at it does not count. Then the open one is closed.
+    await prisma.purchaseOrder.create({ data: { id: 'PO-BLOCK-OPEN', tenantId, status: 'issued', metadata: { targetWarehouseId: warehouseId } } })
+    await prisma.purchaseOrder.create({ data: { id: 'PO-BLOCK-CANCELLED', tenantId, status: 'cancelled', metadata: { targetWarehouseId: warehouseId } } })
+    await prisma.purchaseOrder.create({ data: { id: 'PO-BLOCK-ELSEWHERE', tenantId, status: 'issued', metadata: { targetWarehouseId: 'WH-BLOCK-2' } } })
+    await refusedFor('OPEN_PURCHASE_ORDERS')
+    await prisma.purchaseOrder.update({ where: { id: 'PO-BLOCK-OPEN' }, data: { status: 'closed' } })
+
+    // Nothing left: it can be set inactive.
+    const result = await setWarehouseStatus(prisma, warehouseId, { status: 'inactive', expectedVersion: 1 }, actorId, scope)
+    assert.deepEqual([result.warehouse.status, result.clearedDefaults], ['inactive', 0])
+    assert.equal(await prisma.auditLog.count({ where: { tenantId, entityType: 'warehouse', action: 'deactivate' } }), 1)
+  } finally {
     await prisma.$disconnect()
   }
 })
