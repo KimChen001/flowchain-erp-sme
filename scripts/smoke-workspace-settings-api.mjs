@@ -154,6 +154,31 @@ try {
   assert.equal(denied.status, 403);
   assert.equal((await request(base, "/api/settings-runtime", { token: viewerToken })).documents.letterhead.addressLines[0], "12 Pier Road");
 
+  // Print layouts are the workspace's: saved with the section, unknown keys dropped,
+  // readable by a viewer who prints, refused over the limits and without the permission.
+  const layout = (id) => ({
+    id, name: "Dock receipt", documentType: "receive_sheet", isDefault: false, version: 1,
+    page: { paper: "A4", orientation: "portrait", width: 794, height: 1123, margin: 52 },
+    elements: [{ id: "company", type: "field", title: "Company", field: "companyName", x: 52, y: 42, width: 690, height: 30, visible: true, draggable: true, resizable: true, style: { fontSize: 14, bold: true }, script: "dropped" }],
+  });
+  const withLayouts = { ...documents, layouts: [layout("receive_sheet-custom")] };
+  const savedLayouts = await request(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: withLayouts } });
+  assert.deepEqual(savedLayouts.settings.layouts.map((item) => item.id), ["receive_sheet-custom"]);
+  assert.equal("script" in savedLayouts.settings.layouts[0].elements[0], false);
+  assert.equal("isDefault" in savedLayouts.settings.layouts[0], false);
+  assert.equal((await prisma.tenant.findUnique({ where: { id: tenantId } })).operationalSettings.documents.purchaseOrder.termsText, "Net 30 from invoice.", "the rest of the section is kept");
+  assert.deepEqual((await request(base, "/api/settings-runtime", { token: viewerToken })).documents.layouts.map((item) => item.id), ["receive_sheet-custom"]);
+  const tooMany = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: Array.from({ length: 21 }, (_, index) => layout(`receive_sheet-${index}`)) } } });
+  assert.deepEqual([tooMany.status, tooMany.payload.code, tooMany.payload.details?.field, tooMany.payload.details?.limit], [400, "DOCUMENT_LAYOUTS_TOO_MANY", "layouts", 20]);
+  const terms = (index) => ({ ...layout(`receive_sheet-terms-${index}`), elements: [{ id: "terms", type: "terms", title: "Terms", value: "x".repeat(4000), x: 52, y: 700, width: 690, height: 110, visible: true, draggable: true, resizable: true }] });
+  const tooLarge = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: Array.from({ length: 17 }, (_, index) => terms(index)) } } });
+  assert.deepEqual([tooLarge.status, tooLarge.payload.code, tooLarge.payload.details?.field], [400, "DOCUMENT_LAYOUTS_TOO_LARGE", "layouts"]);
+  const badShape = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: [{ ...layout("receive_sheet-x"), documentType: "purchase_order" }] } } });
+  assert.deepEqual([badShape.status, badShape.payload.code, badShape.payload.details?.field], [400, "DOCUMENT_LAYOUT_INVALID", "layouts.0.documentType"]);
+  const layoutDenied = await raw(base, "/api/settings-runtime/documents", { token: viewerToken, method: "PATCH", body: { settings: withLayouts } });
+  assert.equal(layoutDenied.status, 403);
+  assert.deepEqual((await prisma.tenant.findUnique({ where: { id: tenantId } })).operationalSettings.documents.layouts.map((item) => item.id), ["receive_sheet-custom"], "a refused save changes nothing");
+
   await prisma.tenant.update({ where: { id: tenantId }, data: { openingBalanceLockedAt: new Date() } });
   workspace = await request(base, "/api/workspace", { token });
   const locked = await raw(base, "/api/workspace", { token, method: "PATCH", body: { ...workspace, baseCurrency: "USD" } });
