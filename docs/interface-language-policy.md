@@ -19,6 +19,11 @@ names, or supplier names in place. Translate their presentation where appropriat
   the user's language preference, or else the workspace default, is zh-CN
   (`server/mail/sign-in-email.mjs`). Before sign-in the page follows the
   browser-local selector; the email follows the stored preference.
+- Approval emails are server-generated too, per recipient: US English, or
+  Chinese when that approver's language preference, or else the workspace
+  default, is zh-CN (`server/mail/approval-waiting-email.mjs`). They carry
+  the document type in the recipient's language and the document number as
+  recorded. The Settings > My Profile switch for them has both languages.
 - Existing signed-in profile language selection remains in Settings > Profile.
 - New tenants inherit English from the database default.
 - Migration `20260908120000_english_default_interface` changes existing workspace
