@@ -477,13 +477,13 @@ export const aiToolRegistry = Object.freeze([
     audit: { recordInvocation: true, action: 'ai_business_read_tool_invoked', planningVersion: 'business-query-plan-v1' },
   },
   {
-    name: 'getSupplierPriorityList', module: 'srm', mode: 'read', description: 'Read deterministic supplier priority ranking using supplier-action-priority-v1.',
-    requiredPermission: 'procurement.purchase_order.read', sensitivityGroups: ['finance_partner_snapshot'], inputSchema: { supplierIds: 'string[]?', limit: 'number?' }, outputSchema: { rows: 'supplier_priority[]', algorithmVersion: 'string' }, outputCardTypes: ['business_query_section', 'evidence'], requiresUserReview: false, writesBusinessData: false,
+    name: 'getSupplierPriorityList', module: 'srm', mode: 'read', description: 'Read suppliers with open reasons for attention, the oldest open reason first, each with its date.',
+    requiredPermission: 'procurement.purchase_order.read', sensitivityGroups: ['finance_partner_snapshot'], inputSchema: { supplierIds: 'string[]?', limit: 'number?' }, outputSchema: { rows: 'supplier_priority[]' }, outputCardTypes: ['business_query_section', 'evidence'], requiresUserReview: false, writesBusinessData: false,
     audit: { recordInvocation: true, action: 'ai_business_read_tool_invoked', planningVersion: 'business-query-plan-v1' },
   },
   {
-    name: 'compareSupplierActionRisk', module: 'srm', mode: 'read', description: 'Compare deterministic action risk for an authorized supplier set.',
-    requiredPermission: 'procurement.purchase_order.read', sensitivityGroups: ['finance_amounts', 'finance_partner_snapshot'], inputSchema: { supplierIds: 'string[]' }, outputSchema: { rows: 'supplier_comparison[]', algorithmVersion: 'string' }, outputCardTypes: ['business_query_section', 'evidence'], requiresUserReview: false, writesBusinessData: false,
+    name: 'compareSupplierActionRisk', module: 'srm', mode: 'read', description: 'Compare open reasons for attention, each with its date, for an authorized supplier set.',
+    requiredPermission: 'procurement.purchase_order.read', sensitivityGroups: ['finance_amounts', 'finance_partner_snapshot'], inputSchema: { supplierIds: 'string[]' }, outputSchema: { rows: 'supplier_comparison[]' }, outputCardTypes: ['business_query_section', 'evidence'], requiresUserReview: false, writesBusinessData: false,
     audit: { recordInvocation: true, action: 'ai_business_read_tool_invoked', planningVersion: 'business-query-plan-v1' },
   },
   {

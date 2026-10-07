@@ -23,17 +23,28 @@ KPIs and the detail table; the client renders it in `src/modules/reports/charts/
   exception or variance) or awaiting match.
 - No visual judges a figure against an assumed target. The supplier matrix uses
   the median spend and the average on-time rate as its guides.
+- On time is the supplier scorecard's figure (`server/domain/supplier-scorecard.mjs`),
+  counted in deliveries: the lines of one purchase order that share an original
+  promised date. A delivery is on time when every line's first posted receipt
+  arrived by that date plus the grace days; past that day with a line not
+  received it is late, and while a line is not yet due it waits. The original
+  promise is the date on the PO at approval, which may be the buyer's need date
+  until suppliers confirm dates. A rate needs at least 5 deliveries.
+  Only orders the supplier got are measured: issued, with a sent transmission
+  status or an issue time, or with a posted receipt in any warehouse. An order
+  approved but not sent, with nothing received, is left out and listed on the
+  scorecard as "Not sent to supplier" (owner decision 2026-10-06).
 
 ## Visuals
 
 | Dashboard | KPIs | Visuals |
 | --- | --- | --- |
 | Overview | Committed amount, open POs, inventory risk SKUs, sales orders | Record activity by month, purchase order status, purchasing by supplier, committed spend by month, purchase order lifecycle |
-| Procurement | Committed amount, open POs, overdue open POs, on-time receipts | Committed spend by month (bars and order count), lifecycle funnel, spend concentration (Pareto with A/B/C classes), ordered/received/invoiced value bridge, spend treemap by supplier and item, status, receiving calendar |
+| Procurement | Committed amount, open POs, overdue open POs, on-time deliveries | Committed spend by month (bars and order count), lifecycle funnel, spend concentration (Pareto with A/B/C classes), ordered/received/invoiced value bridge, spend treemap by supplier and item, status, receiving calendar |
 | Finance | Invoice amount, invoices matched, awaiting match, match exceptions | Submitted invoices by month, match-rate gauge, match outcome, supplier-to-outcome flow (Sankey), variance by supplier, invoice status |
 | Sales | Sales orders, open demand, order amount, orders shipped in full | Orders by month, fulfillment funnel, customer concentration, shipped-in-full gauge, open demand by SKU, status |
 | Inventory | On hand, risk SKUs, out-of-stock SKUs, SKUs short against demand | On hand by SKU, stock position by SKU, available to promise by SKU, stock status, stock status by risk heatmap |
-| Suppliers | Suppliers, committed amount, suppliers with committed orders, on-time receipts | Performance matrix (spend × on-time, sized by receipts), scorecard radar, on-time ranking, spend treemap, purchase orders by supplier and month |
+| Suppliers | Suppliers, committed amount, suppliers with committed orders, on-time deliveries | Performance matrix (spend × on-time, sized by deliveries measured), scorecard radar, on-time ranking, spend treemap, purchase orders by supplier and month |
 
 The lifecycle and fulfillment funnels count, at each stage, the orders that
 reached it and every stage before it. The value bridge compares net line values:

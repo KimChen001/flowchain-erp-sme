@@ -23,6 +23,8 @@ const normalize = (value) => text(value).toLowerCase().replace(/\s+/g, ' ').repl
 // The page chips are offered only on a record's page and ask about it.
 const CHIPS = [
   ['What should I handle first today?', '今天先处理什么？', 'today_priorities'],
+  ['What is at risk right now?', '现在有哪些风险？', 'highest_risk_items'],
+  // The chip's earlier wording, still asked as typed.
   ['Which items have the highest risk?', '哪些事项风险最高？', 'highest_risk_items'],
   ['Which records need more data?', '哪些数据需要补齐？', 'records_needing_data'],
   ['Prepare an action draft', '帮我准备一个处理草稿', 'prepare_action_draft'],

@@ -12,7 +12,7 @@ const zh: Record<string, string> = {
   'Enter a supplier code.': '请填写供应商编号。', 'Enter a supplier name.': '请填写供应商名称。', 'Enter a valid email address.': '请填写有效邮箱。',
   'Lead time must be a whole number of days, zero or greater.': '送货周期必须为零或正整数天。', 'Choose a valid currency.': '请选择有效币种。',
   'Check the highlighted fields.': '请检查标记的字段。', 'This supplier code is already in use.': '该供应商编号已被使用。',
-  'This supplier changed. Reopen it and try again.': '供应商已被修改，请重新打开后再试。', 'Could not save supplier. Please try again.': '保存失败，请重试。',
+  'This supplier changed. Reopen it and try again.': '供应商已被修改，请重新打开后再试。', 'Could not save supplier. Please try again.': '供应商保存失败，请重试。',
   'Could not load workspace currency. Choose a currency before saving.': '无法读取工作区币种，请在保存前选择币种。', 'Choose currency': '选择币种',
   'Back to suppliers': '返回供应商列表', 'Edit': '编辑', 'Supplied items': '可供应物料', 'Select SKU': '选择 SKU', 'Reference price': '参考价格',
   'Add supplied item': '新增供应商关系', 'No supplied items yet': '暂无可供应物料', 'Set as preferred': '设为首选', 'Yes': '是', 'No': '否',
@@ -37,8 +37,9 @@ const zh: Record<string, string> = {
   'Supplier': '供应商', 'Suggested': '建议', 'Review and accept': '核对后采纳', 'No suggestion: there are not enough facts you can see.': '暂无建议：你可见的数据不足。',
   'Based on what you can see: purchase orders are hidden for your role.': '仅基于你可见的数据：你的角色看不到采购单。',
   'A suggestion states facts only. Delivery performance never changes it.': '建议只列事实，交货表现不会改变建议。',
-  'Spend, 12 months': '近 12 个月花费', 'Open POs': '未完成 PO', 'Overdue POs': '逾期 PO', 'On time, 90 days': '90 天准时率', 'Open issues': '未结问题',
-  'Hidden for your role': '你的角色不可见', 'Fewer than 5 lines in 90 days': '90 天内不足 5 行，暂不计算', 'Suggestion differs': '建议不同',
+  'Spend, 12 months': '近 12 个月花费', 'Open POs': '未完成 PO', 'Overdue POs': '逾期 PO', 'On time (PO date), 90 days': '90 天准时率（按采购订单日期）', 'Open issues': '未结问题',
+  'Hidden for your role': '你的角色不可见', 'Fewer than 5 deliveries in 90 days': '90 天内交付不足 5 次，暂不计算',
+  "{count} of {of} deliveries on time against the date on the PO, which may be the buyer's need date": '{of} 次交付中 {count} 次按采购订单日期准时（该日期可能是采购方的需求日期）', 'Suggestion differs': '建议不同',
   'Sort by': '排序', 'Name': '名称', 'Spend': '花费', 'Overdue': '逾期', 'Issues': '问题', 'currencies': '种币种',
   'Review suggestions': '审核建议', 'Suppliers not tiered yet, with what FlowChain suggests. Each acceptance is saved with its reasons and its own audit row.': '尚未分级的供应商及系统建议。每次采纳都会连同理由保存，并各自留一条审计记录。',
   'Accept': '采纳', 'Accepted': '已采纳', 'Accept all shown': '全部采纳', 'Confirm': '确认', 'Back to the list': '返回列表',
@@ -46,4 +47,6 @@ const zh: Record<string, string> = {
   'Every supplier is tiered.': '所有供应商都已分级。', 'Not saved': '未保存', 'No suggestion': '无建议',
 };
 const en = Object.fromEntries(Object.entries(zh).map(([key, value]) => [value, key]));
+// The English to Chinese pairs, read by the owner-rule tests.
+export const supplierCopyPairs: Readonly<Record<string, string>> = zh;
 export const supplierCopy = (value: string, language: string) => language === 'en-US' ? en[value] || value : zh[value] || value;

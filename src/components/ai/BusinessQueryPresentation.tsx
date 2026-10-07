@@ -35,7 +35,7 @@ function BusinessQueryRow({ row }: { row: Record<string, unknown> }) {
     <div className="min-w-0 rounded-lg px-2.5 py-2" style={{ background: A.gray6 }}>
       <div className="flex min-w-0 items-center justify-between gap-2">
         <span className="min-w-0 truncate text-[11px] font-semibold" style={{ color: A.label }}>{title}</span>
-        {priority.level ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{String(priority.level)} · {String(priority.score ?? "")}</span> : null}
+        {typeof priority.since === "string" && priority.since ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{languageIndex ? `自 ${priority.since}` : `Since ${priority.since}`}</span> : null}
       </div>
       {blocks.length ? <div className="mt-1 space-y-0.5">{blocks.slice(0, 3).map((block, index) => <div key={`${String(block.payableId)}-${index}`} className="break-words text-[11px] leading-4" style={{ color: A.red }}>{blockReasonLabels[String(block.reason)]?.[languageIndex] || String(block.reason)}</div>)}</div> : null}
       {overduePoIds.length ? <div className="mt-1 break-words text-[11px] leading-4" style={{ color: A.gray1 }}>{languageIndex ? "延期 PO：" : "Overdue POs: "}{overduePoIds.slice(0, 4).map(String).join("、")}</div> : null}
