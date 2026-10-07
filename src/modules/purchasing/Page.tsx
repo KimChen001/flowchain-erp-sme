@@ -1,5 +1,6 @@
 import { invoiceVarianceLabelKey, isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
+import { useI18n } from "../../i18n/I18n";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -543,6 +544,7 @@ export default function PurchasingOrdersPage({
   onActiveContextChange?: (context: ActiveContext | null) => void;
 }) {
   const copy = useWorkspaceCopy();
+  const { t } = useI18n();
   const warehouseName = useWarehouseNames();
   const canOpenRoute = useRouteAvailability();
   const location = useLocation();
@@ -789,6 +791,17 @@ export default function PurchasingOrdersPage({
           ]}
         />
         <div className="flex flex-wrap items-center gap-3">
+          {/* The PO as a document to print or save as PDF; the buyer sends it. */}
+          {canOpenRoute("procurement:order-document") && (
+            <button
+              type="button"
+              data-testid="po-open-document"
+              onClick={() => routerNavigate(`/app/procurement/orders/${encodeURIComponent(selectedPO.po)}/document`)}
+              className="rounded-lg border px-3 py-2 text-xs font-semibold text-slate-700"
+            >
+              {t("documents.openPo")}
+            </button>
+          )}
           <PurchaseOrderWorkflowActions poId={selectedPO.po} status={selectedPO.status} version={selectedPO.version} onChanged={loadWorkbench} />
           <PurchaseOrderReceiveAction poId={selectedPO.po} status={selectedPO.status} />
           {/* A bill covers received goods, so it is offered once something arrived. */}

@@ -164,3 +164,22 @@ test('the read service reads the stored supplier, links, warehouse and settings 
   assert.deepEqual([document.buyer.companyName, document.documentLanguage, document.termsText, document.lines[0].supplierSku, document.shipTo.code], ['Harbor Goods LLC', 'zh-CN', 'Net 30 from invoice.', 'HS-VAL-10', 'OAK'])
   await assert.rejects(createPurchaseOrderDocumentReadService({ prisma }).readPurchaseOrderDocument({ tenantId: '', order: order(), access: {} }), (error) => error.status === 403)
 })
+
+// FlowChain prepares the document; a person sends it. The page has no way to
+// send anything, says so, and Issue still only records the issue.
+test('the document page sends nothing and says FlowChain does not send it', async () => {
+  const { readFileSync, readdirSync } = await import('node:fs')
+  const folder = new URL('../../src/modules/business-documents/', import.meta.url)
+  const sources = readdirSync(folder).map((name) => [name, readFileSync(new URL(name, folder), 'utf8')])
+  assert.ok(sources.some(([name]) => name === 'PurchaseOrderDocumentPage.tsx'))
+  for (const [name, source] of sources) {
+    assert.doesNotMatch(source, /mailto:|sendMail|\/api\/[^"'`]*(mail|send|email)|method:\s*["'](POST|PUT|PATCH|DELETE)["']/i, name)
+  }
+  const i18n = readFileSync(new URL('../../src/i18n/I18n.tsx', import.meta.url), 'utf8')
+  assert.match(i18n, /"documents\.sendNote": "FlowChain does not send this document\. Print or save it and send it yourself\."/)
+  assert.match(sources.find(([name]) => name === 'DocumentShell.tsx')[1], /t\("documents\.sendNote"\)/)
+  const actions = readFileSync(new URL('../../src/modules/purchasing/components/PurchaseOrderWorkflowActions.tsx', import.meta.url), 'utf8')
+  assert.match(actions, /Print or save the PO document and send it yourself, then mark it issued\./)
+  const route = readFileSync(new URL('../routes/procurement-workflow.routes.mjs', import.meta.url), 'utf8')
+  assert.doesNotMatch(route.slice(route.indexOf('orderDocument'), route.indexOf('const poAction')), /mail|transmi/i)
+})
