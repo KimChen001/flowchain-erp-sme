@@ -65,6 +65,9 @@ function mapLine(line = {}, includePrices = true, purchaseOrder = {}) {
     requestedDate: promiseDay(line.metadata?.requestedDate),
     unitPrice: includePrices ? decimal(line.unitPrice) : null,
     amount: includePrices ? decimal(line.amount) : null,
+    // The promised date recorded on the line itself, without the PO's expected
+    // date as a fallback (null when none was recorded).
+    recordedPromisedDate: promiseDay(line.metadata?.promisedDate),
     // The current expected date, and the date first promised at issue (null
     // when it was not recorded).
     promisedDate: currentPromisedDay(line, purchaseOrder),

@@ -8,6 +8,7 @@ import type { DocumentLanguage } from "../../../shared/business-documents.mjs";
 const COPY = {
   purchaseOrder: ["Purchase Order", "采购订单"],
   poNumber: ["PO number", "采购订单号"],
+  approvedOn: ["Approved on", "批准日期"],
   issueDate: ["Issue date", "下达日期"],
   expectedDelivery: ["Expected delivery", "预计交期"],
   currency: ["Currency", "币种"],
@@ -26,7 +27,7 @@ const COPY = {
   unit: ["Unit", "单位"],
   unitPrice: ["Unit price", "单价"],
   amount: ["Amount", "金额"],
-  requestedDate: ["Requested date", "要求交期"],
+  requestedDate: ["Requested date", "需求日期"],
   promisedDate: ["Promised date", "承诺交期"],
   total: ["Total ({currency})", "合计（{currency}）"],
   terms: ["Terms", "条款"],

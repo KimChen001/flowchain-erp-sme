@@ -21,8 +21,8 @@ const order = (overrides = {}) => ({
   expectedDate: '2026-11-03T00:00:00.000Z',
   metadata: { orderNumber: 'PO-2026-0077', targetWarehouseId: 'WH-1' },
   lines: [
-    { id: 'L1', itemId: 'ITEM-1', sku: 'VAL-10', itemName: 'Brass valve', quantity: '10.0000', orderedQuantity: '10.0000', unit: 'EA', unitPrice: '100.1234', amount: '1001.2340', requestedDate: '2026-11-01', promisedDate: '2026-11-03' },
-    { id: 'L2', itemId: 'ITEM-2', sku: 'HOSE-2', itemName: 'Hose', quantity: '2.5000', orderedQuantity: '2.5000', unit: 'M', unitPrice: '93.3300', amount: '233.3260', requestedDate: null, promisedDate: null },
+    { id: 'L1', itemId: 'ITEM-1', sku: 'VAL-10', itemName: 'Brass valve', quantity: '10.0000', orderedQuantity: '10.0000', unit: 'EA', unitPrice: '100.1234', amount: '1001.2340', requestedDate: '2026-11-01', recordedPromisedDate: '2026-11-02', promisedDate: '2026-11-02' },
+    { id: 'L2', itemId: 'ITEM-2', sku: 'HOSE-2', itemName: 'Hose', quantity: '2.5000', orderedQuantity: '2.5000', unit: 'M', unitPrice: '93.3300', amount: '233.3260', requestedDate: null, recordedPromisedDate: null, promisedDate: '2026-11-03' },
   ],
   ...overrides,
 })
@@ -54,7 +54,7 @@ test('missing values are null, never a default currency, payment terms or contac
   const serialized = JSON.stringify(document)
   for (const invented of ['NET30', 'Net 30', '"USD"']) assert.equal(serialized.includes(invented), false, invented)
   assert.deepEqual(document.lines.map((line) => line.supplierSku), ['HS-VAL-10', null], 'an empty supplier SKU is not recorded')
-  assert.deepEqual(document.lines.map((line) => [line.requestedDate, line.promisedDate]), [['2026-11-01', '2026-11-03'], [null, null]])
+  assert.deepEqual(document.lines.map((line) => [line.requestedDate, line.promisedDate]), [['2026-11-01', '2026-11-02'], [null, null]], 'a promised date only where the line records one, never the expected date of the PO')
   assert.equal(document.expectedDate, '2026-11-03', 'a calendar date stays the recorded day')
   assert.equal(document.issuedAt, null)
   assert.equal(build({ order: order({ status: 'issued', metadata: { issuedAt: '2026-10-02T14:05:00.000Z' } }) }).issuedAt, '2026-10-02T14:05:00.000Z')
@@ -182,4 +182,43 @@ test('the document page sends nothing and says FlowChain does not send it', asyn
   assert.match(actions, /Print or save the PO document and send it yourself, then mark it issued\./)
   const route = readFileSync(new URL('../routes/procurement-workflow.routes.mjs', import.meta.url), 'utf8')
   assert.doesNotMatch(route.slice(route.indexOf('orderDocument'), route.indexOf('const poAction')), /mail|transmi/i)
+})
+
+test('the promised date column starts off and the requested date column on', () => {
+  assert.deepEqual(documentSettingsSeed.purchaseOrder.columns, { supplierSku: true, requestedDate: true, promisedDate: false })
+  assert.deepEqual(build().columns, { supplierSku: true, requestedDate: true, promisedDate: false })
+})
+
+test('the copy sent carries the recorded approval date, never today, and the issue date only once issued', () => {
+  const timeline = [
+    { action: 'submit', at: '2026-10-01T15:00:00.000Z' },
+    { action: 'approve', at: '2026-10-02T16:30:00.000Z' },
+    { action: 'issue', at: '2026-10-03T09:00:00.000Z' },
+  ]
+  assert.equal(build({ order: order({ approvalTimeline: timeline }) }).approvedAt, '2026-10-02T16:30:00.000Z')
+  assert.equal(build({ order: order({ metadata: { approvalTimeline: timeline } }) }).approvedAt, '2026-10-02T16:30:00.000Z', 'read from the metadata as well')
+  const document = build()
+  assert.deepEqual([document.approvedAt, document.issuedAt], [null, null], 'no recorded approval: no date')
+  assert.equal(build({ order: order({ approvalTimeline: [{ action: 'approve', at: 'not a time' }] }) }).approvedAt, null)
+})
+
+test('ship-to prints nothing when the warehouse is not found, not its raw id', () => {
+  assert.deepEqual(build({ warehouse: null }).shipTo, { code: null, name: null })
+  assert.equal(JSON.stringify(build({ warehouse: null })).includes('WH-1'), false)
+})
+
+test('supplier SKUs come only from active item links', () => {
+  const document = build({ supplierSkus: [{ itemId: 'ITEM-1', supplierSku: 'OLD-SKU', active: false }, { itemId: 'ITEM-2', supplierSku: 'HS-HOSE', active: true }] })
+  assert.deepEqual(document.lines.map((line) => line.supplierSku), [null, 'HS-HOSE'])
+})
+
+test('a stored negative zero prints as zero, and recorded digits are kept', async () => {
+  const { formatDecimal, formatAmount, formatCalendarDay } = await import('../../src/modules/business-documents/documentFormat.ts')
+  assert.equal(formatAmount('-0.0000', 'USD', 'en-US'), '0.00')
+  assert.equal(formatDecimal('-0.0000', 'en-US'), '0')
+  assert.equal(formatAmount('-12.5000', 'USD', 'en-US'), '-12.50')
+  assert.equal(formatAmount('1001.2340', 'EUR', 'en-US'), '1,001.234')
+  assert.equal(formatDecimal('19500.0000', 'en-US'), '19,500')
+  assert.equal(formatAmount(null, 'USD', 'en-US'), '—')
+  assert.equal(formatCalendarDay('2026-11-03', 'en-US'), 'Nov 3, 2026', 'a calendar day does not move a day back')
 })

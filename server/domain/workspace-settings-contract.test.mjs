@@ -135,7 +135,7 @@ test('document settings default to English with nothing invented and keep only k
     version: 1,
     documentLanguage: 'zh-CN',
     letterhead: { companyName: 'Harbor Goods LLC', addressLines: ['12 Pier Road', 'Oakland, CA 94607'], phone: null, email: 'buying@harbor.example', taxId: null },
-    purchaseOrder: { title: null, columns: { supplierSku: false, requestedDate: true, promisedDate: true }, termsText: 'Net 30 from invoice.', footerText: '', signatureBlock: true },
+    purchaseOrder: { title: null, columns: { supplierSku: false, requestedDate: true, promisedDate: false }, termsText: 'Net 30 from invoice.', footerText: '', signatureBlock: true },
   })
 })
 

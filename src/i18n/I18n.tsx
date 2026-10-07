@@ -352,7 +352,7 @@ const zh = {
   "documents.openPo": "打开采购订单文件",
   "documents.print": "打印或另存为 PDF",
   "documents.sendNote": "FlowChain 不会发送此文件，请打印或另存后自行发送。",
-  "documents.blocked.status": "采购订单批准后可用。",
+  "documents.blocked.status": "仅已批准的采购订单可打印发送。",
   "documents.blocked.prices": "你的角色无权查看价格，无法打印用于发送。",
   "documents.language": "文件语言",
   "documents.languageHint": "仅用于本次打印，不会保存。数字、日期和币种仍按工作区格式显示。",
@@ -377,7 +377,7 @@ const zh = {
   "documents.templates.poTitleHelp": "留空则按文件语言打印“采购订单”。",
   "documents.templates.columns": "可选列",
   "documents.templates.column.supplierSku": "供应商料号",
-  "documents.templates.column.requestedDate": "要求交期",
+  "documents.templates.column.requestedDate": "需求日期",
   "documents.templates.column.promisedDate": "承诺交期",
   "documents.templates.termsText": "条款",
   "documents.templates.termsHelp": "印在每份采购订单文件上。FlowChain 不会自行添加付款条款。",
@@ -387,6 +387,7 @@ const zh = {
   "documents.templates.tooLong": "{field}：最多 {limit} 个字符。",
   "documents.templates.tooManyLines": "{field}：最多 {limit} 行。",
   "documents.templates.invalid": "{field}：该值无法保存。",
+  "documents.templates.forbidden": "你无权修改这些设置。",
 } as const;
 
 const en: Record<keyof typeof zh, string> = {
@@ -725,7 +726,7 @@ const en: Record<keyof typeof zh, string> = {
   "documents.openPo": "Open PO document",
   "documents.print": "Print or save as PDF",
   "documents.sendNote": "FlowChain does not send this document. Print or save it and send it yourself.",
-  "documents.blocked.status": "Available once the PO is approved.",
+  "documents.blocked.status": "Only approved purchase orders can be printed for sending.",
   "documents.blocked.prices": "Your role cannot view prices, so this document cannot be printed for sending.",
   "documents.language": "Document language",
   "documents.languageHint": "For this print only; not saved. Numbers, dates and currencies keep the workspace format.",
@@ -760,6 +761,7 @@ const en: Record<keyof typeof zh, string> = {
   "documents.templates.tooLong": "{field}: at most {limit} characters.",
   "documents.templates.tooManyLines": "{field}: at most {limit} lines.",
   "documents.templates.invalid": "{field}: this value cannot be saved.",
+  "documents.templates.forbidden": "You don't have permission to change these settings.",
 };
 
 const routeKeys: Record<string, keyof typeof zh> = {

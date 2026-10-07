@@ -36,14 +36,17 @@ export const DOCUMENT_SETTINGS_LIMITS = Object.freeze({
 
 export const PURCHASE_ORDER_COLUMNS = Object.freeze(['supplierSku', 'requestedDate', 'promisedDate'])
 
-// A null company name prints the workspace's legal name, or its name.
+// A null company name prints the workspace's legal name, or its name. The
+// requested date is the buyer's own date and is printed by default; a
+// promised date is printed only where the supplier's promise was recorded on
+// the line, so its column starts off.
 export const documentSettingsSeed = Object.freeze({
   version: 1,
   documentLanguage: 'en-US',
   letterhead: Object.freeze({ companyName: null, addressLines: Object.freeze([]), phone: null, email: null, taxId: null }),
   purchaseOrder: Object.freeze({
     title: null,
-    columns: Object.freeze({ supplierSku: true, requestedDate: false, promisedDate: true }),
+    columns: Object.freeze({ supplierSku: true, requestedDate: true, promisedDate: false }),
     termsText: '',
     footerText: '',
     signatureBlock: false,
@@ -167,11 +170,20 @@ function supplierParty(supplier, order) {
   }
 }
 
+// When the PO was last approved: the latest approve step the PO's approval
+// timeline records; null when none was recorded (a PO seeded or imported as
+// approved). Never today's date.
+function approvedInstant(order) {
+  const timeline = Array.isArray(order?.approvalTimeline) ? order.approvalTimeline : Array.isArray(order?.metadata?.approvalTimeline) ? order.metadata.approvalTimeline : []
+  const approvals = timeline.filter((step) => step?.action === 'approve' && recorded(step.at) && Number.isFinite(Date.parse(step.at)))
+  return approvals.length ? recorded(approvals[approvals.length - 1].at) : null
+}
+
 // The purchase order as a document. `order` is the PO as the detail route
 // reads it (prices null without procurement.prices.read); `supplier` the
 // stored supplier row; `warehouse` the PO's delivery warehouse ({ id, code,
 // name }, which has no address); `supplierSkus` the supplier's item links
-// ({ itemId, supplierSku }); `letterhead`, `template` and `documentLanguage`
+// ({ itemId, supplierSku, active }; an inactive link is not used); `letterhead`, `template` and `documentLanguage`
 // the workspace's document settings; `workspace` its { legalName, name };
 // `access.prices` whether the reader may see prices.
 export function buildPurchaseOrderDocument({ order, supplier = null, warehouse = null, supplierSkus = [], letterhead = documentSettingsSeed.letterhead, template = documentSettingsSeed.purchaseOrder, documentLanguage = documentSettingsSeed.documentLanguage, workspace = {}, access = {} }) {
@@ -184,7 +196,7 @@ export function buildPurchaseOrderDocument({ order, supplier = null, warehouse =
     : access.prices !== true
       ? { ok: false, reason: 'prices_hidden' }
       : { ok: true, reason: null }
-  const skuByItem = new Map((supplierSkus || []).filter((link) => recorded(link?.itemId) && recorded(link?.supplierSku)).map((link) => [recorded(link.itemId), recorded(link.supplierSku)]))
+  const skuByItem = new Map((supplierSkus || []).filter((link) => link?.active !== false && recorded(link?.itemId) && recorded(link?.supplierSku)).map((link) => [recorded(link.itemId), recorded(link.supplierSku)]))
   const currency = recorded(order?.currency)
   const columns = Object.fromEntries(PURCHASE_ORDER_COLUMNS.map((key) => [key, template?.columns?.[key] === true]))
   return {
@@ -195,6 +207,9 @@ export function buildPurchaseOrderDocument({ order, supplier = null, warehouse =
     // The issue instant: the PO's own field where the read returns one, else
     // what the Issue action wrote to the metadata; null when never issued.
     issuedAt: recorded(order?.issuedAt) || recorded(meta.issuedAt),
+    // A PO is printed and sent before it is marked issued, so the copy sent
+    // carries the recorded approval time.
+    approvedAt: approvedInstant(order),
     expectedDate: calendarDay(order?.expectedDate),
     documentLanguage: DOCUMENT_LANGUAGES.includes(documentLanguage) ? documentLanguage : documentSettingsSeed.documentLanguage,
     printable,
@@ -206,8 +221,9 @@ export function buildPurchaseOrderDocument({ order, supplier = null, warehouse =
       taxId: recorded(letterhead?.taxId),
     },
     supplier: supplierParty(supplier, order),
-    // A warehouse has no address in FlowChain; the code and name are printed.
-    shipTo: { code: recorded(warehouse?.code) || recorded(meta.targetWarehouseId), name: recorded(warehouse?.name) },
+    // A warehouse has no address in FlowChain; the code and name are printed,
+    // and nothing when the warehouse is not found.
+    shipTo: { code: recorded(warehouse?.code), name: recorded(warehouse?.name) },
     currency,
     lines: (Array.isArray(order?.lines) ? order.lines : []).map((line, index) => ({
       lineNo: index + 1,
@@ -219,7 +235,9 @@ export function buildPurchaseOrderDocument({ order, supplier = null, warehouse =
       unitPrice: recorded(line.unitPrice),
       amount: recorded(line.amount),
       requestedDate: calendarDay(line.requestedDate),
-      promisedDate: calendarDay(line.promisedDate),
+      // Only the date the supplier's promise recorded on the line; never the
+      // PO's expected date, which is the buyer's own.
+      promisedDate: calendarDay(line.recordedPromisedDate),
     })),
     // The amount recorded on the PO, in the PO's one currency.
     totals: [{ currency, amount: recorded(order?.totalAmount) }],

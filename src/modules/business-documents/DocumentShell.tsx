@@ -44,7 +44,7 @@ export function DocumentShell({
             <ArrowLeft size={16} />{backLabel}
           </Link>
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm" title={t("documents.languageHint")}>
+            <label className="flex items-center gap-2 text-sm">
               <span style={{ color: A.label }}>{t("documents.language")}</span>
               <select
                 data-testid="business-document-language"
@@ -57,6 +57,7 @@ export function DocumentShell({
                 <option value="zh-CN">{t("settings.chinese")} — zh-CN</option>
               </select>
             </label>
+            <span className="max-w-[260px] text-xs" data-testid="business-document-language-hint" style={{ color: A.sub }}>{t("documents.languageHint")}</span>
             <button
               type="button"
               data-testid="business-document-print"

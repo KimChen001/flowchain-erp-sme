@@ -41,6 +41,7 @@ declare module '../../../shared/business-documents.mjs' {
     number: string | null;
     status: string | null;
     issuedAt: string | null;
+    approvedAt: string | null;
     expectedDate: string | null;
     documentLanguage: DocumentLanguage;
     printable: { ok: boolean; reason: null | 'status' | 'prices_hidden' };

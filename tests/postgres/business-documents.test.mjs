@@ -36,7 +36,7 @@ test('the PO document reads as the PO detail does and prints only what is record
     await prisma.supplier.create({ data: { id: 'PD-SUP', tenantId, code: 'HARBOR', name: 'Harbor Supply', metadata: { contactName: 'Dana Ruiz', email: 'orders@harbor.invalid', address: '1 Wharf St', taxIdentificationNumber: 'TAX-998877', bankName: 'Coastal Bank', bankAccountName: 'Harbor Supply Inc', bankAccountNumber: '000111222333', creditCode: 'CC-4455' } } })
     await prisma.item.create({ data: { id: 'PD-ITEM', tenantId, sku: 'VAL-10', name: 'Brass valve', unit: 'EA' } })
     await prisma.runtimeRecord.create({ data: { id: 'ISR-PD-1', tenantId, namespace: ITEM_SUPPLIER_NAMESPACE, recordKey: 'PD-ITEM::PD-SUP', payload: { itemId: 'PD-ITEM', supplierId: 'PD-SUP', supplierSku: 'HS-VAL-10', active: true, approved: true, version: 1 } } })
-    await prisma.purchaseOrder.create({ data: { id: 'PD-PO', tenantId, status: 'approved', supplierId: 'PD-SUP', supplierName: 'Harbor Supply', currency: 'EUR', amount: '1001.2340', expectedDate: new Date('2026-11-03T12:00:00Z'), metadata: { orderNumber: 'PO-2026-0077', targetWarehouseId: 'PD-WH' }, lines: { create: { id: 'PD-POL', itemId: 'PD-ITEM', sku: 'VAL-10', itemName: 'Brass valve', orderedQuantity: '10.0000', receivedQuantity: '0.0000', unit: 'EA', unitPrice: '100.1234', amount: '1001.2340', metadata: { requestedDate: '2026-11-01' } } } } })
+    await prisma.purchaseOrder.create({ data: { id: 'PD-PO', tenantId, status: 'approved', supplierId: 'PD-SUP', supplierName: 'Harbor Supply', currency: 'EUR', amount: '1001.2340', expectedDate: new Date('2026-11-03T12:00:00Z'), metadata: { orderNumber: 'PO-2026-0077', targetWarehouseId: 'PD-WH', approvalTimeline: [{ action: 'submit', actorId: 'pd-admin', at: '2026-10-01T15:00:00.000Z', reason: null }, { action: 'approve', actorId: 'pd-admin', at: '2026-10-02T16:30:00.000Z', reason: null }] }, lines: { create: { id: 'PD-POL', itemId: 'PD-ITEM', sku: 'VAL-10', itemName: 'Brass valve', orderedQuantity: '10.0000', receivedQuantity: '0.0000', unit: 'EA', unitPrice: '100.1234', amount: '1001.2340', metadata: { requestedDate: '2026-11-01' } } } } })
     await prisma.purchaseOrder.create({ data: { id: 'PD-PO-DRAFT', tenantId, status: 'draft', supplierId: 'PD-SUP', supplierName: 'Harbor Supply', currency: 'EUR', amount: '5.0000' } })
     await prisma.purchaseOrder.create({ data: { id: 'PD-PO-OTHER', tenantId: otherTenantId, status: 'approved', supplierName: 'Elsewhere Ltd', currency: 'USD', amount: '9.0000' } })
 
@@ -63,6 +63,11 @@ test('the PO document reads as the PO detail does and prints only what is record
     assert.deepEqual(document.shipTo, { code: 'OAK', name: 'Oakland DC' })
     assert.deepEqual(document.lines.map((line) => [line.sku, line.supplierSku, line.quantity, line.unit, line.unitPrice, line.amount, line.requestedDate]), [['VAL-10', 'HS-VAL-10', '10.0000', 'EA', '100.1234', '1001.2340', '2026-11-01']])
     assert.deepEqual(document.totals, [{ currency: 'EUR', amount: '1001.2340' }])
+    // Sent before it is marked issued: the recorded approval date, no issue date.
+    assert.deepEqual([document.approvedAt, document.issuedAt], ['2026-10-02T16:30:00.000Z', null])
+    // A line converted from a purchase request records only the requested
+    // date: no promised date is printed, though the PO has an expected date.
+    assert.deepEqual(document.lines.map((line) => [line.requestedDate, line.promisedDate]), [['2026-11-01', null]])
     assert.equal(document.termsText, 'Deliver to the dock between 8am and 4pm.')
     const serialized = JSON.stringify(body)
     for (const value of ['TAX-998877', 'Coastal Bank', 'Harbor Supply Inc', '000111222333', 'CC-4455', 'NET30', '"USD"']) assert.equal(serialized.includes(value), false, value)

@@ -32,7 +32,9 @@ export function formatDecimal(value: string | null | undefined, locale: string, 
   if (digits.length < minimumFractionDigits) digits = digits.padEnd(minimumFractionDigits, "0");
   const { group, decimal } = separators(locale);
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, group);
-  return `${sign}${grouped}${digits ? `${decimal}${digits}` : ""}`;
+  // A stored "-0.0000" is zero and prints without a minus sign.
+  const zero = /^0+$/.test(whole) && /^0*$/.test(fraction);
+  return `${zero ? "" : sign}${grouped}${digits ? `${decimal}${digits}` : ""}`;
 }
 
 // The minor unit digits of a currency (2 for USD, 0 for JPY), so an amount

@@ -43,7 +43,9 @@ function PurchaseOrderSheet({ doc, language }: { doc: PurchaseOrderDocument; lan
           <h1 data-testid="po-document-title">{doc.title || c("purchaseOrder")}</h1>
           <dl>
             <dt>{c("poNumber")}</dt><dd data-testid="po-document-number">{dash(doc.number)}</dd>
-            <dt>{c("issueDate")}</dt><dd data-testid="po-document-issue-date">{formatInstantDay(doc.issuedAt, locale, timezone)}</dd>
+            {/* The copy sent is printed before the PO is marked issued: it carries the recorded approval date. */}
+            {doc.approvedAt && <><dt>{c("approvedOn")}</dt><dd data-testid="po-document-approved-on">{formatInstantDay(doc.approvedAt, locale, timezone)}</dd></>}
+            {doc.issuedAt && <><dt>{c("issueDate")}</dt><dd data-testid="po-document-issue-date">{formatInstantDay(doc.issuedAt, locale, timezone)}</dd></>}
             <dt>{c("expectedDelivery")}</dt><dd data-testid="po-document-expected-date">{formatCalendarDay(doc.expectedDate, locale)}</dd>
             <dt>{c("currency")}</dt><dd data-testid="po-document-currency">{dash(doc.currency)}</dd>
           </dl>
@@ -81,8 +83,8 @@ function PurchaseOrderSheet({ doc, language }: { doc: PurchaseOrderDocument; lan
           {doc.lines.map((line) => (
             <tr key={line.lineNo} data-testid={`po-document-line-${line.lineNo}`}>
               <td>{line.lineNo}</td>
-              <td>{dash(line.sku)}</td>
-              {columns.supplierSku && <td>{dash(line.supplierSku)}</td>}
+              <td data-testid="po-document-line-sku">{dash(line.sku)}</td>
+              {columns.supplierSku && <td data-testid="po-document-line-supplier-sku">{dash(line.supplierSku)}</td>}
               <td>{dash(line.description)}</td>
               <td className="is-number" data-testid="po-document-line-quantity">{formatDecimal(line.quantity, locale)}</td>
               <td>{dash(line.unit)}</td>
