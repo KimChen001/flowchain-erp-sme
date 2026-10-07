@@ -30,7 +30,11 @@ import { aiAgentBusinessQueryTool } from './ai-agent-business-query.mjs'
 
 export const AI_AGENT_LIMITS = Object.freeze({ maxTools: 3, maxRecords: 10, timeoutMs: 2500, maxTimeoutMs: 5000 })
 // Providers whose adapter sends native tool calls (chat completions).
-const TOOL_CALLING_KINDS = new Set(['deepseek_chat', 'doubao_chat', 'qwen_chat', 'parley_chat'])
+// anthropic_chat is Anthropic's OpenAI-compatible endpoint, the trial provider
+// (direction decision 2). It takes `tools` and returns `tool_calls`; it is
+// asked with tool_choice "auto" until a real call confirms "required"
+// (docs/ai-workspace-access.md).
+const TOOL_CALLING_KINDS = new Set(['deepseek_chat', 'doubao_chat', 'qwen_chat', 'parley_chat', 'anthropic_chat'])
 // Providers asked for a tool call and no text (tool_choice "required"):
 // verified on Parley through both kinds on 2026-10-05, and documented by
 // DeepSeek. With it the model declines by calling AI_AGENT_NO_SKILL alone: a
@@ -53,9 +57,10 @@ const noSkillTool = Object.freeze({
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
 
-// Off unless FLOWCHAIN_AI_AGENT_MODE=plan and a tool-calling provider is configured.
+// Off unless FLOWCHAIN_AI_AGENT_MODE is plan (P2) or compose (P2 and P3
+// wording, ai-answer-compose.mjs) and a tool-calling provider is configured.
 export function aiAgentPlanningEnabled(env = {}) {
-  return text(env.FLOWCHAIN_AI_AGENT_MODE).toLowerCase() === 'plan' && canCallConfiguredProvider(env) && TOOL_CALLING_KINDS.has(providerRuntimeConfig(env).kind)
+  return ['plan', 'compose'].includes(text(env.FLOWCHAIN_AI_AGENT_MODE).toLowerCase()) && canCallConfiguredProvider(env) && TOOL_CALLING_KINDS.has(providerRuntimeConfig(env).kind)
 }
 
 export function aiAgentTimeout(env = {}) {
