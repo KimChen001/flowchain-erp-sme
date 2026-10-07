@@ -12,7 +12,9 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { outboundEnglish } from "./outboundCopy";
+import { outboundPreviewSentences, type OutboundPreviewLookup } from "./outboundPreviewText";
 import { formatQuantity } from "../../lib/format";
+import { movementTypeLabel } from "../../i18n/statusLabels";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
@@ -92,6 +94,7 @@ type Balance = {
 type Reservation = {
   id: string;
   salesOrderLineId: string;
+  sku?: string;
   warehouseId: string;
   location: string;
   reservedQuantity: string;
@@ -148,6 +151,7 @@ type Workbench = {
     sku: string;
     itemName?: string | null;
     warehouseId?: string;
+    location?: string;
     quantityIn: string;
     quantityOut: string;
   }>;
@@ -193,6 +197,7 @@ type Preview = {
   allowed: boolean;
   blockingIssues: Array<{ code: string; message: string }>;
   warnings: Array<{ code: string; message: string }>;
+  normalizedPlan?: Record<string, unknown> | null;
   balanceImpacts: Array<Record<string, string>>;
   reservationImpacts: Array<Record<string, string>>;
   salesOrderLineImpacts: Array<Record<string, string>>;
@@ -257,8 +262,40 @@ const pretty: Record<string, string> = {
   matched: "一致",
   mismatch: "不一致",
   unavailable: "不可用",
+  // Reservation and shipment allocation statuses.
+  active: "有效",
+  allocated: "已分配",
+  partially_allocated: "部分分配",
+  partially_consumed: "部分消耗",
+  consumed: "已消耗",
+  released: "已释放",
+  deallocated: "已取消分配",
 };
 const status = (value: string) => copy(pretty[value] || value);
+// One status for a shipment: cancelled, else posted or reversed, else where
+// the unposted draft stands. Both stored statuses stay as they are.
+const shipmentStatus = (shipment: { workflowStatus: string; postingStatus: string }) =>
+  shipment.workflowStatus === "cancelled"
+    ? "cancelled"
+    : shipment.postingStatus && shipment.postingStatus !== "unposted"
+      ? shipment.postingStatus
+      : shipment.workflowStatus;
+// A long stored id (a reservation or movement UUID) in a short form for a
+// table column. The full id is never changed.
+const shortId = (id?: string | null) => {
+  const value = String(id || "");
+  return value.length > 12 ? `${value.slice(0, 8)}…` : value || "—";
+};
+const hasQuantity = (value?: string | null) => Number(value) > 0;
+// A warehouse by its name and its location, e.g. "Main Warehouse / A-01".
+function usePlace() {
+  const warehouseName = useWarehouseNames();
+  return useCallback(
+    (warehouseId?: string | null, location?: string | null) =>
+      `${warehouseName(warehouseId) || "—"} / ${location || copy("默认库位")}`,
+    [warehouseName],
+  );
+}
 const reconciliationRuleLabels: Record<string, string> = {
   "available = onHand - reserved": "可用量 = 在库量 - 预留量",
   "reserved + fulfilled <= ordered": "预留量 + 已履约量不超过订购量",
@@ -284,29 +321,36 @@ function errorMessage(error: unknown) {
   if (error.status === 401) return "登录已失效，请重新登录后读取销售订单。";
   if (error.status === 403) return "当前账号没有读取销售订单的权限。";
   if (error.status >= 500) return "销售订单服务暂时不可用，请稍后重试。";
-  const map: Record<string, string> = {
-    PERMISSION_DENIED: "当前角色只能查看，不能执行此操作。",
-    WAREHOUSE_SCOPE_DENIED: "当前账号没有相关仓库权限。",
-    SALES_ORDER_ON_HOLD: "销售订单当前已暂停，不能执行发货过账。请先恢复订单。",
-    OUTBOUND_CAPABILITY_NOT_AVAILABLE:
-      "当前销售订单写入能力未启用，页面保持只读。",
-    SALES_ORDER_VERSION_CONFLICT: "订单已发生变化，请刷新后重新预览。",
-    SHIPMENT_VERSION_CONFLICT: "发货单已变化，请刷新后重新预览。",
-    OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT:
-      "库存已发生变化，请刷新后重新预览。",
-    IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD:
-      "操作内容已改变，请重新开始该操作。",
-    COMMAND_EXECUTION_IN_PROGRESS: "该操作正在处理中，请稍后重试。",
-    RESERVATION_INSUFFICIENT_AVAILABLE: "可用库存不足，请调整数量。",
-    SHIPMENT_REVERSAL_NOT_SAFE: "历史出库事实不一致，系统已阻止冲销。",
-    SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE: SHIPMENT_INVOICE_BLOCK,
-    SHIPMENT_NUMBER_CONFLICT: "发货单号已存在，请更换号码。",
-    SALES_ORDER_NUMBER_CONFLICT: "销售订单号已存在，请更换号码。",
-    SALES_ORDER_INVALID_STATE: "当前订单状态不允许此操作。",
-    SALES_ORDER_ITEM_INVALID: "订单物料与当前工作区主数据不一致。",
-  };
-  return map[error.code || ""] || error.message;
+  return codeMessages[error.code || ""] || error.message;
 }
+// A preview's blocking issue in the interface language when its code is known;
+// otherwise the server's message as sent.
+const issueMessage = (issue: { code: string; message: string }) =>
+  codeMessages[issue.code] ? copy(codeMessages[issue.code]) : issue.message;
+const codeMessages: Record<string, string> = {
+  PERMISSION_DENIED: "当前角色只能查看，不能执行此操作。",
+  WAREHOUSE_SCOPE_DENIED: "当前账号没有相关仓库权限。",
+  SALES_ORDER_ON_HOLD: "销售订单当前已暂停，不能执行发货过账。请先恢复订单。",
+  OUTBOUND_CAPABILITY_NOT_AVAILABLE:
+    "当前销售订单写入能力未启用，页面保持只读。",
+  SALES_ORDER_VERSION_CONFLICT: "订单已发生变化，请刷新后重新预览。",
+  SHIPMENT_VERSION_CONFLICT: "发货单已变化，请刷新后重新预览。",
+  OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT:
+    "库存已发生变化，请刷新后重新预览。",
+  IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD:
+    "操作内容已改变，请重新开始该操作。",
+  COMMAND_EXECUTION_IN_PROGRESS: "该操作正在处理中，请稍后重试。",
+  RESERVATION_INSUFFICIENT_AVAILABLE: "可用库存不足，请调整数量。",
+  RESERVATION_OVER_ORDERED: "数量超过该订单行尚待预留的数量。",
+  SHIPMENT_RESERVATION_INSUFFICIENT: "预留数量不足，请调整数量。",
+  SHIPMENT_OVER_FULFILLMENT: "数量超过该订单行尚待发货的数量。",
+  SHIPMENT_REVERSAL_NOT_SAFE: "历史出库事实不一致，系统已阻止冲销。",
+  SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE: SHIPMENT_INVOICE_BLOCK,
+  SHIPMENT_NUMBER_CONFLICT: "发货单号已存在，请更换号码。",
+  SALES_ORDER_NUMBER_CONFLICT: "销售订单号已存在，请更换号码。",
+  SALES_ORDER_INVALID_STATE: "当前订单状态不允许此操作。",
+  SALES_ORDER_ITEM_INVALID: "订单物料与当前工作区主数据不一致。",
+};
 const Section = ({
   title,
   children,
@@ -858,6 +902,7 @@ function OrderEntry() {
 
 function OrderDetail({ id }: { id: string }) {
   const warehouseName = useWarehouseNames();
+  const place = usePlace();
   const stamp = useStamp();
   const [data, setData] = useState<Workbench | null>(null),
     [error, setError] = useState(""),
@@ -918,6 +963,49 @@ function OrderDetail({ id }: { id: string }) {
       setEditQuantity(data.lines[0]?.orderedQuantity || "1.0000");
       setEditUnitPrice(data.lines[0]?.unitPrice ?? "");
     }
+    // With only one order line, or one reservation to release, it is chosen.
+    if ((next === "reserve" || next === "shipment") && data?.lines.length === 1)
+      chooseLine(data.lines[0].id, next);
+    if (next === "release" && data) {
+      const open = data.reservations.filter((row) => hasQuantity(row.allocatableQuantity));
+      if (open.length === 1) chooseReservation(open[0].id);
+    }
+  }
+  // Choosing a line picks its only usable balance (to reserve) or its only
+  // open reservation (to ship), and fills in the quantity the line still needs.
+  function chooseLine(lineId: string, forIntent = intent) {
+    setSelectedLineId(lineId);
+    setSelectedBalanceId("");
+    setSelectedReservationId("");
+    setPreview(null);
+    setIntentKey(key());
+    const line = data?.lines.find((row) => row.id === lineId);
+    if (!data || !line) return;
+    if (forIntent === "reserve") {
+      setQuantity(hasQuantity(line.remainingToReserve) ? line.remainingToReserve! : "1.0000");
+      const usable =
+        data.availability
+          .find((row) => row.salesOrderLineId === lineId)
+          ?.balances.filter((row) => row.selectable) || [];
+      if (usable.length === 1) setSelectedBalanceId(usable[0].id);
+    } else if (forIntent === "shipment") {
+      const open = data.reservations.filter(
+        (row) => row.salesOrderLineId === lineId && hasQuantity(row.allocatableQuantity),
+      );
+      if (open.length === 1) {
+        setSelectedReservationId(open[0].id);
+        setQuantity(open[0].allocatableQuantity);
+      } else setQuantity(hasQuantity(line.remainingToFulfill) ? line.remainingToFulfill! : "1.0000");
+    }
+  }
+  // A reservation's quantity still free to ship or release.
+  function chooseReservation(reservationId: string) {
+    setSelectedReservationId(reservationId);
+    setPreview(null);
+    setIntentKey(key());
+    const reservation = data?.reservations.find((row) => row.id === reservationId);
+    if (reservation && hasQuantity(reservation.allocatableQuantity))
+      setQuantity(reservation.allocatableQuantity);
   }
   // Cancelling: the server's plan first, then the command with the same reason.
   async function previewCancellation() {
@@ -1144,6 +1232,54 @@ function OrderDetail({ id }: { id: string }) {
     balanceOptions =
       data.availability.find((row) => row.salesOrderLineId === selectedLineId)
         ?.balances || [];
+  const reservationFacts = (reservationId: string) => {
+    const reservation = data.reservations.find((row) => row.id === reservationId);
+    if (!reservation) return undefined;
+    const line = data.lines.find((row) => row.id === reservation.salesOrderLineId);
+    return {
+      warehouseId: reservation.warehouseId,
+      location: reservation.location,
+      sku: reservation.sku || line?.sku,
+      unit: line?.unit,
+    };
+  };
+  const previewLookup: OutboundPreviewLookup = {
+    place,
+    reservation: reservationFacts,
+    line: (lineId) => data.lines.find((row) => row.id === lineId),
+    unit: (sku) => data.lines.find((row) => row.sku === sku)?.unit,
+  };
+  const knownWarehouses = new Set(
+    [
+      ...data.reservations.map((row) => row.warehouseId),
+      ...data.movements.map((row) => row.warehouseId),
+      ...data.availability.flatMap((row) => row.balances.map((balance) => balance.warehouseId)),
+    ].filter(Boolean) as string[],
+  );
+  const timelinePart = (part: string) => {
+    const reservation = reservationFacts(part);
+    if (reservation) return place(reservation.warehouseId, reservation.location);
+    return knownWarehouses.has(part) ? warehouseName(part) : undefined;
+  };
+  const lineOptionText = (x: Line) =>
+    `${x.sku} · ${x.itemName} · ${say(
+      "Ordered {o} / Reserved {r} / Shipped {f} / To reserve {p}",
+      "订购 {o} / 预留 {r} / 履约 {f} / 待预留 {p}",
+    )
+      .replace("{o}", formatQuantity(x.orderedQuantity))
+      .replace("{r}", formatQuantity(x.reservedQuantity))
+      .replace("{f}", formatQuantity(x.fulfilledQuantity))
+      .replace("{p}", x.remainingToReserve == null ? copy("受限") : formatQuantity(x.remainingToReserve))}`;
+  const reservationOptionText = (x: Reservation) =>
+    `${data.lines.length > 1 && x.sku ? `${x.sku} · ` : ""}${place(x.warehouseId, x.location)} · ${say(
+      "Reserved {r} / Allocated {a} / Used {c} / Released {l} / Available {v}",
+      "预留 {r} / 已分配 {a} / 已消耗 {c} / 已释放 {l} / 可分配 {v}",
+    )
+      .replace("{r}", formatQuantity(x.reservedQuantity))
+      .replace("{a}", formatQuantity(x.allocatedQuantity))
+      .replace("{c}", formatQuantity(x.consumedQuantity))
+      .replace("{l}", formatQuantity(x.releasedQuantity))
+      .replace("{v}", formatQuantity(x.allocatableQuantity))}`;
   return (
     <div className="space-y-4" data-testid="outbound-order-workbench">
       {error && (
@@ -1181,8 +1317,8 @@ function OrderDetail({ id }: { id: string }) {
           <div>
             <h1 className="text-xl font-semibold">{data.order.orderNumber}</h1>
             <p className="mt-1 text-sm text-slate-500">
-              {data.order.customerName} · {data.order.currency} · v
-              {data.order.version} · {stamp(data.order.updatedAt)}
+              {/* The order version is an internal edit counter, so it is not shown. */}
+              {data.order.customerName} · {data.order.currency} · {stamp(data.order.updatedAt)}
             </p>
             <div className="mt-2 flex gap-2">
               <Badge value={data.order.workflowStatus} />
@@ -1370,14 +1506,14 @@ function OrderDetail({ id }: { id: string }) {
       <Section id="reservations" title={copy("预留记录")}>
         <Table
           rows={data.reservations.map((x) => [
-            x.id,
-            x.warehouseId,
-            x.location,
-            x.reservedQuantity,
-            x.allocatedQuantity,
-            x.consumedQuantity,
-            x.releasedQuantity,
-            x.allocatableQuantity,
+            shortId(x.id),
+            warehouseName(x.warehouseId),
+            x.location || copy("默认库位"),
+            formatQuantity(x.reservedQuantity),
+            formatQuantity(x.allocatedQuantity),
+            formatQuantity(x.consumedQuantity),
+            formatQuantity(x.releasedQuantity),
+            formatQuantity(x.allocatableQuantity),
             status(x.status),
           ])}
           headers={[
@@ -1403,9 +1539,7 @@ function OrderDetail({ id }: { id: string }) {
               key={x.id}
             >
               <span>{x.shipmentNumber}</span>
-              <span>
-                {status(x.workflowStatus)} · {status(x.postingStatus)}
-              </span>
+              <span>{status(shipmentStatus(x))}</span>
             </Link>
           ))}
           {!data.shipments.length && (
@@ -1416,18 +1550,18 @@ function OrderDetail({ id }: { id: string }) {
       <Section id="movements" title={copy("库存流水")}>
         <Table
           rows={data.movements.map((x) => [
-            x.id,
+            shortId(x.id),
             x.sku,
-            x.warehouseId,
-            x.quantityIn,
-            x.quantityOut,
-            status(x.movementType),
+            warehouseName(x.warehouseId),
+            formatQuantity(x.quantityIn),
+            formatQuantity(x.quantityOut),
+            movementTypeLabel(x.movementType, activeLanguage),
           ])}
           headers={["流水 ID", "SKU", "仓库", "入", "出", "类型"]}
         />
       </Section>
       <Section id="evidence" title={copy("订单证据与时间线")}>
-        <Timeline rows={data.evidence} />
+        <Timeline rows={data.evidence} resolve={timelinePart} />
       </Section>
       <Section id="reconciliation" title={copy("履约一致性检查")}>
         <div className="mb-2 flex items-center gap-2">
@@ -1457,12 +1591,12 @@ function OrderDetail({ id }: { id: string }) {
             intent === "cancel"
               ? say("Cancel sales order", "取消销售订单")
               : intent === "edit"
-              ? "编辑销售订单草稿"
+              ? copy("编辑销售订单草稿")
               : intent === "reserve"
-                ? "预留库存"
+                ? say("Reserve inventory", "预留库存")
                 : intent === "release"
-                  ? "释放预留"
-                  : "创建发货草稿"
+                  ? say("Release reservation", "释放预留")
+                  : say("Create delivery draft", "创建发货草稿")
           }
           onClose={() => {
             setIntent("");
@@ -1549,7 +1683,7 @@ function OrderDetail({ id }: { id: string }) {
               </label>
               <div className="mt-4">
                 <Button disabled={saving || !editUnitPrice.trim()} onClick={() => void reviseDraft()}>
-                  {saving ? "保存中…" : "保存修订"}
+                  {saving ? copy("保存中…") : copy("保存修订")}
                 </Button>
               </div>
             </>
@@ -1562,20 +1696,12 @@ function OrderDetail({ id }: { id: string }) {
                     aria-label={copy("销售订单行")}
                     className="mt-1 w-full rounded-lg border p-2"
                     value={selectedLineId}
-                    onChange={(e) => {
-                      setSelectedLineId(e.target.value);
-                      setSelectedBalanceId("");
-                      setSelectedReservationId("");
-                      setPreview(null);
-                      setIntentKey(key());
-                    }}
+                    onChange={(e) => chooseLine(e.target.value)}
                   >
                     <option value="">{copy("请选择订单行")}</option>
                     {lineOptions.map((x) => (
                       <option value={x.id} key={x.id}>
-                        {x.sku} · {x.itemName} · 订购 {x.orderedQuantity} / 预留{" "}
-                        {x.reservedQuantity} / 履约 {x.fulfilledQuantity} /
-                        待预留 {x.remainingToReserve ?? "受限"}
+                        {lineOptionText(x)}
                       </option>
                     ))}
                   </select>
@@ -1597,11 +1723,11 @@ function OrderDetail({ id }: { id: string }) {
                     <option value="">{copy("请选择库存余额")}</option>
                     {balanceOptions.map((x) => (
                       <option disabled={!x.selectable} value={x.id} key={x.id}>
-                        {warehouseName(x.warehouseId)} · {x.location || copy("默认库位")} ·{" "}
+                        {place(x.warehouseId, x.location)} ·{" "}
                         {copy("现有 {n}").replace("{n}", formatQuantity(x.onHandQuantity))} /{" "}
                         {copy("预留 {n}").replace("{n}", formatQuantity(x.reservedQuantity))} /{" "}
-                        {copy("可用 {n}").replace("{n}", formatQuantity(x.availableQuantity))} ·{" "}
-                        {copy(x.selectable ? "可操作" : "只读")}
+                        {copy("可用 {n}").replace("{n}", formatQuantity(x.availableQuantity))}
+                        {x.selectable ? "" : ` · ${copy("只读")}`}
                       </option>
                     ))}
                   </select>
@@ -1614,19 +1740,12 @@ function OrderDetail({ id }: { id: string }) {
                     aria-label={copy("预留记录")}
                     className="mt-1 w-full rounded-lg border p-2"
                     value={selectedReservationId}
-                    onChange={(e) => {
-                      setSelectedReservationId(e.target.value);
-                      setPreview(null);
-                      setIntentKey(key());
-                    }}
+                    onChange={(e) => chooseReservation(e.target.value)}
                   >
                     <option value="">{copy("请选择预留记录")}</option>
                     {reservationOptions.map((x) => (
                       <option value={x.id} key={x.id}>
-                        {x.id} · {x.warehouseId} / {x.location || "默认库位"} ·
-                        预留 {x.reservedQuantity} / 已分配 {x.allocatedQuantity}{" "}
-                        / 已消耗 {x.consumedQuantity} / 已释放{" "}
-                        {x.releasedQuantity} / 可分配 {x.allocatableQuantity}
+                        {reservationOptionText(x)}
                       </option>
                     ))}
                   </select>
@@ -1658,10 +1777,6 @@ function OrderDetail({ id }: { id: string }) {
                       setIntentKey(key());
                     }}
                   />
-                  <span className="mt-1 block text-xs text-slate-500">
-                    当前界面每次创建一个订单行和一条预留分配；后端 API
-                    支持多行和多分配。
-                  </span>
                 </label>
               )}
               {intent === "release" && (
@@ -1680,11 +1795,9 @@ function OrderDetail({ id }: { id: string }) {
                 </label>
               )}
               {preview ? (
-                <PreviewView preview={preview} />
+                <PreviewView preview={preview} lookup={previewLookup} />
               ) : (
-                <p className="mt-3 text-xs text-slate-500">
-                  {copy("必须先读取服务端预览，前端不计算权威库存。")}
-                </p>
+                <p className="mt-3 text-xs text-slate-500">{previewHint()}</p>
               )}
               <div className="mt-4 flex gap-2">
                 <Button
@@ -1692,14 +1805,20 @@ function OrderDetail({ id }: { id: string }) {
                   disabled={saving}
                   onClick={() => void loadPreview()}
                 >
-                  {copy("读取预览")}
+                  {say("Preview", "预览")}
                 </Button>
                 <Button
                   testId="confirm-outbound-action"
                   disabled={!preview?.allowed || saving}
                   onClick={() => void execute()}
                 >
-                  {saving ? "处理中…" : "确认执行"}
+                  {saving
+                    ? copy("处理中…")
+                    : intent === "reserve"
+                      ? say("Reserve", "确认预留")
+                      : intent === "release"
+                        ? say("Release", "确认释放")
+                        : say("Create delivery draft", "创建发货草稿")}
                 </Button>
               </div>
             </>
@@ -1712,13 +1831,15 @@ function OrderDetail({ id }: { id: string }) {
 
 function ShipmentDetail({ id }: { id: string }) {
   const stamp = useStamp();
+  const warehouseName = useWarehouseNames();
+  const place = usePlace();
   const [data, setData] = useState<ShipmentWorkbench | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
     [preview, setPreview] = useState<Preview | null>(null),
     [intent, setIntent] = useState(""),
     [intentKey, setIntentKey] = useState(""),
-    [reason, setReason] = useState("业务冲销"),
+    [reason, setReason] = useState(() => copy("业务冲销")),
     [saving, setSaving] = useState(false);
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1794,6 +1915,32 @@ function ShipmentDetail({ id }: { id: string }) {
       </div>
     );
   if (!data) return <div role="alert">{copy(error)}</div>;
+  // A reservation on this shipment by its warehouse and location; its SKU and
+  // unit are known when the shipment has one line.
+  const onlyLine = data.lines.length === 1 ? data.lines[0] : undefined;
+  const reservationFacts = (reservationId: string) => {
+    const allocation = data.allocations.find((row) => row.reservationId === reservationId);
+    return allocation
+      ? { warehouseId: allocation.warehouseId, location: allocation.location, sku: onlyLine?.sku, unit: onlyLine?.unit }
+      : undefined;
+  };
+  const previewLookup: OutboundPreviewLookup = {
+    place,
+    reservation: reservationFacts,
+    unit: (sku) => data.lines.find((row) => row.sku === sku)?.unit,
+  };
+  const knownWarehouses = new Set(
+    [...data.allocations.map((row) => row.warehouseId), ...data.movements.map((row) => row.warehouseId)].filter(
+      Boolean,
+    ) as string[],
+  );
+  const timelinePart = (part: string) => {
+    const reservation = reservationFacts(part);
+    if (reservation) return place(reservation.warehouseId, reservation.location);
+    return knownWarehouses.has(part) ? warehouseName(part) : undefined;
+  };
+  const postedAt = data.shipment.postedAt ? stamp(data.shipment.postedAt) : "—",
+    reversedAt = data.shipment.reversedAt ? stamp(data.shipment.reversedAt) : "—";
   return (
     <div className="space-y-4" data-testid="shipment-workbench">
       {error && (
@@ -1804,32 +1951,29 @@ function ShipmentDetail({ id }: { id: string }) {
       <section className="rounded-xl border bg-white p-5">
         <div className="flex flex-wrap justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold">
-                {data.shipment.shipmentNumber}
-              </h1>
-              <span className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700">
-                {copy("PostgreSQL 正式记录")}
-              </span>
-            </div>
-            <p className="text-sm text-slate-500">
-              销售订单{" "}
+            <h1 className="text-xl font-semibold">
+              {data.shipment.shipmentNumber}
+            </h1>
+            {/* The shipment version is an internal edit counter, so it is not shown. */}
+            <p className="text-sm text-slate-500" data-testid="shipment-sales-order">
+              {say("Sales order", "销售订单")}{" "}
               <Link
                 className="text-blue-600 underline"
                 to={`/app/sales/orders/${encodeURIComponent(data.shipment.salesOrderId)}`}
               >
                 {data.salesOrder.orderNumber}
-              </Link>{" "}
-              · v{data.shipment.version}
+              </Link>
             </p>
-            <div className="mt-2 flex gap-2">
-              <Badge value={data.shipment.workflowStatus} />
-              <Badge value={data.shipment.postingStatus} />
+            <div className="mt-2 flex gap-2" data-testid="shipment-status">
+              <Badge value={shipmentStatus(data.shipment)} />
             </div>
-            <p className="mt-2 text-xs text-slate-500">
-              过账 {stamp(data.shipment.postedAt)} · 冲销{" "}
-              {stamp(data.shipment.reversedAt)} ·{" "}
-              {data.shipment.reversalReason || copy("无冲销原因")}
+            <p className="mt-2 text-xs text-slate-500" data-testid="shipment-posting-dates">
+              {say("Posted {posted} · Reversed {reversed}", "过账 {posted} · 冲销 {reversed}")
+                .replace("{posted}", postedAt)
+                .replace("{reversed}", reversedAt)}
+              {data.shipment.reversalReason
+                ? ` · ${say("Reason: {reason}", "原因：{reason}").replace("{reason}", data.shipment.reversalReason)}`
+                : ""}
             </p>
           </div>
           <div className="flex gap-2">
@@ -1863,8 +2007,8 @@ function ShipmentDetail({ id }: { id: string }) {
           headers={["SKU / 物料", "请求数量", "已过账", "单位"]}
           rows={data.lines.map((x) => [
             `${x.sku} · ${x.itemName}`,
-            x.requestedQuantity,
-            x.postedQuantity,
+            formatQuantity(x.requestedQuantity),
+            formatQuantity(x.postedQuantity),
             x.unit,
           ])}
         />
@@ -1881,24 +2025,25 @@ function ShipmentDetail({ id }: { id: string }) {
             "冲销流水",
           ]}
           rows={data.allocations.map((x) => [
-            x.reservationId,
-            x.warehouseId,
-            x.location,
-            x.quantity,
-            x.status,
-            x.movementLink || "—",
-            x.reversalMovementLink || "—",
+            shortId(x.reservationId),
+            warehouseName(x.warehouseId),
+            x.location || copy("默认库位"),
+            formatQuantity(x.quantity),
+            status(x.status),
+            x.movementLink ? shortId(x.movementLink) : "—",
+            x.reversalMovementLink ? shortId(x.reversalMovementLink) : "—",
           ])}
         />
         {data.movements.map((x) => (
-          <div className="mt-2 rounded-lg bg-slate-50 p-2 text-xs" key={x.id}>
-            {x.id} · {x.movementType} · {x.itemName} · 入 {x.quantityIn} / 出{" "}
-            {x.quantityOut}
+          <div className="mt-2 rounded-lg bg-slate-50 p-2 text-xs" data-testid="shipment-movement" key={x.id}>
+            {shortId(x.id)} · {movementTypeLabel(x.movementType, activeLanguage)} · {x.itemName} ·{" "}
+            {place(x.warehouseId, x.location)} · {copy("入")}{" "}
+            {formatQuantity(x.quantityIn)} / {copy("出")} {formatQuantity(x.quantityOut)}
           </div>
         ))}
       </Section>
       <Section title={copy("发货证据与时间线")}>
-        <Timeline rows={data.evidence} />
+        <Timeline rows={data.evidence} resolve={timelinePart} />
       </Section>
       <Section title={copy("一致性检查与辅助说明")}>
         <div className="flex items-center gap-2">
@@ -1911,10 +2056,10 @@ function ShipmentDetail({ id }: { id: string }) {
         <ActionDialog
           title={
             intent === "post"
-              ? "发货过账确认"
+              ? say("Post shipment", "发货过账确认")
               : intent === "reverse"
-                ? "发货冲销确认"
-                : "取消发货草稿"
+                ? say("Reverse shipment", "发货冲销确认")
+                : say("Cancel delivery draft", "取消发货草稿")
           }
           onClose={() => {
             setIntent("");
@@ -1932,23 +2077,30 @@ function ShipmentDetail({ id }: { id: string }) {
               />
             </label>
           )}
-          <p className="mt-2 text-xs text-slate-500">
-            {copy("发货时在库量与预留量同时下降，因此可用量不会再次下降。冲销没有“强制绕过”选项。")}
-          </p>
-          {preview && <PreviewView preview={preview} />}
+          {preview ? (
+            <PreviewView preview={preview} lookup={previewLookup} />
+          ) : (
+            <p className="mt-3 text-xs text-slate-500">{previewHint()}</p>
+          )}
           <div className="mt-4 flex gap-2">
             <Button
               testId="shipment-preview"
               onClick={() => void loadPreview()}
             >
-              {copy("读取预览")}
+              {say("Preview", "预览")}
             </Button>
             <Button
               testId="confirm-shipment-action"
               disabled={!preview?.allowed || saving}
               onClick={() => void execute()}
             >
-              {saving ? "处理中…" : "确认执行"}
+              {saving
+                ? copy("处理中…")
+                : intent === "post"
+                  ? say("Post shipment", "过账发货")
+                  : intent === "reverse"
+                    ? say("Reverse shipment", "冲销发货")
+                    : say("Cancel delivery draft", "取消发货草稿")}
             </Button>
           </div>
         </ActionDialog>
@@ -1992,18 +2144,39 @@ function Table({
     </div>
   );
 }
-function Timeline({ rows }: { rows: Workbench["evidence"] }) {
+// The workbench API builds reservation and movement timeline titles when it is
+// read (they are not stored); they are translated here like its other labels.
+// Its summaries name a reservation or warehouse by id, so each such part is
+// shown by its warehouse name and location instead. Audit summaries are shown
+// as recorded.
+function Timeline({
+  rows,
+  resolve,
+}: {
+  rows: Workbench["evidence"];
+  resolve?: (part: string) => string | undefined;
+}) {
   const stamp = useStamp();
+  const summary = (value: string) =>
+    String(value || "")
+      .split(" · ")
+      .map((part) =>
+        part === "未指定仓库"
+          ? say("No warehouse", "未指定仓库")
+          : resolve?.(part) ?? (/^-?\d+(\.\d+)?$/.test(part) ? formatQuantity(part) : part),
+      )
+      .join(" · ");
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-testid="outbound-timeline">
       {rows.map((x, i) => (
         <div
           className="border-l-2 border-blue-200 pl-3 text-sm"
           key={`${x.eventType}-${x.entityId}-${i}`}
         >
-          <div className="font-semibold">{x.title}</div>
+          <div className="font-semibold">{copy(x.title)}</div>
           <div className="text-xs text-slate-500">
-            {stamp(x.occurredAt)} · {x.summary}
+            {stamp(x.occurredAt)}
+            {x.summary && x.summary !== x.title ? ` · ${summary(x.summary)}` : ""}
           </div>
           {x.commandExecutionId && (
             <div className="text-[11px] text-slate-400">
@@ -2016,28 +2189,43 @@ function Timeline({ rows }: { rows: Workbench["evidence"] }) {
     </div>
   );
 }
-function PreviewView({ preview }: { preview: Preview }) {
+const previewHint = () =>
+  say("Preview first to see what will change.", "请先预览，查看将发生的变更。");
+// What the server's preview will do, in plain sentences built from the
+// preview itself. Why it is blocked, when it is. The impact counts stay
+// available under "Technical details".
+function PreviewView({ preview, lookup }: { preview: Preview; lookup: OutboundPreviewLookup }) {
+  const sentences = outboundPreviewSentences(activeLanguage, preview, lookup);
   return (
     <div
       data-testid="outbound-preview-result"
-      className={`mt-3 rounded-lg border p-3 text-xs ${preview.allowed ? "bg-emerald-50" : "bg-amber-50"}`}
+      className={`mt-3 rounded-lg border p-3 text-sm ${preview.allowed ? "bg-emerald-50" : "bg-amber-50"}`}
     >
       <div className="font-semibold">
-        {preview.allowed ? "预览允许执行" : "预览已阻断"}
+        {preview.allowed ? say("What will happen", "将发生的变更") : say("This can't be done yet", "暂时无法执行")}
       </div>
-      {preview.blockingIssues.map((x) => (
-        <div className="mt-1 text-red-700" key={x.code}>
-          {x.code === "SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE" ? copy(SHIPMENT_INVOICE_BLOCK) : x.message}
+      {preview.blockingIssues.map((x, i) => (
+        <div className="mt-1 text-red-700" key={`${x.code}-${i}`}>
+          {issueMessage(x)}
         </div>
       ))}
-      <div className="mt-2">
-        库存影响 {preview.balanceImpacts.length} · 预留影响{" "}
-        {preview.reservationImpacts.length} · 订单行影响{" "}
-        {preview.salesOrderLineImpacts.length}
-      </div>
-      <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap">
-        {JSON.stringify(preview.factsToCreate, null, 2)}
-      </pre>
+      {sentences.map((sentence, i) => (
+        <p className="mt-1" data-testid="outbound-preview-sentence" key={i}>
+          {sentence}
+        </p>
+      ))}
+      <details className="mt-2 text-xs text-slate-500">
+        <summary className="cursor-pointer">{say("Technical details", "技术细节")}</summary>
+        <div className="mt-1">
+          {say(
+            "Stock balances changed {b} · Reservations changed {r} · Order lines changed {l}",
+            "库存余额变更 {b} · 预留变更 {r} · 订单行变更 {l}",
+          )
+            .replace("{b}", String(preview.balanceImpacts.length))
+            .replace("{r}", String(preview.reservationImpacts.length))
+            .replace("{l}", String(preview.salesOrderLineImpacts.length))}
+        </div>
+      </details>
     </div>
   );
 }
