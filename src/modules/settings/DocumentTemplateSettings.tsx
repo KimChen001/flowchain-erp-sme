@@ -101,7 +101,7 @@ export default function DocumentTemplateSettings({ canEdit }: { canEdit: boolean
       // PATCH replaces the whole section. Print layouts are saved from the
       // print-layout editor, so the ones stored now are sent back unchanged.
       const latest = await fetchDocumentSettings();
-      const result = await saveDocumentSettings(validateDocumentSettings({ ...next, layouts: latest.layouts }));
+      const result = await saveDocumentSettings(validateDocumentSettings({ ...next, layouts: latest.layouts, unreadableLayouts: latest.unreadableLayouts }));
       setSaved(result.settings); setDraft(result.settings); setAddressText(result.settings.letterhead.addressLines.join("\n"));
       setState("saved");
     } catch (saveError) {

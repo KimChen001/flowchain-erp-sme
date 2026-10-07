@@ -136,11 +136,27 @@ export function mergeOperationalSettings(value) {
   }
 }
 
-export function validateOperationalSection(section, value) {
+// What the audit log keeps of a section. The documents section keeps its
+// print layouts as a summary (how many, their ids, names and versions), so a
+// template save does not copy every layout into the log twice.
+export function auditSettingsValue(section, value) {
+  if (section !== 'documents' || !value || typeof value !== 'object') return clone(value)
+  const layouts = Array.isArray(value.layouts) ? value.layouts : []
+  const unreadable = Array.isArray(value.unreadableLayouts) ? value.unreadableLayouts : []
+  return {
+    ...clone(value),
+    layouts: { count: layouts.length, items: layouts.map(layout => ({ id: layout?.id ?? null, name: layout?.name ?? null, documentType: layout?.documentType ?? null, version: layout?.version ?? null })) },
+    unreadableLayouts: { count: unreadable.length },
+  }
+}
+
+// `options.stored` is the section as stored now; the documents section checks
+// its print layouts against it (shared/business-documents.mjs).
+export function validateOperationalSection(section, value, options = {}) {
   if (!['numbering', 'review', 'modules', 'ai', 'advanced', 'documents'].includes(section)) throw Object.assign(new Error('Unknown settings section.'), { code: 'SETTINGS_SECTION_NOT_FOUND', status: 404 })
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw Object.assign(new Error('Settings payload is invalid.'), { code: 'SETTINGS_VALIDATION_FAILED', status: 400 })
   // Only the known fields are kept; a value over its limit names the field.
-  if (section === 'documents') return validateDocumentSettings(value)
+  if (section === 'documents') return validateDocumentSettings(value, options)
   if (section === 'numbering') {
     const rules = Array.isArray(value.rules) ? value.rules : []
     const signatures = rules.map(rule => `${text(rule.prefix).toUpperCase()}|${text(rule.datePattern)}|${text(rule.separator)}`)

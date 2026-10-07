@@ -88,6 +88,8 @@ declare module '../../../shared/business-documents.mjs' {
     customerInvoice: { title: string | null; columns: CustomerInvoiceColumns; showPaymentSummary: boolean; paymentInstructions: string; termsText: string; footerText: string };
     // Saved print layouts; their shape is PrintLayoutTemplate (src/modules/print-layout/printLayoutTypes.ts).
     layouts: StoredPrintLayout[];
+    // Stored layouts that no longer pass the check, kept exactly as stored and sent back unchanged.
+    unreadableLayouts: unknown[];
   };
   export type StoredPrintLayout = {
     id: string;
@@ -101,7 +103,8 @@ declare module '../../../shared/business-documents.mjs' {
   export const PRINT_LAYOUT_LIMITS: Readonly<{ templates: number; bytes: number; elements: number; columns: number; id: number; name: number; title: number; value: number; field: number; placeholder: number; coordinate: number }>;
   export const PRINT_LAYOUT_DOCUMENT_TYPES: readonly StoredPrintLayout['documentType'][];
   export function validatePrintLayout(value: unknown, field?: string): StoredPrintLayout;
-  export function validatePrintLayouts(value: unknown): StoredPrintLayout[];
+  export function validatePrintLayouts(value: unknown, options?: { unreadableLayouts?: unknown[]; stored?: unknown }): StoredPrintLayout[];
+  export const PRINT_LAYOUT_STYLE_LIMITS: Readonly<{ fontSize: Readonly<{ min: number; max: number }>; lineHeight: Readonly<{ min: number; max: number }> }>;
   // Every value is the recorded one or null; amounts and quantities are decimal strings.
   export type PurchaseOrderDocument = {
     kind: 'purchase_order';
@@ -159,7 +162,7 @@ declare module '../../../shared/business-documents.mjs' {
   export const DOCUMENT_SETTINGS_LIMITS: Readonly<{ companyName: number; addressLines: number; addressLine: number; phone: number; email: number; taxId: number; title: number; termsText: number; footerText: number; paymentInstructions: number }>;
   export const documentSettingsSeed: DocumentSettings;
   export function normalizeDocumentSettings(value: unknown): DocumentSettings;
-  export function validateDocumentSettings(value: unknown): DocumentSettings;
+  export function validateDocumentSettings(value: unknown, options?: { stored?: unknown }): DocumentSettings;
   export function buildPurchaseOrderDocument(input: unknown): PurchaseOrderDocument;
   export function buildCustomerInvoiceDocument(input: unknown): CustomerInvoiceDocument;
   export function recordedDayOrInstant(value: unknown): RecordedDayOrInstant;

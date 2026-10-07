@@ -13,6 +13,7 @@ import {
   OPERATIONAL_SETTINGS_IN_EFFECT,
   REVIEW_TOLERANCE_FIELDS,
   validateOperationalSection,
+  auditSettingsValue,
 } from './workspace-settings-contract.mjs'
 
 test('workspace localization priority separates language, locale, and timezone', () => {
@@ -139,6 +140,7 @@ test('document settings default to English with nothing invented and keep only k
     purchaseOrder: { title: null, columns: { supplierSku: false, requestedDate: true, promisedDate: false }, termsText: 'Net 30 from invoice.', footerText: '', signatureBlock: true },
     customerInvoice: { title: null, columns: { tax: false }, showPaymentSummary: true, paymentInstructions: '', termsText: '', footerText: '' },
     layouts: [],
+    unreadableLayouts: [],
   })
 })
 
@@ -260,16 +262,63 @@ test('print layouts with a wrong shape are refused with the field named', () => 
   }
 })
 
-test('a workspace saves at most 20 print layouts and 64 KB of them', () => {
+test('a workspace saves at most 20 print layouts and 160 KB of them', () => {
   const many = (count) => Array.from({ length: count }, (_, index) => receiveLayout({ id: `receive_sheet-${index}` }))
   assert.equal(validateOperationalSection('documents', { layouts: many(20) }).layouts.length, 20)
   assert.throws(() => validateOperationalSection('documents', { layouts: many(21) }), (error) => error.code === 'DOCUMENT_LAYOUTS_TOO_MANY' && error.status === 400 && error.details.field === 'layouts' && error.details.limit === 20)
 
-  // Long fixed text in every layout: each passes on its own, all of them together are over 64 KB.
-  const terms = (index) => receiveLayout({ id: `receive_sheet-terms-${index}`, elements: [{ id: 'terms', type: 'terms', title: 'Terms', value: 'x'.repeat(4000), x: 52, y: 700, width: 690, height: 110, visible: true, draggable: true, resizable: true }] })
-  assert.doesNotThrow(() => validateOperationalSection('documents', { layouts: Array.from({ length: 14 }, (_, index) => terms(index)) }))
-  assert.throws(() => validateOperationalSection('documents', { layouts: Array.from({ length: 17 }, (_, index) => terms(index)) }), (error) => error.code === 'DOCUMENT_LAYOUTS_TOO_LARGE' && error.details.field === 'layouts' && error.details.limit === 65536)
+  // Long fixed text in every layout: each passes on its own, all of them together are over 160 KB.
+  const termsElement = (id) => ({ id, type: 'terms', title: 'Terms', value: 'x'.repeat(4000), x: 52, y: 700, width: 690, height: 110, visible: true, draggable: true, resizable: true })
+  const terms = (index) => receiveLayout({ id: `receive_sheet-terms-${index}`, elements: [termsElement('terms-1'), termsElement('terms-2'), termsElement('terms-3')] })
+  assert.doesNotThrow(() => validateOperationalSection('documents', { layouts: Array.from({ length: 12 }, (_, index) => terms(index)) }))
+  assert.throws(() => validateOperationalSection('documents', { layouts: Array.from({ length: 14 }, (_, index) => terms(index)) }), (error) => error.code === 'DOCUMENT_LAYOUTS_TOO_LARGE' && error.details.field === 'layouts' && error.details.limit === 160 * 1024)
+})
 
-  // A stored layout that no longer passes is skipped when read, never thrown on.
-  assert.deepEqual(mergeOperationalSettings({ documents: { layouts: [receiveLayout({ documentType: 'unknown' }), receiveLayout()] } }).documents.layouts.map((layout) => layout.id), ['receive_sheet-custom'])
+test('a stored layout that no longer passes the check is kept as stored, never dropped', () => {
+  const broken = { ...receiveLayout({ id: 'receive_sheet-old' }), documentType: 'unknown' }
+  const read = mergeOperationalSettings({ documents: { layouts: [broken, receiveLayout()] } }).documents
+  assert.deepEqual(read.layouts.map((layout) => layout.id), ['receive_sheet-custom'])
+  assert.deepEqual(read.unreadableLayouts, [broken], 'shown as unreadable, exactly as stored')
+
+  // Saving the other layouts sends it back unchanged, and it is kept.
+  const stored = { layouts: [broken, receiveLayout()] }
+  const saved = validateOperationalSection('documents', { ...read, layouts: [] }, { stored })
+  assert.deepEqual(saved.unreadableLayouts, [broken])
+  assert.deepEqual(mergeOperationalSettings({ documents: saved }).documents.unreadableLayouts, [broken], 'read back the same way')
+  // Key order does not matter (PostgreSQL reorders keys); any change does.
+  const reordered = Object.fromEntries(Object.entries(broken).reverse())
+  assert.deepEqual(validateOperationalSection('documents', { ...read, unreadableLayouts: [reordered] }, { stored }).unreadableLayouts, [reordered])
+  assert.throws(() => validateOperationalSection('documents', { ...read, unreadableLayouts: [{ ...broken, name: 'Edited' }] }, { stored }), (error) => error.code === 'DOCUMENT_LAYOUT_INVALID' && error.details.field === 'unreadableLayouts.0')
+  assert.throws(() => validateOperationalSection('documents', { ...read, unreadableLayouts: [{ anything: true }] }, { stored: null }), (error) => error.details.field === 'unreadableLayouts.0', 'nothing new can be stored as unreadable')
+  // They count toward the 20.
+  const nineteen = Array.from({ length: 19 }, (_, index) => receiveLayout({ id: `receive_sheet-${index}` }))
+  assert.throws(() => validateOperationalSection('documents', { layouts: nineteen, unreadableLayouts: [broken, broken] }, { stored: { layouts: [broken] } }), (error) => error.code === 'DOCUMENT_LAYOUTS_TOO_MANY')
+})
+
+test('a stored layout changed by someone else is refused instead of overwritten', () => {
+  const stored = { layouts: [receiveLayout({ version: 3 })] }
+  const mine = receiveLayout({ version: 3, name: 'My change' })
+  // Sent unchanged, or as the next version: saved.
+  assert.doesNotThrow(() => validateOperationalSection('documents', { layouts: [receiveLayout({ version: 3 })] }, { stored }))
+  assert.equal(validateOperationalSection('documents', { layouts: [{ ...mine, version: 4 }] }, { stored }).layouts[0].name, 'My change')
+  // Changed from an older copy (someone saved version 3 after this editor loaded 2), or without a new version: refused.
+  for (const version of [2, 3, 5]) {
+    assert.throws(() => validateOperationalSection('documents', { layouts: [{ ...mine, version }] }, { stored }), (error) => error.code === 'DOCUMENT_LAYOUT_CHANGED' && error.status === 409 && error.details.id === 'receive_sheet-custom', `version ${version}`)
+  }
+  // A new id and a removed layout need no version.
+  assert.deepEqual(validateOperationalSection('documents', { layouts: [receiveLayout({ id: 'receive_sheet-new', version: 1 })] }, { stored }).layouts.map((layout) => layout.id), ['receive_sheet-new'])
+})
+
+test('the audit log keeps the print layouts as a summary', () => {
+  const documents = validateOperationalSection('documents', { layouts: [receiveLayout()] })
+  const audit = auditSettingsValue('documents', documents)
+  assert.deepEqual(audit.layouts, { count: 1, items: [{ id: 'receive_sheet-custom', name: 'Dock receipt', documentType: 'receive_sheet', version: 2 }] })
+  assert.deepEqual(audit.unreadableLayouts, { count: 0 })
+  assert.deepEqual(audit.letterhead, documents.letterhead, 'the rest of the section is kept as it is')
+  const review = mergeOperationalSettings({}).review
+  assert.deepEqual(auditSettingsValue('review', review), review, 'other sections are unchanged')
+
+  const routes = readFileSync(new URL('../routes/settings-runtime.routes.mjs', import.meta.url), 'utf8')
+  assert.match(routes, /validateOperationalSection\(section, next, \{ stored \}\)/)
+  assert.match(routes, /before, after: auditAfter \}/)
 })
