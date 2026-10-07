@@ -7,6 +7,7 @@ import {
   PRICE_HISTORY_STATUSES,
   maskPriceHistory,
   parsePriceHistoryKey,
+  priceFact,
   priceHistoryForKey,
 } from '../../shared/price-history.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
@@ -121,6 +122,44 @@ export async function readPriceHistoryLines(prisma, { tenantId, itemIds = [], sc
   )
 }
 
+// The last purchase order of one item with each supplier, for the purchase
+// request form that lists an item's approved sources when none is preferred
+// (by this date, most recent first). The same POs and the same date as the
+// price history: issued (or received) POs only, dated by the issue date, else
+// the order date. No prices.
+const LAST_ORDER_SQL = `
+SELECT DISTINCT ON (po."supplierId")
+  po."supplierId" AS "supplierId",
+  po.id AS "purchaseOrderId",
+  po.metadata->>'orderNumber' AS "orderNumber",
+  po."issuedAt" AS "issuedAt",
+  po."createdAt" AS "createdAt",
+  po.status AS status,
+  po."receivingBaseStatus" AS "receivingBaseStatus"
+FROM "PurchaseOrder" AS po
+WHERE po."tenantId" = $1
+  AND po."supplierId" IS NOT NULL
+  AND po.status = ANY($3::text[])
+  AND EXISTS (SELECT 1 FROM "PurchaseOrderLine" AS line WHERE line."purchaseOrderId" = po.id AND line."itemId" = $2)
+ORDER BY po."supplierId" ASC, COALESCE(po."issuedAt", po."createdAt") DESC, po.id ASC`
+
+export async function readLastOrderBySupplier(prisma, { tenantId, itemId }) {
+  const scopedTenantId = requireTenantId({ tenantId })
+  const id = text(itemId)
+  if (!id) return []
+  return prisma.$queryRawUnsafe(LAST_ORDER_SQL, scopedTenantId, id, [...PRICE_HISTORY_STATUSES])
+}
+
+// A stored row as { supplierId, purchaseOrderId, orderNumber, day, dateSource },
+// dateSource as in the price history (issue_date, order_date,
+// order_date_not_issued). Rows come back by supplier id.
+export function mapLastOrders(rows = [], dayOf) {
+  return rows.map((row) => {
+    const fact = priceFact(row, dayOf)
+    return { supplierId: text(row.supplierId), purchaseOrderId: fact.purchaseOrderId, orderNumber: fact.orderNumber, day: fact.date, dateSource: fact.dateSource }
+  }).filter((row) => row.supplierId && row.day)
+}
+
 // The keys asked for; a supplierId given apart applies to every key that
 // does not name a supplier itself.
 export function parsePriceHistoryKeys(values, { supplierId = null } = {}) {
@@ -136,12 +175,28 @@ export function parsePriceHistoryKeys(values, { supplierId = null } = {}) {
 
 export function createPriceHistoryReadService({ prisma, env = process.env, resolveActor = resolveProvisionedActor } = {}) {
   const db = async () => prisma || getPrismaClient(env)
+  const readerOf = async (context) => {
+    const client = await db()
+    const actor = await resolveActor(client, context?.identity || context)
+    assertAuthorized({ actor, permission: 'procurement.purchase_order.read', tenantId: actor.tenantId })
+    return { client, actor }
+  }
   return {
+    // The last issued PO of one item with each supplier: dates and PO numbers only.
+    async lastOrders(itemId, context) {
+      const id = text(itemId)
+      if (!id) throw new PriceHistoryError('ITEM_REQUIRED', 'Name the item as itemId=<id>.', 422)
+      const { client, actor } = await readerOf(context)
+      const [rows, tenant] = await Promise.all([
+        readLastOrderBySupplier(client, { tenantId: actor.tenantId, itemId: id }),
+        client.tenant.findUnique({ where: { id: actor.tenantId }, select: { timezone: true } }),
+      ])
+      const timeZone = text(tenant?.timezone) || DEFAULT_TENANT_TIMEZONE
+      return { itemId: id, timeZone, lastOrders: mapLastOrders(rows, (instant) => instantCalendarDay(instant, timeZone)) }
+    },
     async read(keyValues, context, { excludePurchaseOrderId = null, supplierId = null } = {}) {
       const keys = parsePriceHistoryKeys(keyValues, { supplierId })
-      const client = await db()
-      const actor = await resolveActor(client, context?.identity || context)
-      assertAuthorized({ actor, permission: 'procurement.purchase_order.read', tenantId: actor.tenantId })
+      const { client, actor } = await readerOf(context)
       const prices = can({ actor, permission: 'procurement.prices.read', tenantId: actor.tenantId })
       const itemIds = [...new Set(keys.map((key) => key.itemId))]
       const scopes = keys.map((key) => ({ itemId: key.itemId, supplierId: key.supplierId }))

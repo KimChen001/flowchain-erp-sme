@@ -78,8 +78,8 @@ const entries = {
   // Skill titles and descriptions
   'skill.today_priorities.title': ["Today's priorities", '今日优先事项'],
   'skill.today_priorities.description': ['Ranks what needs attention today across purchasing, inventory, invoices and receiving.', '按采购、库存、发票和收货汇总今天需要优先处理的事项。'],
-  'skill.highest_risk_items.title': ['Highest-risk items', '风险最高的事项'],
-  'skill.highest_risk_items.description': ['Lists the items with the largest risk exposure, ordered by severity.', '按严重程度列出风险敞口最大的事项。'],
+  'skill.highest_risk_items.title': ['Open problems, oldest first', '未解决的问题（最早的在前）'],
+  'skill.highest_risk_items.description': ['Lists overdue orders, stock shortages, invoice variances and rejected receipts still open, oldest first, with the date on each line.', '列出仍未解决的逾期订单、库存短缺、发票差异和拒收的收货，最早的在前，每行列出日期。'],
   'skill.records_needing_data.title': ['Records needing data', '需要补齐的数据'],
   'skill.records_needing_data.description': ['Finds records that are missing fields the reports need.', '找出缺少报表所需字段的记录。'],
   'skill.prepare_action_draft.title': ['Prepare an action draft', '准备处理草稿'],
@@ -138,12 +138,12 @@ const entries = {
   'today.focus_none': ['{id} has no open issue in the workspace data', '工作区数据中 {id} 没有待处理问题'],
 
   // highest_risk_items
-  'risk.title': ['Highest risk: {first}', '风险最高：{first}'],
+  'risk.title': ['Oldest open problem: {first}', '最早的未解决问题：{first}'],
   'risk.first': ['{label} ({status})', '{label}（{status}）'],
-  'risk.title_none': ['No high-risk items found (as of {date})', '未发现高风险事项（截至 {date}）'],
-  'risk.focus_title': ['Risk on {id}: {first}', '{id} 的风险：{first}'],
-  'risk.focus_none': ['No risk found for {id} (as of {date})', '{id} 没有发现风险（截至 {date}）'],
-  'risk.summary': ['{count} items carry risk exposure, ordered by severity and amount.', '共 {count} 项存在风险敞口，按严重程度和金额排序。'],
+  'risk.title_none': ['No open problems found (as of {date})', '未发现未解决的问题（截至 {date}）'],
+  'risk.focus_title': ['Open problems on {id}: {first}', '{id} 的未解决问题：{first}'],
+  'risk.focus_none': ['No open problems found for {id} (as of {date})', '{id} 没有发现未解决的问题（截至 {date}）'],
+  'risk.summary': ['{count} open problems, oldest first by the date on each line; stock problems have no date and come last.', '共 {count} 个未解决问题，按每行列出的日期从早到晚排列；库存问题没有日期，排在最后。'],
 
   // records_needing_data
   'records.title': ['{count} records need more data', '{count} 条记录需要补齐'],
@@ -268,11 +268,11 @@ const entries = {
   'signal.grn_received_unposted.status': ['Not posted', '未过账'],
 
   // Signal reasons: evidence summaries
-  'signal.po_overdue.reason': ['{days} days past the promised date; {remaining} still to receive from {supplier}.', '已超过承诺日期 {days} 天；{supplier} 仍有 {remaining} 未交。'],
+  'signal.po_overdue.reason': ['{days} days past the promised date ({date}); {remaining} still to receive from {supplier}.', '已超过承诺日期（{date}）{days} 天；{supplier} 仍有 {remaining} 未交。'],
   'signal.po_due_7d.reason': ['Due {date}; {remaining} still to receive from {supplier}.', '{date} 到期；{supplier} 仍有 {remaining} 未交。'],
-  'signal.po_overdue.reason_one': ['1 day past the promised date; {remaining} still to receive from {supplier}.', '已超过承诺日期 1 天；{supplier} 仍有 {remaining} 未交。'],
-  'signal.po_overdue.reason_not_sent_one': ['1 day past the promised date, but not yet issued to {supplier}. Send the order before asking about delivery.', '已超过承诺日期 1 天，但尚未发给 {supplier}。请先发出订单，再询问交货。'],
-  'signal.po_overdue.reason_not_sent': ['{days} days past the promised date, but not yet issued to {supplier}. Send the order before asking about delivery.', '已超过承诺日期 {days} 天，但尚未发给 {supplier}。请先发出订单，再询问交货。'],
+  'signal.po_overdue.reason_one': ['1 day past the promised date ({date}); {remaining} still to receive from {supplier}.', '已超过承诺日期（{date}）1 天；{supplier} 仍有 {remaining} 未交。'],
+  'signal.po_overdue.reason_not_sent_one': ['1 day past the promised date ({date}), but not yet issued to {supplier}. Send the order before asking about delivery.', '已超过承诺日期（{date}）1 天，但尚未发给 {supplier}。请先发出订单，再询问交货。'],
+  'signal.po_overdue.reason_not_sent': ['{days} days past the promised date ({date}), but not yet issued to {supplier}. Send the order before asking about delivery.', '已超过承诺日期（{date}）{days} 天，但尚未发给 {supplier}。请先发出订单，再询问交货。'],
   'signal.po_due_7d.reason_not_sent': ['Due {date}, but not yet issued to {supplier}. Send the order before asking about delivery.', '{date} 到期，但尚未发给 {supplier}。请先发出订单，再询问交货。'],
   'signal.po_partially_received.reason': ['Partially received: {received} of {ordered}.', '部分收货：已收 {received}，订购 {ordered}。'],
   'signal.po_partially_received.reason_lines': ['Partially received; {remaining} still to receive.', '部分收货；仍有 {remaining} 待收货。'],
@@ -504,7 +504,7 @@ const entries = {
   'po.not_sent': ['It has not been issued to the supplier yet, so send it before asking about delivery.', '订单尚未发给供应商，请先发出，再询问交货。'],
   'po.not_found_title': ["I couldn't find {id} in this workspace", '当前工作区中找不到 {id}'],
   'po.not_found_summary': ['Check the number, or ask about open or overdue purchase orders.', '请核对编号，或询问未结、逾期的采购订单。'],
-  'po.evidence_late': ['{status} · {supplier} · {days} days late', '{status} · {supplier} · 逾期 {days} 天'],
+  'po.evidence_late': ['{status} · {supplier} · due {date}, {days} days late', '{status} · {supplier} · 应到货 {date}，逾期 {days} 天'],
   'po.evidence_due': ['{status} · {supplier} · due {date}', '{status} · {supplier} · 应到货 {date}'],
   'po.evidence_plain': ['{status} · {supplier}', '{status} · {supplier}'],
   'po.value_remaining': ['{remaining} to receive', '待收 {remaining}'],
@@ -620,8 +620,8 @@ const entries = {
   // Follow-up suggestions (the prompts are the chip texts)
   'followup.today.label': ["Today's priorities", '今日优先事项'],
   'followup.today.prompt': ['What should I handle first today?', '今天先处理什么？'],
-  'followup.risk.label': ['Highest risk', '风险最高'],
-  'followup.risk.prompt': ['Which items have the highest risk?', '哪些事项风险最高？'],
+  'followup.risk.label': ['What is at risk?', '有哪些风险？'],
+  'followup.risk.prompt': ['What is at risk right now?', '现在有哪些风险？'],
   'followup.records.label': ['Records needing data', '需要补齐的数据'],
   'followup.records.prompt': ['Which records need more data?', '哪些数据需要补齐？'],
   'followup.draft.label': ['Prepare a draft', '准备草稿'],

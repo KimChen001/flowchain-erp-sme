@@ -8,6 +8,7 @@ import {
   RFQ_STATUS,
   RFQ_TRANSITIONS,
   canonicalPurchaseRequestLines,
+  missingSupplierOverrides,
   procurementError,
   tenantScopedProcurementMasterData,
 } from "../domain/procurement-workflow.mjs";
@@ -126,6 +127,8 @@ function persistableLines(lines, headerCurrency) {
         specificationSnapshot: text(line.specificationSnapshot) || null,
         commodityId: text(line.commodityId) || null,
         internalLineComment: text(line.internalLineComment) || null,
+        // Why a supplier other than the item's preferred one was chosen.
+        ...(line.supplierOverride ? { supplierOverride: line.supplierOverride } : {}),
       },
     };
   });
@@ -138,6 +141,20 @@ function persistableLines(lines, headerCurrency) {
   };
 }
 
+// The audit row's list of lines that use a supplier other than the item's
+// preferred one, with the reason given.
+// A line with missingReason was saved before a reason was asked for (see
+// missingSupplierOverrides) and is listed with reasonCode null.
+function supplierOverrideAudit(rows, extra = () => ({})) {
+  return rows
+    .filter((row) => row.metadata?.supplierOverride)
+    .map((row) => {
+      const override = row.metadata.supplierOverride;
+      return { clientLineId: row.metadata.clientLineId || null, ...extra(row), itemId: row.itemId || null, supplierId: row.metadata.supplierId, preferredSupplierId: override.preferredSupplierId || null, reasonCode: override.reasonCode || null, note: override.note || null, ...(override.missingReason ? { missingReason: true } : {}) };
+    });
+}
+const withOverrides = (list) => (list.length ? { supplierOverrides: list } : {});
+
 export function createProcurementRequestCommandService({ prisma, masterData, env = process.env, idFactory = randomUUID, now = () => new Date() } = {}) {
   const db = async () => prisma || getPrismaClient(env);
   const actorFor = async (client, context, permission) => {
@@ -149,6 +166,25 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
     if (!Array.isArray(lines) || !lines.length) fail("LINES_REQUIRED", "A purchase request needs at least one line.", 400, [{ field: "lines" }]);
     if (!masterData) fail("MASTER_DATA_UNAVAILABLE", "Master data is not configured.", 503);
     return canonicalPurchaseRequestLines(lines, tenantScopedProcurementMasterData(masterData, tenantId));
+  };
+  // Each saved line's supplierOverride as it should read now: its recorded
+  // reason, a "no reason recorded" mark when it skips the item's preferred
+  // supplier without one, or null. Never refuses anything.
+  // Read before the command's transaction (master data has its own
+  // connection), as a map by line id; null when it could not be read, and
+  // then nothing is marked.
+  const currentOverrides = async (id, context, permission) => {
+    if (!masterData) return null;
+    try {
+      const client = await db();
+      const actor = await actorFor(client, context, permission);
+      const row = await readRequest(client, actor.tenantId, id);
+      if (!row) return null;
+      const overrides = await missingSupplierOverrides(row.lines, tenantScopedProcurementMasterData(masterData, actor.tenantId));
+      return new Map(row.lines.map((line, index) => [line.id, overrides[index]]));
+    } catch {
+      return null;
+    }
   };
   const readRequest = async (client, tenantId, id) => client.purchaseRequest.findFirst({ where: { id: text(id), tenantId }, include: { lines: { orderBy: { id: "asc" } } } });
   const lockRequest = async (tx, tenantId, id) => {
@@ -231,7 +267,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           },
         });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, commandActor.tenantId, created.id));
-        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: created.id, audit: { action: "purchase_request_created", summary: `Created purchase request ${created.id}.`, metadata: { version: 1, amount: persisted.amount, currency, ...(suggestions ? { suggestions } : {}) } } };
+        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: created.id, audit: { action: "purchase_request_created", summary: `Created purchase request ${created.id}.`, metadata: { version: 1, amount: persisted.amount, currency, ...withOverrides(supplierOverrideAudit(persisted.rows)), ...(suggestions ? { suggestions } : {}) } } };
       },
     });
   }
@@ -269,7 +305,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           },
         });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, commandActor.tenantId, row.id));
-        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_updated", summary: `Updated purchase request ${row.id}.`, metadata: { expectedVersion, version } } };
+        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_updated", summary: `Updated purchase request ${row.id}.`, metadata: { expectedVersion, version, ...(persisted ? withOverrides(supplierOverrideAudit(persisted.rows)) : {}) } } };
       },
     });
   }
@@ -281,6 +317,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
     const reason = text(input.reason);
     if (action === "reject" && !reason) fail("REJECT_REASON_REQUIRED", "A reason is required to reject a purchase request.", 400, [{ field: "reason" }]);
     const commandType = `purchase_request.${action}`;
+    const overrides = action === "submit" ? await currentOverrides(id, context, PURCHASE_REQUEST_PERMISSIONS.submit) : null;
     return runCommand({
       context,
       permission: PURCHASE_REQUEST_PERMISSIONS[action],
@@ -295,6 +332,24 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         // Withdrawing or cancelling an approved PR must not orphan its RFQ or POs.
         if (row.status === PURCHASE_REQUEST_STATUS.APPROVED) await assertNoActiveDownstream(tx, actor.tenantId, row.id);
         const version = versionOf(row) + 1;
+        // On submit, a line that skips the item's preferred supplier with no
+        // reason (saved before reasons were asked, or before the item had a
+        // preferred supplier) is marked so the approver sees it; submitting
+        // is never refused for it.
+        let missingOverrides = [];
+        if (overrides) {
+          const marked = row.lines.map((line) => {
+            const current = line.metadata?.supplierOverride || null;
+            const wanted = overrides.get(line.id);
+            return { line, current, wanted: wanted === undefined || current?.reasonCode ? current : wanted };
+          });
+          for (const { line, current, wanted } of marked) {
+            if (JSON.stringify(wanted) === JSON.stringify(current)) continue;
+            const { supplierOverride: _previous, ...rest } = line.metadata || {};
+            await tx.purchaseRequestLine.update({ where: { id: line.id }, data: { metadata: wanted ? { ...rest, supplierOverride: wanted } : rest } });
+          }
+          missingOverrides = supplierOverrideAudit(marked.map(({ line, wanted }) => ({ ...line, metadata: { ...(line.metadata || {}), supplierOverride: wanted } }))).filter((entry) => entry.missingReason);
+        }
         await tx.purchaseRequest.update({
           where: { id: row.id },
           data: {
@@ -303,7 +358,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           },
         });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, actor.tenantId, row.id));
-        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: `purchase_request_${action}`, summary: `${action} purchase request ${row.id}.`, metadata: { expectedVersion, version, from: row.status, to: next, reason: reason || null } } };
+        return { result: purchaseRequest, entityType: "PurchaseRequest", entityId: row.id, audit: { action: `purchase_request_${action}`, summary: `${action} purchase request ${row.id}.`, metadata: { expectedVersion, version, from: row.status, to: next, reason: reason || null, ...(missingOverrides.length ? { supplierOverridesMissing: missingOverrides } : {}) } } };
       },
     });
   }
@@ -397,6 +452,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
   // warehouse and creates one draft PO per group, so no PO mixes currencies.
   async function createPurchaseOrdersFromPurchaseRequest(id, input = {}, context) {
     const expectedVersion = expected(input.expectedVersion);
+    const overrides = await currentOverrides(id, context, PURCHASE_REQUEST_PERMISSIONS.createPurchaseOrders);
     return runCommand({
       context,
       permission: PURCHASE_REQUEST_PERMISSIONS.createPurchaseOrders,
@@ -418,7 +474,16 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           if (!groups.has(groupKey)) groups.set(groupKey, { supplierId: meta.supplierId, supplierName: text(meta.supplierSnapshot?.supplierName) || null, currency: meta.currency, warehouseId: meta.targetWarehouseId, lines: [] });
           groups.get(groupKey).lines.push(line);
         }
+        // A line that skips the item's preferred supplier with no reason
+        // (approved before reasons were asked) reaches its PO marked "no
+        // reason recorded"; a recorded reason travels as it is.
+        const overrideOf = new Map(row.lines.map((line) => {
+          const current = line.metadata?.supplierOverride || null;
+          const wanted = overrides?.get(line.id);
+          return [line.id, wanted === undefined || current?.reasonCode ? current : wanted];
+        }));
         const purchaseOrderIds = [];
+        const carriedOverrides = [];
         for (const group of groups.values()) {
           const poId = documentId("PO");
           purchaseOrderIds.push(poId);
@@ -429,8 +494,12 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
             // An amount-basis line (a service) is ordered as one unit at its amount.
             const quantity = line.quantity === null ? "1.0000" : decimalText(line.quantity);
             const unitPrice = line.unitPrice === null ? receivingDecimalString(amount) : decimalText(line.unitPrice);
-            return { id: idFactory(), itemId: line.itemId, sku: line.sku, itemName: line.itemName, orderedQuantity: quantity, receivedQuantity: "0.0000", unit: line.unit, unitPrice, amount: receivingDecimalString(amount), metadata: { sourcePurchaseRequestLineId: line.id, targetWarehouseId: group.warehouseId, requestedDate: line.metadata?.needByDate || null } };
+            // The reason for a non-preferred supplier travels with the line as
+            // recorded: the PO approver sees what the requester gave.
+            const supplierOverride = overrideOf.get(line.id) || null;
+            return { id: idFactory(), itemId: line.itemId, sku: line.sku, itemName: line.itemName, orderedQuantity: quantity, receivedQuantity: "0.0000", unit: line.unit, unitPrice, amount: receivingDecimalString(amount), metadata: { sourcePurchaseRequestLineId: line.id, targetWarehouseId: group.warehouseId, requestedDate: line.metadata?.needByDate || null, ...(supplierOverride ? { supplierOverride } : {}) } };
           });
+          carriedOverrides.push(...supplierOverrideAudit(group.lines.map((line) => ({ ...line, metadata: { ...(line.metadata || {}), supplierOverride: overrideOf.get(line.id) || null } })), (line) => ({ purchaseOrderId: poId, purchaseRequestLineId: line.id })));
           const dates = group.lines.map((line) => line.metadata?.needByDate).filter(Boolean).sort();
           await tx.purchaseOrder.create({ data: {
             id: poId, tenantId: actor.tenantId, status: PURCHASE_ORDER_STATUS.DRAFT, supplierId: group.supplierId, supplierName: group.supplierName,
@@ -452,7 +521,7 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         await tx.purchaseRequest.update({ where: { id: row.id }, data: sourcedRequest(row, actor, "create_purchase_orders", { status: PURCHASE_REQUEST_STATUS.CONVERTED, linkedPoId: purchaseOrderIds[0], metadata: { procurementPath: "direct_po", linkedPurchaseOrderIds: purchaseOrderIds } }) });
         const orders = await tx.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, id: { in: purchaseOrderIds } }, include: { lines: true }, orderBy: { id: "asc" } });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, actor.tenantId, row.id));
-        return { result: { purchaseRequestId: row.id, purchaseRequest, createdPurchaseOrders: orders.map(mapPurchaseOrder) }, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_converted_to_purchase_orders", summary: `Created ${purchaseOrderIds.length} purchase order(s) from purchase request ${row.id}.`, metadata: { expectedVersion, purchaseOrderIds } } };
+        return { result: { purchaseRequestId: row.id, purchaseRequest, createdPurchaseOrders: orders.map(mapPurchaseOrder) }, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_converted_to_purchase_orders", summary: `Created ${purchaseOrderIds.length} purchase order(s) from purchase request ${row.id}.`, metadata: { expectedVersion, purchaseOrderIds, ...withOverrides(carriedOverrides) } } };
       },
     });
   }

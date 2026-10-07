@@ -23,14 +23,24 @@ async function priceHistoryService(ctx) {
   return createPriceHistoryReadService({ prisma, env: ctx.env || process.env });
 }
 
+// GET /api/procurement/item-supplier-orders?itemId=<id>: the last issued
+// purchase order of that item with each supplier (date and PO number, no
+// prices), for the purchase request form that lists an item's approved
+// sources when none is preferred.
+const LAST_ORDERS_PATH = "/api/procurement/item-supplier-orders";
+
 export async function handlePriceHistoryRoute(ctx) {
-  if (ctx.req.method !== "GET" || ctx.url.pathname !== "/api/procurement/price-history") return false;
+  if (ctx.req.method !== "GET" || !["/api/procurement/price-history", LAST_ORDERS_PATH].includes(ctx.url.pathname)) return false;
   if (!ctx.identity?.authenticated) {
     ctx.send(ctx.res, 401, { code: "AUTHENTICATION_REQUIRED", message: "Authentication is required." });
     return true;
   }
   try {
     const service = await priceHistoryService(ctx);
+    if (ctx.url.pathname === LAST_ORDERS_PATH) {
+      ctx.send(ctx.res, 200, await service.lastOrders(ctx.url.searchParams.get("itemId") || "", { identity: ctx.identity }));
+      return true;
+    }
     const excludePurchaseOrderId = ctx.url.searchParams.get("excludePurchaseOrder") || null;
     const supplierId = ctx.url.searchParams.get("supplierId") || null;
     ctx.send(ctx.res, 200, await service.read(ctx.url.searchParams.getAll("key"), { identity: ctx.identity }, { excludePurchaseOrderId, supplierId }));

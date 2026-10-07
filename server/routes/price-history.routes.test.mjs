@@ -95,3 +95,56 @@ test("a reader without price rights gets the facts with prices masked", async ()
   assert.deepEqual(restrictedFields, ["unitPrice"]);
   assert.deepEqual([histories[0].latest.orderNumber, histories[0].latest.date, histories[0].latest.unitPrice], ["PO-0031", "2026-09-14", null]);
 });
+
+test("the last-order route passes the item and the signed identity, and returns no prices", async () => {
+  let observed;
+  const payload = { itemId: "ITEM-1", timeZone: "America/New_York", lastOrders: [] };
+  const route = routeContext({
+    path: "/api/procurement/item-supplier-orders?itemId=ITEM-1&ignored=1",
+    service: { lastOrders: async (itemId, context) => { observed = { itemId, tenantId: context.identity.tenantId }; return payload; } },
+  });
+  assert.equal(await handlePriceHistoryRoute(route.ctx), true);
+  assert.deepEqual(observed, { itemId: "ITEM-1", tenantId: "signed-tenant" });
+  assert.deepEqual(route.sent, [{ status: 200, payload }]);
+  assert.equal(await handlePriceHistoryRoute(routeContext({ path: "/api/procurement/item-supplier-orders", method: "POST" }).ctx), false);
+});
+
+test("the last-order route needs an item, a signed-in reader and the PO read permission", async () => {
+  const unsigned = routeContext({ path: "/api/procurement/item-supplier-orders?itemId=ITEM-1", authenticated: false, service: { lastOrders: async () => assert.fail("not read") } });
+  await handlePriceHistoryRoute(unsigned.ctx);
+  assert.equal(unsigned.sent[0].status, 401);
+  const prisma = { $queryRawUnsafe: async () => assert.fail("not queried"), tenant: { findUnique: async () => ({ timezone: "America/New_York" }) } };
+  const noItem = routeContext({ path: "/api/procurement/item-supplier-orders", service: createPriceHistoryReadService({ prisma }) });
+  await handlePriceHistoryRoute(noItem.ctx);
+  assert.equal(noItem.sent[0].status, 422);
+  assert.equal(noItem.sent[0].payload.code, "ITEM_REQUIRED");
+  const resolveActor = async (_client, identity) => ({ tenantId: identity.tenantId, authenticated: true, complete: true, user: { id: identity.userId }, permissionCodes: new Set(["inventory.read"]) });
+  const denied = routeContext({ path: "/api/procurement/item-supplier-orders?itemId=ITEM-1", service: createPriceHistoryReadService({ prisma, resolveActor }) });
+  await handlePriceHistoryRoute(denied.ctx);
+  assert.equal(denied.sent[0].status, 403);
+});
+
+test("each supplier's last PO is dated in the workspace timezone with its date source", async () => {
+  const rows = [
+    { supplierId: "S1", purchaseOrderId: "PO-0031", orderNumber: null, issuedAt: new Date("2026-09-15T02:00:00Z"), createdAt: new Date("2026-09-10T15:00:00Z"), status: "issued", receivingBaseStatus: null },
+    { supplierId: "S2", purchaseOrderId: "PO-0012", orderNumber: "PO-12", issuedAt: null, createdAt: new Date("2026-08-01T15:00:00Z"), status: "fully_received", receivingBaseStatus: "issued" },
+    { supplierId: "S3", purchaseOrderId: "PO-0040", orderNumber: null, issuedAt: null, createdAt: new Date("2026-07-01T15:00:00Z"), status: "fully_received", receivingBaseStatus: "approved" },
+  ];
+  let asked;
+  const prisma = {
+    $queryRawUnsafe: async (sql, tenantId, itemId, statuses) => { asked = { sql, tenantId, itemId, statuses }; return rows; },
+    tenant: { findUnique: async () => ({ timezone: "America/New_York" }) },
+  };
+  const resolveActor = async (_client, identity) => ({ tenantId: identity.tenantId, authenticated: true, complete: true, user: { id: identity.userId }, permissionCodes: new Set(["procurement.purchase_order.read"]) });
+  const route = routeContext({ path: "/api/procurement/item-supplier-orders?itemId=ITEM-1", service: createPriceHistoryReadService({ prisma, resolveActor }) });
+  await handlePriceHistoryRoute(route.ctx);
+  assert.equal(route.sent[0].status, 200);
+  assert.deepEqual([asked.tenantId, asked.itemId, asked.statuses], ["signed-tenant", "ITEM-1", ["issued", "partially_received", "fully_received", "closed"]]);
+  assert.match(asked.sql, /DISTINCT ON \(po\."supplierId"\)/);
+  assert.deepEqual(route.sent[0].payload.lastOrders, [
+    { supplierId: "S1", purchaseOrderId: "PO-0031", orderNumber: "PO-0031", day: "2026-09-14", dateSource: "issue_date" },
+    { supplierId: "S2", purchaseOrderId: "PO-0012", orderNumber: "PO-12", day: "2026-08-01", dateSource: "order_date" },
+    { supplierId: "S3", purchaseOrderId: "PO-0040", orderNumber: "PO-0040", day: "2026-07-01", dateSource: "order_date_not_issued" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(route.sent[0].payload), /unitPrice|amount/i);
+});

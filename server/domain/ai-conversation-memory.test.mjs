@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { aiSkillActor, aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
+import { aiSkillActor, aiSkillScenario, aiSkillSeedDay } from './test-fixtures/ai-skill-scenario.mjs'
+import { loadAiSkillContext } from './ai-skill-context.mjs'
+import { readAiSkillFacts } from './ai-skill-readers.mjs'
+import { runPrepareActionDraft } from './ai-skill-prepare-action-draft.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 import { aiConversationMemory, aiMemoryForModels, aiMemoryNames, aiQuestionRefersToEarlierAnswer, aiSkillMemoryReference } from './ai-conversation-memory.mjs'
 import { routeSkill } from './ai-skill-router.mjs'
@@ -180,10 +183,6 @@ test('"draft a chaser for this supplier" after a list of late orders drafts for 
   assert.match(draft.conclusion.title, /Acme Components/)
   assert.ok(draft.reviewCards.length > 0)
   assert.ok(draft.keyEvidence.every((item) => !/Summit/.test(`${item.summary} ${item.entityLabel}`)), JSON.stringify(draft.keyEvidence))
-  // The supplier's drafts are those whose order is Acme's, as a tier's are: the
-  // LDM-001 shortage, which names no supplier itself, stays because Acme's
-  // order covers it.
-  assert.ok(draft.keyEvidence.some((item) => item.entityLabel === 'LDM-001'), JSON.stringify(draft.keyEvidence.map((item) => item.entityLabel)))
   assert.deepEqual(draft.followUp, { kind: 'reference' })
   assert.equal(audits.at(-1).metadata.followUp, 'reference')
   // "It": the first late order.
@@ -266,4 +265,21 @@ test('the wording reads a reference with the records it was read as, and the pre
   assert.equal(asked.type, 'answer_composition')
   assert.equal(asked.resolvedQuestion, '帮我给这家供应商写个催货邮件 (Acme Components)')
   assert.equal(asked.previousQuestion, 'Which purchase orders are late?')
+})
+
+test('a supplier focus keeps the drafts for a shortage its order covers, as a tier does', async () => {
+  // Acme's orders are not late here, so the LDM-001 shortage, which names no
+  // supplier itself, is the only way to a follow-up on PO-001.
+  const scenario = aiSkillScenario()
+  const { at, day } = aiSkillSeedDay('2026-09-29')
+  for (const po of scenario.data.purchaseOrders.filter((row) => ['PO-001', 'PO-008'].includes(row.id))) {
+    po.expectedDate = at(10)
+    for (const line of po.lines) line.promisedDate = day(10)
+  }
+  const facts = await readAiSkillFacts(await loadAiSkillContext(scenario.ctx))
+  const drafts = runPrepareActionDraft(facts, { focus: { entityType: 'supplier', entityId: 'SUP-001' }, route: {} }).drafts
+  const shortage = drafts.find((candidate) => candidate.item.label === 'LDM-001')
+  assert.ok(shortage, JSON.stringify(drafts.map((candidate) => candidate.item.label)))
+  assert.equal(shortage.po.supplierId, 'SUP-001')
+  assert.ok(drafts.every((candidate) => (candidate.po?.supplierId || candidate.item.supplierId) === 'SUP-001'))
 })
