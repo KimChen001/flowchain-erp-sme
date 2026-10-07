@@ -59,7 +59,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     mobile-operations mobile-operations:tasks mobile-operations:receiving
     mobile-operations:task mobile-operations:po-detail
     mobile-operations:receiving-detail
-    settings:custom-fields
+    settings:custom-fields master-data:import
     universal-intake review-actions review-actions:waiting
     review-actions:data-limited
   `),
@@ -297,6 +297,7 @@ mapCapability(
   "mobile-operations mobile-operations:tasks mobile-operations:receiving mobile-operations:task mobile-operations:po-detail mobile-operations:receiving-detail mobile-operations:settlement-detail",
 );
 mapCapability("universal-intake", "universal-intake settings:custom-fields");
+mapCapability("data-import", "master-data:import");
 mapCapability(
   "review-actions",
   "review-actions review-actions:waiting review-actions:data-limited",
@@ -549,7 +550,9 @@ export function authorityForRoute(
     owner: ownerByModule[route.moduleId] || "src/app/FlowChainApp.tsx",
     businessObject: route.entityType || route.moduleId,
     apiDependency:
-      route.id === "procurement:rfq"
+      route.id === "master-data:import"
+        ? "/api/data-import/*"
+        : route.id === "procurement:rfq"
         ? "/api/procurement/documents?type=rfq"
         : route.id === "procurement:rfq-detail"
           ? "/api/procurement/documents/rfq/:id"

@@ -104,6 +104,10 @@ projects:
                 value: "true"
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS
                 value: "true"
+              # CSV import of master data and opening stock through the
+              # manual-entry commands; opening stock lands as draft adjustments.
+              - key: FLOWCHAIN_ENABLE_DATA_IMPORT
+                value: "true"
               # Mobile Sync stays off; enabling it also needs cursor secrets.
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC
                 value: "false"
@@ -208,6 +212,10 @@ projects:
               - key: FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE
                 value: "true"
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS
+                value: "true"
+              # CSV import of master data and opening stock through the
+              # manual-entry commands; opening stock lands as draft adjustments.
+              - key: FLOWCHAIN_ENABLE_DATA_IMPORT
                 value: "true"
               # Mobile Sync stays off; enabling it also needs cursor secrets.
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC

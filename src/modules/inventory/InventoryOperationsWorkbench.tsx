@@ -6,6 +6,7 @@ import { createSecureClientMutationId } from "../../lib/client-id";
 
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { useInventoryOperationsCopy } from "./inventoryOperationsCopy";
+import { DataImportLink } from "../master-data/DataImportLink";
 type Capability = { enabled: boolean; maturity?: string };
 type Entry = {
   capabilities: Record<string, Capability>;
@@ -220,9 +221,12 @@ function OperationList({
     <div className="space-y-4" data-testid={`inventory-${kind}-list`}>
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">{config.title}</h2>
-        <Link className={button} to={config.newPath}>
-          {copy("新建")}
-        </Link>
+        <div className="flex items-center gap-2">
+          {kind === "adjustment" ? <DataImportLink type="opening-stock" className={secondary} /> : null}
+          <Link className={button} to={config.newPath}>
+            {copy("新建")}
+          </Link>
+        </div>
       </div>
       <Card className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-xs">

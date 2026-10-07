@@ -86,6 +86,7 @@ import { CanonicalRfqComparisonPage } from "../modules/procurement/CanonicalRfqC
 import FinanceWorkbench from "../modules/finance/Page";
 import SrmPage from "../modules/srm/Page";
 import MasterDataPage from "../modules/master-data/Page";
+import DataImportPage from "../modules/master-data/DataImportPage";
 import AiPanel, { type ActiveContext } from "../modules/ai-assistant/Panel";
 import {
   ActionDraftReviewShell,
@@ -1116,6 +1117,7 @@ export default function FlowChainApp() {
         onActiveContextChange={setAiActiveContext}
       />
     ),
+    "data-import": <DataImportPage />,
     finance: (
       <FinanceWorkbench
         initialView={activeView as any}
