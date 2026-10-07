@@ -15,6 +15,7 @@ import { handleCollaborationNotificationDraftsRoute } from "../routes/collaborat
 import { handleContextRoute } from "../routes/context.routes.mjs";
 import { handleCustomFieldsRoute } from "../routes/custom-fields.routes.mjs";
 import { handleDataAccessQualityRoute } from "../routes/data-access-quality.routes.mjs";
+import { handleDataImportRoute } from "../routes/data-import.routes.mjs";
 import { handleEvidenceGraphRoute } from "../routes/evidence-graph.routes.mjs";
 import { handleExceptionCasesRoute } from "../routes/exception-cases.routes.mjs";
 import { handleIntakeRoute } from "../routes/intake.routes.mjs";
@@ -111,6 +112,7 @@ const orderedRouteHandlers = Object.freeze([
   handleProcurementReadRoute,
   handleCapabilitiesRoute,
   handleIntakeRoute,
+  handleDataImportRoute,
   handleCustomFieldsRoute,
   handleMasterDataRoute,
   handleActionDraftsRoute,
