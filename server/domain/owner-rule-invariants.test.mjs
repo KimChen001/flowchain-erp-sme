@@ -231,9 +231,10 @@ test('rule 3: assistant and supplier payloads carry no weight or score', async (
 })
 
 test('rule 4: no supplier rate is shown below the minimum sample of 5', () => {
-  const line = (index, extra = {}) => ({ purchaseOrderLineId: `L${index}`, originalPromisedDate: '2026-09-20', unit: 'pcs', receivedQuantity: 10, rejectedQuantity: 0, onTime: true, onTimeCurrent: true, inFull: true, inFullPending: false, otif: true, otifCurrent: true, early: false, daysLate: 0, ...extra })
+  // One line per PO, so each line is its own delivery (scorecard v3 counts deliveries).
+  const line = (index, extra = {}) => ({ purchaseOrderId: `PO${index}`, purchaseOrderLineId: `L${index}`, originalPromisedDate: '2026-09-20', unit: 'pcs', orderedQuantity: 10, receivedQuantity: 10, rejectedQuantity: 0, onTime: true, onTimeCurrent: true, inFull: true, inFullPending: false, otif: true, otifCurrent: true, early: false, daysLate: 0, ...extra })
   const four = summarizeScorecardLines({ lines: Array.from({ length: 4 }, (_, index) => line(index)) }).metrics
-  for (const metric of ['onTime', 'inFull', 'otif', 'rejection']) assert.equal(four[metric].rate, null, `${metric} with 4 lines`)
+  for (const metric of ['onTime', 'inFull', 'otif', 'rejection']) assert.equal(four[metric].rate, null, `${metric} with 4 deliveries`)
   const five = summarizeScorecardLines({ lines: Array.from({ length: 5 }, (_, index) => line(index)) }).metrics
   assert.equal(five.onTime.rate, 1)
 
