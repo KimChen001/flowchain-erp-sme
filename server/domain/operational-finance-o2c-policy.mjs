@@ -2,6 +2,7 @@ import {
   financeFixed as fixed,
   financeUnits as units,
 } from "./operational-finance-policy.mjs";
+import { SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES } from "./outbound-transaction-policy.mjs";
 
 const SCALE = 10_000n;
 const ZERO = 0n;
@@ -139,7 +140,7 @@ export async function buildCustomerInvoicePlan({
             : {}),
           customerInvoice: {
             tenantId,
-            status: { in: ["submitted", "approved", "issued", "disputed"] },
+            status: { in: [...SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES] },
           },
         },
         select: { shipmentLineId: true, quantity: true },

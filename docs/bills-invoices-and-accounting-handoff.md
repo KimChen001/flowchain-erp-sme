@@ -1,8 +1,9 @@
 # Bills, invoices and the accounting handoff
 
 Status: design agreed with the owner on 2026-10-03. Steps 1a (names,
-navigation, redirects), 1b (entry from source documents, invoice actions) and
-2 (light payment records) are implemented; the rest is planned.
+navigation, redirects), 1b (entry from source documents, invoice actions), 1c
+(bills recorded before the receipt) and 2 (light payment records) are
+implemented; the rest is planned.
 
 ## 1. Problem
 
@@ -63,20 +64,36 @@ Stored identifiers, statuses and partner names are never translated in place
 ## 4. The two chains
 
 ```
-Buy:   Purchase order → Receipt (warehouse) → Bill → Three-way match → Bill to pay → Paid
+Buy:   Purchase order → Receipt (warehouse) ┐
+                      → Bill (any order)    ┴→ Three-way match → Bill to pay → Paid
 Sell:  Sales order    → Shipment (posted)   → Invoice → Issued        → Receivable  → Paid
 ```
 
-The rules below already hold in the server; this change moves entry points and
-names, not rules.
+Step 1a moved entry points and names, not rules. Step 1c changed one rule at
+the owner's request (2026-10-03): a supplier's bill often arrives before the
+goods, so it can be recorded first and the receipt added later. Payment still
+always needs the three-way match.
 
 Buy side (`docs/operational-finance-phase-5a.md`):
 
-- Every bill line names one purchase-order line and one posted, non-reversed
-  receiving line (`SUPPLIER_INVOICE_SOURCE_REQUIRED`). There is no bill for
-  goods that have not been received.
-- Billed quantity cannot exceed received quantity minus quantity already
-  billed. Price, quantity and amount are checked per line against configured
+- Every bill line names one purchase-order line (`SUPPLIER_INVOICE_SOURCE_REQUIRED`).
+  Either every line also names a posted, non-reversed receiving line of one
+  receipt, or none does yet (`SUPPLIER_INVOICE_RECEIPT_PARTIAL`).
+- A bill with a receipt cannot bill more than was received minus what other
+  bills already hold on that receipt line.
+- A bill **before its receipt** is recorded against an approved purchase order
+  that can still be received (approved, issued, partially or fully received);
+  it cannot bill more than was ordered minus what other submitted bills
+  already claim on that order line (`SUPPLIER_INVOICE_QUANTITY_EXCEEDS_ORDERED`).
+  It shows "Waiting for receipt" and cannot be matched, approved or paid
+  (`SUPPLIER_INVOICE_RECEIPT_REQUIRED`). Once the warehouse posts the receipt,
+  **Link receipt** on the bill names the receipt line of the same order line
+  for every bill line; quantities and prices stay as billed. A receipt that
+  covers less than the bill is allowed and the preview says so: the three-way
+  match then raises a quantity exception, which must be reviewed before
+  approval. A receipt of another order, an unposted or reversed receipt, or
+  one without goods for a line is refused.
+- Price, quantity and amount are checked per line against configured
   tolerances; line variances never offset each other.
 - Bill lifecycle: `draft → submitted → matched | exception → approved | held`,
   plus cancel. Approval creates the bill to pay (`AP-…` number).
@@ -138,11 +155,13 @@ Suppliers · Items · Reports
   only the read permission. This keeps the rule that capabilities gate
   transactions, not reads.
 - Source documents carry the create buttons (step 1b):
-  - "Record bill" on a purchase order once something was received (partially
-    received, received or closed) and on a posted receipt. It opens
-    `/app/procurement/bills/new?po=…` or `?receipt=…`: the supplier and receipt
-    are chosen and each accepted quantity is offered. A purchase order without
-    a posted receipt says so instead of offering a bill.
+  - "Record bill" on an approved purchase order (approved, issued, partially
+    or fully received, or closed) and on a posted receipt. It opens
+    `/app/procurement/bills/new?po=…` or `?receipt=…`: the supplier, order and
+    receipt are chosen and each accepted quantity is offered. A purchase order
+    without a posted receipt offers what was ordered and not yet billed; the
+    bill then waits for its receipt (step 1c). The form can also be switched
+    to "No receipt yet" by hand.
   - "Create invoice" on a sales order with a posted shipment and on a posted
     shipment. It opens `/app/sales/invoices/new?salesOrder=…` or `?shipment=…`
     with the shipment chosen and each shipped quantity offered.
@@ -302,6 +321,7 @@ contacts", "Import inventory items" and the Xero API reference; Microsoft
 | --- | --- | --- |
 | 1a | Names, navigation, redirects; the bill detail links its PO, receipt and match | No |
 | 1b | Create buttons on source documents with prefill; submit, approve and issue on the invoice page | No |
+| 1c | Bills recorded before the receipt; Link receipt on the bill | No |
 | 2 | Record payment on bills to pay and receivables (implemented) | Yes |
 | 3 | Books setting, export presets (Excel, Xero, QuickBooks Online) and export batches | Yes |
 | 4 | Payments import; supplier, customer and item import | Yes |
@@ -309,8 +329,15 @@ contacts", "Import inventory items" and the Xero API reference; Microsoft
 
 ## 12. Open questions
 
-- Non-stock purchase lines (freight, services): a bill line needs a receiving
-  line today. Decide whether such lines are "received" on confirmation.
+- Non-stock purchase lines (freight, services): the owner's rule is that every
+  payment needs the three-way match, so such a line also needs a receipt (a
+  confirmation that the service was delivered) before its bill is paid. The
+  bill itself can be recorded first. How a service is "received" is still
+  open.
+- A bill links one receipt. If the goods on one bill arrive in several
+  receipts, only one can be linked today, and the match reports the rest as
+  missing. Linking several receipts to one bill needs a model change; decide
+  whether it is needed.
 - Supplier deposits and prepayments are not supported.
 - Sales tax is not calculated; exports leave tax to the accounting system. This
   is also why QuickBooks Online customers with sales tax need the connector.

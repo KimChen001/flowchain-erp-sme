@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Info, RefreshCw } from "lucide-react";
+import { useSearchParams } from "react-router";
 import { A, Card } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
-import { apiJson } from "../../lib/api-client";
+import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { ReportDateInput } from "../reports/ReportDateInput";
 
@@ -45,6 +46,9 @@ const COPY: Record<string, [string, string]> = {
   last30: ["Last 30 days", "最近 30 天"], last90: ["Last 90 days", "最近 90 天"], last180: ["Last 180 days", "最近 180 天"], last365: ["Last 12 months", "最近 12 个月"],
   refresh: ["Refresh", "刷新"], loading: ["Loading supplier performance…", "正在加载供应商绩效…"],
   loadFailed: ["Could not load supplier performance.", "无法加载供应商绩效。"], retry: ["Retry", "重试"],
+  periodInvalid: ["Enter the period as calendar dates, starting on or before its end.", "请按日历日期输入统计期，开始日期不得晚于结束日期。"],
+  periodTooLong: ["The period can cover at most {n} days. Choose a shorter range.", "统计期最多 {n} 天，请选择更短的范围。"],
+  graceInvalid: ["Grace days must be a whole number from 0 to {n}.", "宽限天数必须是 0 到 {n} 之间的整数。"],
   supplier: ["Supplier", "供应商"], lines: ["Lines", "行数"],
   onTime: ["On time", "准时率"], onTimeOriginal: ["On time vs original promise", "按原始承诺准时率"], onTimeCurrent: ["vs current date", "按当前日期"], onTimeCurrentFull: ["On time vs current date", "按当前日期准时率"],
   overdueCount: ["{n} overdue, nothing received", "{n} 行逾期未到货"],
@@ -108,9 +112,22 @@ const isoDay = (date: Date) => date.toISOString().slice(0, 10);
 const shiftDay = (day: string, days: number) => isoDay(new Date(Date.parse(`${day}T12:00:00Z`) + days * 86_400_000));
 const PRESETS = [["last30", 30], ["last90", 90], ["last180", 180], ["last365", 365]] as const;
 
+// The scorecard's own error codes, in the reader's language; any other error
+// keeps the server's message.
+const SCORECARD_ERRORS: Record<string, string> = { SCORECARD_PERIOD_INVALID: "periodInvalid", SCORECARD_PERIOD_TOO_LONG: "periodTooLong", SCORECARD_GRACE_DAYS_INVALID: "graceInvalid" };
+type ScorecardFailure = { key: string; n: string } | { message: string };
+function scorecardFailure(reason: unknown): ScorecardFailure {
+  if (reason instanceof ApiError && reason.code && SCORECARD_ERRORS[reason.code]) return { key: SCORECARD_ERRORS[reason.code], n: String(reason.details.find((item) => item.maxDays !== undefined)?.maxDays ?? "") };
+  return { message: reason instanceof Error ? reason.message : "" };
+}
+function ScorecardError({ failure, onRetry }: { failure: ScorecardFailure; onRetry: () => void }) {
+  const tr = useCopy();
+  return <>{tr("loadFailed")} {"key" in failure ? tr(failure.key, { n: failure.n }) : failure.message} <button type="button" className="ml-2 underline" onClick={onRetry}>{tr("retry")}</button></>;
+}
+
 export function useSupplierScorecard(query: { supplierId?: string; from: string; to: string; graceDays: number }) {
   const [data, setData] = useState<SupplierScorecard | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ScorecardFailure | null>(null);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -121,10 +138,10 @@ export function useSupplierScorecard(query: { supplierId?: string; from: string;
     if (query.to) params.set("to", query.to);
     params.set("graceDays", String(query.graceDays));
     setLoading(true);
-    setError("");
+    setError(null);
     apiJson<SupplierScorecard>(`/api/reports/supplier-scorecard?${params}`)
       .then((value) => { if (alive) setData(value); })
-      .catch((reason) => { if (alive) setError(reason instanceof Error ? reason.message : ""); })
+      .catch((reason) => { if (alive) setError(scorecardFailure(reason)); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [query.supplierId, query.from, query.to, query.graceDays, tick]);
@@ -313,6 +330,28 @@ function usePeriod() {
   return [period, setPeriod] as const;
 }
 
+type Period = { from: string; to: string; graceDays: number };
+
+// On Reports › Supplier analytics the period and grace days live in the page
+// URL, shared with the supplier dashboard below the table, so the table and
+// the dashboard's on-time figures always measure the same lines. Without
+// dates both use the scorecard's default, the last 90 days.
+function useUrlPeriod() {
+  const [params, setParams] = useSearchParams();
+  const grace = Number(params.get("graceDays") || 0);
+  const period: Period = { from: params.get("from") || "", to: params.get("to") || "", graceDays: Number.isInteger(grace) && grace >= 0 ? grace : 0 };
+  const setPeriod = (next: Period) => {
+    const updated = new URLSearchParams(params);
+    const values: Array<[string, string]> = [["from", next.from], ["to", next.to], ["graceDays", next.graceDays ? String(next.graceDays) : ""]];
+    for (const [key, value] of values) {
+      if (value) updated.set(key, value);
+      else updated.delete(key);
+    }
+    setParams(updated, { replace: true });
+  };
+  return [period, setPeriod] as const;
+}
+
 // The Performance tab of the supplier detail page.
 export function SupplierPerformancePanel({ supplierId }: { supplierId: string }) {
   const tr = useCopy();
@@ -331,7 +370,7 @@ export function SupplierPerformancePanel({ supplierId }: { supplierId: string })
       </div>
       <div className="mt-4">
         {loading ? <p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("loading")}</p>
-          : error ? <div role="alert" className="rounded-lg bg-red-50 p-3 text-xs text-red-800">{tr("loadFailed")} {error} <button type="button" className="ml-2 underline" onClick={reload}>{tr("retry")}</button></div>
+          : error ? <div role="alert" className="rounded-lg bg-red-50 p-3 text-xs text-red-800"><ScorecardError failure={error} onRetry={reload} /></div>
           : row ? <SupplierFigures row={row} limitations={data?.limitations || []} />
           : <p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("noLines")}</p>}
       </div>
@@ -343,7 +382,7 @@ export function SupplierPerformancePanel({ supplierId }: { supplierId: string })
 export function SupplierPerformanceTable() {
   const tr = useCopy();
   const format = useFormat();
-  const [period, setPeriod] = usePeriod();
+  const [period, setPeriod] = useUrlPeriod();
   const { data, error, loading, reload } = useSupplierScorecard(period);
   const [open, setOpen] = useState<string | null>(null);
   const cell = (row: SupplierScorecardRow, value: string) => (row.sampleStatus === "ok" ? value : tr("insufficient"));
@@ -358,7 +397,7 @@ export function SupplierPerformanceTable() {
         <PeriodFilter from={period.from || data?.period.from || ""} to={period.to || data?.period.to || ""} graceDays={period.graceDays} asOf={data?.asOf} onChange={setPeriod} onReload={reload} />
       </div>
       {loading ? <p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("loading")}</p>
-        : error ? <div role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-xs text-red-800">{tr("loadFailed")} {error} <button type="button" className="ml-2 underline" onClick={reload}>{tr("retry")}</button></div>
+        : error ? <div role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-xs text-red-800"><ScorecardError failure={error} onRetry={reload} /></div>
         : !data?.suppliers.length ? <p className="py-6 text-center text-xs" style={{ color: A.sub }}>{tr("noSuppliers")}</p>
         : (
           <div className="mt-3 overflow-x-auto">

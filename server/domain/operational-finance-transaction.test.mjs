@@ -1030,7 +1030,10 @@ test(
 
       // Approvals that do not share a number all succeed together, in the
       // same workspace and in another one, even though each reads the
-      // payable numbers inside its serializable transaction.
+      // payable numbers inside its serializable transaction. Postgres often
+      // commits only one of them at a time and aborts the others, which then
+      // retry by themselves, so the last can need a retry per approval
+      // ahead of it.
       const unrelated = [
         { invoiceId: await matchedInvoice("G", "6001"), actor: approver },
         { invoiceId: await matchedInvoice("H", "6002"), actor: approver },
@@ -1082,8 +1085,8 @@ test(
           error.details?.retryable === true &&
           error.message.includes("AP-1001"),
       );
-      // One attempt plus two automatic retries.
-      assert.equal(blindAttempts, 3);
+      // One attempt plus five automatic retries.
+      assert.equal(blindAttempts, 6);
       assert.equal(
         (await prisma.supplierInvoice.findUnique({ where: { id: guarded } })).status,
         "matched",

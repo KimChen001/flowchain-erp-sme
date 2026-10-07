@@ -4,7 +4,7 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { buildAiSkillSignals, compareSignalsByDate } from './ai-skill-signals.mjs'
 import { listItemSupplierRecords, mapItemSupplierRecord } from './master-data-commands.mjs'
 import { isCommittedPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
-import { buildOpenPurchaseOrdersReport, purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
+import { buildOpenPurchaseOrdersReport, purchaseOrderDueDay, purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
 import { reportReadAccessFor } from './report-read-access.mjs'
 import { SUPPLIER_SCORECARD_READ_PERMISSIONS, createSupplierScorecardReadService } from './supplier-scorecard.mjs'
@@ -37,11 +37,11 @@ const listed = (skus) => {
 }
 
 // Committed purchase orders per supplier id over a window of business days.
-export function supplierPurchaseTotals(purchaseOrders = [], { from, to }) {
+export function supplierPurchaseTotals(purchaseOrders = [], { from, to, timeZone }) {
   const totals = new Map()
   for (const po of purchaseOrders) {
     const supplierId = text(po?.supplierId)
-    const day = purchaseOrderBusinessDate(po)
+    const day = purchaseOrderBusinessDate(po, timeZone)
     if (!supplierId || !isCommittedPurchaseOrder(po) || !day || day < from || day > to) continue
     const row = totals.get(supplierId) || { orders: 0, byCurrency: new Map(), amountKnown: true }
     row.orders += 1
@@ -171,19 +171,21 @@ export function buildSupplierInsights({ suppliers = [], totals = new Map(), open
   }))
 }
 
-// A supplier's latest purchase orders, newest first by business date: the
-// order's number, date, status, promised day (its earliest line's, else the
-// order's expected date, as the open purchase orders report reads it), days
-// overdue while open, and its amount only with price access.
-export function supplierPurchaseRecords(purchaseOrders = [], supplierId, { prices = false, openRows = [] } = {}) {
+// A supplier's latest purchase orders, newest first by business date in the
+// workspace timezone: the order's number, date, status, promised day, days
+// overdue while open, and its amount only with price access. The promised day
+// is the one the open purchase orders report counts days overdue from (the
+// earliest line still to receive); once every line is received, the earliest
+// line's day, else the order's expected date.
+export function supplierPurchaseRecords(purchaseOrders = [], supplierId, { prices = false, openRows = [], timeZone } = {}) {
   const overdue = new Map(openRows.map((row) => [row.id, Number(row.overdueDays) || 0]))
   const mine = purchaseOrders.filter((po) => text(po.supplierId) === text(supplierId))
   const rows = mine
-    .map((po) => ({ po, date: purchaseOrderBusinessDate(po) || '' }))
+    .map((po) => ({ po, date: purchaseOrderBusinessDate(po, timeZone) || '' }))
     .sort((a, b) => b.date.localeCompare(a.date) || text(b.po.orderNumber || b.po.id).localeCompare(text(a.po.orderNumber || a.po.id)))
     .slice(0, SUPPLIER_ACTIVITY_LIMIT)
     .map(({ po, date }) => {
-      const due = (po.lines || []).map((line) => purchaseOrderReportLine(line, po).due).filter(Boolean).sort()[0] || reportCalendarDay(po.expectedDate) || null
+      const due = purchaseOrderDueDay(po) || (po.lines || []).map((line) => purchaseOrderReportLine(line, po).due).filter(Boolean).sort()[0] || reportCalendarDay(po.expectedDate) || null
       const amount = Number(po.totalAmount ?? po.amount)
       return {
         id: text(po.id),
@@ -234,7 +236,7 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
         listItemSupplierRecords(prisma, tenantId).then((rows) => rows.map((row) => mapItemSupplierRecord(row))),
         visibility.orders && listPurchaseOrders ? listPurchaseOrders({ tenantId }) : [],
       ])
-      const totals = supplierPurchaseTotals(purchaseOrders, window)
+      const totals = supplierPurchaseTotals(purchaseOrders, { ...window, timeZone: tenant.timezone })
       const openRows = visibility.orders ? buildOpenPurchaseOrdersReport(purchaseOrders, { export: 'true' }, instant, { timeZone: tenant.timezone }).exportRows || [] : []
       const scorecard = visibility.onTime ? await createSupplierScorecardReadService({ prisma, now: () => instant }).read({}, { actor }) : null
       const signals = visibility.issues ? buildAiSkillSignals(await readAiSkillFacts(skillContext)) : []
@@ -286,7 +288,7 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
         asOf: today,
         supplierId: supplier.id,
         visibility,
-        purchaseOrders: visibility.orders ? supplierPurchaseRecords(mine, supplier.id, { prices: visibility.orderAmounts, openRows }) : null,
+        purchaseOrders: visibility.orders ? supplierPurchaseRecords(mine, supplier.id, { prices: visibility.orderAmounts, openRows, timeZone: tenant.timezone }) : null,
         invoices: visibility.invoices
           ? {
             rows: invoices.slice(0, SUPPLIER_ACTIVITY_LIMIT).map((row) => ({

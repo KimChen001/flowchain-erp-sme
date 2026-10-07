@@ -203,7 +203,7 @@ export async function readAiSkillFacts(skillContext) {
     purchaseOrders: null, inventory: null, invoices: null, purchaseRequests: null, rfqs: null, receipts: null, suppliers: null,
   }
 
-  const overview = buildRuntimeGovernedReport(business, { subject: 'overview' }, { allocationContext })
+  const overview = buildRuntimeGovernedReport(business, { subject: 'overview' }, { allocationContext, now, timeZone: tenant.timezone })
   const kpi = (report, id) => array(report.kpis).find((row) => row.id === id)
   // Overdue days count to the tenant's calendar day, as in the report itself.
   const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now, { timeZone: tenant.timezone })
@@ -230,8 +230,9 @@ export async function readAiSkillFacts(skillContext) {
     // The lines still to receive, by the report's line rules, each with its
     // own remaining quantity, unit and promised day. The order's sku is its
     // first line, which may be fully received, and its remaining quantity is
-    // the order total: a follow-up names these lines instead. Quantities and
-    // dates only, no prices.
+    // the order total, which the report gives only for one SKU in one unit: a
+    // follow-up, and an answer about an order of several SKUs, names these
+    // lines instead. Quantities and dates only, no prices.
     const openLinesById = new Map(reportRows.map((po) => [text(po.id), array(po.lines).flatMap((line) => {
       const read = purchaseOrderReportLine(line, po)
       return read.open ? [{
@@ -256,7 +257,7 @@ export async function readAiSkillFacts(skillContext) {
     // Every purchase order, whatever its status, by the open purchase orders
     // report's line rules (scope all), for questions about one order. Open
     // orders carry the same figures as the rows above.
-    const allOrders = buildOpenPurchaseOrdersReport(reportRows, { export: 'true', scope: 'all' }, now)
+    const allOrders = buildOpenPurchaseOrdersReport(reportRows, { export: 'true', scope: 'all' }, now, { timeZone: tenant.timezone })
     facts.purchaseOrders.index = array(allOrders.exportRows).map((row) => ({
       id: row.id, orderNumber: row.orderNumber, supplierId: row.supplierId, supplier: row.supplier, status: purchaseOrderStatus(row.status),
       createdDate: row.createdDate || null, dueDate: row.dueDate || null, overdueDays: row.overdueDays, ordered: row.ordered, received: row.received,
@@ -293,7 +294,7 @@ export async function readAiSkillFacts(skillContext) {
   }
 
   if (visible.supplier_invoices) {
-    const finance = buildRuntimeGovernedReport(business, { subject: 'finance' })
+    const finance = buildRuntimeGovernedReport(business, { subject: 'finance' }, { now, timeZone: tenant.timezone })
     const committed = array(business.supplierInvoices).filter((row) => committedInvoiceStatuses.has(text(row.status).toLowerCase()))
     facts.invoices = {
       committed: visibility.amounts.invoice_amounts ? kpiMoney(kpi(finance, 'invoice_amount')) : null,

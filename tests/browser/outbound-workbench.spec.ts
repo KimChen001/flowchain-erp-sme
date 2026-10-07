@@ -27,8 +27,12 @@ test("sales fulfillment workbench closes reserve, shipment, post, and reverse th
   await page.getByRole("link", { name: "新建销售订单" }).click();
   await page.getByLabel("客户").fill("Playwright Customer");
   await page.getByLabel("数量").fill("4.0000");
+  // Without a price the draft cannot be saved, because it could never be invoiced.
+  await expect(page.getByTestId("create-sales-order")).toBeDisabled();
+  await page.getByLabel(/^(Unit price|单价)$/).fill("12.5000");
   await page.getByTestId("create-sales-order").click();
   await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();
+  await expect(page.getByTestId("sales-order-line-price").first()).toContainText("12.5");
   const orderUrl = page.url();
   await page.getByTestId("confirm-sales-order").click();
   await expect(page.getByText("已确认", { exact: true }).first()).toBeVisible();

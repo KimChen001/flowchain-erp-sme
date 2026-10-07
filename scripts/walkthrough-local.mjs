@@ -9,6 +9,14 @@
 //
 //   npm run walkthrough:local            start (seeds on the first run)
 //   npm run walkthrough:local -- --reset delete the walkthrough data first
+//   npm run walkthrough:local -- --ai-env=<file>
+//                                        also try the assistant's model features
+//
+// --ai-env is the one exception to "calls no paid service", and only when
+// given: it reads a model provider from a file outside this checkout (the
+// owner's provider settings, for example another worktree's
+// .local/ai-provider.env) and switches on agent planning. Only the AI provider
+// and knowledge settings in it are used, and the key is never printed.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -32,6 +40,32 @@ if (localFiles.length) {
   console.error(`[walkthrough] Refusing to start: ${localFiles.join(", ")} found in ${root}.`);
   console.error("[walkthrough] Run it from a clean checkout (for example a new git worktree) so no local key or database is used.");
   process.exit(1);
+}
+
+// The opt-in model provider (see the top of this file).
+const AI_ENV_KEYS = new Set([
+  "FLOWCHAIN_AI_RUNTIME_MODE", "FLOWCHAIN_AI_PROVIDER_KIND", "FLOWCHAIN_AI_PROVIDER_ENDPOINT", "FLOWCHAIN_AI_PROVIDER_MODEL",
+  "FLOWCHAIN_AI_PROVIDER_API_KEY", "FLOWCHAIN_AI_PROVIDER_TIMEOUT_MS", "FLOWCHAIN_AI_PROVIDER_MAX_OUTPUT_CHARS",
+  "FLOWCHAIN_KNOWLEDGE_PROVIDER", "FLOWCHAIN_ENABLE_AI_SEMANTIC_PLANNER",
+]);
+const aiEnvArg = process.argv.find((arg) => arg.startsWith("--ai-env="));
+const aiEnv = {};
+if (aiEnvArg) {
+  const file = resolve(aiEnvArg.slice("--ai-env=".length));
+  if (file.toLowerCase().startsWith(root.toLowerCase())) {
+    console.error("[walkthrough] --ai-env must point outside this checkout, so no key is ever kept in it.");
+    process.exit(1);
+  }
+  for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (match && AI_ENV_KEYS.has(match[1])) aiEnv[match[1]] = match[2].replace(/^(["'])(.*)\1$/, "$2");
+  }
+  if (!aiEnv.FLOWCHAIN_AI_PROVIDER_KIND || !aiEnv.FLOWCHAIN_AI_PROVIDER_API_KEY) {
+    console.error("[walkthrough] --ai-env needs FLOWCHAIN_AI_PROVIDER_KIND and FLOWCHAIN_AI_PROVIDER_API_KEY.");
+    process.exit(1);
+  }
+  // Agent planning (P2): one model call picks the skills; the skills answer.
+  aiEnv.FLOWCHAIN_AI_AGENT_MODE = "plan";
 }
 
 if (process.argv.includes("--reset")) rmSync(dataRoot, { recursive: true, force: true });
@@ -69,9 +103,11 @@ const env = {
   FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: "true",
   FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
   FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "true",
-  // No model provider: the assistant answers from workspace data only.
+  // No model provider: the assistant answers from workspace data only,
+  // unless --ai-env opts in.
   OPENAI_API_KEY: "",
   FLOWCHAIN_KNOWLEDGE_PROVIDER: "",
+  ...aiEnv,
   // The Vite dev server proxies /api to the local API.
   PLAYWRIGHT_APP_PORT: String(appPort),
   PLAYWRIGHT_API_PORT: String(apiPort),
@@ -122,7 +158,8 @@ try {
 [walkthrough] Ready: http://127.0.0.1:${appPort}
 [walkthrough] Sign in with admin@flowchain.local or kim@example.com, then open
 [walkthrough] "View the sign-in link" on the sign-in page (local outbox only).
-[walkthrough] Data folder: ${dataRoot}   Stop with Ctrl+C.`);
+[walkthrough] Data folder: ${dataRoot}   Stop with Ctrl+C.
+[walkthrough] Model features: ${aiEnvArg ? `on (${aiEnv.FLOWCHAIN_AI_PROVIDER_KIND}, ${aiEnv.FLOWCHAIN_AI_PROVIDER_MODEL || "default model"}; agent planning, knowledge ${aiEnv.FLOWCHAIN_KNOWLEDGE_PROVIDER || "off"})` : "off"}`);
 } catch (error) {
   console.error(`[walkthrough] ${error.message}`);
   await stop(1);
