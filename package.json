@@ -21,6 +21,7 @@
     "test:db:english": "node scripts/run-postgres-test-files.mjs tests/postgres/english-default-language.test.mjs",
     "test:db:us-defaults": "node scripts/run-postgres-test-files.mjs tests/postgres/us-business-defaults.test.mjs",
     "test:db:email-link-sign-in": "node scripts/run-postgres-test-files.mjs tests/postgres/email-link-sign-in-migration.test.mjs tests/postgres/workspace-sessions.test.mjs tests/postgres/email-link-sign-in.test.mjs",
+    "test:db:approval-email": "node scripts/run-postgres-test-files.mjs tests/postgres/approval-email.test.mjs",
     "test:db:tenant-provision": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-provision.test.mjs",
     "test:db:walkthrough-scenario": "node scripts/run-postgres-test-files.mjs tests/postgres/walkthrough-scenario.test.mjs",
     "test:db:tenant-scoped-reads": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-scoped-business-reads.test.mjs",
