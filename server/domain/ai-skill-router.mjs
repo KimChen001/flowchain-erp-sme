@@ -54,6 +54,9 @@ const PAGE_REFERENCE = [
 const PAGE_PRONOUN = /\b(?:it|its|it's|it’s)\b/i
 const MANY = [/\b(?:which|all|every|list|how many|any)\b/i, /哪些|所有|全部|多少/]
 const refersToPage = (raw) => matches(PAGE_REFERENCE, raw) || (PAGE_PRONOUN.test(raw) && !matches(MANY, raw))
+// The same words point at a record of the previous answer when the question
+// is not asked on a record's page (ai-conversation-memory.mjs).
+export const aiSkillRefersToRecord = (message) => refersToPage(text(message))
 
 // A draft request: prepare/write/create ... draft, or a draft of a message.
 const DRAFT = [

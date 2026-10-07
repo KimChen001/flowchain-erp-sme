@@ -1,4 +1,5 @@
 import { isOpenPurchaseOrder, reportCalendarDay } from './open-purchase-order.mjs'
+import { tenantCalendarDay } from './tenant-calendar-day.mjs'
 import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs'
 import { can } from '../auth/authorization-service.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
@@ -56,12 +57,19 @@ function sourceState(available, visible, partition, count) {
   return resultStateForValidity(partition.recordValiditySummary, count)
 }
 
+// A due date is a calendar day and is compared with the window's calendar
+// days (resolveBusinessTimeWindow's startDay and endDay, or the days of its
+// bounds in the workspace timezone), never as an instant: a bill due today,
+// stored at 00:00 UTC, falls before "today" begins in New York and read as
+// overdue.
 function inWindow(value, window) {
-  const candidate = date(value)
-  if (!candidate) return false
-  if (window?.type === 'overdue') return window.endAt ? candidate <= new Date(window.endAt) : false
-  if (window?.startAt && candidate < new Date(window.startAt)) return false
-  if (window?.endAt && candidate > new Date(window.endAt)) return false
+  const day = calendarDay(value)
+  if (!day) return false
+  const startDay = window?.startDay ?? (window?.startAt ? dayOf(window.startAt, window.timezone) : null)
+  const endDay = window?.endDay ?? (window?.endAt ? dayOf(window.endAt, window.timezone) : null)
+  if (window?.type === 'overdue') return endDay ? day <= endDay : false
+  if (startDay && day < startDay) return false
+  if (endDay && day > endDay) return false
   return true
 }
 
@@ -72,9 +80,11 @@ function reportRow(row) {
   return { ...row, id: text(row.id), expectedDate: iso(row.expectedDate), orderDate: iso(row.orderDate), createdAt: iso(row.createdAt), lines: array(row.lines).map((line) => ({ ...line, promisedDate: line.promisedDate || line.metadata?.promisedDate || null })) }
 }
 
-function isOverdue(value, now) {
-  const due = date(value)
-  return Boolean(due && due < now)
+// Overdue from the day after the due day, in the workspace's calendar
+// (`today`, tenantCalendarDay), as on the open purchase orders report.
+function isOverdue(value, today) {
+  const due = calendarDay(value)
+  return Boolean(due && due < today)
 }
 
 // `status` is the stored status code and `reasonCode` says why the record is
@@ -168,6 +178,8 @@ function emptySourceState(state) {
 // purchase orders, as on the open purchase orders report.
 export function buildSupplierActionSummaries({ records = {}, actor, sourceAvailability = {}, timeWindow, filters = {}, now = new Date(), timeZone } = {}) {
   const current = now instanceof Date ? now : new Date(now)
+  // The workspace's calendar day, which due dates are counted against.
+  const today = tenantCalendarDay(current, timeZone || timeWindow?.timezone)
   const available = {
     suppliers: sourceAvailability.suppliers !== false,
     payables: sourceAvailability.payables !== false,
@@ -218,14 +230,14 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
     const matchesDueState = payable => {
       if (!filters.dueState?.length) return true
       const reasons = blockReasonsForPayable(payable, safeRecords)
-      return filters.dueState.some(state => state === 'overdue' ? isOverdue(payable.dueDate, current) : state === 'blocked' ? reasons.length > 0 : state === 'ready_for_payment' ? reasons.length === 0 : state === 'held' ? reasons.includes('payment_hold') : state === 'missing_evidence' ? reasons.some(reason => ['missing_invoice', 'missing_receiving_evidence'].includes(reason)) : state === 'future_due' ? date(payable.dueDate) > current : state === 'partially_settled' ? text(payable.status) === 'partially_settled' : state === 'disputed' ? reasons.includes('invoice_disputed') : state === 'due_now' ? date(payable.dueDate) && date(payable.dueDate) <= current : false)
+      return filters.dueState.some(state => state === 'overdue' ? isOverdue(payable.dueDate, today) : state === 'blocked' ? reasons.length > 0 : state === 'ready_for_payment' ? reasons.length === 0 : state === 'held' ? reasons.includes('payment_hold') : state === 'missing_evidence' ? reasons.some(reason => ['missing_invoice', 'missing_receiving_evidence'].includes(reason)) : state === 'future_due' ? calendarDay(payable.dueDate) > today : state === 'partially_settled' ? text(payable.status) === 'partially_settled' : state === 'disputed' ? reasons.includes('invoice_disputed') : state === 'due_now' ? Boolean(calendarDay(payable.dueDate)) && calendarDay(payable.dueDate) <= today : false)
     }
     const scopedPayables = windowPayables.filter(matchesDueState)
     const blocks = scopedPayables.flatMap((payable) => blockReasonsForPayable(payable, safeRecords).map((reason) => ({ payableId: payable.id, reason, supplierId: id })))
     const blockedSince = new Map(scopedPayables.map((payable) => [payable.id, blockedSinceFor(payable, blocks.filter((row) => row.payableId === payable.id).map((row) => row.reason), safeRecords, timeZone, dayOf(current, timeZone))]))
     const blockedIds = new Set(blocks.map((row) => row.payableId))
     const ready = scopedPayables.filter((row) => !blockedIds.has(row.id))
-    const overdue = scopedPayables.filter((row) => isOverdue(row.dueDate, current))
+    const overdue = scopedPayables.filter((row) => isOverdue(row.dueDate, today))
     const currencies = unique(scopedPayables.map(row => text(row.currency)))
     const dueAmount = currencies.length > 1 ? null : scopedPayables.reduce((sum, row) => sum + (decimal(row.outstandingAmount) || 0), 0)
     const overdueAmount = currencies.length > 1 ? null : overdue.reduce((sum, row) => sum + (decimal(row.outstandingAmount) || 0), 0)
@@ -262,7 +274,7 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
       .sort((left, right) => text(left.sku).localeCompare(text(right.sku)) || text(left.unit).localeCompare(text(right.unit)))
     const pendingReceivingEvidence = receiving.filter((row) => ['draft', 'receiving', 'unposted'].includes(text(row.workflowStatus || row.postingStatus).toLowerCase()) && array(row.attachments).length === 0)
     const awaitingRfqs = rfqs.filter((row) => !['awarded', 'closed', 'cancelled'].includes(text(row.status).toLowerCase()) && Number(row.respondedSupplierCount ?? row.quoted ?? 0) < Number(row.supplierCount ?? row.suppliers ?? 0))
-    const expiredRfqs = rfqs.filter((row) => isOverdue(row.dueDate || row.due, current) && !['awarded', 'closed', 'cancelled'].includes(text(row.status).toLowerCase()))
+    const expiredRfqs = rfqs.filter((row) => isOverdue(row.dueDate || row.due, today) && !['awarded', 'closed', 'cancelled'].includes(text(row.status).toLowerCase()))
     const incompleteRecords = Object.values(partitions).flatMap((item) => item.incompleteRecords.filter(({ record }) => [record.supplierId, record.supplierInvoice?.supplierId].map(text).includes(id)))
     const incompleteRecordCount = incompleteRecords.length
     const limitations = []
@@ -328,7 +340,7 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
         bankExceptions.length ? 'review_bank_reconciliation_exceptions' : null,
       ]),
       evidence: unique([
-        ...scopedPayables.map((row) => evidence('payable_obligation', row.id, row.obligationNumber || row.id, row.status, '/finance?view=payables', blockedIds.has(row.id) ? 'payable_blocked' : isOverdue(row.dueDate, current) ? 'payable_overdue' : 'payable_due')),
+        ...scopedPayables.map((row) => evidence('payable_obligation', row.id, row.obligationNumber || row.id, row.status, '/finance?view=payables', blockedIds.has(row.id) ? 'payable_blocked' : isOverdue(row.dueDate, today) ? 'payable_overdue' : 'payable_due')),
         ...overduePos.map((row) => evidence('purchase_order', row.id, row.id, row.status, '/procurement?view=purchase-orders', 'purchase_order_overdue')),
         ...mismatchInvoices.map((row) => evidence('supplier_invoice', row.id, row.invoiceNumber || row.id, row.status, '/finance?view=invoices', 'invoice_match_difference')),
         ...receivingExceptions.map((row) => evidence('receiving_doc', row.id, row.documentNumber || row.id, row.status, '/receiving', 'receiving_exception')),
