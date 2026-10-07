@@ -15,6 +15,7 @@ type Profile = {
   jobTitle?: string;
   status: string;
   languagePreference?: "zh-CN" | "en-US" | null;
+  approvalEmailsEnabled?: boolean;
   defaultWarehouseId?: string;
   profileCompletedAt?: string;
   version: number;
@@ -243,6 +244,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       <label>{t("settings.email")}<input className={`${field} bg-slate-50`} value={profile.email} readOnly /></label>
       <label>{t("settings.role")}<input data-testid="profile-roles" className={`${field} bg-slate-50`} value={assignedRoles.map(roleName).join(", ") || t("settings.none")} readOnly /></label>
       <label>{t("settings.interfaceLanguage")}<select aria-label={t("settings.interfaceLanguage")} className={field} value={profile.languagePreference || ""} onChange={event => setProfile({ ...profile, languagePreference: (event.target.value || null) as Profile["languagePreference"] })}><option value="">{t("settings.followWorkspace")}</option>{languageOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+      <label className="flex items-start gap-2 text-sm md:col-span-2"><input data-testid="profile-approval-emails" type="checkbox" className="mt-1" checked={profile.approvalEmailsEnabled !== false} onChange={event => setProfile({ ...profile, approvalEmailsEnabled: event.target.checked })} /><span>{t("settings.approvalEmails")}<span className="block text-xs text-slate-500">{t("settings.approvalEmailsHint")}</span></span></label>
       <label>{t("settings.defaultWarehouse")}<select aria-label={t("settings.defaultWarehouse")} className={field} value={profile.defaultWarehouseId || ""} onChange={event => setProfile({ ...profile, defaultWarehouseId: event.target.value })}><option value="">{t("settings.none")}</option>{warehouses.filter(item => item.status === "active" && ownWarehouseIds.has(item.id)).map(item => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}</select></label>
     </div>}
 
