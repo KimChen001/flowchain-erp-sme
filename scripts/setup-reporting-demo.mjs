@@ -80,7 +80,11 @@ export async function seedReportingDemo(prisma, env = process.env, anchor = new 
         const id = `DEMO-RPT-PO-${suffix(n)}`;
         const lineId = `${id}-L1`;
         const lineMeta = { ...marker, targetWarehouseId: warehouse.id, promisedDate: expectedDate.toISOString().slice(0, 10), requestedDate: expectedDate.toISOString().slice(0, 10) };
-        const created = await insert('purchaseOrder', { id, supplierId: vendor.id, supplierName: vendor.name, status, expectedDate, amount, currency: 'USD', owner: ['Kim', 'Alex Morgan', 'Jordan Lee'][n % 3], priority: n % 4 === 0 ? 'high' : 'medium', metadata: { ...marker, targetWarehouseId: warehouse.id, transmissionStatus: ['issued', 'partially_received', 'fully_received'].includes(status) ? 'sent' : 'not_sent' }, createdAt, updatedAt: createdAt, lines: { create: [{ id: lineId, itemId: item.id, sku: item.sku, itemName: item.name, orderedQuantity, receivedQuantity, unit: item.unit, unitPrice, amount, metadata: lineMeta }] } });
+        // A sent order records when it was issued, as the Issue action does:
+        // two hours after it was created. Inserted once, never rewritten.
+        const sent = ['issued', 'partially_received', 'fully_received'].includes(status);
+        const issuedAt = sent ? new Date(createdAt.getTime() + 2 * 60 * 60 * 1000) : null;
+        const created = await insert('purchaseOrder', { id, supplierId: vendor.id, supplierName: vendor.name, status, expectedDate, amount, currency: 'USD', owner: ['Kim', 'Alex Morgan', 'Jordan Lee'][n % 3], priority: n % 4 === 0 ? 'high' : 'medium', issuedAt, metadata: { ...marker, targetWarehouseId: warehouse.id, transmissionStatus: sent ? 'sent' : 'not_sent', ...(issuedAt ? { issuedAt: issuedAt.toISOString() } : {}) }, createdAt, updatedAt: createdAt, lines: { create: [{ id: lineId, itemId: item.id, sku: item.sku, itemName: item.name, orderedQuantity, receivedQuantity, unit: item.unit, unitPrice, amount, metadata: lineMeta }] } });
         // A committed order keeps its first promised date, as the approve and issue commands record it.
         if (created && isCommittedPurchaseOrder({ status })) await recordOriginalPromises(tx, { purchaseOrder: await tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { lines: true } }) });
         if (!created || !receivedQuantity) continue;

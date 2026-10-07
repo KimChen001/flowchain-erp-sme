@@ -30,6 +30,11 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
         call(repositories.salesOrders, 'listOrders', [], scope),
         call(repositories.procurementRuntime, 'snapshot', {}, scope),
       ])
+      // The recorded stock unit of every item a purchase order line names, read
+      // apart from the bounded item list, so incoming never adds a line in
+      // another unit because the item fell outside that list.
+      const lineKeys = [...new Set(array(procurement.purchaseOrders).flatMap(po => array(po.lines).flatMap(line => [line.sku, line.itemId])).map(key => String(key ?? '').trim()).filter(Boolean))]
+      const itemUnits = lineKeys.length ? await call(masterData, 'listRecordedItemUnits', [], { ...scope, keys: lineKeys }) : []
       const dataLimitations = []
       if (!repositories.procurementRuntime) dataLimitations.push('procurement_runtime_unavailable')
       if (!repositories.inventoryRuntime) dataLimitations.push('inventory_runtime_unavailable')
@@ -54,6 +59,7 @@ export function createBusinessReadContextService({ repositories = {}, dataMode =
         receipts: array(procurement.receipts),
         supplierInvoices: array(procurement.supplierInvoices),
         itemSupplierRelationships: array(itemSupplierRelationships),
+        itemUnits: array(itemUnits),
         dataLimitations: [...new Set(dataLimitations)],
         truncatedSubjects: [...truncated.values()],
         runtimeAdapters: {

@@ -275,7 +275,7 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
 // figures (inventory and the overview); the warehouse and bin notes only on
 // the inventory dashboard, the one that would show stock by location.
 const INVENTORY_DASHBOARD_NOTES = new Set(['warehouse_runtime_not_connected', 'bin_runtime_not_connected'])
-const inventoryNote = code => /^(inventory_|on_hand_|reserved_|sales_reservation_|sales_demand_quantity_missing|open_po_remaining_)/.test(code)
+const inventoryNote = code => /^(inventory_|on_hand_|reserved_|sales_reservation_|sales_demand_quantity_missing|open_po_remaining_|po_line_unit_)/.test(code)
 const noteApplies = (code, subject) => INVENTORY_DASHBOARD_NOTES.has(code) ? subject === 'inventory' : inventoryNote(code) ? ['inventory', 'overview'].includes(subject) : true
 
 // options.now and options.timeZone set the workspace's "today" for overdue

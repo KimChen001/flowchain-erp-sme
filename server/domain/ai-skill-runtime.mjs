@@ -5,11 +5,12 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { routeSkill } from './ai-skill-router.mjs'
 import { resolveAiSkillFollowUp } from './ai-skill-follow-up.mjs'
 import { answerAiSkill, toolsFor } from './ai-skills.mjs'
-import { recordAiSkillAudit } from './ai-skill-audit.mjs'
+import { aiKnowledgeAuditBlock, recordAiSkillAudit } from './ai-skill-audit.mjs'
 import { aiSkillIntentShadowAudit, aiSkillIntentShadowEnabled, classifyAiSkillIntentShadow } from './ai-skill-intent-shadow.mjs'
 import { aiSkillIntentRoutingAudit, aiSkillIntentRoutingEnabled, routeAiSkillIntent } from './ai-skill-intent-routing.mjs'
 import { aiCompoundAnswersEnabled, aiCompoundAudit, aiCompoundGaps, composeAiCompoundAnswer, planAiCompoundAnswer, splitAiCompoundQuestion } from './ai-skill-compound.mjs'
-import { aiAgentAudit, aiAgentPlanningEnabled, planAiAgentTools } from './ai-agent-planning.mjs'
+import { AI_AGENT_KNOWLEDGE, aiAgentAudit, aiAgentPlanningEnabled, planAiAgentTools } from './ai-agent-planning.mjs'
+import { classifyQueryScope } from './ai-query-scope.mjs'
 import { AI_AGENT_BUSINESS_QUERY, AI_AGENT_BUSINESS_QUERY_TITLE, answerAiAgentBusinessQuery } from './ai-agent-business-query.mjs'
 import { aiSkillById } from './ai-skill-registry.mjs'
 import { assertValidAiSkillResponse } from './ai-skill-validator.mjs'
@@ -59,8 +60,9 @@ export function isLegacyAiTemplateGatewayEnabled(env = process.env) {
 
 // `agentFirst`: an object the gateway reads back when this returns null (the
 // planner's audit block and whether it failed). `skipAgent`: the planner has
-// already been asked for this question.
-export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, skipAgent = false } = {}) {
+// already been asked for this question. `knowledge`: the actor's documents for
+// the planner's knowledge search ({ languages, search }), or null.
+export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, skipAgent = false, knowledge = null } = {}) {
   const started = Date.now()
   const message = text(body.message || body.question)
   const language = aiSkillQuestionLanguage(message, body.answerLanguage)
@@ -105,9 +107,14 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   const agentOn = !skipAgent && readsFacts && !followUp && !route?.greeting && !route?.explicit && !refined?.capability && aiAgentPlanningEnabled(env)
   if (agentFirst && !agentOn) return null
   const gaps = !agentFirst && agentOn && refined?.skillId && !compound ? aiCompoundGaps({ message, route, facts, allowed, focusTarget: body.focusTarget }) : null
-  const agentEntry = agentOn ? (agentFirst ? 'multi_part' : !refined?.skillId ? 'unmatched' : gaps && (gaps.draft || gaps.dropped) ? 'multi_part' : null) : null
+  // A question about records and documents together ("which of Acme's
+  // overdue orders need follow-up under our policy"): the planner may search
+  // the documents in their own language, so a Chinese question finds an
+  // English policy (PR-3). Without documents to search, the rules answer.
+  const mixed = !agentFirst && agentOn && knowledge && refined?.skillId && !compound && classifyQueryScope({ ...body, message }) === 'mixed'
+  const agentEntry = agentOn ? (agentFirst ? 'multi_part' : !refined?.skillId ? 'unmatched' : gaps && (gaps.draft || gaps.dropped) ? 'multi_part' : mixed ? 'mixed' : null) : null
   const parts = agentEntry ? (gaps?.parts ?? splitAiCompoundQuestion(message).length) : 0
-  const agentPlan = agentEntry ? await planAiAgentTools({ message, actor: context.actor, env, parts, businessQuery: Boolean(agentFirst), excluded: route?.excluded || [], ...(ctx.aiAgentProvider ? { provider: ctx.aiAgentProvider } : {}) }) : null
+  const agentPlan = agentEntry ? await planAiAgentTools({ message, actor: context.actor, env, parts, businessQuery: Boolean(agentFirst), knowledge: knowledge?.languages || null, excluded: route?.excluded || [], ...(ctx.aiAgentProvider ? { provider: ctx.aiAgentProvider } : {}) }) : null
   // Each planned call runs through the same record step as a rule's: the
   // records the model named (all written in the question) are looked up in the
   // actor's own facts, and the skill answers in its own words.
@@ -117,6 +124,8 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   const isBusinessQuery = (section) => section.route.skillId === AI_AGENT_BUSINESS_QUERY
   const agentSections = agentPlan?.status === 'planned'
     ? (await Promise.all(agentPlan.calls.map(async (call) => {
+      // The knowledge search is not a section; its passages follow below.
+      if (call.tool === AI_AGENT_KNOWLEDGE) return null
       if (call.tool === AI_AGENT_BUSINESS_QUERY) {
         const answered = await answerAiAgentBusinessQuery(ctx, body, { goals: call.goals, records: call.records, alone: agentPlan.calls.length === 1 }).catch(() => null)
         return answered ? { question: AI_AGENT_BUSINESS_QUERY_TITLE[titleKey], route: { skillId: AI_AGENT_BUSINESS_QUERY, mode: null }, ...answered } : null
@@ -137,6 +146,11 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   // not served, and the rules answer.
   const businessQuery = agentSections.find(isBusinessQuery) || null
   const planned = { source: 'model', modelStatus: 'planned' }
+  // The knowledge search: the planner's words search the actor's own
+  // documents, and the passages found are shown with their sources, beside the
+  // sections or on their own. No model writes an answer from them here.
+  const searchCall = agentPlan?.status === 'planned' ? agentPlan.calls.find((call) => call.tool === AI_AGENT_KNOWLEDGE) : null
+  const found = searchCall && knowledge ? await knowledge.search({ query: searchCall.query, question: message, language }).catch(() => null) : null
   let agentResponse = null
   let agentFailure = null
   if (agentSections.length === 1 && businessQuery) agentResponse = { ...businessQuery.response, skillRouting: planned }
@@ -147,7 +161,7 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
       const extra = businessQuery ? { ids: businessQuery.readIds, stored: businessQuery.stored } : {}
       agentResponse = { ...assertValidAiSkillResponse(businessQuery ? { ...composed, businessQuery: businessQuery.response.businessQuery } : composed, facts, extra), skillRouting: planned }
     } catch { agentFailure = 'invalid_answer' }
-  }
+  } else if (!agentSections.length && found) agentResponse = { ...found, skillRouting: planned }
   const agentResult = agentPlan && agentFailure ? { ...agentPlan, status: 'degraded', reason: agentFailure } : agentPlan
   const agentServed = Boolean(agentResponse) || (agentSections.length === 1 && !agentFailure)
   // Asked first for a question the business query path would take: when the
@@ -164,10 +178,10 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   }
   // One planned skill answers as that skill.
   if (agentServed && !agentResponse) refined = agentSections[0].route
-  const skillId = agentResponse ? (agentResponse.intent === 'compound' ? 'compound' : 'business_query') : compound ? 'compound' : refined?.skillId && allowed.has(refined.skillId) ? refined.skillId : 'capability_overview'
+  const skillId = agentResponse ? (agentResponse.intent === 'compound' ? 'compound' : agentResponse.intent === 'knowledge_retrieval' ? 'knowledge_retrieval' : 'business_query') : compound ? 'compound' : refined?.skillId && allowed.has(refined.skillId) ? refined.skillId : 'capability_overview'
   // A business query answer is audited as the business query path's: its
   // records are not in the skills' facts.
-  const answerFacts = ['capability_overview', 'business_query'].includes(skillId) ? null : facts
+  const answerFacts = ['capability_overview', 'business_query', 'knowledge_retrieval'].includes(skillId) ? null : facts
   let response
   if (agentResponse) {
     response = agentResponse
@@ -187,10 +201,13 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   // A model step was tried and failed: the rules answered, and the answer says
   // it may not cover every part (the limited-mode label).
   if (agentResult && !agentServed && agentResult.status === 'degraded') response = { ...response, agentPlanning: { status: 'degraded', entry: agentEntry } }
+  // The passages the planner's search found go with a planned answer from
+  // records as its knowledge supplement; the gateway then adds none.
+  if (found && agentServed && response.intent !== 'knowledge_retrieval') response = { ...response, supplementalKnowledge: { title: found.conclusion.title, summary: found.conclusion.summary, rag: found.rag } }
   const routingAudit = aiSkillIntentRoutingAudit(intentRouting)
-  const agent = agentResult ? aiAgentAudit(agentResult, { entry: agentEntry, served: agentServed ? agentSections.map((section) => section.route.skillId) : [] }) : compound ? aiCompoundAudit(compound) : null
-  const audited = skillId === 'business_query' ? { ...response, answerSource: 'business_query' } : response
-  const audit = (intentShadow = null) => recordAiSkillAudit(ctx, { response: audited, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow, intentRouting: routingAudit, followUp: followUp?.kind || null, agent })
+  const agent = agentResult ? aiAgentAudit(agentResult, { entry: agentEntry, served: agentServed ? [...agentSections.map((section) => section.route.skillId), ...(found ? [AI_AGENT_KNOWLEDGE] : [])] : [] }) : compound ? aiCompoundAudit(compound) : null
+  const audited = skillId === 'business_query' ? { ...response, answerSource: 'business_query' } : skillId === 'knowledge_retrieval' ? { ...response, answerSource: 'knowledge', language } : response
+  const audit = (intentShadow = null) => recordAiSkillAudit(ctx, { response: audited, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow, intentRouting: routingAudit, followUp: followUp?.kind || null, agent, knowledge: found && agentServed ? aiKnowledgeAuditBlock(found.rag) : null })
   // With the classifier on, the answer does not wait for it: the audit row
   // is written when its suggestion arrives (best effort, like every audit).
   if (aiSkillIntentShadowEnabled(env) && !route?.capability) {

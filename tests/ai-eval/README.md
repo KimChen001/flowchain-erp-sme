@@ -295,6 +295,10 @@ these cases, and the rules still run first:
   from the gateway. If the planner does not answer it, the business query path
   answers as before, with the planner's audit block and, after a failure, the
   limited-mode note.
+- **mixed** (PR-3): a one-part question about records and documents together
+  ("Which of Acme's overdue orders need follow-up under our purchasing policy?"),
+  when the actor may read at least one document. The planner can then search the
+  documents in their own language. Without documents, the rules answer as before.
 
 Chips, follow-ups, greetings, instructions and questions about the outside world
 never reach it.
@@ -305,8 +309,8 @@ never reach it.
   - `records`: the record numbers, SKUs or supplier names a call is about, as the
     question writes them;
   - `mode`: only `overview` or `short` for stock;
-  - `tier`, for `purchase_orders` and `supplier_attention` only: `1`, `2`, `3` or
-    `none`. It must be the tier the question itself names (`aiSkillTierOf`), or
+  - `tier`, for `purchase_orders`, `supplier_attention` and `prepare_action_draft`
+    only: `1`, `2`, `3` or `none`. It must be the tier the question itself names (`aiSkillTierOf`), or
     the call is dropped (`tier_not_in_question`); it then filters as a tier in a
     rule-routed question does, without changing the order;
   - `goals`, for `supplier_business_query` only: the business query goals the
@@ -318,6 +322,20 @@ never reach it.
     query planner. Alone, the call keeps the deterministic plan's goals too; beside
     other calls it answers its own part. A second business query call joins the
     first.
+  - `query`, for `knowledge_search` only (PR-3, offered when the actor may read at
+    least one document): a few search words, 2 to 200 characters, in the
+    documents' language. The tool's description names that language, so a
+    Chinese question can find an English policy. The words only search the
+    actor's own documents; the audit keeps their length, never the words.
+    - When no document is in Chinese, Chinese search words are dropped
+      (`query_language`): keyword search would find nothing with them. On
+      Parley the model wrote Chinese words until the tool's description asked
+      for English with a translated example.
+    - The passages found are shown with their sources, and no model writes an
+      answer from them (plan gap 6). Beside other calls they become the answer's
+      knowledge supplement; alone, they are the answer.
+    - One search per answer. It comes on top of one call per part, three calls in
+      all.
 - **Declining.** With `deepseek_chat` and `parley_chat` the request sets
   `tool_choice: "required"` and adds a `no_matching_skill` tool, so a question no
   tool answers costs one short call (about 0.7 s on Parley) rather than a written

@@ -99,7 +99,7 @@ request is named. The state in §3–§8 was brought up to date on 2026-10-06, a
 | --- | --- | --- | --- |
 | A. Baseline | Real-provider runs of both evaluations, recorded in `docs/ai-provider-baseline-2026-10-04.md` (#130); token totals for planning calls in `--agent` runs (#144) | — | Failures sorted per case by stage (routing, data, retrieval, generation, permission, provider); the model name in reports |
 | B. Model tool planning (P2) | Agent planning, off by default (`FLOWCHAIN_AI_AGENT_MODE=plan`, #144): native tool calls, the supplier business query tool, a tier argument (also on the draft tool), the Acme entry rule with cases in both languages, the `agent` audit block, the limited-mode label. The P2 gate passed with Parley (§8) | — | Naming an unanswered part; a scripted provider for offline runs; the `agent_failure` category; multi-turn `turns` |
-| C. Knowledge evidence | Routing of product and policy questions, whole model codes, Markdown section chunks (#126); an honest "the documents don't say" is a no-answer, citations read `[1]`, 18 knowledge cases (#139); the Acme workspace in the assistant evaluation holds the three policy documents, and knowledge answers get an audit row (#156) | — | Knowledge search as a P2 tool (PR-3); a relevance threshold (baseline finding 3); conflicting documents (handling and a case); a prompt-injection document case; document version and effective date; the original file; headings and pages for PDF and DOCX; retrieval across languages (a Chinese question does not find an English policy offline) |
+| C. Knowledge evidence | Routing of product and policy questions, whole model codes, Markdown section chunks (#126); an honest "the documents don't say" is a no-answer, citations read `[1]`, 18 knowledge cases (#139); the Acme workspace in the assistant evaluation holds the three policy documents, and knowledge answers get an audit row (#156) | #159 (PR-3): knowledge search as a P2 tool. The planner writes search words in the documents' language and the passages are shown without generation | A relevance threshold (baseline finding 3); conflicting documents (handling and a case); a prompt-injection document case; document version and effective date; the original file; headings and pages for PDF and DOCX; retrieval across languages without a model (offline, a Chinese question still finds no English policy) |
 | D. Reviewable drafts | The purchase request form opens prefilled with field sources; message drafts with To, Subject and Open in email; a next step and draft on every answer line; receiving and quote prefill; the order form opens by itself; follow-ups only for issued orders, in the order answer too; a tier the question names narrows the drafts (#118, #119, #120, #122, #124, #125, #140, #148, #152) | — | Partial-delivery wording and a policy citation on the draft review (PR-4); one message per supplier covering several orders; "no supplier email on file" |
 | E. Authorized execution | Nothing; the legacy `/api/user-confirmed-actions` route is still mounted, with no permission check and no caller | #151: the design. The assistant proposes, a person confirms, the system runs the existing command. v1 is a draft purchase request and a draft RFQ from an approved request; decisions A1–A8 | C1 (purchase request), C2 (RFQ), C3 (model proposal tools) |
 | Model on the trial (direction 1–2) | A per-workspace switch, off by default; usage per workspace and month; a cap (USD 20 by default); the `anthropic_chat` adapter (#150). No change on any deployed site until a key is set | #143: no provider settings in the Blueprint (R4) | The owner's key and budget; the Blueprint change with #143's test as an allow-list; one real call checking `tool_choice: "required"`; a rate limit |
@@ -115,8 +115,8 @@ draft" answer, is still not met. The Acme request lacks the cited policy inside 
 Status as of 2026-10-06:
 - **Fixed:** 1–4, 16 and 17.
 - **Handled in open pull requests or designs:** 8 (#143); 14 and 15 (C1, #151).
-- **In part:** 7, 9, 10 and 12.
-- **Open:** 5, 6, 11 and 13.
+- **In part:** 6 (#159), 7, 9, 10 and 12.
+- **Open:** 5, 11 and 13.
 
 1. **Unissued orders were chased.** `LOCAL-DEMO-PO-023` (approved, never issued)
    counted as overdue and got a supplier follow-up draft. Fixed by #140 (V5),
@@ -143,6 +143,12 @@ Status as of 2026-10-06:
    take 4.6 s at p95, against the P2 gate of 2.5 s at p95. PR-3 must either show
    cited passages without generation inside a P2 answer, or ask the owner for a
    separate knowledge budget.
+   - **In part (#159):** inside a P2 answer the documents are shown as passages
+     without generation. On Parley, answers on the model path took p50 990 ms and
+     p95 1,716 ms, search included.
+   - **Still open:** a question about the documents alone still takes the knowledge
+     path with a generated answer (3.4 s in that run). Its budget is the knowledge
+     one.
 7. **Data handling.** There is no per-workspace opt-in yet (agent mode decision 6),
    the knowledge path sends excerpts to any configured provider, and the AI
    endpoints have no rate limit or spend cap. Parley keys belong to individual MIT
@@ -200,7 +206,7 @@ Found on 2026-10-05:
 | Part | Delivered by | Status |
 | --- | --- | --- |
 | Acme's open and overdue orders, with original and current promise dates | `purchase_orders` | On main |
-| The policy, cited | Knowledge search as a P2 tool | Gap 3 done (#156): offline, an English question cites the policy section; a Chinese one does not yet. Inside the planned answer: PR-3, moved up to 10/12–10/18 (§6) |
+| The policy, cited | Knowledge search as a P2 tool | Gap 3 done (#156). With agent planning on, both languages cite the policy section through the planner's search (#159; the Acme cases pass in English and Chinese on Parley). Offline, only English |
 | Which orders need follow-up under the policy: issued, overdue lines; due-soon orders shown apart | V5 (#140), then a policy-aligned selection | V5 on main; the selection comes with PR-3 or PR-4 |
 | A message asking about the remaining quantity | Per-line drafts (#120, #122), partial-delivery wording | Drafts on main; the wording in PR-4 |
 | Customer impact, escalation, duplicate reminders | Honest "not recorded" answers (D7) | Gated on main (#139) |
@@ -233,7 +239,7 @@ approved on 10/05 using the freed time to bring the Acme request forward.
 | Window | AI work | Pull request | Done when |
 | --- | --- | --- | --- |
 | 10/6–10/11 | Merged by 10/06: this file (#142), supplier tier drafts (#148), AI per workspace (#150, no change on any deployed site until the owner provides a key), V5 in the order answer (#152), the eval's workspace day (#155), P2 with the flag off (#144), the Acme scenario workspace with the three policy documents (gap 3, #156). Still open: the trial scope lock | #143 | Each merged after main with its baseline regenerated, one at a time; the README count rechecked by the last one; gap 3 seeded and checked by the knowledge evaluation |
-| 10/12–10/18 (scope freeze) | Knowledge search as a P2 tool, moved up from 10/26. C1, confirmed draft purchase requests, if A1–A8 are decided by 10/11. B live on the trial once the owner provides the key and budget: the Blueprint, #143's test as an allow-list, one real call, the gate run with claude-haiku-4-5 | PR-3, C1, B | PR-3: §8 knowledge and the §5 acceptance offline. C1: the tests in #151 §10. B: the §8 gate on the trial provider before any workspace is switched on |
+| 10/12–10/18 (scope freeze) | Knowledge search as a P2 tool, moved up from 10/26 and built on 10/06 (#159). C1, confirmed draft purchase requests, if A1–A8 are decided by 10/11. B live on the trial once the owner provides the key and budget: the Blueprint, #143's test as an allow-list, one real call, the gate run with claude-haiku-4-5 | PR-3, C1, B | PR-3: §8 knowledge and the §5 acceptance offline. C1: the tests in #151 §10. B: the §8 gate on the trial provider before any workspace is switched on |
 | 10/19–10/23 (release candidate) | Fixes to what merged; the Acme request in a browser walkthrough | — | §5 acceptance in both languages |
 | 10/26–10/31 | Partial-delivery wording and the policy citation on the draft review. C2 (RFQ from an approved request). C3 (model proposal tools) if C1 has landed | PR-4, C2, C3 | PR-4: §5 acceptance with the draft; C2 and C3: #151 §10 |
 | November | Fixes only, at most 3 merges a week | — | — |
@@ -315,6 +321,16 @@ Status in #144 as of 2026-10-05: **done** or **not yet**.
   1,743 ms. The miss was `mt-tier-draft-en`: for "prepare a message to them" the
   model picked `supplier_attention`, which then took no tier. One run at 14 of 14 is
   not yet a trend.
+
+**PR-3 result, with Parley, 2026-10-06 (#159):**
+- **Passes the gate.**
+  - 215/215 gated, no regressions.
+  - Degraded calls: 1 of 56, a timeout.
+  - Planning latency: p50 927 ms, p95 1,659 ms.
+  - Whole answers on the model path: p50 990 ms, p95 1,716 ms.
+- **Pending cases: 30/30**, including the Chinese Acme request and
+  `policy-acme-overdue-zh`.
+- **One run was not counted:** it had 15 network errors from Parley.
 
 **Knowledge:** the knowledge cases pass offline; a provider run is scored per case
 and allows a no-answer only where a case lists it.

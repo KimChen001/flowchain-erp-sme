@@ -17,7 +17,11 @@ import { aiAgentBusinessQueryTool } from './ai-agent-business-query.mjs'
 //
 // What the model may say: which skills, the inventory mode (overview or
 // short), which records each call is about, written as the question writes
-// them, and the goals of a supplier business query (ai-agent-business-query.mjs).
+// them, the goals of a supplier business query (ai-agent-business-query.mjs),
+// and the words to search the actor's own documents with (knowledge_search,
+// PR-3): a few search words, never shown or stored, in the documents' language,
+// so a Chinese question finds an English policy. The passages found are shown
+// with their sources; no model writes an answer from them here.
 // The business query's suppliers and filters come from the question. The deterministic record step (refineAiSkillRoute) resolves
 // those words against the actor's own records and sets the mode, so a record
 // the actor cannot see answers exactly as one that does not exist. A record
@@ -33,6 +37,11 @@ const TOOL_CALLING_KINDS = new Set(['deepseek_chat', 'doubao_chat', 'qwen_chat',
 // written refusal took 2.1 to 3.0 s to generate and was thrown away.
 const REQUIRED_TOOL_CHOICE_KINDS = new Set(['deepseek_chat', 'parley_chat'])
 export const AI_AGENT_NO_SKILL = 'no_matching_skill'
+export const AI_AGENT_KNOWLEDGE = 'knowledge_search'
+const LANGUAGE_NAMES = Object.freeze({ 'en-US': 'English', 'zh-CN': 'Chinese' })
+const QUERY_LENGTH = Object.freeze({ min: 2, max: 200 })
+// The languages each knowledge search tool was offered with.
+const SEARCH_LANGUAGES = new WeakMap()
 const noSkillTool = Object.freeze({
   type: 'function',
   function: Object.freeze({
@@ -77,10 +86,30 @@ const RECORDS = Object.freeze({
 
 // The actor's skills as native tool definitions, plus the supplier business
 // query for a question the business query path would take, when the actor may
-// read one of its goals. capability_overview is the fallback, not a tool.
-export function aiAgentTools(actor, { businessQuery = true } = {}) {
+// read one of its goals, and the knowledge search when the actor may read at
+// least one document (`knowledge`: those documents' languages).
+// capability_overview is the fallback, not a tool.
+export function aiAgentTools(actor, { businessQuery = true, knowledge = null } = {}) {
   const query = businessQuery ? aiAgentBusinessQueryTool(actor) : null
-  return [...aiAgentSkillTools(actor), ...(query ? [query] : [])]
+  return [...aiAgentSkillTools(actor), ...(query ? [query] : []), ...(array(knowledge).length ? [aiAgentKnowledgeTool(knowledge)] : [])]
+}
+
+function aiAgentKnowledgeTool(languages) {
+  const codes = array(languages)
+  const written = codes.map((code) => LANGUAGE_NAMES[code] || code).join(' and ')
+  // English documents only: a Chinese question's terms must be translated, or
+  // keyword search finds nothing (seen on Parley, 2026-10-06).
+  const translate = !codes.includes('zh-CN') ? ' Write the query in English even when the question is in Chinese, translating its terms (采购政策 → purchasing policy, 逾期 → overdue, 跟进 → follow-up).' : ''
+  const definition = {
+    type: 'function',
+    function: {
+      name: AI_AGENT_KNOWLEDGE,
+      description: `Search this workspace's own documents (policies, procedures, product guides) for the part of the question about what the rules or the documents say. The documents are written in ${written}.${translate}`,
+      parameters: { type: 'object', additionalProperties: false, properties: { query: { type: 'string', minLength: QUERY_LENGTH.min, maxLength: QUERY_LENGTH.max, description: `${written} search words for that part, as the documents would word it: a few words, not a sentence and not record numbers.` } }, required: ['query'] },
+    },
+  }
+  SEARCH_LANGUAGES.set(definition.function, codes)
+  return definition
 }
 
 function aiAgentSkillTools(actor) {
@@ -112,8 +141,11 @@ function parseArguments(raw) {
 }
 
 // The calls the runtime may run, and the ones it dropped with their reasons.
+// `maxTools` counts the calls that answer parts of the question; one
+// knowledge search may come on top of them, three calls in all.
 export function validateAiAgentToolCalls(toolCalls, { message, tools, maxTools = AI_AGENT_LIMITS.maxTools }) {
   const known = new Map(array(tools).map((tool) => [tool.function.name, tool.function.parameters]))
+  const searchLanguages = new Map(array(tools).map((tool) => [tool.function.name, SEARCH_LANGUAGES.get(tool.function)]))
   const question = normalized(message)
   const calls = []
   const dropped = []
@@ -138,6 +170,14 @@ export function validateAiAgentToolCalls(toolCalls, { message, tools, maxTools =
     if (asked !== null && !array(parameters.properties.tier?.enum).includes(asked)) { drop('invalid_arguments'); continue }
     const tier = asked === null ? null : asked === 'none' ? 'none' : Number(asked)
     if (tier !== null && aiSkillTierOf(message) !== tier) { drop('tier_not_in_question'); continue }
+    // Search words: the knowledge search's one required argument. One search
+    // per answer; a second is left out.
+    const querySchema = parameters.properties.query
+    const query = querySchema ? (typeof args.query === 'string' ? args.query.replace(/\s+/g, ' ').trim() : null) : undefined
+    if (querySchema && (!query || query.length < QUERY_LENGTH.min || query.length > QUERY_LENGTH.max)) { drop('invalid_arguments'); continue }
+    if (querySchema && calls.some((entry) => entry.tool === tool)) continue
+    // Words in a language none of the documents is written in find nothing.
+    if (querySchema && /[\u3400-\u9fff]/u.test(query) && !array(searchLanguages.get(tool)).includes('zh-CN')) { drop('query_language'); continue }
     // Goals: a required list of the tool's own values (the business query).
     const goalSchema = parameters.properties.goals
     const goals = goalSchema ? args.goals : undefined
@@ -148,8 +188,9 @@ export function validateAiAgentToolCalls(toolCalls, { message, tools, maxTools =
     const key = `${tool}|${mode || ''}|${tier ?? ''}|${named.map(normalized).sort().join(',')}`
     if (seen.has(key)) continue
     seen.add(key)
-    if (calls.length >= maxTools) { drop('over_limit'); continue }
-    calls.push({ tool, mode, records: named, ...(tier !== null ? { tier } : {}), ...(goalSchema ? { goals: [...goals] } : {}) })
+    const answering = calls.filter((entry) => entry.query === undefined).length
+    if (querySchema ? calls.length >= AI_AGENT_LIMITS.maxTools : answering >= maxTools || calls.length >= AI_AGENT_LIMITS.maxTools) { drop('over_limit'); continue }
+    calls.push({ tool, mode, records: named, ...(tier !== null ? { tier } : {}), ...(goalSchema ? { goals: [...goals] } : {}), ...(querySchema ? { query } : {}) })
   }
   return { calls, dropped }
 }
@@ -165,13 +206,15 @@ function withTimeout(promise, ms, onTimeout) {
 // `parts` is how many parts the question has (splitAiCompoundQuestion): the
 // model may call at most one skill per part, and three in all.
 // `businessQuery`: offer the supplier business query (a question the business
-// query path would take, sent here first by the gateway).
-export async function planAiAgentTools({ message, actor, env = {}, parts = 1, businessQuery = false, excluded = [], provider = callConfiguredProvider, fetchImpl = globalThis.fetch } = {}) {
+// query path would take, sent here first by the gateway). `knowledge`: the
+// languages of the documents the actor may read, to offer the knowledge
+// search; a search may come on top of one call per part, three calls in all.
+export async function planAiAgentTools({ message, actor, env = {}, parts = 1, businessQuery = false, knowledge = null, excluded = [], provider = callConfiguredProvider, fetchImpl = globalThis.fetch } = {}) {
   if (!aiAgentPlanningEnabled(env)) return { status: 'disabled' }
   const started = Date.now()
   // A skill a rule excluded for this question (purchase order skills for a
   // sales order question, for example) is not offered.
-  const tools = aiAgentTools(actor, { businessQuery }).filter((tool) => !excluded.includes(tool.function.name))
+  const tools = aiAgentTools(actor, { businessQuery, knowledge }).filter((tool) => !excluded.includes(tool.function.name))
   const base = () => ({ provider: providerRuntimeConfig(env).kind, latencyMs: Date.now() - started, toolCount: tools.length })
   if (!tools.length) return { status: 'declined', reason: 'no_tools', calls: [], dropped: [], ...base() }
   const controller = new AbortController()
@@ -203,7 +246,7 @@ export function aiAgentAudit(plan, { entry, served = [] } = {}) {
     provider: plan.provider || null,
     latencyMs: plan.latencyMs ?? null,
     modelCalls: 1,
-    calls: array(plan.calls).map((call) => ({ tool: call.tool, mode: call.mode || null, records: call.records.length, ...(call.tier !== undefined ? { tier: call.tier } : {}), ...(call.goals ? { goals: call.goals } : {}), served: served.includes(call.tool) })),
+    calls: array(plan.calls).map((call) => ({ tool: call.tool, mode: call.mode || null, records: call.records.length, ...(call.tier !== undefined ? { tier: call.tier } : {}), ...(call.goals ? { goals: call.goals } : {}), ...(call.query !== undefined ? { queryLength: call.query.length } : {}), served: served.includes(call.tool) })),
     dropped: array(plan.dropped).map((row) => ({ tool: row.tool, reason: row.reason })),
     // Key names without "token": the audit store redacts those as secrets.
     usage: { input: plan.usage?.inputTokens ?? null, output: plan.usage?.outputTokens ?? null },

@@ -6,6 +6,7 @@ import { BusinessEntityLink } from "../../components/business/BusinessEntityLink
 import type { CustomerMaster, PrintTemplateCatalogItem } from "./standardData";
 import { orNotProvided, useMasterDataCopy } from "./masterDataCopy";
 import { useMasterDataWriteAccess } from "./writeAccess";
+import { DataImportLink } from "./DataImportLink";
 
 function creditStyle(status: string) {
   if (status === "正常") return { color: A.green, bg: "#f0faf4" };
@@ -94,6 +95,7 @@ export function CustomerTable({ customers, onChanged }: { customers: CustomerMas
   const toolbar = (
     <div className="flex items-center justify-end gap-2 px-4 py-3">
       {error ? <p role="alert" className="mr-auto text-xs" style={{ color: A.red }}>{error}</p> : null}
+      <DataImportLink type="customers" />
       {canEdit && !creating ? <button type="button" data-testid="customer-new" onClick={() => setCreating(true)} className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white">{copy("New customer")}</button> : null}
     </div>
   );
