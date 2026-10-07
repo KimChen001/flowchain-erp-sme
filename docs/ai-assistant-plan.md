@@ -1,6 +1,6 @@
 # FlowChain AI assistant plan
 
-Version 4.0, 2026-10-05.
+Version 5.0, 2026-10-07.
 - **v3.0.** Approved by the owner on 2026-10-04, with decisions V1–V5 and R1–R6.
 - **v4.0.** Adds the owner's AI direction of 2026-10-05 (decisions 1–7, §2). That
   direction:
@@ -8,6 +8,11 @@ Version 4.0, 2026-10-05.
   - starts stage E: the assistant may create a draft, once a person confirms it.
 
   Under §12 that makes it a new major version.
+- **v5.0.** Adds the owner's decisions of 2026-10-07 (§2). They approve P3, so the
+  model words answers from the facts the skills return. They also approve
+  conversation memory, and later analysis tools, general concept answers and
+  models per task. They replace D3 and move P3 out of V3's "after the November
+  report". §3–§8 are not yet updated for them.
 
 This file is the single index for the assistant and knowledge (RAG) work. It
 replaces plan v2.0 and the v2.1 revision that review decision D8 called for.
@@ -30,9 +35,14 @@ request is named. The state in §3–§8 was brought up to date on 2026-10-06, a
   owner has approved it (review decision D1, routing decision of 2026-10-02).
 - **Facts come from skills and the knowledge index, never from a model.** A model
   may choose what to read; it never supplies a number, an id, a status or a date.
-- **Templates this round.** Answers and drafts are worded by templates (D3). The
-  model may route a question to one skill today and, from P2, plan up to three
-  read-only tools in one round (D4, agent mode decision 2).
+- **Templates until P3 lands, then model wording over checked facts (decision of
+  2026-10-07, replacing D3).**
+  - Today answers and drafts are worded by templates. The model may route a
+    question to one skill and, from P2, plan up to three read-only tools in one
+    round (D4, agent mode decision 2).
+  - With P3 the model writes the answer from the facts the skills returned. A
+    verifier checks every number, id and date against those facts, and the
+    template is the fallback.
 - **Draft-first.** The assistant never sends, pays, approves, issues or submits.
   - Drafts are reviewed by a person.
   - "Open in email" hands the text to the user's own mail app.
@@ -65,13 +75,13 @@ request is named. The state in §3–§8 was brought up to date on 2026-10-06, a
 | Agent mode 1, 2, 3 | P1 compound answers on by default; P2 lets the model pick up to 3 read-only tools and their arguments from the question and the tool list, local, off by default; P2 writes the supplier query plan with the planner guards | Approved; P1 merged (#111); P2 built in draft #144, gate passed with Parley on 2026-10-05 | #108 §11 |
 | Agent mode 6, 8, 9 | Per-workspace opt-in before real tenant data reaches any provider; the §9 gate thresholds; audit rows keep reason codes only | Approved; the opt-in is built in #150 | #108 §11 |
 | Agent mode 5 | A provider for a public deployment | Answered for opted-in trial workspaces by direction decision 2; any wider use stays open | #108 §11 |
-| Agent mode 4, 7 | P3 model wording with masked tool results sent to the provider; the P3 answer label | **Open**; waits until the owner has used the model in the walkthrough and on the trial (direction decision 7) | #108 §11 |
+| Agent mode 4, 7 | P3 model wording with masked tool results sent to the provider; the P3 answer label | Approved 2026-10-07 (owner decision 1 of that day); being built | #108 §11; owner, 2026-10-07 |
 | Prefill 1–8 | P1 prefill with field sources; a next step and draft on every answer line; mailto; "Log as sent" stores the text (P2); others' values deferred; history prices are hints; audit-row measurement; Tab accepts | Approved; P1 merged (#119, #120, #122, #124) | #116 §9 |
 | Prefill 9 | P3 model completion of descriptive text | **Open**, decided with agent mode decision 4 | #116 §9 |
 | Prefill 10 | Open a filled-in purchase request when asked for an order; not when open orders cover it, and then say them first | Approved, merged (#125) | #116 §9 |
 | Review D1 | Keep rules first; revisit model-first only with P2 latency and accuracy data | Approved | review of v2.0 |
 | Review D2 | Knowledge search may be one of the P2 tools (one round, at most 3 tools) | Approved; this moves it out of P4 | review of v2.0 |
-| Review D3 | No model wording or draft rewriting this round | Approved | review of v2.0 |
+| Review D3 | No model wording or draft rewriting this round | Approved; **replaced** 2026-10-07 for answers by the P3 approval (draft rewriting stays with prefill decision 9) | review of v2.0 |
 | Review D4 | One tool round only, not three rounds and six calls | Approved | review of v2.0 |
 | Review D5 | Evaluation data in an isolated embedded PostgreSQL with the Acme scenario seed; the three fictional documents in their own test workspaces | Approved, built (#126, #130) | review of v2.0 |
 | Review D6 | Parley budget of USD 15 for this round; ask when close | Approved; about USD 0.53 spent by 2026-10-04 | review of v2.0 |
@@ -79,7 +89,7 @@ request is named. The state in §3–§8 was brought up to date on 2026-10-06, a
 | Review D8 | Move the plan into `docs/` as v2.1 | Replaced by V1 | review of v2.0 |
 | V1 | This file: an English index (v3.0, now v4.0) | Approved, this file | gap audit |
 | V2 | One gate: agent mode §9 plus the knowledge cases for P2 and PR-3; the 40 + 10 task set before any public "agent" claim | Approved, §8 | gap audit |
-| V3 | Timeline: small fixes, prefill merges and PR-2 before 10/25; PR-3 and the browser walkthrough of the Acme request in the last week of October; November fixes only; P3, new data models and the invoice-difference explanation after the November report | Approved, §6 | gap audit |
+| V3 | Timeline: small fixes, prefill merges and PR-2 before 10/25; PR-3 and the browser walkthrough of the Acme request in the last week of October; November fixes only; P3, new data models and the invoice-difference explanation after the November report | Approved, §6; **revised** 2026-10-07: P3 and conversation memory are built now, local first | gap audit |
 | V4 | The trial assistant stays model-free until agent mode decision 5 | Approved 2026-10-04; **revised** 2026-10-05 by direction decision 1 | gap audit |
 | V5 | Supplier follow-ups only for orders issued to the supplier | Approved, merged (#140); the order answer follows in #152 | gap audit |
 | R1–R6 | Merge mechanics, CI shards, trial customers, trial scope and the V4 lock, the PR-2 slip rule, weekly capacity | Approved; CI shards merged (#141) | roadmap of 2026-10-04 (§6) |
@@ -90,7 +100,12 @@ request is named. The state in §3–§8 was brought up to date on 2026-10-06, a
 | Direction 4 | Supplier email is a later step, with its own permission, the platform mail channel and a rate limit | Approved; not started | AI direction |
 | Direction 5 | Confirmation is a preview card in the chat with one click; the form stays the route to edit first | Approved; designed in #151 | AI direction |
 | Direction 6 | The old "AI creates no real records" promises are updated | Approved; #151 A8 proposes the timing: with the C1 build | AI direction |
-| Direction 7 | P3 waits until the owner has used the model in the walkthrough and on the trial | Approved | AI direction |
+| Direction 7 | P3 waits until the owner has used the model in the walkthrough and on the trial | Approved; met 2026-10-07 by the model-off and model-on comparison in the walkthrough, after which the owner approved P3 | AI direction |
+| Owner, 2026-10-07, 1 | P3: the model writes the answer text from the facts the skills returned, masked to what the asking user may see. A verifier checks every number, id and date against those facts; the template is the fallback. Local Parley first; the trial once the Anthropic key is live | Approved; being built | owner, 2026-10-07: "按推荐来，先修那三个问题，再做 P3 和对话记忆" |
+| Owner, 2026-10-07, 2 | Conversation memory: the model sees the previous turn's question and the records that answer cited, so "why", "this supplier" and "it" follow the conversation | Approved; being built after P3 | owner, 2026-10-07 |
+| Owner, 2026-10-07, 3 | Analysis tools, deterministic, offered to the planner: the effect of a late order (purchase order, SKU, sales orders, customers), a spend breakdown, a supplier comparison, a stock projection | Approved; after P3 and memory | owner, 2026-10-07 |
+| Owner, 2026-10-07, 4 | General ERP concept answers ("what is three-way matching"), labelled as general knowledge, not workspace data | Approved; after P3 and memory | owner, 2026-10-07 |
+| Owner, 2026-10-07, 5 | Models per task through Parley: a fast model for routing and planning, a stronger one (Sonnet) for wording | Approved; after P3 and memory | owner, 2026-10-07 |
 | Actions A1–A8 | Where proposals live, who confirms, auto-open, the source mark, RFQ invitees, the switch, the old confirm route, the wording timing | **Open** | #151 §12 |
 
 ## 3. State on main and in open pull requests
@@ -415,7 +430,9 @@ AI_EVAL_PROVIDER_ENV=<env file> AI_EVAL_REPEAT=3 npm run test:ai:eval:knowledge
 | Gap audit | 2026-10-04 | `main` at `39194bb` against v2.0 and the review: decisions V1–V5, summarized in §3 and §4 |
 | v3.0 | 2026-10-04 | This file as approved with V1–V5 and R1–R6. Never merged on its own. Superseded by v4.0. |
 | AI direction | 2026-10-05 | The owner felt the assistant was unused: "the site has no AI, and it cannot do things for me". Decisions 1–7, approved as recommended (§2). They revise V4 and start stage E (#150, #151). The reasoning page is kept outside the repository. |
-| **v4.0** | 2026-10-05 | This file: the direction added; §3–§7 brought up to `main` at `51b21d7` and the open pull requests; the roadmap moves PR-3 forward because P2 is built. |
+| v4.0 | 2026-10-05 | This file: the direction added; §3–§7 brought up to `main` at `51b21d7` and the open pull requests; the roadmap moves PR-3 forward because P2 is built. |
+| Probe | 2026-10-07 | The owner found the assistant "really dumb". 24 everyday questions were asked in the walkthrough with the model off and with every built model path on (Parley, claude-haiku-4-5). Fully answered: 9 of 24 with the model off, 13 with it on. The rest are "why" follow-ups, pronouns, analysis and writing. Parley also offers Sonnet, Opus, GPT and Gemini models under the same key. |
+| **v5.0** | 2026-10-07 | This file: the owner's decisions 1–5 of 2026-10-07 (§2) approve P3 and conversation memory, then analysis tools, general concept answers and models per task. They replace D3 for answers and revise V3. |
 
 **Keeping it current.** When a decision is taken or reversed, update §2 first. When
 a pull request in §3, §5 or §6 lands, update its row. A change of direction, such as
