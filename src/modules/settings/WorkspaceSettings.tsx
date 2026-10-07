@@ -4,6 +4,7 @@ import { apiJson } from "../../lib/api-client";
 import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import AuthorizationWorkbench from "./AuthorizationWorkbench";
+import WarehouseMaster from "./WarehouseMaster";
 import WorkspaceMembers from "./WorkspaceMembers";
 
 type Profile = {
@@ -223,6 +224,8 @@ export default function WorkspaceSettings({ view }: { view: string }) {
   // Someone who reads or grants warehouse access is sent every warehouse, but
   // their own default warehouse must still be one they can read.
   const ownWarehouseIds = new Set((profile.warehouseScopes || []).map(scope => scope.warehouseId));
+  // A warehouse is maintained by an administrator with operate access to it.
+  const ownOperateIds = new Set((profile.warehouseScopes || []).filter(scope => scope.accessLevel === "operate").map(scope => scope.warehouseId));
   const scopeTarget = canReadUsers ? users.find(user => user.id === scopeUserId) : undefined;
 
   // Members, then roles, permissions and assignments. Both read the actor's
@@ -262,6 +265,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       </div>
     </div>}
 
+    {view === "warehouse-access" && canEditWorkspace && <WarehouseMaster operateIds={ownOperateIds} onChanged={() => void load()} />}
     {view === "warehouse-access" && <div className="mt-5 overflow-x-auto" data-testid="warehouse-access">
       {canReadUsers && <div className="mb-3 flex gap-2"><select aria-label={t("settings.user")} data-testid="warehouse-access-user" className={`${field} max-w-sm`} value={scopeUserId} onChange={event => setScopeUserId(event.target.value)}>{users.map(user => <option key={user.id} value={user.id}>{user.name} · {user.email}</option>)}</select>{canManageUsers && <button data-testid="warehouse-access-save" onClick={saveScopes} className={`${button} text-white`} style={{ background: A.blue }}><Save size={15} />{t("settings.saveAccess")}</button>}</div>}
       <table className="w-full text-sm"><thead><tr><th className="p-2 text-left">{t("settings.warehouse")}</th><th>{t("settings.warehouseScope")}</th><th>{t("settings.defaultWarehouse")}</th></tr></thead><tbody>{warehouses.map(warehouse => {
