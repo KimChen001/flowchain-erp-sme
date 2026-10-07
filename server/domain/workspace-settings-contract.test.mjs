@@ -158,4 +158,6 @@ test('document settings over their limits are refused with the field named', () 
 test('document settings are saved with the workspace manage permission', () => {
   const routes = readFileSync(new URL('../routes/settings-runtime.routes.mjs', import.meta.url), 'utf8')
   assert.match(routes, /documents: 'settings.workspace.manage'/)
+  // A refused value names its field; other errors (a denied permission) carry no details.
+  assert.ok(routes.includes('error?.status === 400 && error?.details?.field ? { details: error.details } : {}'))
 })

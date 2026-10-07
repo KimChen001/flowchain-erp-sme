@@ -92,13 +92,18 @@ export async function handleSettingsRuntimeRoute(ctx) {
   }
 
   const match = url.pathname.match(/^\/api\/settings-runtime\/([a-z-]+)$/)
+  // PATCH replaces the whole section with the validated body, as for every
+  // section; for documents that is the language, letterhead and PO template.
   if (req.method === 'PATCH' && match) {
     try {
       const body = await readBody(req)
       const result = await updateDatabaseSection(ctx, match[1], body.settings)
       send(res, 200, result)
     } catch (error) {
-      send(res, error?.status || error?.statusCode || 400, { code: error?.code, message: error?.message || '设置保存失败' })
+      // A validation error names its field ({ field, limit }); other errors
+      // carry no details, so an authorization decision is never sent.
+      const details = error?.status === 400 && error?.details?.field ? { details: error.details } : {}
+      send(res, error?.status || error?.statusCode || 400, { code: error?.code, message: error?.message || '设置保存失败', ...details })
     }
     return true
   }

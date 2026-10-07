@@ -3,6 +3,7 @@ import { FileText, Save } from "lucide-react";
 import { DOCUMENT_SETTINGS_LIMITS, validateDocumentSettings, type DocumentSettings } from "../../../shared/business-documents.mjs";
 import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
+import { ApiError } from "../../lib/api-client";
 import { fetchDocumentSettings, saveDocumentSettings } from "./settingsRuntime";
 
 type Translate = ReturnType<typeof useI18n>["t"];
@@ -25,19 +26,37 @@ const FIELD_LABELS: Array<[RegExp, TranslationKey]> = [
   [/^documentLanguage/, "documents.templates.documentLanguage"],
 ];
 
+type FieldDetails = { field?: string; limit?: number };
+
+// One message for a refused value, from the shared check here or the same
+// check on the server (its code and { field, limit } details).
+function fieldMessage(t: Translate, code: string | undefined, details: FieldDetails) {
+  const label = FIELD_LABELS.find(([pattern]) => pattern.test(details.field || ""))?.[1];
+  const name = label ? t(label) : details.field || "";
+  if (code === "DOCUMENT_SETTING_TOO_LONG") return t("documents.templates.tooLong", { field: name, limit: details.limit ?? "" });
+  if (code === "DOCUMENT_SETTING_TOO_MANY_LINES") return t("documents.templates.tooManyLines", { field: name, limit: details.limit ?? "" });
+  return t("documents.templates.invalid", { field: name });
+}
+
 function problem(t: Translate, draft: DocumentSettings) {
   try {
     validateDocumentSettings(draft);
     return "";
   } catch (error) {
-    const details = (error as { details?: { field?: string; limit?: number } }).details || {};
-    const label = FIELD_LABELS.find(([pattern]) => pattern.test(details.field || ""))?.[1];
-    const name = label ? t(label) : details.field || "";
-    const code = (error as { code?: string }).code;
-    if (code === "DOCUMENT_SETTING_TOO_LONG") return t("documents.templates.tooLong", { field: name, limit: details.limit ?? "" });
-    if (code === "DOCUMENT_SETTING_TOO_MANY_LINES") return t("documents.templates.tooManyLines", { field: name, limit: details.limit ?? "" });
-    return t("documents.templates.invalid", { field: name });
+    return fieldMessage(t, (error as { code?: string }).code, (error as { details?: FieldDetails }).details || {});
   }
+}
+
+// Why a save failed: a refused value named as the form names it, a missing
+// permission, or the general failure with the server's own message.
+function saveFailure(t: Translate, error: unknown) {
+  if (error instanceof ApiError) {
+    const details = (error.payload as { details?: FieldDetails }).details;
+    if (error.status === 403) return t("documents.templates.forbidden");
+    if (error.status === 400 && details && typeof details === "object" && !Array.isArray(details) && details.field) return fieldMessage(t, error.code, details);
+    return error.message ? `${t("settings.saveFailed")} (${error.message})` : t("settings.saveFailed");
+  }
+  return t("settings.saveFailed");
 }
 
 // Letterhead and purchase order template for printed documents, under
@@ -50,6 +69,7 @@ export default function DocumentTemplateSettings({ canEdit }: { canEdit: boolean
   const [draft, setDraft] = useState<DocumentSettings | null>(null);
   const [addressText, setAddressText] = useState("");
   const [state, setState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
+  const [failure, setFailure] = useState("");
   const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
@@ -74,7 +94,8 @@ export default function DocumentTemplateSettings({ canEdit }: { canEdit: boolean
       const result = await saveDocumentSettings(validateDocumentSettings(next));
       setSaved(result.settings); setDraft(result.settings); setAddressText(result.settings.letterhead.addressLines.join("\n"));
       setState("saved");
-    } catch {
+    } catch (saveError) {
+      setFailure(saveFailure(t, saveError));
       setState("failed");
     }
   };
@@ -99,7 +120,7 @@ export default function DocumentTemplateSettings({ canEdit }: { canEdit: boolean
       </div>
       {!canEdit && <p data-testid="document-template-read-only" className="mt-3 text-sm text-amber-700">{t("settings.workspaceOnly")}</p>}
       {error && <p role="alert" data-testid="document-template-error" className="mt-3 text-sm text-red-600">{error}</p>}
-      {state === "failed" && <p role="status" className="mt-3 text-sm text-red-600">{t("settings.saveFailed")}</p>}
+      {state === "failed" && <p role="status" data-testid="document-template-save-failed" className="mt-3 text-sm text-red-600">{failure || t("settings.saveFailed")}</p>}
 
       <fieldset disabled={!canEdit} className="mt-5 space-y-6">
         <label className="block max-w-sm text-sm">{t("documents.templates.documentLanguage")}
