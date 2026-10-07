@@ -94,6 +94,8 @@ function mapPurchaseOrder(row, { includePrices = true, includePartner = true } =
     sourceRequestId: row.sourceRequestId,
     sourceRfqId: row.sourceRfqId,
     expectedDate: serial(row.expectedDate),
+    // When the PO was issued to the supplier; null when it was not recorded.
+    issuedAt: serial(row.issuedAt),
     receivingBaseStatus: row.receivingBaseStatus,
     version: row.version,
     lines: (row.lines || []).map((line) => mapLine(line, includePrices, row)),
@@ -222,13 +224,16 @@ export function createDbProcurementCommandService({ prisma, env = process.env, i
         // Receiving restores receivingBaseStatus when a receipt is reversed.
         const receivingBaseStatus = [APPROVED, ISSUED].includes(nextStatus) ? nextStatus : row.receivingBaseStatus;
         // FlowChain records the issue; the buyer sends the PO to the supplier.
-        const issued = action === "issue" ? { transmissionStatus: "issued_outside_flowchain", issuedAt: serial(now()), issuedById: actor.user.id } : {};
+        // The issue date is written once (a trigger refuses a change), and
+        // metadata keeps the same instant.
+        const issuedAt = action === "issue" ? row.issuedAt || now() : null;
+        const issued = action === "issue" ? { transmissionStatus: "issued_outside_flowchain", issuedAt: serial(issuedAt), issuedById: actor.user.id } : {};
         // Approval fixes each dated line's original promise, which supplier
         // scorecards and the on-time KPI measure against. Issuing records it
         // for a line dated since; a line that has one keeps it.
         const recordsPromises = action === "approve" || action === "issue";
         const originalPromisesRecorded = recordsPromises ? await recordOriginalPromises(tx, { purchaseOrder: row }) : [];
-        await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus, version: { increment: 1 }, metadata: { ...(row.metadata || {}), ...issued, ...closed, approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } } });
+        await tx.purchaseOrder.update({ where: { id: row.id }, data: { status: nextStatus, receivingBaseStatus, version: { increment: 1 }, ...(action === "issue" && !row.issuedAt ? { issuedAt } : {}), metadata: { ...(row.metadata || {}), ...issued, ...closed, approvalTimeline: timeline, lastApprovalAction: action, lastApprovalActorId: actor.user.id, lastApprovalReason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null } } });
         return { action: `purchase_order_${action}`, summary: `${action} purchase order ${row.id}.`, metadata: { reason: text(input.reason) || null, sourceDeviceId: text(input.sourceDeviceId) || null, ...(recordsPromises ? { originalPromisesRecorded } : {}), ...(action === "close" ? { closedOpenQuantities } : {}) } };
       },
     });

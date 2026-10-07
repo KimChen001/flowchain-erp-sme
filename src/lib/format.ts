@@ -68,6 +68,15 @@ export function todayInTimeZone(timeZone?: string, now: Date = new Date()) {
   }
 }
 
+// The workspace calendar day (YYYY-MM-DD) of a stored instant, such as the
+// time a purchase order was issued. "" when the value is not an instant.
+export function instantDayInTimeZone(value: string | null | undefined, timeZone?: string) {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? todayInTimeZone(timeZone, parsed) : "";
+}
+
 // Amount in the workspace locale. A currency symbol is shown only when the
 // document's currency is known; otherwise the amount is a plain number.
 // Never throws: an unrecognised code falls back to "<number> <code>".

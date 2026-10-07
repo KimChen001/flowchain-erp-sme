@@ -13,6 +13,7 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
+import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 import { DataImportLink } from "../master-data/DataImportLink";
 
 type Supplier = {
@@ -462,6 +463,13 @@ export default function SupplierMasterPage({
     if (accepted) toast.success(`${copy("Accepted")}: ${accepted}`);
     await Promise.all([load(), loadInsights()]);
   };
+  // Earlier PO prices of each supplied item from this supplier only, in the
+  // link currency and the item's unit, in one request. Display only.
+  // The item being linked gets the same facts under its reference price, in
+  // the currency the link will be saved in. Never fills the price.
+  const relationshipHistoryKey = (r: Relationship) => (selected ? priceHistoryKey({ itemId: r.itemId, currency: r.currency, supplierId: selected.id }) : "");
+  const relationFormHistoryKey = selected && writes.items ? priceHistoryKey({ itemId: relationForm.itemId, currency: relationForm.currency || selected.defaultCurrency, supplierId: selected.id }) : "";
+  const relationshipHistory = usePriceHistory([...relationships.map(relationshipHistoryKey), relationFormHistoryKey]);
   if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
   if (selected)
     return (
@@ -573,18 +581,21 @@ export default function SupplierMasterPage({
               />{" "}
               Preferred
             </label>
-            <input
-              aria-label={copy("参考价格")}
-              placeholder={copy("参考价格")}
-              value={relationForm.referencePrice}
-              onChange={(e) =>
-                setRelationForm({
-                  ...relationForm,
-                  referencePrice: e.target.value,
-                })
-              }
-              style={inputStyle}
-            />
+            <div>
+              <input
+                aria-label={copy("参考价格")}
+                placeholder={copy("参考价格")}
+                value={relationForm.referencePrice}
+                onChange={(e) =>
+                  setRelationForm({
+                    ...relationForm,
+                    referencePrice: e.target.value,
+                  })
+                }
+                style={inputStyle}
+              />
+              {relationFormHistoryKey && <PriceHistoryFacts history={relationshipHistory.histories.get(relationFormHistoryKey)} state={relationshipHistory.state} testId="supplied-item-form-price-history" />}
+            </div>
             <button
               onClick={addRelationship}
               className="rounded bg-blue-600 px-3 py-2 text-xs text-white"
@@ -628,6 +639,7 @@ export default function SupplierMasterPage({
                     <td className="p-2">{r.minimumOrderQuantity ?? "—"}</td>
                     <td className="p-2">
                       {r.currency} {r.referencePrice}
+                      {relationshipHistoryKey(r) && <PriceHistoryFacts compact history={relationshipHistory.histories.get(relationshipHistoryKey(r))} state={relationshipHistory.state} testId={`supplied-item-price-history-${r.itemId}`} />}
                     </td>
                     <td className="p-2">{copy(r.active ? "启用" : "停用")}</td>
                     {writes.items && <td className="p-2 space-x-2">

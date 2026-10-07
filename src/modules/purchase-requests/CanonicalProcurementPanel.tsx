@@ -14,6 +14,7 @@ import { tableLinkClass } from "../../components/ui/workbenchTable";
 import { createClientTemporaryId } from "../../lib/client-id";
 import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin } from "../../lib/prefill";
+import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 
 type Item = {
   itemId: string;
@@ -259,6 +260,9 @@ export default function CanonicalProcurementPanel({
     prefill && line.lineId === prefill.lineId ? (
       <PrefillSourceChip entry={prefill.fields[field]} current={line[field] ?? ""} testId={`prefill-source-${field}`} />
     ) : null;
+  // Earlier PO prices for every catalog line, in one request. Never fills a price.
+  const priceHistoryKeyOf = (line: Line) => line.sourceType === "catalog_item" ? priceHistoryKey({ itemId: line.itemId, unit: line.unitSnapshot, currency: line.currency || currency }) : "";
+  const priceHistory = usePriceHistory(lines.map(priceHistoryKeyOf));
   const patchLine = (index: number, patch: Partial<Line>) =>
     setLines((current) =>
       current.map((line, i) => (i === index ? { ...line, ...patch } : line)),
@@ -797,6 +801,12 @@ export default function CanonicalProcurementPanel({
                   {prefillChip(line, "needByDate")}
                 </Field>
               </div>
+              {/* Earlier PO prices for the item, beside the estimated unit price. Display only. */}
+              {line.lineBasis === "quantity" && priceHistoryKeyOf(line) && (
+                <div className="mt-2">
+                  <PriceHistoryFacts history={priceHistory.histories.get(priceHistoryKeyOf(line))} state={priceHistory.state} testId={`pr-line-price-history-${index + 1}`} />
+                </div>
+              )}
               <Field label={copy("行级内部备注")}>
                 <textarea
                   aria-label={`${copy("行级内部备注")} ${index + 1}`}
