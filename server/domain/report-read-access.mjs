@@ -59,6 +59,20 @@ export function reportReadAccessFor(actor) {
     prices: allowed('procurement.prices.read'),
     amounts: allowed('finance.amounts.read'),
     partner: allowed('finance.partner_snapshot.read'),
+    // What the home page reads beyond the business read context, with each
+    // page's own permission: customer invoices and receivables, and the
+    // first-day setup steps the reader may do themselves.
+    home: {
+      customerInvoices: allowed('finance.customer_invoice.read'),
+      receivables: allowed('finance.receivable.read'),
+      setup: {
+        items: allowed('master_data.item.manage'),
+        suppliers: allowed('master_data.supplier.manage'),
+        customers: allowed('master_data.customer.manage'),
+        openingStock: allowed('inventory.adjustment.create'),
+        teammates: allowed('settings.users.manage'),
+      },
+    },
   }
 }
 
