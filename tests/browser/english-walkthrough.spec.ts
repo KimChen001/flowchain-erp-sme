@@ -14,6 +14,7 @@ const ROUTES = [
   "/app/procurement/workbench",
   "/app/procurement/orders",
   "/app/procurement/orders/LOCAL-DEMO-PO-002",
+  "/app/procurement/orders/LOCAL-DEMO-PO-021/document",
   "/app/procurement/requests",
   "/app/procurement/requests/LOCAL-DEMO-PR-001",
   "/app/procurement/rfq",
