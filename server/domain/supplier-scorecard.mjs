@@ -1,5 +1,6 @@
 import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
+import { isCommittedPurchaseOrder } from './open-purchase-order.mjs'
 import { currentPromisedDay, promiseDay } from './purchase-order-promise-dates.mjs'
 
 // Supplier scorecard: delivery statistics per supplier, measured against the
@@ -88,6 +89,15 @@ export function wilsonInterval(successes, trials, z = WILSON_Z) {
   const half = (z * Math.sqrt((p * (1 - p)) / trials + z2 / (4 * trials * trials))) / denominator
   return { low: Math.max(0, center - half), high: Math.min(1, center + half) }
 }
+
+// The purchase orders whose lines are measured against their promise, here and
+// on the report dashboards: committed orders (approved, issued or received).
+// Drafts, pending approvals and rejections were never promised; a cancelled
+// order was called off by the buyer, so its undelivered lines are not late.
+// An approved order can still be cancelled, and approval records the original
+// promise, so cancelled orders are left out explicitly.
+export const isPromiseMeasuredPurchaseOrder = (purchaseOrder) => isCommittedPurchaseOrder(purchaseOrder)
+const PROMISE_UNMEASURED_PO_STATUSES = ['draft', 'pending_approval', 'rejected', 'cancelled']
 
 // A line is closed when nothing more will be received against it: its PO is
 // fully received or cancelled, or the buyer closed the line short
@@ -299,7 +309,7 @@ export function buildSupplierScorecard({
   if (supplierId) entry(supplierId)
   for (const purchaseOrder of purchaseOrders) {
     const id = text(purchaseOrder.supplierId)
-    if (!id || (supplierId && id !== supplierId)) continue
+    if (!id || (supplierId && id !== supplierId) || !isPromiseMeasuredPurchaseOrder(purchaseOrder)) continue
     for (const line of purchaseOrder.lines || []) {
       const evaluated = evaluatePromiseLine({ line, purchaseOrder, receipts: receiptLines.get(line.id) || [], asOfDay, graceDays, earlyDays })
       const withMoney = { ...evaluated, currency: text(purchaseOrder.currency) || null, amount: visibility.lineAmounts ? round(quantity(line.amount), 2) : null }
@@ -353,10 +363,10 @@ export function scorecardParameters(query = {}, asOfDay) {
   const from = text(query.from) || addDays(to, -(periodDays - 1))
   if (!isDay(from) || !isDay(to)) throw new SupplierScorecardError('SCORECARD_PERIOD_INVALID', 'Enter the period as calendar dates (YYYY-MM-DD).', 422, [{ field: isDay(from) ? 'to' : 'from' }])
   if (from > to) throw new SupplierScorecardError('SCORECARD_PERIOD_INVALID', 'The period must start on or before its end.', 422, [{ field: 'from' }])
-  if (daysBetween(from, to) + 1 > maxPeriodDays) throw new SupplierScorecardError('SCORECARD_PERIOD_TOO_LONG', `The period can cover at most ${maxPeriodDays} days.`, 422, [{ field: 'from' }])
+  if (daysBetween(from, to) + 1 > maxPeriodDays) throw new SupplierScorecardError('SCORECARD_PERIOD_TOO_LONG', `The period can cover at most ${maxPeriodDays} days.`, 422, [{ field: 'from', maxDays: maxPeriodDays }])
   const graceText = text(query.graceDays)
   const graceDays = graceText === '' ? SUPPLIER_SCORECARD_RULES.graceDays : Number(graceText)
-  if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > maxGraceDays) throw new SupplierScorecardError('SCORECARD_GRACE_DAYS_INVALID', `Grace days must be a whole number from 0 to ${maxGraceDays}.`, 422, [{ field: 'graceDays' }])
+  if (!Number.isInteger(graceDays) || graceDays < 0 || graceDays > maxGraceDays) throw new SupplierScorecardError('SCORECARD_GRACE_DAYS_INVALID', `Grace days must be a whole number from 0 to ${maxGraceDays}.`, 422, [{ field: 'graceDays', maxDays: maxGraceDays }])
   return { period: { from, to }, graceDays, supplierId: text(query.supplierId) || null }
 }
 
@@ -374,7 +384,7 @@ export function createSupplierScorecardReadService({ prisma, now = () => new Dat
       const { period, graceDays, supplierId } = scorecardParameters(query, asOfDay)
       const allowed = (permission) => can({ actor, permission, tenantId })
       const supplierWhere = supplierId ? { supplierId } : { supplierId: { not: null } }
-      const purchaseOrders = await prisma.purchaseOrder.findMany({ where: { tenantId, ...supplierWhere, status: { notIn: ['draft', 'pending_approval', 'rejected'] } }, include: { lines: true }, orderBy: [{ id: 'asc' }] })
+      const purchaseOrders = await prisma.purchaseOrder.findMany({ where: { tenantId, ...supplierWhere, status: { notIn: PROMISE_UNMEASURED_PO_STATUSES } }, include: { lines: true }, orderBy: [{ id: 'asc' }] })
       // Receipts outside the reader's warehouses are left out, as elsewhere.
       const warehouseFilter = actor.allWarehouses ? {} : { OR: [{ warehouseId: null }, { warehouseId: { in: [...(actor.readWarehouseIds || [])] } }] }
       const receipts = purchaseOrders.length

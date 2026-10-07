@@ -414,7 +414,7 @@ test('step 3b: an approved PR becomes a draft PO (POST /api/procurement/requests
   assert.equal(dec(po.lines[0].unitPrice), '12.5')
   assert.equal(dec(po.lines[0].amount), '125')
   // The PR line's need-by date becomes the line's promised date through the
-  // promise-date helper; the original promise waits for the PO to be issued.
+  // promise-date helper; the original promise waits for the PO to be approved.
   assert.equal(po.lines[0].metadata.promisedDate, needBy)
   assert.equal(po.lines[0].originalPromisedDate, null)
   assert.equal(po.lines[0].version, 0)

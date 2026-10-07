@@ -5,6 +5,7 @@ import { apiJson } from "../../lib/api-client";
 import { A, Card, Field, inputStyle } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useMasterDataWriteAccess } from "./writeAccess";
+import { DataImportLink } from "./DataImportLink";
 
 export type MasterItem = {
   itemId: string;
@@ -355,17 +356,20 @@ export default function ItemMasterWorkbench({
           onChange={(e) => setCategory(e.target.value)}
           style={inputStyle}
         />
-        {canEdit && (
-          <button
-            className="ml-auto rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
-            onClick={() => {
-              setSelected(null);
-              setEditing({ ...empty });
-            }}
-          >
-            {copy("新建 SKU")}
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <DataImportLink type="items" />
+          {canEdit && (
+            <button
+              className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
+              onClick={() => {
+                setSelected(null);
+                setEditing({ ...empty });
+              }}
+            >
+              {copy("新建 SKU")}
+            </button>
+          )}
+        </div>
       </div>
       {error && <p className="mt-3 text-xs text-red-600">{error}</p>}
       <div className="mt-3 overflow-auto">

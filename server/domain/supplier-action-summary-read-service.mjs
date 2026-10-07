@@ -115,7 +115,9 @@ function emptySourceState(state) {
   return { state, recordValiditySummary: validitySummary({ unavailable: state === 'unavailable', hiddenCount: state === 'hidden' ? 1 : 0 }) }
 }
 
-export function buildSupplierActionSummaries({ records = {}, actor, sourceAvailability = {}, timeWindow, filters = {}, now = new Date() } = {}) {
+// timeZone is the workspace timezone, whose calendar day decides overdue
+// purchase orders, as on the open purchase orders report.
+export function buildSupplierActionSummaries({ records = {}, actor, sourceAvailability = {}, timeWindow, filters = {}, now = new Date(), timeZone } = {}) {
   const current = now instanceof Date ? now : new Date(now)
   const available = {
     suppliers: sourceAvailability.suppliers !== false,
@@ -186,7 +188,7 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
     // with quantity still to receive, and an open line past its promised date.
     // Drafts, pending approvals, rejections and fully received orders are not open.
     const openPos = purchaseOrders.filter(isOpenPurchaseOrder)
-    const overdueIds = new Set(buildOpenPurchaseOrdersReport(openPos.map(reportRow), { export: 'true' }, current).exportRows.filter((row) => row.overdueDays > 0).map((row) => row.id))
+    const overdueIds = new Set(buildOpenPurchaseOrdersReport(openPos.map(reportRow), { export: 'true' }, current, { timeZone }).exportRows.filter((row) => row.overdueDays > 0).map((row) => row.id))
     const overduePos = openPos.filter((row) => overdueIds.has(text(row.id)))
     const unreceivedPos = openPos.filter((row) => {
       const ordered = array(row.lines).reduce((sum, line) => sum + (decimal(line.orderedQuantity) || 0), 0)
@@ -336,6 +338,7 @@ export function createSupplierActionSummaryReadService({ prisma, env = process.e
         timeWindow,
         filters,
         now: now(),
+        timeZone: typeof prisma.tenant?.findUnique === 'function' ? text((await prisma.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }))?.timezone) || undefined : undefined,
       })
     },
   }

@@ -272,6 +272,7 @@ const entries = {
   'signal.po_overdue.reason_not_sent': ['{days} days past the promised date, but not yet issued to {supplier}. Send the order before asking about delivery.', '已超过承诺日期 {days} 天，但尚未发给 {supplier}。请先发出订单，再询问交货。'],
   'signal.po_due_7d.reason_not_sent': ['Due {date}, but not yet issued to {supplier}. Send the order before asking about delivery.', '{date} 到期，但尚未发给 {supplier}。请先发出订单，再询问交货。'],
   'signal.po_partially_received.reason': ['Partially received: {received} of {ordered}.', '部分收货：已收 {received}，订购 {ordered}。'],
+  'signal.po_partially_received.reason_lines': ['Partially received; {remaining} still to receive.', '部分收货；仍有 {remaining} 待收货。'],
   'signal.stock_shortage.reason': ['{available} available against {demand} on open sales orders, short {shortage}; {incoming} incoming on open POs.', '可用 {available}，未结销售订单需求 {demand}，缺口 {shortage}；在途采购 {incoming}。'],
   'signal.stock_below_safety.reason': ['{available} available against a safety stock of {safety}; {incoming} incoming on open POs.', '可用 {available}，安全库存 {safety}；在途采购 {incoming}。'],
   'signal.stock_below_reorder.reason': ['Available to promise {atp} is at or below the reorder point of {reorder}.', '可承诺量 {atp} 已达到或低于再订货点 {reorder}。'],
@@ -370,6 +371,7 @@ const entries = {
   'value.quotes': ['{responses} quotes', '{responses} 份报价'],
   'value.issues': ['{count} issues', '{count} 个问题'],
   'value.unknown': ['unknown', '未知'],
+  'value.sku_quantity': ['{quantity} of {sku}', '{sku} {quantity}'],
   'value.a_supplier': ['a supplier', '某供应商'],
 
   // Areas
@@ -456,6 +458,7 @@ const entries = {
   'po.single_received': ['{po} is fully received', '{po} 全部收货'],
   'po.single_status': ['{po}: {status}', '{po}：{status}'],
   'po.single_mixed': ['{po}: lines use different units, so there is no single remaining quantity', '{po}：各行单位不同，无法合计待收数量'],
+  'po.single_skus': ['{po}: lines are different SKUs, so there is no single remaining quantity', '{po}：各行 SKU 不同，无法合计待收数量'],
   'po.detail': ['Supplier {supplier}. Ordered {ordered}, received {received}.', '供应商 {supplier}。订购 {ordered}，已收 {received}。'],
   'po.detail_supplier': ['Supplier {supplier}.', '供应商 {supplier}。'],
   'po.due_overdue': ['Due {date}, {days} days overdue.', '应到货日期 {date}，逾期 {days} 天。'],

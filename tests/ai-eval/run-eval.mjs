@@ -487,9 +487,10 @@ async function loadTruthSources() {
       invoice_variance_count: invoices.filter((row) => committed.has(text(row.status).toLowerCase()) && (Number(row.varianceAmount ?? 0) !== 0 || row.matchStatus === 'variance')).length,
       b_open_po_count: openB.summary.open,
     }
+    // Inventory detail rows carry the SKU as their business ID.
     for (const row of array(inventory.details)) {
-      values[`atp:${row.sku}`] = row.availableToPromise ?? null
-      values[`available:${row.sku}`] = row.available ?? null
+      values[`atp:${row.id}`] = row.availableToPromise ?? null
+      values[`available:${row.id}`] = row.available ?? null
     }
     // Overdue open orders per supplier tier ('none' for suppliers not tiered).
     const tiers = new Map((await prisma.supplier.findMany({ where: { tenantId: TENANT_A }, select: { id: true, tier: true } })).map((row) => [row.id, row.tier]))
@@ -503,13 +504,13 @@ async function loadTruthSources() {
     const truth = {
       asOf: open.asOf,
       values,
-      lists: { at_risk_skus: array(inventory.details).filter((row) => row.shortage !== null && row.shortage > 0).map((row) => row.sku).sort() },
+      lists: { at_risk_skus: array(inventory.details).filter((row) => row.shortage !== null && row.shortage > 0).map((row) => row.id).sort() },
       metrics: {
         openPurchaseOrders: open.summary.open,
         overduePurchaseOrders: open.summary.overdue,
         committedSpend: kpiAmounts(overview, 'purchase_order_amount'),
         committedInvoices: kpiAmounts(finance, 'invoice_amount'),
-        atRiskSkus: array(inventory.details).filter((row) => row.shortage !== null && row.shortage > 0).map((row) => row.sku).sort(),
+        atRiskSkus: array(inventory.details).filter((row) => row.shortage !== null && row.shortage > 0).map((row) => row.id).sort(),
       },
       tenantOpen: { A: open.summary.open, B: openB.summary.open },
     }
