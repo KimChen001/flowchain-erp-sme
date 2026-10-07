@@ -27,7 +27,7 @@ import { FORBIDDEN_AI_RUNTIME_PROVIDER_TECHNICAL_PATTERN, callConfiguredProvider
 // workspace without the model switched on never gets there
 // (ai-workspace-access.mjs).
 
-export const AI_COMPOSE_LIMITS = Object.freeze({ timeoutMs: 6000, maxTimeoutMs: 10000, records: 12, cards: 3, sections: 3, title: 160, summary: 1200 })
+export const AI_COMPOSE_LIMITS = Object.freeze({ timeoutMs: 7000, maxTimeoutMs: 10000, records: 8, cards: 3, sections: 3, title: 160, summary: 1200 })
 
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
@@ -124,7 +124,15 @@ function parseReply(raw) {
   const start = cleaned.indexOf('{')
   const end = cleaned.lastIndexOf('}')
   if (start < 0 || end <= start) return null
-  try { return JSON.parse(cleaned.slice(start, end + 1)) } catch { return null }
+  try { return JSON.parse(cleaned.slice(start, end + 1)) } catch { /* a raw line break or quote inside a string: read the two fields */ }
+  const field = (name) => {
+    const match = cleaned.match(new RegExp(`"${name}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`, 's'))
+    if (!match) return null
+    try { return JSON.parse(`"${match[1].replace(/\n/g, '\\n')}"`) } catch { return match[1] }
+  }
+  const title = field('title')
+  const summary = field('summary')
+  return title !== null && summary !== null ? { title, summary } : null
 }
 
 // Stored names and ids the facts hold. Those this answer shows (inside one of
@@ -257,12 +265,15 @@ export function verifyAiAnswerComposition(reply, { response, facts, slots, quest
 
 // Asks the model to word the answer, and returns the composed answer or the
 // template answer with the outcome for the audit row.
-export async function composeAiAnswer({ response, facts, message, env = {}, provider = callConfiguredProvider, fetchImpl = globalThis.fetch } = {}) {
+// `resolvedQuestion`: what a follow-up means once the rules have read it with
+// the previous answer ("what about the second one?" is "What about PO-011?").
+export async function composeAiAnswer({ response, facts, message, resolvedQuestion = null, env = {}, provider = callConfiguredProvider, fetchImpl = globalThis.fetch } = {}) {
   if (!aiAnswerComposeEnabled(env)) return { response, compose: null }
   if (!aiAnswerComposable(response)) return { response, compose: { status: 'skipped', reason: 'not_composable' } }
   const started = Date.now()
   const { slots, groups } = aiAnswerComposeSlots(response, facts)
-  const input = { task: { type: 'answer_composition', question: text(message).slice(0, 1200), answerLanguage: response.language === 'zh-CN' ? 'zh-CN' : 'en-US' }, facts: { slots, groups } }
+  const resolved = text(resolvedQuestion) && text(resolvedQuestion) !== text(message) ? text(resolvedQuestion).slice(0, 600) : null
+  const input = { task: { type: 'answer_composition', question: text(message).slice(0, 1200), ...(resolved ? { resolvedQuestion: resolved } : {}), answerLanguage: response.language === 'zh-CN' ? 'zh-CN' : 'en-US' }, facts: { slots, groups } }
   const controller = new AbortController()
   const timeoutMs = setting(env, 'FLOWCHAIN_AI_COMPOSE_TIMEOUT_MS', AI_COMPOSE_LIMITS.timeoutMs, AI_COMPOSE_LIMITS.maxTimeoutMs)
   const abortable = (url, init = {}) => fetchImpl(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal })
@@ -281,7 +292,7 @@ export async function composeAiAnswer({ response, facts, message, env = {}, prov
   }
   const base = { provider: providerRuntimeConfig(env).kind, ...(text(env.FLOWCHAIN_AI_COMPOSE_MODEL) ? { model: 'compose_model' } : {}), latencyMs: Date.now() - started, slotsOffered: Object.keys(slots).length, ...(reply?.usage ? { usage: { input: reply.usage.inputTokens ?? null, output: reply.usage.outputTokens ?? null } } : {}) }
   if (!reply?.ok) return { response, compose: { status: 'degraded', reason: reply?.reason || 'provider_error', ...base } }
-  const verified = verifyAiAnswerComposition(reply.rawOutput ?? reply.output, { response, facts, slots, question: message })
+  const verified = verifyAiAnswerComposition(reply.rawOutput ?? reply.output, { response, facts, slots, question: [message, resolved].filter(Boolean).join('\n') })
   if (!verified.ok) return { response, compose: { status: verified.reason === 'unchanged' ? 'unchanged' : 'rejected', reason: verified.reason, ...base } }
   return { response: verified.response, compose: { status: 'composed', slotsUsed: verified.slotCount, ...base } }
 }

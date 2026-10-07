@@ -207,7 +207,7 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   if (found && agentServed && response.intent !== 'knowledge_retrieval') response = { ...response, supplementalKnowledge: { title: found.conclusion.title, summary: found.conclusion.summary, rag: found.rag } }
   // P3: with compose mode on, the model words the title and summary from this
   // answer's own facts; the verifier keeps the template on any doubt.
-  const composed = await composeAiAnswer({ response, facts, message, env, ...(ctx.aiComposeProvider ? { provider: ctx.aiComposeProvider } : {}) })
+  const composed = await composeAiAnswer({ response, facts, message, resolvedQuestion: followUp ? asked : null, env, ...(ctx.aiComposeProvider ? { provider: ctx.aiComposeProvider } : {}) })
   response = composed.response
   const routingAudit = aiSkillIntentRoutingAudit(intentRouting)
   const agent = agentResult ? aiAgentAudit(agentResult, { entry: agentEntry, served: agentServed ? [...agentSections.map((section) => section.route.skillId), ...(found ? [AI_AGENT_KNOWLEDGE] : [])] : [] }) : compound ? aiCompoundAudit(compound) : null

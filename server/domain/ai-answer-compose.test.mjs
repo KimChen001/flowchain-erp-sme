@@ -149,6 +149,20 @@ test("a sentence slot's full stop is not doubled, and Chinese punctuation is ful
   assert.equal(english.response.conclusion.summary, `${response.keyEvidence[0].entityLabel}: ${response.keyEvidence[0].summary} Then the rest.`)
 })
 
+test('a follow-up the rules resolved is worded with what it means, and a reply with a raw line break is still read', async () => {
+  const { facts, response } = await priorities()
+  const seen = []
+  const result = await composeAiAnswer({ response, facts, message: 'what about the second one?', resolvedQuestion: 'What about PO-008?', env: COMPOSE_ENV, provider: async (input) => { seen.push(input); return { ok: true, rawOutput: { conclusion: { summary: '{"title": "About {r1}", "summary": "{r1}: {r1.detail}\nNothing else stands out."}' } } } } })
+  assert.equal(seen[0].task.resolvedQuestion, 'What about PO-008?')
+  const body = parleyChatAdapter.buildRequestBody(seen[0], { model: 'placeholder-model' })
+  assert.equal(JSON.parse(body.messages[1].content).task.resolvedQuestion, 'What about PO-008?')
+  assert.equal(result.compose.status, 'composed')
+  assert.match(result.response.conclusion.summary, /Nothing else stands out.$/)
+  // The same question as resolved: no resolvedQuestion is sent.
+  await composeAiAnswer({ response, facts, message: 'q', resolvedQuestion: 'q', env: COMPOSE_ENV, provider: async (input) => { seen.push(input); return { ok: false, reason: 'non_success_status' } } })
+  assert.equal(seen[1].task.resolvedQuestion, undefined)
+})
+
 test('the wording may use its own model', async () => {
   const { facts, response } = await priorities()
   const models = []
