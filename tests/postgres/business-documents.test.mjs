@@ -70,8 +70,6 @@ test('the PO document reads as the PO detail does and prints only what is record
     // date: no promised date is printed, though the PO has an expected date.
     assert.deepEqual(document.lines.map((line) => [line.requestedDate, line.promisedDate]), [['2026-11-01', null]])
     assert.equal(document.termsText, 'Deliver to the dock between 8am and 4pm.')
-    // No payment terms recorded on the supplier: none printed, never NET30.
-    assert.equal(document.paymentTerms, null)
     const serialized = JSON.stringify(body)
     for (const value of ['TAX-998877', 'Coastal Bank', 'Harbor Supply Inc', '000111222333', 'CC-4455', 'NET30', '"USD"']) assert.equal(serialized.includes(value), false, value)
 

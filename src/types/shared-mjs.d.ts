@@ -99,7 +99,6 @@ declare module '../../../shared/business-documents.mjs' {
     buyer: { companyName: string | null; addressLines: string[]; phone: string | null; email: string | null; taxId: string | null };
     supplier: { name: string | null; code: string | null; contactName: string | null; email: string | null; telephone: string | null; address: string | null; postalCode: string | null };
     shipTo: { code: string | null; name: string | null };
-    paymentTerms: string | null;
     currency: string | null;
     lines: Array<{ lineNo: number; sku: string | null; supplierSku: string | null; description: string | null; quantity: string | null; unit: string | null; unitPrice: string | null; amount: string | null; requestedDate: string | null; promisedDate: string | null }>;
     totals: Array<{ currency: string | null; amount: string | null }>;

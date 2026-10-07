@@ -227,12 +227,10 @@ function approvedInstant(order) {
 // reads it (prices null without procurement.prices.read); `supplier` the
 // stored supplier row; `warehouse` the PO's delivery warehouse ({ id, code,
 // name }, which has no address); `supplierSkus` the supplier's item links
-// ({ itemId, supplierSku, active }; an inactive link is not used);
-// `paymentTerms` the workspace's payment terms that the supplier's recorded
-// terms name ({ id, code, name }); `letterhead`, `template` and `documentLanguage`
+// ({ itemId, supplierSku, active }; an inactive link is not used); `letterhead`, `template` and `documentLanguage`
 // the workspace's document settings; `workspace` its { legalName, name };
 // `access.prices` whether the reader may see prices.
-export function buildPurchaseOrderDocument({ order, supplier = null, warehouse = null, supplierSkus = [], paymentTerms = [], letterhead = documentSettingsSeed.letterhead, template = documentSettingsSeed.purchaseOrder, documentLanguage = documentSettingsSeed.documentLanguage, workspace = {}, access = {} }) {
+export function buildPurchaseOrderDocument({ order, supplier = null, warehouse = null, supplierSkus = [], letterhead = documentSettingsSeed.letterhead, template = documentSettingsSeed.purchaseOrder, documentLanguage = documentSettingsSeed.documentLanguage, workspace = {}, access = {} }) {
   const meta = isObject(order?.metadata) ? order.metadata : {}
   const status = recorded(order?.status)
   // A role that cannot see prices gets no document to send rather than one
@@ -244,7 +242,6 @@ export function buildPurchaseOrderDocument({ order, supplier = null, warehouse =
       : { ok: true, reason: null }
   const skuByItem = new Map((supplierSkus || []).filter((link) => link?.active !== false && recorded(link?.itemId) && recorded(link?.supplierSku)).map((link) => [recorded(link.itemId), recorded(link.supplierSku)]))
   const currency = recorded(order?.currency)
-  const supplierMeta = isObject(supplier?.metadata) ? supplier.metadata : {}
   const columns = Object.fromEntries(PURCHASE_ORDER_COLUMNS.map((key) => [key, template?.columns?.[key] === true]))
   return {
     kind: 'purchase_order',
@@ -268,9 +265,6 @@ export function buildPurchaseOrderDocument({ order, supplier = null, warehouse =
       taxId: recorded(letterhead?.taxId),
     },
     supplier: supplierParty(supplier, order),
-    // The supplier's recorded payment terms (from the stored row, never the
-    // master data view's NET30); null, and left off, when none were recorded.
-    paymentTerms: recordedPaymentTerms(recorded(supplierMeta.paymentTermsId) || recorded(supplierMeta.paymentTerms), paymentTerms),
     // A warehouse has no address in FlowChain; the code and name are printed,
     // and nothing when the warehouse is not found.
     shipTo: { code: recorded(warehouse?.code), name: recorded(warehouse?.name) },
