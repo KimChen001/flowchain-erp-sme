@@ -21,12 +21,19 @@ const candidateSupplier = (candidate) => candidate.po?.supplierId || candidate.i
 
 export function runPrepareActionDraft(facts, { focus = null, route = null } = {}) {
   if (route?.mode === 'order') return runStartOrder(facts, { focus, route, canDraft: Boolean(facts.visibility?.canDraft) })
-  // Several named records (route.focusAny): the drafts for any of them.
+  // The record the drafts are for (focus), or several named ones
+  // (route.focusAny): the drafts for any of them. An order or item keeps the
+  // signals tied to it; a supplier keeps the drafts whose order or invoice is
+  // that supplier's, as a tier does, so a shortage its order covers stays.
   const any = Array.isArray(route?.focusAny) && route.focusAny.length ? route.focusAny : null
-  const ranked = rankAiSkillItems(buildAiSkillSignals(facts)).filter((item) => matchesAiSkillFocus(item, focus) && (!any || any.some((one) => matchesAiSkillFocus(item, one))))
+  const records = any || (focus ? [focus] : [])
+  const supplierIds = new Set(records.filter((one) => one.entityType === 'supplier').map((one) => one.entityId))
+  const others = records.filter((one) => one.entityType !== 'supplier')
+  const wanted = (candidate) => !records.length || others.some((one) => matchesAiSkillFocus(candidate.item, one)) || supplierIds.has(candidateSupplier(candidate))
+  const ranked = rankAiSkillItems(buildAiSkillSignals(facts))
   const tier = route?.tier || null
   const tierIds = tier?.supplierIds ? new Set(tier.supplierIds) : null
-  const all = ranked.map((item) => aiSkillDraftCandidate(item, facts)).filter((candidate) => !tierIds || tierIds.has(candidateSupplier(candidate)))
+  const all = ranked.map((item) => aiSkillDraftCandidate(item, facts)).filter((candidate) => wanted(candidate) && (!tierIds || tierIds.has(candidateSupplier(candidate))))
   const seen = new Set()
   const drafts = []
   const take = (candidate) => { if (drafts.length < MAX_CARDS && !seen.has(candidate.key)) { seen.add(candidate.key); drafts.push(candidate) } }

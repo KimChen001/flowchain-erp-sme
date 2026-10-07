@@ -180,6 +180,10 @@ test('"draft a chaser for this supplier" after a list of late orders drafts for 
   assert.match(draft.conclusion.title, /Acme Components/)
   assert.ok(draft.reviewCards.length > 0)
   assert.ok(draft.keyEvidence.every((item) => !/Summit/.test(`${item.summary} ${item.entityLabel}`)), JSON.stringify(draft.keyEvidence))
+  // The supplier's drafts are those whose order is Acme's, as a tier's are: the
+  // LDM-001 shortage, which names no supplier itself, stays because Acme's
+  // order covers it.
+  assert.ok(draft.keyEvidence.some((item) => item.entityLabel === 'LDM-001'), JSON.stringify(draft.keyEvidence.map((item) => item.entityLabel)))
   assert.deepEqual(draft.followUp, { kind: 'reference' })
   assert.equal(audits.at(-1).metadata.followUp, 'reference')
   // "It": the first late order.
