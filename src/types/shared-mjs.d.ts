@@ -58,3 +58,11 @@ declare module '../../../shared/price-history.mjs' {
   export function priceHistoryKeyString(key: { itemId?: string | null; unit?: string | null; currency?: string | null; supplierId?: string | null }): string;
   export function compareQuote(input: { unitPrice: string | number | null | undefined; history: PriceHistory | null | undefined }): QuoteComparison;
 }
+
+declare module '../../../shared/data-import-columns.mjs' {
+  export type DataImportColumn = { key: string; en: string; zh: string; required: boolean; example: string; aliases: readonly string[] };
+  export const DATA_IMPORT_TYPES: readonly string[];
+  export const DATA_IMPORT_COLUMNS: Readonly<Record<string, readonly DataImportColumn[]>>;
+  export function dataImportCsv(rows: ReadonlyArray<ReadonlyArray<unknown>>): string;
+  export function dataImportCsvCell(value: unknown): string;
+}

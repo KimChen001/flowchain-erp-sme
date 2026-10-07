@@ -62,6 +62,8 @@ jobs:
       - run: npm run test:db:walkthrough-scenario
       - run: npm run test:db:tenant-scoped-reads
       - run: npm run test:db:master-data-writes
+      - run: npm run test:db:data-import
+      - run: npm run test:api:data-import
       - run: npm run test:db:supplier-tiers
       - run: npm run test:db:supplier-insights
       - run: npm run test:db:ai-workspace-access

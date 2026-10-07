@@ -2959,7 +2959,7 @@ model InventoryAdjustmentDocument {
 model InventoryAdjustmentLine {
   id                 String  @id
   adjustmentId       String
-  inventoryBalanceId String
+  inventoryBalanceId String?
   itemId             String?
   sku                String
   itemName           String?
