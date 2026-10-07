@@ -3,7 +3,7 @@ import { purchaseOrderDueDay } from './open-purchase-orders-report.mjs'
 import { ALL_PURCHASE_ORDERS } from './business-overview.mjs'
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from './procurement-status-authority.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
-import { SUPPLIER_SCORECARD_RULES, evaluatePromiseLine, isPromiseMeasuredPurchaseOrder, summarizeScorecardLines } from './supplier-scorecard.mjs'
+import { SUPPLIER_SCORECARD_RULES, evaluatePromiseLine, scorecardPurchaseOrderStanding, summarizeScorecardLines } from './supplier-scorecard.mjs'
 import { instantCalendarDay } from './tenant-calendar-day.mjs'
 
 // The analytics visuals of each report dashboard. Every visual aggregates the
@@ -231,22 +231,31 @@ function receiptFacts(context, query, poById, purchaseOrderIdsAnyDate, timeZone)
 }
 
 // On time is measured by the supplier scorecard's rules (supplier-scorecard.mjs),
-// so a page never shows two on-time figures: each PO line of an order the
-// scorecard measures (committed, not cancelled; isPromiseMeasuredPurchaseOrder)
-// that passes every filter but the date range is judged against the date the
-// supplier ORIGINALLY promised, plus the grace days, by its first POSTED
-// receipt, in the workspace timezone. A line counts when its original promise
-// falls in the date range; a line past its promise with nothing received is
-// late. A rate needs at least SUPPLIER_SCORECARD_RULES.minimumSample (5) lines.
+// so a page never shows two on-time figures: the PO lines of the orders the
+// scorecard measures (committed, not cancelled, and issued to the supplier or
+// with a posted receipt; scorecardPurchaseOrderStanding: an approved order
+// never sent is not measured) that pass every filter but the date range are
+// grouped into deliveries (the
+// lines of one PO with one original promised date) and judged against that
+// date, plus the grace days, by each line's first POSTED receipt, in the
+// workspace timezone. A delivery counts when its original promise falls in the
+// date range; past its promise with a line not received, it is late. The lines
+// not received and not yet due are returned too: they hold their delivery
+// back. A rate needs at least SUPPLIER_SCORECARD_RULES.minimumSample (5)
+// deliveries.
 // warehouseIds, when the reader is limited to some warehouses, leaves out
-// receipts in other warehouses, as the scorecard does. purchaseOrderIds, when
+// receipts in other warehouses from the on-time judgement, as the scorecard
+// does; a posted receipt anywhere still marks its order as measured. purchaseOrderIds, when
 // given, are the orders measured in place of purchaseOrderIdsAnyDate.
 export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone, { graceDays = SUPPLIER_SCORECARD_RULES.graceDays, warehouseIds = null, purchaseOrderIds = null } = {}) {
   const measured = purchaseOrderIds || purchaseOrderIdsAnyDate
   const readable = Array.isArray(warehouseIds) ? new Set(warehouseIds.map(text)) : null
   const receiptLines = new Map()
+  const receivedPurchaseOrderIds = new Set()
   for (const document of array(context.receipts)) {
     if (text(document.postingStatus).toLowerCase() !== 'posted') continue
+    // A posted receipt in any warehouse means the supplier got the order.
+    if (text(document.poId)) receivedPurchaseOrderIds.add(text(document.poId))
     if (readable && text(document.warehouseId) && !readable.has(text(document.warehouseId))) continue
     const day = instantCalendarDay(document.arrivedAt || document.postedAt, timeZone) || null
     for (const line of array(document.lines)) {
@@ -257,15 +266,16 @@ export function promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today,
   const from = query.from || '0001-01-01'
   const to = query.to || '9999-12-31'
   return array(context.purchaseOrders)
-    .filter(po => isPromiseMeasuredPurchaseOrder(po) && (!measured || measured.has(text(po.id || po.po))))
-    .flatMap(po => array(po.lines).map(line => ({ ...evaluatePromiseLine({ line, purchaseOrder: { ...po, id: text(po.id || po.po) }, receipts: receiptLines.get(text(line.id)) || [], asOfDay: today || null, graceDays }), supplier: poSupplier(po) })))
-    .filter(line => line.status === 'evaluated' && line.originalPromisedDate >= from && line.originalPromisedDate <= to)
+    .filter(po => (!measured || measured.has(text(po.id || po.po))) && scorecardPurchaseOrderStanding({ ...po, id: text(po.id || po.po) }, { receiptLinesByLine: receiptLines, receivedPurchaseOrderIds }) === 'measured')
+    .flatMap(po => array(po.lines).map(line => ({ ...evaluatePromiseLine({ line, purchaseOrder: { ...po, id: text(po.id || po.po) }, receipts: receiptLines.get(text(line.id)) || [], asOfDay: today || null, graceDays, timeZone }), supplier: poSupplier(po) })))
+    .filter(line => ['evaluated', 'not_received'].includes(line.status) && line.originalPromisedDate && line.originalPromisedDate >= from && line.originalPromisedDate <= to)
 }
 
-// The on-time rate of evaluated lines as a percentage, null below the minimum sample.
-const onTimePercent = lines => {
-  const rate = summarizeScorecardLines({ lines }).metrics.onTime.rate
-  return rate === null ? null : Math.round(rate * 1000) / 10
+// The on-time rate of the deliveries the lines make up, as a percentage, null
+// below the minimum sample, with the number of deliveries judged.
+const onTimeOf = lines => {
+  const { metrics, sampleSize } = summarizeScorecardLines({ lines })
+  return { percent: metrics.onTime.rate === null ? null : Math.round(metrics.onTime.rate * 1000) / 10, deliveries: sampleSize }
 }
 
 function receiptCalendarVisual(id, receipts, query) {
@@ -302,37 +312,40 @@ function supplierPerformance(pos, receipts, invoices, scope, promiseLines = []) 
   }
   const totalAmount = [...suppliers.values()].reduce((sum, row) => sum + row.amount, 0)
   const totalOrders = pos.length
-  return [...suppliers.values()].map(({ promised, ...row }) => ({
-    ...row,
-    spend: scope.ok && row.amountKnown ? row.amount : null,
-    promisedLines: promised.length,
-    onTimeRate: onTimePercent(promised),
-    acceptedRate: share(row.accepted, row.lines),
-    matchRate: share(row.matched, row.decided),
-    spendShare: scope.ok ? share(row.amount, totalAmount) : share(row.orders, totalOrders),
-  }))
+  return [...suppliers.values()].map(({ promised, ...row }) => {
+    const onTime = onTimeOf(promised)
+    return {
+      ...row,
+      spend: scope.ok && row.amountKnown ? row.amount : null,
+      promisedDeliveries: onTime.deliveries,
+      onTimeRate: onTime.percent,
+      acceptedRate: share(row.accepted, row.lines),
+      matchRate: share(row.matched, row.decided),
+      spendShare: scope.ok ? share(row.amount, totalAmount) : share(row.orders, totalOrders),
+    }
+  })
 }
 
-// Suppliers placed by spend (or order count) and on-time lines. The guides
+// Suppliers placed by spend (or order count) and on-time deliveries. The guides
 // are the median of the horizontal measure and the average on-time rate, so
 // the quadrants come from the data, not from an assumed target.
 function performanceMatrixVisual(id, performance, scope, emptyState = ON_TIME_EMPTY) {
   const xKey = scope.ok ? 'Committed amount' : 'Purchase orders'
-  const rows = performance.filter(row => row.onTimeRate !== null && row.name !== 'Unspecified' && (scope.ok ? row.spend !== null : true)).map(row => ({ name: row.name, [xKey]: scope.ok ? row.spend : row.orders, 'On-time lines': row.onTimeRate, 'PO lines': row.promisedLines, filterValue: row.name }))
+  const rows = performance.filter(row => row.onTimeRate !== null && row.name !== 'Unspecified' && (scope.ok ? row.spend !== null : true)).map(row => ({ name: row.name, [xKey]: scope.ok ? row.spend : row.orders, 'On-time deliveries': row.onTimeRate, 'Deliveries': row.promisedDeliveries, filterValue: row.name }))
   const xs = rows.map(row => row[xKey]).sort((a, b) => a - b)
   const median = xs.length ? (xs.length % 2 ? xs[(xs.length - 1) / 2] : (xs[xs.length / 2 - 1] + xs[xs.length / 2]) / 2) : null
-  const average = rows.length ? Math.round(rows.reduce((sum, row) => sum + row['On-time lines'], 0) / rows.length * 10) / 10 : null
-  return visual(id, 'Supplier performance matrix', 'scatter', rows, { unit: scope.ok ? 'currency' : 'number', currencyCode: scope.currencyCode, measures: [{ key: xKey, unit: scope.ok ? 'currency' : 'number', axis: 'x' }, { key: 'On-time lines', unit: 'percentage', axis: 'y' }, { key: 'PO lines', unit: 'number', axis: 'size' }], guides: { x: median, y: average }, seriesKeys: [xKey, 'On-time lines', 'PO lines'], drilldownPath: '/app/master-data/suppliers', crossFilter: 'supplier', description: 'On time against the original promise. Bubble size is the number of PO lines measured. The guides are the median spend and the average on-time rate.', emptyState, limitations: moneyLimitations(scope, []) })
+  const average = rows.length ? Math.round(rows.reduce((sum, row) => sum + row['On-time deliveries'], 0) / rows.length * 10) / 10 : null
+  return visual(id, 'Supplier performance matrix', 'scatter', rows, { unit: scope.ok ? 'currency' : 'number', currencyCode: scope.currencyCode, measures: [{ key: xKey, unit: scope.ok ? 'currency' : 'number', axis: 'x' }, { key: 'On-time deliveries', unit: 'percentage', axis: 'y' }, { key: 'Deliveries', unit: 'number', axis: 'size' }], guides: { x: median, y: average }, seriesKeys: [xKey, 'On-time deliveries', 'Deliveries'], drilldownPath: '/app/master-data/suppliers', crossFilter: 'supplier', description: 'Deliveries on time against the date on the PO. Bubble size is the number of deliveries measured. The guides are the median spend and the average on-time rate.', emptyState, limitations: moneyLimitations(scope, []) })
 }
 
-const ON_TIME_EMPTY = 'No supplier has 5 or more PO lines first promised in the selected range.'
+const ON_TIME_EMPTY = 'No supplier has 5 or more deliveries first promised in the selected range.'
 // On time is not measured when the reader cannot see receipts, or when not
-// every receipt was loaded: a line whose receipt is missing would count as late.
+// every receipt was loaded: a delivery whose receipt is missing would count as late.
 // Nor, on the supplier page, over a range the scorecard there does not accept.
-const ON_TIME_WITHHELD = { restricted: 'Your role cannot view receipts.', truncated: 'Not every receipt could be loaded, so on-time lines are not measured here.', period_too_long: 'The range is longer than the supplier scorecard allows, so on-time lines are not measured. Choose a shorter range.' }
+const ON_TIME_WITHHELD = { restricted: 'Your role cannot view receipts.', truncated: 'Not every receipt could be loaded, so on-time deliveries are not measured here.', period_too_long: 'The range is longer than the supplier scorecard allows, so on-time deliveries are not measured. Choose a shorter range.' }
 
 function scorecardVisual(id, performance, scope) {
-  const indicators = [['On-time lines', 'onTimeRate'], ['Lines accepted in full', 'acceptedRate'], ['Invoices matched', 'matchRate'], [scope.ok ? 'Share of spend' : 'Share of orders', 'spendShare']]
+  const indicators = [['On-time deliveries', 'onTimeRate'], ['Lines accepted in full', 'acceptedRate'], ['Invoices matched', 'matchRate'], [scope.ok ? 'Share of spend' : 'Share of orders', 'spendShare']]
   const size = row => scope.ok ? row.spend ?? -1 : row.orders
   const candidates = performance.filter(row => row.name !== 'Unspecified').sort((a, b) => size(b) - size(a) || a.name.localeCompare(b.name)).slice(0, 5)
   const used = indicators.filter(([, key]) => candidates.some(row => row[key] !== null))
@@ -534,7 +547,7 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
     return [
       performanceMatrixVisual('supplier_performance_matrix', performance(), scope, onTimeEmpty),
       scorecardVisual('supplier_scorecard', performance(), scope),
-      rankingVisual('supplier_on_time', 'On-time lines by supplier', onTime, { unit: 'percentage', drilldownPath: '/app/procurement/receiving', crossFilter: 'supplier', description: 'PO lines first promised in range whose first posted receipt arrived by that date. Each supplier needs at least 5 lines.', emptyState: onTimeEmpty }),
+      rankingVisual('supplier_on_time', 'On-time deliveries by supplier', onTime, { unit: 'percentage', drilldownPath: '/app/procurement/receiving', crossFilter: 'supplier', description: 'Deliveries (the lines of one PO with one date) first promised in range whose every line had a posted receipt by the date on the PO. Orders approved but not sent to the supplier are left out. Each supplier needs at least 5 deliveries.', emptyState: onTimeEmpty }),
       spendTreemapVisual('supplier_spend_treemap', pos(), scope),
       activityHeatmapVisual('supplier_activity_heatmap', pos()),
     ]
@@ -547,7 +560,7 @@ export function buildDashboardVisuals({ subject, context, all, query, purchaseOr
 // scope as the visuals.
 export function buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDate, today, timeZone, salesDemand = [], onTimeWithheld = null, promiseOptions = {} }) {
   const poById = new Map(array(context.purchaseOrders).map(row => [text(row.id || row.po), row]))
-  const promiseLines = onTimeWithheld ? [] : promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone, promiseOptions)
+  const onTime = onTimeOf(onTimeWithheld ? [] : promiseLineFacts(context, query, purchaseOrderIdsAnyDate, today, timeZone, promiseOptions))
   const invoices = invoiceFacts(context, all, timeZone)
   const orders = salesFacts(context, all, salesDemand).filter(row => row.active)
   const openPurchaseOrders = all.purchase_orders.filter(row => row.isOpen)
@@ -558,8 +571,8 @@ export function buildDashboardFacts({ context, all, query, purchaseOrderIdsAnyDa
     return Boolean(due && today && due < today)
   })
   return {
-    onTimeReceiptRate: onTimePercent(promiseLines),
-    onTimeLines: promiseLines.length,
+    onTimeReceiptRate: onTime.percent,
+    onTimeDeliveries: onTime.deliveries,
     onTimeWithheld,
     overdueOpenPurchaseOrders: overdue.length,
     invoiceMatchRate: share(invoices.filter(row => row.outcome === 'matched').length, invoices.length),
