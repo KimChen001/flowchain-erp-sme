@@ -18,3 +18,10 @@ declare module '../../shared/purchase-request-prefill.mjs' {
   export function planPurchaseRequestPrefill(input: unknown): any;
   export function addCalendarDays(day: string, days: number): string;
 }
+declare module '../../../shared/data-import-columns.mjs' {
+  export type DataImportColumn = { key: string; en: string; zh: string; required: boolean; example: string; aliases: readonly string[] };
+  export const DATA_IMPORT_TYPES: readonly string[];
+  export const DATA_IMPORT_COLUMNS: Readonly<Record<string, readonly DataImportColumn[]>>;
+  export function dataImportCsv(rows: ReadonlyArray<ReadonlyArray<unknown>>): string;
+  export function dataImportCsvCell(value: unknown): string;
+}

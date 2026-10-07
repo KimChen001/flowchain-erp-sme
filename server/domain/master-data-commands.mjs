@@ -41,7 +41,8 @@ function numberField(input, key, issues, { min = 0, integer = false, positive = 
   if (raw === null || raw === undefined || raw === '') return null
   const value = Number(raw)
   if (!Number.isFinite(value) || value < min || (positive && value <= 0) || (integer && !Number.isInteger(value))) {
-    issues.push({ field: key, message: `${label} must be ${integer ? 'a whole number' : 'a number'}${positive ? ' greater than zero' : ', zero or greater'}.` })
+    const code = integer ? 'WHOLE_NUMBER_REQUIRED' : positive ? 'POSITIVE_NUMBER_REQUIRED' : 'NUMBER_INVALID'
+    issues.push({ field: key, code, message: `${label} must be ${integer ? 'a whole number' : 'a number'}${positive ? ' greater than zero' : ', zero or greater'}.` })
     return undefined
   }
   return value
@@ -66,6 +67,30 @@ async function runSerializable(prisma, work, duplicate) {
 const ITEM_TEXT_FIELDS = ['shortName', 'itemType', 'brand', 'specification', 'purchaseUnit', 'taxCodeId', 'barcode', 'manufacturerPartNumber', 'comments']
 const ITEM_FLAGS = ['purchasable', 'inventoryItem', 'batchManaged', 'serialManaged', 'shelfLifeManaged']
 
+// The field checks of an item write that need no database, in the order the
+// form shows them. old is the stored item when editing, otherwise null.
+export function itemInputIssues(input = {}, old = null) {
+  const issues = []
+  const issue = (field, code, message) => issues.push({ field, code, message })
+  const sku = old ? old.sku : text(input.sku)
+  if (old && has(input, 'sku') && text(input.sku) && text(input.sku) !== old.sku) issue('sku', 'SKU_LOCKED', 'The SKU cannot be changed once the item exists.')
+  if (!sku) issue('sku', 'SKU_REQUIRED', 'Enter a SKU.')
+  else if (sku.length > 64 || /\s/.test(sku)) issue('sku', 'SKU_INVALID', 'A SKU has at most 64 characters and no spaces.')
+  const name = has(input, 'itemName') || has(input, 'name') ? text(input.itemName ?? input.name) : text(old?.name)
+  if (!name) issue('itemName', 'NAME_REQUIRED', 'Enter an item name.')
+  else if (name.length > 200) issue('itemName', 'NAME_TOO_LONG', 'An item name has at most 200 characters.')
+  const status = has(input, 'status') ? text(input.status) : text(old?.status) || 'active'
+  if (!STATUSES.includes(status)) issue('status', 'STATUS_INVALID', 'Choose a valid status.')
+  const unit = has(input, 'baseUnit') || has(input, 'unit') ? text(input.baseUnit ?? input.unit) : text(old?.unit) || 'pcs'
+  if (!unit) issue('baseUnit', 'UNIT_REQUIRED', 'Enter a unit.')
+  const category = has(input, 'category') ? text(input.category) || null : old?.category ?? null
+  const safetyStock = numberField(input, 'safetyStock', issues, { label: 'Safety stock' })
+  const reorderPoint = numberField(input, 'reorderPoint', issues, { label: 'Reorder point' })
+  const minimumOrderQuantity = numberField(input, 'minimumOrderQuantity', issues, { positive: true, label: 'Minimum order quantity' })
+  const leadTimeDays = numberField(input, 'purchaseLeadTimeDays', issues, { integer: true, label: 'Lead time' })
+  return { issues, values: { sku, name, status, unit, category, safetyStock, reorderPoint, minimumOrderQuantity, leadTimeDays } }
+}
+
 export async function saveItemMaster(prisma, id, input = {}, actorId, scope) {
   requireScope(actorId, scope)
   return runSerializable(prisma, async (tx) => {
@@ -74,24 +99,9 @@ export async function saveItemMaster(prisma, id, input = {}, actorId, scope) {
     const previous = meta(old)
     const currentVersion = Number(previous.version || 1)
     if (old && Number(input.expectedVersion) !== currentVersion) throw fail(409, 'VERSION_CONFLICT', 'This item changed. Reopen it and try again.')
-    const issues = []
-    const issue = (field, message) => issues.push({ field, message })
-    const sku = old ? old.sku : text(input.sku)
-    if (old && has(input, 'sku') && text(input.sku) && text(input.sku) !== old.sku) issue('sku', 'The SKU cannot be changed once the item exists.')
-    if (!sku) issue('sku', 'Enter a SKU.')
-    else if (sku.length > 64 || /\s/.test(sku)) issue('sku', 'A SKU has at most 64 characters and no spaces.')
-    const name = has(input, 'itemName') || has(input, 'name') ? text(input.itemName ?? input.name) : text(old?.name)
-    if (!name) issue('itemName', 'Enter an item name.')
-    else if (name.length > 200) issue('itemName', 'An item name has at most 200 characters.')
-    const status = has(input, 'status') ? text(input.status) : text(old?.status) || 'active'
-    if (!STATUSES.includes(status)) issue('status', 'Choose a valid status.')
-    const unit = has(input, 'baseUnit') || has(input, 'unit') ? text(input.baseUnit ?? input.unit) : text(old?.unit) || 'pcs'
-    if (!unit) issue('baseUnit', 'Enter a unit.')
-    const category = has(input, 'category') ? text(input.category) || null : old?.category ?? null
-    const safetyStock = numberField(input, 'safetyStock', issues, { label: 'Safety stock' })
-    const reorderPoint = numberField(input, 'reorderPoint', issues, { label: 'Reorder point' })
-    const moq = numberField(input, 'minimumOrderQuantity', issues, { positive: true, label: 'Minimum order quantity' })
-    const leadTime = numberField(input, 'purchaseLeadTimeDays', issues, { integer: true, label: 'Lead time' })
+    const { issues, values } = itemInputIssues(input, old)
+    const { sku, name, status, unit, category, safetyStock, reorderPoint, minimumOrderQuantity: moq, leadTimeDays: leadTime } = values
+    const issue = (field, code, message) => issues.push({ field, code, message })
 
     const next = { ...previous }
     for (const key of ITEM_TEXT_FIELDS) if (has(input, key)) next[key] = text(input[key])
@@ -106,14 +116,14 @@ export async function saveItemMaster(prisma, id, input = {}, actorId, scope) {
       if (!supplierId) preferredSupplierId = null
       else {
         const supplier = await tx.supplier.findFirst({ where: { tenantId: scope.tenantId, id: supplierId } })
-        if (!supplier) issue('defaultSupplierId', 'Choose a supplier of this workspace.')
-        else if (text(supplier.status || 'active') !== 'active') issue('defaultSupplierId', 'Choose an active supplier.')
+        if (!supplier) issue('defaultSupplierId', 'SUPPLIER_NOT_FOUND', 'Choose a supplier of this workspace.')
+        else if (text(supplier.status || 'active') !== 'active') issue('defaultSupplierId', 'SUPPLIER_INACTIVE', 'Choose an active supplier.')
         else preferredSupplierId = supplier.id
       }
     }
     if (has(input, 'defaultWarehouseId')) {
       const warehouseId = text(input.defaultWarehouseId)
-      if (warehouseId && !(await tx.warehouse.findFirst({ where: { tenantId: scope.tenantId, id: warehouseId } }))) issue('defaultWarehouseId', 'Choose a warehouse of this workspace.')
+      if (warehouseId && !(await tx.warehouse.findFirst({ where: { tenantId: scope.tenantId, id: warehouseId } }))) issue('defaultWarehouseId', 'WAREHOUSE_NOT_FOUND', 'Choose a warehouse of this workspace.')
       else next.defaultWarehouseId = warehouseId
     }
     validationError(issues)
@@ -147,6 +157,33 @@ async function findCustomerRecord(tx, tenantId, idOrCode) {
   return rows.find((row) => text(row.payload?.id) === key || row.id === key) || null
 }
 
+// The field checks of a customer write; customers need no lookups, so these
+// are all of them. old is the stored RuntimeRecord when editing.
+export function customerInputIssues(input = {}, old = null) {
+  const previous = isObject(old?.payload) ? old.payload : {}
+  const issues = []
+  const issue = (field, code, message) => issues.push({ field, code, message })
+  const code = old ? old.recordKey : text(input.code)
+  if (old && has(input, 'code') && text(input.code) && text(input.code) !== old.recordKey) issue('code', 'CODE_LOCKED', 'The customer code cannot be changed once the customer exists.')
+  if (!code) issue('code', 'CODE_REQUIRED', 'Enter a customer code.')
+  else if (code.length > 64) issue('code', 'CODE_TOO_LONG', 'A customer code has at most 64 characters.')
+  const name = has(input, 'name') ? text(input.name) : text(previous.name)
+  if (!name) issue('name', 'NAME_REQUIRED', 'Enter a customer name.')
+  const status = has(input, 'status') ? text(input.status) : text(previous.status) || 'active'
+  if (!STATUSES.includes(status)) issue('status', 'STATUS_INVALID', 'Choose a valid status.')
+  const textValues = {}
+  for (const key of CUSTOMER_TEXT_FIELDS) if (has(input, key)) textValues[key] = text(input[key])
+  const email = has(textValues, 'email') ? textValues.email : previous.email
+  if (email && !EMAIL.test(email)) issue('email', 'EMAIL_INVALID', 'Enter a valid email address.')
+  let currency
+  if (has(input, 'currency')) {
+    currency = text(input.currency).toUpperCase()
+    // Only a recorded currency: an empty one stays empty, never guessed.
+    if (currency && !currencies.has(currency)) issue('currency', 'CURRENCY_INVALID', 'Choose a valid currency.')
+  }
+  return { issues, values: { code, name, status, text: textValues, currency } }
+}
+
 export async function saveCustomerMaster(prisma, id, input = {}, actorId, scope) {
   requireScope(actorId, scope)
   return runSerializable(prisma, async (tx) => {
@@ -155,25 +192,10 @@ export async function saveCustomerMaster(prisma, id, input = {}, actorId, scope)
     const previous = isObject(old?.payload) ? old.payload : {}
     const currentVersion = Number(previous.version || 1)
     if (old && Number(input.expectedVersion) !== currentVersion) throw fail(409, 'VERSION_CONFLICT', 'This customer changed. Reopen it and try again.')
-    const issues = []
-    const issue = (field, message) => issues.push({ field, message })
-    const code = old ? old.recordKey : text(input.code)
-    if (old && has(input, 'code') && text(input.code) && text(input.code) !== old.recordKey) issue('code', 'The customer code cannot be changed once the customer exists.')
-    if (!code) issue('code', 'Enter a customer code.')
-    else if (code.length > 64) issue('code', 'A customer code has at most 64 characters.')
-    const name = has(input, 'name') ? text(input.name) : text(previous.name)
-    if (!name) issue('name', 'Enter a customer name.')
-    const status = has(input, 'status') ? text(input.status) : text(previous.status) || 'active'
-    if (!STATUSES.includes(status)) issue('status', 'Choose a valid status.')
-    const next = { ...previous }
-    for (const key of CUSTOMER_TEXT_FIELDS) if (has(input, key)) next[key] = text(input[key])
-    if (next.email && !EMAIL.test(next.email)) issue('email', 'Enter a valid email address.')
-    if (has(input, 'currency')) {
-      const currency = text(input.currency).toUpperCase()
-      // Only a recorded currency: an empty one stays empty, never guessed.
-      if (currency && !currencies.has(currency)) issue('currency', 'Choose a valid currency.')
-      next.currency = currency
-    }
+    const { issues, values } = customerInputIssues(input, old)
+    const { code, name, status } = values
+    const next = { ...previous, ...values.text }
+    if (values.currency !== undefined) next.currency = values.currency
     validationError(issues)
     next.id = previous.id || `CUST-${randomUUID()}`
     next.code = code
@@ -216,9 +238,40 @@ export function mapItemSupplierRecord(record = {}, item = null) {
   }
 }
 
+// The record key is "<itemId>::<supplierId>", so one item's or one
+// supplier's links are found in the database, however many the workspace
+// holds; only the unfiltered list is capped.
 export async function listItemSupplierRecords(prisma, tenantId, { itemId = '', supplierId = '' } = {}) {
-  const rows = await prisma.runtimeRecord.findMany({ where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE }, orderBy: [{ recordKey: 'asc' }], take: 2000 })
+  const recordKey = itemId && supplierId ? `${itemId}::${supplierId}` : itemId ? { startsWith: `${itemId}::` } : supplierId ? { endsWith: `::${supplierId}` } : undefined
+  const rows = await prisma.runtimeRecord.findMany({
+    where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE, ...(recordKey ? { recordKey } : {}) },
+    orderBy: [{ recordKey: 'asc' }],
+    ...(recordKey ? {} : { take: 2000 }),
+  })
   return rows.filter((row) => (!itemId || text(row.payload?.itemId) === itemId) && (!supplierId || text(row.payload?.supplierId) === supplierId))
+}
+
+// The field checks of an item-supplier write. The caller looks the supplier
+// up in the workspace (null when it is not there); old is the stored
+// relationship when editing.
+export function itemSupplierInputIssues(input = {}, { old = null, supplier = null } = {}) {
+  const issues = []
+  const issue = (field, code, message) => issues.push({ field, code, message })
+  if (!supplier) issue('supplierId', 'SUPPLIER_NOT_FOUND', 'Choose a supplier of this workspace.')
+  else if (!old && text(supplier.status || 'active') !== 'active') issue('supplierId', 'SUPPLIER_INACTIVE', 'Choose an active supplier.')
+  const leadTimeDays = numberField(input, 'leadTimeDays', issues, { integer: true, label: 'Lead time' })
+  const minimumOrderQuantity = numberField(input, 'minimumOrderQuantity', issues, { positive: true, label: 'Minimum order quantity' })
+  const price = numberField(input, 'referencePrice', issues, { label: 'Reference price' })
+  // The form sends 0 for an empty price field: a zero reference price is
+  // "not recorded", never a price of $0.
+  const referencePrice = price === undefined ? undefined : price === 0 ? null : price
+  let currency
+  if (has(input, 'currency') || !old) {
+    // An empty currency is the supplier's default currency, as on the form.
+    currency = text(input.currency || meta(supplier).defaultCurrency).toUpperCase()
+    if (currency && !currencies.has(currency)) issue('currency', 'CURRENCY_INVALID', 'Choose a valid currency.')
+  }
+  return { issues, values: { leadTimeDays, minimumOrderQuantity, referencePrice, currency } }
 }
 
 // Creates (relationshipId null) or updates one item-supplier relationship.
@@ -232,30 +285,18 @@ export async function saveItemSupplier(prisma, itemIdOrSku, relationshipId, inpu
     const previous = isObject(old?.payload) ? old.payload : {}
     const currentVersion = Number(previous.version || 1)
     if (old && Number(input.expectedVersion) !== currentVersion) throw fail(409, 'VERSION_CONFLICT', 'This relationship changed. Reopen it and try again.')
-    const issues = []
-    const issue = (field, message) => issues.push({ field, message })
     const supplierId = old ? text(previous.supplierId) : text(input.supplierId)
     const supplier = supplierId ? await tx.supplier.findFirst({ where: { tenantId: scope.tenantId, id: supplierId } }) : null
-    if (!supplier) issue('supplierId', 'Choose a supplier of this workspace.')
-    else if (!old && text(supplier.status || 'active') !== 'active') issue('supplierId', 'Choose an active supplier.')
-    const leadTime = numberField(input, 'leadTimeDays', issues, { integer: true, label: 'Lead time' })
-    const moq = numberField(input, 'minimumOrderQuantity', issues, { positive: true, label: 'Minimum order quantity' })
-    const price = numberField(input, 'referencePrice', issues, { label: 'Reference price' })
+    const { issues, values } = itemSupplierInputIssues(input, { old, supplier })
     const next = { ...previous, itemId: item.id, supplierId }
     if (has(input, 'supplierSku')) next.supplierSku = text(input.supplierSku)
     for (const key of ['active', 'approved', 'preferred']) if (has(input, key)) next[key] = Boolean(input[key])
     if (!old) { next.active = next.active !== false; next.approved = next.approved !== false; next.preferred = Boolean(next.preferred) }
     // A blank field is stored as not recorded (null), never as 0 days or 1.
-    if (leadTime !== undefined) next.leadTimeDays = leadTime
-    if (moq !== undefined) next.minimumOrderQuantity = moq
-    // The form sends 0 for an empty price field: a zero reference price is
-    // "not recorded", never a price of $0.
-    if (price !== undefined) next.referencePrice = price === 0 ? null : price
-    if (has(input, 'currency') || !old) {
-      const currency = text(input.currency || meta(supplier).defaultCurrency).toUpperCase()
-      if (currency && !currencies.has(currency)) issue('currency', 'Choose a valid currency.')
-      next.currency = currency
-    }
+    if (values.leadTimeDays !== undefined) next.leadTimeDays = values.leadTimeDays
+    if (values.minimumOrderQuantity !== undefined) next.minimumOrderQuantity = values.minimumOrderQuantity
+    if (values.referencePrice !== undefined) next.referencePrice = values.referencePrice
+    if (values.currency !== undefined) next.currency = values.currency
     // Only an active, approved source can be the preferred one.
     if (next.preferred && (!next.active || !next.approved)) next.preferred = false
     validationError(issues)

@@ -13,6 +13,7 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
+import { DataImportLink } from "../master-data/DataImportLink";
 
 type Supplier = {
   id: string;
@@ -768,6 +769,7 @@ export default function SupplierMasterPage({
             <RefreshCw size={14} />
             {copy("刷新")}
           </button>
+          <DataImportLink type="suppliers" className="inline-flex items-center gap-1 rounded border px-3 text-xs" />
           {writes.suppliers && (
             <button
               onClick={startCreate}

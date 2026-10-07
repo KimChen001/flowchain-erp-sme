@@ -32,6 +32,18 @@ test('retrieval without a model is explicitly labelled and carries original pass
   assert.match(result.answer, /18 months/)
   assert.equal(result.citations[0].documentId, 'doc-a')
 })
+test('agent planning searches with its own words and shows passages without asking a model to write', async () => {
+  const env = { FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted', FLOWCHAIN_AI_PROVIDER_KIND: 'deepseek_chat', FLOWCHAIN_AI_PROVIDER_ENDPOINT: 'https://example.invalid/chat', FLOWCHAIN_AI_PROVIDER_API_KEY: 'test-only', FLOWCHAIN_AI_PROVIDER_MODEL: 'test' }
+  let called = false
+  // A Chinese question finds an English document through English search words.
+  const question = '那个控制器的保修期是多久？'
+  assert.equal((await answerKnowledgeQuery({ question, actor: {}, service: { documents: async () => documents } })).mode, 'no_results')
+  const result = await answerKnowledgeQuery({ question, retrievalQuery: 'Zephyr warranty', generate: false, language: 'zh-CN', actor: {}, service: { documents: async () => documents }, env, provider: async () => { called = true; return { ok: false } } })
+  assert.equal(called, false)
+  assert.equal(result.mode, 'retrieved_excerpts')
+  assert.deepEqual(result.citations.map(c => c.documentId), ['doc-a'])
+  assert.match(result.answer, /18 months/)
+})
 test('RAG provider request is bounded and rejects invented citation IDs', async () => {
   const env = { FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted', FLOWCHAIN_AI_PROVIDER_KIND: 'deepseek_chat', FLOWCHAIN_AI_PROVIDER_ENDPOINT: 'https://example.invalid/chat', FLOWCHAIN_AI_PROVIDER_API_KEY: 'test-only', FLOWCHAIN_AI_PROVIDER_MODEL: 'test' }
   let called = false
