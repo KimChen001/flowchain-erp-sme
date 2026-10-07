@@ -170,6 +170,25 @@ test('the scorecard counts lines by original promise in the period, dates receip
   assert.deepEqual(supplier.lines[1].receipts, [{ receivingDocumentId: 'GRN-2', day: '2026-08-08', accepted: 100, rejected: 0 }])
 })
 
+test('an invoice date is the calendar day entered, not a day earlier in New York', () => {
+  // Bills store the invoice date at UTC midnight. Read in New York time,
+  // 08-01 fell on 07-31 and left the period, and 09-01 fell into August.
+  const variance = { supplierId: 'SUP-1', status: 'exception', currency: 'USD', varianceAmount: 10, metadata: { varianceType: 'price_variance' }, lines: [] }
+  const invoices = [
+    { ...variance, id: 'INV-FIRST', invoiceDate: new Date('2026-08-01T00:00:00.000Z') },
+    { ...variance, id: 'INV-NEXT', invoiceDate: new Date('2026-09-01T00:00:00.000Z') },
+    { ...variance, id: 'INV-TEXT', invoiceDate: '2026-08-31T00:00:00.000Z' },
+    // Without an invoice date the creation time counts on its New York day: 07-31.
+    { ...variance, id: 'INV-UNDATED', invoiceDate: null, createdAt: new Date('2026-08-01T02:00:00.000Z') },
+  ]
+  const result = buildSupplierScorecard({
+    purchaseOrders: [], receipts: [], invoices, suppliers: [{ id: 'SUP-1', name: 'Summit Supply' }], supplierId: 'SUP-1',
+    period: { from: '2026-08-01', to: '2026-08-31' }, asOfDay: '2026-09-30', timeZone: 'America/New_York',
+  })
+  const [supplier] = result.suppliers
+  assert.deepEqual(supplier.invoices.map((row) => [row.supplierInvoiceId, row.invoiceDate]), [['INV-FIRST', '2026-08-01'], ['INV-TEXT', '2026-08-31']])
+})
+
 test('period and grace days are validated; the default period is the 90 days ending today', () => {
   assert.deepEqual(scorecardParameters({}, '2026-09-30'), { period: { from: '2026-07-03', to: '2026-09-30' }, graceDays: 0, supplierId: null })
   assert.equal(scorecardParameters({ graceDays: '2' }, '2026-09-30').graceDays, 2)

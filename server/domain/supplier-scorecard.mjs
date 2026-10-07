@@ -320,7 +320,10 @@ export function buildSupplierScorecard({
   for (const invoice of invoices || []) {
     const id = text(invoice.supplierId)
     if (!id || (supplierId && id !== supplierId) || COMMITTED_INVOICE_STATUSES_EXCLUDED.includes(text(invoice.status))) continue
-    const day = localDay(invoice.invoiceDate || invoice.submittedAt || invoice.createdAt, timeZone)
+    // The invoice date is a calendar day stored at UTC midnight, so it is read as
+    // that day: in the workspace timezone it would fall a day early in the US.
+    // Submission and creation times are instants and count on their local day.
+    const day = promiseDay(invoice.invoiceDate) || localDay(invoice.submittedAt || invoice.createdAt, timeZone)
     if (!inPeriod(day) || !hasPriceVariance(invoice)) continue
     entry(id, invoice.supplierName).invoices.push({
       supplierInvoiceId: invoice.id,
