@@ -31,7 +31,6 @@ export const outboundEnglish: Record<string, string> = {
   "业务调整": "Business adjustment",
   "正在读取正式订单…": "Loading the order…",
   "当前页面仅显示您有权查看的仓库数据，部分库存或履约事实已隐藏。": "Only warehouses you can access are shown. Some inventory or fulfillment records are hidden.",
-  "当前订单包含多条订单行。为避免不完整覆盖，窄版界面暂不支持编辑该草稿。": "This order has several lines. To avoid overwriting some of them, this draft cannot be edited on a narrow screen.",
   "编辑草稿": "Edit draft",
   "确认订单": "Confirm order",
   "恢复": "Resume",
