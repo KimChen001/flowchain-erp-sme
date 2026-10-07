@@ -178,6 +178,12 @@ const authoritativeWriteRouteIds = ids(`
   settings:ai
 `);
 
+// The printable business documents live in their own module, whatever
+// module their route sits under.
+const businessDocumentRouteIds = ids(`
+  procurement:order-document sales:invoice-document
+`);
+
 const ownerByModule: Record<string, string> = {
   overview: "src/modules/overview",
   "master-data": "src/modules/master-data",
@@ -553,7 +559,9 @@ export function authorityForRoute(
       requiredCapability,
       requiredPermission,
     ),
-    owner: ownerByModule[route.moduleId] || "src/app/FlowChainApp.tsx",
+    owner: businessDocumentRouteIds.has(route.id)
+      ? "src/modules/business-documents"
+      : ownerByModule[route.moduleId] || "src/app/FlowChainApp.tsx",
     businessObject: route.entityType || route.moduleId,
     apiDependency:
       route.id === "master-data:import"
