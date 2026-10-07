@@ -287,6 +287,7 @@ export default function CanonicalProcurementPanel({
     );
   const selectItem = async (index: number, value: string) => {
     const item = items.find((row) => (row.itemId || row.id) === value);
+    clearOverrideIssues(index);
     if (!item)
       return patchLine(index, {
         itemId: "",
@@ -353,6 +354,21 @@ export default function CanonicalProcurementPanel({
       const match = OVERRIDE_FIELD.exec(error.field || "");
       return Boolean(match) && Number(match?.[1]) === index;
     });
+  // A refused reason belongs to the supplier it was asked for: a new supplier
+  // or item drops it, so the picker follows only the preferred-supplier rule.
+  const clearOverrideIssues = (index: number) =>
+    setErrors((current) => {
+      const kept = current.filter((error) => {
+        const match = OVERRIDE_FIELD.exec(error.field || "");
+        return !match || Number(match[1]) !== index;
+      });
+      return kept.length === current.length ? current : kept;
+    });
+  // A reason belongs to the supplier it was given for.
+  const chooseSupplier = (index: number, supplierId: string) => {
+    patchLine(index, { supplierId, supplierOverride: null });
+    clearOverrideIssues(index);
+  };
   const overrideIssues = (index: number) =>
     Object.fromEntries(errors.flatMap((error) => {
       const match = OVERRIDE_FIELD.exec(error.field || "");
@@ -770,10 +786,7 @@ export default function CanonicalProcurementPanel({
                   <select
                     aria-label={`${copy("供应商")} ${index + 1}`}
                     value={line.supplierId}
-                    onChange={(e) =>
-                      // A reason belongs to the supplier it was given for.
-                      patchLine(index, { supplierId: e.target.value, supplierOverride: null })
-                    }
+                    onChange={(e) => chooseSupplier(index, e.target.value)}
                     style={inputStyle}
                   >
                     <option value="">{copy("选择供应商")}</option>
@@ -790,7 +803,7 @@ export default function CanonicalProcurementPanel({
                       choices={prefill.supplierChoices}
                       preferredOnly={prefill.fields.supplierId?.ref === "item_supplier:choose_preferred"}
                       selectedId={line.supplierId}
-                      onChoose={(supplierId) => patchLine(index, supplierId === line.supplierId ? {} : { supplierId, supplierOverride: null })}
+                      onChoose={(supplierId) => { if (supplierId !== line.supplierId) chooseSupplier(index, supplierId); }}
                     />
                   ) : null}
                   {needsReason(line) || (line.sourceType === "catalog_item" && hasOverrideIssue(index)) ? (
