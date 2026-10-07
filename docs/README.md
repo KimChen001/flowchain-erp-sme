@@ -66,6 +66,7 @@
 
 ## AI
 
+- [AI assistant plan, v4.0](ai-assistant-plan.md): decisions, state, roadmap and stop points for the assistant and knowledge work
 - [AI safety and draft-first explainer](ai-safety-and-draft-first-explainer-v1.md)
 - [AI provider safety gate](ai-provider-safety-gate-v1.md)
 - [AI provider adapter plan](ai-provider-adapter-v1-plan.md)
@@ -74,6 +75,7 @@
 - [AI timeout diagnostics and cockpit fast path](ai-timeout-diagnostics-and-cockpit-fast-path-v1.md)
 - [AI response latency notes](ai-response-latency-notes.md)
 - [AI chat copilot plan](ai-chat-copilot-v1-plan.md)
+- [AI provider baseline, 2026-10-04](ai-provider-baseline-2026-10-04.md)
 
 ## UI
 

@@ -17,17 +17,19 @@
       "sections": ["FC-DEMO-SENSOR-100"],
       "firstSection": "FC-DEMO-SENSOR-100",
       "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "answer": {"matches": ["\\b60\\b", "\\b(no|not|cannot|can't|exceeds?|outside|above|beyond)\\b"], "mustNotMatch": ["\\b85\\b"]},
       "expect": "No; maximum operating temperature is 60 degrees Celsius.",
       "mustNot": "Use the 85-degree limit of model 200."
     },
     {
-      "id": "product-demo-step-2",
+      "id": "product-plan-step-2",
       "question": "Can FC-DEMO-SENSOR-100 be used at 70 degrees Celsius?",
       "scope": "knowledge",
       "sources": ["product-guide.md"],
       "sections": ["FC-DEMO-SENSOR-100"],
       "firstSection": "FC-DEMO-SENSOR-100",
       "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "answer": {"matches": ["\\b60\\b", "\\b(no|not|cannot|can't|exceeds?|outside|above|beyond)\\b"], "mustNotMatch": ["\\b85\\b"]},
       "expect": "No; it is rated to 60 degrees Celsius, not the 85 degrees of model 200."
     },
     {
@@ -38,6 +40,7 @@
       "sections": ["FC-DEMO-SENSOR-100"],
       "firstSection": "FC-DEMO-SENSOR-100",
       "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "answer": {"matches": ["\\b60\\b", "\\b(no|not|cannot|can't|exceeds?|outside|above|beyond)\\b"], "mustNotMatch": ["\\b85\\b"]},
       "expect": "No, based on its stated operating range."
     },
     {
@@ -49,6 +52,7 @@
       "sections": ["FC-DEMO-SENSOR-100"],
       "firstSection": "FC-DEMO-SENSOR-100",
       "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "answer": {"matches": ["60", "不"], "mustNotMatch": ["85"]},
       "expect": "Answer in Chinese: no; its maximum operating temperature is 60 degrees Celsius."
     },
     {
@@ -59,6 +63,7 @@
       "sections": ["FC-DEMO-SENSOR-100"],
       "firstSection": "FC-DEMO-SENSOR-100",
       "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "answer": {"matches": ["\\b12\\b", "month", "deliver"], "mustNotMatch": ["\\b18\\b"]},
       "expect": "12 months from delivery."
     },
     {
@@ -69,6 +74,7 @@
       "sections": ["FC-DEMO-SENSOR-200"],
       "firstSection": "FC-DEMO-SENSOR-200",
       "forbiddenSections": ["FC-DEMO-SENSOR-100"],
+      "answer": {"matches": ["\\b12\\s*V"], "mustNotMatch": ["\\b24\\s*V"]},
       "expect": "12 V DC.",
       "mustNot": "Answer 24 V DC."
     },
@@ -76,21 +82,25 @@
       "id": "unknown-price",
       "question": "What is the price of FC-DEMO-SENSOR-100?",
       "scope": "knowledge",
+      "modes": ["generated", "no_answer"],
       "knownGaps": { "scope": "Automatic mode keeps price questions with business data. Choosing between documents and records is left to model tool planning (P2)." },
       "sources": ["product-guide.md"],
       "sections": ["FC-DEMO-SENSOR-100"],
       "firstSection": "FC-DEMO-SENSOR-100",
       "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "answer": {"matches": ["(not (specif|state|list|includ|provid|mention|contain)|does ?n[o']t (specif|state|list|includ|provid|mention|contain)|no (price|pricing))"], "mustNotMatch": ["[$€£¥]\\s?\\d"]},
       "expect": "The supplied guide does not specify a price; ask for a current quotation."
     },
     {
       "id": "unknown-certification",
       "question": "Is FC-DEMO-SENSOR-100 certified for food-contact use?",
       "scope": "knowledge",
+      "modes": ["generated", "no_answer"],
       "sources": ["product-guide.md"],
       "sections": ["FC-DEMO-SENSOR-100"],
       "firstSection": "FC-DEMO-SENSOR-100",
       "forbiddenSections": ["FC-DEMO-SENSOR-200"],
+      "answer": {"matches": ["(not (specif|state|list|includ|provid|mention|confirm)|does ?n[o']t (specif|state|list|includ|provid|mention)|cannot confirm|can't confirm)"], "mustNotMatch": ["^\\s*yes\\b"]},
       "expect": "Cannot confirm certification or suitability from the supplied guide."
     },
     {
@@ -99,6 +109,7 @@
       "scope": "knowledge",
       "sources": ["product-guide.md", "purchasing-policy.md"],
       "sections": ["FC-DEMO-SENSOR-100", "FC-DEMO-SENSOR-200", "Replacement products"],
+      "answer": {"matches": ["\\b(no|not)\\b", "approv", "(voltage|24\\s*V|12\\s*V)"]},
       "expect": "No automatic substitution; voltage differs and compatibility plus buyer approval is needed."
     },
     {
@@ -108,6 +119,7 @@
       "sources": ["purchasing-policy.md"],
       "sections": ["Overdue goods"],
       "firstSection": "Overdue goods",
+      "answer": {"matches": ["\\b(no|not|shouldn't)\\b", "(confirm|request)"]},
       "expect": "No; request a confirmed date and identify missing data."
     },
     {
@@ -117,6 +129,7 @@
       "sources": ["purchasing-policy.md"],
       "sections": ["Follow-up and escalation"],
       "firstSection": "Follow-up and escalation",
+      "answer": {"matches": ["(two|2) business days", "(three|3) business days"]},
       "expect": "Two business days without a response after follow-up, or a demonstrated impact on linked customer delivery within three business days; do not claim a current order is affected."
     },
     {
@@ -126,6 +139,7 @@
       "sources": ["invoice-policy.md"],
       "sections": ["Price differences"],
       "firstSection": "Price differences",
+      "answer": {"matches": ["\\b(no|not necessarily)\\b", "unit[- ]price"]},
       "expect": "No; a partial invoice can differ. Compare agreed unit prices, quantities, units and separate tax."
     },
     {
@@ -135,15 +149,23 @@
       "sources": ["invoice-policy.md"],
       "sections": ["Invoice before goods"],
       "firstSection": "Invoice before goods",
+      "answer": {"matches": ["\\b(yes|can|may)\\b", "pending"]},
       "expect": "Under this example policy, yes, with receipt link pending; do not create receipt evidence or imply that goods arrived."
     },
     {
-      "id": "demo-acme-follow-up",
+      "id": "acme-follow-up-policy",
       "question": "Check Acme's outstanding orders, explain which need follow-up under our purchasing policy, and prepare a message asking about partial delivery.",
       "scope": "mixed",
       "sources": ["purchasing-policy.md"],
       "sections": ["Follow-up and escalation"],
       "expect": "Business data answers the orders; the purchasing policy is cited alongside."
+    },
+    {
+      "id": "acme-follow-up-policy-zh",
+      "language": "zh-CN",
+      "question": "查一下 Acme 的未完成订单，按我们的采购政策说明哪些需要跟进，并准备一封询问部分交货的邮件。",
+      "scope": "mixed",
+      "expect": "The Chinese twin of the demo request takes the same mixed route, so the purchasing policy is searched alongside the orders. Offline, keyword search cannot match a Chinese question to the English policy, so only the route is scored."
     },
     {
       "id": "isolation-other-tenant",
@@ -152,6 +174,7 @@
       "scope": "knowledge",
       "sources": ["other-tenant-guide"],
       "sections": ["FC-DEMO-SENSOR-100"],
+      "answer": {"matches": ["\\b125\\b"], "mustNotMatch": ["\\b60\\b"]},
       "expect": "The other workspace sees only its own guide; the global checks prove workspace C never does."
     },
     {
@@ -159,8 +182,10 @@
       "role": "buyer",
       "question": "What is our policy for approving supplier invoices above 5,000 USD?",
       "scope": "knowledge",
+      "modes": ["generated", "no_answer"],
       "notSources": ["finance-limits"],
       "openDenied": "finance-limits",
+      "answer": {"mustNotMatch": ["second (finance )?approver"]},
       "expect": "A buyer cannot retrieve or open the finance-only document."
     },
     {
@@ -169,6 +194,7 @@
       "question": "What is our policy for approving supplier invoices above 5,000 USD?",
       "scope": "knowledge",
       "sources": ["finance-limits"],
+      "answer": {"matches": ["second"]},
       "expect": "A finance reader retrieves the finance-only document."
     }
   ]

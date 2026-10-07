@@ -13,6 +13,7 @@ import { createInternalSettlementCommandService, InternalSettlementError } from 
 import { createInternalSettlementReadService } from "../domain/internal-settlement-read-service.mjs";
 import { createInternalTransferCommandService } from "../domain/internal-transfer-command-service.mjs";
 import { createAdvanceApplicationCommandService } from "../domain/advance-application-command-service.mjs";
+import { createPaymentRecordCommandService } from "../domain/payment-record-command-service.mjs";
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 
@@ -116,6 +117,7 @@ async function services(ctx) {
       createInternalSettlementCommandService({ prisma, env }),
     transferCommand: ctx.internalTransferCommandService || createInternalTransferCommandService({ prisma, env }),
     advanceCommand: ctx.advanceApplicationCommandService || createAdvanceApplicationCommandService({ prisma, env }),
+    payment: ctx.paymentRecordCommandService || createPaymentRecordCommandService({ prisma, env }),
   };
 }
 
@@ -124,7 +126,7 @@ export async function handleOperationalFinanceRoute(ctx) {
   if (!path.startsWith("/api/finance/")) return false;
   if (!ensureBoundary(ctx)) return true;
   try {
-    const { read, command, o2cRead, o2cCommand, settlementRead, settlementCommand, transferCommand, advanceCommand } = await services(ctx);
+    const { read, command, o2cRead, o2cCommand, settlementRead, settlementCommand, transferCommand, advanceCommand, payment } = await services(ctx);
     if (ctx.req.method === "GET" && path === "/api/finance/entry-data") {
       const [p2p, o2c, settlement] = await Promise.all([
         read.entryData(ctx),
@@ -417,6 +419,17 @@ export async function handleOperationalFinanceRoute(ctx) {
         );
         return true;
       }
+      if (ctx.req.method === "POST" && (action === "link-receipt-preview" || action === "link-receipt")) {
+        if (!ensureCapability(ctx, "supplier-invoice")) return true;
+        ctx.send(
+          ctx.res,
+          200,
+          action === "link-receipt-preview"
+            ? await command.previewLinkReceipt(invoiceId, body, ctx)
+            : await command.linkReceipt(invoiceId, body, ctx),
+        );
+        return true;
+      }
       if (ctx.req.method === "POST" && action === "submit-preview") {
         if (!ensureCapability(ctx, "supplier-invoice")) return true;
         ctx.send(
@@ -485,6 +498,38 @@ export async function handleOperationalFinanceRoute(ctx) {
           ? await command.previewReviewMatchException(exceptionId, body, ctx)
           : await command.reviewMatchException(exceptionId, body, ctx);
       ctx.send(ctx.res, 200, result);
+      return true;
+    }
+
+    // Payments recorded on a bill to pay or a receivable (step 2 of
+    // docs/bills-invoices-and-accounting-handoff.md): record or void, each
+    // previewed first. Nothing here moves money.
+    const paymentMatch = path.match(
+      /^\/api\/finance\/(payables|receivables)\/([^/]+)\/payments(?:\/(preview)|\/([^/]+)\/(void-preview|void))?$/,
+    );
+    if (paymentMatch && ctx.req.method === "POST") {
+      const kind = paymentMatch[1] === "payables" ? "payable" : "receivable";
+      if (!ensureCapability(ctx, kind === "payable" ? "payable-obligation" : "receivable-obligation")) return true;
+      const obligationId = decodeURIComponent(paymentMatch[2]);
+      const body = await ctx.readBody(ctx.req);
+      if (paymentMatch[4]) {
+        const paymentId = decodeURIComponent(paymentMatch[4]);
+        ctx.send(
+          ctx.res,
+          200,
+          paymentMatch[5] === "void-preview"
+            ? await payment.previewVoidPayment(kind, obligationId, paymentId, body, ctx)
+            : await payment.voidPayment(kind, obligationId, paymentId, body, ctx),
+        );
+        return true;
+      }
+      ctx.send(
+        ctx.res,
+        paymentMatch[3] ? 200 : 201,
+        paymentMatch[3]
+          ? await payment.previewRecordPayment(kind, obligationId, body, ctx)
+          : await payment.recordPayment(kind, obligationId, body, ctx),
+      );
       return true;
     }
 

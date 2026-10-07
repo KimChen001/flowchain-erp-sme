@@ -15,6 +15,7 @@ export const AI_MODEL_POLICIES = Object.freeze({
   queryRewriteShadow: 'query_rewrite_shadow',
   businessQueryPlanning: 'business_query_planning',
   intentRouting: 'intent_routing',
+  agentPlanning: 'agent_planning',
 })
 
 export const AI_MODEL_POLICY_DEFINITIONS = Object.freeze({
@@ -76,6 +77,14 @@ export const AI_MODEL_POLICY_DEFINITIONS = Object.freeze({
     modelMayRun: true,
     enabledBy: 'FLOWCHAIN_AI_INTENT_ROUTING',
     description: 'A model may pick which workspace skill answers a question that no deterministic rule and no named record routed. It sees only the question and the skills the actor may use, and may only return one of them. The skill runs on the facts of the actor as if a rule had chosen it. The capability answer stays when the model is unavailable, slow, unsure or picks no skill. The model never decides facts, records, figures, wording or actions.',
+  },
+  // Agent mode P2. The owner approved it on 2026-10-03 (docs/ai-agent-mode-design.md,
+  // decision 2), local only and off by default; docs/ai-assistant-plan.md section 7.
+  [AI_MODEL_POLICIES.agentPlanning]: {
+    enabledByDefault: false,
+    modelMayRun: true,
+    enabledBy: 'FLOWCHAIN_AI_AGENT_MODE',
+    description: 'A model may choose up to three of the actor\'s read-only workspace skills, and their modes, for a question no rule routed or a question with several parts the rules could not answer part by part. It sees only the question and the skills the actor may use, never business data. Record ids, SKUs and supplier names are taken from the question by the deterministic record step; an argument the question does not contain is refused. The skills answer from the actor\'s facts with their own wording, composed into one answer. The rules\' answer stays when the model is unavailable, slow or returns no valid plan. The model never decides facts, records, figures, wording or actions.',
   },
 })
 

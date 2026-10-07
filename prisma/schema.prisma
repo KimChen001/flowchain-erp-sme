@@ -23,6 +23,7 @@ model Tenant {
   updatedAt              DateTime  @updatedAt
 
   knowledgeDocuments                    AiKnowledgeDocument[]
+  aiUsageMonthly                        AiUsageMonthly[]
   users                                 User[]
   suppliers                             Supplier[]
   items                                 Item[]
@@ -51,6 +52,7 @@ model Tenant {
   customerInvoices                      CustomerInvoice[]
   receivableObligations                 ReceivableObligation[]
   customerCreditNotes                   CustomerCreditNote[]
+  paymentRecords                        PaymentRecord[]
   cashbookAccounts                      CashbookAccount[]
   settlementDocuments                   SettlementDocument[]
   settlementAllocations                 SettlementAllocation[]
@@ -559,6 +561,8 @@ model User {
   rolesCreated         TenantRole[]                @relation("RoleCreator")
   rolesUpdated         TenantRole[]                @relation("RoleUpdater")
   roleGrantsCreated    TenantRolePermission[]      @relation("RolePermissionCreator")
+  suppliersOwned       Supplier[]                  @relation("SupplierBusinessOwner")
+  supplierTiersSet     Supplier[]                  @relation("SupplierTierSetBy")
   invitationsSent      WorkspaceInvitation[]       @relation("InvitationInviter")
   invitationsAccepted  WorkspaceInvitation[]       @relation("InvitationAcceptor")
   workspaceSessions    WorkspaceSession[]
@@ -649,10 +653,21 @@ model Supplier {
   riskLevel String?
   score     Decimal? @db.Decimal(10, 2)
   metadata  Json?
+  // Importance to the business: 1 Strategic, 2 Core, 3 Transactional; null is
+  // not tiered (docs/supplier-tiers-design.md). A database check keeps it 1-3.
+  // A person sets it with a reason; every change is a tier_change audit row.
+  tier            Int?
+  tierReason      String?
+  tierSetById     String?
+  tierSetAt       DateTime?
+  // A user of the same workspace; the command checks the workspace.
+  businessOwnerId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
+  tierSetBy     User? @relation("SupplierTierSetBy", fields: [tierSetById], references: [id], onDelete: SetNull)
+  businessOwner User? @relation("SupplierBusinessOwner", fields: [businessOwnerId], references: [id], onDelete: SetNull)
   items  Item[]
   rfqParticipations RfqSupplierParticipation[]
   quotations SupplierQuotation[]
@@ -661,6 +676,8 @@ model Supplier {
   @@unique([tenantId, id])
   @@unique([tenantId, code])
   @@index([tenantId, name])
+  @@index([tenantId, tier])
+  @@index([tenantId, businessOwnerId])
 }
 
 model Item {
@@ -1567,6 +1584,7 @@ model PayableObligation {
   supplierInvoice       SupplierInvoice              @relation(fields: [supplierInvoiceId], references: [id], onDelete: Restrict)
   settlementAllocations SettlementAllocation[]
   advanceApplications   AdvanceApplicationDocument[]
+  paymentRecords        PaymentRecord[]
 
   @@unique([tenantId, obligationNumber])
   @@unique([tenantId, id])
@@ -1729,12 +1747,49 @@ model ReceivableObligation {
   customerInvoice       CustomerInvoice              @relation(fields: [customerInvoiceId], references: [id], onDelete: Restrict)
   settlementAllocations SettlementAllocation[]
   advanceApplications   AdvanceApplicationDocument[]
+  paymentRecords        PaymentRecord[]
 
   @@unique([tenantId, obligationNumber])
   @@unique([tenantId, id])
   @@index([tenantId, status])
   @@index([tenantId, dueDate])
   @@index([tenantId, currency])
+}
+
+// A payment someone made or received outside FlowChain, recorded against one
+// bill to pay or one receivable. FlowChain never moves money: the record only
+// lowers what is outstanding. A wrong record is voided with a reason, never
+// edited or deleted (docs/bills-invoices-and-accounting-handoff.md, step 2).
+model PaymentRecord {
+  id                     String    @id
+  tenantId               String
+  obligationType         String
+  payableObligationId    String?
+  receivableObligationId String?
+  paymentDate            DateTime
+  amount                 Decimal   @db.Decimal(18, 4)
+  currency               String
+  method                 String
+  reference              String?
+  note                   String?
+  status                 String    @default("recorded")
+  recordedById           String
+  voidedAt               DateTime?
+  voidedById             String?
+  voidReason             String?
+  version                Int       @default(0)
+  metadata               Json?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  payableObligation    PayableObligation?    @relation(fields: [tenantId, payableObligationId], references: [tenantId, id], onDelete: Restrict)
+  receivableObligation ReceivableObligation? @relation(fields: [tenantId, receivableObligationId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, payableObligationId])
+  @@index([tenantId, receivableObligationId])
+  @@index([tenantId, paymentDate])
 }
 
 model CashbookAccount {
@@ -3400,4 +3455,20 @@ model AiKnowledgeChunk {
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   @@unique([documentId, position])
   @@index([embeddingModel, embeddingDimensions])
+}
+
+// Model calls per workspace and calendar month (UTC, YYYY-MM), for the AI
+// spend cap (server/domain/ai-usage-meter.mjs). costMicros is millionths of a
+// US dollar at the configured token prices.
+model AiUsageMonthly {
+  tenantId    String
+  month       String
+  calls       Int      @default(0)
+  inputUnits  Int      @default(0)
+  outputUnits Int      @default(0)
+  costMicros  Int      @default(0)
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, month])
 }

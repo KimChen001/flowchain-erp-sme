@@ -75,7 +75,7 @@ async function forceLanguage(page: any, language: "en-US" | "zh-CN") {
   } }));
 }
 
-test("only the invoice matching tolerances save; settings nothing reads are marked not in effect", async ({ page, request }) => {
+test("only the invoice matching tolerances and the AI switch save; settings nothing reads are marked not in effect", async ({ page, request }) => {
   const value = await login(request);
   await session(page, value);
   await forceLanguage(page, "en-US");
@@ -84,7 +84,7 @@ test("only the invoice matching tolerances save; settings nothing reads are mark
 
   // Advanced settings (session timeout, negative stock) sit on an internal page
   // outside normal navigation; they carry the same notice there.
-  for (const path of ["/app/settings/numbering", "/app/settings/modules", "/app/settings/ai"]) {
+  for (const path of ["/app/settings/numbering", "/app/settings/modules"]) {
     await page.goto(path);
     const notice = page.getByTestId("settings-not-in-effect");
     await expect(notice).toContainText("Not in effect yet");
@@ -92,6 +92,29 @@ test("only the invoice matching tolerances save; settings nothing reads are mark
     await expect(page.getByTestId("settings-save")).toHaveCount(0);
     await expect(notice.locator("input, select, textarea, button").first()).toBeDisabled();
   }
+
+  // In the AI section only the AI features switch is in effect; the capability
+  // levels stay read-only. This server has no model configured, and says so.
+  await page.goto("/app/settings/ai");
+  const aiModel = page.getByTestId("settings-ai-model");
+  await expect(aiModel).toContainText("AI features");
+  await expect(aiModel).toContainText("In effect");
+  await expect(page.getByTestId("settings-ai-model-status")).toContainText("No AI model is configured on this server.");
+  const aiNotice = page.getByTestId("settings-not-in-effect");
+  await expect(aiNotice).toContainText("Not in effect yet");
+  await expect(aiNotice.locator("input, select, textarea, button").first()).toBeDisabled();
+  const toggle = page.locator("#settings-ai-model-toggle");
+  await expect(toggle).not.toBeChecked();
+  await toggle.check();
+  await page.getByTestId("settings-save").click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved at" })).toBeVisible();
+  await page.reload();
+  await expect(page.locator("#settings-ai-model-toggle")).toBeChecked();
+  const aiAfter = (await (await request.get("/api/settings-runtime", auth)).json()).ai;
+  expect(aiAfter.modelAssistEnabled).toBe(true);
+  expect(aiAfter.capabilities).toEqual(before.ai.capabilities);
+  // Switch it back off for the specs that share this workspace.
+  expect((await request.patch("/api/settings-runtime/ai", { ...auth, data: { settings: { ...aiAfter, modelAssistEnabled: false } } })).status()).toBe(200);
 
   await page.goto("/app/settings/review");
   const tolerances = page.getByTestId("settings-review-tolerances");
@@ -132,6 +155,9 @@ test("not-in-effect settings and matching tolerances are translated into Chinese
   await forceLanguage(page, "zh-CN");
   await page.goto("/app/settings/numbering");
   await expect(page.getByTestId("settings-not-in-effect")).toContainText("尚未生效");
+  await page.goto("/app/settings/ai");
+  await expect(page.getByTestId("settings-ai-model")).toContainText("AI 功能");
+  await expect(page.getByTestId("settings-ai-model-status")).toContainText("此服务器没有配置 AI 模型");
   await page.goto("/app/settings/review");
   const tolerances = page.getByTestId("settings-review-tolerances");
   await expect(tolerances).toContainText("发票匹配容差");

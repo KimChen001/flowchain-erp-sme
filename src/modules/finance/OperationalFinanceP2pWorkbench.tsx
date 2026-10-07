@@ -50,6 +50,8 @@ const tokenKeys: Record<string, TranslationKey> = {
   approved: "finance.status.approved",
   held: "finance.status.held",
   export_ready: "finance.status.export_ready",
+  partially_settled: "finance.status.partially_settled",
+  settled: "finance.status.settled",
   open: "finance.status.open",
   reviewed: "finance.status.reviewed",
   resolved: "finance.status.resolved",
@@ -62,6 +64,8 @@ const tokenKeys: Record<string, TranslationKey> = {
   hold: "finance.action.hold",
   mark_export_ready: "finance.action.mark_export_ready",
   release: "finance.action.release",
+  record_payment: "finance.action.record_payment",
+  link_receipt: "finance.action.link_receipt",
 };
 
 function Warning({ children }: { children: ReactNode }) {
@@ -87,10 +91,10 @@ export function FinanceLanding() {
   if (error) return <Warning>{error}</Warning>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const cards = [
-    ["supplierInvoicesAwaitingMatch", t("finance.awaitingMatch"), "/app/finance/invoices?status=submitted"],
-    ["matchExceptions", t("finance.matchExceptions"), "/app/finance/three-way-match?status=open"],
+    ["supplierInvoicesAwaitingMatch", t("finance.awaitingMatch"), "/app/procurement/bills?status=submitted"],
+    ["matchExceptions", t("finance.matchExceptions"), "/app/procurement/bills?status=exception"],
     ["approvedPayableObligations", t("finance.approvedPayables"), "/app/finance/payables?status=approved"],
-    ["customerInvoicesAwaitingIssue", t("finance.awaitingIssue"), "/app/finance/customer-invoices?status=approved"],
+    ["customerInvoicesAwaitingIssue", t("finance.awaitingIssue"), "/app/sales/invoices?status=approved"],
     ["overdueReceivables", t("finance.overdueReceivables"), "/app/finance/receivables?status=overdue"],
     ["disputedReceivables", t("finance.disputedReceivables"), "/app/finance/receivables?disputeStatus=open"],
     ["supplierCreditMemos", t("finance.supplierCredits"), "/app/finance/credits"],
@@ -160,7 +164,7 @@ function FinanceList({
       {!enabled && <Warning>{t("finance.capabilityDisabled")}</Warning>}
       {kind === "invoice" && enabled && (
         <div className="flex justify-end">
-          <a data-testid="supplier-invoice-new" href="/app/finance/invoices/new" className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-white" style={{ background: A.blue }}>{t("finance.newSupplierInvoice")}</a>
+          <a data-testid="supplier-invoice-new" href="/app/procurement/bills/new" className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-white" style={{ background: A.blue }}>{t("finance.newSupplierInvoice")}</a>
         </div>
       )}
       {kind === "payable" && <Warning>{t("finance.notPaid")}</Warning>}
@@ -222,7 +226,9 @@ function FinanceList({
               return (
                 <tr className="border-b border-slate-50" key={id}>
                   <td className="px-4 py-3 font-medium">
-                    {kind === "invoice" && id ? <a className="text-blue-600 hover:underline" href={`/app/finance/invoices/${encodeURIComponent(id)}`}>{label}</a> : label}
+                    {kind === "invoice" && id ? <a className="text-blue-600 hover:underline" href={`/app/procurement/bills/${encodeURIComponent(id)}`}>{label}</a>
+                      : kind === "payable" && row.supplierInvoiceId ? <a className="text-blue-600 hover:underline" href={`/app/procurement/bills/${encodeURIComponent(String(row.supplierInvoiceId))}`}>{label}</a>
+                      : label}
                   </td>
                   <td className="px-4 py-3">{source}</td>
                   <td className="px-4 py-3">
@@ -234,6 +240,11 @@ function FinanceList({
                       color={A.blue}
                       bg="#eff6ff"
                     />
+                    {row.awaitingReceipt && (
+                      <span className="ml-1" data-testid="bill-awaiting-receipt">
+                        <Chip label={t("finance.awaitingReceipt")} color="#b45309" bg="#fffbeb" />
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {actionLabels.join(" · ") || "—"}

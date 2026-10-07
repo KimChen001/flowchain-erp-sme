@@ -9,6 +9,15 @@ export function isStructuredDraftType(type?: string | null) {
   return type === "purchase_request_draft" || type === "rfq_draft" || type === "task_draft";
 }
 
+// The card an answer opens as it arrives: a structured draft the server marked
+// autoOpen, when the user asked for an order and the choice was clear. The
+// assistant panel opens it once, when the answer arrives; a restored or
+// re-rendered answer never opens it again. The form still saves only through
+// its own button.
+export function autoOpenDraftCard<T extends { autoOpen?: boolean; draftType?: string | null }>(cards: T[] | null | undefined) {
+  return (cards || []).find((card) => card.autoOpen === true && isStructuredDraftType(card.draftType)) || null;
+}
+
 export function structuredDraftTarget(type: string, payload: Record<string, unknown> = {}, source?: string | null) {
   const query = Object.fromEntries(Object.entries({
     mode: "create",

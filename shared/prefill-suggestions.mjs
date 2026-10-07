@@ -48,6 +48,22 @@ export function buildSuggestionTrail({ origin, prefills = {}, values = {} } = {}
   return fields.length ? { origin: prefillOrigin(origin), fields } : null
 }
 
+// The suggested fields of a draft or form: { field: { source, ref?, value } }.
+// The value is kept so the review screen can tell whether a field still
+// holds the suggestion; it never goes to an audit row.
+const MAX_PREFILL_VALUE = 4000
+export function sanitizePrefillMap(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out = {}
+  for (const [field, entry] of Object.entries(raw).slice(0, MAX_FIELDS)) {
+    if (!FIELD_PATTERN.test(field) || !entry || typeof entry !== 'object') continue
+    if (!PREFILL_SOURCES.includes(entry.source) || typeof entry.value !== 'string' || entry.value.length > MAX_PREFILL_VALUE) continue
+    const ref = normalize(entry.ref)
+    out[field] = { source: entry.source, ...(REF_PATTERN.test(ref) ? { ref } : {}), value: entry.value }
+  }
+  return Object.keys(out).length ? out : null
+}
+
 // The server's view of a posted trail: unknown codes, oversized or malformed
 // entries and any other property are dropped, so no free text reaches the
 // audit row. Returns null when nothing valid is left.

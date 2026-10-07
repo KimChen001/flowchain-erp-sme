@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { sanitizeSuggestionTrail } from '../../shared/prefill-suggestions.mjs'
 import { assertAuthorized } from '../auth/authorization-service.mjs'
+import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { assertWarehouseAccess, hasWarehouseAccess, resolveProvisionedActor } from './pilot-identity.mjs'
 import { ReceivingCommandError } from './receiving-posting-command-service.mjs'
 import { isPurchaseOrderReceivable, RECEIVABLE_PURCHASE_ORDER_INPUTS, RECEIVING_POSTING_STATUS, RECEIVING_WORKFLOW_STATUS } from './procurement-status-authority.mjs'
@@ -169,6 +171,8 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
   async function createDraft(input = {}, context, channel = RECEIVING_DRAFT_CHANNELS.desktop) {
     const actor = await authorizedActor(prisma, context, channel)
     const warehouseId = text(input.warehouseId)
+    // Which prefilled values the user kept: codes only, for the audit row.
+    const suggestions = sanitizeSuggestionTrail(input.suggestionTrail)
     if (!warehouseId) fail('RECEIVING_WAREHOUSE_REQUIRED', 'A receiving warehouse is required.', 422)
     const warehouseIds = [...new Set([warehouseId, ...(input.lines || []).map((line) => text(line.warehouseId) || warehouseId)])]
     assertWarehouseAccess(actor, warehouseIds, 'operate')
@@ -189,7 +193,7 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
         metadata: { note: text(input.note), ...channel.metadata(input) }, lines: { create: lines },
       } })
       const result = { entityId: document.id, receivingDocument: documentSummary(document), pendingSync: false }
-      await audit(tx, actor, channel, document, 'receiving_draft_created', `Created receiving draft ${document.documentNumber}.`, { commandExecutionId: execution.id, commandType, idempotencyKey: key, poId: po.id, lineCount: lines.length })
+      await audit(tx, actor, channel, document, 'receiving_draft_created', `Created receiving draft ${document.documentNumber}.`, { commandExecutionId: execution.id, commandType, idempotencyKey: key, poId: po.id, lineCount: lines.length, ...(suggestions ? { suggestions } : {}) })
       await changeFeed(tx, actor, channel, document, key)
       return { result, entityId: document.id }
     })
@@ -277,7 +281,7 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
   async function listReceivablePurchaseOrders({ search = '', purchaseOrderId = '' } = {}, context, channel = RECEIVING_DRAFT_CHANNELS.desktop) {
     const actor = await resolveProvisionedActor(prisma, context?.identity || context)
     assertAuthorized({ actor, permission: 'receiving.read', tenantId: actor.tenantId })
-    const value = text(search), id = text(purchaseOrderId)
+    const value = escapeLikePattern(text(search)), id = text(purchaseOrderId)
     const rows = await prisma.purchaseOrder.findMany({
       where: { tenantId: actor.tenantId, ...(id ? { id } : { status: { in: [...RECEIVABLE_PURCHASE_ORDER_INPUTS] } }), ...(value ? { id: { contains: value, mode: 'insensitive' } } : {}) },
       include: { lines: true }, take: 50, orderBy: { updatedAt: 'desc' },

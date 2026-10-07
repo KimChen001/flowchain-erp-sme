@@ -1,5 +1,9 @@
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { can } from "../auth/authorization-service.mjs";
+import { paymentRecordsView } from "./payment-record-command-service.mjs";
+import { awaitingReceipt, financeFixed, financeUnits } from "./operational-finance-policy.mjs";
+import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
+import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 
 export class OperationalFinanceReadError extends Error {
   constructor(code, message, status = 400, details) {
@@ -29,6 +33,8 @@ function assertRead(actor, permission) {
     fail("PERMISSION_DENIED", "Your role cannot view this finance record.", 403, { permission });
 }
 
+const PAYABLE_PAYMENT_STATUSES = ["approved", "export_ready", "partially_settled"];
+
 function pageQuery(query = {}) {
   const page = Math.max(1, Number(query.page || 1));
   const pageSize = Math.min(100, Math.max(1, Number(query.pageSize || 25)));
@@ -39,9 +45,14 @@ function actions(actor, capability, row, type) {
   if (!capability?.enabled) return [];
   if (type === "invoice") {
     const values = [];
+    const waiting = awaitingReceipt(row);
     if (can({ actor, permission: "finance.supplier_invoice.revise", tenantId: actor.tenantId }) && row.status === "draft")
       values.push("revise", "submit");
-    if (can({ actor, permission: "finance.three_way_match.execute", tenantId: actor.tenantId }) && row.status === "submitted")
+    // A bill recorded before the goods arrived is linked to its receipt
+    // before it can be matched.
+    if (can({ actor, permission: "finance.supplier_invoice.revise", tenantId: actor.tenantId }) && waiting)
+      values.push("link_receipt");
+    if (can({ actor, permission: "finance.three_way_match.execute", tenantId: actor.tenantId }) && row.status === "submitted" && !waiting)
       values.push("match");
     // An exception invoice can be approved only once every match exception
     // is approved; until then the list must not offer Approve.
@@ -58,9 +69,13 @@ function actions(actor, capability, row, type) {
     return values;
   }
   if (type === "payable") {
-    if (row.status === "approved") return [["hold", "finance.payable.hold"], ["mark_export_ready", "finance.payable.mark_export_ready"]].filter(([, permission]) => can({ actor, permission, tenantId: actor.tenantId })).map(([action]) => action);
-    if (row.status === "export_ready" && can({ actor, permission: "finance.payable.hold", tenantId: actor.tenantId })) return ["hold"];
+    // A payment can be recorded until nothing is outstanding; a held bill to
+    // pay is released first.
+    const payment = PAYABLE_PAYMENT_STATUSES.includes(row.status) && Number(row.outstandingAmount) > 0 && can({ actor, permission: "finance.payable.record_payment", tenantId: actor.tenantId }) ? ["record_payment"] : [];
+    if (row.status === "approved") return [...payment, ...[["hold", "finance.payable.hold"], ["mark_export_ready", "finance.payable.mark_export_ready"]].filter(([, permission]) => can({ actor, permission, tenantId: actor.tenantId })).map(([action]) => action)];
+    if (row.status === "export_ready") return [...payment, ...(can({ actor, permission: "finance.payable.hold", tenantId: actor.tenantId }) ? ["hold"] : [])];
     if (row.status === "held" && can({ actor, permission: "finance.payable.release", tenantId: actor.tenantId })) return ["release"];
+    return payment;
   }
   if (type === "creditMemo") {
     if (can({ actor, permission: "finance.supplier_credit.approve", tenantId: actor.tenantId }) && row.status === "draft")
@@ -72,7 +87,7 @@ function actions(actor, capability, row, type) {
 // Money on a finance record needs finance.amounts.read and the supplier needs
 // finance.partner_snapshot.read. A hidden value is null with a fieldVisibility
 // entry, never 0. A quantity exception's values are quantities, not money.
-const FINANCE_MONEY_KEYS = ["subtotalAmount", "enteredTaxAmount", "totalAmount", "varianceAmount", "originalAmount", "outstandingAmount", "approvedCreditAmount", "unitPrice", "lineAmount", "poUnitPrice", "invoiceUnitPrice", "priceVariance", "amountVariance", "expectedValue", "actualValue", "varianceValue"];
+const FINANCE_MONEY_KEYS = ["subtotalAmount", "enteredTaxAmount", "totalAmount", "varianceAmount", "originalAmount", "outstandingAmount", "approvedCreditAmount", "paidAmount", "unitPrice", "lineAmount", "poUnitPrice", "invoiceUnitPrice", "priceVariance", "amountVariance", "expectedValue", "actualValue", "varianceValue"];
 const QUANTITY_VALUE_KEYS = new Set(["expectedValue", "actualValue", "varianceValue"]);
 
 function protectFinanceFields(model, actor) {
@@ -102,6 +117,7 @@ function invoiceSummary(row, actor, capabilities) {
     status: row.status,
     matchStatus: row.matchStatus,
     varianceAmount: decimal(row.varianceAmount),
+    awaitingReceipt: awaitingReceipt(row),
     version: row.version,
     availableActions: actions(
       actor,
@@ -122,6 +138,9 @@ function payableSummary(row, actor, capabilities) {
     originalAmount: decimal(row.originalAmount),
     outstandingAmount: decimal(row.outstandingAmount),
     approvedCreditAmount: decimal(row.approvedCreditAmount),
+    // What was paid so far: the original amount less approved credits and
+    // what is still outstanding.
+    paidAmount: financeFixed(financeUnits(row.originalAmount) - financeUnits(row.approvedCreditAmount || 0) - financeUnits(row.outstandingAmount)),
     currency: row.currency,
     dueDate: serial(row.dueDate),
     status: row.status,
@@ -174,7 +193,7 @@ export function createOperationalFinanceReadService({
     const current = await actor(context);
     assertRead(current, "finance.supplier_invoice.read");
     const { page, pageSize, skip } = pageQuery(query);
-    const search = text(query.search);
+    const search = escapeLikePattern(text(query.search));
     const where = {
       tenantId: current.tenantId,
       ...(text(query.status) ? { status: text(query.status) } : {}),
@@ -231,7 +250,7 @@ export function createOperationalFinanceReadService({
             exceptions: { orderBy: { createdAt: "asc" } },
           },
         },
-        payableObligation: true,
+        payableObligation: { include: { paymentRecords: true } },
         supplierCreditMemos: {
           orderBy: { createdAt: "desc" },
           include: { lines: true },
@@ -246,6 +265,16 @@ export function createOperationalFinanceReadService({
       .flatMap((run) => run.exceptions || [])
       .filter((entry) => ["open", "rejected"].includes(entry.status)).length;
     const summary = invoiceSummary({ ...invoice, blockingExceptionCount }, current, capabilities);
+    // Posted receipts of the purchase order that a waiting bill can be linked
+    // to, newest first.
+    const receiptCandidates = summary.availableActions.includes("link_receipt")
+      ? await prisma.receivingDocument.findMany({
+          where: { tenantId: current.tenantId, poId: invoice.relatedPoId, postingStatus: "posted", reversedAt: null },
+          select: { id: true, documentNumber: true, postedAt: true },
+          orderBy: { postedAt: "desc" },
+          take: 20,
+        })
+      : [];
     const partner = protectFinanceFields({ supplierSnapshot: invoice.supplierSnapshot }, current);
     // The match result is part of the three-way match, which has its own read
     // permission; without it the invoice shows no match lines or variances.
@@ -270,6 +299,7 @@ export function createOperationalFinanceReadService({
         enteredTaxAmount: decimal(line.enteredTaxAmount ?? 0),
         totalAmount: decimal(line.amount),
       }, current)),
+      receiptCandidates: receiptCandidates.map((row) => ({ id: row.id, documentNumber: row.documentNumber, postedAt: serial(row.postedAt) })),
       matchVisible,
       match: match
         ? {
@@ -312,7 +342,13 @@ export function createOperationalFinanceReadService({
           }
         : null,
       payable: invoice.payableObligation && can({ actor: current, permission: "finance.payable.read", tenantId: current.tenantId })
-        ? payableSummary(invoice.payableObligation, current, capabilities)
+        ? {
+            ...payableSummary(invoice.payableObligation, current, capabilities),
+            payments: paymentRecordsView(invoice.payableObligation.paymentRecords, {
+              amountsVisible: can({ actor: current, permission: "finance.amounts.read", tenantId: current.tenantId }),
+              canRecord: Boolean(capabilities["payable-obligation"]?.enabled) && can({ actor: current, permission: "finance.payable.record_payment", tenantId: current.tenantId }),
+            }),
+          }
         : null,
       supplierCreditMemos: (can({ actor: current, permission: "finance.supplier_credit.read", tenantId: current.tenantId }) ? invoice.supplierCreditMemos : []).map((memo) =>
         creditMemoSummary(memo, current, capabilities),
@@ -511,6 +547,18 @@ export function createOperationalFinanceReadService({
           take: 100,
         }),
       ]);
+    // What other bills already claim on each order line, so a bill recorded
+    // before the goods arrive starts at what is left to bill.
+    const billedRows = await prisma.supplierInvoiceLine.findMany({
+      where: {
+        purchaseOrderLineId: { in: purchaseOrders.flatMap((row) => row.lines.map((line) => line.id)) },
+        supplierInvoice: { tenantId: current.tenantId, status: { in: [...RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES] } },
+      },
+      select: { purchaseOrderLineId: true, quantity: true },
+    });
+    const billed = new Map();
+    for (const row of billedRows)
+      billed.set(row.purchaseOrderLineId, (billed.get(row.purchaseOrderLineId) || 0n) + financeUnits(row.quantity || 0));
     return {
       suppliers,
       purchaseOrders: purchaseOrders.map((row) => ({
@@ -518,12 +566,14 @@ export function createOperationalFinanceReadService({
         supplierId: row.supplierId,
         supplierName: row.supplierName,
         currency: row.currency,
+        status: row.status,
         lines: row.lines.map((line) => ({
           id: line.id,
           itemId: line.itemId,
           sku: line.sku,
           itemName: line.itemName,
           orderedQuantity: decimal(line.orderedQuantity),
+          billedQuantity: financeFixed(billed.get(line.id) || 0n),
           unit: line.unit,
           unitPrice: pricesVisible ? decimal(line.unitPrice) : null,
         })),

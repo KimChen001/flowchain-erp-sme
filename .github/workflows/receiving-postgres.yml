@@ -62,6 +62,9 @@ jobs:
       - run: npm run test:db:walkthrough-scenario
       - run: npm run test:db:tenant-scoped-reads
       - run: npm run test:db:master-data-writes
+      - run: npm run test:db:supplier-tiers
+      - run: npm run test:db:supplier-insights
+      - run: npm run test:db:ai-workspace-access
       - run: npm run test:db:report-truncation
       - run: npm run test:db:inventory-allocation
       - run: npm run test:db:ai-knowledge
@@ -93,7 +96,10 @@ jobs:
       - run: npm run test:db:original-promise
       - run: npm run test:db:supplier-scorecard
       - run: npm run test:db:finance-read-permissions
+      - run: npm run test:db:payment-records
+      - run: npm run test:db:bill-before-receipt
       - run: npm run test:db:sales-read-permissions
+      - run: npm run test:db:search-wildcards
       - run: npm run test:db:inventory-warehouse-scope
       - run: npm run test:db:search-graph-read-scope
       - run: npm run test:db:role-backfill-once
@@ -158,9 +164,26 @@ jobs:
           FLOWCHAIN_SYNC_CURSOR_SECRET: ci-mobile-sync-cursor-secret-at-least-32-characters
           FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: 'false'
 
-  browser:
+  # The browser suites run in three shards on separate runners, so no single
+  # job nears its time limit. Each shard is about six minutes of suites:
+  #   walkthrough  product recovery (acceptance, English walkthrough, supplier
+  #                performance, assistant and every phase not in "shell"),
+  #                English sign-in, assistant business query planning
+  #   shell        product recovery shell, routing and sign-in phases,
+  #                settings, authorization
+  #   operations   receiving, reports, outbound, RFQ, inventory, returns,
+  #                intake, operational finance, mobile operations
+  # Suites for frozen modules (internal settlement, settlement workflow, bank
+  # reconciliation and security, mobile sync controls) run nightly in
+  # frozen-modules-nightly.yml. Their node tests still run in verify.
+  browser-shard:
+    name: browser (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [walkthrough, shell, operations]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -175,60 +198,69 @@ jobs:
         run: npx playwright install --with-deps chromium
       # Each suite runs even after an earlier one fails, so one failure cannot
       # hide others; the job still fails. Suites are skipped only when setup failed.
-      - run: npm run test:browser:english
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:receiving
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:reports
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:outbound
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:product-recovery
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:canonical-rfq-detail
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:canonical-rfq-comparison
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:canonical-rfq-supplier-response
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:inventory-operations
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:returns-quarantine
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:settings
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:intake
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:operational-finance
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:authorization
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:internal-settlement
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:settlement-workflow
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:mobile-operations
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:mobile-authority
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:mobile-sync-controls
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:bank-reconciliation
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - run: npm run test:browser:bank-security-hardening
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
+        if: ${{ matrix.shard == 'walkthrough' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+        env:
+          PRODUCT_RECOVERY_GROUP: walkthrough
+      - run: npm run test:browser:english
+        if: ${{ matrix.shard == 'walkthrough' && !cancelled() && steps.browser-setup.outcome == 'success' }}
       - run: npm run test:browser:ai-business-query-planning
-        if: ${{ !cancelled() && steps.browser-setup.outcome == 'success' }}
-      - name: Upload Product Recovery browser evidence
+        if: ${{ matrix.shard == 'walkthrough' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:product-recovery
+        if: ${{ matrix.shard == 'shell' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+        env:
+          PRODUCT_RECOVERY_GROUP: shell
+      - run: npm run test:browser:settings
+        if: ${{ matrix.shard == 'shell' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:authorization
+        if: ${{ matrix.shard == 'shell' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:receiving
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:reports
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:outbound
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:canonical-rfq-detail
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:canonical-rfq-comparison
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:canonical-rfq-supplier-response
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:inventory-operations
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:returns-quarantine
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:intake
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:operational-finance
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:mobile-operations
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - run: npm run test:browser:mobile-authority
+        if: ${{ matrix.shard == 'operations' && !cancelled() && steps.browser-setup.outcome == 'success' }}
+      - name: Upload browser evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: product-recovery-browser-evidence
+          name: browser-evidence-${{ matrix.shard }}
           if-no-files-found: warn
           retention-days: 14
           path: |
             playwright-report
             test-results
+
+  # The required "browser" check: it passes only when every shard passed.
+  # A shard that failed, timed out or was cancelled fails it.
+  browser:
+    needs: browser-shard
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every browser shard passed
+        run: |
+          echo "browser shards: ${{ needs.browser-shard.result }}"
+          test "${{ needs.browser-shard.result }}" = success
 
   production-container:
     runs-on: ubuntu-latest
