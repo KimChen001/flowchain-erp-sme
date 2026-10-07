@@ -39,7 +39,7 @@ const chinese: Record<string, string> = {
   'Metric summary': '指标摘要', 'Metric': '指标名称', 'Current value': '当前值', 'Baseline value': '上期值', 'Change': '变化',
   'Definition': '中文定义', 'Data range': '数据范围', 'Chart data': '图表数据', 'Detail data': '明细数据', 'Filters': '筛选条件',
   'Not compared': '未比较', 'Numerator': '分子', 'Denominator': '分母', 'Not applicable': '不适用', 'Metric version': '指标版本',
-  'Data limitations': '数据限制', 'None': '无', 'Source subject': '来源对象', 'Reserved': 'reserved', 'Fulfilled': 'fulfilled',
+  'Data limitations': '数据限制', 'None': '无', 'Source subject': '来源对象', 'Reserved': '已预留', 'Fulfilled': '已履约',
   'Operational snapshot': '运营概览', 'See what changed. Focus on what needs attention.': '查看业务变化，优先关注待处理事项。',
   'Record activity by month': '每月业务记录活动', 'Purchase orders': '采购订单', 'Sales orders': '销售订单',
   'Purchase order status': '采购订单状态', 'Purchasing by supplier': '按供应商统计采购订单',
@@ -100,7 +100,7 @@ const chinese: Record<string, string> = {
   'Total': '合计', 'Decrease': '减少', 'Increase': '增加', 'Matched': '已匹配', 'Match exception': '匹配异常', 'Awaiting match': '待匹配',
   'Other suppliers': '其他供应商', 'Other customers': '其他客户', 'All suppliers': '全部供应商', 'Median': '中位数', 'Average': '平均值', 'More': '多', 'Less': '少',
   'Class A': 'A 类', 'Class B': 'B 类', 'Class C': 'C 类', 'Share of first stage': '占首阶段比例', 'From previous stage': '较上一阶段',
-  'Count': '数量', 'Share': '占比', 'Date': '日期', 'Stage': '阶段', 'Flow': '流向', 'Category': '类别',
+  'Count': '计数', 'Share': '占比', 'Date': '日期', 'Stage': '阶段', 'Flow': '流向', 'Category': '类别',
   'Amounts are in more than one currency, so documents are counted. Select a currency to compare amounts.': '金额涉及多个币种，因此按单据数量统计。请选择币种以比较金额。',
   'Some records have no valid currency, so documents are counted. Select a currency to compare amounts.': '部分记录缺少有效币种，因此按单据数量统计。请选择币种以比较金额。',
   'Some documents have no amount and are left out of the amounts.': '部分单据缺少金额，未计入金额。',
@@ -148,6 +148,8 @@ const chinese: Record<string, string> = {
   'Date range': '日期范围', 'This month': '本月', 'Last 3 months': '近 3 个月', 'Year to date': '今年至今', 'Last 12 months': '近 12 个月', 'All dates': '全部日期',
 };
 const english = Object.fromEntries(Object.entries(chinese).map(([en, zh]) => [zh, en]));
+// The English to Chinese pairs, read by the owner-rule tests.
+export const analyticsCopyPairs: Readonly<Record<string, string>> = chinese;
 export function analyticsCopy(value: string, language: string) {
   return language === 'en-US' ? english[value] || value : chinese[value] || value;
 }
@@ -165,7 +167,7 @@ export function reportStatusCopy(value: string, language: string) {
     out_of_stock: ['Out of stock', '缺货'], below_safety_stock: ['Below safety stock', '低于安全库存'],
     below_reorder_point: ['Below reorder point', '低于再订货点'], ok: ['In stock', '库存正常'],
     submitted: ['Submitted', '已提交'], matching: ['Matching', '匹配中'], exception: ['Exception', '有差异'], matched: ['Matched', '已匹配'],
-    held: ['Held', '已暂挂'], pending: ['Pending', '待处理'], variance: ['Variance', '有差异'], canceled: ['Cancelled', '已取消'],
+    reserved: ['Reserved', '已预留'], held: ['Held', '已暂挂'], pending: ['Pending', '待处理'], variance: ['Variance', '有差异'], canceled: ['Cancelled', '已取消'],
   };
   const pair = states[value];
   return pair ? pair[language === 'en-US' ? 0 : 1] : analyticsCopy(value, language);

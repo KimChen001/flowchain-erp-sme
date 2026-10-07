@@ -2,8 +2,9 @@ import { aiSkillQuestionTopic } from './ai-skill-capabilities.mjs'
 import { AI_SKILL_IDS } from './ai-skill-registry.mjs'
 
 // Follow-up questions, read with the previous answer: "What about PO-020?",
-// 那 Northstar 呢？, "Why?", 为什么？, "the first one", 第二个, "only the overdue
-// ones", 只看逾期的. Only a short question that no rule, chip or record answers
+// 那 Northstar 呢？, "Why?", 为什么？, "why is it first?", 为什么是第一个？,
+// "the first one", 第二个, "only the overdue ones", 只看逾期的. Only a short
+// question that no rule, chip or record answers
 // on its own is read this way, and only against the previous answer the panel
 // sends back (conversationContext): its skill (`previousIntent`), the records
 // it cited, in order (`previousEvidenceRefs`), and the records of the latest
@@ -44,6 +45,14 @@ const ORDINALS = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, '1st': 1,
 const ORDINAL = [
   /^(?:(?:and|what about|how about|show me|open|tell me (?:more )?about)\s+)?(?:the\s+)?(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)(?:\s+(?:one|item|record|order|po))?\s*[?？!.]*$/i,
   /^(?:那|看看|打开|说说)?第\s*([一二三四五1-5])\s*(?:个|条|项|张|笔|家)?(?:呢|吧)?[？?！!。.]*$/,
+]
+// Why a record of the list is where it is: "why the second one?", "why is it
+// first?", 为什么是第一个？, 为什么它排第一？ No place named means the first.
+const WHY_NTH = [
+  /^(?:(?:but|and|so)[,\s]+)?why\s+(?:is\s+)?the\s+(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)(?:\s+(?:one|item|record|order|po|supplier))?(?:\s+(?:first|on top|at the top))?\s*[?？!.]*$/i,
+  /^(?:(?:but|and|so)[,\s]+)?why\s+(?:is\s+)?(?:it|that|this(?:\s+one)?)\s+(?:(?:ranked|listed|put)\s+)?(?:first|on top|at the top|number one|the top one)\s*[?？!.]*$/i,
+  /^(?:那|那么)?(?:为什么|为啥|凭什么)(?:是|把|要)?(?:它|这个)?(?:排在?|放在?|列在?)?第\s*([一二三四五1-5])\s*(?:个|条|项|张|笔|家|位)?(?:呢)?[？?！!。.]*$/,
+  /^(?:那|那么)?(?:为什么|为啥)(?:它|这个|这一?[个条项张笔家])?(?:排(?:在)?第一|排最前|放(?:在)?最前面?|最优先|最紧急|在最前面?)(?:呢)?[？?！!。.]*$/,
 ]
 const OVERDUE_ONLY = [
   /^(?:(?:show\s+(?:me\s+)?)?(?:only|just)\s+(?:the\s+)?(?:overdue|late)(?:\s+(?:ones?|orders?|pos?))?|(?:overdue|late)\s+(?:ones\s+)?only)\s*[?？!.]*$/i,
@@ -112,6 +121,15 @@ function ordinalOf(raw) {
   return null
 }
 
+// The place a "why" question asks about (1 when it names none), or null.
+function whyPlaceOf(raw) {
+  for (const pattern of WHY_NTH) {
+    const match = raw.match(pattern)
+    if (match) return match[1] ? ORDINALS[match[1].toLowerCase()] || ORDINALS[match[1]] || null : 1
+  }
+  return null
+}
+
 function aboutSubject(raw) {
   if (ONLY_RECORD_IDS.test(raw)) return raw.replace(/[?？]+$/u, '').trim()
   for (const pattern of ABOUT) {
@@ -129,6 +147,8 @@ export function resolveAiSkillFollowUp({ message, route, conversationContext } =
   const previous = previousAnswer(conversationContext)
   if (!previous) return null
   if (matches(WHY, raw)) return previous.records[0] ? why(previous.records[0], 'why') : null
+  const whyNth = whyPlaceOf(raw)
+  if (whyNth) return previous.list[whyNth - 1] ? why(previous.list[whyNth - 1], 'why') : null
   const nth = ordinalOf(raw)
   if (nth) {
     const record = previous.list[nth - 1]

@@ -1,11 +1,10 @@
-import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
+import { isOpenPurchaseOrder, reportCalendarDay } from './open-purchase-order.mjs'
+import { tenantCalendarDay } from './tenant-calendar-day.mjs'
 import { buildOpenPurchaseOrdersReport } from './open-purchase-orders-report.mjs'
 import { can } from '../auth/authorization-service.mjs'
 import { resolveProvisionedActor } from './pilot-identity.mjs'
 import { createBankReconciliationService } from './bank-reconciliation-service.mjs'
 import { partitionBusinessRecords, resultStateForValidity, validitySummary } from './ai-business-record-validity.mjs'
-
-export const SUPPLIER_ACTION_PRIORITY_VERSION = 'supplier-action-priority-v1'
 
 export const PAYMENT_BLOCK_REASONS = Object.freeze([
   'invoice_disputed',
@@ -31,6 +30,26 @@ const serial = (value) => value?.toISOString?.() || value || null
 const date = (value) => { const parsed = value instanceof Date ? value : new Date(value); return Number.isNaN(parsed.getTime()) ? null : parsed }
 const unique = (items) => [...new Set(items.filter(Boolean))]
 const permission = (actor, code) => Boolean(actor?.permissionCodes?.has(code))
+const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ''))
+// The calendar day of an instant (an arrival, a hold, a detection, a creation
+// time), in the workspace timezone when known.
+function dayOf(value, timeZone) {
+  if (isDay(value)) return value
+  const parsed = value ? date(value) : null
+  if (!parsed) return null
+  if (timeZone) {
+    try { return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(parsed) } catch { /* an unknown timezone falls back to UTC */ }
+  }
+  return parsed.toISOString().slice(0, 10)
+}
+// A date-only field (a payable's due date, an invoice date) is stored at 00:00
+// UTC and is its own calendar day: it is never moved by the workspace
+// timezone, which would put it a day earlier in US timezones (see
+// tenant-calendar-day.mjs), as the open purchase orders report reads it.
+const calendarDay = (value) => reportCalendarDay(serial(value)) || null
+const earliestDay = (days) => days.filter(isDay).sort()[0] || null
+// Dated before undated; earlier dates first.
+const compareDays = (left, right) => left && right ? (left < right ? -1 : left > right ? 1 : 0) : left ? -1 : right ? 1 : 0
 
 function sourceState(available, visible, partition, count) {
   if (!available) return 'unavailable'
@@ -38,12 +57,19 @@ function sourceState(available, visible, partition, count) {
   return resultStateForValidity(partition.recordValiditySummary, count)
 }
 
+// A due date is a calendar day and is compared with the window's calendar
+// days (resolveBusinessTimeWindow's startDay and endDay, or the days of its
+// bounds in the workspace timezone), never as an instant: a bill due today,
+// stored at 00:00 UTC, falls before "today" begins in New York and read as
+// overdue.
 function inWindow(value, window) {
-  const candidate = date(value)
-  if (!candidate) return false
-  if (window?.type === 'overdue') return window.endAt ? candidate <= new Date(window.endAt) : false
-  if (window?.startAt && candidate < new Date(window.startAt)) return false
-  if (window?.endAt && candidate > new Date(window.endAt)) return false
+  const day = calendarDay(value)
+  if (!day) return false
+  const startDay = window?.startDay ?? (window?.startAt ? dayOf(window.startAt, window.timezone) : null)
+  const endDay = window?.endDay ?? (window?.endAt ? dayOf(window.endAt, window.timezone) : null)
+  if (window?.type === 'overdue') return endDay ? day <= endDay : false
+  if (startDay && day < startDay) return false
+  if (endDay && day > endDay) return false
   return true
 }
 
@@ -54,9 +80,11 @@ function reportRow(row) {
   return { ...row, id: text(row.id), expectedDate: iso(row.expectedDate), orderDate: iso(row.orderDate), createdAt: iso(row.createdAt), lines: array(row.lines).map((line) => ({ ...line, promisedDate: line.promisedDate || line.metadata?.promisedDate || null })) }
 }
 
-function isOverdue(value, now) {
-  const due = date(value)
-  return Boolean(due && due < now)
+// Overdue from the day after the due day, in the workspace's calendar
+// (`today`, tenantCalendarDay), as on the open purchase orders report.
+function isOverdue(value, today) {
+  const due = calendarDay(value)
+  return Boolean(due && due < today)
 }
 
 // `status` is the stored status code and `reasonCode` says why the record is
@@ -72,6 +100,25 @@ function supplierKey(row) {
 
 function payableSupplierId(row) {
   return text(row?.supplierId || row?.supplierInvoice?.supplierId)
+}
+
+const INVOICE_BLOCKS = new Set(['three_way_match_difference', 'supplier_mismatch', 'currency_mismatch', 'missing_receiving_evidence'])
+
+// The day a payable's block began: a hold from when it was held, a dispute
+// from when it was disputed, an invoice problem from the invoice date, any
+// other block from the day the payable was entered. Never its due date, which
+// may still be ahead, and never after today.
+function blockedSinceFor(payable, reasons, records, timeZone, today) {
+  const invoice = payable.supplierInvoice || records.invoices.find((row) => row.id === payable.supplierInvoiceId)
+  const days = reasons.map((reason) => {
+    const day = reason === 'payment_hold' ? earliestDay([dayOf(payable.heldAt, timeZone), dayOf(invoice?.heldAt, timeZone)])
+      : reason === 'invoice_disputed' ? dayOf(invoice?.disputedAt, timeZone) || calendarDay(invoice?.invoiceDate)
+        : INVOICE_BLOCKS.has(reason) ? calendarDay(invoice?.invoiceDate)
+          : null
+    return day || dayOf(payable.createdAt, timeZone)
+  })
+  const day = earliestDay(days)
+  return day && today && day > today ? today : day
 }
 
 function blockReasonsForPayable(payable, records) {
@@ -94,21 +141,33 @@ function blockReasonsForPayable(payable, records) {
   return PAYMENT_BLOCK_REASONS.filter((reason) => reasons.has(reason))
 }
 
-function priorityFor(summary, internalAmountImpact = 0) {
+// Why a supplier needs attention and since when, with no score or weight
+// (owner decision 2026-10-03). Each reason is dated by its oldest open record:
+//   payment_overdue                     the payable's due date
+//   payment_blocked                     the day the block began (blockedSinceFor)
+//   purchase_order_overdue              the date promised on the report
+//   invoice_exception                   the invoice date
+//   receiving_exception                 the arrival, else the day it was entered
+//   bank_reconciliation_exception       the day it was detected
+//   data_incomplete                     no date
+// `since` is the oldest of those dates. Reasons are listed oldest first.
+// dateOf returns a calendar day, or an instant read in the workspace timezone.
+export function supplierAttentionFor(groups, timeZone) {
   const reasons = []
-  let score = 0
-  const overdueDays = summary.payment.maxOverdueDays
-  if (overdueDays > 0) { const points = Math.min(30, overdueDays * 2); score += points; reasons.push({ code: 'payment_overdue', points, evidence: `${overdueDays} days` }) }
-  if (summary.payment.blockedCount > 0) { const points = Math.min(30, 15 + summary.payment.blockedCount * 5); score += points; reasons.push({ code: 'payment_blocked', points, evidence: summary.payment.blockedCount }) }
-  if (summary.procurement.overduePoCount > 0) { const points = Math.min(25, summary.procurement.overduePoCount * 10); score += points; reasons.push({ code: 'purchase_order_overdue', points, evidence: summary.procurement.overduePoCount }) }
-  if (summary.receiving.exceptionCount > 0) { const points = Math.min(20, summary.receiving.exceptionCount * 10); score += points; reasons.push({ code: 'receiving_exception', points, evidence: summary.receiving.exceptionCount }) }
-  if (summary.invoice.mismatchCount + summary.invoice.disputedCount > 0) { const points = Math.min(20, (summary.invoice.mismatchCount + summary.invoice.disputedCount) * 8); score += points; reasons.push({ code: 'invoice_exception', points, evidence: summary.invoice.mismatchCount + summary.invoice.disputedCount }) }
-  if (summary.reconciliation.blockingExceptionCount > 0) { score += 25; reasons.push({ code: 'bank_reconciliation_exception', points: 25, evidence: summary.reconciliation.blockingExceptionCount }) }
-  if (summary.dataQuality.incompleteRecordCount > 0) { const points = Math.min(12, summary.dataQuality.incompleteRecordCount * 3); score += points; reasons.push({ code: 'data_incomplete', points, evidence: summary.dataQuality.incompleteRecordCount }) }
-  if (internalAmountImpact > 0) { const points = Math.min(10, Math.max(1, Math.floor(Math.log10(internalAmountImpact + 1) * 2))); score += points; reasons.push({ code: 'authorized_amount_impact', points, evidence: 'backend_only' }) }
-  score = Math.min(100, score)
-  const level = score >= 70 ? 'critical' : score >= 40 ? 'high' : score >= 20 ? 'medium' : 'low'
-  return { level, score, reasons, algorithmVersion: SUPPLIER_ACTION_PRIORITY_VERSION }
+  for (const [code, rows, dateOf] of groups) {
+    if (!rows?.length) continue
+    reasons.push({ code, since: earliestDay(rows.map((row) => dayOf(dateOf(row), timeZone))), count: rows.length })
+  }
+  reasons.sort((left, right) => compareDays(left.since, right.since) || left.code.localeCompare(right.code))
+  return { since: earliestDay(reasons.map((row) => row.since)), reasons }
+}
+
+// Suppliers with a dated reason first, the oldest first; then the rest. Ties
+// A-Z by name, then by id.
+export function compareSupplierAttention(left, right) {
+  return compareDays(left.priority?.since || null, right.priority?.since || null)
+    || text(left.supplier?.name).localeCompare(text(right.supplier?.name))
+    || text(left.supplier?.id).localeCompare(text(right.supplier?.id))
 }
 
 function emptySourceState(state) {
@@ -119,6 +178,8 @@ function emptySourceState(state) {
 // purchase orders, as on the open purchase orders report.
 export function buildSupplierActionSummaries({ records = {}, actor, sourceAvailability = {}, timeWindow, filters = {}, now = new Date(), timeZone } = {}) {
   const current = now instanceof Date ? now : new Date(now)
+  // The workspace's calendar day, which due dates are counted against.
+  const today = tenantCalendarDay(current, timeZone || timeWindow?.timezone)
   const available = {
     suppliers: sourceAvailability.suppliers !== false,
     payables: sourceAvailability.payables !== false,
@@ -169,14 +230,14 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
     const matchesDueState = payable => {
       if (!filters.dueState?.length) return true
       const reasons = blockReasonsForPayable(payable, safeRecords)
-      return filters.dueState.some(state => state === 'overdue' ? isOverdue(payable.dueDate, current) : state === 'blocked' ? reasons.length > 0 : state === 'ready_for_payment' ? reasons.length === 0 : state === 'held' ? reasons.includes('payment_hold') : state === 'missing_evidence' ? reasons.some(reason => ['missing_invoice', 'missing_receiving_evidence'].includes(reason)) : state === 'future_due' ? date(payable.dueDate) > current : state === 'partially_settled' ? text(payable.status) === 'partially_settled' : state === 'disputed' ? reasons.includes('invoice_disputed') : state === 'due_now' ? date(payable.dueDate) && date(payable.dueDate) <= current : false)
+      return filters.dueState.some(state => state === 'overdue' ? isOverdue(payable.dueDate, today) : state === 'blocked' ? reasons.length > 0 : state === 'ready_for_payment' ? reasons.length === 0 : state === 'held' ? reasons.includes('payment_hold') : state === 'missing_evidence' ? reasons.some(reason => ['missing_invoice', 'missing_receiving_evidence'].includes(reason)) : state === 'future_due' ? calendarDay(payable.dueDate) > today : state === 'partially_settled' ? text(payable.status) === 'partially_settled' : state === 'disputed' ? reasons.includes('invoice_disputed') : state === 'due_now' ? Boolean(calendarDay(payable.dueDate)) && calendarDay(payable.dueDate) <= today : false)
     }
     const scopedPayables = windowPayables.filter(matchesDueState)
     const blocks = scopedPayables.flatMap((payable) => blockReasonsForPayable(payable, safeRecords).map((reason) => ({ payableId: payable.id, reason, supplierId: id })))
+    const blockedSince = new Map(scopedPayables.map((payable) => [payable.id, blockedSinceFor(payable, blocks.filter((row) => row.payableId === payable.id).map((row) => row.reason), safeRecords, timeZone, dayOf(current, timeZone))]))
     const blockedIds = new Set(blocks.map((row) => row.payableId))
     const ready = scopedPayables.filter((row) => !blockedIds.has(row.id))
-    const overdue = scopedPayables.filter((row) => isOverdue(row.dueDate, current))
-    const maxOverdueDays = overdue.reduce((max, row) => Math.max(max, Math.floor((current.getTime() - date(row.dueDate).getTime()) / 86_400_000)), 0)
+    const overdue = scopedPayables.filter((row) => isOverdue(row.dueDate, today))
     const currencies = unique(scopedPayables.map(row => text(row.currency)))
     const dueAmount = currencies.length > 1 ? null : scopedPayables.reduce((sum, row) => sum + (decimal(row.outstandingAmount) || 0), 0)
     const overdueAmount = currencies.length > 1 ? null : overdue.reduce((sum, row) => sum + (decimal(row.outstandingAmount) || 0), 0)
@@ -188,7 +249,8 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
     // with quantity still to receive, and an open line past its promised date.
     // Drafts, pending approvals, rejections and fully received orders are not open.
     const openPos = purchaseOrders.filter(isOpenPurchaseOrder)
-    const overdueIds = new Set(buildOpenPurchaseOrdersReport(openPos.map(reportRow), { export: 'true' }, current, { timeZone }).exportRows.filter((row) => row.overdueDays > 0).map((row) => row.id))
+    const overdueReportRows = buildOpenPurchaseOrdersReport(openPos.map(reportRow), { export: 'true' }, current, { timeZone }).exportRows.filter((row) => row.overdueDays > 0)
+    const overdueIds = new Set(overdueReportRows.map((row) => row.id))
     const overduePos = openPos.filter((row) => overdueIds.has(text(row.id)))
     const unreceivedPos = openPos.filter((row) => {
       const ordered = array(row.lines).reduce((sum, line) => sum + (decimal(line.orderedQuantity) || 0), 0)
@@ -196,11 +258,25 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
       return ordered > receivedQty
     })
     const receivingExceptions = receiving.filter((row) => /exception|reject|异常|拒收/.test(text(row.status).toLowerCase()) || array(row.lines).some((line) => (decimal(line.rejectedQty) || 0) > 0))
-    const rejectedQuantity = receivingExceptions.flatMap((row) => array(row.lines)).reduce((sum, line) => sum + (decimal(line.rejectedQty) || 0), 0)
+    // Rejected quantities per SKU and unit, never one total across them. A
+    // line without its SKU or unit stays on its own: it may be another item
+    // or unit than the next such line.
+    const rejectedBySkuUnit = new Map()
+    for (const [receiptIndex, row] of receivingExceptions.entries()) for (const [lineIndex, line] of array(row.lines).entries()) {
+      const quantity = decimal(line.rejectedQty) || 0
+      if (quantity <= 0) continue
+      const sku = text(line.sku) || null
+      const unit = text(line.unit) || null
+      const key = JSON.stringify(sku && unit ? [sku, unit] : [sku, unit, text(line.id) || `${text(row.id) || receiptIndex}:${lineIndex}`])
+      rejectedBySkuUnit.set(key, (rejectedBySkuUnit.get(key) || 0) + quantity)
+    }
+    const rejectedQuantities = [...rejectedBySkuUnit.entries()].map(([key, quantity]) => { const [sku, unit] = JSON.parse(key); return { sku, unit, quantity } })
+      .sort((left, right) => text(left.sku).localeCompare(text(right.sku)) || text(left.unit).localeCompare(text(right.unit)))
     const pendingReceivingEvidence = receiving.filter((row) => ['draft', 'receiving', 'unposted'].includes(text(row.workflowStatus || row.postingStatus).toLowerCase()) && array(row.attachments).length === 0)
     const awaitingRfqs = rfqs.filter((row) => !['awarded', 'closed', 'cancelled'].includes(text(row.status).toLowerCase()) && Number(row.respondedSupplierCount ?? row.quoted ?? 0) < Number(row.supplierCount ?? row.suppliers ?? 0))
-    const expiredRfqs = rfqs.filter((row) => isOverdue(row.dueDate || row.due, current) && !['awarded', 'closed', 'cancelled'].includes(text(row.status).toLowerCase()))
-    const incompleteRecordCount = Object.values(partitions).reduce((sum, item) => sum + item.incompleteRecords.filter(({ record }) => [record.supplierId, record.supplierInvoice?.supplierId].map(text).includes(id)).length, 0)
+    const expiredRfqs = rfqs.filter((row) => isOverdue(row.dueDate || row.due, today) && !['awarded', 'closed', 'cancelled'].includes(text(row.status).toLowerCase()))
+    const incompleteRecords = Object.values(partitions).flatMap((item) => item.incompleteRecords.filter(({ record }) => [record.supplierId, record.supplierInvoice?.supplierId].map(text).includes(id)))
+    const incompleteRecordCount = incompleteRecords.length
     const limitations = []
     for (const [key, state] of Object.entries(available)) if (!state) limitations.push(`${key}_unavailable`)
     if (!visible.amounts) limitations.push('amounts_hidden')
@@ -219,7 +295,6 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
         readyCount: available.payables && visible.payables ? ready.length : null,
         blockedCount: available.payables && visible.payables ? new Set(blocks.map((row) => row.payableId)).size : null,
         blocks: available.payables && visible.payables ? blocks : [],
-        maxOverdueDays,
         recordValiditySummary: partitions.payables.recordValiditySummary,
       },
       invoice: {
@@ -241,7 +316,7 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
       receiving: {
         state: sourceState(available.receiving, visible.receiving, partitions.receiving, receivingExceptions.length),
         exceptionCount: available.receiving && visible.receiving ? receivingExceptions.length : null,
-        rejectedQuantity: available.receiving && visible.receiving ? rejectedQuantity : null,
+        rejectedQuantities: available.receiving && visible.receiving ? rejectedQuantities : null,
         pendingEvidenceCount: available.receiving && visible.receiving ? pendingReceivingEvidence.length : null,
         recordValiditySummary: partitions.receiving.recordValiditySummary,
       },
@@ -265,19 +340,30 @@ export function buildSupplierActionSummaries({ records = {}, actor, sourceAvaila
         bankExceptions.length ? 'review_bank_reconciliation_exceptions' : null,
       ]),
       evidence: unique([
-        ...scopedPayables.map((row) => evidence('payable_obligation', row.id, row.obligationNumber || row.id, row.status, '/finance?view=payables', blockedIds.has(row.id) ? 'payable_blocked' : isOverdue(row.dueDate, current) ? 'payable_overdue' : 'payable_due')),
+        ...scopedPayables.map((row) => evidence('payable_obligation', row.id, row.obligationNumber || row.id, row.status, '/finance?view=payables', blockedIds.has(row.id) ? 'payable_blocked' : isOverdue(row.dueDate, today) ? 'payable_overdue' : 'payable_due')),
         ...overduePos.map((row) => evidence('purchase_order', row.id, row.id, row.status, '/procurement?view=purchase-orders', 'purchase_order_overdue')),
         ...mismatchInvoices.map((row) => evidence('supplier_invoice', row.id, row.invoiceNumber || row.id, row.status, '/finance?view=invoices', 'invoice_match_difference')),
         ...receivingExceptions.map((row) => evidence('receiving_doc', row.id, row.documentNumber || row.id, row.status, '/receiving', 'receiving_exception')),
       ].filter(Boolean).map((item) => JSON.stringify(item))).map((item) => JSON.parse(item)),
       sourceStatus: { available, visible },
     }
-    result.priority = priorityFor(result, dueAmount)
-    delete result.payment.maxOverdueDays
+    const shown = (source) => available[source] && visible[source]
+    const blockedPayables = scopedPayables.filter((row) => blockedIds.has(row.id))
+    const invoiceExceptions = [...new Set([...mismatchInvoices, ...disputedInvoices])]
+    const blockingBank = bankExceptions.filter((row) => ['open', 'acknowledged'].includes(text(row.status).toLowerCase()) && text(row.severity).toLowerCase() === 'blocking')
+    result.priority = supplierAttentionFor([
+      ['payment_overdue', shown('payables') ? overdue : [], (row) => calendarDay(row.dueDate)],
+      ['payment_blocked', shown('payables') ? blockedPayables : [], (row) => blockedSince.get(row.id)],
+      ['purchase_order_overdue', shown('purchaseOrders') ? overdueReportRows : [], (row) => calendarDay(row.dueDate)],
+      ['invoice_exception', shown('invoices') ? invoiceExceptions : [], (row) => calendarDay(row.invoiceDate)],
+      ['receiving_exception', shown('receiving') ? receivingExceptions : [], (row) => row.arrivedAt || row.createdAt],
+      ['bank_reconciliation_exception', shown('bankReconciliation') ? blockingBank : [], (row) => row.detectedAt || row.createdAt],
+      ['data_incomplete', incompleteRecords, () => null],
+    ], timeZone)
     return result
   })
 
-  summaries.sort((left, right) => right.priority.score - left.priority.score || left.supplier.id.localeCompare(right.supplier.id))
+  summaries.sort(compareSupplierAttention)
   return {
     items: summaries,
     recordValiditySummary: validitySummary({

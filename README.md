@@ -25,7 +25,7 @@ Every change to business data is made by a person: posting, approving and revers
 
 ## AI assistant
 
-- **Answers come from workspace data.** Everyday questions ("What should I handle first today?", "Which items have the highest risk?") are answered by read-only skills that query your records. By default no language model is called.
+- **Answers come from workspace data.** Everyday questions ("What should I handle first today?", "What is at risk right now?") are answered by read-only skills that query your records. By default no language model is called.
 - **Every answer shows its evidence.** Answers list the records they rely on, with links back to them, and state what was checked and what is missing.
 - **Ask about a specific record.** Name a purchase order, SKU or supplier and the assistant looks it up among the records you are allowed to see. It answers in the language you asked in.
 - **It never acts on your behalf.** Requests to approve, pay, send or change records are refused. The assistant can prepare a draft for a person to review, nothing more.
