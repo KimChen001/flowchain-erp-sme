@@ -224,17 +224,21 @@ const NO_ANSWER = {
 const SOURCE_NUMBER = /^\s*\[?\s*(\d+)\s*\]?\s*$/
 const citedPassage = (reference, citations) => citations.find(c => c.id === reference) || citations.find(c => c.sourceNumber === Number(String(reference).match(SOURCE_NUMBER)?.[1]))
 
-export async function answerKnowledgeQuery({ question, language = 'en-US', actor, service, env = {}, provider = callConfiguredProvider, embeddingProvider = callConfiguredEmbeddingProvider }) {
+// `retrievalQuery`: the words to search with, when they are not the question
+// itself (agent planning writes them in the documents' language). `generate`:
+// false shows the passages found, with their sources, and asks no model to
+// write an answer.
+export async function answerKnowledgeQuery({ question, retrievalQuery = question, generate = true, language = 'en-US', actor, service, env = {}, provider = callConfiguredProvider, embeddingProvider = callConfiguredEmbeddingProvider }) {
   const zh = language === 'zh-CN'
-  const queryVector = await embeddingProvider([question], env)
+  const queryVector = await embeddingProvider([retrievalQuery], env)
   const databaseSemanticRanks = queryVector.ok && service.semanticRanks ? await service.semanticRanks(actor, queryVector.vectors[0], queryVector.model) : null
   const retriever = new WorkspaceKnowledgeRetriever({ loadDocuments: () => service.documents(actor), queryEmbedding: queryVector.ok ? queryVector.vectors[0] : null, embeddingModel: queryVector.ok ? queryVector.model : null, databaseSemanticRanks })
   const chain = RunnableSequence.from([
-    RunnableLambda.from(async input => ({ question: input, documents: await retriever.invoke(input) })),
+    RunnableLambda.from(async input => ({ question, documents: await retriever.invoke(input) })),
     RunnableLambda.from(async ({ question, documents }) => {
       const citations = documents.map((doc, index) => ({ id: doc.metadata.id, documentId: doc.metadata.documentId, title: doc.metadata.title, heading: doc.metadata.heading || null, position: doc.metadata.position, sourceNumber: index + 1, language: doc.metadata.language, contentHash: doc.metadata.contentHash, excerpt: doc.pageContent }))
       if (!citations.length) return { answer: zh ? '没有找到有权限访问的相关资料。请先导入产品资料或补充具体型号、术语。' : 'No relevant accessible documents were found. Import product information or add a specific model or term to your question.', citations, mode: 'no_results' }
-      if (canCallConfiguredProvider(env)) {
+      if (generate && canCallConfiguredProvider(env)) {
         try {
           const result = await provider({ task: { type: 'knowledge_rag', question, answerLanguage: language }, evidencePackage: { citations }, safetyPolicy: { readOnly: true } }, env)
           const raw = result?.rawOutput?.conclusion?.summary || result?.rawOutput
@@ -258,10 +262,10 @@ export async function answerKnowledgeQuery({ question, language = 'en-US', actor
           }
         } catch { /* Retrieval remains available when model output cannot be used. */ }
       }
-      return { answer: citations.slice(0, 3).map((source, index) => `[${index + 1}] ${source.excerpt.slice(0, 550)}`).join('\n\n'), citations, mode: canCallConfiguredProvider(env) ? 'model_unavailable' : 'retrieved_excerpts' }
+      return { answer: citations.slice(0, 3).map((source, index) => `[${index + 1}] ${source.excerpt.slice(0, 550)}`).join('\n\n'), citations, mode: generate && canCallConfiguredProvider(env) ? 'model_unavailable' : 'retrieved_excerpts' }
     }),
   ])
-  return chain.invoke(question)
+  return chain.invoke(retrievalQuery)
 }
 
 export function knowledgeResponse(result, question, language = 'en-US') {

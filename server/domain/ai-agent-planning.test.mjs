@@ -2,7 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { aiSkillActor, aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
-import { AI_AGENT_LIMITS, AI_AGENT_NO_SKILL, aiAgentPlanningEnabled, aiAgentTools, planAiAgentTools, validateAiAgentToolCalls } from './ai-agent-planning.mjs'
+import { AI_AGENT_KNOWLEDGE, AI_AGENT_LIMITS, AI_AGENT_NO_SKILL, aiAgentPlanningEnabled, aiAgentTools, planAiAgentTools, validateAiAgentToolCalls } from './ai-agent-planning.mjs'
+import { knowledgeResponse } from './ai-knowledge-service.mjs'
 import { parleyChatAdapter } from './ai-runtime-provider-specific-adapters-v2.mjs'
 
 // Placeholder provider settings: the provider is a scripted stub, so nothing
@@ -22,7 +23,9 @@ const ACME = "Check Acme's outstanding orders, explain which need follow-up unde
 const ACME_ZH = '查一下 Acme 的未完成订单，按我们的采购政策说明哪些需要跟进，并准备一封询问部分交货的邮件。'
 const UNMATCHED = 'is there anything I should chase with the warehouse folks'
 
-function harness({ env = AGENT_ENV, provider, roleKey, tiers = null } = {}) {
+// `knowledge`: the actor's documents for the knowledge search ({ languages,
+// search }); none by default, so no test reaches a database.
+function harness({ env = AGENT_ENV, provider, roleKey, tiers = null, knowledge = null } = {}) {
   const scenario = aiSkillScenario(roleKey ? { roleKey } : {})
   if (tiers) for (const supplier of scenario.data.suppliers) supplier.tier = tiers[supplier.id] ?? null
   const audits = []
@@ -36,6 +39,7 @@ function harness({ env = AGENT_ENV, provider, roleKey, tiers = null } = {}) {
     env,
     send: (_res, status, payload) => sent.push({ status, payload }),
     ...(provider ? { aiAgentProvider: async (input) => { plans.push(input); return provider(input) } } : {}),
+    aiAgentKnowledge: knowledge,
     aiSkillIntentProvider: async (input) => { picks.push(input); return { ok: true, rawOutput: { conclusion: { summary: JSON.stringify({ skillId: 'receiving_issues', confidence: 0.9 }) } } } },
   }
   ctx.repositories = { ...ctx.repositories, auditLog: { mode: 'database', recordAuditEntry: async (entry) => { audits.push(entry); return entry } } }
@@ -258,4 +262,126 @@ test('rules, instructions and one-part questions never reach the planner', async
   assert.equal(off.plans.length, 0)
   assert.equal(payload.intent, 'prepare_action_draft')
   assert.equal(Object.hasOwn(payload, 'skillRouting'), false)
+})
+
+// The knowledge search (PR-3): the planner's words search the actor's own
+// documents; the passages found are shown with their sources.
+// Two parts at the comma: the policy, and Acme's overdue orders.
+const POLICY_ZH = '按我们的采购政策，Acme 哪些逾期订单需要跟进？'
+// One part that asks about records and documents together.
+const POLICY_EN = "Which of Acme's overdue orders need follow-up under our purchasing policy?"
+const POLICY_QUERY = 'overdue purchase order follow-up'
+function documents({ fail = false } = {}) {
+  const searched = []
+  return {
+    searched,
+    languages: ['en-US'],
+    async search({ query, question, language }) {
+      searched.push({ query, question, language })
+      if (fail) throw new Error('search failed')
+      const citations = [
+        { id: 'chunk-overdue', documentId: 'doc-policy', title: 'purchasing-policy', heading: 'Example Purchasing Follow-up Policy › Overdue goods', position: 1, sourceNumber: 1, language: 'en-US', excerpt: 'An issued purchase order line with outstanding quantity is overdue when its current confirmed delivery date has passed.' },
+        { id: 'chunk-follow-up', documentId: 'doc-policy', title: 'purchasing-policy', heading: 'Example Purchasing Follow-up Policy › Follow-up and escalation', position: 2, sourceNumber: 2, language: 'en-US', excerpt: 'Prepare a supplier follow-up for an overdue line.' },
+      ]
+      return knowledgeResponse({ answer: citations.map((citation) => `[${citation.sourceNumber}] ${citation.excerpt}`).join('\n\n'), citations, mode: 'retrieved_excerpts' }, question, language)
+    },
+  }
+}
+
+test('the knowledge search is offered only over documents the actor may read, with search words of bounded length', () => {
+  const actor = aiSkillActor()
+  assert.equal(aiAgentTools(actor).some((tool) => tool.function.name === AI_AGENT_KNOWLEDGE), false)
+  const tools = aiAgentTools(actor, { knowledge: ['en-US'] })
+  const search = tools.find((tool) => tool.function.name === AI_AGENT_KNOWLEDGE).function
+  assert.match(search.description, /written in English/)
+  assert.match(search.description, /in English even when the question is in Chinese/)
+  assert.deepEqual(search.parameters.required, ['query'])
+  const message = 'Which of Acme\'s overdue orders need follow-up under our purchasing policy?'
+  const { calls: kept, dropped } = validateAiAgentToolCalls([
+    { name: AI_AGENT_KNOWLEDGE, arguments: { query: '  overdue   follow-up  ' } },
+    { name: AI_AGENT_KNOWLEDGE, arguments: { query: 'escalation' } },
+    { name: AI_AGENT_KNOWLEDGE, arguments: { query: 'x' } },
+    { name: AI_AGENT_KNOWLEDGE, arguments: { query: 'y'.repeat(201) } },
+    { name: AI_AGENT_KNOWLEDGE, arguments: {} },
+    { name: AI_AGENT_KNOWLEDGE, arguments: { query: 'policy', records: ['Acme'] } },
+  ], { message, tools })
+  // One search per answer; a second is left out, not counted as a call.
+  assert.deepEqual(kept, [{ tool: AI_AGENT_KNOWLEDGE, mode: null, records: [], query: 'overdue follow-up' }])
+  assert.deepEqual(dropped.map((row) => row.reason), ['invalid_arguments', 'invalid_arguments', 'invalid_arguments', 'invalid_arguments'])
+  // Chinese words find nothing in English documents: the call is left out.
+  assert.deepEqual(validateAiAgentToolCalls([{ name: AI_AGENT_KNOWLEDGE, arguments: { query: '采购政策 跟进' } }], { message, tools }).dropped, [{ tool: AI_AGENT_KNOWLEDGE, reason: 'query_language' }])
+  const both = aiAgentTools(actor, { knowledge: ['en-US', 'zh-CN'] })
+  assert.equal(validateAiAgentToolCalls([{ name: AI_AGENT_KNOWLEDGE, arguments: { query: '采购政策 跟进' } }], { message, tools: both }).calls.length, 1)
+  // The search comes on top of one call per part; a second skill does not.
+  const one = validateAiAgentToolCalls([{ name: 'purchase_orders', arguments: { records: ['Acme'] } }, { name: 'supplier_attention', arguments: {} }, { name: AI_AGENT_KNOWLEDGE, arguments: { query: 'overdue follow-up' } }], { message, tools, maxTools: 1 })
+  assert.deepEqual(one.calls.map((call) => call.tool), ['purchase_orders', AI_AGENT_KNOWLEDGE])
+  assert.deepEqual(one.dropped, [{ tool: 'supplier_attention', reason: 'over_limit' }])
+})
+
+test('a Chinese question about orders and policy finds the English policy through the planner\'s search words', async () => {
+  const knowledge = documents()
+  const run = harness({ knowledge, provider: calls(['purchase_orders', { records: ['Acme'] }], [AI_AGENT_KNOWLEDGE, { query: POLICY_QUERY }]) })
+  const payload = await run.ask(POLICY_ZH, 'zh-CN')
+  assert.equal(run.plans.length, 1)
+  // Two parts; the search comes on top.
+  assert.equal(run.plans[0].task.parts, 2)
+  assert.ok(run.plans[0].tools.some((tool) => tool.function.name === AI_AGENT_KNOWLEDGE))
+  assert.deepEqual(knowledge.searched, [{ query: POLICY_QUERY, question: POLICY_ZH, language: 'zh-CN' }])
+  assert.deepEqual(payload.skillRouting, { source: 'model', modelStatus: 'planned' })
+  assert.equal(payload.intent, 'purchase_orders')
+  assert.deepEqual(payload.supplementalKnowledge.rag.citations.map((citation) => citation.heading.split(' › ').at(-1)), ['Overdue goods', 'Follow-up and escalation'])
+  assert.equal(payload.supplementalKnowledge.rag.mode, 'retrieved_excerpts')
+  const audit = run.audits.at(-1).metadata
+  assert.equal(audit.agent.entry, 'multi_part')
+  assert.deepEqual(audit.agent.calls.find((call) => call.tool === AI_AGENT_KNOWLEDGE), { tool: AI_AGENT_KNOWLEDGE, mode: null, records: 0, queryLength: POLICY_QUERY.length, served: true })
+  assert.deepEqual(audit.knowledge, { mode: 'retrieved_excerpts', citationCount: 2, documentIds: ['doc-policy'] })
+  // Never the search words or the passages.
+  const stored = JSON.stringify(run.audits)
+  for (const text of [POLICY_QUERY, 'outstanding quantity', POLICY_ZH]) assert.equal(stored.includes(text), false, text)
+})
+
+test('a one-part question about orders and policy goes to the planner only when there are documents to search', async () => {
+  const knowledge = documents()
+  const run = harness({ knowledge, provider: calls(['purchase_orders', { records: ['Acme'] }], [AI_AGENT_KNOWLEDGE, { query: POLICY_QUERY }]) })
+  const payload = await run.ask(POLICY_EN)
+  assert.equal(run.plans.length, 1)
+  // One part; the search comes on top.
+  assert.equal(run.plans[0].task.parts, 1)
+  assert.equal(run.audits.at(-1).metadata.agent.entry, 'mixed')
+  assert.equal(payload.intent, 'purchase_orders')
+  assert.equal(payload.supplementalKnowledge.rag.citations.length, 2)
+  // Without documents, the rules answer and no model is asked.
+  const none = harness({ provider: calls(['purchase_orders', { records: ['Acme'] }]) })
+  assert.equal((await none.ask(POLICY_EN)).intent, 'purchase_orders')
+  assert.equal(none.plans.length, 0)
+  // A question with several parts still goes to the planner, without the search.
+  const parts = harness({ provider: calls(['purchase_orders', { records: ['Acme'] }]) })
+  await parts.ask(POLICY_ZH, 'zh-CN')
+  assert.equal(parts.plans.length, 1)
+  assert.equal(parts.plans[0].tools.some((tool) => tool.function.name === AI_AGENT_KNOWLEDGE), false)
+})
+
+test('a planned search alone answers with the passages found', async () => {
+  const knowledge = documents()
+  const run = harness({ knowledge, provider: calls([AI_AGENT_KNOWLEDGE, { query: POLICY_QUERY }]) })
+  const payload = await run.ask(UNMATCHED)
+  assert.equal(payload.intent, 'knowledge_retrieval')
+  assert.deepEqual(payload.skillRouting, { source: 'model', modelStatus: 'planned' })
+  assert.equal(payload.rag.citations.length, 2)
+  const audit = run.audits.at(-1).metadata
+  assert.equal(audit.answerSource, 'knowledge')
+  assert.equal(audit.knowledge.citationCount, 2)
+})
+
+test('a search that fails leaves the planned answer, and the documents are searched as before', async () => {
+  const knowledge = documents({ fail: true })
+  const run = harness({ knowledge, provider: calls(['purchase_orders', { records: ['Acme'] }], [AI_AGENT_KNOWLEDGE, { query: POLICY_QUERY }]) })
+  const payload = await run.ask(POLICY_ZH, 'zh-CN')
+  assert.equal(knowledge.searched.length, 1)
+  assert.equal(payload.intent, 'purchase_orders')
+  assert.deepEqual(payload.skillRouting, { source: 'model', modelStatus: 'planned' })
+  // The gateway's own search of the question (here without a database, so its
+  // "temporarily unavailable" note), as for any question about records and documents.
+  assert.equal(payload.supplementalKnowledge.rag.mode, 'unavailable')
+  assert.equal(run.audits.at(-1).metadata.knowledge, undefined)
 })
