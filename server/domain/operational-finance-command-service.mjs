@@ -306,19 +306,33 @@ const isConcurrency = (error) =>
   isPrismaConcurrencyError(error) ||
   /serialization|deadlock|write conflict/i.test(text(error?.message));
 
-// An approval reads the payable numbers it might assign, so two approvals in
-// one workspace can trip a serializable conflict even when their numbers
-// differ, and one that loses a race for a number fails with the retryable
-// PAYABLE_OBLIGATION_NUMBER_CONFLICT. Either way the whole transaction has
-// rolled back, so approval runs again a couple of times, seeing what the
-// other approval committed, before a 409 reaches the user. Only approval
-// assigns numbers this way, so the other P2P commands still return the 409
-// at once, as they did before.
+// An approval reads its idempotency key and the payable numbers it might
+// assign, and Postgres guards those reads with index page locks that other
+// approvals write to. So approvals running at the same time trip serializable
+// conflicts even when their numbers differ, and even in different workspaces:
+// usually only one of them commits and the rest abort, round after round. One
+// that loses a race for a number fails with the retryable
+// PAYABLE_OBLIGATION_NUMBER_CONFLICT instead. Either way the whole transaction
+// has rolled back, so approval runs again, seeing what the others committed,
+// before a 409 reaches the user. With n approvals at once the last one can
+// need n - 1 retries, so the budget leaves room for several. Only approval
+// assigns numbers this way, so the other P2P commands still return the 409 at
+// once, as they did before.
 const isRetryableConflict = (error) =>
   error instanceof OperationalFinanceError
     ? error.details?.retryable === true
     : isConcurrency(error);
-const APPROVAL_RETRIES = 2;
+const APPROVAL_RETRIES = 5;
+
+// Each retry waits about twice as long as the one before (25-50 ms, then
+// 50-100 ms, up to 400-800 ms), and the random part keeps approvals that
+// aborted together from running again in step and colliding once more.
+const retryPause = (retried) => {
+  const step = 25 * 2 ** retried;
+  return new Promise((resolve) =>
+    setTimeout(resolve, step + Math.floor(Math.random() * step)),
+  );
+};
 
 // Reads which unique fields a P2002 violated. The driver adapter reports them
 // on the constraint, while older engines put them in meta.target.
@@ -481,7 +495,7 @@ export function createOperationalFinanceCommandService({
     context,
     payload,
     work,
-    { retries = 0 } = {},
+    { retries = 0, retried = 0 } = {},
   ) {
     assertEnabled(env);
     const identity = assertIdentity(context);
@@ -540,13 +554,11 @@ export function createOperationalFinanceCommandService({
         { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
       );
     } catch (error) {
-      if (retries > 0 && isRetryableConflict(error)) {
-        // A short random pause keeps the retries of several losers apart.
-        await new Promise((resolve) =>
-          setTimeout(resolve, 25 + Math.floor(Math.random() * 25)),
-        );
+      if (retried < retries && isRetryableConflict(error)) {
+        await retryPause(retried);
         return execute(commandType, input, context, payload, work, {
-          retries: retries - 1,
+          retries,
+          retried: retried + 1,
         });
       }
       if (error instanceof OperationalFinanceError) throw error;
@@ -1706,7 +1718,8 @@ export function createOperationalFinanceCommandService({
           // Another approval committed the same number after it was checked
           // above. A typed number is a real duplicate; an assigned one only
           // needs the approval run again to pick the next free number, which
-          // execute does by itself a couple of times before returning this.
+          // execute does by itself up to APPROVAL_RETRIES times before
+          // returning this.
           if (typedNumber) {
             const duplicate = payableNumberDuplicate(typedNumber);
             fail(duplicate.code, duplicate.message, duplicate.status, duplicate.details);

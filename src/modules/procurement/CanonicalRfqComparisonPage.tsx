@@ -5,9 +5,13 @@ import { A, Card, Chip } from "../../components/ui";
 import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
 import { useI18n } from "../../i18n/I18n";
+import { QuoteVsHistory, priceHistoryKey, usePriceHistory, usePriceFactText } from "./PriceHistoryFacts";
+import { usePriceHistoryCopy } from "./priceHistoryCopy";
+import { compareQuote } from "../../../shared/price-history.mjs";
 import type {
   RfqAwardDecision,
   RfqComparisonEligibility,
+  RfqComparisonLine,
   RfqComparisonResponse,
   RfqSupplierComparison,
 } from "./procurementTypes";
@@ -147,21 +151,33 @@ function ResponseSummary({ responses }: { responses: RfqComparisonResponse[] }) 
   );
 }
 
+const quotedLineOf = (response: RfqComparisonResponse, rfqLineId: string) =>
+  response.latestRevision?.lines.find((candidate) => candidate.rfqLineId === rfqLineId && candidate.lineAuthorityState === "exact_target_rfq_line");
+
 function LineMatrix({ comparison }: { comparison: RfqSupplierComparison }) {
   const { language } = useI18n();
   const tr: Tr = (zh, en) => language === "en-US" ? en : zh;
+  // Each quoted price beside the item's own PO history in the same currency
+  // and unit, read once for every cell. Facts only: display order, colours and
+  // the ranking authority do not change.
+  const historyKeyOf = (line: RfqComparisonLine, response: RfqComparisonResponse) => {
+    const quoted = quotedLineOf(response, line.rfqLineId);
+    return quoted ? priceHistoryKey({ itemId: quoted.itemId || line.itemId, unit: quoted.unit || line.unit, currency: response.latestRevision?.currency }) : "";
+  };
+  const history = usePriceHistory(comparison.lines.flatMap((line) => comparison.responses.map((response) => historyKeyOf(line, response))));
   return (
     <Card className="overflow-hidden" data-testid="rfq-comparison-line-matrix">
       <div className="border-b p-4"><h2 className="text-sm font-semibold">{tr("行项目并列展示", "Line-by-line comparison")}</h2><p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("金额直接显示 API Decimal 字符串，不在浏览器重算。", "Amounts use the exact decimal values returned by the API and are not recalculated in the browser.")}</p></div>
       {comparison.lines.length === 0 ? <div className="p-8 text-center text-xs" style={{ color: A.sub }}>{tr("当前 RFQ 没有权威行项目。", "This RFQ has no authoritative line items.")}</div> : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-left text-xs">
-            <thead className="bg-slate-50" style={{ color: A.sub }}><tr><th className="sticky left-0 z-10 min-w-[260px] bg-slate-50 p-3 font-medium">{tr("RFQ 行项目", "RFQ line item")}</th>{comparison.responses.map((response) => <th className="min-w-[230px] p-3 font-medium" key={response.supplierId}><div>{response.supplierName || response.supplierId}</div><div className="mt-1 font-normal">{response.supplierId}</div></th>)}</tr></thead>
+            <thead className="bg-slate-50" style={{ color: A.sub }}><tr><th className="sticky left-0 z-10 min-w-[260px] bg-slate-50 p-3 font-medium">{tr("RFQ 行项目", "RFQ line item")}</th>{comparison.responses.map((response) => <th className="min-w-[230px] p-3 font-medium" key={response.supplierId}><div>{response.supplierName || response.supplierId}</div><div className="mt-1 font-normal">{response.supplierId}</div><CopySupplierNote comparison={comparison} response={response} history={history} historyKeyOf={historyKeyOf} /></th>)}</tr></thead>
             <tbody>{comparison.lines.map((line) => <tr className="border-t align-top" data-testid={`rfq-comparison-line-${line.rfqLineId}`} key={line.rfqLineId}>
               <td className="sticky left-0 z-10 bg-white p-3"><div className="font-medium">{line.itemName || line.sku || line.itemId || line.rfqLineId}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || "—"} · {line.rfqLineId}</div><div className="mt-2 tabular-nums">{tr("需求", "Required")}: {line.requestedQuantity || "—"} {line.unit || ""}</div></td>
               {comparison.responses.map((response) => {
-                const quotedLine = response.latestRevision?.lines.find((candidate) => candidate.rfqLineId === line.rfqLineId && candidate.lineAuthorityState === "exact_target_rfq_line");
-                return <td className="p-3" data-testid={`rfq-comparison-cell-${line.rfqLineId}-${response.supplierId}`} key={response.supplierId}>{quotedLine ? <div className="space-y-1"><div>{tr("数量", "Quantity")}: <span className="tabular-nums">{quotedLine.quantity || "—"}</span> {quotedLine.unit || ""}</div><div>{tr("单价", "Unit price")}: <span className="tabular-nums">{exactAmount(quotedLine.unitPrice, response.latestRevision?.currency)}</span></div><div>{tr("行金额", "Line total")}: <span className="tabular-nums">{exactAmount(quotedLine.amount, response.latestRevision?.currency)}</span></div><div style={{ color: A.sub }}>{tr("交期", "Delivery")}: {dateOnly(quotedLine.deliveryDate || response.latestRevision?.deliveryDate)}</div></div> : <span style={{ color: A.sub }}>{tr("未覆盖", "Not covered")}</span>}</td>;
+                const quotedLine = quotedLineOf(response, line.rfqLineId);
+                const historyKey = historyKeyOf(line, response);
+                return <td className="p-3" data-testid={`rfq-comparison-cell-${line.rfqLineId}-${response.supplierId}`} key={response.supplierId}>{quotedLine ? <div className="space-y-1"><div>{tr("数量", "Quantity")}: <span className="tabular-nums">{quotedLine.quantity || "—"}</span> {quotedLine.unit || ""}</div><div>{tr("单价", "Unit price")}: <span className="tabular-nums">{exactAmount(quotedLine.unitPrice, response.latestRevision?.currency)}</span></div><div>{tr("行金额", "Line total")}: <span className="tabular-nums">{exactAmount(quotedLine.amount, response.latestRevision?.currency)}</span></div><div style={{ color: A.sub }}>{tr("交期", "Delivery")}: {dateOnly(quotedLine.deliveryDate || response.latestRevision?.deliveryDate)}</div>{historyKey && <QuoteVsHistory unitPrice={quotedLine.unitPrice} history={history.histories.get(historyKey)} state={history.state} testId={`rfq-comparison-history-${line.rfqLineId}-${response.supplierId}`} />}</div> : <span style={{ color: A.sub }}>{tr("未覆盖", "Not covered")}</span>}</td>;
               })}
             </tr>)}</tbody>
           </table>
@@ -169,6 +185,53 @@ function LineMatrix({ comparison }: { comparison: RfqSupplierComparison }) {
       )}
       {comparison.responses.some((response) => response.latestRevision?.lines.some((line) => line.lineAuthorityState !== "exact_target_rfq_line")) && <div className="border-t p-4 text-xs" style={{ color: A.sub }}><div className="font-semibold text-slate-700">{tr("无法与 RFQ 行建立权威对应", "Lines without an authoritative RFQ match")}</div>{comparison.responses.flatMap((response) => (response.latestRevision?.lines || []).filter((line) => line.lineAuthorityState !== "exact_target_rfq_line").map((line) => <div key={`${response.supplierId}:${line.revisionLineId}`} className="mt-1">{response.supplierName || response.supplierId} · {line.revisionLineId} · {tr("未能与 RFQ 行建立权威对应", "No authoritative RFQ line match")}</div>))}</div>}
     </Card>
+  );
+}
+
+// Drafts a plain note to one supplier with the facts beside its quoted prices
+// and copies it for a person to send. Nothing is sent from FlowChain.
+function CopySupplierNote({ comparison, response, history, historyKeyOf }: {
+  comparison: RfqSupplierComparison;
+  response: RfqComparisonResponse;
+  history: ReturnType<typeof usePriceHistory>;
+  historyKeyOf: (line: RfqComparisonLine, response: RfqComparisonResponse) => string;
+}) {
+  const copy = usePriceHistoryCopy();
+  const text = usePriceFactText();
+  const [status, setStatus] = useState<"" | "copied" | "failed">("");
+  if (history.state !== "loaded") return null;
+  const lines = comparison.lines.flatMap((line) => {
+    const quoted = quotedLineOf(response, line.rfqLineId);
+    const key = historyKeyOf(line, response);
+    if (!quoted || !key) return [];
+    const result = compareQuote({ unitPrice: quoted.unitPrice, history: history.histories.get(key) });
+    if (result.status !== "compared") return [];
+    const currency = response.latestRevision?.currency;
+    return [copy("noteLine", {
+      item: line.sku || line.itemName || line.rfqLineId,
+      quote: text.price(quoted.unitPrice, currency),
+      unit: quoted.unit || line.unit || "—",
+      last: text.price(result.lastPo.unitPrice, result.lastPo.currency),
+      po: result.lastPo.orderNumber,
+      date: text.date(result.lastPo),
+      average: result.average?.unitPrice ? copy("noteAverage", { n: result.average.n, price: text.price(result.average.unitPrice, result.lastPo.currency) }) : "",
+    })];
+  });
+  if (!lines.length) return null;
+  const note = copy("noteTemplate", { supplier: response.supplierName || response.supplierId, rfq: comparison.rfqId, lines: lines.join("\n") });
+  const copyNote = async () => {
+    try {
+      await navigator.clipboard.writeText(note);
+      setStatus("copied");
+    } catch {
+      setStatus("failed");
+    }
+  };
+  return (
+    <div className="mt-2 font-normal">
+      <button type="button" className="rounded border px-2 py-1 text-[11px]" data-testid={`rfq-comparison-copy-note-${response.supplierId}`} data-note={note} onClick={() => void copyNote()}>{copy("copyNote")}</button>
+      {status && <div className="mt-1 text-[11px]" role="status" style={{ color: A.sub }}>{copy(status === "copied" ? "noteCopied" : "noteCopyFailed")}</div>}
+    </div>
   );
 }
 

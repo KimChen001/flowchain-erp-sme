@@ -1270,6 +1270,11 @@ model PurchaseOrder {
   receivingBaseStatus String?
   version             Int       @default(0)
   metadata            Json?
+  // When the PO was issued to the supplier: written once by the Issue action
+  // and never changed (a database trigger refuses a change). Null means the
+  // issue date was not recorded (POs issued before it was kept, or received
+  // without being issued).
+  issuedAt            DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
@@ -1278,6 +1283,7 @@ model PurchaseOrder {
 
   @@index([tenantId, status])
   @@index([tenantId, expectedDate])
+  @@index([tenantId, issuedAt])
 }
 
 model PurchaseOrderLine {
@@ -1293,9 +1299,10 @@ model PurchaseOrderLine {
   unitPrice        Decimal? @db.Decimal(18, 4)
   amount           Decimal? @db.Decimal(18, 4)
   metadata         Json?
-  // The date the supplier first promised once the PO was issued. Set once and
-  // never changed (a database trigger refuses a change); null means the
-  // original promise was not recorded. The current expected date stays in
+  // The date the supplier first promised, recorded when the PO is approved (or
+  // issued, for a line dated after approval). Set once and never changed (a
+  // database trigger refuses a change); null means the original promise was
+  // not recorded. The current expected date stays in
   // metadata.promisedDate, falling back to PurchaseOrder.expectedDate.
   originalPromisedDate DateTime?
 
@@ -1303,6 +1310,7 @@ model PurchaseOrderLine {
   promiseRevisions PurchaseOrderPromiseRevision[]
 
   @@index([purchaseOrderId])
+  @@index([itemId])
 }
 
 // One row for every change to a line's promised date after the PO is issued.
@@ -2978,7 +2986,7 @@ model InventoryAdjustmentDocument {
 model InventoryAdjustmentLine {
   id                 String  @id
   adjustmentId       String
-  inventoryBalanceId String
+  inventoryBalanceId String?
   itemId             String?
   sku                String
   itemName           String?

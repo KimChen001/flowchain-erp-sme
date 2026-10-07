@@ -86,6 +86,7 @@ import { CanonicalRfqComparisonPage } from "../modules/procurement/CanonicalRfqC
 import FinanceWorkbench from "../modules/finance/Page";
 import SrmPage from "../modules/srm/Page";
 import MasterDataPage from "../modules/master-data/Page";
+import DataImportPage from "../modules/master-data/DataImportPage";
 import AiPanel, { type ActiveContext } from "../modules/ai-assistant/Panel";
 import {
   ActionDraftReviewShell,
@@ -108,6 +109,7 @@ import {
 } from "../components/business/businessEntityRoutes";
 import OutboundWorkbench from "../modules/sales/OutboundWorkbench";
 import InventoryOperationsWorkbench from "../modules/inventory/InventoryOperationsWorkbench";
+import ReorderListPage from "../modules/inventory/ReorderListPage";
 import MobileOperationsPage from "../modules/mobile/MobileOperationsPage";
 import ReturnQuarantineWorkbench from "../modules/inventory/ReturnQuarantineWorkbench";
 import { useI18n } from "../i18n/I18n";
@@ -1089,6 +1091,7 @@ export default function FlowChainApp() {
     ),
     "outbound-workbench": <OutboundWorkbench />,
     "inventory-operations": <InventoryOperationsWorkbench />,
+    "inventory-reorder": <ReorderListPage />,
     "returns-quarantine": <ReturnQuarantineWorkbench />,
     procurement: (
       <ProcurementPanel
@@ -1116,6 +1119,7 @@ export default function FlowChainApp() {
         onActiveContextChange={setAiActiveContext}
       />
     ),
+    "data-import": <DataImportPage />,
     finance: (
       <FinanceWorkbench
         initialView={activeView as any}

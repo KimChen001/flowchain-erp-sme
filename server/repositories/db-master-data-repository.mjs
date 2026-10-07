@@ -45,11 +45,18 @@ function safeLimit(value, fallback = 200) {
   return Math.min(500, Math.max(1, Number(value || fallback)))
 }
 
+// The unit someone recorded for the item's stock; '' when none is. mapItem's
+// baseUnit falls back to 'pcs' for forms, which is not a recorded unit.
+export function recordedItemUnit(record = {}) {
+  const meta = metadata(record)
+  return text(record.unit || meta.baseUom || meta.uom)
+}
+
 function mapItem(record = {}) {
   const meta = metadata(record)
   const itemId = text(record.id || record.sku)
   const itemName = text(record.name || record.sku)
-  const baseUnit = text(record.unit || meta.baseUom || meta.uom, 'pcs')
+  const baseUnit = text(recordedItemUnit(record), 'pcs')
   return {
     id: itemId,
     itemId,
@@ -63,6 +70,7 @@ function mapItem(record = {}) {
     specification: text(meta.specification || meta.spec),
     baseUom: baseUnit,
     baseUnit,
+    recordedUnit: recordedItemUnit(record),
     purchaseUnit: text(meta.purchaseUnit, baseUnit),
     // Only a warehouse someone set: drafts and data-quality checks rely on it.
     defaultWarehouseId: meta.defaultWarehouseId || meta.warehouseId || '',
@@ -308,6 +316,19 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
         orderBy: [{ sku: 'asc' }],
       }, { limit: safeLimit(filters.limit), subject: 'items', onTruncated: filters.onTruncated })
       return records.map(mapItem)
+    },
+    // The recorded stock unit of each item a list of SKUs or item ids names
+    // (the purchase order lines of a read context), whatever the size of the
+    // item list: { sku, itemId, unit }, unit '' when none is recorded.
+    listRecordedItemUnits: async (filters = {}) => {
+      const keys = [...new Set((Array.isArray(filters.keys) ? filters.keys : []).map((key) => text(key)).filter(Boolean))]
+      if (!keys.length) return []
+      const client = await resolvePrisma({ env, prisma })
+      const records = await client.item.findMany({
+        where: { ...tenantWhere(filters), OR: [{ sku: { in: keys } }, { id: { in: keys } }] },
+        select: { id: true, sku: true, unit: true, metadata: true },
+      })
+      return records.map((record) => ({ sku: text(record.sku), itemId: text(record.id), unit: recordedItemUnit(record) }))
     },
     getItem: async (idOrSku = '', options = {}) => {
       const client = await resolvePrisma({ env, prisma })

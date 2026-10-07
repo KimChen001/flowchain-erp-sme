@@ -62,6 +62,8 @@ jobs:
       - run: npm run test:db:walkthrough-scenario
       - run: npm run test:db:tenant-scoped-reads
       - run: npm run test:db:master-data-writes
+      - run: npm run test:db:data-import
+      - run: npm run test:api:data-import
       - run: npm run test:db:supplier-tiers
       - run: npm run test:db:supplier-insights
       - run: npm run test:db:ai-workspace-access
@@ -93,6 +95,7 @@ jobs:
       - run: npm run test:api:mobile-sync-controls
       - run: npm run test:db:po-command-atomicity
       - run: npm run test:db:procurement-flow
+      - run: npm run test:db:supplier-choice
       - run: npm run test:db:original-promise
       - run: npm run test:db:supplier-scorecard
       - run: npm run test:db:finance-read-permissions
