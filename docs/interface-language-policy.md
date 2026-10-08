@@ -83,7 +83,11 @@ names, or supplier names in place. Translate their presentation where appropriat
   orders, receiving, bills, three-way match), inventory stock, transfers, counts and
   adjustments (lists and new forms), sales risks, evidence and invoices, finance
   overview, payables, receivables and aging, the reports overview and the open
-  assistant. Deferred: the sales order and shipment workbench (`/app/sales/orders`,
+  assistant. On the walkthrough data the harness adds two trial sales orders (three
+  lines; on hold with no customer name), and the spec checks their translated labels
+  on the risk and evidence pages in English and their Chinese labels in zh-CN. The
+  order drawer and its review panel are translated but not checked in a browser: no
+  link opens the drawer (a sales order focus goes to `/app/sales/orders/:id`). Deferred: the sales order and shipment workbench (`/app/sales/orders`,
   `OutboundWorkbench.tsx`) until #173 and #178; the inventory filter chips
   (`src/modules/inventory/Page.tsx`) until #182; shell strings in
   `src/app/FlowChainApp.tsx` until #174 and #179; an order's evidence graph, whose

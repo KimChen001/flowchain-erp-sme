@@ -42,14 +42,14 @@ const ROUTES = [
   // #173 and #178 land.
 ];
 
-async function signIn(page: Page) {
+async function signIn(page: Page, language: "en-US" | "zh-CN" = "en-US") {
   const response = await page.request.post("/api/auth/login", {
     data: { email: "admin@flowchain.local", name: "English trial", company: "FlowChain" },
   });
   expect(response.ok()).toBeTruthy();
   const session = await response.json();
   await page.route("**/api/me/localization", (route) => route.fulfill({
-    json: { languagePreference: "en-US", defaultLanguage: "en-US", effectiveLanguage: "en-US", locale: "en-US", timezone: "America/New_York" },
+    json: { languagePreference: language, defaultLanguage: "en-US", effectiveLanguage: language, locale: "en-US", timezone: "America/New_York" },
   }));
   await page.addInitScript(({ token, user }) => {
     localStorage.setItem("flowchain:auth-token", token);
@@ -108,4 +108,61 @@ test("English trial: the assistant opens in English", async ({ page }) => {
   await expect(panel).toBeVisible();
   await expect(panel.getByTestId("ai-empty-prompt-chip").first()).toBeVisible();
   await expectEnglish(page);
+});
+
+// The sales orders the harness adds under PLAYWRIGHT_US_TRIAL on the
+// walkthrough data: LOCAL-TRIAL-SO-101 has three lines; LOCAL-TRIAL-SO-102 is
+// on hold and has no recorded customer name. The read API sends their labels
+// in Chinese; the page translates them when shown.
+//
+// The order drawer with its review panel (OrderDetailModal, ReviewActionPanel)
+// is not checked here: no link opens it. "View order" goes to the sales order
+// workbench, and a sales order focus is routed to /app/sales/orders/:id.
+test.describe("sales delivery risks with the trial orders", () => {
+  test.skip(process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY === "true", "the trial orders are seeded on the walkthrough data only");
+
+  test("English: server labels, the unnamed customer and the multi-line item are translated", async ({ page }) => {
+    await signIn(page);
+    await page.goto("/app/sales/risks");
+    await settle(page);
+    const multiLine = page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ });
+    await expect(multiLine).toContainText("Harbor Supply Co");
+    await expect(multiLine).toContainText("Flow Controller and 2 more");
+    await expect(multiLine).toContainText("High risk");
+    await expect(multiLine).toContainText("Order quantities are not fully covered by reservations or fulfillment records; a delivery shortage remains.");
+    const onHold = page.getByRole("row", { name: /LOCAL-TRIAL-SO-102/ });
+    await expect(onHold).toContainText("Unnamed customer");
+    await expect(onHold).toContainText("Blocked");
+    await expect(onHold).toContainText("The order is on hold. Review delivery conditions and next steps.");
+    await expectEnglish(page);
+
+    await page.goto("/app/sales/evidence");
+    await settle(page);
+    const evidenceRow = page.getByRole("row", { name: /LOCAL-TRIAL-SO-102/ });
+    await expect(evidenceRow).toContainText("Unnamed customer");
+    await expect(evidenceRow).toContainText("Shortage risk");
+    await expect(evidenceRow).toContainText("Blocked");
+    await expect(page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ })).toContainText("Flow Controller and 2 more");
+    await expectEnglish(page);
+  });
+
+  test("Chinese: the same page shows the Chinese halves", async ({ page }) => {
+    await signIn(page, "zh-CN");
+    await page.goto("/app/sales/risks");
+    await settle(page);
+    await expect(page.getByText("交付风险查询", { exact: true })).toBeVisible();
+    const multiLine = page.getByRole("row", { name: /LOCAL-TRIAL-SO-101/ });
+    await expect(multiLine).toContainText("Flow Controller 等 3 个物料");
+    await expect(multiLine).toContainText("高风险");
+    await expect(multiLine).toContainText("订单数量尚未被库存预留或履约记录覆盖，存在交付缺口。");
+    const onHold = page.getByRole("row", { name: /LOCAL-TRIAL-SO-102/ });
+    await expect(onHold).toContainText("未命名客户");
+    await expect(onHold).toContainText("已阻塞");
+    await expect(onHold).toContainText("订单已暂停，需要复核交付条件和后续处理。");
+    await expect(page.locator("main").first()).not.toContainText(/Unnamed customer|Blocked|and 2 more/);
+
+    await page.goto("/app/sales/evidence");
+    await settle(page);
+    await expect(page.getByRole("row", { name: /LOCAL-TRIAL-SO-102/ })).toContainText("缺货风险");
+  });
 });

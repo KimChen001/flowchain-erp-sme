@@ -340,6 +340,32 @@ async function seedCanonicalRfqBrowserScenario(client) {
   }
 }
 
+// US trial only, on the walkthrough data: two more sales orders for the
+// English trial spec's delivery risk checks. One has three lines, so the read
+// API names it after its first item; the other is on hold without a recorded
+// customer name, so it is blocked and shows the unnamed-customer label. No
+// stock is reserved for either, and no other phase sees them.
+async function seedUsTrialSalesOrders(client) {
+  const items = Object.fromEntries((await client.item.findMany({ where: { tenantId, sku: { in: ["LDM-001", "LDM-002", "LDM-003"] } } })).map((item) => [item.sku, item]));
+  const metadata = { browserAcceptance: true, usTrial: true };
+  const promisedDate = new Date(Date.now() + 7 * 86_400_000);
+  const line = (id, sku, orderedQuantity) => ({ id, itemId: items[sku].id, sku, itemName: items[sku].name, orderedQuantity, unit: items[sku].unit || "pcs", metadata });
+  await client.salesOrder.create({
+    data: {
+      id: "LOCAL-TRIAL-SO-101", tenantId, orderNumber: "LOCAL-TRIAL-SO-101", customerName: "Harbor Supply Co", workflowStatus: "confirmed",
+      promisedDate, currency: "USD", metadata,
+      lines: { create: [line("LOCAL-TRIAL-SOL-101-1", "LDM-001", 12), line("LOCAL-TRIAL-SOL-101-2", "LDM-002", 8), line("LOCAL-TRIAL-SOL-101-3", "LDM-003", 20)] },
+    },
+  });
+  await client.salesOrder.create({
+    data: {
+      id: "LOCAL-TRIAL-SO-102", tenantId, orderNumber: "LOCAL-TRIAL-SO-102", customerName: "", workflowStatus: "on_hold",
+      promisedDate, currency: "USD", metadata,
+      lines: { create: [line("LOCAL-TRIAL-SOL-102-1", "LDM-002", 5)] },
+    },
+  });
+}
+
 async function cleanup() {
   await new Promise((resolveClose) => server?.close(resolveClose) || resolveClose());
   await prisma?.$disconnect().catch(() => {});
@@ -407,6 +433,7 @@ try {
   await seedLocalDemo(prisma, process.env);
   if (process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY !== "true") {
     await seedLocalScenario(prisma, process.env);
+    if (usTrial) await seedUsTrialSalesOrders(prisma);
     if (process.env.PLAYWRIGHT_CANONICAL_RFQ_DETAIL === "true" || process.env.PLAYWRIGHT_CANONICAL_RFQ_COMPARISON === "true" || process.env.PLAYWRIGHT_CANONICAL_RFQ_SUPPLIER_RESPONSE === "true") {
       await seedCanonicalRfqBrowserScenario(prisma);
     }
