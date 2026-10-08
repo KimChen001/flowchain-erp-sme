@@ -356,11 +356,15 @@ export type ReceivingDocLine = {
   rejectedQty: number;
   warehouseId?: string;
   unit?: string;
+  // The lot number recorded on the receiving line, when one was.
+  lotNumber?: string;
   status?: string;
 };
 
 export type ReceivingDoc = {
   grn: string;
+  // The receipt number recorded on the document; grn is its id.
+  documentNumber?: string;
   po: string;
   supplier: string;
   arrived: string;
