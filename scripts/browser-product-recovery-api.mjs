@@ -46,6 +46,18 @@ const pg = new EmbeddedPostgres({
 });
 let prisma;
 let server;
+// PLAYWRIGHT_US_TRIAL=true turns on the documented US trial capability set
+// (server/domain/us-trial-capabilities.test.mjs) and an English workspace
+// default, so the English trial spec reaches finance, sales and inventory
+// operations. Without it the walkthrough keeps receiving posting only.
+const usTrial = process.env.PLAYWRIGHT_US_TRIAL === "true";
+const usTrialFlags = usTrial ? {
+  FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: "true",
+  FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: "true",
+  FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
+  FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "true",
+  FLOWCHAIN_ENABLE_DATA_IMPORT: "true",
+} : {};
 
 async function seedComparisonQuotation(client, quote) {
   await client.supplierQuotation.create({
@@ -351,6 +363,7 @@ try {
     FLOWCHAIN_LOCAL_SESSION_SECRET: `product-recovery-${randomUUID()}-secure`,
     SCM_API_PORT: String(apiPort),
     NODE_ENV: "development",
+    ...usTrialFlags,
   });
   await execFileAsync(process.execPath, [prismaCli, "migrate", "deploy"], {
     cwd: root,
@@ -358,7 +371,7 @@ try {
     maxBuffer: 10 * 1024 * 1024,
   });
   prisma = await createPrismaClient(process.env);
-  await prisma.tenant.create({ data: { id: tenantId, name: "Product Recovery Browser Tenant", defaultLanguage: "zh-CN", countryCode: "US", locale: "en-US", currency: "USD", timezone: "America/New_York" } });
+  await prisma.tenant.create({ data: { id: tenantId, name: "Product Recovery Browser Tenant", defaultLanguage: usTrial ? "en-US" : "zh-CN", countryCode: "US", locale: "en-US", currency: "USD", timezone: "America/New_York" } });
   await prisma.user.create({
     data: {
       id: adminActorId,
