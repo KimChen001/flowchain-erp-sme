@@ -9,6 +9,7 @@ import { PaymentRecords } from "./PaymentRecords";
 import { useI18n } from "../../i18n/I18n";
 import { A, Card } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { formatCalendarDay } from "../../lib/format";
 
 type Capability = { enabled?: boolean; maturity?: string; reason?: string };
 type Invoice = {
@@ -120,8 +121,6 @@ const money = (value: string | null | undefined, currency: string, locale: strin
         maximumFractionDigits: 4,
       }).format(Number(value))
     : `${value} ${currency}`;
-const date = (value: string, locale: string) =>
-  value ? new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value)) : "—";
 const canPrepare = () => {
   try {
     const role = String(
@@ -270,7 +269,7 @@ function InvoiceList() {
                   </td>
                   <td className="px-4 py-3">{row.customerName}</td>
                   <td className="px-4 py-3">{row.shipmentNumber || row.shipmentId}</td>
-                  <td className="px-4 py-3">{date(row.dueDate, locale)}</td>
+                  <td className="px-4 py-3">{formatCalendarDay(row.dueDate, locale)}</td>
                   <td className="px-4 py-3 font-medium">
                     {money(row.totalAmount, row.currency, locale)}
                   </td>
@@ -354,7 +353,7 @@ function Receivables() {
                     : row.customerInvoiceNumber || row.obligationNumber}
                 </td>
                 <td className="px-4 py-3">{row.customerName || "—"}</td>
-                <td className="px-4 py-3">{date(row.dueDate, locale)}</td>
+                <td className="px-4 py-3">{formatCalendarDay(row.dueDate, locale)}</td>
                 <td className="px-4 py-3 font-medium">
                   {money(row.outstandingAmount, row.currency, locale)}
                 </td>
@@ -663,7 +662,7 @@ function InvoiceDetail() {
                 ? <Link className="font-semibold text-blue-600 hover:underline" to={`/app/sales/shipments/${encodeURIComponent(data.shipmentId)}`}>{data.shipmentNumber || data.shipmentId}</Link>
                 : "—"}
             </p>
-            <p className="mt-1 text-xs text-slate-500">{t("finance.dueDate")} {date(data.dueDate, locale)}</p>
+            <p className="mt-1 text-xs text-slate-500">{t("finance.dueDate")} {formatCalendarDay(data.dueDate, locale)}</p>
           </div>
           <div className="text-right">
             <strong>{money(data.totalAmount, data.currency, locale)}</strong>
@@ -696,7 +695,7 @@ function InvoiceDetail() {
             <h3 className="font-semibold">{t("finance.receivables")} · {receivable.obligationNumber || receivable.id}</h3>
             <div className="flex items-center gap-2"><strong>{money(receivable.outstandingAmount, receivable.currency, locale)}</strong><StatusChip status={receivable.status} /></div>
           </div>
-          <div className="text-xs text-slate-500">{t("finance.dueDate")} {date(receivable.dueDate, locale)}</div>
+          <div className="text-xs text-slate-500">{t("finance.dueDate")} {formatCalendarDay(receivable.dueDate, locale)}</div>
           <PaymentRecords kind="receivable" obligation={receivable} onDone={load} />
         </Card>
       )}
