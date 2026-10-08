@@ -1,5 +1,6 @@
-import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
+import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useI18n } from "../../i18n/I18n";
+import { salesDemandEnglish } from "./salesDemandCopy";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Boxes, ClipboardList, FileText, PackageSearch, ShoppingCart, Truck, Users } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -59,6 +60,7 @@ type SalesOrder = {
   linkedExceptionCases: string[];
   evidence: Array<{ type: string; id: string; label: string; summary?: string; status?: string }>;
   dataLimitations: string[];
+  lines?: Array<{ sku?: string; itemName?: string }>;
 };
 
 type SalesSummary = {
@@ -113,6 +115,30 @@ function limitationLabel(code: string) {
   } as Record<string, string>)[code] || code;
 }
 
+// Display copy in the interface language: the page's own map first, then the
+// workspace dictionary. Server labels (status, risk, tier) are translated here,
+// when shown; the values the server sends are never changed. New copy is
+// written in English with its Chinese translation through say().
+function useSalesCopy() {
+  const { language } = useI18n();
+  return useMemo(() => {
+    const english = language === "en-US";
+    const copy = (label: string) => (english ? salesDemandEnglish[label] || workspaceCopy(label, language) : workspaceCopy(label, language));
+    const say = (englishText: string, chineseText: string) => (english ? englishText : chineseText);
+    // The read API names a customer without a recorded name "未命名客户";
+    // recorded names are shown as stored.
+    const customerLabel = (order: SalesOrder) => (order.customerName === "未命名客户" ? copy("未命名客户") : order.customerName);
+    // An order with several lines is named after its first item; the read API
+    // writes that name in Chinese, so the English one is built from the lines.
+    const itemLabel = (order: SalesOrder) => {
+      const lines = order.lines || [];
+      if (!english || lines.length < 2) return order.itemName;
+      return `${lines[0].itemName || lines[0].sku || order.sku} and ${lines.length - 1} more`;
+    };
+    return { copy, say, customerLabel, itemLabel };
+  }, [language]);
+}
+
 // Quantities follow the workspace number locale.
 function useQty() {
   const { formatNumber } = useI18n();
@@ -134,7 +160,7 @@ export default function SalesDemandPage(props: SalesDemandPageProps) {
 }
 
 function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDemandPageProps) {
-  const copy = useWorkspaceCopy();
+  const { copy, customerLabel, itemLabel } = useSalesCopy();
   const qty = useQty();
   const [searchParams, setSearchParams] = useSearchParams();
   const view = viewFromInitial(initialView);
@@ -274,16 +300,16 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
                   {visibleOrders.map((order, index) => (
                     <tr key={order.salesOrderId} data-testid={`sales-order-${order.salesOrderId}`} style={{ borderBottom: index < visibleOrders.length - 1 ? `1px solid ${A.border}` : "none", background: selectedOrder?.salesOrderId === order.salesOrderId ? "#f0f6ff" : A.white }}>
                       <td className="px-3 py-3 tabular-nums" style={{ color: A.blue }}><EntityLink kind="sales_order" id={order.salesOrderId}>{order.salesOrderId}</EntityLink></td>
-                      <td className="px-3 py-3" style={{ color: A.label }}>{order.customerName}</td>
+                      <td className="px-3 py-3" style={{ color: A.label }}>{customerLabel(order)}</td>
                       <td className="px-3 py-3">
                         <div className="tabular-nums" style={{ color: A.label }}><EntityLink kind="item" id={order.itemId}>{order.sku}</EntityLink></div>
-                        <div className="fc-caption truncate max-w-[180px]" style={{ color: A.sub }}>{order.itemName}</div>
+                        <div className="fc-caption truncate max-w-[180px]" style={{ color: A.sub }}>{itemLabel(order)}</div>
                       </td>
                       <td className="px-3 py-3 tabular-nums" style={{ color: A.label }}>{qty(order.orderedQty)}</td>
                       <td className="px-3 py-3 tabular-nums" style={{ color: A.green }}>{qty(order.reservedQty)}</td>
                       <td className="px-3 py-3 tabular-nums font-semibold" style={{ color: order.shortageQty > 0 ? A.red : A.gray2 }}>{qty(order.shortageQty)}</td>
                       <td className="px-3 py-3" style={{ color: A.sub }}>{order.promisedDate || copy("待确认")}</td>
-                      <td className="px-3 py-3"><Chip label={order.deliveryRiskLabel} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
+                      <td className="px-3 py-3"><Chip label={copy(order.deliveryRiskLabel)} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
                       <td className="px-3 py-3" style={{ color: A.sub }}>{copy(order.statusLabel)}</td>
                       <td className="px-3 py-3">
                         <Link to={`/app/sales/orders/${encodeURIComponent(order.salesOrderId)}`} className="px-2.5 py-1.5 rounded-md font-medium" style={{ background: A.gray6, color: A.blue }}>{copy("查看详情")}</Link>
@@ -319,17 +345,17 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
                 {riskOrders.map((order) => (
                   <tr key={order.salesOrderId} style={{ borderBottom: `1px solid ${A.border}` }}>
                     <td className={tdIdClass}><EntityLink kind="sales_order" id={order.salesOrderId}>{order.salesOrderId}</EntityLink></td>
-                    <td className={tdNameClass}>{order.customerName}</td>
+                    <td className={tdNameClass}>{customerLabel(order)}</td>
                     <td className={tdNameClass}>
                       <EntityLink kind="item" id={order.itemId}>{order.sku}</EntityLink>
-                      <div className="max-w-[180px] truncate text-xs" style={{ color: A.sub }}>{order.itemName}</div>
+                      <div className="max-w-[180px] truncate text-xs" style={{ color: A.sub }}>{itemLabel(order)}</div>
                     </td>
                     <td className={tdNumericClass}>{qty(order.orderedQty)}</td>
                     <td className={tdNumericClass}>{qty(order.reservedQty)}</td>
                     <td className={tdNumericClass}>{qty(order.fulfilledQty)}</td>
                     <td className={`${tdNumericClass} font-semibold`} style={{ color: order.shortageQty > 0 ? A.red : A.gray2 }}>{qty(order.shortageQty)}</td>
                     <td className={tdNowrapClass}>{order.promisedDate || copy("待确认")}</td>
-                    <td className={tdNowrapClass}><Chip label={order.deliveryRiskLabel} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
+                    <td className={tdNowrapClass}><Chip label={copy(order.deliveryRiskLabel)} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
                     <td className="max-w-[320px] px-4 py-3">
                       <div className="line-clamp-2 text-xs" style={{ color: A.gray1 }}>{copy(order.deliveryRiskReason)}</div>
                       {order.dataLimitations.length > 0 && (
@@ -375,7 +401,7 @@ function OrderDetailModal({
   onNavigate?: EvidenceNavigate;
   onOpenAi?: () => void;
 }) {
-  const copy = useWorkspaceCopy();
+  const { copy, say, customerLabel, itemLabel } = useSalesCopy();
   const qty = useQty();
   if (!order) return null;
   const allocationRiskColor = allocation?.riskLevel === "low" ? A.green : allocation?.riskLevel === "medium" ? A.orange : A.red;
@@ -383,14 +409,14 @@ function OrderDetailModal({
     <BusinessObjectDetailModal
       open={Boolean(order)}
       onClose={onClose}
-      title={`${order.salesOrderId} · ${order.customerName}`}
-      subtitle={`${order.sku} / ${order.itemName}`}
+      title={`${order.salesOrderId} · ${customerLabel(order)}`}
+      subtitle={`${order.sku} / ${itemLabel(order)}`}
       width={1120}
     >
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-2">
           <Chip label={copy(order.statusLabel)} color={A.blue} bg="#f0f6ff" />
-          <Chip label={order.deliveryRiskLabel} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} />
+          <Chip label={copy(order.deliveryRiskLabel)} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} />
           <span className="text-xs" style={{ color: A.sub }}>{copy("承诺日期")} {order.promisedDate || copy("待确认")}</span>
         </div>
 
@@ -398,17 +424,17 @@ function OrderDetailModal({
           { label: "订单数量", value: qty(order.orderedQty) },
           { label: "已预留", value: qty(order.reservedQty), tone: "good" },
           { label: "缺口", value: qty(order.shortageQty), tone: order.shortageQty > 0 ? "danger" : "default" },
-          { label: "优先级", value: order.priority, tone: order.priority === "高" ? "warning" : "default" },
+          { label: "优先级", value: copy(order.priority), tone: order.priority === "高" ? "warning" : "default" },
         ]} />
 
         <DetailSection title={copy("基本信息")}>
           <DetailFieldGrid fields={[
-            { label: "客户", value: order.customerName },
-            { label: "客户层级", value: order.customerTier },
+            { label: "客户", value: customerLabel(order) },
+            { label: "客户层级", value: copy(order.customerTier) },
             { label: "SKU", value: order.sku },
-            { label: "物料", value: order.itemName },
-            { label: "状态", value: order.statusLabel },
-            { label: "风险原因", value: order.deliveryRiskReason, tone: "warning" },
+            { label: "物料", value: itemLabel(order) },
+            { label: "状态", value: copy(order.statusLabel) },
+            { label: "风险原因", value: copy(order.deliveryRiskReason), tone: "warning" },
             { label: "关联供应商", value: order.linkedSuppliers.map((supplier) => supplier.name).join("; ") || "待关联" },
             { label: "异常工单", value: order.linkedExceptionCases.join("; ") || "暂无" },
           ]} />
@@ -425,19 +451,19 @@ function OrderDetailModal({
             ]} />
           ) : (
             <div className="text-xs leading-6" style={{ color: A.orange }}>
-              {allocationWarning || "当前工作区暂未读取到完整库存分配记录，因此可承诺量和预留建议需人工复核。"}
+              {copy(allocationWarning || "当前工作区暂未读取到完整库存分配记录，因此可承诺量和预留建议需人工复核。")}
             </div>
           )}
         </DetailSection>
 
         <EvidenceSummaryPanel groups={[
-          { label: "客户订单", value: `${order.salesOrderId} · ${order.customerName} · ${copy(order.statusLabel)}` },
-          { label: "SKU库存", value: `${order.sku} · 已预留 ${qty(order.reservedQty)} · 缺口 ${qty(order.shortageQty)}`, tone: order.shortageQty > 0 ? "danger" : "good" },
-          { label: "采购订单", value: order.linkedPurchaseOrders.map((po) => `${po.id} ${po.status || ""} ${po.expectedDate || ""}`).join("; ") || "暂无完整采购订单关联" },
-          { label: "供应商", value: order.linkedSuppliers.map((supplier) => `${supplier.name}${supplier.risk ? ` · ${supplier.risk}` : ""}`).join("; ") || "暂无完整供应商记录" },
-          { label: "收货单", value: order.linkedReceivingDocs.map((grn) => `${grn.id} ${grn.status || ""}`).join("; ") || "暂无完整收货记录" },
-          { label: "发票财务", value: "按当前采购、收货与供应商记录人工追溯" },
-          { label: "异常工单", value: order.linkedExceptionCases.join("; ") || "暂无关联异常工单" },
+          { label: "客户订单", value: `${order.salesOrderId} · ${customerLabel(order)} · ${copy(order.statusLabel)}` },
+          { label: "SKU库存", value: say(`${order.sku} · reserved ${qty(order.reservedQty)} · short ${qty(order.shortageQty)}`, `${order.sku} · 已预留 ${qty(order.reservedQty)} · 缺口 ${qty(order.shortageQty)}`), tone: order.shortageQty > 0 ? "danger" : "good" },
+          { label: "采购订单", value: order.linkedPurchaseOrders.map((po) => `${po.id} ${po.status || ""} ${po.expectedDate || ""}`).join("; ") || copy("暂无完整采购订单关联") },
+          { label: "供应商", value: order.linkedSuppliers.map((supplier) => `${supplier.name}${supplier.risk ? ` · ${supplier.risk}` : ""}`).join("; ") || copy("暂无完整供应商记录") },
+          { label: "收货单", value: order.linkedReceivingDocs.map((grn) => `${grn.id} ${grn.status || ""}`).join("; ") || copy("暂无完整收货记录") },
+          { label: "发票财务", value: copy("按当前采购、收货与供应商记录人工追溯") },
+          { label: "异常工单", value: order.linkedExceptionCases.join("; ") || copy("暂无关联异常工单") },
         ]} />
 
         <DataLimitationsPanel items={order.dataLimitations} labelFor={code => copy(limitationLabel(code))} />
@@ -451,7 +477,7 @@ function OrderDetailModal({
           </div>
         </DetailSection>
 
-        <ReviewActionPanel objectLabel={`客户订单 ${order.salesOrderId}`} />
+        <ReviewActionPanel objectLabel={say(`Sales order ${order.salesOrderId}`, `客户订单 ${order.salesOrderId}`)} />
 
         <DetailSection title={copy("审计与时间线")}>
           <div className="grid grid-cols-3 gap-2 text-[11px] leading-5" style={{ color: A.sub }}>
@@ -476,7 +502,7 @@ function EvidenceChainView({
   onSelectOrder: (orderId: string) => void;
   onNavigate?: EvidenceNavigate;
 }) {
-  const copy = useWorkspaceCopy();
+  const { copy, say, customerLabel, itemLabel } = useSalesCopy();
   const qty = useQty();
   const hasSelectedOrder = Boolean(selectedOrderId);
   const selectedOrder = allOrders.find((order) => order.salesOrderId === selectedOrderId) || null;
@@ -518,8 +544,8 @@ function EvidenceChainView({
     sourceRoute: "sales:evidence",
     sourceEntityType: "sales_order",
     sourceEntityId: selectedOrder.salesOrderId,
-    sourceLabel: `客户订单 ${selectedOrder.salesOrderId}`,
-    returnLabel: `返回客户订单 ${selectedOrder.salesOrderId}`,
+    sourceLabel: say(`Sales order ${selectedOrder.salesOrderId}`, `客户订单 ${selectedOrder.salesOrderId}`),
+    returnLabel: say(`Back to sales order ${selectedOrder.salesOrderId}`, `返回客户订单 ${selectedOrder.salesOrderId}`),
     originIntent: "evidenceGraph",
   } : null;
 
@@ -538,8 +564,8 @@ function EvidenceChainView({
     <Card className="p-4">
       <SectionHeader title={copy("工作区关联摘要")} right={<Chip label={copy("需人工复核")} color={A.orange} bg="#fff8f0" />} />
       <div className="grid grid-cols-1 gap-1.5 text-[11px] leading-5">
-        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ClipboardList size={12} />{copy("客户订单：")}{selectedOrder.customerName} · {copy(selectedOrder.statusLabel)}</div>
-        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><PackageSearch size={12} />{copy("SKU库存：")}{selectedOrder.sku} / {selectedOrder.itemName}{copy("· 已预留")}{qty(selectedOrder.reservedQty)}{copy("· 缺口")}{qty(selectedOrder.shortageQty)}</div>
+        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ClipboardList size={12} />{copy("客户订单：")}{customerLabel(selectedOrder)} · {copy(selectedOrder.statusLabel)}</div>
+        <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><PackageSearch size={12} />{copy("SKU库存：")}{selectedOrder.sku} / {itemLabel(selectedOrder)}{copy("· 已预留")}{qty(selectedOrder.reservedQty)}{copy("· 缺口")}{qty(selectedOrder.shortageQty)}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><ShoppingCart size={12} />{copy("采购订单：")}{selectedOrder.linkedPurchaseOrders.map((po) => `${po.id} ${po.status || ""}`).join("; ") || copy("暂无完整采购订单关联")}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><Users size={12} />{copy("供应商：")}{selectedOrder.linkedSuppliers.map((supplier) => `${supplier.name}${supplier.risk ? ` · ${supplier.risk}` : ""}`).join("; ") || copy("暂无完整供应商记录")}</div>
         <div className="flex items-center gap-1.5" style={{ color: A.gray1 }}><Truck size={12} />{copy("收货单：")}{selectedOrder.linkedReceivingDocs.map((grn) => `${grn.id} ${grn.status || ""}`).join("; ") || copy("暂无完整收货记录")}</div>
@@ -573,13 +599,13 @@ function EvidenceChainView({
               {allOrders.map((order) => (
                 <tr key={order.salesOrderId} style={{ borderBottom: `1px solid ${A.border}`, background: selectedOrderId === order.salesOrderId ? "#f0f6ff" : A.white }}>
                   <td className={tdIdClass}><EntityLink kind="sales_order" id={order.salesOrderId}>{order.salesOrderId}</EntityLink></td>
-                  <td className={tdNameClass}>{order.customerName}</td>
+                  <td className={tdNameClass}>{customerLabel(order)}</td>
                   <td className={tdNameClass}>
                     <EntityLink kind="item" id={order.itemId}>{order.sku}</EntityLink>
-                    <div className="max-w-[200px] truncate text-xs" style={{ color: A.sub }}>{order.itemName}</div>
+                    <div className="max-w-[200px] truncate text-xs" style={{ color: A.sub }}>{itemLabel(order)}</div>
                   </td>
                   <td className={tdNowrapClass}>{copy(order.statusLabel)}</td>
-                  <td className={tdNowrapClass}><Chip label={order.deliveryRiskLabel} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
+                  <td className={tdNowrapClass}><Chip label={copy(order.deliveryRiskLabel)} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} /></td>
                   <td className={tdNumericClass}>{qty(order.shortageQty)}</td>
                   <td className={tdActionClass}>
                     <button
@@ -603,13 +629,13 @@ function EvidenceChainView({
           <EvidenceGraphPanel
             graph={graph}
             loading={loading}
-            error={error === RESTRICTED_GRAPH ? t("evidence.restricted") : error}
+            error={error === RESTRICTED_GRAPH ? t("evidence.restricted") : copy(error)}
             onNavigate={onNavigate}
             onRetry={retry}
             onBack={() => onNavigate?.("sales")}
             onReturnList={() => onNavigate?.("sales")}
-            onReturnSource={() => onNavigate?.("sales", { entityType: "sales_order", entityId: selectedOrderId }, { returnTo: "sales:evidence", entityLabel: `客户订单 ${selectedOrderId}`, returnContext })}
-            sourceLabel={selectedOrder ? `客户订单 ${selectedOrder.salesOrderId}` : ""}
+            onReturnSource={() => onNavigate?.("sales", { entityType: "sales_order", entityId: selectedOrderId }, { returnTo: "sales:evidence", entityLabel: say(`Sales order ${selectedOrderId}`, `客户订单 ${selectedOrderId}`), returnContext })}
+            sourceLabel={selectedOrder ? say(`Sales order ${selectedOrder.salesOrderId}`, `客户订单 ${selectedOrder.salesOrderId}`) : ""}
             returnContext={returnContext}
             returnTo="sales:evidence"
             showReturnPath={false}
