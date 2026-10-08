@@ -127,10 +127,20 @@ function quantity(item: Item) {
 function reorder(item: Item) {
   return Number(item.reorderPoint ?? item.safetyStock ?? 0);
 }
+// The safety stock and reorder point are one figure for the whole item, so
+// they are set against the item's available stock over every location shown,
+// as the reorder list sets them against the item's stock; a location's row is
+// never judged on its own (65 EA over A-01 and an unlocated record is above a
+// reorder point of 40, though each row alone is below it).
+function availableBySku(items: Item[]) {
+  const totals = new Map<string, number>();
+  for (const item of items) totals.set(item.sku, (totals.get(item.sku) || 0) + quantity(item));
+  return totals;
+}
 // Below the safety stock, or at or below the reorder point, as the reorder
 // list and the assistant judge it. 0 means none is recorded.
-function isShort(item: Item) {
-  const available = quantity(item);
+function isShort(item: Item, totals: Map<string, number>) {
+  const available = totals.get(item.sku) ?? quantity(item);
   const safetyStock = Number(item.safetyStock || 0);
   const reorderPoint = Number(item.reorderPoint || 0);
   return (safetyStock > 0 && available < safetyStock) || (reorderPoint > 0 && available <= reorderPoint);
@@ -214,9 +224,10 @@ export default function InventoryPage({
     if (focus?.entityId) setSelectedSku(focus.entityId);
   }, [focus?.entityId]);
   const items = rows as Item[];
+  const totals = useMemo(() => availableBySku(items), [items]);
   const visible = useMemo(
-    () => (view === "warnings" ? items.filter(isShort) : rows),
-    [items, rows, view],
+    () => (view === "warnings" ? items.filter((item) => isShort(item, totals)) : rows),
+    [items, rows, totals, view],
   );
   const selected =
     view === "overview" || view === "warnings"
@@ -382,7 +393,8 @@ export default function InventoryPage({
                       {Number(item.safetyStock || 0)} / {reorder(item)}
                     </td>
                     <td className="px-4 py-3">
-                      {view === "warnings" && isShort(item) ? (
+                      {/* Both pages say when stock is below safety stock or at the reorder point, as the warnings page lists it. */}
+                      {isShort(item, totals) ? (
                         <Chip label="需补货" color={A.orange} bg="#fff7e8" />
                       ) : (
                         <Chip
@@ -485,7 +497,7 @@ export default function InventoryPage({
             <AlertTriangle
               size={15}
               color={
-                view === "warnings" && isShort(selected) ? A.orange : A.green
+                isShort(selected, totals) ? A.orange : A.green
               }
             />
             <h3 className="text-sm font-semibold">{copy("库存详情")} · {selected.sku}</h3>

@@ -22,6 +22,9 @@ function run(spec, extra = {}) {
 }
 const main = await run("tests/browser/inventory-operations.spec.ts");
 if (main !== 0) process.exit(main);
+// Stock level on the balances and warnings pages, judged per item.
+const levels = await run("tests/browser/inventory-stock-levels.spec.ts");
+if (levels !== 0) process.exit(levels);
 process.exit(
   await run("tests/browser/inventory-operations-disabled.spec.ts", {
     PLAYWRIGHT_INVENTORY_OPERATIONS_DISABLED: "true",
