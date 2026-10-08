@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { FileSpreadsheet, Package, Search, Truck, Users, Warehouse } from "lucide-react";
-import ContextualImportActions from "../../components/import/ContextualImportActions";
-import { A, Card, KpiCard } from "../../components/ui";
+import { FileSpreadsheet, Search } from "lucide-react";
+import { A, Card } from "../../components/ui";
 import type { ActiveContext } from "../ai-assistant/Panel";
 import MasterDataTables from "./MasterDataTables";
 import { fetchMasterDataSnapshot, masterDataErrorStatus, type AsyncDataStatus, type MasterDataSnapshot } from "./api";
@@ -28,17 +27,6 @@ const LOAD_ERRORS: Record<string, string> = {
   server_error: "The master data service failed. Try again later.",
   network_error: "Could not reach the master data service. Check your network or the local API.",
 };
-
-const IMPORT_LABELS = {
-  overview: ["基础资料", "基础资料"],
-  items: ["物料资料", "物料"],
-  suppliers: ["供应商资料", "供应商"],
-  customers: ["客户资料", "客户"],
-  warehouses: ["仓库资料", "仓库"],
-  "tax-codes": ["税码", "税码"],
-  "payment-terms": ["付款条款", "付款条款"],
-  "print-templates": ["打印模板", "打印模板"],
-} satisfies Record<MasterDataTab, [string, string]>;
 
 export default function MasterDataPage({
   initialView = "items",
@@ -98,32 +86,27 @@ export default function MasterDataPage({
   const filteredTemplates = useMemo(() => templateCatalog.filter((item) => matches([item.name, copy(item.name), item.documentType, copy(item.documentType)])), [query, templateCatalog, copy]);
 
   function exportCurrent() {
-    if (tab === "items" || tab === "warehouses" || tab === "tax-codes" || tab === "payment-terms") {
-      exportMasterDataCsv(tab, { items: masterData.items, warehouses: filteredWarehouses, taxCodes: filteredTaxCodes, paymentTerms: filteredPaymentTerms }, copy);
+    if (tab === "warehouses" || tab === "tax-codes" || tab === "payment-terms") {
+      exportMasterDataCsv(tab, { warehouses: filteredWarehouses, taxCodes: filteredTaxCodes, paymentTerms: filteredPaymentTerms }, copy);
     }
   }
 
-  const [entityLabel, templateName] = IMPORT_LABELS[tab];
+  // Items have their own list page, laid out like the other list pages.
+  if (tab === "items" || tab === "overview" || tab === "suppliers") {
+    return <ItemMasterWorkbench focus={focus} onNavigate={onNavigate} />;
+  }
 
   if (loadStatus === "loading") return <Card className="p-6" aria-live="polite">{copy("正在加载基础资料…")}</Card>;
   if (!["ready_with_data", "ready_empty"].includes(loadStatus)) {
     return <Card className="p-6"><h2 className="text-sm font-semibold" style={{ color: A.red }}>{copy("基础资料加载失败")}</h2><p className="mt-2 text-sm" style={{ color: A.sub }}>{copy(LOAD_ERRORS[loadStatus] || LOAD_ERRORS.server_error)}</p><button onClick={() => window.location.reload()} className="mt-4 rounded-lg bg-slate-100 px-3 py-2 text-sm">{copy("重新加载")}</button></Card>;
   }
 
-  const canExport = tab === "items" || tab === "warehouses" || tab === "tax-codes" || tab === "payment-terms";
+  const canExport = tab === "warehouses" || tab === "tax-codes" || tab === "payment-terms";
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-4 gap-3">
-        <KpiCard label={copy("物料资料")} value={String(masterData.items.length)} sub={copy("{count} incomplete", { count: masterData.items.filter((item) => item.status === "待完善").length })} icon={Package} color={A.blue} />
-        <KpiCard label={copy("供应商资料")} value={String(masterData.suppliers.length)} sub={copy("{count} high risk", { count: masterData.suppliers.filter((item) => item.riskStatus === "高").length })} icon={Truck} color={A.purple} />
-        <KpiCard label={copy("仓库 / 库位")} value={String(masterData.warehouses.length)} sub={copy("{count} available", { count: masterData.warehouses.filter((item) => item.available).length })} icon={Warehouse} color={A.green} />
-        <KpiCard label={copy("客户资料")} value={String(masterData.customers.length)} sub={copy("{count} need attention", { count: masterData.customers.filter((item) => item.creditStatus === "受限" || item.creditStatus === "待评估").length })} icon={Users} color={A.orange} />
-      </div>
-
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <ContextualImportActions entityLabel={entityLabel} templateName={templateName} compact />
           <div className="h-8 px-2 rounded-lg flex items-center gap-1.5" style={{ background: A.white, boxShadow: "0 0 0 0.5px rgba(0,0,0,0.08)" }}>
             <Search size={12} style={{ color: A.gray2 }} />
             <input value={search} onChange={(event) => setSearch(event.target.value)}
@@ -140,9 +123,7 @@ export default function MasterDataPage({
       </div>
 
       <Card>
-        {tab === "items" || tab === "overview" || tab === "suppliers" ? (
-          <ItemMasterWorkbench focus={focus} onNavigate={onNavigate} />
-        ) : tab === "customers" ? (
+        {tab === "customers" ? (
           <CustomerTable customers={filteredCustomers} onChanged={() => setReloadKey((key) => key + 1)} />
         ) : tab === "print-templates" ? (
           <PrintTemplateTable templates={filteredTemplates} onCopy={(item) => setTemplateCatalog((current) => [...current, { ...item, id: `${item.id}-copy-${Date.now()}`, copyOf: item.copyOf || item.name, isDefault: false, updatedAt: new Date().toISOString() }])} />

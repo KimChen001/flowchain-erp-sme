@@ -21,7 +21,8 @@ const source = (path) => readFileSync(new URL(`../../${path}`, import.meta.url),
 function itemExportHeaders() {
   const exportSource = source('src/modules/master-data/export.ts')
   const items = exportSource.slice(exportSource.indexOf('items: {'), exportSource.indexOf('warehouses: {'))
-  const english = [...items.matchAll(/\["([^"]+)",\s*(?:item\.|yesNo|copy)/g)].map((match) => match[1])
+  // A column items do not record is exported empty ("").
+  const english = [...items.matchAll(/\["([^"]+)",\s*(?:item\.|yesNo|copy|"")/g)].map((match) => match[1])
   const copy = source('src/modules/master-data/masterDataFormat.ts')
   const chinese = (label) => copy.match(new RegExp(`"${label.replace(/[()]/g, '\\$&')}":\\s*"([^"]+)"`))?.[1] || label
   return english.map((en) => ({ en, zh: chinese(en) }))

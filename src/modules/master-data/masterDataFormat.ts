@@ -40,6 +40,20 @@ const zh: Record<string, string> = {
   "Default bin": "默认库位", "Safety stock": "安全库存", "Maximum stock": "最大库存", "Reorder point": "再订货点",
   "Lead time (days)": "采购提前期（天）", "Batch managed": "批次管理", "Serial managed": "序列号管理", "QA required": "质检要求",
   "Default supplier": "默认供应商", "Default tax code": "默认税码",
+  // The items list page.
+  "Items": "物料总数", "{count} active": "{count} 个启用", "Inactive items": "停用物料",
+  "Kept for history, not offered on new documents": "保留历史记录，新单据中不再提供",
+  "No reorder point": "未设再订货点", "Active items the reorder list cannot check": "补货清单无法检查的启用物料",
+  "No preferred supplier": "无首选供应商", "Active items without a supplier to order from": "没有可下单供应商的启用物料",
+  "Item search": "物料查询", "Search items by SKU, name, status, type and category.": "按 SKU、名称、状态、类型和分类查询物料。",
+  "Reset": "重置", "Export results": "导出当前结果", "Search": "搜索", "Type": "类型", "Filter by type": "按类型筛选",
+  "All types": "全部类型", "Filter by category": "按分类筛选", "All categories": "全部分类", "Item list": "物料列表",
+  "{total} items, {shown} shown": "共 {total} 个物料，当前显示 {shown} 个", "MOQ": "最小起订量", "Preferred supplier": "首选供应商",
+  "No items match these filters": "没有符合筛选条件的物料",
+  "Create an item or import a file of items to get started.": "新建物料或导入物料文件即可开始。",
+  "Uncategorized": "未分类", "Not set: the reorder list does not check this item": "未设置：补货清单不会检查该物料",
+  "View": "查看", "Material": "物料", "Purchase unit": "采购单位",
+  "Safety stock / reorder point": "安全库存 / 再订货点", "Lead time": "提前期", "{count} days": "{count} 天",
 };
 const en = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [chinese, english]));
 
