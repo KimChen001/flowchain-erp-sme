@@ -106,7 +106,7 @@ function Action({ action, primary, onNavigate, onReviewActionDraft, language }: 
   }
   const request = reviewRequest(action.card);
   if (!request || !onReviewActionDraft) return null;
-  return <button type="button" onClick={() => onReviewActionDraft(request)} data-testid="ai-action-draft-preview" data-action-kind="generate_text_draft" className={primary ? "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold"} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{action.label || rendererCopy[language].textDraft}</button>;
+  return <button type="button" onClick={() => onReviewActionDraft(request)} data-testid="ai-action-draft-preview" data-action-kind="generate_text_draft" data-draft-type={action.card.draftType || ""} className={primary ? "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold"} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{action.label || rendererCopy[language].textDraft}</button>;
 }
 
 // One part of a compound answer: its title and summary, in the answer

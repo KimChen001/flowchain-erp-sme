@@ -1,3 +1,4 @@
+import { aiSkillDraftBasis } from '../domain/ai-skill-drafts.mjs'
 import { withoutUnavailableProductLinks } from '../../shared/unavailable-product-routes.mjs'
 import { withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
 import { aiAgentKnowledge, handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
@@ -36,7 +37,7 @@ async function addKnowledgeContext(ctx, body, response) {
   if (classifyQueryScope(body) !== 'mixed') return response
   try {
     const knowledge = await runKnowledgeQuery(ctx, body, { force: true })
-    return { ...response, supplementalKnowledge: { title: knowledge.conclusion.title, summary: knowledge.conclusion.summary, rag: knowledge.rag } }
+    return aiSkillDraftBasis({ ...response, supplementalKnowledge: { title: knowledge.conclusion.title, summary: knowledge.conclusion.summary, rag: knowledge.rag } })
   } catch {
     const zh = body.answerLanguage === 'zh-CN'
     return { ...response, supplementalKnowledge: { title: zh ? '知识库暂时不可用' : 'Knowledge temporarily unavailable', summary: zh ? '业务查询已完成，但本次未能读取相关政策或产品资料。请稍后重试。' : 'The business query completed, but supporting policy or product documents could not be retrieved. Try again later.', rag: { mode: 'unavailable', citations: [] } } }

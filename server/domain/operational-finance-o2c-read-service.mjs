@@ -4,6 +4,7 @@ import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 import { OperationalFinanceReadError } from "./operational-finance-read-service.mjs";
 import { financeFixed as fixed, financeUnits as units } from "./operational-finance-policy.mjs";
 import { paymentRecordsView } from "./payment-record-command-service.mjs";
+import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from "./tenant-calendar-day.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const decimal = (value) =>
@@ -188,11 +189,26 @@ function localDateNumber(date, timezone) {
   return Date.UTC(Number(value.year), Number(value.month) - 1, Number(value.day));
 }
 
+// A due date is a calendar day, stored at 00:00 UTC as the invoice form
+// writes it, so it is read as that UTC day. Read in the workspace timezone it
+// would fall a day early in the US, and an invoice due today would age by a
+// day. "Today" is the workspace's calendar day.
+function dueDayNumber(dueDate) {
+  const day = new Date(dueDate);
+  return Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate());
+}
+
 export function agingDays(dueDate, asOf, timezone) {
   return Math.floor(
-    (localDateNumber(asOf, timezone) - localDateNumber(dueDate, timezone)) /
-      86_400_000,
+    (localDateNumber(asOf, timezone) - dueDayNumber(dueDate)) / 86_400_000,
   );
+}
+
+// The first instant of the workspace's calendar day as a stored due date:
+// a receivable is overdue when its due day is before it, so one due today
+// is not overdue until the workspace's next day.
+export function overdueBefore(asOf, timezone = DEFAULT_TENANT_TIMEZONE) {
+  return new Date(`${tenantCalendarDay(asOf, timezone)}T00:00:00.000Z`);
 }
 
 export function agingBucket(days) {
@@ -207,9 +223,9 @@ export function agingBucket(days) {
 // status says "overdue" only after a dispute is resolved, so overdue is derived
 // from the due date instead. The landing count and the receivables list's
 // "overdue" filter both use this rule, so the count and the list agree.
-export function overdueReceivableWhere(asOf) {
+export function overdueReceivableWhere(asOf, timezone) {
   return {
-    dueDate: { lt: asOf },
+    dueDate: { lt: overdueBefore(asOf, timezone) },
     outstandingAmount: { gt: 0 },
     status: { in: ["open", "partially_settled", "overdue"] },
   };
@@ -221,6 +237,13 @@ export function createOperationalFinanceO2cReadService({
   now = () => new Date(),
 } = {}) {
   if (!prisma) throw new Error("prisma is required");
+  const workspaceTimezone = async (tenantId) =>
+    (
+      await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { timezone: true },
+      })
+    )?.timezone || DEFAULT_TENANT_TIMEZONE;
 
   async function actor(context) {
     return resolveProvisionedActor(prisma, context?.identity || context);
@@ -352,7 +375,7 @@ export function createOperationalFinanceO2cReadService({
     const where = {
       tenantId: current.tenantId,
       ...(status === "overdue"
-        ? overdueReceivableWhere(now())
+        ? overdueReceivableWhere(now(), await workspaceTimezone(current.tenantId))
         : status
           ? { status }
           : {}),
@@ -386,11 +409,7 @@ export function createOperationalFinanceO2cReadService({
     const current = await actor(context);
     assertRead(current, "finance.receivable.read");
     const amountsVisible = amountsVisibleFor(current);
-    const workspace = await prisma.tenant.findUnique({
-      where: { id: current.tenantId },
-      select: { timezone: true },
-    });
-    const timezone = workspace?.timezone || "America/New_York";
+    const timezone = await workspaceTimezone(current.tenantId);
     const asOf = text(query.asOf) ? new Date(text(query.asOf)) : now();
     if (Number.isNaN(asOf.getTime()))
       fail("AGING_AS_OF_INVALID", "asOf must be a valid date.", 422);
@@ -575,6 +594,7 @@ export function createOperationalFinanceO2cReadService({
     const current = await actor(context);
     assertRead(current, "finance.overview.read");
     const asOf = now();
+    const timezone = await workspaceTimezone(current.tenantId);
     const [
       supplierInvoicesAwaitingMatch,
       matchExceptions,
@@ -608,7 +628,7 @@ export function createOperationalFinanceO2cReadService({
         where: { tenantId: current.tenantId, status: "approved" },
       }),
       prisma.receivableObligation.count({
-        where: { tenantId: current.tenantId, ...overdueReceivableWhere(asOf) },
+        where: { tenantId: current.tenantId, ...overdueReceivableWhere(asOf, timezone) },
       }),
       prisma.receivableObligation.count({
         where: {
