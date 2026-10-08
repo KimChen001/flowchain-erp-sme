@@ -3,6 +3,7 @@ const denied = (send, res) => send(res, 403, { code: "PERMISSION_DENIED", messag
 import { createHash } from "node:crypto";
 import { createProcurementRequestCommandService } from "../services/procurement-request-command-service.mjs";
 import { recommendProcurementPath } from "../domain/procurement-workflow.mjs";
+import { createPurchaseOrderDocumentReadService } from "../domain/purchase-order-document-read-service.mjs";
 const PROCUREMENT_PATH_POLICY = Object.freeze({
   directPurchaseThreshold: 50000,
   rfqRequiredAboveAmount: 100000,
@@ -17,6 +18,8 @@ const purchaseOrderCommands = (ctx) => {
   if (!ctx.repositories?.procurementAuthority) throw new Error("PostgreSQL procurement authority is not configured.");
   return ctx.repositories.procurementAuthority;
 };
+const purchaseOrderDocuments = (ctx) => ctx.repositories?.purchaseOrderDocuments
+  || createPurchaseOrderDocumentReadService({ env: ctx.env || process.env });
 const PURCHASE_ORDER_ACTIONS = Object.freeze({
   submit: "submitPurchaseOrder",
   approve: "approvePurchaseOrder",
@@ -104,6 +107,16 @@ export async function handleProcurementWorkflowRoute(ctx) {
       const access = await procurementReadAccess(ctx);
       const order = await purchaseOrderCommands(ctx).readPurchaseOrder(decodeURIComponent(orderDetail[1]), ctx, { includePrices: access.prices, includePartner: true });
       return access.prices ? order : { ...order, restrictedFields: ["amounts"] };
+    });
+  // The printable PO a person sends: read exactly as the detail above (same
+  // permission, tenant and price masking), then built from what is recorded.
+  // Without prices the document comes back marked not printable.
+  const orderDocument = url.pathname.match(/^\/api\/procurement\/orders\/([^/]+)\/document$/);
+  if (req.method === "GET" && orderDocument)
+    return respond(ctx, 200, async () => {
+      const access = await procurementReadAccess(ctx);
+      const order = await purchaseOrderCommands(ctx).readPurchaseOrder(decodeURIComponent(orderDocument[1]), ctx, { includePrices: access.prices, includePartner: true });
+      return { document: await purchaseOrderDocuments(ctx).readPurchaseOrderDocument({ tenantId: ctx.identity.tenantId, order, access }) };
     });
   const poAction = url.pathname.match(
     /^\/api\/procurement\/orders\/([^/]+)\/(submit|approve|reject|return-for-revision|issue|cancel|close)$/,

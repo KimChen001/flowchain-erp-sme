@@ -14,6 +14,7 @@ import { createInternalSettlementReadService } from "../domain/internal-settleme
 import { createInternalTransferCommandService } from "../domain/internal-transfer-command-service.mjs";
 import { createAdvanceApplicationCommandService } from "../domain/advance-application-command-service.mjs";
 import { createPaymentRecordCommandService } from "../domain/payment-record-command-service.mjs";
+import { createCustomerInvoiceDocumentReadService } from "../domain/customer-invoice-document-read-service.mjs";
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 
@@ -119,6 +120,7 @@ async function services(ctx) {
     transferCommand: ctx.internalTransferCommandService || createInternalTransferCommandService({ prisma, env }),
     advanceCommand: ctx.advanceApplicationCommandService || createAdvanceApplicationCommandService({ prisma, env }),
     payment: ctx.paymentRecordCommandService || createPaymentRecordCommandService({ prisma, env }),
+    invoiceDocuments: ctx.customerInvoiceDocumentReadService || createCustomerInvoiceDocumentReadService({ prisma, env }),
   };
 }
 
@@ -127,7 +129,7 @@ export async function handleOperationalFinanceRoute(ctx) {
   if (!path.startsWith("/api/finance/")) return false;
   if (!ensureBoundary(ctx)) return true;
   try {
-    const { read, command, o2cRead, o2cCommand, settlementRead, settlementCommand, transferCommand, advanceCommand, payment } = await services(ctx);
+    const { read, command, o2cRead, o2cCommand, settlementRead, settlementCommand, transferCommand, advanceCommand, payment, invoiceDocuments } = await services(ctx);
     if (ctx.req.method === "GET" && path === "/api/finance/entry-data") {
       const [p2p, o2c, settlement] = await Promise.all([
         read.entryData(ctx),
@@ -585,6 +587,26 @@ export async function handleOperationalFinanceRoute(ctx) {
           ? await command.previewApproveSupplierCreditMemo(memoId, body, ctx)
           : await command.approveSupplierCreditMemo(memoId, body, ctx),
       );
+      return true;
+    }
+
+    // The printable invoice a person sends: read exactly as the detail below
+    // (same permission, tenant and field masking), then built from what is
+    // recorded. Without amounts or the customer it comes back not printable.
+    const customerInvoiceDocument = path.match(
+      /^\/api\/finance\/customer-invoices\/([^/]+)\/document$/,
+    );
+    if (customerInvoiceDocument && ctx.req.method === "GET") {
+      const invoice = await o2cRead.customerInvoiceDetail(
+        decodeURIComponent(customerInvoiceDocument[1]),
+        ctx,
+      );
+      ctx.send(ctx.res, 200, {
+        document: await invoiceDocuments.readCustomerInvoiceDocument({
+          tenantId: ctx.identity.tenantId,
+          invoice,
+        }),
+      });
       return true;
     }
 

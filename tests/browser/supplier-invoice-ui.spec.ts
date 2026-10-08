@@ -36,6 +36,12 @@ async function enterInvoice(page: Page, number: string, quantity: string, unitPr
 }
 
 async function run(page: Page, id: string, reason?: string) {
+  // A status-only step runs on one click (D4); the step is done when its button goes.
+  if ((await page.getByTestId(id).getAttribute("data-one-step")) === "true") {
+    await page.getByTestId(id).click();
+    await expect(page.getByTestId(id)).toHaveCount(0);
+    return;
+  }
   await page.getByTestId(id).click();
   if (reason) await page.getByTestId(`${id}-reason`).fill(reason);
   await page.getByTestId(`${id}-preview`).click();

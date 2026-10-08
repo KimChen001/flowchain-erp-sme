@@ -4,6 +4,7 @@ import { apiJson } from "../../lib/api-client";
 import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import AuthorizationWorkbench from "./AuthorizationWorkbench";
+import DocumentTemplateSettings from "./DocumentTemplateSettings";
 import WorkspaceMembers from "./WorkspaceMembers";
 
 type Profile = {
@@ -229,7 +230,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
   // effective permissions, not the legacy profile role.
   if (view === "roles") return <div className="space-y-5"><WorkspaceMembers /><AuthorizationWorkbench /></div>;
 
-  return <Card className="p-5" data-testid={`workspace-settings-${view}`}>
+  const settingsCard = <Card className="p-5" data-testid={`workspace-settings-${view}`}>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h2 className="text-lg font-semibold">{title}</h2><p className="mt-1 text-sm text-slate-500">{workspace.workspaceName}</p></div>
       {view === "profile" && <SaveActions state={profileState} onCancel={() => setProfile(savedProfile)} onSave={saveProfile} />}
@@ -283,4 +284,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       {canReadDiagnostics && diagnostics && <div className="rounded-xl border p-4" data-testid="admin-diagnostics"><div className="flex items-center justify-between"><h3 className="font-semibold">{t("settings.systemReadiness")}</h3><span className="text-xs uppercase">{diagnostics.overall}</span></div><div className="mt-3 grid gap-2 md:grid-cols-2">{diagnostics.checks.map(check => <div key={check.id} className="rounded-lg bg-slate-50 p-3 text-sm"><span className="font-semibold">{check.status.toUpperCase()}</span> · {check.id}</div>)}</div><div className="mt-3 text-xs text-slate-500">{formatDateTime(diagnostics.generatedAt)}</div></div>}
     </div>}
   </Card>;
+  // The letterhead and document templates sit with the company they print.
+  if (view === "company") return <div className="space-y-5">{settingsCard}<DocumentTemplateSettings canEdit={canEditWorkspace} /></div>;
+  return settingsCard;
 }
