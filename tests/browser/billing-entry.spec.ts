@@ -21,6 +21,12 @@ async function signIn(page: Page, email: string) {
 }
 
 async function run(page: Page, id: string) {
+  // A status-only step runs on one click (D4); the step is done when its button goes.
+  if ((await page.getByTestId(id).getAttribute("data-one-step")) === "true") {
+    await page.getByTestId(id).click();
+    await expect(page.getByTestId(id)).toHaveCount(0);
+    return;
+  }
   await page.getByTestId(id).click();
   await page.getByTestId(`${id}-preview`).click();
   await expect(page.getByTestId(`${id}-confirm`)).toBeEnabled();
@@ -99,7 +105,9 @@ test("a waiting bill is linked to its receipt, then matched and approved", async
   await expect(page.getByTestId("link-receipt-confirm")).toBeEnabled();
   await page.getByTestId("link-receipt-confirm").click();
   await expect(page.getByTestId("supplier-invoice-awaiting-receipt")).toHaveCount(0);
-  await expect(page.getByTestId("supplier-invoice-sources")).toContainText("finance-browser-grn");
+  // The receipt shows by its GRN number, not its stored id.
+  await expect(page.getByTestId("supplier-invoice-sources")).toContainText("GRN-FIN-BROWSER");
+  await expect(page.getByTestId("supplier-invoice-sources")).not.toContainText("finance-browser-grn");
   await run(page, "invoice-match");
   await expect(page.getByTestId("supplier-invoice-match")).toBeVisible();
   await run(page, "invoice-approve");

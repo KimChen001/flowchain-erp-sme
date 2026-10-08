@@ -14,6 +14,7 @@ const ROUTES = [
   "/app/procurement/workbench",
   "/app/procurement/orders",
   "/app/procurement/orders/LOCAL-DEMO-PO-002",
+  "/app/procurement/orders/LOCAL-DEMO-PO-021/document",
   "/app/procurement/requests",
   "/app/procurement/requests/LOCAL-DEMO-PR-001",
   "/app/procurement/rfq",
@@ -173,9 +174,17 @@ test("purchase request amounts use the document currency", async ({ page }) => {
   await page.goto("/app/procurement/requests/LOCAL-DEMO-PR-001");
   await expect(page.getByText("$5,000.00").first()).toBeVisible();
   await page.goto("/app/overview/risks");
+  // Today lists the request among the day's work, earliest date first. The
+  // list and its Show all button render together once the work has loaded,
+  // so wait for the list before deciding whether to expand it.
+  await expect(page.getByTestId("today-work-item").first()).toBeVisible();
+  const showAll = page.getByRole("button", { name: /^Show all \d+$/ });
+  if (await showAll.count()) await showAll.click();
   await expect(page.getByText("Request amount $5,000.00")).toBeVisible();
-  await expect(page.getByRole("row", { name: /LOCAL-DEMO-PO-013/ })).toContainText("$2,460.00");
-  await expect(page.locator("main").first()).not.toContainText(/Request amount 5000|\b2460\.0000\b/);
+  // Recent documents of every type show the amount in the document's
+  // currency; on the walkthrough the bills written last lead the list.
+  await expect(page.getByTestId("recent-documents").locator("tbody tr").first()).toContainText(/\$\d{1,3}(,\d{3})*\.\d{2}/);
+  await expect(page.locator("main").first()).not.toContainText(/Request amount 5000|\b\d+\.\d{4}\b/);
 });
 
 test("the purchase orders header totals committed orders only, per currency", async ({ page }) => {

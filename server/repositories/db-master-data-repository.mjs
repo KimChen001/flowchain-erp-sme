@@ -119,8 +119,10 @@ function mapSupplier(record = {}) {
     risk: record.riskLevel || meta.risk || 'medium',
     score,
     scoreSource: score ? 'explicit' : meta.scoreSource || 'missing',
-    defaultCurrency: meta.defaultCurrency || meta.currency || 'USD',
-    paymentTermsId: meta.paymentTermsId || meta.paymentTerms || 'NET30',
+    // Only recorded values: an empty currency or payment term stays null
+    // ("not recorded"), never a USD or NET30 default.
+    defaultCurrency: text(meta.defaultCurrency || meta.currency) || null,
+    paymentTermsId: text(meta.paymentTermsId || meta.paymentTerms) || null,
     categories: Array.isArray(meta.categories) ? meta.categories : [record.category || meta.category || 'General'].filter(Boolean),
     contactName: text(meta.contactName || meta.contact),
     telephone: text(meta.telephone || meta.phone),
@@ -187,6 +189,8 @@ function mapPaymentTerm(record = {}) {
   const meta = metadata(record)
   return {
     id: record.code || record.id,
+    // The row id, which the supplier import stores as a supplier's term.
+    recordId: record.id,
     label: record.name || record.code || record.id,
     days: numberFrom(record.days, 30),
     status: meta.status || 'active',

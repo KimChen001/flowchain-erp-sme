@@ -74,3 +74,79 @@ declare module '../../../shared/data-import-columns.mjs' {
   export function dataImportCsv(rows: ReadonlyArray<ReadonlyArray<unknown>>): string;
   export function dataImportCsvCell(value: unknown): string;
 }
+declare module '../../../shared/business-documents.mjs' {
+  export type DocumentLanguage = 'en-US' | 'zh-CN';
+  export type PurchaseOrderColumns = { supplierSku: boolean; requestedDate: boolean; promisedDate: boolean };
+  export type CustomerInvoiceColumns = { tax: boolean };
+  // A calendar day (YYYY-MM-DD) or an instant (ISO), as the value was stored.
+  export type RecordedDayOrInstant = { day: string | null; instant: string | null };
+  export type DocumentSettings = {
+    version: 1;
+    documentLanguage: DocumentLanguage;
+    letterhead: { companyName: string | null; addressLines: string[]; phone: string | null; email: string | null; taxId: string | null };
+    purchaseOrder: { title: string | null; columns: PurchaseOrderColumns; termsText: string; footerText: string; signatureBlock: boolean };
+    customerInvoice: { title: string | null; columns: CustomerInvoiceColumns; showPaymentSummary: boolean; paymentInstructions: string; termsText: string; footerText: string };
+  };
+  // Every value is the recorded one or null; amounts and quantities are decimal strings.
+  export type PurchaseOrderDocument = {
+    kind: 'purchase_order';
+    orderId: string | null;
+    number: string | null;
+    status: string | null;
+    issuedAt: string | null;
+    approvedAt: string | null;
+    expectedDate: string | null;
+    documentLanguage: DocumentLanguage;
+    printable: { ok: boolean; reason: null | 'status' | 'prices_hidden' };
+    buyer: { companyName: string | null; addressLines: string[]; phone: string | null; email: string | null; taxId: string | null };
+    supplier: { name: string | null; code: string | null; contactName: string | null; email: string | null; telephone: string | null; address: string | null; postalCode: string | null };
+    shipTo: { code: string | null; name: string | null };
+    currency: string | null;
+    lines: Array<{ lineNo: number; sku: string | null; supplierSku: string | null; description: string | null; quantity: string | null; unit: string | null; unitPrice: string | null; amount: string | null; requestedDate: string | null; promisedDate: string | null }>;
+    totals: Array<{ currency: string | null; amount: string | null }>;
+    title: string | null;
+    columns: PurchaseOrderColumns;
+    termsText: string | null;
+    footerText: string | null;
+    signatureBlock: boolean;
+  };
+  // Every value is the recorded one or null; amounts and quantities are decimal strings.
+  export type CustomerInvoiceDocument = {
+    kind: 'customer_invoice';
+    invoiceId: string | null;
+    number: string | null;
+    status: string | null;
+    invoiceDate: RecordedDayOrInstant;
+    dueDate: string | null;
+    salesOrderNumber: string | null;
+    shipmentNumber: string | null;
+    documentLanguage: DocumentLanguage;
+    printable: { ok: boolean; reason: null | 'status' | 'not_issued' | 'amounts_hidden' };
+    seller: { companyName: string | null; addressLines: string[]; phone: string | null; email: string | null; taxId: string | null };
+    billTo: { name: string | null; code: string | null; contactName: string | null; email: string | null; telephone: string | null; address: string | null };
+    paymentTerms: string | null;
+    currency: string | null;
+    lines: Array<{ lineNo: number; sku: string | null; description: string | null; quantity: string | null; unit: string | null; unitPrice: string | null; amount: string | null; tax: string | null; total: string | null }>;
+    totals: Array<{ currency: string | null; subtotal: string | null; tax: string | null; total: string | null }>;
+    paymentSummary: null | { currency: string | null; amountPaid: string | null; creditsApplied: string | null; balanceDue: string | null };
+    title: string | null;
+    columns: CustomerInvoiceColumns;
+    paymentInstructions: string | null;
+    termsText: string | null;
+    footerText: string | null;
+  };
+  export const DOCUMENT_LANGUAGES: readonly DocumentLanguage[];
+  export const PRINTABLE_PURCHASE_ORDER_STATUSES: readonly string[];
+  export const PURCHASE_ORDER_COLUMNS: readonly (keyof PurchaseOrderColumns)[];
+  export const PRINTABLE_CUSTOMER_INVOICE_STATUSES: readonly string[];
+  export const PREVIEW_CUSTOMER_INVOICE_STATUSES: readonly string[];
+  export const CUSTOMER_INVOICE_COLUMNS: readonly (keyof CustomerInvoiceColumns)[];
+  export const DOCUMENT_SETTINGS_LIMITS: Readonly<{ companyName: number; addressLines: number; addressLine: number; phone: number; email: number; taxId: number; title: number; termsText: number; footerText: number; paymentInstructions: number }>;
+  export const documentSettingsSeed: DocumentSettings;
+  export function normalizeDocumentSettings(value: unknown): DocumentSettings;
+  export function validateDocumentSettings(value: unknown): DocumentSettings;
+  export function buildPurchaseOrderDocument(input: unknown): PurchaseOrderDocument;
+  export function buildCustomerInvoiceDocument(input: unknown): CustomerInvoiceDocument;
+  export function recordedDayOrInstant(value: unknown): RecordedDayOrInstant;
+  export function recordedPaymentTerms(value: unknown, terms?: ReadonlyArray<{ id?: string | null; code?: string | null; name?: string | null }>): string | null;
+}

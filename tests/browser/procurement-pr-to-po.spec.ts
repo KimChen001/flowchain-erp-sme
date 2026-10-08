@@ -21,8 +21,10 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   await expect(supplier).toHaveValue('browser-supplier')
   await expect(page.getByLabel('Estimated unit price 1')).toHaveValue('4.25')
   // Earlier PO prices show beside the price; the item has none yet, and the
-  // price stays the supplier's reference price.
-  await expect(page.getByTestId('pr-line-price-history-1')).toHaveText('No issued PO for this item yet')
+  // price stays the supplier's reference price. A retry reuses the first
+  // attempt's database, where the item may already have an issued PO.
+  const firstAttempt = test.info().retry === 0
+  if (firstAttempt) await expect(page.getByTestId('pr-line-price-history-1')).toHaveText('No issued PO for this item yet')
   // The buyer agrees a price below the reference price, so the PO price
   // (4.10) and the reference price (4.25) tell the two sources apart below.
   await page.getByLabel('Estimated unit price 1').fill('4.10')
@@ -37,33 +39,36 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   expect(submitted.totalAmount).toBe(49.2)
   const row = page.locator('tr', { hasText: submitted.id })
   await row.getByRole('button', { name: 'Approve' }).click()
-  await expect(row.getByRole('button', { name: 'Create draft PO' })).toBeVisible()
-  await row.getByRole('button', { name: 'Create draft PO' }).click()
+  await expect(row.getByRole('button', { name: 'Create purchase order' })).toBeVisible()
+  await row.getByRole('button', { name: 'Create purchase order' }).click()
 
   await expect.poll(async () => (await api('/api/procurement/orders')).filter((po: { sourceRequest: string }) => po.sourceRequest === submitted.id).length).toBe(1)
   const po = (await api('/api/procurement/orders')).find((order: { sourceRequest: string }) => order.sourceRequest === submitted.id)
-  expect(po.status).toBe('draft')
+  // Approved with the request: no second approval (owner decision D3).
+  expect(po.status).toBe('approved')
   expect(po.amount).toBe(49.2)
   expect(po.currency).toBe('USD')
 
   await page.goto(`/app/procurement/orders/${encodeURIComponent(po.id)}`)
   const issuedField = page.locator('div.min-w-0', { has: page.getByText('Issue date', { exact: true }) }).last()
-  // A draft was never issued, so it says so rather than "not recorded".
+  // Not issued yet, so it says so rather than "not recorded".
   await expect(issuedField).toContainText('Not issued yet')
   await expect(issuedField).not.toContainText('Issue date not recorded')
   // The PO's own line is not its own history.
-  await expect(page.locator('[data-testid^="po-line-price-history-"]').first()).toContainText('No issued PO for this item yet')
-  await page.getByTestId('po-action-submit').click()
-  await expect(page.getByTestId('po-action-approve')).toBeVisible()
-  await page.getByTestId('po-action-approve').click()
+  if (firstAttempt) await expect(page.locator('[data-testid^="po-line-price-history-"]').first()).toContainText('No issued PO for this item yet')
+  await expect(page.getByTestId('po-action-submit')).toHaveCount(0)
+  await expect(page.getByTestId('po-action-approve')).toHaveCount(0)
   await expect(page.getByTestId('po-action-issue')).toBeVisible()
   await page.getByTestId('po-action-issue').click()
-  await expect(page.getByTestId('po-workflow-actions')).toHaveCount(0)
+  // An issued PO still offers Close to a manager, so the panel stays; it now
+  // holds only that. (The panel is briefly absent while the page reloads, so
+  // waiting for it to vanish passed only when a poll hit that moment.)
+  await expect(page.getByTestId('po-workflow-actions').getByRole('button')).toHaveText(['Close PO'])
   await expect(issuedField).toContainText(/\d{4}-\d{2}-\d{2}/)
 
   const issued = await api(`/api/procurement/orders/${encodeURIComponent(po.id)}`)
   expect(issued.status).toBe('issued')
-  expect(issued.version).toBe(3)
+  expect(issued.version).toBe(1)
   expect(issued.totalAmount).toBe('49.2000')
   expect(issued.currency).toBe('USD')
 
@@ -207,6 +212,11 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   await page.getByLabel('SKU 1').selectOption(ids.withPreferred)
   await expect(page.getByLabel('Suppliers 1')).toHaveValue(ids.acme)
   await expect(page.getByTestId('supplier-override-reason-1')).toHaveCount(0)
+  // The preferred supplier's 5-day lead time sets the need-by date, so the
+  // order is not due the day it is placed (walkthrough 2026-10-07).
+  const defaultDay = await page.getByLabel('Default required date').inputValue()
+  const inFiveDays = new Date(Date.parse(`${defaultDay}T12:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10)
+  await expect(field(page, 'Required date').locator('input').first()).toHaveValue(inFiveDays)
   await page.getByLabel('Suppliers 1').selectOption(ids.bolt)
   const picker = page.getByTestId('supplier-override-reason-1')
   await expect(picker).toContainText(`Why not the preferred supplier (Acme ${ids.stamp})?`)
@@ -245,9 +255,33 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
 
   await page.goto('/app/procurement/requests')
   await row.getByRole('button', { name: 'Approve' }).click()
-  await row.getByRole('button', { name: 'Create draft PO' }).click()
+  await row.getByRole('button', { name: 'Create purchase order' }).click()
   await expect.poll(async () => (await api('/api/procurement/orders')).filter((po: { sourceRequest: string }) => po.sourceRequest === submitted.id).length).toBe(1)
   const po = (await api('/api/procurement/orders')).find((order: { sourceRequest: string }) => order.sourceRequest === submitted.id)
   await page.goto(`/app/procurement/orders/${encodeURIComponent(po.id)}`)
   await expect(page.getByTestId('po-line-supplier-override')).toHaveText(flag)
+})
+
+// CI run at 00:03 UTC (2026-10-08): the form's default date started on the
+// browser's UTC day before the workspace timezone loaded, while the lead-time
+// date counted from the workspace day, so they disagreed for five hours a
+// night. A browser on UTC at 00:30 UTC must show the workspace day.
+test.describe('a browser on UTC just after midnight UTC', () => {
+  test.use({ timezoneId: 'UTC' })
+  test('the default and lead-time need-by dates both count from the workspace day', async ({ page, request }) => {
+    const headers = await signIn(page, request)
+    const ids = await supplierChoiceData(request, headers)
+    const now = new Date()
+    const at = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 30))
+    await page.clock.setFixedTime(at)
+    const { timezone } = await (await request.get('/api/me/localization', { headers })).json()
+    const workspaceDay = new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(at)
+    const inFiveDays = new Date(Date.parse(`${workspaceDay}T12:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10)
+
+    await page.goto('/app/procurement/requests')
+    await page.getByLabel('SKU 1').selectOption(ids.withPreferred)
+    await expect(page.getByLabel('Suppliers 1')).toHaveValue(ids.acme)
+    await expect(page.getByLabel('Default required date')).toHaveValue(workspaceDay)
+    await expect(field(page, 'Required date').locator('input').first()).toHaveValue(inFiveDays)
+  })
 })

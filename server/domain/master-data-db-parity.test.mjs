@@ -38,6 +38,9 @@ test('master data seed rows are deterministic and non-mutating', () => {
   assert.deepEqual(first, second)
   assert.equal(first.tenant.id, 'tenant-test')
   assert.equal(first.items[0].preferredSupplierId, 'SUP-1')
+  // A supplier with no recorded payment term is seeded without one, not NET30.
+  assert.equal(Object.hasOwn(first.suppliers[0].metadata, 'paymentTermsId'), false)
+  assert.equal(buildMasterDataSeedRows({ suppliers: [{ id: 'SUP-2', name: 'Termed', paymentTermsId: 'NET45' }] }).suppliers[0].metadata.paymentTermsId, 'NET45')
   assert.equal(preview.rowCounts.items, 1)
   assert.equal(preview.mutatesSource, false)
   assert.deepEqual(db, before)
