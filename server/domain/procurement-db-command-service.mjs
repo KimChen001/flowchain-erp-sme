@@ -67,6 +67,9 @@ function mapLine(line = {}, includePrices = true, purchaseOrder = {}) {
     // when it was not recorded).
     promisedDate: currentPromisedDay(line, purchaseOrder),
     originalPromisedDate: promiseDay(line.originalPromisedDate),
+    // Why the purchase request chose a supplier other than the item's
+    // preferred one, carried from its line; null when none was needed.
+    supplierOverride: line.metadata?.supplierOverride || null,
   };
 }
 

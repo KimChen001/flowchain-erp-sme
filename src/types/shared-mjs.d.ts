@@ -58,6 +58,14 @@ declare module '../../../shared/price-history.mjs' {
   export function priceHistoryKeyString(key: { itemId?: string | null; unit?: string | null; currency?: string | null; supplierId?: string | null }): string;
   export function compareQuote(input: { unitPrice: string | number | null | undefined; history: PriceHistory | null | undefined }): QuoteComparison;
 }
+declare module '../../../shared/supplier-override-reasons.mjs' {
+  export type SupplierOverrideReasonCode = 'price' | 'lead_time' | 'stock_now' | 'quality' | 'moq_fit' | 'customer_specified' | 'other';
+  export type SupplierOverrideIssue = { field: 'reasonCode' | 'note'; code: 'REASON_REQUIRED' | 'REASON_UNKNOWN' | 'NOTE_LENGTH' };
+  export const SUPPLIER_OVERRIDE_REASONS: readonly SupplierOverrideReasonCode[];
+  export const SUPPLIER_OVERRIDE_NOTE_LIMITS: { readonly min: number; readonly max: number };
+  export function overrideNeeded(input: { supplierId?: string | null; preferredId?: string | null; preferredIds?: readonly (string | null | undefined)[] }): boolean;
+  export function validateSupplierOverride(raw: unknown, needed: boolean): { value: { reasonCode: SupplierOverrideReasonCode; note: string | null } | null; issues: SupplierOverrideIssue[] };
+}
 
 declare module '../../../shared/data-import-columns.mjs' {
   export type DataImportColumn = { key: string; en: string; zh: string; required: boolean; example: string; aliases: readonly string[] };

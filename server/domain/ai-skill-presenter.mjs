@@ -109,7 +109,7 @@ export function aiSkillSignalReason(item, facts, language) {
   const data = item.data || {}
   const remaining = fmt.remaining(data) ?? fmt.quantity(data.remaining, data.unit)
   const values = {
-    po_overdue: { days: fmt.number(data.days), remaining, supplier: data.supplier },
+    po_overdue: { days: fmt.number(data.days), date: fmt.day(data.dueDate), remaining, supplier: data.supplier },
     po_due_7d: { date: fmt.day(data.dueDate), remaining, supplier: data.supplier },
     po_partially_received: { received: fmt.number(data.received), ordered: fmt.quantity(data.ordered, data.unit) },
     stock_shortage: { available: fmt.number(data.available), demand: fmt.number(data.demand), shortage: fmt.number(data.shortage), incoming: fmt.number(data.incoming) },

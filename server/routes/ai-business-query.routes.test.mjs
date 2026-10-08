@@ -12,11 +12,11 @@ const item = (id, dueCount = 1) => ({
   payment: { state: dueCount ? 'confirmed' : 'confirmed_zero', dueCount, dueAmount: dueCount ? 100 : 0, overdueCount: 0, overdueAmount: 0, readyCount: dueCount, blockedCount: 0, blocks: [] },
   invoice: { state: 'confirmed_zero', openCount: 0, mismatchCount: 0, disputedCount: 0, missingEvidenceCount: 0 },
   procurement: { state: 'confirmed_zero', openPoCount: 0, overduePoCount: 0, overduePoIds: [], unreceivedPoCount: 0 },
-  receiving: { state: 'confirmed_zero', exceptionCount: 0, rejectedQuantity: 0, pendingEvidenceCount: 0 },
+  receiving: { state: 'confirmed_zero', exceptionCount: 0, rejectedQuantities: [], pendingEvidenceCount: 0 },
   rfq: { state: 'confirmed_zero', awaitingResponseCount: 0, expiredCount: 0 },
   reconciliation: { state: 'confirmed_zero', unreconciledPaymentCount: 0, blockingExceptionCount: 0 },
   dataQuality: { incompleteRecordCount: 0, limitations: [] },
-  priority: { level: 'low', score: 1, reasons: [], algorithmVersion: 'supplier-action-priority-v1' },
+  priority: { since: null, reasons: [] },
   recommendedActions: [], evidence: [],
 })
 const summaryService = { read: async () => ({ items: [item('supplier-a'), item('supplier-b', 0)], recordValiditySummary: { validCount: 2, incompleteCount: 0, invalidCount: 0, hiddenCount: 0, unavailable: false }, fieldVisibility: { amounts: true, partner: true }, sourceStatus: {} }) }

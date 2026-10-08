@@ -21,6 +21,10 @@ function signalFor(evidence, byId, byEntity, bySupplier) {
     || null
 }
 
+// Lines that state a figure (the spend analysis' suppliers, items and months)
+// name no problem, so they get no next step and offer no draft.
+const FIGURE_LINES = new Set(['spend', 'spend_item', 'spend_month'])
+
 export function attachAiSkillNextSteps(response, facts) {
   if (!facts || !response || !array(response.keyEvidence).length) return response
   const language = response.language
@@ -37,6 +41,7 @@ export function attachAiSkillNextSteps(response, facts) {
   const reviewCards = [...array(response.reviewCards)]
   const taken = new Set(reviewCards.map(cardKey))
   const keyEvidence = response.keyEvidence.map((evidence) => {
+    if (FIGURE_LINES.has(evidence.evidenceType)) return evidence
     const signal = signalFor(evidence, byId, byEntity, bySupplier)
     if (!signal) return evidence
     const candidate = aiSkillDraftCandidate(signal, facts)

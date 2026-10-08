@@ -105,3 +105,13 @@ test('an open question about what is going on gets today\'s priorities', () => {
   // "News" is still a question about the outside world.
   assert.equal(routeSkill({ message: 'Any news today?' }).outOfDomain, true)
 })
+
+test('the open problems chip and its earlier wording both reach the open problems list', () => {
+  for (const message of ['What is at risk right now?', '现在有哪些风险？', 'Which items have the highest risk?', '哪些事项风险最高？']) {
+    const route = routeSkill({ message })
+    assert.equal(route.skillId, 'highest_risk_items', message)
+    assert.equal(route.focus, null, message)
+  }
+  // On a record's page the workspace chip stays about the workspace.
+  assert.equal(routeSkill({ message: 'What is at risk right now?', focusTarget: { entityType: 'purchase_order', entityId: 'PO-016' } }).focus, null)
+})

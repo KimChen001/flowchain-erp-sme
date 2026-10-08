@@ -2,6 +2,7 @@ import { getPrismaClient, disconnectPrismaClient } from '../server/persistence/p
 import { assertLocalDevelopment } from '../server/domain/local-development-contract.mjs'
 import { localDemoSupplier } from './setup-local-demo.mjs'
 import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../server/domain/procurement-status-authority.mjs'
+import { isCommittedPurchaseOrder } from '../server/domain/open-purchase-order.mjs'
 import { createReceivingPostingCommandService } from '../server/domain/receiving-posting-command-service.mjs'
 import { applyPromisedDateChanges, recordOriginalPromises } from '../server/domain/purchase-order-promise-dates.mjs'
 import { resolveProvisionedActor } from '../server/domain/pilot-identity.mjs'
@@ -20,7 +21,7 @@ import { resolve } from 'node:path'
 // inventory movements agree. Posted receipts are inventory history: once they
 // exist the scenario keeps its first seed day and refuses a different one.
 // No payables, payments or journal entries are created.
-export const LOCAL_SCENARIO_VERSION = 6
+export const LOCAL_SCENARIO_VERSION = 7
 const WAREHOUSE = 'LOCAL-DEMO-WH-001'
 const BUYERS = ['Kim', 'Dana Whitfield']
 const RECEIVER = 'Luis Ortega'
@@ -330,9 +331,10 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
           metadata: { ...metadata, targetWarehouseId: WAREHOUSE, requestedDate: promisedDate, promisedDate },
         })
       }
-      // An order issued to the supplier keeps its first promised date, as the
-      // issue command records it. Recorded once; a later seed leaves it alone.
-      if (sent) {
+      // A committed order keeps its first promised date, as the approve and
+      // issue commands record it; so does a cancelled order that was sent first.
+      // Recorded once; a later seed leaves it alone.
+      if (isCommittedPurchaseOrder({ status: po.status }) || po.sent) {
         await recordOriginalPromises(tx, { purchaseOrder: await tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { lines: true } }) })
       }
       // A revised promise goes through the same helper as the revise command:
