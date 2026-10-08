@@ -120,8 +120,9 @@ test.before(async () => {
     FLOWCHAIN_PUBLIC_BASE_URL: 'https://flowchain.test',
     FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: 'true',
     FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: 'true',
+    // The test runner turns approval emails off for every other suite.
+    FLOWCHAIN_APPROVAL_EMAILS: 'on',
   })
-  delete process.env.FLOWCHAIN_APPROVAL_EMAILS
   prisma = await createPrismaClient(process.env)
   await prisma.tenant.create({ data: { id: tenantA, name: 'Approval Email A', countryCode: 'US', locale: 'en-US', currency: 'USD', timezone: 'America/New_York', operationalSettings: tolerances } })
   await prisma.tenant.create({ data: { id: tenantB, name: 'Approval Email B' } })
@@ -250,7 +251,7 @@ test('with the kill switch nothing is sent; with a failing provider the command 
     assert.equal(off.result.status, 200, describe(off.result))
     assert.deepEqual(off.messages, [])
   } finally {
-    delete process.env.FLOWCHAIN_APPROVAL_EMAILS
+    process.env.FLOWCHAIN_APPROVAL_EMAILS = 'on'
   }
 
   const failing = createScmServer({
