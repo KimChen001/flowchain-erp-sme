@@ -220,6 +220,42 @@ For staging you can do the same with `staging.getflowchain.com` on `flowchain-st
 
 The mail provider will also ask for DNS records (SPF, DKIM and a return-path CNAME) for the sender domain. Add them in Cloudflare exactly as the provider shows them.
 
+### Security headers
+
+Every response from the service carries browser security headers, set in
+`server/bootstrap/security-headers.mjs`. There is nothing to configure:
+
+- **Content-Security-Policy.** The browser runs scripts and makes API calls
+  only to the service's own address. Images may also be `data:` or `blob:`.
+  Inline styles and Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`)
+  are allowed. Plugins, framing by other sites, and forms that post elsewhere
+  are refused.
+- `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Cross-Origin-Opener-Policy: same-origin`, and a `Permissions-Policy` that
+  turns off camera, microphone, location, payment, USB and ad topics.
+- `Referrer-Policy: strict-origin-when-cross-origin`. The sign-in confirm page
+  keeps `no-referrer`, because its address holds the single-use token.
+- **HSTS:** `Strict-Transport-Security: max-age=31536000` (one year), only when
+  the service runs the production profile and `FLOWCHAIN_PUBLIC_BASE_URL`
+  starts with `https://`. Both Render services meet both conditions. It covers
+  only the host users open. It has no `includeSubDomains` and no `preload`, so
+  other names under `getflowchain.com` are not affected. A browser that has
+  seen it will refuse plain HTTP for that host for a year.
+
+If a page stops working after a release and the browser console shows
+"Content Security Policy" errors, set `FLOWCHAIN_CSP_MODE` on the service's
+**Environment** page and save (saving redeploys):
+
+| Value | Effect |
+| --- | --- |
+| unset or `enforce` | The policy is enforced. This is the normal setting. |
+| `report-only` | The browser allows everything and only lists the violations in its console. Use this while a fix is prepared. |
+| `off` | No policy is sent. The other headers stay. |
+
+Any other value enforces the policy, so a typo never turns it off. Delete the
+variable once the fix is deployed. To check the headers, run
+`curl -sI https://<service address>/` and read the response.
+
 ## 10. Rough monthly cost
 
 **Estimate only**, based on the list prices at <https://render.com/pricing> on
