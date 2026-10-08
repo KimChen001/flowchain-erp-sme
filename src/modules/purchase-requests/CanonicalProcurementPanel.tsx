@@ -165,6 +165,19 @@ export default function CanonicalProcurementPanel({
     [errors, setErrors] = useState<FieldError[]>([]),
     [saving, setSaving] = useState(false);
   const currencyInitialized = useRef(false);
+  // The default date is first set before the workspace timezone loads, on the
+  // browser's own day. Once the timezone is known, a default nobody changed,
+  // and the lines still on it, move to the workspace day, which the
+  // lead-time need-by date also counts from.
+  const untouchedDefault = useRef(defaultDate);
+  useEffect(() => {
+    const workspaceDay = today(timezone);
+    const previous = untouchedDefault.current;
+    if (defaultDate !== previous || workspaceDay === previous) return;
+    untouchedDefault.current = workspaceDay;
+    setDefaultDate(workspaceDay);
+    setLines((current) => current.map((line) => (line.needByDate === previous ? { ...line, needByDate: workspaceDay } : line)));
+  }, [timezone]);
   const selected =
     focus?.entityType === "purchase_request"
       ? rows.find((row) => row.id === focus.entityId)

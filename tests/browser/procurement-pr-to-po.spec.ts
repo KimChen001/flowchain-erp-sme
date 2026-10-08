@@ -256,3 +256,27 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   await page.goto(`/app/procurement/orders/${encodeURIComponent(po.id)}`)
   await expect(page.getByTestId('po-line-supplier-override')).toHaveText(flag)
 })
+
+// CI run at 00:03 UTC (2026-10-08): the form's default date started on the
+// browser's UTC day before the workspace timezone loaded, while the lead-time
+// date counted from the workspace day, so they disagreed for five hours a
+// night. A browser on UTC at 00:30 UTC must show the workspace day.
+test.describe('a browser on UTC just after midnight UTC', () => {
+  test.use({ timezoneId: 'UTC' })
+  test('the default and lead-time need-by dates both count from the workspace day', async ({ page, request }) => {
+    const headers = await signIn(page, request)
+    const ids = await supplierChoiceData(request, headers)
+    const now = new Date()
+    const at = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 30))
+    await page.clock.setFixedTime(at)
+    const { timezone } = await (await request.get('/api/me/localization', { headers })).json()
+    const workspaceDay = new Intl.DateTimeFormat('en-CA', { timeZone: timezone || 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(at)
+    const inFiveDays = new Date(Date.parse(`${workspaceDay}T12:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10)
+
+    await page.goto('/app/procurement/requests')
+    await page.getByLabel('SKU 1').selectOption(ids.withPreferred)
+    await expect(page.getByLabel('Suppliers 1')).toHaveValue(ids.acme)
+    await expect(page.getByLabel('Default required date')).toHaveValue(workspaceDay)
+    await expect(field(page, 'Required date').locator('input').first()).toHaveValue(inFiveDays)
+  })
+})
