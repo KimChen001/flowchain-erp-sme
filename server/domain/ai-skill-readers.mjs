@@ -3,6 +3,7 @@ import { reportReadAccessFor, scopeBusinessContext } from './report-read-access.
 import { buildOpenPurchaseOrdersReport, purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
+import { createSupplierScorecardReadService } from './supplier-scorecard.mjs'
 import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-inventory-allocation-read-model.mjs'
 import { PURCHASE_ORDER_STATUS, RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 import { classifyBusinessRecord } from './ai-business-record-validity.mjs'
@@ -210,6 +211,19 @@ export async function readAiSkillFacts(skillContext) {
   // filters: the spend analysis (ai-skill-spend-analysis.mjs) reads its
   // charts, so its figures are the dashboard's. A function, so only a spend
   // question builds it, and not enumerable, so it is never read as a fact.
+  // The supplier scorecard (supplier-scorecard.mjs), the one the supplier page
+  // and Reports › Supplier analytics show, for the supplier comparison
+  // (ai-skill-supplier-comparison.mjs): delivery performance against the
+  // original promise, for a period. It reads the database itself, under the
+  // same permission checks as its route, so the runtime reads it before the
+  // skill answers (aiSkillPrepareRoute). A reader who may not see purchase
+  // orders and receipts has none.
+  if (visible.purchase_orders && visible.receipts && prisma) {
+    Object.defineProperty(facts, 'supplierScorecard', {
+      enumerable: false,
+      value: (query = {}) => createSupplierScorecardReadService({ prisma, now: () => now }).read(query, { actor }),
+    })
+  }
   if (visible.purchase_orders) {
     Object.defineProperty(facts, 'procurementReport', {
       enumerable: false,

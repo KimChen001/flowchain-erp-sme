@@ -2,7 +2,8 @@ import { aiSkillQuestionLanguage } from './ai-skill-copy.mjs'
 import { refineAiSkillRoute } from './ai-skill-entities.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
-import { aiSkillSpendSignals, routeSkill } from './ai-skill-router.mjs'
+import { aiSkillComparisonSignals, aiSkillSpendSignals, routeSkill } from './ai-skill-router.mjs'
+import { aiSkillPrepareComparison } from './ai-skill-supplier-comparison.mjs'
 import { resolveAiSkillFollowUp } from './ai-skill-follow-up.mjs'
 import { answerAiSkill, toolsFor } from './ai-skills.mjs'
 import { aiKnowledgeAuditBlock, recordAiSkillAudit } from './ai-skill-audit.mjs'
@@ -158,10 +159,11 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
       // A tier the call names filters as the question's own tier does. A spend
       // call reads its period and currency from the question, as a rule-routed
       // spend question does, and its view from the call.
-      const spend = call.tool === 'spend_analysis' ? { spend: { ...aiSkillSpendSignals(message), ...(call.mode ? { mode: call.mode } : {}) } } : {}
+      const spend = call.tool === 'spend_analysis' ? { spend: { ...aiSkillSpendSignals(message), ...(call.mode ? { mode: call.mode } : {}) } }
+        : call.tool === 'supplier_comparison' ? { compare: { ...aiSkillComparisonSignals(message), ...(call.mode ? { mode: call.mode } : {}) } } : {}
       const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short', tier: call.tier ?? null, ...spend }, skillId: call.tool }, named, facts)
       if (!partRoute || partRoute.capability || !partRoute.skillId || !allowed.has(partRoute.skillId)) return null
-      return { question: aiSkillById(partRoute.skillId)?.title?.[titleKey] || partRoute.skillId, route: partRoute }
+      return { question: aiSkillById(partRoute.skillId)?.title?.[titleKey] || partRoute.skillId, route: await aiSkillPrepareComparison(partRoute, facts) }
     }))).filter(Boolean).sort((a, b) => agentSectionRank(a) - agentSectionRank(b))
     : []
   // The planned answer: a business query alone answers as the business query
@@ -210,9 +212,14 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   if (agentResponse) {
     response = agentResponse
   } else if (compound) {
-    const sections = compound.sections.map((section) => ({ ...section, response: answerAiSkill({ skillId: section.route.skillId, facts, language, query: section.question, focus: section.route.focus || null, actor: context.actor, route: section.route }).response }))
+    // A part a skill answers from facts it reads first (the supplier scorecard).
+    const prepared = await Promise.all(compound.sections.map(async (section) => ({ ...section, route: await aiSkillPrepareComparison(section.route, facts) })))
+    const sections = prepared.map((section) => ({ ...section, response: answerAiSkill({ skillId: section.route.skillId, facts, language, query: section.question, focus: section.route.focus || null, actor: context.actor, route: section.route }).response }))
     response = assertValidAiSkillResponse(composeAiCompoundAnswer({ sections, facts, language, query: message, skipped: compound.skipped }), facts)
   } else {
+    // A skill that answers from facts it reads first (the supplier scorecard)
+    // reads them now, for this question.
+    if (refined?.skillId === skillId) refined = await aiSkillPrepareComparison(refined, facts)
     const answered = answerAiSkill({ skillId, facts: answerFacts, language, query: message, focus: refined?.focus || null, refusal, outOfDomain: Boolean(route?.outOfDomain), actor: context.actor, route: refined }).response
     const modelRouted = intentRouting?.status === 'routed' && skillId === intentRouting.skillId
     const routed = agentServed
