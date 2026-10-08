@@ -65,6 +65,15 @@ names, or supplier names in place. Translate their presentation where appropriat
   that a purchase order line in another unit than the item's stock unit is not counted
   as incoming is in both languages on the reports page and in the assistant's stock and
   order answers.
+- The sales order reserve, release and delivery draft dialogs and the shipment post,
+  reverse and cancel dialogs have English and Chinese titles and confirm buttons that
+  name the action. Their previews say what will happen in one or two sentences built
+  from the server's preview (`src/modules/sales/outboundPreviewText.ts`), with the
+  impact counts under "Technical details"; warehouses show by name and location, and
+  reservation and movement ids in short form. The order and shipment timelines show
+  the reservation and movement titles the workbench API builds at read time in the
+  interface language (`src/modules/sales/outboundCopy.ts`); audit summaries stay as
+  recorded. SKUs, item and warehouse names, units and shipment numbers stay as stored.
 - Today (`/app/overview/risks`) has English and Chinese copy
   (`src/modules/overview/todayCopy.ts`): the work rows and their date labels, the
   status tiles, the first-day checklist and recent documents. The server sends codes,
