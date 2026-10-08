@@ -87,13 +87,14 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       return null;
     }
   };
-  // One click: preview, then run it when the server allows it; otherwise show why.
+  // One click: preview, then run it when the server allows it. A blocked
+  // preview, or a run that fails (another change got there first, a lost
+  // connection), opens the panel with the reason and Preview/Confirm to retry.
   const runAtOnce = async () => {
     setBusy(true);
     const next = await preview();
     setBusy(false);
-    if (next?.allowed) await confirm();
-    else setOpen(true);
+    if (!next?.allowed || !(await confirm())) setOpen(true);
   };
   const confirm = async () => {
     setError("");
@@ -104,13 +105,15 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       setPlan(null);
       setReason("");
       onDone();
+      return true;
     } catch (cause) {
       setError(cause instanceof ApiError ? issueText?.(cause.code) || cause.message : cause instanceof Error ? cause.message : t("finance.loadFailed"));
+      return false;
     } finally {
       setBusy(false);
     }
   };
-  if (!open) return <button type="button" data-testid={testId} data-one-step={oneStep && !reasonLabel ? "true" : undefined} disabled={busy} className={`${button} ${tone === "primary" ? "text-white" : "border border-slate-200"} disabled:opacity-50`} style={tone === "primary" ? { background: A.blue } : undefined} onClick={() => (oneStep && !reasonLabel ? void runAtOnce() : setOpen(true))}>{label}</button>;
+  if (!open) return <button type="button" data-testid={testId} data-one-step={oneStep && !reasonLabel ? "true" : undefined} disabled={busy} className={`${button} ${tone === "primary" ? "text-white" : "border border-slate-200"} disabled:opacity-50`} style={tone === "primary" ? { background: A.blue } : undefined} onClick={() => (oneStep && !reasonLabel ? void runAtOnce() : setOpen(true))}>{busy ? t("finance.working") : label}</button>;
   return (
     <div className="w-full space-y-2 rounded-xl border border-slate-200 p-3" data-testid={`${testId}-panel`}>
       <div className="text-sm font-semibold">{label}</div>
