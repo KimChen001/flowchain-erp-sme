@@ -170,9 +170,18 @@ try {
   assert.deepEqual((await request(base, "/api/settings-runtime", { token: viewerToken })).documents.layouts.map((item) => item.id), ["receive_sheet-custom"]);
   const tooMany = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: Array.from({ length: 21 }, (_, index) => layout(`receive_sheet-${index}`)) } } });
   assert.deepEqual([tooMany.status, tooMany.payload.code, tooMany.payload.details?.field, tooMany.payload.details?.limit], [400, "DOCUMENT_LAYOUTS_TOO_MANY", "layouts", 20]);
-  const terms = (index) => ({ ...layout(`receive_sheet-terms-${index}`), elements: [{ id: "terms", type: "terms", title: "Terms", value: "x".repeat(4000), x: 52, y: 700, width: 690, height: 110, visible: true, draggable: true, resizable: true }] });
-  const tooLarge = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: Array.from({ length: 17 }, (_, index) => terms(index)) } } });
-  assert.deepEqual([tooLarge.status, tooLarge.payload.code, tooLarge.payload.details?.field], [400, "DOCUMENT_LAYOUTS_TOO_LARGE", "layouts"]);
+  const termsElement = (id) => ({ id, type: "terms", title: "Terms", value: "x".repeat(4000), x: 52, y: 700, width: 690, height: 110, visible: true, draggable: true, resizable: true });
+  const terms = (index) => ({ ...layout(`receive_sheet-terms-${index}`), elements: [termsElement("terms-1"), termsElement("terms-2"), termsElement("terms-3")] });
+  const tooLarge = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: Array.from({ length: 14 }, (_, index) => terms(index)) } } });
+  assert.deepEqual([tooLarge.status, tooLarge.payload.code, tooLarge.payload.details?.field, tooLarge.payload.details?.limit], [400, "DOCUMENT_LAYOUTS_TOO_LARGE", "layouts", 160 * 1024]);
+  // A stored layout comes back unchanged or as the next version; a change from an older copy is refused.
+  const stale = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: [{ ...layout("receive_sheet-custom"), name: "Changed from an old copy" }] } } });
+  assert.deepEqual([stale.status, stale.payload.code], [409, "DOCUMENT_LAYOUT_CHANGED"]);
+  const nextVersion = await request(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: [{ ...layout("receive_sheet-custom"), name: "Dock receipt v2", version: 2 }] } } });
+  assert.deepEqual([nextVersion.settings.layouts[0].name, nextVersion.settings.layouts[0].version], ["Dock receipt v2", 2]);
+  // The audit row keeps the layouts as a summary.
+  const layoutAudit = (await request(base, "/api/audit-log?limit=100", { token })).find((entry) => entry.action === "documents_settings_updated");
+  assert.deepEqual(layoutAudit.after.layouts, { count: 1, items: [{ id: "receive_sheet-custom", name: "Dock receipt v2", documentType: "receive_sheet", version: 2 }] });
   const badShape = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...withLayouts, layouts: [{ ...layout("receive_sheet-x"), documentType: "purchase_order" }] } } });
   assert.deepEqual([badShape.status, badShape.payload.code, badShape.payload.details?.field], [400, "DOCUMENT_LAYOUT_INVALID", "layouts.0.documentType"]);
   const layoutDenied = await raw(base, "/api/settings-runtime/documents", { token: viewerToken, method: "PATCH", body: { settings: withLayouts } });
