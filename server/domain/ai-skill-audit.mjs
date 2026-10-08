@@ -20,7 +20,7 @@ export function aiKnowledgeAuditBlock(rag) {
   return { mode: rag?.mode || null, citationCount: citations.length, documentIds: [...new Set(citations.map((citation) => citation.documentId).filter(Boolean))].slice(0, 10) }
 }
 
-export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal = false, intentShadow = null, intentRouting = null, followUp = null, agent = null, knowledge = null }) {
+export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal = false, intentShadow = null, intentRouting = null, followUp = null, agent = null, knowledge = null, compose = null }) {
   const recordIds = [...new Set([...array(response.keyEvidence).map((item) => item.entityId), ...array(response.reviewCards).map((card) => card.targetEntityId)].filter(Boolean))].slice(0, 25)
   const rowCounts = facts ? {
     purchase_orders: facts.purchaseOrders ? facts.purchaseOrders.rows.length : null,
@@ -60,6 +60,9 @@ export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal
       ...(agent ? { agent } : {}),
       // A knowledge answer: its mode and the documents it cited.
       ...(knowledge ? { knowledge } : {}),
+      // P3 wording: composed, rejected (with the verifier's reason code),
+      // degraded or skipped; counts and tokens, never the text.
+      ...(compose ? { compose } : {}),
     },
   }
 }

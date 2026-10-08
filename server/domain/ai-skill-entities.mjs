@@ -208,7 +208,21 @@ const FOCUS_SKILLS = new Set(['today_priorities', 'highest_risk_items', 'records
 function focusFromIds(found) {
   if (found.purchaseOrders.length === 1) return { entityType: 'purchase_order', entityId: found.purchaseOrders[0].id }
   if (found.skus.length === 1) return { entityType: 'item', entityId: found.skus[0].itemId || found.skus[0].sku }
+  // One supplier and no order or SKU: "draft a chaser for Acme" drafts for
+  // Acme's records only.
+  if (found.suppliers.length === 1 && !found.purchaseOrders.length && !found.skus.length) return { entityType: 'supplier', entityId: found.suppliers[0].id }
   return null
+}
+
+// Several named records ("drafts for PO-001 and PO-008", or the first two of
+// the previous answer): the drafts for any of them, at most five.
+function focusesFromIds(found) {
+  const all = [
+    ...found.purchaseOrders.map((row) => ({ entityType: 'purchase_order', entityId: row.id })),
+    ...found.skus.map((row) => ({ entityType: 'item', entityId: row.itemId || row.sku })),
+    ...found.suppliers.map((row) => ({ entityType: 'supplier', entityId: row.id })),
+  ]
+  return all.length > 1 ? all.slice(0, 5) : null
 }
 
 const missing = (found, source) => [...found.truncated, ...found.absent].some((entry) => entry.source === source)
@@ -326,5 +340,6 @@ export function refineAiSkillRoute(route, message, facts) {
   }
   const tiered = tier && TIER_SKILLS.has(skill) ? { tier } : {}
   if (FOCUS_SKILLS.has(skill) && !route.focus && focusFromIds(found)) return { ...route, focus: focusFromIds(found), entities: found, ...tiered }
+  if (skill === 'prepare_action_draft' && !route.focus && route.mode !== 'order' && focusesFromIds(found)) return { ...route, focusAny: focusesFromIds(found), entities: found, ...tiered }
   return { ...route, entities: found, ...tiered }
 }

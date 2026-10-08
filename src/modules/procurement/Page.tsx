@@ -27,8 +27,8 @@ type ProcurementPanelProps = {
 // English source copy with its Chinese translation.
 const emptyViews: Record<string, { en: [string, string]; zh: [string, string] }> = {
   returns: {
-    en: ["Purchase returns are not available yet", "Purchase returns are not connected to this workspace yet."],
-    zh: ["采购退货工作台尚未接入", "退货与隔离库存 repository 基础已存在，但采购 canonical route 尚未接通。"],
+    en: ["Supplier returns are not handled here", "Supplier returns are requested under Inventory › Returns."],
+    zh: ["此处不处理供应商退货", "供应商退货请在“库存管理 › 退货管理”中申请。"],
   },
   contracts: {
     en: ["Purchase contracts are not available yet", "This workspace has no contract records to show."],
