@@ -64,6 +64,7 @@ jobs:
       - run: npm run test:db:master-data-writes
       - run: npm run test:db:data-import
       - run: npm run test:api:data-import
+      - run: npm run test:db:reorder-list
       - run: npm run test:db:supplier-tiers
       - run: npm run test:db:supplier-insights
       - run: npm run test:db:ai-workspace-access
@@ -109,6 +110,7 @@ jobs:
       - run: npm run test:db:role-backfill-once
       - run: npm run test:db:po-close-receipt-cancel
       - run: npm run test:db:business-documents
+      - run: npm run test:db:receiving-locations
       - run: npm run test:db:report-views
       - run: npm run test:db:rfq-response-revisions
       - run: npm run test:db:rfq-supplier-response-command

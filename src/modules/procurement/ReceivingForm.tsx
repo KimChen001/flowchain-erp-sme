@@ -6,7 +6,7 @@ import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { dateTimeInputInTimeZone, dateTimeInputToIso } from "../../lib/format";
-import { receivingApi, type ReceivablePurchaseOrder, type ReceiptInput, type ReceivingWarehouse } from "./receivingApi";
+import { receivingApi, type ReceivableLine, type ReceivablePurchaseOrder, type ReceiptInput, type ReceivingWarehouse } from "./receivingApi";
 import { PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { buildSuggestionTrail, type PrefillEntry } from "../../lib/prefill";
 
@@ -39,6 +39,8 @@ const COPY: Record<string, [string, string]> = {
   rejected: ["Rejected", "拒收"],
   rejectionReason: ["Rejection reason", "拒收原因"],
   location: ["Location", "库位"],
+  locationStocked: ["Where this item is stocked", "该物料现有库位"],
+  locationNew: ["New location in this warehouse", "此仓库的新库位"],
   saveDraft: ["Save draft", "保存草稿"],
   saveSubmit: ["Save and submit for posting", "保存并提交过账"],
   saving: ["Saving…", "正在保存…"],
@@ -66,6 +68,9 @@ type Detail = {
 type LineState = { include: boolean; accepted: string; rejected: string; reason: string; location: string };
 
 const QUANTITY = /^\d+(?:\.\d{1,4})?$/;
+// The location holding most of the item in the warehouse, so a receipt adds to
+// that stock record instead of starting one without a location.
+const stockedLocation = (line: ReceivableLine, warehouseId: string) => line.stockLocations?.find((row) => row.warehouseId === warehouseId)?.location || "";
 // Four-decimal quantities compared as integers of 1/10000, as the server does.
 const units = (value: string) => {
   const [whole, fraction = ""] = value.split(".");
@@ -129,6 +134,10 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
           : usable(fromUser) ? [fromUser, "user:default_warehouse"]
             : receivable.warehouses.length === 1 ? [receivable.warehouses[0].id, "workspace:only_warehouse"] : ["", ""];
       setWarehouseId(chosen);
+      if (mode === "new") setLines((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => {
+        const line = receivable.purchaseOrder.lines.find((row) => row.id === id);
+        return [id, line ? { ...value, location: stockedLocation(line, chosen) } : value];
+      })));
       const arrival = dateTimeInputInTimeZone(detail?.receivingDocument.arrivedAt ? new Date(detail.receivingDocument.arrivedAt) : new Date(), timezone);
       setArrivedAt(arrival);
       setPrefill(mode === "new" ? {
@@ -145,6 +154,17 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
   useEffect(() => { void load(); }, [load]);
 
   const update = (lineId: string, patch: Partial<LineState>) => setLines((current) => ({ ...current, [lineId]: { ...current[lineId], ...patch } }));
+  // A location left empty or still on the old warehouse's stocked location
+  // follows the new warehouse; one the person typed stays.
+  const changeWarehouse = (next: string) => {
+    if (po) setLines((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => {
+      const line = po.lines.find((row) => row.id === id);
+      const untouched = line && (!value.location.trim() || value.location === stockedLocation(line, warehouseId));
+      return [id, line && untouched ? { ...value, location: stockedLocation(line, next) } : value];
+    })));
+    setWarehouseId(next);
+  };
+  const knownLocations = warehouses.find((row) => row.id === warehouseId)?.locations || [];
 
   const validation = useMemo(() => {
     const found: string[] = [];
@@ -239,7 +259,7 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
           <div><dt style={{ color: A.sub }}>{tr("purchaseOrder")}</dt><dd className="mt-1 font-medium">{po.id}</dd></div>
           <div><dt style={{ color: A.sub }}>{tr("supplier")}</dt><dd className="mt-1 font-medium">{po.supplierName || "—"}</dd></div>
           <label className="block"><span style={{ color: A.sub }}>{tr("warehouse")} *</span>
-            <select aria-label={tr("warehouse")} value={warehouseId} onChange={(event) => setWarehouseId(event.target.value)} className={`${inputClass} mt-1`}>
+            <select aria-label={tr("warehouse")} value={warehouseId} onChange={(event) => changeWarehouse(event.target.value)} className={`${inputClass} mt-1`}>
               <option value="">{tr("selectWarehouse")}</option>
               {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.code} · {warehouse.name}</option>)}
             </select>
@@ -276,12 +296,22 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
                   <td className="px-3 py-2"><input aria-label={`${tr("accepted")} ${line.sku}`} inputMode="decimal" value={value?.accepted || ""} disabled={!value?.include} onChange={(event) => update(line.id, { accepted: event.target.value })} className={`${inputClass} w-24`} /></td>
                   <td className="px-3 py-2"><input aria-label={`${tr("rejected")} ${line.sku}`} inputMode="decimal" value={value?.rejected || ""} disabled={!value?.include} onChange={(event) => update(line.id, { rejected: event.target.value })} className={`${inputClass} w-24`} /></td>
                   <td className="px-3 py-2"><input aria-label={`${tr("rejectionReason")} ${line.sku}`} value={value?.reason || ""} disabled={!value?.include} onChange={(event) => update(line.id, { reason: event.target.value })} className={inputClass} /></td>
-                  <td className="px-3 py-2"><input aria-label={`${tr("location")} ${line.sku}`} value={value?.location || ""} disabled={!value?.include} onChange={(event) => update(line.id, { location: event.target.value })} className={`${inputClass} w-28`} /></td>
+                  <td className="px-3 py-2">
+                    <input aria-label={`${tr("location")} ${line.sku}`} list="receiving-locations" value={value?.location || ""} disabled={!value?.include} onChange={(event) => update(line.id, { location: event.target.value })} className={`${inputClass} w-28`} />
+                    {value?.include && value.location.trim() ? (
+                      value.location.trim().toLowerCase() === stockedLocation(line, warehouseId).toLowerCase()
+                        ? <span data-testid="receiving-location-stocked" className="mt-1 block text-[11px]" style={{ color: A.blue }}>{tr("locationStocked")}</span>
+                        : !knownLocations.some((known) => known.toLowerCase() === value.location.trim().toLowerCase())
+                          ? <span data-testid="receiving-location-new" className="mt-1 block text-[11px]" style={{ color: A.sub }}>{tr("locationNew")}</span>
+                          : null
+                    ) : null}
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+        <datalist id="receiving-locations">{knownLocations.map((location) => <option key={location} value={location} />)}</datalist>
       </Card>
 
       <Card className="space-y-3 p-4">
