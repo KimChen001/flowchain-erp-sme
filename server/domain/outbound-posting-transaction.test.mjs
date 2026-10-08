@@ -1389,6 +1389,11 @@ if (!realPostgres) {
       ).total,
       0,
     );
+    // The thresholds recorded on the item are the ones the stock pages show.
+    await prisma.item.update({
+      where: { id: ids.itemId },
+      data: { safetyStock: "6", reorderPoint: "12" },
+    });
     const balances = await inventory.listBalances(
       {
         sku: item.sku,
@@ -1403,6 +1408,10 @@ if (!realPostgres) {
       [ids.balanceId],
     );
     assert.equal(balances.balances[0].availableQuantity, "8.0000");
+    assert.deepEqual(
+      [balances.balances[0].safetyStock, balances.balances[0].reorderPoint],
+      ["6.0000", "12.0000"],
+    );
   });
 
   test("partial/full release, cancellation, authorization, version, and idempotency conflicts are stable", async () => {

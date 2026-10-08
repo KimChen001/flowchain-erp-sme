@@ -248,7 +248,7 @@ export async function readAiSkillFacts(skillContext) {
       const read = purchaseOrderReportLine(line, po)
       return read.open ? [{
         lineId: text(line.id) || null, sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName || line.itemNameSnapshot) || null,
-        remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
+        ordered: read.ordered, received: read.received, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
       }] : []
     })]))
     const rawStatusById = new Map(reportRows.map((po) => [text(po.id), text(po.status)]))

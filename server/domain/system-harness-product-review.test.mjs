@@ -289,7 +289,8 @@ test('Phase 0 product positioning and visible language governance stay productiz
   const constants = readSource('src', 'lib', 'constants.ts')
   const forecast = readSource('src', 'modules', 'forecast', 'Page.tsx')
   const actionShell = readSource('src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx')
-  const overview = readSource('src', 'modules', 'overview', 'Page.tsx')
+  // The home page and its copy, which holds the page's English and Chinese text.
+  const overview = [readSource('src', 'modules', 'overview', 'Page.tsx'), readSource('src', 'modules', 'overview', 'todayCopy.ts')].join('\n')
   const importsPage = readSource('src', 'modules', 'imports', 'Page.tsx')
   const inventoryPage = readSource('src', 'modules', 'inventory', 'Page.tsx')
   const reportsPage = readSource('src', 'modules', 'reports', 'Page.tsx')
@@ -315,7 +316,7 @@ test('Phase 0 product positioning and visible language governance stay productiz
   assert.match(actionShell, /保留待复核草稿/)
   assert.match(importsPage, /旧 Pilot Imports 不再创建预览批次、提交业务表或回滚历史批次/)
   assert.match(importsPage, /Universal Intake 是唯一面向未来的数据接入权威/)
-  assert.match(inventoryPage, /仅显示库存运行时仓库中的正式记录/)
+  assert.match(inventoryPage, /仅显示已过账的库存记录/)
   assert.match(inventoryPage, /不会用固定 SKU、批次、序列号或移动记录补足空数据/)
   assert.match(reportsPage, /API \/ 当前数据范围/)
   assert.match(aiVisibleCopySources, /待复核草稿/)
