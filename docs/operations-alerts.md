@@ -36,11 +36,25 @@ request handler), `route` (a route caught it and answered 500), `after_headers`
 `response` (a 500 that no code reported; `errorName` is
 `UnreportedServerError` and there is no stack).
 
-Never logged: names, emails, request bodies, headers, cookies, tokens, query
-strings, or the webhook URL. Error messages and stacks pass through the same
-redaction as before (bearer tokens, `sk-` keys, database URLs and any
-`..._API_KEY=`, `..._SECRET=`, `..._TOKEN=`, `..._PASSWORD=` value). In
-production a stack keeps its first 8 frames; elsewhere it is complete.
+What is and is not in the logs:
+
+- Never logged: request headers (so cookies and bearer tokens), request
+  bodies, query strings, and the webhook URL.
+- Error messages and stacks *are* logged, after known secret shapes are
+  redacted (`server/observability/redact.mjs`): bearer and basic credentials,
+  `Authorization:` values, `sk-` keys, `x-api-key`/`apiKey`/`accessToken`-style
+  and `..._API_KEY=`, `..._SECRET=`, `..._TOKEN=`, `..._PASSWORD=` values, JSON
+  `"password"`/`"secret"`/`"token"`/`"apiKey"` fields, PostgreSQL, MySQL, Redis
+  and MongoDB connection strings, credentials in any other URL, and Slack and
+  Discord webhook URLs. Redaction knows shapes, not values, so a message can
+  still hold other text, such as a value from a failed database constraint.
+- Paths are logged as requested, so record ids in them (a purchase order or
+  supplier id) appear.
+- Signed-in tenant and user ids appear as ids; names and emails are not added
+  by the logger.
+- In production a stack keeps its first 8 frames; elsewhere it is complete.
+- Client errors (4xx) that reach the error reporter, such as the 403 for a
+  request without a workspace, are logged at `level: "warn"` and never alert.
 
 To follow one failure, take the `requestId` from the error response or the
 `X-Request-Id` header and search the logs for it: the `server_error` line and
@@ -134,19 +148,26 @@ FlowChain flowchain-production: server_error P1001 on 500 GET /api/home/overview
 The JSON body also has `event`, `service` (Render's service name), `commitSha`,
 `requestId`, `method`, `path`, `status`, `errorName`, `errorCode`, `time` and
 `suppressed`. It never has the error message, the stack, tenant or user ids,
-or anything from the request. A path segment that contains `@` is replaced by
-`[redacted]`. To see the details, search the logs for the request id.
+or anything from the request. A path segment that contains `@` or `%40` is
+replaced by `[redacted]`. To see the details, search the logs for the request
+id.
 
 ### How often alerts are sent
 
+- Only server-side failures alert: 5xx responses, errors after a response had
+  started, and crashes. Client errors (4xx) are logged but never alert, so
+  they cannot use up the hourly limit.
 - One alert per error code and path in any 5 minutes, and at most 10 alerts an
   hour in total.
 - Alerts held back are counted; the next alert for the same code and path says
-  `N similar held back` and carries the count in `suppressed`.
+  `N more held back` and carries the count in `suppressed`. Counts for code and
+  path pairs that stay quiet are folded into the next alert of any kind, and
+  the server tracks at most 500 pairs, so memory stays bounded.
 - The limits are per running process, so they start again after a restart.
 - Sending never delays or fails a request. It runs after the error is logged,
-  gives up after 3 seconds, and a failure only writes one
-  `error_webhook_failed` line per 5 minutes.
+  gives up after 3 seconds, refuses redirects (so it cannot be sent on to a
+  plain http address), and a failure only writes one `error_webhook_failed`
+  line per 5 minutes.
 - On a crash the server waits up to 2 seconds for the alert to leave, then
   exits with code 1 as before.
 
@@ -186,14 +207,20 @@ These are settings, not code. Do them once per environment unless noted.
 ## For developers
 
 - `server/observability/error-reporter.mjs` holds the reporter: the log line,
-  redaction, the webhook, its rate limit, `flush()` and `sendTestAlert()`.
+  the webhook, its rate limit, `flush()` and `sendTestAlert()`. Redaction is in
+  `server/observability/redact.mjs`, shared with `server/utils/safe-errors.mjs`.
 - One reporter is built per server in `createScmServer` and shared by the
   error boundary and the route context, so all alerts share one rate limit.
 - A route that catches an error and answers 500 itself must call
   `ctx.reportError?.(error)` before sending, so the error is logged with its
   stack. A 500 without that call is still logged, as `UnreportedServerError`.
-  Routes that answer `error.status || 500` do not call it yet; their 500s are
-  logged this way.
+- **Known follow-up:** routes that answer `error.status || 500` (or similar)
+  without calling `ctx.reportError` yet, among them master-data (about ten
+  sites), data-import, settings-runtime, authorization, exception-cases,
+  inventory-operations, user-confirmed-actions and ai-knowledge, show up only
+  as `UnreportedServerError`: no error name, code or stack, and the alert's
+  code is `HTTP_500`. Adding `if (status >= 500) ctx.reportError?.(error)`
+  before each send fixes that without changing any response.
 - `registerProcessErrorHandlers` in `server/bootstrap/server-lifecycle.mjs`
   handles crashes; `startScmServer` registers it.
 - Tests: `server/domain/error-reporter.test.mjs`.

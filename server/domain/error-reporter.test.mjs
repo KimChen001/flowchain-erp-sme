@@ -9,9 +9,12 @@ import { registerProcessErrorHandlers } from "../bootstrap/server-lifecycle.mjs"
 import {
   WEBHOOK_HOURLY_LIMIT,
   WEBHOOK_KEY_WINDOW_MS,
+  WEBHOOK_MAX_KEYS,
   createErrorReporter,
   errorWebhookUrl,
 } from "../observability/error-reporter.mjs";
+import { redactSecrets } from "../observability/redact.mjs";
+import { sanitizeErrorSummary, sendInternalServerError } from "../utils/safe-errors.mjs";
 import { handlePriceHistoryRoute } from "../routes/price-history.routes.mjs";
 
 const WEBHOOK = "https://hooks.example.com/services/T000/B000/hook-secret-part";
@@ -127,6 +130,7 @@ test("the webhook gets name, code, path and request id, never the message or act
   assert.equal(url, WEBHOOK);
   assert.equal(init.method, "POST");
   assert.ok(init.signal instanceof AbortSignal);
+  assert.equal(init.redirect, "error", "a redirect cannot lead the alert off https");
   assert.deepEqual(Object.keys(body).sort(), [
     "commitSha", "content", "errorCode", "errorName", "event", "method", "path", "requestId",
     "service", "status", "suppressed", "text", "time",
@@ -343,4 +347,138 @@ test("a process error exits even when the webhook never answers", async () => {
   target.emit("unhandledRejection", new Error("never answered"));
   await new Promise((resolve) => setTimeout(resolve, 60));
   assert.deepEqual(exits, [1]);
+});
+
+test("client errors (4xx) are logged at warn and never alert; crashes and errors after a 2xx still alert", async () => {
+  const logger = memoryLogger();
+  const { calls, fetchImpl } = recordingFetch();
+  const reporter = createErrorReporter({ logger, env: { FLOWCHAIN_ERROR_WEBHOOK_URL: WEBHOOK }, fetchImpl });
+  const tenantMissing = Object.assign(new Error("A workspace is required."), { code: "TENANT_CONTEXT_REQUIRED", status: 403 });
+  for (let index = 0; index < 2 * WEBHOOK_HOURLY_LIMIT; index += 1) {
+    reporter.report(tenantMissing, { req: { method: "GET", url: `/api/items/${index}` }, status: 403, phase: "boundary" });
+  }
+  await settle();
+  assert.equal(calls.length, 0);
+  assert.deepEqual([...new Set(logger.lines.map(({ level, entry }) => `${level}/${entry.level}`))], ["warn/warn"]);
+
+  reporter.report(new Error("crash"), { event: "process_error", phase: "uncaughtException", fatal: true });
+  reporter.report(new Error("stream broke"), { req: { method: "GET", url: "/api/exports/items" }, status: 200, phase: "after_headers" });
+  reporter.report(new Error("db down"), { req: { method: "GET", url: "/api/items" }, status: 500, phase: "boundary" });
+  await settle();
+  assert.deepEqual(calls.map(({ body }) => [body.event, body.status]), [["process_error", undefined], ["server_error", 200], ["server_error", 500]]);
+});
+
+test("the TENANT_CONTEXT_REQUIRED 403 from sendInternalServerError does not alert", async () => {
+  const { calls, fetchImpl } = recordingFetch();
+  const logger = memoryLogger();
+  const reporter = createErrorReporter({ logger, env: { FLOWCHAIN_ERROR_WEBHOOK_URL: WEBHOOK }, fetchImpl });
+  let sent;
+  const error = Object.assign(new Error("A workspace is required."), { code: "TENANT_CONTEXT_REQUIRED", status: 403 });
+  sendInternalServerError({}, (_res, status, body) => { sent = { status, body }; }, error, { reporter, req: { method: "GET", url: "/api/items" }, requestId: "req-12345678" });
+  await settle();
+  assert.equal(sent.status, 403);
+  assert.equal(calls.length, 0);
+  assert.equal(logger.lines[0].level, "warn");
+  assert.equal(logger.lines[0].entry.status, 403);
+});
+
+test("held-back counts stay bounded however many distinct errors arrive", async () => {
+  const time = clock();
+  const { calls, fetchImpl } = recordingFetch();
+  const reporter = createErrorReporter({ logger: memoryLogger(), env: { FLOWCHAIN_ERROR_WEBHOOK_URL: WEBHOOK }, fetchImpl, now: time.now });
+  const fail = (code) => reporter.report(Object.assign(new Error("x"), { code }), { req: { method: "GET", url: "/api/items" }, status: 500 });
+
+  for (let index = 0; index < WEBHOOK_HOURLY_LIMIT; index += 1) fail(`SENT_${index}`);
+  const heldBack = 4 * WEBHOOK_MAX_KEYS;
+  for (let index = 0; index < heldBack; index += 1) fail(`HELD_${index}`);
+  await settle();
+  assert.equal(calls.length, WEBHOOK_HOURLY_LIMIT);
+  assert.ok(reporter.trackedKeys.suppressed <= WEBHOOK_MAX_KEYS, JSON.stringify(reporter.trackedKeys));
+  assert.ok(reporter.trackedKeys.sent <= WEBHOOK_MAX_KEYS);
+
+  // An hour later the forgotten keys' counts travel with the next alert.
+  time.advance(60 * 60_000);
+  fail("AFTER");
+  await settle();
+  const last = calls.at(-1).body;
+  assert.equal(last.errorCode, "AFTER");
+  assert.ok(last.suppressed >= heldBack - WEBHOOK_MAX_KEYS, String(last.suppressed));
+  assert.match(last.text, /more held back/);
+  assert.ok(reporter.trackedKeys.suppressed < WEBHOOK_MAX_KEYS);
+  assert.ok(reporter.trackedKeys.sent <= WEBHOOK_MAX_KEYS);
+});
+
+test("a percent-encoded @ in a path segment is masked in the alert", async () => {
+  const { calls, fetchImpl } = recordingFetch();
+  const reporter = createErrorReporter({ logger: memoryLogger(), env: { FLOWCHAIN_ERROR_WEBHOOK_URL: WEBHOOK }, fetchImpl });
+  reporter.report(new Error("x"), { req: { method: "GET", url: "/api/users/buyer%40example.com/roles" }, status: 500 });
+  reporter.report(new Error("x"), { req: { method: "GET", url: "/api/users/buyer%40EXAMPLE.com" }, status: 502 });
+  await settle();
+  assert.deepEqual(calls.map(({ body }) => body.path), ["/api/users/[redacted]/roles", "/api/users/[redacted]"]);
+  assert.doesNotMatch(JSON.stringify(calls.map(({ body }) => body)), /example\.com|EXAMPLE/);
+});
+
+test("redaction covers the common credential shapes", () => {
+  const cases = [
+    ['{"password":"pw-value-1","user":"u"}', /pw-value-1/],
+    ['{"clientSecret": "cs-value-2"}', /cs-value-2/],
+    ['{"accessToken":"at-value-3"}', /at-value-3/],
+    ['{"api_key":"ak-value-4"}', /ak-value-4/],
+    ["Authorization: Basic dXNlcjpwYXNzd29yZA==", /dXNlcjpwYXNzd29yZA/],
+    ["sent Basic dXNlcjpwYXNzd29yZA== upstream", /dXNlcjpwYXNzd29yZA/],
+    ["x-api-key: xk-value-5", /xk-value-5/],
+    ["apiKey=ak-value-6", /ak-value-6/],
+    ["accessToken=at-value-7 expired", /at-value-7/],
+    ["redis://cacheuser:cache-pass-8@cache:6379/0", /cache-pass-8|cacheuser/],
+    ["rediss://default:cache-pass-9@cache:6380", /cache-pass-9/],
+    ["mongodb://mongo-user:mongo-pass-10@db:27017/app", /mongo-pass-10|mongo-user/],
+    ["mongodb+srv://mongo-user:mongo-pass-11@cluster0.example.net/app", /mongo-pass-11/],
+    ["amqp://queue-user:queue-pass-12@broker:5672", /queue-pass-12|queue-user/],
+    ["post to https://hooks.slack.com/services/T000/B000/slack-part-13 failed", /slack-part-13|hooks\.slack\.com/],
+    ["post to https://discord.com/api/webhooks/123/discord-part-14 failed", /discord-part-14/],
+    ["post to https://discordapp.com/api/webhooks/123/discord-part-15 failed", /discord-part-15/],
+  ];
+  for (const [input, secret] of cases) {
+    const output = redactSecrets(input);
+    assert.doesNotMatch(output, secret, `${input} -> ${output}`);
+    assert.match(output, /\[redacted\]/, input);
+    assert.doesNotMatch(sanitizeErrorSummary(new Error(input)), secret, input);
+  }
+  // Another URL with credentials keeps its scheme and host.
+  assert.equal(redactSecrets("amqp://queue-user:queue-pass-12@broker:5672"), "amqp://[redacted]@broker:5672");
+  // Prose and plain ids are left alone.
+  for (const kept of ["Basic authentication failed", "Unique constraint failed on the fields: (tenantId, sku)", "invalid or expired workspace session token"]) {
+    assert.equal(redactSecrets(kept), kept);
+  }
+});
+
+test("an error that cannot be described still leaves a minimal line", () => {
+  const logger = memoryLogger();
+  const reporter = createErrorReporter({ logger, env: {} });
+  const unprintable = Object.create(null);
+  assert.doesNotThrow(() => reporter.report(unprintable, { requestId: "req-12345678", status: 500, phase: "boundary" }));
+  assert.equal(logger.lines.length, 1);
+  assert.deepEqual(
+    (({ level, event, requestId, status, errorName }) => ({ level, event, requestId, status, errorName }))(logger.lines[0].entry),
+    { level: "error", event: "server_error", requestId: "req-12345678", status: 500, errorName: "UnloggableError" },
+  );
+});
+
+test("startScmServer registers the process error handlers once and shutdown removes them", async () => {
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = "postgresql://user:pass@127.0.0.1:5432/flowchain_error_reporter";
+  const { startScmServer } = await import("../bootstrap/scm-server.mjs");
+  const counts = () => ["uncaughtException", "unhandledRejection", "SIGTERM", "SIGINT"].map((name) => process.listenerCount(name));
+  const before = counts();
+  const quiet = { info() {}, warn() {}, error() {} };
+  const server = startScmServer(0, { logger: quiet });
+  try {
+    await new Promise((resolve) => (server.listening ? resolve() : server.once("listening", resolve)));
+    assert.deepEqual(counts(), before.map((count) => count + 1));
+  } finally {
+    await server.shutdown("test");
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+  }
+  assert.deepEqual(counts(), before);
 });

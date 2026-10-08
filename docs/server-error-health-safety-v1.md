@@ -64,7 +64,7 @@ Unhandled errors are always logged as one JSON line, by the error reporter in `s
 at ...","tenantId":"tenant-a","userId":"user-1","commitSha":"..."}
 ```
 
-This includes errors thrown after the response has started streaming. The caller cannot be told about those, and they used to go unrecorded. The `error` summary passes through `sanitizeErrorSummary`, which redacts bearer tokens, `sk-` keys, database URLs, and any `NAME=value` or `NAME: value` whose name ends in `API_KEY`, `SECRET`, `TOKEN` or `PASSWORD`.
+This includes errors thrown after the response has started streaming. The caller cannot be told about those, and they used to go unrecorded. The `error` summary passes through `sanitizeErrorSummary`, which redacts bearer tokens, `sk-` keys, database URLs, and any `NAME=value` or `NAME: value` whose name ends in `API_KEY`, `SECRET`, `TOKEN` or `PASSWORD`. Since the error tracking round the patterns live in `server/observability/redact.mjs` and also cover `Authorization:` and basic credentials, camelCase and header-style key names, JSON secret fields, Redis and MongoDB connection strings, credentials in any URL, and Slack and Discord webhook URLs ([operations-alerts.md](operations-alerts.md) has the list).
 
 Fields added in the error tracking round:
 

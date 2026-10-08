@@ -1,15 +1,16 @@
-import { redactSecrets, sanitizeErrorSummary } from "../utils/safe-errors.mjs";
+import { redactSecrets, sanitizeErrorSummary } from "./redact.mjs";
 import { requestActorOf, requestIdOf, requestLogPath } from "../bootstrap/request-logging.mjs";
 
 // One reporter per server. It writes one JSON line per unexpected error and,
 // when FLOWCHAIN_ERROR_WEBHOOK_URL is an https URL, posts a short alert to it
 // (a Slack or Discord incoming webhook, or anything that accepts JSON).
 //
-// What is never written or sent: names, emails, request bodies, headers,
-// tokens, query strings and the webhook URL itself. The log line carries the
-// signed-in tenant and user ids; the webhook carries no ids and no error
-// message, only the error's name and code, so an alert channel never holds
-// customer data.
+// Never written or sent: request bodies, headers, query strings and the
+// webhook URL itself. Error messages and stacks are logged after known
+// secret shapes are redacted (./redact.mjs); paths are logged as requested,
+// so record ids may appear. The log line carries the signed-in tenant and
+// user ids; the webhook carries no ids and no error message, only the
+// error's name and code, and masks path segments that hold an email.
 //
 // The webhook is fire-and-forget: report() returns before the POST starts,
 // a slow or failing endpoint never delays or fails a request, and alerts are
@@ -21,10 +22,12 @@ export const WEBHOOK_HOURLY_LIMIT = 10;
 const HOUR_MS = 60 * 60_000;
 const PRODUCTION_STACK_FRAMES = 8;
 const MAX_STACK_LENGTH = 4_000;
-const MAX_KEYS = 500;
+export const WEBHOOK_MAX_KEYS = 500;
+const MAX_KEYS = WEBHOOK_MAX_KEYS;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9_.:-]{1,64}$/;
 
 const text = (value) => String(value ?? "").trim();
+const isClientErrorStatus = (status) => Number.isInteger(status) && status >= 400 && status < 500;
 
 export function isProductionEnv(env = process.env) {
   return text(env.NODE_ENV).toLowerCase() === "production"
@@ -77,10 +80,11 @@ function stackOf(error, production) {
   return redactSecrets(kept.join("\n")).slice(0, MAX_STACK_LENGTH);
 }
 
-// A path segment that holds an email address is the one way a path could
-// carry personal data, so it is masked before the path leaves the server.
+// A path segment that holds an email address, plain or percent-encoded, is
+// masked before the path leaves the server for the alert channel.
+const EMAIL_MARK = /@|%40/i;
 function alertPath(path) {
-  return redactSecrets(path.split("/").map((segment) => (segment.includes("@") ? "[redacted]" : segment)).join("/"));
+  return redactSecrets(path.split("/").map((segment) => (EMAIL_MARK.test(segment) ? "[redacted]" : segment)).join("/"));
 }
 
 function writeLine(logger, level, entry) {
@@ -111,6 +115,7 @@ export function createErrorReporter({
   const lastSentByKey = new Map();
   const suppressedByKey = new Map();
   let hourlySends = [];
+  let otherSuppressed = 0;
   let lastFailureLoggedAt = -Infinity;
 
   if (!webhookUrl && webhookReason !== "not_configured") {
@@ -146,6 +151,8 @@ export function createErrorReporter({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         signal: controller.signal,
+        // A redirect could lead the alert off https; webhooks never need one.
+        redirect: "error",
       }))
       .then((response) => {
         const status = Number(response?.status) || 0;
@@ -169,22 +176,46 @@ export function createErrorReporter({
     return attempt;
   }
 
+  // Keys whose 5-minute window is over are forgotten, and their held-back
+  // counts move to otherSuppressed, which the next alert of any key carries.
+  // Neither map grows past MAX_KEYS.
+  function prune(at) {
+    for (const [key, sentAt] of lastSentByKey) {
+      if (at - sentAt < WEBHOOK_KEY_WINDOW_MS) continue;
+      lastSentByKey.delete(key);
+      otherSuppressed += suppressedByKey.get(key) || 0;
+      suppressedByKey.delete(key);
+    }
+    for (const [key, count] of suppressedByKey) {
+      if (suppressedByKey.size < MAX_KEYS) break;
+      // Oldest first (insertion order).
+      otherSuppressed += count;
+      suppressedByKey.delete(key);
+    }
+  }
+
+  function holdBack(key) {
+    if (suppressedByKey.has(key) || suppressedByKey.size < MAX_KEYS) {
+      suppressedByKey.set(key, (suppressedByKey.get(key) || 0) + 1);
+    } else {
+      otherSuppressed += 1;
+    }
+  }
+
   // 1 alert per error code and path per 5 minutes, at most 10 an hour. What
-  // is held back is counted and reported with the next alert for that key.
+  // is held back is counted and reported with the next alert for that key
+  // (or, once the key is forgotten, with the next alert of any key).
   function admit(key, at) {
     hourlySends = hourlySends.filter((sentAt) => at - sentAt < HOUR_MS);
+    if (lastSentByKey.size >= MAX_KEYS || suppressedByKey.size >= MAX_KEYS) prune(at);
     const last = lastSentByKey.get(key);
     if ((last !== undefined && at - last < WEBHOOK_KEY_WINDOW_MS) || hourlySends.length >= WEBHOOK_HOURLY_LIMIT) {
-      suppressedByKey.set(key, (suppressedByKey.get(key) || 0) + 1);
+      holdBack(key);
       return null;
     }
-    if (lastSentByKey.size >= MAX_KEYS) {
-      for (const [staleKey, sentAt] of lastSentByKey) {
-        if (at - sentAt >= WEBHOOK_KEY_WINDOW_MS) lastSentByKey.delete(staleKey);
-      }
-    }
-    const suppressed = suppressedByKey.get(key) || 0;
+    const suppressed = (suppressedByKey.get(key) || 0) + otherSuppressed;
     suppressedByKey.delete(key);
+    otherSuppressed = 0;
     lastSentByKey.set(key, at);
     hourlySends.push(at);
     return { suppressed };
@@ -192,6 +223,10 @@ export function createErrorReporter({
 
   function alert(entry) {
     if (!webhookUrl) return;
+    // A client error (such as a 403 for a missing workspace) is logged but
+    // never alerts, so it cannot use up the hourly limit. Crash lines carry no
+    // status and still alert, as do errors after a 2xx response had started.
+    if (isClientErrorStatus(entry.status)) return;
     const at = Date.parse(entry.time) || now().getTime();
     const path = entry.path === undefined ? undefined : alertPath(entry.path);
     const admitted = admit(`${entry.errorCode}|${path ?? entry.phase ?? ""}`, at);
@@ -199,7 +234,7 @@ export function createErrorReporter({
     const where = [entry.status, entry.method, path].filter((part) => part !== undefined && part !== "").join(" ");
     const summary = `FlowChain ${service}: ${entry.event} ${entry.errorCode}${where ? ` on ${where}` : ""}`
       + `${entry.requestId ? ` (request ${entry.requestId})` : ""}`
-      + `${admitted.suppressed ? `, ${admitted.suppressed} similar held back` : ""}`;
+      + `${admitted.suppressed ? `, ${admitted.suppressed} more held back` : ""}`;
     post({
       text: summary,
       content: summary,
@@ -221,14 +256,17 @@ export function createErrorReporter({
   // (what the caller was or will be sent), phase (boundary, route, ...),
   // event (server_error by default; process_error for crashes), fatal.
   function report(error, { req, requestId, status, phase, event = "server_error", fatal } = {}) {
+    let id = "";
+    let written = false;
     try {
       if (req) reported.add(req);
       const errorName = errorNameOf(error);
-      const id = requestId || (req ? requestIdOf(req) : "");
+      id = requestId || (req ? requestIdOf(req) : "");
       const stack = stackOf(error, production);
+      const level = isClientErrorStatus(status) ? "warn" : "error";
       const entry = {
         time: now().toISOString(),
-        level: "error",
+        level,
         event,
         ...(id ? { requestId: id } : {}),
         ...(req ? { method: identifier(req.method) || "UNKNOWN", path: requestLogPath(req) } : {}),
@@ -242,10 +280,22 @@ export function createErrorReporter({
         ...(req ? requestActorOf(req) : {}),
         ...(text(commitSha) ? { commitSha: text(commitSha) } : {}),
       };
-      writeLine(logger, "error", entry);
+      writeLine(logger, level, entry);
+      written = true;
       alert(entry);
     } catch {
-      // Reporting must never turn one failure into two.
+      if (written) return;
+      // The error could not be described (for example an object whose
+      // properties throw). A minimal line still records that it happened;
+      // reporting must never turn one failure into two.
+      writeLine(logger, "error", {
+        time: new Date().toISOString(),
+        level: "error",
+        event: identifier(event) || "server_error",
+        ...(typeof id === "string" && id ? { requestId: id } : {}),
+        ...(Number.isInteger(status) ? { status } : {}),
+        errorName: "UnloggableError",
+      });
     }
   }
 
@@ -300,5 +350,7 @@ export function createErrorReporter({
     flush,
     sendTestAlert,
     get webhookEnabled() { return Boolean(webhookUrl); },
+    // For tests: how many keys the rate limiter is holding.
+    get trackedKeys() { return { sent: lastSentByKey.size, suppressed: suppressedByKey.size }; },
   };
 }
