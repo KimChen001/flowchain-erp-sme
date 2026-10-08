@@ -133,7 +133,7 @@ function useSalesCopy() {
     const itemLabel = (order: SalesOrder) => {
       const lines = order.lines || [];
       if (!english || lines.length < 2) return order.itemName;
-      return `${lines[0].itemName || lines[0].sku || order.sku} and ${lines.length - 1} more`;
+      return `${lines[0].itemName?.trim() || lines[0].sku?.trim() || order.sku} and ${lines.length - 1} more`;
     };
     return { copy, say, customerLabel, itemLabel };
   }, [language]);
@@ -477,7 +477,7 @@ function OrderDetailModal({
           </div>
         </DetailSection>
 
-        <ReviewActionPanel objectLabel={say(`Sales order ${order.salesOrderId}`, `客户订单 ${order.salesOrderId}`)} />
+        <ReviewActionPanel key={order.salesOrderId} objectLabel={say(`Sales order ${order.salesOrderId}`, `客户订单 ${order.salesOrderId}`)} />
 
         <DetailSection title={copy("审计与时间线")}>
           <div className="grid grid-cols-3 gap-2 text-[11px] leading-5" style={{ color: A.sub }}>
