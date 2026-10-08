@@ -65,6 +65,14 @@ const zh: Record<string, string> = {
   "No tax codes yet.": "暂无税码。", "Payment term search": "付款条款查询", "Search payment terms by code, name or description.": "按编码、名称或描述查询付款条款。",
   "Payment term list": "付款条款列表", "No payment terms yet.": "暂无付款条款。", "Print template search": "打印模板查询",
   "Search templates by name or document type.": "按名称或单据类型查询模板。", "Print template list": "打印模板列表", "No print templates yet.": "暂无打印模板。",
+  // Locations / bins.
+  "Bin search": "库位查询", "Bins come from posted stock: every bin that holds a stock record is listed, with its warehouse.": "库位来自已过账的库存：列出所有有库存记录的库位及其仓库。",
+  "Refresh": "刷新", "Bin or warehouse": "库位或仓库", "Warehouse": "仓库", "All warehouses": "全部仓库", "Bin list": "库位列表",
+  "{total} bins, {shown} shown": "共 {total} 个库位，当前显示 {shown} 个", "1 bin, {shown} shown": "共 1 个库位，当前显示 {shown} 个",
+  "Read the first {count} stock records; bins beyond them are not listed.": "已读取前 {count} 条库存记录，之后的库位未列出。",
+  "Loading bins…": "正在加载库位…", "Could not load the bins.": "库位加载失败。", "Try again": "重试",
+  "No bins yet. A bin is listed once stock is received or opening stock is posted into it.": "暂无库位。库位在收货或期初库存过账后才会列出。",
+  "SKUs": "SKU 数", "On hand": "在手", "No bin recorded": "未记录库位", "View stock": "查看库存",
 };
 const en = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [chinese, english]));
 
