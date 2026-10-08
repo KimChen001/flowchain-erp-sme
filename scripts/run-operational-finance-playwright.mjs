@@ -32,6 +32,9 @@ if (entry !== 0) process.exit(entry);
 // Payments recorded on bills to pay and receivables, on a fresh database.
 const payments = await run("tests/browser/payment-records.spec.ts");
 if (payments !== 0) process.exit(payments);
+// The customer invoice document, approved and then issued, on a fresh database.
+const invoiceDocument = await run("tests/browser/customer-invoice-document.spec.ts");
+if (invoiceDocument !== 0) process.exit(invoiceDocument);
 process.exit(
   await run("tests/browser/operational-finance-disabled.spec.ts", {
     PLAYWRIGHT_OPERATIONAL_FINANCE_DISABLED: "true",

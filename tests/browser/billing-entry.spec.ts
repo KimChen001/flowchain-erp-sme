@@ -105,7 +105,9 @@ test("a waiting bill is linked to its receipt, then matched and approved", async
   await expect(page.getByTestId("link-receipt-confirm")).toBeEnabled();
   await page.getByTestId("link-receipt-confirm").click();
   await expect(page.getByTestId("supplier-invoice-awaiting-receipt")).toHaveCount(0);
-  await expect(page.getByTestId("supplier-invoice-sources")).toContainText("finance-browser-grn");
+  // The receipt shows by its GRN number, not its stored id.
+  await expect(page.getByTestId("supplier-invoice-sources")).toContainText("GRN-FIN-BROWSER");
+  await expect(page.getByTestId("supplier-invoice-sources")).not.toContainText("finance-browser-grn");
   await run(page, "invoice-match");
   await expect(page.getByTestId("supplier-invoice-match")).toBeVisible();
   await run(page, "invoice-approve");

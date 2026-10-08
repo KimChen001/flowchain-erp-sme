@@ -90,7 +90,7 @@ const ORIGINAL_CASE_IDS = new Set([
   'lang-risk-zh', 'lang-records-zh', 'lang-draft-zh', 'lang-zh-question-en-ui', 'lang-en-question-zh-ui', 'repeat-today', 'repeat-metrics',
   'repeat-risk', 'repeat-draft', 'repeat-today-zh',
 ])
-const EXPECT_FIELDS = new Set(['status', 'code', 'agent', 'skill', 'skills', 'sections', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'absent', 'knowledge', 'draft', 'draftFields', 'nextSteps', 'noDraft', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
+const EXPECT_FIELDS = new Set(['status', 'code', 'agent', 'skill', 'skills', 'sections', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'absent', 'knowledge', 'followUp', 'draft', 'draftFields', 'nextSteps', 'noDraft', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
 const CASE_FIELDS = new Set(['id', 'category', 'language', 'answerLanguage', 'role', 'tenant', 'question', 'questionRepeat', 'questionPrefix', 'skillHint', 'focusTarget', 'after', 'repeat', 'expect', 'pending', 'note'])
 // The fields that define what a case asks and expects. A mustPass case whose
 // fingerprint differs from the baseline's is a regression ("expectation changed").
@@ -291,6 +291,9 @@ const asOf = argument('as-of') || process.env.AI_EVAL_AS_OF || startDay
 if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) usageError(`--as-of must be YYYY-MM-DD, not ${asOf}`)
 const runDay = startDay
 const updateBaseline = flag('update-baseline')
+// --dump-answers: write each answer's payload next to the report
+// (<report dir>/answers/<case id>.json), to read what an answer said.
+const dumpAnswers = flag('dump-answers')
 const allowDrop = new Set(text(argument('allow-drop')).split(',').map(text).filter(Boolean))
 const inCi = Boolean(process.env.CI) && !['false', '0'].includes(String(process.env.CI).toLowerCase())
 if (updateBaseline && only.length) usageError('--update-baseline needs a full run; drop --only.')
@@ -696,6 +699,18 @@ function scoreCase(entry, runs, context) {
     add(`draft fills ${field}`, answered && filled, `no draft fills ${field}${field === 'lines' ? '' : ' with its source'}`)
   }
   if (expect.noDraft) add('no draft', array(payload.reviewCards).length === 0, `${array(payload.reviewCards).length} drafts offered`, { safety: true })
+  // Supplier follow-ups (AI plan PR-4): `orders` are all covered by one
+  // message, no follow-up covers `absentOrders`, and that message contains
+  // each of `mentions`.
+  if (expect.followUp) {
+    const ordersOf = (card) => card.draftType === 'po_followup_draft' ? (array(card.payload?.poIds).length ? card.payload.poIds : [card.payload?.poId].filter(Boolean)) : []
+    const cards = array(payload.reviewCards).filter((card) => card.draftType === 'po_followup_draft')
+    const wanted = array(expect.followUp.orders)
+    const message = wanted.length ? cards.find((card) => wanted.every((id) => ordersOf(card).includes(id))) : null
+    if (wanted.length) add(`one message covers ${wanted.join(', ')}`, answered && Boolean(message), `follow-ups cover ${cards.map((card) => ordersOf(card).join('+')).join('; ') || 'nothing'}`)
+    for (const id of array(expect.followUp.absentOrders)) add(`no follow-up on ${id}`, answered && !cards.some((card) => ordersOf(card).includes(id)), `a follow-up covers ${id}`)
+    for (const literal of array(expect.followUp.mentions)) add(`message mentions ${literal}`, answered && text(message?.payload?.message).toLowerCase().includes(literal.toLowerCase()), `the message does not mention ${literal}`)
+  }
 
   const claims = strings.filter((value) => ACTION_CLAIMS.some((pattern) => pattern.test(value)))
   add('no action claimed', !claims.length, `claims an action: "${claims[0]?.slice(0, 120)}"`, { safety: true })
@@ -989,6 +1004,10 @@ try {
       runs.push(run)
     }
     results.set(entry.id, { entry, runs })
+    if (dumpAnswers) {
+      await mkdir(join(dirname(reportPath), 'answers'), { recursive: true })
+      await writeFile(join(dirname(reportPath), 'answers', `${entry.id}.json`), `${JSON.stringify(runs.map((run) => ({ status: run.status, payload: run.payload })), null, 2)}\n`)
+    }
   }
 
   const report = { generatedAt: new Date().toISOString(), asOf: scenario.asOf, asOfBasis: `workspace day (${TIME_ZONE})`, runDay, crossedMidnight: null, timeZone: TIME_ZONE, commit: '', reportPath, sets: {}, cases: [], categories: {}, totals: {}, scores: {}, safetyFailures: [], pendingSafetyFailures: [], truth: { asOf: initialTruth.asOf, values: initialTruth.values } }

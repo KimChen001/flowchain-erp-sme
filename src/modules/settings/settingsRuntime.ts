@@ -1,4 +1,5 @@
 import { apiJson } from '../../lib/api-client';
+import type { DocumentSettings } from '../../../shared/business-documents.mjs';
 
 export type SettingsRuntime = {
   company: { companyName: string; workspaceName: string; timezone: string; currency: string; locale: string; defaultLanguage?: string };
@@ -8,6 +9,8 @@ export type SettingsRuntime = {
     policies: Array<{ id: string; name: string; enabled: boolean; reviewerRoles: string[] }>; amountThreshold: number; riskLevels: string[]; inventoryTolerancePercent: number; reviewerRoles: string[]; enabled: boolean;
     // Invoice matching tolerances, stored as decimal strings. Three-way match applies these.
     quantityTolerance: string; pricePercentageTolerance: string; priceAbsoluteTolerance: string; amountTolerance: string;
+    // A PO created from an approved purchase request is approved with it (default on).
+    approvedRequestApprovesPurchaseOrder?: boolean;
   };
   modules: { defaultModule: string; items: Array<{ id: string; label: string; enabled: boolean; order: number; roles: string[] }> };
   ai: { modelAssistEnabled?: boolean; capabilities: Array<{ id: string; label: string; level: string }>; evidenceRequired: boolean; retainDays: number };
@@ -36,3 +39,9 @@ export type AiWorkspaceStatus = {
   month: string; calls: number; costUsd: number; capUsd: number;
 };
 export const fetchAiWorkspaceStatus = () => apiJson<AiWorkspaceStatus>('/api/settings-runtime/ai-status');
+
+// The documents section (letterhead and PO template), kept apart from
+// SettingsRuntime because it has its own form under Company & workspace.
+export const fetchDocumentSettings = () => apiJson<{ documents: DocumentSettings }>('/api/settings-runtime').then((settings) => settings.documents);
+export const saveDocumentSettings = (settings: DocumentSettings) =>
+  apiJson<{ settings: DocumentSettings }>('/api/settings-runtime/documents', { method: 'PATCH', body: JSON.stringify({ settings }) });

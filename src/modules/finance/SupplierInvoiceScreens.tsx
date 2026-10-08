@@ -8,6 +8,8 @@ import { createSecureClientMutationId } from "../../lib/client-id";
 import { formatDateTimeInTimeZone } from "../../lib/format";
 import { Notice, StatusChip, TwoStepAction, button, field, message } from "./FinanceControls";
 import { PaymentRecords } from "./PaymentRecords";
+import { addCalendarDays } from "../../lib/prefill";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 
 // The supplier invoice screens of the trial's procure-to-pay chain: enter an
 // invoice against a posted receipt, then submit, match, review exceptions,
@@ -18,7 +20,7 @@ import { PaymentRecords } from "./PaymentRecords";
 type Issue = { code?: string; message?: string; details?: unknown };
 type Plan = { allowed: boolean; blockingIssues?: Issue[]; invoice?: { totalAmount?: string; currency?: string }; nextStatus?: string };
 type EntryData = {
-  suppliers: Array<{ id: string; code?: string | null; name: string }>;
+  suppliers: Array<{ id: string; code?: string | null; name: string; paymentTerm?: { code: string; name: string; days: number | null } | null }>;
   purchaseOrders: Array<{ id: string; supplierId: string; currency: string; status: string; lines: Array<{ id: string; sku: string; itemName: string; orderedQuantity: string; billedQuantity: string; unitPrice: string | null; unit: string | null }> }>;
   receivingDocuments: Array<{ id: string; documentNumber: string | null; poId: string | null; supplierId: string; supplierName: string | null; currency: string | null; lines: Array<{ id: string; purchaseOrderLineId: string | null; sku: string; itemName: string; acceptedQuantity: string; unit: string | null }> }>;
   capabilities: Record<string, { enabled?: boolean }>;
@@ -65,6 +67,9 @@ export function NewSupplierInvoice() {
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(localToday);
   const [dueDate, setDueDate] = useState("");
+  // Until someone types a due date, it follows the supplier's payment term:
+  // the invoice date plus the term's days.
+  const [dueTyped, setDueTyped] = useState(false);
   const [lines, setLines] = useState<Record<string, { quantity?: string; unitPrice?: string; tax?: string }>>({});
   const [plan, setPlan] = useState<Plan | null>(null);
   const [notice, setNotice] = useState("");
@@ -145,6 +150,11 @@ export function NewSupplierInvoice() {
     };
   };
   const reset = () => setPlan(null);
+  const term = entry?.suppliers.find((row) => row.id === supplierId)?.paymentTerm || null;
+  const termDue = term && term.days !== null && /^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) ? addCalendarDays(invoiceDate, term.days) : "";
+  useEffect(() => {
+    if (!dueTyped && termDue) setDueDate(termDue);
+  }, [termDue, dueTyped]);
   const chooseOrder = (id: string) => {
     const next = entry?.purchaseOrders.find((row) => row.id === id);
     const forPo = (entry?.receivingDocuments || []).filter((row) => row.poId === id);
@@ -216,7 +226,8 @@ export function NewSupplierInvoice() {
             <input type="date" className={`${field} mt-1 w-full`} value={invoiceDate} onChange={(event) => { setInvoiceDate(event.target.value); reset(); }} />
           </label>
           <label className="text-xs">{t("finance.dueDate")}
-            <input type="date" data-testid="supplier-invoice-due" className={`${field} mt-1 w-full`} value={dueDate} onChange={(event) => { setDueDate(event.target.value); reset(); }} />
+            <input type="date" data-testid="supplier-invoice-due" className={`${field} mt-1 w-full`} value={dueDate} onChange={(event) => { setDueDate(event.target.value); setDueTyped(true); reset(); }} />
+            {!dueTyped && termDue && dueDate === termDue && term && <span className="mt-1 block text-slate-500" data-testid="supplier-invoice-due-terms">{t("finance.dueFromTerms", { term: term.name, days: String(term.days) })}</span>}
           </label>
           <div className="text-xs">{t("finance.currency")}<div className="mt-1 rounded-lg bg-slate-50 px-3 py-2 text-sm">{currency || "—"}</div></div>
         </div>
@@ -487,6 +498,7 @@ export function SupplierInvoiceDetail() {
       });
   }, [id]);
   useEffect(() => { load(); }, [load]);
+  useDetailCrumb(data?.invoiceNumber);
   if (failure && !data) {
     const testId = { notFound: "supplier-invoice-not-found", unauthenticated: "supplier-invoice-unauthenticated", forbidden: "supplier-invoice-forbidden", error: "supplier-invoice-read-error" }[failure];
     const text = { notFound: t("finance.billNotFound"), unauthenticated: t("finance.billSignedOut"), forbidden: t("finance.billForbidden"), error: t("finance.billReadError") }[failure];
@@ -515,7 +527,7 @@ export function SupplierInvoiceDetail() {
             <p className="mt-1 text-sm text-slate-500" data-testid="supplier-invoice-sources">
               {data.supplierName || "—"}
               {" · "}{t("finance.purchaseOrder")} {data.relatedPoId ? <BusinessEntityLink entityType="purchase_order" entityId={data.relatedPoId} /> : "—"}
-              {" · "}{t("finance.receipt")} {data.relatedGrnId ? <BusinessEntityLink entityType="receiving_doc" entityId={data.relatedGrnId} /> : data.awaitingReceipt ? <span className="font-medium text-amber-700">{t("finance.awaitingReceipt")}</span> : "—"}
+              {" · "}{t("finance.receipt")} {data.relatedGrnId ? <BusinessEntityLink entityType="receiving_doc" entityId={data.relatedGrnId}>{data.relatedGrnNumber || data.relatedGrnId}</BusinessEntityLink> : data.awaitingReceipt ? <span className="font-medium text-amber-700">{t("finance.awaitingReceipt")}</span> : "—"}
               {data.relatedPoId && <>{" · "}<BusinessEntityLink entityType="three_way_match" entityId={`MATCH-${data.id}`}>{t("finance.threeWayMatch")}</BusinessEntityLink></>}
             </p>
           </div>
