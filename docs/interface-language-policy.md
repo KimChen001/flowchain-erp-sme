@@ -66,13 +66,10 @@ names, or supplier names in place. Translate their presentation where appropriat
   as incoming is in both languages on the reports page and in the assistant's stock and
   order answers.
 - English trial screens (pilot item 7, first part). Sales delivery risks and order
-  evidence (`src/modules/sales/Page.tsx`) translate the sales order read API's status,
-  risk and customer-tier labels, the unnamed-customer name and the multi-line item name
-  when shown (`src/modules/sales/salesDemandCopy.ts`); the allocation warning and the
-  evidence error are translated, and the review panel in the order drawer
-  (`src/components/business/BusinessObjectDetail.tsx`) has English and Chinese
-  decisions and messages. The API still sends its Chinese labels; only the display
-  changes. `server/domain/interface-language-coverage.test.mjs` lists the
+  evidence (`src/modules/sales/Page.tsx`) translate the sales order read API's status
+  and risk labels, the unnamed-customer name and the multi-line item name when shown
+  (`src/modules/sales/salesDemandCopy.ts`); the evidence error is translated. The API
+  still sends its Chinese labels; only the display changes. `server/domain/interface-language-coverage.test.mjs` lists the
   English-covered screens (the five operational finance screens, inventory operations,
   the reorder list, procurement document detail, three-way match, the receiving list,
   AI suggestions, sales risks and evidence, and the business object detail panels):
@@ -86,8 +83,8 @@ names, or supplier names in place. Translate their presentation where appropriat
   assistant. On the walkthrough data the harness adds two trial sales orders (three
   lines; on hold with no customer name), and the spec checks their translated labels
   on the risk and evidence pages in English and their Chinese labels in zh-CN. The
-  order drawer and its review panel are translated but not checked in a browser: no
-  link opens the drawer (a sales order focus goes to `/app/sales/orders/:id`). Deferred: the sales order and shipment workbench (`/app/sales/orders`,
+  sales order drawer on these pages and its review panel were removed (2026-10-08): no
+  link opened them, and a sales order focus goes to `/app/sales/orders/:id`. Deferred: the sales order and shipment workbench (`/app/sales/orders`,
   `OutboundWorkbench.tsx`) until #173 and #178; the inventory filter chips
   (`src/modules/inventory/Page.tsx`) until #182; shell strings in
   `src/app/FlowChainApp.tsx` until #179 (shell strings added by the documents work); an order's evidence graph, whose

@@ -1,8 +1,7 @@
-import { useState, type ReactNode } from "react";
-import { CheckCircle2, FileText, ShieldCheck } from "lucide-react";
+import type { ReactNode } from "react";
+import { FileText } from "lucide-react";
 import { A, Card, Chip, Modal, SectionHeader } from "../ui";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
-import { useI18n } from "../../i18n/I18n";
 
 const copy = (label: string) => workspaceCopy(label, typeof document === "undefined" ? "en-US" : document.documentElement.lang);
 
@@ -11,19 +10,6 @@ export type DetailField = {
   value: string | number | undefined | null;
   tone?: "default" | "good" | "warning" | "danger" | "info";
 };
-
-type ReviewDecision = "approve" | "reject" | "request_changes" | "defer" | "cancel";
-
-// Review decisions in English and Chinese.
-const decisionLabels: Record<ReviewDecision, [string, string]> = {
-  approve: ["Approve", "通过复核"],
-  reject: ["Reject", "拒绝"],
-  request_changes: ["Request changes", "要求补充"],
-  defer: ["Defer", "暂缓"],
-  cancel: ["Cancel", "取消"],
-};
-
-const decisionRequiresReason = new Set<ReviewDecision>(["reject", "request_changes", "cancel"]);
 
 function toneColor(tone: DetailField["tone"] = "default") {
   if (tone === "good") return A.green;
@@ -141,79 +127,6 @@ export function DataLimitationsPanel({
             {copy(labelFor(item))}
           </span>
         ))}
-      </div>
-    </DetailSection>
-  );
-}
-
-// The preview is kept as its parts and written out when shown, so it follows
-// the interface language. objectLabel is passed in the interface language.
-type ReviewPreview = { decision: ReviewDecision; reason: string; missingReason: boolean };
-
-export function ReviewActionPanel({ objectLabel }: { objectLabel: string }) {
-  const { language } = useI18n();
-  const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
-  const decisionLabel = (item: ReviewDecision) => say(...decisionLabels[item]);
-  const [decision, setDecision] = useState<ReviewDecision>("approve");
-  const [reason, setReason] = useState("");
-  const [result, setResult] = useState<ReviewPreview | null>(null);
-
-  function preview() {
-    const trimmed = reason.trim();
-    setResult({ decision, reason: trimmed, missingReason: decisionRequiresReason.has(decision) && !trimmed });
-  }
-
-  function previewMessage(preview: ReviewPreview) {
-    const label = decisionLabel(preview.decision);
-    if (preview.missingReason) return say(`${label} needs a reason. Nothing is written to business records.`, `${label}需要填写原因，当前不会写入业务数据。`);
-    const reasonText = preview.reason ? say(`, reason: ${preview.reason}`, `，原因：${preview.reason}`) : "";
-    return say(
-      `Review record preview for ${objectLabel}: ${label}${reasonText}. For the owner to check before confirming; nothing is written.`,
-      `${objectLabel}已生成${label}复核记录预览${reasonText}。该操作仅供负责人确认前查看。`,
-    );
-  }
-
-  return (
-    <DetailSection title="复核动作" right={<Chip label="预览模式" color={A.green} bg="#f0faf4" />}>
-      <div className="space-y-3">
-        <div className="grid grid-cols-5 gap-2">
-          {(Object.keys(decisionLabels) as ReviewDecision[]).map((item) => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setDecision(item)}
-              className="h-8 rounded-lg text-[11px] font-semibold"
-              style={decision === item ? { background: "#0f172a", color: A.white } : { background: A.white, color: A.gray1 }}
-            >
-              {decisionLabel(item)}
-            </button>
-          ))}
-        </div>
-        <textarea
-          value={reason}
-          onChange={(event) => setReason(event.target.value)}
-          className="w-full min-h-[72px] rounded-lg px-3 py-2 text-xs outline-none"
-          style={{ background: A.white, color: A.label, boxShadow: "0 0 0 0.5px rgba(15,23,42,0.12)" }}
-          placeholder={copy("填写复核原因、补充资料要求或暂缓说明")}
-        />
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5 text-[11px]" style={{ color: A.sub }}>
-            <ShieldCheck size={13} /> {copy("所有动作仅生成内部复核预览，不自动改主档、不发外部通知。")}
-          </div>
-          <button
-            type="button"
-            onClick={preview}
-            className="h-8 px-3 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5"
-            style={{ background: "#f0f6ff", color: A.blue }}
-          >
-            <CheckCircle2 size={13} /> {copy("生成复核预览")}
-          </button>
-        </div>
-        {result && (
-          <div className="rounded-lg px-3 py-2 text-[11px] leading-5" style={{ background: A.white, color: result.missingReason ? A.red : A.green }}>
-            {previewMessage(result)}
-          </div>
-        )}
       </div>
     </DetailSection>
   );

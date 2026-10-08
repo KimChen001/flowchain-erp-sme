@@ -114,10 +114,8 @@ test("English trial: the assistant opens in English", async ({ page }) => {
 // walkthrough data: LOCAL-TRIAL-SO-101 has three lines; LOCAL-TRIAL-SO-102 is
 // on hold and has no recorded customer name. The read API sends their labels
 // in Chinese; the page translates them when shown.
-//
-// The order drawer with its review panel (OrderDetailModal, ReviewActionPanel)
-// is not checked here: no link opens it. "View order" goes to the sales order
-// workbench, and a sales order focus is routed to /app/sales/orders/:id.
+// "View order" goes to the sales order workbench, and a sales order focus is
+// routed to /app/sales/orders/:id; these pages have no order drawer.
 test.describe("sales delivery risks with the trial orders", () => {
   test.skip(process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY === "true", "the trial orders are seeded on the walkthrough data only");
 

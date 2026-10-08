@@ -98,14 +98,11 @@ const TRANSLATED_ITEMS = {
 const ALLOWED = [
   // The server's Chinese status labels, matched to filter unshipped orders.
   { file: 'src/modules/sales/Page.tsx', text: '/已完成|已交付/' },
-  // The read API's priority label, compared to choose the KPI tone.
-  { file: 'src/modules/sales/Page.tsx', text: '高' },
   // The read API's fallback customer name, compared before it is translated.
   { file: 'src/modules/sales/Page.tsx', text: '未命名客户', line: /order\.customerName === "未命名客户"/ },
   // Data limitation labels by code; limitationLabel() is shown through copy().
   { file: 'src/modules/sales/Page.tsx', within: 'limitationLabel' },
   // Error and warning text kept in state and shown through copy() when rendered.
-  { file: 'src/modules/sales/Page.tsx', text: '库存分配尚未接入销售订单运行时仓库，当前不展示未经接入的可承诺量。' },
   { file: 'src/modules/sales/Page.tsx', text: '当前未读取到客户订单记录，请检查工作区数据或刷新后重试。' },
   { file: 'src/modules/sales/Page.tsx', text: '当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。' },
 ]

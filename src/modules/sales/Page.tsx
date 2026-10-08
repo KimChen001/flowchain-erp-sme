@@ -5,16 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Boxes, ClipboardList, FileText, PackageSearch, ShoppingCart, Truck, Users } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Chip, SectionHeader } from "../../components/ui";
-import type { InventoryAvailability } from "../inventory/api";
-import {
-  BusinessObjectDetailModal,
-  CompactKpiStrip,
-  DataLimitationsPanel,
-  DetailFieldGrid,
-  DetailSection,
-  EvidenceSummaryPanel,
-  ReviewActionPanel,
-} from "../../components/business/BusinessObjectDetail";
 import EvidenceGraphPanel, { type EvidenceGraphResponse, type EvidenceNavigate } from "../../components/evidence/EvidenceGraphPanel";
 import SalesReturnPage from "./SalesReturnPage";
 import { BusinessDocumentForm } from "../../components/business/BusinessDocumentForm";
@@ -159,19 +149,16 @@ export default function SalesDemandPage(props: SalesDemandPageProps) {
   return <SalesDemandCore {...props} />;
 }
 
-function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDemandPageProps) {
+function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProps) {
   const { copy, customerLabel, itemLabel } = useSalesCopy();
   const qty = useQty();
   const [searchParams, setSearchParams] = useSearchParams();
   const view = viewFromInitial(initialView);
   const [orders, setOrders] = useState<SalesOrder[]>([]);
-  const [availability] = useState<InventoryAvailability[]>([]);
   const [summary, setSummary] = useState<SalesSummary | null>(null);
   const [loadingOrders, setLoadingOrders] = useState(true);
   const [ordersError, setOrdersError] = useState("");
-  const [allocationWarning] = useState("库存分配尚未接入销售订单运行时仓库，当前不展示未经接入的可承诺量。");
   const [selectedOrderId, setSelectedOrderId] = useState(() => searchParams.get("orderId") || "");
-  const [detailOpen, setDetailOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -210,7 +197,6 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
     if (!focus?.entityId) return;
     if (focus.entityType === "sales_order" || focus.entityType === "customer_order") {
       setSelectedOrderId(focus.entityId);
-      setDetailOpen(true);
       return;
     }
     if (focus.entityType === "inventory_item" || focus.entityType === "item" || focus.entityType === "sku") {
@@ -219,11 +205,6 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
     }
   }, [focus?.entityId, focus?.entityType, orders]);
 
-  function openOrderDetail(orderId: string) {
-    setSelectedOrderId(orderId);
-    setDetailOpen(true);
-  }
-
   const focusedOrder = useMemo(() => {
     if (!focus?.entityId) return null;
     return orders.find((order) => order.salesOrderId === focus.entityId) || null;
@@ -231,7 +212,6 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
   const selectedOrder = useMemo(() => {
     return orders.find((order) => order.salesOrderId === selectedOrderId) || focusedOrder || null;
   }, [focusedOrder, orders, selectedOrderId]);
-  const availabilityBySku = useMemo(() => new Map(availability.map((item) => [item.sku, item])), [availability]);
   const visibleOrders = useMemo(() => {
     const customer = searchParams.get("customer") || "";
     const status = searchParams.get("status") || "";
@@ -264,15 +244,6 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
         <ActionableMetricCard label={copy("缺口数量")} value={qty(activeSummary.shortageQty)} description={copy("查看影响交付承诺的订单")} to="/app/sales/orders?risk=blocked" icon={PackageSearch} color={A.red} />
         <ActionableMetricCard label={copy("已预留数量")} value={qty(activeSummary.reservedQty)} description={copy("查看库存分配证据")} to="/app/sales/orders?status=unshipped" icon={Boxes} color={A.green} />
       </div>}
-
-      <OrderDetailModal
-        order={detailOpen ? selectedOrder : null}
-        allocation={selectedOrder ? availabilityBySku.get(selectedOrder.sku) : undefined}
-        allocationWarning={allocationWarning}
-        onClose={() => setDetailOpen(false)}
-        onNavigate={onNavigate}
-        onOpenAi={onOpenAi}
-      />
 
       {ordersError && <Card className="p-4 text-sm" style={{ color: A.red }}>{copy(ordersError)}</Card>}
       {loadingOrders && <Card className="p-6 text-sm" style={{ color: A.sub }}>{copy("正在读取客户订单...")}</Card>}
@@ -383,111 +354,6 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
         <EvidenceChainView allOrders={orders} selectedOrderId={selectedOrderId} onSelectOrder={selectEvidenceOrder} onNavigate={onNavigate} />
       )}
     </div>
-  );
-}
-
-function OrderDetailModal({
-  order,
-  allocation,
-  allocationWarning,
-  onClose,
-  onNavigate,
-  onOpenAi,
-}: {
-  order: SalesOrder | null;
-  allocation?: InventoryAvailability;
-  allocationWarning: string;
-  onClose: () => void;
-  onNavigate?: EvidenceNavigate;
-  onOpenAi?: () => void;
-}) {
-  const { copy, say, customerLabel, itemLabel } = useSalesCopy();
-  const qty = useQty();
-  if (!order) return null;
-  const allocationRiskColor = allocation?.riskLevel === "low" ? A.green : allocation?.riskLevel === "medium" ? A.orange : A.red;
-  return (
-    <BusinessObjectDetailModal
-      open={Boolean(order)}
-      onClose={onClose}
-      title={`${order.salesOrderId} · ${customerLabel(order)}`}
-      subtitle={`${order.sku} / ${itemLabel(order)}`}
-      width={1120}
-    >
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <Chip label={copy(order.statusLabel)} color={A.blue} bg="#f0f6ff" />
-          <Chip label={copy(order.deliveryRiskLabel)} color={riskColor[order.deliveryRiskLevel] || A.gray1} bg={`${riskColor[order.deliveryRiskLevel] || A.gray1}16`} />
-          <span className="text-xs" style={{ color: A.sub }}>{copy("承诺日期")} {order.promisedDate || copy("待确认")}</span>
-        </div>
-
-        <CompactKpiStrip items={[
-          { label: "订单数量", value: qty(order.orderedQty) },
-          { label: "已预留", value: qty(order.reservedQty), tone: "good" },
-          { label: "缺口", value: qty(order.shortageQty), tone: order.shortageQty > 0 ? "danger" : "default" },
-          { label: "优先级", value: copy(order.priority), tone: order.priority === "高" ? "warning" : "default" },
-        ]} />
-
-        <DetailSection title={copy("基本信息")}>
-          <DetailFieldGrid fields={[
-            { label: "客户", value: customerLabel(order) },
-            { label: "客户层级", value: copy(order.customerTier) },
-            { label: "SKU", value: order.sku },
-            { label: "物料", value: itemLabel(order) },
-            { label: "状态", value: copy(order.statusLabel) },
-            { label: "风险原因", value: copy(order.deliveryRiskReason), tone: "warning" },
-            { label: "关联供应商", value: order.linkedSuppliers.map((supplier) => supplier.name).join("; ") || "待关联" },
-            { label: "异常工单", value: order.linkedExceptionCases.join("; ") || "暂无" },
-          ]} />
-        </DetailSection>
-
-        <DetailSection title={copy("库存影响")} right={<Chip label={allocation?.riskLabel || "需人工复核"} color={allocationRiskColor} bg={allocation?.riskLevel === "low" ? "#f0faf4" : allocation?.riskLevel === "medium" ? "#fff8f0" : "#fff1f0"} />}>
-          <div className="mb-2 text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy("库存分配摘要")}</div>
-          {allocation ? (
-            <DetailFieldGrid fields={[
-              { label: "可承诺量", value: qty(allocation.availableToPromiseQty), tone: "info" },
-              { label: "可预留", value: qty(allocation.reservableQty), tone: "good" },
-              { label: "在途采购", value: qty(allocation.incomingPurchaseQty), tone: "info" },
-              { label: "预计可用", value: qty(allocation.projectedAvailableQty), tone: allocation.projectedAvailableQty < order.orderedQty ? "warning" : "good" },
-            ]} />
-          ) : (
-            <div className="text-xs leading-6" style={{ color: A.orange }}>
-              {copy(allocationWarning || "当前工作区暂未读取到完整库存分配记录，因此可承诺量和预留建议需人工复核。")}
-            </div>
-          )}
-        </DetailSection>
-
-        <EvidenceSummaryPanel groups={[
-          { label: "客户订单", value: `${order.salesOrderId} · ${customerLabel(order)} · ${copy(order.statusLabel)}` },
-          { label: "SKU库存", value: say(`${order.sku} · reserved ${qty(order.reservedQty)} · short ${qty(order.shortageQty)}`, `${order.sku} · 已预留 ${qty(order.reservedQty)} · 缺口 ${qty(order.shortageQty)}`), tone: order.shortageQty > 0 ? "danger" : "good" },
-          { label: "采购订单", value: order.linkedPurchaseOrders.map((po) => `${po.id} ${po.status || ""} ${po.expectedDate || ""}`).join("; ") || copy("暂无完整采购订单关联") },
-          { label: "供应商", value: order.linkedSuppliers.map((supplier) => `${supplier.name}${supplier.risk ? ` · ${supplier.risk}` : ""}`).join("; ") || copy("暂无完整供应商记录") },
-          { label: "收货单", value: order.linkedReceivingDocs.map((grn) => `${grn.id} ${grn.status || ""}`).join("; ") || copy("暂无完整收货记录") },
-          { label: "发票财务", value: copy("按当前采购、收货与供应商记录人工追溯") },
-          { label: "异常工单", value: order.linkedExceptionCases.join("; ") || copy("暂无关联异常工单") },
-        ]} />
-
-        <DataLimitationsPanel items={order.dataLimitations} labelFor={code => copy(limitationLabel(code))} />
-
-        <DetailSection title={copy("AI 辅助与跳转")}>
-          <div className="flex flex-wrap gap-2">
-            <button onClick={() => onNavigate?.("sales:evidence")} className="text-xs px-3 py-2 rounded-lg font-medium" style={{ background: "#f0f6ff", color: A.blue }}>{copy("进入证据链")}</button>
-            <button onClick={() => onNavigate?.("sales:risks")} className="text-xs px-3 py-2 rounded-lg font-medium" style={{ background: "#fff8f0", color: A.orange }}>{copy("查看交付风险")}</button>
-            <button onClick={onOpenAi} className="text-xs px-3 py-2 rounded-lg font-medium" style={{ background: A.white, color: A.blue }}>{copy("解释风险信号")}</button>
-            <button className="text-xs px-3 py-2 rounded-lg font-medium" style={{ background: A.white, color: A.green }}>{copy("生成内部通知草稿预览")}</button>
-          </div>
-        </DetailSection>
-
-        <ReviewActionPanel key={order.salesOrderId} objectLabel={say(`Sales order ${order.salesOrderId}`, `客户订单 ${order.salesOrderId}`)} />
-
-        <DetailSection title={copy("审计与时间线")}>
-          <div className="grid grid-cols-3 gap-2 text-[11px] leading-5" style={{ color: A.sub }}>
-            <div className="rounded-lg p-2" style={{ background: A.white }}>{copy("订单读取：已进入当前工作区视图")}</div>
-            <div className="rounded-lg p-2" style={{ background: A.white }}>{copy("库存复核：根据可承诺量和在途采购判断")}</div>
-            <div className="rounded-lg p-2" style={{ background: A.white }}>{copy("后续动作：负责人确认后进入业务流程")}</div>
-          </div>
-        </DetailSection>
-      </div>
-    </BusinessObjectDetailModal>
   );
 }
 
