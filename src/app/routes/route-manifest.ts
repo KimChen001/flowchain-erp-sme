@@ -29,7 +29,8 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     procurement:receiving-detail
     procurement:match-detail
     inventory inventory:stock inventory:movements inventory:warnings
-    inventory:lots inventory:serials inventory:bins inventory:exceptions
+    inventory:reorder inventory:lots inventory:serials inventory:bins
+    inventory:exceptions
     sales sales:orders sales:risks sales:evidence sales:order-detail
     sales:invoices sales:invoice-detail
     reports reports:overview reports:procurement reports:sales
@@ -328,7 +329,7 @@ mapPermission("procurement.prices.read", "procurement:rfq-comparison");
 mapPermission("returns.request.read", "procurement:returns");
 mapPermission(
   "inventory.balance.read",
-  "inventory inventory:stock inventory:movements inventory:warnings inventory:lots inventory:serials inventory:bins inventory:exceptions inventory:operations",
+  "inventory inventory:stock inventory:movements inventory:warnings inventory:reorder inventory:lots inventory:serials inventory:bins inventory:exceptions inventory:operations",
 );
 mapPermission(
   "inventory.transfer.read",

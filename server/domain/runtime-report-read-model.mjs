@@ -103,7 +103,7 @@ const metricDefinitions = {
   invoice_amount: ['供应商发票金额', 'supplier_invoices', 'currency', '已提交供应商发票（已提交、匹配中、有差异、已匹配、已批准或暂挂）的金额合计，不含草稿、驳回和取消的发票；有发票缺少金额时不显示合计。', '/app/finance/invoices'],
   supplier_count: ['供应商数量', 'suppliers', 'number', '当前供应商主数据记录数。', '/app/master-data/suppliers'],
   overdue_open_po_count: ['Overdue open POs', 'purchase_orders', 'number', "Open purchase orders whose earliest line still to receive was due before today in the workspace timezone (the line's promised date, else the order's expected date).", '/app/reports/procurement?scope=overdue'],
-  on_time_receipt_rate: ['On-time lines (original promise)', 'receipts', 'percentage', 'PO lines first promised in range whose first posted receipt arrived by that date. Needs at least 5 lines.', '/app/reports/suppliers'],
+  on_time_receipt_rate: ['On-time deliveries (date on the PO)', 'receipts', 'percentage', "Deliveries (the lines of one PO with one date) first promised in range whose every line had a posted receipt by the date on the PO, which may be the buyer's need date. Orders approved but not sent to the supplier are left out. Needs at least 5 deliveries.", '/app/reports/suppliers'],
   active_supplier_count: ['Suppliers with committed orders', 'purchase_orders', 'number', 'Suppliers with at least one committed purchase order in range.', '/app/master-data/suppliers'],
   invoice_match_rate: ['Invoices matched', 'supplier_invoices', 'percentage', 'Share of submitted supplier invoices whose three-way match passed.', '/app/finance/three-way-match'],
   invoices_awaiting_match: ['Invoices awaiting match', 'supplier_invoices', 'number', 'Submitted supplier invoices without a three-way match result yet.', '/app/finance/three-way-match'],
@@ -258,9 +258,9 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
   const unconverted = money?.currencyAggregationStatus === 'multi_currency_unconverted'
   // A quantity KPI totals one SKU in one unit and names that unit.
   const demand = id === 'open_sales_demand' ? facts.salesDemandTotal : id === 'inventory_on_hand' ? facts.inventoryOnHand : null
-  // Fewer PO lines than the scorecard's minimum sample give no on-time rate,
+  // Fewer deliveries than the scorecard's minimum sample give no on-time rate,
   // and neither does a receipt list that was not loaded in full.
-  const smallSample = id === 'on_time_receipt_rate' && currentValue === null && facts.onTimeLines > 0
+  const smallSample = id === 'on_time_receipt_rate' && currentValue === null && facts.onTimeDeliveries > 0
   const receiptsCut = id === 'on_time_receipt_rate' && facts.onTimeWithheld === 'truncated'
   const periodTooLong = id === 'on_time_receipt_rate' && facts.onTimeWithheld === 'period_too_long'
   const incomplete = money ? currentValue === null : (['inventory_on_hand', 'open_sales_demand'].includes(id) && currentValue === null) || smallSample || receiptsCut || periodTooLong
@@ -275,7 +275,7 @@ function unrestrictedMetric(id, all, inventory, query, primaryKey, facts) {
 // figures (inventory and the overview); the warehouse and bin notes only on
 // the inventory dashboard, the one that would show stock by location.
 const INVENTORY_DASHBOARD_NOTES = new Set(['warehouse_runtime_not_connected', 'bin_runtime_not_connected'])
-const inventoryNote = code => /^(inventory_|on_hand_|reserved_|sales_reservation_|sales_demand_quantity_missing|open_po_remaining_)/.test(code)
+const inventoryNote = code => /^(inventory_|on_hand_|reserved_|sales_reservation_|sales_demand_quantity_missing|open_po_remaining_|po_line_unit_)/.test(code)
 const noteApplies = (code, subject) => INVENTORY_DASHBOARD_NOTES.has(code) ? subject === 'inventory' : inventoryNote(code) ? ['inventory', 'overview'].includes(subject) : true
 
 // options.now and options.timeZone set the workspace's "today" for overdue

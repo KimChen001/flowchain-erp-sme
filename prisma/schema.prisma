@@ -1269,6 +1269,11 @@ model PurchaseOrder {
   receivingBaseStatus String?
   version             Int       @default(0)
   metadata            Json?
+  // When the PO was issued to the supplier: written once by the Issue action
+  // and never changed (a database trigger refuses a change). Null means the
+  // issue date was not recorded (POs issued before it was kept, or received
+  // without being issued).
+  issuedAt            DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
@@ -1277,6 +1282,7 @@ model PurchaseOrder {
 
   @@index([tenantId, status])
   @@index([tenantId, expectedDate])
+  @@index([tenantId, issuedAt])
 }
 
 model PurchaseOrderLine {
@@ -1303,6 +1309,7 @@ model PurchaseOrderLine {
   promiseRevisions PurchaseOrderPromiseRevision[]
 
   @@index([purchaseOrderId])
+  @@index([itemId])
 }
 
 // One row for every change to a line's promised date after the PO is issued.

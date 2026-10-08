@@ -69,7 +69,7 @@ test('today priorities states the report figures with tenant formatting', async 
   // soonest (PO-002 in 4 days), then the oldest open problems. The undated
   // stock shortage (LDM-001) comes after every dated item.
   assert.deepEqual(english.keyEvidence.map((item) => item.entityLabel), ['PO-001', 'PO-008', 'PO-002', 'INV-001', 'GRN-002'])
-  assert.equal(english.keyEvidence[0].summary, '4 days past the promised date; 30 pcs still to receive from Acme Components.')
+  assert.equal(english.keyEvidence[0].summary, '4 days past the promised date (Sep 25, 2026); 30 pcs still to receive from Acme Components.')
   // Each line states the date it is ordered by.
   assert.equal(english.keyEvidence[3].summary, 'Invoice variance of $200.00 from Acme Components. Open 5 days, since Sep 24, 2026.')
   assert.equal(answer('today_priorities', 'zh-CN').keyEvidence[4].summary, '已收货，尚未过账到库存。已挂起 1 天（自 Sep 28, 2026）。')

@@ -128,7 +128,7 @@ function viewFromInitial(initialView?: string): SalesView {
 export default function SalesDemandPage(props: SalesDemandPageProps) {
   const location = useLocation();
   if (location.pathname === "/app/sales/orders" || location.pathname === "/app/sales/orders/new" || /^\/app\/sales\/orders\/[^/]+$/.test(location.pathname) || /^\/app\/sales\/shipments\/[^/]+$/.test(location.pathname)) return <OutboundWorkbench />;
-  if (props.initialView === "returns-new") return <BusinessDocumentForm documentLabel="销售退货单" listPath="/app/sales/returns" />;
+  if (props.initialView === "returns-new") return <BusinessDocumentForm documentLabel="Sales return" listPath="/app/sales/returns" />;
   if (props.initialView === "returns") return <SalesReturnPage />;
   return <SalesDemandCore {...props} />;
 }

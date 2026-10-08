@@ -5,6 +5,7 @@ import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { answerAiSkill } from './ai-skills.mjs'
 import { runAiSkillRuntime } from './ai-skill-runtime.mjs'
+import { validateAiSkillResponse } from './ai-skill-validator.mjs'
 
 // In the scenario LDM-001 is short 7 against SO-001 (28 available, target 40),
 // and PO-001 (4 days late) and PO-008 bring 70 pcs, with 50 more in PR-001,
@@ -88,6 +89,28 @@ test('the one SKU that needs ordering is opened with its gap', async () => {
   assert.equal(response.conclusion.title, 'Opening a purchase request for 12 pcs of LDM-001')
   assert.deepEqual(cards(response), [['purchase_request_draft', 'ITEM-001', 12, true]])
   assert.equal(response.reviewCards[0].payload.reason, '28 available against a target of 40; nothing incoming covers it.')
+})
+
+test('open purchase order lines in another unit are named first, and the request is not opened', async () => {
+  // 12 CASE of LDM-001 on PO-0040: not counted as incoming (LDM-001 is kept
+  // in pcs), but on order, so the answer says so and opens nothing.
+  const data = uncovered(await facts())
+  data.inventory.rows.find((row) => row.sku === 'LDM-001').incomingOtherUnit = [{ purchaseOrderId: 'PO-0040', orderNumber: 'PO-0040', unit: 'CASE', remaining: 12 }]
+  const response = order(data)
+  assert.equal(response.conclusion.title, 'LDM-001 needs ordering: 12 pcs')
+  assert.match(response.conclusion.summary, /^LDM-001 is also on open purchase order lines in another unit, not counted above: PO-0040 \(12 CASE\)\. Check them before you order more\./)
+  assert.deepEqual(cards(response), [['purchase_request_draft', 'ITEM-001', 12, false]])
+  assert.deepEqual(validateAiSkillResponse(response, data), { ok: true, errors: [] })
+  const chinese = order(data, 'zh-CN')
+  assert.match(chinese.conclusion.summary, /^LDM-001 还有以其他单位记录的未结采购订单行，上面未计入：PO-0040 \(12 CASE\)。/)
+  assert.deepEqual(cards(chinese), cards(response))
+  // A reader who cannot read purchase orders hears the quantity, not the order.
+  data.inventory.rows.find((row) => row.sku === 'LDM-001').incomingOtherUnit = [{ purchaseOrderId: null, orderNumber: null, unit: 'CASE', remaining: 12 }]
+  assert.match(order(data).conclusion.summary, /not counted above: 12 CASE\./)
+  // The stock answer names the line too.
+  const row = data.inventory.rows.find((entry) => entry.sku === 'LDM-001')
+  const stock = answerAiSkill({ skillId: 'inventory_availability', facts: data, language: 'en-US', query: 'How much LDM-001 can I promise?', route: { skillId: 'inventory_availability', mode: 'single', entities: { skus: [row] } } }).response
+  assert.match(stock.conclusion.summary, /Not counted as incoming because the line is in another unit than the stock: 12 CASE\./)
 })
 
 test('several SKUs that need ordering are offered by name, and none is opened', async () => {

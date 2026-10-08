@@ -205,6 +205,17 @@ export async function readAiSkillFacts(skillContext) {
 
   const overview = buildRuntimeGovernedReport(business, { subject: 'overview' }, { allocationContext, now, timeZone: tenant.timezone })
   const kpi = (report, id) => array(report.kpis).find((row) => row.id === id)
+  // The procurement dashboard's own report, built from the same scoped read
+  // as the dashboard's route, with the question's period and currency as its
+  // filters: the spend analysis (ai-skill-spend-analysis.mjs) reads its
+  // charts, so its figures are the dashboard's. A function, so only a spend
+  // question builds it, and not enumerable, so it is never read as a fact.
+  if (visible.purchase_orders) {
+    Object.defineProperty(facts, 'procurementReport', {
+      enumerable: false,
+      value: (filters = {}) => buildRuntimeGovernedReport(business, { subject: 'procurement', filters }, { allocationContext, now, timeZone: tenant.timezone, warehouseIds: access.warehouseIds }),
+    })
+  }
   // Overdue days count to the tenant's calendar day, as in the report itself.
   const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now, { timeZone: tenant.timezone })
   facts.asOf = openReport.asOf
@@ -280,6 +291,10 @@ export async function readAiSkillFacts(skillContext) {
       // quantity is part of available to promise, which inventory shows.
       // Sales order ids only for readers of sales orders.
       stockStatus: row.stockStatus, riskLevel: row.riskLevel, purchaseOrderIds: visible.purchase_orders ? row.purchaseOrderIds : [], salesOrderIds: access.collections.salesOrders ? row.salesOrderIds : [],
+      // Open purchase order lines in another unit than the item's stock unit:
+      // not counted as incoming, but still on order, so the answers name them.
+      // The order number only for readers of purchase orders.
+      incomingOtherUnit: array(row.incomingExcluded).map((line) => ({ purchaseOrderId: visible.purchase_orders ? text(line.purchaseOrderId) || null : null, orderNumber: visible.purchase_orders ? text(line.orderNumber) || null : null, unit: text(line.unit) || null, remaining: line.remaining ?? null })),
     }))
     // Master items with no stock, sales or purchase line: known items the
     // allocation has no row for, so a question about one is not "not found".
