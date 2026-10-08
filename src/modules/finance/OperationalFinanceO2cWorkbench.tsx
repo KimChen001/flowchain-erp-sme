@@ -10,6 +10,13 @@ import { useI18n } from "../../i18n/I18n";
 import { A, Card } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
+import { useRouteAvailability } from "../../app/routeAvailability";
+import { PREVIEW_CUSTOMER_INVOICE_STATUSES, PRINTABLE_CUSTOMER_INVOICE_STATUSES } from "../../../shared/business-documents.mjs";
+
+// The invoice statuses whose document is worth opening: issued (to send) and
+// approved (to check before issuing).
+const documentStatuses: readonly string[] = [...PREVIEW_CUSTOMER_INVOICE_STATUSES, ...PRINTABLE_CUSTOMER_INVOICE_STATUSES];
+import { formatCalendarDay } from "../../lib/format";
 
 type Capability = { enabled?: boolean; maturity?: string; reason?: string };
 type Invoice = {
@@ -121,8 +128,6 @@ const money = (value: string | null | undefined, currency: string, locale: strin
         maximumFractionDigits: 4,
       }).format(Number(value))
     : `${value} ${currency}`;
-const date = (value: string, locale: string) =>
-  value ? new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value)) : "—";
 const canPrepare = () => {
   try {
     const role = String(
@@ -271,7 +276,7 @@ function InvoiceList() {
                   </td>
                   <td className="px-4 py-3">{row.customerName}</td>
                   <td className="px-4 py-3">{row.shipmentNumber || row.shipmentId}</td>
-                  <td className="px-4 py-3">{date(row.dueDate, locale)}</td>
+                  <td className="px-4 py-3">{formatCalendarDay(row.dueDate, locale)}</td>
                   <td className="px-4 py-3 font-medium">
                     {money(row.totalAmount, row.currency, locale)}
                   </td>
@@ -355,7 +360,7 @@ function Receivables() {
                     : row.customerInvoiceNumber || row.obligationNumber}
                 </td>
                 <td className="px-4 py-3">{row.customerName || "—"}</td>
-                <td className="px-4 py-3">{date(row.dueDate, locale)}</td>
+                <td className="px-4 py-3">{formatCalendarDay(row.dueDate, locale)}</td>
                 <td className="px-4 py-3 font-medium">
                   {money(row.outstandingAmount, row.currency, locale)}
                 </td>
@@ -618,6 +623,7 @@ function invoiceReadFailure(reason: unknown): InvoiceReadFailure {
 // money. Each step previews the server's plan before it runs.
 function InvoiceDetail() {
   const { t, locale } = useI18n();
+  const canOpenRoute = useRouteAvailability();
   const id = decodeURIComponent(window.location.pathname.split("/").filter(Boolean).at(-1) || "");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
@@ -665,7 +671,7 @@ function InvoiceDetail() {
                 ? <Link className="font-semibold text-blue-600 hover:underline" to={`/app/sales/shipments/${encodeURIComponent(data.shipmentId)}`}>{data.shipmentNumber || data.shipmentId}</Link>
                 : "—"}
             </p>
-            <p className="mt-1 text-xs text-slate-500">{t("finance.dueDate")} {date(data.dueDate, locale)}</p>
+            <p className="mt-1 text-xs text-slate-500">{t("finance.dueDate")} {formatCalendarDay(data.dueDate, locale)}</p>
           </div>
           <div className="text-right">
             <strong>{money(data.totalAmount, data.currency, locale)}</strong>
@@ -676,6 +682,12 @@ function InvoiceDetail() {
           {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="customer-invoice-submit" previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={version} onDone={load} />}
           {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="customer-invoice-approve" previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={version} onDone={load} />}
           {actions.includes("issue") && <TwoStepAction label={t("finance.action.issue")} testId="customer-invoice-issue" previewUrl={`${base}/issue-preview`} runUrl={`${base}/issue`} payload={version} onDone={load} />}
+          {/* The invoice as a document to print or save as PDF; a person sends it. An approved invoice opens to be checked before it is issued. */}
+          {documentStatuses.includes(data.status) && canOpenRoute("sales:invoice-document") && (
+            <Link data-testid="customer-invoice-open-document" to={`/app/sales/invoices/${encodeURIComponent(data.id)}/document`} className="rounded-lg border px-3 py-2 text-xs font-semibold text-slate-700">
+              {t("documents.openInvoice")}
+            </Link>
+          )}
           {!actions.length && <span className="text-xs text-slate-500">{t("finance.noActions")}</span>}
         </div>
       </Card>
@@ -698,7 +710,7 @@ function InvoiceDetail() {
             <h3 className="font-semibold">{t("finance.receivables")} · {receivable.obligationNumber || receivable.id}</h3>
             <div className="flex items-center gap-2"><strong>{money(receivable.outstandingAmount, receivable.currency, locale)}</strong><StatusChip status={receivable.status} /></div>
           </div>
-          <div className="text-xs text-slate-500">{t("finance.dueDate")} {date(receivable.dueDate, locale)}</div>
+          <div className="text-xs text-slate-500">{t("finance.dueDate")} {formatCalendarDay(receivable.dueDate, locale)}</div>
           <PaymentRecords kind="receivable" obligation={receivable} onDone={load} />
         </Card>
       )}

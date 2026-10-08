@@ -202,8 +202,11 @@ test('a draft request that names several records drafts for those records only',
   assert.equal(two.intent, 'prepare_action_draft')
   assert.match(two.conclusion.title, /PO-001 and PO-008/)
   // Their own drafts, and the invoice of PO-001; nothing for other records.
-  assert.ok(two.reviewCards.every((card) => /PO-001|PO-008|INV-001/.test(card.title)), JSON.stringify(two.reviewCards.map((card) => card.title)))
-  assert.ok(two.reviewCards.some((card) => /PO-008/.test(card.title)))
+  // Follow-ups to one supplier are one message (PR-4), naming its orders.
+  const recordsOf = (card) => [card.title, ...(card.payload?.poIds || []), card.payload?.poId].filter(Boolean).join(' ')
+  assert.ok(two.reviewCards.every((card) => /PO-001|PO-008|INV-001/.test(recordsOf(card))), JSON.stringify(two.reviewCards.map(recordsOf)))
+  assert.ok(two.reviewCards.some((card) => /PO-008/.test(recordsOf(card))))
+  assert.ok(two.reviewCards.every((card) => (card.payload?.poIds || []).every((id) => ['PO-001', 'PO-008'].includes(id))))
   const zh = await ask({ message: '给 PO-001 和 PO-008 起草催货', answerLanguage: 'zh-CN' })
   assert.match(zh.conclusion.title, /PO-001和 PO-008/)
 })
@@ -277,9 +280,11 @@ test('a supplier focus keeps the drafts for a shortage its order covers, as a ti
     for (const line of po.lines) line.promisedDate = day(10)
   }
   const facts = await readAiSkillFacts(await loadAiSkillContext(scenario.ctx))
-  const drafts = runPrepareActionDraft(facts, { focus: { entityType: 'supplier', entityId: 'SUP-001' }, route: {} }).drafts
-  const shortage = drafts.find((candidate) => candidate.item.label === 'LDM-001')
-  assert.ok(shortage, JSON.stringify(drafts.map((candidate) => candidate.item.label)))
-  assert.equal(shortage.po.supplierId, 'SUP-001')
-  assert.ok(drafts.every((candidate) => (candidate.po?.supplierId || candidate.item.supplierId) === 'SUP-001'))
+  const result = runPrepareActionDraft(facts, { focus: { entityType: 'supplier', entityId: 'SUP-001' }, route: {} })
+  // PO-001 is not late, so the shortage it covers gets no follow-up draft
+  // (owner decision 2026-10-06: drafts only for issued, overdue orders); the
+  // supplier focus still keeps it, as a link.
+  assert.ok(result.links.some((item) => item.label === 'LDM-001'), JSON.stringify(result.links.map((item) => item.label)))
+  assert.ok(!result.drafts.some((candidate) => candidate.item.label === 'LDM-001'))
+  assert.ok(result.drafts.every((candidate) => (candidate.po?.supplierId || candidate.item.supplierId) === 'SUP-001'))
 })

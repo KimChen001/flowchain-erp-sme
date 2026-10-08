@@ -127,8 +127,13 @@ function quantity(item: Item) {
 function reorder(item: Item) {
   return Number(item.reorderPoint ?? item.safetyStock ?? 0);
 }
+// Below the safety stock, or at or below the reorder point, as the reorder
+// list and the assistant judge it. 0 means none is recorded.
 function isShort(item: Item) {
-  return quantity(item) < reorder(item);
+  const available = quantity(item);
+  const safetyStock = Number(item.safetyStock || 0);
+  const reorderPoint = Number(item.reorderPoint || 0);
+  return (safetyStock > 0 && available < safetyStock) || (reorderPoint > 0 && available <= reorderPoint);
 }
 
 export default function InventoryPage({

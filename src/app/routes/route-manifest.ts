@@ -26,13 +26,14 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     procurement:bills procurement:bill-detail
     procurement:match procurement:request-detail
     procurement:rfq-detail procurement:rfq-comparison procurement:order-detail
+    procurement:order-document
     procurement:receiving-detail
     procurement:match-detail
     inventory inventory:stock inventory:movements inventory:warnings
     inventory:reorder inventory:lots inventory:serials inventory:bins
     inventory:exceptions
     sales sales:orders sales:risks sales:evidence sales:order-detail
-    sales:invoices sales:invoice-detail
+    sales:invoices sales:invoice-detail sales:invoice-document
     reports reports:overview reports:procurement reports:sales
     reports:inventory reports:finance reports:suppliers reports:library
     settings settings:profile settings:warehouse-access settings:readiness
@@ -177,6 +178,12 @@ const authoritativeWriteRouteIds = ids(`
   settings:ai
 `);
 
+// The printable business documents live in their own module, whatever
+// module their route sits under.
+const businessDocumentRouteIds = ids(`
+  procurement:order-document sales:invoice-document
+`);
+
 const ownerByModule: Record<string, string> = {
   overview: "src/modules/overview",
   "master-data": "src/modules/master-data",
@@ -239,7 +246,7 @@ const mapCapability = (capability: string, routeIds: string) => {
 };
 mapCapability(
   "sales",
-  "sales sales:orders sales:risks sales:evidence sales:order-detail sales:invoices sales:invoice-detail",
+  "sales sales:orders sales:risks sales:evidence sales:order-detail sales:invoices sales:invoice-detail sales:invoice-document",
 );
 mapCapability(
   "stock-transfer",
@@ -311,7 +318,7 @@ const mapPermission = (permission: string, routeIds: string) => {
 };
 mapPermission(
   "procurement.purchase_order.read",
-  "procurement procurement:workbench procurement:orders procurement:order-lines procurement:order-detail",
+  "procurement procurement:workbench procurement:orders procurement:order-lines procurement:order-detail procurement:order-document",
 );
 mapPermission(
   "receiving.read",
@@ -368,7 +375,7 @@ mapPermission("finance.overview.read", "finance finance:overview");
 mapPermission("finance.payable.read", "finance:payables");
 mapPermission(
   "finance.customer_invoice.read",
-  "sales:invoices sales:invoice-new sales:invoice-detail",
+  "sales:invoices sales:invoice-new sales:invoice-detail sales:invoice-document",
 );
 mapPermission("finance.receivable.read", "finance:receivables finance:aging");
 mapPermission("finance.customer_credit.read", "finance:customer-credit-notes");
@@ -506,6 +513,10 @@ function limitationFor(
     return "只读展示当前租户的 RFQ、行项目、参与记录、最大 revisionNumber 报价和明确证据关系；内部 response/revision command 与 Comparison read contract 不在此 UI 路由内。";
   if (route.id === "procurement:rfq-comparison")
     return "只读展示当前租户 RFQ 的供应商报价比较、Participation 摘要与非有效响应；不排名、不推荐、不授标、不转换 PO，币种不做汇率换算。";
+  if (route.id === "procurement:order-document")
+    return "Read-only PO document to print or save as PDF; printable from approval on and only with procurement.prices.read. FlowChain does not send it.";
+  if (route.id === "sales:invoice-document")
+    return "Read-only invoice document to print or save as PDF; printable once issued and only with finance.amounts.read and finance.partner_snapshot.read. FlowChain does not send it.";
   if (compatibilityRouteIds.has(route.id))
     return "Compatibility extension; not part of the default SME Core surface.";
   if (route.id === "imports")
@@ -548,7 +559,9 @@ export function authorityForRoute(
       requiredCapability,
       requiredPermission,
     ),
-    owner: ownerByModule[route.moduleId] || "src/app/FlowChainApp.tsx",
+    owner: businessDocumentRouteIds.has(route.id)
+      ? "src/modules/business-documents"
+      : ownerByModule[route.moduleId] || "src/app/FlowChainApp.tsx",
     businessObject: route.entityType || route.moduleId,
     apiDependency:
       route.id === "master-data:import"
@@ -559,6 +572,10 @@ export function authorityForRoute(
           ? "/api/procurement/documents/rfq/:id"
           : route.id === "procurement:rfq-comparison"
             ? "/api/procurement/rfqs/:rfqId/comparison"
+          : route.id === "procurement:order-document"
+            ? "/api/procurement/orders/:id/document"
+          : route.id === "sales:invoice-document"
+            ? "/api/finance/customer-invoices/:id/document"
           : apiByModule[route.panelId === "finance" ? "finance" : route.moduleId],
     repositoryAuthority:
       classification === "LEGACY"

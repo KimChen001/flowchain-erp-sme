@@ -169,6 +169,65 @@ const METRICS = [
   /\boverdue (pos?|purchase orders?)\b/i,
   /未结\s*(采购订单|PO)|开放\s*PO|多少[^？]*(采购订单|PO)|采购金额|已承诺金额|逾期[^？]*(采购订单|PO)/i,
 ]
+// Spend analysis (ai-skill-spend-analysis.mjs): spend broken down by supplier,
+// item or month, or for a period. A spend word with a breakdown cue, a period
+// or a supplier; "what do we buy from Acme?"; "who are our top suppliers?".
+// "What is our committed spend?" alone stays with the workspace metrics.
+const SPEND = [
+  /\b(?:spend|spends|spent|spending|purchase (?:volume|value)|buying volume)\b/i,
+  /花费|花了|花钱|花得|花在|花的钱|支出|开销|采购额|采购金额|采购总额|采购量|买了多少|买得最多|采购最多/,
+]
+// "在 Acme 花了", "从 Acme 买", "给 Acme 的采购": a place for the money, not 现在.
+const SPEND_BREAKDOWN = [
+  /\b(?:by|per|across|top|most|biggest|largest|which|who|whom|breakdown|split|share|trend|month|monthly|with|from)\b/i,
+  /按|哪些|哪家|哪个|最多|最大|前\s*[0-9一二三四五六七八九十]|分布|占比|趋势|每月|按月|月度|(?:^|[^现实存])在[^，。？！]{1,30}(?:上|身上)?(?:花|采购|买)|(?:从|向|跟)[^，。？！]{1,30}(?:买|采购|订购)|给[^，。？！]{1,30}的(?:采购|花费)/,
+]
+const SPEND_ITEMS = [
+  /\bwhat (?:do|did|have) we (?:buy|bought|purchase|purchased|order|ordered)\b|\bwhat (?:items|products|materials) (?:do|did) we (?:buy|purchase|order)\b/i,
+  /(?:从|向|跟)[^，。？！]{1,30}(?:买|采购|订购)(?:了)?(?:什么|哪些)|(?:买|采购|订购)(?:了)?哪些(?:物料|东西|产品|货)/,
+]
+const TOP_SUPPLIERS = [
+  /\b(?:top|biggest|largest|main|major|key)\s+(?:\d+\s+)?(?:suppliers?|vendors?)\b/i,
+  /最大的(?:几家)?供应商|主要(?:的)?供应商|前\s*[0-9一二三四五六七八九十]+\s*(?:大|名|家)?\s*供应商/,
+]
+const NOT_SPEND = [/\b(?:on.?time|otif|deliver\w*|delay\w*|late|overdue|quality|reject\w*|risk\w*|pay|paid|payment|invoice\w*)\b/i, /准时|交付|延误|逾期|质量|拒收|风险|付款|支付|发票/]
+const SPEND_TREND = [/\b(?:trend|by month|monthly|per month|each month|month by month|over time)\b/i, /趋势|每月|按月|月度|逐月/]
+const SPEND_CURRENCY = { USD: 'USD', EUR: 'EUR', CNY: 'CNY', RMB: 'CNY', GBP: 'GBP', JPY: 'JPY', 美元: 'USD', 欧元: 'EUR', 人民币: 'CNY', 英镑: 'GBP', 日元: 'JPY' }
+const ZH_COUNT = { 一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }
+
+// The period a question names, read by the spend analysis from the
+// workspace's today: { kind } or { kind: 'last_days', days } or
+// { kind: 'year', year }. null for none.
+function spendPeriodOf(raw) {
+  if (/\bthis month\b|本月|这个月/i.test(raw)) return { kind: 'this_month' }
+  if (/\blast month\b|上个?月/i.test(raw)) return { kind: 'last_month' }
+  if (/\bthis quarter\b|本季度?|这个季度/i.test(raw)) return { kind: 'this_quarter' }
+  if (/\blast quarter\b|上个?季度/i.test(raw)) return { kind: 'last_quarter' }
+  if (/\bthis year\b|\bytd\b|\byear to date\b|今年|本年/i.test(raw)) return { kind: 'this_year' }
+  if (/\blast year\b|去年/i.test(raw)) return { kind: 'last_year' }
+  const days = raw.match(/\b(?:last|past)\s+(\d{1,4})\s+days?\b/i) || raw.match(/(?:最近|过去|近)\s*(\d{1,4}|[一两二三四五六七八九十])\s*天/)
+  if (days) return { kind: 'last_days', days: Number(days[1]) || ZH_COUNT[days[1]] }
+  const year = raw.match(/\b(20\d{2})\b|(20\d{2})\s*年/)
+  if (year) return { kind: 'year', year: Number(year[1] || year[2]) }
+  return null
+}
+
+// What a spend question asks for: the view (suppliers, items or trend), the
+// period and the currency it names.
+export function aiSkillSpendSignals(message) {
+  const raw = text(message)
+  const currency = Object.entries(SPEND_CURRENCY).find(([word]) => (/^[A-Z]+$/.test(word) ? new RegExp(`\\b${word}\\b`, 'i') : new RegExp(word)).test(raw))?.[1] || null
+  return {
+    mode: matches(SPEND_TREND, raw) ? 'trend' : matches(SPEND_ITEMS, raw) ? 'items' : 'suppliers',
+    period: spendPeriodOf(raw),
+    currency,
+  }
+}
+
+const isSpendQuestion = (intent) => !matches(NOT_SPEND, intent) && (
+  matches(SPEND_ITEMS, intent) || matches(TOP_SUPPLIERS, intent)
+  || (matches(SPEND, intent) && (matches(SPEND_BREAKDOWN, intent) || Boolean(spendPeriodOf(intent)) || Boolean(aiSkillSpendSignals(intent).currency) || matches(SUPPLIER, intent))))
+
 // Today's priorities: a task cue, or "today"/"first" together with doing
 // something. A bare "today" ("Apple's stock price today") is not a task.
 const TODAY = [
@@ -258,6 +317,10 @@ function focusOf(focusTarget) {
 }
 
 const matches = (patterns, message) => patterns.some((pattern) => pattern.test(message))
+// Asking about partial delivery: the follow-up then asks whether what is
+// ready can ship first (ai-skill-drafts.mjs).
+const PARTIAL = [/\bpartial(?:ly)?\s+(?:deliver(?:y|ies|ed)?|shipments?|ship(?:ped|ping)?)\b|\bship\s+what(?:'s|’s| is)\s+(?:ready|available)\b|\bsplit\s+(?:shipments?|deliver(?:y|ies))\b/i, /部分(?:交货|发货|到货|交付)|分批(?:交货|发货|交付|到货)/]
+export const aiSkillAsksPartialDelivery = (message) => matches(PARTIAL, String(message ?? ''))
 // "tier-1" is a supplier tier, not a record number.
 const TIER_ID = /^TIER-[123]$/
 const recordIds = (message) => {
@@ -307,7 +370,7 @@ export function aiSkillTierOf(message) {
 // shortages narrows the records it answers with, and a supplier tier filters
 // them.
 function signalsOf(intent) {
-  return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent), orders: matches(ORDER_NOUN, intent), tier: aiSkillTierOf(intent) }
+  return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent), orders: matches(ORDER_NOUN, intent), tier: aiSkillTierOf(intent), partial: matches(PARTIAL, intent) }
 }
 
 // Skills a rule knows cannot answer this question, whichever skill is asked
@@ -343,6 +406,7 @@ function intentRoute(intent, base) {
   if (!base.ids.length && matches(RFQ, intent) && !matches(PAYMENT, intent)) return route('rfq_followups')
   if (!base.ids.length && matches(RECEIVING, intent) && !matches(NOT_RECEIPT, intent) && !matches(PAYMENT, intent)) return route('receiving_issues')
   if (matches(STOCK, intent) || (matches(AVAILABLE, intent) && (base.ids.length || matches(AVAILABLE_CONTEXT, intent)))) return route('inventory_availability')
+  if (isSpendQuestion(intent)) return { ...route('spend_analysis'), signals: { ...signalsOf(intent), spend: aiSkillSpendSignals(intent) } }
   if (matches(METRICS, intent) || (late && matches(ORDER_NOUN, intent) && !otherRecord)) return route('workspace_metrics')
   // A tier ("Which Tier 1 suppliers do we have?") is cue enough.
   if (matches(SUPPLIER, intent) && (matches(SUPPLIER_CUE, intent) || tier) && !base.ids.length && !matches(SPECIFIC_ASPECT, intent) && !matches(PREVIOUS_RESULT, intent)) return route('supplier_attention')

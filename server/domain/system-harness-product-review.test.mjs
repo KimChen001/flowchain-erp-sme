@@ -289,7 +289,8 @@ test('Phase 0 product positioning and visible language governance stay productiz
   const constants = readSource('src', 'lib', 'constants.ts')
   const forecast = readSource('src', 'modules', 'forecast', 'Page.tsx')
   const actionShell = readSource('src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx')
-  const overview = readSource('src', 'modules', 'overview', 'Page.tsx')
+  // The home page and its copy, which holds the page's English and Chinese text.
+  const overview = [readSource('src', 'modules', 'overview', 'Page.tsx'), readSource('src', 'modules', 'overview', 'todayCopy.ts')].join('\n')
   const importsPage = readSource('src', 'modules', 'imports', 'Page.tsx')
   const inventoryPage = readSource('src', 'modules', 'inventory', 'Page.tsx')
   const reportsPage = readSource('src', 'modules', 'reports', 'Page.tsx')

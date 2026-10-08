@@ -10,7 +10,11 @@ npm run test:ai:eval -- --as-of=2026-09-29
 npm run test:ai:eval -- --only=refuse-pay,num-item-atp --report=./ai-eval-report.json
 npm run test:ai:eval -- --update-baseline
 npm run test:ai:eval -- --update-baseline --allow-drop=route-open-pos,num-item-atp
+npm run test:ai:eval -- --only=followup-acme-partial-en --dump-answers
 ```
+
+`--dump-answers` writes each answer's payload next to the report
+(`<report dir>/answers/<case id>.json`), to read what an answer said.
 
 ## What a run does
 
@@ -108,6 +112,7 @@ flag the same wording.
 | `expect.metricsAgree` | The answer must carry the structured report `metrics`. |
 | `expect.mentions`, `expect.absent` | Literals the answer must contain, or must not contain. Both ignore case; `absent` also treats a curly apostrophe as a straight one, and is checked against the whole response. |
 | `expect.knowledge` | `{ document, sections }`: the answer cites the document titled `document`, in one of `sections` (the last part of the heading path; any section when empty). Citations are read from a knowledge answer (`rag`) and from a business answer's knowledge supplement (`supplementalKnowledge.rag`). Offline, retrieval is keyword-only, so a Chinese question does not find an English document. |
+| `expect.followUp` | `{ orders, absentOrders, mentions }` for supplier follow-up drafts (AI plan PR-4): one message covers every order in `orders` (`payload.poIds`, or `poId`), no follow-up covers an order in `absentOrders`, and that message contains each of `mentions`. |
 | `expect.draft` | Needs at least one review card, and every card must be review-only. |
 | `expect.refusal` | The answer must refuse in the question's language, offer a draft, claim no action and write nothing. |
 | `expect.noAmounts` | No money anywhere in the payload: no currency-formatted text, no numeric amount fields and no money `figures` (a figure with a currency, or a code naming an amount). |

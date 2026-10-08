@@ -48,12 +48,14 @@ async function seed(prisma) {
   await prisma.warehouse.create({ data: { id: 'PR-WH', tenantId, code: 'PR-WH', name: 'Main' } })
 }
 
-// An approved bill for 10 x 10 plus 5 tax: a bill to pay of 105.
-async function approvedBill(prisma, command, suffix) {
+// An approved bill for 10 x 10 plus 5 tax: a bill to pay of 105. Bills of the
+// same total are dated more than 7 days apart, so the duplicate check does not
+// flag them.
+async function approvedBill(prisma, command, suffix, invoiceDate = '2026-09-01') {
   await prisma.purchaseOrder.create({ data: { id: `PR-PO-${suffix}`, tenantId, status: 'approved', supplierId: 'PR-SUP', supplierName: 'Harbor Supply', currency: 'USD', amount: '100.0000', lines: { create: { id: `PR-POL-${suffix}`, itemId: 'PR-ITEM', sku: 'PR-SKU', itemName: 'Valve', orderedQuantity: '10.0000', receivedQuantity: '10.0000', unit: 'EA', unitPrice: '10.0000' } } } })
   await prisma.receivingDocument.create({ data: { id: `PR-GRN-${suffix}`, tenantId, documentNumber: `PR-GRN-${suffix}`, poId: `PR-PO-${suffix}`, supplierId: 'PR-SUP', supplierName: 'Harbor Supply', status: 'received', workflowStatus: 'posted', postingStatus: 'posted', postedAt: new Date(), postedById: users.admin.id, warehouseId: 'PR-WH', currency: 'USD', lines: { create: { id: `PR-GRNL-${suffix}`, purchaseOrderLineId: `PR-POL-${suffix}`, itemId: 'PR-ITEM', sku: 'PR-SKU', itemName: 'Valve', acceptedQty: '10.0000', rejectedQty: '0.0000', unit: 'EA', warehouseId: 'PR-WH', location: 'A-01', locationKey: 'a-01' } } } })
   const admin = as('admin')
-  const bill = await command.createSupplierInvoice({ invoiceNumber: `PR-BILL-${suffix}`, supplierId: 'PR-SUP', currency: 'USD', invoiceDate: '2026-09-01', dueDate: '2026-10-01', totalAmount: '105.0000', idempotencyKey: `pr-create-${suffix}`, lines: [{ purchaseOrderLineId: `PR-POL-${suffix}`, receivingLineId: `PR-GRNL-${suffix}`, quantity: '10.0000', unitPrice: '10.0000', lineAmount: '100.0000', enteredTaxAmount: '5.0000' }] }, admin)
+  const bill = await command.createSupplierInvoice({ invoiceNumber: `PR-BILL-${suffix}`, supplierId: 'PR-SUP', currency: 'USD', invoiceDate, dueDate: '2026-10-01', totalAmount: '105.0000', idempotencyKey: `pr-create-${suffix}`, lines: [{ purchaseOrderLineId: `PR-POL-${suffix}`, receivingLineId: `PR-GRNL-${suffix}`, quantity: '10.0000', unitPrice: '10.0000', lineAmount: '100.0000', enteredTaxAmount: '5.0000' }] }, admin)
   await command.submitSupplierInvoice(bill.entityId, { expectedVersion: 0, idempotencyKey: `pr-submit-${suffix}` }, admin)
   await command.matchSupplierInvoice(bill.entityId, { expectedVersion: 1, idempotencyKey: `pr-match-${suffix}` }, admin)
   const approved = await command.approveSupplierInvoice(bill.entityId, { expectedVersion: 2, idempotencyKey: `pr-approve-${suffix}` }, admin)
@@ -162,7 +164,7 @@ test('payments lower what is owed, never below zero, and a void puts the amount 
     assert.deepEqual(viewerDetail.body.payable.payments[0].availableActions, [])
 
     // A held bill to pay is released before it takes a payment.
-    const held = await approvedBill(prisma, command, 'B')
+    const held = await approvedBill(prisma, command, 'B', '2026-09-15')
     await command.holdPayable(held.payableId, { expectedVersion: 0, reason: 'Waiting for a credit note', idempotencyKey: 'pr-hold-b' }, as('admin'))
     const heldPreview = await call(prisma, 'finance', 'POST', `/api/finance/payables/${held.payableId}/payments/preview`, payment({ expectedVersion: 1 }))
     assert.equal(heldPreview.body.blockingIssues[0].code, 'PAYMENT_OBLIGATION_HELD')
