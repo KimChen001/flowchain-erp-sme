@@ -13,7 +13,8 @@ import {
   tenantScopedProcurementMasterData,
 } from "../domain/procurement-workflow.mjs";
 import { receivingDecimalString, receivingDecimalUnits } from "../domain/receiving-transaction-policy.mjs";
-import { applyPromisedDateChanges } from "../domain/purchase-order-promise-dates.mjs";
+import { applyPromisedDateChanges, recordOriginalPromises } from "../domain/purchase-order-promise-dates.mjs";
+import { mergeOperationalSettings } from "../domain/workspace-settings-contract.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { sanitizeSuggestionTrail } from "../../shared/prefill-suggestions.mjs";
 import { mapPurchaseOrder, mapPurchaseRequest, mapRfq } from "../repositories/db-procurement-read-repository.mjs";
@@ -449,7 +450,9 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
   }
 
   // Groups the approved PR's lines by supplier, currency and delivery
-  // warehouse and creates one draft PO per group, so no PO mixes currencies.
+  // warehouse and creates one PO per group, so no PO mixes currencies. The PO
+  // is approved with the request (owner decision D3) unless the workspace
+  // turns that off, and then it starts as a draft for PO approval.
   async function createPurchaseOrdersFromPurchaseRequest(id, input = {}, context) {
     const expectedVersion = expected(input.expectedVersion);
     const overrides = await currentOverrides(id, context, PURCHASE_REQUEST_PERMISSIONS.createPurchaseOrders);
@@ -484,6 +487,16 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         }));
         const purchaseOrderIds = [];
         const carriedOverrides = [];
+        // Approved with the request: the PO never waits in pending approval,
+        // and its approval step names the request and who approved it.
+        const tenant = await tx.tenant.findUnique({ where: { id: actor.tenantId }, select: { operationalSettings: true } });
+        const approvedWithRequest = mergeOperationalSettings(tenant?.operationalSettings).review.approvedRequestApprovesPurchaseOrder !== false;
+        const requestApproval = [...(Array.isArray(row.metadata?.timeline) ? row.metadata.timeline : [])].reverse().find((entry) => entry?.action === "approve") || null;
+        const status = approvedWithRequest ? PURCHASE_ORDER_STATUS.APPROVED : PURCHASE_ORDER_STATUS.DRAFT;
+        const approvalTimeline = approvedWithRequest
+          ? [{ action: "approve", actorId: actor.user.id, at: serial(now()), reason: null, via: "approved_purchase_request", purchaseRequestId: row.id, requestApprovedBy: requestApproval?.actorId || null, requestApprovedAt: requestApproval?.at || null }]
+          : [];
+        const originalPromisesRecorded = [];
         for (const group of groups.values()) {
           const poId = documentId("PO");
           purchaseOrderIds.push(poId);
@@ -502,10 +515,10 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           carriedOverrides.push(...supplierOverrideAudit(group.lines.map((line) => ({ ...line, metadata: { ...(line.metadata || {}), supplierOverride: overrideOf.get(line.id) || null } })), (line) => ({ purchaseOrderId: poId, purchaseRequestLineId: line.id })));
           const dates = group.lines.map((line) => line.metadata?.needByDate).filter(Boolean).sort();
           await tx.purchaseOrder.create({ data: {
-            id: poId, tenantId: actor.tenantId, status: PURCHASE_ORDER_STATUS.DRAFT, supplierId: group.supplierId, supplierName: group.supplierName,
+            id: poId, tenantId: actor.tenantId, status, ...(approvedWithRequest ? { receivingBaseStatus: PURCHASE_ORDER_STATUS.APPROVED } : {}), supplierId: group.supplierId, supplierName: group.supplierName,
             sourceRequestId: row.id, expectedDate: dates[0] ? new Date(`${dates[0]}T00:00:00Z`) : row.requiredDate,
             amount: receivingDecimalString(total), currency: group.currency, owner: actor.user.name || actor.user.id, version: 0,
-            metadata: { orderNumber: poId, targetWarehouseId: group.warehouseId, procurementPath: "direct_po", transmissionStatus: "not_sent", createdBy: actor.user.id, sourcePurchaseRequestVersion: versionOf(row) },
+            metadata: { orderNumber: poId, targetWarehouseId: group.warehouseId, procurementPath: "direct_po", transmissionStatus: "not_sent", createdBy: actor.user.id, sourcePurchaseRequestVersion: versionOf(row), ...(approvedWithRequest ? { approvalTimeline } : {}) },
             lines: { create: lines },
           } });
           // Each line's date from its PR line (a promised date, or else the need-by
@@ -516,12 +529,18 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
           if (lineDates.length) {
             await applyPromisedDateChanges(tx, { tenantId: actor.tenantId, purchaseOrder: await tx.purchaseOrder.findFirst({ where: { id: poId, tenantId: actor.tenantId }, include: { lines: true } }), changes: lineDates, actorId: actor.user.id, source: "procurement_request_command_service", at: now(), idFactory, bumpVersions: false });
           }
-          await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "PurchaseOrder", entityId: poId, operation: "upsert", entityVersion: 0, actorId: actor.user.id, source: "procurement_request_command_service", requestId: idempotencyKey, payloadHash: hash({ id: poId, version: 0, status: PURCHASE_ORDER_STATUS.DRAFT }), sensitivityGroups: ["procurement_prices", "finance_partner_snapshot"], moduleKey: "procurement", authorizationClass: "procurement.purchase_order.read", resourceTenantId: actor.tenantId } });
+          // Approval fixes each dated line's original promise, as approving a
+          // PO does; the supplier scorecard measures against it.
+          if (approvedWithRequest) {
+            const created = await tx.purchaseOrder.findFirst({ where: { id: poId, tenantId: actor.tenantId }, include: { lines: true } });
+            originalPromisesRecorded.push(...(await recordOriginalPromises(tx, { purchaseOrder: created })).map((entry) => ({ purchaseOrderId: poId, ...entry })));
+          }
+          await tx.domainChangeFeed.create({ data: { tenantId: actor.tenantId, entityType: "PurchaseOrder", entityId: poId, operation: "upsert", entityVersion: 0, actorId: actor.user.id, source: "procurement_request_command_service", requestId: idempotencyKey, payloadHash: hash({ id: poId, version: 0, status }), sensitivityGroups: ["procurement_prices", "finance_partner_snapshot"], moduleKey: "procurement", authorizationClass: "procurement.purchase_order.read", resourceTenantId: actor.tenantId } });
         }
         await tx.purchaseRequest.update({ where: { id: row.id }, data: sourcedRequest(row, actor, "create_purchase_orders", { status: PURCHASE_REQUEST_STATUS.CONVERTED, linkedPoId: purchaseOrderIds[0], metadata: { procurementPath: "direct_po", linkedPurchaseOrderIds: purchaseOrderIds } }) });
         const orders = await tx.purchaseOrder.findMany({ where: { tenantId: actor.tenantId, id: { in: purchaseOrderIds } }, include: { lines: true }, orderBy: { id: "asc" } });
         const purchaseRequest = mapPurchaseRequest(await readRequest(tx, actor.tenantId, row.id));
-        return { result: { purchaseRequestId: row.id, purchaseRequest, createdPurchaseOrders: orders.map(mapPurchaseOrder) }, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_converted_to_purchase_orders", summary: `Created ${purchaseOrderIds.length} purchase order(s) from purchase request ${row.id}.`, metadata: { expectedVersion, purchaseOrderIds, ...withOverrides(carriedOverrides) } } };
+        return { result: { purchaseRequestId: row.id, purchaseRequest, createdPurchaseOrders: orders.map(mapPurchaseOrder) }, entityType: "PurchaseRequest", entityId: row.id, audit: { action: "purchase_request_converted_to_purchase_orders", summary: `Created ${purchaseOrderIds.length} ${approvedWithRequest ? "approved " : ""}purchase order(s) from purchase request ${row.id}.`, metadata: { expectedVersion, purchaseOrderIds, approvedWithRequest, ...(approvedWithRequest ? { originalPromisesRecorded } : {}), ...withOverrides(carriedOverrides) } } };
       },
     });
   }

@@ -389,7 +389,7 @@ test('step 3a: an approved PR above the RFQ threshold opens an RFQ (POST /api/pr
   assert.equal(await audits('Rfq', rfq.id), 2)
 })
 
-test('step 3b: an approved PR becomes a draft PO (POST /api/procurement/requests/:id/generate-purchase-orders)', async () => {
+test('step 3b: an approved PR becomes an approved PO (POST /api/procurement/requests/:id/generate-purchase-orders)', async () => {
   const id = 'PR-FLOW-DIRECT'
   await seedPurchaseRequest(id, { status: 'approved' })
   const foreign = await api(tokens.managerB, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 1 })
@@ -403,7 +403,12 @@ test('step 3b: an approved PR becomes a draft PO (POST /api/procurement/requests
   const po = await prisma.purchaseOrder.findFirst({ where: { tenantId: tenantA, sourceRequestId: id }, include: { lines: true } })
   assert.ok(po, 'the PO is stored in PostgreSQL')
   assert.equal(created.body.createdPurchaseOrders[0].id, po.id)
-  assert.equal(po.status, 'draft')
+  // Approved with the request (owner decision D3, on by default): no second
+  // approval, and the approval step names the request it came from.
+  assert.equal(po.status, 'approved')
+  assert.equal(po.receivingBaseStatus, 'approved')
+  assert.deepEqual(po.metadata.approvalTimeline.map((step) => [step.action, step.via, step.purchaseRequestId]), [['approve', 'approved_purchase_request', id]])
+  assert.ok(po.metadata.approvalTimeline[0].at)
   assert.equal(po.version, 0)
   assert.equal(po.supplierId, supplierA)
   assert.equal(po.currency, 'USD')
@@ -414,9 +419,9 @@ test('step 3b: an approved PR becomes a draft PO (POST /api/procurement/requests
   assert.equal(dec(po.lines[0].unitPrice), '12.5')
   assert.equal(dec(po.lines[0].amount), '125')
   // The PR line's need-by date becomes the line's promised date through the
-  // promise-date helper; the original promise waits for the PO to be approved.
+  // promise-date helper, and approval records it as the original promise.
   assert.equal(po.lines[0].metadata.promisedDate, needBy)
-  assert.equal(po.lines[0].originalPromisedDate, null)
+  assert.equal(po.lines[0].originalPromisedDate?.toISOString().slice(0, 10), needBy)
   assert.equal(po.lines[0].version, 0)
   assert.equal(po.expectedDate.toISOString().slice(0, 10), needBy)
   assert.equal(await prisma.purchaseOrderPromiseRevision.count({ where: { purchaseOrderId: po.id } }), 0)
@@ -434,9 +439,27 @@ test('step 3b: an approved PR becomes a draft PO (POST /api/procurement/requests
   const again = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 2 })
   assert.equal(again.status, 409, describe(again))
   const orders = await api(tokens.managerA, 'GET', '/api/procurement/orders')
-  assert.equal(orders.body.find((row) => row.id === po.id)?.status, 'draft')
+  assert.equal(orders.body.find((row) => row.id === po.id)?.status, 'approved')
   const otherOrders = await api(tokens.managerB, 'GET', '/api/procurement/orders')
   assert.ok(!otherOrders.body.some((row) => row.id === po.id))
+})
+
+test('step 3c: with the setting off, an approved PR becomes a draft PO for its own approval', async () => {
+  const id = 'PR-FLOW-DIRECT-OFF'
+  await seedPurchaseRequest(id, { status: 'approved' })
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantA } })
+  const settings = tenant.operationalSettings && typeof tenant.operationalSettings === 'object' ? tenant.operationalSettings : {}
+  await prisma.tenant.update({ where: { id: tenantA }, data: { operationalSettings: { ...settings, review: { ...(settings.review || {}), approvedRequestApprovesPurchaseOrder: false } } } })
+  try {
+    const created = await api(tokens.managerA, 'POST', `/api/procurement/requests/${id}/generate-purchase-orders`, { expectedVersion: 1 })
+    assert.equal(created.status, 201, describe(created))
+    const po = await prisma.purchaseOrder.findFirst({ where: { tenantId: tenantA, sourceRequestId: id }, include: { lines: true } })
+    assert.equal(po.status, 'draft')
+    assert.equal(po.metadata.approvalTimeline, undefined)
+    assert.equal(po.lines[0].originalPromisedDate, null)
+  } finally {
+    await prisma.tenant.update({ where: { id: tenantA }, data: { operationalSettings: tenant.operationalSettings ?? undefined } })
+  }
 })
 
 test('step 3c: a buyer converts a two-supplier PR into one draft PO per supplier', async () => {

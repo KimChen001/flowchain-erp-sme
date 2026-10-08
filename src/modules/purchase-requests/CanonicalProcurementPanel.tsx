@@ -1040,7 +1040,7 @@ export default function CanonicalProcurementPanel({
                       {pr.status === "approved" && (
                         <button
                           onClick={() => act(pr, "generate-purchase-orders")}
-                        >{copy("生成 Draft PO")}</button>
+                        >{copy("生成采购订单")}</button>
                       )}
                     </td>
                   </tr>
