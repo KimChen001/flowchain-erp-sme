@@ -39,25 +39,25 @@ test('a manager takes a purchase request to an issued purchase order in the brow
   expect(submitted.totalAmount).toBe(49.2)
   const row = page.locator('tr', { hasText: submitted.id })
   await row.getByRole('button', { name: 'Approve' }).click()
-  await expect(row.getByRole('button', { name: 'Create draft PO' })).toBeVisible()
-  await row.getByRole('button', { name: 'Create draft PO' }).click()
+  await expect(row.getByRole('button', { name: 'Create purchase order' })).toBeVisible()
+  await row.getByRole('button', { name: 'Create purchase order' }).click()
 
   await expect.poll(async () => (await api('/api/procurement/orders')).filter((po: { sourceRequest: string }) => po.sourceRequest === submitted.id).length).toBe(1)
   const po = (await api('/api/procurement/orders')).find((order: { sourceRequest: string }) => order.sourceRequest === submitted.id)
-  expect(po.status).toBe('draft')
+  // Approved with the request: no second approval (owner decision D3).
+  expect(po.status).toBe('approved')
   expect(po.amount).toBe(49.2)
   expect(po.currency).toBe('USD')
 
   await page.goto(`/app/procurement/orders/${encodeURIComponent(po.id)}`)
   const issuedField = page.locator('div.min-w-0', { has: page.getByText('Issue date', { exact: true }) }).last()
-  // A draft was never issued, so it says so rather than "not recorded".
+  // Not issued yet, so it says so rather than "not recorded".
   await expect(issuedField).toContainText('Not issued yet')
   await expect(issuedField).not.toContainText('Issue date not recorded')
   // The PO's own line is not its own history.
   if (firstAttempt) await expect(page.locator('[data-testid^="po-line-price-history-"]').first()).toContainText('No issued PO for this item yet')
-  await page.getByTestId('po-action-submit').click()
-  await expect(page.getByTestId('po-action-approve')).toBeVisible()
-  await page.getByTestId('po-action-approve').click()
+  await expect(page.getByTestId('po-action-submit')).toHaveCount(0)
+  await expect(page.getByTestId('po-action-approve')).toHaveCount(0)
   await expect(page.getByTestId('po-action-issue')).toBeVisible()
   await page.getByTestId('po-action-issue').click()
   // An issued PO still offers Close to a manager, so the panel stays; it now
@@ -68,7 +68,7 @@ test('a manager takes a purchase request to an issued purchase order in the brow
 
   const issued = await api(`/api/procurement/orders/${encodeURIComponent(po.id)}`)
   expect(issued.status).toBe('issued')
-  expect(issued.version).toBe(3)
+  expect(issued.version).toBe(1)
   expect(issued.totalAmount).toBe('49.2000')
   expect(issued.currency).toBe('USD')
 
@@ -255,7 +255,7 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
 
   await page.goto('/app/procurement/requests')
   await row.getByRole('button', { name: 'Approve' }).click()
-  await row.getByRole('button', { name: 'Create draft PO' }).click()
+  await row.getByRole('button', { name: 'Create purchase order' }).click()
   await expect.poll(async () => (await api('/api/procurement/orders')).filter((po: { sourceRequest: string }) => po.sourceRequest === submitted.id).length).toBe(1)
   const po = (await api('/api/procurement/orders')).find((order: { sourceRequest: string }) => order.sourceRequest === submitted.id)
   await page.goto(`/app/procurement/orders/${encodeURIComponent(po.id)}`)

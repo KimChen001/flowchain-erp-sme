@@ -70,9 +70,9 @@ const serverSources = () => {
   return files.map(path => ({ path: relative(serverRoot, path).replaceAll('\\', '/'), source: readFileSync(path, 'utf8') }))
 }
 
-test('only the four invoice matching tolerances, the AI switch and the document settings are read from the operational settings the UI edits', () => {
+test('only the four invoice matching tolerances, PO approval from an approved request, the AI switch and the document settings are read from the operational settings the UI edits', () => {
   assert.deepEqual(REVIEW_TOLERANCE_FIELDS, ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance'])
-  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice'] })
+  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice'] })
 
   const sources = serverSources()
   // Every server reader of tenant.operationalSettings. The PO and invoice documents read
@@ -90,12 +90,16 @@ test('only the four invoice matching tolerances, the AI switch and the document 
     'domain/purchase-order-document-read-service.mjs',
     'domain/workspace-settings-contract.mjs',
     'routes/settings-runtime.routes.mjs',
+    'services/procurement-request-command-service.mjs',
   ])
   // The assistant reads only the AI switch (ai-workspace-access.mjs).
   const access = sources.find(file => file.path === 'domain/ai-workspace-access.mjs').source
   assert.deepEqual([...new Set([...access.matchAll(/\.ai\.([A-Za-z]+)/g)].map(match => match[1]))], ['modelAssistEnabled'])
   const finance = sources.find(file => file.path === 'domain/operational-finance-policy.mjs').source
   assert.deepEqual([...new Set([...finance.matchAll(/review\.([A-Za-z]+)/g)].map(match => match[1]))].sort(), [...REVIEW_TOLERANCE_FIELDS].sort())
+  // Converting an approved purchase request reads only the PO approval switch (owner decision D3).
+  const conversion = sources.find(file => file.path === 'services/procurement-request-command-service.mjs').source
+  assert.deepEqual([...new Set([...conversion.matchAll(/review\.([A-Za-z]+)/g)].map(match => match[1]))], ['approvedRequestApprovesPurchaseOrder'])
 
   // Settings marked "Not in effect yet" have no reader anywhere on the server.
   for (const key of ['nextSequence', 'sequenceLength', 'amountThreshold', 'inventoryTolerancePercent', 'reviewerRoles', 'defaultModule', 'evidenceRequired', 'retainDays', 'sessionTimeoutMinutes', 'exportLimit', 'negativeInventoryBlocked', 'maintenanceNotice']) {
