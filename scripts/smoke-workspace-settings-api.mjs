@@ -17,6 +17,7 @@ const prismaCli = join(root, "node_modules", "prisma", "build", "index.js");
 const tenantId = "tenant-workspace-settings-api";
 const email = "settings-admin@flowchain.invalid";
 const userId = `USR-${createHash("sha256").update(email).digest("hex").slice(0, 16)}`;
+const viewerEmail = "settings-viewer@flowchain.invalid";
 
 const freePort = () => new Promise((resolvePort, reject) => {
   const server = createServer().on("error", reject);
@@ -98,6 +99,7 @@ try {
   prisma = await createPrismaClient(env);
   await prisma.tenant.create({ data: { id: tenantId, name: "Settings Workspace", legalName: "Settings Company" } });
   await prisma.user.create({ data: { id: userId, tenantId, email, name: "Settings Admin", role: "admin", status: "active" } });
+  await prisma.user.create({ data: { id: "USR-settings-viewer", tenantId, email: viewerEmail, name: "Settings Viewer", role: "viewer", status: "active" } });
   server = startApi(env);
   const base = `http://127.0.0.1:${apiPort}`;
   await waitFor(`${base}/api/health`);
@@ -140,6 +142,17 @@ try {
   const numbering = { ...settings.numbering, rules: settings.numbering.rules.map(rule => rule.id === "NUM-RR" ? { ...rule, prefix: "RTR" } : rule) };
   await request(base, "/api/settings-runtime/numbering", { token, method: "PATCH", body: { settings: numbering } });
   assert.equal((await prisma.tenant.findUnique({ where: { id: tenantId } })).operationalSettings.numbering.rules.find(rule => rule.id === "NUM-RR").prefix, "RTR");
+
+  // Document settings: saved by whoever manages the workspace, refused over a limit and without that permission.
+  const documents = { ...settings.documents, letterhead: { ...settings.documents.letterhead, addressLines: ["12 Pier Road", "Oakland, CA 94607"] }, purchaseOrder: { ...settings.documents.purchaseOrder, termsText: "Net 30 from invoice." } };
+  await request(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: documents } });
+  assert.equal((await prisma.tenant.findUnique({ where: { id: tenantId } })).operationalSettings.documents.purchaseOrder.termsText, "Net 30 from invoice.");
+  const tooLong = await raw(base, "/api/settings-runtime/documents", { token, method: "PATCH", body: { settings: { ...documents, purchaseOrder: { ...documents.purchaseOrder, footerText: "x".repeat(501) } } } });
+  assert.deepEqual([tooLong.status, tooLong.payload.code], [400, "DOCUMENT_SETTING_TOO_LONG"]);
+  const viewerToken = (await signInThroughEmailLink(base, prisma, { tenantId, email: viewerEmail })).token;
+  const denied = await raw(base, "/api/settings-runtime/documents", { token: viewerToken, method: "PATCH", body: { settings: documents } });
+  assert.equal(denied.status, 403);
+  assert.equal((await request(base, "/api/settings-runtime", { token: viewerToken })).documents.letterhead.addressLines[0], "12 Pier Road");
 
   await prisma.tenant.update({ where: { id: tenantId }, data: { openingBalanceLockedAt: new Date() } });
   workspace = await request(base, "/api/workspace", { token });

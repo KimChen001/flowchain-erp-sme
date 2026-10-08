@@ -16,12 +16,12 @@ backend-authorized.
 
 ## Classification summary
 
-- Core: 70
+- Core: 71
 - Extension: 51
 - Internal: 18
 - Frozen: 19
 - Legacy: 14
-- Total: 172
+- Total: 173
 
 ## Default SME navigation
 
@@ -40,7 +40,7 @@ and Internal surfaces remain outside normal navigation.
 The classification summary and the executable route matrix below are
 regenerated with `node scripts/generate-route-authority-matrix.mjs`.
 
-The 172/172 frontend route stability audit verifies
+The 173/173 frontend route stability audit verifies
 resolution, shell rendering, no route-level 404 recovery, no render crash, and
 no observed API 5xx. It does not prove business semantics, data authority,
 permission correctness, capability correctness, or complete functionality.
@@ -116,6 +116,7 @@ classification and navigation metadata.
 | `procurement:rfq-detail` | `/app/procurement/rfq/:id` | RFQ 详情 | `procurement` | CORE | CONTEXTUAL | no | rfq | `src/modules/procurement` | /api/procurement/documents/rfq/:id | Tenant-scoped PostgreSQL direct document repository | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | 只读展示当前租户的 RFQ、行项目、参与记录、最大 revisionNumber 报价和明确证据关系；内部 response/revision command 与 Comparison read contract 不在此 UI 路由内。 |
 | `procurement:rfq-comparison` | `/app/procurement/rfq/:id/comparison` | 供应商报价比较 | `procurement` | CORE | CONTEXTUAL | no | rfq_supplier_comparison | `src/modules/procurement` | /api/procurement/rfqs/:rfqId/comparison | Tenant-scoped PostgreSQL RFQ Supplier Comparison Read Model | AUTHORITATIVE | UNAVAILABLE | — | procurement.prices.read | PERMISSION_REQUIRED | — | 只读展示当前租户 RFQ 的供应商报价比较、Participation 摘要与非有效响应；不排名、不推荐、不授标、不转换 PO，币种不做汇率换算。 |
 | `procurement:order-detail` | `/app/procurement/orders/:id` | 采购订单详情 | `procurement` | CORE | CONTEXTUAL | no | purchase_order | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | procurement.purchase_order.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `procurement:order-document` | `/app/procurement/orders/:id/document` | 采购订单文件 | `procurement` | CORE | CONTEXTUAL | no | purchase_order | `src/modules/procurement` | /api/procurement/orders/:id/document | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | procurement.purchase_order.read | PERMISSION_REQUIRED | — | Read-only PO document to print or save as PDF; printable from approval on and only with procurement.prices.read. FlowChain does not send it. |
 | `procurement:receiving-detail` | `/app/procurement/receiving/:id` | 收货单详情 | `procurement` | CORE | CONTEXTUAL | no | receiving_doc | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | receiving.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:invoice-detail` | `/app/procurement/invoices/:id` | 供应商发票详情 | `procurement` | LEGACY | HIDDEN | no | supplier_invoice | `src/modules/procurement` | /api/procurement/* | Retired legacy route | RETIRED | RETIRED | — | — | LEGACY_REDIRECT | procurement:bill-detail | Moved; redirects to procurement:bill-detail. |
 | `procurement:match-detail` | `/app/procurement/three-way-match/:id` | 三单匹配详情 | `procurement` | CORE | CONTEXTUAL | no | three_way_match | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | finance.three_way_match.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
