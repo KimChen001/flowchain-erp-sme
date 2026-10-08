@@ -319,8 +319,15 @@ step('8. the supplier bill for what arrived matches the order and the receipt, i
 step('9. a sales order for valves is entered, confirmed, reserved and shipped', async () => {
   const entry = expectStatus(await api('GET', '/api/sales/order-entry-data'), 200)
   assert.ok(entry.items.some((item) => item.id === state.items[VALVE.sku]))
-  // The order form takes the customer name as typed (OutboundWorkbench.tsx).
-  const created = expectStatus(await api('POST', '/api/sales/orders', { orderNumber: 'SO-GP-1001', customerName: CUSTOMER.name, currency: 'USD', idempotencyKey: key('so'), lines: [{ itemId: state.items[VALVE.sku], quantity: String(SHIPPED[VALVE.sku].quantity), unitPrice: SALE_PRICE }] }), 201)
+  // The order form offers the imported customer with its recorded terms and
+  // currency, and sends the chosen customer's id (OutboundWorkbench.tsx).
+  const customer = entry.customers.find((row) => row.code === CUSTOMER.code)
+  assert.ok(customer, 'the imported customer is offered on the order form')
+  assert.equal(customer.name, CUSTOMER.name)
+  assert.equal(customer.currency, 'USD')
+  const created = expectStatus(await api('POST', '/api/sales/orders', { orderNumber: 'SO-GP-1001', customerId: customer.id, currency: customer.currency, idempotencyKey: key('so'), lines: [{ itemId: state.items[VALVE.sku], quantity: String(SHIPPED[VALVE.sku].quantity), unitPrice: SALE_PRICE }] }), 201)
+  assert.equal(created.order.customerId, customer.id)
+  assert.equal(created.order.customerName, CUSTOMER.name)
   state.soId = created.order.id
   state.soLineId = created.order.lines[0].id
   expectStatus(await api('POST', `/api/sales/orders/${state.soId}/confirm`, { expectedOrderVersion: created.order.version, idempotencyKey: key('so-confirm') }), 200)
