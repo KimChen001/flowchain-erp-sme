@@ -35,10 +35,16 @@ FlowChain has no passwords. You sign in with a link sent to your work email.
    link" on the same device and click the link. The link works once and
    expires after 15 minutes. If it does not arrive, check your spam folder or
    choose **Resend the link**.
-4. On the **Finish signing in** page, choose **Sign in to** your workspace.
+4. On the **Finish signing in** page, choose **Sign in to** followed by your
+   workspace name.
 
 Only people your administrator has added can sign in. If your email is not on
 the list, the page looks the same but no email is sent; ask your administrator.
+
+**Joining from an invitation.** If an administrator invited you, open the
+invitation link they sent you, enter **Your name** and choose **Accept and
+email me a sign-in link**, then continue from step 3. An invitation link works
+once and expires after 3 days.
 
 **Language.** FlowChain is in English by default. Chinese (简体中文) is
 available:
@@ -68,9 +74,11 @@ The base currency locks once posted transactions exist, so check it first.
 
 Other useful settings pages:
 
-- **Numbering Rules**: the prefixes and sequence used for document numbers.
-- **Review Policies**: the **Invoice matching tolerances** that the three-way
-  match uses (see section 3), and optional amount review thresholds.
+- **Numbering Rules**: shown for reference; it does not change document
+  numbers yet.
+- **Review Policies**: the **Invoice matching tolerances** used by the
+  three-way match (see section 3). The other review settings are not in effect
+  yet.
 - **Users & Roles** and **Warehouse Access**: see section 8.
 
 ### Warehouses
@@ -86,6 +94,12 @@ location when you import opening stock or receive goods, for example `A-01`.
 
 Open **Master Data › Import data**. It creates records from a CSV or XLSX
 file. Existing records are skipped, never changed.
+
+Who can import: items, item suppliers and suppliers need a role that manages
+them (Administrator, Operations Manager, Operations Specialist or Procurement
+Specialist); customers and opening stock need an Administrator, Operations
+Manager or Operations Specialist. Posting the opening-stock adjustment needs
+an Administrator or Operations Manager.
 
 Import in this order: items, suppliers, customers, item suppliers, then
 opening stock. For each type:
@@ -137,16 +151,20 @@ The usual path is: purchase request → approval → purchase order → approval
 issue → receipt → bill → three-way match → approval → payment record.
 
 **1. Purchase request.** **Procurement › Purchase requests › New purchase
-request**. Add the item, quantity, supplier, warehouse and need-by date, then
+request**. For each line enter the item, quantity, supplier, **Estimated unit
+price**, **Destination warehouse or service location** and need-by date, then
 **Save draft** and **Submit**. The supplier must be one of the item's
-suppliers (from the item suppliers file or the item record).
+suppliers (from the item suppliers file or the item record). If the item has a
+preferred supplier and you choose another, pick a reason (for example price or
+lead time); the approver sees it.
 
 **2. Approval.** A manager opens the request and chooses **Approve** or
 **Reject** (with a reason). The person who submitted can **Withdraw** it while
 it waits.
 
 **3. Purchase order.** On an approved request choose **Create draft PO**.
-FlowChain creates one draft purchase order per supplier. Open it under
+FlowChain creates one draft purchase order per supplier, currency and
+warehouse. Open it under
 **Procurement › Purchase orders**, check it, and choose **Submit for
 approval**; a manager chooses **Approve**.
 
@@ -186,9 +204,10 @@ reason, never deleted.
 ## 4. Selling: from order to payment
 
 **1. Sales order.** **Sales › Sales orders › New sales order**. Enter the order
-number, customer, currency and the item, quantity and unit price, then save the
-draft. Open it and choose **Confirm order**. Enter a unit price: an order line
-without a price cannot be invoiced later.
+number, type the customer's name (it is not linked to your imported customer
+records), the 3-letter currency, and one item, quantity and **Unit price**,
+then **Save draft**. The button stays disabled until a unit price is entered.
+Open the order and choose **Confirm order**.
 
 **2. Reserve.** On the confirmed order choose **Reserve inventory**, pick the
 warehouse and location to take the stock from, check the preview and
@@ -207,8 +226,8 @@ invoice**. Issuing creates the amount the customer owes under **Payables &
 receivables › Receivables**. FlowChain does not send the invoice; you send it
 to your customer.
 
-**5. Payment received.** When the customer pays, choose **Record payment
-received** and enter the date, amount, method and reference. As with bills,
+**5. Payment received.** When the customer pays, on the issued invoice choose
+**Record payment received** and enter the date, amount, method and reference. As with bills,
 this records a payment; no money moves through FlowChain.
 
 ## 5. Inventory
@@ -256,10 +275,12 @@ How to read the figures:
   is left to pay.
 - Overdue days count by your workspace's calendar day.
 
-**Supplier scorecard** (in **Supplier analytics**) measures deliveries
+**Supplier performance** (in **Supplier analytics** and on each supplier's
+page) measures deliveries
 against the date first promised on the purchase order when it was approved,
 over the last 90 days by default. A delivery is the lines of one purchase
-order that share a promised date. A supplier with fewer than five deliveries
+order that share a promised date. Only purchase orders issued to the supplier
+or with a posted receipt are measured. A supplier with fewer than five deliveries
 in the period shows no on-time rate rather than a misleading one. If your role
 cannot see amounts, money figures are hidden for you.
 
@@ -274,7 +295,7 @@ about your own records, for example:
   owes you;
 - supplier questions, such as a supplier's open orders and delivery record;
 - questions about your own policy documents, when your workspace has them set
-  up.
+  up and AI is switched on.
 
 Answers show the records they are based on, and the assistant reads only what
 your role may see.
@@ -291,16 +312,21 @@ The assistant prepares; you decide:
 
 Answers that use an AI model are switched on per workspace by an administrator
 (**System Administration › AI Governance**, "Use an AI model in this
-workspace") and are off unless your company asked for them. Without it, the assistant still answers the supported
-questions about your records.
+workspace") and are off unless your company asked for them. As the settings
+page says, when it is on, questions are sent to Anthropic (Claude) to plan
+lookups, and for questions about your documents the matching passages are sent
+too; business records are not sent. Use is capped each month; once the limit
+is reached, the assistant answers from workspace rules until next month.
+Without the model, the assistant still answers the supported questions about
+your records.
 
 ## 8. Roles, permissions and warehouse access
 
 An administrator manages people in **System Administration › Users & Roles**:
 
-- **Create invitation** for a teammate's email with a role, then **Copy
-  invitation link** and send it to them. FlowChain does not email the
-  invitation.
+- **Create invitation** for a teammate's email with a role, then **Copy link**
+  and send it yourself (it works once and expires in 3 days). FlowChain does
+  not email the invitation.
 - Disable a person who leaves; their history stays.
 
 The standard roles:
@@ -309,7 +335,7 @@ The standard roles:
 | --- | --- |
 | Workspace Administrator | Everything, including settings, users and roles |
 | Operations Manager | Approvals, purchasing, receiving, sales, inventory and finance |
-| Operations Specialist | Day-to-day purchasing, receiving, sales and inventory |
+| Operations Specialist | Receiving, sales orders and shipments, bill entry and matching, and inventory drafts (a manager posts counts and adjustments) |
 | Procurement Specialist | Purchase requests and orders, items and suppliers |
 | Finance Specialist | Bills, invoices, matching and payment records |
 | Read-only Viewer | Looks at records; cannot change them or see amounts |
@@ -323,7 +349,8 @@ not include it; ask your administrator.
 administrator gives each person **Read** or **Operate** access per warehouse,
 or **No access**. You can receive, ship, count and adjust only in warehouses
 where you have **Operate**, and reports show stock only from warehouses you
-can see.
+can see. A new member other than an administrator has no warehouse access
+until an administrator grants **Read** or **Operate** here.
 
 ## 9. Getting help and known limits
 
@@ -333,7 +360,8 @@ trial. Tell them the page, the document number and what you expected.
 What FlowChain does not do today:
 
 - It does not print or create PDF purchase orders or invoices. Send orders and
-  invoices from your own documents or email.
+  invoices from your own documents or email. The **Print templates** list
+  under Master Data is a preview; it does not produce or save documents.
 - It sends no email other than the sign-in link. Approvals are not announced by
   email; check the lists in FlowChain.
 - It does not send anything to suppliers or customers.
@@ -351,6 +379,7 @@ The technical list of current limits is in
 These are planned. Dates and details may change.
 
 - Adding and editing warehouses in Settings.
+- Picking the customer on a sales order from your customer list.
 - Purchase order and invoice documents you can download and send.
 - Print layouts for those documents.
 - Email notifications when something waits for your approval.
