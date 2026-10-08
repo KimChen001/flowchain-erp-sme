@@ -1,6 +1,7 @@
 // The business documents FlowChain prepares for a person to print or save as
-// PDF and send themselves: the purchase order now, the customer invoice next.
-// FlowChain never sends them; issuing a PO only records that someone did.
+// PDF and send themselves: the purchase order and the customer invoice.
+// FlowChain never sends them; issuing a PO or an invoice only records that
+// someone did.
 //
 // Pure, so the server and the page share it. The server reads the records;
 // this builds the document from what is recorded:
@@ -11,16 +12,26 @@
 //   - amounts stay decimal strings, one total per currency, never converted
 //     or added across currencies;
 //   - quantities are never added up, because lines differ in SKU and unit;
-//   - a supplier's tax ID and bank details are never part of a document.
+//   - a supplier's tax ID and bank details, and a customer's currency and
+//     credit standing, are never part of a document.
 //
-// The workspace's document settings (letterhead and the purchase order
-// template) live in Tenant.operationalSettings.documents; their shape and
-// limits are defined here so the settings form checks what the server checks.
+// The workspace's document settings (letterhead, the purchase order and the
+// invoice templates) live in Tenant.operationalSettings.documents; their
+// shape and limits are defined here so the settings form checks what the
+// server checks.
 
 export const DOCUMENT_LANGUAGES = Object.freeze(['en-US', 'zh-CN'])
 
 // A PO is a document to send once it is approved, and stays one afterwards.
 export const PRINTABLE_PURCHASE_ORDER_STATUSES = Object.freeze(['approved', 'issued', 'partially_received', 'fully_received', 'closed'])
+
+// An invoice is a document to send once it is issued. A customer's dispute
+// is recorded on the receivable and the invoice stays issued; 'disputed' is
+// listed only so that an invoice ever stored with that status stays
+// printable. An approved invoice can be looked over on screen before it is
+// issued, but not printed.
+export const PRINTABLE_CUSTOMER_INVOICE_STATUSES = Object.freeze(['issued', 'disputed'])
+export const PREVIEW_CUSTOMER_INVOICE_STATUSES = Object.freeze(['approved'])
 
 export const DOCUMENT_SETTINGS_LIMITS = Object.freeze({
   companyName: 200,
@@ -32,14 +43,18 @@ export const DOCUMENT_SETTINGS_LIMITS = Object.freeze({
   title: 120,
   termsText: 4000,
   footerText: 500,
+  paymentInstructions: 2000,
 })
 
 export const PURCHASE_ORDER_COLUMNS = Object.freeze(['supplierSku', 'requestedDate', 'promisedDate'])
+export const CUSTOMER_INVOICE_COLUMNS = Object.freeze(['tax'])
 
 // A null company name prints the workspace's legal name, or its name. The
 // requested date is the buyer's own date and is printed by default; a
 // promised date is printed only where the supplier's promise was recorded on
-// the line, so its column starts off.
+// the line, so its column starts off. On the invoice the tax per line starts
+// off (the totals always carry the invoice's tax), and what the customer has
+// paid is printed when the receivable is readable in the invoice's currency.
 export const documentSettingsSeed = Object.freeze({
   version: 1,
   documentLanguage: 'en-US',
@@ -50,6 +65,14 @@ export const documentSettingsSeed = Object.freeze({
     termsText: '',
     footerText: '',
     signatureBlock: false,
+  }),
+  customerInvoice: Object.freeze({
+    title: null,
+    columns: Object.freeze({ tax: false }),
+    showPaymentSummary: true,
+    paymentInstructions: '',
+    termsText: '',
+    footerText: '',
   }),
 })
 
@@ -69,6 +92,8 @@ export function normalizeDocumentSettings(value) {
   const letterhead = isObject(current.letterhead) ? current.letterhead : {}
   const purchaseOrder = isObject(current.purchaseOrder) ? current.purchaseOrder : {}
   const columns = isObject(purchaseOrder.columns) ? purchaseOrder.columns : {}
+  const customerInvoice = isObject(current.customerInvoice) ? current.customerInvoice : {}
+  const invoiceColumns = isObject(customerInvoice.columns) ? customerInvoice.columns : {}
   const seed = documentSettingsSeed
   return {
     version: 1,
@@ -87,6 +112,14 @@ export function normalizeDocumentSettings(value) {
       footerText: trimmed(purchaseOrder.footerText),
       signatureBlock: typeof purchaseOrder.signatureBlock === 'boolean' ? purchaseOrder.signatureBlock : seed.purchaseOrder.signatureBlock,
     },
+    customerInvoice: {
+      title: typeof customerInvoice.title === 'string' ? recorded(customerInvoice.title) : null,
+      columns: Object.fromEntries(CUSTOMER_INVOICE_COLUMNS.map((key) => [key, typeof invoiceColumns[key] === 'boolean' ? invoiceColumns[key] : seed.customerInvoice.columns[key]])),
+      showPaymentSummary: typeof customerInvoice.showPaymentSummary === 'boolean' ? customerInvoice.showPaymentSummary : seed.customerInvoice.showPaymentSummary,
+      paymentInstructions: trimmed(customerInvoice.paymentInstructions),
+      termsText: trimmed(customerInvoice.termsText),
+      footerText: trimmed(customerInvoice.footerText),
+    },
   }
 }
 
@@ -97,10 +130,14 @@ export function validateDocumentSettings(value) {
   if (!isObject(value)) throw invalid('DOCUMENT_SETTINGS_INVALID', 'documents', 'Document settings are invalid.')
   const letterhead = value.letterhead === undefined ? {} : value.letterhead
   const purchaseOrder = value.purchaseOrder === undefined ? {} : value.purchaseOrder
+  const customerInvoice = value.customerInvoice === undefined ? {} : value.customerInvoice
   if (!isObject(letterhead)) throw invalid('DOCUMENT_SETTINGS_INVALID', 'letterhead', 'The letterhead is invalid.')
   if (!isObject(purchaseOrder)) throw invalid('DOCUMENT_SETTINGS_INVALID', 'purchaseOrder', 'The purchase order template is invalid.')
   const columns = purchaseOrder.columns === undefined ? {} : purchaseOrder.columns
   if (!isObject(columns)) throw invalid('DOCUMENT_SETTINGS_INVALID', 'purchaseOrder.columns', 'The purchase order columns are invalid.')
+  if (!isObject(customerInvoice)) throw invalid('DOCUMENT_SETTINGS_INVALID', 'customerInvoice', 'The invoice template is invalid.')
+  const invoiceColumns = customerInvoice.columns === undefined ? {} : customerInvoice.columns
+  if (!isObject(invoiceColumns)) throw invalid('DOCUMENT_SETTINGS_INVALID', 'customerInvoice.columns', 'The invoice columns are invalid.')
 
   const language = value.documentLanguage === undefined ? documentSettingsSeed.documentLanguage : value.documentLanguage
   if (!DOCUMENT_LANGUAGES.includes(language)) throw invalid('DOCUMENT_LANGUAGE_NOT_SUPPORTED', 'documentLanguage', 'Choose English (en-US) or Chinese (zh-CN) for documents.')
@@ -124,6 +161,7 @@ export function validateDocumentSettings(value) {
   if (addressLines.length > DOCUMENT_SETTINGS_LIMITS.addressLines) throw invalid('DOCUMENT_SETTING_TOO_MANY_LINES', 'letterhead.addressLines', `The address can have at most ${DOCUMENT_SETTINGS_LIMITS.addressLines} lines.`, { limit: DOCUMENT_SETTINGS_LIMITS.addressLines })
 
   const seedColumns = documentSettingsSeed.purchaseOrder.columns
+  const seedInvoice = documentSettingsSeed.customerInvoice
   return {
     version: 1,
     documentLanguage: language,
@@ -141,7 +179,28 @@ export function validateDocumentSettings(value) {
       footerText: textField('purchaseOrder.footerText', purchaseOrder.footerText, DOCUMENT_SETTINGS_LIMITS.footerText, { nullable: false }),
       signatureBlock: flag('purchaseOrder.signatureBlock', purchaseOrder.signatureBlock, documentSettingsSeed.purchaseOrder.signatureBlock),
     },
+    customerInvoice: {
+      title: textField('customerInvoice.title', customerInvoice.title, DOCUMENT_SETTINGS_LIMITS.title, { nullable: true }),
+      columns: Object.fromEntries(CUSTOMER_INVOICE_COLUMNS.map((key) => [key, flag(`customerInvoice.columns.${key}`, invoiceColumns[key], seedInvoice.columns[key])])),
+      showPaymentSummary: flag('customerInvoice.showPaymentSummary', customerInvoice.showPaymentSummary, seedInvoice.showPaymentSummary),
+      paymentInstructions: textField('customerInvoice.paymentInstructions', customerInvoice.paymentInstructions, DOCUMENT_SETTINGS_LIMITS.paymentInstructions, { nullable: false }),
+      termsText: textField('customerInvoice.termsText', customerInvoice.termsText, DOCUMENT_SETTINGS_LIMITS.termsText, { nullable: false }),
+      footerText: textField('customerInvoice.footerText', customerInvoice.footerText, DOCUMENT_SETTINGS_LIMITS.footerText, { nullable: false }),
+    },
   }
+}
+
+// The invoice date: the invoice form stores the moment it was created, so it
+// is printed as the day that moment falls on in the workspace timezone
+// (`instant`); a value stored at exactly 00:00:00.000Z (or as a bare date) is
+// a calendar day and stays that day (`day`). One of the two, or neither.
+export function recordedDayOrInstant(value) {
+  if (value === null || value === undefined || value === '') return { day: null, instant: null }
+  const time = value instanceof Date ? value.getTime() : Date.parse(String(value).trim())
+  if (!Number.isFinite(time)) return { day: null, instant: null }
+  const iso = new Date(time).toISOString()
+  const bareDate = !(value instanceof Date) && /^\d{4}-\d{2}-\d{2}$/.test(String(value).trim())
+  return bareDate || iso.endsWith('T00:00:00.000Z') ? { day: iso.slice(0, 10), instant: null } : { day: null, instant: iso }
 }
 
 // A calendar day, YYYY-MM-DD, from a Date or an ISO string; null otherwise.
@@ -246,5 +305,128 @@ export function buildPurchaseOrderDocument({ order, supplier = null, warehouse =
     termsText: recorded(template?.termsText),
     footerText: recorded(template?.footerText),
     signatureBlock: template?.signatureBlock === true,
+  }
+}
+
+// Payment terms as recorded on a supplier or customer: the stored value is a
+// payment term's id or code, or free text. Where the workspace's payment terms
+// (PaymentTerm rows { id, code, name }) name it, the recorded name is printed;
+// otherwise the value as stored. Null when nothing was recorded, never NET30.
+export function recordedPaymentTerms(value, terms = []) {
+  const stored = recorded(value)
+  if (!stored) return null
+  const rows = Array.isArray(terms) ? terms : []
+  const match = rows.find((term) => recorded(term?.id) === stored) || rows.find((term) => recorded(term?.code) === stored)
+  return recorded(match?.name) || stored
+}
+
+// The recorded customer fields an invoice prints, from the stored customer
+// record (RuntimeRecord payload): the code, contact, phone, email, address and
+// payment terms someone entered, each null when nobody did. A customer's
+// payment terms are stored only when someone enters them (no form, import,
+// view or seed fills them in), unlike a supplier's paymentTermsId, which
+// defaults to NET30 and so is never printed. The customer's currency and
+// credit standing are not read.
+function customerParty(customer) {
+  const payload = isObject(customer?.payload) ? customer.payload : {}
+  return {
+    code: recorded(payload.code) || recorded(customer?.recordKey),
+    name: recorded(payload.name),
+    contactName: recorded(payload.contact),
+    email: recorded(payload.email),
+    telephone: recorded(payload.phone),
+    address: recorded(payload.address),
+    paymentTerms: recorded(payload.paymentTerms),
+  }
+}
+
+const sameCurrency = (left, right) => Boolean(left && right && left.toUpperCase() === right.toUpperCase())
+
+// The customer invoice as a document. `invoice` is the invoice as the detail
+// route reads it (amounts null without finance.amounts.read, the customer
+// name null without finance.partner_snapshot.read, `receivable` null without
+// finance.receivable.read or before issue); `customer` the stored customer
+// record ({ id, recordKey, payload }), looked up only when the customer name
+// came back visible; `paymentTerms` the workspace's payment terms that the
+// customer's recorded terms name ({ id, code, name }); `letterhead`,
+// `template` and `documentLanguage` the
+// workspace's document settings; `workspace` its { legalName, name };
+// `access.amounts` and `access.partner` whether the reader may see amounts
+// and the customer.
+export function buildCustomerInvoiceDocument({ invoice, customer = null, paymentTerms = [], letterhead = documentSettingsSeed.letterhead, template = documentSettingsSeed.customerInvoice, documentLanguage = documentSettingsSeed.documentLanguage, workspace = {}, access = {} }) {
+  const status = recorded(invoice?.status)
+  const partnerVisible = access.partner === true
+  // Sending needs an issued invoice with its amounts and its customer: a role
+  // that cannot see them gets no document to send rather than one with
+  // blanks. An approved invoice is shown to be checked, never printed.
+  const sendable = PRINTABLE_CUSTOMER_INVOICE_STATUSES.includes(status) || PREVIEW_CUSTOMER_INVOICE_STATUSES.includes(status)
+  const printable = !sendable
+    ? { ok: false, reason: 'status' }
+    : access.amounts !== true || !partnerVisible
+      ? { ok: false, reason: 'amounts_hidden' }
+      : PREVIEW_CUSTOMER_INVOICE_STATUSES.includes(status)
+        ? { ok: false, reason: 'not_issued' }
+        : { ok: true, reason: null }
+  // The customer master is used only when the customer may be seen; the name
+  // printed is the one recorded on the invoice.
+  const party = partnerVisible ? customerParty(customer) : customerParty(null)
+  const currency = recorded(invoice?.currency)
+  const receivable = isObject(invoice?.receivable) ? invoice.receivable : null
+  // What was paid, credited and is still owed, from the receivable the reader
+  // may see, with its amounts; only in the invoice's own currency, never
+  // converted. Left off, not printed blank, when the amounts are hidden.
+  const paymentSummary = template?.showPaymentSummary !== false && access.amounts === true && receivable && sameCurrency(recorded(receivable.currency), currency)
+    ? { currency, amountPaid: recorded(receivable.paidAmount), creditsApplied: recorded(receivable.approvedCreditAmount), balanceDue: recorded(receivable.outstandingAmount) }
+    : null
+  return {
+    kind: 'customer_invoice',
+    invoiceId: recorded(invoice?.id),
+    // The invoice number as recorded; never the internal id in its place.
+    number: recorded(invoice?.invoiceNumber),
+    status,
+    invoiceDate: recordedDayOrInstant(invoice?.invoiceDate),
+    dueDate: calendarDay(invoice?.dueDate),
+    salesOrderNumber: recorded(invoice?.salesOrderNumber),
+    shipmentNumber: recorded(invoice?.shipmentNumber),
+    documentLanguage: DOCUMENT_LANGUAGES.includes(documentLanguage) ? documentLanguage : documentSettingsSeed.documentLanguage,
+    printable,
+    seller: {
+      companyName: recorded(letterhead?.companyName) || recorded(workspace?.legalName) || recorded(workspace?.name),
+      addressLines: Array.isArray(letterhead?.addressLines) ? letterhead.addressLines.map(recorded).filter(Boolean) : [],
+      phone: recorded(letterhead?.phone),
+      email: recorded(letterhead?.email),
+      taxId: recorded(letterhead?.taxId),
+    },
+    billTo: {
+      name: partnerVisible ? recorded(invoice?.customerName) || party.name : null,
+      code: party.code,
+      contactName: party.contactName,
+      email: party.email,
+      telephone: party.telephone,
+      address: party.address,
+    },
+    // The customer's recorded payment terms; null (left off) when none were
+    // recorded or the customer may not be seen.
+    paymentTerms: recordedPaymentTerms(party.paymentTerms, paymentTerms),
+    currency,
+    lines: (Array.isArray(invoice?.lines) ? invoice.lines : []).map((line, index) => ({
+      lineNo: Number.isInteger(line?.lineNumber) ? line.lineNumber : index + 1,
+      sku: recorded(line?.sku),
+      description: recorded(line?.itemName),
+      quantity: recorded(line?.quantity),
+      unit: recorded(line?.unit),
+      unitPrice: recorded(line?.unitPrice),
+      amount: recorded(line?.lineAmount),
+      tax: recorded(line?.enteredTaxAmount),
+      total: recorded(line?.totalAmount),
+    })),
+    // The amounts recorded on the invoice, in its one currency.
+    totals: [{ currency, subtotal: recorded(invoice?.subtotalAmount), tax: recorded(invoice?.enteredTaxAmount), total: recorded(invoice?.totalAmount) }],
+    paymentSummary,
+    title: recorded(template?.title),
+    columns: Object.fromEntries(CUSTOMER_INVOICE_COLUMNS.map((key) => [key, template?.columns?.[key] === true])),
+    paymentInstructions: recorded(template?.paymentInstructions),
+    termsText: recorded(template?.termsText),
+    footerText: recorded(template?.footerText),
   }
 }

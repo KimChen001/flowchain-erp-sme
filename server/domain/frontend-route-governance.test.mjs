@@ -29,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 173);
+  assert.equal(routes.length, 174);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -46,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    173,
+    174,
   );
   assert.throws(
     () =>
@@ -333,6 +333,19 @@ test("legacy redirects and canonical operational deep links remain exact", () =>
   assert.equal(byId("procurement:order-document").navigationVisibility, "CONTEXTUAL");
   assert.equal(byId("procurement:order-document").apiDependency, "/api/procurement/orders/:id/document");
   assert.equal(byId("procurement:order-document").writeMaturity, "UNAVAILABLE");
+  // The invoice document reads with exactly the invoice's read permission and
+  // the sales capability of the other invoice pages; it writes nothing.
+  assert.equal(registry.routeByPath("/app/sales/invoices/CI-001/document").id, "sales:invoice-document");
+  assert.equal(registry.routeByPath("/app/sales/invoices/CI-001").id, "sales:invoice-detail");
+  assert.equal(byId("sales:invoice-document").requiredPermission, byId("sales:invoice-detail").requiredPermission);
+  assert.equal(byId("sales:invoice-document").requiredPermission, "finance.customer_invoice.read");
+  assert.equal(byId("sales:invoice-document").requiredCapability, byId("sales:invoice-detail").requiredCapability);
+  assert.equal(byId("sales:invoice-document").requiredCapability, "sales");
+  assert.equal(byId("sales:invoice-document").parentId, "sales:invoice-detail");
+  assert.equal(byId("sales:invoice-document").classification, "CORE");
+  assert.equal(byId("sales:invoice-document").navigationVisibility, "CONTEXTUAL");
+  assert.equal(byId("sales:invoice-document").apiDependency, "/api/finance/customer-invoices/:id/document");
+  assert.equal(byId("sales:invoice-document").writeMaturity, "UNAVAILABLE");
   assert.equal(
     registry.routeByPath("/app/procurement/receiving/GRN-001").id,
     "procurement:receiving-detail",
@@ -595,5 +608,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /173\/173 frontend route stability audit/);
+  assert.match(matrix, /174\/174 frontend route stability audit/);
 });

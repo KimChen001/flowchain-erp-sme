@@ -70,17 +70,18 @@ const serverSources = () => {
   return files.map(path => ({ path: relative(serverRoot, path).replaceAll('\\', '/'), source: readFileSync(path, 'utf8') }))
 }
 
-test('only the four invoice matching tolerances, the AI switch and the document settings are read from the operational settings the UI edits', () => {
+test('only the four invoice matching tolerances, PO approval from an approved request, the AI switch and the document settings are read from the operational settings the UI edits', () => {
   assert.deepEqual(REVIEW_TOLERANCE_FIELDS, ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance'])
-  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder'] })
+  assert.deepEqual(OPERATIONAL_SETTINGS_IN_EFFECT, { numbering: [], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice'] })
 
   const sources = serverSources()
-  // Every server reader of tenant.operationalSettings. The PO document reads
+  // Every server reader of tenant.operationalSettings. The PO and invoice documents read
   // the documents section through mergeOperationalSettings. The settlement services
   // read settlementPolicy, which the settings UI never edits; Mobile Sync reads
   // module visibility but is outside the US trial capability set.
   assert.deepEqual(sources.filter(file => /operationalSettings/.test(file.source)).map(file => file.path).sort(), [
     'domain/ai-workspace-access.mjs',
+    'domain/customer-invoice-document-read-service.mjs',
     'domain/internal-settlement-command-service.mjs',
     'domain/internal-settlement-read-service.mjs',
     'domain/mobile-sync-entity-policy.mjs',
@@ -89,12 +90,16 @@ test('only the four invoice matching tolerances, the AI switch and the document 
     'domain/purchase-order-document-read-service.mjs',
     'domain/workspace-settings-contract.mjs',
     'routes/settings-runtime.routes.mjs',
+    'services/procurement-request-command-service.mjs',
   ])
   // The assistant reads only the AI switch (ai-workspace-access.mjs).
   const access = sources.find(file => file.path === 'domain/ai-workspace-access.mjs').source
   assert.deepEqual([...new Set([...access.matchAll(/\.ai\.([A-Za-z]+)/g)].map(match => match[1]))], ['modelAssistEnabled'])
   const finance = sources.find(file => file.path === 'domain/operational-finance-policy.mjs').source
   assert.deepEqual([...new Set([...finance.matchAll(/review\.([A-Za-z]+)/g)].map(match => match[1]))].sort(), [...REVIEW_TOLERANCE_FIELDS].sort())
+  // Converting an approved purchase request reads only the PO approval switch (owner decision D3).
+  const conversion = sources.find(file => file.path === 'services/procurement-request-command-service.mjs').source
+  assert.deepEqual([...new Set([...conversion.matchAll(/review\.([A-Za-z]+)/g)].map(match => match[1]))], ['approvedRequestApprovesPurchaseOrder'])
 
   // Settings marked "Not in effect yet" have no reader anywhere on the server.
   for (const key of ['nextSequence', 'sequenceLength', 'amountThreshold', 'inventoryTolerancePercent', 'reviewerRoles', 'defaultModule', 'evidenceRequired', 'retainDays', 'sessionTimeoutMinutes', 'exportLimit', 'negativeInventoryBlocked', 'maintenanceNotice']) {
@@ -136,6 +141,7 @@ test('document settings default to English with nothing invented and keep only k
     documentLanguage: 'zh-CN',
     letterhead: { companyName: 'Harbor Goods LLC', addressLines: ['12 Pier Road', 'Oakland, CA 94607'], phone: null, email: 'buying@harbor.example', taxId: null },
     purchaseOrder: { title: null, columns: { supplierSku: false, requestedDate: true, promisedDate: false }, termsText: 'Net 30 from invoice.', footerText: '', signatureBlock: true },
+    customerInvoice: { title: null, columns: { tax: false }, showPaymentSummary: true, paymentInstructions: '', termsText: '', footerText: '' },
   })
 })
 
@@ -160,4 +166,34 @@ test('document settings are saved with the workspace manage permission', () => {
   assert.match(routes, /documents: 'settings.workspace.manage'/)
   // A refused value names its field; other errors (a denied permission) carry no details.
   assert.ok(routes.includes('error?.status === 400 && error?.details?.field ? { details: error.details } : {}'))
+})
+
+test('the invoice template starts with no tax column and the payment summary on, and keeps only known fields', () => {
+  assert.deepEqual(mergeOperationalSettings({}).documents.customerInvoice, { title: null, columns: { tax: false }, showPaymentSummary: true, paymentInstructions: '', termsText: '', footerText: '' })
+  // A workspace saved before the invoice template existed reads the defaults.
+  assert.deepEqual(mergeOperationalSettings({ documents: { purchaseOrder: { termsText: 'Net 30' } } }).documents.customerInvoice.columns, { tax: false })
+  assert.equal(mergeOperationalSettings({ documents: { customerInvoice: { showPaymentSummary: 'no', columns: { tax: 'yes' } } } }).documents.customerInvoice.showPaymentSummary, true, 'a stored value of the wrong type is ignored')
+
+  const saved = validateOperationalSection('documents', {
+    customerInvoice: { title: '  Tax Invoice ', columns: { tax: true, discount: true }, showPaymentSummary: false, paymentInstructions: ' Wire to account on file. ', termsText: ' Due on receipt. ', footerText: '', currency: 'USD', paymentTerms: 'NET30' },
+  }).customerInvoice
+  assert.deepEqual(saved, { title: 'Tax Invoice', columns: { tax: true }, showPaymentSummary: false, paymentInstructions: 'Wire to account on file.', termsText: 'Due on receipt.', footerText: '' })
+})
+
+test('invoice template values over their limits are refused with the field named', () => {
+  const cases = [
+    [{ customerInvoice: { paymentInstructions: 'x'.repeat(2001) } }, 'DOCUMENT_SETTING_TOO_LONG', 'customerInvoice.paymentInstructions', 2000],
+    [{ customerInvoice: { termsText: 'x'.repeat(4001) } }, 'DOCUMENT_SETTING_TOO_LONG', 'customerInvoice.termsText', 4000],
+    [{ customerInvoice: { footerText: 'x'.repeat(501) } }, 'DOCUMENT_SETTING_TOO_LONG', 'customerInvoice.footerText', 500],
+    [{ customerInvoice: { title: 'x'.repeat(121) } }, 'DOCUMENT_SETTING_TOO_LONG', 'customerInvoice.title', 120],
+    [{ customerInvoice: { columns: { tax: 'yes' } } }, 'DOCUMENT_SETTING_INVALID', 'customerInvoice.columns.tax'],
+    [{ customerInvoice: { showPaymentSummary: 1 } }, 'DOCUMENT_SETTING_INVALID', 'customerInvoice.showPaymentSummary'],
+    [{ customerInvoice: { paymentInstructions: 7 } }, 'DOCUMENT_SETTING_INVALID', 'customerInvoice.paymentInstructions'],
+    [{ customerInvoice: 'Invoice' }, 'DOCUMENT_SETTINGS_INVALID', 'customerInvoice'],
+    [{ customerInvoice: { columns: [] } }, 'DOCUMENT_SETTINGS_INVALID', 'customerInvoice.columns'],
+  ]
+  for (const [value, code, field, limit] of cases) {
+    assert.throws(() => validateOperationalSection('documents', value), (error) => error.code === code && error.status === 400 && error.details.field === field && (limit === undefined || error.details.limit === limit), field)
+  }
+  assert.doesNotThrow(() => validateOperationalSection('documents', { customerInvoice: { paymentInstructions: 'x'.repeat(2000), termsText: 'x'.repeat(4000), footerText: 'x'.repeat(500), title: 'x'.repeat(120) } }))
 })

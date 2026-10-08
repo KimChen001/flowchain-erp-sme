@@ -84,16 +84,33 @@ names, or supplier names in place. Translate their presentation where appropriat
   lines; on hold with no customer name), and the spec checks their translated labels
   on the risk and evidence pages in English and their Chinese labels in zh-CN. The
   sales order drawer on these pages and its review panel were removed (2026-10-08): no
-  link opened them, and a sales order focus goes to `/app/sales/orders/:id`. Deferred: the sales order and shipment workbench (`/app/sales/orders`,
-  `OutboundWorkbench.tsx`) until #173 and #178; the inventory filter chips
-  (`src/modules/inventory/Page.tsx`) until #182; shell strings in
-  `src/app/FlowChainApp.tsx` until #179 (shell strings added by the documents work); an order's evidence graph, whose
+  link opened them, and a sales order focus goes to `/app/sales/orders/:id`. Next part (the PRs it waited for have merged): the rest of the sales order and shipment
+  workbench (`/app/sales/orders`, `OutboundWorkbench.tsx`) beyond its action dialogs; the
+  inventory filter chips (`src/modules/inventory/Page.tsx`); shell strings in
+  `src/app/FlowChainApp.tsx`. Deferred: an order's evidence graph, whose
   risk summaries the server writes in Chinese. Out of scope because no route renders
   them: `src/modules/overview/overviewEvidence.ts` and `TodayCockpitPanel.tsx`, the
   inventory movement ledger, exception, warning and adjustment page files, the V2
   panels under `src/components`, `src/modules/sales/DeliveryPage.tsx` and
   `ReceiptPage.tsx`, `src/modules/receiving/Page.tsx` (the receiving routes render
   `ReceivingListPage`) and the procurement panels PR #147 removes.
+- The sales order reserve, release and delivery draft dialogs and the shipment post,
+  reverse and cancel dialogs have English and Chinese titles and confirm buttons that
+  name the action. Their previews say what will happen in one or two sentences built
+  from the server's preview (`src/modules/sales/outboundPreviewText.ts`), with the
+  impact counts under "Technical details"; warehouses show by name and location, and
+  reservation and movement ids in short form. The order and shipment timelines show
+  the reservation and movement titles the workbench API builds at read time in the
+  interface language (`src/modules/sales/outboundCopy.ts`); audit summaries stay as
+  recorded. SKUs, item and warehouse names, units and shipment numbers stay as stored.
+- Today (`/app/overview/risks`) has English and Chinese copy
+  (`src/modules/overview/todayCopy.ts`): the work rows and their date labels, the
+  status tiles, the first-day checklist and recent documents. The server sends codes,
+  dates and numbers (`GET /api/home/overview`); document numbers, SKUs, units and
+  supplier and customer names stay as stored, and calendar days and change times
+  follow the workspace locale and timezone in both languages. Checked in both
+  languages by `home-overview-language.spec.ts`, `today-work.spec.ts` and
+  `today-first-run.spec.ts`.
 - The purchase order document (`/app/procurement/orders/:id/document`) prints its
   labels in the document language: the workspace default from Settings › Company &
   workspace › Documents, or the language picked on the page for one print, which is
@@ -102,6 +119,12 @@ names, or supplier names in place. Translate their presentation where appropriat
   document language. The page's toolbar and the Documents settings form have English
   and Chinese copy; a custom document title is the workspace's own text and is printed
   as entered.
+- The customer invoice document (`/app/sales/invoices/:id/document`) follows the same
+  rules: labels in the document language, the invoice number, SKUs, units, amounts,
+  currency codes and the invoice and due dates as recorded and formatted in the
+  workspace locale (calendar days read in UTC, so the day entered is the day printed).
+  Customer contact details, payment terms and payment instructions are printed as
+  the workspace recorded them, in whatever language they were entered.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.
