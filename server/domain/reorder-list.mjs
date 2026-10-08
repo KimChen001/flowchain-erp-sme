@@ -152,6 +152,15 @@ export function preferredSupplierFor(item, links = [], suppliersById = new Map()
 
 const purchaseUnitOf = (item, stockUnit) => text(metadataOf(item).purchaseUnit) || stockUnit
 
+// The supplier's minimum order that a purchase request for this item asks for
+// at least, or 0. It counts only when the item is bought in its stock unit,
+// since the minimum is in the unit the item is bought in. One rule for the
+// reorder list and the assistant's order suggestions (ai-skill-readers.mjs).
+export function requestMinimumOf(item, supplier, stockUnit) {
+  if (!text(stockUnit) || !sameUnit(purchaseUnitOf(item, stockUnit), stockUnit)) return 0
+  return Number(supplier?.minimumOrderQuantity) > 0 ? Number(supplier.minimumOrderQuantity) : 0
+}
+
 // One item's row, or { notJudged } / null (not listed). stockUnit is recorded.
 function judgeItem({ item, allocation, demand, reorderPoint, stockUnit, today, showPurchaseOrders, supplier }) {
   const base = { itemId: text(item.id), sku: text(item.sku), itemName: text(item.name || item.sku) }
@@ -199,7 +208,7 @@ function judgeItem({ item, allocation, demand, reorderPoint, stockUnit, today, s
   // A request below the supplier's minimum order would be refused or rounded
   // up by the supplier, so the request asks for at least the minimum. The
   // shortfall itself is shown as computed.
-  const minimum = Number(supplier?.minimumOrderQuantity) > 0 ? Number(supplier.minimumOrderQuantity) : 0
+  const minimum = requestMinimumOf(item, supplier, stockUnit)
   const requestQuantity = shortfall > 0 && !purchaseUnitDiffers ? Math.max(shortfall, minimum) : null
   return {
     row: {

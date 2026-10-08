@@ -1,7 +1,7 @@
 import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillEvidence, aiSkillFormatter, aiSkillNavigation, aiSkillRecordEvidence, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { aiSkillPurchaseOrderNotSent, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
-import { aiSkillDraftCard } from './ai-skill-drafts.mjs'
+import { aiSkillDraftCard, aiSkillMinimumText } from './ai-skill-drafts.mjs'
 import { aiSkillOtherUnitLines } from './ai-skill-inventory-availability.mjs'
 
 // Starting an order: prepare_action_draft in mode `order`, for "can you help
@@ -47,7 +47,9 @@ function stockPlan(facts, row, item = null) {
   const pending = data.pendingRequests ?? 0
   const target = Math.max(data.reorder ?? 0, data.safety ?? 0, data.demand ?? 0)
   const gap = Math.ceil(target - available - incoming - pending)
-  return { target, available, incoming, pending, gap, onTop: Math.ceil(target - available), purchaseOrderIds: array(data.purchaseOrderIds) }
+  // The preferred supplier's minimum order (the reorder list's rule).
+  const minimum = Number(data.minimum ?? row.orderMinimum?.quantity) > 0 ? Number(data.minimum ?? row.orderMinimum?.quantity) : 0
+  return { target, available, incoming, pending, gap, onTop: Math.ceil(target - available), purchaseOrderIds: array(data.purchaseOrderIds), minimum, minimumSupplier: data.minimumSupplier ?? row.orderMinimum?.supplier ?? null }
 }
 
 // The SKU a focus names: the item, or the item a named purchase order buys.
@@ -89,13 +91,21 @@ export function runStartOrder(facts, { focus = null, route = null, canDraft = fa
 
 // The quantity to open the form with: the one the question names, else the
 // gap, else (ordered on top of what is coming) the target less what is
-// available. null leaves it to the user.
+// available, raised to the supplier's minimum order. null leaves it to the user.
 function quantityFor(target, result) {
   if (result.quantity) return result.quantity
   const plan = target.plan
   if (!plan) return null
-  if (plan.gap > 0) return plan.gap
-  return plan.onTop > 0 ? plan.onTop : null
+  const need = plan.gap > 0 ? plan.gap : plan.onTop > 0 ? plan.onTop : null
+  return need === null ? null : Math.max(need, plan.minimum || 0)
+}
+
+// The minimum the quantity was raised to, or null.
+function raisedToMinimum(target, result) {
+  const plan = target.plan
+  if (result.quantity || !plan || !plan.minimum) return null
+  const need = plan.gap > 0 ? plan.gap : plan.onTop > 0 ? plan.onTop : null
+  return need !== null && plan.minimum > need ? { minimum: plan.minimum, gap: need, supplier: plan.minimumSupplier } : null
 }
 
 function requestCard(target, result, facts, language, { autoOpen, anyway = false }) {
@@ -109,13 +119,15 @@ function requestCard(target, result, facts, language, { autoOpen, anyway = false
     : result.quantity ? aiSkillText('order.reason.asked', language, values)
       : plan.gap > 0 ? aiSkillText(plan.incoming || plan.pending ? 'order.reason.gap_after_incoming' : 'draft.pr.reason', language, values)
         : aiSkillText(plan.onTop > 0 ? 'order.reason.on_top' : 'order.reason.not_needed', language, values)
+  const raised = raisedToMinimum(target, result)
+  const why = raised ? [reason, aiSkillMinimumText(raised, fmt, language)].join(language === 'zh-CN' ? '' : ' ') : reason
   const title = aiSkillText(amount ? 'order.card.title' : 'order.card.title_no_quantity', language, values)
   return {
     previewOnly: true, reviewRequired: true, requiresHumanReview: true, prohibitedActions: PROHIBITED,
     allowedNextStep: aiSkillText(anyway ? 'order.action.anyway' : amount ? 'order.action.open' : 'order.action.open_no_quantity', language, values),
-    title, draftTitle: title, description: reason,
+    title, draftTitle: title, description: why,
     draftType: 'purchase_request_draft', targetModule: AI_SKILL_MODULES.purchase_request, targetEntityType: 'item', targetEntityId: row.itemId || row.sku,
-    payload: { itemIdOrSku: row.sku, ...(quantity ? { quantity } : {}), reason, language },
+    payload: { itemIdOrSku: row.sku, ...(quantity ? { quantity } : {}), reason: why, language },
     originEvidence: [{ entityType: 'item', entityId: row.itemId || row.sku }],
     autoOpen,
   }

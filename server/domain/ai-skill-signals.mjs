@@ -104,7 +104,7 @@ export function buildAiSkillSignals(facts) {
   }
   for (const row of array(facts.inventory?.rows)) {
     const covered = projection(facts, row.sku, row.incomingApprovedPo)
-    const data = { sku: row.sku, itemName: row.itemName, available: row.available, demand: row.openSalesDemand, shortage: row.shortage, incoming: row.incomingApprovedPo, atp: row.availableToPromise, safety: row.safetyStock, reorder: row.reorderPoint, pendingRequests: covered.pendingRequests, purchaseOrderIds: row.purchaseOrderIds }
+    const data = { sku: row.sku, itemName: row.itemName, available: row.available, demand: row.openSalesDemand, shortage: row.shortage, incoming: row.incomingApprovedPo, atp: row.availableToPromise, safety: row.safetyStock, reorder: row.reorderPoint, pendingRequests: covered.pendingRequests, purchaseOrderIds: row.purchaseOrderIds, minimum: row.orderMinimum?.quantity ?? null, minimumSupplier: row.orderMinimum?.supplier ?? null }
     if (row.shortage !== null && row.shortage > 0) signals.push(signal('stock_shortage', 'item', row.itemId, row.sku, { ...data, covered: (row.incomingApprovedPo ?? 0) >= row.shortage }))
     if (['out_of_stock', 'below_safety_stock'].includes(row.stockStatus)) signals.push(signal('stock_below_safety', 'item', row.itemId, row.sku, { ...data, covered: row.safetyStock !== null && (row.available ?? 0) + (row.incomingApprovedPo ?? 0) + covered.pendingRequests >= row.safetyStock }))
     else if (row.stockStatus === 'below_reorder_point') signals.push(signal('stock_below_reorder', 'item', row.itemId, row.sku, { ...data, covered: false }))
