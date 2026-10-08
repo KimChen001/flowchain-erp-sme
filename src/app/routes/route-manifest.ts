@@ -26,6 +26,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     procurement:bills procurement:bill-detail
     procurement:match procurement:request-detail
     procurement:rfq-detail procurement:rfq-comparison procurement:order-detail
+    procurement:order-document
     procurement:receiving-detail
     procurement:match-detail
     inventory inventory:stock inventory:movements inventory:warnings
@@ -311,7 +312,7 @@ const mapPermission = (permission: string, routeIds: string) => {
 };
 mapPermission(
   "procurement.purchase_order.read",
-  "procurement procurement:workbench procurement:orders procurement:order-lines procurement:order-detail",
+  "procurement procurement:workbench procurement:orders procurement:order-lines procurement:order-detail procurement:order-document",
 );
 mapPermission(
   "receiving.read",
@@ -506,6 +507,8 @@ function limitationFor(
     return "只读展示当前租户的 RFQ、行项目、参与记录、最大 revisionNumber 报价和明确证据关系；内部 response/revision command 与 Comparison read contract 不在此 UI 路由内。";
   if (route.id === "procurement:rfq-comparison")
     return "只读展示当前租户 RFQ 的供应商报价比较、Participation 摘要与非有效响应；不排名、不推荐、不授标、不转换 PO，币种不做汇率换算。";
+  if (route.id === "procurement:order-document")
+    return "Read-only PO document to print or save as PDF; printable from approval on and only with procurement.prices.read. FlowChain does not send it.";
   if (compatibilityRouteIds.has(route.id))
     return "Compatibility extension; not part of the default SME Core surface.";
   if (route.id === "imports")
@@ -559,6 +562,8 @@ export function authorityForRoute(
           ? "/api/procurement/documents/rfq/:id"
           : route.id === "procurement:rfq-comparison"
             ? "/api/procurement/rfqs/:rfqId/comparison"
+          : route.id === "procurement:order-document"
+            ? "/api/procurement/orders/:id/document"
           : apiByModule[route.panelId === "finance" ? "finance" : route.moduleId],
     repositoryAuthority:
       classification === "LEGACY"

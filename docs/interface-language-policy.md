@@ -90,13 +90,21 @@ names, or supplier names in place. Translate their presentation where appropriat
   link opens the drawer (a sales order focus goes to `/app/sales/orders/:id`). Deferred: the sales order and shipment workbench (`/app/sales/orders`,
   `OutboundWorkbench.tsx`) until #173 and #178; the inventory filter chips
   (`src/modules/inventory/Page.tsx`) until #182; shell strings in
-  `src/app/FlowChainApp.tsx` until #174 and #179; an order's evidence graph, whose
+  `src/app/FlowChainApp.tsx` until #179 (shell strings added by the documents work); an order's evidence graph, whose
   risk summaries the server writes in Chinese. Out of scope because no route renders
   them: `src/modules/overview/overviewEvidence.ts` and `TodayCockpitPanel.tsx`, the
   inventory movement ledger, exception, warning and adjustment page files, the V2
   panels under `src/components`, `src/modules/sales/DeliveryPage.tsx` and
   `ReceiptPage.tsx`, `src/modules/receiving/Page.tsx` (the receiving routes render
   `ReceivingListPage`) and the procurement panels PR #147 removes.
+- The purchase order document (`/app/procurement/orders/:id/document`) prints its
+  labels in the document language: the workspace default from Settings › Company &
+  workspace › Documents, or the language picked on the page for one print, which is
+  not saved. Numbers, dates, currency codes, PO numbers, SKUs and units stay as
+  recorded and are formatted in the workspace locale and timezone whatever the
+  document language. The page's toolbar and the Documents settings form have English
+  and Chinese copy; a custom document title is the workspace's own text and is printed
+  as entered.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.

@@ -54,6 +54,8 @@ await phase("english trial empty", "tests/browser/english-trial.spec.ts", {
 });
 // Supplier performance against the original promise, in English.
 await phase("supplier performance", ["tests/browser/supplier-performance-english.spec.ts", "tests/browser/supplier-activity.spec.ts"]);
+// The PO document: printed alone, labels in the document language, figures unchanged.
+await phase("po document", "tests/browser/purchase-order-document.spec.ts");
 // The assistant answers the walkthrough prompt chips in English from workspace data.
 await phase("english assistant", "tests/browser/ai-assistant-english.spec.ts");
 // Shell, routing, capability and authorization checks on the walkthrough data.
