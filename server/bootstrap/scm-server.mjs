@@ -15,7 +15,8 @@ import {
 import { createWorkspaceSessionStore } from "../auth/workspace-sessions.mjs";
 import { createEmailLinkService } from "../auth/email-link-sign-in.mjs";
 import { checkRuntimeReadiness } from "../domain/runtime-readiness.mjs";
-import { createServerLifecycle, registerShutdownSignals } from "./server-lifecycle.mjs";
+import { createServerLifecycle, registerProcessErrorHandlers, registerShutdownSignals } from "./server-lifecycle.mjs";
+import { createErrorReporter } from "../observability/error-reporter.mjs";
 import {
   actorFromBody,
   applyWorkflowTransition,
@@ -738,7 +739,8 @@ function supplierRecommendations() {
 }
 // requestLogger enables the one-line-per-request access log. It is off unless
 // supplied, so in-process test servers stay quiet; startScmServer supplies it.
-// Unhandled errors are always logged, to errorLogger or the console.
+// Unhandled errors are always logged, to errorLogger or the console, by
+// errorReporter, which also sends alerts when FLOWCHAIN_ERROR_WEBHOOK_URL is set.
 // mailer replaces the provider FLOWCHAIN_MAIL_PROVIDER selects; tests and
 // harnesses pass one so they never reach a real mail service.
 export function createScmServer({
@@ -746,6 +748,7 @@ export function createScmServer({
   requestLogger = null,
   errorLogger,
   mailer = null,
+  errorReporter = createErrorReporter({ logger: errorLogger || console, env: process.env, commitSha: buildIdentity.commitSha }),
 } = {}) {
   validateProductionRuntimeConfig(process.env);
   validateDatabasePersistenceConfig(process.env);
@@ -761,6 +764,7 @@ export function createScmServer({
     sessionStore,
     emailLinks,
     localSessionSecret,
+    errorReporter,
     domain: {
       event,
       todayLabel,
@@ -810,10 +814,12 @@ export function createScmServer({
 
 export function startScmServer(listenPort = port, options = {}) {
   const logger = options.logger || console;
+  const errorReporter = createErrorReporter({ logger, env: process.env, commitSha: buildIdentity.commitSha });
   const server = createScmServer({
     readinessCheck: options.readinessCheck || checkRuntimeReadiness,
     requestLogger: requestLogEnabled(process.env) ? logger : null,
     errorLogger: logger,
+    errorReporter,
   });
   const lifecycle = createServerLifecycle({
     server,
@@ -821,12 +827,14 @@ export function startScmServer(listenPort = port, options = {}) {
     shutdownTimeoutMs: options.shutdownTimeoutMs,
   });
   const unregisterSignals = registerShutdownSignals({ lifecycle, logger });
+  const unregisterProcessErrors = registerProcessErrorHandlers({ reporter: errorReporter });
   server.lifecycle = lifecycle;
   server.shutdown = async (reason = "manual") => {
     try {
       await lifecycle.shutdown(reason);
     } finally {
       unregisterSignals();
+      unregisterProcessErrors();
     }
   };
   server.listen(listenPort, () => {

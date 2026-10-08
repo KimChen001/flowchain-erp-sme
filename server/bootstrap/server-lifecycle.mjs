@@ -82,3 +82,40 @@ export function registerShutdownSignals({ lifecycle, signalTarget = process, log
   }
   return remove;
 }
+
+// An uncaught exception or unhandled rejection still ends the process with
+// exit code 1, as Node does by default; first it is logged as one
+// "process_error" line (sanitized, like request errors) and an alert in
+// flight gets up to flushTimeoutMs to leave. A second failure while that
+// happens exits at once.
+export function registerProcessErrorHandlers({
+  reporter,
+  target = process,
+  exit = (code) => process.exit(code),
+  flushTimeoutMs = 2_000,
+} = {}) {
+  if (!reporter?.report) throw new TypeError("reporter.report is required");
+  let exiting = false;
+  const handlers = new Map();
+  for (const origin of ["uncaughtException", "unhandledRejection"]) {
+    const handler = async (error) => {
+      if (target === process) process.exitCode = 1;
+      if (exiting) return exit(1);
+      exiting = true;
+      try {
+        reporter.report(error, { event: "process_error", phase: origin, fatal: true });
+        await reporter.flush?.(flushTimeoutMs);
+      } catch {
+        // Nothing may keep the process alive after a fatal error.
+      } finally {
+        exit(1);
+      }
+    };
+    handlers.set(origin, handler);
+    target.on(origin, handler);
+  }
+  return () => {
+    for (const [origin, handler] of handlers) target.removeListener(origin, handler);
+    handlers.clear();
+  };
+}

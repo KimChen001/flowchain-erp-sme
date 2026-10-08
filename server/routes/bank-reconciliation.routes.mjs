@@ -15,6 +15,7 @@ function knownError(ctx, error) {
   if (error instanceof BankStatementError || error instanceof BankStatementParserError || error instanceof BankReconciliationError || error instanceof PilotIdentityError || error?.name === "AuthorizationError") {
     ctx.send(ctx.res, error.status || 400, { code: error.code || "BANK_RECONCILIATION_FAILED", message: error.message, ...(error.details ? { details: error.details } : {}) }); return;
   }
+  ctx.reportError?.(error);
   ctx.send(ctx.res, 500, { code: "BANK_RECONCILIATION_FAILED", message: "Bank statement reconciliation could not be completed." });
 }
 async function services(ctx) {

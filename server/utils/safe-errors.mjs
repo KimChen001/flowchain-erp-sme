@@ -1,3 +1,5 @@
+import { createErrorReporter, logOnlyEnv } from '../observability/error-reporter.mjs'
+
 export const GENERIC_INTERNAL_ERROR = 'Internal server error'
 export const SAFE_OPERATIONAL_ERROR_CODES = new Set([
   'FLOWCHAIN_DATABASE_CONFIG_MISSING',
@@ -16,35 +18,41 @@ const SECRET_PATTERNS = [
   /mysql:\/\/[^,\s;]+/gi,
 ]
 
+export function redactSecrets(text) {
+  return SECRET_PATTERNS.reduce(
+    (redacted, pattern) => redacted.replace(pattern, '[redacted]'),
+    String(text ?? '')
+  )
+}
+
 export function sanitizeErrorSummary(error) {
   const code = String(error?.code || error?.name || 'Error')
   const message = String(error?.message || error || '')
-  const sanitized = SECRET_PATTERNS.reduce(
-    (text, pattern) => text.replace(pattern, '[redacted]'),
-    message
-  )
-  return `${code}: ${sanitized}`.slice(0, 240)
+  return `${code}: ${redactSecrets(message)}`.slice(0, 240)
 }
 
 // One JSON line per unhandled error, carrying the request id so it can be
-// matched to the access log line and to what the caller was shown.
+// matched to the access log line and to what the caller was shown. The line
+// is written by the server's error reporter (server/observability/
+// error-reporter.mjs), which adds the method, path, status, stack and actor
+// ids and may send an alert. Without one, the line goes to options.logger
+// and no alert is sent.
 export function logServerError(error, options = {}) {
-  const logger = options.logger || console
-  const write = typeof logger.error === 'function' ? logger.error : logger.warn
-  if (typeof write !== 'function') return
-  write.call(logger, JSON.stringify({
-    time: new Date().toISOString(),
-    level: 'error',
-    event: 'server_error',
-    ...(options.requestId ? { requestId: options.requestId } : {}),
-    error: sanitizeErrorSummary(error),
-  }))
+  const reporter = options.reporter
+    || createErrorReporter({ logger: options.logger || console, env: logOnlyEnv() })
+  reporter.report(error, {
+    req: options.req,
+    requestId: options.requestId,
+    status: options.status,
+    phase: options.phase,
+  })
 }
 
 export function sendInternalServerError(res, send, error, options = {}) {
-  logServerError(error, options)
+  const safe = SAFE_OPERATIONAL_ERROR_CODES.has(error?.code)
+  logServerError(error, { ...options, status: safe ? error.status || 500 : 500 })
   const reference = options.requestId ? { requestId: options.requestId } : {}
-  if (SAFE_OPERATIONAL_ERROR_CODES.has(error?.code)) {
+  if (safe) {
     return send(res, error.status || 500, {
       error: error.message,
       code: error.code,
