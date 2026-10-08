@@ -2,7 +2,7 @@ import { aiSkillQuestionLanguage } from './ai-skill-copy.mjs'
 import { refineAiSkillRoute } from './ai-skill-entities.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
-import { routeSkill } from './ai-skill-router.mjs'
+import { aiSkillSpendSignals, routeSkill } from './ai-skill-router.mjs'
 import { resolveAiSkillFollowUp } from './ai-skill-follow-up.mjs'
 import { answerAiSkill, toolsFor } from './ai-skills.mjs'
 import { aiKnowledgeAuditBlock, recordAiSkillAudit } from './ai-skill-audit.mjs'
@@ -155,8 +155,11 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
       // step reads it exactly as it reads the question.
       const named = call.records.map((record) => `${spelledAsAsked(message, record)},`).join(' ')
       const base = routeSkill({ message: named }) || {}
-      // A tier the call names filters as the question's own tier does.
-      const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short', tier: call.tier ?? null }, skillId: call.tool }, named, facts)
+      // A tier the call names filters as the question's own tier does. A spend
+      // call reads its period and currency from the question, as a rule-routed
+      // spend question does, and its view from the call.
+      const spend = call.tool === 'spend_analysis' ? { spend: { ...aiSkillSpendSignals(message), ...(call.mode ? { mode: call.mode } : {}) } } : {}
+      const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short', tier: call.tier ?? null, ...spend }, skillId: call.tool }, named, facts)
       if (!partRoute || partRoute.capability || !partRoute.skillId || !allowed.has(partRoute.skillId)) return null
       return { question: aiSkillById(partRoute.skillId)?.title?.[titleKey] || partRoute.skillId, route: partRoute }
     }))).filter(Boolean).sort((a, b) => agentSectionRank(a) - agentSectionRank(b))
