@@ -81,8 +81,9 @@ Other useful settings pages:
 - **Numbering Rules**: shown for reference; it does not change document
   numbers yet.
 - **Review Policies**: the **Invoice matching tolerances** used by the
-  three-way match (see section 3). The other review settings are not in effect
-  yet.
+  three-way match (see section 3), and whether a purchase order made from an
+  approved purchase request is approved with it (on in a new workspace; see
+  section 3). The other review settings are not in effect yet.
 - **Users & Roles** and **Warehouse Access**: see section 8.
 
 ### Warehouses
@@ -166,11 +167,13 @@ lead time); the approver sees it.
 **Reject** (with a reason). The person who submitted can **Withdraw** it while
 it waits.
 
-**3. Purchase order.** On an approved request choose **Create draft PO**.
-FlowChain creates one draft purchase order per supplier, currency and
-warehouse. Open it under
-**Procurement › Purchase orders**, check it, and choose **Submit for
-approval**; a manager chooses **Approve**.
+**3. Purchase order.** On an approved request choose **Create purchase order**.
+FlowChain creates one purchase order per supplier, currency and warehouse,
+under **Procurement › Purchase orders**. In a new workspace the request's
+approval approves the order too: it is created approved, and its approval
+names the request and who approved it. If an administrator turns this off in
+**Review Policies**, the order is created as a draft: check it, choose
+**Submit for approval**, and a manager chooses **Approve**.
 
 **4. Issue.** On the approved order choose **Open PO document**, then **Print
 or save as PDF**, and send it to your supplier yourself, by email or your usual

@@ -250,17 +250,13 @@ step('5. a purchase request for both items is saved, submitted and approved', as
   state.prVersion = approved.version ?? detail.version
 })
 
-step('6. the approved request becomes one purchase order, which is submitted, approved and issued', async () => {
+step('6. the approved request becomes one purchase order, approved with the request, and issued', async () => {
   const generated = expectStatus(await api('POST', `/api/procurement/requests/${state.prId}/generate-purchase-orders`, { expectedVersion: state.prVersion }), 201)
   assert.equal(generated.createdPurchaseOrders.length, 1)
   state.poId = generated.createdPurchaseOrders[0].id
-  let po = expectStatus(await api('GET', `/api/procurement/orders/${state.poId}`), 200)
-  assert.equal(po.status, 'draft')
-  const submitted = expectStatus(await api('POST', `/api/procurement/orders/${state.poId}/submit`, { expectedVersion: po.version ?? 0 }), 200)
-  po = expectStatus(await api('GET', `/api/procurement/orders/${state.poId}`), 200)
-  assert.equal(po.status, 'pending_approval', show({ status: 200, body: submitted }))
-  expectStatus(await api('POST', `/api/procurement/orders/${state.poId}/approve`, { expectedVersion: po.version }), 200)
-  po = expectStatus(await api('GET', `/api/procurement/orders/${state.poId}`), 200)
+  // A new workspace has Review Policies' "approved with the request" on: the
+  // PO is created approved, and its approval step names the request.
+  const po = expectStatus(await api('GET', `/api/procurement/orders/${state.poId}`), 200)
   assert.equal(po.status, 'approved')
   // Issuing records that the buyer sent the order; FlowChain sends nothing.
   const issued = expectStatus(await api('POST', `/api/procurement/orders/${state.poId}/issue`, { expectedVersion: po.version }), 200)
