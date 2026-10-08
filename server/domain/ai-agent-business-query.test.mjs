@@ -26,11 +26,11 @@ const summary = {
   payment: { state: 'confirmed', dueCount: 1, dueAmount: 100, overdueCount: 0, overdueAmount: 0, readyCount: 1, blockedCount: 0, blocks: [] },
   invoice: { state: 'confirmed', openCount: 1, mismatchCount: 1, disputedCount: 0, missingEvidenceCount: 0 },
   procurement: { state: 'confirmed_zero', openPoCount: 0, overduePoCount: 0, overduePoIds: [], unreceivedPoCount: 0 },
-  receiving: { state: 'confirmed_zero', exceptionCount: 0, rejectedQuantity: 0, pendingEvidenceCount: 0 },
+  receiving: { state: 'confirmed_zero', exceptionCount: 0, rejectedQuantities: [], pendingEvidenceCount: 0 },
   rfq: { state: 'confirmed_zero', awaitingResponseCount: 0, expiredCount: 0 },
   reconciliation: { state: 'hidden', unreconciledPaymentCount: null, blockingExceptionCount: null },
   dataQuality: { incompleteRecordCount: 0, limitations: [] },
-  priority: { level: 'medium', score: 30, reasons: [], algorithmVersion: 'supplier-action-priority-v1' },
+  priority: { since: '2026-07-01', reasons: [{ code: 'payment_overdue', since: '2026-07-01', count: 1 }] },
   recommendedActions: [],
   evidence: [{ type: 'supplier_invoice', id: 'INV-001', label: 'INV-001' }],
 }

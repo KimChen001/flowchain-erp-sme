@@ -73,7 +73,7 @@ function orderEvidence(row, fmt, language, rank, facts) {
   const open = row.isOpen !== false
   const supplier = aiSkillSupplierWithTier(row.supplier, row.supplierId, facts, language)
   const summary = row.overdueDays > 0
-    ? aiSkillText('po.evidence_late', language, { status, supplier, days: fmt.number(row.overdueDays) })
+    ? aiSkillText('po.evidence_late', language, { status, supplier, date: fmt.day(row.dueDate), days: fmt.number(row.overdueDays) })
     : open && row.dueDate
       ? aiSkillText('po.evidence_due', language, { status, supplier, date: fmt.day(row.dueDate) })
       : aiSkillText('po.evidence_plain', language, { status, supplier })
