@@ -196,6 +196,11 @@ function judgeItem({ item, allocation, demand, reorderPoint, stockUnit, today, s
   const purchaseUnit = purchaseUnitOf(item, stockUnit)
   const purchaseUnitDiffers = !sameUnit(purchaseUnit, stockUnit)
   if (purchaseUnitDiffers) flags.push({ code: 'purchase_unit_differs', unit: purchaseUnit })
+  // A request below the supplier's minimum order would be refused or rounded
+  // up by the supplier, so the request asks for at least the minimum. The
+  // shortfall itself is shown as computed.
+  const minimum = Number(supplier?.minimumOrderQuantity) > 0 ? Number(supplier.minimumOrderQuantity) : 0
+  const requestQuantity = shortfall > 0 && !purchaseUnitDiffers ? Math.max(shortfall, minimum) : null
   return {
     row: {
       ...base,
@@ -226,7 +231,8 @@ function judgeItem({ item, allocation, demand, reorderPoint, stockUnit, today, s
         supplierId: supplier?.id || null,
         // Only a shortfall in the unit the request line will use; otherwise
         // the form opens with the quantity empty for the person to enter.
-        quantity: shortfall > 0 && !purchaseUnitDiffers ? shortfall : null,
+        quantity: requestQuantity,
+        raisedToMinimum: requestQuantity !== null && minimum > shortfall,
       },
     },
   }
