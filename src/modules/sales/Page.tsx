@@ -291,8 +291,8 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
               <table className="w-full min-w-[980px] text-xs">
                 <thead>
                   <tr style={{ borderBottom: `1px solid ${A.border}` }}>
-                    {["客户订单号", "客户", "SKU / 物料", "订单数量", "已预留", "缺口", "承诺日期", "风险等级", "状态", "操作"].map((header) => (
-                      <th key={copy(header)} className="px-3 py-3 text-left font-semibold" style={{ color: A.gray1 }}>{copy(header)}</th>
+                    {[copy("客户订单号"), copy("客户"), copy("SKU / 物料"), copy("订单数量"), copy("已预留"), copy("缺口"), copy("承诺日期"), copy("风险等级"), copy("状态"), copy("操作")].map((header) => (
+                      <th key={header} className="px-3 py-3 text-left font-semibold" style={{ color: A.gray1 }}>{header}</th>
                     ))}
                   </tr>
                 </thead>
@@ -336,8 +336,8 @@ function SalesDemandCore({ initialView, focus, onNavigate, onOpenAi }: SalesDema
             <table className={tableMinMdClass}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${A.border}` }}>
-                  {["销售订单", "客户", "SKU / 物料", "订购", "已预留", "已履约", "缺口", "承诺日期", "风险", "风险原因", "操作"].map((header) => (
-                    <th key={copy(header)} className={thClass}>{copy(header)}</th>
+                  {[copy("销售订单"), copy("客户"), copy("SKU / 物料"), copy("订购"), copy("已预留"), copy("已履约"), copy("缺口"), copy("承诺日期"), copy("风险"), copy("风险原因"), copy("操作")].map((header) => (
+                    <th key={header} className={thClass}>{header}</th>
                   ))}
                 </tr>
               </thead>
@@ -590,8 +590,8 @@ function EvidenceChainView({
           <table className={tableBaseClass}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${A.border}` }}>
-                {["销售订单", "客户", "SKU / 物料", "状态", "交付风险", "缺口", "操作"].map((header) => (
-                  <th key={copy(header)} className={thClass}>{copy(header)}</th>
+                {[copy("销售订单"), copy("客户"), copy("SKU / 物料"), copy("状态"), copy("交付风险"), copy("缺口"), copy("操作")].map((header) => (
+                  <th key={header} className={thClass}>{header}</th>
                 ))}
               </tr>
             </thead>

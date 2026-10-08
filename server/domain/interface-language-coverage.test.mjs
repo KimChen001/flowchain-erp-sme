@@ -12,9 +12,31 @@ test('every Chinese route and primary-navigation label has an English display ma
   assert.deepEqual(missing, [], `Missing English route labels: ${missing.join(', ')}`)
 })
 
-// Screens on the English trial path whose copy is English first. Every Chinese
-// literal left in them (comments are not literals) must be translated: a key of
-// a display dictionary, or the Chinese half of an English/Chinese pair.
+// English-covered screens: the files on the English trial path whose copy is
+// English first.
+//
+// What the second test proves, for these files only: every Chinese literal
+// (string, template text, JSX text or regular expression; comments are not
+// literals) is in one of these direct shapes, and failures are reported as
+// file:line.
+//   1. Translated: a key of a display dictionary (DICTIONARIES) that is the
+//      first argument of a translating call (TRANSLATING_CALLS), or the value
+//      of a prop the component translates (TRANSLATED_PROPS, and the label and
+//      value of the items in TRANSLATED_ITEMS). The literal may reach the call
+//      or prop through parentheses, `||`, `??` or a ternary branch, nothing else.
+//   2. The Chinese half of a pair: the second element of a two-element
+//      [English, Chinese] array; the Chinese argument of a known pair function
+//      (PAIR_CALLS) whose other argument is an English literal; the value of a
+//      zh / zh-CN key, or of a property one object below such a key; the value
+//      of an English string key (an English-to-Chinese map); or the branch an
+//      "en-US" ternary takes for Chinese when that branch is the literal itself.
+//   3. Allow-listed below, with the reason.
+// What it does not prove: that a translating call or pair function picks the
+// interface language at render time, that a Chinese value kept in state or a
+// variable is translated where it is shown (those sites are allow-listed), that
+// server-generated text is translated, or anything about other files. The
+// browser specs (tests/browser/english-trial.spec.ts and its zh-CN smoke test)
+// check the rendered pages.
 const ENGLISH_COVERED = [
   'src/modules/finance/OperationalFinanceO2cWorkbench.tsx',
   'src/modules/finance/OperationalFinanceP2pWorkbench.tsx',
@@ -45,11 +67,47 @@ const DICTIONARIES = [
   'src/modules/sales/salesDemandCopy.ts',
 ]
 
-// Chinese literals that are not display copy: comparisons with values the
-// server stores or sends, which stay as stored.
+// Calls that translate one argument through those dictionaries, with the
+// index of that argument: copy() in each covered screen (useWorkspaceCopy,
+// useSalesCopy, useInventoryOperationsCopy or the module-level workspaceCopy
+// wrapper), the i18n t(), workspaceCopy() itself, and the inventory
+// operations errorText(reason, fallback), which translates its fallback.
+const TRANSLATING_CALLS = { copy: 0, t: 0, workspaceCopy: 0, errorText: 1 }
+
+// Pair functions: the index of the Chinese argument; the other one is English.
+const PAIR_CALLS = [
+  { name: 'say', chinese: 1 },
+  { name: 'tr', chinese: 0, file: 'src/modules/procurement/ReceivingListPage.tsx' },
+]
+
+// Props the component translates with the workspace dictionary.
+const TRANSLATED_PROPS = {
+  Chip: ['label'],
+  SectionHeader: ['title'],
+  DetailSection: ['title'],
+  ActionableMetricCard: ['label', 'description'],
+}
+// Array props whose items' properties the component translates.
+const TRANSLATED_ITEMS = {
+  CompactKpiStrip: { items: ['label', 'value'] },
+  DetailFieldGrid: { fields: ['label', 'value'] },
+  EvidenceSummaryPanel: { groups: ['label'] },
+}
+
+// Chinese literals outside those shapes, each with its reason.
 const ALLOWED = [
   // The server's Chinese status labels, matched to filter unshipped orders.
   { file: 'src/modules/sales/Page.tsx', text: '/已完成|已交付/' },
+  // The read API's priority label, compared to choose the KPI tone.
+  { file: 'src/modules/sales/Page.tsx', text: '高' },
+  // The read API's fallback customer name, compared before it is translated.
+  { file: 'src/modules/sales/Page.tsx', text: '未命名客户', line: /order\.customerName === "未命名客户"/ },
+  // Data limitation labels by code; limitationLabel() is shown through copy().
+  { file: 'src/modules/sales/Page.tsx', within: 'limitationLabel' },
+  // Error and warning text kept in state and shown through copy() when rendered.
+  { file: 'src/modules/sales/Page.tsx', text: '库存分配尚未接入销售订单运行时仓库，当前不展示未经接入的可承诺量。' },
+  { file: 'src/modules/sales/Page.tsx', text: '当前未读取到客户订单记录，请检查工作区数据或刷新后重试。' },
+  { file: 'src/modules/sales/Page.tsx', text: '当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。' },
 ]
 
 const CJK = /[㐀-鿿]/
@@ -76,30 +134,71 @@ function dictionaryKeys() {
 const templateText = (node) => [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join('${…}')
 const isLiteral = (node) => node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node))
 const englishLiteral = (node) => isLiteral(node) && !CJK.test(ts.isTemplateExpression(node) ? templateText(node) : node.text)
-const propertyName = (node) => ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) ? node.name.text : ''
+const nameText = (name) => name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) ? name.text : ''
+const calleeName = (call) => ts.isIdentifier(call.expression) ? call.expression.text : ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : ''
+const isChineseKey = (property) => ts.isPropertyAssignment(property) && /^(?:zh|zh-CN)$/.test(nameText(property.name))
 const ENGLISH_CONDITION = /["']en-US["']|\b(?:en|english|isEnglish|englishUi|isEn)\b/
-const CHINESE_CONDITION = /["']zh-CN["']/
 
-// True when the literal is the Chinese half of an English/Chinese pair: under a
-// zh key, the value of an English key (or the key of an English value), one of
-// two arguments or array elements next to English text, or the branch an
-// "en-US" ternary takes for Chinese.
-function isChineseHalf(literal) {
-  for (let child = literal, parent = literal.parent; parent; child = parent, parent = parent.parent) {
-    if (ts.isPropertyAssignment(parent)) {
-      if (/^(?:zh|zh-CN|zhCN|chinese)$/.test(propertyName(parent))) return true
-      if (child === literal && parent.initializer === literal && (ts.isStringLiteral(parent.name) || ts.isNoSubstitutionTemplateLiteral(parent.name)) && !CJK.test(parent.name.text)) return true
-      if (child === literal && parent.name === literal && englishLiteral(parent.initializer)) return true
+// The expression the literal is passed as: climbs parentheses, `||` / `??`
+// operands and ternary branches (not conditions).
+function passedAs(literal) {
+  let node = literal
+  for (;;) {
+    const parent = node.parent
+    if (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent)) node = parent
+    else if (ts.isBinaryExpression(parent) && [ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken].includes(parent.operatorToken.kind)) node = parent
+    else if (ts.isConditionalExpression(parent) && parent.condition !== node) node = parent
+    else return node
+  }
+}
+
+const jsxTagName = (attribute) => attribute.parent?.parent?.tagName?.getText() || ''
+
+function isTranslated(literal) {
+  const node = passedAs(literal)
+  const parent = node.parent
+  if (ts.isCallExpression(parent) && Object.hasOwn(TRANSLATING_CALLS, calleeName(parent)) && parent.arguments[TRANSLATING_CALLS[calleeName(parent)]] === node) return true
+  const attribute = ts.isJsxExpression(parent) ? parent.parent : parent
+  if (ts.isJsxAttribute(attribute) && (TRANSLATED_PROPS[jsxTagName(attribute)] || []).includes(nameText(attribute.name))) return true
+  // { label: "…", value: "…" } items of a translating component's array prop.
+  if (ts.isPropertyAssignment(parent) && parent.initializer === node) {
+    const array = parent.parent?.parent
+    const expression = array?.parent
+    const itemAttribute = expression && ts.isJsxExpression(expression) ? expression.parent : null
+    if (ts.isArrayLiteralExpression(array) && itemAttribute && ts.isJsxAttribute(itemAttribute)) {
+      const props = TRANSLATED_ITEMS[jsxTagName(itemAttribute)]?.[nameText(itemAttribute.name)] || []
+      if (props.includes(nameText(parent.name))) return true
     }
-    if (child === literal && ts.isCallExpression(parent) && parent.arguments.length === 2 && parent.arguments.includes(literal)
-      && englishLiteral(parent.arguments.find((argument) => argument !== literal))) return true
-    if (child === literal && ts.isArrayLiteralExpression(parent) && parent.elements.length === 2 && parent.elements.includes(literal)
-      && englishLiteral(parent.elements.find((element) => element !== literal))) return true
-    if (ts.isConditionalExpression(parent)) {
-      const condition = parent.condition.getText()
-      if (child === parent.whenFalse && ENGLISH_CONDITION.test(condition)) return true
-      if (child === parent.whenTrue && CHINESE_CONDITION.test(condition)) return true
-    }
+  }
+  return false
+}
+
+function isChineseHalf(literal, file) {
+  const parent = literal.parent
+  if (ts.isArrayLiteralExpression(parent) && parent.elements.length === 2 && parent.elements[1] === literal && englishLiteral(parent.elements[0])) return true
+  if (ts.isCallExpression(parent) && parent.arguments.length === 2) {
+    const pair = PAIR_CALLS.find((entry) => entry.name === calleeName(parent) && (!entry.file || entry.file === file))
+    if (pair && parent.arguments[pair.chinese] === literal && englishLiteral(parent.arguments[1 - pair.chinese])) return true
+  }
+  if (ts.isPropertyAssignment(parent) && parent.initializer === literal) {
+    if (isChineseKey(parent)) return true
+    if (ts.isObjectLiteralExpression(parent.parent) && isChineseKey(parent.parent.parent)) return true
+    if ((ts.isStringLiteral(parent.name) || ts.isNoSubstitutionTemplateLiteral(parent.name)) && !CJK.test(parent.name.text)) return true
+  }
+  if (ts.isConditionalExpression(parent) && parent.whenFalse === literal && ENGLISH_CONDITION.test(parent.condition.getText())) return true
+  return false
+}
+
+function isAllowed(literal, text, file) {
+  return ALLOWED.some((entry) => entry.file === file
+    && (!entry.text || entry.text === text)
+    && (!entry.line || entry.line.test(literal.parent.getText()))
+    && (!entry.within || withinFunction(literal, entry.within)))
+}
+
+function withinFunction(node, name) {
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (ts.isFunctionDeclaration(parent) && parent.name?.text === name) return true
   }
   return false
 }
@@ -109,17 +208,16 @@ test('English-covered screens translate every Chinese literal they show', () => 
   const failures = []
   for (const file of ENGLISH_COVERED) {
     const source = parse(file)
-    const allowed = new Set(ALLOWED.filter((entry) => entry.file === file).map((entry) => entry.text))
     walk(source, (node) => {
       let text = ''
       if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) text = node.text
       else if (ts.isTemplateExpression(node)) text = templateText(node)
       else if (ts.isJsxText(node) || ts.isRegularExpressionLiteral(node)) text = node.getText().trim()
       if (!text || !CJK.test(text)) return
-      if (keys.has(text.trim()) || allowed.has(text) || isChineseHalf(node)) return
+      if ((keys.has(text) && isTranslated(node)) || isChineseHalf(node, file) || isAllowed(node, text, file)) return
       const { line } = source.getLineAndCharacterOfPosition(node.getStart())
       failures.push(`${file}:${line + 1} ${text}`)
     })
   }
-  assert.deepEqual(failures, [], `Chinese literals without an English translation:\n${failures.join('\n')}`)
+  assert.deepEqual(failures, [], `Chinese literals outside a translating call, a pair or the allow-list:\n${failures.join('\n')}`)
 })
