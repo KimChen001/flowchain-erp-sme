@@ -156,20 +156,27 @@ export function createApprovalNotifier({ env = process.env, prismaFactory = getP
       log("error", { event: "approval_email_failed", documentType, documentId: document.id, userId, provider: error?.provider || null, status: error?.status || null, providerCode: error?.providerCode || null, code: error?.code || "MAIL_DELIVERY_FAILED" });
     });
     // One audit row per notice, naming people by user id only: who was sent
-    // it and whose send failed.
-    await prisma.auditLog.create({ data: {
-      id: randomUUID(),
-      tenantId,
-      source: APPROVAL_EMAILS_AUDIT_SOURCE,
-      module: "notifications",
-      action: "approval_email_sent",
-      entityType: "ApprovalEmail",
-      entityId: document.id,
-      actorId: null,
-      summary: `Approval email for ${documentType} sent to ${recipientUserIds.length} of ${recipients.length} approvers.`,
-      metadata: { documentType, documentId: document.id, triggeredById: actorId, recipientUserIds, failedUserIds },
-    } });
-    return { status: recipientUserIds.length ? "sent" : "failed", documentId: document.id, recipientUserIds, failedUserIds };
+    // it and whose send failed. The sends are over by now, so a failed audit
+    // write is logged as itself, not as a failed send.
+    let audited = true;
+    try {
+      await prisma.auditLog.create({ data: {
+        id: randomUUID(),
+        tenantId,
+        source: APPROVAL_EMAILS_AUDIT_SOURCE,
+        module: "notifications",
+        action: "approval_email_sent",
+        entityType: "ApprovalEmail",
+        entityId: document.id,
+        actorId: null,
+        summary: `Approval email for ${documentType} sent to ${recipientUserIds.length} of ${recipients.length} approvers.`,
+        metadata: { documentType, documentId: document.id, triggeredById: actorId, recipientUserIds, failedUserIds },
+      } });
+    } catch (error) {
+      audited = false;
+      log("error", { event: "approval_email_audit_failed", documentType, documentId: document.id, recipientUserIds, failedUserIds, code: error?.code || "AUDIT_WRITE_FAILED" });
+    }
+    return { status: recipientUserIds.length ? "sent" : "failed", documentId: document.id, recipientUserIds, failedUserIds, audited };
   }
 
   // Returns at once. `delivery` settles when sending finishes and never

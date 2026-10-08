@@ -251,3 +251,41 @@ test("the kill switch, a missing production origin and a workspace default of Ch
   assert.equal((await chinese.service.documentWaiting({ identity: submitter, documentType: "sales_order", documentId: "SO-1" }).delivery).reason, "invalid_request");
   assert.equal((await chinese.service.documentWaiting({ identity: { authenticated: true }, documentType: "purchase_request", documentId: "PR-ZH" }).delivery).reason, "invalid_request");
 });
+
+test("an exception review that leaves another exception open, or rejects one, sends nothing", async () => {
+  const prisma = stubPrisma({
+    exceptions: [
+      { id: "ex-approved", supplierInvoiceId: "bill-two", status: "approved" },
+      { id: "ex-still-open", supplierInvoiceId: "bill-two", status: "open" },
+      { id: "ex-rejected", supplierInvoiceId: "bill-other", status: "rejected" },
+    ],
+    users: [approver("u-finance", { permissions: ["finance.supplier_invoice.approve"] })],
+  });
+  prisma.supplierInvoice.findFirst = async ({ where }) => ({ "bill-two": { id: "bill-two", status: "exception", invoiceNumber: "INV-2" }, "bill-other": { id: "bill-other", status: "exception", invoiceNumber: "INV-3" } })[where.id] || null;
+  const { service, mailer } = notifier({ prisma });
+  const leftOpen = await service.documentWaiting({ identity: submitter, documentType: "supplier_invoice", matchExceptionId: "ex-approved" }).delivery;
+  assert.deepEqual(leftOpen, { status: "skipped", reason: "not_waiting" }, "another exception is still open");
+  const rejected = await service.documentWaiting({ identity: submitter, documentType: "supplier_invoice", matchExceptionId: "ex-rejected" }).delivery;
+  assert.deepEqual(rejected, { status: "skipped", reason: "not_waiting" }, "a rejected exception blocks approval");
+  const unknown = await service.documentWaiting({ identity: submitter, documentType: "supplier_invoice", matchExceptionId: "ex-missing" }).delivery;
+  assert.deepEqual(unknown, { status: "skipped", reason: "not_waiting" });
+  assert.equal(mailer.sent.length, 0);
+  assert.equal(prisma.calls.userQueries.length, 0);
+  assert.equal(prisma.calls.audits.length, 0);
+});
+
+test("a failed audit write after sending is logged as approval_email_audit_failed, not as a failed send", async () => {
+  const prisma = stubPrisma({
+    documents: { purchaseRequest: [{ id: "PR-AUDIT", tenantId, status: "submitted" }] },
+    users: [approver("u-manager", { permissions: ["procurement.purchase_order.approve"] })],
+  });
+  prisma.auditLog.create = async () => { throw Object.assign(new Error("audit table locked"), { code: "P2034" }); };
+  const { service, mailer, logger } = notifier({ prisma });
+  const outcome = await service.documentWaiting({ identity: submitter, documentType: "purchase_request", documentId: "PR-AUDIT" }).delivery;
+  assert.equal(outcome.status, "sent");
+  assert.equal(outcome.audited, false);
+  assert.equal(mailer.sent.length, 1);
+  assert.deepEqual(logger.lines.map((line) => line.event), ["approval_email_sent", "approval_email_audit_failed"]);
+  assert.deepEqual(logger.lines[1], { event: "approval_email_audit_failed", documentType: "purchase_request", documentId: "PR-AUDIT", recipientUserIds: ["u-manager"], failedUserIds: [], code: "P2034" });
+  assert.equal(JSON.stringify(logger.lines).includes("@example.com"), false, "no address in the log");
+});
