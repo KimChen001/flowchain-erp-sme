@@ -13,7 +13,7 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { tableLinkClass } from "../../components/ui/workbenchTable";
 import { createClientTemporaryId } from "../../lib/client-id";
 import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
-import { buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
+import { addCalendarDays, buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
 import { SupplierChoices } from "../../components/procurement/SupplierChoices";
 import { SupplierOverrideCount, SupplierOverrideFlag, SupplierOverrideReason, hasSupplierOverride, supplierOverrideIssueText, type SupplierOverride } from "../../components/procurement/SupplierOverrideReason";
 import { overrideNeeded, validateSupplierOverride } from "../../../shared/supplier-override-reasons.mjs";
@@ -285,6 +285,17 @@ export default function CanonicalProcurementPanel({
     setLines((current) =>
       current.map((line, i) => (i === index ? { ...line, ...patch } : line)),
     );
+  // A supplier with a recorded lead time moves the line's need-by date from
+  // the form's default to today + lead time, so a new order is not due on the
+  // day it is placed. A date the person changed is kept.
+  const applyLeadTime = (index: number, supplier?: SupplierOption) => {
+    const days = Number(supplier?.leadTimeDays);
+    if (supplier?.leadTimeDays === null || supplier?.leadTimeDays === undefined || !Number.isInteger(days) || days < 0) return;
+    const leadDate = addCalendarDays(today(timezone), days);
+    setLines((current) =>
+      current.map((line, i) => (i === index && line.needByDate === defaultDate ? { ...line, needByDate: leadDate } : line)),
+    );
+  };
   const selectItem = async (index: number, value: string) => {
     const item = items.find((row) => (row.itemId || row.id) === value);
     clearOverrideIssues(index);
@@ -320,7 +331,7 @@ export default function CanonicalProcurementPanel({
     // than one, the person picks (the same rule as the handoff prefill).
     const preferredSources = result.suppliers.filter((s) => s.preferred);
     const preferred = preferredSources.length === 1 ? preferredSources[0] : undefined;
-    if (preferred)
+    if (preferred) {
       patchLine(index, {
         supplierId: preferred.id,
         estimatedUnitPrice: preferred.referencePrice
@@ -328,6 +339,8 @@ export default function CanonicalProcurementPanel({
           : "",
         currency: preferred.currency || currency,
       });
+      applyLeadTime(index, preferred);
+    }
   };
   const supplierOptions = (line: Line): SupplierOption[] =>
     line.sourceType === "non_catalog_item"
@@ -368,6 +381,8 @@ export default function CanonicalProcurementPanel({
   const chooseSupplier = (index: number, supplierId: string) => {
     patchLine(index, { supplierId, supplierOverride: null });
     clearOverrideIssues(index);
+    const line = lines[index];
+    applyLeadTime(index, (itemSuppliers[line?.itemId || ""] || []).find((supplier) => supplier.id === supplierId));
   };
   const overrideIssues = (index: number) =>
     Object.fromEntries(errors.flatMap((error) => {

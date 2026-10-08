@@ -207,6 +207,11 @@ test('a line that skips the preferred supplier asks why, and the approver sees t
   await page.getByLabel('SKU 1').selectOption(ids.withPreferred)
   await expect(page.getByLabel('Suppliers 1')).toHaveValue(ids.acme)
   await expect(page.getByTestId('supplier-override-reason-1')).toHaveCount(0)
+  // The preferred supplier's 5-day lead time sets the need-by date, so the
+  // order is not due the day it is placed (walkthrough 2026-10-07).
+  const defaultDay = await page.getByLabel('Default required date').inputValue()
+  const inFiveDays = new Date(Date.parse(`${defaultDay}T12:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10)
+  await expect(field(page, 'Required date').locator('input').first()).toHaveValue(inFiveDays)
   await page.getByLabel('Suppliers 1').selectOption(ids.bolt)
   const picker = page.getByTestId('supplier-override-reason-1')
   await expect(picker).toContainText(`Why not the preferred supplier (Acme ${ids.stamp})?`)

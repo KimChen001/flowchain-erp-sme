@@ -9,6 +9,7 @@ import { PaymentRecords } from "./PaymentRecords";
 import { useI18n } from "../../i18n/I18n";
 import { A, Card } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { addCalendarDays } from "../../lib/prefill";
 
 type Capability = { enabled?: boolean; maturity?: string; reason?: string };
 type Invoice = {
@@ -73,11 +74,14 @@ type AgingPayload = {
   }>;
 };
 type EntryData = {
+  today?: string;
+  suggestedInvoiceNumber?: string;
   postedShipments: Array<{
     id: string;
     shipmentNumber: string;
     salesOrderId: string;
     customerName: string;
+    customerPaymentTerm?: { code: string; name: string; days: number } | null;
     currency: string;
     lines: Array<{
       id: string;
@@ -477,6 +481,9 @@ function NewInvoice() {
   const [shipmentId, setShipmentId] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [dueDate, setDueDate] = useState("");
+  // The number and due date are suggested until someone types their own.
+  const [numberTyped, setNumberTyped] = useState(false);
+  const [dueTyped, setDueTyped] = useState(false);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [taxes, setTaxes] = useState<Record<string, string>>({});
   const [plan, setPlan] = useState<InvoicePlan | null>(null);
@@ -518,11 +525,19 @@ function NewInvoice() {
     () => entry?.postedShipments.find((row) => row.id === shipmentId),
     [entry, shipmentId],
   );
+  const term = shipment?.customerPaymentTerm || null;
+  const termDue = term && entry?.today ? addCalendarDays(entry.today, term.days) : "";
+  useEffect(() => {
+    if (!numberTyped && entry?.suggestedInvoiceNumber) setInvoiceNumber(entry.suggestedInvoiceNumber);
+  }, [entry, numberTyped]);
+  useEffect(() => {
+    if (!dueTyped) setDueDate(termDue);
+  }, [termDue, dueTyped]);
   const body = () => ({
     invoiceNumber,
     shipmentId,
     currency: shipment?.currency || "",
-    invoiceDate: new Date().toISOString(),
+    invoiceDate: entry?.today ? `${entry.today}T00:00:00.000Z` : new Date().toISOString(),
     dueDate: dueDate ? new Date(`${dueDate}T00:00:00.000Z`).toISOString() : "",
     lines:
       shipment?.lines
@@ -581,9 +596,9 @@ function NewInvoice() {
           </div>
         )}
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="text-xs">{t("finance.invoiceNumber")}<input data-testid="customer-invoice-number" className={`${field} mt-1 w-full`} value={invoiceNumber} onChange={(event) => setInvoiceNumber(event.target.value)} /></label>
+          <label className="text-xs">{t("finance.invoiceNumber")}<input data-testid="customer-invoice-number" className={`${field} mt-1 w-full`} value={invoiceNumber} onChange={(event) => { setInvoiceNumber(event.target.value); setNumberTyped(true); }} /></label>
           <label className="text-xs">{t("finance.postedShipment")}<select data-testid="customer-invoice-shipment" className={`${field} mt-1 w-full`} value={shipmentId} onChange={(event) => { const next = entry.postedShipments.find((row) => row.id === event.target.value); setShipmentId(event.target.value); setQuantities(next ? shipped(next) : {}); setPlan(null); }}><option value="">—</option>{entry.postedShipments.filter((row) => !orderFilter || row.salesOrderId === orderFilter).map((row) => <option value={row.id} key={row.id}>{row.shipmentNumber} · {row.customerName} · {row.currency}</option>)}</select></label>
-          <label className="text-xs">{t("finance.dueDate")}<input type="date" data-testid="customer-invoice-due" className={`${field} mt-1 w-full`} value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+          <label className="text-xs">{t("finance.dueDate")}<input type="date" data-testid="customer-invoice-due" className={`${field} mt-1 w-full`} value={dueDate} onChange={(event) => { setDueDate(event.target.value); setDueTyped(true); }} />{!dueTyped && termDue && dueDate === termDue && term && <span className="mt-1 block text-slate-500" data-testid="customer-invoice-due-terms">{t("finance.dueFromTerms", { term: term.name, days: String(term.days) })}</span>}</label>
         </div>
         {shipment?.lines.map((line) => (
           <div className="grid items-end gap-3 rounded-xl bg-slate-50 p-3 md:grid-cols-4" key={line.id} data-testid="customer-invoice-line">
