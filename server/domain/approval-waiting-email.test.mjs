@@ -86,3 +86,15 @@ test("email links use FLOWCHAIN_PUBLIC_BASE_URL, are empty in production without
   assert.equal(publicBaseUrl({}, { headers: { host: "127.0.0.1:18789" } }), "http://127.0.0.1:18789");
   assert.equal(publicBaseUrl({}, { headers: { host: "evil.example" } }), "http://localhost");
 });
+
+test("the opt-out line names the navigation labels the app shows in each language", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("../../src/i18n/I18n.tsx", import.meta.url), "utf8");
+  const labels = (key) => [...source.matchAll(new RegExp(`"${key.replace(".", "\.")}": "([^"]+)"`, "g"))].map((match) => match[1]);
+  const [zhSettings, enSettings] = labels("nav.settings");
+  const [zhProfile, enProfile] = labels("settings.profile");
+  const english = buildApprovalWaitingEmail({ language: "en-US", documentType: "purchase_request", documentNumber: "PR-1", link });
+  const chinese = buildApprovalWaitingEmail({ language: "zh-CN", documentType: "purchase_request", documentNumber: "PR-1", link });
+  assert.ok(english.text.includes(`${enSettings} › ${enProfile}`), `${enSettings} › ${enProfile}`);
+  assert.ok(chinese.text.includes(`${zhSettings} › ${zhProfile}`), `${zhSettings} › ${zhProfile}`);
+});
