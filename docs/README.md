@@ -28,6 +28,7 @@
   business commit adapters remain reserved for Phase 5.4C.
 - [Architecture overview](architecture-overview-v1.md)
 - [Repository boundary](repository-boundary-v1.md)
+- [Proposal: browser session in an HttpOnly cookie](session-cookie-migration-proposal.md)
 - [JSON adapter contract tests](json-adapter-contract-tests-v1.md)
 - [Persistence mode and adapter registry](persistence-mode-and-adapter-registry-v1.md)
 - [Full repository risk scan](full-repo-risk-scan-v1.md)
