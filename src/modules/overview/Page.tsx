@@ -1,42 +1,325 @@
-import { useEffect, useState } from "react";
-import { ArrowRight, RefreshCw } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link } from "react-router";
+import { ArrowRight, CheckCircle2, Circle, RefreshCw } from "lucide-react";
 import { A, Card } from "../../components/ui";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import AiSuggestionsPage from "./AiSuggestionsPage";
-import { EntityLink, type EntityKind } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { apiJson } from "../../lib/api-client";
-import { formatLocaleAmount } from "../../lib/format";
-import { workspaceCopy } from "../../i18n/workspaceCopy";
-import { homeLabel, homeDescription } from './homeCopy';
+import { formatDateTimeInTimeZone, formatLocaleAmount, formatQuantity } from "../../lib/format";
+import { useTodayCopy, type TodayCopyKey } from "./todayCopy";
 
-type Navigate=(moduleId:string,focus?:{entityType:string;entityId:string}|null,options?:any)=>void;
-type Work={priority:"高"|"中"|"低";title:string;id:string;description:string;canonicalRoute:string;entityType:EntityKind;updatedAt:string;amount?:number|string|null;currency?:string};
-type DocumentRow={type:string;id:string;status:string;supplier:string;amount:number|string|null;currency?:string;updatedAt:string;canonicalRoute:string;entityType:EntityKind};
-type HomeOverview={workItems:Work[];unresolvedRisks:number|null;todayChanges:number;recentDocuments:DocumentRow[];limitations:string[];generatedAt:string};
-const request=<T,>(url:string)=>apiJson<T>(url);
+// Today: the work that needs doing, from the rules the rest of the app uses
+// (GET /api/home/overview, server/domain/today-work.mjs), earliest date first;
+// the first-day checklist while any setup step is open; and the documents
+// changed most recently. Every row links to its record.
 
-export default function OverviewPanel({initialView="",onNavigate,onOpenAi,onReviewActionDraft}:{initialView?:string;onNavigate:Navigate;onOpenAi:()=>void;onReviewActionDraft?:(request:ActionDraftPreviewRequest)=>void}){
-  if(initialView==="ai")return <AiSuggestionsPage onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} onOpenAi={onOpenAi}/>;
-  return <RuntimeHomepage onNavigate={onNavigate}/>;
+type Navigate = (moduleId: string, focus?: { entityType: string; entityId: string } | null, options?: any) => void;
+type WorkKind =
+  | "purchase_order_overdue" | "purchase_order_due" | "reorder_now" | "bill_exception" | "bill_to_approve" | "bill_to_match"
+  | "bill_awaiting_receipt" | "customer_invoice_to_issue" | "receivable_overdue" | "sales_order_to_reserve" | "sales_order_to_ship"
+  | "purchase_order_to_approve" | "purchase_request_to_approve" | "purchase_request_to_convert" | "draft_purchase_order";
+type WorkItem = {
+  id: string;
+  kind: WorkKind;
+  entityType: string;
+  recordId: string;
+  label: string;
+  name: string | null;
+  href: string;
+  actionHref: string | null;
+  date: string | null;
+  dateKind: "due" | "order_by" | "invoice" | "promised" | "required";
+  overdueDays: number;
+  detail: Record<string, any>;
+};
+type DocumentRow = { type: string; id: string; number: string; status: string; partner: string | null; amount: number | null; currency: string; updatedAt: string; canonicalRoute: string };
+type SetupStep = { id: "items" | "suppliers" | "customers" | "opening_stock" | "teammates"; count: number; done: boolean; href: string | null; blocked: "permission" | "unavailable" | null };
+type HomeOverview = {
+  today: string;
+  workItems: WorkItem[];
+  workTotal: number;
+  overdue: number;
+  todayChanges: number;
+  recentDocuments: DocumentRow[];
+  firstRun: { steps: SetupStep[]; done: number; total: number } | null;
+  hidden: string[];
+  limitations: string[];
+  generatedAt: string;
+};
+
+const COLLAPSED = 10;
+const HIDDEN_KEYS: Record<string, TodayCopyKey> = {
+  purchasing: "hiddenPurchasing",
+  inventory: "hiddenInventory",
+  bills: "hiddenBills",
+  sales_orders: "hiddenSalesOrders",
+  customer_invoices: "hiddenCustomerInvoices",
+  receivables: "hiddenReceivables",
+};
+const SOURCE_KEYS: Record<string, TodayCopyKey> = {
+  reorder_list: "sourceReorder",
+  customer_invoices: "sourceCustomerInvoices",
+  receivables: "sourceReceivables",
+  purchase_orders: "sourcePurchaseOrders",
+  setup_counts: "sourceSetup",
+  database: "sourceDatabase",
+};
+const LINK = "fc-entity-link font-semibold text-blue-600 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
+
+// A workspace calendar day (YYYY-MM-DD) in the interface locale. The day is
+// already the workspace's, so it is formatted as a date, not an instant.
+function formatDay(day: string, locale: string) {
+  const date = new Date(`${day}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(date.getTime())) return day;
+  try {
+    return new Intl.DateTimeFormat(locale || "en-US", { timeZone: "UTC", dateStyle: "medium" }).format(date);
+  } catch {
+    return day;
+  }
 }
 
-function RuntimeHomepage({onNavigate}:{onNavigate:Navigate}){
-  void onNavigate;
-  const {language,locale,timezone}=useI18n();
-  // Update times in the workspace timezone, not the UTC wall clock.
-  const stamp=(value?:string)=>{if(!value)return "—";if(/^\d{4}-\d{2}-\d{2}$/.test(value))return value;const parsed=new Date(value);if(!Number.isFinite(parsed.getTime()))return value;try{return new Intl.DateTimeFormat(locale,{timeZone:timezone,year:"numeric",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}).format(parsed)}catch{return value}};
-  const tr=(zh:string,en:string)=>language==="en-US"?en:zh;
-  // Amounts use the document currency; without one they stay a plain number.
-  const money=(value:unknown,currency?:string)=>value===null||value===undefined||value===""||!Number.isFinite(Number(value))?"—":formatLocaleAmount(Number(value),currency,locale,{maximumFractionDigits:2});
-  const describe=(item:Work)=>item.entityType==="purchase_request"&&item.amount!==undefined?`${tr("申请金额","Request amount")} ${money(item.amount,item.currency)}`:homeDescription(item.description,language);
-  const display=(value:string)=>homeLabel(workspaceCopy(value,language)||value,language);
-  const [overview,setOverview]=useState<HomeOverview|null>(null),[state,setState]=useState<"loading"|"loaded"|"error">("loading"),[filter,setFilter]=useState<"work"|"risk"|"today">("work");
-  const load=async()=>{setState("loading");try{setOverview(await request<HomeOverview>("/api/home/overview"));setState("loaded")}catch{setOverview(null);setState("error")}};
-  useEffect(()=>{load()},[]);
-  const work=overview?.workItems||[],recent=overview?.recentDocuments||[],todayChanges=overview?.todayChanges||0,risks=overview?.unresolvedRisks;
-  const activate=(next:typeof filter)=>setFilter(next);
-  const key=(event:React.KeyboardEvent,next:typeof filter)=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();activate(next)}};
-  if(state==="error")return <Card className="p-12 text-center"><h2 className="text-lg font-semibold">{tr("首页数据加载失败","Could not load overview")}</h2><button onClick={load} className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600"><RefreshCw size={14}/>{tr("重试","Retry")}</button></Card>;
-  return <div data-testid="runtime-homepage" className="space-y-4"><div><h2 className="text-lg font-semibold">{tr("首页概览","Overview")}</h2><p className="text-xs" style={{color:A.sub}}>{tr("查看当前真实采购待办、状态和最近单据。","Review live purchasing work, statuses, and recent documents.")}</p></div><div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]"><Card className="p-5"><div className="flex items-center justify-between"><h2 className="text-sm font-semibold">{tr("今日需处理","Today work")}</h2><button onClick={load} aria-label={tr("刷新首页","Refresh overview")}><RefreshCw size={15}/></button></div>{state==="loading"?<div className="py-10 text-center text-xs">{tr("加载中","Loading")}</div>:work.length===0?<div className="py-10 text-center text-sm" style={{color:A.sub}}>{tr("暂无待处理事项","No work items")}</div>:<div className="mt-3 divide-y">{work.map(item=><div key={item.id} className="flex items-center gap-3 py-3"><span className="rounded bg-orange-50 px-2 py-1 text-xs text-orange-700">{display(item.priority)}</span><div className="min-w-0 flex-1"><div className="text-sm font-medium">{homeLabel(item.title,language)}</div><EntityLink kind={item.entityType} id={item.id} className="mt-1 text-xs text-blue-600">{item.id}</EntityLink><div className="text-xs" style={{color:A.sub}}>{describe(item)}</div></div><EntityLink kind={item.entityType} id={item.id} className="p-1" ><ArrowRight size={16}/></EntityLink></div>)}</div>}</Card><Card className="p-5"><h2 className="text-sm font-semibold">{tr("今日状态","Today status")}</h2><div className="mt-3 grid gap-2">{[{id:"work" as const,label:tr("待我处理","Assigned to me"),value:work.length},{id:"risk" as const,label:tr("风险异常","Risk exceptions"),value:risks??"—"},{id:"today" as const,label:tr("今日变化","Changes today"),value:todayChanges}].map(item=><div key={item.id} role="button" tabIndex={0} onClick={()=>activate(item.id)} onKeyDown={e=>key(e,item.id)} className="cursor-pointer rounded-md border p-4 outline-none transition hover:bg-slate-50 focus:ring-2 focus:ring-blue-500" style={{background:filter===item.id?"#f0f6ff":A.white}}><div className="text-xs" style={{color:A.sub}}>{item.label}</div><div className="mt-1 text-2xl font-semibold">{item.value}</div></div>)}</div>{filter==="today"&&todayChanges===0&&<div className="mt-3 text-xs" style={{color:A.sub}}>{tr("今天暂无业务变化","No business changes today")}</div>}{filter==="risk"&&risks===null&&<div className="mt-3 text-xs" style={{color:A.sub}}>{tr("风险聚合尚未接通","Risk aggregation is not connected")}</div>}</Card></div><Card className="overflow-hidden"><div className="border-b p-5"><h2 className="text-sm font-semibold">{tr("最近单据","Recent documents")}</h2><p className="mt-1 text-xs" style={{color:A.sub}}>{tr("近期采购申请、询价和采购订单记录。","Recent purchase requests, RFQs, and purchase orders.")}</p></div>{state==="loading"?<div className="py-10 text-center text-xs">{tr("加载中","Loading")}</div>:recent.length===0?<div className="py-12 text-center text-sm" style={{color:A.sub}}>{tr("暂无近期单据","No recent documents")}<br/><span className="text-xs">{tr("创建采购申请后，相关单据将显示在这里。","Related documents will appear here after a purchase request is created.")}</span></div>:<div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr>{(language==="en-US"?["Type","Document number","Status","Supplier","Amount","Updated"]:["类型","单号","状态","供应商","金额","更新时间"]).map(h=><th key={h} className="p-3 text-left">{h}</th>)}</tr></thead><tbody>{recent.map(row=><tr key={`${row.type}-${row.id}`} className="border-t"><td className="p-3">{display(row.type)}</td><td className="p-3"><EntityLink kind={row.entityType} id={row.id} className="text-blue-600">{row.id}</EntityLink></td><td className="p-3">{display(row.status)}</td><td className="p-3">{row.supplier}</td><td className="p-3">{money(row.amount,row.currency)}</td><td className="p-3">{stamp(row.updatedAt)}</td></tr>)}</tbody></table></div>}</Card></div>;
+export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi, onReviewActionDraft }: { initialView?: string; onNavigate: Navigate; onOpenAi: () => void; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void }) {
+  if (initialView === "ai") return <AiSuggestionsPage onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} onOpenAi={onOpenAi} />;
+  return <RuntimeHomepage />;
+}
+
+function RuntimeHomepage() {
+  const { locale, timezone } = useI18n();
+  const t = useTodayCopy();
+  const [overview, setOverview] = useState<HomeOverview | null>(null);
+  const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
+  const [filter, setFilter] = useState<"all" | "overdue">("all");
+  const [expanded, setExpanded] = useState(false);
+  const load = async () => {
+    setState("loading");
+    try {
+      setOverview(await apiJson<HomeOverview>("/api/home/overview"));
+      setState("loaded");
+    } catch {
+      setOverview(null);
+      setState("error");
+    }
+  };
+  useEffect(() => { void load(); }, []);
+
+  if (state === "error") {
+    return (
+      <Card className="p-12 text-center">
+        <h2 className="text-lg font-semibold">{t("loadFailed")}</h2>
+        <button onClick={load} className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600"><RefreshCw size={14} />{t("retry")}</button>
+      </Card>
+    );
+  }
+
+  const today = overview?.today || "";
+  const items = overview?.workItems || [];
+  const shown = filter === "overdue" ? items.filter((item) => item.overdueDays > 0) : items;
+  const visible = expanded ? shown : shown.slice(0, COLLAPSED);
+  const recent = overview?.recentDocuments || [];
+  const quantity = (value: unknown, unit?: string | null) => `${formatQuantity(value as number)}${unit ? ` ${unit}` : ""}`;
+  // Amounts use the document currency; a hidden amount (null) is never shown as 0.
+  const money = (value: unknown, currency?: string | null) => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "—" : formatLocaleAmount(Number(value), currency, locale, { maximumFractionDigits: 2 });
+  const day = (value: string) => formatDay(value, locale);
+
+  const dateText = (item: WorkItem) => {
+    if (!item.date) return t("noDate");
+    if (item.dateKind === "due") return item.overdueDays > 0 ? t.count("overdueDays", item.overdueDays) : item.date === today ? t("dueToday") : t("dueOn", { date: day(item.date) });
+    if (item.dateKind === "order_by") return item.date <= today ? t("orderToday") : t("orderBy", { date: day(item.date) });
+    if (item.dateKind === "promised") return item.overdueDays > 0 ? t.count("lateDays", item.overdueDays) : item.date === today ? t("promisedToday") : t("promisedOn", { date: day(item.date) });
+    if (item.dateKind === "required") return t("neededBy", { date: day(item.date) });
+    return t("invoiceOn", { date: day(item.date) });
+  };
+  // Red for what is late or an exception, orange for today and for approvals
+  // and stock warnings, blue for the rest, gray without a date.
+  const tone = (item: WorkItem) => {
+    if (item.overdueDays > 0 || item.kind === "bill_exception") return { color: "#b91c1c", background: "#fef2f2" };
+    if (item.date === today || item.kind === "reorder_now" || item.kind.endsWith("_to_approve")) return { color: "#b45309", background: "#fffbeb" };
+    if (!item.date) return { color: A.gray1, background: A.gray6 };
+    return { color: "#1d4ed8", background: "#eff6ff" };
+  };
+
+  const reasons = (item: WorkItem): string[] => {
+    const d = item.detail || {};
+    const supplier = item.name ? t("supplier", { name: item.name }) : null;
+    const customer = item.name ? t("customer", { name: item.name }) : null;
+    const amount = d.amount === null || d.amount === undefined ? null : t("amount", { amount: money(d.amount, d.currency) });
+    const lines: Array<string | null> = (() => {
+      switch (item.kind) {
+        case "purchase_order_overdue":
+        case "purchase_order_due":
+          return [
+            d.remaining !== null && d.remaining !== undefined ? t("stillToReceive", { qty: quantity(d.remaining, d.unit) }) : t.count("linesToReceive", Number(d.openLines) || 0),
+            d.received > 0 && d.ordered !== null && d.ordered !== undefined ? t("receivedOf", { received: formatQuantity(d.received), ordered: quantity(d.ordered, d.unit) }) : null,
+            d.notIssued ? t("notIssued") : null,
+            supplier,
+          ];
+        case "reorder_now":
+          return [
+            item.name,
+            t("position", { position: quantity(d.position, d.unit), reorderPoint: quantity(d.reorderPoint, d.unit) }),
+            d.stockSignal === "stock_below_safety" ? t("belowSafety") : d.stockSignal === "stock_shortage" ? t("shortage") : null,
+          ];
+        case "bill_awaiting_receipt": return [t("billAwaitingReceipt"), amount, supplier];
+        case "bill_to_match": return [t("billToMatch"), amount, supplier];
+        case "bill_to_approve": return [t("billToApprove"), amount, supplier];
+        case "bill_exception": return [t("billException"), amount, supplier];
+        case "customer_invoice_to_issue": return [t("issueToCustomer"), amount, customer];
+        case "receivable_overdue": return [d.outstanding === null || d.outstanding === undefined ? t("owedHidden") : t("owed", { amount: money(d.outstanding, d.currency) }), d.disputed ? t("disputed") : null, customer];
+        case "sales_order_to_reserve": return [d.quantity === null || d.quantity === undefined ? t.count("linesToReserve", Number(d.lines) || 0) : t("toReserve", { qty: quantity(d.quantity, d.unit) }), customer];
+        case "sales_order_to_ship": return [d.quantity === null || d.quantity === undefined ? t.count("linesToShip", Number(d.lines) || 0) : t("toShip", { qty: quantity(d.quantity, d.unit) }), customer];
+        case "purchase_order_to_approve": return [t("awaitingApproval"), supplier];
+        case "purchase_request_to_approve": return [amount === null ? null : t("requestAmount", { amount: money(d.amount, d.currency) })];
+        case "purchase_request_to_convert": return [t("requestConvert")];
+        case "draft_purchase_order": return [supplier];
+        default: return [];
+      }
+    })();
+    return lines.filter((line): line is string => Boolean(line));
+  };
+
+  const notes: ReactNode[] = [];
+  if (overview?.hidden?.length) notes.push(t("hiddenNote", { kinds: overview.hidden.map((code) => (HIDDEN_KEYS[code] ? t(HIDDEN_KEYS[code]) : code)).join(", ") }));
+  if (overview?.limitations?.includes("reorder_not_checked_for_warehouse_scope")) notes.push(t("reorderScope"));
+  const unavailable = (overview?.limitations || []).filter((code) => code.startsWith("today_source_unavailable:")).map((code) => code.slice("today_source_unavailable:".length));
+  if (overview?.limitations?.includes("today_database_sources_unavailable")) unavailable.push("database");
+  if (unavailable.length) notes.push(t("notChecked", { sources: [...new Set(unavailable)].map((code) => (SOURCE_KEYS[code] ? t(SOURCE_KEYS[code]) : code)).join(", ") }));
+  const truncated = (overview?.limitations || []).filter((code) => /^truncated:(customer_invoices|receivables)$/.test(code));
+  if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
+
+  const tiles = [
+    { id: "all" as const, label: t("tileWork"), value: overview?.workTotal ?? 0 },
+    { id: "overdue" as const, label: t("tileOverdue"), value: overview?.overdue ?? 0 },
+  ];
+
+  return (
+    <div data-testid="runtime-homepage" className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold">{t("title")}</h2>
+        <p className="text-xs" style={{ color: A.sub }}>{t("subtitle")}</p>
+      </div>
+
+      {overview?.firstRun ? (
+        <Card className="p-5" data-testid="first-run-checklist">
+          <h2 className="text-sm font-semibold">{t("setupTitle")}</h2>
+          <p className="mt-1 text-xs" style={{ color: A.sub }}>{t("setupNote", { done: overview.firstRun.done, total: overview.firstRun.total })}</p>
+          <ol className="mt-3 grid gap-2 md:grid-cols-5">
+            {overview.firstRun.steps.map((step, index) => (
+              <li key={step.id} data-testid={`first-run-step-${step.id}`} data-done={step.done ? "true" : "false"} className="rounded-md border p-3" style={{ borderColor: A.gray4 }}>
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  {step.done ? <CheckCircle2 size={16} style={{ color: "#0F766E" }} aria-hidden /> : <Circle size={16} style={{ color: A.gray2 }} aria-hidden />}
+                  <span>{index + 1}. {t(`step_${step.id}` as TodayCopyKey)}</span>
+                </div>
+                <div className="mt-1 text-xs" style={{ color: step.done ? "#0F766E" : A.sub }}>{step.done ? t("stepDone", { n: step.count }) : t("stepOpen")}</div>
+                {!step.done ? (step.href ? <Link to={step.href} className={`mt-2 inline-block text-xs ${LINK}`}>{t("stepStart")}</Link> : <div className="mt-2 text-xs" style={{ color: A.sub }}>{t(step.blocked === "unavailable" ? "stepUnavailable" : "stepAskAdmin")}</div>) : null}
+              </li>
+            ))}
+          </ol>
+        </Card>
+      ) : null}
+
+      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
+        <Card className="p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold">{t("workTitle")}</h2>
+              <p className="mt-0.5 text-xs" style={{ color: A.sub }}>{t("workNote")}</p>
+            </div>
+            <button onClick={load} aria-label={t("refresh")}><RefreshCw size={15} /></button>
+          </div>
+          {state === "loading" ? (
+            <div className="py-10 text-center text-xs">{t("loading")}</div>
+          ) : shown.length === 0 ? (
+            <div className="py-10 text-center text-sm" style={{ color: A.sub }}>
+              <p>{filter === "overdue" ? t("noOverdueWork") : t("noWork")}</p>
+              {filter === "all" ? <div className="mx-auto mt-1 max-w-md text-xs">{t("noWorkHint")}</div> : null}
+            </div>
+          ) : (
+            <ul className="mt-3 divide-y" data-testid="today-work-list">
+              {visible.map((item) => (
+                <li key={item.id} className="flex items-start gap-3 py-3" data-testid="today-work-item" data-kind={item.kind}>
+                  <span className="mt-0.5 shrink-0 rounded px-2 py-1 text-xs font-medium" style={tone(item)}>{dateText(item)}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">{t(`kind_${item.kind}` as TodayCopyKey)}</div>
+                    <Link to={item.href} className={`mt-0.5 inline-block text-xs ${LINK}`}>{item.label}</Link>
+                    <div className="text-xs" style={{ color: A.sub }}>{reasons(item).join(" · ")}</div>
+                    {item.actionHref ? <Link to={item.actionHref} className={`text-xs ${LINK}`}>{t("openReorderList")}</Link> : null}
+                  </div>
+                  <Link to={item.href} className="p-1" aria-label={item.label}><ArrowRight size={16} /></Link>
+                </li>
+              ))}
+            </ul>
+          )}
+          {state === "loaded" && shown.length > COLLAPSED ? (
+            <button className="mt-2 text-xs text-blue-600" onClick={() => setExpanded((value) => !value)}>{expanded ? t("showFewer") : t("showAll", { n: shown.length })}</button>
+          ) : null}
+          {state === "loaded" && filter === "all" && overview && overview.workTotal > items.length ? (
+            <div className="mt-2 text-xs" style={{ color: A.sub }}>{t("moreNotShown", { n: overview.workTotal - items.length })}</div>
+          ) : null}
+          {state === "loaded" && notes.length ? (
+            <div className="mt-3 space-y-1 border-t pt-3 text-xs" style={{ color: A.sub }} data-testid="today-work-notes">
+              {notes.map((note, index) => <p key={index}>{note}</p>)}
+            </div>
+          ) : null}
+        </Card>
+
+        <Card className="p-5">
+          <h2 className="text-sm font-semibold">{t("statusTitle")}</h2>
+          <div className="mt-3 grid gap-2">
+            {tiles.map((tile) => (
+              <button
+                key={tile.id}
+                type="button"
+                aria-pressed={filter === tile.id}
+                onClick={() => { setFilter(tile.id); setExpanded(false); }}
+                className="rounded-md border p-4 text-left outline-none transition hover:bg-slate-50 focus:ring-2 focus:ring-blue-500"
+                style={{ background: filter === tile.id ? "#f0f6ff" : A.white }}
+                data-testid={`today-tile-${tile.id}`}
+              >
+                <div className="text-xs" style={{ color: A.sub }}>{tile.label}</div>
+                <div className="mt-1 text-2xl font-semibold">{tile.value}</div>
+              </button>
+            ))}
+            <div className="rounded-md border p-4" data-testid="today-tile-changes">
+              <div className="text-xs" style={{ color: A.sub }}>{t("tileChanges")}</div>
+              <div className="mt-1 text-2xl font-semibold">{overview?.todayChanges ?? 0}</div>
+              {today ? <div className="mt-1 text-xs" style={{ color: A.sub }}>{t("changesNote", { date: day(today) })}</div> : null}
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <Card className="overflow-hidden">
+        <div className="border-b p-5">
+          <h2 className="text-sm font-semibold">{t("recentTitle")}</h2>
+          <p className="mt-1 text-xs" style={{ color: A.sub }}>{t("recentNote")}</p>
+        </div>
+        {state === "loading" ? (
+          <div className="py-10 text-center text-xs">{t("loading")}</div>
+        ) : recent.length === 0 ? (
+          <div className="py-12 text-center text-sm" style={{ color: A.sub }}><p>{t("recentEmpty")}</p><p className="text-xs">{t("recentEmptyHint")}</p></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs" data-testid="recent-documents">
+              <thead>
+                <tr>{(["colType", "colNumber", "colStatus", "colPartner", "colAmount", "colUpdated"] as const).map((key) => <th key={key} className="p-3 text-left">{t(key)}</th>)}</tr>
+              </thead>
+              <tbody>
+                {recent.map((row) => (
+                  <tr key={`${row.type}-${row.id}`} className="border-t">
+                    <td className="p-3">{t(`type_${row.type}` as TodayCopyKey) || row.type}</td>
+                    <td className="p-3"><Link to={row.canonicalRoute} className={LINK}>{row.number}</Link></td>
+                    <td className="p-3">{t.status(row.status)}</td>
+                    <td className="p-3">{row.partner || "—"}</td>
+                    <td className="p-3">{money(row.amount, row.currency)}</td>
+                    <td className="p-3">{formatDateTimeInTimeZone(row.updatedAt, locale, timezone)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
 }

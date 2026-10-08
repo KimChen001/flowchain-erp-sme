@@ -6,6 +6,8 @@ import {
   agingBucket,
   agingDays,
   createOperationalFinanceO2cReadService,
+  overdueBefore,
+  overdueReceivableWhere,
 } from "./operational-finance-o2c-read-service.mjs";
 import { buildShipmentReversalPlan } from "./outbound-transaction-policy.mjs";
 
@@ -605,10 +607,23 @@ test(
   },
 );
 
-test("aging uses workspace-local calendar boundaries", () => {
-  const asOf = new Date("2026-03-09T03:30:00.000Z");
-  const due = new Date("2026-03-08T04:30:00.000Z");
-  assert.equal(agingDays(due, asOf, "America/New_York"), 1);
+test("aging reads the due date as its calendar day and today in the workspace", () => {
+  // The invoice form stores a due date of Nov 6 as 00:00 UTC.
+  const due = new Date("2026-11-06T00:00:00.000Z");
+  const newYork = (local) => new Date(`${local}-05:00`);
+  // Before this, the due day read in New York was Nov 5, so the invoice aged
+  // a day on its own due date.
+  assert.equal(agingDays(due, newYork("2026-11-06T09:00:00"), "America/New_York"), 0);
+  // 23:30 in New York is already Nov 7 in UTC; it is still the due day.
+  assert.equal(agingDays(due, newYork("2026-11-06T23:30:00"), "America/New_York"), 0);
+  assert.equal(agingDays(due, newYork("2026-11-07T00:30:00"), "America/New_York"), 1);
+  assert.equal(agingDays(due, newYork("2026-11-05T20:00:00"), "America/New_York"), -1);
+  // Overdue starts on the workspace's next day, not at 19:00 the day before.
+  assert.equal(overdueBefore(newYork("2026-11-05T20:00:00"), "America/New_York").toISOString(), "2026-11-05T00:00:00.000Z");
+  assert.equal(overdueBefore(newYork("2026-11-06T23:30:00"), "America/New_York").toISOString(), "2026-11-06T00:00:00.000Z");
+  assert.ok(due >= overdueBefore(newYork("2026-11-06T23:30:00"), "America/New_York"));
+  assert.ok(due < overdueBefore(newYork("2026-11-07T00:30:00"), "America/New_York"));
+  assert.deepEqual(overdueReceivableWhere(newYork("2026-11-07T00:30:00"), "America/New_York").dueDate, { lt: new Date("2026-11-07T00:00:00.000Z") });
   assert.equal(agingBucket(0), "current");
   assert.equal(agingBucket(30), "1_30");
   assert.equal(agingBucket(31), "31_60");
