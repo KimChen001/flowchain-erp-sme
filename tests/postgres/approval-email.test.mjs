@@ -70,18 +70,27 @@ async function login(account) {
 const pause = (ms) => new Promise((done) => setTimeout(done, ms))
 const approvalMessages = async () => (await readOutbox(outboxPath)).filter((message) => message.tag === 'approval-waiting')
 
-// The approval emails an action produced: waits for the expected number,
-// then a little longer so an extra or duplicate email would be seen too.
+const noticeCount = () => prisma.auditLog.count({ where: { tenantId: tenantA, source: 'approval_notifications' } })
+
+// The approval emails an action produced. The notifier writes its audit row
+// only after every send has settled, so a notice is complete once that row
+// exists: no timing guess, however slow the machine. With nothing expected,
+// it waits a moment and checks that no notice was recorded either.
 async function emailsAfter(action, expected) {
   const before = (await approvalMessages()).length
+  const noticesBefore = await noticeCount()
   const result = await action()
-  for (let attempt = 0; attempt < 100 && (await approvalMessages()).length < before + expected; attempt += 1) await pause(50)
-  await pause(400)
+  if (expected > 0) await waitFor(noticeCount, (count) => count > noticesBefore, 'the approval notice audit row')
+  else {
+    await pause(750)
+    assert.equal(await noticeCount(), noticesBefore, 'no approval notice was recorded')
+  }
   return { result, messages: (await approvalMessages()).slice(before) }
 }
 
+// Polls for up to 20 seconds, so a loaded machine does not fail the suite.
 async function waitFor(read, ready, label) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
     const value = await read()
     if (ready(value)) return value
     await pause(50)
@@ -90,6 +99,12 @@ async function waitFor(read, ready, label) {
 }
 const noticeAudits = (entityId) => prisma.auditLog.findMany({ where: { tenantId: tenantA, source: 'approval_notifications', entityId }, orderBy: { createdAt: 'asc' } })
 
+// For a failed recipient check: what the notifier recorded and logged.
+async function deliveryReport(entityId) {
+  const audits = await noticeAudits(entityId)
+  const failures = logLines.filter((line) => line.includes('approval_email_') && line.includes(entityId))
+  return JSON.stringify({ audits: audits.map((row) => row.metadata), logs: failures })
+}
 const byRecipient = (messages) => [...messages].sort((a, b) => a.to.localeCompare(b.to))
 function assertOnlyTypeNumberAndLink(message, link, forbidden = []) {
   assert.equal(message.tag, 'approval-waiting')
@@ -259,7 +274,7 @@ test('a bill with match exceptions waits for the last one to be approved; previe
   }
   const last = await emailsAfter(() => review(exceptions.at(-1), 'ae-bill2-review-last'), 3)
   assert.equal(last.result.status, 200, describe(last.result))
-  assert.deepEqual(last.messages.map((message) => message.to).sort(), [users.approverEn.email, users.approverZh.email, users.finance.email])
+  assert.deepEqual(last.messages.map((message) => message.to).sort(), [users.approverEn.email, users.approverZh.email, users.finance.email], await deliveryReport(bill.entityId))
   assert.equal(last.messages.find((message) => message.to === users.approverEn.email).subject, 'Supplier bill AE-BILL-2 is waiting for approval')
   for (const message of last.messages) assertOnlyTypeNumberAndLink(message, `https://flowchain.test/app/procurement/bills/${bill.entityId}`, ['110.00', '11.00', 'Price agreed', 'GRN-AE-2'])
 })
