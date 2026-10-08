@@ -174,7 +174,10 @@ test("purchase request amounts use the document currency", async ({ page }) => {
   await page.goto("/app/procurement/requests/LOCAL-DEMO-PR-001");
   await expect(page.getByText("$5,000.00").first()).toBeVisible();
   await page.goto("/app/overview/risks");
-  // Today lists the request among the day's work, earliest date first.
+  // Today lists the request among the day's work, earliest date first. The
+  // list and its Show all button render together once the work has loaded,
+  // so wait for the list before deciding whether to expand it.
+  await expect(page.getByTestId("today-work-item").first()).toBeVisible();
   const showAll = page.getByRole("button", { name: /^Show all \d+$/ });
   if (await showAll.count()) await showAll.click();
   await expect(page.getByText("Request amount $5,000.00")).toBeVisible();
