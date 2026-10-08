@@ -140,8 +140,9 @@ test('the supplier scorecard is measured against the original promise, per tenan
       assert.equal(graced.suppliers[0].metrics.onTime.count, 6)
     })
 
-    await t.test('a line approved but never issued is measured against the promise recorded at approval', async () => {
-      // Approved for Aug 20, received Aug 22 without being issued in FlowChain.
+    await t.test('a line approved but never issued, with a posted receipt, is measured against the promise recorded at approval', async () => {
+      // Approved for Aug 20, received Aug 22 without being issued in FlowChain:
+      // the supplier got the order, so it counts (owner decision 2026-10-06).
       await prisma.purchaseOrder.create({ data: { id: 'SC-PO-APPROVED', tenantId: tenantA, status: 'pending_approval', supplierId: 'SC-SUP-A', supplierName: 'Scorecard Supplier', currency: 'USD', amount: 500, lines: { create: [{ id: 'SC-PO-APPROVED-L1', sku: 'SC-SKU', itemName: 'Sensor', orderedQuantity: 10, receivedQuantity: 0, unit: 'pcs', unitPrice: 50, amount: 500, metadata: { promisedDate: '2026-08-20' } }] } } })
       await service.approvePurchaseOrder('SC-PO-APPROVED', { expectedVersion: 0, idempotencyKey: 'SC-PO-APPROVED-approve' }, { identity: identityOf(users.admin) })
       await prisma.receivingDocument.create({ data: { id: 'SC-PO-APPROVED-GRN', tenantId: tenantA, poId: 'SC-PO-APPROVED', supplierId: 'SC-SUP-A', postingStatus: 'posted', arrivedAt: at('2026-08-22', '15:00:00'), lines: { create: [{ id: 'SC-PO-APPROVED-GRNL', purchaseOrderLineId: 'SC-PO-APPROVED-L1', acceptedQty: 10, rejectedQty: 0 }] } } })
@@ -150,6 +151,7 @@ test('the supplier scorecard is measured against the original promise, per tenan
       assert.equal(supplier.originalNotRecordedCount, 0)
       assert.deepEqual(supplier.lines.map((line) => [line.purchaseOrderId, line.originalPromisedDate, line.firstReceiptDay, line.onTime, line.daysLate]), [['SC-PO-APPROVED', '2026-08-20', '2026-08-22', false, 2]])
       assert.equal(supplier.sampleStatus, 'insufficient_sample')
+      assert.equal(supplier.notSentCount, 0)
     })
 
     await t.test('an order approved and then cancelled is not late on the scorecard or on the dashboard', async () => {
@@ -174,6 +176,36 @@ test('the supplier scorecard is measured against the original promise, per tenan
       // September, where the scorecard measures six lines at 66.7%, agrees too.
       const september = buildRuntimeGovernedReport({ ...snapshot, salesOrders: [], suppliers: [], inventoryItems: [], items: [] }, { subject: 'suppliers', filters: { from: '2026-09-01', to: '2026-09-30' } }, { now: NOW, timeZone: 'America/New_York' })
       assert.equal(september.kpis.find((row) => row.id === 'on_time_receipt_rate').currentValue, 66.7)
+    })
+
+    await t.test('an order approved but never sent, with nothing received, is left out and listed as not sent; once issued it counts', async () => {
+      // Owner decision 2026-10-06: approved for Jun 15, never issued, nothing
+      // received. It is in no rate or count, on the scorecard or the dashboard.
+      const identity = { identity: identityOf(users.admin) }
+      const id = 'SC-PO-UNSENT'
+      await prisma.purchaseOrder.create({ data: { id, tenantId: tenantA, status: 'pending_approval', supplierId: 'SC-SUP-A', supplierName: 'Scorecard Supplier', currency: 'USD', amount: 500, metadata: { orderNumber: id, transmissionStatus: 'not_sent' }, lines: { create: [{ id: `${id}-L1`, sku: 'SC-SKU', itemName: 'Sensor', orderedQuantity: 10, receivedQuantity: 0, unit: 'pcs', unitPrice: 50, amount: 500, metadata: { promisedDate: '2026-06-15' } }] } } })
+      await service.approvePurchaseOrder(id, { expectedVersion: 0, idempotencyKey: `${id}-approve` }, identity)
+      const june = '?from=2026-06-01&to=2026-06-30'
+      const unsent = (await scorecard(prisma, users.admin, june)).payload
+      assert.deepEqual(unsent.suppliers.map((row) => [row.supplierId, row.sampleSize, row.waitingCount, row.overdueUndeliveredCount, row.notSentCount]), [['SC-SUP-A', 0, 0, 0, 1]])
+      assert.deepEqual(unsent.suppliers[0].notSentPurchaseOrders.map((row) => [row.purchaseOrderId, row.orderNumber, row.status, row.promisedDate, row.lines.map((line) => [line.purchaseOrderLineId, line.originalPromisedDate, line.amount])]), [[id, id, 'approved', '2026-06-15', [[`${id}-L1`, '2026-06-15', 500]]]])
+      // A viewer sees the order without its amount.
+      assert.equal((await scorecard(prisma, users.viewer, june)).payload.suppliers[0].notSentPurchaseOrders[0].lines[0].amount, null)
+      const dashboard = async () => {
+        const snapshot = await createDbProcurementRuntimeRepository({ prisma }).snapshot({ tenantId: tenantA })
+        const report = buildRuntimeGovernedReport({ ...snapshot, salesOrders: [], suppliers: [], inventoryItems: [], items: [] }, { subject: 'suppliers', filters: { from: '2026-06-01', to: '2026-06-30' } }, { now: NOW, timeZone: 'America/New_York' })
+        const onTime = report.kpis.find((row) => row.id === 'on_time_receipt_rate')
+        return [onTime.currentValue, onTime.dataStatus, onTime.limitations]
+      }
+      assert.deepEqual(await dashboard(), [null, 'no_records', []])
+
+      // Issued through the PO command: now a delivery, past its promise with
+      // nothing received, so overdue and late, on both.
+      await service.issuePurchaseOrder(id, { expectedVersion: 1, idempotencyKey: `${id}-issue` }, identity)
+      const issued = (await scorecard(prisma, users.admin, june)).payload
+      assert.deepEqual(issued.suppliers.map((row) => [row.supplierId, row.sampleSize, row.overdueUndeliveredCount, row.notSentCount]), [['SC-SUP-A', 1, 1, 0]])
+      assert.deepEqual([issued.suppliers[0].obligations[0].purchaseOrderId, issued.suppliers[0].obligations[0].onTime], [id, false])
+      assert.deepEqual(await dashboard(), [null, 'incomplete', ['insufficient_sample']])
     })
   } finally {
     await prisma.$disconnect()

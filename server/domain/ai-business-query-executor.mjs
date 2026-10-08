@@ -1,6 +1,7 @@
 import { assertValidBusinessQueryPlan } from './ai-business-query-plan.mjs'
 import { assertReadOnlyGoalRegistry, goalDefinition, goalsInStableOrder } from './ai-business-goal-registry.mjs'
 import { resolveBusinessTimeWindow } from './ai-business-time-window.mjs'
+import { compareSupplierAttention } from './supplier-action-summary-read-service.mjs'
 
 const text = (value) => String(value ?? '').trim()
 const stateOrder = ['confirmed', 'confirmed_zero', 'incomplete', 'hidden', 'unavailable']
@@ -139,8 +140,8 @@ export async function executeBusinessQueryPlan(planCandidate, context = {}) {
   if (!context.summaryService || typeof context.summaryService.read !== 'function') throw new Error('summaryService.read is required')
   const summary = await context.summaryService.read({ timeWindow, filters: plan.filters }, context)
   let rows = scopeRows(summary.items || [], plan.scope)
-  if (plan.filters.riskLevels.length) rows = rows.filter(row => plan.filters.riskLevels.includes(row.priority?.level))
-  if (plan.ranking.enabled) rows = [...rows].sort((a, b) => (b.priority?.score || 0) - (a.priority?.score || 0) || a.supplier.id.localeCompare(b.supplier.id)).slice(0, plan.ranking.limit)
+  // Ranked by the oldest open reason's date, never by a score (owner decision 2026-10-03).
+  if (plan.ranking.enabled) rows = [...rows].sort(compareSupplierAttention).slice(0, plan.ranking.limit)
   const sections = []
   const executedTools = []
   const failures = []

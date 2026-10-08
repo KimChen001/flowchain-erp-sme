@@ -11,6 +11,8 @@ export const aiSkillRoutingCases = [
   { id: 'chip-today-zh', prompt: '今天先处理什么？', expected: 'today_priorities' },
   { id: 'chip-risk-en', prompt: 'Which items have the highest risk?', expected: 'highest_risk_items' },
   { id: 'chip-risk-zh', prompt: '哪些事项风险最高？', expected: 'highest_risk_items' },
+  { id: 'chip-risk-now-en', prompt: 'What is at risk right now?', expected: 'highest_risk_items' },
+  { id: 'chip-risk-now-zh', prompt: '现在有哪些风险？', expected: 'highest_risk_items' },
   { id: 'chip-records-en', prompt: 'Which records need more data?', expected: 'records_needing_data' },
   { id: 'chip-records-zh', prompt: '哪些数据需要补齐？', expected: 'records_needing_data' },
   { id: 'chip-draft-en', prompt: 'Prepare an action draft', expected: 'prepare_action_draft' },

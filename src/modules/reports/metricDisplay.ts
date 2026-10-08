@@ -17,7 +17,7 @@ export function metricDisplayValue(item: MetricDefinition, dataScope: GovernedRe
   if (item.limitations?.includes('inventory_units_mixed') || item.limitations?.includes('sales_demand_units_mixed')) return 'Mixed units';
   if (item.limitations?.includes('sales_demand_skus_mixed') || item.limitations?.includes('inventory_skus_mixed')) return 'Multiple SKUs';
   if (item.dataStatus === 'restricted') return 'Restricted';
-  if (item.limitations?.includes('insufficient_sample')) return 'Fewer than 5 lines';
+  if (item.limitations?.includes('insufficient_sample')) return 'Fewer than 5 deliveries';
   if (item.limitations?.includes('receipts_truncated') || item.limitations?.includes('period_too_long')) return 'Not measured';
   if (item.dataStatus === 'no_records') return '暂无业务记录';
   if (item.unit === 'currency' && currency.status === 'no_currency_data') return '暂无金额数据';
