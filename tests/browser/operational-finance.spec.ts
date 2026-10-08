@@ -391,10 +391,12 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   );
   await page.goto(`/app/finance/customer-invoices/${uiDraft.entityId}`);
   await expect(page.getByTestId("customer-invoice-detail")).toContainText("CUS-INV-BROWSER-UI");
+  // Submit, approve and issue only change the invoice's status: one click
+  // each (owner decision D4), and the step is done when its button goes.
   for (const action of ["submit", "approve", "issue"]) {
+    await expect(page.getByTestId(`customer-invoice-${action}`)).toHaveAttribute("data-one-step", "true");
     await page.getByTestId(`customer-invoice-${action}`).click();
-    await page.getByTestId(`customer-invoice-${action}-preview`).click();
-    await page.getByTestId(`customer-invoice-${action}-confirm`).click();
+    await expect(page.getByTestId(`customer-invoice-${action}`)).toHaveCount(0);
     await expect(page.getByTestId(`customer-invoice-${action}-panel`)).toHaveCount(0);
   }
   await expect(page.getByTestId("customer-invoice-actions")).toContainText(/当前状态下没有可执行的操作|No action is available/);

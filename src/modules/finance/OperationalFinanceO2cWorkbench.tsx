@@ -671,9 +671,9 @@ function InvoiceDetail() {
           </div>
         </div>
         <div className="mt-4 flex flex-wrap gap-2" data-testid="customer-invoice-actions">
-          {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="customer-invoice-submit" previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={version} onDone={load} />}
-          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="customer-invoice-approve" previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={version} onDone={load} />}
-          {actions.includes("issue") && <TwoStepAction label={t("finance.action.issue")} testId="customer-invoice-issue" previewUrl={`${base}/issue-preview`} runUrl={`${base}/issue`} payload={version} onDone={load} />}
+          {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="customer-invoice-submit" oneStep previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={version} onDone={load} />}
+          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="customer-invoice-approve" oneStep previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={version} onDone={load} />}
+          {actions.includes("issue") && <TwoStepAction label={t("finance.action.issue")} testId="customer-invoice-issue" oneStep previewUrl={`${base}/issue-preview`} runUrl={`${base}/issue`} payload={version} onDone={load} />}
           {!actions.length && <span className="text-xs text-slate-500">{t("finance.noActions")}</span>}
         </div>
       </Card>
