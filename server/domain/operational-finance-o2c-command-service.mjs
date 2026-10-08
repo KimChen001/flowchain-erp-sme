@@ -10,8 +10,12 @@ import {
   financeFixed as fixed,
   financeUnits as units,
 } from "./operational-finance-policy.mjs";
+import { overdueBefore } from "./operational-finance-o2c-read-service.mjs";
+import { DEFAULT_TENANT_TIMEZONE } from "./tenant-calendar-day.mjs";
 
 const text = (value) => String(value ?? "").trim();
+const workspaceTimezone = async (client, tenantId) =>
+  (await client.tenant.findUnique({ where: { id: tenantId }, select: { timezone: true } }))?.timezone || DEFAULT_TENANT_TIMEZONE;
 const fail = (code, message, status = 400, details) => {
   throw new OperationalFinanceError(code, message, status, details);
 };
@@ -192,7 +196,7 @@ const creditResult = (row) => ({
     version: row.version,
   },
 });
-const receivableActionPlan = (action, row, input, asOf) => {
+const receivableActionPlan = (action, row, input, asOf, timezone) => {
   const blockingIssues = [];
   if (row.version !== version(input.expectedVersion))
     blockingIssues.push({
@@ -235,7 +239,7 @@ const receivableActionPlan = (action, row, input, asOf) => {
         action === "dispute"
           ? "disputed"
           : action === "resolve-dispute"
-            ? new Date(row.dueDate).getTime() < asOf.getTime()
+            ? new Date(row.dueDate).getTime() < overdueBefore(asOf, timezone).getTime()
               ? "overdue"
               : "open"
             : row.status,
@@ -666,7 +670,7 @@ export function createOperationalFinanceO2cCommandService({
     });
     if (!row)
       fail("RECEIVABLE_NOT_FOUND", "Receivable obligation was not found.", 404);
-    return receivableActionPlan(action, row, input, now());
+    return receivableActionPlan(action, row, input, now(), await workspaceTimezone(prisma, actor.tenantId));
   }
 
   async function receivableAction(action, id, input, context) {
@@ -693,7 +697,7 @@ export function createOperationalFinanceO2cCommandService({
           where: { id: normalized.receivableId },
         });
         const actionPlan = enforce(
-          receivableActionPlan(action, current, normalized, now()),
+          receivableActionPlan(action, current, normalized, now(), await workspaceTimezone(tx, actor.tenantId)),
         );
         const data =
           action === "dispute"
