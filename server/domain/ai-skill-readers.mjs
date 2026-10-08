@@ -320,6 +320,18 @@ export async function readAiSkillFacts(skillContext) {
       atRisk: rows.filter(isInventoryRiskSku).map((row) => row.sku).sort(),
       atRiskCount: kpi(overview, 'inventory_risk_sku')?.currentValue ?? rows.filter(isInventoryRiskSku).length,
     }
+    // The open sales orders the stock is set against, for readers of sales
+    // orders: each with its customer, the day promised to the customer and, per
+    // SKU, the quantity not yet shipped or reserved (the allocation's unreserved
+    // demand). The late order impact (ai-skill-late-order-impact.mjs) names them.
+    if (access.collections.salesOrders) {
+      const open = new Set(rows.flatMap((row) => row.salesOrderIds))
+      const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
+      facts.salesOrders = array(business.salesOrders).filter((row) => open.has(text(row.salesOrderId || row.id))).map((row) => ({
+        id: text(row.salesOrderId || row.id), number: text(row.orderNumber || row.salesOrderId || row.id), customer: text(row.customerName) || null, promisedDate: dayOf(row.promisedDate),
+        lines: array(row.lines).map((line) => ({ sku: text(line.sku || line.itemId), open: Math.max(0, count(line.orderedQuantity ?? line.orderedQty ?? line.quantity) - count(line.fulfilledQuantity ?? line.fulfilledQty ?? line.shippedQty) - count(line.reservedQuantity ?? line.reservedQty)) })).filter((line) => line.sku),
+      }))
+    }
   }
 
   if (visible.supplier_invoices) {

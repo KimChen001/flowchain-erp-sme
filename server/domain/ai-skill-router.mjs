@@ -32,7 +32,7 @@ const CHIPS = [
   // Purchase order page chips.
   ['Why does this PO need attention?', '这个 PO 为什么需要关注？', 'today_priorities', 'page'],
   ['Which receipt or invoice evidence is missing?', '还差哪些收货或发票证据？', 'records_needing_data', 'page'],
-  ['What will a delay affect?', '延误会影响什么？', 'highest_risk_items', 'page'],
+  ['What will a delay affect?', '延误会影响什么？', 'late_order_impact', 'page'],
   ['What should happen next?', '建议下一步是什么？', 'prepare_action_draft', 'page'],
   // SKU page chips.
   ['Does this SKU need replenishment?', '这个 SKU 需要补货吗？', 'today_priorities', 'page'],
@@ -157,6 +157,13 @@ const clauses = (message) => message.split(/[.!?;:,\n。！？；：，]+/u).map
 const RECORDS = [
   /\b(missing|incomplete|blank|empty fields?|data quality|fill in|need(s)? (more )?data|lacks?)\b/i,
   /补齐|缺失|缺少|不完整|数据质量|补充数据|还差哪些/,
+]
+// What a late order affects (ai-skill-late-order-impact.mjs): a delay and its
+// consequences together. "What will a delay of PO-001 affect?", "If PO-001 is
+// late, which customers are hit?", PO-001 延误会影响哪些客户？
+const LATE_IMPACT = [
+  /\b(?:delay\w*|late|slip\w*|overdue|held up)\b[^.?!]*\b(?:affect\w*|impact\w*|hit|knock.?on|consequence\w*|put at risk|which (?:customers?|sales orders?|orders?)|who)\b|\b(?:affect\w*|impact\w*)\b[^.?!]*\b(?:delay\w*|late|slip\w*)\b/i,
+  /(?:延误|延迟|晚到|拖期|迟到|逾期|推迟)[^。？！]{0,20}(?:影响|波及|耽误|连累)|(?:影响|波及)[^。？！]{0,10}(?:哪些|什么)(?:客户|销售订单|订单)/,
 ]
 const RISK = [
   /\b(risks?|riskiest|risky|exposure|at risk)\b/i,
@@ -412,6 +419,7 @@ function intentRoute(intent, base) {
   const route = (skillId) => ({ ...base, skillId, signals: signalsOf(intent) })
   if (matches(OUTSIDE, intent) && !matches(WORKSPACE_NOUN, intent)) return { capability: true, outOfDomain: true }
   if (matches(RECORDS, intent)) return route('records_needing_data')
+  if (matches(LATE_IMPACT, intent)) return route('late_order_impact')
   if (matches(RISK, intent)) return route('highest_risk_items')
   const otherRecord = matches(OTHER_RECORD, intent)
   if (matches(APPROVAL, intent) && matches(REQUEST_NOUN, intent) && !otherRecord) return route('pending_approvals')

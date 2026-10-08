@@ -84,6 +84,10 @@ const definitions = [
   // (ai-skill-supplier-comparison.mjs). Like the scorecard's route, it needs
   // both purchase orders and receipts (requiredAllPermissions).
   { id: 'supplier_comparison', version: '1', requiredAnyPermission: [AI_SKILL_SOURCES.purchase_orders.permission], requiredAllPermissions: [AI_SKILL_SOURCES.purchase_orders.permission, AI_SKILL_SOURCES.receipts.permission], sources: ['purchase_orders', 'receipts', 'supplier_invoices'], fieldGroups: ['purchase_order_amounts', 'invoice_amounts'], inputSchema: entityInput(AI_SKILL_MODES.supplier_comparison, ['supplierIds']), outputSchema: evidenceOutput },
+  // What a late purchase order puts at risk, in the inventory page's terms
+  // (ai-skill-late-order-impact.mjs). Needs purchase orders and stock; sales
+  // orders and customers are named only for their readers.
+  { id: 'late_order_impact', version: '1', requiredAnyPermission: [AI_SKILL_SOURCES.purchase_orders.permission], requiredAllPermissions: [AI_SKILL_SOURCES.purchase_orders.permission, AI_SKILL_SOURCES.inventory.permission], sources: ['purchase_orders', 'inventory'], fieldGroups: [], inputSchema: entityInput(['named', 'late'], ['purchaseOrderIds']), outputSchema: evidenceOutput },
   // Needs only sign-in: it reads no business data.
   { id: 'capability_overview', version: '1', requiredAnyPermission: [], sources: [], fieldGroups: [], inputSchema: noInput, outputSchema: { skills: 'skill[]' } },
 ]

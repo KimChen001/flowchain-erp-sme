@@ -22,7 +22,7 @@ export const aiSkillRoutingCases = [
   { id: 'po-why', prompt: 'Why does this PO need attention?', focusTarget: po, expected: 'today_priorities', focus: po },
   { id: 'po-why-zh', prompt: '这个 PO 为什么需要关注？', focusTarget: po, expected: 'today_priorities', focus: po },
   { id: 'po-evidence', prompt: 'Which receipt or invoice evidence is missing?', focusTarget: po, expected: 'records_needing_data', focus: po },
-  { id: 'po-delay', prompt: 'What will a delay affect?', focusTarget: po, expected: 'highest_risk_items', focus: po },
+  { id: 'po-delay', prompt: 'What will a delay affect?', focusTarget: po, expected: 'late_order_impact', focus: po },
   { id: 'po-next', prompt: 'What should happen next?', focusTarget: po, expected: 'prepare_action_draft', focus: po },
   { id: 'po-next-zh', prompt: '建议下一步是什么？', focusTarget: po, expected: 'prepare_action_draft', focus: po },
   { id: 'sku-replenish', prompt: 'Does this SKU need replenishment?', focusTarget: sku, expected: 'today_priorities', focus: sku },
