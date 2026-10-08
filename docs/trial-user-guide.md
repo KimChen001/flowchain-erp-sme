@@ -71,6 +71,10 @@ dollars and the America/New_York time zone. An administrator can review them
 in **System Administration › Company & Workspace** (company name, **Default
 interface language**, **Regional format**, **Timezone**, **Base currency**).
 The base currency locks once posted transactions exist, so check it first.
+The same page has **Documents**: the letterhead, the **Default document
+language** and the purchase order and invoice templates (title, optional
+columns, terms, footer, payment instructions) used when a document is printed
+or saved as PDF. FlowChain adds no payment terms or bank details of its own.
 
 Other useful settings pages:
 
@@ -168,8 +172,11 @@ warehouse. Open it under
 **Procurement › Purchase orders**, check it, and choose **Submit for
 approval**; a manager chooses **Approve**.
 
-**4. Issue.** Send the purchase order to your supplier yourself, by email or
-your usual channel, then choose **Mark as issued to supplier**. As the screen
+**4. Issue.** On the approved order choose **Open PO document**, then **Print
+or save as PDF**, and send it to your supplier yourself, by email or your usual
+channel. The document can be printed from approval until the order is closed,
+and only by a role that can see prices; **Document language** on the page
+changes the language of one print. Then choose **Mark as issued to supplier**. As the screen
 says, issuing records that you sent the PO; FlowChain does not send it.
 
 **5. Receiving.** When goods arrive, open the purchase order and choose
@@ -203,11 +210,15 @@ reason, never deleted.
 
 ## 4. Selling: from order to payment
 
-**1. Sales order.** **Sales › Sales orders › New sales order**. Enter the order
-number, type the customer's name (it is not linked to your imported customer
-records), the 3-letter currency, and one item, quantity and **Unit price**,
-then **Save draft**. The button stays disabled until a unit price is entered.
-Open the order and choose **Confirm order**.
+**1. Sales order.** **Sales › Sales orders › New sales order**. Choose the
+**Customer** from your customer records (**Master Data › Customers**; add or
+import customers first). Their recorded payment terms show under the choice,
+and their recorded currency replaces the workspace currency. Enter the order
+number, an optional **Promised date**, and for each line the item, quantity
+and **Unit price**; **Add line** adds another. Then **Save draft**. The button
+stays disabled until every line has a unit price. Open the order and choose
+**Confirm order**. A draft can be edited as a whole: customer, promised date
+and every line.
 
 **2. Reserve.** On the confirmed order choose **Reserve inventory**, pick the
 warehouse and location to take the stock from, check the preview and
@@ -223,8 +234,10 @@ shipment choose **Create invoice** (or **New invoice**), choose the shipment,
 enter the quantity and any tax, **Preview** and **Create draft**. The price
 comes from the sales order. Then **Submit**, **Approve** and **Issue
 invoice**. Issuing creates the amount the customer owes under **Payables &
-receivables › Receivables**. FlowChain does not send the invoice; you send it
-to your customer.
+receivables › Receivables**. FlowChain does not send the invoice: on the issued invoice choose **Open
+invoice document**, then **Print or save as PDF**, and send it to your customer
+yourself. An approved invoice that is not issued yet opens as a preview marked
+"Not issued — do not send."
 
 **5. Payment received.** When the customer pays, on the issued invoice choose
 **Record payment received** and enter the date, amount, method and reference. As with bills,
@@ -359,9 +372,10 @@ trial. Tell them the page, the document number and what you expected.
 
 What FlowChain does not do today:
 
-- It does not print or create PDF purchase orders or invoices. Send orders and
-  invoices from your own documents or email. The **Print templates** list
-  under Master Data is a preview; it does not produce or save documents.
+- It prints purchase orders and invoices through your browser (**Print or save
+  as PDF**) but does not send them; you send them yourself. The **Print
+  templates** list under Master Data is a preview; it does not produce or save
+  documents.
 - It sends no email other than the sign-in link. Approvals are not announced by
   email; check the lists in FlowChain.
 - It does not send anything to suppliers or customers.
@@ -379,8 +393,6 @@ The technical list of current limits is in
 These are planned. Dates and details may change.
 
 - Adding and editing warehouses in Settings.
-- Picking the customer on a sales order from your customer list.
-- Purchase order and invoice documents you can download and send.
-- Print layouts for those documents.
+- Print layouts saved for the whole workspace.
 - Email notifications when something waits for your approval.
 - Further security and alert improvements.
