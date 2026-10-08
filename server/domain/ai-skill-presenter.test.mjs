@@ -63,7 +63,10 @@ test('today priorities states the report figures with tenant formatting', async 
   const { answer } = await answers()
   const english = answer('today_priorities', 'en-US')
   assert.equal(english.conclusion.title, '8 items need attention today (as of Sep 29, 2026)')
-  assert.equal(english.conclusion.summary, '4 open purchase orders, 2 overdue. Committed PO spend: €500.00 and $17,920.00. Committed supplier invoices: $7,381.50. 1 SKU is short against open sales orders: LDM-001.')
+  // The answer lists 5 of the 8 and says so; submitted supplier invoices are
+  // not work to do, so the figure stays in the metrics, not the sentence.
+  assert.equal(english.conclusion.summary, 'Showing the first 5 of 8, earliest date first. 4 open purchase orders, 2 overdue. Committed PO spend: €500.00 and $17,920.00. 1 SKU is short against open sales orders: LDM-001.')
+  assert.equal(answer('today_priorities', 'zh-CN').conclusion.summary.startsWith('按日期先列出 8 项中的 5 项。'), true)
   assert.deepEqual(english.metrics, { asOf: '2026-09-29', openPurchaseOrders: 4, overduePurchaseOrders: 2, committedSpend: [{ currency: 'EUR', amount: 500 }, { currency: 'USD', amount: 17920 }], committedInvoices: [{ currency: 'USD', amount: 7381.5 }], atRiskSkus: ['LDM-001'], atRiskSkuCount: 1 })
   // By date: the longest overdue first (PO-001 4 days, PO-008 2 days), then due
   // soonest (PO-002 in 4 days), then the oldest open problems. The undated
@@ -151,4 +154,15 @@ test('the refusal offers a draft and never acts', async () => {
   assert.deepEqual(refusal.reviewCards, [])
   const zh = answer('capability_overview', 'zh-CN', { refusal: true })
   assert.match(zh.conclusion.summary, /我不能批准、付款、发送/)
+})
+
+test('one open purchase order is singular, and a name ending in a period ends the sentence once', async () => {
+  const { aiSkillCountText, aiSkillText } = await import('./ai-skill-copy.mjs')
+  // The 2026-10-08 walkthrough: "1 open purchase orders" and "from Acme Valve Co..".
+  assert.equal(aiSkillCountText('metrics.no_overdue', 1, 'en-US', { open: '1', overdue: '0' }), '1 open purchase order; it is not overdue.')
+  assert.equal(aiSkillCountText('metrics.open_pos', 1, 'en-US', { open: '1', overdue: '1' }), '1 open purchase order, and it is overdue.')
+  assert.equal(aiSkillCountText('metrics.no_overdue', 3, 'en-US', { open: '3', overdue: '0' }), '3 open purchase orders; none are overdue.')
+  assert.equal(aiSkillText('metrics.committed_spend', 'en-US', { amounts: 'Acme Valve Co.' }), 'Committed PO spend: Acme Valve Co.')
+  assert.equal(aiSkillText('metrics.committed_spend', 'en-US', { amounts: '$5.00' }), 'Committed PO spend: $5.00.')
+  assert.equal(aiSkillText('metrics.committed_spend', 'zh-CN', { amounts: 'Acme Valve Co.' }), '已承诺采购金额：Acme Valve Co.。')
 })

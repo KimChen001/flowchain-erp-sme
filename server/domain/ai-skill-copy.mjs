@@ -123,17 +123,22 @@ const entries = {
 
   // Report figures, shared by several skills
   'metrics.open_pos': ['{open} open purchase orders, {overdue} overdue.', '未结采购订单 {open} 张，其中逾期 {overdue} 张。'],
+  'metrics.open_pos_one': ['1 open purchase order, and it is overdue.', '未结采购订单 1 张，已逾期。'],
   'metrics.no_overdue': ['{open} open purchase orders; none are overdue.', '未结采购订单 {open} 张，没有逾期。'],
+  'metrics.no_overdue_one': ['1 open purchase order; it is not overdue.', '未结采购订单 1 张，没有逾期。'],
   'metrics.committed_spend': ['Committed PO spend: {amounts}.', '已承诺采购金额：{amounts}。'],
-  'metrics.committed_invoices': ['Committed supplier invoices: {amounts}.', '已提交供应商发票金额：{amounts}。'],
+  'metrics.committed_invoices': ['Supplier invoices submitted, paid ones included: {amounts}.', '已提交的供应商发票（含已付）：{amounts}。'],
   'metrics.at_risk': ['{count} SKUs are short against open sales orders: {skus}.', '{count} 个 SKU 无法满足未结销售订单：{skus}。'],
   'metrics.at_risk_one': ['1 SKU is short against open sales orders: {skus}.', '1 个 SKU 无法满足未结销售订单：{skus}。'],
   'metrics.at_risk_none': ['No SKU is short against open sales orders.', '没有 SKU 无法满足未结销售订单。'],
   'metrics.amounts_hidden': ['Amounts are hidden for your role.', '你的角色无法查看金额。'],
   'metrics.title': ['{open} open purchase orders, {overdue} overdue (as of {date})', '未结采购订单 {open} 张，逾期 {overdue} 张（截至 {date}）'],
+  'metrics.title_one': ['1 open purchase order, {overdue} overdue (as of {date})', '未结采购订单 1 张，逾期 {overdue} 张（截至 {date}）'],
 
   // today_priorities
   'today.title': ['{count} items need attention today (as of {date})', '今天需要关注 {count} 项（截至 {date}）'],
+  'answer.showing': ['Showing the first {shown} of {total}, earliest date first.', '按日期先列出 {total} 项中的 {shown} 项。'],
+  'answer.showing_plain': ['Showing {shown} of {total}.', '列出 {total} 项中的 {shown} 项。'],
   'today.title_one': ['1 item needs attention today (as of {date})', '今天需要关注 1 项（截至 {date}）'],
   'today.title_none': ['Nothing needs attention today (as of {date})', '今天没有需要优先处理的事项（截至 {date}）'],
   'today.focus_title': ['Why {id} needs attention', '{id} 需要关注的原因'],
@@ -716,8 +721,13 @@ export const AI_SKILL_COPY = Object.freeze(Object.fromEntries(Object.entries(ent
 
 // Fills {name} placeholders. A missing value renders as an empty string, never
 // as the placeholder or "undefined".
+// A value that ends with its own period ("Acme Valve Co.") stands in for the
+// template's period after it, so a sentence never ends "Co..".
 function fill(template, values = {}) {
-  return template.replace(/\{(\w+)\}/g, (_, name) => (values[name] === undefined || values[name] === null ? '' : String(values[name])))
+  return template.replace(/\{(\w+)\}(\.?)/g, (_, name, dot) => {
+    const value = values[name] === undefined || values[name] === null ? '' : String(values[name])
+    return value + (dot && value.endsWith('.') ? '' : dot)
+  })
 }
 
 export function aiSkillText(key, language, values) {

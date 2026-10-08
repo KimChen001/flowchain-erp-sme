@@ -1,7 +1,7 @@
 import { aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, compareSignalsByPrintedDate, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
-import { aiSkillFocusName, matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
+import { aiSkillFocusName, matchesAiSkillFocus, showingSentence } from './ai-skill-today-priorities.mjs'
 
 const TOP = 5
 // The open problems this list names: late orders, stock below its levels,
@@ -54,6 +54,7 @@ export function presentHighestRisk(result, facts, { skill, language, query }) {
     : first ? aiSkillText('risk.title', language, { first: firstText }) : aiSkillText('risk.title_none', language, { date: fmt.day(facts.asOf) })
   const summary = aiSkillSentences([
     ...(result.total ? [aiSkillText('risk.summary', language, { count: fmt.number(result.total) })] : []),
+    showingSentence(result, fmt, language, 'answer.showing'),
     ...aiSkillMetricSentences(facts, language, { spend: false, invoices: false }),
   ], language)
   return presentAiSkillAnswer({ skill, facts, language, query, title, summary, severity: first?.severity || 'success', items: result.items, followUpIds: ['prepare_action_draft', 'today_priorities'] })
