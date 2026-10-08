@@ -83,6 +83,8 @@ import OverviewPanel from "../modules/overview/Page";
 import ProcurementPanel from "../modules/procurement/Page";
 import { CanonicalRfqDetailPage } from "../modules/procurement/CanonicalRfqDetailPage";
 import { CanonicalRfqComparisonPage } from "../modules/procurement/CanonicalRfqComparisonPage";
+import { PurchaseOrderDocumentPage } from "../modules/business-documents/PurchaseOrderDocumentPage";
+import { CustomerInvoiceDocumentPage } from "../modules/business-documents/CustomerInvoiceDocumentPage";
 import FinanceWorkbench from "../modules/finance/Page";
 import SrmPage from "../modules/srm/Page";
 import MasterDataPage from "../modules/master-data/Page";
@@ -1834,6 +1836,10 @@ export default function FlowChainApp() {
                             effectivePermissionCodes={effectivePermissionCodes}
                             authorizationLoadState={authorizationLoadState}
                           />
+                        ) : activeRoute.id === "procurement:order-document" ? (
+                          <PurchaseOrderDocumentPage orderId={entityIdForRoutePath(activeRoute, location.pathname)} />
+                        ) : activeRoute.id === "sales:invoice-document" ? (
+                          <CustomerInvoiceDocumentPage invoiceId={entityIdForRoutePath(activeRoute, location.pathname)} />
                         ) : activeRoute.panelId === "receiving-workbench" ? (
                           panels["receiving-workbench"]
                         ) : activeRoute.panelId === "outbound-workbench" ? (
