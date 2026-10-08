@@ -231,6 +231,8 @@ export type SupplierMaster = {
 };
 
 export type WarehouseBin = {
+  // The record id, for links; the code is what people read. Absent on fallback rows.
+  warehouseId?: string;
   warehouseCode: string;
   warehouseName: string;
   zone: string;

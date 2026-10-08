@@ -433,7 +433,7 @@ export default function ItemMasterWorkbench({
         <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
           <div>
             <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("Item list")}</div>
-            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{copy("{total} items, {shown} shown", { total: items.length, shown: shown.length })}</div>
+            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: items.length, shown: shown.length })}</div>
           </div>
         </div>
         {error && <p className="px-5 pt-3 text-xs text-red-600">{error}</p>}

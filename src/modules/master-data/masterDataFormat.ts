@@ -54,6 +54,17 @@ const zh: Record<string, string> = {
   "Uncategorized": "未分类", "Not set: the reorder list does not check this item": "未设置：补货清单不会检查该物料",
   "View": "查看", "Material": "物料", "Purchase unit": "采购单位",
   "Safety stock / reorder point": "安全库存 / 再订货点", "Lead time": "提前期", "{count} days": "{count} 天",
+  // The reference lists (customers, warehouses, tax codes, payment terms, print templates).
+  "All statuses": "全部状态", "All QA statuses": "全部 QA 状态", "All document types": "全部单据类型",
+  "{total} records, {shown} shown": "共 {total} 条，当前显示 {shown} 条", "1 record, {shown} shown": "共 1 条，当前显示 {shown} 条",
+  "1 item, {shown} shown": "共 1 个物料，当前显示 {shown} 个", "No records match these filters": "没有符合筛选条件的记录",
+  "Customer search": "客户查询", "Search customers by code, name, contact, phone, address or payment terms.": "按编号、名称、联系人、电话、地址或付款条款查询客户。",
+  "Customer list": "客户列表", "Warehouse search": "仓库查询", "Search warehouses by code, name, zone, bin or owner.": "按编码、名称、库区、库位或负责人查询仓库。",
+  "Warehouse list": "仓库列表", "No warehouses yet.": "暂无仓库。", "Tax code search": "税码查询",
+  "Search tax codes by code, name, type, region or description.": "按编码、名称、税种、区域或描述查询税码。", "Tax code list": "税码列表",
+  "No tax codes yet.": "暂无税码。", "Payment term search": "付款条款查询", "Search payment terms by code, name or description.": "按编码、名称或描述查询付款条款。",
+  "Payment term list": "付款条款列表", "No payment terms yet.": "暂无付款条款。", "Print template search": "打印模板查询",
+  "Search templates by name or document type.": "按名称或单据类型查询模板。", "Print template list": "打印模板列表", "No print templates yet.": "暂无打印模板。",
 };
 const en = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [chinese, english]));
 
