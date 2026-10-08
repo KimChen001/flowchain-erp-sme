@@ -402,6 +402,8 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   );
   await page.getByTestId("customer-invoice-submit").click();
   await expect(page.getByTestId("customer-invoice-submit-panel")).toContainText("Someone else changed this invoice first.");
+  // The earlier preview no longer holds, so Confirm waits for a new preview.
+  await expect(page.getByTestId("customer-invoice-submit-confirm")).toBeDisabled();
   await page.unroute("**/api/finance/customer-invoices/*/submit");
   await page.getByTestId("customer-invoice-submit-panel").getByRole("button", { name: /^(Close|关闭)$/ }).click();
   for (const action of ["submit", "approve", "issue"]) {

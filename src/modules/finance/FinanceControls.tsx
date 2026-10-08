@@ -108,6 +108,8 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       return true;
     } catch (cause) {
       setError(cause instanceof ApiError ? issueText?.(cause.code) || cause.message : cause instanceof Error ? cause.message : t("finance.loadFailed"));
+      // The preview no longer holds (another change got there first): preview again before confirming.
+      setPlan(null);
       return false;
     } finally {
       setBusy(false);
