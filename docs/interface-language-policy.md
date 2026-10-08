@@ -65,6 +65,34 @@ names, or supplier names in place. Translate their presentation where appropriat
   that a purchase order line in another unit than the item's stock unit is not counted
   as incoming is in both languages on the reports page and in the assistant's stock and
   order answers.
+- English trial screens (pilot item 7, first part). Sales delivery risks and order
+  evidence (`src/modules/sales/Page.tsx`) translate the sales order read API's status,
+  risk and customer-tier labels, the unnamed-customer name and the multi-line item name
+  when shown (`src/modules/sales/salesDemandCopy.ts`); the allocation warning and the
+  evidence error are translated, and the review panel in the order drawer
+  (`src/components/business/BusinessObjectDetail.tsx`) has English and Chinese
+  decisions and messages. The API still sends its Chinese labels; only the display
+  changes. `server/domain/interface-language-coverage.test.mjs` lists the
+  English-covered screens (the five operational finance screens, inventory operations,
+  the reorder list, procurement document detail, three-way match, the receiving list,
+  AI suggestions, sales risks and evidence, and the business object detail panels):
+  every Chinese literal in them must be a dictionary key or the Chinese half of an
+  English/Chinese pair. The browser spec `tests/browser/english-trial.spec.ts` runs
+  with the US trial capability set (`PLAYWRIGHT_US_TRIAL=true`) on the walkthrough
+  data and on an empty workspace, and checks Today, purchasing (workbench, requests,
+  orders, receiving, bills, three-way match), inventory stock, transfers, counts and
+  adjustments (lists and new forms), sales risks, evidence and invoices, finance
+  overview, payables, receivables and aging, the reports overview and the open
+  assistant. Deferred: the sales order and shipment workbench (`/app/sales/orders`,
+  `OutboundWorkbench.tsx`) until #173 and #178; the inventory filter chips
+  (`src/modules/inventory/Page.tsx`) until #182; shell strings in
+  `src/app/FlowChainApp.tsx` until #174 and #179; an order's evidence graph, whose
+  risk summaries the server writes in Chinese. Out of scope because no route renders
+  them: `src/modules/overview/overviewEvidence.ts` and `TodayCockpitPanel.tsx`, the
+  inventory movement ledger, exception, warning and adjustment page files, the V2
+  panels under `src/components`, `src/modules/sales/DeliveryPage.tsx` and
+  `ReceiptPage.tsx`, `src/modules/receiving/Page.tsx` (the receiving routes render
+  `ReceivingListPage`) and the procurement panels PR #147 removes.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.
