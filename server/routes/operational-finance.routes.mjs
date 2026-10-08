@@ -420,6 +420,17 @@ export async function handleOperationalFinanceRoute(ctx) {
         );
         return true;
       }
+      if (ctx.req.method === "POST" && (action === "duplicate-dismiss-preview" || action === "duplicate-dismiss")) {
+        if (!ensureCapability(ctx, "supplier-invoice")) return true;
+        ctx.send(
+          ctx.res,
+          200,
+          action === "duplicate-dismiss-preview"
+            ? await command.previewDismissDuplicate(invoiceId, body, ctx)
+            : await command.dismissDuplicate(invoiceId, body, ctx),
+        );
+        return true;
+      }
       if (ctx.req.method === "POST" && (action === "link-receipt-preview" || action === "link-receipt")) {
         if (!ensureCapability(ctx, "supplier-invoice")) return true;
         ctx.send(

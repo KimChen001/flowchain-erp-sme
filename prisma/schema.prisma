@@ -53,6 +53,7 @@ model Tenant {
   receivableObligations                 ReceivableObligation[]
   customerCreditNotes                   CustomerCreditNote[]
   paymentRecords                        PaymentRecord[]
+  supplierInvoiceDuplicateReviews       SupplierInvoiceDuplicateReview[]
   cashbookAccounts                      CashbookAccount[]
   settlementDocuments                   SettlementDocument[]
   settlementAllocations                 SettlementAllocation[]
@@ -1429,16 +1430,42 @@ model SupplierInvoice {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  tenant              Tenant                  @relation(fields: [tenantId], references: [id])
-  lines               SupplierInvoiceLine[]
-  matchRuns           ThreeWayMatch[]
-  matchExceptions     FinanceMatchException[]
-  payableObligation   PayableObligation?
-  supplierCreditMemos SupplierCreditMemo[]
+  tenant                  Tenant                           @relation(fields: [tenantId], references: [id])
+  lines                   SupplierInvoiceLine[]
+  matchRuns               ThreeWayMatch[]
+  matchExceptions         FinanceMatchException[]
+  payableObligation       PayableObligation?
+  supplierCreditMemos     SupplierCreditMemo[]
+  duplicateReviews        SupplierInvoiceDuplicateReview[] @relation("SupplierInvoiceDuplicateReviews")
+  duplicateReviewsAsOther SupplierInvoiceDuplicateReview[] @relation("SupplierInvoiceDuplicateReviewsAsOther")
 
   @@index([tenantId, status])
   @@index([tenantId, relatedPoId])
   @@index([tenantId, supplierId, invoiceNumber])
+  @@index([tenantId, supplierId, currency, invoiceDate])
+}
+
+// A duplicate flag dismissed by the approver of supplierInvoiceId, with the
+// reason and the basis it was given on (both bills' normalized number,
+// currency, total and day). Rows are kept as history; one whose basis no
+// longer holds is shown as no longer applying.
+model SupplierInvoiceDuplicateReview {
+  id                String   @id
+  tenantId          String
+  supplierInvoiceId String
+  otherInvoiceId    String
+  kind              String
+  basis             Json
+  reason            String
+  dismissedById     String
+  dismissedAt       DateTime @default(now())
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  supplierInvoice SupplierInvoice @relation("SupplierInvoiceDuplicateReviews", fields: [supplierInvoiceId], references: [id], onDelete: Restrict)
+  otherInvoice    SupplierInvoice @relation("SupplierInvoiceDuplicateReviewsAsOther", fields: [otherInvoiceId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, supplierInvoiceId])
+  @@index([otherInvoiceId])
 }
 
 model SupplierInvoiceLine {
