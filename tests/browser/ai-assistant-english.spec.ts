@@ -97,6 +97,48 @@ test("a prepared draft opens as a supplier message for the user's own mail app",
   await expect(shell).toHaveCount(0);
 });
 
+test("one message to a supplier covers its overdue orders, says how much arrived, and notes a missing email", async ({ page }) => {
+  await signIn(page);
+  const panel = await openAssistant(page);
+  const answers = panel.locator('[data-answer-source="workspace_rules"]');
+  const before = await answers.count();
+  await page.getByTestId("ai-assistant-input").fill("Prepare a message to Acme Components asking about partial delivery.");
+  await page.getByTestId("ai-assistant-send").click();
+  await expect(answers).toHaveCount(before + 1, { timeout: 15_000 });
+  const answer = answers.last();
+  // Every draft is for Acme: the follow-up and, when Acme has one, its invoice query.
+  await expect(answer).toContainText(/[0-9]+ drafts? for Acme Components/);
+  await answer.locator('[data-testid="ai-action-draft-preview"][data-draft-type="po_followup_draft"]').first().click();
+  const shell = page.getByTestId("action-draft-review-shell");
+  // Acme has no email on file: the review says so rather than leaving To blank.
+  await expect(shell.getByTestId("action-draft-to-missing")).toContainText("No email on file for this supplier");
+  // Both overdue orders, each line named by its order; the partly received one says how much arrived.
+  const lines = shell.getByTestId("action-draft-lines");
+  await expect(lines.locator("th")).toHaveText(["Order", "SKU", "Item", "Remaining", "Received", "Promised date"]);
+  await expect(lines).toContainText("LOCAL-DEMO-PO-001");
+  await expect(lines).toContainText("LOCAL-DEMO-PO-015");
+  await expect(lines).toContainText("20 of 50");
+  await expect(shell.getByTestId("action-draft-message-body")).toHaveValue(/could you ship what is ready now/);
+  expect(await chineseLines(shell), "draft review").toEqual([]);
+  await page.getByRole("button", { name: "Discard draft" }).click();
+  await expect(shell).toHaveCount(0);
+
+  // Asked under the purchasing policy, the answer cites the workspace's policy
+  // document, and the draft review shows it as the basis, outside the message.
+  // (Reviewing a draft closed the assistant; it opens again on the same conversation.)
+  await page.getByTestId("ai-assistant-toggle").click();
+  await expect(panel).toBeVisible();
+  const count = await answers.count();
+  await page.getByTestId("ai-assistant-input").fill("Under our purchasing policy, prepare a message to Acme Components about its overdue orders.");
+  await page.getByTestId("ai-assistant-send").click();
+  await expect(answers).toHaveCount(count + 1, { timeout: 15_000 });
+  await answers.last().locator('[data-testid="ai-action-draft-preview"][data-draft-type="po_followup_draft"]').first().click();
+  await expect(shell.getByTestId("action-draft-basis")).toContainText("Based on your documents:");
+  await expect(shell.getByTestId("action-draft-basis")).toContainText("Procurement and Inventory Operating Policy");
+  await expect(shell.getByTestId("action-draft-message-body")).not.toHaveValue(/Procurement and Inventory Operating Policy/);
+  await page.getByRole("button", { name: "Discard draft" }).click();
+});
+
 test("every line that needs attention states its next step and offers its draft there", async ({ page }) => {
   await signIn(page);
   const panel = await openAssistant(page);

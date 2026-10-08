@@ -1,8 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 
 // A finance user takes a posted receipt through the supplier invoice screens:
-// enter the invoice, submit, match, approve, hold the payable; and an
-// overcharge whose variance is rejected is cancelled instead of approved.
+// enter the invoice, submit, match, approve, hold the payable; an
+// overcharge whose variance is rejected is cancelled instead of approved; and a
+// bill that repeats another bill's number is approved only after its duplicate
+// flag is dismissed with a reason.
 test.setTimeout(150_000);
 
 async function signIn(page: Page, email: string) {
@@ -71,4 +73,45 @@ test("a rejected overcharge is not offered for approval and can be cancelled", a
   await run(page, "invoice-cancel", "Supplier billed above the PO price");
   await expect(page.getByTestId("supplier-invoice-actions")).not.toContainText(/Cancel invoice|取消发票/);
   await expect(page.getByTestId("supplier-invoice-detail")).toContainText(/Cancelled|已取消/);
+});
+
+test("a second bill numbered as a format variant is flagged, dismissed with a reason, then approved", async ({ page }) => {
+  await signIn(page, "manager@example.com");
+  // The supplier sends invoice 7 twice, written differently.
+  await enterInvoice(page, "UI-DUP-007", "1");
+  const original = page.url().split("/").at(-1);
+  await enterInvoice(page, "ui dup 7", "1");
+  const checks = page.getByTestId("supplier-invoice-duplicates");
+  await expect(checks).toContainText(/Likely duplicate: same invoice number|疑似重复：.*发票号相同/);
+  await expect(checks).toContainText("ui dup 7");
+  await expect(checks).toContainText("UI-DUP-007");
+  await expect(checks.getByRole("link", { name: "UI-DUP-007" })).toHaveAttribute("href", `/app/procurement/bills/${original}`);
+  await expect(page.getByTestId("duplicate-window")).toContainText("7");
+  await expect(page.getByTestId("duplicate-window")).toContainText(/cancelled bills not compared|已取消的账单不比较/);
+  await run(page, "invoice-submit");
+  await run(page, "invoice-match");
+
+  // Approval asks for the review first.
+  await page.getByTestId("invoice-approve").click();
+  await page.getByTestId("invoice-approve-preview").click();
+  await expect(page.getByTestId("invoice-approve-panel")).toContainText(/Dismiss each open duplicate flag with a reason|批准前请逐条填写原因排除重复标记/);
+  await expect(page.getByTestId("invoice-approve-confirm")).toBeDisabled();
+  // The flag is listed at the approval step with the other bill.
+  await expect(page.getByTestId("invoice-approve-duplicate")).toHaveAttribute("data-kind", "likely");
+  await expect(page.getByTestId("invoice-approve-duplicates").getByRole("link", { name: "UI-DUP-007" })).toHaveAttribute("href", `/app/procurement/bills/${original}`);
+  await page.getByTestId("invoice-approve-panel").getByRole("button", { name: /^(Close|关闭)$/ }).click();
+
+  // A reason is required; the dismissal shows who and why.
+  await page.getByTestId("duplicate-dismiss-likely").click();
+  await page.getByTestId("duplicate-dismiss-likely-preview").click();
+  await expect(page.getByTestId("duplicate-dismiss-likely-panel")).toContainText(/Enter why this bill is not a duplicate|请填写不是重复的原因/);
+  await page.getByTestId("duplicate-dismiss-likely-reason").fill("The draft UI-DUP-007 was entered by mistake");
+  await page.getByTestId("duplicate-dismiss-likely-preview").click();
+  await expect(page.getByTestId("duplicate-dismiss-likely-confirm")).toBeEnabled();
+  await page.getByTestId("duplicate-dismiss-likely-confirm").click();
+  await expect(page.getByTestId("duplicate-dismissal")).toContainText("The draft UI-DUP-007 was entered by mistake");
+  await expect(page.getByTestId("duplicate-flag")).toHaveAttribute("data-status", "dismissed");
+
+  await run(page, "invoice-approve");
+  await expect(page.getByTestId("supplier-invoice-payable")).toBeVisible();
 });

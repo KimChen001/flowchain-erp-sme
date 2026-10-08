@@ -1,7 +1,7 @@
 import { aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, compareSignalsByPrintedDate, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
-import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
+import { aiSkillFocusName, matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
 
 const TOP = 5
 // The open problems this list names: late orders, stock below its levels,
@@ -48,7 +48,7 @@ export function presentHighestRisk(result, facts, { skill, language, query }) {
   const firstText = first ? aiSkillText('risk.first', language, { label: first.label, status }) : ''
   // Narrowed to one record, the title says so: "Open problems on PO-016",
   // never the whole workspace's.
-  const id = result.focus?.entityId
+  const id = result.focus ? aiSkillFocusName(result.focus, facts) : null
   const title = id
     ? first ? aiSkillText('risk.focus_title', language, { id, first: first.label === id ? status : firstText }) : aiSkillText('risk.focus_none', language, { id, date: fmt.day(facts.asOf) })
     : first ? aiSkillText('risk.title', language, { first: firstText }) : aiSkillText('risk.title_none', language, { date: fmt.day(facts.asOf) })

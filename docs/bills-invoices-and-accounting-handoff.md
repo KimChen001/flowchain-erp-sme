@@ -226,6 +226,55 @@ record instead (`PaymentRecord`, `server/domain/payment-record-command-service.m
 - It records that money moved; FlowChain never moves money and writes no
   cashbook or ledger entry.
 
+## 8a. Duplicate bill checks
+
+A supplier sometimes sends the same invoice twice, or a bill is entered twice.
+FlowChain flags such bills; it never blocks or holds one on its own (plan item
+C1, decision 9). The rules are in `server/domain/supplier-invoice-duplicates.mjs`.
+
+- The exact invoice number stays unique per supplier in the database
+  (`SupplierInvoice_tenant_supplier_number_key`, cancelled bills excepted), so
+  a bill with the same number is refused when it is entered.
+- **Likely duplicate:** another bill of the same supplier whose number is the
+  same once case, spaces, dashes, dots, slashes and leading zeros are set
+  aside. Leading zeros are dropped from each run of digits both before and
+  after the separators are removed, and either reading counts, so
+  "INV-2024-001", "inv 2024/1" and "INV2024001" are all the same number.
+  Because inner separators are removed, "INV-1-23" and "INV-12-3" are flagged
+  too; both numbers are printed for the approver to judge.
+- **Possible duplicate:** another bill of the same supplier in the same
+  currency with the same total, dated at most 7 calendar days apart. The page
+  prints how far apart ("same amount, 3 days apart"). Amounts are compared
+  only within one currency. Bill dates are calendar dates as entered.
+- Cancelled bills are left out. A bill with no supplier, number or date says
+  which check was not done; it is never passed silently.
+- The bill page shows each flag with the other bill's number (a link), date,
+  amount and status, and so does the approval step. Both bills show the
+  flag. Flags are listed likely first, then by the other bill's date, oldest
+  first.
+- An approver (`finance.supplier_invoice.approve`) either dismisses a flag
+  with a reason, which is audited and shown afterwards with who and when, or
+  cancels the bill through the usual cancel step. Approving a bill with an
+  open flag asks for that first. Approved bills cannot be cancelled, so when
+  the earlier bill is already approved, the later one is the one cancelled.
+- Each approver dismisses the flag on their own bill. A dismissal given on
+  the other bill is shown beside the flag but does not clear it. Once a bill
+  is past approval (approved, held while its payable is on hold, or
+  cancelled), its undismissed flags are shown for information only ("no
+  action") and can no longer be dismissed on it.
+- A dismissal names the other bill's version as the approver saw it; if the
+  other bill changed since, the dismissal is refused and the page asks for a
+  reload.
+- A dismissal holds only while both bills keep the number, currency, total
+  and date it was given for. Editing a draft reopens the flag, and the old
+  dismissal is shown as no longer applying.
+- A same-amount flag reveals that two totals are equal, so a role without
+  `finance.amounts.read` does not see those flags and is told so. If such an
+  approver approves a bill with an open same-amount flag, approval waits for
+  someone who can see amounts; they are not told which bill.
+- Payments are not held by these flags; whether to hold a bill to pay is a
+  separate owner decision.
+
 ## 9. Accounting handoff
 
 See section 10 for formats. Three layers, built in order:

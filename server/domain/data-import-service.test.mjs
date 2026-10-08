@@ -35,7 +35,7 @@ const seed = () => ({
     { id: 'SUP-5', tenantId: TENANT, code: 'SUP-005', status: 'active', metadata: { defaultCurrency: 'USD' } },
     { id: 'SUP-B', tenantId: OTHER, code: 'SUP-FOREIGN', status: 'active', metadata: { defaultCurrency: 'EUR' } },
   ],
-  paymentTerm: [{ id: 'TERM-30', tenantId: TENANT, code: 'NET30' }, { id: 'TERM-B', tenantId: OTHER, code: 'NET60' }],
+  paymentTerm: [{ id: 'TERM-DUE', tenantId: TENANT, code: 'DUE', name: 'Due on receipt' }, { id: 'TERM-30', tenantId: TENANT, code: 'NET30', name: 'Net 30' }, { id: 'TERM-B', tenantId: OTHER, code: 'NET60', name: 'Net 60' }],
   runtimeRecord: [
     { id: 'RR-1', tenantId: TENANT, namespace: 'master-data.customers', recordKey: 'CUST-001', payload: { id: 'CUST-1' } },
     { id: 'RR-B', tenantId: OTHER, namespace: 'master-data.customers', recordKey: 'CUST-FOREIGN', payload: { id: 'CUST-B' } },
@@ -239,6 +239,8 @@ test('existing keys are skipped, not updated', async () => {
   // An empty supplier currency becomes the workspace currency, shown in the preview.
   assert.deepEqual([rows[3].action, rows[3].details.currency, rows[3].details.currencySource], ['create', 'CNY', 'workspace'])
   assert.deepEqual(codes(rows[4]), ['PAYMENT_TERM_NOT_FOUND'])
+  // The issue lists the workspace's own codes, never another workspace's.
+  assert.deepEqual(rows[4].issues[0].params, { codes: 'DUE, NET30' })
   const customers = await service(prisma).preview('customers', { fileName: 'c.csv', contentBase64: csv(['Customer code,Customer name', 'CUST-001,Existing', 'CUST-002,New']) }, context)
   assert.deepEqual(customers.rows.map((row) => row.action), ['skip_existing', 'create'])
   const links = await service(prisma).preview('item-suppliers', { fileName: 'l.csv', contentBase64: csv(['SKU,Supplier code,Reference price,Currency', 'VALVE-100,SUP-001,12.5,', 'PIPE-200,SUP-001,3,EUR', 'NOPE,SUP-001,1,', 'PIPE-200,SUP-404,1,']) }, context)
@@ -599,4 +601,17 @@ test('an inactive warehouse the importer cannot operate is reported as out of sc
   prisma.data.warehouse.push({ id: 'WH-N', tenantId: TENANT, code: 'NORTH', name: 'North', status: 'inactive' })
   const result = await service(prisma).preview('opening-stock', { fileName: 'o.csv', contentBase64: csv(['SKU,Warehouse code,Location,Quantity', 'VALVE-100,NORTH,A-01,1']) }, context)
   assert.deepEqual([codes(result.rows[0]), result.rows[0].details.warehouseName], [['WAREHOUSE_SCOPE_DENIED'], null])
+})
+
+test('a payment term matches by code or name, written the way a spreadsheet writes it', async () => {
+  const prisma = fakePrisma()
+  const preview = await service(prisma).preview('suppliers', { fileName: 's.csv', contentBase64: csv(['Supplier code,Supplier name,Payment term code', 'SUP-A,Net thirty,Net 30', 'SUP-B,Lower case,net-30', 'SUP-C,By name,Due on receipt', 'SUP-D,Unknown,NET90']) }, context)
+  const rows = byRow(preview)
+  assert.deepEqual([2, 3, 4].map((line) => [codes(rows[line]), rows[line].action]), [[[], 'create'], [[], 'create'], [[], 'create']])
+  assert.deepEqual(codes(rows[5]), ['PAYMENT_TERM_NOT_FOUND'])
+  // A workspace with no payment terms says so instead of naming codes.
+  const empty = fakePrisma()
+  empty.data.paymentTerm.splice(0, empty.data.paymentTerm.length)
+  const none = await service(empty).preview('suppliers', { fileName: 's.csv', contentBase64: csv(['Supplier code,Supplier name,Payment term code', 'SUP-A,No terms,NET30']) }, context)
+  assert.deepEqual(codes(none.rows[0]), ['PAYMENT_TERMS_NONE'])
 })

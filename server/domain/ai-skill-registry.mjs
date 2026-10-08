@@ -56,6 +56,7 @@ export const AI_SKILL_MODES = Object.freeze({
   purchase_orders: Object.freeze(['single', 'supplier', 'sku', 'overdue', 'not_found', 'hidden', 'ambiguous']),
   inventory_availability: Object.freeze(['single', 'overview', 'short', 'not_found', 'hidden']),
   pending_approvals: Object.freeze(['all', 'not_found']),
+  spend_analysis: Object.freeze(['suppliers', 'items', 'trend']),
 })
 
 const definitions = [
@@ -75,6 +76,9 @@ const definitions = [
   { id: 'receiving_issues', version: '1', requiredAnyPermission: anyReadPermission, sources: ['receipts', 'purchase_orders'], fieldGroups: [], inputSchema: noInput, outputSchema: evidenceOutput },
   // Suppliers with open work, by date (ai-skill-supplier-attention.mjs).
   { id: 'supplier_attention', version: '1', requiredAnyPermission: anyReadPermission, sources: ['purchase_orders', 'receipts', 'supplier_invoices'], fieldGroups: ['invoice_amounts'], inputSchema: noInput, outputSchema: evidenceOutput },
+  // Committed spend by supplier, item or month, from the procurement
+  // dashboard's report (ai-skill-spend-analysis.mjs). Needs purchase orders.
+  { id: 'spend_analysis', version: '1', requiredAnyPermission: [AI_SKILL_SOURCES.purchase_orders.permission], sources: ['purchase_orders'], fieldGroups: ['purchase_order_amounts'], inputSchema: entityInput(AI_SKILL_MODES.spend_analysis, ['supplierIds']), outputSchema: evidenceOutput },
   // Needs only sign-in: it reads no business data.
   { id: 'capability_overview', version: '1', requiredAnyPermission: [], sources: [], fieldGroups: [], inputSchema: noInput, outputSchema: { skills: 'skill[]' } },
 ]
