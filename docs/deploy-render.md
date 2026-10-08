@@ -142,6 +142,10 @@ Sessions are stored in PostgreSQL, so a deploy or restart does not sign anyone o
 
 Repeat steps 4 and 5 for `flowchain-production`.
 
+Once both environments pass, set up error alerts and Render's notifications as
+described in [operations-alerts.md](operations-alerts.md). It also lists the log
+searches that find errors, crashes and restarts.
+
 ## 6. PostgreSQL backups
 
 Render keeps these backups for paid databases. Both Blueprint databases are on paid plans.
