@@ -45,14 +45,14 @@ function stubPrisma({ documents = {}, users = [], exceptions = [], tenant = { de
   };
 }
 
-function fakeMailer({ fail = () => false } = {}) {
+function recordingMailer({ fail = () => false } = {}) {
   const sent = [];
   return {
     sent,
     async send(message) {
       if (fail(message)) throw Object.assign(new Error("boom"), { code: "MAIL_DELIVERY_FAILED", provider: "postmark", status: 503, providerCode: "300" });
       sent.push(message);
-      return { provider: "fake", messageId: `m-${sent.length}` };
+      return { provider: "recorder", messageId: `m-${sent.length}` };
     },
   };
 }
@@ -63,7 +63,7 @@ function captureLogger() {
   return { lines, info: push, warn: push, error: push };
 }
 
-const notifier = ({ prisma, mailer = fakeMailer(), logger = captureLogger(), environment = env }) => ({
+const notifier = ({ prisma, mailer = recordingMailer(), logger = captureLogger(), environment = env }) => ({
   mailer,
   logger,
   service: createApprovalNotifier({ env: environment, prismaFactory: async () => prisma, mailer, logger }),
@@ -152,7 +152,7 @@ test("a PO uses its order number; a failing provider only logs, the delivery res
       approver("u-b", { permissions: ["procurement.purchase_order.approve"] }),
     ],
   });
-  const mailer = fakeMailer({ fail: (message) => message.to.startsWith("u-b") });
+  const mailer = recordingMailer({ fail: (message) => message.to.startsWith("u-b") });
   const { service, logger } = notifier({ prisma, mailer });
   const outcome = await service.documentWaiting({ identity: submitter, documentType: "purchase_order", documentId: "po-uuid-1" }).delivery;
   assert.equal(outcome.status, "sent");
@@ -165,7 +165,7 @@ test("a PO uses its order number; a failing provider only logs, the delivery res
   assert.deepEqual(prisma.calls.audits[0].metadata.failedUserIds, ["u-b"]);
 
   const brokenLogger = captureLogger();
-  const broken = createApprovalNotifier({ env, prismaFactory: async () => { throw Object.assign(new Error("db down"), { code: "P1001" }); }, mailer: fakeMailer(), logger: brokenLogger });
+  const broken = createApprovalNotifier({ env, prismaFactory: async () => { throw Object.assign(new Error("db down"), { code: "P1001" }); }, mailer: recordingMailer(), logger: brokenLogger });
   const result = await broken.documentWaiting({ identity: submitter, documentType: "purchase_order", documentId: "po-uuid-1" }).delivery;
   assert.deepEqual(result, { status: "failed", reason: "error" });
   assert.equal(brokenLogger.lines[0].event, "approval_email_failed");
@@ -235,7 +235,7 @@ test("the kill switch, a missing production origin and a workspace default of Ch
     tenant: { defaultLanguage: "zh-CN" },
   });
   let factoryCalls = 0;
-  const off = createApprovalNotifier({ env: { ...env, FLOWCHAIN_APPROVAL_EMAILS: "off" }, prismaFactory: async () => { factoryCalls += 1; return prisma; }, mailer: fakeMailer(), logger: captureLogger() });
+  const off = createApprovalNotifier({ env: { ...env, FLOWCHAIN_APPROVAL_EMAILS: "off" }, prismaFactory: async () => { factoryCalls += 1; return prisma; }, mailer: recordingMailer(), logger: captureLogger() });
   assert.deepEqual(await off.documentWaiting({ identity: submitter, documentType: "purchase_request", documentId: "PR-ZH" }).delivery, { status: "skipped", reason: "disabled" });
   assert.equal(factoryCalls, 0, "switched off: nothing is read");
 
