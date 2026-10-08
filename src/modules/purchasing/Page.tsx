@@ -36,6 +36,7 @@ import {
   SectionHeader,
 } from "../../components/ui";
 import { ActionableMetricCard } from "../../components/cards/ActionableMetricCard";
+import { ResponsiveFilters } from "../../components/business/ResponsiveFilters";
 import {
   DocumentActionBar,
   DocumentHeader,
@@ -1060,11 +1061,18 @@ export default function PurchasingOrdersPage({
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-3">
-          <Field label={copy("PO 编号")}>
-            <input value={filters.poNumber} onChange={(event) => updateFilter("poNumber", event.target.value)}
-              placeholder="PO-2026-1287" style={inputStyle} />
-          </Field>
+        {/* On phones the PO number stays in view and the rest open as a sheet. */}
+        <ResponsiveFilters
+          className="grid grid-cols-4 gap-3"
+          activeCount={(Object.keys(defaultPurchaseOrderWorkbenchFilters) as Array<keyof PurchaseOrderWorkbenchFilters>).filter((key) => key !== "poNumber" && filters[key] !== defaultPurchaseOrderWorkbenchFilters[key]).length}
+          onReset={resetFilters}
+          leading={
+            <Field label={copy("PO 编号")}>
+              <input value={filters.poNumber} onChange={(event) => updateFilter("poNumber", event.target.value)}
+                placeholder="PO-2026-1287" style={inputStyle} />
+            </Field>
+          }
+        >
           <Field label={copy("供应商")}>
             <input value={filters.supplier} onChange={(event) => updateFilter("supplier", event.target.value)}
               placeholder={copy("供应商名称")} style={inputStyle} />
@@ -1100,7 +1108,7 @@ export default function PurchasingOrdersPage({
             <input value={filters.etaTo} onChange={(event) => updateFilter("etaTo", event.target.value)}
               placeholder="2026-06-30" style={inputStyle} />
           </Field>
-        </div>
+        </ResponsiveFilters>
       </Card>
 
       <Card>
@@ -1109,10 +1117,10 @@ export default function PurchasingOrdersPage({
             <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("采购订单列表")}</div>
             <div className="text-[11px] mt-0.5" style={{ color: A.sub }}>{copy("共")} {orders.length} {copy("条，当前筛选")} {filtered.length}</div>
           </div>
-          <span className="text-xs ml-auto flex items-center gap-1.5" style={{ color: A.gray2 }}>
+          <span className="text-xs ml-auto hidden items-center gap-1.5 sm:flex" style={{ color: A.gray2 }}>
             <Filter size={13} /> {copy("PO / GRN / Invoice 证据")}
           </span>
-          <Chip label={copy("只读复核")} color={A.blue} bg="#f0f6ff" />
+          <span className="hidden sm:inline-flex"><Chip label={copy("只读复核")} color={A.blue} bg="#f0f6ff" /></span>
         </div>
         <div className={tableScrollClass}>
           <table className="w-full min-w-[1200px] table-fixed text-left [&_tbody_td]:!py-0">

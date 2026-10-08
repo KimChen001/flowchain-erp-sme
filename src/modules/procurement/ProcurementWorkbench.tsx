@@ -1,5 +1,6 @@
 import { isNoInvoiceVariance } from "../../domain/procurement/variance-types";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import { RefreshCw } from "lucide-react";
 import { A, Card } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
@@ -18,7 +19,11 @@ export function ProcurementWorkbench({ onNavigate }: { onNavigate?: ProcurementN
   const statusText = (value: string) => String(value || "").split(" · ").map(code => statusCodeLabel(code, language) || copy(code)).join(" · ");
   const [rows, setRows] = useState<ProcurementWorkItem[]>([]);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
-  const [filter, setFilter] = useState<"all" | "approval" | "tracking">("all");
+  // ?queue=approval opens the "Awaiting my approval" queue (the Approvals tab on phones).
+  const [searchParams] = useSearchParams();
+  const queue = searchParams.get("queue");
+  const [filter, setFilter] = useState<"all" | "approval" | "tracking">(queue === "approval" || queue === "tracking" ? queue : "all");
+  useEffect(() => { if (queue === "approval" || queue === "tracking") setFilter(queue); }, [queue]);
   const load = async () => {
     setState("loading");
     try {
