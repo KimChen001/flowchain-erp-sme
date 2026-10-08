@@ -324,7 +324,8 @@ test("SME navigation, direct access and browser history follow the route manifes
   await expect(
     page.getByRole("heading", { name: "LOCAL-DEMO-GRN-001", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("Beta · PostgreSQL", { exact: true })).toBeVisible();
+  // No internal storage or beta labels on a customer's receipt.
+  await expect(page.getByText("Beta · PostgreSQL", { exact: true })).toHaveCount(0);
 
   await page.goto("/app/imports");
   await expect(page).toHaveURL(/\/app\/universal-intake$/);

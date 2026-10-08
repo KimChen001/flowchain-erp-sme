@@ -256,7 +256,7 @@ export default function InventoryPage({
         <div>
           <h2 className="text-lg font-semibold">{copy("库存管理")}</h2>
           <p className="mt-1 text-xs" style={{ color: A.sub }}>
-            {copy("仅显示库存运行时仓库中的正式记录；没有记录时保持为空。")}
+            {copy("仅显示已过账的库存记录；没有记录时保持为空。")}
           </p>
         </div>
         <button
@@ -298,12 +298,12 @@ export default function InventoryPage({
       )}
       {state === "loading" && (
         <Card className="p-8 text-sm" style={{ color: A.sub }}>
-          {copy("正在读取库存运行时数据...")}
+          {copy("正在读取库存...")}
         </Card>
       )}
       {state === "error" && (
         <Card className="p-8 text-sm" style={{ color: A.red }}>
-          {copy("库存数据读取失败。请检查运行时服务后重试。")}
+          {copy("库存数据读取失败，请稍后重试。")}
         </Card>
       )}
       {state === "ready" && visible.length === 0 && (
