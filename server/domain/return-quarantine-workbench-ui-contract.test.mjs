@@ -6,9 +6,10 @@ const root = new URL("../../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
 
 test("return and quarantine workbench exposes governed product acceptance markers", async () => {
-  const [workbench, readService, routes, app, packageJson, workflow, browser] =
+  const [workbench, copyData, readService, routes, app, packageJson, workflow, browser] =
     await Promise.all([
       read("src/modules/inventory/ReturnQuarantineWorkbench.tsx"),
+      read("src/modules/inventory/returnsCopyData.ts"),
       read("server/domain/supplier-return-read-service.mjs"),
       read("src/app/routeRegistry.tsx"),
       read("src/app/FlowChainApp.tsx"),
@@ -23,11 +24,14 @@ test("return and quarantine workbench exposes governed product acceptance marker
     "quarantine-inventory-workbench",
     "return-preview",
     "return-reconciliation",
-    "请选择正式已过账来源单据",
-    "请选择余额",
+    "Select a posted source document",
+    "Select a balance",
     "returns-readonly",
   ])
     assert.match(workbench, new RegExp(marker));
+  // The Chinese copy for the explicit source and balance choices.
+  for (const marker of ["请选择正式已过账来源单据", "请选择余额"])
+    assert.match(copyData, new RegExp(marker));
   assert.match(readService, /crossLineNettingAllowed:\s*false/);
   assert.match(readService, /lineIsolation:\s*true/);
   for (const path of [

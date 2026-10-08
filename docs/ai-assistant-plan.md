@@ -1,6 +1,6 @@
 # FlowChain AI assistant plan
 
-Version 4.0, 2026-10-05.
+Version 5.0, 2026-10-07.
 - **v3.0.** Approved by the owner on 2026-10-04, with decisions V1–V5 and R1–R6.
 - **v4.0.** Adds the owner's AI direction of 2026-10-05 (decisions 1–7, §2). That
   direction:
@@ -8,6 +8,11 @@ Version 4.0, 2026-10-05.
   - starts stage E: the assistant may create a draft, once a person confirms it.
 
   Under §12 that makes it a new major version.
+- **v5.0.** Adds the owner's decisions of 2026-10-07 (§2). They approve P3, so the
+  model words answers from the facts the skills return. They also approve
+  conversation memory, and later analysis tools, general concept answers and
+  models per task. They replace D3 and move P3 out of V3's "after the November
+  report". §3–§8 are not yet updated for them.
 
 This file is the single index for the assistant and knowledge (RAG) work. It
 replaces plan v2.0 and the v2.1 revision that review decision D8 called for.
@@ -30,9 +35,14 @@ request is named. The state in §3–§8 was brought up to date on 2026-10-06, a
   owner has approved it (review decision D1, routing decision of 2026-10-02).
 - **Facts come from skills and the knowledge index, never from a model.** A model
   may choose what to read; it never supplies a number, an id, a status or a date.
-- **Templates this round.** Answers and drafts are worded by templates (D3). The
-  model may route a question to one skill today and, from P2, plan up to three
-  read-only tools in one round (D4, agent mode decision 2).
+- **Templates until P3 lands, then model wording over checked facts (decision of
+  2026-10-07, replacing D3).**
+  - Today answers and drafts are worded by templates. The model may route a
+    question to one skill and, from P2, plan up to three read-only tools in one
+    round (D4, agent mode decision 2).
+  - With P3 the model writes the answer from the facts the skills returned. A
+    verifier checks every number, id and date against those facts, and the
+    template is the fallback.
 - **Draft-first.** The assistant never sends, pays, approves, issues or submits.
   - Drafts are reviewed by a person.
   - "Open in email" hands the text to the user's own mail app.
@@ -65,13 +75,13 @@ request is named. The state in §3–§8 was brought up to date on 2026-10-06, a
 | Agent mode 1, 2, 3 | P1 compound answers on by default; P2 lets the model pick up to 3 read-only tools and their arguments from the question and the tool list, local, off by default; P2 writes the supplier query plan with the planner guards | Approved; P1 merged (#111); P2 built in draft #144, gate passed with Parley on 2026-10-05 | #108 §11 |
 | Agent mode 6, 8, 9 | Per-workspace opt-in before real tenant data reaches any provider; the §9 gate thresholds; audit rows keep reason codes only | Approved; the opt-in is built in #150 | #108 §11 |
 | Agent mode 5 | A provider for a public deployment | Answered for opted-in trial workspaces by direction decision 2; any wider use stays open | #108 §11 |
-| Agent mode 4, 7 | P3 model wording with masked tool results sent to the provider; the P3 answer label | **Open**; waits until the owner has used the model in the walkthrough and on the trial (direction decision 7) | #108 §11 |
+| Agent mode 4, 7 | P3 model wording with masked tool results sent to the provider; the P3 answer label | Approved 2026-10-07 (owner decision 1 of that day); being built | #108 §11; owner, 2026-10-07 |
 | Prefill 1–8 | P1 prefill with field sources; a next step and draft on every answer line; mailto; "Log as sent" stores the text (P2); others' values deferred; history prices are hints; audit-row measurement; Tab accepts | Approved; P1 merged (#119, #120, #122, #124) | #116 §9 |
 | Prefill 9 | P3 model completion of descriptive text | **Open**, decided with agent mode decision 4 | #116 §9 |
 | Prefill 10 | Open a filled-in purchase request when asked for an order; not when open orders cover it, and then say them first | Approved, merged (#125) | #116 §9 |
 | Review D1 | Keep rules first; revisit model-first only with P2 latency and accuracy data | Approved | review of v2.0 |
 | Review D2 | Knowledge search may be one of the P2 tools (one round, at most 3 tools) | Approved; this moves it out of P4 | review of v2.0 |
-| Review D3 | No model wording or draft rewriting this round | Approved | review of v2.0 |
+| Review D3 | No model wording or draft rewriting this round | Approved; **replaced** 2026-10-07 for answers by the P3 approval (draft rewriting stays with prefill decision 9) | review of v2.0 |
 | Review D4 | One tool round only, not three rounds and six calls | Approved | review of v2.0 |
 | Review D5 | Evaluation data in an isolated embedded PostgreSQL with the Acme scenario seed; the three fictional documents in their own test workspaces | Approved, built (#126, #130) | review of v2.0 |
 | Review D6 | Parley budget of USD 15 for this round; ask when close | Approved; about USD 0.53 spent by 2026-10-04 | review of v2.0 |
@@ -79,10 +89,11 @@ request is named. The state in §3–§8 was brought up to date on 2026-10-06, a
 | Review D8 | Move the plan into `docs/` as v2.1 | Replaced by V1 | review of v2.0 |
 | V1 | This file: an English index (v3.0, now v4.0) | Approved, this file | gap audit |
 | V2 | One gate: agent mode §9 plus the knowledge cases for P2 and PR-3; the 40 + 10 task set before any public "agent" claim | Approved, §8 | gap audit |
-| V3 | Timeline: small fixes, prefill merges and PR-2 before 10/25; PR-3 and the browser walkthrough of the Acme request in the last week of October; November fixes only; P3, new data models and the invoice-difference explanation after the November report | Approved, §6 | gap audit |
+| V3 | Timeline: small fixes, prefill merges and PR-2 before 10/25; PR-3 and the browser walkthrough of the Acme request in the last week of October; November fixes only; P3, new data models and the invoice-difference explanation after the November report | Approved, §6; **revised** 2026-10-07: P3 and conversation memory are built now, local first | gap audit |
 | V4 | The trial assistant stays model-free until agent mode decision 5 | Approved 2026-10-04; **revised** 2026-10-05 by direction decision 1 | gap audit |
 | V5 | Supplier follow-ups only for orders issued to the supplier | Approved, merged (#140); the order answer follows in #152 | gap audit |
 | R1–R6 | Merge mechanics, CI shards, trial customers, trial scope and the V4 lock, the PR-2 slip rule, weekly capacity | Approved; CI shards merged (#141) | roadmap of 2026-10-04 (§6) |
+| Follow-ups, 2026-10-06 | A follow-up draft only for an order issued to its supplier and overdue; an order due soon gets "no follow-up yet" and no draft. Revises prefill P1 ("overdue, due or partially received") | Approved; built in #163 | PR-4 |
 | Supplier tiers 8 | In the assistant a tier filters and labels, never re-ranks | Approved; T1–T3 merged (#137, #138, #145, #146), drafts in #148 | #135 |
 | Direction 1 | V4 becomes: AI on for the trial workspaces the owner opts in; the rest stay rules-only | Approved 2026-10-05; built in #150 | AI direction, 2026-10-05 |
 | Direction 2 | Trial provider: the Anthropic API, claude-haiku-4-5; the owner supplies the key and a monthly budget, starting at USD 20 per workspace | Approved; waits for the key and budget | AI direction |
@@ -90,7 +101,12 @@ request is named. The state in §3–§8 was brought up to date on 2026-10-06, a
 | Direction 4 | Supplier email is a later step, with its own permission, the platform mail channel and a rate limit | Approved; not started | AI direction |
 | Direction 5 | Confirmation is a preview card in the chat with one click; the form stays the route to edit first | Approved; designed in #151 | AI direction |
 | Direction 6 | The old "AI creates no real records" promises are updated | Approved; #151 A8 proposes the timing: with the C1 build | AI direction |
-| Direction 7 | P3 waits until the owner has used the model in the walkthrough and on the trial | Approved | AI direction |
+| Direction 7 | P3 waits until the owner has used the model in the walkthrough and on the trial | Approved; met 2026-10-07 by the model-off and model-on comparison in the walkthrough, after which the owner approved P3 | AI direction |
+| Owner, 2026-10-07, 1 | P3: the model writes the answer text from the facts the skills returned, masked to what the asking user may see. A verifier checks every number, id and date against those facts; the template is the fallback. Local Parley first; the trial once the Anthropic key is live | Approved; built in #168 (off unless `FLOWCHAIN_AI_AGENT_MODE=compose`) | owner, 2026-10-07: "按推荐来，先修那三个问题，再做 P3 和对话记忆" |
+| Owner, 2026-10-07, 2 | Conversation memory: the model sees the previous turn's question and the records that answer cited, so "why", "this supplier" and "it" follow the conversation | Approved; built in #171: the rules narrow a question about one remembered record, the planner reads the rest, the wording gets the previous question | owner, 2026-10-07 |
+| Owner, 2026-10-07, 3 | Analysis tools, deterministic, offered to the planner: the effect of a late order (purchase order, SKU, sales orders, customers), a spend breakdown, a supplier comparison, a stock projection | Approved; P3 and memory are on main. Tool 1, the spend analysis, is #180, built from the procurement dashboard's own report; the other three follow | owner, 2026-10-07 |
+| Owner, 2026-10-07, 4 | General ERP concept answers ("what is three-way matching"), labelled as general knowledge, not workspace data | Approved; after P3 and memory | owner, 2026-10-07 |
+| Owner, 2026-10-07, 5 | Models per task through Parley: a fast model for routing and planning, a stronger one (Sonnet) for wording | Approved; the wording model setting (`FLOWCHAIN_AI_COMPOSE_MODEL`) is in #168, the rest after #171 | owner, 2026-10-07 |
 | Actions A1–A8 | Where proposals live, who confirms, auto-open, the source mark, RFQ invitees, the switch, the old confirm route, the wording timing | **Open** | #151 §12 |
 
 ## 3. State on main and in open pull requests
@@ -100,22 +116,23 @@ request is named. The state in §3–§8 was brought up to date on 2026-10-06, a
 | A. Baseline | Real-provider runs of both evaluations, recorded in `docs/ai-provider-baseline-2026-10-04.md` (#130); token totals for planning calls in `--agent` runs (#144) | — | Failures sorted per case by stage (routing, data, retrieval, generation, permission, provider); the model name in reports |
 | B. Model tool planning (P2) | Agent planning, off by default (`FLOWCHAIN_AI_AGENT_MODE=plan`, #144): native tool calls, the supplier business query tool, a tier argument (also on the draft tool), the Acme entry rule with cases in both languages, the `agent` audit block, the limited-mode label. The P2 gate passed with Parley (§8) | — | Naming an unanswered part; a scripted provider for offline runs; the `agent_failure` category; multi-turn `turns` |
 | C. Knowledge evidence | Routing of product and policy questions, whole model codes, Markdown section chunks (#126); an honest "the documents don't say" is a no-answer, citations read `[1]`, 18 knowledge cases (#139); the Acme workspace in the assistant evaluation holds the three policy documents, and knowledge answers get an audit row (#156) | #159 (PR-3): knowledge search as a P2 tool. The planner writes search words in the documents' language and the passages are shown without generation | A relevance threshold (baseline finding 3); conflicting documents (handling and a case); a prompt-injection document case; document version and effective date; the original file; headings and pages for PDF and DOCX; retrieval across languages without a model (offline, a Chinese question still finds no English policy) |
-| D. Reviewable drafts | The purchase request form opens prefilled with field sources; message drafts with To, Subject and Open in email; a next step and draft on every answer line; receiving and quote prefill; the order form opens by itself; follow-ups only for issued orders, in the order answer too; a tier the question names narrows the drafts (#118, #119, #120, #122, #124, #125, #140, #148, #152) | — | Partial-delivery wording and a policy citation on the draft review (PR-4); one message per supplier covering several orders; "no supplier email on file" |
+| D. Reviewable drafts | The purchase request form opens prefilled with field sources; message drafts with To, Subject and Open in email; a next step and draft on every answer line; receiving and quote prefill; the order form opens by itself; follow-ups only for issued orders, in the order answer too; a tier the question names narrows the drafts (#118, #119, #120, #122, #124, #125, #140, #148, #152) | #163 (PR-4): follow-ups only for overdue orders; drafts narrowed to a named supplier; one message per supplier; partly received lines and a partial-delivery question; "no email on file"; the cited policy shown with the draft | A supplier email recorded nowhere else stays missing; one message across suppliers is not planned |
 | E. Authorized execution | Nothing; the legacy `/api/user-confirmed-actions` route is still mounted, with no permission check and no caller | #151: the design. The assistant proposes, a person confirms, the system runs the existing command. v1 is a draft purchase request and a draft RFQ from an approved request; decisions A1–A8 | C1 (purchase request), C2 (RFQ), C3 (model proposal tools) |
 | Model on the trial (direction 1–2) | A per-workspace switch, off by default; usage per workspace and month; a cap (USD 20 by default); the `anthropic_chat` adapter (#150). No change on any deployed site until a key is set | #143: no provider settings in the Blueprint (R4) | The owner's key and budget; the Blueprint change with #143's test as an allow-list; one real call checking `tool_choice: "required"`; a rate limit |
 | Supplier tiers (#135) | Tier on the supplier, the supplier list and page, tier labels and filters in answers, tier-narrowed drafts (#137, #138, #145, #146, #148) | — | — |
 | Evaluation | `npm run test:ai:eval`: 245 cases, 215 gated, 30 scored only (14 `multi_tool` cases for `--agent` runs); the as-of day is the workspace day (#155); a `knowledge` expectation (#156). `npm run test:ai:eval:knowledge`: 18 cases | — | `agent_failure`, `multi_turn` and `grounding` categories; multi-turn `turns`; a task-level completion score; the 40 + 10 task set |
 
 The plan's own definition of a first usable version, one real "data + evidence +
-draft" answer, is still not met. The Acme request lacks the cited policy inside its planned answer
-(PR-3) and the partial-delivery wording (PR-4) (§5).
+draft" answer, is met with agent planning on: both Acme cases pass the §5
+acceptance on Parley (#163). It is not met offline, where the request needs the
+model to become one answer (§5).
 
 ## 4. Gaps found on 2026-10-04, and since
 
 Status as of 2026-10-06:
-- **Fixed:** 1–4, 16 and 17.
+- **Fixed:** 1–4, 12 (#163), 16 and 17.
 - **Handled in open pull requests or designs:** 8 (#143); 14 and 15 (C1, #151).
-- **In part:** 6 (#159), 7, 9, 10 and 12.
+- **In part:** 6 (#159), 7, 9 and 10.
 - **Open:** 5, 11 and 13.
 
 1. **Unissued orders were chased.** `LOCAL-DEMO-PO-023` (approved, never issued)
@@ -176,9 +193,9 @@ Status as of 2026-10-06:
     audit rows hold reason codes only (agent mode decision 9). The proposal is a
     Yes/No control with a reason code, stored as codes only.
 12. **Drafts follow records, not suppliers.** "Draft a message to Acme" gives the
-    workspace's top drafts, which may be for other suppliers. In part: #148 (merged) narrows
-    the drafts to a tier the question names; narrowing to one named supplier is
-    still open.
+    workspace's top drafts, which may be for other suppliers. #148 (merged) narrows
+    the drafts to a tier the question names; #163 narrows them to a supplier the
+    question names, and writes one message per supplier.
 13. **Data limits.** Lateness is per order, not per line; days are calendar days;
     a single line cannot be cancelled; no supplier replies are recorded.
 
@@ -207,8 +224,8 @@ Found on 2026-10-05:
 | --- | --- | --- |
 | Acme's open and overdue orders, with original and current promise dates | `purchase_orders` | On main |
 | The policy, cited | Knowledge search as a P2 tool | Gap 3 done (#156). With agent planning on, both languages cite the policy section through the planner's search (#159; the Acme cases pass in English and Chinese on Parley). Offline, only English |
-| Which orders need follow-up under the policy: issued, overdue lines; due-soon orders shown apart | V5 (#140), then a policy-aligned selection | V5 on main; the selection comes with PR-3 or PR-4 |
-| A message asking about the remaining quantity | Per-line drafts (#120, #122), partial-delivery wording | Drafts on main; the wording in PR-4 |
+| Which orders need follow-up under the policy: issued, overdue lines; due-soon orders shown apart | V5 (#140), then a policy-aligned selection | Follow-ups only for issued, overdue orders (owner decision 2026-10-06, #163); a due-soon order says "no follow-up yet" |
+| A message asking about the remaining quantity | Per-line drafts (#120, #122), partial-delivery wording | One message to Acme about both overdue orders, with how much arrived and a partial-delivery question (#163) |
 | Customer impact, escalation, duplicate reminders | Honest "not recorded" answers (D7) | Gated on main (#139) |
 | One answer for all parts | P2 planning (PR-2) with the entry rule of §4.4 | On main with the flag off (#144), with the entry cases in both languages |
 
@@ -241,7 +258,7 @@ approved on 10/05 using the freed time to bring the Acme request forward.
 | 10/6–10/11 | Merged by 10/06: this file (#142), supplier tier drafts (#148), AI per workspace (#150, no change on any deployed site until the owner provides a key), V5 in the order answer (#152), the eval's workspace day (#155), P2 with the flag off (#144), the Acme scenario workspace with the three policy documents (gap 3, #156). Still open: the trial scope lock | #143 | Each merged after main with its baseline regenerated, one at a time; the README count rechecked by the last one; gap 3 seeded and checked by the knowledge evaluation |
 | 10/12–10/18 (scope freeze) | Knowledge search as a P2 tool, moved up from 10/26 and built on 10/06 (#159). C1, confirmed draft purchase requests, if A1–A8 are decided by 10/11. B live on the trial once the owner provides the key and budget: the Blueprint, #143's test as an allow-list, one real call, the gate run with claude-haiku-4-5 | PR-3, C1, B | PR-3: §8 knowledge and the §5 acceptance offline. C1: the tests in #151 §10. B: the §8 gate on the trial provider before any workspace is switched on |
 | 10/19–10/23 (release candidate) | Fixes to what merged; the Acme request in a browser walkthrough | — | §5 acceptance in both languages |
-| 10/26–10/31 | Partial-delivery wording and the policy citation on the draft review. C2 (RFQ from an approved request). C3 (model proposal tools) if C1 has landed | PR-4, C2, C3 | PR-4: §5 acceptance with the draft; C2 and C3: #151 §10 |
+| 10/26–10/31 | C2 (RFQ from an approved request). C3 (model proposal tools) if C1 has landed. PR-4 (partial-delivery wording, the policy with the draft) was built on 10/06 (#163) | C2, C3 | C2 and C3: #151 §10 |
 | November | Fixes only, at most 3 merges a week | — | — |
 | 12/1–12/18 | The invoice-difference explanation (rules and templates, after the bills stack lands). The trial review: model use and spend per workspace, confirmed drafts and how many were cancelled. It decides P3 (direction decision 7), supplier email (direction decision 4) and the first data model | — | Explanation: at least 10 English and Chinese cases with full numeric agreement |
 | Q1 2027 | One AI data model, by default the PO-to-sales-order link (customer impact); P3 if decided; supplier email if decided; a native Messages API adapter for Anthropic; the 40 + 10 task set before any public "agent" claim | — | §8 |
@@ -332,6 +349,13 @@ Status in #144 as of 2026-10-05: **done** or **not yet**.
   `policy-acme-overdue-zh`.
 - **One run was not counted:** it had 15 network errors from Parley.
 
+**PR-4 result, with Parley, 2026-10-06 (#163):**
+- 218/218 gated, no regressions; 0 of 56 calls degraded; planning p50 847 ms,
+  p95 1,256 ms.
+- **Pending: 30/30.** The Acme cases in both languages now also check the
+  follow-up: one message covering PO-001 and PO-015 with the partial-delivery
+  question, and none for PO-002 or PO-021. That is the §5 acceptance.
+
 **Knowledge:** the knowledge cases pass offline; a provider run is scored per case
 and allows a no-answer only where a case lists it.
 
@@ -415,7 +439,9 @@ AI_EVAL_PROVIDER_ENV=<env file> AI_EVAL_REPEAT=3 npm run test:ai:eval:knowledge
 | Gap audit | 2026-10-04 | `main` at `39194bb` against v2.0 and the review: decisions V1–V5, summarized in §3 and §4 |
 | v3.0 | 2026-10-04 | This file as approved with V1–V5 and R1–R6. Never merged on its own. Superseded by v4.0. |
 | AI direction | 2026-10-05 | The owner felt the assistant was unused: "the site has no AI, and it cannot do things for me". Decisions 1–7, approved as recommended (§2). They revise V4 and start stage E (#150, #151). The reasoning page is kept outside the repository. |
-| **v4.0** | 2026-10-05 | This file: the direction added; §3–§7 brought up to `main` at `51b21d7` and the open pull requests; the roadmap moves PR-3 forward because P2 is built. |
+| v4.0 | 2026-10-05 | This file: the direction added; §3–§7 brought up to `main` at `51b21d7` and the open pull requests; the roadmap moves PR-3 forward because P2 is built. |
+| Probe | 2026-10-07 | The owner found the assistant "really dumb". 24 everyday questions were asked in the walkthrough with the model off and with every built model path on (Parley, claude-haiku-4-5). Fully answered: 9 of 24 with the model off, 13 with it on. The rest are "why" follow-ups, pronouns, analysis and writing. Parley also offers Sonnet, Opus, GPT and Gemini models under the same key. |
+| **v5.0** | 2026-10-07 | This file: the owner's decisions 1–5 of 2026-10-07 (§2) approve P3 and conversation memory, then analysis tools, general concept answers and models per task. They replace D3 for answers and revise V3. |
 
 **Keeping it current.** When a decision is taken or reversed, update §2 first. When
 a pull request in §3, §5 or §6 lands, update its row. A change of direction, such as

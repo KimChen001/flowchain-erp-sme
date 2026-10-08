@@ -18,6 +18,7 @@ import {
   inventoryOperationDecimalUnits as units,
   inventoryStockRecordHasHistory,
 } from "./inventory-operations-policy.mjs";
+import { isPrismaConcurrencyError } from "./prisma-concurrency-error.mjs";
 
 export class InventoryOperationsError extends Error {
   constructor(code, message, status = 400, details) {
@@ -113,8 +114,11 @@ const replay = (execution, hash) => {
     );
   return { ...execution.resultPayload, idempotentReplay: true };
 };
+// A losing serializable transaction, whichever shape Prisma gives it: P2034
+// from its own queries, or P2010 with SQLSTATE 40001/40P01 from the raw
+// `SELECT ... FOR UPDATE` row locks (lockTenantRows).
 const concurrencyError = (error) =>
-  error?.code === "P2034" ||
+  isPrismaConcurrencyError(error) ||
   /serialization|deadlock|write conflict/i.test(text(error?.message));
 const uniqueError = (error) => error?.code === "P2002";
 
