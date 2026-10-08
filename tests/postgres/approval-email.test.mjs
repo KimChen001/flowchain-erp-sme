@@ -214,6 +214,10 @@ test('a matched bill goes to whoever may approve bills, by its invoice number', 
   const bill = await finance.createSupplierInvoice({ invoiceNumber: 'AE-BILL-1', supplierId: supplier, currency: 'USD', invoiceDate: '2026-09-01', dueDate: '2026-10-01', totalAmount: '100.0000', idempotencyKey: 'ae-bill-create', lines: [{ purchaseOrderLineId: 'po-ae-bill-L1', receivingLineId: 'grn-ae-bill-L1', quantity: '10.0000', unitPrice: '10.0000', lineAmount: '100.0000', enteredTaxAmount: '0' }] }, { identity })
   await finance.submitSupplierInvoice(bill.entityId, { expectedVersion: 0, idempotencyKey: 'ae-bill-submit' }, { identity })
 
+  const preview = await emailsAfter(() => api(tokens.submitter, 'POST', `/api/finance/supplier-invoices/${bill.entityId}/match-preview`, { expectedVersion: 1 }), 0)
+  assert.equal(preview.result.status, 200, describe(preview.result))
+  assert.deepEqual(preview.messages, [], 'a preview sends nothing')
+
   const match = () => api(tokens.submitter, 'POST', `/api/finance/supplier-invoices/${bill.entityId}/match`, { expectedVersion: 1, idempotencyKey: 'ae-bill-match' })
   const first = await emailsAfter(match, 3)
   assert.equal(first.result.status, 200, describe(first.result))
@@ -227,6 +231,37 @@ test('a matched bill goes to whoever may approve bills, by its invoice number', 
   const replay = await emailsAfter(match, 0)
   assert.equal(replay.result.body.idempotentReplay, true)
   assert.deepEqual(replay.messages, [])
+})
+
+test('a bill with match exceptions waits for the last one to be approved; previews and a review that leaves one open send nothing', async () => {
+  await prisma.purchaseOrder.create({ data: { id: 'po-ae-ex', tenantId: tenantA, status: 'approved', supplierId: supplier, supplierName: 'Approval Supply Co.', currency: 'USD', amount: '100.0000', lines: { create: { id: 'po-ae-ex-L1', itemId: item.id, sku: item.sku, itemName: item.name, orderedQuantity: '10.0000', receivedQuantity: '10.0000', unit: 'EA', unitPrice: '10.0000' } } } })
+  await prisma.receivingDocument.create({ data: { id: 'grn-ae-ex', tenantId: tenantA, documentNumber: 'GRN-AE-2', poId: 'po-ae-ex', supplierId: supplier, supplierName: 'Approval Supply Co.', status: 'received', workflowStatus: 'posted', postingStatus: 'posted', postedAt: new Date(), postedById: users.submitter.id, warehouseId: warehouse, currency: 'USD', lines: { create: { id: 'grn-ae-ex-L1', purchaseOrderLineId: 'po-ae-ex-L1', itemId: item.id, sku: item.sku, itemName: item.name, acceptedQty: '10.0000', rejectedQty: '0.0000', unit: 'EA', warehouseId: warehouse, location: 'A-01', locationKey: 'a-01' } } } })
+  const finance = createOperationalFinanceCommandService({ prisma, env: process.env })
+  // Billed at 11 against an order price of 10: a price and an amount exception.
+  const bill = await finance.createSupplierInvoice({ invoiceNumber: 'AE-BILL-2', supplierId: supplier, currency: 'USD', invoiceDate: '2026-09-01', dueDate: '2026-10-01', totalAmount: '110.0000', idempotencyKey: 'ae-bill2-create', lines: [{ purchaseOrderLineId: 'po-ae-ex-L1', receivingLineId: 'grn-ae-ex-L1', quantity: '10.0000', unitPrice: '11.0000', lineAmount: '110.0000', enteredTaxAmount: '0' }] }, { identity })
+  await finance.submitSupplierInvoice(bill.entityId, { expectedVersion: 0, idempotencyKey: 'ae-bill2-submit' }, { identity })
+
+  const matched = await emailsAfter(() => api(tokens.submitter, 'POST', `/api/finance/supplier-invoices/${bill.entityId}/match`, { expectedVersion: 1, idempotencyKey: 'ae-bill2-match' }), 0)
+  assert.equal(matched.result.status, 200, describe(matched.result))
+  assert.equal(matched.result.body.invoice.status, 'exception')
+  assert.deepEqual(matched.messages, [], 'a bill with open exceptions is not waiting for approval')
+  const exceptions = await prisma.financeMatchException.findMany({ where: { supplierInvoiceId: bill.entityId }, orderBy: { id: 'asc' } })
+  assert.ok(exceptions.length >= 2, `expected at least two exceptions, got ${exceptions.length}`)
+  const review = (exception, key) => api(tokens.submitter, 'POST', `/api/finance/match-exceptions/${exception.id}/review`, { expectedVersion: exception.version, decision: 'approved', resolution: 'Price agreed with the supplier', idempotencyKey: key })
+
+  const previewed = await emailsAfter(() => api(tokens.submitter, 'POST', `/api/finance/match-exceptions/${exceptions[0].id}/review-preview`, { expectedVersion: exceptions[0].version, decision: 'approved', resolution: 'Price agreed with the supplier' }), 0)
+  assert.equal(previewed.result.status, 200, describe(previewed.result))
+  assert.deepEqual(previewed.messages, [], 'a review preview sends nothing')
+  for (const [index, exception] of exceptions.slice(0, -1).entries()) {
+    const reviewed = await emailsAfter(() => review(exception, `ae-bill2-review-${index}`), 0)
+    assert.equal(reviewed.result.status, 200, describe(reviewed.result))
+    assert.deepEqual(reviewed.messages, [], 'another exception is still open')
+  }
+  const last = await emailsAfter(() => review(exceptions.at(-1), 'ae-bill2-review-last'), 3)
+  assert.equal(last.result.status, 200, describe(last.result))
+  assert.deepEqual(last.messages.map((message) => message.to).sort(), [users.approverEn.email, users.approverZh.email, users.finance.email])
+  assert.equal(last.messages.find((message) => message.to === users.approverEn.email).subject, 'Supplier bill AE-BILL-2 is waiting for approval')
+  for (const message of last.messages) assertOnlyTypeNumberAndLink(message, `https://flowchain.test/app/procurement/bills/${bill.entityId}`, ['110.00', '11.00', 'Price agreed', 'GRN-AE-2'])
 })
 
 test('a new adjustment goes only to approvers who may operate its warehouse', async () => {
