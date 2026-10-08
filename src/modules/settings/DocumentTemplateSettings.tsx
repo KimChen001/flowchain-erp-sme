@@ -23,6 +23,12 @@ const FIELD_LABELS: Array<[RegExp, TranslationKey]> = [
   [/^purchaseOrder\.title/, "documents.templates.poTitle"],
   [/^purchaseOrder\.termsText/, "documents.templates.termsText"],
   [/^purchaseOrder\.footerText/, "documents.templates.footerText"],
+  [/^customerInvoice\.title/, "documents.templates.poTitle"],
+  [/^customerInvoice\.paymentInstructions/, "documents.templates.paymentInstructions"],
+  [/^customerInvoice\.termsText/, "documents.templates.termsText"],
+  [/^customerInvoice\.footerText/, "documents.templates.footerText"],
+  [/^customerInvoice\.showPaymentSummary/, "documents.templates.showPaymentSummary"],
+  [/^customerInvoice\.columns\.tax/, "documents.templates.column.tax"],
   [/^documentLanguage/, "documents.templates.documentLanguage"],
 ];
 
@@ -59,7 +65,7 @@ function saveFailure(t: Translate, error: unknown) {
   return t("settings.saveFailed");
 }
 
-// Letterhead and purchase order template for printed documents, under
+// Letterhead, purchase order and invoice templates for printed documents, under
 // Settings › Company & workspace. Whoever may manage workspace settings
 // edits them; everyone else sees them read-only. The server checks the
 // permission and the same limits again.
@@ -88,6 +94,7 @@ export default function DocumentTemplateSettings({ canEdit }: { canEdit: boolean
 
   const letterhead = (patch: Partial<DocumentSettings["letterhead"]>) => { setDraft({ ...draft, letterhead: { ...draft.letterhead, ...patch } }); setState("idle"); };
   const purchaseOrder = (patch: Partial<DocumentSettings["purchaseOrder"]>) => { setDraft({ ...draft, purchaseOrder: { ...draft.purchaseOrder, ...patch } }); setState("idle"); };
+  const customerInvoice = (patch: Partial<DocumentSettings["customerInvoice"]>) => { setDraft({ ...draft, customerInvoice: { ...draft.customerInvoice, ...patch } }); setState("idle"); };
   const save = async () => {
     setState("saving");
     try {
@@ -172,6 +179,41 @@ export default function DocumentTemplateSettings({ canEdit }: { canEdit: boolean
             <label className="text-sm md:col-span-2">{t("documents.templates.footerText")}
               <textarea rows={2} className={`${field} mt-1`} value={draft.purchaseOrder.footerText} onChange={(event) => purchaseOrder({ footerText: event.target.value })} />
               <span className="mt-1 flex justify-end">{count(draft.purchaseOrder.footerText, DOCUMENT_SETTINGS_LIMITS.footerText)}</span>
+            </label>
+          </div>
+        </section>
+
+        {/* The customer invoice: printed once issued; FlowChain adds no payment terms or bank details of its own. */}
+        <section className="rounded-xl border border-slate-200 p-4" data-testid="document-template-invoice">
+          <h3 className="mb-3 font-medium" style={{ color: A.label }}>{t("documents.templates.customerInvoice")}</h3>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="text-sm">{t("documents.templates.poTitle")}
+              <input data-testid="document-template-invoice-title" className={`${field} mt-1`} value={draft.customerInvoice.title || ""} maxLength={DOCUMENT_SETTINGS_LIMITS.title} onChange={(event) => customerInvoice({ title: event.target.value })} />
+              <span className="mt-1 block text-xs text-slate-500">{t("documents.templates.invoiceTitleHelp")}</span>
+            </label>
+            <div className="text-sm">
+              <div>{t("documents.templates.columns")}</div>
+              <label className="mt-2 flex items-center gap-2">
+                <input type="checkbox" data-testid="document-template-invoice-column-tax" checked={draft.customerInvoice.columns.tax} onChange={(event) => customerInvoice({ columns: { ...draft.customerInvoice.columns, tax: event.target.checked } })} />
+                {t("documents.templates.column.tax")}
+              </label>
+              <label className="mt-3 flex items-center gap-2">
+                <input type="checkbox" data-testid="document-template-invoice-payment-summary" checked={draft.customerInvoice.showPaymentSummary} onChange={(event) => customerInvoice({ showPaymentSummary: event.target.checked })} />
+                {t("documents.templates.showPaymentSummary")}
+              </label>
+              <span className="mt-1 block text-xs text-slate-500">{t("documents.templates.paymentSummaryHelp")}</span>
+            </div>
+            <label className="text-sm md:col-span-2">{t("documents.templates.paymentInstructions")}
+              <textarea data-testid="document-template-invoice-payment-instructions" rows={3} className={`${field} mt-1`} value={draft.customerInvoice.paymentInstructions} onChange={(event) => customerInvoice({ paymentInstructions: event.target.value })} />
+              <span className="mt-1 flex justify-between gap-3 text-xs text-slate-500"><span>{t("documents.templates.paymentInstructionsHelp")}</span>{count(draft.customerInvoice.paymentInstructions, DOCUMENT_SETTINGS_LIMITS.paymentInstructions)}</span>
+            </label>
+            <label className="text-sm md:col-span-2">{t("documents.templates.termsText")}
+              <textarea data-testid="document-template-invoice-terms" rows={3} className={`${field} mt-1`} value={draft.customerInvoice.termsText} onChange={(event) => customerInvoice({ termsText: event.target.value })} />
+              <span className="mt-1 flex justify-between gap-3 text-xs text-slate-500"><span>{t("documents.templates.invoiceTermsHelp")}</span>{count(draft.customerInvoice.termsText, DOCUMENT_SETTINGS_LIMITS.termsText)}</span>
+            </label>
+            <label className="text-sm md:col-span-2">{t("documents.templates.footerText")}
+              <textarea rows={2} className={`${field} mt-1`} value={draft.customerInvoice.footerText} onChange={(event) => customerInvoice({ footerText: event.target.value })} />
+              <span className="mt-1 flex justify-end">{count(draft.customerInvoice.footerText, DOCUMENT_SETTINGS_LIMITS.footerText)}</span>
             </label>
           </div>
         </section>

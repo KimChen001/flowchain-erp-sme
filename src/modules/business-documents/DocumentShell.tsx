@@ -6,19 +6,30 @@ import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import "./business-documents.css";
 
-export type DocumentBlock = null | "status" | "prices_hidden";
+export type DocumentBlock = null | "status" | "prices_hidden" | "invoice_status" | "not_issued" | "amounts_hidden";
+
+// Why a document cannot be printed, in the interface language.
+const BLOCK_MESSAGES = {
+  status: "documents.blocked.status",
+  prices_hidden: "documents.blocked.prices",
+  invoice_status: "documents.blocked.invoiceStatus",
+  not_issued: "documents.notIssuedPreview",
+  amounts_hidden: "documents.blocked.amounts",
+} as const;
 
 // The frame of a printable business document: back link, the document
 // language for this print only (never saved), "Print or save as PDF", and
 // the reminder that FlowChain does not send the document; a person does.
 // When the document cannot be printed, a notice says why, Print is off, and
-// the browser's own print prints the notice instead of the document.
+// the browser's own print prints the notice instead of the document. With
+// `showSheet` off only the notice is shown (a document not yet one to send).
 export function DocumentShell({
   backTo,
   backLabel,
   blocked,
   language,
   onLanguageChange,
+  showSheet = true,
   children,
 }: {
   backTo: string;
@@ -26,6 +37,7 @@ export function DocumentShell({
   blocked: DocumentBlock;
   language: DocumentLanguage;
   onLanguageChange: (language: DocumentLanguage) => void;
+  showSheet?: boolean;
   children: ReactNode;
 }) {
   const { t } = useI18n();
@@ -72,21 +84,23 @@ export function DocumentShell({
         </div>
         <p className="mt-3 text-xs" data-testid="business-document-send-note" style={{ color: A.sub }}>{t("documents.sendNote")}</p>
       </Card>
-      {!printable && (
-        <div role="alert" data-testid="business-document-blocked" className="business-document-print-target flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      {blocked !== null && (
+        <div role="alert" data-testid="business-document-blocked" data-reason={blocked} className="business-document-print-target flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           <Lock size={16} className="mt-0.5 shrink-0" />
-          <span>{t(blocked === "status" ? "documents.blocked.status" : "documents.blocked.prices")}</span>
+          <span>{t(BLOCK_MESSAGES[blocked])}</span>
         </div>
       )}
-      <div className="business-document-stage">
-        <article
-          data-testid="business-document-sheet"
-          lang={language}
-          className={`business-document-sheet${printable ? " business-document-print-target" : ""}`}
-        >
-          {children}
-        </article>
-      </div>
+      {showSheet && (
+        <div className="business-document-stage">
+          <article
+            data-testid="business-document-sheet"
+            lang={language}
+            className={`business-document-sheet${printable ? " business-document-print-target" : ""}`}
+          >
+            {children}
+          </article>
+        </div>
+      )}
     </div>
   );
 }

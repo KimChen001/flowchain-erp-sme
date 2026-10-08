@@ -68,6 +68,13 @@ export function formatCalendarDay(day: string | null | undefined, locale: string
   }
 }
 
+// A recorded date that is either a calendar day (printed as that day) or an
+// instant (printed as the day it falls on in the workspace timezone).
+export function formatDayOrInstant(value: { day: string | null; instant: string | null } | null | undefined, locale: string, timeZone: string) {
+  if (value?.day) return formatCalendarDay(value.day, locale);
+  return formatInstantDay(value?.instant, locale, timeZone);
+}
+
 // The day an instant (such as the moment a PO was issued) falls on in the
 // workspace timezone.
 export function formatInstantDay(value: string | null | undefined, locale: string, timeZone: string) {
