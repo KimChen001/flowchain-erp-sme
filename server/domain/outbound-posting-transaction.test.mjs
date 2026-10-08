@@ -92,6 +92,68 @@ if (!realPostgres) {
     assert.equal(outboundRequestHash(a), outboundRequestHash(b));
   });
 
+  test("an order for a chosen customer keeps the customer's id and recorded name, and entry data lists active customers", async () => {
+    const base = await seed(),
+      other = await seed(),
+      ctx = identity(base.tenantId, base.actorId),
+      service = createSalesOrderWorkbenchService({ prisma });
+    const customer = (tenantId, code, name, extra = {}) => ({
+      id: randomUUID(),
+      tenantId,
+      namespace: "master-data.customers",
+      recordKey: code,
+      payload: { id: `${code}-ID`, code, name, status: "active", ...extra },
+    });
+    await prisma.runtimeRecord.createMany({
+      data: [
+        customer(base.tenantId, "CUST-RW", "Redwood Plumbing", { currency: "USD", paymentTerms: "NET30" }),
+        customer(base.tenantId, "CUST-OLD", "Closed Account", { status: "inactive" }),
+        customer(other.tenantId, "CUST-FOREIGN", "Other Workspace Customer"),
+      ],
+    });
+    const entry = await createSalesOrderReadService({ prisma, lifecycleCapability: { enabled: true } }).entryData(ctx);
+    assert.deepEqual(
+      entry.customers.map((row) => [row.id, row.code, row.name, row.currency, row.paymentTerms]),
+      [["CUST-RW-ID", "CUST-RW", "Redwood Plumbing", "USD", "NET30"]],
+    );
+    const order = (customerId, extra = {}) => ({
+      orderNumber: `SO-CUST-${randomUUID()}`,
+      customerId,
+      customerName: "redwood plumbng",
+      currency: "USD",
+      idempotencyKey: `customer-${randomUUID()}`,
+      lines: [{ itemId: base.itemId, quantity: "2", unitPrice: "5" }, { itemId: base.itemId, quantity: "1", unitPrice: "4" }],
+      ...extra,
+    });
+    // The name recorded in Customers wins over a typed one.
+    const created = await service.createOrder(order("CUST-RW-ID", { promisedDate: "2026-10-20T12:00:00.000Z" }), ctx);
+    assert.deepEqual(
+      [created.order.customerId, created.order.customerName, created.order.lines.length, created.order.promisedDate],
+      ["CUST-RW-ID", "Redwood Plumbing", 2, "2026-10-20T12:00:00.000Z"],
+    );
+    // Inactive, unknown and another workspace's customers are refused.
+    for (const customerId of ["CUST-OLD-ID", "CUST-NOPE", "CUST-FOREIGN-ID"]) {
+      await assert.rejects(service.createOrder(order(customerId), ctx), (error) => error.code === "SALES_ORDER_CUSTOMER_NOT_FOUND");
+    }
+    // A revision may name the customer by code, and keeps every line sent.
+    const revised = await service.reviseOrder(
+      created.order.id,
+      {
+        expectedOrderVersion: created.order.version,
+        idempotencyKey: `customer-revise-${randomUUID()}`,
+        revisionMode: "replace_all",
+        expectedLineIds: created.order.lines.map((line) => line.id),
+        header: { customerId: "CUST-RW", currency: "USD", promisedDate: null },
+        lines: [{ itemId: base.itemId, quantity: "3", unitPrice: "5" }, { itemId: base.itemId, quantity: "2", unitPrice: "4" }],
+      },
+      ctx,
+    );
+    assert.deepEqual(
+      [revised.order.customerId, revised.order.customerName, revised.order.lines.map((line) => line.orderedQuantity), revised.order.promisedDate],
+      ["CUST-RW-ID", "Redwood Plumbing", ["3.0000", "2.0000"], null],
+    );
+  });
+
   test("authoritative sales order lifecycle creates, revises, confirms, holds, resumes, and paginates", async () => {
     const base = await seed(),
       ctx = identity(base.tenantId, base.actorId),
@@ -360,9 +422,10 @@ if (!realPostgres) {
       prisma,
       capabilities: enabledWorkbenchCapabilities,
     }).orderWorkbench(created.order.id, ctx);
-    assert.equal(workbench.availableActions.canEditDraft, false);
+    // The draft editor sends every line, so a multi-line draft can be edited.
+    assert.equal(workbench.availableActions.canEditDraft, true);
     assert.ok(
-      workbench.availableActions.blockingReasonCodes.includes(
+      !workbench.availableActions.blockingReasonCodes.includes(
         "MULTI_LINE_DRAFT_EDITOR_NOT_AVAILABLE",
       ),
     );

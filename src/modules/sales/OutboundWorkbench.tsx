@@ -53,6 +53,7 @@ type CancellationPreview = {
 type Order = {
   id: string;
   orderNumber: string;
+  customerId?: string | null;
   customerName: string;
   promisedDate?: string | null;
   currency: string;
@@ -702,49 +703,228 @@ function Filter({
   );
 }
 
+type EntryItem = { id: string; sku: string; name: string; unit?: string };
+type EntryCustomer = {
+  id: string;
+  code: string;
+  name: string;
+  currency: string | null;
+  paymentTerms: string | null;
+};
+type EntryData = {
+  items: EntryItem[];
+  customers?: EntryCustomer[];
+  capabilities: { salesOrderLifecycle: LifecycleCapability };
+};
+type DraftLine = { key: string; itemId: string; quantity: string; unitPrice: string };
+
+const draftLine = (itemId = "", quantity = "1", unitPrice = ""): DraftLine => ({
+  key: key(),
+  itemId,
+  quantity,
+  unitPrice,
+});
+// Every line needs an item, a quantity above 0 and a unit price (0 for free
+// goods), because an order without prices could never be invoiced.
+const linesReady = (lines: DraftLine[]) =>
+  lines.length > 0 &&
+  lines.every((line) => line.itemId && Number(line.quantity) > 0 && line.unitPrice.trim() !== "");
+const linesPayload = (lines: DraftLine[]) =>
+  lines.map(({ itemId, quantity, unitPrice }) => ({
+    itemId,
+    quantity: quantity.trim(),
+    unitPrice: unitPrice.trim(),
+  }));
+// A promised date is a calendar day. It is stored at 12:00 UTC like the other
+// business dates, so it reads as the same day in every timezone.
+const promisedDay = (value?: string | null) => (value ? String(value).slice(0, 10) : "");
+const promisedValue = (day: string) => (day ? `${day}T12:00:00.000Z` : null);
+
+// The customer an order is for, chosen from Customers. A new workspace with no
+// customers is sent to add or import them first.
+function CustomerField({
+  customers,
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  customers: EntryCustomer[];
+  value: string;
+  onChange: (customer: EntryCustomer | null) => void;
+  ariaLabel: string;
+}) {
+  const chosen = customers.find((customer) => customer.id === value);
+  if (!customers.length)
+    return (
+      <div className="text-sm" data-testid="sales-order-no-customers">
+        {say("Customer", "客户")}
+        <p className="mt-1 rounded-lg bg-amber-50 p-2 text-amber-800">
+          {say(
+            "No customers yet. Add or import your customers, then place the order.",
+            "还没有客户。请先新增或导入客户，再录入订单。",
+          )}{" "}
+          <Link className="underline" to="/app/master-data/customers">
+            {say("Customers", "客户")}
+          </Link>
+          {" · "}
+          <Link className="underline" to="/app/master-data/import">
+            {say("Import data", "导入数据")}
+          </Link>
+        </p>
+      </div>
+    );
+  return (
+    <label className="text-sm">
+      {say("Customer", "客户")}
+      <select
+        aria-label={ariaLabel}
+        className="mt-1 w-full rounded-lg border p-2"
+        value={value}
+        onChange={(e) => onChange(customers.find((customer) => customer.id === e.target.value) || null)}
+      >
+        <option value="">{say("Choose a customer", "选择客户")}</option>
+        {customers.map((customer) => (
+          <option key={customer.id} value={customer.id}>
+            {customer.name} · {customer.code}
+          </option>
+        ))}
+      </select>
+      {chosen?.paymentTerms && (
+        <span className="mt-1 block text-xs text-slate-500" data-testid="sales-order-customer-terms">
+          {say(`Payment terms: ${chosen.paymentTerms}`, `付款条款：${chosen.paymentTerms}`)}
+        </span>
+      )}
+    </label>
+  );
+}
+
+// The order's lines: item, quantity and unit price, one row each.
+function OrderLinesField({
+  items,
+  lines,
+  currency,
+  onChange,
+}: {
+  items: EntryItem[];
+  lines: DraftLine[];
+  currency: string;
+  onChange: (lines: DraftLine[]) => void;
+}) {
+  const update = (lineKey: string, change: Partial<DraftLine>) =>
+    onChange(lines.map((line) => (line.key === lineKey ? { ...line, ...change } : line)));
+  return (
+    <div className="space-y-3" data-testid="sales-order-lines">
+      {lines.map((line, index) => {
+        const unit = items.find((item) => item.id === line.itemId)?.unit;
+        const n = String(index + 1);
+        return (
+          <div
+            key={line.key}
+            className="grid gap-2 rounded-lg border p-3 md:grid-cols-[2fr_1fr_1fr_auto]"
+            data-testid={`sales-order-line-${n}`}
+          >
+            <label className="text-sm">
+              {say("Item", "物料")}
+              <select
+                aria-label={say(`Item, line ${n}`, `物料（第 ${n} 行）`)}
+                className="mt-1 w-full rounded-lg border p-2"
+                value={line.itemId}
+                onChange={(e) => update(line.key, { itemId: e.target.value })}
+              >
+                <option value="">{say("Choose an item", "选择物料")}</option>
+                {items.map((item) => (
+                  <option value={item.id} key={item.id}>
+                    {item.sku} · {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              {unit ? say(`Quantity (${unit})`, `数量（${unit}）`) : say("Quantity", "数量")}
+              <input
+                aria-label={say(`Quantity, line ${n}`, `数量（第 ${n} 行）`)}
+                inputMode="decimal"
+                className="mt-1 w-full rounded-lg border p-2"
+                value={line.quantity}
+                onChange={(e) => update(line.key, { quantity: e.target.value })}
+              />
+            </label>
+            <label className="text-sm">
+              {currency ? say(`Unit price (${currency})`, `单价（${currency}）`) : say("Unit price", "单价")}
+              <input
+                aria-label={say(`Unit price, line ${n}`, `单价（第 ${n} 行）`)}
+                inputMode="decimal"
+                className="mt-1 w-full rounded-lg border p-2"
+                value={line.unitPrice}
+                onChange={(e) => update(line.key, { unitPrice: e.target.value })}
+              />
+            </label>
+            <div className="flex items-end">
+              <Button
+                tone="secondary"
+                ariaLabel={say(`Remove line ${n}`, `删除第 ${n} 行`)}
+                disabled={lines.length === 1}
+                onClick={() => onChange(lines.filter((other) => other.key !== line.key))}
+              >
+                {say("Remove", "删除")}
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button tone="secondary" testId="sales-order-add-line" onClick={() => onChange([...lines, draftLine()])}>
+          {say("Add line", "添加行")}
+        </Button>
+        <span className="text-xs text-slate-500">
+          {say(
+            "A unit price is needed to invoice the customer. Enter 0 for free goods.",
+            "开客户发票需要单价。赠品请填 0。",
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function OrderEntry() {
   const nav = useNavigate(),
-    [items, setItems] = useState<
-      Array<{ id: string; sku: string; name: string; unit?: string }>
-    >([]),
+    [entry, setEntry] = useState<EntryData | null>(null),
     [orderNumber, setOrderNumber] = useState(`SO-${Date.now()}`),
-    [customerName, setCustomerName] = useState(""),
+    [customerId, setCustomerId] = useState(""),
     [currency, setCurrency] = useState(""),
-    [itemId, setItemId] = useState(""),
-    [quantity, setQuantity] = useState("1.0000"),
-    [unitPrice, setUnitPrice] = useState(""),
-    [capability, setCapability] = useState<LifecycleCapability | null>(null),
+    [promised, setPromised] = useState(""),
+    [lines, setLines] = useState<DraftLine[]>(() => [draftLine()]),
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");
   const intent = useRef({ fingerprint: "", idempotencyKey: "" }),
     inFlight = useRef(false);
   const workspace = useWorkspaceCurrency();
-  // Prefill the workspace currency; the user can still type another ISO code.
+  const customers = entry?.customers || [];
+  // Prefill the workspace currency; a chosen customer's recorded currency
+  // replaces it, and the user can still type another ISO code.
   useEffect(() => {
     if (workspace.currency) setCurrency((current) => current || workspace.currency);
   }, [workspace.currency]);
   useEffect(() => {
-    apiJson<{
-      items: typeof items;
-      capabilities: { salesOrderLifecycle: LifecycleCapability };
-    }>("/api/sales/order-entry-data")
-      .then((x) => {
-        setCapability(x.capabilities.salesOrderLifecycle);
-        setItems(x.items);
-        setItemId(x.items[0]?.id || "");
-      })
+    apiJson<EntryData>("/api/sales/order-entry-data")
+      .then((x) => setEntry(x))
       .catch((e) => setError(message(e)));
   }, []);
+  function chooseCustomer(customer: EntryCustomer | null) {
+    setCustomerId(customer?.id || "");
+    if (customer?.currency) setCurrency(customer.currency);
+  }
   async function save() {
     if (inFlight.current) return;
-    const fingerprint = JSON.stringify({
+    const body = {
       orderNumber,
-      customerName,
+      customerId,
       currency,
-      itemId,
-      quantity,
-      unitPrice,
-    });
+      promisedDate: promisedValue(promised),
+      lines: linesPayload(lines),
+    };
+    const fingerprint = JSON.stringify(body);
     if (intent.current.fingerprint !== fingerprint)
       intent.current = { fingerprint, idempotencyKey: key() };
     inFlight.current = true;
@@ -753,13 +933,7 @@ function OrderEntry() {
     try {
       const result = await apiJson<{ order: Order }>("/api/sales/orders", {
         method: "POST",
-        body: JSON.stringify({
-          orderNumber,
-          customerName,
-          currency,
-          idempotencyKey: intent.current.idempotencyKey,
-          lines: [{ itemId, quantity, unitPrice: unitPrice.trim() }],
-        }),
+        body: JSON.stringify({ ...body, idempotencyKey: intent.current.idempotencyKey }),
       });
       intent.current = { fingerprint: "", idempotencyKey: "" };
       nav(`/app/sales/orders/${encodeURIComponent(result.order.id)}`);
@@ -770,10 +944,11 @@ function OrderEntry() {
       setSaving(false);
     }
   }
-  if (!capability)
+  const capability = entry?.capabilities.salesOrderLifecycle;
+  if (!entry || !capability)
     return (
       <div className="p-10 text-center" data-testid="sales-order-entry-loading">
-        {error || "正在读取销售订单能力…"}
+        {error ? copy(error) : say("Loading…", "正在读取…")}
       </div>
     );
   if (!capability.enabled)
@@ -789,10 +964,7 @@ function OrderEntry() {
       </div>
     );
   return (
-    <div
-      className="mx-auto max-w-3xl space-y-4"
-      data-testid="sales-order-entry"
-    >
+    <div className="mx-auto max-w-3xl space-y-4" data-testid="sales-order-entry">
       <div>
         <h1 className="text-xl font-semibold">{copy("新建销售订单草稿")}</h1>
         <p className="text-sm text-slate-500">
@@ -806,6 +978,12 @@ function OrderEntry() {
       )}
       <Section title={copy("订单信息")}>
         <div className="grid gap-3 md:grid-cols-2">
+          <CustomerField
+            customers={customers}
+            value={customerId}
+            onChange={chooseCustomer}
+            ariaLabel={say("Customer", "客户")}
+          />
           <label className="text-sm">
             {copy("订单号")}
             <input
@@ -813,15 +991,6 @@ function OrderEntry() {
               className="mt-1 w-full rounded-lg border p-2"
               value={orderNumber}
               onChange={(e) => setOrderNumber(e.target.value)}
-            />
-          </label>
-          <label className="text-sm">
-            {copy("客户")}
-            <input
-              aria-label={copy("客户")}
-              className="mt-1 w-full rounded-lg border p-2"
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
             />
           </label>
           <label className="text-sm">
@@ -840,58 +1009,28 @@ function OrderEntry() {
             )}
           </label>
           <label className="text-sm">
-            {copy("物料")}
-            <select
-              aria-label={copy("物料")}
-              className="mt-1 w-full rounded-lg border p-2"
-              value={itemId}
-              onChange={(e) => setItemId(e.target.value)}
-            >
-              {items.map((x) => (
-                <option value={x.id} key={x.id}>
-                  {x.sku} · {x.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm">
-            {copy("数量")}
+            {say("Promised date (optional)", "承诺交期（可选）")}
             <input
-              aria-label={copy("数量")}
+              type="date"
+              aria-label={say("Promised date", "承诺交期")}
               className="mt-1 w-full rounded-lg border p-2"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
+              value={promised}
+              onChange={(e) => setPromised(e.target.value)}
             />
-          </label>
-          <label className="text-sm">
-            {say("Unit price", "单价")}
-            <input
-              aria-label={say("Unit price", "单价")}
-              inputMode="decimal"
-              className="mt-1 w-full rounded-lg border p-2"
-              value={unitPrice}
-              onChange={(e) => setUnitPrice(e.target.value)}
-            />
-            <span className="mt-1 block text-xs text-slate-500">
-              {say(
-                "Required to invoice the customer. Enter 0 for free goods.",
-                "开客户发票需要单价。赠品请填 0。",
-              )}
-            </span>
           </label>
         </div>
+      </Section>
+      <Section title={say("Lines", "订单行")}>
+        <OrderLinesField items={entry.items} lines={lines} currency={currency} onChange={setLines} />
         <div className="mt-4 flex gap-2">
           <Button
             testId="create-sales-order"
-            disabled={saving || !itemId || !customerName || !currency.trim() || !unitPrice.trim()}
+            disabled={saving || !customerId || !currency.trim() || !linesReady(lines)}
             onClick={() => void save()}
           >
             {saving ? copy("保存中…") : copy("保存草稿")}
           </Button>
-          <Link
-            className="rounded-lg bg-slate-100 px-3 py-2 text-sm"
-            to="/app/sales/orders"
-          >
+          <Link className="rounded-lg bg-slate-100 px-3 py-2 text-sm" to="/app/sales/orders">
             {copy("取消")}
           </Link>
         </div>
@@ -916,9 +1055,10 @@ function OrderDetail({ id }: { id: string }) {
     [quantity, setQuantity] = useState("1.0000"),
     [reason, setReason] = useState(() => copy("业务调整")),
     [shipmentNumber, setShipmentNumber] = useState(`SHIP-${Date.now()}`),
-    [editCustomer, setEditCustomer] = useState(""),
-    [editQuantity, setEditQuantity] = useState("1.0000"),
-    [editUnitPrice, setEditUnitPrice] = useState(""),
+    [editCustomerId, setEditCustomerId] = useState(""),
+    [editPromised, setEditPromised] = useState(""),
+    [editLines, setEditLines] = useState<DraftLine[]>([]),
+    [editEntry, setEditEntry] = useState<EntryData | null>(null),
     [cancelReason, setCancelReason] = useState(""),
     [cancelPreview, setCancelPreview] = useState<CancellationPreview | null>(null),
     [saving, setSaving] = useState(false);
@@ -959,9 +1099,12 @@ function OrderDetail({ id }: { id: string }) {
     setError("");
     if (next === "edit" && data) {
       setSelectedLineId(data.lines[0]?.id || "");
-      setEditCustomer(data.order.customerName);
-      setEditQuantity(data.lines[0]?.orderedQuantity || "1.0000");
-      setEditUnitPrice(data.lines[0]?.unitPrice ?? "");
+      setEditCustomerId(data.order.customerId || "");
+      setEditPromised(promisedDay(data.order.promisedDate));
+      setEditLines(data.lines.map((line) => draftLine(line.itemId, line.orderedQuantity, line.unitPrice ?? "")));
+      apiJson<EntryData>("/api/sales/order-entry-data")
+        .then(setEditEntry)
+        .catch((e) => setError(message(e)));
     }
     // With only one order line, or one reservation to release, it is chosen.
     if ((next === "reserve" || next === "shipment") && data?.lines.length === 1)
@@ -1061,7 +1204,7 @@ function OrderDetail({ id }: { id: string }) {
     }
   }
   async function reviseDraft() {
-    if (!data || !selectedLine || inFlight.current) return;
+    if (!data || inFlight.current) return;
     inFlight.current = true;
     setSaving(true);
     try {
@@ -1072,18 +1215,14 @@ function OrderDetail({ id }: { id: string }) {
           idempotencyKey: intentKey,
           revisionMode: "replace_all",
           expectedLineIds: data.lines.map((line) => line.id),
+          // An order placed before customers were chosen keeps its name
+          // until someone picks the customer.
           header: {
-            customerName: editCustomer,
+            ...(editCustomerId ? { customerId: editCustomerId } : { customerName: data.order.customerName }),
             currency: data.order.currency,
-            promisedDate: data.order.promisedDate,
+            promisedDate: promisedValue(editPromised),
           },
-          lines: [
-            {
-              itemId: selectedLine.itemId,
-              quantity: editQuantity,
-              unitPrice: editUnitPrice.trim(),
-            },
-          ],
+          lines: linesPayload(editLines),
         }),
       });
       setIntent("");
@@ -1295,13 +1434,6 @@ function OrderDetail({ id }: { id: string }) {
           {copy("当前页面仅显示您有权查看的仓库数据，部分库存或履约事实已隐藏。")}
         </div>
       )}
-      {(a.blockingReasonCodes as string[] | undefined)?.includes(
-        "MULTI_LINE_DRAFT_EDITOR_NOT_AVAILABLE",
-      ) && (
-        <div role="status" className="rounded-lg bg-amber-50 p-3 text-amber-800">
-          {copy("当前订单包含多条订单行。为避免不完整覆盖，窄版界面暂不支持编辑该草稿。")}
-        </div>
-      )}
       {((a.blockingReasonCodes as string[]) || []).includes(
         "OUTBOUND_CAPABILITY_NOT_AVAILABLE",
       ) && (
@@ -1330,6 +1462,7 @@ function OrderDetail({ id }: { id: string }) {
             {a.canEditDraft && (
               <Button
                 tone="secondary"
+                testId="open-edit"
                 disabled={saving}
                 onClick={() => start("edit")}
               >
@@ -1644,45 +1777,55 @@ function OrderDetail({ id }: { id: string }) {
             </div>
           ) : intent === "edit" ? (
             <>
-              <label className="text-sm">
-                {copy("客户")}
-                <input
-                  aria-label={copy("编辑客户")}
-                  className="mt-1 w-full rounded-lg border p-2"
-                  value={editCustomer}
-                  onChange={(e) => {
-                    setEditCustomer(e.target.value);
-                    setIntentKey(key());
-                  }}
-                />
-              </label>
-              <label className="mt-3 block text-sm">
-                {copy("订购数量")}
-                <input
-                  aria-label={copy("编辑数量")}
-                  className="mt-1 w-full rounded-lg border p-2"
-                  value={editQuantity}
-                  onChange={(e) => {
-                    setEditQuantity(e.target.value);
-                    setIntentKey(key());
-                  }}
-                />
-              </label>
-              <label className="mt-3 block text-sm">
-                {say("Unit price", "单价")}
-                <input
-                  aria-label={say("Edit unit price", "编辑单价")}
-                  inputMode="decimal"
-                  className="mt-1 w-full rounded-lg border p-2"
-                  value={editUnitPrice}
-                  onChange={(e) => {
-                    setEditUnitPrice(e.target.value);
-                    setIntentKey(key());
-                  }}
-                />
-              </label>
+              {!editEntry ? (
+                <div className="text-sm text-slate-500">{say("Loading…", "正在读取…")}</div>
+              ) : (
+                <div className="space-y-3" data-testid="sales-order-edit-form">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <CustomerField
+                      customers={editEntry.customers || []}
+                      value={editCustomerId}
+                      onChange={(customer) => {
+                        setEditCustomerId(customer?.id || "");
+                        setIntentKey(key());
+                      }}
+                      ariaLabel={say("Edit customer", "编辑客户")}
+                    />
+                    <label className="text-sm">
+                      {say("Promised date (optional)", "承诺交期（可选）")}
+                      <input
+                        type="date"
+                        aria-label={say("Edit promised date", "编辑承诺交期")}
+                        className="mt-1 w-full rounded-lg border p-2"
+                        value={editPromised}
+                        onChange={(e) => {
+                          setEditPromised(e.target.value);
+                          setIntentKey(key());
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {!editCustomerId && (
+                    <p className="text-xs text-amber-700">
+                      {say(
+                        `This order was entered for "${data.order.customerName}". Choose the customer from Customers to link it.`,
+                        `该订单录入的客户为“${data.order.customerName}”。请从客户中选择以建立关联。`,
+                      )}
+                    </p>
+                  )}
+                  <OrderLinesField
+                    items={editEntry.items}
+                    lines={editLines}
+                    currency={data.order.currency}
+                    onChange={(next) => {
+                      setEditLines(next);
+                      setIntentKey(key());
+                    }}
+                  />
+                </div>
+              )}
               <div className="mt-4">
-                <Button disabled={saving || !editUnitPrice.trim()} onClick={() => void reviseDraft()}>
+                <Button disabled={saving || !editEntry || !linesReady(editLines)} onClick={() => void reviseDraft()}>
                   {saving ? copy("保存中…") : copy("保存修订")}
                 </Button>
               </div>
