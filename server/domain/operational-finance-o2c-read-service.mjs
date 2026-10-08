@@ -4,7 +4,32 @@ import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 import { OperationalFinanceReadError } from "./operational-finance-read-service.mjs";
 import { financeFixed as fixed, financeUnits as units } from "./operational-finance-policy.mjs";
 import { paymentRecordsView } from "./payment-record-command-service.mjs";
+import { CUSTOMER_NAMESPACE } from "./master-data-commands.mjs";
 import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from "./tenant-calendar-day.mjs";
+
+// "Net 30", "net-30" and "NET30" name the same term; so do "Due on receipt"
+// and its code.
+const termKey = (value) => String(value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+// The next invoice number after the workspace's highest INV-<number>, or
+// INV-1001 for the first. Only a suggestion: the person can type another.
+export function nextInvoiceNumber(numbers) {
+  const highest = numbers.reduce((max, value) => {
+    const match = /^INV-(\d{1,9})$/i.exec(String(value ?? "").trim());
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 1000);
+  return `INV-${highest + 1}`;
+}
+
+// A customer's payment terms are recorded as text. They count when they name
+// one of the workspace's payment terms by code or name; otherwise the due
+// date is left to the person.
+export function customerPaymentTerm(text, terms) {
+  const key = termKey(text);
+  if (!key) return null;
+  const term = terms.find((row) => termKey(row.code) === key) || terms.find((row) => termKey(row.name) === key);
+  return term && term.days !== null && term.days !== undefined ? { code: term.code, name: term.name, days: term.days } : null;
+}
 
 const text = (value) => String(value ?? "").trim();
 const decimal = (value) =>
@@ -516,6 +541,13 @@ export function createOperationalFinanceO2cReadService({
     if (!["finance.customer_invoice.create", "finance.customer_credit.create"].some((permission) => can({ actor: current, permission, tenantId: current.tenantId })))
       return { postedShipments: [], customerInvoices: [], customerReturnPostings: [], capabilities };
     const amountsVisible = amountsVisibleFor(current);
+    const [tenant, customerRecords, paymentTerms, invoiceNumbers] = await Promise.all([
+      prisma.tenant.findUnique({ where: { id: current.tenantId }, select: { timezone: true } }),
+      prisma.runtimeRecord.findMany({ where: { tenantId: current.tenantId, namespace: CUSTOMER_NAMESPACE }, select: { payload: true }, take: 2000 }),
+      prisma.paymentTerm.findMany({ where: { tenantId: current.tenantId }, select: { code: true, name: true, days: true } }),
+      prisma.customerInvoice.findMany({ where: { tenantId: current.tenantId, invoiceNumber: { startsWith: "INV-" } }, select: { invoiceNumber: true } }),
+    ]);
+    const customerTerms = new Map(customerRecords.map((record) => [String(record.payload?.id ?? ""), customerPaymentTerm(record.payload?.paymentTerms, paymentTerms)]));
     const [shipments, invoices, returnPostings] = await Promise.all([
       prisma.shipmentDocument.findMany({
         where: {
@@ -559,6 +591,7 @@ export function createOperationalFinanceO2cReadService({
         salesOrderNumber: row.salesOrder.orderNumber,
         customerId: row.salesOrder.customerId,
         customerName: row.salesOrder.customerName,
+        customerPaymentTerm: customerTerms.get(String(row.salesOrder.customerId ?? "")) || null,
         currency: row.salesOrder.currency,
         lines: row.lines.map((line) => ({
           id: line.id,
@@ -574,6 +607,9 @@ export function createOperationalFinanceO2cReadService({
       customerInvoices: invoices.map((row) =>
         invoiceSummary(row, current, capabilities),
       ),
+      // The invoice date is the workspace's calendar day, not the browser's.
+      today: tenantCalendarDay(now(), tenant?.timezone || "America/New_York"),
+      suggestedInvoiceNumber: nextInvoiceNumber(invoiceNumbers.map((row) => row.invoiceNumber)),
       customerReturnPostings: returnPostings.map((row) => ({
         id: row.id,
         postingNumber: row.postingNumber,

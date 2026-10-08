@@ -119,7 +119,7 @@ Phase 4 may introduce controlled picking and richer multi-line entry only after 
 
 Draft revision is an explicit whole-document replacement contract. Clients must send `revisionMode: "replace_all"`, the complete current `expectedLineIds` set, and the complete replacement line set. The server compares the sorted expected IDs with the authoritative order lines before deleting anything. Missing, extra, stale, or foreign line IDs return `SALES_ORDER_DRAFT_REVISION_INCOMPLETE`; the existing draft remains unchanged. Idempotent replay does not repeat line deletion or creation.
 
-The current narrow editor remains available only for one-line drafts. Multi-line drafts return `canEditDraft: false` with `MULTI_LINE_DRAFT_EDITOR_NOT_AVAILABLE`, explain why editing is blocked, and never submit only the first line.
+The draft editor edits the customer (chosen from Customers), the promised date and every line, and always submits all of them as one `replace_all` revision, so a multi-line draft can be edited without dropping lines. An order created for a chosen customer stores its `customerId` and the name recorded in Customers.
 
 ## 29. Capability-disabled entry behavior
 
