@@ -65,6 +65,14 @@ names, or supplier names in place. Translate their presentation where appropriat
   that a purchase order line in another unit than the item's stock unit is not counted
   as incoming is in both languages on the reports page and in the assistant's stock and
   order answers.
+- Today (`/app/overview/risks`) has English and Chinese copy
+  (`src/modules/overview/todayCopy.ts`): the work rows and their date labels, the
+  status tiles, the first-day checklist and recent documents. The server sends codes,
+  dates and numbers (`GET /api/home/overview`); document numbers, SKUs, units and
+  supplier and customer names stay as stored, and calendar days and change times
+  follow the workspace locale and timezone in both languages. Checked in both
+  languages by `home-overview-language.spec.ts`, `today-work.spec.ts` and
+  `today-first-run.spec.ts`.
 - The purchase order document (`/app/procurement/orders/:id/document`) prints its
   labels in the document language: the workspace default from Settings › Company &
   workspace › Documents, or the language picked on the page for one print, which is
