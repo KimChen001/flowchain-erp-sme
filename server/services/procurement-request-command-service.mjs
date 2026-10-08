@@ -493,8 +493,12 @@ export function createProcurementRequestCommandService({ prisma, masterData, env
         const approvedWithRequest = mergeOperationalSettings(tenant?.operationalSettings).review.approvedRequestApprovesPurchaseOrder !== false;
         const requestApproval = [...(Array.isArray(row.metadata?.timeline) ? row.metadata.timeline : [])].reverse().find((entry) => entry?.action === "approve") || null;
         const status = approvedWithRequest ? PURCHASE_ORDER_STATUS.APPROVED : PURCHASE_ORDER_STATUS.DRAFT;
+        // The PO's approval is the request's: its step names who approved the
+        // request and when (what the PO document prints as "Approved on"), and
+        // who turned it into the PO. A request approved before approvals were
+        // recorded falls back to the conversion.
         const approvalTimeline = approvedWithRequest
-          ? [{ action: "approve", actorId: actor.user.id, at: serial(now()), reason: null, via: "approved_purchase_request", purchaseRequestId: row.id, requestApprovedBy: requestApproval?.actorId || null, requestApprovedAt: requestApproval?.at || null }]
+          ? [{ action: "approve", actorId: requestApproval?.actorId || actor.user.id, at: requestApproval?.at || serial(now()), reason: null, via: "approved_purchase_request", purchaseRequestId: row.id, requestApprovedBy: requestApproval?.actorId || null, requestApprovedAt: requestApproval?.at || null, convertedBy: actor.user.id, convertedAt: serial(now()) }]
           : [];
         const originalPromisesRecorded = [];
         for (const group of groups.values()) {

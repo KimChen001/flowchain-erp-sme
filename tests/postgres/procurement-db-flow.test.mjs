@@ -409,6 +409,10 @@ test('step 3b: an approved PR becomes an approved PO (POST /api/procurement/requ
   assert.equal(po.receivingBaseStatus, 'approved')
   assert.deepEqual(po.metadata.approvalTimeline.map((step) => [step.action, step.via, step.purchaseRequestId]), [['approve', 'approved_purchase_request', id]])
   assert.ok(po.metadata.approvalTimeline[0].at)
+  // The seeded request has no recorded approval step, so the step falls back
+  // to the person who converted it, and says so.
+  assert.equal(po.metadata.approvalTimeline[0].convertedBy, po.metadata.approvalTimeline[0].actorId)
+  assert.equal(po.metadata.approvalTimeline[0].requestApprovedBy, null)
   assert.equal(po.version, 0)
   assert.equal(po.supplierId, supplierA)
   assert.equal(po.currency, 'USD')
