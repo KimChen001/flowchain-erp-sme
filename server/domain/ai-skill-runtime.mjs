@@ -2,7 +2,8 @@ import { aiSkillQuestionLanguage } from './ai-skill-copy.mjs'
 import { refineAiSkillRoute } from './ai-skill-entities.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
-import { aiSkillComparisonSignals, aiSkillSpendSignals, routeSkill } from './ai-skill-router.mjs'
+import { aiSkillAsksPartialDelivery, aiSkillComparisonSignals, aiSkillSpendSignals, routeSkill } from './ai-skill-router.mjs'
+import { aiSkillDraftBasis } from './ai-skill-drafts.mjs'
 import { aiSkillPrepareComparison } from './ai-skill-supplier-comparison.mjs'
 import { resolveAiSkillFollowUp } from './ai-skill-follow-up.mjs'
 import { answerAiSkill, toolsFor } from './ai-skills.mjs'
@@ -161,7 +162,7 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
       // spend question does, and its view from the call.
       const spend = call.tool === 'spend_analysis' ? { spend: { ...aiSkillSpendSignals(message), ...(call.mode ? { mode: call.mode } : {}) } }
         : call.tool === 'supplier_comparison' ? { compare: { ...aiSkillComparisonSignals(message), ...(call.mode ? { mode: call.mode } : {}) } } : {}
-      const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short', tier: call.tier ?? null, ...spend }, skillId: call.tool }, named, facts)
+      const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short', tier: call.tier ?? null, partial: aiSkillAsksPartialDelivery(message), ...spend }, skillId: call.tool }, named, facts)
       if (!partRoute || partRoute.capability || !partRoute.skillId || !allowed.has(partRoute.skillId)) return null
       return { question: aiSkillById(partRoute.skillId)?.title?.[titleKey] || partRoute.skillId, route: await aiSkillPrepareComparison(partRoute, facts) }
     }))).filter(Boolean).sort((a, b) => agentSectionRank(a) - agentSectionRank(b))
@@ -235,7 +236,7 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   if (agentResult && !agentServed && agentResult.status === 'degraded') response = { ...response, agentPlanning: { status: 'degraded', entry: agentEntry } }
   // The passages the planner's search found go with a planned answer from
   // records as its knowledge supplement; the gateway then adds none.
-  if (found && agentServed && response.intent !== 'knowledge_retrieval') response = { ...response, supplementalKnowledge: { title: found.conclusion.title, summary: found.conclusion.summary, rag: found.rag } }
+  if (found && agentServed && response.intent !== 'knowledge_retrieval') response = aiSkillDraftBasis({ ...response, supplementalKnowledge: { title: found.conclusion.title, summary: found.conclusion.summary, rag: found.rag } })
   // P3: with compose mode on, the model words the title and summary from this
   // answer's own facts; the verifier keeps the template on any doubt. A
   // follow-up or a question about the earlier answer also gives it the

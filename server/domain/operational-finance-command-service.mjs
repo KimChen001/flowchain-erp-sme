@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { assertAuthorized } from "../auth/authorization-service.mjs";
+import { assertAuthorized, can } from "../auth/authorization-service.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { isPrismaConcurrencyError } from "./prisma-concurrency-error.mjs";
 import {
@@ -12,6 +12,14 @@ import {
   supplierCreditMemoNumberDuplicate,
 } from "./operational-finance-policy.mjs";
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
+import {
+  DUPLICATE_KINDS,
+  duplicateFlagView,
+  duplicateReviewIssues,
+  isDuplicateReviewClosed,
+  loadDuplicateChecks,
+  workspaceTimezone,
+} from "./supplier-invoice-duplicates.mjs";
 
 export class OperationalFinanceError extends Error {
   constructor(code, message, status = 400, details) {
@@ -36,6 +44,7 @@ const commandPermission = (commandType) => ({
   match_supplier_invoice: "finance.three_way_match.execute",
   review_match_exception: "finance.match_exception.review",
   approve_supplier_invoice: "finance.supplier_invoice.approve",
+  dismiss_supplier_invoice_duplicate: "finance.supplier_invoice.approve",
   hold_payable_obligation: "finance.payable.hold",
   release_payable_obligation: "finance.payable.release",
   mark_export_ready_payable_obligation: "finance.payable.mark_export_ready",
@@ -418,6 +427,60 @@ const payableNumberDuplicate = (obligationNumber) => ({
 const isSupplierCreditMemoNumberConflict = (error) =>
   isUniqueConflictOn(error, "SupplierCreditMemo", "creditMemoNumber");
 
+// Duplicate supplier invoice flags (plan item C1, supplier-invoice-duplicates.mjs).
+// An open flag asks the approver to dismiss it with a reason, or to cancel the
+// bill, before approval; nothing is held on its own and payments are not
+// touched. duplicateReviewIssues lists what approval waits for.
+const DUPLICATE_REASON_MAX = 500;
+
+const duplicateFlagNotFound = () => ({
+  code: "DUPLICATE_FLAG_NOT_FOUND",
+  message: "This bill has no open duplicate flag of that kind against that bill. Reload the bill to see its current flags.",
+  status: 409,
+});
+
+const duplicateFlagChanged = () => ({
+  code: "DUPLICATE_FLAG_CHANGED",
+  message: "The other bill changed after this flag was shown. Reload the bill and review the flag again.",
+  status: 409,
+});
+
+function dismissDuplicateIssues(invoice, version, input) {
+  const issues = [];
+  if (isDuplicateReviewClosed(invoice.status))
+    issues.push({
+      code: "SUPPLIER_INVOICE_STATUS_INVALID",
+      message: "Duplicate flags are dismissed before approval; this bill is already approved, held or cancelled.",
+      status: 409,
+    });
+  if (invoice.version !== version)
+    issues.push({
+      code: "FINANCE_VERSION_CONFLICT",
+      message: "Supplier invoice changed concurrently.",
+      status: 409,
+    });
+  if (!DUPLICATE_KINDS.includes(text(input.kind)) || !text(input.otherInvoiceId))
+    issues.push({
+      code: "FINANCE_VALIDATION_FAILED",
+      message: "Name the flag to dismiss: the other bill and the kind (likely or possible).",
+      status: 422,
+    });
+  const reason = text(input.reason);
+  if (!reason)
+    issues.push({
+      code: "DUPLICATE_DISMISS_REASON_REQUIRED",
+      message: "Enter why this bill is not a duplicate.",
+      status: 422,
+    });
+  else if (reason.length > DUPLICATE_REASON_MAX)
+    issues.push({
+      code: "DUPLICATE_DISMISS_REASON_TOO_LONG",
+      message: `Keep the reason to ${DUPLICATE_REASON_MAX} characters.`,
+      status: 422,
+    });
+  return issues;
+}
+
 export function createOperationalFinanceCommandService({
   prisma,
   env = process.env,
@@ -525,6 +588,24 @@ export function createOperationalFinanceCommandService({
       throw error;
     }
   }
+
+  const amountsVisible = (actor) =>
+    can({ actor, permission: "finance.amounts.read", tenantId: actor.tenantId });
+
+  async function duplicateChecks(db, tenantId, invoice) {
+    const timezone = await workspaceTimezone(db, tenantId);
+    return loadDuplicateChecks(db, { tenantId, invoice, timezone });
+  }
+
+  // The open flags this approver can see, and the one they name if it still
+  // holds. A same-amount flag is only dismissed by someone who can see the
+  // amounts.
+  const visibleOpenFlags = (checks, actor) =>
+    checks.openFlags.filter((entry) => entry.kind !== "possible" || amountsVisible(actor));
+  const openFlagNamed = (checks, actor, otherInvoiceId, kind) =>
+    visibleOpenFlags(checks, actor).find(
+      (entry) => entry.otherInvoiceId === otherInvoiceId && entry.kind === kind,
+    );
 
   async function previewSupplierInvoice(input, context) {
     assertEnabled(env);
@@ -1517,6 +1598,8 @@ export function createOperationalFinanceCommandService({
         message: "This supplier invoice already has a payable obligation.",
         status: 409,
       });
+    const { openFlags } = await duplicateChecks(prisma, actor.tenantId, invoice);
+    blockingIssues.push(...duplicateReviewIssues(openFlags, amountsVisible(actor)));
     const typedNumber = text(input.obligationNumber);
     if (typedNumber && (await payableNumberTaken(prisma, actor.tenantId, typedNumber)))
       blockingIssues.push(payableNumberDuplicate(typedNumber));
@@ -1591,6 +1674,11 @@ export function createOperationalFinanceCommandService({
             "Every line-level match exception must be approved before invoice approval.",
             409,
           );
+        // Recomputed here, so a bill entered or edited after the preview is
+        // seen. Not retryable: the approver has to look at the flag.
+        const { openFlags } = await duplicateChecks(tx, actor.tenantId, current);
+        const [issue] = duplicateReviewIssues(openFlags, amountsVisible(actor));
+        if (issue) fail(issue.code, issue.message, issue.status, issue.details);
         const typedNumber = normalized.obligationNumber;
         if (typedNumber && (await payableNumberTaken(tx, actor.tenantId, typedNumber))) {
           const duplicate = payableNumberDuplicate(typedNumber);
@@ -1667,6 +1755,131 @@ export function createOperationalFinanceCommandService({
         return result;
       },
       { retries: APPROVAL_RETRIES },
+    );
+  }
+
+  // The approver dismisses one duplicate flag of this bill with a reason. The
+  // flag is recomputed, so only a flag that still holds can be dismissed, and
+  // the dismissal keeps the basis it was given on: editing either bill later
+  // reopens it. The bill's version is checked but not changed. The request
+  // names the other bill's version as shown, so a dismissal is never recorded
+  // against a state of the other bill the approver did not see.
+  async function previewDismissDuplicate(invoiceId, input, context) {
+    assertEnabled(env);
+    const actor = await resolveProvisionedActor(prisma, assertIdentity(context));
+    assertAuthorized({ actor, permission: "finance.supplier_invoice.approve", tenantId: actor.tenantId });
+    const invoice = await prisma.supplierInvoice.findFirst({
+      where: { id: invoiceId, tenantId: actor.tenantId },
+    });
+    if (!invoice)
+      fail("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404);
+    const version = expectedVersion(input.expectedVersion);
+    const otherVersion = expectedVersion(input.otherVersion, "otherVersion");
+    const blockingIssues = dismissDuplicateIssues(invoice, version, input);
+    const checks = await duplicateChecks(prisma, actor.tenantId, invoice);
+    const flag = openFlagNamed(checks, actor, text(input.otherInvoiceId), text(input.kind));
+    if (!flag) blockingIssues.push(duplicateFlagNotFound());
+    else if (flag.otherInvoice?.version !== otherVersion) blockingIssues.push(duplicateFlagChanged());
+    return {
+      operation: "dismiss_supplier_invoice_duplicate",
+      allowed: blockingIssues.length === 0,
+      blockingIssues,
+      expectedVersion: version,
+      flag: flag ? duplicateFlagView(flag, amountsVisible(actor)) : null,
+      openFlagsAfter: visibleOpenFlags(checks, actor).length - (flag ? 1 : 0),
+      paymentExecution: false,
+      ledgerMutation: false,
+    };
+  }
+
+  async function dismissDuplicate(invoiceId, input, context) {
+    const payload = {
+      invoiceId: required(invoiceId, "invoiceId"),
+      expectedVersion: expectedVersion(input.expectedVersion),
+      otherInvoiceId: text(input.otherInvoiceId),
+      otherVersion: expectedVersion(input.otherVersion, "otherVersion"),
+      kind: text(input.kind),
+      reason: text(input.reason),
+    };
+    return execute(
+      "dismiss_supplier_invoice_duplicate",
+      input,
+      context,
+      payload,
+      async (tx, actor, normalized, command) => {
+        await lockTenantRow(
+          tx,
+          "SupplierInvoice",
+          actor.tenantId,
+          normalized.invoiceId,
+          "SUPPLIER_INVOICE_NOT_FOUND",
+        );
+        const current = await tx.supplierInvoice.findUnique({
+          where: { id: normalized.invoiceId },
+        });
+        const issues = dismissDuplicateIssues(current, normalized.expectedVersion, normalized);
+        if (issues.length) fail(issues[0].code, issues[0].message, issues[0].status);
+        const checks = await duplicateChecks(tx, actor.tenantId, current);
+        const flag = openFlagNamed(checks, actor, normalized.otherInvoiceId, normalized.kind);
+        if (!flag) {
+          const missing = duplicateFlagNotFound();
+          fail(missing.code, missing.message, missing.status);
+        }
+        if (flag.otherInvoice?.version !== normalized.otherVersion) {
+          const changed = duplicateFlagChanged();
+          fail(changed.code, changed.message, changed.status);
+        }
+        const review = await tx.supplierInvoiceDuplicateReview.create({
+          data: {
+            id: idFactory(),
+            tenantId: actor.tenantId,
+            supplierInvoiceId: current.id,
+            otherInvoiceId: flag.otherInvoiceId,
+            kind: flag.kind,
+            basis: flag.basis,
+            reason: normalized.reason,
+            dismissedById: actor.user.id,
+            dismissedAt: now(),
+          },
+        });
+        const result = {
+          ...invoiceResult(current),
+          review: {
+            id: review.id,
+            otherInvoiceId: review.otherInvoiceId,
+            kind: review.kind,
+            reason: review.reason,
+            dismissedById: review.dismissedById,
+            dismissedAt: review.dismissedAt.toISOString(),
+          },
+          openFlags: visibleOpenFlags(checks, actor).length - 1,
+        };
+        await tx.auditLog.create({
+          data: audit({
+            idFactory,
+            actor,
+            action: "supplier_invoice_duplicate_dismissed",
+            entityType: result.entityType,
+            entityId: result.entityId,
+            summary: "Duplicate flag dismissed with a reason; the bill itself was not changed.",
+            ...command,
+            before: invoiceResult(current).invoice,
+            after: result.invoice,
+            evidence: {
+              reviewId: review.id,
+              otherInvoiceId: flag.otherInvoiceId,
+              otherVersion: normalized.otherVersion,
+              kind: flag.kind,
+              numberKey: flag.numberKey ?? null,
+              daysApart: flag.daysApart,
+              windowDays: flag.windowDays,
+              basis: flag.basis,
+              reason: normalized.reason,
+            },
+          }),
+        });
+        return result;
+      },
     );
   }
 
@@ -2116,6 +2329,8 @@ export function createOperationalFinanceCommandService({
     approveSupplierInvoice,
     previewCancelSupplierInvoice,
     cancelSupplierInvoice,
+    previewDismissDuplicate,
+    dismissDuplicate,
     previewLinkReceipt,
     linkReceipt,
     previewPayableAction,

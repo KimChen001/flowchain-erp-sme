@@ -337,6 +337,10 @@ function focusOf(focusTarget) {
 }
 
 const matches = (patterns, message) => patterns.some((pattern) => pattern.test(message))
+// Asking about partial delivery: the follow-up then asks whether what is
+// ready can ship first (ai-skill-drafts.mjs).
+const PARTIAL = [/\bpartial(?:ly)?\s+(?:deliver(?:y|ies|ed)?|shipments?|ship(?:ped|ping)?)\b|\bship\s+what(?:'s|’s| is)\s+(?:ready|available)\b|\bsplit\s+(?:shipments?|deliver(?:y|ies))\b/i, /部分(?:交货|发货|到货|交付)|分批(?:交货|发货|交付|到货)/]
+export const aiSkillAsksPartialDelivery = (message) => matches(PARTIAL, String(message ?? ''))
 // "tier-1" is a supplier tier, not a record number.
 const TIER_ID = /^TIER-[123]$/
 const recordIds = (message) => {
@@ -386,7 +390,7 @@ export function aiSkillTierOf(message) {
 // shortages narrows the records it answers with, and a supplier tier filters
 // them.
 function signalsOf(intent) {
-  return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent), orders: matches(ORDER_NOUN, intent), tier: aiSkillTierOf(intent) }
+  return { late: matches(LATE, intent) && !matches(DELIVERED, intent), short: matches(SHORT, intent), orders: matches(ORDER_NOUN, intent), tier: aiSkillTierOf(intent), partial: matches(PARTIAL, intent) }
 }
 
 // Skills a rule knows cannot answer this question, whichever skill is asked
