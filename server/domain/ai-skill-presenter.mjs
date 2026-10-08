@@ -29,7 +29,18 @@ export function aiSkillFormatter(facts, language) {
   const locale = facts.locale || 'en-US'
   const numberFormat = new Intl.NumberFormat(locale, { maximumFractionDigits: 4 })
   const number = (value) => value === null || value === undefined || !Number.isFinite(Number(value)) ? aiSkillText('value.unknown', language) : numberFormat.format(Number(value))
-  const quantity = (value, unit) => unit && unit !== 'mixed' ? `${number(value)} ${unit}` : number(value)
+  // 'mixed' and 'multiple_skus' say why an order has no total; they are not units.
+  const quantity = (value, unit) => unit && unit !== 'mixed' && unit !== 'multiple_skus' ? `${number(value)} ${unit}` : number(value)
+  // What an order still has to receive: the report's total when it has one
+  // (one SKU in one unit), else each line still to receive with its SKU ("10
+  // pcs of BOLT and 5 pcs of MOTOR"), never a total across SKUs or units.
+  // null when neither is known.
+  const remaining = (row) => {
+    if (row?.remaining !== null && row?.remaining !== undefined) return quantity(row.remaining, row.unit)
+    const lines = array(row?.openLines)
+    if (!lines.length || lines.some((line) => !line.sku || line.remaining === null || line.remaining === undefined)) return null
+    return aiSkillList(lines.map((line) => aiSkillText('value.sku_quantity', language, { quantity: quantity(line.remaining, line.unit), sku: line.sku })), language)
+  }
   const money = (value, currency) => {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) return aiSkillText('value.unknown', language)
     const code = String(currency || '').toUpperCase()
@@ -47,7 +58,7 @@ export function aiSkillFormatter(facts, language) {
     return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(`${text}T12:00:00Z`))
   }
   const moneyList = (amounts) => aiSkillList(array(amounts).filter((row) => row.amount !== null && row.amount !== undefined).map((row) => money(row.amount, row.currency)), language)
-  return { number, quantity, money, day, moneyList }
+  return { number, quantity, remaining, money, day, moneyList }
 }
 
 // The report figures every data answer carries, for the reader and for tests
@@ -81,7 +92,7 @@ function signalValue(item, fmt, language) {
   switch (item.type) {
     case 'po_overdue': return aiSkillText('value.days_late', language, { days: fmt.number(data.days) })
     case 'po_due_7d': return aiSkillText('value.due_in', language, { days: fmt.number(data.days) })
-    case 'po_partially_received': return aiSkillText('value.received_of', language, { received: fmt.number(data.received), ordered: fmt.quantity(data.ordered, data.unit) })
+    case 'po_partially_received': return data.ordered === null || data.ordered === undefined ? null : aiSkillText('value.received_of', language, { received: fmt.number(data.received), ordered: fmt.quantity(data.ordered, data.unit) })
     case 'stock_shortage': return aiSkillText('value.short', language, { shortage: fmt.number(data.shortage) })
     case 'stock_below_safety': return aiSkillText('value.of', language, { value: fmt.number(data.available), target: fmt.number(data.safety) })
     case 'stock_below_reorder': return aiSkillText('value.of', language, { value: fmt.number(data.atp), target: fmt.number(data.reorder) })
@@ -96,9 +107,9 @@ function signalValue(item, fmt, language) {
 export function aiSkillSignalReason(item, facts, language) {
   const fmt = aiSkillFormatter(facts, language)
   const data = item.data || {}
-  const remaining = fmt.quantity(data.remaining, data.unit)
+  const remaining = fmt.remaining(data) ?? fmt.quantity(data.remaining, data.unit)
   const values = {
-    po_overdue: { days: fmt.number(data.days), remaining, supplier: data.supplier },
+    po_overdue: { days: fmt.number(data.days), date: fmt.day(data.dueDate), remaining, supplier: data.supplier },
     po_due_7d: { date: fmt.day(data.dueDate), remaining, supplier: data.supplier },
     po_partially_received: { received: fmt.number(data.received), ordered: fmt.quantity(data.ordered, data.unit) },
     stock_shortage: { available: fmt.number(data.available), demand: fmt.number(data.demand), shortage: fmt.number(data.shortage), incoming: fmt.number(data.incoming) },
@@ -113,9 +124,13 @@ export function aiSkillSignalReason(item, facts, language) {
     supplier_exposure: { count: fmt.number(data.count), supplier: item.label, issues: aiSkillList(array(data.types).map((type) => aiSkillText(`signal.${type}.status`, language).toLowerCase()), language) },
   }[item.type] || {}
   // An order not yet issued to the supplier is to be sent, not chased (decision V5).
+  // An order without one total (several SKUs or units) names what it still has to receive.
+  const partialByLine = item.type === 'po_partially_received' && (data.ordered === null || data.ordered === undefined) && fmt.remaining(data) !== null
   const reasonKey = item.type === 'invoice_variance' && data.variance === null ? 'signal.invoice_variance.reason_hidden'
-    : data.notSent && SELF_DATED.has(item.type) ? `signal.${item.type}.reason_not_sent` : `signal.${item.type}.reason`
-  const reason = item.type === 'po_overdue' ? aiSkillCountText(reasonKey, data.days === 1 ? 1 : 2, language, values) : aiSkillText(reasonKey, language, values)
+    : partialByLine ? 'signal.po_partially_received.reason_lines'
+      : data.notSent && SELF_DATED.has(item.type) ? `signal.${item.type}.reason_not_sent` : `signal.${item.type}.reason`
+  const reasonValues = { ...values, ...(partialByLine ? { remaining } : {}) }
+  const reason = item.type === 'po_overdue' ? aiSkillCountText(reasonKey, data.days === 1 ? 1 : 2, language, reasonValues) : aiSkillText(reasonKey, language, reasonValues)
   return aiSkillSentences([reason, aiSkillWhenText(item, facts, language), data.covered && item.type.startsWith('stock_') ? aiSkillText('signal.covered', language) : ''], language)
 }
 

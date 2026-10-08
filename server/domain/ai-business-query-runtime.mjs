@@ -16,7 +16,7 @@ const array = (value) => Array.isArray(value) ? value : []
 // waiting for approval. They go to the skills unless they are about payments.
 // A general question about suppliers gets the supplier list by date
 // (supplier_attention) unless it is about payments.
-const SKILL_FIRST = new Set(['invoice_summary', 'inventory_availability', 'pending_approvals', 'supplier_attention'])
+const SKILL_FIRST = new Set(['invoice_summary', 'inventory_availability', 'pending_approvals', 'supplier_attention', 'spend_analysis'])
 
 // Whether the business query path takes this question before the skills.
 export function shouldUseSemanticBusinessQuery(message, body = {}) {

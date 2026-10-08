@@ -1,13 +1,13 @@
-import { aiSkillCountText, aiSkillText } from './ai-skill-copy.mjs'
+import { aiSkillCountText, aiSkillList, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillNavigation, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
-import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
-import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
+import { buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
+import { aiSkillFocusName, matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
 import { AI_SKILL_DRAFT_TYPES, aiSkillCombineFollowups, aiSkillDraftCandidate, aiSkillDraftCard } from './ai-skill-drafts.mjs'
 import { presentStartOrder, runStartOrder } from './ai-skill-start-order.mjs'
 
-// Review-only drafts for the top signals: the best candidate of each draft
-// type, then the rest by rank, at most three. The candidates and cards are
-// shared with the draft each answer line offers (ai-skill-drafts.mjs). A
+// Review-only drafts for the signals in date order (compareSignalsByDate):
+// the first candidate of each draft type, then the rest in that order, at
+// most three. The candidates and cards are shared with the draft each answer line offers (ai-skill-drafts.mjs). A
 // request to start an order (route mode order) is answered by
 // ai-skill-start-order.mjs.
 // A supplier tier the question names ("follow-ups for our Tier 1 suppliers")
@@ -26,24 +26,35 @@ const candidateSupplier = (candidate) => candidate.po?.supplierId || candidate.i
 
 export function runPrepareActionDraft(facts, { focus = null, route = null } = {}) {
   if (route?.mode === 'order') return runStartOrder(facts, { focus, route, canDraft: Boolean(facts.visibility?.canDraft) })
-  const ranked = rankAiSkillItems(buildAiSkillSignals(facts)).filter((item) => matchesAiSkillFocus(item, focus))
+  // The record the drafts are for (focus), or several named ones
+  // (route.focusAny): the drafts for any of them. An order or item keeps the
+  // signals tied to it; a supplier keeps the drafts whose order or invoice is
+  // that supplier's, as a tier does, so a shortage its order covers stays.
+  const any = Array.isArray(route?.focusAny) && route.focusAny.length ? route.focusAny : null
+  const records = any || (focus ? [focus] : [])
+  const supplierIds = new Set(records.filter((one) => one.entityType === 'supplier').map((one) => one.entityId))
+  const others = records.filter((one) => one.entityType !== 'supplier')
+  const wanted = (candidate) => !records.length || others.some((one) => matchesAiSkillFocus(candidate.item, one)) || supplierIds.has(candidateSupplier(candidate))
+  const ranked = rankAiSkillItemsByDate(buildAiSkillSignals(facts))
   const tier = route?.tier || null
   const tierIds = tier?.supplierIds ? new Set(tier.supplierIds) : null
+  // The focus filter (wanted) and a supplier the route names are the same
+  // predicate on the candidate's supplier, so applying both never filters twice.
   const named = array(route?.entities?.suppliers)
-  const supplierIds = named.length ? new Set(named.map((row) => row.id)) : null
+  const namedSupplierIds = named.length ? new Set(named.map((row) => row.id)) : null
   const all = aiSkillCombineFollowups(ranked.map((item) => aiSkillDraftCandidate(item, facts))
-    .filter((candidate) => (!tierIds || tierIds.has(candidateSupplier(candidate))) && (!supplierIds || supplierIds.has(candidateSupplier(candidate)))))
+    .filter((candidate) => wanted(candidate) && (!tierIds || tierIds.has(candidateSupplier(candidate))) && (!namedSupplierIds || namedSupplierIds.has(candidateSupplier(candidate)))))
   const askPartial = Boolean(route?.signals?.partial)
   const seen = new Set()
   const drafts = []
   const take = (candidate) => { if (drafts.length < MAX_CARDS && !seen.has(candidate.key)) { seen.add(candidate.key); drafts.push(candidate) } }
-  // The best candidate of each draft type first, then the rest by rank.
+  // The first candidate of each draft type, then the rest, all by date.
   for (const kind of AI_SKILL_DRAFT_TYPES) { const first = all.find((candidate) => candidate.kind === kind); if (first) take(first) }
   for (const candidate of all.filter((entry) => entry.kind !== 'link')) take(candidate)
   drafts.sort((a, b) => a.item.rank - b.item.rank)
   const canDraft = Boolean(facts.visibility?.canDraft)
   return {
-    skillId: 'prepare_action_draft', focus, canDraft, tier,
+    skillId: 'prepare_action_draft', focus, focusAny: any, canDraft, tier,
     supplier: named.length === 1 ? { id: named[0].id, name: named[0].name || named[0].id } : null,
     // Asked to draft for one order that is not yet issued: say so, not "no draft needed".
     focusNotSent: Boolean(focus) && !drafts.length && all.some((candidate) => candidate.kind === 'link' && candidate.notSent),
@@ -68,8 +79,9 @@ export function presentPrepareActionDraft(result, facts, { skill, language, quer
   return presentAiSkillAnswer({
     skill, facts, language, query,
     title: !result.canDraft ? aiSkillText('draft.title_blocked', language)
-      : result.focusNotSent ? aiSkillText('draft.focus_not_sent', language, { id: result.focus.entityId })
-        : result.focus ? focusTitle(result.focus.entityId, reviewCards.length, fmt, language)
+      : result.focusNotSent ? aiSkillText('draft.focus_not_sent', language, { id: aiSkillFocusName(result.focus, facts) })
+        : result.focus ? focusTitle(aiSkillFocusName(result.focus, facts), reviewCards.length, fmt, language)
+          : result.focusAny ? focusTitle(aiSkillList(result.focusAny.map((one) => aiSkillFocusName(one, facts)), language), reviewCards.length, fmt, language)
           : result.tier?.supplierIds ? aiSkillCountText('draft.tier_title', reviewCards.length, language, { count: fmt.number(reviewCards.length), group: aiSkillText(`tier.group_${result.tier.tier}`, language) })
             : result.supplier ? aiSkillCountText('draft.supplier_title', reviewCards.length, language, { count: fmt.number(reviewCards.length), supplier: result.supplier.name })
             : aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }),

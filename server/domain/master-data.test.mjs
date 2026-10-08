@@ -117,7 +117,7 @@ test('master data helper marks missing preferred supplier metadata', () => {
   assert.equal(items[0].preferredSupplierSource, 'missing')
 })
 
-test('master data helper normalizes supplier read models with score source metadata', () => {
+test('master data helper normalizes supplier read models with score source metadata, never deriving a score from rates', () => {
   const suppliers = listMasterSuppliers(createDb())
   assert.equal(suppliers.length, 2)
   assert.deepEqual(suppliers[0], {
@@ -125,8 +125,9 @@ test('master data helper normalizes supplier read models with score source metad
     name: 'ABC Components',
     status: 'active',
     risk: 'medium',
-    score: 'A',
-    scoreSource: 'derived_performance_fallback',
+    // ABC has on-time and quality rates but no recorded score: none is derived.
+    score: '',
+    scoreSource: 'missing',
     defaultCurrency: 'USD',
     paymentTermsId: 'NET30',
     categories: ['Motors'],

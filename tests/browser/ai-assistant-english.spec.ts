@@ -49,7 +49,7 @@ test("the assistant answers every prompt chip in English from the workspace data
   const panel = await openAssistant(page);
   for (const [chip, headline] of [
     ["What should I handle first today?", /items? needs? attention today|Nothing needs attention today/],
-    ["Which items have the highest risk?", /^Highest risk: |No high-risk items found/],
+    ["What is at risk right now?", /^Oldest open problem: |No open problems found/],
     ["Which records need more data?", /records? needs? more data|No records are missing required fields/],
     ["Prepare an action draft", /drafts? ready for your review|No draft is needed right now/],
   ] as const) {

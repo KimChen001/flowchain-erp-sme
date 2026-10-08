@@ -11,6 +11,8 @@
 //   npm run walkthrough:local -- --reset delete the walkthrough data first
 //   npm run walkthrough:local -- --ai-env=<file>
 //                                        also try the assistant's model features
+//   npm run walkthrough:local -- --ai-env=<file> --compose
+//                                        and let the model word the answers (P3)
 //
 // --ai-env is the one exception to "calls no paid service", and only when
 // given: it reads a model provider from a file outside this checkout (the
@@ -65,7 +67,8 @@ if (aiEnvArg) {
     process.exit(1);
   }
   // Agent planning (P2): one model call picks the skills; the skills answer.
-  aiEnv.FLOWCHAIN_AI_AGENT_MODE = "plan";
+  // --compose also lets the model word the answers from their facts (P3).
+  aiEnv.FLOWCHAIN_AI_AGENT_MODE = process.argv.includes("--compose") ? "compose" : "plan";
 }
 
 if (process.argv.includes("--reset")) rmSync(dataRoot, { recursive: true, force: true });
@@ -103,6 +106,7 @@ const env = {
   FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: "true",
   FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
   FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "true",
+  FLOWCHAIN_ENABLE_DATA_IMPORT: "true",
   // No model provider: the assistant answers from workspace data only,
   // unless --ai-env opts in.
   OPENAI_API_KEY: "",
@@ -159,7 +163,7 @@ try {
 [walkthrough] Sign in with admin@flowchain.local or kim@example.com, then open
 [walkthrough] "View the sign-in link" on the sign-in page (local outbox only).
 [walkthrough] Data folder: ${dataRoot}   Stop with Ctrl+C.
-[walkthrough] Model features: ${aiEnvArg ? `on (${aiEnv.FLOWCHAIN_AI_PROVIDER_KIND}, ${aiEnv.FLOWCHAIN_AI_PROVIDER_MODEL || "default model"}; agent planning, knowledge ${aiEnv.FLOWCHAIN_KNOWLEDGE_PROVIDER || "off"})` : "off"}`);
+[walkthrough] Model features: ${aiEnvArg ? `on (${aiEnv.FLOWCHAIN_AI_PROVIDER_KIND}, ${aiEnv.FLOWCHAIN_AI_PROVIDER_MODEL || "default model"}; agent planning${aiEnv.FLOWCHAIN_AI_AGENT_MODE === "compose" ? " and answer wording" : ""}, knowledge ${aiEnv.FLOWCHAIN_KNOWLEDGE_PROVIDER || "off"})` : "off"}`);
 } catch (error) {
   console.error(`[walkthrough] ${error.message}`);
   await stop(1);

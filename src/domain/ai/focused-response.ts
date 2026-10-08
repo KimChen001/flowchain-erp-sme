@@ -43,21 +43,11 @@ export type AiFocusedResponseModel = {
   followUps: Array<{ label: string; prompt: string; skillHint?: string }>;
 };
 
-const severityScore: Record<AiResponseV2Severity, number> = { risk: 400, warning: 300, info: 200, success: 100 };
-
 type Language = "en-US" | "zh-CN";
 const focusedCopy = {
   "en-US": { rfqDraft: "Create RFQ draft", taskDraft: "Create task draft", prDraft: "Create purchase request draft", textDraft: "Prepare text draft", reason: "Review it against the current business status.", headline: "Business review complete", summary: "Review the priorities and suggested next steps." },
   "zh-CN": { rfqDraft: "创建正式 RFQ 草稿", taskDraft: "创建正式任务草稿", prDraft: "创建正式 PR 草稿", textDraft: "生成文本草稿", reason: "需要结合当前业务状态处理。", headline: "已完成业务分析", summary: "请查看重点事项和建议下一步。" },
 } as const;
-
-function priorityScore(item: AiResponseV2EvidenceItem) {
-  const text = `${item.status || ""} ${item.summary || ""} ${item.value ?? ""}`;
-  const urgency = /逾期|阻断|缺货|严重|高风险|待处理/i.test(text) ? 180 : /临期|差异|不足|缺少|关注/i.test(text) ? 90 : 0;
-  const numeric = Number(String(item.value ?? "").replace(/[^0-9.-]/g, ""));
-  const scale = Number.isFinite(numeric) && numeric > 0 ? Math.min(60, Math.log10(numeric + 1) * 10) : 0;
-  return severityScore[item.severity || "info"] + urgency + scale;
-}
 
 function answerMode(response: AiResponseV2): AiFocusedAnswerMode {
   const query = `${response.query || ""} ${response.intent || ""}`;
@@ -111,9 +101,10 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
   // language; it is never filled with interface-language text.
   const answerCopy = focusedCopy[response.language === "zh-CN" || response.language === "en-US" ? response.language : language];
   const impacts = (response.businessImpact || []).slice(0, 3);
-  // The server's rank, when it gives one, is the order; otherwise a heuristic.
+  // The server's rank, when it gives one, is the order; otherwise the server's
+  // own order (by date). The page never re-sorts by a severity or amount score.
   const ranked = (response.keyEvidence || []).every((item) => typeof item.rank === "number");
-  const evidence = [...(response.keyEvidence || [])].sort((a, b) => ranked ? (a.rank as number) - (b.rank as number) : priorityScore(b) - priorityScore(a));
+  const evidence = ranked ? [...(response.keyEvidence || [])].sort((a, b) => (a.rank as number) - (b.rank as number)) : [...(response.keyEvidence || [])];
   // A compound answer shows sections, not lines, so its drafts stay actions.
   const lineCards = new Set<AiResponseV2ReviewCard>();
   const compound = (response.sections || []).filter((section) => Boolean(section?.title)).length > 1;

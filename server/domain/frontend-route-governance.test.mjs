@@ -29,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 170);
+  assert.equal(routes.length, 172);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -46,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    170,
+    172,
   );
   assert.throws(
     () =>
@@ -211,6 +211,17 @@ test("capability and permission metadata remain declarative boundaries", () => {
     routes.find((route) => route.id === "inventory:transfer").requiredPermission,
     "inventory.transfer.read",
   );
+  // The reorder list reads stock like the warnings page and writes nothing;
+  // its action opens a purchase request a person submits.
+  const reorder = routes.find((route) => route.id === "inventory:reorder");
+  assert.equal(reorder.path, "/app/inventory/reorder");
+  assert.equal(reorder.classification, "CORE");
+  assert.equal(reorder.requiredPermission, "inventory.balance.read");
+  assert.equal(reorder.requiredCapability, undefined);
+  assert.equal(reorder.navigationVisibility, "SECONDARY");
+  assert.equal(reorder.readMaturity, "AUTHORITATIVE");
+  assert.equal(reorder.writeMaturity, "UNAVAILABLE");
+  assert.equal(reorder.directAccessBehavior, "PERMISSION_REQUIRED");
   assert.equal(
     routes.find((route) => route.id === "finance:bank-statements").requiredPermission,
     "finance.bank_statement.read",
@@ -576,5 +587,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /170\/170 frontend route stability audit/);
+  assert.match(matrix, /172\/172 frontend route stability audit/);
 });

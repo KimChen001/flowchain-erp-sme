@@ -87,17 +87,18 @@ test('follow-ups answer through the usual skills, in the language they are asked
   const why = await ask({ message: '为什么？', answerLanguage: 'en-US', conversationContext: contextOf(first) })
   assert.equal(why.intent, 'today_priorities')
   assert.equal(why.language, 'zh-CN')
-  assert.equal(why.conclusion.title, `${top} 需要关注的原因`)
+  // The title names the record as the answer showed it (a SKU, not its id).
+  assert.equal(why.conclusion.title, `${first.keyEvidence[0].entityLabel} 需要关注的原因`)
   assert.deepEqual(why.followUp, { kind: 'why' })
   assert.equal(audits.at(-1).metadata.followUp, 'why')
   // Then "the second one" counts in the risk list, not in the one-record why.
   const next = await ask({ message: '第二个呢？', answerLanguage: 'en-US', conversationContext: contextOf(why, first) })
   assert.notEqual(next.intent, 'capability_overview')
   assert.ok(next.keyEvidence.some((item) => item.entityId === first.keyEvidence[1].entityId), next.conclusion.title)
-  // Another order for the same skill: its risk, not the page's or the list's.
+  // Another order for the same skill: its open problems, not the page's or the list's.
   const other = await ask({ message: 'What about PO-008?', answerLanguage: 'en-US', conversationContext: contextOf(first) })
   assert.equal(other.intent, 'highest_risk_items')
-  assert.match(other.conclusion.title, /^(Risk on PO-008|No risk found for PO-008)/)
+  assert.match(other.conclusion.title, /^(Open problems on PO-008|No open problems found for PO-008)/)
   // The second record of a purchase order list: that order's card.
   const orders = await ask({ message: 'Which purchase orders are late?', answerLanguage: 'en-US' })
   const second = await ask({ message: 'the second one', answerLanguage: 'en-US', conversationContext: contextOf(orders) })

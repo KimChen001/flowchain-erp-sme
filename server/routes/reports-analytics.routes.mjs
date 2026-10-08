@@ -19,7 +19,7 @@ async function routeReports(ctx) {
   const readerContext = async () => {
     const access = await reportReadAccess(ctx)
     const context = await readBusinessContext(ctx, { warehouseIds: access.warehouseIds })
-    return { context: scopeBusinessContext(context, access), allocationContext: context }
+    return { context: scopeBusinessContext(context, access), allocationContext: context, warehouseIds: access.warehouseIds }
   }
 
   if (req.method === 'GET' && url.pathname === '/api/reports/open-purchase-orders') {
@@ -55,12 +55,13 @@ async function routeReports(ctx) {
     }
     return true
   }
-  // Overdue counts use the workspace's calendar day.
-  const reportOptions = async (allocationContext) => ({ now: ctx.reportNow || new Date(), timeZone: await readTenantTimezone(ctx), allocationContext })
+  // Overdue counts use the workspace's calendar day. On-time deliveries count the
+  // receipts in the reader's warehouses, as the supplier scorecard does.
+  const reportOptions = async (allocationContext, warehouseIds) => ({ now: ctx.reportNow || new Date(), timeZone: await readTenantTimezone(ctx), allocationContext, warehouseIds })
 
   if (req.method === 'GET' && url.pathname === '/api/reports-analytics') {
-    const { context, allocationContext } = await readerContext()
-    send(res, 200, buildRuntimeGovernedReport(context, { subject: 'overview' }, await reportOptions(allocationContext)))
+    const { context, allocationContext, warehouseIds } = await readerContext()
+    send(res, 200, buildRuntimeGovernedReport(context, { subject: 'overview' }, await reportOptions(allocationContext, warehouseIds)))
     return true
   }
 
@@ -71,16 +72,16 @@ async function routeReports(ctx) {
 
   if (req.method === 'POST' && url.pathname === '/api/reports/query') {
     const body = await readBody(req)
-    const { context, allocationContext } = await readerContext()
-    send(res, 200, buildRuntimeGovernedReport(context, body, await reportOptions(allocationContext)))
+    const { context, allocationContext, warehouseIds } = await readerContext()
+    send(res, 200, buildRuntimeGovernedReport(context, body, await reportOptions(allocationContext, warehouseIds)))
     return true
   }
 
   const dashboardMatch = url.pathname.match(/^\/api\/reports\/(overview|procurement|sales|inventory|finance|suppliers)$/)
   if (req.method === 'GET' && dashboardMatch) {
     const filters = Object.fromEntries(url.searchParams.entries())
-    const { context, allocationContext } = await readerContext()
-    send(res, 200, buildRuntimeGovernedReport(context, { subject: dashboardMatch[1], filters }, await reportOptions(allocationContext)))
+    const { context, allocationContext, warehouseIds } = await readerContext()
+    send(res, 200, buildRuntimeGovernedReport(context, { subject: dashboardMatch[1], filters }, await reportOptions(allocationContext, warehouseIds)))
     return true
   }
 
