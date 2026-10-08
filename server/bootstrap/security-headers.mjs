@@ -4,6 +4,10 @@
 // They are set with res.setHeader before the request is handled, so a header
 // a route passes to res.writeHead for the same name still wins. That keeps
 // Referrer-Policy: no-referrer on /sign-in/confirm (static-assets.mjs).
+//
+// The browser suites run through the Vite dev server, which sends no CSP.
+// After changing the policy, check the built app with
+// scripts/check-csp-live.mjs.
 
 const text = (value) => String(value ?? "").trim();
 
