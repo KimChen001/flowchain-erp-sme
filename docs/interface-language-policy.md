@@ -65,6 +65,23 @@ names, or supplier names in place. Translate their presentation where appropriat
   that a purchase order line in another unit than the item's stock unit is not counted
   as incoming is in both languages on the reports page and in the assistant's stock and
   order answers.
+- The sales order reserve, release and delivery draft dialogs and the shipment post,
+  reverse and cancel dialogs have English and Chinese titles and confirm buttons that
+  name the action. Their previews say what will happen in one or two sentences built
+  from the server's preview (`src/modules/sales/outboundPreviewText.ts`), with the
+  impact counts under "Technical details"; warehouses show by name and location, and
+  reservation and movement ids in short form. The order and shipment timelines show
+  the reservation and movement titles the workbench API builds at read time in the
+  interface language (`src/modules/sales/outboundCopy.ts`); audit summaries stay as
+  recorded. SKUs, item and warehouse names, units and shipment numbers stay as stored.
+- Today (`/app/overview/risks`) has English and Chinese copy
+  (`src/modules/overview/todayCopy.ts`): the work rows and their date labels, the
+  status tiles, the first-day checklist and recent documents. The server sends codes,
+  dates and numbers (`GET /api/home/overview`); document numbers, SKUs, units and
+  supplier and customer names stay as stored, and calendar days and change times
+  follow the workspace locale and timezone in both languages. Checked in both
+  languages by `home-overview-language.spec.ts`, `today-work.spec.ts` and
+  `today-first-run.spec.ts`.
 - The purchase order document (`/app/procurement/orders/:id/document`) prints its
   labels in the document language: the workspace default from Settings › Company &
   workspace › Documents, or the language picked on the page for one print, which is
@@ -103,10 +120,23 @@ remaining potential display literals; the report is deliberately heuristic becau
 Chinese business values and API status enums must not be rewritten as UI copy.
 
 This is not yet a claim of complete English coverage. Supplier details, other
-purchasing detail views, receiving, returns/quarantine, and some AI response surfaces are the
-largest remaining areas. Translate them at their presentation boundary with both
+purchasing detail views, receiving, returns/quarantine server text, and some AI
+response surfaces are the largest remaining areas. Translate them at their presentation boundary with both
 English and Chinese acceptance scenarios. A regression test requires every Chinese
 route, module, breadcrumb, and primary-navigation label to have an English mapping.
+
+- The returns and quarantine screens (`/app/inventory/returns/**`,
+  `/app/inventory/quarantine`, `/app/sales/returns` and its form) have English and
+  Chinese copy in `src/modules/inventory/returnsCopyData.ts`, including statuses,
+  disposition routes, reconciliation rules, audit action names and the error codes
+  the returns API and its role and sign-in checks send. Error and blocking messages
+  show the raw code on a line below the text; status, type and route chips show only
+  the label. A node test (`server/domain/returns-copy.test.mjs`) requires both
+  languages for every string and code. For the few codes the server sends for
+  several causes, English shows the server's message and Chinese a label that fits
+  every cause. Still English in the Chinese UI: the server's audit summaries in the
+  evidence log. The browser spec still runs in Chinese only; an English browser
+  check is pending. The module stays off for the trial.
 
 The global search dropdown still shows Chinese literals for its heading, loading,
 empty and overflow states, and the server builds the search source hint and the

@@ -1,4 +1,4 @@
-import { aiSkillDraftCandidate, aiSkillDraftCard, aiSkillNextStepText } from './ai-skill-drafts.mjs'
+import { aiSkillDraftCandidate, aiSkillDraftCard, aiSkillDraftOrders, aiSkillNextStepText } from './ai-skill-drafts.mjs'
 import { buildAiSkillSignals, compareSignalsByDate } from './ai-skill-signals.mjs'
 
 // Every answer line that names a record needing attention says what to do
@@ -21,6 +21,10 @@ function signalFor(evidence, byId, byEntity, bySupplier) {
     || null
 }
 
+// Lines that state a figure (the spend analysis' suppliers, items and months)
+// name no problem, so they get no next step and offer no draft.
+const FIGURE_LINES = new Set(['spend', 'spend_item', 'spend_month'])
+
 export function attachAiSkillNextSteps(response, facts) {
   if (!facts || !response || !array(response.keyEvidence).length) return response
   const language = response.language
@@ -36,7 +40,10 @@ export function attachAiSkillNextSteps(response, facts) {
   const canDraft = Boolean(facts.visibility?.canDraft)
   const reviewCards = [...array(response.reviewCards)]
   const taken = new Set(reviewCards.map(cardKey))
+  // Orders a message already covers (one message to a supplier about several).
+  const covered = new Set(reviewCards.flatMap(aiSkillDraftOrders))
   const keyEvidence = response.keyEvidence.map((evidence) => {
+    if (FIGURE_LINES.has(evidence.evidenceType)) return evidence
     const signal = signalFor(evidence, byId, byEntity, bySupplier)
     if (!signal) return evidence
     const candidate = aiSkillDraftCandidate(signal, facts)
@@ -44,7 +51,7 @@ export function attachAiSkillNextSteps(response, facts) {
     if (canDraft && candidate.kind !== 'link' && reviewCards.length < MAX_DRAFTS) {
       const card = aiSkillDraftCard(candidate, facts, language)
       // The card names the line it belongs to, so the answer can show it there.
-      if (!taken.has(cardKey(card))) {
+      if (!taken.has(cardKey(card)) && !aiSkillDraftOrders(card).some((id) => covered.has(id))) {
         taken.add(cardKey(card))
         reviewCards.push({ ...card, lineEvidenceId: evidence.id })
       }

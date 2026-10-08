@@ -34,6 +34,10 @@ export const operationalSettingsSeed = {
       { id: 'customer-credit-note-approval', name: 'Customer Credit Note Approval', enabled: true, reviewerRoles: ['admin', 'manager'] },
     ],
     amountThreshold: 100000,
+    // A PO created from an approved purchase request is approved with it
+    // (owner decision D3, 2026-10-07). Off: such a PO starts as a draft and
+    // goes through PO approval as before.
+    approvedRequestApprovesPurchaseOrder: true,
     quantityTolerance: '0.0000',
     pricePercentageTolerance: '0.0000',
     priceAbsoluteTolerance: '0.0000',
@@ -83,7 +87,7 @@ export const operationalSettingsSeed = {
 // Nothing reads the other sections yet, so the settings UI shows them
 // read-only as "Not in effect yet" and keeps their stored values.
 export const REVIEW_TOLERANCE_FIELDS = ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance']
-export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: [], review: REVIEW_TOLERANCE_FIELDS, modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
+export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: [], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice', 'layouts'] })
 const TOLERANCE_PATTERN = /^\d+(\.\d{1,4})?$/
 
 const clone = value => structuredClone(value)
@@ -165,6 +169,9 @@ export function validateOperationalSection(section, value, options = {}) {
   if (section === 'review' && !Array.isArray(value.policies)) throw Object.assign(new Error('Review policies are required.'), { code: 'REVIEW_POLICY_VALIDATION_FAILED', status: 400 })
   if (section === 'review') {
     const next = clone(value)
+    if (value.approvedRequestApprovesPurchaseOrder !== undefined && typeof value.approvedRequestApprovesPurchaseOrder !== 'boolean') {
+      throw Object.assign(new Error('approvedRequestApprovesPurchaseOrder must be true or false.'), { code: 'SETTINGS_VALIDATION_FAILED', status: 400, details: { field: 'approvedRequestApprovesPurchaseOrder' } })
+    }
     for (const field of REVIEW_TOLERANCE_FIELDS) {
       if (value[field] === undefined) continue
       const raw = text(value[field])

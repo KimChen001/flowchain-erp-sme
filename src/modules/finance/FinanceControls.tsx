@@ -11,7 +11,7 @@ import { createSecureClientMutationId } from "../../lib/client-id";
 // action that runs exactly the operation the server previewed.
 
 type TranslationKey = Parameters<ReturnType<typeof useI18n>["t"]>[0];
-type Issue = { code?: string; message?: string };
+type Issue = { code?: string; message?: string; details?: unknown };
 type Plan = { allowed: boolean; blockingIssues?: Issue[] };
 
 export const field = "rounded-lg border border-slate-200 px-3 py-2 text-sm";
@@ -53,10 +53,20 @@ export function StatusChip({ status }: { status: string }) {
 }
 
 // One operation: an optional reason, a preview of the server's plan, then a
-// confirm that runs exactly the previewed operation.
-export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, onDone, tone = "primary" }: {
+// confirm that runs exactly the previewed operation. The server words its
+// issues in English; issueText gives the translated text for the codes a
+// screen knows, and the server's message is kept for the rest. issueDetail
+// shows what a blocking issue is about, under the notice.
+// oneStep (owner decision D4): a step that only changes a document's status
+// (submit, approve, issue) runs on one click. The server still previews it
+// first; when the preview blocks it, the panel opens with the reason, as a
+// two-step action shows it. Posting and payments keep preview and confirm.
+export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, reasonMaxLength, onDone, tone = "primary", issueText, issueDetail, oneStep = false }: {
   label: string; testId: string; previewUrl: string; runUrl: string; payload: () => Record<string, unknown>;
-  reasonLabel?: string; onDone: () => void; tone?: "primary" | "secondary";
+  reasonLabel?: string; reasonMaxLength?: number; onDone: () => void; tone?: "primary" | "secondary";
+  issueText?: (code: string | undefined) => string | undefined;
+  issueDetail?: (issue: Issue) => ReactNode;
+  oneStep?: boolean;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -64,10 +74,27 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const describe = (issue: Issue) => issueText?.(issue.code) || issue.message;
   const body = () => ({ ...payload(), ...(reasonLabel ? { reason, resolution: reason } : {}) });
   const preview = async () => {
     setError("");
-    try { setPlan(await apiJson<Plan>(previewUrl, { method: "POST", body: JSON.stringify(body()) })); } catch (reason) { setError(message(reason, t("finance.loadFailed"))); }
+    try {
+      const next = await apiJson<Plan>(previewUrl, { method: "POST", body: JSON.stringify(body()) });
+      setPlan(next);
+      return next;
+    } catch (reason) {
+      setError(reason instanceof ApiError ? issueText?.(reason.code) || reason.message : message(reason, t("finance.loadFailed")));
+      return null;
+    }
+  };
+  // One click: preview, then run it when the server allows it. A blocked
+  // preview, or a run that fails (another change got there first, a lost
+  // connection), opens the panel with the reason and Preview/Confirm to retry.
+  const runAtOnce = async () => {
+    setBusy(true);
+    const next = await preview();
+    setBusy(false);
+    if (!next?.allowed || !(await confirm())) setOpen(true);
   };
   const confirm = async () => {
     setError("");
@@ -78,19 +105,23 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       setPlan(null);
       setReason("");
       onDone();
+      return true;
     } catch (cause) {
-      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : t("finance.loadFailed"));
+      setError(cause instanceof ApiError ? issueText?.(cause.code) || cause.message : cause instanceof Error ? cause.message : t("finance.loadFailed"));
+      // The preview no longer holds (another change got there first): preview again before confirming.
+      setPlan(null);
+      return false;
     } finally {
       setBusy(false);
     }
   };
-  if (!open) return <button type="button" data-testid={testId} className={`${button} ${tone === "primary" ? "text-white" : "border border-slate-200"}`} style={tone === "primary" ? { background: A.blue } : undefined} onClick={() => setOpen(true)}>{label}</button>;
+  if (!open) return <button type="button" data-testid={testId} data-one-step={oneStep && !reasonLabel ? "true" : undefined} disabled={busy} className={`${button} ${tone === "primary" ? "text-white" : "border border-slate-200"} disabled:opacity-50`} style={tone === "primary" ? { background: A.blue } : undefined} onClick={() => (oneStep && !reasonLabel ? void runAtOnce() : setOpen(true))}>{busy ? t("finance.working") : label}</button>;
   return (
     <div className="w-full space-y-2 rounded-xl border border-slate-200 p-3" data-testid={`${testId}-panel`}>
       <div className="text-sm font-semibold">{label}</div>
       {reasonLabel && (
         <label className="block text-xs">{reasonLabel}
-          <input data-testid={`${testId}-reason`} className={`${field} mt-1 w-full`} value={reason} onChange={(event) => { setReason(event.target.value); setPlan(null); }} />
+          <input data-testid={`${testId}-reason`} className={`${field} mt-1 w-full`} maxLength={reasonMaxLength} value={reason} onChange={(event) => { setReason(event.target.value); setPlan(null); }} />
         </label>
       )}
       <div className="flex flex-wrap gap-2">
@@ -98,7 +129,8 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
         <button type="button" data-testid={`${testId}-confirm`} className={`${button} text-white`} style={{ background: A.blue }} disabled={!plan?.allowed || busy} onClick={() => void confirm()}>{t("finance.confirm")}</button>
         <button type="button" className={`${button} text-slate-600`} onClick={() => { setOpen(false); setPlan(null); setError(""); }}>{t("finance.close")}</button>
       </div>
-      {plan && (plan.allowed ? <Notice tone="success">{t("finance.previewAllowed")}</Notice> : <Notice>{(plan.blockingIssues || []).map((issue) => issue.message).join(" · ")}</Notice>)}
+      {plan && (plan.allowed ? <Notice tone="success">{t("finance.previewAllowed")}</Notice> : <Notice>{(plan.blockingIssues || []).map(describe).join(" · ")}</Notice>)}
+      {plan && !plan.allowed && issueDetail && (plan.blockingIssues || []).map((issue, index) => <div key={`${issue.code}-${index}`}>{issueDetail(issue)}</div>)}
       {error && <Notice>{error}</Notice>}
     </div>
   );

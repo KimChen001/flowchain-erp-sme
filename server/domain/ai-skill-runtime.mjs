@@ -2,7 +2,8 @@ import { aiSkillQuestionLanguage } from './ai-skill-copy.mjs'
 import { refineAiSkillRoute } from './ai-skill-entities.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
-import { routeSkill } from './ai-skill-router.mjs'
+import { aiSkillAsksPartialDelivery, aiSkillSpendSignals, routeSkill } from './ai-skill-router.mjs'
+import { aiSkillDraftBasis } from './ai-skill-drafts.mjs'
 import { resolveAiSkillFollowUp } from './ai-skill-follow-up.mjs'
 import { answerAiSkill, toolsFor } from './ai-skills.mjs'
 import { aiKnowledgeAuditBlock, recordAiSkillAudit } from './ai-skill-audit.mjs'
@@ -14,6 +15,9 @@ import { classifyQueryScope } from './ai-query-scope.mjs'
 import { AI_AGENT_BUSINESS_QUERY, AI_AGENT_BUSINESS_QUERY_TITLE, answerAiAgentBusinessQuery } from './ai-agent-business-query.mjs'
 import { aiSkillById } from './ai-skill-registry.mjs'
 import { assertValidAiSkillResponse } from './ai-skill-validator.mjs'
+import { aiAnswerComposeAudit, composeAiAnswer } from './ai-answer-compose.mjs'
+import { aiConversationMemory, aiMemoryForModels, aiSkillMemoryReference } from './ai-conversation-memory.mjs'
+import { aiSkillFocusName } from './ai-skill-today-priorities.mjs'
 
 // The assistant's answer path after knowledge and business queries: route the
 // question to a workspace skill, read the facts through the report
@@ -21,7 +25,9 @@ import { assertValidAiSkillResponse } from './ai-skill-validator.mjs'
 // names (which can choose the skill), answer in the question's language, and
 // audit the answer. A short follow-up no rule answers on its own ("What about
 // PO-020?", 为什么？, 第一个) is read with the previous answer the panel sends
-// back (ai-skill-follow-up.mjs). A question with two or three parts the rules
+// back (ai-skill-follow-up.mjs). A question that points at a record of the
+// previous answer ("draft a follow-up email for it") is narrowed to it
+// (ai-conversation-memory.mjs). A question with two or three parts the rules
 // route to different skills gets a section per part (ai-skill-compound.mjs).
 // A question no rule and no named record matches may be routed by a model
 // when that is switched on (ai-skill-intent-routing.mjs). With agent planning
@@ -72,7 +78,7 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   // hash and the answer's query.
   const followUp = body.skillHint ? null : resolveAiSkillFollowUp({ message, route: typed, conversationContext: body.conversationContext })
   const asked = followUp ? followUp.message : message
-  const route = followUp ? routeSkill({ message: asked, skillHint: followUp.skillHint, focusTarget: followUp.focusTarget || null }) : typed
+  let route = followUp ? routeSkill({ message: asked, skillHint: followUp.skillHint, focusTarget: followUp.focusTarget || null }) : typed
   const context = await loadAiSkillContext(ctx)
   // Off unless switched on: a model's suggestion for the audit row only. It
   // runs beside the facts read and never changes the route or the answer.
@@ -87,13 +93,24 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   const dataSkills = [...allowed].some((id) => id !== 'capability_overview')
   const readsFacts = Boolean(route && !route.capability && dataSkills)
   const facts = readsFacts ? await readAiSkillFacts(context) : null
+  // Conversation memory: the previous question and the records its answer
+  // showed, as the actor's own facts have them (ai-conversation-memory.mjs).
+  // A question that points at one of them and names no record ("draft a
+  // follow-up email for it", 这家供应商) is narrowed to it, as a question on
+  // that record's page is. A chip or a follow-up hint keeps its own focus.
+  const memory = readsFacts && !body.skillHint ? aiConversationMemory(body.conversationContext, facts) : null
+  const reference = memory && !followUp ? aiSkillMemoryReference({ message, route, memory, facts }) : null
+  if (reference) route = { ...route, focus: reference.focus }
+  // What the models may read of it: only for a question that refers to the
+  // earlier answer, the previous question and the remembered records' names.
+  const remembered = memory ? aiMemoryForModels(memory, message) : null
   let refined = readsFacts ? refineAiSkillRoute(route, asked, facts) : route
   const env = ctx.env || process.env
   // Two or three parts the rules route to different skills: each skill
   // answers its part, and the answers come back as one, with a section per
   // part. Follow-ups, chips, follow-up hints, instructions and one-part
   // questions keep the one-skill answer. No model is asked.
-  const compound = !agentFirst && readsFacts && !followUp && aiCompoundAnswersEnabled(env) ? planAiCompoundAnswer({ message, route, facts, allowed, focusTarget: body.focusTarget }) : null
+  const compound = !agentFirst && readsFacts && !followUp && aiCompoundAnswersEnabled(env) ? planAiCompoundAnswer({ message, route, facts, allowed, focusTarget: reference ? reference.focus : body.focusTarget }) : null
   // No rule and no named record chose a skill, no record number was left
   // unread, and the message is not a greeting or a test: the model may pick
   // one of the actor's skills. The pick runs through the same record step as
@@ -106,18 +123,23 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
   // never reach it. It calls at most one skill per part of the question.
   const agentOn = !skipAgent && readsFacts && !followUp && !route?.greeting && !route?.explicit && !refined?.capability && aiAgentPlanningEnabled(env)
   if (agentFirst && !agentOn) return null
-  const gaps = !agentFirst && agentOn && refined?.skillId && !compound ? aiCompoundGaps({ message, route, facts, allowed, focusTarget: body.focusTarget }) : null
+  const gaps = !agentFirst && agentOn && refined?.skillId && !compound ? aiCompoundGaps({ message, route, facts, allowed, focusTarget: reference ? reference.focus : body.focusTarget }) : null
   // A question about records and documents together ("which of Acme's
   // overdue orders need follow-up under our policy"): the planner may search
   // the documents in their own language, so a Chinese question finds an
   // English policy (PR-3). Without documents to search, the rules answer.
   const mixed = !agentFirst && agentOn && knowledge && refined?.skillId && !compound && classifyQueryScope({ ...body, message }) === 'mixed'
-  const agentEntry = agentOn ? (agentFirst ? 'multi_part' : !refined?.skillId ? 'unmatched' : gaps && (gaps.draft || gaps.dropped) ? 'multi_part' : mixed ? 'mixed' : null) : null
+  // A question that refers to the earlier answer in a way the rules could not
+  // read ("compare these two suppliers", "those orders' invoices"): the
+  // planner reads it with the remembered records (conversation memory).
+  const unresolved = Boolean(remembered?.records.length) && !reference && !compound && !route?.ids?.length && !route?.focus
+  const agentEntry = agentOn ? (agentFirst ? 'multi_part' : !refined?.skillId ? 'unmatched' : gaps && (gaps.draft || gaps.dropped) ? 'multi_part' : mixed ? 'mixed' : unresolved ? 'follow_up' : null) : null
   const parts = agentEntry ? (gaps?.parts ?? splitAiCompoundQuestion(message).length) : 0
-  const agentPlan = agentEntry ? await planAiAgentTools({ message, actor: context.actor, env, parts, businessQuery: Boolean(agentFirst), knowledge: knowledge?.languages || null, excluded: route?.excluded || [], ...(ctx.aiAgentProvider ? { provider: ctx.aiAgentProvider } : {}) }) : null
+  const agentPlan = agentEntry ? await planAiAgentTools({ message, actor: context.actor, env, parts, businessQuery: Boolean(agentFirst), knowledge: knowledge?.languages || null, excluded: route?.excluded || [], memory: remembered, ...(ctx.aiAgentProvider ? { provider: ctx.aiAgentProvider } : {}) }) : null
   // Each planned call runs through the same record step as a rule's: the
-  // records the model named (all written in the question) are looked up in the
-  // actor's own facts, and the skill answers in its own words.
+  // records the model named (written in the question, or remembered from the
+  // previous answer) are looked up in the actor's own facts, and the skill
+  // answers in its own words.
   // A supplier business query runs its own plan (ai-agent-business-query.mjs).
   // The sections come in a fixed order (agentSectionRank).
   const titleKey = language === 'zh-CN' ? 'zh' : 'en'
@@ -134,8 +156,11 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
       // step reads it exactly as it reads the question.
       const named = call.records.map((record) => `${spelledAsAsked(message, record)},`).join(' ')
       const base = routeSkill({ message: named }) || {}
-      // A tier the call names filters as the question's own tier does.
-      const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short', tier: call.tier ?? null }, skillId: call.tool }, named, facts)
+      // A tier the call names filters as the question's own tier does. A spend
+      // call reads its period and currency from the question, as a rule-routed
+      // spend question does, and its view from the call.
+      const spend = call.tool === 'spend_analysis' ? { spend: { ...aiSkillSpendSignals(message), ...(call.mode ? { mode: call.mode } : {}) } } : {}
+      const partRoute = refineAiSkillRoute({ ids: base.ids || [], signals: { ...(base.signals || {}), short: call.mode === 'short', tier: call.tier ?? null, partial: aiSkillAsksPartialDelivery(message), ...spend }, skillId: call.tool }, named, facts)
       if (!partRoute || partRoute.capability || !partRoute.skillId || !allowed.has(partRoute.skillId)) return null
       return { question: aiSkillById(partRoute.skillId)?.title?.[titleKey] || partRoute.skillId, route: partRoute }
     }))).filter(Boolean).sort((a, b) => agentSectionRank(a) - agentSectionRank(b))
@@ -196,18 +221,30 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
       : agentPlan
         ? { ...answered, skillRouting: { source: 'rules', modelStatus: agentPlan.status } }
         : intentRouting ? { ...answered, skillRouting: { source: modelRouted ? 'model' : 'rules', modelStatus: intentRouting.status } } : answered
-    response = followUp ? { ...routed, followUp: { kind: followUp.kind } } : routed
+    const resolvedKind = followUp?.kind || reference?.kind || null
+    response = resolvedKind ? { ...routed, followUp: { kind: resolvedKind } } : routed
   }
   // A model step was tried and failed: the rules answered, and the answer says
   // it may not cover every part (the limited-mode label).
   if (agentResult && !agentServed && agentResult.status === 'degraded') response = { ...response, agentPlanning: { status: 'degraded', entry: agentEntry } }
   // The passages the planner's search found go with a planned answer from
   // records as its knowledge supplement; the gateway then adds none.
-  if (found && agentServed && response.intent !== 'knowledge_retrieval') response = { ...response, supplementalKnowledge: { title: found.conclusion.title, summary: found.conclusion.summary, rag: found.rag } }
+  if (found && agentServed && response.intent !== 'knowledge_retrieval') response = aiSkillDraftBasis({ ...response, supplementalKnowledge: { title: found.conclusion.title, summary: found.conclusion.summary, rag: found.rag } })
+  // P3: with compose mode on, the model words the title and summary from this
+  // answer's own facts; the verifier keeps the template on any doubt. A
+  // follow-up or a question about the earlier answer also gives it the
+  // previous question, so "why?" is read as about what was asked before. The
+  // records a reference was read as go with the question ("the first two" is
+  // PO-001 and PO-008), so the wording names those.
+  const previousQuestion = followUp || reference || remembered ? memory?.question || null : null
+  const referred = reference ? [aiSkillFocusName(reference.focus, facts)] : agentServed && remembered ? [...new Set(agentPlan.calls.flatMap((call) => call.records))] : []
+  const resolvedQuestion = followUp ? asked : referred.length ? `${message} (${referred.join(', ')})` : null
+  const composed = await composeAiAnswer({ response, facts, message, resolvedQuestion, previousQuestion, env, ...(ctx.aiComposeProvider ? { provider: ctx.aiComposeProvider } : {}) })
+  response = composed.response
   const routingAudit = aiSkillIntentRoutingAudit(intentRouting)
   const agent = agentResult ? aiAgentAudit(agentResult, { entry: agentEntry, served: agentServed ? [...agentSections.map((section) => section.route.skillId), ...(found ? [AI_AGENT_KNOWLEDGE] : [])] : [] }) : compound ? aiCompoundAudit(compound) : null
   const audited = skillId === 'business_query' ? { ...response, answerSource: 'business_query' } : skillId === 'knowledge_retrieval' ? { ...response, answerSource: 'knowledge', language } : response
-  const audit = (intentShadow = null) => recordAiSkillAudit(ctx, { response: audited, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow, intentRouting: routingAudit, followUp: followUp?.kind || null, agent, knowledge: found && agentServed ? aiKnowledgeAuditBlock(found.rag) : null })
+  const audit = (intentShadow = null) => recordAiSkillAudit(ctx, { response: audited, facts: answerFacts, message, latencyMs: Date.now() - started, refusal, intentShadow, intentRouting: routingAudit, followUp: followUp?.kind || reference?.kind || null, agent, knowledge: found && agentServed ? aiKnowledgeAuditBlock(found.rag) : null, compose: aiAnswerComposeAudit(composed.compose) })
   // With the classifier on, the answer does not wait for it: the audit row
   // is written when its suggestion arrives (best effort, like every audit).
   if (aiSkillIntentShadowEnabled(env) && !route?.capability) {

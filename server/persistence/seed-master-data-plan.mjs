@@ -120,7 +120,8 @@ export function buildMasterDataSeedRows(db = {}, options = {}) {
     score: supplier.score ?? null,
     metadata: {
       defaultCurrency: text(supplier.defaultCurrency || supplier.currency, text(options.currency, 'USD')),
-      paymentTermsId: text(supplier.paymentTermsId || supplier.paymentTerms, 'NET30'),
+      // Only a recorded term; an empty one is left out, not seeded as NET30.
+      ...(text(supplier.paymentTermsId || supplier.paymentTerms) ? { paymentTermsId: text(supplier.paymentTermsId || supplier.paymentTerms) } : {}),
       preferred: Boolean(supplier.preferred),
       sourceKey: supplierKey(supplier, index),
     },

@@ -128,8 +128,9 @@ test('master data helper normalizes supplier read models with score source metad
     // ABC has on-time and quality rates but no recorded score: none is derived.
     score: '',
     scoreSource: 'missing',
-    defaultCurrency: 'USD',
-    paymentTermsId: 'NET30',
+    // No recorded currency or payment term: both stay empty, not USD / NET30.
+    defaultCurrency: null,
+    paymentTermsId: null,
     categories: ['Motors'],
     preferred: true,
   })
@@ -143,6 +144,12 @@ test('master data helper marks missing supplier score metadata', () => {
 
   assert.equal(suppliers[0].score, '')
   assert.equal(suppliers[0].scoreSource, 'missing')
+  assert.equal(suppliers[0].paymentTermsId, null)
+})
+
+test('master data helper keeps a recorded supplier payment term and currency', () => {
+  const [supplier] = listMasterSuppliers({ suppliers: [{ id: 'SUP-004', name: 'Termed Supplier', defaultCurrency: 'EUR', paymentTermsId: 'NET45' }] })
+  assert.deepEqual([supplier.defaultCurrency, supplier.paymentTermsId], ['EUR', 'NET45'])
 })
 
 test('GET /api/master-data/items returns item collection', async () => {

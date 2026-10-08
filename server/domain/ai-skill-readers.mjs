@@ -205,6 +205,17 @@ export async function readAiSkillFacts(skillContext) {
 
   const overview = buildRuntimeGovernedReport(business, { subject: 'overview' }, { allocationContext, now, timeZone: tenant.timezone })
   const kpi = (report, id) => array(report.kpis).find((row) => row.id === id)
+  // The procurement dashboard's own report, built from the same scoped read
+  // as the dashboard's route, with the question's period and currency as its
+  // filters: the spend analysis (ai-skill-spend-analysis.mjs) reads its
+  // charts, so its figures are the dashboard's. A function, so only a spend
+  // question builds it, and not enumerable, so it is never read as a fact.
+  if (visible.purchase_orders) {
+    Object.defineProperty(facts, 'procurementReport', {
+      enumerable: false,
+      value: (filters = {}) => buildRuntimeGovernedReport(business, { subject: 'procurement', filters }, { allocationContext, now, timeZone: tenant.timezone, warehouseIds: access.warehouseIds }),
+    })
+  }
   // Overdue days count to the tenant's calendar day, as in the report itself.
   const openReport = buildOpenPurchaseOrdersReport(reportRows, { export: 'true' }, now, { timeZone: tenant.timezone })
   facts.asOf = openReport.asOf
@@ -237,7 +248,7 @@ export async function readAiSkillFacts(skillContext) {
       const read = purchaseOrderReportLine(line, po)
       return read.open ? [{
         lineId: text(line.id) || null, sku: text(line.sku) || null, itemId: text(line.itemId) || null, itemName: text(line.itemName || line.itemNameSnapshot) || null,
-        remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
+        ordered: read.ordered, received: read.received, remaining: read.remaining, unit: read.unit || null, promisedDate: read.due || null, originalPromisedDate: dayOf(line.originalPromisedDate),
       }] : []
     })]))
     const rawStatusById = new Map(reportRows.map((po) => [text(po.id), text(po.status)]))
