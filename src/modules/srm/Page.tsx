@@ -1,4 +1,4 @@
-import { SupplierForm } from "./SupplierForm";
+import { SupplierForm, type PaymentTermOption } from "./SupplierForm";
 import { supplierCopy } from "./supplierCopy";
 import { SupplierPerformancePanel, supplierPerformanceTabLabel } from "./supplierPerformance";
 import { SupplierActivityCards } from "./supplierActivity";
@@ -95,7 +95,8 @@ const empty = (currency = "") => ({
   postalCode: "",
   deliveryCycleDays: "",
   defaultCurrency: currency,
-  paymentTermsId: "NET30",
+  // Empty until someone records the agreed term.
+  paymentTermsId: "",
   settlementMethod: "",
   creditCode: "",
   taxIdentificationNumber: "",
@@ -166,6 +167,14 @@ export default function SupplierMasterPage({
   const [saving, setSaving] = useState(false);
   const [currencyWarning, setCurrencyWarning] = useState(false);
   const [workspaceCurrency, setWorkspaceCurrency] = useState('');
+  // The workspace's payment terms for the form; null when they could not load.
+  const [paymentTerms, setPaymentTerms] = useState<PaymentTermOption[] | null>([]);
+  const loadPaymentTerms = async () => {
+    try {
+      const { options } = await request<{ options: Array<{ id: string; code?: string; label?: string; metadata?: { recordId?: string | null } }> }>('/api/master-data/payment-terms/select');
+      setPaymentTerms(options.map(option => ({ id: option.code || option.id, label: option.label || option.code || option.id, recordId: option.metadata?.recordId ?? null })));
+    } catch { setPaymentTerms(null); }
+  };
   const savingRef = useRef(false);
   const [rows, setRows] = useState<Supplier[]>([]),
     [loading, setLoading] = useState(true),
@@ -290,6 +299,12 @@ export default function SupplierMasterPage({
       toast.error(e.message);
     }
   };
+  useEffect(() => { loadPaymentTerms(); }, []);
+  // A stored term by its name, whether the supplier holds its code or row id.
+  const termName = (stored: string) => {
+    const term = (paymentTerms || []).find(option => option.id === stored || option.recordId === stored);
+    return term ? `${term.label} (${term.id})` : stored;
+  };
   const startCreate = async () => {
     let currency = '';
     try { currency = (await request<{ company: { currency: string } }>('/api/settings-runtime')).company.currency; } catch { /* Let the user choose explicitly. */ }
@@ -299,6 +314,7 @@ export default function SupplierMasterPage({
     setForm(empty(currency));
     setFieldErrors([]);
     setShowForm(true);
+    loadPaymentTerms();
   };
   const startEdit = (supplier: Supplier) => {
     setEditing(supplier);
@@ -306,6 +322,7 @@ export default function SupplierMasterPage({
     setForm({ ...supplier, categories: (supplier.categories || []).join(",") });
     setFieldErrors([]);
     setShowForm(true);
+    loadPaymentTerms();
   };
   const save = async () => {
     if (savingRef.current) return;
@@ -472,7 +489,7 @@ export default function SupplierMasterPage({
   const relationshipHistoryKey = (r: Relationship) => (selected ? priceHistoryKey({ itemId: r.itemId, currency: r.currency, supplierId: selected.id }) : "");
   const relationFormHistoryKey = selected && writes.items ? priceHistoryKey({ itemId: relationForm.itemId, currency: relationForm.currency || selected.defaultCurrency, supplierId: selected.id }) : "";
   const relationshipHistory = usePriceHistory([...relationships.map(relationshipHistoryKey), relationFormHistoryKey]);
-  if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
+  if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} paymentTerms={paymentTerms} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
   if (selected)
     return (
       <div className="space-y-4">
@@ -530,7 +547,7 @@ export default function SupplierMasterPage({
               ],
               [
                 "商业条款",
-                `${selected.defaultCurrency} · ${selected.paymentTermsId} · ${selected.settlementMethod || "-"}`,
+                `${selected.defaultCurrency || copy("Not recorded")} · ${copy("Payment terms")}: ${selected.paymentTermsId ? termName(selected.paymentTermsId) : copy("Not recorded")} · ${selected.settlementMethod || "-"}`,
               ],
               [
                 "财税与银行",

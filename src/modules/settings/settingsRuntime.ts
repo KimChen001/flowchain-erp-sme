@@ -1,4 +1,5 @@
 import { apiJson } from '../../lib/api-client';
+import type { DocumentSettings } from '../../../shared/business-documents.mjs';
 
 export type SettingsRuntime = {
   company: { companyName: string; workspaceName: string; timezone: string; currency: string; locale: string; defaultLanguage?: string };
@@ -38,3 +39,9 @@ export type AiWorkspaceStatus = {
   month: string; calls: number; costUsd: number; capUsd: number;
 };
 export const fetchAiWorkspaceStatus = () => apiJson<AiWorkspaceStatus>('/api/settings-runtime/ai-status');
+
+// The documents section (letterhead and PO template), kept apart from
+// SettingsRuntime because it has its own form under Company & workspace.
+export const fetchDocumentSettings = () => apiJson<{ documents: DocumentSettings }>('/api/settings-runtime').then((settings) => settings.documents);
+export const saveDocumentSettings = (settings: DocumentSettings) =>
+  apiJson<{ settings: DocumentSettings }>('/api/settings-runtime/documents', { method: 'PATCH', body: JSON.stringify({ settings }) });

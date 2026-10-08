@@ -5,6 +5,7 @@ import { A } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { useI18n } from "../../i18n/I18n";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { RecordBillAction } from "../../components/business/BillingEntryActions";
 
@@ -20,7 +21,7 @@ type Detail = {
 };
 type Preview = { operation: "post" | "reverse"; allowed: boolean; blockingIssues: Array<{ code: string; message: string }>; warnings: Array<{ code: string; message: string }>; inventoryImpacts: Array<Record<string, string>>; purchaseOrderImpacts: Array<Record<string, string>>; statusImpact: Record<string, string>; factsToCreate: { inventoryMovementCount: number; auditEventCount: number; commandExecutionCount: number }; limitations: string[] };
 type Link = { label: string; count: number; targetRouteId: string; targetType: string; targetId?: string; filter?: Record<string, unknown>; enabled: boolean; unavailableReason?: string | null };
-type TimelineEvent = { id: string; type: string; event: string; occurredAt: string; label: string; actorId?: string; postedFact: boolean };
+type TimelineEvent = { id: string; type: string; event: string; occurredAt: string; label: string; actorId?: string; actorName?: string | null; postedFact: boolean };
 type Reconciliation = { status: "matched" | "mismatch" | "unavailable"; reason?: string; entries: Array<{ sku: string; warehouseId?: string | null; locationKey: string; status: string; calculatedQuantity: string; recordedQuantity: string | null; differenceQuantity: string | null }> };
 type Navigate = (routeId: string, focus?: { entityType: string; entityId: string } | null, options?: { source?: string; entityLabel?: string }) => void;
 
@@ -93,6 +94,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   }, [receivingDocumentId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useDetailCrumb(detail?.receivingDocument.documentNumber);
 
   const operation = detail?.availableActions.primaryAction === "reverse" ? "reverse" : "post";
   const capability = operation === "post" ? detail?.capabilities.posting : detail?.capabilities.reversal;
@@ -148,18 +150,28 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   if (loading) return <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm" data-testid="receiving-loading"><Loader2 className="animate-spin" size={18} />Loading authoritative receiving data…</div>;
   if (!detail) return <div className="rounded-xl border p-6" data-testid="receiving-error"><AlertTriangle className="mb-2" color={A.red} />{error || "Receiving is unavailable."}<button className="ml-3 underline" onClick={() => void refresh()}>Retry</button></div>;
 
+  const say = (english: string, chinese: string) => (language === "en-US" ? english : chinese);
+  // The timeline says what happened and who did it. Command bookkeeping
+  // repeats the change log, and notes are shown once below, so both stay out.
+  const shownEvents = events.filter((event) => event.type !== "human_activity" && event.type !== "limitation");
+  const eventKind = (event: TimelineEvent) =>
+    event.type === "audit" ? say("Change", "变更") : event.postedFact ? say("Posted", "已过账") : say("Recorded", "已记录");
+  // Lot and serial numbers are the one limitation a user can act on.
+  const notes = detail.limitations.some((item) => /lot\/serial/i.test(item))
+    ? [say("Lot and serial numbers are not recorded on receipts yet.", "收货暂不记录批次号和序列号。")]
+    : [];
   const grn = detail.receivingDocument;
   return <div className="space-y-4" data-testid="receiving-workbench">
     {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</div>}
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><div className="mb-2 flex items-center gap-2"><h1 className="text-xl font-semibold">{grn.documentNumber}</h1><span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">Beta · PostgreSQL</span></div><p className="text-sm text-gray-500">{grn.supplier?.name || "Unknown supplier"} · PO <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}>{detail.purchaseOrder.id}</a></p></div>
+        <div><div className="mb-2 flex items-center gap-2"><h1 className="text-xl font-semibold">{grn.documentNumber}</h1></div><p className="text-sm text-gray-500">{grn.supplier?.name || "Unknown supplier"} · PO <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}>{detail.purchaseOrder.id}</a></p></div>
         <div className="flex gap-2">{detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className="rounded-lg border px-4 py-2 text-sm font-semibold">{draftCopy("editDraft")}</a>}{detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}{detail.availableActions.canCancel && <button data-testid="receiving-cancel" disabled={saving} onClick={() => void cancelReceipt()} className="rounded-lg border px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50">{draftCopy("cancelReceipt")}</button>}{canOfferAction && <button data-testid="receiving-primary-action" onClick={() => void openPreview(operation)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">{operation === "post" ? "Post Receipt" : "Reverse Receipt"}</button>}{detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className="rounded-lg bg-gray-100 px-4 py-2 text-sm">View Reversal</button>}{grn.postingStatus === 'posted' && <RecordBillAction receiptId={grn.id} />}</div>
       </div>
       {detail.availableActions.canSubmit && <div className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{draftCopy("draftNote")}</div>}
       {!capability?.enabled && <div className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Read-only. Database receiving capability requires explicit administrator enablement.</div>}
       <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-        {[['Workflow', pretty(grn.workflowStatus)], ['Posting', pretty(grn.postingStatus)], ['PO Fulfillment', pretty(detail.purchaseOrder.fulfillmentStatus)], ['Quality', pretty(grn.qualityStatus)], ['Warehouse', grn.warehouse?.name || 'Unavailable'], ['Receiver', grn.receiver || 'Unavailable'], ['Arrived', stamp(grn.arrivedAt)], [grn.postingStatus === 'reversed' ? 'Reversed' : 'Posted', stamp(grn.reversedAt || grn.postedAt)]].map(([name, value]) => <div key={name} className="rounded-xl bg-gray-50 p-3"><div className="text-[11px] uppercase tracking-wide text-gray-500">{name}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>)}
+        {[['Workflow', pretty(grn.workflowStatus)], ['Posting', pretty(grn.postingStatus)], ['PO Fulfillment', pretty(detail.purchaseOrder.fulfillmentStatus)], ['Warehouse', grn.warehouse?.name || 'Unavailable'], ['Receiver', grn.receiver || 'Unavailable'], ['Arrived', stamp(grn.arrivedAt)], [grn.postingStatus === 'reversed' ? 'Reversed' : 'Posted', stamp(grn.reversedAt || grn.postedAt)]].map(([name, value]) => <div key={name} className="rounded-xl bg-gray-50 p-3"><div className="text-[11px] uppercase tracking-wide text-gray-500">{name}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>)}
       </div>
     </section>
 
@@ -173,8 +185,8 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
 
     <section className="rounded-2xl border bg-white p-4" data-testid="receiving-reconciliation"><div className="mb-3 font-semibold">Inventory reconciliation · {pretty(reconciliation?.status)}</div>{reconciliation?.entries.length ? <div className="space-y-2">{reconciliation.entries.map((entry) => <div key={`${entry.sku}-${entry.warehouseId || ''}-${entry.locationKey}`} className="grid gap-2 rounded-lg bg-gray-50 p-3 text-sm md:grid-cols-5"><span>{entry.sku}</span><span>{warehouseName(entry.warehouseId) || 'No warehouse'} / {entry.locationKey || 'No location'}</span><span>Calculated {entry.calculatedQuantity}</span><span>Recorded {entry.recordedQuantity ?? 'Unavailable'}</span><span className={entry.status === 'matched' ? 'text-green-700' : 'text-red-700'}>{pretty(entry.status)}{entry.differenceQuantity != null ? ` · Δ ${entry.differenceQuantity}` : ''}</span></div>)}</div> : <div className="text-sm text-gray-500">{reconciliation?.reason || 'Reconciliation is unavailable.'}</div>}</section>
 
-    <section id="evidence" className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 font-semibold"><ShieldCheck size={16} />Evidence timeline</div><div className="space-y-3">{events.length ? events.map((event) => <div key={event.id} className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="min-w-24 text-xs text-gray-500">{stamp(event.occurredAt)}</div><div><div className="text-sm font-medium">{event.label}</div><div className="text-[11px] uppercase text-gray-500">{event.type.replaceAll('_',' ')}{event.postedFact ? ' · Posted business fact' : ''}{event.actorId ? ` · ${event.actorId}` : ''}</div></div></div>) : <div className="text-sm text-gray-500">No evidence connected.</div>}</div></section>
-    <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900"><strong>Beta limitation:</strong> {detail.limitations.join(' ')}</div>
+    <section id="evidence" className="rounded-2xl border bg-white p-4"><div className="mb-3 flex items-center gap-2 font-semibold"><ShieldCheck size={16} />Evidence timeline</div><div className="space-y-3">{shownEvents.length ? shownEvents.map((event) => <div key={event.id} className="flex gap-3 border-l-2 border-blue-200 pl-3" data-testid="evidence-event"><div className="min-w-24 text-xs text-gray-500">{stamp(event.occurredAt)}</div><div><div className="text-sm font-medium">{event.label}</div><div className="text-[11px] text-gray-500">{eventKind(event)}{event.actorName ? ` · ${event.actorName}` : ''}</div></div></div>) : <div className="text-sm text-gray-500">No evidence connected.</div>}</div></section>
+    {notes.length > 0 && <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900" data-testid="receiving-notes">{notes.join(' ')}</div>}
 
     {preview && <div className="fc-overlay-enter fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-testid="impact-preview"><div className="fc-dialog-enter max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
       <div className="flex items-start justify-between"><div><h2 className="text-lg font-semibold">{preview.operation === 'post' ? 'Review receipt posting' : 'Review receipt reversal'}</h2><p className="text-sm text-gray-500">No business fact is written until you confirm.</p></div><button onClick={() => setPreview(null)}>✕</button></div>

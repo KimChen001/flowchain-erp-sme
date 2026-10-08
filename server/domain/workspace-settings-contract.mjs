@@ -1,3 +1,5 @@
+import { documentSettingsSeed, normalizeDocumentSettings, validateDocumentSettings } from '../../shared/business-documents.mjs'
+
 export const SUPPORTED_LANGUAGES = ['en-US', 'zh-CN']
 export const SUPPORTED_LOCALES = ['zh-CN', 'en-US']
 export const SUPPORTED_TIMEZONES = [
@@ -72,14 +74,19 @@ export const operationalSettingsSeed = {
     negativeInventoryBlocked: true,
     maintenanceNotice: '',
   },
+  // Letterhead and templates of the documents a person prints and sends
+  // (shared/business-documents.mjs).
+  documents: documentSettingsSeed,
 }
 
 // The operational settings FlowChain reads today: three-way match applies the
-// four invoice matching tolerances (operational-finance-policy.mjs). Nothing
-// reads the other sections yet, so the settings UI shows them read-only as
-// "Not in effect yet" and keeps their stored values.
+// four invoice matching tolerances (operational-finance-policy.mjs), and the
+// PO and invoice documents print the document settings
+// (purchase-order-document-read-service.mjs, customer-invoice-document-read-service.mjs).
+// Nothing reads the other sections yet, so the settings UI shows them
+// read-only as "Not in effect yet" and keeps their stored values.
 export const REVIEW_TOLERANCE_FIELDS = ['quantityTolerance', 'pricePercentageTolerance', 'priceAbsoluteTolerance', 'amountTolerance']
-export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: [], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [] })
+export const OPERATIONAL_SETTINGS_IN_EFFECT = Object.freeze({ numbering: [], review: [...REVIEW_TOLERANCE_FIELDS, 'approvedRequestApprovesPurchaseOrder'], modules: [], ai: ['modelAssistEnabled'], advanced: [], documents: ['documentLanguage', 'letterhead', 'purchaseOrder', 'customerInvoice'] })
 const TOLERANCE_PATTERN = /^\d+(\.\d{1,4})?$/
 
 const clone = value => structuredClone(value)
@@ -128,12 +135,15 @@ export function mergeOperationalSettings(value) {
     modules: { ...clone(operationalSettingsSeed.modules), ...(current.modules || {}), items: Array.isArray(current.modules?.items) ? clone(current.modules.items) : clone(operationalSettingsSeed.modules.items) },
     ai: { ...clone(operationalSettingsSeed.ai), ...(current.ai || {}), capabilities: Array.isArray(current.ai?.capabilities) ? clone(current.ai.capabilities) : clone(operationalSettingsSeed.ai.capabilities) },
     advanced: { ...clone(operationalSettingsSeed.advanced), ...(current.advanced || {}) },
+    documents: normalizeDocumentSettings(current.documents),
   }
 }
 
 export function validateOperationalSection(section, value) {
-  if (!['numbering', 'review', 'modules', 'ai', 'advanced'].includes(section)) throw Object.assign(new Error('Unknown settings section.'), { code: 'SETTINGS_SECTION_NOT_FOUND', status: 404 })
+  if (!['numbering', 'review', 'modules', 'ai', 'advanced', 'documents'].includes(section)) throw Object.assign(new Error('Unknown settings section.'), { code: 'SETTINGS_SECTION_NOT_FOUND', status: 404 })
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw Object.assign(new Error('Settings payload is invalid.'), { code: 'SETTINGS_VALIDATION_FAILED', status: 400 })
+  // Only the known fields are kept; a value over its limit names the field.
+  if (section === 'documents') return validateDocumentSettings(value)
   if (section === 'numbering') {
     const rules = Array.isArray(value.rules) ? value.rules : []
     const signatures = rules.map(rule => `${text(rule.prefix).toUpperCase()}|${text(rule.datePattern)}|${text(rule.separator)}`)

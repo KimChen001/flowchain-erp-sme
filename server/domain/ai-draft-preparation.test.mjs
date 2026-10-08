@@ -267,6 +267,19 @@ test('RFQ prompt with supplier name matches supplier master and payment terms', 
   assert.equal(draft.paymentTermsSource, 'supplier_default')
 })
 
+test('RFQ for a supplier with no recorded payment term leaves the term empty, not the workspace first term', () => {
+  const db = createDb()
+  delete db.suppliers[0].paymentTermsId
+  const response = buildAiDraftPreparationResponse(db, { message: '帮我做一个 quotation request 给 ABC Components，采购 300 个 A100' })
+  const draft = response.cards[0].data
+
+  assert.equal(draft.supplierCandidates.length, 1)
+  assert.equal(draft.supplierCandidates[0].supplierId, 'SUP-001')
+  assert.equal(draft.paymentTermsId, '')
+  assert.equal(draft.paymentTermsSource, 'missing')
+  assert.ok(!response.cards.flatMap((card) => card.evidence || []).some((item) => item.type === 'payment_terms'))
+})
+
 test('RFQ prompt without quotation deadline returns missing quotationDeadline', () => {
   const response = buildAiDraftPreparationResponse(createDb(), { text: 'RFQ B200 200 pcs urgent' })
   const missing = response.cards.find((card) => card.type === 'missing_fields').fields

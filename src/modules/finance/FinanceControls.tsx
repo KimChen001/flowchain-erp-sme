@@ -11,7 +11,7 @@ import { createSecureClientMutationId } from "../../lib/client-id";
 // action that runs exactly the operation the server previewed.
 
 type TranslationKey = Parameters<ReturnType<typeof useI18n>["t"]>[0];
-type Issue = { code?: string; message?: string };
+type Issue = { code?: string; message?: string; details?: unknown };
 type Plan = { allowed: boolean; blockingIssues?: Issue[] };
 
 export const field = "rounded-lg border border-slate-200 px-3 py-2 text-sm";
@@ -53,10 +53,15 @@ export function StatusChip({ status }: { status: string }) {
 }
 
 // One operation: an optional reason, a preview of the server's plan, then a
-// confirm that runs exactly the previewed operation.
-export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, onDone, tone = "primary" }: {
+// confirm that runs exactly the previewed operation. The server words its
+// issues in English; issueText gives the translated text for the codes a
+// screen knows, and the server's message is kept for the rest. issueDetail
+// shows what a blocking issue is about, under the notice.
+export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, reasonMaxLength, onDone, tone = "primary", issueText, issueDetail }: {
   label: string; testId: string; previewUrl: string; runUrl: string; payload: () => Record<string, unknown>;
-  reasonLabel?: string; onDone: () => void; tone?: "primary" | "secondary";
+  reasonLabel?: string; reasonMaxLength?: number; onDone: () => void; tone?: "primary" | "secondary";
+  issueText?: (code: string | undefined) => string | undefined;
+  issueDetail?: (issue: Issue) => ReactNode;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -64,10 +69,11 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const describe = (issue: Issue) => issueText?.(issue.code) || issue.message;
   const body = () => ({ ...payload(), ...(reasonLabel ? { reason, resolution: reason } : {}) });
   const preview = async () => {
     setError("");
-    try { setPlan(await apiJson<Plan>(previewUrl, { method: "POST", body: JSON.stringify(body()) })); } catch (reason) { setError(message(reason, t("finance.loadFailed"))); }
+    try { setPlan(await apiJson<Plan>(previewUrl, { method: "POST", body: JSON.stringify(body()) })); } catch (reason) { setError(reason instanceof ApiError ? issueText?.(reason.code) || reason.message : message(reason, t("finance.loadFailed"))); }
   };
   const confirm = async () => {
     setError("");
@@ -79,7 +85,7 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       setReason("");
       onDone();
     } catch (cause) {
-      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : t("finance.loadFailed"));
+      setError(cause instanceof ApiError ? issueText?.(cause.code) || cause.message : cause instanceof Error ? cause.message : t("finance.loadFailed"));
     } finally {
       setBusy(false);
     }
@@ -90,7 +96,7 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
       <div className="text-sm font-semibold">{label}</div>
       {reasonLabel && (
         <label className="block text-xs">{reasonLabel}
-          <input data-testid={`${testId}-reason`} className={`${field} mt-1 w-full`} value={reason} onChange={(event) => { setReason(event.target.value); setPlan(null); }} />
+          <input data-testid={`${testId}-reason`} className={`${field} mt-1 w-full`} maxLength={reasonMaxLength} value={reason} onChange={(event) => { setReason(event.target.value); setPlan(null); }} />
         </label>
       )}
       <div className="flex flex-wrap gap-2">
@@ -98,7 +104,8 @@ export function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reas
         <button type="button" data-testid={`${testId}-confirm`} className={`${button} text-white`} style={{ background: A.blue }} disabled={!plan?.allowed || busy} onClick={() => void confirm()}>{t("finance.confirm")}</button>
         <button type="button" className={`${button} text-slate-600`} onClick={() => { setOpen(false); setPlan(null); setError(""); }}>{t("finance.close")}</button>
       </div>
-      {plan && (plan.allowed ? <Notice tone="success">{t("finance.previewAllowed")}</Notice> : <Notice>{(plan.blockingIssues || []).map((issue) => issue.message).join(" · ")}</Notice>)}
+      {plan && (plan.allowed ? <Notice tone="success">{t("finance.previewAllowed")}</Notice> : <Notice>{(plan.blockingIssues || []).map(describe).join(" · ")}</Notice>)}
+      {plan && !plan.allowed && issueDetail && (plan.blockingIssues || []).map((issue, index) => <div key={`${issue.code}-${index}`}>{issueDetail(issue)}</div>)}
       {error && <Notice>{error}</Notice>}
     </div>
   );

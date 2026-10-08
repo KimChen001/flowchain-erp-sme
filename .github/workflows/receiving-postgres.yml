@@ -101,12 +101,14 @@ jobs:
       - run: npm run test:db:finance-read-permissions
       - run: npm run test:db:payment-records
       - run: npm run test:db:bill-before-receipt
+      - run: npm run test:db:supplier-invoice-duplicates
       - run: npm run test:db:sales-read-permissions
       - run: npm run test:db:search-wildcards
       - run: npm run test:db:inventory-warehouse-scope
       - run: npm run test:db:search-graph-read-scope
       - run: npm run test:db:role-backfill-once
       - run: npm run test:db:po-close-receipt-cancel
+      - run: npm run test:db:business-documents
       - run: npm run test:db:report-views
       - run: npm run test:db:rfq-response-revisions
       - run: npm run test:db:rfq-supplier-response-command
