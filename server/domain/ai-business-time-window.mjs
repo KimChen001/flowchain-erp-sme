@@ -40,6 +40,9 @@ function addLocalDays(local, days) {
   return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() }
 }
 
+// A local day as YYYY-MM-DD, the form calendar dates are compared in.
+const dayText = (local) => `${local.year}-${String(local.month).padStart(2, '0')}-${String(local.day).padStart(2, '0')}`
+
 function startOfLocalDay(local, timezone) {
   return utcForLocal(timezone, local.year, local.month, local.day)
 }
@@ -69,27 +72,43 @@ export function resolveBusinessTimeWindow(kind = 'all', { now = new Date(), time
   const todayStart = startOfLocalDay(local, resolvedTimezone)
   let startAt = null
   let endAt = null
+  // The same window as workspace calendar days, both included. A due date is
+  // a calendar day (stored at 00:00 or 12:00 UTC) and is compared with these,
+  // never with the instants: in New York a bill due today starts at 20:00 the
+  // day before in UTC, before "today" begins, and would read as overdue.
+  let startDay = null
+  let endDay = null
   let interpretation = normalizedKind
   const limitations = []
 
   if (normalizedKind === 'today') {
     startAt = todayStart
     endAt = endBeforeLocalDay(addLocalDays(local, 1), resolvedTimezone)
+    startDay = dayText(local)
+    endDay = startDay
   } else if (normalizedKind === 'current_week') {
     const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(local.weekday)
     const daysSinceMonday = weekday === 0 ? 6 : weekday - 1
     const monday = addLocalDays(local, -daysSinceMonday)
     startAt = startOfLocalDay(monday, resolvedTimezone)
     endAt = endBeforeLocalDay(addLocalDays(monday, 7), resolvedTimezone)
+    startDay = dayText(monday)
+    endDay = dayText(addLocalDays(monday, 6))
   } else if (normalizedKind === 'next_7_days' || normalizedKind === 'next_30_days') {
     startAt = todayStart
     endAt = endBeforeLocalDay(addLocalDays(local, normalizedKind === 'next_7_days' ? 7 : 30), resolvedTimezone)
+    startDay = dayText(local)
+    endDay = dayText(addLocalDays(local, normalizedKind === 'next_7_days' ? 6 : 29))
   } else if (normalizedKind === 'month_end') {
     startAt = todayStart
     const nextMonth = new Date(Date.UTC(local.year, local.month, 1))
-    endAt = endBeforeLocalDay({ year: nextMonth.getUTCFullYear(), month: nextMonth.getUTCMonth() + 1, day: 1 }, resolvedTimezone)
+    const firstOfNext = { year: nextMonth.getUTCFullYear(), month: nextMonth.getUTCMonth() + 1, day: 1 }
+    endAt = endBeforeLocalDay(firstOfNext, resolvedTimezone)
+    startDay = dayText(local)
+    endDay = dayText(addLocalDays(firstOfNext, -1))
   } else if (normalizedKind === 'overdue') {
     endAt = new Date(todayStart.getTime() - 1)
+    endDay = dayText(addLocalDays(local, -1))
     interpretation = 'due before the current workspace-local day'
   }
 
@@ -100,6 +119,8 @@ export function resolveBusinessTimeWindow(kind = 'all', { now = new Date(), time
     type: normalizedKind,
     startAt: startAt?.toISOString() || null,
     endAt: endAt?.toISOString() || null,
+    startDay,
+    endDay,
     timezone: resolvedTimezone,
     interpretation,
     limitations,
