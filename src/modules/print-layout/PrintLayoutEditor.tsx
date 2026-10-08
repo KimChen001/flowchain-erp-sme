@@ -1,58 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Eraser, Printer, RotateCcw, Save } from "lucide-react";
+import { ArrowLeft, Eraser, Printer, RotateCcw, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { PRINT_LAYOUT_LIMITS, type DocumentSettings } from "../../../shared/business-documents.mjs";
 import { useUnsavedChanges } from "../../components/navigation/UnsavedChangesProvider";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import PrintCanvas from "./PrintCanvas";
 import PrintElementInspector from "./PrintElementInspector";
-import PrintInstancePanel, { printInstanceFields } from "./PrintInstancePanel";
+import PrintInstancePanel from "./PrintInstancePanel";
 import PrintLayoutImportBanner from "./PrintLayoutImportBanner";
 import { printFieldOptions } from "./printDataAdapters";
 import { clearPrintInstance, loadPrintInstance, savePrintInstance } from "./printInstanceStorage";
+import { createPrintElement, instanceElementId, withInstanceFields, type NewPrintElementType } from "./printLayoutElements";
 import { defaultPrintTemplate } from "./printLayoutPresets";
-import { fetchWorkspacePrintSettings, loadLastTemplate, restoreDefaultTemplate, savePrintTemplate, savePrintTemplateAs, templatesFor, workspaceLayouts } from "./printLayoutStorage";
-import { PAGE_SIZES, type PrintDocumentData, type PrintDocumentType, type PrintElementType, type PrintLayoutElement, type PrintLayoutTemplate } from "./printLayoutTypes";
+import {
+  deletePrintTemplate, fetchWorkspacePrintSettings, loadLastTemplate, PrintLayoutChangedError, restoreDefaultTemplate,
+  saveExistingPrintTemplate, saveNewPrintTemplate, templatesFor, workspaceLayouts, type PrintLayoutSaveError,
+} from "./printLayoutStorage";
+import { PAGE_SIZES, type PrintDocumentData, type PrintDocumentType, type PrintLayoutElement, type PrintLayoutTemplate } from "./printLayoutTypes";
 import "./print-layout.css";
 
 // While the editor is open the body carries this class, and only then do the
 // print rules in print-layout.css hide the rest of the page.
 export const PRINT_LAYOUT_BODY_CLASS = "fc-print-layout-open";
-
-function instanceElementId(key: string) { return `instance-${key}`; }
-
-function withInstanceFields(template: PrintLayoutTemplate, documentType: PrintDocumentType) {
-  const existing = new Set(template.elements.map((element) => element.id));
-  const startY = Math.max(template.page.margin + 220, template.page.height - 265);
-  const additions = printInstanceFields[documentType]
-    .filter((field) => !existing.has(instanceElementId(field.key)))
-    .map((field, index): PrintLayoutElement => ({
-      id: instanceElementId(field.key), type: "comment", title: field.label, placeholder: `${field.label}（本次打印）`,
-      contentMode: "instance", x: template.page.margin, y: startY + index * 54,
-      width: template.page.width - template.page.margin * 2, height: 46, visible: true, draggable: true, resizable: true,
-      style: { fontSize: 11, lineHeight: 1.45, align: "left", bordered: false },
-    }));
-  return { ...template, elements: [...template.elements, ...additions] };
-}
-
-function createElement(type: PrintElementType, index: number): PrintLayoutElement {
-  const definitions: Record<string, { title: string; value?: string; mode?: "static" | "instance"; width: number; height: number }> = {
-    text: { title: "自由文本", value: "请输入固定文字", mode: "static", width: 320, height: 54 },
-    comment: { title: "Comments", mode: "instance", width: 420, height: 90 },
-    remark: { title: "备注", mode: "instance", width: 420, height: 80 },
-    terms: { title: "条款", value: "请在此输入固定条款", mode: "static", width: 520, height: 110 },
-    signature: { title: "签字栏", value: "签字：________________    日期：____________", mode: "static", width: 460, height: 58 },
-    line: { title: "横线", width: 500, height: 20 },
-  };
-  const definition = definitions[type] || definitions.text;
-  return {
-    id: `${type}-${Date.now()}-${index}`, type, title: definition.title, value: definition.value,
-    placeholder: type === "comment" ? "输入本次打印 Comments" : undefined,
-    contentMode: definition.mode, x: 72 + (index % 3) * 18, y: 300 + (index % 6) * 65,
-    width: definition.width, height: definition.height, visible: true, draggable: true, resizable: true,
-    style: { fontSize: type === "terms" || type === "comment" ? 11 : 12, lineHeight: 1.45, align: "left", bordered: type === "comment" },
-  };
-}
 
 type WorkspaceState = "loading" | "ready" | "failed";
 type Access = { tenantId: string; canManage: boolean };
@@ -66,17 +36,19 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const [template, setTemplate] = useState<PrintLayoutTemplate>(() => withInstanceFields(defaultPrintTemplate(documentType), documentType));
+  const [template, setTemplate] = useState<PrintLayoutTemplate>(() => withInstanceFields(defaultPrintTemplate(documentType), documentType, t));
   const [selectedId, setSelectedId] = useState("title");
-  const [availableTemplates, setAvailableTemplates] = useState<PrintLayoutTemplate[]>([]);
+  const [documents, setDocuments] = useState<DocumentSettings | null>(null);
   const [instanceValues, setInstanceValues] = useState<Record<string, string>>({});
   const [savedTemplateSnapshot, setSavedTemplateSnapshot] = useState("");
   const [savedInstanceSnapshot, setSavedInstanceSnapshot] = useState("{}");
   const [closePrompt, setClosePrompt] = useState(false);
+  const [deletePrompt, setDeletePrompt] = useState(false);
   const [workspaceState, setWorkspaceState] = useState<WorkspaceState>("loading");
   const [companyName, setCompanyName] = useState("");
   const [access, setAccess] = useState<Access | null>(null);
   const [saving, setSaving] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Scope the print rules to the time the editor is open.
   useEffect(() => {
@@ -86,7 +58,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
   }, [open]);
 
   function showTemplate(next: PrintLayoutTemplate) {
-    const withFields = withInstanceFields(next, documentType);
+    const withFields = withInstanceFields(next, documentType, t);
     setTemplate(withFields);
     setSavedTemplateSnapshot(JSON.stringify(withFields));
   }
@@ -98,9 +70,10 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
     showTemplate(defaultPrintTemplate(documentType));
     setInstanceValues(instance.values);
     setSavedInstanceSnapshot(JSON.stringify(instance.values));
-    setAvailableTemplates(templatesFor(documentType, []));
+    setDocuments(null);
     setSelectedId("title");
     setClosePrompt(false);
+    setDeletePrompt(false);
     setWorkspaceState("loading");
     let alive = true;
     Promise.all([
@@ -108,9 +81,8 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
       apiJson<{ tenantId?: string; effectivePermissions?: string[] }>("/api/authorization/context").catch(() => null),
     ]).then(([settings, context]) => {
       if (!alive) return;
-      const layouts = workspaceLayouts(settings.documents);
-      showTemplate(loadLastTemplate(documentType, layouts));
-      setAvailableTemplates(templatesFor(documentType, layouts));
+      setDocuments(settings.documents);
+      showTemplate(loadLastTemplate(documentType, workspaceLayouts(settings.documents)));
       setCompanyName(settings.companyName);
       setAccess({ tenantId: context?.tenantId || "", canManage: Boolean(context?.effectivePermissions?.includes("settings.workspace.manage")) });
       setWorkspaceState("ready");
@@ -120,16 +92,23 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
       setWorkspaceState("failed");
     });
     return () => { alive = false; };
-  }, [documentNo, documentType, open]);
+  }, [documentNo, documentType, open, reloadKey]);
 
+  const layouts = useMemo(() => workspaceLayouts(documents), [documents]);
+  const availableTemplates = useMemo(() => templatesFor(documentType, layouts), [documentType, layouts]);
+  const unreadableCount = documents?.unreadableLayouts?.length || 0;
   // The company printed is the recorded one: the letterhead, else the workspace.
   const printData = useMemo<PrintDocumentData>(() => ({ ...data, companyName: data.companyName || companyName }), [companyName, data]);
   const canSave = workspaceState === "ready" && Boolean(access?.canManage);
+  // A template from the workspace is saved over itself; a built-in one is saved as a new template.
+  const isSavedTemplate = !template.isDefault && layouts.some((item) => item.id === template.id);
   const selected = useMemo(() => template.elements.find((element) => element.id === selectedId), [selectedId, template.elements]);
   // Someone who cannot save templates may still adjust the layout for one print; that is not an unsaved template.
   const templateDirty = Boolean(open && canSave && savedTemplateSnapshot && JSON.stringify(template) !== savedTemplateSnapshot);
   const instanceDirty = Boolean(open && JSON.stringify(instanceValues) !== savedInstanceSnapshot);
   const anyDirty = templateDirty || instanceDirty;
+  const nameProblem = !template.name.trim() ? t("printLayout.nameRequired")
+    : template.name.trim().length > PRINT_LAYOUT_LIMITS.name ? t("printLayout.nameTooLong", { limit: PRINT_LAYOUT_LIMITS.name }) : "";
 
   function updateElement(id: string, patch: Partial<PrintLayoutElement>) {
     setTemplate((current) => ({ ...current, elements: current.elements.map((element) => element.id === id ? { ...element, ...patch } : element) }));
@@ -161,32 +140,53 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
     }));
   }
 
+  const isChanged = (error: unknown) => error instanceof PrintLayoutChangedError || (error instanceof ApiError && error.code === "DOCUMENT_LAYOUT_CHANGED");
+
+  // A refused value named by its template and element ("layouts.7.elements.12.style.fontSize").
+  function namedField(field: string, sent: PrintLayoutTemplate[] | undefined) {
+    const match = field.match(/^layouts\.(\d+)(?:\.elements\.(\d+))?/);
+    const layout = match && sent ? sent[Number(match[1])] : undefined;
+    if (!layout) return t("printLayout.invalidValue", { field });
+    const element = match?.[2] !== undefined ? layout.elements?.[Number(match[2])] : undefined;
+    return element ? t("printLayout.invalidElement", { template: layout.name, element: element.title || element.id }) : t("printLayout.invalidTemplate", { template: layout.name });
+  }
+
   // Why a save failed, from the shared check here or the same check on the server.
   function describeFailure(error: unknown) {
-    const local = error as { code?: string; details?: unknown; message?: string };
+    const local = error as PrintLayoutSaveError & { details?: unknown };
     const details = (error instanceof ApiError ? error.payload.details : local.details) as FailureDetails | undefined;
     const code = error instanceof ApiError ? error.code : local.code;
+    if (isChanged(error)) return t("printLayout.changedElsewhere");
     if (error instanceof ApiError && error.status === 403) return t("printLayout.saveForbidden");
     if (code === "DOCUMENT_LAYOUTS_TOO_MANY") return t("printLayout.tooMany", { limit: details?.limit ?? "" });
     if (code === "DOCUMENT_LAYOUTS_TOO_LARGE") return t("printLayout.tooLarge", { limit: details?.limit ? Math.floor(details.limit / 1024) : "" });
-    if (details && typeof details === "object" && !Array.isArray(details) && details.field) return t("printLayout.invalidValue", { field: details.field });
+    if (details && typeof details === "object" && !Array.isArray(details) && details.field) return namedField(details.field, local.sentLayouts);
     return local.message || "";
   }
 
-  function afterSave(saved: PrintLayoutTemplate, layouts: PrintLayoutTemplate[]) {
-    showTemplate(saved);
-    setAvailableTemplates(templatesFor(documentType, layouts));
+  function reportFailure(error: unknown) {
+    toast.error(t("printLayout.saveFailed"), {
+      description: describeFailure(error),
+      action: isChanged(error) ? { label: t("printLayout.reloadTemplates"), onClick: () => setReloadKey((key) => key + 1) } : undefined,
+    });
+  }
+
+  function afterSave(saved: PrintLayoutTemplate | null, next: DocumentSettings) {
+    setDocuments(next);
+    if (saved) showTemplate(saved);
   }
 
   async function saveTemplate() {
     if (!canSave) throw new Error(t("printLayout.saveForbidden"));
+    if (nameProblem) { toast.error(t("printLayout.saveFailed"), { description: nameProblem }); throw new Error(nameProblem); }
     setSaving(true);
     try {
-      const { saved, layouts } = await savePrintTemplate(template.isDefault ? { ...template, id: `${documentType}-custom`, isDefault: false } : template);
-      afterSave(saved, layouts);
+      const named = { ...template, name: template.name.trim() };
+      const { saved, documents: next } = isSavedTemplate ? await saveExistingPrintTemplate(named) : await saveNewPrintTemplate(named);
+      afterSave(saved, next);
       toast.success(t("printLayout.templateSaved"), { description: t("printLayout.templateSavedHelp") });
     } catch (error) {
-      toast.error(t("printLayout.saveFailed"), { description: describeFailure(error) });
+      reportFailure(error);
       throw error;
     } finally {
       setSaving(false);
@@ -212,16 +212,34 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
   });
 
   async function saveAs() {
-    if (!canSave) return;
+    if (!canSave || nameProblem) return;
     setSaving(true);
     try {
-      const { saved, layouts } = await savePrintTemplateAs(template, t("printLayout.copyName", { name: template.name }));
-      afterSave(saved, layouts);
+      const name = t("printLayout.copyName", { name: template.name.trim() }).slice(0, PRINT_LAYOUT_LIMITS.name);
+      const { saved, documents: next } = await saveNewPrintTemplate(template, name);
+      afterSave(saved, next);
       toast.success(t("printLayout.savedAs"));
     } catch (error) {
-      toast.error(t("printLayout.saveFailed"), { description: describeFailure(error) });
+      reportFailure(error);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function deleteTemplate() {
+    if (!canSave || !isSavedTemplate) return;
+    setSaving(true);
+    try {
+      const next = await deletePrintTemplate(template);
+      setDocuments(next);
+      showTemplate(loadLastTemplate(documentType, workspaceLayouts(next)));
+      setSelectedId("title");
+      toast.success(t("printLayout.deleted"));
+    } catch (error) {
+      reportFailure(error);
+    } finally {
+      setSaving(false);
+      setDeletePrompt(false);
     }
   }
 
@@ -231,9 +249,8 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
     toast.success(t("printLayout.restored"), { description: t("printLayout.restoredHelp") });
   }
 
-  function addElement(type: PrintElementType | "remark") {
-    const element = createElement(type === "remark" ? "comment" : type, template.elements.length);
-    if (type === "remark") element.title = "备注";
+  function addElement(kind: NewPrintElementType) {
+    const element = createPrintElement(kind, template.elements.length, t);
     setTemplate((current) => ({ ...current, elements: [...current.elements, element] }));
     setSelectedId(element.id);
   }
@@ -264,7 +281,8 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
           {instanceDirty && <span className="print-dirty-chip">{t("printLayout.instanceUnsaved")}</span>}
         </div>
         <div className="print-toolbar-group print-template-controls">
-          <input aria-label={t("printLayout.templateName")} value={template.name} onChange={(event) => setTemplate((current) => ({ ...current, name: event.target.value }))} />
+          <input aria-label={t("printLayout.templateName")} aria-invalid={Boolean(canSave && nameProblem)} data-testid="print-layout-template-name" maxLength={PRINT_LAYOUT_LIMITS.name} value={template.name} onChange={(event) => setTemplate((current) => ({ ...current, name: event.target.value }))} />
+          {canSave && nameProblem && <span className="print-name-error" role="alert" data-testid="print-layout-name-error">{nameProblem}</span>}
           <select aria-label={t("printLayout.templateSelect")} data-testid="print-layout-template-select" value={template.id} onChange={(event) => {
             const selectedTemplate = availableTemplates.find((item) => item.id === event.target.value);
             if (selectedTemplate) { showTemplate(structuredClone(selectedTemplate)); setSelectedId("title"); }
@@ -275,8 +293,9 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
           </div>
         </div>
         <div className="print-toolbar-group">
-          {canSave && <button type="button" data-testid="print-layout-save-template" disabled={saving} onClick={() => void saveTemplate().catch(() => undefined)}><Save size={14} /> {t("printLayout.saveTemplate")}</button>}
-          {canSave && <button type="button" disabled={saving} onClick={() => void saveAs()}>{t("printLayout.saveAs")}</button>}
+          {canSave && <button type="button" data-testid="print-layout-save-template" disabled={saving || Boolean(nameProblem)} onClick={() => void saveTemplate().catch(() => undefined)}><Save size={14} /> {t("printLayout.saveTemplate")}</button>}
+          {canSave && <button type="button" disabled={saving || Boolean(nameProblem)} onClick={() => void saveAs()}>{t("printLayout.saveAs")}</button>}
+          {canSave && isSavedTemplate && <button type="button" data-testid="print-layout-delete-template" disabled={saving} onClick={() => setDeletePrompt(true)}><Trash2 size={14} /> {t("printLayout.deleteTemplate")}</button>}
           <button type="button" onClick={restore}><RotateCcw size={14} /> {t("printLayout.restore")}</button>
           <button type="button" onClick={saveInstance}><Save size={14} /> {t("printLayout.saveInstance")}</button>
           <button type="button" onClick={clearInstance}><Eraser size={14} /> {t("printLayout.clearInstance")}</button>
@@ -294,11 +313,12 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
       {workspaceState === "loading" && <div className="print-readonly-note" role="status">{t("printLayout.loading")}</div>}
       {workspaceState === "failed" && <div className="print-readonly-note" role="alert" data-testid="print-layout-load-failed">{t("printLayout.loadFailed")}</div>}
       {workspaceState === "ready" && access && !access.canManage && <div className="print-readonly-note" role="note" data-testid="print-layout-read-only">{t("printLayout.readOnly")}</div>}
+      {workspaceState === "ready" && unreadableCount > 0 && <div className="print-readonly-note" role="note" data-testid="print-layout-unreadable">{t("printLayout.unreadableNote", { count: unreadableCount })}</div>}
       {workspaceState === "ready" && access && <PrintLayoutImportBanner
         tenantId={access.tenantId}
         canManage={access.canManage}
         describeFailure={describeFailure}
-        onImported={(layouts) => setAvailableTemplates(templatesFor(documentType, layouts))}
+        onImported={setDocuments}
       />}
       <div className="print-layout-workspace">
         <main className="print-canvas-stage">
@@ -323,6 +343,16 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
           />
         </aside>
       </div>
+      {deletePrompt && <div className="print-unsaved-backdrop" data-testid="print-layout-delete-dialog">
+        <div className="print-unsaved-dialog" role="dialog" aria-modal="true" aria-label={t("printLayout.deleteTitle", { name: template.name })}>
+          <h2>{t("printLayout.deleteTitle", { name: template.name })}</h2>
+          <p>{t("printLayout.deleteHelp")}</p>
+          <div>
+            <button type="button" onClick={() => setDeletePrompt(false)}>{t("printLayout.deleteCancel")}</button>
+            <button type="button" className="danger" data-testid="print-layout-delete-confirm" disabled={saving} onClick={() => void deleteTemplate()}>{t("printLayout.deleteConfirm")}</button>
+          </div>
+        </div>
+      </div>}
       {closePrompt && <div className="print-unsaved-backdrop" data-testid="print-unsaved-dialog">
         <div className="print-unsaved-dialog">
           <h2>{t("printLayout.unsavedTitle")}</h2>

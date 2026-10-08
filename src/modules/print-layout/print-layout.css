@@ -69,6 +69,7 @@
 .print-import-banner button.danger { border-color: #f4b4b0; color: #d92d20; }
 .print-import-banner button:disabled { opacity: .5; cursor: default; }
 .print-import-dialog { width: min(520px, 100%); }
+.print-name-error { color: #d92d20; font-size: 11px; }
 .print-import-list { max-height: 280px; overflow-y: auto; margin: 0 0 16px; padding: 0; list-style: none; border: 1px solid #edf0f4; border-radius: 10px; }
 .print-import-list li + li { border-top: 1px solid #edf0f4; }
 .print-import-list label { display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-size: 13px; color: #344054; }

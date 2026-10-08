@@ -5,52 +5,54 @@ import type { PrintLayoutTemplate } from "./printLayoutTypes";
 // browser under the key below. They are no longer used. Someone who may
 // manage the workspace settings is offered to import them, never silently:
 // Review and import, Not now (asked again next time), or Don't ask again in
-// this browser (the decision key). Nothing here writes templates to the
-// browser, and the old copies are removed only when the person chooses Remove.
+// this browser (the decision key). After an import, Remove takes only the
+// imported templates out of the browser; the others are written back as they
+// were. Nothing is removed without that choice.
 const LEGACY_TEMPLATES_KEY = "flowchain.print-layout.templates.v1";
 const DECISION_KEY_PREFIX = "flowchain.print-layout.import-decision.v1:";
 
-export type BrowserTemplates = { importable: PrintLayoutTemplate[]; unreadable: number };
+// Each stored entry as it is in the browser, and as a template when it can be read.
+export type BrowserTemplateEntry = { raw: unknown; template: PrintLayoutTemplate | null };
 
-export function readBrowserTemplates(): BrowserTemplates {
-  let stored: unknown = [];
+export function readBrowserTemplates(storage: Pick<Storage, "getItem"> = localStorage): BrowserTemplateEntry[] {
+  let stored: unknown;
   try {
-    stored = JSON.parse(localStorage.getItem(LEGACY_TEMPLATES_KEY) || "[]");
+    stored = JSON.parse(storage.getItem(LEGACY_TEMPLATES_KEY) || "[]");
   } catch {
-    return { importable: [], unreadable: 0 };
+    return [];
   }
-  if (!Array.isArray(stored)) return { importable: [], unreadable: 0 };
-  const importable: PrintLayoutTemplate[] = [];
-  let unreadable = 0;
-  for (const item of stored) {
+  if (!Array.isArray(stored)) return [];
+  return stored.map((raw) => {
     try {
-      importable.push(validatePrintLayout(item) as unknown as PrintLayoutTemplate);
+      return { raw, template: validatePrintLayout(raw) as unknown as PrintLayoutTemplate };
     } catch {
-      unreadable += 1;
+      return { raw, template: null };
     }
-  }
-  return { importable, unreadable };
-}
-
-export function hasBrowserTemplates() {
-  const { importable, unreadable } = readBrowserTemplates();
-  return importable.length + unreadable > 0;
+  });
 }
 
 const decisionKey = (tenantId: string) => `${DECISION_KEY_PREFIX}${tenantId}`;
 
-export function importDecided(tenantId: string) {
-  try { return Boolean(localStorage.getItem(decisionKey(tenantId))); } catch { return false; }
+export function importDecided(tenantId: string, storage: Pick<Storage, "getItem"> = localStorage) {
+  try { return Boolean(storage.getItem(decisionKey(tenantId))); } catch { return false; }
 }
 
-// Recorded when the person chooses Don't ask again, or after they import.
-export function rememberImportDecision(tenantId: string, decision: "dont_ask" | "imported") {
-  try { localStorage.setItem(decisionKey(tenantId), JSON.stringify({ decision, at: new Date().toISOString() })); } catch { /* Asked again next time. */ }
+// Recorded when the person chooses Don't ask again, or once everything in
+// the browser has been imported.
+export function rememberImportDecision(tenantId: string, decision: "dont_ask" | "imported", storage: Pick<Storage, "setItem"> = localStorage) {
+  try { storage.setItem(decisionKey(tenantId), JSON.stringify({ decision, at: new Date().toISOString() })); } catch { /* Asked again next time. */ }
 }
 
-// Only when the person chooses Remove after a successful import.
-export function removeBrowserTemplates() {
-  try { localStorage.removeItem(LEGACY_TEMPLATES_KEY); } catch { /* Nothing to remove. */ }
+// Only when the person chooses Remove after a successful import: the entries
+// not imported (unticked or unreadable) are written back exactly as they were.
+// Returns how many stay in the browser.
+export function removeImportedBrowserTemplates(entries: BrowserTemplateEntry[], imported: ReadonlySet<number>, storage: Pick<Storage, "setItem" | "removeItem"> = localStorage) {
+  const remaining = entries.filter((_, index) => !imported.has(index)).map((entry) => entry.raw);
+  try {
+    if (remaining.length) storage.setItem(LEGACY_TEMPLATES_KEY, JSON.stringify(remaining));
+    else storage.removeItem(LEGACY_TEMPLATES_KEY);
+  } catch { /* Nothing removed. */ }
+  return remaining.length;
 }
 
 // The chosen templates as they are added to the workspace: a template whose
