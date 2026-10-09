@@ -94,32 +94,33 @@ const endpointFor: Record<string, { url: string; key: string }> = {
   exceptions: { url: "/api/inventory/exceptions", key: "exceptions" },
 };
 
-const emptyStateFor: Record<string, { title: string; description: string }> = {
+// Built when the page renders, so the copy follows the interface language.
+const emptyStateFor = (): Record<string, { title: string; description: string }> => ({
   overview: {
-    title: "当前工作区暂无库存余额",
-    description: "尚未读取到当前用户有权查看的仓库库存余额。",
+    title: copy("当前工作区暂无库存余额"),
+    description: copy("尚未读取到当前用户有权查看的仓库库存余额。"),
   },
   movements: {
-    title: "当前工作区暂无库存流水",
-    description: "库存余额可以由本地场景显式加载；只有正式入库、出库、调拨或调整过账后才会产生流水。",
+    title: copy("当前工作区暂无库存流水"),
+    description: copy("库存余额可以由本地场景显式加载；只有正式入库、出库、调拨或调整过账后才会产生流水。"),
   },
   warnings: {
-    title: "当前没有库存预警",
-    description: "当前可见库存余额未低于安全库存或再订货点。",
+    title: copy("当前没有库存预警"),
+    description: copy("当前可见库存余额未低于安全库存或再订货点。"),
   },
   lots: {
-    title: "当前工作区暂无批次记录",
-    description: "只有启用批次管理并完成正式库存过账后才会出现批次记录。",
+    title: copy("当前工作区暂无批次记录"),
+    description: copy("只有启用批次管理并完成正式库存过账后才会出现批次记录。"),
   },
   serials: {
-    title: "当前工作区暂无序列号记录",
-    description: "只有启用序列号管理并完成正式库存过账后才会出现序列号记录。",
+    title: copy("当前工作区暂无序列号记录"),
+    description: copy("只有启用序列号管理并完成正式库存过账后才会出现序列号记录。"),
   },
   exceptions: {
-    title: "当前没有库存异常",
-    description: "当前可见库存记录未产生需要处理的异常。",
+    title: copy("当前没有库存异常"),
+    description: copy("当前可见库存记录未产生需要处理的异常。"),
   },
-};
+});
 
 function quantity(item: Item) {
   return Number(item.availableQuantity ?? item.onHandQuantity ?? 0);
@@ -245,9 +246,9 @@ export default function InventoryPage({
     supportedFilterNames.forEach((name) => next.delete(name));
     setSearchParams(next);
   };
-  const emptyState = emptyStateFor[view] || {
-    title: "当前工作区暂无库存记录",
-    description: "页面不会用固定 SKU、批次、序列号或移动记录补足空数据。",
+  const emptyState = emptyStateFor()[view] || {
+    title: copy("当前工作区暂无库存记录"),
+    description: copy("页面不会用固定 SKU、批次、序列号或移动记录补足空数据。"),
   };
 
   return (
@@ -309,9 +310,9 @@ export default function InventoryPage({
       {state === "ready" && visible.length === 0 && (
         <Card className="p-10 text-center">
           <Boxes className="mx-auto mb-3" size={28} color={A.gray2} />
-          <div className="text-sm font-semibold">{copy(emptyState.title)}</div>
+          <div className="text-sm font-semibold">{emptyState.title}</div>
           <p className="mt-2 text-xs" style={{ color: A.sub }}>
-            {copy(emptyState.description)}
+            {emptyState.description}
           </p>
         </Card>
       )}
@@ -323,17 +324,17 @@ export default function InventoryPage({
               <thead>
                 <tr style={{ borderBottom: `1px solid ${A.border}` }}>
                   {[
-                    "SKU / 物料",
-                    "仓库 / 库位",
-                    "在手量",
-                    "预留量",
-                    "可用量",
-                    "安全库存 / 再订货点",
-                    "状态",
-                    "操作",
+                    copy("SKU / 物料"),
+                    copy("仓库 / 库位"),
+                    copy("在手量"),
+                    copy("预留量"),
+                    copy("可用量"),
+                    copy("安全库存 / 再订货点"),
+                    copy("状态"),
+                    copy("操作"),
                   ].map((h) => (
                     <th key={h} className="px-4 py-3 text-left">
-                      {copy(h)}
+                      {h}
                     </th>
                   ))}
                 </tr>
@@ -411,7 +412,7 @@ export default function InventoryPage({
         )}
       {state === "ready" && visible.length > 0 && view === "lots" && (
         <SimpleTable
-          headers={["批次", "SKU", "物料", "数量", "到期日", "状态"]}
+          headers={[copy("批次"), "SKU", copy("物料"), copy("数量"), copy("到期日"), copy("状态")]}
           rows={(visible as Lot[]).map((row) => [
             row.lotId || row.lot,
             <EntityLink kind="item" id={row.sku}>
@@ -426,7 +427,7 @@ export default function InventoryPage({
       )}
       {state === "ready" && visible.length > 0 && view === "serials" && (
         <SimpleTable
-          headers={["序列号", "SKU", "仓库", "状态"]}
+          headers={[copy("序列号"), "SKU", copy("仓库"), copy("状态")]}
           rows={(visible as Serial[]).map((row) => [
             row.serialId || row.sn,
             <EntityLink kind="item" id={row.sku}>
@@ -440,14 +441,14 @@ export default function InventoryPage({
       {state === "ready" && visible.length > 0 && view === "movements" && (
         <SimpleTable
           headers={[
-            "移动类型",
-            "来源单据",
+            copy("移动类型"),
+            copy("来源单据"),
             "SKU",
-            "仓库 / 库位",
-            "入库",
-            "出库",
-            "日期",
-            "状态",
+            copy("仓库 / 库位"),
+            copy("入库"),
+            copy("出库"),
+            copy("日期"),
+            copy("状态"),
           ]}
           rows={(visible as Movement[]).map((row) => [
             // The movement's own id is an internal UUID; show what moved it instead.
@@ -466,7 +467,7 @@ export default function InventoryPage({
       )}
       {state === "ready" && visible.length > 0 && view === "exceptions" && (
         <SimpleTable
-          headers={["异常单号", "SKU", "物料", "数量影响", "原因", "状态"]}
+          headers={[copy("异常单号"), "SKU", copy("物料"), copy("数量影响"), copy("原因"), copy("状态")]}
           rows={(visible as InventoryException[]).map((row) => [
             row.id,
             <EntityLink kind="item" id={row.sku}>
@@ -520,7 +521,7 @@ function SimpleTable({ headers, rows }: { headers: string[]; rows: any[][] }) {
           <tr style={{ borderBottom: `1px solid ${A.border}` }}>
             {headers.map((h) => (
               <th key={h} className="px-4 py-3 text-left">
-                {copy(h)}
+                {h}
               </th>
             ))}
           </tr>
