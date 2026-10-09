@@ -105,7 +105,7 @@ Use Node 24, run `npm ci`, set database mode and a PostgreSQL `DATABASE_URL`, de
 
 ## 25. Known limitations
 
-New Sales Order UI currently creates one line. Shipment Draft UI currently creates one explicitly selected line and one explicitly selected Reservation Allocation per action; the API supports multiple lines and allocations. The workbench no longer silently uses the first eligible record. There is no FX conversion, costing/COGS, picking, lot/serial allocation, negative inventory, cancelling an order that has shipped goods, customer master overhaul, or automated AI transaction execution.
+New Sales Order UI creates one or more lines for a customer chosen from Customers. Shipment Draft UI currently creates one explicitly selected line and one explicitly selected Reservation Allocation per action; the API supports multiple lines and allocations. The workbench no longer silently uses the first eligible record. There is no FX conversion, costing/COGS, picking, lot/serial allocation, negative inventory, cancelling an order that has shipped goods, customer master overhaul, or automated AI transaction execution.
 
 ## 26. Order list
 

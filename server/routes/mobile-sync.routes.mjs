@@ -14,6 +14,7 @@ function sendError(ctx, error) {
     ctx.send(ctx.res, error.status || 400, { code: error.code || "MOBILE_SYNC_FAILED", message: error.message, ...(error.details ? { details: error.details } : {}) });
     return;
   }
+  ctx.reportError?.(error);
   ctx.send(ctx.res, 500, { code: "MOBILE_SYNC_FAILED", message: "Mobile synchronization could not be completed." });
 }
 
