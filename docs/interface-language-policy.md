@@ -102,11 +102,11 @@ names, or supplier names in place. Translate their presentation where appropriat
   where shown; other search subtitles and evidence values the server builds (for
   example "可用 …" and "安全库存 …" on stock results) are still Chinese. Deferred: an order's evidence graph, whose
   risk summaries the server writes in Chinese. Out of scope because no route renders
-  them: `src/modules/overview/overviewEvidence.ts` and `TodayCockpitPanel.tsx`, the
-  inventory movement ledger, exception, warning and adjustment page files, the V2
-  panels under `src/components`, `src/modules/sales/DeliveryPage.tsx` and
-  `ReceiptPage.tsx`, `src/modules/receiving/Page.tsx` (the receiving routes render
-  `ReceivingListPage`) and the procurement panels PR #147 removes.
+  them: `src/modules/overview/TodayCockpitPanel.tsx`, the inventory movement ledger,
+  exception, warning and adjustment page files and the V2 panels under `src/components`.
+  Removed because no route rendered them: `overviewEvidence.ts` and the procurement
+  panels (#147); the old receiving page, `DeliveryPage.tsx` and `ReceiptPage.tsx`
+  (2026-10-09).
 - The sales order reserve, release and delivery draft dialogs and the shipment post,
   reverse and cancel dialogs have English and Chinese titles and confirm buttons that
   name the action. Their previews say what will happen in one or two sentences built

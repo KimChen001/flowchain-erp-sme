@@ -61,7 +61,6 @@ test('R206-R208 AI insight, cockpit, and transactional links preserve workflow r
   const aiPanel = source('src', 'components', 'ai', 'ContextualAIInsightPanel.tsx')
   const cockpit = source('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
   const purchasing = source('src', 'modules', 'purchasing', 'Page.tsx')
-  const receiving = source('src', 'modules', 'receiving', 'Page.tsx')
   assert.match(aiPanel, /onNavigateRecord/)
   assert.match(aiPanel, /source:\s*"contextualAiInsight"/)
   assert.doesNotMatch(aiPanel, /Back to AI Assistant/)
@@ -70,8 +69,6 @@ test('R206-R208 AI insight, cockpit, and transactional links preserve workflow r
   assert.match(purchasing, /returnLabel:\s*`返回采购订单 \$\{order\.po\}`/)
   assert.match(purchasing, /buildGrnRows\(selectedPO, facts\)/)
   assert.match(purchasing, /buildInvoiceRows\(selectedPO, facts\)/)
-  assert.match(receiving, /returnLabel:\s*`返回收货单 \$\{selectedGrn\.grn\}`/)
-  assert.match(receiving, /"grn", selectedGrn\.grn/)
 })
 
 test('R210 guardrails keep AI embedded provider-free and non-mutating', () => {
@@ -82,7 +79,8 @@ test('R210 guardrails keep AI embedded provider-free and non-mutating', () => {
     source('src', 'components', 'document', 'DocumentShell.tsx'),
     source('src', 'modules', 'overview', 'TodayCockpitPanel.tsx'),
     source('src', 'modules', 'purchasing', 'Page.tsx'),
-    source('src', 'modules', 'receiving', 'Page.tsx'),
+    // The contextual AI actions and their review-only guardrails.
+    source('src', 'domain', 'contextual-ai', 'actions.ts'),
   ].join('\n')
   assert.match(app, /setFocusReturnContext/)
   assert.match(app, /buildReturnContext/)

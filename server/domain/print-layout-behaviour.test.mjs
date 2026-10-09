@@ -261,26 +261,3 @@ test('20 realistic templates fit in 160 KB', async () => {
   assert.ok(bytes < PRINT_LAYOUT_LIMITS.bytes, `${bytes} bytes`)
   assert.ok(bytes > 64 * 1024, 'the old 64 KB cap would not have held them')
 })
-
-test('the receive sheet, delivery note and sign receipt print recorded values and nothing invented', async () => {
-  const mod = await modules()
-  const sheet = mod.adaptReceiveSheet({
-    grn: 'grn-uuid-1', documentNumber: 'GRN-202610-0007', po: 'PO-202610-0003', supplier: 'Harbor Supply', arrived: '2026-10-07', dock: '', receiver: 'Dana Ruiz',
-    items: 12, passed: 10, failed: 2, status: 'receiving', warehouse: 'wh-uuid-1',
-    lines: [{ sku: 'SKU-1', itemName: 'Pallet wrap', receivedQty: 12, acceptedQty: 10, rejectedQty: 2, unit: 'roll', lotNumber: 'LOT-88' }, { sku: 'SKU-2', receivedQty: 4, acceptedQty: 4, rejectedQty: 0 }],
-  }, { rejectedLabel: (qty) => `Rejected ${qty}`, warehouseName: (id) => (id === 'wh-uuid-1' ? 'Oakland DC' : id) })
-  assert.equal(sheet.documentNo, 'GRN-202610-0007')
-  assert.equal(sheet.warehouse, 'Oakland DC')
-  assert.deepEqual([sheet.companyName, sheet.handler, sheet.createdBy, sheet.reviewedBy, sheet.remarks], ['', '', '', '', ''])
-  assert.equal(sheet.receiver, 'Dana Ruiz')
-  assert.deepEqual(sheet.lines, [
-    { sku: 'SKU-1', itemName: 'Pallet wrap', quantity: 12, unit: 'roll', batchNo: 'LOT-88', remarks: 'Rejected 2' },
-    { sku: 'SKU-2', itemName: '', quantity: 4, unit: '', batchNo: '', remarks: '' },
-  ])
-  assert.deepEqual(mod.adaptReceiveSheet({ grn: 'grn-2', po: '', supplier: '', arrived: '', dock: '', receiver: '', items: 3, passed: 3, failed: 0, status: 'receiving', warehouse: '' }, { rejectedLabel: String }).lines, [], 'no summary line is made up')
-
-  const note = mod.adaptDeliveryNote({ deliveryNo: 'DN-1', deliveryDate: '2026-10-07', customerName: 'Acme', warehouse: 'Main', salesOrderNo: 'SO-1', createdBy: 'Lee', lines: [] })
-  assert.deepEqual([note.reviewedBy, note.logisticsCompany, note.driver, note.vehicleNo, note.cartonCount], ['', '', '', '', ''])
-  const receipt = mod.adaptSignReceipt({ receiptNo: 'SR-1', signDate: '2026-10-07', deliveryNo: 'DN-1', salesOrderNo: 'SO-1', customerName: 'Acme', receiverName: 'Kim', lines: [] })
-  assert.deepEqual([receipt.warehouse, receipt.exceptionNote, receipt.reviewedBy, receipt.signature, receipt.handler, receipt.receiverPhone], ['', '', '', '', '', ''])
-})
