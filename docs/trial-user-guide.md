@@ -415,5 +415,5 @@ The technical list of current limits is in
 
 These are planned. Dates and details may change.
 
-- Print layouts saved for the whole workspace.
-- Further security and alert improvements.
+- Printing receive sheets from Receipts, with print layouts saved for the whole
+  workspace.
