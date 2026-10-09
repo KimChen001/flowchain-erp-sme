@@ -36,7 +36,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const [template, setTemplate] = useState<PrintLayoutTemplate>(() => withInstanceFields(defaultPrintTemplate(documentType), documentType, t));
+  const [template, setTemplate] = useState<PrintLayoutTemplate>(() => withInstanceFields(defaultPrintTemplate(documentType, t), documentType, t));
   const [selectedId, setSelectedId] = useState("title");
   const [documents, setDocuments] = useState<DocumentSettings | null>(null);
   const [instanceValues, setInstanceValues] = useState<Record<string, string>>({});
@@ -67,7 +67,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
   useEffect(() => {
     if (!open) return;
     const instance = loadPrintInstance(documentType, documentNo);
-    showTemplate(defaultPrintTemplate(documentType));
+    showTemplate(defaultPrintTemplate(documentType, t));
     setInstanceValues(instance.values);
     setSavedInstanceSnapshot(JSON.stringify(instance.values));
     setDocuments(null);
@@ -82,7 +82,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
     ]).then(([settings, context]) => {
       if (!alive) return;
       setDocuments(settings.documents);
-      showTemplate(loadLastTemplate(documentType, workspaceLayouts(settings.documents)));
+      showTemplate(loadLastTemplate(documentType, workspaceLayouts(settings.documents), t));
       setCompanyName(settings.companyName);
       setAccess({ tenantId: context?.tenantId || "", canManage: Boolean(context?.effectivePermissions?.includes("settings.workspace.manage")) });
       setWorkspaceState("ready");
@@ -95,7 +95,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
   }, [documentNo, documentType, open, reloadKey]);
 
   const layouts = useMemo(() => workspaceLayouts(documents), [documents]);
-  const availableTemplates = useMemo(() => templatesFor(documentType, layouts), [documentType, layouts]);
+  const availableTemplates = useMemo(() => templatesFor(documentType, layouts, t), [documentType, layouts, t]);
   const unreadableCount = documents?.unreadableLayouts?.length || 0;
   // The company printed is the recorded one: the letterhead, else the workspace.
   const printData = useMemo<PrintDocumentData>(() => ({ ...data, companyName: data.companyName || companyName }), [companyName, data]);
@@ -232,7 +232,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
     try {
       const next = await deletePrintTemplate(template);
       setDocuments(next);
-      showTemplate(loadLastTemplate(documentType, workspaceLayouts(next)));
+      showTemplate(loadLastTemplate(documentType, workspaceLayouts(next), t));
       setSelectedId("title");
       toast.success(t("printLayout.deleted"));
     } catch (error) {
@@ -244,7 +244,7 @@ export default function PrintLayoutEditor({ open, documentType, documentNo, data
   }
 
   function restore() {
-    showTemplate(restoreDefaultTemplate(documentType));
+    showTemplate(restoreDefaultTemplate(documentType, t));
     setSelectedId("title");
     toast.success(t("printLayout.restored"), { description: t("printLayout.restoredHelp") });
   }

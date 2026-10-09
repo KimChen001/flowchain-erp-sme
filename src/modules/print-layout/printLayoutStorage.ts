@@ -2,6 +2,7 @@ import { validateDocumentSettings, type DocumentSettings } from "../../../shared
 import { apiJson } from "../../lib/api-client";
 import { saveDocumentSettings } from "../settings/settingsRuntime";
 import { defaultPrintTemplate } from "./printLayoutPresets";
+import type { PrintLayoutCopy } from "./printLayoutElements";
 import type { PrintDocumentType, PrintLayoutTemplate } from "./printLayoutTypes";
 
 // Saved print templates belong to the workspace: they are stored in the
@@ -43,8 +44,8 @@ export function workspaceLayouts(documents: DocumentSettings | null | undefined)
 }
 
 // The built-in template first, then the workspace's saved ones of that type.
-export function templatesFor(type: PrintDocumentType, layouts: PrintLayoutTemplate[]): PrintLayoutTemplate[] {
-  const preset = defaultPrintTemplate(type);
+export function templatesFor(type: PrintDocumentType, layouts: PrintLayoutTemplate[], copy: PrintLayoutCopy): PrintLayoutTemplate[] {
+  const preset = defaultPrintTemplate(type, copy);
   return [preset, ...layouts.filter((item) => item.documentType === type && item.id !== preset.id)];
 }
 
@@ -71,8 +72,8 @@ function forgetLastTemplate(type: PrintDocumentType) {
   writeLast(last);
 }
 
-export function loadLastTemplate(type: PrintDocumentType, layouts: PrintLayoutTemplate[]): PrintLayoutTemplate {
-  const templates = templatesFor(type, layouts);
+export function loadLastTemplate(type: PrintDocumentType, layouts: PrintLayoutTemplate[], copy: PrintLayoutCopy): PrintLayoutTemplate {
+  const templates = templatesFor(type, layouts, copy);
   const last = readLast()[type];
   return structuredClone(templates.find((item) => item.id === last) || templates.find((item) => !item.isDefault) || templates[0]);
 }
@@ -152,7 +153,7 @@ export async function deletePrintTemplate(template: PrintLayoutTemplate): Promis
 }
 
 // Back to the built-in template in this browser; no saved template changes.
-export function restoreDefaultTemplate(type: PrintDocumentType): PrintLayoutTemplate {
+export function restoreDefaultTemplate(type: PrintDocumentType, copy: PrintLayoutCopy): PrintLayoutTemplate {
   forgetLastTemplate(type);
-  return defaultPrintTemplate(type);
+  return defaultPrintTemplate(type, copy);
 }

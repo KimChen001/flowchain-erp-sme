@@ -138,10 +138,13 @@ names, or supplier names in place. Translate their presentation where appropriat
   Chinese copy for its toolbar, save, delete and import messages, the read-only and
   unreadable-template notes, the close prompt and the per-print panel. Elements added
   from the toolbar and the per-print fields start with text in the interface language.
-  Not yet translated: the element inspector, the canvas placeholders (page number,
-  barcode, QR code) and the built-in templates' element titles. Template names and
-  element text are template content: a template saved to the workspace keeps the text
-  it was saved with in either language.
+  The built-in templates (`printLayoutPresets.ts`) are built in the interface
+  language: their names, element titles, column titles, signature line and footer.
+  Not yet translated: the element inspector and the canvas placeholders (page number,
+  barcode, QR code). Template names and element text are template content: a template
+  saved to the workspace keeps the text it was saved with in either language. The
+  receive sheet opens from a receipt's detail page (`/app/procurement/receiving/:id`,
+  **Print receive sheet**); the delivery note and sign receipt pages have no route yet.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.
