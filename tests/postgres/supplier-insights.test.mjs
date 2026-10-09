@@ -136,6 +136,34 @@ test('supplier metrics agree with the reports, per reader', async () => {
     assert.equal((await activity('operations', SUP(1))).invoices, null)
     await assert.rejects(activity('admin', 'LOCAL-DEMO-SUP-404'), (error) => error.status === 404)
 
+    // Supplier risks: every supplier's open issues on one list, the earliest
+    // date first, never by a score; the same issues the list counts, per reader.
+    const risks = (key) => service.readRisks({ env, repositories, identity: { authenticated: true, tenantId, userId: `${tenantId}-${key}`, role: people[key], name: `Insights ${key}`, source: 'test-suite' } })
+    const totalIssues = (insights) => Object.values(insights.suppliers).reduce((sum, row) => sum + (row.openIssues || 0), 0)
+    const adminRisks = await risks('admin')
+    assert.deepEqual(adminRisks.visibility, { orders: true, receipts: true, invoices: true, issues: true })
+    assert.equal(adminRisks.asOf, AS_OF)
+    assert.ok(adminRisks.issues.length > 0)
+    assert.equal(adminRisks.issues.length, totalIssues(admin))
+    for (const [supplierId, row] of Object.entries(admin.suppliers)) assert.equal(adminRisks.issues.filter((issue) => issue.supplierId === supplierId).length, row.openIssues, supplierId)
+    const dated = adminRisks.issues.filter((issue) => issue.when.date).map((issue) => issue.when.date)
+    assert.deepEqual(dated, [...dated].sort(), 'earliest date first')
+    assert.ok(adminRisks.issues.slice(dated.length).every((issue) => !issue.when.date), 'undated issues last')
+    assert.ok(new Set(adminRisks.issues.map((issue) => issue.type)).size > 1)
+    assert.ok(adminRisks.issues.every((issue) => issue.supplierName && issue.supplierCode && issue.label && !('severity' in issue) && !('score' in issue)))
+    const overdueRow = adminRisks.issues.find((issue) => issue.type === 'po_overdue')
+    assert.equal(overdueRow.when.kind, 'overdue')
+    assert.equal(overdueRow.when.days, report.find((po) => po.id === overdueRow.entityId).overdueDays)
+    // A viewer sees what their own counts show.
+    const viewerRisks = await risks('viewer')
+    assert.equal(viewerRisks.issues.length, totalIssues(viewer))
+    // Finance reads no purchase orders: no overdue order is listed, and the
+    // page is told so rather than showing none.
+    const financeRisks = await risks('finance')
+    assert.equal(financeRisks.visibility.orders, false)
+    assert.ok(financeRisks.issues.every((issue) => issue.type !== 'po_overdue'))
+    assert.equal(financeRisks.issues.length, totalIssues(finance))
+
     // The route serves the same read to the signed-in user.
     server = createScmServer()
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -153,6 +181,12 @@ test('supplier metrics agree with the reports, per reader', async () => {
     assert.deepEqual(detail.payload.visibility, viewerAcme.visibility)
     assert.equal(detail.payload.purchaseOrders.total, acmeOrders.length)
     assert.equal((await request(port, 'GET', '/api/master-data/suppliers/LOCAL-DEMO-SUP-404/activity', { headers: { Authorization: `Bearer ${login.payload.token}` } })).status, 404)
+    assert.equal((await request(port, 'GET', '/api/master-data/supplier-risks')).status, 401)
+    const servedRisks = await request(port, 'GET', '/api/master-data/supplier-risks', { headers: { Authorization: `Bearer ${login.payload.token}` } })
+    assert.equal(servedRisks.status, 200, JSON.stringify(servedRisks.payload))
+    // The route reads as of today, not the scenario day: its access, not its rows, is compared.
+    assert.deepEqual(servedRisks.payload.visibility, viewerRisks.visibility)
+    assert.ok(Array.isArray(servedRisks.payload.issues))
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve))
     await disconnectPrismaClient()

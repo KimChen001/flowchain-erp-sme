@@ -4,6 +4,7 @@ import { SupplierPerformancePanel, supplierPerformanceTabLabel } from "./supplie
 import { SupplierActivityCards } from "./supplierActivity";
 import { SupplierTierPanel, TierChip, type Tier, type TierHistoryRow } from "./SupplierTier";
 import type { SupplierInsight, SupplierInsights } from "./supplierInsights";
+import { sortSuppliersBy, useSupplierMetricCells } from "./supplierMetrics";
 import { useEffect, useState, useRef } from "react";
 import { Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -157,7 +158,8 @@ export default function SupplierMasterPage({
   onNavigate?: (moduleId: string, focus?: unknown) => void;
   onActiveContextChange?: (context: any) => void;
 }) {
-  const { language, locale } = useI18n();
+  const { language } = useI18n();
+  const { count, spendCell, onTimeCell } = useSupplierMetricCells();
   const copy = (label: string) => supplierCopy(workspaceCopy(label, language), language);
   const listSeparator = language === "en-US" ? ", " : "、";
   // Supplier edits need master_data.supplier.manage; the supplied-item links
@@ -413,40 +415,7 @@ export default function SupplierMasterPage({
     }
   };
   const insightOf = (id: string): SupplierInsight | undefined => insights?.suppliers[id];
-  const hiddenCell = <span title={copy("Hidden for your role")} style={{ color: A.sub }}>—</span>;
-  const count = (value: number | null | undefined) => (value === null || value === undefined ? hiddenCell : <span className="tabular-nums">{value}</span>);
-  const moneyText = (amount: number, currency: string) => {
-    try { return new Intl.NumberFormat(locale, { style: "currency", currency, maximumFractionDigits: 0 }).format(amount); }
-    catch { return `${currency} ${amount}`; }
-  };
-  const spendCell = (insight?: SupplierInsight) => {
-    if (!insight || insight.spend12m === null) return hiddenCell;
-    if (!insight.spend12m.length) return <span className="tabular-nums">0</span>;
-    const [first, ...others] = insight.spend12m;
-    return <span className="tabular-nums" title={insight.spend12m.map((row) => moneyText(row.amount, row.currency)).join(" · ")}>
-      {moneyText(first.amount, first.currency)}{others.length ? <span style={{ color: A.sub }}> +{others.length} {copy("currencies")}</span> : null}
-    </span>;
-  };
-  const onTimeCell = (insight?: SupplierInsight) => {
-    if (!insight || insight.onTime === null) return hiddenCell;
-    if (insight.onTime.rate === null) return <span title={copy("Fewer than 5 deliveries in 90 days")} style={{ color: A.sub }}>—</span>;
-    // Deliveries measured against the date on the PO, which may be the buyer's need date.
-    const detail = copy("{count} of {of} deliveries on time against the date on the PO, which may be the buyer's need date").replace("{count}", String(insight.onTime.count)).replace("{of}", String(insight.onTime.of));
-    return <span className="tabular-nums" title={detail}>{new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 }).format(insight.onTime.rate)}</span>;
-  };
-  // The reader chooses the order; it never comes from a hidden weight. Spend
-  // sorts by currency, then amount, and never compares across currencies.
-  const sortedRows = (() => {
-    if (sortBy === "name") return rows;
-    const value = (row: Supplier) => {
-      const insight = insightOf(row.id);
-      if (sortBy === "overdue") return insight?.overduePos ?? -1;
-      if (sortBy === "issues") return insight?.openIssues ?? -1;
-      return insight?.spend12m?.[0]?.amount ?? -1;
-    };
-    const currencyOf = (row: Supplier) => insightOf(row.id)?.spend12m?.[0]?.currency || "";
-    return [...rows].sort((a, b) => (sortBy === "spend" ? currencyOf(a).localeCompare(currencyOf(b)) : 0) || value(b) - value(a) || a.supplierName.localeCompare(b.supplierName));
-  })();
+  const sortedRows = sortSuppliersBy(rows, sortBy, insightOf);
   // Earlier PO prices of each supplied item from this supplier only, in the
   // link currency and the item's unit, in one request. Display only.
   // The item being linked gets the same facts under its reference price, in

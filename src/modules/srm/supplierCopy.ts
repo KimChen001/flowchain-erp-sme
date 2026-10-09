@@ -43,6 +43,33 @@ const zh: Record<string, string> = {
   "{count} of {of} deliveries on time against the date on the PO, which may be the buyer's need date": '{of} 次交付中 {count} 次按采购订单日期准时（该日期可能是采购方的需求日期）',
   'Set inactive': '设为停用', 'Set active': '设为启用', 'Supplier search': '供应商查询', 'Search suppliers by code, name, status, category and owner.': '按编号、名称、状态、品类和负责人查询供应商。', 'Search': '搜索',
   'Sort by': '排序', 'Name': '名称', 'Spend': '花费', 'Overdue': '逾期', 'Issues': '问题', 'currencies': '种币种',
+  // Supplier evaluation: indicators per supplier, with the tier a person sets.
+  'All tiers': '全部层级', 'Tier filter': '层级筛选', 'All statuses': '全部状态', 'Status filter': '状态筛选', 'Reset': '重置', 'Refresh': '刷新',
+  'Search suppliers': '搜索供应商', 'Code or name': '编号或名称', 'Actions': '操作', 'Set tier': '设置层级',
+  'Filter suppliers by name, tier, owner and status, and compare their indicators.': '按名称、层级、负责人和状态筛选供应商，并比较各项指标。',
+  'Supplier indicators': '供应商指标', '{total} suppliers, {shown} shown': '共 {total} 家供应商，当前显示 {shown} 家', '1 supplier, {shown} shown': '共 1 家供应商，当前显示 {shown} 家',
+  "Tiers are set by your team with a reason and kept in each supplier's history. FlowChain does not suggest tiers.": '层级由团队填写原因后设置，并记入每家供应商的历史。系统不会建议层级。',
+  'Spend, highest first': '花费从高到低', 'Open POs, most first': '未完成 PO 从多到少', 'Overdue POs, most first': '逾期 PO 从多到少',
+  'On time, lowest first': '准时率从低到高', 'Open issues, most first': '未结问题从多到少',
+  'No suppliers match these filters': '没有符合筛选条件的供应商', 'Reset the filters to see every supplier.': '重置筛选即可查看全部供应商。',
+  'No suppliers yet': '暂无供应商', 'Add suppliers on the Suppliers tab, or import a file of suppliers, to evaluate them here.': '在“供应商”页新增或导入供应商后，即可在此评估。',
+  'Could not load suppliers.': '供应商数据加载失败。', 'Retry': '重试', 'Loading…': '正在加载…',
+  'Indicators could not be loaded. Refresh to try again.': '指标加载失败，请刷新重试。',
+  // Supplier risks: every supplier's open issues, the earliest date first.
+  'Overdue purchase orders': '逾期采购订单', 'Receipts with rejections': '有拒收的收货', 'Received, not posted': '已收货未过账', 'Invoice variances': '发票差异',
+  'Past their promised date': '已过承诺交期', 'A quantity was rejected on receipt': '收货时有数量被拒收', 'Not yet posted to inventory': '尚未过账入库',
+  'Invoices that differ from the PO or receipt': '与采购订单或收货不一致的发票',
+  'Supplier risk search': '供应商风险查询', 'Search open issues by supplier and issue type.': '按供应商和问题类型查询未结问题。',
+  'Supplier code or name': '供应商编号或名称', 'Issue type': '问题类型', 'All issue types': '全部问题类型', 'Issue type filter': '问题类型筛选',
+  '{total} issues, {shown} shown': '共 {total} 个问题，当前显示 {shown} 个', '1 issue, {shown} shown': '共 1 个问题，当前显示 {shown} 个',
+  'Date': '日期', 'Issue': '问题说明', 'Document': '单据', 'Days overdue': '逾期天数', 'Promised date': '承诺交期', 'Open since': '发生日期',
+  'Earliest date first: an overdue purchase order by its promised date, any other issue by the day it started. Never ordered by a score.': '按日期从早到晚排列：逾期采购订单按承诺交期，其他问题按发生日期，从不按评分排序。',
+  'No open supplier issues': '暂无未结的供应商问题',
+  'Overdue purchase orders, rejected or unposted receipts and invoice variances are listed here when they happen. Nothing needs following up now.': '逾期采购订单、拒收或未过账的收货以及发票差异出现时会列在这里。目前无需跟进。',
+  'No issues match these filters': '没有符合筛选条件的问题', 'Reset the filters to see every open issue.': '重置筛选即可查看全部未结问题。',
+  'Hidden for your role: you cannot read the purchase orders, receipts or supplier invoices behind these issues.': '你的角色不可见：你无法查看这些问题对应的采购订单、收货或供应商发票。',
+  'Some kinds of issue are hidden for your role: {kinds}.': '部分问题类型对你的角色不可见：{kinds}。',
+  'Could not load supplier risks.': '供应商风险加载失败。',
 };
 const en = Object.fromEntries(Object.entries(zh).map(([key, value]) => [value, key]));
 // The English to Chinese pairs, read by the owner-rule tests.

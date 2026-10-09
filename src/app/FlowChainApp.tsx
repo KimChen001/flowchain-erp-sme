@@ -87,6 +87,8 @@ import { PurchaseOrderDocumentPage } from "../modules/business-documents/Purchas
 import { CustomerInvoiceDocumentPage } from "../modules/business-documents/CustomerInvoiceDocumentPage";
 import FinanceWorkbench from "../modules/finance/Page";
 import SrmPage from "../modules/srm/Page";
+import SupplierEvaluationPage from "../modules/srm/SupplierEvaluationPage";
+import SupplierRisksPage from "../modules/srm/SupplierRisksPage";
 import MasterDataPage from "../modules/master-data/Page";
 import DataImportPage from "../modules/master-data/DataImportPage";
 import AiPanel, { type ActiveContext } from "../modules/ai-assistant/Panel";
@@ -768,7 +770,7 @@ export default function FlowChainApp() {
     ],
   );
   const contentMaxWidthClass =
-    panelModule === "srm"
+    ["srm", "supplier-evaluation", "supplier-risks"].includes(panelModule)
       ? "max-w-[1440px]"
       : [
             "overview",
@@ -1133,6 +1135,8 @@ export default function FlowChainApp() {
       />
     ),
     "data-import": <DataImportPage />,
+    "supplier-evaluation": <SupplierEvaluationPage />,
+    "supplier-risks": <SupplierRisksPage />,
     finance: (
       <FinanceWorkbench
         initialView={activeView as any}

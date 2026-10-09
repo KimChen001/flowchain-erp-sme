@@ -1,7 +1,7 @@
 import { can } from '../auth/authorization-service.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
-import { buildAiSkillSignals, compareSignalsByDate } from './ai-skill-signals.mjs'
+import { buildAiSkillSignals, compareSignalsByDate, compareSignalsByPrintedDate } from './ai-skill-signals.mjs'
 import { isCommittedPurchaseOrder, purchaseOrderBusinessDate, reportCalendarDay } from './open-purchase-order.mjs'
 import { buildOpenPurchaseOrdersReport, purchaseOrderDueDay, purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { reportCurrencyCode } from './report-currency.mjs'
@@ -128,6 +128,23 @@ const issueRow = (signal) => ({
   data: Object.fromEntries(['days', 'rejected', 'unit', 'variance', 'currency'].filter((key) => signal.data?.[key] !== undefined).map((key) => [key, signal.data[key]])),
 })
 
+// Every supplier's open issues on one list for Supplier risks: the same
+// signals the list's "Open issues" counts and each detail page's "Risks and
+// exceptions" lists, with the supplier named from the supplier master. Ordered
+// by the date each row prints, the earliest first, never by a score (owner
+// rule 2026-10-03). A signal of a supplier not in the master is not listed,
+// as the list does not count it.
+export function supplierRiskRows(signals = [], suppliers = []) {
+  const byId = new Map(suppliers.map((supplier) => [text(supplier.id), supplier]))
+  return signals
+    .filter((signal) => SUPPLIER_ISSUE_TYPES.includes(signal.type) && byId.has(text(signal.supplierId)))
+    .sort(compareSignalsByPrintedDate)
+    .map((signal) => {
+      const supplier = byId.get(text(signal.supplierId))
+      return { ...issueRow(signal), supplierId: supplier.id, supplierCode: text(supplier.code) || supplier.id, supplierName: text(supplier.name) || supplier.id }
+    })
+}
+
 // Reads every supplier's metrics for the signed-in reader.
 // listPurchaseOrders is the procurement runtime's listForReport.
 export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, now = () => new Date() } = {}) {
@@ -217,6 +234,32 @@ export function createSupplierInsightsReadService({ prisma, listPurchaseOrders, 
           }
           : null,
         issues: visibility.issues ? supplierIssueSignals(signals, supplier.id).map(issueRow) : null,
+      }
+    },
+    // Every supplier's open issues for Supplier risks, with the reader's
+    // access as readActivity applies it: issues with any source behind them,
+    // through the assistant's masked facts; each source the reader cannot
+    // read is named in visibility, so a missing kind is never read as none.
+    async readRisks(ctx) {
+      const instant = now()
+      const skillContext = await loadAiSkillContext({ ...ctx, aiSkillNow: instant.toISOString() })
+      const { actor, tenantId, today } = skillContext
+      const access = reportReadAccessFor(actor)
+      const visibility = {
+        orders: Boolean(access.collections.purchaseOrders),
+        receipts: Boolean(access.collections.receipts),
+        invoices: Boolean(access.collections.supplierInvoices),
+        issues: Boolean(access.collections.purchaseOrders || access.collections.receipts || access.collections.supplierInvoices),
+      }
+      const [suppliers, signals] = await Promise.all([
+        prisma.supplier.findMany({ where: { tenantId }, select: { id: true, code: true, name: true }, orderBy: [{ name: 'asc' }, { id: 'asc' }] }),
+        visibility.issues ? readAiSkillFacts(skillContext).then(buildAiSkillSignals) : [],
+      ])
+      return {
+        asOf: today,
+        visibility,
+        issueTypes: SUPPLIER_ISSUE_TYPES,
+        issues: visibility.issues ? supplierRiskRows(signals, suppliers) : null,
       }
     },
   }

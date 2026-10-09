@@ -240,8 +240,10 @@ export async function handleMasterDataRoute(ctx) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/suppliers') {
-    // Search, status and category narrow every tab; tier (1, 2, 3, none) and
-    // owner (a user id, me, none) pick the tab. The counts cover each tab.
+    // Search, status and category narrow every view; tier (1, 2, 3, none),
+    // the Supplier evaluation filter, and owner (a user id, me, none), the
+    // list's Managed by me tab, narrow further. The counts cover each tier
+    // and owner view under the search, status and category.
     const filters = tenantScope({
       query: url.searchParams.get('query') || '',
       status: url.searchParams.get('status') || '',
@@ -258,9 +260,8 @@ export async function handleMasterDataRoute(ctx) {
     return true
   }
 
-  // Every supplier's list metrics and tier suggestion, for the signed-in
-  // reader: what they may not see comes back null. Read once per list load,
-  // not per search.
+  // Every supplier's list metrics, for the signed-in reader: what they may
+  // not see comes back null. Read once per list load, not per search.
   if (req.method === 'GET' && url.pathname === '/api/master-data/supplier-insights') {
     if (!ctx.identity?.authenticated) {
       send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read supplier metrics.' })
@@ -274,6 +275,25 @@ export async function handleMasterDataRoute(ctx) {
       send(res, 200, await service.read(ctx))
     } catch (error) {
       send(res, error.status || 500, { code: error.code || 'SUPPLIER_INSIGHTS_UNAVAILABLE', message: error.status ? error.message : 'Supplier metrics are unavailable. Try again.' })
+    }
+    return true
+  }
+
+  // Every supplier's open issues for Supplier risks, the earliest date first,
+  // with the reader's access (supplier-insights.mjs readRisks).
+  if (req.method === 'GET' && url.pathname === '/api/master-data/supplier-risks') {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read supplier risks.' })
+      return true
+    }
+    try {
+      const service = ctx.supplierInsightsService || createSupplierInsightsReadService({
+        prisma: await getPrismaClient(ctx.env || process.env),
+        listPurchaseOrders: ctx.repositories?.procurementRuntime?.listForReport,
+      })
+      send(res, 200, await service.readRisks(ctx))
+    } catch (error) {
+      send(res, error.status || 500, { code: error.code || 'SUPPLIER_RISKS_UNAVAILABLE', message: error.status ? error.message : 'Supplier risks are unavailable. Try again.' })
     }
     return true
   }

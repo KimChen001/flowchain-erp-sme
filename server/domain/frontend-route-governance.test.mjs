@@ -29,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 174);
+  assert.equal(routes.length, 176);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -46,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    174,
+    176,
   );
   assert.throws(
     () =>
@@ -596,6 +596,43 @@ test("moved bill and invoice routes redirect to their new pages", () => {
   assert.ok(!tabs("finance").includes("finance:invoices"));
 });
 
+test("Suppliers has second-level tabs whose paths never reach its detail route", () => {
+  const byId = (id) => routes.find((route) => route.id === id);
+  // What ModuleShell renders as the sub-nav of a standalone primary surface.
+  const subnav = (rootId) =>
+    registry
+      .routesForPrimarySurface(byId(rootId))
+      .filter((route) => route.id === rootId || route.navigationVisibility === "SECONDARY")
+      .map((route) => route.id);
+  assert.deepEqual(subnav("master-data:suppliers"), [
+    "master-data:suppliers",
+    "master-data:supplier-evaluation",
+    "master-data:supplier-risks",
+  ]);
+  for (const [path, id] of [
+    ["/app/master-data/supplier-evaluation", "master-data:supplier-evaluation"],
+    ["/app/master-data/supplier-risks", "master-data:supplier-risks"],
+    ["/app/master-data/suppliers/supplier-evaluation", "master-data:supplier-detail"],
+    ["/app/master-data/suppliers/SUP-1", "master-data:supplier-detail"],
+  ])
+    assert.equal(registry.routeByPath(path).id, id, path);
+  for (const id of ["master-data:supplier-evaluation", "master-data:supplier-risks"]) {
+    const route = byId(id);
+    assert.equal(route.classification, "CORE", id);
+    assert.equal(route.navigationVisibility, "SECONDARY", id);
+    assert.equal(route.showInModuleNav, true, id);
+    // Readable by every signed-in user, like the supplier list; the API hides
+    // what the reader may not see.
+    assert.equal(route.requiredPermission, undefined, id);
+    assert.equal(route.requiredCapability, undefined, id);
+    assert.equal(route.directAccessBehavior, "RENDER", id);
+    assert.deepEqual(registry.breadcrumbRoutes(route).map((item) => item.id), ["overview", "master-data:suppliers", id]);
+  }
+  // Supplier evaluation sets tiers; Supplier risks only reads.
+  assert.equal(byId("master-data:supplier-evaluation").writeMaturity, "AUTHORITATIVE");
+  assert.equal(byId("master-data:supplier-risks").writeMaturity, "UNAVAILABLE");
+});
+
 test("human-readable route authority matrix covers the executable manifest", () => {
   const matrix = readFileSync(
     new URL("../../docs/frontend-route-authority-matrix.md", import.meta.url),
@@ -608,5 +645,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /174\/174 frontend route stability audit/);
+  assert.match(matrix, /176\/176 frontend route stability audit/);
 });

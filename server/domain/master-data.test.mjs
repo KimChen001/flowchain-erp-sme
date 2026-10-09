@@ -580,3 +580,28 @@ test('master data helper marks explicit tax code source metadata', () => {
     sourceType: 'explicit_data',
   })
 })
+
+test('GET /api/master-data/supplier-risks needs a signed-in reader and serves the reader-scoped read', async () => {
+  const signedOut = createRouteContext('GET', '/api/master-data/supplier-risks', createDb())
+  signedOut.ctx.supplierInsightsService = { readRisks: async () => assert.fail('read without a session') }
+  assert.equal(await handleMasterDataRoute(signedOut.ctx), true)
+  assert.equal(signedOut.response.status, 401)
+
+  const seen = []
+  const payload = { asOf: '2026-10-09', visibility: { orders: true, receipts: false, invoices: false, issues: true }, issueTypes: [], issues: [] }
+  const route = createRouteContext('GET', '/api/master-data/supplier-risks', createDb())
+  route.ctx.identity = { authenticated: true, tenantId: 'tenant-a', userId: 'user-a' }
+  route.ctx.supplierInsightsService = { readRisks: async (ctx) => { seen.push(ctx.identity.userId); return payload } }
+  await handleMasterDataRoute(route.ctx)
+  assert.equal(route.response.status, 200)
+  assert.deepEqual(route.response.payload, payload)
+  assert.deepEqual(seen, ['user-a'])
+
+  // A failure says the page is unavailable without leaking the cause.
+  const failing = createRouteContext('GET', '/api/master-data/supplier-risks', createDb())
+  failing.ctx.identity = { authenticated: true, tenantId: 'tenant-a', userId: 'user-a' }
+  failing.ctx.supplierInsightsService = { readRisks: async () => { throw new Error('connection reset at 10.0.0.5') } }
+  await handleMasterDataRoute(failing.ctx)
+  assert.equal(failing.response.status, 500)
+  assert.deepEqual(failing.response.payload, { code: 'SUPPLIER_RISKS_UNAVAILABLE', message: 'Supplier risks are unavailable. Try again.' })
+})

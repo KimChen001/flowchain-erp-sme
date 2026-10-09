@@ -131,6 +131,32 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     legacyIds: ["srm", "srm:master"],
     order: 22,
   }),
+  // The supplier surface's second-level tabs (owner decision 2026-10-09).
+  // Their paths sit beside /app/master-data/suppliers/:id, never under it.
+  page({
+    id: "master-data:supplier-evaluation",
+    path: "/app/master-data/supplier-evaluation",
+    moduleId: "master-data",
+    moduleLabel: "基础资料",
+    label: "供应商评估",
+    description: "按供应商比较花费、采购订单、准时率和未结问题，并由人工设置层级。",
+    parentId: "master-data:suppliers",
+    pageType: "list",
+    panelId: "supplier-evaluation",
+    order: 22.1,
+  }),
+  page({
+    id: "master-data:supplier-risks",
+    path: "/app/master-data/supplier-risks",
+    moduleId: "master-data",
+    moduleLabel: "基础资料",
+    label: "供应商风险",
+    description: "按日期从早到晚查看所有供应商的未结问题。",
+    parentId: "master-data:suppliers",
+    pageType: "list",
+    panelId: "supplier-risks",
+    order: 22.2,
+  }),
   page({
     id: "master-data:customers",
     path: "/app/master-data/customers",
