@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { loadEnv } from "../config/env.mjs";
 import { resolveBuildIdentity, validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import { validateDatabasePersistenceConfig } from "../persistence/persistence-config.mjs";
+import { withSecurityHeaders } from "./security-headers.mjs";
 import { createHttpRequestHandler } from "./http-request-handler.mjs";
 import { requestLogEnabled, withRequestLogging } from "./request-logging.mjs";
 import { withServerErrorBoundary } from "./server-error-boundary.mjs";
@@ -810,7 +811,7 @@ export function createScmServer({
     env: process.env,
   });
   return http.createServer(withRequestLogging(
-    withServerErrorBoundary(handleRequest, { logger: errorLogger }),
+    withSecurityHeaders(withServerErrorBoundary(handleRequest, { logger: errorLogger }), { env: process.env }),
     { logger: requestLogger },
   ));
 }
