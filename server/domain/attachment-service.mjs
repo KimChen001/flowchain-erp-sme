@@ -7,6 +7,7 @@ import { createLocalDurableAttachmentStorage } from "./attachment-storage-provid
 const text = (value) => String(value ?? "").trim();
 const fail = (code, message, status = 400, details) => { throw new InternalSettlementError(code, message, status, details); };
 const allowedMime = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain"]);
+export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const digest = (buffer) => createHash("sha256").update(buffer).digest("hex");
 
 export function createAttachmentService({ prisma, env = process.env, idFactory = randomUUID, now = () => new Date(), storageProvider } = {}) {
@@ -27,7 +28,7 @@ export function createAttachmentService({ prisma, env = process.env, idFactory =
     const fileName = text(input.fileName), mimeType = text(input.mimeType).toLowerCase();
     if (!fileName || !allowedMime.has(mimeType)) fail("UPLOAD_TYPE_NOT_ALLOWED", "The file type is not allowed.", 422);
     let bytes; try { bytes = Buffer.from(text(input.contentBase64), "base64"); } catch { fail("UPLOAD_CONTENT_INVALID", "Upload content is invalid.", 422); }
-    if (!bytes.length || bytes.length > 20 * 1024 * 1024) fail("UPLOAD_SIZE_INVALID", "Upload size must be between 1 byte and 20 MB.", 422);
+    if (!bytes.length || bytes.length > MAX_UPLOAD_BYTES) fail("UPLOAD_SIZE_INVALID", "Upload size must be between 1 byte and 20 MB.", 422);
     const sha256 = digest(bytes), suppliedHash = text(input.sha256).toLowerCase();
     if (suppliedHash && suppliedHash !== sha256) fail("UPLOAD_HASH_MISMATCH", "The supplied SHA-256 does not match the file.", 422);
     await cleanupExpiredUploads();

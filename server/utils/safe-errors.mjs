@@ -5,6 +5,9 @@ export const SAFE_OPERATIONAL_ERROR_CODES = new Set([
   'FLOWCHAIN_DATABASE_CONFIG_MISSING',
   // A read repository was called without a workspace; answered as its 403.
   'TENANT_CONTEXT_REQUIRED',
+  // readBody refused the body: over its byte cap (413) or not JSON (400).
+  'REQUEST_BODY_TOO_LARGE',
+  'REQUEST_BODY_INVALID_JSON',
 ])
 
 // The redaction lives in its own module, so the error reporter can use it
