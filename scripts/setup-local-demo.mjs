@@ -38,9 +38,9 @@ export function localDemoSupplier(id) {
   }
   return supplier
 }
-// The tiers the walkthrough starts with: what the suggestion rules give on its
-// scenario (docs/supplier-tiers-design.md, section 7). They are set once, with
-// an audit row each; a tier someone has since changed is kept on a rerun.
+// The tiers the walkthrough starts with, set by hand for its scenario with a
+// reason each (FlowChain suggests no tier). They are set once, with an audit
+// row each; a tier someone has since changed is kept on a rerun.
 const supplierTiers = [
   ['LOCAL-DEMO-SUP-005', 1, 'The largest share of committed spend in the walkthrough, about a quarter.'],
   ['LOCAL-DEMO-SUP-001', 1, 'Preferred source of LDM-001, LDM-002 and LDM-005, and about a quarter of committed spend.'],
