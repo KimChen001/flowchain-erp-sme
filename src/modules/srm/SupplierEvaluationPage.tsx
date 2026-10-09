@@ -216,7 +216,7 @@ export default function SupplierEvaluationPage() {
           </div>
         ) : (
           <div className={tableScrollClass}>
-            <table className={`w-full min-w-[1180px] text-left ${tableBodyTextClass}`} data-testid="supplier-evaluation-table">
+            <table className={`w-full min-w-[1080px] text-left ${tableBodyTextClass}`} data-testid="supplier-evaluation-table">
               <thead>
                 <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
                   <th className={`${thClass} sticky left-0 z-20 bg-white align-bottom`} style={{ color: A.gray1 }}>{t("Supplier code")}</th>
