@@ -5,6 +5,8 @@ import { buildReorderList } from "../../server/domain/reorder-list.mjs";
 // order-by date with their inputs and flags, the items without a reorder
 // point, the supplier filter, the purchase request it opens prefilled, and a
 // reader of only some warehouses, for whom nothing is checked.
+// Runs with the settings suite (scripts/run-settings-playwright.mjs), whose
+// API seeds manager@example.com; the reorder list itself is stubbed.
 
 const TODAY = "2026-10-05";
 const shipments = (itemId: string, days: number, quantity: number) =>
