@@ -209,6 +209,11 @@ each line the **Accepted** quantity, any **Rejected** quantity with a
 posting**, then on the receipt **Post Receipt** and **Confirm Post**. Only
 accepted quantities become stock. A partial delivery leaves the rest open; you
 can receive again later. Receipts are listed under **Procurement › Receipts**.
+To print a receive sheet, open the receipt and choose **Print receive sheet**,
+then **Print**. It shows what the receipt records: its number, supplier,
+warehouse, purchase order, receiver, arrival day and each line in its own unit.
+The layout can be adjusted for one print; an administrator can save it as a
+layout everyone in the workspace prints with.
 
 **6. Supplier bill.** Bills are under **Procurement › Bills**. From a posted
 receipt choose **Record bill** (or **New bill**), enter the supplier's invoice
@@ -395,7 +400,7 @@ trial. Tell them the page, the document number and what you expected.
 
 What FlowChain does not do today:
 
-- It prints purchase orders and invoices through your browser (**Print or save
+- It prints purchase orders, invoices and receive sheets through your browser (**Print or save
   as PDF**) but does not send them; you send them yourself. The **Print
   templates** list under Master Data is a preview; it does not produce or save
   documents.
@@ -411,9 +416,3 @@ What FlowChain does not do today:
 The technical list of current limits is in
 [Current development limitations](current-development-limitations-v1.md).
 
-### Coming soon in the trial
-
-These are planned. Dates and details may change.
-
-- Printing receive sheets from Receipts, with print layouts saved for the whole
-  workspace.
