@@ -32,7 +32,7 @@ const CHIPS = [
   // Purchase order page chips.
   ['Why does this PO need attention?', '这个 PO 为什么需要关注？', 'today_priorities', 'page'],
   ['Which receipt or invoice evidence is missing?', '还差哪些收货或发票证据？', 'records_needing_data', 'page'],
-  ['What will a delay affect?', '延误会影响什么？', 'highest_risk_items', 'page'],
+  ['What will a delay affect?', '延误会影响什么？', 'late_order_impact', 'page'],
   ['What should happen next?', '建议下一步是什么？', 'prepare_action_draft', 'page'],
   // SKU page chips.
   ['Does this SKU need replenishment?', '这个 SKU 需要补货吗？', 'today_priorities', 'page'],
@@ -158,6 +158,13 @@ const RECORDS = [
   /\b(missing|incomplete|blank|empty fields?|data quality|fill in|need(s)? (more )?data|lacks?)\b/i,
   /补齐|缺失|缺少|不完整|数据质量|补充数据|还差哪些/,
 ]
+// What a late order affects (ai-skill-late-order-impact.mjs): a delay and its
+// consequences together. "What will a delay of PO-001 affect?", "If PO-001 is
+// late, which customers are hit?", PO-001 延误会影响哪些客户？
+const LATE_IMPACT = [
+  /\b(?:delay\w*|late|slip\w*|overdue|held up)\b[^.?!]*\b(?:affect\w*|impact\w*|hit|knock.?on|consequence\w*|put at risk|which (?:customers?|sales orders?|orders?)|who)\b|\b(?:affect\w*|impact\w*)\b[^.?!]*\b(?:delay\w*|late|slip\w*)\b/i,
+  /(?:延误|延迟|晚到|拖期|迟到|逾期|推迟)[^。？！]{0,20}(?:影响|波及|耽误|连累)|(?:影响|波及)[^。？！]{0,10}(?:哪些|什么)(?:客户|销售订单|订单)/,
+]
 const RISK = [
   /\b(risks?|riskiest|risky|exposure|at risk)\b/i,
   /风险|敞口|受影响/,
@@ -227,6 +234,26 @@ export function aiSkillSpendSignals(message) {
 const isSpendQuestion = (intent) => !matches(NOT_SPEND, intent) && (
   matches(SPEND_ITEMS, intent) || matches(TOP_SUPPLIERS, intent)
   || (matches(SPEND, intent) && (matches(SPEND_BREAKDOWN, intent) || Boolean(spendPeriodOf(intent)) || Boolean(aiSkillSpendSignals(intent).currency) || matches(SUPPLIER, intent))))
+
+// Supplier comparison (ai-skill-supplier-comparison.mjs): how suppliers
+// deliver over time. A performance word ("on-time rate", "reliable", OTIF,
+// 准时率, 交付表现), or comparing suppliers ("compare Acme and Summit", 对比两家
+// 供应商). Open late orders ("which suppliers are late?") stay with the
+// purchase orders and the suppliers needing attention.
+const PERFORMANCE = [
+  /\b(?:otif|reliab\w*|unreliable|scorecard|perform(?:s|ing|ance)?|on.?time (?:rate|delivery|deliveries|performance|record|percentage)|delivery (?:rate|record|performance|reliability)|in.?full rate|fill rate|rejection rate|deliver(?:s|ed)? (?:on time|late) (?:most|more|least|less)\b|(?:most|least) (?:often )?(?:on time|late))\b/i,
+  /准时率|准时交货|按时交货|交付表现|交付绩效|供应商绩效|绩效|靠谱|可靠|评分卡|表现(?:怎么样|如何|好不好)|拒收率|最准时|最不准时|经常(?:迟到|延误|晚到)/,
+]
+const COMPARE = [/\b(?:compare|comparison|versus|vs\.?|better|worse)\b/i, /比较|对比|相比|哪家更|谁更/]
+const PAIR = [/\b(?:and|or|vs\.?|versus)\b/i, /和|与|跟|还是/]
+const WORST = [/\b(?:least|worst|less|unreliable|poor\w*|most (?:often )?late|latest|late (?:most|more) often|delivers? late|(?:is|are|runs?) late)\b/i, /最差|最不|最晚|最慢|不可靠|不靠谱|经常(?:迟到|延误|晚到)|总是(?:迟到|延误|晚)/]
+const isComparisonQuestion = (intent) => !matches(SPEND, intent) && (matches(PERFORMANCE, intent) || (matches(COMPARE, intent) && (matches(SUPPLIER, intent) || matches(PAIR, intent))))
+
+// What a comparison asks: the best or the worst first, and the period.
+export function aiSkillComparisonSignals(message) {
+  const raw = text(message)
+  return { mode: matches(WORST, raw) ? 'worst' : 'best', period: spendPeriodOf(raw) }
+}
 
 // Today's priorities: a task cue, or "today"/"first" together with doing
 // something. A bare "today" ("Apple's stock price today") is not a task.
@@ -392,6 +419,7 @@ function intentRoute(intent, base) {
   const route = (skillId) => ({ ...base, skillId, signals: signalsOf(intent) })
   if (matches(OUTSIDE, intent) && !matches(WORKSPACE_NOUN, intent)) return { capability: true, outOfDomain: true }
   if (matches(RECORDS, intent)) return route('records_needing_data')
+  if (matches(LATE_IMPACT, intent)) return route('late_order_impact')
   if (matches(RISK, intent)) return route('highest_risk_items')
   const otherRecord = matches(OTHER_RECORD, intent)
   if (matches(APPROVAL, intent) && matches(REQUEST_NOUN, intent) && !otherRecord) return route('pending_approvals')
@@ -407,6 +435,7 @@ function intentRoute(intent, base) {
   if (!base.ids.length && matches(RECEIVING, intent) && !matches(NOT_RECEIPT, intent) && !matches(PAYMENT, intent)) return route('receiving_issues')
   if (matches(STOCK, intent) || (matches(AVAILABLE, intent) && (base.ids.length || matches(AVAILABLE_CONTEXT, intent)))) return route('inventory_availability')
   if (isSpendQuestion(intent)) return { ...route('spend_analysis'), signals: { ...signalsOf(intent), spend: aiSkillSpendSignals(intent) } }
+  if (isComparisonQuestion(intent)) return { ...route('supplier_comparison'), signals: { ...signalsOf(intent), compare: aiSkillComparisonSignals(intent) } }
   if (matches(METRICS, intent) || (late && matches(ORDER_NOUN, intent) && !otherRecord)) return route('workspace_metrics')
   // A tier ("Which Tier 1 suppliers do we have?") is cue enough.
   if (matches(SUPPLIER, intent) && (matches(SUPPLIER_CUE, intent) || tier) && !base.ids.length && !matches(SPECIFIC_ASPECT, intent) && !matches(PREVIOUS_RESULT, intent)) return route('supplier_attention')

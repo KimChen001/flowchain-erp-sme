@@ -83,6 +83,8 @@ const ABOUT_QUESTION = Object.freeze({
   receiving_issues: 'Which receipts need attention for {x}?',
   supplier_attention: 'What needs attention for supplier {x}?',
   spend_analysis: 'How much did we spend with {x}?',
+  supplier_comparison: 'How is supplier {x} performing on delivery?',
+  late_order_impact: 'What will a delay of {x} affect?',
 })
 // "What about invoices?" after another answer: that topic's own question.
 const TOPIC_QUESTION = Object.freeze({
