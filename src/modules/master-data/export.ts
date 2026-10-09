@@ -1,6 +1,10 @@
 import { toast } from "sonner";
 import { exportRowsToCsv } from "../../lib/data-export";
-import type { ItemMaster, PaymentTerm, TaxCode, WarehouseBin } from "../../types/scm";
+import type { PaymentTerm, TaxCode, WarehouseBin } from "../../types/scm";
+import type { MasterItem } from "./ItemMasterWorkbench";
+
+// An item row as the items list shows it, with its preferred supplier's name.
+export type ItemExportRow = MasterItem & { preferredSupplierName: string };
 
 type Copy = (value: string, params?: Record<string, string | number>) => string;
 export type ExportableMasterDataTab = "items" | "warehouses" | "tax-codes" | "payment-terms";
@@ -9,21 +13,24 @@ export type ExportableMasterDataTab = "items" | "warehouses" | "tax-codes" | "pa
 // English workspace gets an English spreadsheet. Values stay as stored.
 export function exportMasterDataCsv(
   tab: ExportableMasterDataTab,
-  data: { items?: ItemMaster[]; warehouses?: WarehouseBin[]; taxCodes?: TaxCode[]; paymentTerms?: PaymentTerm[] },
+  data: { items?: ItemExportRow[]; warehouses?: WarehouseBin[]; taxCodes?: TaxCode[]; paymentTerms?: PaymentTerm[] },
   copy: Copy,
 ) {
   const yesNo = (value: boolean) => copy(value ? "Yes" : "No");
   const row = (pairs: Array<[string, unknown]>) => Object.fromEntries(pairs.map(([header, value]) => [copy(header), value]));
   const configs: Record<ExportableMasterDataTab, { filename: string; rows: () => Record<string, unknown>[] }> = {
+    // The headers and their order are the item import's columns
+    // (shared/data-import-columns.mjs), so an exported file imports again.
+    // Fields items do not record (default bin, maximum stock, QA) stay empty.
     items: {
       filename: "master-data-items-export.csv",
       rows: () => (data.items || []).map((item) => row([
-        ["SKU", item.sku], ["Item name", item.name], ["Category", item.category], ["Specification", item.specification],
-        ["Unit", item.unit], ["Default warehouse", item.defaultWarehouse], ["Default bin", item.defaultBin],
-        ["Safety stock", item.safetyStock], ["Maximum stock", item.maxStock], ["Reorder point", item.reorderPoint],
-        ["Lead time (days)", item.leadTimeDays], ["Batch managed", yesNo(item.batchManaged)], ["Serial managed", yesNo(item.serialManaged)],
-        ["QA required", yesNo(item.qaRequired)], ["Default supplier", item.defaultSupplier], ["Default tax code", item.defaultTaxCode],
-        ["Status", copy(item.status)],
+        ["SKU", item.sku], ["Item name", item.itemName], ["Category", item.category], ["Specification", item.specification],
+        ["Unit", item.baseUnit], ["Default warehouse", item.defaultWarehouseId], ["Default bin", ""],
+        ["Safety stock", item.safetyStock], ["Maximum stock", ""], ["Reorder point", item.reorderPoint > 0 ? item.reorderPoint : ""],
+        ["Lead time (days)", item.purchaseLeadTimeDays > 0 ? item.purchaseLeadTimeDays : ""], ["Batch managed", yesNo(item.batchManaged)], ["Serial managed", yesNo(item.serialManaged)],
+        ["QA required", ""], ["Default supplier", item.preferredSupplierName], ["Default tax code", item.taxCodeId],
+        ["Status", copy(item.status === "active" ? "Active" : item.status === "inactive" ? "Inactive" : item.status)],
       ])),
     },
     warehouses: {
@@ -54,3 +61,4 @@ export function exportMasterDataCsv(
   exportRowsToCsv(current.filename, current.rows());
   toast.success(copy("Export file created"));
 }
+

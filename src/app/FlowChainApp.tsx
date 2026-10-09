@@ -77,6 +77,7 @@ import {
 
 import ReceivingPostingWorkbench from "../modules/receiving/ReceivingPostingWorkbench";
 import InventoryPanel from "../modules/inventory/Page";
+import BinListPage from "../modules/master-data/BinListPage";
 import ForecastPanel from "../modules/forecast/Page";
 import OverviewPanel from "../modules/overview/Page";
 import ProcurementPanel from "../modules/procurement/Page";
@@ -1046,7 +1047,8 @@ export default function FlowChainApp() {
         onOpenAi={() => setAiOpenSignal(Date.now())}
       />
     ),
-    inventory: (
+    // Master data > Locations / bins lists the bins found on posted stock.
+    inventory: activeView === "bins" ? <BinListPage /> : (
       <InventoryPanel
         initialView={activeView as any}
         focus={searchFocus}

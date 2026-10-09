@@ -38,6 +38,8 @@ const ROUTES = [
   "/app/master-data/payment-terms",
   "/app/master-data/tax-codes",
   "/app/master-data/print-templates",
+  "/app/master-data/bins",
+  "/app/master-data/import",
   "/app/reports/overview",
   "/app/reports/procurement",
   "/app/settings/numbering",

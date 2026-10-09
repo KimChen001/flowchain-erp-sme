@@ -8,7 +8,8 @@ import { useEffect, useState, useRef } from "react";
 import { Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
-import { A, Card, Field, inputStyle } from "../../components/ui";
+import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
+import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, thClass } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
@@ -106,8 +107,9 @@ const empty = (currency = "") => ({
   internalComment: "",
 });
 const statusLabel = { draft: "草稿", active: "启用", inactive: "停用" };
-// The list filters sit side by side instead of a full-width row each.
-const filterStyle = { ...inputStyle, width: "auto", minWidth: 160 };
+// The list's long metric headers wrap to two lines; the list scrolls
+// sideways with the code and actions columns kept in view, as on purchase orders.
+const WRAPPED_HEADERS = new Set(["经营品类", "Business owner", "Spend, 12 months", "Open POs", "Overdue POs", "On time (PO date), 90 days", "Open issues"]);
 
 function normalizeSupplier(value: Partial<Supplier> & Record<string, unknown>): Supplier {
   const text = (candidate: unknown, fallback = "") => String(candidate ?? "").trim() || fallback;
@@ -738,181 +740,201 @@ export default function SupplierMasterPage({
       </div>
     );
   }
+  // Laid out like the other list pages (purchase orders, items): a search
+  // card with labelled filters, then the list with its tier tabs. The module
+  // shell already shows the page title.
+  const filtersApplied = Boolean(query || status || category || owner || tab !== "all");
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">{copy("供应商")}</h1>
-        <p className="text-xs" style={{ color: A.sub }}>
-          {copy("维护供应商基本资料、商业条款和可供应物料关系。")}
-        </p>
-      </div>
-      <Card className="p-4">
-        <div className="flex flex-wrap gap-2">
-          <label className="flex min-w-64 items-center gap-2 rounded border px-3">
-            <Search size={14} />
-            <input
-              aria-label={copy("搜索供应商")}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={copy("编号或名称")}
-              className="h-9 flex-1 outline-none"
-            />
-          </label>
-          <select
-            aria-label={copy("状态筛选")}
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            style={filterStyle}
-          >
-            <option value="">{copy("全部状态")}</option>
-            <option value="active">{copy("启用")}</option>
-            <option value="inactive">{copy("停用")}</option>
-            <option value="draft">{copy("草稿")}</option>
-          </select>
-          <select
-            aria-label={copy("经营品类筛选")}
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            style={filterStyle}
-          >
-            <option value="">{copy("全部品类")}</option>
-            {categories.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
-          <select
-            aria-label={copy("Owner filter")}
-            value={tab === "mine" ? "" : owner}
-            disabled={tab === "mine"}
-            onChange={(e) => setOwner(e.target.value)}
-            style={filterStyle}
-          >
-            <option value="">{copy("All owners")}</option>
-            <option value="none">{copy("No owner")}</option>
-            {knownOwners.map((person) => (
-              <option key={person.id} value={person.id}>{person.name || person.id}</option>
-            ))}
-          </select>
-          <button
-            onClick={load}
-            className="inline-flex items-center gap-1 rounded border px-3 text-xs"
-          >
-            <RefreshCw size={14} />
-            {copy("刷新")}
-          </button>
-          <DataImportLink type="suppliers" className="inline-flex items-center gap-1 rounded border px-3 text-xs" />
-          {writes.suppliers && (
+    <div className="space-y-5">
+      <Card className="p-5">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="fc-section-title" style={{ color: A.label }}>{copy("Supplier search")}</h2>
+            <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("Search suppliers by code, name, status, category and owner.")}</div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={startCreate}
-              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 text-xs text-white"
+              type="button"
+              onClick={load}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium"
+              style={{ background: A.gray6, color: A.label }}
             >
-              <Plus size={14} />
-              {copy("新增供应商")}
+              <RefreshCw size={13} />
+              {copy("刷新")}
             </button>
-          )}
+            <DataImportLink type="suppliers" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700" />
+            {writes.suppliers && (
+              <button
+                type="button"
+                onClick={startCreate}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white"
+              >
+                <Plus size={13} />
+                {copy("新增供应商")}
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+          <Field label={copy("Search")}>
+            <label className="flex items-center gap-2" style={{ ...inputStyle, paddingTop: 0, paddingBottom: 0 }}>
+              <Search size={14} style={{ color: A.gray2 }} />
+              <input
+                aria-label={copy("搜索供应商")}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={copy("编号或名称")}
+                className="h-9 min-w-0 flex-1 bg-transparent outline-none"
+              />
+            </label>
+          </Field>
+          <Field label={copy("状态")}>
+            <select aria-label={copy("状态筛选")} value={status} onChange={(e) => setStatus(e.target.value)} style={inputStyle}>
+              <option value="">{copy("全部状态")}</option>
+              <option value="active">{copy("启用")}</option>
+              <option value="inactive">{copy("停用")}</option>
+              <option value="draft">{copy("草稿")}</option>
+            </select>
+          </Field>
+          <Field label={copy("经营品类")}>
+            <select aria-label={copy("经营品类筛选")} value={category} onChange={(e) => setCategory(e.target.value)} style={inputStyle}>
+              <option value="">{copy("全部品类")}</option>
+              {categories.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label={copy("Business owner")}>
+            <select
+              aria-label={copy("Owner filter")}
+              value={tab === "mine" ? "" : owner}
+              disabled={tab === "mine"}
+              onChange={(e) => setOwner(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">{copy("All owners")}</option>
+              <option value="none">{copy("No owner")}</option>
+              {knownOwners.map((person) => (
+                <option key={person.id} value={person.id}>{person.name || person.id}</option>
+              ))}
+            </select>
+          </Field>
         </div>
       </Card>
-      <div role="tablist" aria-label={copy("Supplier tiers")} className="flex flex-wrap gap-1 border-b" style={{ borderColor: A.border }}>
-        {LIST_TABS.map((item) => (
-          <button key={item.tab} type="button" role="tab" aria-selected={tab === item.tab} data-testid={`supplier-list-tab-${item.tab}`} onClick={() => setTab(item.tab)}
-            className="px-3 py-2 text-xs font-semibold" style={{ color: tab === item.tab ? A.blue : A.gray1, borderBottom: tab === item.tab ? `2px solid ${A.blue}` : "2px solid transparent" }}>
-            {copy(item.label)}{counts ? <span className="ml-1 font-normal tabular-nums" style={{ color: A.sub }}>{counts[item.count]}</span> : null}
-          </button>
-        ))}
-        <div className="ml-auto flex flex-wrap items-center gap-2 pb-1">
-          <label className="flex items-center gap-1 text-xs" style={{ color: A.sub }}>
-            {copy("Sort by")}
-            <select aria-label={copy("Sort by")} value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} style={{ ...filterStyle, minWidth: 120 }}>
-              <option value="name">{copy("Name")}</option>
-              <option value="spend">{copy("Spend")}</option>
-              <option value="overdue">{copy("Overdue")}</option>
-              <option value="issues">{copy("Issues")}</option>
-            </select>
-          </label>
-          {writes.suppliers && <button type="button" data-testid="supplier-review-suggestions-open" onClick={openReview} className="rounded border px-3 py-1.5 text-xs">{copy("Review suggestions")}{counts ? ` (${counts.untiered})` : ""}</button>}
+
+      <Card>
+        <div className="flex flex-wrap items-end gap-3 px-5 pt-3" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
+          <div role="tablist" aria-label={copy("Supplier tiers")} className="flex flex-wrap gap-1">
+            {LIST_TABS.map((item) => (
+              <button key={item.tab} type="button" role="tab" aria-selected={tab === item.tab} data-testid={`supplier-list-tab-${item.tab}`} onClick={() => setTab(item.tab)}
+                className="px-3 py-2 text-xs font-semibold" style={{ color: tab === item.tab ? A.blue : A.gray1, borderBottom: tab === item.tab ? `2px solid ${A.blue}` : "2px solid transparent" }}>
+                {copy(item.label)}{counts ? <span className="ml-1 font-normal tabular-nums" style={{ color: A.sub }}>{counts[item.count]}</span> : null}
+              </button>
+            ))}
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2 pb-2">
+            <label className="flex items-center gap-1.5 text-xs" style={{ color: A.sub }}>
+              {copy("Sort by")}
+              <select aria-label={copy("Sort by")} value={sortBy} onChange={(e) => setSortBy(e.target.value as typeof sortBy)} style={{ ...inputStyle, width: "auto", minWidth: 120, paddingTop: 4, paddingBottom: 4 }}>
+                <option value="name">{copy("Name")}</option>
+                <option value="spend">{copy("Spend")}</option>
+                <option value="overdue">{copy("Overdue")}</option>
+                <option value="issues">{copy("Issues")}</option>
+              </select>
+            </label>
+            {writes.suppliers && <button type="button" data-testid="supplier-review-suggestions-open" onClick={openReview} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700">{copy("Review suggestions")}{counts ? ` (${counts.untiered})` : ""}</button>}
+          </div>
         </div>
-      </div>
-      {error ? (
-        <Card className="p-8 text-center">
-          <div className="text-sm text-red-700">{copy("供应商数据加载失败")}</div>
-          <button onClick={load} className="mt-3 text-xs text-blue-600">
-            {copy("重试")}
-          </button>
-        </Card>
-      ) : loading && rows.length === 0 ? (
-        <Card className="p-8 text-center text-xs">{copy("加载中")}</Card>
-      ) : rows.length === 0 && (query || status || category || owner || tab !== "all") ? (
-        <Card className="py-14 text-center text-sm" style={{ color: A.sub }}>
-          {copy("没有符合筛选条件的供应商")}
-        </Card>
-      ) : rows.length === 0 ? (
-        <Card className="py-14 text-center text-sm" style={{ color: A.sub }}>
-          {copy("暂无供应商")}
-          {writes.suppliers && <>
-            <br />
-            <span className="text-xs">{copy("点击“新增供应商”开始维护供应商资料。")}</span>
-          </>}
-        </Card>
-      ) : (
-        <Card className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr>
-                {[
-                  "供应商编号",
-                  "供应商名称",
-                  "经营品类",
-                  "Tier",
-                  "Business owner",
-                  "Spend, 12 months",
-                  "Open POs",
-                  "Overdue POs",
-                  "On time (PO date), 90 days",
-                  "Open issues",
-                  "状态",
-                  ...(writes.suppliers ? ["操作"] : []),
-                ].map((h) => (
-                  <th key={copy(h)} className="p-3 text-left">
-                    {copy(h)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRows.map((row) => (
-                <tr key={row.id} className="border-t">
-                  <td className="p-3">
-                    <EntityLink kind="supplier" id={row.id} className="text-blue-600">
-                      {row.supplierCode}
-                    </EntityLink>
-                  </td>
-                  <td className="p-3">{row.supplierName}</td>
-                  <td className="p-3">
-                    {(row.categories || []).join(listSeparator) || "-"}
-                  </td>
-                  <td className="p-3 whitespace-nowrap" title={row.tierReason || undefined}>
-                    <TierChip tier={row.tier} short />
-                    {suggestionDiffers(row.tier, insightOf(row.id)?.suggestion) && <span data-testid="supplier-suggestion-differs" title={`${copy("Suggestion differs")}: ${copy(`Tier ${insightOf(row.id)?.suggestion?.tier}`)}`} className="ml-1 inline-block h-2 w-2 rounded-full align-middle" style={{ background: "#2563EB" }} />}
-                  </td>
-                  <td className="p-3">{row.businessOwner?.name || "-"}</td>
-                  <td className="p-3 whitespace-nowrap">{spendCell(insightOf(row.id))}</td>
-                  <td className="p-3">{count(insightOf(row.id)?.openPos)}</td>
-                  <td className="p-3">{count(insightOf(row.id)?.overduePos)}</td>
-                  <td className="p-3">{onTimeCell(insightOf(row.id))}</td>
-                  <td className="p-3">{count(insightOf(row.id)?.openIssues)}</td>
-                  <td className="p-3">{copy(statusLabel[row.status])}</td>
-                  {writes.suppliers && <td className="p-3 space-x-2">
-                    <button onClick={() => startEdit(row)}>{copy("编辑")}</button>
-                    <button onClick={() => toggle(row)}>
-                      {copy(row.status === "active" ? "停用" : "启用")}
-                    </button>
-                  </td>}
+        {error ? (
+          <div className="p-8 text-center">
+            <div className="text-sm text-red-700">{copy("供应商数据加载失败")}</div>
+            <button onClick={load} className="mt-3 text-xs text-blue-600">
+              {copy("重试")}
+            </button>
+          </div>
+        ) : loading && rows.length === 0 ? (
+          <div className="p-8 text-center text-xs">{copy("加载中")}</div>
+        ) : rows.length === 0 && filtersApplied ? (
+          <div className="py-14 text-center text-sm" style={{ color: A.sub }}>
+            {copy("没有符合筛选条件的供应商")}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="py-14 text-center text-sm" style={{ color: A.sub }}>
+            {copy("暂无供应商")}
+            {writes.suppliers && <>
+              <br />
+              <span className="text-xs">{copy("点击“新增供应商”开始维护供应商资料。")}</span>
+            </>}
+          </div>
+        ) : (
+          <div className={tableScrollClass}>
+            <table className={`w-full min-w-[1180px] text-left ${tableBodyTextClass}`}>
+              <thead>
+                <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
+                  {[
+                    "供应商编号",
+                    "供应商名称",
+                    "经营品类",
+                    "Tier",
+                    "Business owner",
+                    "Spend, 12 months",
+                    "Open POs",
+                    "Overdue POs",
+                    "On time (PO date), 90 days",
+                    "Open issues",
+                    "状态",
+                    ...(writes.suppliers ? ["操作"] : []),
+                  ].map((h) => (
+                    <th key={copy(h)} className={`${thClass} align-bottom${WRAPPED_HEADERS.has(h) ? " !whitespace-normal min-w-[96px] max-w-[132px]" : ""}${h === "供应商编号" ? " sticky left-0 z-20 bg-white" : h === "操作" ? " sticky right-0 z-20 bg-white" : ""}`} style={{ color: A.gray1 }}>
+                      {copy(h)}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
+              </thead>
+              <tbody>
+                {sortedRows.map((row, index) => (
+                  <tr key={row.id} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < sortedRows.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
+                    <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                      <EntityLink kind="supplier" id={row.id} className={tableLinkClass}>
+                        {row.supplierCode}
+                      </EntityLink>
+                    </td>
+                    <td className={`${tdNameClass} max-w-[220px] truncate font-medium`} style={{ color: A.label }} title={row.supplierName}>{row.supplierName}</td>
+                    <td className={`${tdNameClass} max-w-[200px] truncate`} style={{ color: A.sub }}>
+                      {(row.categories || []).join(listSeparator) || "—"}
+                    </td>
+                    <td className={tdNowrapClass} title={row.tierReason || undefined}>
+                      <TierChip tier={row.tier} short />
+                      {suggestionDiffers(row.tier, insightOf(row.id)?.suggestion) && <span data-testid="supplier-suggestion-differs" title={`${copy("Suggestion differs")}: ${copy(`Tier ${insightOf(row.id)?.suggestion?.tier}`)}`} className="ml-1 inline-block h-2 w-2 rounded-full align-middle" style={{ background: "#2563EB" }} />}
+                    </td>
+                    <td className={tdNowrapClass} style={{ color: A.sub }}>{row.businessOwner?.name || "—"}</td>
+                    <td className={tdNowrapClass}>{spendCell(insightOf(row.id))}</td>
+                    <td className={tdNowrapClass}>{count(insightOf(row.id)?.openPos)}</td>
+                    <td className={tdNowrapClass}>{count(insightOf(row.id)?.overduePos)}</td>
+                    <td className={tdNowrapClass}>{onTimeCell(insightOf(row.id))}</td>
+                    <td className={tdNowrapClass}>{count(insightOf(row.id)?.openIssues)}</td>
+                    <td className={tdNowrapClass}>
+                      {row.status === "active"
+                        ? <Chip label={copy(statusLabel[row.status])} color={A.green} bg="#f0faf4" />
+                        : row.status === "draft"
+                          ? <Chip label={copy(statusLabel[row.status])} color={A.orange} bg="#fff8f0" />
+                          : <Chip label={copy(statusLabel[row.status])} color={A.gray1} bg={A.gray6} />}
+                    </td>
+                    {writes.suppliers && <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
+                      <div className="flex items-center gap-1.5">
+                        <button type="button" onClick={() => startEdit(row)} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">{copy("编辑")}</button>
+                        <button type="button" onClick={() => toggle(row)} className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium">
+                          {copy(row.status === "active" ? "Set inactive" : "Set active")}
+                        </button>
+                      </div>
+                    </td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

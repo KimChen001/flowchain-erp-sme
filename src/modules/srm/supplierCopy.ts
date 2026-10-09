@@ -43,6 +43,7 @@ const zh: Record<string, string> = {
   'Spend, 12 months': '近 12 个月花费', 'Open POs': '未完成 PO', 'Overdue POs': '逾期 PO', 'On time (PO date), 90 days': '90 天准时率（按采购订单日期）', 'Open issues': '未结问题',
   'Hidden for your role': '你的角色不可见', 'Fewer than 5 deliveries in 90 days': '90 天内交付不足 5 次，暂不计算',
   "{count} of {of} deliveries on time against the date on the PO, which may be the buyer's need date": '{of} 次交付中 {count} 次按采购订单日期准时（该日期可能是采购方的需求日期）', 'Suggestion differs': '建议不同',
+  'Set inactive': '设为停用', 'Set active': '设为启用', 'Supplier search': '供应商查询', 'Search suppliers by code, name, status, category and owner.': '按编号、名称、状态、品类和负责人查询供应商。', 'Search': '搜索',
   'Sort by': '排序', 'Name': '名称', 'Spend': '花费', 'Overdue': '逾期', 'Issues': '问题', 'currencies': '种币种',
   'Review suggestions': '审核建议', 'Suppliers not tiered yet, with what FlowChain suggests. Each acceptance is saved with its reasons and its own audit row.': '尚未分级的供应商及系统建议。每次采纳都会连同理由保存，并各自留一条审计记录。',
   'Accept': '采纳', 'Accepted': '已采纳', 'Accept all shown': '全部采纳', 'Confirm': '确认', 'Back to the list': '返回列表',
