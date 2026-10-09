@@ -90,10 +90,20 @@ Other useful settings pages:
 
 Your workspace starts with one warehouse, code **MAIN** ("Main Warehouse"),
 created when the workspace was set up. You can see it under **Master Data ›
-Warehouses**. Adding more warehouses yourself from Settings is planned; until
-then, ask your FlowChain contact if you need a second warehouse. Locations
-(bins) inside a warehouse do not need to be set up in advance: you name the
-location when you import opening stock or receive goods, for example `A-01`.
+Warehouses**. An administrator adds more in **System Administration ›
+Warehouse Access › Warehouses**: **New warehouse**, a **Code** (up to 32
+letters, digits, hyphens or underscores; it cannot be changed later) and a
+**Name**, then **Add warehouse**. Whoever adds a warehouse gets **Operate**
+access to it; give others access in the table below it (see section 8). A
+warehouse can be renamed, or **Set inactive** once nothing is still in it or
+waiting on it (stock on hand, open reservations, receipts, counts, transfers,
+adjustments, or purchase orders still to be received there); the page lists
+what is in the way. The last active warehouse cannot be set inactive.
+
+Locations (bins) inside a warehouse do not need to be set up in advance: you
+name the location when you import opening stock or receive goods, for example
+`A-01`. The same page can keep a list of bins per warehouse for reference;
+an inactive bin does not block receiving or transfers that type its code.
 
 ### Importing your data
 
@@ -385,7 +395,6 @@ What FlowChain does not do today:
 - It is not an accounting system: no general ledger, no tax filing, no bank
   connection, and no payment execution. Payment records note payments you made
   elsewhere.
-- Adding warehouses yourself is not available yet.
 - A few screens and messages are not yet fully translated in both languages.
 
 The technical list of current limits is in
@@ -395,7 +404,6 @@ The technical list of current limits is in
 
 These are planned. Dates and details may change.
 
-- Adding and editing warehouses in Settings.
 - Print layouts saved for the whole workspace.
 - Email notifications when something waits for your approval.
 - Further security and alert improvements.
