@@ -187,6 +187,8 @@ const entries = {
   'draft.invoice.message': ['Invoice {invoice} differs from the purchase order by {amount}. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单相差 {amount}。请提供更正后的发票或差异原因。'],
   'draft.invoice.message_hidden': ['Invoice {invoice} differs from the purchase order. Please send a corrected invoice or the reason for the difference.', '发票 {invoice} 与采购订单存在差异。请提供更正后的发票或差异原因。'],
   'draft.pr.title': ['Request {quantity} {unit} of {sku}', '申请采购 {sku} {quantity} {unit}'],
+  'draft.pr.minimum': ['{supplier} takes orders of at least {minimum}, so the request is for {minimum} rather than {gap}.', '{supplier} 的最小起订量是 {minimum}，因此按 {minimum} 申请，而不是 {gap}。'],
+  'draft.pr.minimum_unnamed': ['The supplier takes orders of at least {minimum}, so the request is for {minimum} rather than {gap}.', '供应商的最小起订量是 {minimum}，因此按 {minimum} 申请，而不是 {gap}。'],
   'draft.pr.reason': ['{available} available against a target of {target}; nothing incoming covers it.', '可用 {available}，目标 {target}；没有在途订单覆盖。'],
   'draft.review': ['Review draft', '复核草稿'],
   // A supplier message draft: greeting, body and closing, each line of the
@@ -217,6 +219,8 @@ const entries = {
   'next.on_order': ['Next: no follow-up yet; it is on order on {po}, due {date}.', '下一步：暂不需要跟进，已在 {po} 订购，{date} 到期。'],
   'next.on_order_no_date': ['Next: no follow-up yet; it is on order on {po}.', '下一步：暂不需要跟进，已在 {po} 订购。'],
   'next.raise_pr': ['Next: raise a purchase request for {quantity}.', '下一步：申请采购 {quantity}。'],
+  'next.raise_pr_minimum': ['Next: raise a purchase request for {quantity}, {supplier}\'s minimum order.', '下一步：按 {supplier} 的最小起订量申请采购 {quantity}。'],
+  'next.raise_pr_minimum_unnamed': ['Next: raise a purchase request for {quantity}, the supplier\'s minimum order.', '下一步：按供应商的最小起订量申请采购 {quantity}。'],
   'next.await_pr': ['Next: get the pending purchase request approved.', '下一步：推动待审批的采购申请通过。'],
   'next.invoice_query': ['Next: ask {supplier} about the difference.', '下一步：就差异询问 {supplier}。'],
   'next.rejected': ['Next: tell {supplier} about the rejected quantity.', '下一步：告知 {supplier} 拒收数量。'],

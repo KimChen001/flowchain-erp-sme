@@ -39,6 +39,12 @@ function poRowsOf(facts) {
 }
 
 // What a signal calls for: a draft of some kind, or only a link.
+// "Raised to the supplier's minimum order": the request asks for the minimum,
+// more than the gap.
+export function aiSkillMinimumText(raised, fmt, language) {
+  return aiSkillText(raised.supplier ? 'draft.pr.minimum' : 'draft.pr.minimum_unnamed', language, { minimum: fmt.number(raised.minimum), gap: fmt.number(raised.gap), supplier: raised.supplier || '' })
+}
+
 export function aiSkillDraftCandidate(item, facts) {
   const poRows = poRowsOf(facts)
   if (PO.has(item.type) && poRows.has(item.entityId)) {
@@ -57,8 +63,12 @@ export function aiSkillDraftCandidate(item, facts) {
     if (supplying.length) return { kind: 'link', key: `link:${item.id}`, item, po: supplying[0], notSent: true }
     if (!item.data.pendingRequests) {
       const target = Math.max(item.data.reorder ?? 0, item.data.safety ?? 0, (item.data.demand ?? 0))
-      const quantity = Math.max(1, Math.ceil(target - (item.data.available ?? 0) - (item.data.incoming ?? 0) - (item.data.pendingRequests ?? 0)))
-      return { kind: 'purchase_request_draft', key: `pr:${item.entityId}`, item, quantity, target }
+      const gap = Math.max(1, Math.ceil(target - (item.data.available ?? 0) - (item.data.incoming ?? 0) - (item.data.pendingRequests ?? 0)))
+      // At least the preferred supplier's minimum order, as the reorder list asks
+      // for (requestMinimumOf in reorder-list.mjs); the answer says so.
+      const minimum = Number(item.data.minimum) > 0 ? Number(item.data.minimum) : 0
+      const quantity = Math.max(gap, minimum)
+      return { kind: 'purchase_request_draft', key: `pr:${item.entityId}`, item, quantity, target, ...(minimum > gap ? { raisedToMinimum: { minimum, gap, supplier: item.data.minimumSupplier || null } } : {}) }
     }
     return { kind: 'link', key: `link:${item.id}`, item, pendingRequest: true }
   }
@@ -195,7 +205,7 @@ export function aiSkillDraftCard(candidate, facts, language) {
       originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
   }
   const title = aiSkillText('draft.pr.title', language, { quantity: fmt.number(candidate.quantity), unit: '', sku: item.label }).replace(/\s{2,}/g, ' ')
-  const reason = aiSkillText('draft.pr.reason', language, { available: fmt.number(item.data.available), target: fmt.number(candidate.target) })
+  const reason = [aiSkillText('draft.pr.reason', language, { available: fmt.number(item.data.available), target: fmt.number(candidate.target) }), candidate.raisedToMinimum ? aiSkillMinimumText(candidate.raisedToMinimum, fmt, language) : ''].filter(Boolean).join(language === 'zh-CN' ? '' : ' ')
   return { ...base, allowedNextStep: aiSkillText('draft.create_pr', language), title, draftTitle: title, description: reason, draftType: 'purchase_request_draft', targetModule: AI_SKILL_MODULES.purchase_request, targetEntityType: 'item', targetEntityId: item.entityId,
     payload: { itemIdOrSku: item.label, quantity: candidate.quantity, reason, language }, originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
 }
@@ -219,7 +229,7 @@ export function aiSkillNextStepText(candidate, facts, language) {
   const supplier = item.supplier || item.data?.supplier || aiSkillText('value.a_supplier', language)
   if (candidate.kind === 'po_followup_draft' && candidate.chases) return aiSkillText('next.chase_po', language, { po: candidate.po.orderNumber })
   if (candidate.kind === 'po_followup_draft') return aiSkillText('next.po_followup', language, { supplier: candidate.po.supplier || supplier })
-  if (candidate.kind === 'purchase_request_draft') return aiSkillText('next.raise_pr', language, { quantity: fmt.number(candidate.quantity) })
+  if (candidate.kind === 'purchase_request_draft') return aiSkillText(candidate.raisedToMinimum ? (candidate.raisedToMinimum.supplier ? 'next.raise_pr_minimum' : 'next.raise_pr_minimum_unnamed') : 'next.raise_pr', language, { quantity: fmt.number(candidate.quantity), supplier: candidate.raisedToMinimum?.supplier || '' })
   if (candidate.kind === 'supplier_followup_draft') return aiSkillText('next.invoice_query', language, { supplier })
   if (candidate.notSent) return aiSkillText('next.send_po', language, { po: candidate.po.orderNumber || candidate.po.id })
   if (candidate.notDue) return candidate.po.dueDate ? aiSkillText('next.not_due', language, { date: fmt.day(candidate.po.dueDate) }) : ''

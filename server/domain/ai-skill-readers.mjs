@@ -8,6 +8,8 @@ import { PURCHASE_ORDER_STATUS, RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES, norma
 import { classifyBusinessRecord } from './ai-business-record-validity.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
 import { AI_SKILL_RECENT_DAYS, aiSkillDaysBetween } from './ai-skill-signals.mjs'
+import { itemStockUnit, preferredSupplierFor, requestMinimumOf } from './reorder-list.mjs'
+import { listItemSupplierRecords } from './master-data-commands.mjs'
 
 // The facts every workspace skill reads, through the same definitions the
 // reports use, so an answer can never disagree with a report:
@@ -72,10 +74,35 @@ async function rawRecordColumns(prisma, tenantId, visible, limitations, warehous
   if (!prisma || !visible.inventory) return { items: null, balances: null }
   const balanceWhere = warehouseIds ? { tenantId, warehouseId: { in: warehouseIds } } : { tenantId }
   const [items, balances] = await Promise.all([
-    boundedRaw(prisma.item, { where: { tenantId }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'items', limitations),
+    boundedRaw(prisma.item, { where: { tenantId }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, safetyStock: true, reorderPoint: true, metadata: true }, orderBy: [{ id: 'asc' }] }, 'items', limitations),
     boundedRaw(prisma.inventoryBalance, { where: balanceWhere, select: { id: true, sku: true, itemId: true, availableQuantity: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'inventory', limitations),
   ])
   return { items, balances }
+}
+
+// The preferred supplier's minimum order of each item, by SKU: the reorder
+// list's own rule (requestMinimumOf, preferredSupplierFor in reorder-list.mjs)
+// over the same reads (reorder-list-read-service.mjs). A purchase request the
+// assistant suggests asks for at least it. The supplier is named only for
+// readers who may see suppliers. Empty when it cannot be read.
+async function orderMinimums(prisma, tenantId, items, { names = false } = {}) {
+  if (!prisma || !array(items).length) return new Map()
+  try {
+    const [links, suppliers] = await Promise.all([
+      listItemSupplierRecords(prisma, tenantId),
+      prisma.supplier.findMany({ where: { tenantId }, select: { id: true, code: true, name: true, status: true } }),
+    ])
+    const suppliersById = new Map(array(suppliers).map((row) => [text(row.id), row]))
+    const minimums = new Map()
+    for (const item of array(items)) {
+      const supplier = preferredSupplierFor(item, links, suppliersById)
+      const quantity = requestMinimumOf(item, supplier, itemStockUnit(item))
+      if (quantity > 0) minimums.set(text(item.sku), { quantity, supplier: names ? text(supplier.name) || null : null })
+    }
+    return minimums
+  } catch {
+    return new Map()
+  }
 }
 
 // RFQ responses and awards from their own tables: the RFQ row's response
@@ -283,7 +310,10 @@ export async function readAiSkillFacts(skillContext) {
   if (visible.inventory) {
     const allocation = buildRuntimeInventoryAllocation(access.collections.inventoryItems ? allocationContext : business)
     const unitBySku = new Map(array(business.items).map((row) => [text(row.sku), text(row.unit) || null]))
+    const minimums = await orderMinimums(prisma, tenantId, raw.items ?? array(business.items), { names: visible.purchase_orders })
     const rows = allocation.availability.map((row) => ({
+      // The preferred supplier's minimum order ({ quantity, supplier }), or null.
+      orderMinimum: minimums.get(text(row.sku)) || null,
       sku: row.sku, itemId: row.itemId, itemName: row.itemName, unit: unitBySku.get(text(row.sku)) || null, onHand: row.onHand, reserved: row.reserved, available: row.available,
       openSalesDemand: row.openSalesDemand, incomingApprovedPo: row.incomingApprovedPo, shortage: row.shortage,
       availableToPromise: row.availableToPromise, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint,

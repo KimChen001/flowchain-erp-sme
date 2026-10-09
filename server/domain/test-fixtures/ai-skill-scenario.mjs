@@ -31,6 +31,7 @@ export function aiSkillActor(roleKey = 'workspace-administrator', tenantId = AI_
   }
 }
 
+const array = (value) => (Array.isArray(value) ? value : [])
 const suppliers = { 'SUP-001': 'Acme Components', 'SUP-002': 'Summit Packaging' }
 
 function records(seedDay) {
@@ -109,6 +110,10 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     inventoryBalance: { findMany: ({ where, take }) => data.balances.filter(() => where.tenantId === AI_SKILL_TENANT).slice(0, take) },
     rfqSupplierParticipation: { findMany: ({ where }) => data.participations.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
     rfqAwardDecision: { findMany: ({ where }) => data.awards.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
+    // Item-supplier links (master-data-commands.mjs listItemSupplierRecords)
+    // and suppliers, for the preferred supplier's minimum order.
+    runtimeRecord: { findMany: ({ where }) => where.tenantId === AI_SKILL_TENANT ? array(data.supplierLinks) : [] },
+    supplier: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.suppliers.filter((row) => !where.id || row.id === where.id).map((row) => ({ id: row.id, code: row.supplierCode || row.id, name: row.name, status: row.status || 'active' })) },
   }
   return new Proxy({}, {
     get(_target, model) {
@@ -148,8 +153,10 @@ export function aiSkillRepositories(data, calls = [], { truncated = [] } = {}) {
   }
 }
 
-export function aiSkillScenario({ seedDay = '2026-09-29', roleKey = 'workspace-administrator', truncated = [], tenant } = {}) {
-  const data = records(seedDay)
+// supplierLinks: item-supplier link records ({ payload: { itemId, supplierId,
+// preferred, minimumOrderQuantity, ... } }), none by default.
+export function aiSkillScenario({ seedDay = '2026-09-29', roleKey = 'workspace-administrator', truncated = [], tenant, supplierLinks = [] } = {}) {
+  const data = { ...records(seedDay), supplierLinks }
   const calls = { prisma: [], repositories: [] }
   const actor = aiSkillActor(roleKey)
   const ctx = {
