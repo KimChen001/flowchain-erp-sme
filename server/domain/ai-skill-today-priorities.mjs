@@ -44,6 +44,11 @@ export function runTodayPriorities(facts, { focus = null } = {}) {
   return { skillId: 'today_priorities', focus, total: ranked.length, items: ranked.slice(0, TOP).map((item, index) => ({ ...item, rank: index + 1 })), counts: countAiSkillSignals(signals) }
 }
 
+// When the answer lists fewer records than its title counts, it says so.
+export function showingSentence(result, fmt, language, key) {
+  return result.total > result.items.length ? aiSkillText(key, language, { shown: fmt.number(result.items.length), total: fmt.number(result.total) }) : ''
+}
+
 export function presentTodayPriorities(result, facts, { skill, language, query }) {
   const fmt = aiSkillFormatter(facts, language)
   const date = fmt.day(facts.asOf)
@@ -52,7 +57,9 @@ export function presentTodayPriorities(result, facts, { skill, language, query }
     : aiSkillCountText('today.title', result.total, language, { count: fmt.number(result.total), date })
   return presentAiSkillAnswer({
     skill, facts, language, query, title,
-    summary: aiSkillSentences(aiSkillMetricSentences(facts, language), language),
+    // The answer lists what needs doing; supplier invoices already submitted
+    // are not part of it (the paid ones would read as still owed).
+    summary: aiSkillSentences([showingSentence(result, fmt, language, 'answer.showing'), ...aiSkillMetricSentences(facts, language, { invoices: false })], language),
     severity: result.items[0]?.severity || 'success',
     items: result.items,
     followUpIds: ['prepare_action_draft', 'records_needing_data'],
