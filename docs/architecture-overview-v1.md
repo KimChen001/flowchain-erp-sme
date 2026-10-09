@@ -50,7 +50,7 @@ Read models provide deterministic business views over current JSON data:
 - `server/domain/procurement-read-model.mjs`
 - `server/domain/inventory-read.mjs`
 - `server/domain/master-data.mjs`
-- `server/domain/global-business-search.mjs`
+- `server/domain/runtime-business-search.mjs`
 
 They are intended to stay stable as future repository/database adapters are introduced.
 
