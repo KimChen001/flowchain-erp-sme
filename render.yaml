@@ -93,6 +93,12 @@ projects:
                 value: "false"
               - key: FLOWCHAIN_REQUEST_LOG
                 value: "on"
+              # Optional error alerts: an https incoming-webhook URL (Slack,
+              # Discord or any endpoint that takes JSON). Leave empty for none.
+              # It is a credential: never paste it anywhere else. See
+              # docs/operations-alerts.md.
+              - key: FLOWCHAIN_ERROR_WEBHOOK_URL
+                sync: false
               # US trial capability set (deploy/README.md).
               - key: FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING
                 value: "true"
@@ -202,6 +208,12 @@ projects:
                 value: "false"
               - key: FLOWCHAIN_REQUEST_LOG
                 value: "on"
+              # Optional error alerts: an https incoming-webhook URL (Slack,
+              # Discord or any endpoint that takes JSON). Leave empty for none.
+              # It is a credential: never paste it anywhere else. See
+              # docs/operations-alerts.md.
+              - key: FLOWCHAIN_ERROR_WEBHOOK_URL
+                sync: false
               # US trial capability set (deploy/README.md).
               - key: FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING
                 value: "true"

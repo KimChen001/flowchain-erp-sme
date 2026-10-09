@@ -82,6 +82,7 @@ function knownError(ctx, error) {
     });
     return;
   }
+  ctx.reportError?.(error);
   ctx.send(ctx.res, 500, {
     code: "OPERATIONAL_FINANCE_FAILED",
     message: "Operational finance could not be completed.",

@@ -109,7 +109,8 @@ const IMAGE_ENV = { NODE_ENV: "production", FLOWCHAIN_DEPLOYMENT_PROFILE: "produ
 const RENDER_PLATFORM_ENV = { RENDER: "true", RENDER_GIT_COMMIT: RENDER_SHA, RENDER_GIT_BRANCH: "main" };
 // Keys the guard requires that Render satisfies without a Blueprint entry.
 const PLATFORM_SATISFIED = { FLOWCHAIN_COMMIT_SHA: "RENDER_GIT_COMMIT" };
-const SECRET_KEYS = ["POSTMARK_SERVER_TOKEN", "RESEND_API_KEY", "OPENAI_API_KEY"];
+// FLOWCHAIN_ERROR_WEBHOOK_URL is a credential too: anyone holding it can post to the channel.
+const SECRET_KEYS = ["POSTMARK_SERVER_TOKEN", "RESEND_API_KEY", "OPENAI_API_KEY", "FLOWCHAIN_ERROR_WEBHOOK_URL"];
 const OPERATOR_KEYS = ["FLOWCHAIN_DEFAULT_TENANT_ID", "FLOWCHAIN_MAIL_PROVIDER", "FLOWCHAIN_MAIL_FROM", "FLOWCHAIN_PUBLIC_BASE_URL"];
 
 // Every key the production guard reports when nothing is configured.
