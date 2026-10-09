@@ -225,20 +225,22 @@ export default function InventoryPage({
           (row) => row.sku === selectedSku || row.itemId === selectedSku,
         )
       : null;
+  // Each filter chip names one value, so its label is singular.
+  const english = document.documentElement.lang === "en-US";
   const activeFilters = [
-    ["relatedSalesOrderId", "销售订单"],
-    ["sourceDocumentId", "来源单据"],
-    ["sourceDocumentLineId", "来源行"],
-    ["postingBatchId", "Posting Batch"],
-    ["sku", "SKU"],
-    ["warehouseId", "仓库"],
-    ["locationKey", "库位"],
-    ["movementType", "流水类型"],
-    ["itemId", "物料"],
-    ["status", "状态"],
-  ].flatMap(([name, label]) =>
+    { name: "relatedSalesOrderId", en: "Sales order", zh: "销售订单" },
+    { name: "sourceDocumentId", en: "Source document", zh: "来源单据" },
+    { name: "sourceDocumentLineId", en: "Source line", zh: "来源行" },
+    { name: "postingBatchId", en: "Posting batch", zh: "过账批次" },
+    { name: "sku", en: "SKU", zh: "SKU" },
+    { name: "warehouseId", en: "Warehouse", zh: "仓库" },
+    { name: "locationKey", en: "Location", zh: "库位" },
+    { name: "movementType", en: "Movement type", zh: "流水类型" },
+    { name: "itemId", en: "Item", zh: "物料" },
+    { name: "status", en: "Status", zh: "状态" },
+  ].flatMap(({ name, en, zh }) =>
     searchParams.get(name)
-      ? [{ name, label, value: searchParams.get(name)! }]
+      ? [{ name, label: english ? en : zh, value: searchParams.get(name)! }]
       : [],
   );
   const clearFilters = () => {
@@ -281,7 +283,7 @@ export default function InventoryPage({
             {activeFilters.map((filter) => (
               <Chip
                 key={filter.name}
-                label={`${copy(filter.label)}: ${filter.value}`}
+                label={`${filter.label}: ${filter.value}`}
                 color={A.blue}
                 bg="#eef5ff"
               />

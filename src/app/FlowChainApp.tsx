@@ -1595,7 +1595,10 @@ export default function FlowChainApp() {
                                         className={`${typography.searchResultMeta} mt-1 truncate`}
                                         style={{ color: A.sub }}
                                       >
-                                        {result.subtitle || result.entityLabel}
+                                        {/* Runtime results repeat the server's status label as the subtitle. */}
+                                        {result.subtitle && result.subtitle === result.status
+                                          ? workspaceCopy(result.status, language)
+                                          : result.subtitle || result.entityLabel}
                                       </div>
                                       {hint && (
                                         <div
@@ -1614,7 +1617,7 @@ export default function FlowChainApp() {
                                           color: A.gray1,
                                         }}
                                       >
-                                        {result.status}
+                                        {workspaceCopy(result.status, language)}
                                       </span>
                                     )}
                                   </div>
