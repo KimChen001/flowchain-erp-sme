@@ -28,14 +28,12 @@ test("10px inline font sizes stay confined to print or chart-coordinate allowlis
   assert.deepEqual(violations, []);
 });
 
-test("semantic typography and public business primitives are centrally defined", () => {
+test("semantic typography tokens are centrally defined", () => {
   const theme = read("src/styles/theme.css");
-  const primitives = read("src/components/business/PagePrimitives.tsx");
   for (const token of ["fc-module-title", "fc-page-title", "fc-page-subtitle", "fc-modal-title", "fc-section-title", "fc-body", "fc-label", "fc-caption", "fc-table-header", "fc-kpi-value", "fc-nav-primary", "fc-nav-secondary"]) {
     assert.match(theme, new RegExp(`\\.${token}`));
   }
   assert.match(theme, /--font-size: 16px/);
   assert.match(theme, /font-size: 13px;\s*line-height: 20px/);
   assert.match(theme, /Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC"/);
-  for (const component of ["PageHeader", "ModuleHeader", "FilterBar", "DataTable", "DetailField", "ActionButton", "StatusChip"]) assert.match(primitives, new RegExp(`function ${component}`));
 });

@@ -25,7 +25,8 @@ test('every Chinese route and primary-navigation label has an English display ma
 //      value of the items in TRANSLATED_ITEMS). The literal may reach the call
 //      or prop through parentheses, `||`, `??` or a ternary branch, nothing else.
 //   2. The Chinese half of a pair: the second element of a two-element
-//      [English, Chinese] array; the Chinese argument of a known pair function
+//      [English, Chinese] array whose English half reads as text (a capital letter
+//      or a space, so [code, 中文] lookups do not count); the Chinese argument of a known pair function
 //      (PAIR_CALLS) whose other argument is an English literal; the value of a
 //      zh / zh-CN key, or of a property one object below such a key; the value
 //      of an English string key (an English-to-Chinese map); or the branch an
@@ -51,6 +52,10 @@ const ENGLISH_COVERED = [
   'src/modules/overview/AiSuggestionsPage.tsx',
   'src/modules/sales/Page.tsx',
   'src/components/business/BusinessObjectDetail.tsx',
+  'src/modules/sales/OutboundWorkbench.tsx',
+  'src/modules/inventory/Page.tsx',
+  'src/app/FlowChainApp.tsx',
+  'src/modules/procurement/ProcurementWorkbench.tsx',
 ]
 
 // Display dictionaries, read as text: their Chinese property names are the
@@ -105,6 +110,17 @@ const ALLOWED = [
   // Error and warning text kept in state and shown through copy() when rendered.
   { file: 'src/modules/sales/Page.tsx', text: '当前未读取到客户订单记录，请检查工作区数据或刷新后重试。' },
   { file: 'src/modules/sales/Page.tsx', text: '当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。' },
+  // Request errors kept in state in their source form and shown through copy().
+  { file: 'src/modules/sales/OutboundWorkbench.tsx', within: 'errorMessage' },
+  // A part of the server's timeline summary, compared before it is translated.
+  { file: 'src/modules/sales/OutboundWorkbench.tsx', text: '未指定仓库', line: /part === "未指定仓库"/ },
+  // Legacy Chinese stored order statuses, compared to leave finished orders out.
+  { file: 'src/modules/procurement/ProcurementWorkbench.tsx', line: /^\["fully_received", "completed", "closed", "cancelled", "已完成", "已关闭", "已取消"\]$/ },
+  // Matchers for the server's invoice and match status text, never shown.
+  { file: 'src/modules/procurement/ProcurementWorkbench.tsx', text: '/差异|variance/i' },
+  { file: 'src/modules/procurement/ProcurementWorkbench.tsx', text: '/差异|异常|待处理|variance/i' },
+  // The route registry's group name, compared to pick the translated heading.
+  { file: 'src/app/FlowChainApp.tsx', text: '主导航', line: /^group\.label === "主导航"$/ },
 ]
 
 const CJK = /[㐀-鿿]/
@@ -131,6 +147,10 @@ function dictionaryKeys() {
 const templateText = (node) => [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join('${…}')
 const isLiteral = (node) => node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateExpression(node))
 const englishLiteral = (node) => isLiteral(node) && !CJK.test(ts.isTemplateExpression(node) ? templateText(node) : node.text)
+// The English half of an [English, Chinese] array is text a person reads: it starts
+// with a capital letter or has a space. A lower-case or camelCase word is a code
+// (a status, a query parameter), and [code, 中文] is a lookup, not a translation.
+const englishText = (node) => englishLiteral(node) && /^[A-Z]|\s/.test(ts.isTemplateExpression(node) ? templateText(node) : node.text)
 const nameText = (name) => name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) ? name.text : ''
 const calleeName = (call) => ts.isIdentifier(call.expression) ? call.expression.text : ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : ''
 const isChineseKey = (property) => ts.isPropertyAssignment(property) && /^(?:zh|zh-CN)$/.test(nameText(property.name))
@@ -172,7 +192,7 @@ function isTranslated(literal) {
 
 function isChineseHalf(literal, file) {
   const parent = literal.parent
-  if (ts.isArrayLiteralExpression(parent) && parent.elements.length === 2 && parent.elements[1] === literal && englishLiteral(parent.elements[0])) return true
+  if (ts.isArrayLiteralExpression(parent) && parent.elements.length === 2 && parent.elements[1] === literal && englishText(parent.elements[0])) return true
   if (ts.isCallExpression(parent) && parent.arguments.length === 2) {
     const pair = PAIR_CALLS.find((entry) => entry.name === calleeName(parent) && (!entry.file || entry.file === file))
     if (pair && parent.arguments[pair.chinese] === literal && englishLiteral(parent.arguments[1 - pair.chinese])) return true
@@ -217,4 +237,17 @@ test('English-covered screens translate every Chinese literal they show', () => 
     })
   }
   assert.deepEqual(failures, [], `Chinese literals outside a translating call, a pair or the allow-list:\n${failures.join('\n')}`)
+})
+
+test('an [English, Chinese] pair counts, a [code, Chinese] lookup does not', () => {
+  const chineseLiteral = (source) => {
+    const file = ts.createSourceFile('pair.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    let found = null
+    walk(file, (node) => { if (!found && isLiteral(node) && CJK.test(node.text)) found = node })
+    return found
+  }
+  assert.equal(isChineseHalf(chineseLiteral('const label = ["Movement type", "流水类型"]'), 'pair.tsx'), true)
+  assert.equal(isChineseHalf(chineseLiteral('const label = ["SKU", "物料编码"]'), 'pair.tsx'), true)
+  assert.equal(isChineseHalf(chineseLiteral('const filter = ["movementType", "流水类型"]'), 'pair.tsx'), false)
+  assert.equal(isChineseHalf(chineseLiteral('const status = ["draft", "草稿"]'), 'pair.tsx'), false)
 })

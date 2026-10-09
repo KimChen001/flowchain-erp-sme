@@ -28,7 +28,7 @@ export const RECEIVING_INVENTORY_BASELINE = Object.freeze({
     'server/domain/procurement-transaction-core.mjs',
     'server/domain/exception-case-draft-builder.mjs',
     'server/domain/user-confirmed-business-action.mjs',
-    'src/modules/receiving/Page.tsx',
+    'src/modules/receiving/ReceivingPostingWorkbench.tsx',
     'src/modules/inventory/Page.tsx',
     'src/domain/relationships/resolver.ts',
   ],

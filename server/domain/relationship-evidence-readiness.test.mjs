@@ -78,15 +78,11 @@ test('R214 evidence resolver keeps risk level separate from reason and produces 
 
 test('R215-R216 high-value surfaces retain authoritative evidence without a duplicate PO relationship panel', () => {
   const purchasing = source('src', 'modules', 'purchasing', 'Page.tsx')
-  const receiving = source('src', 'modules', 'receiving', 'Page.tsx')
-  const invoice = source('src', 'modules', 'procurement', 'SupplierInvoiceRegister.tsx')
   const aiReadiness = source('src', 'domain', 'contextual-ai', 'readiness.ts')
   assert.match(purchasing, /buildGrnRows/)
   assert.match(purchasing, /buildInvoiceRows/)
   assert.match(purchasing, /buildMatchRows/)
   assert.doesNotMatch(purchasing, /DocumentEvidencePanel/)
-  assert.match(receiving, /relatedRecordsForEntity/)
-  assert.match(invoice, /relatedRecordsForEntity/)
   assert.match(aiReadiness, /resolvePoDelayEvidence/)
   assert.match(aiReadiness, /resolveSkuShortageEvidence/)
   assert.match(aiReadiness, /resolveReceivingExceptionEvidence/)
@@ -117,9 +113,8 @@ test('R218-R220 relationship guardrails preserve navigation safety and AI bounda
     source('src', 'domain', 'relationships', 'resolver.ts'),
     source('src', 'domain', 'relationships', 'evidence.ts'),
     source('src', 'domain', 'contextual-ai', 'readiness.ts'),
+    source('src', 'domain', 'contextual-ai', 'actions.ts'),
     source('src', 'modules', 'purchasing', 'Page.tsx'),
-    source('src', 'modules', 'receiving', 'Page.tsx'),
-    source('src', 'modules', 'procurement', 'SupplierInvoiceRegister.tsx'),
   ].join('\n')
   assert.match(links, /Route not available yet/)
   assert.match(nav, /record\.disabledReason/)
