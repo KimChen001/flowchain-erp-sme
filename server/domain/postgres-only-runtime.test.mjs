@@ -197,12 +197,10 @@ test('runtime initialization modules contain no embedded business rows', async (
     'src/data/empty-business-state.ts',
     'src/data/master-data.ts',
     'src/data/settlement.ts',
-    'src/modules/inventory/warningData.ts',
     'src/modules/inventory/adjustmentData.ts',
     'src/modules/sales/deliveryData.ts',
     'src/modules/sales/returnData.ts',
     'src/modules/sales/receiptData.ts',
-    'src/modules/ai-assistant/ai-insights.ts',
   ]
   for (const file of emptyModules) {
     const source = await readFile(path.join(root, file), 'utf8')

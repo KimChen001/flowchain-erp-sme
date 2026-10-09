@@ -92,6 +92,8 @@ const operationalEnglish: Record<string, string> = {
   '收货异常数': 'Receiving exceptions', 'Invoice 数量': 'Invoice count', '发票差异数': 'Invoice variances', '未开票金额': 'Uninvoiced amount', '三单匹配异常数': 'Three-way match exceptions', '最近交易日期': 'Latest transaction date',
   '相关 RFQ / Quote': 'Related RFQs / quotes', 'RFQ 编号': 'RFQ number', '品类 / SKU': 'Category / SKU', '报价状态': 'Quote status', '报价总额': 'Quote total', '交期': 'Lead time', '付款条款': 'Payment terms', '推荐结果': 'Recommendation', '是否入选授标建议草稿': 'Included in award draft', '风险提示': 'Risk note',
   '返回供应商列表': 'Back to suppliers', '返回 SRM 工作台': 'Back to SRM workbench', '返回采购工作台': 'Back to purchasing workbench', '返回相关 RFQ': 'Back to related RFQ', '返回相关 PO': 'Back to related PO', '返回相关收货记录': 'Back to related receipt', '返回相关发票记录': 'Back to related invoice', '返回证据链': 'Back to evidence', '返回上一级': 'Back',
+  // Stock status labels the inventory read model derives (server/domain/inventory-read.mjs).
+  '缺货': 'Out of stock', '低库存': 'Low stock', '不足': 'Short', '预警': 'Warning', '冻结': 'Frozen', '异常': 'Exception',
   '正常': 'Normal', '低': 'Low', '中': 'Medium', '高': 'High', '整改中': 'Remediation in progress', '需复核': 'Review required', '低风险': 'Low risk', '已收未票风险': 'Received-not-invoiced risk',
   '当前采购订单没有明细行。': 'This purchase order has no line items.', 'AI 已定位：收货、发票差异与建议下一步': 'AI focus: receiving, invoice variance, and next action',
   '收货 / GRN 明细行': 'Receiving / GRN lines', '对照采购订单查看实收、质检和差异记录。': 'Compare receipts, quality checks, and variances against the purchase order.',

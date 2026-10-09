@@ -1,6 +1,3 @@
-import type { ReceivingDoc } from "../../types/scm";
-import type { DeliveryNote } from "../sales/deliveryTypes";
-import type { SignReceipt } from "../sales/receiptTypes";
 import type { PrintDocumentData, PrintDocumentType, PrintFieldOption } from "./printLayoutTypes";
 
 export const printFieldOptions: Record<PrintDocumentType, PrintFieldOption[]> = {
@@ -14,31 +11,6 @@ export const printFieldOptions: Record<PrintDocumentType, PrintFieldOption[]> = 
 // stays a blank box), never filled in. The company is left empty here; the
 // editor prints the workspace letterhead's company name, else the
 // workspace's name.
-
-// The receive sheet: the receipt's recorded number (its id when none was
-// recorded), its lines with their own units and lot numbers, the receiver
-// typed on the receipt, and the warehouse by name. Who reviewed or created
-// it, a handler other than the receiver and a remark are not recorded.
-// `rejectedLabel` words a line's rejected quantity in the interface
-// language; `warehouseName` shows a warehouse id by its name (or as is).
-export function adaptReceiveSheet(grn: ReceivingDoc, { rejectedLabel, warehouseName = (id) => id }: {
-  rejectedLabel: (quantity: number) => string;
-  warehouseName?: (id: string) => string;
-}): PrintDocumentData {
-  const lines = (grn.lines || []).map((line) => ({
-    sku: line.sku || "",
-    itemName: line.itemName || "",
-    quantity: line.receivedQty,
-    unit: line.unit || "",
-    batchNo: line.lotNumber || "",
-    remarks: line.rejectedQty ? rejectedLabel(line.rejectedQty) : "",
-  }));
-  return {
-    companyName: "", documentNo: grn.documentNumber || grn.grn, documentDate: grn.arrived, supplier: grn.supplier, warehouse: grn.warehouse ? warehouseName(grn.warehouse) : "",
-    sourceOrderNo: grn.po, handler: "", receiver: grn.receiver || "", receiveDate: grn.arrived, createdBy: "",
-    reviewedBy: "", remarks: "", lines,
-  };
-}
 
 // The receipt detail page (/app/procurement/receiving/:id) reads the
 // receiving workbench API, whose quantities are decimal strings. The sheet
@@ -77,24 +49,5 @@ export function adaptReceivingDetailSheet(detail: ReceivingDetailForPrint, { qua
       batchNo: "",
       remarks: Number(line.rejectedQuantity) > 0 ? rejectedLabel(quantity(line.rejectedQuantity)) : "",
     })),
-  };
-}
-
-export function adaptDeliveryNote(note: DeliveryNote): PrintDocumentData {
-  return {
-    companyName: "", documentNo: note.deliveryNo, documentDate: note.deliveryDate, customer: note.customerName, warehouse: note.warehouse,
-    sourceOrderNo: note.salesOrderNo, handler: note.createdBy, deliveryDate: note.deliveryDate, logisticsCompany: note.logisticsCompany || "", driver: note.driver || "",
-    vehicleNo: note.vehicleNo || "", cartonCount: note.cartonCount ?? "", createdBy: note.createdBy, reviewedBy: note.reviewedBy || "", remarks: note.remarks || "",
-    lines: note.lines.map((line) => ({ ...line })),
-  };
-}
-
-export function adaptSignReceipt(receipt: SignReceipt): PrintDocumentData {
-  return {
-    companyName: "", documentNo: receipt.receiptNo, receiptNo: receipt.receiptNo, documentDate: receipt.signDate, deliveryNo: receipt.deliveryNo,
-    sourceOrderNo: receipt.salesOrderNo, customer: receipt.customerName, warehouse: receipt.signLocation || "", handler: receipt.deliveryPerson || "",
-    receiverName: receipt.receiverName, receiverPhone: receipt.receiverPhone || "", signDate: receipt.signDate, exceptionNote: receipt.exceptionNote || "",
-    deliveryPerson: receipt.deliveryPerson || "", reviewedBy: receipt.reviewedBy || "", signature: receipt.signature || "", remarks: receipt.exceptionNote || "",
-    lines: receipt.lines.map((line) => ({ ...line })),
   };
 }
