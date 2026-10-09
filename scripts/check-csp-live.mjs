@@ -163,18 +163,18 @@ try {
   await step("purchase order detail", visit("/app/procurement/orders/LOCAL-DEMO-PO-002"));
   await step("receiving", visit("/app/procurement/receiving"));
   await step("print preview", async () => {
-    // The first document list that offers a print button opens the preview.
-    let opened = "";
-    for (const path of ["/app/procurement/receiving", "/app/sales/deliveries", "/app/sales/receipts"]) {
-      await page.goto(path);
-      await settle();
-      const button = page.locator('button[aria-label^="打印"]:visible, button[aria-label^="Print"]:visible').first();
-      if (!(await button.count())) continue;
-      await button.click();
-      opened = path;
-      break;
-    }
-    if (!opened) throw new Error("no document list offered a print button");
+    // The receive sheet prints from a receipt's detail page: open the first
+    // receipt on the receiving list, then its print button.
+    await page.goto("/app/procurement/receiving");
+    await settle();
+    const receipt = page.locator('a[href^="/app/procurement/receiving/"]:not([href$="/new"]):visible').first();
+    if (!(await receipt.count())) throw new Error("the receiving list has no receipt to open");
+    await receipt.click();
+    await settle();
+    const button = page.getByTestId("receiving-print-sheet");
+    await button.waitFor();
+    await button.click();
+    const opened = page.url().replace(/^https?:\/\/[^/]+/, "");
     currentStep = `print preview (${opened})`;
     const print = page.getByTestId("print-document-button");
     await print.waitFor();
