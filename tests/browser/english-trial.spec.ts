@@ -123,6 +123,8 @@ test("English trial: global search answers in English", async ({ page }) => {
   await expect(page.getByText("Search results")).toBeVisible();
   await settle(page);
   await expectEnglish(page);
+  // Results show records, not internal source names or matched-field codes.
+  await expect(page.getByText(/inventoryRuntime|procurementRuntime|itemRuntime|runtimeRecord|entityId/)).toHaveCount(0);
 });
 
 // The sales orders the harness adds under PLAYWRIGHT_US_TRIAL on the
