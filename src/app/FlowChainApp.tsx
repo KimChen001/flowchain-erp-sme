@@ -92,6 +92,7 @@ import SupplierRisksPage from "../modules/srm/SupplierRisksPage";
 import MasterDataPage from "../modules/master-data/Page";
 import DataImportPage from "../modules/master-data/DataImportPage";
 import ItemSupplierPricesPage from "../modules/master-data/ItemSupplierPricesPage";
+import ContractsPage from "../modules/contracts/Page";
 import AiPanel, { type ActiveContext } from "../modules/ai-assistant/Panel";
 import {
   ActionDraftReviewShell,
@@ -771,7 +772,7 @@ export default function FlowChainApp() {
     ],
   );
   const contentMaxWidthClass =
-    ["srm", "supplier-evaluation", "supplier-risks"].includes(panelModule)
+    ["srm", "supplier-evaluation", "supplier-risks", "contracts"].includes(panelModule)
       ? "max-w-[1440px]"
       : [
             "overview",
@@ -1139,6 +1140,12 @@ export default function FlowChainApp() {
     "supplier-evaluation": <SupplierEvaluationPage />,
     "supplier-risks": <SupplierRisksPage />,
     "item-suppliers": <ItemSupplierPricesPage />,
+    contracts: (
+      <ContractsPage
+        routeId={activeRoute?.id || ""}
+        contractId={activeRoute ? entityIdForRoutePath(activeRoute, location.pathname) : ""}
+      />
+    ),
     finance: (
       <FinanceWorkbench
         initialView={activeView as any}
@@ -1880,6 +1887,7 @@ export default function FlowChainApp() {
                             "supplier_invoice",
                             "customer_invoice",
                             "three_way_match",
+                            "contract",
                           ].includes(activeRoute.entityType) ? (
                           <BusinessEntityDetailPage route={activeRoute} />
                         ) : (

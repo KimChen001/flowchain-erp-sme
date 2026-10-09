@@ -16,12 +16,12 @@ backend-authorized.
 
 ## Classification summary
 
-- Core: 75
+- Core: 80
 - Extension: 51
 - Internal: 18
-- Frozen: 19
-- Legacy: 14
-- Total: 177
+- Frozen: 18
+- Legacy: 15
+- Total: 182
 
 ## Default SME navigation
 
@@ -40,7 +40,7 @@ and Internal surfaces remain outside normal navigation.
 The classification summary and the executable route matrix below are
 regenerated with `node scripts/generate-route-authority-matrix.mjs`.
 
-The 177/177 frontend route stability audit verifies
+The 182/182 frontend route stability audit verifies
 resolution, shell rendering, no route-level 404 recovery, no render crash, and
 no observed API 5xx. It does not prove business semantics, data authority,
 permission correctness, capability correctness, or complete functionality.
@@ -99,6 +99,11 @@ classification and navigation metadata.
 | `master-data:bin-detail` | `/app/master-data/bins/:id` | 库位详情 | `master-data` | CORE | CONTEXTUAL | no | bin | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `master-data:payment-term-detail` | `/app/master-data/payment-terms/:id` | 付款条款详情 | `master-data` | CORE | CONTEXTUAL | no | payment_term | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `master-data:tax-code-detail` | `/app/master-data/tax-codes/:id` | 税码详情 | `master-data` | CORE | CONTEXTUAL | no | tax_code | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `contracts` | `/app/contracts` | 合同 | `contracts` | CORE | PRIMARY | no | contracts | `src/modules/contracts` | /api/contracts/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | contracts | contracts.contract.read | CAPABILITY_REQUIRED | — | Needs the contracts capability and contracts.contract.read; recording, activating, renewing, terminating and files need contracts.contract.manage; the total value needs procurement.prices.read and is hidden, never 0, without it. States are read from the dates on the workspace day; FlowChain never moves a date. |
+| `contracts:list` | `/app/contracts/list` | 合同 | `contracts` | CORE | SECONDARY | no | contract | `src/modules/contracts` | /api/contracts/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | contracts | contracts.contract.read | CAPABILITY_REQUIRED | — | Needs the contracts capability and contracts.contract.read; recording, activating, renewing, terminating and files need contracts.contract.manage; the total value needs procurement.prices.read and is hidden, never 0, without it. States are read from the dates on the workspace day; FlowChain never moves a date. |
+| `contracts:ending` | `/app/contracts/ending` | 即将到期 | `contracts` | CORE | SECONDARY | no | contract | `src/modules/contracts` | /api/contracts/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | contracts | contracts.contract.read | CAPABILITY_REQUIRED | — | Needs the contracts capability and contracts.contract.read; recording, activating, renewing, terminating and files need contracts.contract.manage; the total value needs procurement.prices.read and is hidden, never 0, without it. States are read from the dates on the workspace day; FlowChain never moves a date. |
+| `contracts:new` | `/app/contracts/new` | 新建合同 | `contracts` | CORE | CONTEXTUAL | no | contract | `src/modules/contracts` | /api/contracts/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | contracts | contracts.contract.read | CAPABILITY_REQUIRED | — | Needs the contracts capability and contracts.contract.read; recording, activating, renewing, terminating and files need contracts.contract.manage; the total value needs procurement.prices.read and is hidden, never 0, without it. States are read from the dates on the workspace day; FlowChain never moves a date. |
+| `contracts:detail` | `/app/contracts/:id` | 合同详情 | `contracts` | CORE | CONTEXTUAL | no | contract | `src/modules/contracts` | /api/contracts/:id, /api/uploads/stage, /api/attachments/:id/download | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | contracts | contracts.contract.read | CAPABILITY_REQUIRED | — | Needs the contracts capability and contracts.contract.read; recording, activating, renewing, terminating and files need contracts.contract.manage; the total value needs procurement.prices.read and is hidden, never 0, without it. States are read from the dates on the workspace day; FlowChain never moves a date. |
 | `procurement` | `/app/procurement` | 采购管理 | `procurement` | CORE | PRIMARY | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | procurement.purchase_order.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:workbench` | `/app/procurement/workbench` | 采购工作台 | `procurement` | CORE | SECONDARY | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | procurement.purchase_order.read | PERMISSION_REQUIRED | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:requests` | `/app/procurement/requests` | 采购申请 | `procurement` | CORE | SECONDARY | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | No dedicated frontend read permission exists; backend tenant and authorization checks remain authoritative. |
@@ -114,7 +119,7 @@ classification and navigation metadata.
 | `procurement:receiving:new` | `/app/procurement/receiving/new` | 新建收货单 | `procurement` | EXTENSION | CONTEXTUAL | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | receiving-posting | receiving.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `procurement:receiving:edit` | `/app/procurement/receiving/:id/edit` | 编辑收货单 | `procurement` | EXTENSION | CONTEXTUAL | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | receiving-posting | receiving.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
 | `procurement:returns` | `/app/procurement/returns` | 采购退货 | `procurement` | EXTENSION | SECONDARY | no | procurement | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | CAPABILITY_GATED | CAPABILITY_GATED | return-request | returns.request.read | CAPABILITY_REQUIRED | — | Available only when its exact capability and permission are enabled. |
-| `procurement:contracts` | `/app/procurement/contracts` | 框架合同 | `procurement` | FROZEN | HIDDEN | no | procurement | `src/modules/procurement` | /api/procurement/* | Capability or direct-route boundary | UNAVAILABLE | UNAVAILABLE | — | — | FROZEN_UNAVAILABLE | — | No authoritative enabled product capability is claimed. |
+| `procurement:contracts` | `/app/procurement/contracts` | 合同 | `procurement` | LEGACY | HIDDEN | no | procurement | `src/modules/procurement` | /api/procurement/* | Retired legacy route | RETIRED | RETIRED | — | — | LEGACY_REDIRECT | contracts:list | Moved; redirects to contracts:list. |
 | `procurement:request-detail` | `/app/procurement/requests/:id` | 采购申请详情 | `procurement` | CORE | CONTEXTUAL | no | purchase_request | `src/modules/procurement` | /api/procurement/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `procurement:rfq-detail` | `/app/procurement/rfq/:id` | RFQ 详情 | `procurement` | CORE | CONTEXTUAL | no | rfq | `src/modules/procurement` | /api/procurement/documents/rfq/:id | Tenant-scoped PostgreSQL direct document repository | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | 只读展示当前租户的 RFQ、行项目、参与记录、最大 revisionNumber 报价和明确证据关系；内部 response/revision command 与 Comparison read contract 不在此 UI 路由内。 |
 | `procurement:rfq-comparison` | `/app/procurement/rfq/:id/comparison` | 供应商报价比较 | `procurement` | CORE | CONTEXTUAL | no | rfq_supplier_comparison | `src/modules/procurement` | /api/procurement/rfqs/:rfqId/comparison | Tenant-scoped PostgreSQL RFQ Supplier Comparison Read Model | AUTHORITATIVE | UNAVAILABLE | — | procurement.prices.read | PERMISSION_REQUIRED | — | 只读展示当前租户 RFQ 的供应商报价比较、Participation 摘要与非有效响应；不排名、不推荐、不授标、不转换 PO，币种不做汇率换算。 |
