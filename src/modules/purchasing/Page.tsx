@@ -818,7 +818,8 @@ export default function PurchasingOrdersPage({
             { key: "match", label: "查看三单匹配", onClick: focusFulfillmentEvidence, kind: "module", tone: "subtle" },
           ]}
         />
-        <div className="flex flex-wrap items-center gap-3">
+        {/* fc-detail-actions: pinned at the bottom on phones (phone.css). */}
+        <div className="fc-detail-actions flex flex-wrap items-center gap-3">
           {/* The PO as a document to print or save as PDF; the buyer sends it. */}
           {canOpenRoute("procurement:order-document") && (
             <button

@@ -61,6 +61,8 @@
   .fc-app-main { padding-bottom: calc(80px + env(safe-area-inset-bottom)) !important; }
   /* The Assistant tab opens the assistant; no floating button over the rows. */
   [data-testid="ai-assistant-toggle"] { display: none !important; }
+  /* Already full screen: no expand button. */
+  [data-testid="ai-assistant-panel"] .fc-ai-expand { display: none; }
   [data-testid="ai-assistant-panel"] {
     position: fixed;
     inset: 0;
@@ -106,6 +108,9 @@
     padding: 6px 12px;
   }
   .fc-subnav-pill { border-radius: 999px; }
+
+  /* Metric cards show the figure and its label; the icons go. */
+  .fc-module-content .fc-kpi-icons { display: none; }
 
   /* Card and form grids with a fixed column count drop to two columns. */
   .fc-module-content .grid-cols-3,
@@ -195,4 +200,37 @@
   }
   .fc-filters-portal .fc-filters-sheet-head { display: flex; align-items: center; justify-content: space-between; }
   .fc-filters-portal .fc-filters-sheet-foot { display: flex; gap: 8px; padding-top: 4px; }
+
+  /*
+   * Detail pages: the links back to related records scroll in one row, and
+   * the record's actions (fc-detail-actions) sit in a bar pinned above the
+   * tabs, within thumb reach, as in Fiori's object page footer.
+   */
+  .fc-module-shell[data-page-type="detail"] .fc-module-subnav { display: none; }
+  .fc-module-content .fc-recovery-actions { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .fc-module-content .fc-recovery-actions::-webkit-scrollbar { display: none; }
+  .fc-module-content .fc-recovery-actions > * { flex: none; }
+  .fc-module-content .fc-detail-actions {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(60px + env(safe-area-inset-bottom));
+    z-index: 35;
+    display: flex;
+    flex-wrap: nowrap !important;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    margin: 0 !important;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    background: #fff;
+    padding: 10px 16px;
+    box-shadow: 0 -4px 12px rgba(15, 23, 42, 0.06);
+  }
+  .fc-module-content .fc-detail-actions:empty { display: none; }
+  .fc-module-content .fc-detail-actions > * { flex: none; }
+  .fc-module-content .fc-detail-actions .fc-action-note { display: none; }
+  .fc-app-main:has(.fc-detail-actions:not(:empty)) { padding-bottom: calc(150px + env(safe-area-inset-bottom)) !important; }
+  /* Fixed bars need an untransformed ancestor; pages only fade in on phones. */
+  [data-testid="page-transition"] { transform: none !important; }
 }

@@ -195,7 +195,8 @@ function RuntimeHomepage() {
   return (
     <div data-testid="runtime-homepage" className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold">{t("title")}</h2>
+        {/* On phones the page title above already says this. */}
+        <h2 className="text-lg font-semibold max-md:hidden">{t("title")}</h2>
         <p className="text-xs" style={{ color: A.sub }}>{t("subtitle")}</p>
       </div>
 

@@ -826,7 +826,7 @@ export default function FloatingAiAssistant({
             </div>
             <div className="flex items-center gap-1">
               <button type="button" onClick={startNewConversation} className="flex h-8 items-center gap-1 rounded-lg px-2 text-[11px] font-medium hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={language === "zh-CN" ? "新对话" : "New conversation"}><Plus size={13} />{language === "zh-CN" ? "新对话" : "New conversation"}</button>
-              <button type="button" onClick={() => setExpanded((value) => !value)} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={expanded ? (language === "zh-CN" ? "收起 AI 工作区" : "Collapse AI workspace") : (language === "zh-CN" ? "展开 AI 工作区" : "Expand AI workspace")}>{expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
+              <button type="button" onClick={() => setExpanded((value) => !value)} className="fc-ai-expand flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={expanded ? (language === "zh-CN" ? "收起 AI 工作区" : "Collapse AI workspace") : (language === "zh-CN" ? "展开 AI 工作区" : "Expand AI workspace")}>{expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
               <button type="button" onClick={minimizeAssistant} className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-slate-100" style={{ color: A.gray1 }} aria-label={language === "zh-CN" ? "最小化 AI 助手" : "Minimize AI assistant"}><X size={15} /></button>
             </div>
           </div>

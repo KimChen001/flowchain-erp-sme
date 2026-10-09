@@ -50,6 +50,8 @@ await phase("english walkthrough", ["tests/browser/english-walkthrough.spec.ts",
 await phase("supplier performance", ["tests/browser/supplier-performance-english.spec.ts", "tests/browser/supplier-activity.spec.ts"]);
 // The PO document: printed alone, labels in the document language, figures unchanged.
 await phase("po document", "tests/browser/purchase-order-document.spec.ts");
+// The phone layout: bottom tabs, card lists, the filter sheet and pinned actions.
+await phase("phone layout", "tests/browser/mobile-shell.spec.ts");
 // The assistant answers the walkthrough prompt chips in English from workspace data.
 await phase("english assistant", "tests/browser/ai-assistant-english.spec.ts");
 // Shell, routing, capability and authorization checks on the walkthrough data.

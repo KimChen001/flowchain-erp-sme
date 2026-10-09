@@ -11,6 +11,7 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { A, Card, Chip, Field, inputStyle } from "../../components/ui";
 import { tableBodyTextClass, tableLinkClass, tableScrollClass, tdIdClass, tdNameClass, tdNowrapClass, thClass } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
+import { ResponsiveFilters } from "../../components/business/ResponsiveFilters";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
@@ -504,7 +505,7 @@ export default function SupplierMasterPage({
           >
             {copy("返回供应商列表")}</button>
           {writes.suppliers && (
-            <div className="flex gap-2">
+            <div className="fc-detail-actions flex gap-2">
               <button
                 onClick={() => startEdit(selected)}
                 className="inline-flex items-center gap-1 rounded border px-3 py-2 text-xs"
@@ -775,7 +776,11 @@ export default function SupplierMasterPage({
             )}
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <ResponsiveFilters
+          className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4"
+          activeCount={[status, category, tab === "mine" ? "" : owner].filter(Boolean).length}
+          onReset={() => { setStatus(""); setCategory(""); setOwner(""); }}
+          leading={
           <Field label={copy("Search")}>
             <label className="flex items-center gap-2" style={{ ...inputStyle, paddingTop: 0, paddingBottom: 0 }}>
               <Search size={14} style={{ color: A.gray2 }} />
@@ -788,6 +793,8 @@ export default function SupplierMasterPage({
               />
             </label>
           </Field>
+          }
+        >
           <Field label={copy("状态")}>
             <select aria-label={copy("状态筛选")} value={status} onChange={(e) => setStatus(e.target.value)} style={inputStyle}>
               <option value="">{copy("全部状态")}</option>
@@ -819,7 +826,7 @@ export default function SupplierMasterPage({
               ))}
             </select>
           </Field>
-        </div>
+        </ResponsiveFilters>
       </Card>
 
       <Card>

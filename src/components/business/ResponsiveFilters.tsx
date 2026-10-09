@@ -83,7 +83,7 @@ export function ResponsiveFilters({
           <button type="button" data-testid="filters-sheet-open" onClick={() => setOpen(true)} className="fc-filters-toggle" aria-label={activeCount ? t("mobile.filtersOn", { count: activeCount }) : t("mobile.filters")}>
             <SlidersHorizontal size={15} />
             {t("mobile.filters")}
-            {activeCount > 0 && <span className="grid h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] text-white" style={{ background: A.blue }}>{activeCount}</span>}
+            {activeCount > 0 && <span className="grid h-4 min-w-4 place-items-center rounded-full px-1 text-[11px] text-white" style={{ background: A.blue }}>{activeCount}</span>}
           </button>
         </div>
       )}

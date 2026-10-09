@@ -14,6 +14,7 @@ import {
   thRightClass,
 } from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
+import { ResponsiveFilters } from "../../components/business/ResponsiveFilters";
 import { useMasterDataWriteAccess } from "./writeAccess";
 import { DataImportLink } from "./DataImportLink";
 import { exportMasterDataCsv } from "./export";
@@ -339,12 +340,14 @@ export default function ItemMasterWorkbench({
             </p>
           </div>
           {canEdit && (
+            <div className="fc-detail-actions">
             <button
               onClick={() => setEditing(selected)}
               className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
             >
               {copy("编辑 SKU")}
             </button>
+            </div>
           )}
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -352,7 +355,7 @@ export default function ItemMasterWorkbench({
             <div key={key} className="rounded-lg bg-slate-50 p-3">
               <div className="text-[11px] text-slate-500">{copy(label)}</div>
               <div className="mt-1 text-xs font-medium">
-                {String(selected[key] ?? "—") || "—"}
+                {key === "itemType" ? typeLabel(selected.itemType) : String(selected[key] ?? "—") || "—"}
               </div>
             </div>
           ))}
@@ -403,10 +406,16 @@ export default function ItemMasterWorkbench({
             )}
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
-          <Field label={copy("Search")}>
-            <input aria-label={copy("搜索 SKU")} placeholder={copy("搜索 SKU 编码或物料名称")} value={query} onChange={(e) => setQuery(e.target.value)} style={inputStyle} />
-          </Field>
+        <ResponsiveFilters
+          className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4"
+          activeCount={[status, type, category].filter(Boolean).length}
+          onReset={resetFilters}
+          leading={
+            <Field label={copy("Search")}>
+              <input aria-label={copy("搜索 SKU")} placeholder={copy("搜索 SKU 编码或物料名称")} value={query} onChange={(e) => setQuery(e.target.value)} style={inputStyle} />
+            </Field>
+          }
+        >
           <Field label={copy("Status")}>
             <select aria-label={copy("状态筛选")} value={status} onChange={(e) => setStatus(e.target.value)} style={inputStyle}>
               <option value="">{copy("全部状态")}</option>
@@ -426,7 +435,7 @@ export default function ItemMasterWorkbench({
               {categories.map((name) => <option key={name} value={name}>{name}</option>)}
             </select>
           </Field>
-        </div>
+        </ResponsiveFilters>
       </Card>
 
       <Card>
