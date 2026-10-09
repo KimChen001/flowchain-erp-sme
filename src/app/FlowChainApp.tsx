@@ -75,7 +75,6 @@ import {
   type RouteRegistryLoadState,
 } from "./routes/index.ts";
 
-import ReceivingPanel from "../modules/receiving/Page";
 import ReceivingPostingWorkbench from "../modules/receiving/ReceivingPostingWorkbench";
 import InventoryPanel from "../modules/inventory/Page";
 import ForecastPanel from "../modules/forecast/Page";
@@ -1089,7 +1088,6 @@ export default function FlowChainApp() {
         onActiveContextChange={setAiActiveContext}
       />
     ),
-    receiving: <ReceivingPanel focus={searchFocus} onNavigate={navigateTo} />,
     "receiving-workbench": (
       <ReceivingPostingWorkbench
         receivingDocumentId={

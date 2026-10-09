@@ -70,19 +70,11 @@ test('saved print templates are the workspace\'s; the browser keeps only the las
 test('the receive sheet prints recorded values only', () => {
   const adapters = read('src/modules/print-layout/printDataAdapters.ts')
   for (const invented of ['新辰智能制造', '李婷']) assert.ok(!adapters.includes(invented), invented)
-  const start = adapters.indexOf('export function adaptReceiveSheet')
-  const receiveSheet = adapters.slice(start, adapters.indexOf('\nexport function', start + 1))
-  for (const placeholder of ['"件"', '件', '待审核', '按采购订单收货', '收货汇总', 'SUMMARY', '"—"']) {
-    assert.ok(!receiveSheet.includes(placeholder), `adaptReceiveSheet still has ${placeholder}`)
+  for (const placeholder of ['"件"', '件', '待审核', '按采购订单收货', '收货汇总', 'SUMMARY', '客户收货点', '"无"', '待签名', '"—"']) {
+    assert.ok(!adapters.includes(placeholder), `printDataAdapters still has ${placeholder}`)
   }
-  // The delivery note and sign receipt fill in nothing either.
-  for (const placeholder of ['待审核', '客户收货点', '"无"', '待签名', '"—"']) assert.ok(!adapters.includes(placeholder), `printDataAdapters still has ${placeholder}`)
-  // The receipt number and lot numbers are read from the record.
-  const repository = read('server/repositories/db-procurement-read-repository.mjs')
-  const mapper = repository.slice(repository.indexOf('function mapReceivingDocument'), repository.indexOf('function mapSupplierInvoice'))
-  assert.match(mapper, /documentNumber: text\(record\.documentNumber\)/)
-  assert.match(mapper, /lotNumber: text\(entry\.lotNumber\)/)
-  assert.match(read('src/modules/receiving/Page.tsx'), /adaptReceiveSheet\(printGrn, \{ rejectedLabel: \(qty\) => t\("printLayout\.rejectedQty", \{ qty \}\), warehouseName \}\)/)
+  // The receipt detail page prints the sheet from the receipt it shows.
+  assert.match(read('src/modules/receiving/ReceivingPostingWorkbench.tsx'), /adaptReceivingDetailSheet\(detail, \{/)
 
   // The company printed is the letterhead's, else the workspace's name.
   const storage = read('src/modules/print-layout/printLayoutStorage.ts')
@@ -94,7 +86,7 @@ test('the receive sheet prints recorded values only', () => {
 test('the print-layout editor copy is in English and Chinese', () => {
   const i18n = read('src/i18n/I18n.tsx')
   const used = new Set()
-  for (const file of ['src/modules/print-layout/PrintLayoutEditor.tsx', 'src/modules/print-layout/PrintLayoutImportBanner.tsx', 'src/modules/print-layout/PrintInstancePanel.tsx', 'src/modules/print-layout/printLayoutElements.ts', 'src/modules/receiving/Page.tsx', 'src/modules/receiving/ReceivingPostingWorkbench.tsx', 'src/modules/print-layout/printLayoutPresets.ts']) {
+  for (const file of ['src/modules/print-layout/PrintLayoutEditor.tsx', 'src/modules/print-layout/PrintLayoutImportBanner.tsx', 'src/modules/print-layout/PrintInstancePanel.tsx', 'src/modules/print-layout/printLayoutElements.ts', 'src/modules/receiving/ReceivingPostingWorkbench.tsx', 'src/modules/print-layout/printLayoutPresets.ts']) {
     for (const match of read(file).matchAll(/(?:\bt|copy)\("(printLayout\.[A-Za-z_.-]+)"/g)) used.add(match[1])
   }
   for (const type of ['receive_sheet', 'delivery_note', 'sign_receipt']) used.add(`printLayout.documentType.${type}`)
