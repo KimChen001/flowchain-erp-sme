@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Save, ShieldCheck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import AuthorizationWorkbench from "./AuthorizationWorkbench";
 import DocumentTemplateSettings from "./DocumentTemplateSettings";
+import WarehouseMaster from "./WarehouseMaster";
 import WorkspaceMembers from "./WorkspaceMembers";
 
 type Profile = {
@@ -112,6 +113,8 @@ export default function WorkspaceSettings({ view }: { view: string }) {
   const [savedWorkspace, setSavedWorkspace] = useState<Workspace | null>(null);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  // Members as last read from the server, to tell unsaved access edits apart.
+  const loadedUsers = useRef<User[]>([]);
   const [notice, setNotice] = useState("");
   const [profileState, setProfileState] = useState<SaveState>("saved");
   const [workspaceState, setWorkspaceState] = useState<SaveState>("saved");
@@ -149,6 +152,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       setWarehouses(wh.warehouses);
       if (granted.has("settings.users.read")) {
         const u = await apiJson<{ users: User[] }>("/api/workspace/users");
+        loadedUsers.current = u.users;
         setUsers(u.users);
         // Whoever grants access opens on a teammate to edit; someone who may
         // only read it opens on their own access.
@@ -160,6 +164,36 @@ export default function WorkspaceSettings({ view }: { view: string }) {
     }
   }
   useEffect(() => { void load(); }, []);
+  // After a warehouse is added, renamed or set inactive: the warehouse list,
+  // the signed-in user's own access and default, and members' access, without
+  // dropping access edits not yet saved. A member's unsaved edits are kept,
+  // with any access granted on the server since (the creator's access to a
+  // warehouse they just added) added to them.
+  async function refreshWarehouses() {
+    try {
+      const [p, wh] = await Promise.all([
+        apiJson<Profile>("/api/me/profile"),
+        apiJson<{ warehouses: Warehouse[] }>("/api/workspace/warehouses"),
+      ]);
+      setWarehouses(wh.warehouses);
+      const access = { warehouseScopes: p.warehouseScopes, defaultWarehouseId: p.defaultWarehouseId, version: p.version };
+      setProfile(current => current && { ...current, ...access });
+      setSavedProfile(current => current && { ...current, ...access });
+      if (!permissions.has("settings.users.read")) return;
+      const u = await apiJson<{ users: User[] }>("/api/workspace/users");
+      const before = new Map(loadedUsers.current.map(user => [user.id, user]));
+      loadedUsers.current = u.users;
+      setUsers(current => u.users.map(fresh => {
+        const local = current.find(user => user.id === fresh.id);
+        const was = before.get(fresh.id);
+        if (!local || !was || JSON.stringify(local.warehouseScopes) === JSON.stringify(was.warehouseScopes)) return fresh;
+        const granted = fresh.warehouseScopes.filter(scope => !was.warehouseScopes.some(old => old.warehouseId === scope.warehouseId) && !local.warehouseScopes.some(own => own.warehouseId === scope.warehouseId));
+        return { ...fresh, warehouseScopes: [...local.warehouseScopes, ...granted] };
+      }));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t("settings.loadFailed"));
+    }
+  }
   useEffect(() => {
     if (view === "readiness" && canReadDiagnostics) {
       apiJson<Diagnostics>("/api/admin/pilot-diagnostics").then(setDiagnostics).catch(error => setNotice(error instanceof Error ? error.message : t("settings.loadFailed")));
@@ -225,6 +259,8 @@ export default function WorkspaceSettings({ view }: { view: string }) {
   // Someone who reads or grants warehouse access is sent every warehouse, but
   // their own default warehouse must still be one they can read.
   const ownWarehouseIds = new Set((profile.warehouseScopes || []).map(scope => scope.warehouseId));
+  // A warehouse is maintained by an administrator with operate access to it.
+  const ownOperateIds = new Set((profile.warehouseScopes || []).filter(scope => scope.accessLevel === "operate").map(scope => scope.warehouseId));
   const scopeTarget = canReadUsers ? users.find(user => user.id === scopeUserId) : undefined;
 
   // Members, then roles, permissions and assignments. Both read the actor's
@@ -265,6 +301,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       </div>
     </div>}
 
+    {view === "warehouse-access" && canEditWorkspace && <WarehouseMaster operateIds={ownOperateIds} onChanged={() => void refreshWarehouses()} />}
     {view === "warehouse-access" && <div className="mt-5 overflow-x-auto" data-testid="warehouse-access">
       {canReadUsers && <div className="mb-3 flex gap-2"><select aria-label={t("settings.user")} data-testid="warehouse-access-user" className={`${field} max-w-sm`} value={scopeUserId} onChange={event => setScopeUserId(event.target.value)}>{users.map(user => <option key={user.id} value={user.id}>{user.name} · {user.email}</option>)}</select>{canManageUsers && <button data-testid="warehouse-access-save" onClick={saveScopes} className={`${button} text-white`} style={{ background: A.blue }}><Save size={15} />{t("settings.saveAccess")}</button>}</div>}
       <table className="w-full text-sm"><thead><tr><th className="p-2 text-left">{t("settings.warehouse")}</th><th>{t("settings.warehouseScope")}</th><th>{t("settings.defaultWarehouse")}</th></tr></thead><tbody>{warehouses.map(warehouse => {
@@ -273,7 +310,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
         const scopes = scopeTarget ? scopeTarget.warehouseScopes : profile.warehouseScopes || [];
         const access = scopes.find(scope => scope.warehouseId === warehouse.id)?.accessLevel || "";
         const defaultWarehouseId = scopeTarget ? scopeTarget.defaultWarehouseId : profile.defaultWarehouseId;
-        return <tr key={warehouse.id} className="border-t"><td className="p-2">{warehouse.code} · {warehouse.name}</td><td className="text-center">{canManageUsers && scopeTarget ? <select aria-label={`${warehouse.code} ${t("settings.warehouseScope")}`} className={field} value={access} onChange={event => setUsers(rows => rows.map(user => user.id === scopeTarget.id ? { ...user, warehouseScopes: [...user.warehouseScopes.filter(scope => scope.warehouseId !== warehouse.id), ...(event.target.value ? [{ warehouseId: warehouse.id, accessLevel: event.target.value }] : [])] } : user))}><option value="">{t("settings.noAccess")}</option><option value="read">{t("settings.read")}</option><option value="operate">{t("settings.operate")}</option></select> : accessName(access)}</td><td className="text-center">{defaultWarehouseId === warehouse.id ? "✓" : "—"}</td></tr>;
+        return <tr key={warehouse.id} className="border-t"><td className="p-2">{warehouse.code} · {warehouse.name}{warehouse.status !== "active" && <span className="text-slate-500"> · {t("settings.warehouseInactive")}</span>}</td><td className="text-center">{canManageUsers && scopeTarget ? <select aria-label={`${warehouse.code} ${t("settings.warehouseScope")}`} className={field} value={access} onChange={event => setUsers(rows => rows.map(user => user.id === scopeTarget.id ? { ...user, warehouseScopes: [...user.warehouseScopes.filter(scope => scope.warehouseId !== warehouse.id), ...(event.target.value ? [{ warehouseId: warehouse.id, accessLevel: event.target.value }] : [])] } : user))}><option value="">{t("settings.noAccess")}</option><option value="read">{t("settings.read")}</option><option value="operate">{t("settings.operate")}</option></select> : accessName(access)}</td><td className="text-center">{defaultWarehouseId === warehouse.id ? "✓" : "—"}</td></tr>;
       })}</tbody></table>
     </div>}
 
