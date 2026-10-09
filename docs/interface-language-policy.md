@@ -99,8 +99,10 @@ names, or supplier names in place. Translate their presentation where appropriat
   (`src/app/FlowChainApp.tsx`) and the purchasing workbench (`ProcurementWorkbench.tsx`)
   are on the coverage list; the finance status filters and credit note statuses show
   labels. The global search status and a subtitle that only repeats it are translated
-  where shown; other search subtitles and evidence values the server builds (for
-  example "可用 …" and "安全库存 …" on stock results) are still Chinese. Deferred: an order's evidence graph, whose
+  where shown, and results no longer show internal source names
+  ("inventoryRuntime") or matched-field codes. The search route reads
+  `server/domain/runtime-business-search.mjs`; `global-business-search.mjs`, whose
+  subtitles are built in Chinese, is used only by its tests. Deferred: an order's evidence graph, whose
   risk summaries the server writes in Chinese. Removed because no route rendered
   them: `overviewEvidence.ts` and the procurement panels (#147); the old receiving
   page, `DeliveryPage.tsx` and `ReceiptPage.tsx` (2026-10-09); the Today cockpit
