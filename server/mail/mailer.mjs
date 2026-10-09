@@ -36,3 +36,16 @@ export function createMailer(env = process.env, { fetch = globalThis.fetch } = {
   if (provider === "postmark") return createPostmarkMailer({ serverToken: required(env.POSTMARK_SERVER_TOKEN, "POSTMARK_SERVER_TOKEN"), from, fetch });
   return createResendMailer({ apiKey: required(env.RESEND_API_KEY, "RESEND_API_KEY"), from, fetch });
 }
+
+// One provider per server for every kind of email, created on the first
+// send: a provider that cannot be created fails that send, which the caller
+// logs, and the local outbox file has a single writer.
+export function createLazyMailer(env = process.env, options = {}) {
+  let resolved = null;
+  return {
+    send(message) {
+      resolved ||= createMailer(env, options);
+      return resolved.send(message);
+    },
+  };
+}

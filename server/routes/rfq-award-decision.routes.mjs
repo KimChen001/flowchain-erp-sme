@@ -10,6 +10,7 @@ function sendError(ctx, error) {
   } else if (knownError(error)) {
     ctx.send(ctx.res, error.status || 400, { code: error.code || "RFQ_AWARD_DECISION_FAILED", message: error.message, ...(error.details ? { details: error.details } : {}) });
   } else {
+    ctx.reportError?.(error);
     ctx.send(ctx.res, 500, { code: "RFQ_AWARD_DECISION_FAILED", message: "The Award Decision request could not be completed." });
   }
 }

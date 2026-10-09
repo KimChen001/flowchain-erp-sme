@@ -44,6 +44,7 @@ function sendError(ctx, error) {
     ctx.send(ctx.res, 409, { code: "INTAKE_CONFLICT", message: "An Intake resource with the same tenant key already exists." });
     return;
   }
+  ctx.reportError?.(error);
   ctx.send(ctx.res, 500, { code: "INTAKE_REQUEST_FAILED", message: "The Intake request could not be completed." });
 }
 

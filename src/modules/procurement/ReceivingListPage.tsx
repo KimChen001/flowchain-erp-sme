@@ -14,7 +14,7 @@ export function ReceivingListPage() {
   const tr = (zh: string, en: string) => language === "en-US" ? en : zh;
   const statusLabel = (status: string) => language === "en-US"
     ? (workspaceCopy(status, language) !== status ? workspaceCopy(status, language) : status.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()))
-    : ({ draft: "草稿", ready_for_receiving: "待过账", received: "已收货", cancelled: "已取消", unposted: "未过账", posted: "已过账", reversed: "已冲销" } as Record<string, string>)[status] || status;
+    : workspaceCopy(status, language);
   const [rows, setRows] = useState<ReceiptListItem[]>([]);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
 
