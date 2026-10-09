@@ -51,7 +51,7 @@ test('tax types, due rules and statuses render in the active language', async ()
 
 test('every English master data label has a Chinese translation', async () => {
   const source = await import('node:fs/promises').then(({ readFile }) => readFile('src/modules/master-data/masterDataFormat.ts', 'utf8'))
-  const tables = await Promise.all(['MasterDataTables.tsx', 'StandardMasterTables.tsx', 'export.ts', 'Page.tsx'].map((file) =>
+  const tables = await Promise.all(['MasterDataTables.tsx', 'StandardMasterTables.tsx', 'export.ts', 'Page.tsx', 'ItemMasterWorkbench.tsx', 'BinListPage.tsx'].map((file) =>
     import('node:fs/promises').then(({ readFile }) => readFile(`src/modules/master-data/${file}`, 'utf8'))))
   const { masterDataCopy } = await loadCopyModule()
   const labels = new Set()

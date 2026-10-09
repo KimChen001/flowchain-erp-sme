@@ -1,11 +1,23 @@
-import { workspaceCopy } from "../../i18n/workspaceCopy";
-import { useI18n } from "../../i18n/I18n";
 import { useEffect, useMemo, useState } from "react";
+import { AlertCircle, CheckCircle2, FileSpreadsheet, Package, Truck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
-import { A, Card, Field, inputStyle } from "../../components/ui";
+import { A, Card, Chip, Field, KpiCard, inputStyle } from "../../components/ui";
+import {
+  tableBodyTextClass,
+  tableLinkClass,
+  tableScrollClass,
+  tdIdClass,
+  tdNameClass,
+  tdNowrapClass,
+  tdNumericRightClass,
+  thClass,
+  thRightClass,
+} from "../../components/ui/workbenchTable";
 import { EntityLink } from "../../components/business/EntityLink";
 import { useMasterDataWriteAccess } from "./writeAccess";
 import { DataImportLink } from "./DataImportLink";
+import { exportMasterDataCsv } from "./export";
+import { NOT_PROVIDED, useMasterDataCopy } from "./masterDataCopy";
 
 export type MasterItem = {
   itemId: string;
@@ -59,7 +71,14 @@ const FLAG_LABELS: Record<string, { en: string; zh: string }> = {
   shelfLifeManaged: { en: "Shelf-life managed", zh: "保质期管理" },
 };
 const flagLabel = (key: string, language: string) => FLAG_LABELS[key]?.[language === "en-US" ? "en" : "zh"] || key;
-const UNCATEGORIZED = { en: "Uncategorized", zh: "未分类" };
+// Item types and units are stored as codes; known ones are shown in the
+// interface language and anything else as stored.
+const ITEM_TYPE_LABELS: Record<string, string> = { material: "Material" };
+const UNIT_LABELS: Record<string, { en: string; zh: string }> = { pcs: { en: "pcs", zh: "件" } };
+// The reorder list reads a missing, zero or negative reorder point as none
+// (server/domain/reorder-list.mjs), and the form saves 0 for an empty field.
+const hasReorderPoint = (item: MasterItem) => item.reorderPoint > 0;
+type SupplierName = { id: string; supplierCode?: string; supplierName?: string };
 
 const fields: Array<[keyof MasterItem, string, string]> = [
   ["itemId", "物料 ID", "text"],
@@ -135,11 +154,13 @@ export default function ItemMasterWorkbench({
   focus?: { entityType: string; entityId: string; at: number } | null;
   onNavigate?: (routeId: string, focus?: unknown) => void;
 }) {
-  const { language } = useI18n();
-  const copy = (label: string) => workspaceCopy(label, language);
+  const { copy, language, locale } = useMasterDataCopy();
   // Creating and editing items needs master_data.item.manage.
   const canEdit = useMasterDataWriteAccess().items;
   const [items, setItems] = useState<MasterItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  // Supplier names for the preferred supplier column; ids when unavailable.
+  const [suppliers, setSuppliers] = useState<Map<string, SupplierName>>(new Map());
   const [selected, setSelected] = useState<MasterItem | null>(null);
   const [editing, setEditing] = useState<Partial<MasterItem> | null>(null);
   const [query, setQuery] = useState("");
@@ -152,9 +173,13 @@ export default function ItemMasterWorkbench({
       "/api/master-data/items?managed=true",
     );
     setItems((result.items || []).map((item) => normalizeMasterItem(item)));
+    setLoaded(true);
   };
   useEffect(() => {
     load().catch((cause) => setError(cause.message));
+    apiJson<{ suppliers?: SupplierName[] }>("/api/master-data/suppliers")
+      .then((result) => setSuppliers(new Map((result.suppliers || []).map((row) => [row.id, row]))))
+      .catch(() => {});
   }, []);
   useEffect(() => {
     if (!focus?.entityId || focus.entityType !== "item" || !items.length)
@@ -179,6 +204,21 @@ export default function ItemMasterWorkbench({
       ),
     [items, query, status, type, category],
   );
+  const distinct = (values: string[]) => [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, locale));
+  const types = useMemo(() => distinct(items.map((item) => item.itemType)), [items, locale]);
+  const categories = useMemo(() => distinct(items.map((item) => item.category)), [items, locale]);
+  const typeLabel = (code: string) => copy(ITEM_TYPE_LABELS[code] || code);
+  const unitLabel = (code: string) => UNIT_LABELS[code]?.[language === "en-US" ? "en" : "zh"] || code;
+  const supplierLabel = (id: string) => {
+    if (!id) return NOT_PROVIDED;
+    const supplier = suppliers.get(id);
+    return supplier?.supplierName || supplier?.supplierCode || id;
+  };
+  const quantity = (value: number) => value.toLocaleString(locale);
+  const statusLabel = (code: string) => copy(code === "active" ? "Active" : code === "inactive" ? "Inactive" : code);
+  const activeCount = items.filter((item) => item.status === "active").length;
+  const filtered = Boolean(query || status || type || category);
+  const resetFilters = () => { setQuery(""); setStatus(""); setType(""); setCategory(""); };
   const save = async () => {
     if (!editing) return;
     try {
@@ -295,7 +335,7 @@ export default function ItemMasterWorkbench({
               {selected.sku} · {selected.itemName}
             </h2>
             <p className="text-xs" style={{ color: A.sub }}>
-              {selected.status} · v{selected.version}
+              {statusLabel(selected.status)} · v{selected.version}
             </p>
           </div>
           {canEdit && (
@@ -324,106 +364,160 @@ export default function ItemMasterWorkbench({
         </div>
       </Card>
     );
+  // Laid out like the other list pages (purchase orders, sales orders):
+  // item-level counts, a search card with labelled filters, then the list.
   return (
-    <Card className="p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          aria-label={copy("搜索 SKU")}
-          placeholder={copy("搜索 SKU 编码或物料名称")}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          style={inputStyle}
-        />
-        <select
-          aria-label={copy("状态筛选")}
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          style={inputStyle}
-        >
-          <option value="">{copy("全部状态")}</option>
-          <option value="active">{copy("启用")}</option>
-          <option value="inactive">{copy("停用")}</option>
-        </select>
-        <input
-          placeholder={copy("物料类型")}
-          value={type}
-          onChange={(e) => setType(e.target.value)}
-          style={inputStyle}
-        />
-        <input
-          placeholder={copy("分类")}
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          style={inputStyle}
-        />
-        <div className="ml-auto flex items-center gap-2">
-          <DataImportLink type="items" />
-          {canEdit && (
-            <button
-              className="rounded-md bg-blue-600 px-3 py-2 text-xs text-white"
-              onClick={() => {
-                setSelected(null);
-                setEditing({ ...empty });
-              }}
-            >
-              {copy("新建 SKU")}
-            </button>
-          )}
-        </div>
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard label={copy("Items")} value={String(items.length)} sub={copy("{count} active", { count: activeCount })} icon={Package} color={A.blue} />
+        <KpiCard label={copy("Inactive items")} value={String(items.length - activeCount)} sub={copy("Kept for history, not offered on new documents")} icon={CheckCircle2} color={A.gray1} />
+        <KpiCard label={copy("No reorder point")} value={String(items.filter((item) => item.status === "active" && !hasReorderPoint(item)).length)} sub={copy("Active items the reorder list cannot check")} icon={AlertCircle} color={A.orange} />
+        <KpiCard label={copy("No preferred supplier")} value={String(items.filter((item) => item.status === "active" && !item.defaultSupplierId).length)} sub={copy("Active items without a supplier to order from")} icon={Truck} color={A.purple} />
       </div>
-      {error && <p className="mt-3 text-xs text-red-600">{error}</p>}
-      <div className="mt-3 overflow-auto">
-        {!error && shown.length === 0 && (
-          <div className="p-10 text-center">
-            <h2 className="font-semibold">{copy("暂无物料资料")}</h2>
-            <p className="mt-2 text-sm text-slate-500">{copy("可以新建物料、使用 Structured Intake，或在本地运行 pilot:setup:demo。")}</p>
+
+      <Card className="p-5">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="fc-section-title" style={{ color: A.label }}>{copy("Item search")}</h2>
+            <div className="mt-1 text-xs" style={{ color: A.sub }}>{copy("Search items by SKU, name, status, type and category.")}</div>
           </div>
-        )}
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b text-left">
-              <th className="p-2">SKU</th>
-              <th>{copy("物料名称")}</th>
-              <th>{copy("类型")}</th>
-              <th>{copy("分类")}</th>
-              <th>{copy("单位")}</th>
-              <th>{copy("规格")}</th>
-              <th>{copy("状态")}</th>
-              {canEdit && <th>{copy("操作")}</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((item) => (
-              <tr className="border-b" key={item.itemId}>
-                <td className="p-2">
-                  <EntityLink kind="item" id={item.itemId} className="text-blue-600">
-                    {item.sku}
-                  </EntityLink>
-                </td>
-                <td>{item.itemName}</td>
-                <td>{item.itemType}</td>
-                <td>{item.category || UNCATEGORIZED[language === "en-US" ? "en" : "zh"]}</td>
-                <td>{item.baseUnit}</td>
-                <td>{item.specification}</td>
-                <td>{item.status}</td>
-                {canEdit && (
-                  <td>
-                    <button
-                      className="text-blue-600"
-                      onClick={() => {
-                        setSelected(item);
-                        setEditing(item);
-                      }}
-                    >
-                      {copy("编辑")}
-                    </button>
-                  </td>
-                )}
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={resetFilters} className="h-8 rounded-lg px-3 text-xs font-medium" style={{ background: A.gray6, color: A.label }}>
+              {copy("Reset")}
+            </button>
+            <button type="button" onClick={() => exportMasterDataCsv("items", { items: shown.map((item) => ({ ...item, preferredSupplierName: item.defaultSupplierId ? supplierLabel(item.defaultSupplierId) : "" })) }, copy)} className="flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium" style={{ background: "#f0f6ff", color: A.blue }}>
+              <FileSpreadsheet size={13} /> {copy("Export results")}
+            </button>
+            <DataImportLink type="items" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700" />
+            {canEdit && (
+              <button
+                type="button"
+                className="h-8 rounded-lg bg-blue-600 px-3 text-xs font-medium text-white"
+                onClick={() => {
+                  setSelected(null);
+                  setEditing({ ...empty });
+                }}
+              >
+                {copy("新建 SKU")}
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+          <Field label={copy("Search")}>
+            <input aria-label={copy("搜索 SKU")} placeholder={copy("搜索 SKU 编码或物料名称")} value={query} onChange={(e) => setQuery(e.target.value)} style={inputStyle} />
+          </Field>
+          <Field label={copy("Status")}>
+            <select aria-label={copy("状态筛选")} value={status} onChange={(e) => setStatus(e.target.value)} style={inputStyle}>
+              <option value="">{copy("全部状态")}</option>
+              <option value="active">{copy("Active")}</option>
+              <option value="inactive">{copy("Inactive")}</option>
+            </select>
+          </Field>
+          <Field label={copy("Type")}>
+            <select aria-label={copy("Filter by type")} value={type} onChange={(e) => setType(e.target.value)} style={inputStyle}>
+              <option value="">{copy("All types")}</option>
+              {types.map((code) => <option key={code} value={code}>{typeLabel(code)}</option>)}
+            </select>
+          </Field>
+          <Field label={copy("Category")}>
+            <select aria-label={copy("Filter by category")} value={category} onChange={(e) => setCategory(e.target.value)} style={inputStyle}>
+              <option value="">{copy("All categories")}</option>
+              {categories.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
+          <div>
+            <div className="text-sm font-semibold" style={{ color: A.label }}>{copy("Item list")}</div>
+            <div className="mt-0.5 text-[11px]" style={{ color: A.sub }}>{copy(items.length === 1 ? "1 item, {shown} shown" : "{total} items, {shown} shown", { total: items.length, shown: shown.length })}</div>
+          </div>
+        </div>
+        {error && <p className="px-5 pt-3 text-xs text-red-600">{error}</p>}
+        <div className={tableScrollClass}>
+          <table className={`w-full min-w-[1080px] text-left ${tableBodyTextClass}`} data-testid="item-list-table">
+            <thead>
+              <tr style={{ borderBottom: "0.5px solid rgba(0,0,0,0.06)" }}>
+                <th className={`${thClass} sticky left-0 z-20 bg-white`} style={{ color: A.gray1 }}>SKU</th>
+                {["Item name", "Category", "Unit"].map((label) => <th key={label} className={thClass} style={{ color: A.gray1 }}>{copy(label)}</th>)}
+                {/* The long header wraps to two lines, as on the inventory balances page. */}
+                <th className={`${thRightClass} !whitespace-normal w-[130px]`} style={{ color: A.gray1 }}>{copy("Safety stock / reorder point")}</th>
+                {["MOQ", "Lead time"].map((label) => <th key={label} className={thRightClass} style={{ color: A.gray1 }}>{copy(label)}</th>)}
+                <th className={thClass} style={{ color: A.gray1 }}>{copy("Preferred supplier")}</th>
+                <th className={thClass} style={{ color: A.gray1 }}>{copy("Status")}</th>
+                <th className={`${thClass} sticky right-0 z-20 bg-white`} style={{ color: A.gray1 }}>{copy("Actions")}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Card>
+            </thead>
+            <tbody>
+              {loaded && !error && shown.length === 0 && (
+                <tr>
+                  <td colSpan={10} className="px-4 py-12 text-center text-sm" style={{ color: A.sub }}>
+                    {filtered ? copy("No items match these filters") : (
+                      <>
+                        <span className="font-semibold" style={{ color: A.label }}>{copy("暂无物料资料")}</span>
+                        <br />
+                        <span className="text-xs">{copy("Create an item or import a file of items to get started.")}</span>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              )}
+              {shown.map((item, index) => (
+                <tr key={item.itemId} className="transition-colors hover:bg-blue-50/40" style={{ borderBottom: index < shown.length - 1 ? "0.5px solid rgba(0,0,0,0.04)" : "none" }}>
+                  <td className={`${tdIdClass} sticky left-0 z-10 bg-white`}>
+                    <EntityLink kind="item" id={item.itemId} className={tableLinkClass}>
+                      {item.sku}
+                    </EntityLink>
+                  </td>
+                  <td className={`${tdNameClass} max-w-[260px]`} title={item.specification ? `${item.itemName} · ${item.specification}` : item.itemName}>
+                    <div className="truncate font-medium" style={{ color: A.label }}>{item.itemName}</div>
+                    {item.specification && <div className="truncate text-[11px]" style={{ color: A.sub }}>{item.specification}</div>}
+                  </td>
+                  <td className={tdNowrapClass} style={{ color: A.sub }}>{item.category || copy("Uncategorized")}</td>
+                  <td className={tdNowrapClass} style={{ color: A.sub }}>{unitLabel(item.baseUnit)}</td>
+                  <td className={tdNumericRightClass}>
+                    {quantity(item.safetyStock)} / {hasReorderPoint(item) ? quantity(item.reorderPoint) : <span title={copy("Not set: the reorder list does not check this item")} style={{ color: A.gray2 }}>{NOT_PROVIDED}</span>}
+                  </td>
+                  <td className={tdNumericRightClass}>{quantity(item.minimumOrderQuantity)}</td>
+                  <td className={tdNumericRightClass}>{item.purchaseLeadTimeDays > 0 ? copy("{count} days", { count: quantity(item.purchaseLeadTimeDays) }) : <span style={{ color: A.gray2 }}>{NOT_PROVIDED}</span>}</td>
+                  <td className={`${tdNameClass} max-w-[200px] truncate`}>
+                    {item.defaultSupplierId
+                      ? <EntityLink kind="supplier" id={item.defaultSupplierId} className={tableLinkClass}>{supplierLabel(item.defaultSupplierId)}</EntityLink>
+                      : <span style={{ color: A.gray2 }}>{NOT_PROVIDED}</span>}
+                  </td>
+                  <td className={tdNowrapClass}>
+                    {item.status === "active"
+                      ? <Chip label={statusLabel(item.status)} color={A.green} bg="#f0faf4" />
+                      : <Chip label={statusLabel(item.status)} color={A.gray1} bg={A.gray6} />}
+                  </td>
+                  <td className={`${tdNowrapClass} sticky right-0 z-10 bg-white`}>
+                    <div className="flex items-center gap-1.5">
+                      <button type="button" onClick={() => setSelected(item)} className="rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-600">
+                        {copy("View")}
+                      </button>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium"
+                          onClick={() => {
+                            setSelected(item);
+                            setEditing(item);
+                          }}
+                        >
+                          {copy("编辑")}
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
   );
 }
