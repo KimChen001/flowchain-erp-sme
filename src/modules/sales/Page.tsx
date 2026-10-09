@@ -150,7 +150,7 @@ export default function SalesDemandPage(props: SalesDemandPageProps) {
 }
 
 function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProps) {
-  const { copy, customerLabel, itemLabel } = useSalesCopy();
+  const { copy, say, customerLabel, itemLabel } = useSalesCopy();
   const qty = useQty();
   const [searchParams, setSearchParams] = useSearchParams();
   const view = viewFromInitial(initialView);
@@ -240,7 +240,7 @@ function SalesDemandCore({ initialView, focus, onNavigate }: SalesDemandPageProp
     <div className="space-y-5">
       {view === "risks" && <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <ActionableMetricCard label={copy("客户订单")} value={String(activeSummary.totalOrders)} description={copy("查看当前工作区全部订单")} to="/app/sales/orders" icon={ClipboardList} color={A.blue} />
-        <ActionableMetricCard label={copy("交付风险")} value={String(activeSummary.riskOrderCount)} description={`${activeSummary.highRiskOrderCount} ${copy("个高风险订单")}`} to="/app/sales/orders?risk=true" icon={AlertTriangle} color={activeSummary.highRiskOrderCount ? A.red : A.orange} />
+        <ActionableMetricCard label={copy("交付风险")} value={String(activeSummary.riskOrderCount)} description={say(`${activeSummary.highRiskOrderCount} high-risk ${activeSummary.highRiskOrderCount === 1 ? "order" : "orders"}`, `${activeSummary.highRiskOrderCount} 个高风险订单`)} to="/app/sales/orders?risk=true" icon={AlertTriangle} color={activeSummary.highRiskOrderCount ? A.red : A.orange} />
         <ActionableMetricCard label={copy("缺口数量")} value={qty(activeSummary.shortageQty)} description={copy("查看影响交付承诺的订单")} to="/app/sales/orders?risk=blocked" icon={PackageSearch} color={A.red} />
         <ActionableMetricCard label={copy("已预留数量")} value={qty(activeSummary.reservedQty)} description={copy("查看库存分配证据")} to="/app/sales/orders?status=unshipped" icon={Boxes} color={A.green} />
       </div>}

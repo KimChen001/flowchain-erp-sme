@@ -51,6 +51,10 @@ const ENGLISH_COVERED = [
   'src/modules/overview/AiSuggestionsPage.tsx',
   'src/modules/sales/Page.tsx',
   'src/components/business/BusinessObjectDetail.tsx',
+  'src/modules/sales/OutboundWorkbench.tsx',
+  'src/modules/inventory/Page.tsx',
+  'src/app/FlowChainApp.tsx',
+  'src/modules/procurement/ProcurementWorkbench.tsx',
 ]
 
 // Display dictionaries, read as text: their Chinese property names are the
@@ -105,6 +109,17 @@ const ALLOWED = [
   // Error and warning text kept in state and shown through copy() when rendered.
   { file: 'src/modules/sales/Page.tsx', text: '当前未读取到客户订单记录，请检查工作区数据或刷新后重试。' },
   { file: 'src/modules/sales/Page.tsx', text: '当前暂未读取到完整证据链，请返回客户订单列表或切换业务对象后重试。' },
+  // Request errors kept in state in their source form and shown through copy().
+  { file: 'src/modules/sales/OutboundWorkbench.tsx', within: 'errorMessage' },
+  // A part of the server's timeline summary, compared before it is translated.
+  { file: 'src/modules/sales/OutboundWorkbench.tsx', text: '未指定仓库', line: /part === "未指定仓库"/ },
+  // Legacy Chinese stored order statuses, compared to leave finished orders out.
+  { file: 'src/modules/procurement/ProcurementWorkbench.tsx', line: /^\["fully_received", "completed", "closed", "cancelled", "已完成", "已关闭", "已取消"\]$/ },
+  // Matchers for the server's invoice and match status text, never shown.
+  { file: 'src/modules/procurement/ProcurementWorkbench.tsx', text: '/差异|variance/i' },
+  { file: 'src/modules/procurement/ProcurementWorkbench.tsx', text: '/差异|异常|待处理|variance/i' },
+  // The route registry's group name, compared to pick the translated heading.
+  { file: 'src/app/FlowChainApp.tsx', text: '主导航', line: /^group\.label === "主导航"$/ },
 ]
 
 const CJK = /[㐀-鿿]/

@@ -20,8 +20,12 @@ const ROUTES = [
   "/app/procurement/receiving",
   "/app/procurement/bills",
   "/app/procurement/three-way-match",
-  // Unfiltered: the inventory filter chips are translated in #182.
   "/app/inventory/stock",
+  // With filter chips: their labels are copy, their values are as given.
+  "/app/inventory/movements?movementType=receipt&status=posted",
+  "/app/inventory/warnings",
+  "/app/inventory/lots",
+  "/app/inventory/serials",
   "/app/inventory/transfers",
   "/app/inventory/transfers/new",
   "/app/inventory/counts",
@@ -38,8 +42,8 @@ const ROUTES = [
   "/app/finance/receivables",
   "/app/finance/aging",
   "/app/reports/overview",
-  // Deferred: /app/sales/orders (OutboundWorkbench) keeps Chinese copy until
-  // #173 and #178 land.
+  "/app/sales/orders",
+  "/app/sales/orders/new",
 ];
 
 async function signIn(page: Page, language: "en-US" | "zh-CN" = "en-US") {
@@ -110,6 +114,17 @@ test("English trial: the assistant opens in English", async ({ page }) => {
   await expectEnglish(page);
 });
 
+test("English trial: global search answers in English", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/app/overview");
+  await settle(page);
+  await page.getByPlaceholder("Search business records").fill("PO");
+  await page.getByRole("button", { name: "Search business records" }).click();
+  await expect(page.getByText("Search results")).toBeVisible();
+  await settle(page);
+  await expectEnglish(page);
+});
+
 // The sales orders the harness adds under PLAYWRIGHT_US_TRIAL on the
 // walkthrough data: LOCAL-TRIAL-SO-101 has three lines; LOCAL-TRIAL-SO-102 is
 // on hold and has no recorded customer name. The read API sends their labels
@@ -118,6 +133,14 @@ test("English trial: the assistant opens in English", async ({ page }) => {
 // routed to /app/sales/orders/:id; these pages have no order drawer.
 test.describe("sales delivery risks with the trial orders", () => {
   test.skip(process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY === "true", "the trial orders are seeded on the walkthrough data only");
+
+  test("a trial sales order opens in English", async ({ page }) => {
+    await signIn(page);
+    await page.goto("/app/sales/orders/LOCAL-TRIAL-SO-101");
+    await settle(page);
+    await expect(page.getByTestId("outbound-order-workbench")).toBeVisible();
+    await expectEnglish(page);
+  });
 
   test("English: server labels, the unnamed customer and the multi-line item are translated", async ({ page }) => {
     await signIn(page);
