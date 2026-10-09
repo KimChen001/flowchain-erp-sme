@@ -13,6 +13,8 @@
 //                                        also try the assistant's model features
 //   npm run walkthrough:local -- --ai-env=<file> --compose
 //                                        and let the model word the answers (P3)
+//   npm run walkthrough:local -- --lan   also serve the app to phones on this
+//                                        network (sign-in links use the LAN address)
 //
 // --ai-env is the one exception to "calls no paid service", and only when
 // given: it reads a model provider from a file outside this checkout (the
@@ -22,7 +24,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import { join, resolve } from "node:path";
 import EmbeddedPostgres from "embedded-postgres";
 
@@ -71,6 +73,20 @@ if (aiEnvArg) {
   aiEnv.FLOWCHAIN_AI_AGENT_MODE = process.argv.includes("--compose") ? "compose" : "plan";
 }
 
+// --lan: the app listens on every interface and sign-in links point at this
+// computer's private network address, so a phone on the same Wi-Fi can sign
+// in. The API stays on 127.0.0.1 behind the app's proxy. Off by default:
+// anyone on the network can then reach the sign-in page.
+const lanAddress = process.argv.includes("--lan")
+  ? Object.values(networkInterfaces()).flat()
+    .find((entry) => entry && entry.family === "IPv4" && !entry.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(entry.address))?.address
+  : null;
+if (process.argv.includes("--lan") && !lanAddress) {
+  console.error("[walkthrough] --lan found no private network address (10.x, 172.16-31.x or 192.168.x).");
+  process.exit(1);
+}
+const appHost = lanAddress || "127.0.0.1";
+
 if (process.argv.includes("--reset")) rmSync(dataRoot, { recursive: true, force: true });
 mkdirSync(dataRoot, { recursive: true });
 
@@ -95,7 +111,8 @@ const env = {
   FLOWCHAIN_LOCAL_SESSION_SECRET: secrets.session,
   FLOWCHAIN_SYNC_CURSOR_SECRET: secrets.syncCursor,
   SCM_API_PORT: String(apiPort),
-  FLOWCHAIN_PUBLIC_BASE_URL: `http://127.0.0.1:${appPort}`,
+  FLOWCHAIN_PUBLIC_BASE_URL: `http://${appHost}:${appPort}`,
+  ...(lanAddress ? { PLAYWRIGHT_APP_HOST: "0.0.0.0" } : {}),
   FLOWCHAIN_ARTIFACT_STORAGE_ROOT: join(dataRoot, "artifacts"),
   FLOWCHAIN_UPLOAD_STORAGE_DIR: join(dataRoot, "uploads"),
   FLOWCHAIN_MAIL_PROVIDER: "outbox",
@@ -159,7 +176,8 @@ try {
   for (const child of children) child.once("exit", (code) => { if (!stopping) stop(code ?? 1); });
 
   console.log(`
-[walkthrough] Ready: http://127.0.0.1:${appPort}
+[walkthrough] Ready: http://${appHost}:${appPort}${lanAddress ? `
+[walkthrough] On a phone on this network, open http://${lanAddress}:${appPort} (this computer: http://127.0.0.1:${appPort}).` : ""}
 [walkthrough] Sign in with admin@flowchain.local or kim@example.com, then open
 [walkthrough] "View the sign-in link" on the sign-in page (local outbox only).
 [walkthrough] Data folder: ${dataRoot}   Stop with Ctrl+C.

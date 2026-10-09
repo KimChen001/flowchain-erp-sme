@@ -31,7 +31,7 @@ export function ActionableMetricCard({
       aria-label={`${copy(label)}: ${value}, ${copy(description)}`}
     >
       <Card className="flex h-full flex-col gap-3 p-4 transition-transform group-hover:-translate-y-0.5">
-        <div className="flex items-center justify-between">
+        <div className="fc-kpi-icons flex items-center justify-between">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: `${color}12`, color }}>
             <Icon size={15} strokeWidth={1.8} />
           </span>

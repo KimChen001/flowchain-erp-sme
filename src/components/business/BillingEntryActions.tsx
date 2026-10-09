@@ -30,7 +30,7 @@ function EntryButton({ testId, label, note, to, showNote }: { testId: string; la
         <FilePlus2 size={14} />
         {label}
       </button>
-      {showNote && <span className="text-[11px] text-slate-500">{note}</span>}
+      {showNote && <span className="fc-action-note text-[11px] text-slate-500">{note}</span>}
     </span>
   );
 }

@@ -1,3 +1,4 @@
+import { ResponsiveFilters } from "../../components/business/ResponsiveFilters";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import {
@@ -511,7 +512,12 @@ function OrderList() {
             </Link>
           )}
         </div>
-        <div className="mb-3 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+        <div className="mb-3">
+        <ResponsiveFilters
+          className="grid gap-2 md:grid-cols-3 xl:grid-cols-6"
+          activeCount={["workflowStatus", "reservationStatus", "fulfillmentStatus", "currency"].filter((name) => value(name)).length}
+          onReset={() => update({ workflowStatus: "", reservationStatus: "", fulfillmentStatus: "", currency: "", page: 1 })}
+          leading={
           <label className="text-xs">
             {copy("搜索")}
             <input
@@ -522,6 +528,8 @@ function OrderList() {
               placeholder={copy("订单号或客户")}
             />
           </label>
+          }
+        >
           <Filter
             label={copy("流程状态")}
             value={value("workflowStatus")}
@@ -573,6 +581,7 @@ function OrderList() {
               <option value="orderNumber:desc">{copy("订单号（降序）")}</option>
             </select>
           </label>
+        </ResponsiveFilters>
         </div>
         <div className={tableScrollClass}>
           <table className={tableMinSmClass}>
@@ -1457,7 +1466,7 @@ function OrderDetail({ id }: { id: string }) {
               <Badge value={data.order.fulfillmentStatus} />
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="fc-detail-actions flex flex-wrap gap-2">
             {a.canEditDraft && (
               <Button
                 tone="secondary"
@@ -2118,7 +2127,7 @@ function ShipmentDetail({ id }: { id: string }) {
                 : ""}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="fc-detail-actions flex gap-2">
             {data.availableActions.canCancel && (
               <Button tone="secondary" onClick={() => start("cancel")}>
                 {copy("取消草稿")}

@@ -55,7 +55,7 @@ export function RecoveryActions({
 }) {
   if (!actions.length) return null;
   return (
-    <div className={`flex flex-wrap items-center gap-2 ${className}`}>
+    <div className={`fc-recovery-actions flex flex-wrap items-center gap-2 ${className}`}>
       {actions.map((action) => (
         <button
           key={action.key}
@@ -245,7 +245,7 @@ export function KpiCard({ label, value, sub, delta, positive, icon: Icon, color 
   const c = color ?? A.blue;
   return (
     <Card className="p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
+      <div className="fc-kpi-icons flex items-center justify-between">
         <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${c}12` }}>
           <Icon size={15} style={{ color: c }} strokeWidth={1.8} />
         </div>
