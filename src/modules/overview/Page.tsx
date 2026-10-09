@@ -57,6 +57,7 @@ const HIDDEN_KEYS: Record<string, TodayCopyKey> = {
   sales_orders: "hiddenSalesOrders",
   customer_invoices: "hiddenCustomerInvoices",
   receivables: "hiddenReceivables",
+  contracts: "hiddenContracts",
 };
 const SOURCE_KEYS: Record<string, TodayCopyKey> = {
   reorder_list: "sourceReorder",
@@ -65,51 +66,9 @@ const SOURCE_KEYS: Record<string, TodayCopyKey> = {
   purchase_orders: "sourcePurchaseOrders",
   setup_counts: "sourceSetup",
   database: "sourceDatabase",
+  contracts: "sourceContracts",
 };
 const LINK = "fc-entity-link font-semibold text-blue-600 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
-
-// Contract rows on Today (docs/contracts-module-design.md §5). English is the
-// source; zh-CN follows the interface language. The contract pages come in a
-// later step and may move this copy to todayCopy.ts.
-const CONTRACT_COPY = {
-  "en-US": {
-    kind_contract_notice_due: "Contract notice due",
-    kind_contract_ending: "Contract ending",
-    kind_contract_past_end: "Contract past its end date",
-    noticeBy: "Give notice by {date}",
-    noticeToday: "Last day to give notice",
-    endsOn: "Ends {date}",
-    endsToday: "Ends today",
-    endedDays: "Ended {n} days ago",
-    endedDaysOne: "Ended 1 day ago",
-    renewsUnlessNotice: "Renews automatically on {date} unless notice is given",
-    recordNewEnd: "Renewed automatically: record the new end date",
-    recordOutcome: "Record a renewal, or terminate it",
-    renewByAgreement: "Renews by agreement",
-    hiddenContracts: "contracts",
-    sourceContracts: "contracts",
-  },
-  "zh-CN": {
-    kind_contract_notice_due: "合同通知截止将至",
-    kind_contract_ending: "合同即将到期",
-    kind_contract_past_end: "合同已过到期日",
-    noticeBy: "请在 {date} 前发出通知",
-    noticeToday: "今天是通知截止日",
-    endsOn: "{date} 到期",
-    endsToday: "今天到期",
-    endedDays: "已到期 {n} 天",
-    endedDaysOne: "已到期 1 天",
-    renewsUnlessNotice: "如不发出通知，将于 {date} 自动续约",
-    recordNewEnd: "已自动续约：请记录新的到期日",
-    recordOutcome: "请记录续约，或终止合同",
-    renewByAgreement: "协商续约",
-    hiddenContracts: "合同",
-    sourceContracts: "合同",
-  },
-} as const;
-type ContractCopyKey = keyof (typeof CONTRACT_COPY)["en-US"];
-const contractText = (language: string, key: ContractCopyKey, params: Record<string, string | number> = {}) =>
-  String((language === "zh-CN" ? CONTRACT_COPY["zh-CN"] : CONTRACT_COPY["en-US"])[key]).replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match));
 
 // A workspace calendar day (YYYY-MM-DD) in the interface locale. The day is
 // already the workspace's, so it is formatted as a date, not an instant.
@@ -131,8 +90,6 @@ export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi, 
 function RuntimeHomepage() {
   const { locale, timezone } = useI18n();
   const t = useTodayCopy();
-  const c = (key: ContractCopyKey, params?: Record<string, string | number>) => contractText(t.language, key, params);
-  const kindTitle = (kind: WorkKind) => (kind.startsWith("contract_") ? c(`kind_${kind}` as ContractCopyKey) : t(`kind_${kind}` as TodayCopyKey));
   const [overview, setOverview] = useState<HomeOverview | null>(null);
   const [state, setState] = useState<"loading" | "loaded" | "error">("loading");
   const [filter, setFilter] = useState<"all" | "overdue">("all");
@@ -174,9 +131,9 @@ function RuntimeHomepage() {
     if (item.dateKind === "order_by") return item.date <= today ? t("orderToday") : t("orderBy", { date: day(item.date) });
     if (item.dateKind === "promised") return item.overdueDays > 0 ? t.count("lateDays", item.overdueDays) : item.date === today ? t("promisedToday") : t("promisedOn", { date: day(item.date) });
     if (item.dateKind === "required") return t("neededBy", { date: day(item.date) });
-    if (item.dateKind === "notice_by") return item.date === today ? c("noticeToday") : c("noticeBy", { date: day(item.date) });
-    if (item.dateKind === "ends") return item.date === today ? c("endsToday") : c("endsOn", { date: day(item.date) });
-    if (item.dateKind === "ended") return item.overdueDays === 1 ? c("endedDaysOne") : c("endedDays", { n: item.overdueDays });
+    if (item.dateKind === "notice_by") return item.date === today ? t("noticeToday") : t("noticeBy", { date: day(item.date) });
+    if (item.dateKind === "ends") return item.date === today ? t("endsToday") : t("endsOn", { date: day(item.date) });
+    if (item.dateKind === "ended") return t.count("endedDays", item.overdueDays);
     return t("invoiceOn", { date: day(item.date) });
   };
   // Red for what is late or an exception, orange for today and for approvals
@@ -221,9 +178,9 @@ function RuntimeHomepage() {
         case "purchase_request_to_approve": return [amount === null ? null : t("requestAmount", { amount: money(d.amount, d.currency) })];
         case "purchase_request_to_convert": return [t("requestConvert")];
         case "draft_purchase_order": return [supplier];
-        case "contract_notice_due": return [d.title, supplier, d.endDate ? c("renewsUnlessNotice", { date: day(d.endDate) }) : null];
-        case "contract_ending": return [d.title, supplier, d.renewal === "by_agreement" ? c("renewByAgreement") : null];
-        case "contract_past_end": return [d.title, supplier, d.renewal === "automatic" ? c("recordNewEnd") : c("recordOutcome")];
+        case "contract_notice_due": return [d.title, supplier, d.endDate ? t("renewsUnlessNotice", { date: day(d.endDate) }) : null];
+        case "contract_ending": return [d.title, supplier, d.renewal === "by_agreement" ? t("renewByAgreement") : null];
+        case "contract_past_end": return [d.title, supplier, d.renewal === "automatic" ? t("recordNewEnd") : t("recordOutcome")];
         default: return [];
       }
     })();
@@ -231,13 +188,13 @@ function RuntimeHomepage() {
   };
 
   const notes: ReactNode[] = [];
-  if (overview?.hidden?.length) notes.push(t("hiddenNote", { kinds: overview.hidden.map((code) => (HIDDEN_KEYS[code] ? t(HIDDEN_KEYS[code]) : code === "contracts" ? c("hiddenContracts") : code)).join(", ") }));
+  if (overview?.hidden?.length) notes.push(t("hiddenNote", { kinds: overview.hidden.map((code) => (HIDDEN_KEYS[code] ? t(HIDDEN_KEYS[code]) : code)).join(", ") }));
   if (overview?.limitations?.includes("reorder_not_checked_for_warehouse_scope")) notes.push(t("reorderScope"));
   const unavailable = (overview?.limitations || []).filter((code) => code.startsWith("today_source_unavailable:")).map((code) => code.slice("today_source_unavailable:".length));
   if (overview?.limitations?.includes("today_database_sources_unavailable")) unavailable.push("database");
-  if (unavailable.length) notes.push(t("notChecked", { sources: [...new Set(unavailable)].map((code) => (SOURCE_KEYS[code] ? t(SOURCE_KEYS[code]) : code === "contracts" ? c("sourceContracts") : code)).join(", ") }));
+  if (unavailable.length) notes.push(t("notChecked", { sources: [...new Set(unavailable)].map((code) => (SOURCE_KEYS[code] ? t(SOURCE_KEYS[code]) : code)).join(", ") }));
   const truncated = (overview?.limitations || []).filter((code) => /^truncated:(customer_invoices|receivables|contracts)$/.test(code));
-  if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => (code.endsWith("contracts") ? c("sourceContracts") : t(code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices"))).join(", ") }));
+  if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("contracts") ? "sourceContracts" : code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
 
   const tiles = [
     { id: "all" as const, label: t("tileWork"), value: overview?.workTotal ?? 0 },
@@ -292,7 +249,7 @@ function RuntimeHomepage() {
                 <li key={item.id} className="flex items-start gap-3 py-3" data-testid="today-work-item" data-kind={item.kind}>
                   <span className="mt-0.5 shrink-0 rounded px-2 py-1 text-xs font-medium" style={tone(item)}>{dateText(item)}</span>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">{kindTitle(item.kind)}</div>
+                    <div className="text-sm font-medium">{t(`kind_${item.kind}` as TodayCopyKey)}</div>
                     <Link to={item.href} className={`mt-0.5 inline-block text-xs ${LINK}`}>{item.label}</Link>
                     <div className="text-xs" style={{ color: A.sub }}>{reasons(item).join(" · ")}</div>
                     {item.actionHref ? <Link to={item.actionHref} className={`text-xs ${LINK}`}>{t("openReorderList")}</Link> : null}
