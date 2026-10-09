@@ -155,6 +155,8 @@ test('system harness validates global search and canonical evidence target shape
   assert.equal(result.deepLink, result.canonicalRoute)
   assert.equal(result.sourceRepository, 'procurementRuntime')
   assert.ok(result.evidence.every((item) => item.label && item.value))
+  // The internal repository name is kept for diagnostics, never shown as evidence.
+  assert.ok(!JSON.stringify(result.evidence).includes('procurementRuntime'))
 })
 
 test('system harness locks draft-first preview invariants', async () => {

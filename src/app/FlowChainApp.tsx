@@ -1550,9 +1550,10 @@ export default function FlowChainApp() {
                               rowIndex += 1;
                               const activeResult =
                                 rowIndex === activeSearchIndex;
+                              // Evidence a person can read; the matched field names are internal.
                               const hint = result.evidence?.[0]
                                 ? `${workspaceCopy(result.evidence[0].label, language)}: ${result.evidence[0].value}`
-                                : result.matchedFields.slice(0, 2).join(" / ");
+                                : "";
                               return (
                                 <button
                                   key={result.id}
