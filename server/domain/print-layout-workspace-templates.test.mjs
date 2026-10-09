@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { transform } from 'esbuild'
 
 const read = (path) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8')
 
@@ -93,7 +94,7 @@ test('the receive sheet prints recorded values only', () => {
 test('the print-layout editor copy is in English and Chinese', () => {
   const i18n = read('src/i18n/I18n.tsx')
   const used = new Set()
-  for (const file of ['src/modules/print-layout/PrintLayoutEditor.tsx', 'src/modules/print-layout/PrintLayoutImportBanner.tsx', 'src/modules/print-layout/PrintInstancePanel.tsx', 'src/modules/print-layout/printLayoutElements.ts', 'src/modules/receiving/Page.tsx']) {
+  for (const file of ['src/modules/print-layout/PrintLayoutEditor.tsx', 'src/modules/print-layout/PrintLayoutImportBanner.tsx', 'src/modules/print-layout/PrintInstancePanel.tsx', 'src/modules/print-layout/printLayoutElements.ts', 'src/modules/receiving/Page.tsx', 'src/modules/receiving/ReceivingPostingWorkbench.tsx', 'src/modules/print-layout/printLayoutPresets.ts']) {
     for (const match of read(file).matchAll(/(?:\bt|copy)\("(printLayout\.[A-Za-z_.-]+)"/g)) used.add(match[1])
   }
   for (const type of ['receive_sheet', 'delivery_note', 'sign_receipt']) used.add(`printLayout.documentType.${type}`)
@@ -105,4 +106,40 @@ test('the print-layout editor copy is in English and Chinese', () => {
     const occurrences = i18n.split(`"${key}":`).length - 1
     assert.equal(occurrences, 2, `${key} needs a Chinese and an English entry`)
   }
+})
+
+// The adapters, compiled as the browser runs them (they import only types).
+async function printAdapters() {
+  const { code } = await transform(read('src/modules/print-layout/printDataAdapters.ts'), { loader: 'ts', format: 'esm' })
+  return import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
+}
+
+test('the receipt detail page prints its receive sheet from the recorded receipt', async () => {
+  const { adaptReceivingDetailSheet } = await printAdapters()
+  const detail = {
+    receivingDocument: { id: 'grn-1', documentNumber: 'GRN-0042', arrivedAt: '2026-10-08T03:30:00.000Z', receiver: 'Dock Lead', supplier: { name: 'Harbor Supply' }, warehouse: { name: 'Main Warehouse', code: 'MAIN' } },
+    purchaseOrder: { id: 'PO-7' },
+    lines: [
+      { sku: 'VAL-1', itemName: 'Valve', documentAcceptedQuantity: '12.5000', rejectedQuantity: '0.0000', unit: 'EA' },
+      { sku: 'PIPE-2', itemName: 'Pipe', documentAcceptedQuantity: '3.0000', rejectedQuantity: '1.2500', unit: 'M' },
+    ],
+  }
+  const sheet = adaptReceivingDetailSheet(detail, {
+    quantity: (value) => `q(${value})`,
+    rejectedLabel: (qty) => `Rejected ${qty}`,
+    day: (instant) => `day(${instant})`,
+  })
+  assert.deepEqual(
+    [sheet.documentNo, sheet.supplier, sheet.warehouse, sheet.sourceOrderNo, sheet.receiver, sheet.receiveDate, sheet.documentDate],
+    ['GRN-0042', 'Harbor Supply', 'Main Warehouse', 'PO-7', 'Dock Lead', 'day(2026-10-08T03:30:00.000Z)', 'day(2026-10-08T03:30:00.000Z)'],
+  )
+  // Each line in its own unit, never added up; a rejected quantity only where one was recorded.
+  assert.deepEqual(sheet.lines, [
+    { sku: 'VAL-1', itemName: 'Valve', quantity: 'q(12.5000)', unit: 'EA', batchNo: '', remarks: '' },
+    { sku: 'PIPE-2', itemName: 'Pipe', quantity: 'q(3.0000)', unit: 'M', batchNo: '', remarks: 'Rejected q(1.2500)' },
+  ])
+  // Nothing the receipt does not record is filled in.
+  for (const key of ['companyName', 'handler', 'createdBy', 'reviewedBy', 'remarks']) assert.equal(sheet[key], '', key)
+  const bare = adaptReceivingDetailSheet({ receivingDocument: { id: 'grn-2' }, purchaseOrder: { id: 'PO-8' }, lines: [] }, { quantity: String, rejectedLabel: String, day: () => 'never' })
+  assert.deepEqual([bare.documentNo, bare.supplier, bare.warehouse, bare.receiver, bare.receiveDate], ['grn-2', '', '', '', ''])
 })
