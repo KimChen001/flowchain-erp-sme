@@ -168,10 +168,6 @@ function invoiceContainsSku(invoice: any, sku: string) {
   return asArray(invoice?.lines).some((line: any) => norm(line?.sku) === norm(sku));
 }
 
-function grnContainsSku(grn: any, sku: string) {
-  return asArray(grn?.lines).some((line: any) => norm(line?.sku) === norm(sku));
-}
-
 function resolveForPo(context: RelationshipResolverContext, po: any, sourceId: string) {
   const relationships: BusinessRelationship[] = [];
   const limitations: DataLimitation[] = [];
@@ -391,16 +387,4 @@ export function resolveEntityRelationships(input: RelationshipResolverInput): Re
     linkedRecords: relationships.map((relationship) => relationship.linkedRecord).filter(Boolean),
     dataLimitations,
   };
-}
-
-export function relatedRecordsForEntity(context: RelationshipResolverContext, sourceEntityType: RelationshipEntityType, sourceEntityId: string) {
-  return resolveEntityRelationships({ context, sourceEntityType, sourceEntityId }).linkedRecords.map((record) => ({
-    type: record.entityType,
-    id: record.entityId,
-    displayLabel: record.displayLabel,
-    relationshipLabel: record.relationshipLabel,
-    relationshipReason: record.relationshipReason,
-    status: record.status,
-    recordFound: record.disabledReason !== "Record not found in current data",
-  }));
 }

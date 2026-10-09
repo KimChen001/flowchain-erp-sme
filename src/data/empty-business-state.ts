@@ -17,6 +17,5 @@ export const TRANSFERS: any[] = [];
 export const VARIANCES: any[] = [];
 export const inventoryItems: any[] = [];
 export const purchaseOrders: any[] = [];
-export const qcExceptions: any[] = [];
 export const receivingDocs: any[] = [];
 export const supplierData: any[] = [];
