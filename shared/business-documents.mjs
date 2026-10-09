@@ -74,6 +74,37 @@ export const documentSettingsSeed = Object.freeze({
     termsText: '',
     footerText: '',
   }),
+  // The workspace's saved print layouts for the receive sheet, delivery note
+  // and sign receipt (src/modules/print-layout). The built-in layouts are in
+  // code and never stored; none are saved until someone saves one.
+  layouts: Object.freeze([]),
+  // Stored layouts that no longer pass the check, kept exactly as stored so a
+  // save of other layouts never drops them.
+  unreadableLayouts: Object.freeze([]),
+})
+
+// What a saved print layout may hold. Its shape mirrors PrintLayoutTemplate
+// (src/modules/print-layout/printLayoutTypes.ts); anything else is dropped.
+export const PRINT_LAYOUT_DOCUMENT_TYPES = Object.freeze(['receive_sheet', 'delivery_note', 'sign_receipt'])
+export const PRINT_LAYOUT_ELEMENT_TYPES = Object.freeze(['text', 'field', 'table', 'comment', 'terms', 'barcode', 'qrcode', 'signature', 'line', 'footer', 'pageNumber'])
+export const PRINT_LAYOUT_LIMITS = Object.freeze({
+  templates: 20,
+  bytes: 160 * 1024,
+  elements: 200,
+  columns: 30,
+  id: 100,
+  name: 120,
+  title: 120,
+  value: 4000,
+  field: 60,
+  placeholder: 200,
+  coordinate: 5000,
+})
+
+// The style values a layout element may hold; the editor keeps its inputs inside them.
+export const PRINT_LAYOUT_STYLE_LIMITS = Object.freeze({
+  fontSize: Object.freeze({ min: 1, max: 200 }),
+  lineHeight: Object.freeze({ min: 0.5, max: 5 }),
 })
 
 const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -84,6 +115,210 @@ const recorded = (value) => {
   return next || null
 }
 const invalid = (code, field, message, details = {}) => Object.assign(new Error(message), { code, status: 400, details: { field, ...details } })
+
+const LAYOUT_ID = /^[A-Za-z0-9._:-]+$/
+const ALIGNMENTS = ['left', 'center', 'right']
+const layoutInvalid = (field, message) => invalid('DOCUMENT_LAYOUT_INVALID', field, message)
+
+function layoutText(field, raw, limit, { required = false, optional = false, pattern = null } = {}) {
+  if (raw === undefined || raw === null) {
+    if (required) throw layoutInvalid(field, `${field} is required.`)
+    return optional ? undefined : ''
+  }
+  if (typeof raw !== 'string') throw layoutInvalid(field, `${field} must be text.`)
+  const next = raw.trim()
+  if (required && !next) throw layoutInvalid(field, `${field} is required.`)
+  if (next.length > limit) throw invalid('DOCUMENT_SETTING_TOO_LONG', field, `${field} can be at most ${limit} characters.`, { limit })
+  if (pattern && !pattern.test(next)) throw layoutInvalid(field, `${field} has characters that are not allowed.`)
+  return next
+}
+
+function layoutNumber(field, raw, { min, max, optional = false, fallback = undefined }) {
+  if (raw === undefined || raw === null) {
+    if (fallback !== undefined) return fallback
+    if (optional) return undefined
+    throw layoutInvalid(field, `${field} is required.`)
+  }
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < min || raw > max) throw layoutInvalid(field, `${field} must be a number from ${min} to ${max}.`)
+  return raw
+}
+
+// A true/false value; `fallback` when it is not given (undefined leaves it out).
+function layoutFlag(field, raw, fallback) {
+  if (raw === undefined || raw === null) return fallback
+  if (typeof raw !== 'boolean') throw layoutInvalid(field, `${field} must be true or false.`)
+  return raw
+}
+
+function layoutChoice(field, raw, choices, { optional = false } = {}) {
+  if ((raw === undefined || raw === null) && optional) return undefined
+  if (!choices.includes(raw)) throw layoutInvalid(field, `${field} must be one of ${choices.join(', ')}.`)
+  return raw
+}
+
+// Only the defined keys, in a fixed order, so a layout saved twice is stored
+// the same way.
+const defined = (entries) => Object.fromEntries(entries.filter(([, value]) => value !== undefined))
+
+function validateLayoutStyle(field, raw) {
+  if (raw === undefined || raw === null) return undefined
+  if (!isObject(raw)) throw layoutInvalid(field, `${field} is invalid.`)
+  return defined([
+    ['fontSize', layoutNumber(`${field}.fontSize`, raw.fontSize, { ...PRINT_LAYOUT_STYLE_LIMITS.fontSize, optional: true })],
+    ['fontWeight', layoutNumber(`${field}.fontWeight`, raw.fontWeight, { min: 100, max: 1000, optional: true })],
+    ['bold', layoutFlag(`${field}.bold`, raw.bold, undefined)],
+    ['align', layoutChoice(`${field}.align`, raw.align, ALIGNMENTS, { optional: true })],
+    ['bordered', layoutFlag(`${field}.bordered`, raw.bordered, undefined)],
+    ['borderWidth', layoutNumber(`${field}.borderWidth`, raw.borderWidth, { min: 0, max: 50, optional: true })],
+    ['lineHeight', layoutNumber(`${field}.lineHeight`, raw.lineHeight, { ...PRINT_LAYOUT_STYLE_LIMITS.lineHeight, optional: true })],
+  ])
+}
+
+function validateLayoutColumns(field, raw) {
+  if (raw === undefined || raw === null) return undefined
+  if (!Array.isArray(raw)) throw layoutInvalid(field, `${field} must be a list.`)
+  if (raw.length > PRINT_LAYOUT_LIMITS.columns) throw layoutInvalid(field, `${field} can have at most ${PRINT_LAYOUT_LIMITS.columns} columns.`)
+  return raw.map((column, index) => {
+    const path = `${field}.${index}`
+    if (!isObject(column)) throw layoutInvalid(path, `${path} is invalid.`)
+    return defined([
+      ['key', layoutText(`${path}.key`, column.key, PRINT_LAYOUT_LIMITS.field, { required: true, pattern: LAYOUT_ID })],
+      ['title', layoutText(`${path}.title`, column.title, PRINT_LAYOUT_LIMITS.title)],
+      ['visible', layoutFlag(`${path}.visible`, column.visible, true)],
+      ['width', layoutNumber(`${path}.width`, column.width, { min: 0, max: PRINT_LAYOUT_LIMITS.coordinate, optional: true })],
+      ['align', layoutChoice(`${path}.align`, column.align, ALIGNMENTS, { optional: true })],
+    ])
+  })
+}
+
+function validateLayoutElement(field, raw) {
+  if (!isObject(raw)) throw layoutInvalid(field, `${field} is invalid.`)
+  const coordinate = PRINT_LAYOUT_LIMITS.coordinate
+  return defined([
+    ['id', layoutText(`${field}.id`, raw.id, PRINT_LAYOUT_LIMITS.id, { required: true, pattern: LAYOUT_ID })],
+    ['type', layoutChoice(`${field}.type`, raw.type, PRINT_LAYOUT_ELEMENT_TYPES)],
+    ['title', layoutText(`${field}.title`, raw.title, PRINT_LAYOUT_LIMITS.title)],
+    ['value', layoutText(`${field}.value`, raw.value, PRINT_LAYOUT_LIMITS.value, { optional: true })],
+    ['field', layoutText(`${field}.field`, raw.field, PRINT_LAYOUT_LIMITS.field, { optional: true })],
+    ['placeholder', layoutText(`${field}.placeholder`, raw.placeholder, PRINT_LAYOUT_LIMITS.placeholder, { optional: true })],
+    ['contentMode', layoutChoice(`${field}.contentMode`, raw.contentMode, ['static', 'field', 'instance'], { optional: true })],
+    ['x', layoutNumber(`${field}.x`, raw.x, { min: -coordinate, max: coordinate })],
+    ['y', layoutNumber(`${field}.y`, raw.y, { min: -coordinate, max: coordinate })],
+    ['width', layoutNumber(`${field}.width`, raw.width, { min: 0, max: coordinate })],
+    ['height', layoutNumber(`${field}.height`, raw.height, { min: 0, max: coordinate })],
+    ['visible', layoutFlag(`${field}.visible`, raw.visible, true)],
+    ['draggable', layoutFlag(`${field}.draggable`, raw.draggable, true)],
+    ['resizable', layoutFlag(`${field}.resizable`, raw.resizable, true)],
+    ['required', layoutFlag(`${field}.required`, raw.required, undefined)],
+    ['style', validateLayoutStyle(`${field}.style`, raw.style)],
+    ['tableColumns', validateLayoutColumns(`${field}.tableColumns`, raw.tableColumns)],
+  ])
+}
+
+// One saved print layout, checked field by field; unknown keys are dropped.
+// Whether it was a built-in layout is not stored: the built-in ones are in code.
+export function validatePrintLayout(raw, field = 'layout') {
+  if (!isObject(raw)) throw layoutInvalid(field, `${field} is invalid.`)
+  const page = raw.page
+  if (!isObject(page)) throw layoutInvalid(`${field}.page`, `${field}.page is invalid.`)
+  if (!Array.isArray(raw.elements)) throw layoutInvalid(`${field}.elements`, `${field}.elements must be a list.`)
+  if (raw.elements.length > PRINT_LAYOUT_LIMITS.elements) throw layoutInvalid(`${field}.elements`, `${field}.elements can have at most ${PRINT_LAYOUT_LIMITS.elements} elements.`)
+  const id = layoutText(`${field}.id`, raw.id, PRINT_LAYOUT_LIMITS.id, { required: true, pattern: LAYOUT_ID })
+  const name = layoutText(`${field}.name`, raw.name, PRINT_LAYOUT_LIMITS.name, { required: true })
+  const documentType = layoutChoice(`${field}.documentType`, raw.documentType, PRINT_LAYOUT_DOCUMENT_TYPES)
+  const version = layoutNumber(`${field}.version`, raw.version, { min: 0, max: 1_000_000_000, fallback: 1 })
+  const updatedAt = layoutText(`${field}.updatedAt`, raw.updatedAt, 40, { optional: true })
+  if (updatedAt && !Number.isFinite(Date.parse(updatedAt))) throw layoutInvalid(`${field}.updatedAt`, `${field}.updatedAt must be a date and time.`)
+  const elements = raw.elements.map((element, index) => validateLayoutElement(`${field}.elements.${index}`, element))
+  const elementIds = elements.map((element) => element.id)
+  const repeated = elementIds.findIndex((elementId, index) => elementIds.indexOf(elementId) !== index)
+  if (repeated >= 0) throw layoutInvalid(`${field}.elements.${repeated}.id`, `${field}.elements.${repeated}.id is used twice.`)
+  return defined([
+    ['id', id],
+    ['name', name],
+    ['documentType', documentType],
+    ['version', version],
+    ['page', {
+      paper: layoutChoice(`${field}.page.paper`, page.paper, ['A4']),
+      orientation: layoutChoice(`${field}.page.orientation`, page.orientation, ['portrait', 'landscape']),
+      width: layoutNumber(`${field}.page.width`, page.width, { min: 1, max: PRINT_LAYOUT_LIMITS.coordinate }),
+      height: layoutNumber(`${field}.page.height`, page.height, { min: 1, max: PRINT_LAYOUT_LIMITS.coordinate }),
+      margin: layoutNumber(`${field}.page.margin`, page.margin, { min: 0, max: 1000 }),
+    }],
+    ['elements', elements],
+    ['updatedAt', updatedAt || undefined],
+  ])
+}
+
+const utf8Bytes = (value) => new TextEncoder().encode(value).length
+const jsonCopy = (value) => JSON.parse(JSON.stringify(value ?? null))
+
+// JSON with object keys sorted, so two copies of a value compare equal
+// however they were stored (PostgreSQL jsonb reorders object keys).
+function sortedKeys(value) {
+  if (Array.isArray(value)) return value.map(sortedKeys)
+  if (isObject(value)) return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortedKeys(value[key])]))
+  return value
+}
+const canonical = (value) => JSON.stringify(sortedKeys(value ?? null))
+
+// The stored layouts as read: the ones that pass the check in `layouts`; one
+// that does not (or repeats an id, or comes after the 20th) in
+// `unreadableLayouts`, exactly as stored. Never thrown on.
+function splitStoredLayouts(rawLayouts, rawUnreadable) {
+  const layouts = []
+  const unreadableLayouts = []
+  for (const [index, layout] of (Array.isArray(rawLayouts) ? rawLayouts : []).entries()) {
+    try {
+      const next = validatePrintLayout(layout, `layouts.${index}`)
+      if (layouts.length < PRINT_LAYOUT_LIMITS.templates && !layouts.some((item) => item.id === next.id)) {
+        layouts.push(next)
+        continue
+      }
+    } catch { /* kept as stored, below */ }
+    unreadableLayouts.push(jsonCopy(layout))
+  }
+  for (const layout of Array.isArray(rawUnreadable) ? rawUnreadable : []) unreadableLayouts.push(jsonCopy(layout))
+  return { layouts, unreadableLayouts }
+}
+
+// Unreadable layouts can only be sent back as they are stored: each one must
+// be identical to a stored one. Without the stored section (a check in the
+// browser) they are passed through; the server always checks against it.
+function validateUnreadableLayouts(raw, stored) {
+  if (raw === undefined || raw === null) return []
+  if (!Array.isArray(raw)) throw layoutInvalid('unreadableLayouts', 'Unreadable print layouts must be a list.')
+  const storedCopies = stored ? stored.unreadableLayouts.map(canonical) : null
+  return raw.map((layout, index) => {
+    if (storedCopies && !storedCopies.includes(canonical(layout))) throw layoutInvalid(`unreadableLayouts.${index}`, 'A print layout that cannot be read can only be kept as it is stored.')
+    return jsonCopy(layout)
+  })
+}
+
+// The workspace's saved print layouts: at most 20 and 160 KB stored in all
+// (counting the unreadable ones kept), each checked, ids unique. Over a limit
+// the save is refused with the field named, never cut short. Checked against
+// the stored section, a layout already stored must either be sent unchanged
+// or carry the next version: one changed by someone else in the meantime is
+// refused (DOCUMENT_LAYOUT_CHANGED, 409) instead of overwritten.
+export function validatePrintLayouts(raw, { unreadableLayouts = [], stored = null } = {}) {
+  const list = raw === undefined || raw === null ? [] : raw
+  if (!Array.isArray(list)) throw layoutInvalid('layouts', 'Print layouts must be a list.')
+  if (list.length + unreadableLayouts.length > PRINT_LAYOUT_LIMITS.templates) throw invalid('DOCUMENT_LAYOUTS_TOO_MANY', 'layouts', `A workspace can save at most ${PRINT_LAYOUT_LIMITS.templates} print layouts.`, { limit: PRINT_LAYOUT_LIMITS.templates })
+  const layouts = list.map((layout, index) => validatePrintLayout(layout, `layouts.${index}`))
+  const ids = layouts.map((layout) => layout.id)
+  const repeated = ids.findIndex((id, index) => ids.indexOf(id) !== index)
+  if (repeated >= 0) throw layoutInvalid(`layouts.${repeated}.id`, `layouts.${repeated}.id is used by another print layout.`)
+  if (utf8Bytes(JSON.stringify([...layouts, ...unreadableLayouts])) > PRINT_LAYOUT_LIMITS.bytes) throw invalid('DOCUMENT_LAYOUTS_TOO_LARGE', 'layouts', `Print layouts can take at most ${PRINT_LAYOUT_LIMITS.bytes} bytes in all.`, { limit: PRINT_LAYOUT_LIMITS.bytes })
+  if (stored) {
+    layouts.forEach((layout, index) => {
+      const previous = stored.layouts.find((item) => item.id === layout.id)
+      if (!previous || canonical(previous) === canonical(layout) || layout.version === previous.version + 1) return
+      throw Object.assign(new Error(`Print layout ${layout.id} was changed by someone else; reload it.`), { code: 'DOCUMENT_LAYOUT_CHANGED', status: 409, details: { field: `layouts.${index}`, id: layout.id } })
+    })
+  }
+  return layouts
+}
 
 // The stored section with the seed under it, for reading. Values of the wrong
 // type are ignored, never thrown on: what was saved passed validation.
@@ -120,13 +355,17 @@ export function normalizeDocumentSettings(value) {
       termsText: trimmed(customerInvoice.termsText),
       footerText: trimmed(customerInvoice.footerText),
     },
+    ...splitStoredLayouts(current.layouts, current.unreadableLayouts),
   }
 }
 
 // A save of the section: the known fields only (anything else is dropped),
 // each checked. A value over its limit is refused with the field named, not
 // cut short.
-export function validateDocumentSettings(value) {
+// `stored`, when given (the server always gives it, null when nothing is
+// stored), is the documents section as stored now: unreadable layouts are
+// kept only as stored, and a stored layout changed by someone else is refused.
+export function validateDocumentSettings(value, options = {}) {
   if (!isObject(value)) throw invalid('DOCUMENT_SETTINGS_INVALID', 'documents', 'Document settings are invalid.')
   const letterhead = value.letterhead === undefined ? {} : value.letterhead
   const purchaseOrder = value.purchaseOrder === undefined ? {} : value.purchaseOrder
@@ -187,7 +426,15 @@ export function validateDocumentSettings(value) {
       termsText: textField('customerInvoice.termsText', customerInvoice.termsText, DOCUMENT_SETTINGS_LIMITS.termsText, { nullable: false }),
       footerText: textField('customerInvoice.footerText', customerInvoice.footerText, DOCUMENT_SETTINGS_LIMITS.footerText, { nullable: false }),
     },
+    ...layoutSettings(value, options),
   }
+}
+
+function layoutSettings(value, options) {
+  const checked = Object.prototype.hasOwnProperty.call(options, 'stored')
+  const stored = checked ? splitStoredLayouts(isObject(options.stored) ? options.stored.layouts : undefined, isObject(options.stored) ? options.stored.unreadableLayouts : undefined) : null
+  const unreadableLayouts = validateUnreadableLayouts(value.unreadableLayouts, stored)
+  return { layouts: validatePrintLayouts(value.layouts, { unreadableLayouts, stored }), unreadableLayouts }
 }
 
 // The invoice date: the invoice form stores the moment it was created, so it
