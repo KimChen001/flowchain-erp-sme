@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { loadEnv } from "../config/env.mjs";
 import { resolveBuildIdentity, validateProductionRuntimeConfig } from "../config/production-runtime-config.mjs";
 import { validateDatabasePersistenceConfig } from "../persistence/persistence-config.mjs";
+import { withSecurityHeaders } from "./security-headers.mjs";
 import { createHttpRequestHandler } from "./http-request-handler.mjs";
 import { requestLogEnabled, withRequestLogging } from "./request-logging.mjs";
 import { withServerErrorBoundary } from "./server-error-boundary.mjs";
@@ -14,6 +15,8 @@ import {
 } from "../domain/local-signed-session.mjs";
 import { createWorkspaceSessionStore } from "../auth/workspace-sessions.mjs";
 import { createEmailLinkService } from "../auth/email-link-sign-in.mjs";
+import { createLazyMailer } from "../mail/mailer.mjs";
+import { createApprovalNotifier } from "../notifications/approval-notifier.mjs";
 import { checkRuntimeReadiness } from "../domain/runtime-readiness.mjs";
 import { createServerLifecycle, registerProcessErrorHandlers, registerShutdownSignals } from "./server-lifecycle.mjs";
 import { createErrorReporter } from "../observability/error-reporter.mjs";
@@ -741,8 +744,9 @@ function supplierRecommendations() {
 // supplied, so in-process test servers stay quiet; startScmServer supplies it.
 // Unhandled errors are always logged, to errorLogger or the console, by
 // errorReporter, which also sends alerts when FLOWCHAIN_ERROR_WEBHOOK_URL is set.
-// mailer replaces the provider FLOWCHAIN_MAIL_PROVIDER selects; tests and
-// harnesses pass one so they never reach a real mail service.
+// mailer replaces the provider FLOWCHAIN_MAIL_PROVIDER selects for sign-in
+// links and approval emails; tests and harnesses pass one so they never reach
+// a real mail service.
 export function createScmServer({
   readinessCheck = checkRuntimeReadiness,
   requestLogger = null,
@@ -754,7 +758,10 @@ export function createScmServer({
   validateDatabasePersistenceConfig(process.env);
   // Sessions are rows in PostgreSQL, so they outlive this process.
   const sessionStore = createWorkspaceSessionStore({ env: process.env });
-  const emailLinks = createEmailLinkService({ env: process.env, sessionStore, mailer, logger: errorLogger || console });
+  // Sign-in links and approval emails share one provider (or the override).
+  const sharedMailer = mailer || createLazyMailer(process.env);
+  const emailLinks = createEmailLinkService({ env: process.env, sessionStore, mailer: sharedMailer, logger: errorLogger || console });
+  const approvalNotifier = createApprovalNotifier({ env: process.env, mailer: sharedMailer, logger: errorLogger || console });
   const localSessionSecret = createLocalSessionSecret(process.env);
   const handleRequest = createHttpRequestHandler({
     port,
@@ -763,6 +770,7 @@ export function createScmServer({
     readinessCheck,
     sessionStore,
     emailLinks,
+    approvalNotifier,
     localSessionSecret,
     errorReporter,
     domain: {
@@ -807,7 +815,7 @@ export function createScmServer({
     env: process.env,
   });
   return http.createServer(withRequestLogging(
-    withServerErrorBoundary(handleRequest, { logger: errorLogger }),
+    withSecurityHeaders(withServerErrorBoundary(handleRequest, { logger: errorLogger }), { env: process.env }),
     { logger: requestLogger },
   ));
 }

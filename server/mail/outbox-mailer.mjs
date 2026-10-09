@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -22,6 +22,25 @@ export async function readOutbox(path) {
   }
 }
 
+// On Windows a rename onto the outbox fails for a moment while another
+// process (a virus scanner, or a reader of the outbox) holds the file. Such a
+// rename is retried briefly instead of losing the message.
+const TRANSIENT_RENAME_ERRORS = new Set(["EPERM", "EACCES", "EBUSY"]);
+async function replaceFile(temporary, path, { attempts = 10, delayMs = 20 } = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await rename(temporary, path);
+      return;
+    } catch (error) {
+      if (!TRANSIENT_RENAME_ERRORS.has(error?.code) || attempt >= attempts) {
+        await rm(temporary, { force: true }).catch(() => {});
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
+  }
+}
+
 export function createOutboxMailer({ path, now = () => new Date() }) {
   let queue = Promise.resolve();
   return {
@@ -35,7 +54,7 @@ export function createOutboxMailer({ path, now = () => new Date() }) {
         await mkdir(dirname(path), { recursive: true });
         const temporary = `${path}.${process.pid}.${entry.id}.tmp`;
         await writeFile(temporary, JSON.stringify({ messages }, null, 2));
-        await rename(temporary, path);
+        await replaceFile(temporary, path);
         return { provider: "outbox", messageId: entry.id };
       });
       queue = write.catch(() => {});

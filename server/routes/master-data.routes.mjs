@@ -1,7 +1,7 @@
 import { assertAuthorized } from '../auth/authorization-service.mjs'
 import { selectMasterData } from '../domain/master-data-selectors.mjs'
 import { maskReferencePrice, maskSupplier, masterDataReadAccess } from '../domain/master-data-read-access.mjs'
-import { PilotIdentityError, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
+import { PilotIdentityError, hasWarehouseAccess, resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { createSupplierInsightsReadService } from '../domain/supplier-insights.mjs'
 
@@ -13,6 +13,8 @@ const WRITE_RULES = Object.freeze({
   'item-supplier-relationship': { permission: 'master_data.item.manage', records: "an item's suppliers" },
   'supplier-master': { permission: 'master_data.supplier.manage', records: 'suppliers' },
   'customer-master': { permission: 'master_data.customer.manage', records: 'customers' },
+  // Warehouses and bins are workspace setup, kept by a workspace administrator.
+  'warehouse-master': { permission: 'settings.workspace.manage', records: 'warehouses and bins' },
 })
 
 function masterDataRepository(ctx) {
@@ -399,6 +401,104 @@ export async function handleMasterDataRoute(ctx) {
   if (req.method === 'POST' && itemSuppliers) { if (!(await authorizeWrite('item-supplier-relationship'))) return true; try{send(res,201,{relationship:(await pricesFor([await repository.createItemSupplier(decodeURIComponent(itemSuppliers[1]),await readBody(req),actor(),tenantScope())]))[0]})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})} return true }
   const relationshipMatch=url.pathname.match(/^\/api\/master-data\/items\/([^/]+)\/suppliers\/([^/]+)$/)
   if(req.method==='PATCH'&&relationshipMatch){if (!(await authorizeWrite('item-supplier-relationship'))) return true;try{send(res,200,{relationship:(await pricesFor([await repository.updateItemSupplier(decodeURIComponent(relationshipMatch[1]),decodeURIComponent(relationshipMatch[2]),await readBody(req),actor(),tenantScope())]))[0]})}catch(error){send(res,error.status||500,{code:error.code||'PERSISTENCE_ERROR',message:error.message,details:error.details||[]})}return true}
+
+  // Warehouses and bins. Creating one needs settings.workspace.manage; every
+  // other change also needs operate access to that warehouse, and reading its
+  // bins needs read access. A warehouse outside the user's access is refused
+  // the same way whether or not it exists.
+  const warehouseScopeDenied = (level) => send(res, 403, {
+    code: 'WAREHOUSE_SCOPE_DENIED',
+    message: `You need ${level} access to this warehouse. A workspace administrator can grant it in Warehouse access.`,
+    action: level === 'read' ? 'read' : 'maintain',
+    resource: 'warehouse-master',
+  })
+  const requireWarehouseScope = async (warehouseId, level) => {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read warehouses.', action: 'read', resource: 'warehouse-master' })
+      return false
+    }
+    let current
+    try {
+      current = await provisionedActor()
+    } catch (error) {
+      if (!(error instanceof PilotIdentityError)) throw error
+      send(res, error.status, { code: error.code, message: error.message, action: level === 'read' ? 'read' : 'maintain', resource: 'warehouse-master' })
+      return false
+    }
+    if (current?.complete && current.tenantId === ctx.identity.tenantId && hasWarehouseAccess(current, [warehouseId], level)) return true
+    warehouseScopeDenied(level)
+    return false
+  }
+  const warehouseWritesUnsupported = () => {
+    if (typeof repository.createWarehouse === 'function') return false
+    send(res, 501, { code: 'ADAPTER_WRITE_UNSUPPORTED', message: 'Warehouse writes are not available in this workspace.' })
+    return true
+  }
+  const sendWarehouseError = (error) => error instanceof SyntaxError
+    ? send(res, 400, { code: 'INVALID_JSON', message: 'The request body is not valid JSON.', details: [] })
+    : send(res, error.status || 500, { code: error.code || 'PERSISTENCE_ERROR', message: error.message, details: error.details || [] })
+
+  if (req.method === 'POST' && url.pathname === '/api/master-data/warehouses') {
+    if (!(await authorizeWrite('warehouse-master'))) return true
+    if (warehouseWritesUnsupported()) return true
+    try {
+      send(res, 201, { warehouse: await repository.createWarehouse(await readBody(req), actor(), tenantScope()) })
+    } catch (error) {
+      sendWarehouseError(error)
+    }
+    return true
+  }
+
+  const warehouseWriteMatch = url.pathname.match(/^\/api\/master-data\/warehouses\/([^/]+)(?:\/(activate|deactivate))?$/)
+  if (warehouseWriteMatch && ((req.method === 'PATCH' && !warehouseWriteMatch[2]) || (req.method === 'POST' && warehouseWriteMatch[2]))) {
+    const warehouseId = decodeURIComponent(warehouseWriteMatch[1])
+    if (!(await authorizeWrite('warehouse-master'))) return true
+    if (!(await requireWarehouseScope(warehouseId, 'operate'))) return true
+    if (warehouseWritesUnsupported()) return true
+    try {
+      const body = await readBody(req)
+      if (warehouseWriteMatch[2]) {
+        const status = warehouseWriteMatch[2] === 'activate' ? 'active' : 'inactive'
+        send(res, 200, await repository.setWarehouseStatus(warehouseId, { status, expectedVersion: body.expectedVersion }, actor(), tenantScope()))
+      } else {
+        send(res, 200, { warehouse: await repository.updateWarehouse(warehouseId, body, actor(), tenantScope()) })
+      }
+    } catch (error) {
+      sendWarehouseError(error)
+    }
+    return true
+  }
+
+  const warehouseBinsMatch = url.pathname.match(/^\/api\/master-data\/warehouses\/([^/]+)\/bins(?:\/([^/]+)(?:\/(activate|deactivate))?)?$/)
+  if (warehouseBinsMatch) {
+    const warehouseId = decodeURIComponent(warehouseBinsMatch[1])
+    const binId = warehouseBinsMatch[2] ? decodeURIComponent(warehouseBinsMatch[2]) : ''
+    const statusChange = warehouseBinsMatch[3]
+    if (req.method === 'GET' && !binId) {
+      if (!(await requireWarehouseScope(warehouseId, 'read'))) return true
+      if (typeof repository.listWarehouseBins !== 'function') {
+        send(res, 501, { code: 'ADAPTER_WRITE_UNSUPPORTED', message: 'Warehouse bins are not available in this workspace.' })
+        return true
+      }
+      send(res, 200, { bins: await repository.listWarehouseBins(warehouseId, tenantScope()) })
+      return true
+    }
+    const kind = req.method === 'POST' && !binId ? 'create' : req.method === 'PATCH' && binId && !statusChange ? 'update' : req.method === 'POST' && binId && statusChange ? 'status' : ''
+    if (kind) {
+      if (!(await authorizeWrite('warehouse-master'))) return true
+      if (!(await requireWarehouseScope(warehouseId, 'operate'))) return true
+      if (warehouseWritesUnsupported()) return true
+      try {
+        const body = await readBody(req)
+        if (kind === 'create') send(res, 201, { bin: await repository.createWarehouseBin(warehouseId, body, actor(), tenantScope()) })
+        else if (kind === 'update') send(res, 200, { bin: await repository.updateWarehouseBin(warehouseId, binId, body, actor(), tenantScope()) })
+        else send(res, 200, { bin: await repository.setWarehouseBinStatus(warehouseId, binId, { status: statusChange === 'activate' ? 'active' : 'inactive', expectedUpdatedAt: body.expectedUpdatedAt }, actor(), tenantScope()) })
+      } catch (error) {
+        sendWarehouseError(error)
+      }
+      return true
+    }
+  }
 
   if (req.method === 'GET' && url.pathname === '/api/master-data/warehouses') {
     send(res, 200, { warehouses: await repository.listWarehouses(tenantScope()) })

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, open, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMailer, mailProviderName } from "../mail/mailer.mjs";
@@ -106,6 +106,26 @@ test("the outbox adapter appends messages to a local JSON file that tests can re
     assert.equal(messages[0].html, message.html);
     assert.equal(messages[0].tag, "sign-in-link");
     assert.ok(messages[0].createdAt);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a message is not lost while a reader holds the outbox file open", async () => {
+  // On Windows the rename that replaces the outbox fails while the file is
+  // open (a test polling it, a virus scanner); the adapter retries it.
+  const directory = await mkdtemp(join(tmpdir(), "flowchain-outbox-test-"));
+  try {
+    const path = join(directory, "outbox.json");
+    const mailer = createOutboxMailer({ path });
+    await mailer.send(message);
+    const handle = await open(path, "r");
+    const sending = mailer.send({ ...message, to: "approver@example.com" });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await handle.close();
+    assert.equal((await sending).provider, "outbox");
+    assert.deepEqual((await readOutbox(path)).map((entry) => entry.to), ["buyer@example.com", "approver@example.com"]);
+    assert.deepEqual(await readdir(directory), ["outbox.json"], "no temporary file is left behind");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
