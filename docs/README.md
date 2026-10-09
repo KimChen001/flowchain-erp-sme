@@ -94,6 +94,7 @@
 
 - [Global business search](global-business-search-v1.md)
 - [Supplier operational search](supplier-operational-search-v1.md)
+- [Supplier tiers and the supplier list: design](supplier-tiers-design.md)
 - [SRM supplier API migration notes](srm-supplier-api-migration-notes.md)
 - [Receiving GRN list/detail safe plan](receiving-grn-list-detail-safe-plan.md)
 - [ERPNext reference notes](erpnext-reference-notes-for-flowchain.md)
