@@ -10,7 +10,57 @@ export type PrintLayoutCopyKey =
   | "printLayout.element.signature" | "printLayout.element.signatureValue"
   | "printLayout.element.line"
   | "printLayout.instancePlaceholder"
-  | `printLayout.instance.${PrintInstanceFieldKey}`;
+  | `printLayout.instance.${PrintInstanceFieldKey}`
+  | `printLayout.preset.${PrintPresetCopyKey}`;
+
+// The built-in templates' text (printLayoutPresets.ts).
+export type PrintPresetCopyKey =
+  | "company"
+  | "documentTitle"
+  | "documentNo"
+  | "date"
+  | "warehouse"
+  | "sourceOrder"
+  | "handler"
+  | "lines"
+  | "remarks"
+  | "signatures"
+  | "signaturesValue"
+  | "footer"
+  | "footerValue"
+  | "pageNumber"
+  | "supplier"
+  | "receiveDate"
+  | "receiver"
+  | "reviewedBy"
+  | "customer"
+  | "carrier"
+  | "driver"
+  | "vehicle"
+  | "cartons"
+  | "signer"
+  | "signerPhone"
+  | "signDate"
+  | "deliveryNo"
+  | "exceptionNote"
+  | "customerSignature"
+  | "column.sku"
+  | "column.itemName"
+  | "column.receivedQuantity"
+  | "column.unit"
+  | "column.batchNo"
+  | "column.orderedQty"
+  | "column.shippedQty"
+  | "column.receivedQty"
+  | "column.damagedQty"
+  | "column.cartonCount"
+  | "column.remarks"
+  | "receiveSheetTitle"
+  | "receiveSheetName"
+  | "deliveryNoteTitle"
+  | "deliveryNoteName"
+  | "signReceiptTitle"
+  | "signReceiptName";
 export type PrintLayoutCopy = (key: PrintLayoutCopyKey, variables?: Record<string, string | number>) => string;
 
 export const PRINT_INSTANCE_FIELD_KEYS: Record<PrintDocumentType, readonly PrintInstanceFieldKey[]> = {

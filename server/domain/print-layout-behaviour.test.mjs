@@ -108,13 +108,13 @@ const storedSection = (overrides = {}) => ({
 // A saved receive-sheet layout as the editor saves it: the built-in one with the per-print fields.
 async function savedLayout(id, version = 1, language = 'en') {
   const mod = await modules()
-  return validatePrintLayout({ ...mod.withInstanceFields(mod.defaultPrintTemplate('receive_sheet'), 'receive_sheet', copy[language]), id, name: `Layout ${id}`, version })
+  return validatePrintLayout({ ...mod.withInstanceFields(mod.defaultPrintTemplate('receive_sheet', copy[language]), 'receive_sheet', copy[language]), id, name: `Layout ${id}`, version })
 }
 
 test('saving a template sends the rest of the documents section back unchanged', async () => {
   const mod = await modules()
   const state = workspace(storedSection())
-  const { saved } = await mod.saveNewPrintTemplate(mod.withInstanceFields(mod.defaultPrintTemplate('receive_sheet'), 'receive_sheet', copy.en))
+  const { saved } = await mod.saveNewPrintTemplate(mod.withInstanceFields(mod.defaultPrintTemplate('receive_sheet', copy.en), 'receive_sheet', copy.en))
   assert.equal(state.patches, 1)
   assert.deepEqual(state.stored.letterhead, storedSection().letterhead)
   assert.deepEqual(state.stored.purchaseOrder, storedSection().purchaseOrder)
@@ -128,7 +128,7 @@ test('saving from a built-in template always adds a new template and never repla
   const mod = await modules()
   const existing = await savedLayout('receive_sheet-custom', 4)
   const state = workspace(storedSection({ layouts: [existing] }))
-  const builtIn = mod.defaultPrintTemplate('receive_sheet')
+  const builtIn = mod.defaultPrintTemplate('receive_sheet', copy.en)
   const first = await mod.saveNewPrintTemplate(builtIn)
   const second = await mod.saveNewPrintTemplate(builtIn)
   assert.equal(state.stored.layouts.length, 3)
@@ -174,7 +174,7 @@ test('a stored template that cannot be read is kept when other templates are sav
   const mod = await modules()
   const broken = { ...(await savedLayout('receive_sheet-old')), documentType: 'retired_type' }
   const state = workspace(storedSection({ layouts: [broken] }))
-  await mod.saveNewPrintTemplate(mod.defaultPrintTemplate('delivery_note'))
+  await mod.saveNewPrintTemplate(mod.defaultPrintTemplate('delivery_note', copy.en))
   assert.equal(state.stored.layouts.length, 1)
   assert.deepEqual(state.stored.unreadableLayouts, [broken])
 })
@@ -213,16 +213,33 @@ test('the built-in templates and every element the toolbar adds pass the shared 
   const mod = await modules()
   for (const language of ['en', 'zh']) {
     for (const type of ['receive_sheet', 'delivery_note', 'sign_receipt']) {
-      const template = mod.withInstanceFields(mod.defaultPrintTemplate(type), type, copy[language])
+      const template = mod.withInstanceFields(mod.defaultPrintTemplate(type, copy[language]), type, copy[language])
       const elements = mod.NEW_PRINT_ELEMENT_TYPES.map((kind, index) => mod.createPrintElement(kind, template.elements.length + index, copy[language], 1700000000000))
       const layout = validatePrintLayout({ ...template, id: `${type}-x`, elements: [...template.elements, ...elements] })
       assert.equal(layout.elements.length, template.elements.length + mod.NEW_PRINT_ELEMENT_TYPES.length)
     }
   }
+  // A built-in template is in the interface language: no Chinese in the English
+  // one, its text from the copy in the Chinese one; ids and bindings are the same.
+  const CJK = /[㐀-鿿]/
+  for (const type of ['receive_sheet', 'delivery_note', 'sign_receipt']) {
+    const en = mod.defaultPrintTemplate(type, copy.en)
+    const zh = mod.defaultPrintTemplate(type, copy.zh)
+    const texts = (template) => [template.name, ...template.elements.flatMap((element) => [element.title, element.value, ...(element.tableColumns || []).map((column) => column.title)])].filter(Boolean)
+    assert.deepEqual(texts(en).filter((text) => CJK.test(text)), [], type)
+    assert.ok(texts(zh).some((text) => CJK.test(text)), type)
+    const shape = (template) => template.elements.map((element) => [element.id, element.type, element.field, (element.tableColumns || []).map((column) => column.key)])
+    assert.deepEqual(shape(en), shape(zh), type)
+    assert.equal(en.id, zh.id)
+  }
+  const receiveSheet = mod.defaultPrintTemplate('receive_sheet', copy.en)
+  assert.deepEqual([receiveSheet.name, receiveSheet.elements.find((element) => element.id === 'title').value], ['Standard goods receipt', 'Goods Receipt'])
+  assert.equal(mod.defaultPrintTemplate('receive_sheet', copy.zh).name, '标准入库单')
+
   const [text] = [mod.createPrintElement('text', 0, copy.en, 1)]
   assert.deepEqual([text.title, text.value], ['Text', 'Enter fixed text'])
   assert.deepEqual([mod.createPrintElement('text', 0, copy.zh, 1).value, mod.createPrintElement('remark', 0, copy.zh, 1).title], ['请输入固定文字', '备注'])
-  assert.equal(mod.withInstanceFields(mod.defaultPrintTemplate('receive_sheet'), 'receive_sheet', copy.en).elements.find((element) => element.id === 'instance-receiving-note').placeholder, 'Receiving note (this print)')
+  assert.equal(mod.withInstanceFields(mod.defaultPrintTemplate('receive_sheet', copy.en), 'receive_sheet', copy.en).elements.find((element) => element.id === 'instance-receiving-note').placeholder, 'Receiving note (this print)')
 
   // A cleared font size or line height becomes the smallest allowed, which passes.
   assert.deepEqual([mod.clampLayoutNumber('', 1, 200), mod.clampLayoutNumber('0', 0.5, 5), mod.clampLayoutNumber('900', 1, 200), mod.clampLayoutNumber('14', 1, 200)], [1, 0.5, 200, 14])
@@ -234,7 +251,7 @@ test('20 realistic templates fit in 160 KB', async () => {
   for (let index = 0; index < PRINT_LAYOUT_LIMITS.templates; index += 1) {
     const type = ['receive_sheet', 'delivery_note', 'sign_receipt'][index % 3]
     const language = index % 2 ? 'zh' : 'en'
-    const template = mod.withInstanceFields(mod.defaultPrintTemplate(type), type, copy[language])
+    const template = mod.withInstanceFields(mod.defaultPrintTemplate(type, copy[language]), type, copy[language])
     const added = mod.NEW_PRINT_ELEMENT_TYPES.map((kind, offset) => mod.createPrintElement(kind, template.elements.length + offset, copy[language], 1700000000000 + index))
     added[3].value = 'Goods remain the property of the seller until paid in full. '.repeat(8)
     layouts.push({ ...template, id: `${type}-${index}`, name: `Layout ${index}`, isDefault: false, version: 3, updatedAt: new Date(0).toISOString(), elements: [...template.elements, ...added] })
