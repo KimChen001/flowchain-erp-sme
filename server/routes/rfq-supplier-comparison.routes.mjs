@@ -20,6 +20,7 @@ function sendError(ctx, error) {
     });
     return;
   }
+  ctx.reportError?.(error);
   ctx.send(ctx.res, 500, {
     code: "RFQ_SUPPLIER_COMPARISON_FAILED",
     message: "The supplier comparison could not be loaded.",

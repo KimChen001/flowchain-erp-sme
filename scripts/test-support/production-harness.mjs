@@ -9,9 +9,12 @@ import { createOutboxMailer } from "../../server/mail/outbox-mailer.mjs";
 // production config validation, which requires a real mail provider. These
 // values satisfy it without being usable: the token is random, the sender and
 // base URL use the reserved .test domain, and no harness requests a sign-in
-// link, so nothing is ever sent to the provider.
+// link, so nothing is ever sent to the provider. Approval emails, which the
+// documents a harness submits would otherwise trigger, stay off unless the
+// caller set FLOWCHAIN_APPROVAL_EMAILS.
 export function productionHarnessMailEnv() {
   return {
+    FLOWCHAIN_APPROVAL_EMAILS: process.env.FLOWCHAIN_APPROVAL_EMAILS || "off",
     FLOWCHAIN_MAIL_PROVIDER: "postmark",
     POSTMARK_SERVER_TOKEN: `harness-never-sends-${randomUUID()}`,
     FLOWCHAIN_MAIL_FROM: "FlowChain <sign-in@flowchain.test>",

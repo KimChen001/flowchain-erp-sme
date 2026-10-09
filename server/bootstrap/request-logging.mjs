@@ -29,6 +29,16 @@ export function noteRequestActor(req, identity) {
   });
 }
 
+// The signed-in tenant and user ids noted for this request, or nothing.
+export function requestActorOf(req) {
+  const actor = requestActors.get(req);
+  return actor ? { ...actor } : {};
+}
+
+export function requestLogPath(req) {
+  return loggedPath(req);
+}
+
 function loggedPath(req) {
   const raw = String(req.url || "/");
   let path;
