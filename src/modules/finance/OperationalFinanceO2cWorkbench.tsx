@@ -1,10 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { AlertTriangle, FilePlus2, RefreshCw } from "lucide-react";
-import { apiJson } from "../../lib/api-client";
+import { Link } from "react-router";
+import { ApiError, apiJson } from "../../lib/api-client";
+import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
+import { StatusChip, TwoStepAction } from "./FinanceControls";
+import { PaymentRecords } from "./PaymentRecords";
 import { useI18n } from "../../i18n/I18n";
-import { A, Card, Chip } from "../../components/ui";
+import { A, Card } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { addCalendarDays } from "../../lib/prefill";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
+import { useRouteAvailability } from "../../app/routeAvailability";
+import { PREVIEW_CUSTOMER_INVOICE_STATUSES, PRINTABLE_CUSTOMER_INVOICE_STATUSES } from "../../../shared/business-documents.mjs";
+
+// The invoice statuses whose document is worth opening: issued (to send) and
+// approved (to check before issuing).
+const documentStatuses: readonly string[] = [...PREVIEW_CUSTOMER_INVOICE_STATUSES, ...PRINTABLE_CUSTOMER_INVOICE_STATUSES];
+import { formatCalendarDay } from "../../lib/format";
 
 type Capability = { enabled?: boolean; maturity?: string; reason?: string };
 type Invoice = {
@@ -23,6 +36,7 @@ type Invoice = {
 type Receivable = {
   id: string;
   obligationNumber: string;
+  customerInvoiceId?: string;
   customerInvoiceNumber?: string;
   customerName?: string;
   outstandingAmount: string;
@@ -68,10 +82,14 @@ type AgingPayload = {
   }>;
 };
 type EntryData = {
+  today?: string;
+  suggestedInvoiceNumber?: string;
   postedShipments: Array<{
     id: string;
     shipmentNumber: string;
+    salesOrderId: string;
     customerName: string;
+    customerPaymentTerm?: { code: string; name: string; days: number } | null;
     currency: string;
     lines: Array<{
       id: string;
@@ -96,7 +114,8 @@ const button =
   "inline-flex h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50";
 const queryString = () => {
   const params = new URLSearchParams(window.location.search);
-  const allowed = ["status", "currency", "search", "page", "pageSize"];
+  // disputeStatus carries the landing page's "disputed receivables" link.
+  const allowed = ["status", "disputeStatus", "currency", "search", "page", "pageSize"];
   const next = new URLSearchParams();
   for (const key of allowed)
     if (params.get(key)) next.set(key, params.get(key) as string);
@@ -113,8 +132,6 @@ const money = (value: string | null | undefined, currency: string, locale: strin
         maximumFractionDigits: 4,
       }).format(Number(value))
     : `${value} ${currency}`;
-const date = (value: string, locale: string) =>
-  value ? new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value)) : "—";
 const canPrepare = () => {
   try {
     const role = String(
@@ -217,7 +234,7 @@ function InvoiceList() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Filters />
         <a
-          href="/app/finance/customer-invoices/new"
+          href="/app/sales/invoices/new"
           aria-disabled={!enabled}
           className={`${button} text-white ${!enabled ? "pointer-events-none opacity-50" : ""}`}
           style={{ background: A.blue }}
@@ -256,22 +273,22 @@ function InvoiceList() {
                   <td className="px-4 py-3">
                     <a
                       className="font-medium text-blue-700"
-                      href={`/app/finance/customer-invoices/${encodeURIComponent(row.id)}`}
+                      href={`/app/sales/invoices/${encodeURIComponent(row.id)}`}
                     >
                       {row.invoiceNumber}
                     </a>
                   </td>
                   <td className="px-4 py-3">{row.customerName}</td>
                   <td className="px-4 py-3">{row.shipmentNumber || row.shipmentId}</td>
-                  <td className="px-4 py-3">{date(row.dueDate, locale)}</td>
+                  <td className="px-4 py-3">{formatCalendarDay(row.dueDate, locale)}</td>
                   <td className="px-4 py-3 font-medium">
                     {money(row.totalAmount, row.currency, locale)}
                   </td>
                   <td className="px-4 py-3">
-                    <Chip label={row.status} color={A.blue} bg="#eff6ff" />
+                    <StatusChip status={row.status} />
                   </td>
                   <td className="px-4 py-3 text-xs">
-                    {row.availableActions.join(" · ") || "—"}
+                    {row.availableActions.map((action) => t(`finance.action.${action}` as Parameters<typeof t>[0])).join(" · ") || "—"}
                   </td>
                 </tr>
               ))}
@@ -290,16 +307,31 @@ function InvoiceList() {
   );
 }
 
+type TranslationKey = Parameters<ReturnType<typeof useI18n>["t"]>[0];
+const RECEIVABLE_ACTION_KEYS: Record<string, TranslationKey> = {
+  record_payment: "finance.action.record_receivable_payment",
+  dispute: "finance.action.dispute",
+  resolve_dispute: "finance.action.resolve_dispute",
+  record_external_reference: "finance.action.record_external_reference",
+};
+
 function Receivables() {
   const { t, locale } = useI18n();
   const [data, setData] = useState<ListPayload<Receivable> | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => {
+  const load = () => {
+    setError("");
     void apiJson<ListPayload<Receivable>>(
       `/api/finance/receivables?${queryString()}`,
     )
       .then(setData)
       .catch((reason) => setError(reason instanceof Error ? reason.message : t("finance.loadFailed")));
+  };
+  useEffect(load, []);
+  // The filters change the query string and announce it with popstate.
+  useEffect(() => {
+    window.addEventListener("popstate", load);
+    return () => window.removeEventListener("popstate", load);
   }, []);
   if (error) return <Notice>{error}</Notice>;
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
@@ -326,14 +358,19 @@ function Receivables() {
           <tbody>
             {data.items.map((row) => (
               <tr className="border-b border-slate-50" key={row.id}>
-                <td className="px-4 py-3">{row.customerInvoiceNumber || row.obligationNumber}</td>
+                <td className="px-4 py-3">
+                  {row.customerInvoiceId
+                    ? <Link className="font-medium text-blue-600 hover:underline" to={`/app/sales/invoices/${encodeURIComponent(row.customerInvoiceId)}`}>{row.customerInvoiceNumber || row.obligationNumber}</Link>
+                    : row.customerInvoiceNumber || row.obligationNumber}
+                </td>
                 <td className="px-4 py-3">{row.customerName || "—"}</td>
-                <td className="px-4 py-3">{date(row.dueDate, locale)}</td>
+                <td className="px-4 py-3">{formatCalendarDay(row.dueDate, locale)}</td>
                 <td className="px-4 py-3 font-medium">
                   {money(row.outstandingAmount, row.currency, locale)}
                 </td>
                 <td className="px-4 py-3">
-                  {row.status} · {row.disputeStatus}
+                  <StatusChip status={row.status} />
+                  {row.disputeStatus === "open" && <span className="ml-1 text-xs text-amber-700">{t("finance.status.disputed")}</span>}
                   {row.externalSettlementReference && (
                     <div className="mt-1 text-xs text-amber-700">
                       {t("finance.externalUnverified")}
@@ -341,7 +378,7 @@ function Receivables() {
                   )}
                 </td>
                 <td className="px-4 py-3 text-xs">
-                  {row.availableActions.join(" · ") || "—"}
+                  {row.availableActions.map((action) => RECEIVABLE_ACTION_KEYS[action] ? t(RECEIVABLE_ACTION_KEYS[action]) : action).join(" · ") || "—"}
                 </td>
               </tr>
             ))}
@@ -450,24 +487,63 @@ function NewInvoice() {
   const [shipmentId, setShipmentId] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [dueDate, setDueDate] = useState("");
+  // The number and due date are suggested until someone types their own.
+  const [numberTyped, setNumberTyped] = useState(false);
+  const [dueTyped, setDueTyped] = useState(false);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [taxes, setTaxes] = useState<Record<string, string>>({});
   const [plan, setPlan] = useState<InvoicePlan | null>(null);
   const [notice, setNotice] = useState("");
+  // Set when the form was opened from a sales order: only its shipments.
+  const [orderFilter, setOrderFilter] = useState("");
+  const [sourceNotice, setSourceNotice] = useState("");
   useEffect(() => {
     void apiJson<EntryData>("/api/finance/entry-data")
       .then(setEntry)
       .catch((reason) => setNotice(reason instanceof Error ? reason.message : t("finance.loadFailed")));
   }, []);
+  const shipped = (row: EntryData["postedShipments"][number]) =>
+    Object.fromEntries(row.lines.map((line) => [line.id, String(Number(line.postedQuantity))]));
+  // Opened from a shipment (?shipment=) or a sales order (?salesOrder=):
+  // choose the shipment and offer each shipped quantity. An invoice only
+  // covers shipped goods, so an order without a posted shipment is explained.
+  useEffect(() => {
+    if (!entry) return;
+    const params = new URLSearchParams(window.location.search);
+    const shipmentParam = params.get("shipment");
+    const orderParam = params.get("salesOrder");
+    if (shipmentParam) {
+      const found = entry.postedShipments.find((row) => row.id === shipmentParam || row.shipmentNumber === shipmentParam);
+      if (!found) { setSourceNotice(`${shipmentParam}: ${t("finance.shipmentNotInvoiceable")}`); return; }
+      setShipmentId(found.id);
+      setQuantities(shipped(found));
+    } else if (orderParam) {
+      const forOrder = entry.postedShipments.filter((row) => row.salesOrderId === orderParam);
+      if (!forOrder.length) { setSourceNotice(`${orderParam}: ${t("finance.noPostedShipment")}`); return; }
+      setOrderFilter(orderParam);
+      if (forOrder.length === 1) {
+        setShipmentId(forOrder[0].id);
+        setQuantities(shipped(forOrder[0]));
+      }
+    }
+  }, [entry]);
   const shipment = useMemo(
     () => entry?.postedShipments.find((row) => row.id === shipmentId),
     [entry, shipmentId],
   );
+  const term = shipment?.customerPaymentTerm || null;
+  const termDue = term && entry?.today ? addCalendarDays(entry.today, term.days) : "";
+  useEffect(() => {
+    if (!numberTyped && entry?.suggestedInvoiceNumber) setInvoiceNumber(entry.suggestedInvoiceNumber);
+  }, [entry, numberTyped]);
+  useEffect(() => {
+    if (!dueTyped) setDueDate(termDue);
+  }, [termDue, dueTyped]);
   const body = () => ({
     invoiceNumber,
     shipmentId,
     currency: shipment?.currency || "",
-    invoiceDate: new Date().toISOString(),
+    invoiceDate: entry?.today ? `${entry.today}T00:00:00.000Z` : new Date().toISOString(),
     dueDate: dueDate ? new Date(`${dueDate}T00:00:00.000Z`).toISOString() : "",
     lines:
       shipment?.lines
@@ -505,7 +581,7 @@ function NewInvoice() {
         },
       );
       window.location.assign(
-        `/app/finance/customer-invoices/${encodeURIComponent(result.entityId)}`,
+        `/app/sales/invoices/${encodeURIComponent(result.entityId)}`,
       );
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : t("finance.loadFailed"));
@@ -517,22 +593,29 @@ function NewInvoice() {
     <div className="space-y-4" data-testid="new-customer-invoice">
       {!enabled && <Notice>{t("finance.capabilityDisabled")}</Notice>}
       {notice && <Notice>{notice}</Notice>}
+      {sourceNotice && <Notice>{sourceNotice}</Notice>}
       <Card className="space-y-4 p-5">
+        {orderFilter && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600" data-testid="customer-invoice-order-filter">
+            <span>{t("finance.shipmentsForOrder")} <strong>{orderFilter}</strong></span>
+            <button type="button" className="font-semibold text-blue-600" onClick={() => setOrderFilter("")}>{t("finance.showAllShipments")}</button>
+          </div>
+        )}
         <div className="grid gap-3 md:grid-cols-3">
-          <label className="text-xs">{t("finance.invoiceNumber")}<input className={`${field} mt-1 w-full`} value={invoiceNumber} onChange={(event) => setInvoiceNumber(event.target.value)} /></label>
-          <label className="text-xs">{t("finance.postedShipment")}<select className={`${field} mt-1 w-full`} value={shipmentId} onChange={(event) => { setShipmentId(event.target.value); setPlan(null); }}><option value="">—</option>{entry.postedShipments.map((row) => <option value={row.id} key={row.id}>{row.shipmentNumber} · {row.customerName} · {row.currency}</option>)}</select></label>
-          <label className="text-xs">{t("finance.dueDate")}<input type="date" className={`${field} mt-1 w-full`} value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+          <label className="text-xs">{t("finance.invoiceNumber")}<input data-testid="customer-invoice-number" className={`${field} mt-1 w-full`} value={invoiceNumber} onChange={(event) => { setInvoiceNumber(event.target.value); setNumberTyped(true); }} /></label>
+          <label className="text-xs">{t("finance.postedShipment")}<select data-testid="customer-invoice-shipment" className={`${field} mt-1 w-full`} value={shipmentId} onChange={(event) => { const next = entry.postedShipments.find((row) => row.id === event.target.value); setShipmentId(event.target.value); setQuantities(next ? shipped(next) : {}); setPlan(null); }}><option value="">—</option>{entry.postedShipments.filter((row) => !orderFilter || row.salesOrderId === orderFilter).map((row) => <option value={row.id} key={row.id}>{row.shipmentNumber} · {row.customerName} · {row.currency}</option>)}</select></label>
+          <label className="text-xs">{t("finance.dueDate")}<input type="date" data-testid="customer-invoice-due" className={`${field} mt-1 w-full`} value={dueDate} onChange={(event) => { setDueDate(event.target.value); setDueTyped(true); }} />{!dueTyped && termDue && dueDate === termDue && term && <span className="mt-1 block text-slate-500" data-testid="customer-invoice-due-terms">{t("finance.dueFromTerms", { term: term.name, days: String(term.days) })}</span>}</label>
         </div>
         {shipment?.lines.map((line) => (
-          <div className="grid items-end gap-3 rounded-xl bg-slate-50 p-3 md:grid-cols-4" key={line.id}>
-            <div><div className="font-medium">{line.sku} · {line.itemName}</div><div className="text-xs text-slate-500">{line.postedQuantity} · {line.unitPrice === null ? "price unavailable" : money(line.unitPrice, shipment.currency, locale)}</div></div>
+          <div className="grid items-end gap-3 rounded-xl bg-slate-50 p-3 md:grid-cols-4" key={line.id} data-testid="customer-invoice-line">
+            <div><div className="font-medium">{line.sku}{line.itemName ? ` · ${line.itemName}` : ""}</div><div className="text-xs text-slate-500">{t("finance.shipped")} {Number(line.postedQuantity)} · {t("finance.soPrice")} {line.unitPrice === null ? t("finance.priceUnavailable") : money(line.unitPrice, shipment.currency, locale)}</div></div>
             <label className="text-xs">{t("finance.quantity")}<input className={`${field} mt-1 w-full`} value={quantities[line.id] || ""} onChange={(event) => setQuantities({ ...quantities, [line.id]: event.target.value })} /></label>
             <label className="text-xs">{t("finance.tax")}<input className={`${field} mt-1 w-full`} value={taxes[line.id] || ""} onChange={(event) => setTaxes({ ...taxes, [line.id]: event.target.value })} /></label>
           </div>
         ))}
         <div className="flex gap-2">
-          <button className={`${button} border border-slate-200`} disabled={!enabled} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
-          <button className={`${button} text-white`} style={{ background: A.blue }} disabled={!enabled || !plan?.allowed} onClick={() => void create()}><FilePlus2 size={14} />{t("finance.createDraft")}</button>
+          <button data-testid="customer-invoice-preview" className={`${button} border border-slate-200`} disabled={!enabled} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
+          <button data-testid="customer-invoice-create" className={`${button} text-white`} style={{ background: A.blue }} disabled={!enabled || !plan?.allowed} onClick={() => void create()}><FilePlus2 size={14} />{t("finance.createDraft")}</button>
         </div>
       </Card>
       {plan && <Card className="p-5"><div className="font-semibold">{plan.allowed ? `${plan.invoice?.totalAmount} ${plan.invoice?.currency}` : plan.blockingIssues.map((issue) => issue.message).join(" · ")}</div></Card>}
@@ -540,31 +623,112 @@ function NewInvoice() {
   );
 }
 
+type InvoiceReadFailure = "notFound" | "unauthenticated" | "forbidden" | "error";
+
+function invoiceReadFailure(reason: unknown): InvoiceReadFailure {
+  if (!(reason instanceof ApiError)) return "error";
+  if (reason.status === 404) return "notFound";
+  if (reason.status === 401) return "unauthenticated";
+  if (reason.status === 403) return "forbidden";
+  return "error";
+}
+
+// An invoice is drafted from a posted shipment, then submitted, approved and
+// issued here. Issuing opens the receivable; nothing on this page collects
+// money. Each step previews the server's plan before it runs.
 function InvoiceDetail() {
   const { t, locale } = useI18n();
+  const canOpenRoute = useRouteAvailability();
   const id = decodeURIComponent(window.location.pathname.split("/").filter(Boolean).at(-1) || "");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
-  useEffect(() => {
+  const [failure, setFailure] = useState<InvoiceReadFailure | null>(null);
+  const load = useCallback(() => {
+    setFailure(null);
     void apiJson(`/api/finance/customer-invoices/${encodeURIComponent(id)}`)
-      .then(setData)
-      .catch((reason) => setError(reason instanceof Error ? reason.message : t("finance.loadFailed")));
+      .then((next) => { setData(next); setError(""); })
+      .catch((reason) => {
+        setError(reason instanceof Error ? reason.message : t("finance.loadFailed"));
+        setFailure(invoiceReadFailure(reason));
+      });
   }, [id]);
-  if (error) return <Notice>{error}</Notice>;
+  useEffect(() => { load(); }, [load]);
+  useDetailCrumb(data?.invoiceNumber);
+  if (failure && !data) {
+    const testId = { notFound: "customer-invoice-not-found", unauthenticated: "customer-invoice-unauthenticated", forbidden: "customer-invoice-forbidden", error: "customer-invoice-read-error" }[failure];
+    const text = { notFound: t("finance.invoiceNotFound"), unauthenticated: t("finance.invoiceSignedOut"), forbidden: t("finance.invoiceForbidden"), error: t("finance.invoiceReadError") }[failure];
+    return (
+      <Card className="py-16 text-center" data-testid={testId}>
+        <div className="text-sm font-semibold">{text}</div>
+        <div className="mt-2 text-xs text-slate-500">{id}</div>
+        {failure === "error" && <button type="button" onClick={load} className="mt-3 text-sm font-semibold text-blue-600">{t("finance.retry")}</button>}
+      </Card>
+    );
+  }
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
+  const base = `/api/finance/customer-invoices/${encodeURIComponent(data.id)}`;
+  const actions: string[] = Array.isArray(data.availableActions) ? data.availableActions : [];
+  const version = () => ({ expectedVersion: data.version });
+  const receivable = data.receivable;
   return (
     <div className="space-y-4" data-testid="customer-invoice-detail">
+      {error && <Notice>{error}</Notice>}
       <Card className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><h2 className="font-semibold">{data.invoiceNumber}</h2><p className="mt-1 text-sm text-slate-500">{data.customerName}</p></div>
-          <div className="text-right"><strong>{money(data.totalAmount, data.currency, locale)}</strong><div className="text-xs text-slate-500">{data.status}</div></div>
+          <div>
+            <h2 className="font-semibold">{data.invoiceNumber}</h2>
+            <p className="mt-1 text-sm text-slate-500" data-testid="customer-invoice-sources">
+              {data.customerName || "—"}
+              {" · "}{t("finance.salesOrder")}{" "}
+              <BusinessEntityLink entityType="sales_order" entityId={data.salesOrderId}>{data.salesOrderNumber || data.salesOrderId}</BusinessEntityLink>
+              {" · "}{t("finance.shipment")}{" "}
+              {data.shipmentId
+                ? <Link className="font-semibold text-blue-600 hover:underline" to={`/app/sales/shipments/${encodeURIComponent(data.shipmentId)}`}>{data.shipmentNumber || data.shipmentId}</Link>
+                : "—"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">{t("finance.dueDate")} {formatCalendarDay(data.dueDate, locale)}</p>
+          </div>
+          <div className="text-right">
+            <strong>{money(data.totalAmount, data.currency, locale)}</strong>
+            <div className="mt-1"><StatusChip status={data.status} /></div>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2" data-testid="customer-invoice-actions">
+          {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="customer-invoice-submit" oneStep previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={version} onDone={load} />}
+          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="customer-invoice-approve" oneStep previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={version} onDone={load} />}
+          {actions.includes("issue") && <TwoStepAction label={t("finance.action.issue")} testId="customer-invoice-issue" oneStep previewUrl={`${base}/issue-preview`} runUrl={`${base}/issue`} payload={version} onDone={load} />}
+          {/* The invoice as a document to print or save as PDF; a person sends it. An approved invoice opens to be checked before it is issued. */}
+          {documentStatuses.includes(data.status) && canOpenRoute("sales:invoice-document") && (
+            <Link data-testid="customer-invoice-open-document" to={`/app/sales/invoices/${encodeURIComponent(data.id)}/document`} className="rounded-lg border px-3 py-2 text-xs font-semibold text-slate-700">
+              {t("documents.openInvoice")}
+            </Link>
+          )}
+          {!actions.length && <span className="text-xs text-slate-500">{t("finance.noActions")}</span>}
         </div>
       </Card>
-      <Card className="p-5">
-        <h3 className="mb-3 font-semibold">{t("finance.source")}</h3>
-        {data.evidence.map((row: any) => <div className="mb-2 rounded-lg bg-slate-50 p-3 text-sm" key={`${row.type}-${row.id}`}>{row.type} · {row.number || row.id} · {row.authoritative ? t("finance.authoritative") : ""}</div>)}
+
+      <Card className="overflow-x-auto p-5">
+        <h3 className="mb-3 font-semibold">{t("finance.lines")}</h3>
+        <table className="w-full min-w-[640px] text-sm">
+          <thead><tr className="border-b text-left text-xs text-slate-500"><th className="py-2">SKU</th><th className="py-2">{t("finance.quantity")}</th><th className="py-2">{t("finance.unitPrice")}</th><th className="py-2">{t("finance.tax")}</th><th className="py-2">{t("finance.amount")}</th></tr></thead>
+          <tbody>
+            {(data.lines || []).map((line: any) => (
+              <tr key={line.id} className="border-b border-slate-50"><td className="py-2">{line.sku} · {line.itemName}</td><td className="py-2">{Number(line.quantity)} {line.unit || ""}</td><td className="py-2">{money(line.unitPrice, data.currency, locale)}</td><td className="py-2">{money(line.enteredTaxAmount, data.currency, locale)}</td><td className="py-2">{money(line.totalAmount, data.currency, locale)}</td></tr>
+            ))}
+          </tbody>
+        </table>
       </Card>
-      {data.receivable && <Notice>{t("finance.noCollection")}</Notice>}
+
+      {receivable && (
+        <Card className="space-y-3 p-5" data-testid="customer-invoice-receivable">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-semibold">{t("finance.receivables")} · {receivable.obligationNumber || receivable.id}</h3>
+            <div className="flex items-center gap-2"><strong>{money(receivable.outstandingAmount, receivable.currency, locale)}</strong><StatusChip status={receivable.status} /></div>
+          </div>
+          <div className="text-xs text-slate-500">{t("finance.dueDate")} {formatCalendarDay(receivable.dueDate, locale)}</div>
+          <PaymentRecords kind="receivable" obligation={receivable} onDone={load} />
+        </Card>
+      )}
     </div>
   );
 }

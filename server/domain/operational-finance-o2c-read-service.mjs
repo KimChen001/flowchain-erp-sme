@@ -3,6 +3,33 @@ import { can } from "../auth/authorization-service.mjs";
 import { escapeLikePattern } from "../persistence/like-pattern.mjs";
 import { OperationalFinanceReadError } from "./operational-finance-read-service.mjs";
 import { financeFixed as fixed, financeUnits as units } from "./operational-finance-policy.mjs";
+import { paymentRecordsView } from "./payment-record-command-service.mjs";
+import { CUSTOMER_NAMESPACE } from "./master-data-commands.mjs";
+import { DEFAULT_TENANT_TIMEZONE, tenantCalendarDay } from "./tenant-calendar-day.mjs";
+
+// "Net 30", "net-30" and "NET30" name the same term; so do "Due on receipt"
+// and its code.
+const termKey = (value) => String(value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+// The next invoice number after the workspace's highest INV-<number>, or
+// INV-1001 for the first. Only a suggestion: the person can type another.
+export function nextInvoiceNumber(numbers) {
+  const highest = numbers.reduce((max, value) => {
+    const match = /^INV-(\d{1,9})$/i.exec(String(value ?? "").trim());
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 1000);
+  return `INV-${highest + 1}`;
+}
+
+// A customer's payment terms are recorded as text. They count when they name
+// one of the workspace's payment terms by code or name; otherwise the due
+// date is left to the person.
+export function customerPaymentTerm(text, terms) {
+  const key = termKey(text);
+  if (!key) return null;
+  const term = terms.find((row) => termKey(row.code) === key) || terms.find((row) => termKey(row.name) === key);
+  return term && term.days !== null && term.days !== undefined ? { code: term.code, name: term.name, days: term.days } : null;
+}
 
 const text = (value) => String(value ?? "").trim();
 const decimal = (value) =>
@@ -61,6 +88,9 @@ function invoiceActions(actor, capability, row) {
 function receivableActions(actor, capability, row) {
   if (!capability?.enabled) return [];
   const result = can({ actor, permission: "finance.receivable.record_external_reference", tenantId: actor.tenantId }) ? ["record_external_reference"] : [];
+  // A payment can be recorded until nothing is outstanding, but not while
+  // the customer disputes the invoice.
+  if (["open", "overdue", "partially_settled"].includes(row.status) && row.disputeStatus !== "open" && Number(row.outstandingAmount) > 0 && can({ actor, permission: "finance.receivable.record_payment", tenantId: actor.tenantId })) result.unshift("record_payment");
   if (["open", "overdue"].includes(row.status) && can({ actor, permission: "finance.receivable.dispute", tenantId: actor.tenantId })) result.unshift("dispute");
   if (row.disputeStatus === "open" && can({ actor, permission: "finance.receivable.resolve_dispute", tenantId: actor.tenantId })) result.unshift("resolve_dispute");
   return result;
@@ -85,7 +115,7 @@ function protectFinanceFields(model, actor) {
   const amountsVisible = can({ actor, permission: "finance.amounts.read", tenantId: actor.tenantId });
   const partnerVisible = can({ actor, permission: "finance.partner_snapshot.read", tenantId: actor.tenantId });
   const output = { ...model, fieldVisibility: { ...(model.fieldVisibility || {}) } };
-  for (const key of ["subtotalAmount", "enteredTaxAmount", "totalAmount", "originalAmount", "outstandingAmount", "approvedCreditAmount", "unitPrice", "lineAmount"]) if (key in output) { if (!amountsVisible) output[key] = null; output.fieldVisibility[key] = { visible: amountsVisible, reasonCode: amountsVisible ? null : "FIELD_PERMISSION_DENIED", permission: "finance.amounts.read" }; }
+  for (const key of ["subtotalAmount", "enteredTaxAmount", "totalAmount", "originalAmount", "outstandingAmount", "approvedCreditAmount", "paidAmount", "unitPrice", "lineAmount"]) if (key in output) { if (!amountsVisible) output[key] = null; output.fieldVisibility[key] = { visible: amountsVisible, reasonCode: amountsVisible ? null : "FIELD_PERMISSION_DENIED", permission: "finance.amounts.read" }; }
   for (const key of ["customerName", "customerNameSnapshot"]) if (key in output) { if (!partnerVisible) output[key] = null; output.fieldVisibility[key] = { visible: partnerVisible, reasonCode: partnerVisible ? null : "FIELD_PERMISSION_DENIED", permission: "finance.partner_snapshot.read" }; }
   return output;
 }
@@ -127,6 +157,9 @@ function receivableSummary(row, actor, capabilities) {
     originalAmount: decimal(row.originalAmount),
     outstandingAmount: decimal(row.outstandingAmount),
     approvedCreditAmount: decimal(row.approvedCreditAmount),
+    // What the customer paid so far: the original amount less approved
+    // credits and what is still outstanding.
+    paidAmount: fixed(units(row.originalAmount) - units(row.approvedCreditAmount || 0) - units(row.outstandingAmount)),
     currency: row.currency,
     dueDate: serial(row.dueDate),
     status: row.status,
@@ -181,11 +214,26 @@ function localDateNumber(date, timezone) {
   return Date.UTC(Number(value.year), Number(value.month) - 1, Number(value.day));
 }
 
+// A due date is a calendar day, stored at 00:00 UTC as the invoice form
+// writes it, so it is read as that UTC day. Read in the workspace timezone it
+// would fall a day early in the US, and an invoice due today would age by a
+// day. "Today" is the workspace's calendar day.
+function dueDayNumber(dueDate) {
+  const day = new Date(dueDate);
+  return Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate());
+}
+
 export function agingDays(dueDate, asOf, timezone) {
   return Math.floor(
-    (localDateNumber(asOf, timezone) - localDateNumber(dueDate, timezone)) /
-      86_400_000,
+    (localDateNumber(asOf, timezone) - dueDayNumber(dueDate)) / 86_400_000,
   );
+}
+
+// The first instant of the workspace's calendar day as a stored due date:
+// a receivable is overdue when its due day is before it, so one due today
+// is not overdue until the workspace's next day.
+export function overdueBefore(asOf, timezone = DEFAULT_TENANT_TIMEZONE) {
+  return new Date(`${tenantCalendarDay(asOf, timezone)}T00:00:00.000Z`);
 }
 
 export function agingBucket(days) {
@@ -196,12 +244,31 @@ export function agingBucket(days) {
   return "90_plus";
 }
 
+// An overdue receivable is past its due date with money still owed. The stored
+// status says "overdue" only after a dispute is resolved, so overdue is derived
+// from the due date instead. The landing count and the receivables list's
+// "overdue" filter both use this rule, so the count and the list agree.
+export function overdueReceivableWhere(asOf, timezone) {
+  return {
+    dueDate: { lt: overdueBefore(asOf, timezone) },
+    outstandingAmount: { gt: 0 },
+    status: { in: ["open", "partially_settled", "overdue"] },
+  };
+}
+
 export function createOperationalFinanceO2cReadService({
   prisma,
   capabilities = {},
   now = () => new Date(),
 } = {}) {
   if (!prisma) throw new Error("prisma is required");
+  const workspaceTimezone = async (tenantId) =>
+    (
+      await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { timezone: true },
+      })
+    )?.timezone || DEFAULT_TENANT_TIMEZONE;
 
   async function actor(context) {
     return resolveProvisionedActor(prisma, context?.identity || context);
@@ -260,7 +327,7 @@ export function createOperationalFinanceO2cReadService({
         salesOrder: true,
         shipment: true,
         lines: { orderBy: { lineNumber: "asc" } },
-        receivableObligation: true,
+        receivableObligation: { include: { paymentRecords: true } },
         creditNotes: {
           include: { returnPosting: true },
           orderBy: { createdAt: "desc" },
@@ -289,7 +356,13 @@ export function createOperationalFinanceO2cReadService({
         totalAmount: decimal(line.totalAmount),
       }, current)),
       receivable: row.receivableObligation && can({ actor: current, permission: "finance.receivable.read", tenantId: current.tenantId })
-        ? receivableSummary(row.receivableObligation, current, capabilities)
+        ? {
+            ...receivableSummary(row.receivableObligation, current, capabilities),
+            payments: paymentRecordsView(row.receivableObligation.paymentRecords, {
+              amountsVisible,
+              canRecord: Boolean(capabilities["receivable-obligation"]?.enabled) && can({ actor: current, permission: "finance.receivable.record_payment", tenantId: current.tenantId }),
+            }),
+          }
         : null,
       customerCreditNotes: (can({ actor: current, permission: "finance.customer_credit.read", tenantId: current.tenantId }) ? row.creditNotes : []).map((note) =>
         creditSummary(note, current, capabilities),
@@ -323,9 +396,14 @@ export function createOperationalFinanceO2cReadService({
     const current = await actor(context);
     assertRead(current, "finance.receivable.read");
     const paging = page(query);
+    const status = text(query.status);
     const where = {
       tenantId: current.tenantId,
-      ...(text(query.status) ? { status: text(query.status) } : {}),
+      ...(status === "overdue"
+        ? overdueReceivableWhere(now(), await workspaceTimezone(current.tenantId))
+        : status
+          ? { status }
+          : {}),
       ...(text(query.disputeStatus)
         ? { disputeStatus: text(query.disputeStatus) }
         : {}),
@@ -356,11 +434,7 @@ export function createOperationalFinanceO2cReadService({
     const current = await actor(context);
     assertRead(current, "finance.receivable.read");
     const amountsVisible = amountsVisibleFor(current);
-    const workspace = await prisma.tenant.findUnique({
-      where: { id: current.tenantId },
-      select: { timezone: true },
-    });
-    const timezone = workspace?.timezone || "America/New_York";
+    const timezone = await workspaceTimezone(current.tenantId);
     const asOf = text(query.asOf) ? new Date(text(query.asOf)) : now();
     if (Number.isNaN(asOf.getTime()))
       fail("AGING_AS_OF_INVALID", "asOf must be a valid date.", 422);
@@ -467,6 +541,13 @@ export function createOperationalFinanceO2cReadService({
     if (!["finance.customer_invoice.create", "finance.customer_credit.create"].some((permission) => can({ actor: current, permission, tenantId: current.tenantId })))
       return { postedShipments: [], customerInvoices: [], customerReturnPostings: [], capabilities };
     const amountsVisible = amountsVisibleFor(current);
+    const [tenant, customerRecords, paymentTerms, invoiceNumbers] = await Promise.all([
+      prisma.tenant.findUnique({ where: { id: current.tenantId }, select: { timezone: true } }),
+      prisma.runtimeRecord.findMany({ where: { tenantId: current.tenantId, namespace: CUSTOMER_NAMESPACE }, select: { payload: true }, take: 2000 }),
+      prisma.paymentTerm.findMany({ where: { tenantId: current.tenantId }, select: { code: true, name: true, days: true } }),
+      prisma.customerInvoice.findMany({ where: { tenantId: current.tenantId, invoiceNumber: { startsWith: "INV-" } }, select: { invoiceNumber: true } }),
+    ]);
+    const customerTerms = new Map(customerRecords.map((record) => [String(record.payload?.id ?? ""), customerPaymentTerm(record.payload?.paymentTerms, paymentTerms)]));
     const [shipments, invoices, returnPostings] = await Promise.all([
       prisma.shipmentDocument.findMany({
         where: {
@@ -510,6 +591,7 @@ export function createOperationalFinanceO2cReadService({
         salesOrderNumber: row.salesOrder.orderNumber,
         customerId: row.salesOrder.customerId,
         customerName: row.salesOrder.customerName,
+        customerPaymentTerm: customerTerms.get(String(row.salesOrder.customerId ?? "")) || null,
         currency: row.salesOrder.currency,
         lines: row.lines.map((line) => ({
           id: line.id,
@@ -525,6 +607,9 @@ export function createOperationalFinanceO2cReadService({
       customerInvoices: invoices.map((row) =>
         invoiceSummary(row, current, capabilities),
       ),
+      // The invoice date is the workspace's calendar day, not the browser's.
+      today: tenantCalendarDay(now(), tenant?.timezone || "America/New_York"),
+      suggestedInvoiceNumber: nextInvoiceNumber(invoiceNumbers.map((row) => row.invoiceNumber)),
       customerReturnPostings: returnPostings.map((row) => ({
         id: row.id,
         postingNumber: row.postingNumber,
@@ -545,6 +630,7 @@ export function createOperationalFinanceO2cReadService({
     const current = await actor(context);
     assertRead(current, "finance.overview.read");
     const asOf = now();
+    const timezone = await workspaceTimezone(current.tenantId);
     const [
       supplierInvoicesAwaitingMatch,
       matchExceptions,
@@ -560,7 +646,7 @@ export function createOperationalFinanceO2cReadService({
       customerInvoiceCurrencies,
     ] = await Promise.all([
       prisma.supplierInvoice.count({
-        where: { tenantId: current.tenantId, status: "submitted" },
+        where: { tenantId: current.tenantId, status: "submitted", relatedGrnId: { not: null } },
       }),
       prisma.financeMatchException.count({
         where: {
@@ -571,19 +657,14 @@ export function createOperationalFinanceO2cReadService({
       prisma.payableObligation.count({
         where: {
           tenantId: current.tenantId,
-          status: { in: ["approved", "export_ready", "held"] },
+          status: { in: ["approved", "export_ready", "held", "partially_settled"] },
         },
       }),
       prisma.customerInvoice.count({
         where: { tenantId: current.tenantId, status: "approved" },
       }),
       prisma.receivableObligation.count({
-        where: {
-          tenantId: current.tenantId,
-          dueDate: { lt: asOf },
-          outstandingAmount: { gt: 0 },
-          status: { in: ["open", "partially_settled", "overdue"] },
-        },
+        where: { tenantId: current.tenantId, ...overdueReceivableWhere(asOf, timezone) },
       }),
       prisma.receivableObligation.count({
         where: {

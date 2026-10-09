@@ -19,7 +19,7 @@ test('R202 linked record resolver maps business objects and disables unavailable
     'inventory',
     'srm:master',
     'procurement:receiving',
-    'procurement:invoices',
+    'procurement:bills',
     'inventory:movements',
     'inventory:exceptions',
   ]) {

@@ -18,6 +18,9 @@ export type AiFocusedPrimaryItem = {
   status: string;
   severity: AiResponseV2Severity;
   evidence: AiResponseV2EvidenceItem;
+  // The line's next step and the draft offered for it, when there is one.
+  nextStep: string;
+  draft: AiFocusedAction | null;
 };
 
 export type AiFocusedAction =
@@ -40,21 +43,12 @@ export type AiFocusedResponseModel = {
   followUps: Array<{ label: string; prompt: string; skillHint?: string }>;
 };
 
-const severityScore: Record<AiResponseV2Severity, number> = { risk: 400, warning: 300, info: 200, success: 100 };
-
 type Language = "en-US" | "zh-CN";
+const PRIMARY_LIMIT = 8;
 const focusedCopy = {
   "en-US": { rfqDraft: "Create RFQ draft", taskDraft: "Create task draft", prDraft: "Create purchase request draft", textDraft: "Prepare text draft", reason: "Review it against the current business status.", headline: "Business review complete", summary: "Review the priorities and suggested next steps." },
   "zh-CN": { rfqDraft: "创建正式 RFQ 草稿", taskDraft: "创建正式任务草稿", prDraft: "创建正式 PR 草稿", textDraft: "生成文本草稿", reason: "需要结合当前业务状态处理。", headline: "已完成业务分析", summary: "请查看重点事项和建议下一步。" },
 } as const;
-
-function priorityScore(item: AiResponseV2EvidenceItem) {
-  const text = `${item.status || ""} ${item.summary || ""} ${item.value ?? ""}`;
-  const urgency = /逾期|阻断|缺货|严重|高风险|待处理/i.test(text) ? 180 : /临期|差异|不足|缺少|关注/i.test(text) ? 90 : 0;
-  const numeric = Number(String(item.value ?? "").replace(/[^0-9.-]/g, ""));
-  const scale = Number.isFinite(numeric) && numeric > 0 ? Math.min(60, Math.log10(numeric + 1) * 10) : 0;
-  return severityScore[item.severity || "info"] + urgency + scale;
-}
 
 function answerMode(response: AiResponseV2): AiFocusedAnswerMode {
   const query = `${response.query || ""} ${response.intent || ""}`;
@@ -66,20 +60,35 @@ function answerMode(response: AiResponseV2): AiFocusedAnswerMode {
   return "diagnosis";
 }
 
-function actions(response: AiResponseV2, language: Language) {
+function draftAction(card: AiResponseV2ReviewCard, language: Language): AiFocusedAction {
+  const structured = ["purchase_request_draft", "rfq_draft", "task_draft"].includes(card.draftType || "");
+  // An order card names its SKU ("Open request: 12 pcs of LDM-001"), so
+  // several of them can be told apart.
+  const named = typeof card.autoOpen === "boolean" && card.allowedNextStep;
+  return {
+    kind: structured ? "structured_draft" : "text_draft",
+    label: named ? card.allowedNextStep : structured
+      ? card.draftType === "rfq_draft" ? focusedCopy[language].rfqDraft : card.draftType === "task_draft" ? focusedCopy[language].taskDraft : focusedCopy[language].prDraft
+      : card.allowedNextStep || focusedCopy[language].textDraft,
+    card,
+  };
+}
+
+// A draft belongs to the line it was offered on, else to the line about the
+// record it was drafted for.
+function draftForLine(item: AiResponseV2EvidenceItem, cards: AiResponseV2ReviewCard[], used: Set<AiResponseV2ReviewCard>) {
+  return cards.find((card) => !used.has(card) && card.lineEvidenceId === item.id)
+    || cards.find((card) => !used.has(card) && !card.lineEvidenceId && (card.originEvidence || []).some((origin) => origin.entityId === item.entityId && (!origin.entityType || origin.entityType === item.entityType)))
+    || null;
+}
+
+// Every answer is an entry point: drafts are offered whatever the question's
+// wording (owner decision 2, docs/ai-prefill-autocomplete-design.md). A draft
+// shown on its line is not repeated among the answer's actions.
+function actions(response: AiResponseV2, language: Language, onLines: Set<AiResponseV2ReviewCard>) {
   const navigation = (response.navigationLinks || []).filter((link) => Boolean(link.moduleId)).map<AiFocusedAction>((link) => ({ kind: "navigation", label: link.label, link }));
-  const drafts = (response.reviewCards || []).map<AiFocusedAction>((card) => {
-    const structured = ["purchase_request_draft", "rfq_draft", "task_draft"].includes(card.draftType || "");
-    return {
-      kind: structured ? "structured_draft" : "text_draft",
-      label: structured
-        ? card.draftType === "rfq_draft" ? focusedCopy[language].rfqDraft : card.draftType === "task_draft" ? focusedCopy[language].taskDraft : focusedCopy[language].prDraft
-        : card.allowedNextStep || focusedCopy[language].textDraft,
-      card,
-    };
-  });
-  const explicitDraftRequest = /草稿|draft|消息|备注|说明|新建|创建/i.test(`${response.query || ""} ${response.intent || ""}`);
-  return explicitDraftRequest ? [...drafts, ...navigation] : navigation;
+  const drafts = (response.reviewCards || []).filter((card) => !onLines.has(card)).map((card) => draftAction(card, language));
+  return [...drafts, ...navigation];
 }
 
 // The help answer ("Here is what I can help with"): it reads no records.
@@ -92,20 +101,32 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
   // A workspace skill answer always carries its own summary, in the answer
   // language; it is never filled with interface-language text.
   const answerCopy = focusedCopy[response.language === "zh-CN" || response.language === "en-US" ? response.language : language];
-  const impacts = (response.businessImpact || []).slice(0, 3);
-  // The server's rank, when it gives one, is the order; otherwise a heuristic.
+  // Every line the server lists (it caps them: 5 priorities, 8 records), so
+  // an answer titled "4 items need attention" shows four.
+  const impacts = (response.businessImpact || []).slice(0, PRIMARY_LIMIT);
+  // The server's rank, when it gives one, is the order; otherwise the server's
+  // own order (by date). The page never re-sorts by a severity or amount score.
   const ranked = (response.keyEvidence || []).every((item) => typeof item.rank === "number");
-  const evidence = [...(response.keyEvidence || [])].sort((a, b) => ranked ? (a.rank as number) - (b.rank as number) : priorityScore(b) - priorityScore(a));
-  const primaryItems = evidence.slice(0, 3).map((item, index) => ({
-    id: item.id || `${item.entityType}-${item.entityId}-${index}`,
-    title: item.entityLabel || item.label || item.entityId,
-    reason: item.summary || copy.reason,
-    impact: impacts[index]?.explanation || impacts[index]?.impact || "",
-    status: item.status || "",
-    severity: item.severity || impacts[index]?.severity || "info",
-    evidence: item,
-  }));
-  const availableActions = actions(response, language);
+  const evidence = ranked ? [...(response.keyEvidence || [])].sort((a, b) => (a.rank as number) - (b.rank as number)) : [...(response.keyEvidence || [])];
+  // A compound answer shows sections, not lines, so its drafts stay actions.
+  const lineCards = new Set<AiResponseV2ReviewCard>();
+  const compound = (response.sections || []).filter((section) => Boolean(section?.title)).length > 1;
+  const primaryItems = evidence.slice(0, PRIMARY_LIMIT).map((item, index) => {
+    const card = compound ? null : draftForLine(item, response.reviewCards || [], lineCards);
+    if (card) lineCards.add(card);
+    return {
+      id: item.id || `${item.entityType}-${item.entityId}-${index}`,
+      title: item.entityLabel || item.label || item.entityId,
+      reason: item.summary || copy.reason,
+      impact: impacts[index]?.explanation || impacts[index]?.impact || "",
+      status: item.status || "",
+      severity: item.severity || impacts[index]?.severity || "info",
+      evidence: item,
+      nextStep: item.nextStep || "",
+      draft: card ? draftAction(card, language) : null,
+    };
+  });
+  const availableActions = actions(response, language, lineCards);
   // The help answer has no records to show, so its suggestions are the answer:
   // all four of them. Any other answer offers two next questions.
   const followUps = (response.followUpSuggestions || [])
@@ -120,7 +141,7 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
     primaryItems,
     primaryAction: availableActions[0] || null,
     secondaryActions: availableActions.slice(1, 3),
-    evidence: evidence.slice(0, 5),
+    evidence: evidence.slice(0, PRIMARY_LIMIT),
     businessImpact: impacts,
     limitations: (response.dataLimitations || []).slice(0, 4),
     reviewDraft: response.reviewCards?.[0] || null,

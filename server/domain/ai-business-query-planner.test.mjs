@@ -39,6 +39,14 @@ test('generic supplier prompt clarifies instead of selecting the first supplier'
   assert.deepEqual(plan.scope.entityIds, [])
 })
 
+test('supplier bills, quotes and deliveries are not supplier names', () => {
+  for (const message of ['Are any supplier bills off?', 'Have the supplier quotes come back, and which are late?', 'Is any supplier delivery stuck at the dock?']) {
+    const plan = buildDeterministicBusinessQueryPlan({ message, suppliers })
+    assert.deepEqual(plan.scope.entityNames, [], message)
+    assert.equal(plan.ambiguities.some((ambiguity) => ambiguity.startsWith('supplier_not_found')), false, message)
+  }
+})
+
 test('unknown English supplier before Chinese business wording remains a not-found entity', () => {
   const plan = buildDeterministicBusinessQueryPlan({ message: '为什么 Supplier Missing 暂时不能付款？', suppliers })
   assert.equal(plan.clarificationNeeded, true)
@@ -169,4 +177,17 @@ test('a supplier code or name matches only as a whole phrase', () => {
   assert.deepEqual(shortScope('Which payments to HP are blocked?').entityIds, ['supplier-hp'])
   assert.deepEqual(shortScope('HP 的付款被阻断了吗？').entityIds, ['supplier-hp'])
   assert.notEqual(shortScope('Which supplier payments are due in March?').source, 'explicit')
+})
+
+test('time windows also give their workspace calendar days, both included', () => {
+  // 22:00 on Wednesday Oct 7 in New York is already Oct 8 in UTC.
+  const now = new Date('2026-10-08T02:00:00.000Z')
+  const days = (kind) => { const window = resolveBusinessTimeWindow(kind, { now, timezone: 'America/New_York' }); return [window.startDay, window.endDay] }
+  assert.deepEqual(days('today'), ['2026-10-07', '2026-10-07'])
+  assert.deepEqual(days('current_week'), ['2026-10-05', '2026-10-11'])
+  assert.deepEqual(days('next_7_days'), ['2026-10-07', '2026-10-13'])
+  assert.deepEqual(days('next_30_days'), ['2026-10-07', '2026-11-05'])
+  assert.deepEqual(days('month_end'), ['2026-10-07', '2026-10-31'])
+  assert.deepEqual(days('overdue'), [null, '2026-10-06'])
+  assert.deepEqual(days('all'), [null, null])
 })

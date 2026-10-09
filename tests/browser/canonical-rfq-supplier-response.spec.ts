@@ -43,6 +43,26 @@ async function quotationFor(page: Page, supplierName: string) {
   return page.getByTestId(/^rfq-quotation-/).filter({ hasText: supplierName });
 }
 
+test("the response editor shows the item's earlier PO prices beside the unit price and never fills it", async ({ page, request }) => {
+  await login(page, request);
+  const historyKeys: string[][] = [];
+  await page.route("**/api/procurement/price-history**", (route) => {
+    const keys = new URL(route.request().url()).searchParams.getAll("key");
+    historyKeys.push(keys);
+    return route.fulfill({ json: { timeZone: "America/New_York", priceLabel: "purchase_order_price", histories: keys.map((key) => ({
+      key, itemId: key.split("|")[0], unit: "pcs", unitSource: "entered", currency: key.split("|")[2], status: "found",
+      latest: { purchaseOrderId: "PO-0031", orderNumber: "PO-0031", lineId: "PO-0031-L1", supplierId: "s", supplierName: "Acme", unit: "pcs", currency: key.split("|")[2], unitPrice: "90.0000", orderedQuantity: "10.0000", date: "2026-09-14", dateSource: "issue_date", instant: "2026-09-14T15:00:00.000Z" },
+      earlier: [], average: null, otherCurrencies: [], otherUnits: [], unitNotRecordedCount: 0,
+    })) } });
+  });
+  await page.goto(`/app/procurement/rfq/${RFQ_ID}`);
+  await page.getByTestId(`rfq-response-action-${SUPPLIER_B}`).click();
+  const firstRow = page.getByTestId(`rfq-response-editor-line-${LINE_1}`);
+  await expect(page.getByTestId(`rfq-response-price-history-${LINE_1}`)).toContainText("上次采购订单价 CNY 90.00 / pcs · PO-0031 · 2026-09-14 · Acme");
+  await expect(firstRow.getByLabel(`单价 ${LINE_1}`)).toHaveValue("");
+  expect(historyKeys[0]).toContain(`LOCAL-DEMO-ITEM-001|pcs|CNY`);
+});
+
 test("planned Supplier progresses draft to submitted revisions with one idempotent retry", async ({ page, request }) => {
   await login(page, request);
   const issues = runtimeIssues(page);
@@ -63,6 +83,12 @@ test("planned Supplier progresses draft to submitted revisions with one idempote
   await expect(page.getByLabel("提交模式", { exact: true })).toHaveCount(0);
   await expect(page.getByTestId("rfq-supplier-response-editor")).toContainText("保存草稿不会记录为供应商已响应");
   await expect(page.getByTestId("rfq-supplier-response-editor")).toContainText("正式提交需要覆盖全部 RFQ 行项目");
+  // A first response starts from the RFQ's requested quantities, labelled as
+  // such; prices are never prefilled.
+  const firstRow = page.getByTestId(`rfq-response-editor-line-${LINE_1}`);
+  await expect(firstRow.getByLabel(`报价数量 ${LINE_1}`)).not.toHaveValue("");
+  await expect(page.getByTestId(`rfq-response-prefill-quantity-${LINE_1}`)).toHaveText("来自询价单");
+  await expect(firstRow.getByLabel(`单价 ${LINE_1}`)).toHaveValue("");
   await selectLine(page, LINE_1, "10.0000", "12.3456");
 
   let firstAttempt = true;

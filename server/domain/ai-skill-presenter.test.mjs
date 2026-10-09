@@ -63,13 +63,16 @@ test('today priorities states the report figures with tenant formatting', async 
   const { answer } = await answers()
   const english = answer('today_priorities', 'en-US')
   assert.equal(english.conclusion.title, '8 items need attention today (as of Sep 29, 2026)')
-  assert.equal(english.conclusion.summary, '4 open purchase orders, 2 overdue. Committed PO spend: €500.00 and $17,920.00. Committed supplier invoices: $7,381.50. 1 SKU is short against open sales orders: LDM-001.')
+  // The answer lists 5 of the 8 and says so; submitted supplier invoices are
+  // not work to do, so the figure stays in the metrics, not the sentence.
+  assert.equal(english.conclusion.summary, 'Showing the first 5 of 8, earliest date first. 4 open purchase orders, 2 overdue. Committed PO spend: €500.00 and $17,920.00. 1 SKU is short against open sales orders: LDM-001.')
+  assert.equal(answer('today_priorities', 'zh-CN').conclusion.summary.startsWith('按日期先列出 8 项中的 5 项。'), true)
   assert.deepEqual(english.metrics, { asOf: '2026-09-29', openPurchaseOrders: 4, overduePurchaseOrders: 2, committedSpend: [{ currency: 'EUR', amount: 500 }, { currency: 'USD', amount: 17920 }], committedInvoices: [{ currency: 'USD', amount: 7381.5 }], atRiskSkus: ['LDM-001'], atRiskSkuCount: 1 })
   // By date: the longest overdue first (PO-001 4 days, PO-008 2 days), then due
   // soonest (PO-002 in 4 days), then the oldest open problems. The undated
   // stock shortage (LDM-001) comes after every dated item.
   assert.deepEqual(english.keyEvidence.map((item) => item.entityLabel), ['PO-001', 'PO-008', 'PO-002', 'INV-001', 'GRN-002'])
-  assert.equal(english.keyEvidence[0].summary, '4 days past the promised date; 30 pcs still to receive from Acme Components.')
+  assert.equal(english.keyEvidence[0].summary, '4 days past the promised date (Sep 25, 2026); 30 pcs still to receive from Acme Components.')
   // Each line states the date it is ordered by.
   assert.equal(english.keyEvidence[3].summary, 'Invoice variance of $200.00 from Acme Components. Open 5 days, since Sep 24, 2026.')
   assert.equal(answer('today_priorities', 'zh-CN').keyEvidence[4].summary, '已收货，尚未过账到库存。已挂起 1 天（自 Sep 28, 2026）。')
@@ -95,16 +98,20 @@ test('a workspace with another locale and no currency formats values as stored',
 test('drafts are review-only cards for the top signals, and need purchasing edit access', async () => {
   const { answer } = await answers()
   const english = answer('prepare_action_draft', 'en-US')
-  assert.deepEqual(english.reviewCards.map((card) => [card.draftType, card.targetEntityId]), [['po_followup_draft', 'PO-001'], ['po_followup_draft', 'PO-008'], ['supplier_followup_draft', 'INV-001']])
+  // Acme's two overdue orders, PO-001 and PO-008, in one message; then the invoice.
+  assert.deepEqual(english.reviewCards.map((card) => [card.draftType, card.targetEntityId, card.payload.poIds || null]), [['po_followup_draft', 'SUP-001', ['PO-001', 'PO-008']], ['supplier_followup_draft', 'INV-001', null]])
   for (const card of english.reviewCards) {
     assert.equal(card.previewOnly, true)
     assert.equal(card.reviewRequired, true)
     assert.equal(card.requiresHumanReview, true)
     assert.equal(card.payload.language, 'en-US')
   }
-  assert.equal(english.reviewCards[0].payload.message, 'Please confirm a delivery date for the remaining 30 pcs of LDM-001 on PO-001.')
-  assert.equal(english.reviewCards[2].payload.message, 'Invoice INV-001 differs from the purchase order by $200.00. Please send a corrected invoice or the reason for the difference.')
-  assert.equal(answer('prepare_action_draft', 'zh-CN').reviewCards[0].payload.message, '请确认 PO-001 上 LDM-001 剩余 30 pcs 的交货日期。')
+  assert.match(english.reviewCards[0].payload.message, /^Please confirm delivery dates for these open lines:\n- PO-001 · LDM-001: 30 pcs still to deliver \(20 of 50 received\), promised .*\n- PO-008 · LDM-001: 40 pcs still to deliver, promised /m)
+  assert.equal(english.reviewCards[1].payload.message, 'Hello Acme Components,\n\nInvoice INV-001 differs from the purchase order by $200.00. Please send a corrected invoice or the reason for the difference.\n\nThank you.')
+  assert.equal(english.reviewCards[1].payload.subject, 'Invoice INV-001: difference from the purchase order')
+  assert.match(answer('prepare_action_draft', 'zh-CN').reviewCards[0].payload.message, /^- PO-001 · LDM-001：仍有 30 pcs 未交（已收 20\/50），承诺日期 /m)
+  // Each suggested field says where it came from: templates filled from the record.
+  assert.deepEqual(Object.fromEntries(Object.entries(english.reviewCards[0].prefill).map(([field, entry]) => [field, `${entry.source}:${entry.ref}`])), { subject: 'template:draft.po_followup.subject_orders', message: 'template:draft.po_followup.message' })
   // A read-only viewer gets links and a limitation, no cards.
   const viewer = (await answers({ roleKey: 'read-only-viewer' })).answer('prepare_action_draft', 'en-US')
   assert.deepEqual(viewer.reviewCards, [])
@@ -147,4 +154,15 @@ test('the refusal offers a draft and never acts', async () => {
   assert.deepEqual(refusal.reviewCards, [])
   const zh = answer('capability_overview', 'zh-CN', { refusal: true })
   assert.match(zh.conclusion.summary, /我不能批准、付款、发送/)
+})
+
+test('one open purchase order is singular, and a name ending in a period ends the sentence once', async () => {
+  const { aiSkillCountText, aiSkillText } = await import('./ai-skill-copy.mjs')
+  // The 2026-10-08 walkthrough: "1 open purchase orders" and "from Acme Valve Co..".
+  assert.equal(aiSkillCountText('metrics.no_overdue', 1, 'en-US', { open: '1', overdue: '0' }), '1 open purchase order; it is not overdue.')
+  assert.equal(aiSkillCountText('metrics.open_pos', 1, 'en-US', { open: '1', overdue: '1' }), '1 open purchase order, and it is overdue.')
+  assert.equal(aiSkillCountText('metrics.no_overdue', 3, 'en-US', { open: '3', overdue: '0' }), '3 open purchase orders; none are overdue.')
+  assert.equal(aiSkillText('metrics.committed_spend', 'en-US', { amounts: 'Acme Valve Co.' }), 'Committed PO spend: Acme Valve Co.')
+  assert.equal(aiSkillText('metrics.committed_spend', 'en-US', { amounts: '$5.00' }), 'Committed PO spend: $5.00.')
+  assert.equal(aiSkillText('metrics.committed_spend', 'zh-CN', { amounts: 'Acme Valve Co.' }), '已承诺采购金额：Acme Valve Co.。')
 })

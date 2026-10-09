@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { aiSkillRoutingCases } from '../../tests/ai-evals/skills/cases.mjs'
-import { detectAiActionRequest, routeSkill } from './ai-skill-router.mjs'
+import { aiSkillOrderRequest, detectAiActionRequest, routeSkill } from './ai-skill-router.mjs'
 
 const outcome = (route) => route === null ? null : route.refusal ? 'refusal' : route.capability ? 'capability' : route.skillId
 
@@ -11,6 +11,7 @@ test('every routing case reaches its skill, refusal or no skill', () => {
   for (const item of aiSkillRoutingCases) {
     const route = routeSkill({ message: item.prompt, skillHint: item.skillHint, focusTarget: item.focusTarget })
     if (outcome(route) !== item.expected) failures.push(`${item.id}: expected ${item.expected}, got ${outcome(route)}`)
+    else if ((route?.mode || undefined) !== item.mode) failures.push(`${item.id}: expected mode ${item.mode}, got ${route?.mode}`)
     else if (item.focus) assert.deepEqual(route.focus, item.focus, item.id)
   }
   assert.deepEqual(failures, [])
@@ -51,8 +52,29 @@ test('the action detector refuses instructions but not questions about them', ()
   ]) assert.equal(detectAiActionRequest(prompt), false, prompt)
   // A draft request that mentions sending is a draft, not a refusal.
   assert.equal(routeSkill({ message: 'Prepare a draft I can send to Acme' }).skillId, 'prepare_action_draft')
+  // A message to write, in Chinese as in English, is a draft; sending one is refused.
+  assert.equal(routeSkill({ message: '准备一封询问部分交货的邮件' }).skillId, 'prepare_action_draft')
+  assert.equal(routeSkill({ message: '请查询 PO-9999 并直接发送催货邮件' }).refusal, true)
+  assert.equal(routeSkill({ message: 'Prepare follow-up drafts for our late orders' }).skillId, 'prepare_action_draft')
   // A focus of an unsupported type is dropped rather than passed through.
   assert.equal(routeSkill({ message: 'What should I handle first today?', focusTarget: { entityType: 'tenant', entityId: 'x' } }).focus, null)
+})
+
+test('an order request says whether it asks for advice or says anyway, and the quantity it names', () => {
+  assert.deepEqual(aiSkillOrderRequest('can you help me generate the order?'), { advice: false, anyway: false, quantity: null })
+  assert.deepEqual(aiSkillOrderRequest('Should I reorder LDM-001?'), { advice: true, anyway: false, quantity: null })
+  assert.deepEqual(aiSkillOrderRequest('要不要给 LDM-001 补货？'), { advice: true, anyway: false, quantity: null })
+  assert.deepEqual(aiSkillOrderRequest('Place an order for LDM-001 anyway'), { advice: false, anyway: true, quantity: null })
+  assert.deepEqual(aiSkillOrderRequest('仍然帮我下单'), { advice: false, anyway: true, quantity: null })
+  // A record number is never read as the quantity.
+  assert.equal(aiSkillOrderRequest('order 1,200 more LDM-004').quantity, 1200)
+  assert.equal(aiSkillOrderRequest('create a PO for LDM-001').quantity, null)
+  assert.equal(aiSkillOrderRequest('Raise a PR for 200 pcs of LDM-003').quantity, 200)
+  assert.equal(aiSkillOrderRequest('帮我生成 50 个 LDM-001 的采购申请').quantity, 50)
+  assert.equal(aiSkillOrderRequest('What is the reorder point of LDM-001?'), null)
+  // A record the question names, or the page's when it points at it, is the focus.
+  assert.deepEqual(routeSkill({ message: 'Reorder this SKU', focusTarget: { entityType: 'item', entityId: 'ITEM-001' } }).focus, { entityType: 'item', entityId: 'ITEM-001' })
+  assert.deepEqual(routeSkill({ message: 'Create a purchase order for LDM-001' }).ids, ['LDM-001'])
 })
 
 test('the page record is the focus only when the question points at it', () => {
@@ -82,4 +104,14 @@ test('an open question about what is going on gets today\'s priorities', () => {
   }
   // "News" is still a question about the outside world.
   assert.equal(routeSkill({ message: 'Any news today?' }).outOfDomain, true)
+})
+
+test('the open problems chip and its earlier wording both reach the open problems list', () => {
+  for (const message of ['What is at risk right now?', '现在有哪些风险？', 'Which items have the highest risk?', '哪些事项风险最高？']) {
+    const route = routeSkill({ message })
+    assert.equal(route.skillId, 'highest_risk_items', message)
+    assert.equal(route.focus, null, message)
+  }
+  // On a record's page the workspace chip stays about the workspace.
+  assert.equal(routeSkill({ message: 'What is at risk right now?', focusTarget: { entityType: 'purchase_order', entityId: 'PO-016' } }).focus, null)
 })

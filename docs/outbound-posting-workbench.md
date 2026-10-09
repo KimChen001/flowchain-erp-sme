@@ -57,7 +57,7 @@ Posting requires a confirmation dialog, expected shipment version, stable intent
 
 ## 13. Reversal UX
 
-Only posted, in-scope shipments can be reversed. Reason and preview are required. Movement-integrity mismatches return `SHIPMENT_REVERSAL_NOT_SAFE`; no force-bypass action exists. Original and reversal movements remain visible.
+Only posted, in-scope shipments can be reversed. Reason and preview are required. Movement-integrity mismatches return `SHIPMENT_REVERSAL_NOT_SAFE`, and a shipment that a submitted or later customer invoice bills returns `SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE`; no force-bypass action exists. Original and reversal movements remain visible.
 
 ## 14. Evidence
 
@@ -105,7 +105,7 @@ Use Node 24, run `npm ci`, set database mode and a PostgreSQL `DATABASE_URL`, de
 
 ## 25. Known limitations
 
-New Sales Order UI currently creates one line. Shipment Draft UI currently creates one explicitly selected line and one explicitly selected Reservation Allocation per action; the API supports multiple lines and allocations. The workbench no longer silently uses the first eligible record. There is no FX conversion, costing/COGS, picking, lot/serial allocation, negative inventory, cancelling an order that has shipped goods, customer master overhaul, or automated AI transaction execution.
+New Sales Order UI creates one or more lines for a customer chosen from Customers. Shipment Draft UI currently creates one explicitly selected line and one explicitly selected Reservation Allocation per action; the API supports multiple lines and allocations. The workbench no longer silently uses the first eligible record. There is no FX conversion, costing/COGS, picking, lot/serial allocation, negative inventory, cancelling an order that has shipped goods, customer master overhaul, or automated AI transaction execution.
 
 ## 26. Order list
 
@@ -119,7 +119,7 @@ Phase 4 may introduce controlled picking and richer multi-line entry only after 
 
 Draft revision is an explicit whole-document replacement contract. Clients must send `revisionMode: "replace_all"`, the complete current `expectedLineIds` set, and the complete replacement line set. The server compares the sorted expected IDs with the authoritative order lines before deleting anything. Missing, extra, stale, or foreign line IDs return `SALES_ORDER_DRAFT_REVISION_INCOMPLETE`; the existing draft remains unchanged. Idempotent replay does not repeat line deletion or creation.
 
-The current narrow editor remains available only for one-line drafts. Multi-line drafts return `canEditDraft: false` with `MULTI_LINE_DRAFT_EDITOR_NOT_AVAILABLE`, explain why editing is blocked, and never submit only the first line.
+The draft editor edits the customer (chosen from Customers), the promised date and every line, and always submits all of them as one `replace_all` revision, so a multi-line draft can be edited without dropping lines. An order created for a chosen customer stores its `customerId` and the name recorded in Customers.
 
 ## 29. Capability-disabled entry behavior
 

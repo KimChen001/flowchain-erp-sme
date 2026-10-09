@@ -10,7 +10,7 @@ Phase 4C consolidates workspace configuration on the existing PostgreSQL `Tenant
 - `Tenant.timezone`: governed IANA timezone
 - `Tenant.locale`: regional formatting (`zh-CN` or `en-US`)
 - `Tenant.defaultLanguage`: default interface language (`zh-CN` or `en-US`)
-- `Tenant.operationalSettings`: numbering, lightweight review, module, AI-governance, and advanced settings
+- `Tenant.operationalSettings`: numbering, lightweight review, module, AI-governance, advanced, and documents settings. The documents section (document language, letterhead, purchase order and invoice templates) is in effect: the PO and invoice documents print it. Saving it needs `settings.workspace.manage` and replaces the whole section.
 - `User.languagePreference`: `null` to follow the workspace, otherwise `zh-CN` or `en-US`
 
 The effective interface language is resolved as user preference, then workspace default, then `zh-CN`. Locale and timezone never select the interface language.

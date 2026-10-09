@@ -6,7 +6,7 @@ import { getPrismaClient } from "../persistence/prisma-client.mjs";
 
 const error = (ctx, caught) => {
   if (caught instanceof InternalSettlementError || caught instanceof PilotIdentityError || caught?.name === "AttachmentStorageError" || caught?.name === "AuthorizationError") ctx.send(ctx.res, caught.status || 400, { code: caught.code || "ATTACHMENT_FAILED", message: caught.message, ...(caught.details ? { details: caught.details } : {}) });
-  else ctx.send(ctx.res, 500, { code: "ATTACHMENT_FAILED", message: "The attachment operation could not be completed." });
+  else { ctx.reportError?.(caught); ctx.send(ctx.res, 500, { code: "ATTACHMENT_FAILED", message: "The attachment operation could not be completed." }); }
 };
 
 export async function handleAttachmentRoute(ctx) {

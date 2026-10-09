@@ -23,6 +23,7 @@ model Tenant {
   updatedAt              DateTime  @updatedAt
 
   knowledgeDocuments                    AiKnowledgeDocument[]
+  aiUsageMonthly                        AiUsageMonthly[]
   users                                 User[]
   suppliers                             Supplier[]
   items                                 Item[]
@@ -51,6 +52,8 @@ model Tenant {
   customerInvoices                      CustomerInvoice[]
   receivableObligations                 ReceivableObligation[]
   customerCreditNotes                   CustomerCreditNote[]
+  paymentRecords                        PaymentRecord[]
+  supplierInvoiceDuplicateReviews       SupplierInvoiceDuplicateReview[]
   cashbookAccounts                      CashbookAccount[]
   settlementDocuments                   SettlementDocument[]
   settlementAllocations                 SettlementAllocation[]
@@ -545,6 +548,9 @@ model User {
   // When role assignments were first set (legacy backfill or an administrator).
   // Once set, User.role never grants roles again.
   rolesAssignedAt    DateTime?
+  // Email me when a document waits for my approval (Settings > Profile). The
+  // email names only the document type and number and links to it.
+  approvalEmailsEnabled Boolean @default(true)
   version            Int       @default(0)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -1267,6 +1273,11 @@ model PurchaseOrder {
   receivingBaseStatus String?
   version             Int       @default(0)
   metadata            Json?
+  // When the PO was issued to the supplier: written once by the Issue action
+  // and never changed (a database trigger refuses a change). Null means the
+  // issue date was not recorded (POs issued before it was kept, or received
+  // without being issued).
+  issuedAt            DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
@@ -1275,6 +1286,7 @@ model PurchaseOrder {
 
   @@index([tenantId, status])
   @@index([tenantId, expectedDate])
+  @@index([tenantId, issuedAt])
 }
 
 model PurchaseOrderLine {
@@ -1290,9 +1302,10 @@ model PurchaseOrderLine {
   unitPrice        Decimal? @db.Decimal(18, 4)
   amount           Decimal? @db.Decimal(18, 4)
   metadata         Json?
-  // The date the supplier first promised once the PO was issued. Set once and
-  // never changed (a database trigger refuses a change); null means the
-  // original promise was not recorded. The current expected date stays in
+  // The date the supplier first promised, recorded when the PO is approved (or
+  // issued, for a line dated after approval). Set once and never changed (a
+  // database trigger refuses a change); null means the original promise was
+  // not recorded. The current expected date stays in
   // metadata.promisedDate, falling back to PurchaseOrder.expectedDate.
   originalPromisedDate DateTime?
 
@@ -1300,6 +1313,7 @@ model PurchaseOrderLine {
   promiseRevisions PurchaseOrderPromiseRevision[]
 
   @@index([purchaseOrderId])
+  @@index([itemId])
 }
 
 // One row for every change to a line's promised date after the PO is issued.
@@ -1416,16 +1430,42 @@ model SupplierInvoice {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  tenant              Tenant                  @relation(fields: [tenantId], references: [id])
-  lines               SupplierInvoiceLine[]
-  matchRuns           ThreeWayMatch[]
-  matchExceptions     FinanceMatchException[]
-  payableObligation   PayableObligation?
-  supplierCreditMemos SupplierCreditMemo[]
+  tenant                  Tenant                           @relation(fields: [tenantId], references: [id])
+  lines                   SupplierInvoiceLine[]
+  matchRuns               ThreeWayMatch[]
+  matchExceptions         FinanceMatchException[]
+  payableObligation       PayableObligation?
+  supplierCreditMemos     SupplierCreditMemo[]
+  duplicateReviews        SupplierInvoiceDuplicateReview[] @relation("SupplierInvoiceDuplicateReviews")
+  duplicateReviewsAsOther SupplierInvoiceDuplicateReview[] @relation("SupplierInvoiceDuplicateReviewsAsOther")
 
   @@index([tenantId, status])
   @@index([tenantId, relatedPoId])
   @@index([tenantId, supplierId, invoiceNumber])
+  @@index([tenantId, supplierId, currency, invoiceDate])
+}
+
+// A duplicate flag dismissed by the approver of supplierInvoiceId, with the
+// reason and the basis it was given on (both bills' normalized number,
+// currency, total and day). Rows are kept as history; one whose basis no
+// longer holds is shown as no longer applying.
+model SupplierInvoiceDuplicateReview {
+  id                String   @id
+  tenantId          String
+  supplierInvoiceId String
+  otherInvoiceId    String
+  kind              String
+  basis             Json
+  reason            String
+  dismissedById     String
+  dismissedAt       DateTime @default(now())
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  supplierInvoice SupplierInvoice @relation("SupplierInvoiceDuplicateReviews", fields: [supplierInvoiceId], references: [id], onDelete: Restrict)
+  otherInvoice    SupplierInvoice @relation("SupplierInvoiceDuplicateReviewsAsOther", fields: [otherInvoiceId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, supplierInvoiceId])
+  @@index([otherInvoiceId])
 }
 
 model SupplierInvoiceLine {
@@ -1582,6 +1622,7 @@ model PayableObligation {
   supplierInvoice       SupplierInvoice              @relation(fields: [supplierInvoiceId], references: [id], onDelete: Restrict)
   settlementAllocations SettlementAllocation[]
   advanceApplications   AdvanceApplicationDocument[]
+  paymentRecords        PaymentRecord[]
 
   @@unique([tenantId, obligationNumber])
   @@unique([tenantId, id])
@@ -1744,12 +1785,49 @@ model ReceivableObligation {
   customerInvoice       CustomerInvoice              @relation(fields: [customerInvoiceId], references: [id], onDelete: Restrict)
   settlementAllocations SettlementAllocation[]
   advanceApplications   AdvanceApplicationDocument[]
+  paymentRecords        PaymentRecord[]
 
   @@unique([tenantId, obligationNumber])
   @@unique([tenantId, id])
   @@index([tenantId, status])
   @@index([tenantId, dueDate])
   @@index([tenantId, currency])
+}
+
+// A payment someone made or received outside FlowChain, recorded against one
+// bill to pay or one receivable. FlowChain never moves money: the record only
+// lowers what is outstanding. A wrong record is voided with a reason, never
+// edited or deleted (docs/bills-invoices-and-accounting-handoff.md, step 2).
+model PaymentRecord {
+  id                     String    @id
+  tenantId               String
+  obligationType         String
+  payableObligationId    String?
+  receivableObligationId String?
+  paymentDate            DateTime
+  amount                 Decimal   @db.Decimal(18, 4)
+  currency               String
+  method                 String
+  reference              String?
+  note                   String?
+  status                 String    @default("recorded")
+  recordedById           String
+  voidedAt               DateTime?
+  voidedById             String?
+  voidReason             String?
+  version                Int       @default(0)
+  metadata               Json?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  tenant               Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  payableObligation    PayableObligation?    @relation(fields: [tenantId, payableObligationId], references: [tenantId, id], onDelete: Restrict)
+  receivableObligation ReceivableObligation? @relation(fields: [tenantId, receivableObligationId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, payableObligationId])
+  @@index([tenantId, receivableObligationId])
+  @@index([tenantId, paymentDate])
 }
 
 model CashbookAccount {
@@ -2911,7 +2989,7 @@ model InventoryAdjustmentDocument {
 model InventoryAdjustmentLine {
   id                 String  @id
   adjustmentId       String
-  inventoryBalanceId String
+  inventoryBalanceId String?
   itemId             String?
   sku                String
   itemName           String?
@@ -3415,4 +3493,20 @@ model AiKnowledgeChunk {
   document AiKnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   @@unique([documentId, position])
   @@index([embeddingModel, embeddingDimensions])
+}
+
+// Model calls per workspace and calendar month (UTC, YYYY-MM), for the AI
+// spend cap (server/domain/ai-usage-meter.mjs). costMicros is millionths of a
+// US dollar at the configured token prices.
+model AiUsageMonthly {
+  tenantId    String
+  month       String
+  calls       Int      @default(0)
+  inputUnits  Int      @default(0)
+  outputUnits Int      @default(0)
+  costMicros  Int      @default(0)
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, month])
 }

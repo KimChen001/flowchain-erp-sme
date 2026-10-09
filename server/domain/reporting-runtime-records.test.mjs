@@ -52,3 +52,29 @@ test('received and rejected POs are not open; draft and cancelled sales do not i
   assert.deepEqual(sales.details.map(row => row.status), ['draft', 'cancelled', 'shortage_risk']);
   assert.equal(buildRuntimeInventoryAllocation(context).availability[0].shortage, 5);
 });
+
+test('report pages describe their scope in customer-facing terms', async () => {
+  const { dateRangeLabel } = await import('../../src/modules/reports/reportWorkbook.ts');
+  const { analyticsCopy } = await import('../../src/modules/reports/analyticsCopy.ts');
+  const context = {
+    items: [{ sku: 'A', itemName: 'Valve', unit: 'pcs' }], inventoryItems: [{ sku: 'A', onHandQuantity: 4, reservedQuantity: 0, unit: 'pcs' }],
+    purchaseOrders: [], salesOrders: [], suppliers: [], supplierInvoices: [], dataLimitations: ['warehouse_runtime_not_connected', 'bin_runtime_not_connected', 'receipt_runtime_has_no_records'],
+  };
+  const inventory = buildRuntimeGovernedReport(context, { subject: 'inventory' });
+  // No date range and no company: nothing to show as "— — —".
+  assert.deepEqual([inventory.dataScope.from, inventory.dataScope.to, inventory.dataScope.company], ['', '', null]);
+  const english = value => analyticsCopy(value, 'en-US');
+  assert.equal(dateRangeLabel('', '', english), 'All dates');
+  assert.equal(dateRangeLabel('2026-09-01', '', english), 'From 2026-09-01');
+  assert.equal(dateRangeLabel('', '2026-09-30', english), 'Through 2026-09-30');
+  assert.equal(dateRangeLabel('2026-09-01', '2026-09-30', english), '2026-09-01 — 2026-09-30');
+  assert.equal(dateRangeLabel('', '', value => analyticsCopy(value, 'zh-CN')), '全部日期');
+  // Inventory rows name the item and its unit; the SKU is the business ID, and the risk column says so.
+  assert.deepEqual(inventory.details[0], { id: 'A', itemName: 'Valve', unit: 'pcs', quantity: 4, reserved: 0, available: 4, shortage: 0, availableToPromise: 4, stockStatus: 'ok', status: 'low' });
+  assert.deepEqual(inventory.columnDefinitions.filter(column => ['id', 'status'].includes(column.key)).map(column => column.label), ['SKU', 'Risk']);
+  // Warehouse and bin notes belong on the inventory dashboard only.
+  assert.ok(inventory.warnings.includes('warehouse_runtime_not_connected'));
+  const procurement = buildRuntimeGovernedReport(context, { subject: 'procurement' });
+  assert.ok(!procurement.warnings.some(code => ['warehouse_runtime_not_connected', 'bin_runtime_not_connected'].includes(code)));
+  assert.ok(procurement.warnings.includes('receipt_runtime_has_no_records'));
+});

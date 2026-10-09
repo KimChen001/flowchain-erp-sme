@@ -6,6 +6,7 @@ import { getPrismaClient } from "../persistence/prisma-client.mjs";
 
 function sendError(ctx, error) {
   if (error instanceof MobileOperationsError || error instanceof ReceivingCommandError || error instanceof PilotIdentityError || error?.name === "AuthorizationError" || error?.code) { ctx.send(ctx.res, error.status || 400, { code: error.code || "MOBILE_OPERATIONS_FAILED", message: error.message, ...(error.details ? { details: error.details } : {}) }); return; }
+  ctx.reportError?.(error);
   ctx.send(ctx.res, 500, { code: "MOBILE_OPERATIONS_FAILED", message: "Mobile operation could not be completed." });
 }
 

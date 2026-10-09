@@ -65,6 +65,11 @@ function lineModel(line, visibleReservations, partialScope) {
     remainingToFulfill: partialScope ? null : fixed(ordered - fulfilled),
     quantityScope: partialScope ? "visible_warehouses_only" : "full",
     unit: line.unit,
+    // A line without a price cannot be invoiced, so the page shows it.
+    unitPrice:
+      line.unitPrice === null || line.unitPrice === undefined
+        ? null
+        : fixed(units(line.unitPrice)),
     version: line.version,
   };
 }
@@ -507,8 +512,7 @@ export function createOutboundWorkbenchReadService({
       canEditDraft:
         lifecycleEnabled &&
         permission(actor, "sales_order.revise") &&
-        order.workflowStatus === "draft" &&
-        order.lines.length === 1,
+        order.workflowStatus === "draft",
       canConfirm:
         lifecycleEnabled &&
         permission(actor, "sales_order.submit") &&
@@ -546,10 +550,6 @@ export function createOutboundWorkbenchReadService({
       blockingReasonCodes: [],
       primaryAction: null,
     };
-    if (order.workflowStatus === "draft" && order.lines.length > 1)
-      availableActions.blockingReasonCodes.push(
-        "MULTI_LINE_DRAFT_EDITOR_NOT_AVAILABLE",
-      );
     if (
       !lifecycleEnabled ||
       !reservationEnabled ||

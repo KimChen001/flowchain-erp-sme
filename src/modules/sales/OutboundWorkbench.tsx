@@ -12,12 +12,15 @@ import { ApiError, apiJson } from "../../lib/api-client";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { outboundEnglish } from "./outboundCopy";
+import { outboundPreviewSentences, type OutboundPreviewLookup } from "./outboundPreviewText";
 import { formatQuantity } from "../../lib/format";
+import { movementTypeLabel } from "../../i18n/statusLabels";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
+import { CreateInvoiceAction } from "../../components/business/BillingEntryActions";
 import {
   tableMinSmClass,
   tableScrollClass,
@@ -50,6 +53,7 @@ type CancellationPreview = {
 type Order = {
   id: string;
   orderNumber: string;
+  customerId?: string | null;
   customerName: string;
   promisedDate?: string | null;
   currency: string;
@@ -74,6 +78,7 @@ type Line = {
   remainingToReserve: string | null;
   remainingToFulfill: string | null;
   unit: string;
+  unitPrice?: string | null;
   version: number;
 };
 type Balance = {
@@ -90,6 +95,7 @@ type Balance = {
 type Reservation = {
   id: string;
   salesOrderLineId: string;
+  sku?: string;
   warehouseId: string;
   location: string;
   reservedQuantity: string;
@@ -146,6 +152,7 @@ type Workbench = {
     sku: string;
     itemName?: string | null;
     warehouseId?: string;
+    location?: string;
     quantityIn: string;
     quantityOut: string;
   }>;
@@ -191,6 +198,7 @@ type Preview = {
   allowed: boolean;
   blockingIssues: Array<{ code: string; message: string }>;
   warnings: Array<{ code: string; message: string }>;
+  normalizedPlan?: Record<string, unknown> | null;
   balanceImpacts: Array<Record<string, string>>;
   reservationImpacts: Array<Record<string, string>>;
   salesOrderLineImpacts: Array<Record<string, string>>;
@@ -255,8 +263,40 @@ const pretty: Record<string, string> = {
   matched: "一致",
   mismatch: "不一致",
   unavailable: "不可用",
+  // Reservation and shipment allocation statuses.
+  active: "有效",
+  allocated: "已分配",
+  partially_allocated: "部分分配",
+  partially_consumed: "部分消耗",
+  consumed: "已消耗",
+  released: "已释放",
+  deallocated: "已取消分配",
 };
 const status = (value: string) => copy(pretty[value] || value);
+// One status for a shipment: cancelled, else posted or reversed, else where
+// the unposted draft stands. Both stored statuses stay as they are.
+const shipmentStatus = (shipment: { workflowStatus: string; postingStatus: string }) =>
+  shipment.workflowStatus === "cancelled"
+    ? "cancelled"
+    : shipment.postingStatus && shipment.postingStatus !== "unposted"
+      ? shipment.postingStatus
+      : shipment.workflowStatus;
+// A long stored id (a reservation or movement UUID) in a short form for a
+// table column. The full id is never changed.
+const shortId = (id?: string | null) => {
+  const value = String(id || "");
+  return value.length > 12 ? `${value.slice(0, 8)}…` : value || "—";
+};
+const hasQuantity = (value?: string | null) => Number(value) > 0;
+// A warehouse by its name and its location, e.g. "Main Warehouse / A-01".
+function usePlace() {
+  const warehouseName = useWarehouseNames();
+  return useCallback(
+    (warehouseId?: string | null, location?: string | null) =>
+      `${warehouseName(warehouseId) || "—"} / ${location || copy("默认库位")}`,
+    [warehouseName],
+  );
+}
 const reconciliationRuleLabels: Record<string, string> = {
   "available = onHand - reserved": "可用量 = 在库量 - 预留量",
   "reserved + fulfilled <= ordered": "预留量 + 已履约量不超过订购量",
@@ -269,6 +309,9 @@ function useStamp() {
   return (value?: string | null) =>
     value && !Number.isNaN(new Date(value).getTime()) ? formatDateTime(value) : value || "—";
 }
+// Shown both as a preview blocking issue and as a command error.
+const SHIPMENT_INVOICE_BLOCK =
+  "已有客户发票对此发货开票，不能再冲销。如需收回货物，请使用客户退货和贷项通知单。";
 // The message for an error, kept in its source form and translated where it
 // is shown, so it follows a language change made after the error occurred.
 function message(error: unknown) {
@@ -279,28 +322,36 @@ function errorMessage(error: unknown) {
   if (error.status === 401) return "登录已失效，请重新登录后读取销售订单。";
   if (error.status === 403) return "当前账号没有读取销售订单的权限。";
   if (error.status >= 500) return "销售订单服务暂时不可用，请稍后重试。";
-  const map: Record<string, string> = {
-    PERMISSION_DENIED: "当前角色只能查看，不能执行此操作。",
-    WAREHOUSE_SCOPE_DENIED: "当前账号没有相关仓库权限。",
-    SALES_ORDER_ON_HOLD: "销售订单当前已暂停，不能执行发货过账。请先恢复订单。",
-    OUTBOUND_CAPABILITY_NOT_AVAILABLE:
-      "当前销售订单写入能力未启用，页面保持只读。",
-    SALES_ORDER_VERSION_CONFLICT: "订单已发生变化，请刷新后重新预览。",
-    SHIPMENT_VERSION_CONFLICT: "发货单已变化，请刷新后重新预览。",
-    OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT:
-      "库存已发生变化，请刷新后重新预览。",
-    IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD:
-      "操作内容已改变，请重新开始该操作。",
-    COMMAND_EXECUTION_IN_PROGRESS: "该操作正在处理中，请稍后重试。",
-    RESERVATION_INSUFFICIENT_AVAILABLE: "可用库存不足，请调整数量。",
-    SHIPMENT_REVERSAL_NOT_SAFE: "历史出库事实不一致，系统已阻止冲销。",
-    SHIPMENT_NUMBER_CONFLICT: "发货单号已存在，请更换号码。",
-    SALES_ORDER_NUMBER_CONFLICT: "销售订单号已存在，请更换号码。",
-    SALES_ORDER_INVALID_STATE: "当前订单状态不允许此操作。",
-    SALES_ORDER_ITEM_INVALID: "订单物料与当前工作区主数据不一致。",
-  };
-  return map[error.code || ""] || error.message;
+  return codeMessages[error.code || ""] || error.message;
 }
+// A preview's blocking issue in the interface language when its code is known;
+// otherwise the server's message as sent.
+const issueMessage = (issue: { code: string; message: string }) =>
+  codeMessages[issue.code] ? copy(codeMessages[issue.code]) : issue.message;
+const codeMessages: Record<string, string> = {
+  PERMISSION_DENIED: "当前角色只能查看，不能执行此操作。",
+  WAREHOUSE_SCOPE_DENIED: "当前账号没有相关仓库权限。",
+  SALES_ORDER_ON_HOLD: "销售订单当前已暂停，不能执行发货过账。请先恢复订单。",
+  OUTBOUND_CAPABILITY_NOT_AVAILABLE:
+    "当前销售订单写入能力未启用，页面保持只读。",
+  SALES_ORDER_VERSION_CONFLICT: "订单已发生变化，请刷新后重新预览。",
+  SHIPMENT_VERSION_CONFLICT: "发货单已变化，请刷新后重新预览。",
+  OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT:
+    "库存已发生变化，请刷新后重新预览。",
+  IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD:
+    "操作内容已改变，请重新开始该操作。",
+  COMMAND_EXECUTION_IN_PROGRESS: "该操作正在处理中，请稍后重试。",
+  RESERVATION_INSUFFICIENT_AVAILABLE: "可用库存不足，请调整数量。",
+  RESERVATION_OVER_ORDERED: "数量超过该订单行尚待预留的数量。",
+  SHIPMENT_RESERVATION_INSUFFICIENT: "预留数量不足，请调整数量。",
+  SHIPMENT_OVER_FULFILLMENT: "数量超过该订单行尚待发货的数量。",
+  SHIPMENT_REVERSAL_NOT_SAFE: "历史出库事实不一致，系统已阻止冲销。",
+  SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE: SHIPMENT_INVOICE_BLOCK,
+  SHIPMENT_NUMBER_CONFLICT: "发货单号已存在，请更换号码。",
+  SALES_ORDER_NUMBER_CONFLICT: "销售订单号已存在，请更换号码。",
+  SALES_ORDER_INVALID_STATE: "当前订单状态不允许此操作。",
+  SALES_ORDER_ITEM_INVALID: "订单物料与当前工作区主数据不一致。",
+};
 const Section = ({
   title,
   children,
@@ -652,47 +703,228 @@ function Filter({
   );
 }
 
+type EntryItem = { id: string; sku: string; name: string; unit?: string };
+type EntryCustomer = {
+  id: string;
+  code: string;
+  name: string;
+  currency: string | null;
+  paymentTerms: string | null;
+};
+type EntryData = {
+  items: EntryItem[];
+  customers?: EntryCustomer[];
+  capabilities: { salesOrderLifecycle: LifecycleCapability };
+};
+type DraftLine = { key: string; itemId: string; quantity: string; unitPrice: string };
+
+const draftLine = (itemId = "", quantity = "1", unitPrice = ""): DraftLine => ({
+  key: key(),
+  itemId,
+  quantity,
+  unitPrice,
+});
+// Every line needs an item, a quantity above 0 and a unit price (0 for free
+// goods), because an order without prices could never be invoiced.
+const linesReady = (lines: DraftLine[]) =>
+  lines.length > 0 &&
+  lines.every((line) => line.itemId && Number(line.quantity) > 0 && line.unitPrice.trim() !== "");
+const linesPayload = (lines: DraftLine[]) =>
+  lines.map(({ itemId, quantity, unitPrice }) => ({
+    itemId,
+    quantity: quantity.trim(),
+    unitPrice: unitPrice.trim(),
+  }));
+// A promised date is a calendar day. It is stored at 12:00 UTC like the other
+// business dates, so it reads as the same day in every timezone.
+const promisedDay = (value?: string | null) => (value ? String(value).slice(0, 10) : "");
+const promisedValue = (day: string) => (day ? `${day}T12:00:00.000Z` : null);
+
+// The customer an order is for, chosen from Customers. A new workspace with no
+// customers is sent to add or import them first.
+function CustomerField({
+  customers,
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  customers: EntryCustomer[];
+  value: string;
+  onChange: (customer: EntryCustomer | null) => void;
+  ariaLabel: string;
+}) {
+  const chosen = customers.find((customer) => customer.id === value);
+  if (!customers.length)
+    return (
+      <div className="text-sm" data-testid="sales-order-no-customers">
+        {say("Customer", "客户")}
+        <p className="mt-1 rounded-lg bg-amber-50 p-2 text-amber-800">
+          {say(
+            "No customers yet. Add or import your customers, then place the order.",
+            "还没有客户。请先新增或导入客户，再录入订单。",
+          )}{" "}
+          <Link className="underline" to="/app/master-data/customers">
+            {say("Customers", "客户")}
+          </Link>
+          {" · "}
+          <Link className="underline" to="/app/master-data/import">
+            {say("Import data", "导入数据")}
+          </Link>
+        </p>
+      </div>
+    );
+  return (
+    <label className="text-sm">
+      {say("Customer", "客户")}
+      <select
+        aria-label={ariaLabel}
+        className="mt-1 w-full rounded-lg border p-2"
+        value={value}
+        onChange={(e) => onChange(customers.find((customer) => customer.id === e.target.value) || null)}
+      >
+        <option value="">{say("Choose a customer", "选择客户")}</option>
+        {customers.map((customer) => (
+          <option key={customer.id} value={customer.id}>
+            {customer.name} · {customer.code}
+          </option>
+        ))}
+      </select>
+      {chosen?.paymentTerms && (
+        <span className="mt-1 block text-xs text-slate-500" data-testid="sales-order-customer-terms">
+          {say(`Payment terms: ${chosen.paymentTerms}`, `付款条款：${chosen.paymentTerms}`)}
+        </span>
+      )}
+    </label>
+  );
+}
+
+// The order's lines: item, quantity and unit price, one row each.
+function OrderLinesField({
+  items,
+  lines,
+  currency,
+  onChange,
+}: {
+  items: EntryItem[];
+  lines: DraftLine[];
+  currency: string;
+  onChange: (lines: DraftLine[]) => void;
+}) {
+  const update = (lineKey: string, change: Partial<DraftLine>) =>
+    onChange(lines.map((line) => (line.key === lineKey ? { ...line, ...change } : line)));
+  return (
+    <div className="space-y-3" data-testid="sales-order-lines">
+      {lines.map((line, index) => {
+        const unit = items.find((item) => item.id === line.itemId)?.unit;
+        const n = String(index + 1);
+        return (
+          <div
+            key={line.key}
+            className="grid gap-2 rounded-lg border p-3 md:grid-cols-[2fr_1fr_1fr_auto]"
+            data-testid={`sales-order-line-${n}`}
+          >
+            <label className="text-sm">
+              {say("Item", "物料")}
+              <select
+                aria-label={say(`Item, line ${n}`, `物料（第 ${n} 行）`)}
+                className="mt-1 w-full rounded-lg border p-2"
+                value={line.itemId}
+                onChange={(e) => update(line.key, { itemId: e.target.value })}
+              >
+                <option value="">{say("Choose an item", "选择物料")}</option>
+                {items.map((item) => (
+                  <option value={item.id} key={item.id}>
+                    {item.sku} · {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              {unit ? say(`Quantity (${unit})`, `数量（${unit}）`) : say("Quantity", "数量")}
+              <input
+                aria-label={say(`Quantity, line ${n}`, `数量（第 ${n} 行）`)}
+                inputMode="decimal"
+                className="mt-1 w-full rounded-lg border p-2"
+                value={line.quantity}
+                onChange={(e) => update(line.key, { quantity: e.target.value })}
+              />
+            </label>
+            <label className="text-sm">
+              {currency ? say(`Unit price (${currency})`, `单价（${currency}）`) : say("Unit price", "单价")}
+              <input
+                aria-label={say(`Unit price, line ${n}`, `单价（第 ${n} 行）`)}
+                inputMode="decimal"
+                className="mt-1 w-full rounded-lg border p-2"
+                value={line.unitPrice}
+                onChange={(e) => update(line.key, { unitPrice: e.target.value })}
+              />
+            </label>
+            <div className="flex items-end">
+              <Button
+                tone="secondary"
+                ariaLabel={say(`Remove line ${n}`, `删除第 ${n} 行`)}
+                disabled={lines.length === 1}
+                onClick={() => onChange(lines.filter((other) => other.key !== line.key))}
+              >
+                {say("Remove", "删除")}
+              </Button>
+            </div>
+          </div>
+        );
+      })}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button tone="secondary" testId="sales-order-add-line" onClick={() => onChange([...lines, draftLine()])}>
+          {say("Add line", "添加行")}
+        </Button>
+        <span className="text-xs text-slate-500">
+          {say(
+            "A unit price is needed to invoice the customer. Enter 0 for free goods.",
+            "开客户发票需要单价。赠品请填 0。",
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function OrderEntry() {
   const nav = useNavigate(),
-    [items, setItems] = useState<
-      Array<{ id: string; sku: string; name: string; unit?: string }>
-    >([]),
+    [entry, setEntry] = useState<EntryData | null>(null),
     [orderNumber, setOrderNumber] = useState(`SO-${Date.now()}`),
-    [customerName, setCustomerName] = useState(""),
+    [customerId, setCustomerId] = useState(""),
     [currency, setCurrency] = useState(""),
-    [itemId, setItemId] = useState(""),
-    [quantity, setQuantity] = useState("1.0000"),
-    [capability, setCapability] = useState<LifecycleCapability | null>(null),
+    [promised, setPromised] = useState(""),
+    [lines, setLines] = useState<DraftLine[]>(() => [draftLine()]),
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");
   const intent = useRef({ fingerprint: "", idempotencyKey: "" }),
     inFlight = useRef(false);
   const workspace = useWorkspaceCurrency();
-  // Prefill the workspace currency; the user can still type another ISO code.
+  const customers = entry?.customers || [];
+  // Prefill the workspace currency; a chosen customer's recorded currency
+  // replaces it, and the user can still type another ISO code.
   useEffect(() => {
     if (workspace.currency) setCurrency((current) => current || workspace.currency);
   }, [workspace.currency]);
   useEffect(() => {
-    apiJson<{
-      items: typeof items;
-      capabilities: { salesOrderLifecycle: LifecycleCapability };
-    }>("/api/sales/order-entry-data")
-      .then((x) => {
-        setCapability(x.capabilities.salesOrderLifecycle);
-        setItems(x.items);
-        setItemId(x.items[0]?.id || "");
-      })
+    apiJson<EntryData>("/api/sales/order-entry-data")
+      .then((x) => setEntry(x))
       .catch((e) => setError(message(e)));
   }, []);
+  function chooseCustomer(customer: EntryCustomer | null) {
+    setCustomerId(customer?.id || "");
+    if (customer?.currency) setCurrency(customer.currency);
+  }
   async function save() {
     if (inFlight.current) return;
-    const fingerprint = JSON.stringify({
+    const body = {
       orderNumber,
-      customerName,
+      customerId,
       currency,
-      itemId,
-      quantity,
-    });
+      promisedDate: promisedValue(promised),
+      lines: linesPayload(lines),
+    };
+    const fingerprint = JSON.stringify(body);
     if (intent.current.fingerprint !== fingerprint)
       intent.current = { fingerprint, idempotencyKey: key() };
     inFlight.current = true;
@@ -701,13 +933,7 @@ function OrderEntry() {
     try {
       const result = await apiJson<{ order: Order }>("/api/sales/orders", {
         method: "POST",
-        body: JSON.stringify({
-          orderNumber,
-          customerName,
-          currency,
-          idempotencyKey: intent.current.idempotencyKey,
-          lines: [{ itemId, quantity }],
-        }),
+        body: JSON.stringify({ ...body, idempotencyKey: intent.current.idempotencyKey }),
       });
       intent.current = { fingerprint: "", idempotencyKey: "" };
       nav(`/app/sales/orders/${encodeURIComponent(result.order.id)}`);
@@ -718,10 +944,11 @@ function OrderEntry() {
       setSaving(false);
     }
   }
-  if (!capability)
+  const capability = entry?.capabilities.salesOrderLifecycle;
+  if (!entry || !capability)
     return (
       <div className="p-10 text-center" data-testid="sales-order-entry-loading">
-        {error || "正在读取销售订单能力…"}
+        {error ? copy(error) : say("Loading…", "正在读取…")}
       </div>
     );
   if (!capability.enabled)
@@ -737,10 +964,7 @@ function OrderEntry() {
       </div>
     );
   return (
-    <div
-      className="mx-auto max-w-3xl space-y-4"
-      data-testid="sales-order-entry"
-    >
+    <div className="mx-auto max-w-3xl space-y-4" data-testid="sales-order-entry">
       <div>
         <h1 className="text-xl font-semibold">{copy("新建销售订单草稿")}</h1>
         <p className="text-sm text-slate-500">
@@ -754,6 +978,12 @@ function OrderEntry() {
       )}
       <Section title={copy("订单信息")}>
         <div className="grid gap-3 md:grid-cols-2">
+          <CustomerField
+            customers={customers}
+            value={customerId}
+            onChange={chooseCustomer}
+            ariaLabel={say("Customer", "客户")}
+          />
           <label className="text-sm">
             {copy("订单号")}
             <input
@@ -761,15 +991,6 @@ function OrderEntry() {
               className="mt-1 w-full rounded-lg border p-2"
               value={orderNumber}
               onChange={(e) => setOrderNumber(e.target.value)}
-            />
-          </label>
-          <label className="text-sm">
-            {copy("客户")}
-            <input
-              aria-label={copy("客户")}
-              className="mt-1 w-full rounded-lg border p-2"
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
             />
           </label>
           <label className="text-sm">
@@ -788,42 +1009,28 @@ function OrderEntry() {
             )}
           </label>
           <label className="text-sm">
-            {copy("物料")}
-            <select
-              aria-label={copy("物料")}
-              className="mt-1 w-full rounded-lg border p-2"
-              value={itemId}
-              onChange={(e) => setItemId(e.target.value)}
-            >
-              {items.map((x) => (
-                <option value={x.id} key={x.id}>
-                  {x.sku} · {x.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-sm">
-            {copy("数量")}
+            {say("Promised date (optional)", "承诺交期（可选）")}
             <input
-              aria-label={copy("数量")}
+              type="date"
+              aria-label={say("Promised date", "承诺交期")}
               className="mt-1 w-full rounded-lg border p-2"
-              value={quantity}
-              onChange={(e) => setQuantity(e.target.value)}
+              value={promised}
+              onChange={(e) => setPromised(e.target.value)}
             />
           </label>
         </div>
+      </Section>
+      <Section title={say("Lines", "订单行")}>
+        <OrderLinesField items={entry.items} lines={lines} currency={currency} onChange={setLines} />
         <div className="mt-4 flex gap-2">
           <Button
             testId="create-sales-order"
-            disabled={saving || !itemId || !customerName || !currency.trim()}
+            disabled={saving || !customerId || !currency.trim() || !linesReady(lines)}
             onClick={() => void save()}
           >
             {saving ? copy("保存中…") : copy("保存草稿")}
           </Button>
-          <Link
-            className="rounded-lg bg-slate-100 px-3 py-2 text-sm"
-            to="/app/sales/orders"
-          >
+          <Link className="rounded-lg bg-slate-100 px-3 py-2 text-sm" to="/app/sales/orders">
             {copy("取消")}
           </Link>
         </div>
@@ -834,6 +1041,7 @@ function OrderEntry() {
 
 function OrderDetail({ id }: { id: string }) {
   const warehouseName = useWarehouseNames();
+  const place = usePlace();
   const stamp = useStamp();
   const [data, setData] = useState<Workbench | null>(null),
     [error, setError] = useState(""),
@@ -847,8 +1055,10 @@ function OrderDetail({ id }: { id: string }) {
     [quantity, setQuantity] = useState("1.0000"),
     [reason, setReason] = useState(() => copy("业务调整")),
     [shipmentNumber, setShipmentNumber] = useState(`SHIP-${Date.now()}`),
-    [editCustomer, setEditCustomer] = useState(""),
-    [editQuantity, setEditQuantity] = useState("1.0000"),
+    [editCustomerId, setEditCustomerId] = useState(""),
+    [editPromised, setEditPromised] = useState(""),
+    [editLines, setEditLines] = useState<DraftLine[]>([]),
+    [editEntry, setEditEntry] = useState<EntryData | null>(null),
     [cancelReason, setCancelReason] = useState(""),
     [cancelPreview, setCancelPreview] = useState<CancellationPreview | null>(null),
     [saving, setSaving] = useState(false);
@@ -889,9 +1099,56 @@ function OrderDetail({ id }: { id: string }) {
     setError("");
     if (next === "edit" && data) {
       setSelectedLineId(data.lines[0]?.id || "");
-      setEditCustomer(data.order.customerName);
-      setEditQuantity(data.lines[0]?.orderedQuantity || "1.0000");
+      setEditCustomerId(data.order.customerId || "");
+      setEditPromised(promisedDay(data.order.promisedDate));
+      setEditLines(data.lines.map((line) => draftLine(line.itemId, line.orderedQuantity, line.unitPrice ?? "")));
+      apiJson<EntryData>("/api/sales/order-entry-data")
+        .then(setEditEntry)
+        .catch((e) => setError(message(e)));
     }
+    // With only one order line, or one reservation to release, it is chosen.
+    if ((next === "reserve" || next === "shipment") && data?.lines.length === 1)
+      chooseLine(data.lines[0].id, next);
+    if (next === "release" && data) {
+      const open = data.reservations.filter((row) => hasQuantity(row.allocatableQuantity));
+      if (open.length === 1) chooseReservation(open[0].id);
+    }
+  }
+  // Choosing a line picks its only usable balance (to reserve) or its only
+  // open reservation (to ship), and fills in the quantity the line still needs.
+  function chooseLine(lineId: string, forIntent = intent) {
+    setSelectedLineId(lineId);
+    setSelectedBalanceId("");
+    setSelectedReservationId("");
+    setPreview(null);
+    setIntentKey(key());
+    const line = data?.lines.find((row) => row.id === lineId);
+    if (!data || !line) return;
+    if (forIntent === "reserve") {
+      setQuantity(hasQuantity(line.remainingToReserve) ? line.remainingToReserve! : "1.0000");
+      const usable =
+        data.availability
+          .find((row) => row.salesOrderLineId === lineId)
+          ?.balances.filter((row) => row.selectable) || [];
+      if (usable.length === 1) setSelectedBalanceId(usable[0].id);
+    } else if (forIntent === "shipment") {
+      const open = data.reservations.filter(
+        (row) => row.salesOrderLineId === lineId && hasQuantity(row.allocatableQuantity),
+      );
+      if (open.length === 1) {
+        setSelectedReservationId(open[0].id);
+        setQuantity(open[0].allocatableQuantity);
+      } else setQuantity(hasQuantity(line.remainingToFulfill) ? line.remainingToFulfill! : "1.0000");
+    }
+  }
+  // A reservation's quantity still free to ship or release.
+  function chooseReservation(reservationId: string) {
+    setSelectedReservationId(reservationId);
+    setPreview(null);
+    setIntentKey(key());
+    const reservation = data?.reservations.find((row) => row.id === reservationId);
+    if (reservation && hasQuantity(reservation.allocatableQuantity))
+      setQuantity(reservation.allocatableQuantity);
   }
   // Cancelling: the server's plan first, then the command with the same reason.
   async function previewCancellation() {
@@ -947,7 +1204,7 @@ function OrderDetail({ id }: { id: string }) {
     }
   }
   async function reviseDraft() {
-    if (!data || !selectedLine || inFlight.current) return;
+    if (!data || inFlight.current) return;
     inFlight.current = true;
     setSaving(true);
     try {
@@ -958,12 +1215,14 @@ function OrderDetail({ id }: { id: string }) {
           idempotencyKey: intentKey,
           revisionMode: "replace_all",
           expectedLineIds: data.lines.map((line) => line.id),
+          // An order placed before customers were chosen keeps its name
+          // until someone picks the customer.
           header: {
-            customerName: editCustomer,
+            ...(editCustomerId ? { customerId: editCustomerId } : { customerName: data.order.customerName }),
             currency: data.order.currency,
-            promisedDate: data.order.promisedDate,
+            promisedDate: promisedValue(editPromised),
           },
-          lines: [{ itemId: selectedLine.itemId, quantity: editQuantity }],
+          lines: linesPayload(editLines),
         }),
       });
       setIntent("");
@@ -1112,6 +1371,54 @@ function OrderDetail({ id }: { id: string }) {
     balanceOptions =
       data.availability.find((row) => row.salesOrderLineId === selectedLineId)
         ?.balances || [];
+  const reservationFacts = (reservationId: string) => {
+    const reservation = data.reservations.find((row) => row.id === reservationId);
+    if (!reservation) return undefined;
+    const line = data.lines.find((row) => row.id === reservation.salesOrderLineId);
+    return {
+      warehouseId: reservation.warehouseId,
+      location: reservation.location,
+      sku: reservation.sku || line?.sku,
+      unit: line?.unit,
+    };
+  };
+  const previewLookup: OutboundPreviewLookup = {
+    place,
+    reservation: reservationFacts,
+    line: (lineId) => data.lines.find((row) => row.id === lineId),
+    unit: (sku) => data.lines.find((row) => row.sku === sku)?.unit,
+  };
+  const knownWarehouses = new Set(
+    [
+      ...data.reservations.map((row) => row.warehouseId),
+      ...data.movements.map((row) => row.warehouseId),
+      ...data.availability.flatMap((row) => row.balances.map((balance) => balance.warehouseId)),
+    ].filter(Boolean) as string[],
+  );
+  const timelinePart = (part: string) => {
+    const reservation = reservationFacts(part);
+    if (reservation) return place(reservation.warehouseId, reservation.location);
+    return knownWarehouses.has(part) ? warehouseName(part) : undefined;
+  };
+  const lineOptionText = (x: Line) =>
+    `${x.sku} · ${x.itemName} · ${say(
+      "Ordered {o} / Reserved {r} / Shipped {f} / To reserve {p}",
+      "订购 {o} / 预留 {r} / 履约 {f} / 待预留 {p}",
+    )
+      .replace("{o}", formatQuantity(x.orderedQuantity))
+      .replace("{r}", formatQuantity(x.reservedQuantity))
+      .replace("{f}", formatQuantity(x.fulfilledQuantity))
+      .replace("{p}", x.remainingToReserve == null ? copy("受限") : formatQuantity(x.remainingToReserve))}`;
+  const reservationOptionText = (x: Reservation) =>
+    `${data.lines.length > 1 && x.sku ? `${x.sku} · ` : ""}${place(x.warehouseId, x.location)} · ${say(
+      "Reserved {r} / Allocated {a} / Used {c} / Released {l} / Available {v}",
+      "预留 {r} / 已分配 {a} / 已消耗 {c} / 已释放 {l} / 可分配 {v}",
+    )
+      .replace("{r}", formatQuantity(x.reservedQuantity))
+      .replace("{a}", formatQuantity(x.allocatedQuantity))
+      .replace("{c}", formatQuantity(x.consumedQuantity))
+      .replace("{l}", formatQuantity(x.releasedQuantity))
+      .replace("{v}", formatQuantity(x.allocatableQuantity))}`;
   return (
     <div className="space-y-4" data-testid="outbound-order-workbench">
       {error && (
@@ -1125,13 +1432,6 @@ function OrderDetail({ id }: { id: string }) {
           className="rounded-lg bg-amber-50 p-3 text-amber-800"
         >
           {copy("当前页面仅显示您有权查看的仓库数据，部分库存或履约事实已隐藏。")}
-        </div>
-      )}
-      {(a.blockingReasonCodes as string[] | undefined)?.includes(
-        "MULTI_LINE_DRAFT_EDITOR_NOT_AVAILABLE",
-      ) && (
-        <div role="status" className="rounded-lg bg-amber-50 p-3 text-amber-800">
-          {copy("当前订单包含多条订单行。为避免不完整覆盖，窄版界面暂不支持编辑该草稿。")}
         </div>
       )}
       {((a.blockingReasonCodes as string[]) || []).includes(
@@ -1149,8 +1449,8 @@ function OrderDetail({ id }: { id: string }) {
           <div>
             <h1 className="text-xl font-semibold">{data.order.orderNumber}</h1>
             <p className="mt-1 text-sm text-slate-500">
-              {data.order.customerName} · {data.order.currency} · v
-              {data.order.version} · {stamp(data.order.updatedAt)}
+              {/* The order version is an internal edit counter, so it is not shown. */}
+              {data.order.customerName} · {data.order.currency} · {stamp(data.order.updatedAt)}
             </p>
             <div className="mt-2 flex gap-2">
               <Badge value={data.order.workflowStatus} />
@@ -1162,6 +1462,7 @@ function OrderDetail({ id }: { id: string }) {
             {a.canEditDraft && (
               <Button
                 tone="secondary"
+                testId="open-edit"
                 disabled={saving}
                 onClick={() => start("edit")}
               >
@@ -1216,6 +1517,10 @@ function OrderDetail({ id }: { id: string }) {
               >
                 {copy("创建发货草稿")}
               </Button>
+            )}
+            {/* An invoice covers shipped goods, so it waits for a posted shipment. */}
+            {data.shipments.some((shipment) => shipment.postingStatus === "posted") && (
+              <CreateInvoiceAction salesOrderId={id} />
             )}
             <Button tone="secondary" onClick={() => void refresh()} ariaLabel="刷新销售订单">
               <RefreshCw size={15} />
@@ -1285,6 +1590,14 @@ function OrderDetail({ id }: { id: string }) {
                       <div className="text-xs text-slate-500">
                         {line.itemName}
                       </div>
+                      <div
+                        className={`text-xs ${line.unitPrice == null ? "text-amber-700" : "text-slate-500"}`}
+                        data-testid="sales-order-line-price"
+                      >
+                        {line.unitPrice == null
+                          ? say("No unit price, cannot be invoiced", "未定价，无法开票")
+                          : `${say("Unit price", "单价")} ${formatQuantity(line.unitPrice)} ${data.order.currency}`}
+                      </div>
                     </td>
                     {[
                       line.orderedQuantity,
@@ -1326,14 +1639,14 @@ function OrderDetail({ id }: { id: string }) {
       <Section id="reservations" title={copy("预留记录")}>
         <Table
           rows={data.reservations.map((x) => [
-            x.id,
-            x.warehouseId,
-            x.location,
-            x.reservedQuantity,
-            x.allocatedQuantity,
-            x.consumedQuantity,
-            x.releasedQuantity,
-            x.allocatableQuantity,
+            shortId(x.id),
+            warehouseName(x.warehouseId),
+            x.location || copy("默认库位"),
+            formatQuantity(x.reservedQuantity),
+            formatQuantity(x.allocatedQuantity),
+            formatQuantity(x.consumedQuantity),
+            formatQuantity(x.releasedQuantity),
+            formatQuantity(x.allocatableQuantity),
             status(x.status),
           ])}
           headers={[
@@ -1359,9 +1672,7 @@ function OrderDetail({ id }: { id: string }) {
               key={x.id}
             >
               <span>{x.shipmentNumber}</span>
-              <span>
-                {status(x.workflowStatus)} · {status(x.postingStatus)}
-              </span>
+              <span>{status(shipmentStatus(x))}</span>
             </Link>
           ))}
           {!data.shipments.length && (
@@ -1372,18 +1683,18 @@ function OrderDetail({ id }: { id: string }) {
       <Section id="movements" title={copy("库存流水")}>
         <Table
           rows={data.movements.map((x) => [
-            x.id,
+            shortId(x.id),
             x.sku,
-            x.warehouseId,
-            x.quantityIn,
-            x.quantityOut,
-            status(x.movementType),
+            warehouseName(x.warehouseId),
+            formatQuantity(x.quantityIn),
+            formatQuantity(x.quantityOut),
+            movementTypeLabel(x.movementType, activeLanguage),
           ])}
           headers={["流水 ID", "SKU", "仓库", "入", "出", "类型"]}
         />
       </Section>
       <Section id="evidence" title={copy("订单证据与时间线")}>
-        <Timeline rows={data.evidence} />
+        <Timeline rows={data.evidence} resolve={timelinePart} />
       </Section>
       <Section id="reconciliation" title={copy("履约一致性检查")}>
         <div className="mb-2 flex items-center gap-2">
@@ -1413,12 +1724,12 @@ function OrderDetail({ id }: { id: string }) {
             intent === "cancel"
               ? say("Cancel sales order", "取消销售订单")
               : intent === "edit"
-              ? "编辑销售订单草稿"
+              ? copy("编辑销售订单草稿")
               : intent === "reserve"
-                ? "预留库存"
+                ? say("Reserve inventory", "预留库存")
                 : intent === "release"
-                  ? "释放预留"
-                  : "创建发货草稿"
+                  ? say("Release reservation", "释放预留")
+                  : say("Create delivery draft", "创建发货草稿")
           }
           onClose={() => {
             setIntent("");
@@ -1466,33 +1777,56 @@ function OrderDetail({ id }: { id: string }) {
             </div>
           ) : intent === "edit" ? (
             <>
-              <label className="text-sm">
-                {copy("客户")}
-                <input
-                  aria-label={copy("编辑客户")}
-                  className="mt-1 w-full rounded-lg border p-2"
-                  value={editCustomer}
-                  onChange={(e) => {
-                    setEditCustomer(e.target.value);
-                    setIntentKey(key());
-                  }}
-                />
-              </label>
-              <label className="mt-3 block text-sm">
-                {copy("订购数量")}
-                <input
-                  aria-label={copy("编辑数量")}
-                  className="mt-1 w-full rounded-lg border p-2"
-                  value={editQuantity}
-                  onChange={(e) => {
-                    setEditQuantity(e.target.value);
-                    setIntentKey(key());
-                  }}
-                />
-              </label>
+              {!editEntry ? (
+                <div className="text-sm text-slate-500">{say("Loading…", "正在读取…")}</div>
+              ) : (
+                <div className="space-y-3" data-testid="sales-order-edit-form">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <CustomerField
+                      customers={editEntry.customers || []}
+                      value={editCustomerId}
+                      onChange={(customer) => {
+                        setEditCustomerId(customer?.id || "");
+                        setIntentKey(key());
+                      }}
+                      ariaLabel={say("Edit customer", "编辑客户")}
+                    />
+                    <label className="text-sm">
+                      {say("Promised date (optional)", "承诺交期（可选）")}
+                      <input
+                        type="date"
+                        aria-label={say("Edit promised date", "编辑承诺交期")}
+                        className="mt-1 w-full rounded-lg border p-2"
+                        value={editPromised}
+                        onChange={(e) => {
+                          setEditPromised(e.target.value);
+                          setIntentKey(key());
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {!editCustomerId && (
+                    <p className="text-xs text-amber-700">
+                      {say(
+                        `This order was entered for "${data.order.customerName}". Choose the customer from Customers to link it.`,
+                        `该订单录入的客户为“${data.order.customerName}”。请从客户中选择以建立关联。`,
+                      )}
+                    </p>
+                  )}
+                  <OrderLinesField
+                    items={editEntry.items}
+                    lines={editLines}
+                    currency={data.order.currency}
+                    onChange={(next) => {
+                      setEditLines(next);
+                      setIntentKey(key());
+                    }}
+                  />
+                </div>
+              )}
               <div className="mt-4">
-                <Button disabled={saving} onClick={() => void reviseDraft()}>
-                  {saving ? "保存中…" : "保存修订"}
+                <Button disabled={saving || !editEntry || !linesReady(editLines)} onClick={() => void reviseDraft()}>
+                  {saving ? copy("保存中…") : copy("保存修订")}
                 </Button>
               </div>
             </>
@@ -1505,20 +1839,12 @@ function OrderDetail({ id }: { id: string }) {
                     aria-label={copy("销售订单行")}
                     className="mt-1 w-full rounded-lg border p-2"
                     value={selectedLineId}
-                    onChange={(e) => {
-                      setSelectedLineId(e.target.value);
-                      setSelectedBalanceId("");
-                      setSelectedReservationId("");
-                      setPreview(null);
-                      setIntentKey(key());
-                    }}
+                    onChange={(e) => chooseLine(e.target.value)}
                   >
                     <option value="">{copy("请选择订单行")}</option>
                     {lineOptions.map((x) => (
                       <option value={x.id} key={x.id}>
-                        {x.sku} · {x.itemName} · 订购 {x.orderedQuantity} / 预留{" "}
-                        {x.reservedQuantity} / 履约 {x.fulfilledQuantity} /
-                        待预留 {x.remainingToReserve ?? "受限"}
+                        {lineOptionText(x)}
                       </option>
                     ))}
                   </select>
@@ -1540,11 +1866,11 @@ function OrderDetail({ id }: { id: string }) {
                     <option value="">{copy("请选择库存余额")}</option>
                     {balanceOptions.map((x) => (
                       <option disabled={!x.selectable} value={x.id} key={x.id}>
-                        {warehouseName(x.warehouseId)} · {x.location || copy("默认库位")} ·{" "}
+                        {place(x.warehouseId, x.location)} ·{" "}
                         {copy("现有 {n}").replace("{n}", formatQuantity(x.onHandQuantity))} /{" "}
                         {copy("预留 {n}").replace("{n}", formatQuantity(x.reservedQuantity))} /{" "}
-                        {copy("可用 {n}").replace("{n}", formatQuantity(x.availableQuantity))} ·{" "}
-                        {copy(x.selectable ? "可操作" : "只读")}
+                        {copy("可用 {n}").replace("{n}", formatQuantity(x.availableQuantity))}
+                        {x.selectable ? "" : ` · ${copy("只读")}`}
                       </option>
                     ))}
                   </select>
@@ -1557,19 +1883,12 @@ function OrderDetail({ id }: { id: string }) {
                     aria-label={copy("预留记录")}
                     className="mt-1 w-full rounded-lg border p-2"
                     value={selectedReservationId}
-                    onChange={(e) => {
-                      setSelectedReservationId(e.target.value);
-                      setPreview(null);
-                      setIntentKey(key());
-                    }}
+                    onChange={(e) => chooseReservation(e.target.value)}
                   >
                     <option value="">{copy("请选择预留记录")}</option>
                     {reservationOptions.map((x) => (
                       <option value={x.id} key={x.id}>
-                        {x.id} · {x.warehouseId} / {x.location || "默认库位"} ·
-                        预留 {x.reservedQuantity} / 已分配 {x.allocatedQuantity}{" "}
-                        / 已消耗 {x.consumedQuantity} / 已释放{" "}
-                        {x.releasedQuantity} / 可分配 {x.allocatableQuantity}
+                        {reservationOptionText(x)}
                       </option>
                     ))}
                   </select>
@@ -1601,10 +1920,6 @@ function OrderDetail({ id }: { id: string }) {
                       setIntentKey(key());
                     }}
                   />
-                  <span className="mt-1 block text-xs text-slate-500">
-                    当前界面每次创建一个订单行和一条预留分配；后端 API
-                    支持多行和多分配。
-                  </span>
                 </label>
               )}
               {intent === "release" && (
@@ -1623,11 +1938,9 @@ function OrderDetail({ id }: { id: string }) {
                 </label>
               )}
               {preview ? (
-                <PreviewView preview={preview} />
+                <PreviewView preview={preview} lookup={previewLookup} />
               ) : (
-                <p className="mt-3 text-xs text-slate-500">
-                  {copy("必须先读取服务端预览，前端不计算权威库存。")}
-                </p>
+                <p className="mt-3 text-xs text-slate-500">{previewHint()}</p>
               )}
               <div className="mt-4 flex gap-2">
                 <Button
@@ -1635,14 +1948,20 @@ function OrderDetail({ id }: { id: string }) {
                   disabled={saving}
                   onClick={() => void loadPreview()}
                 >
-                  {copy("读取预览")}
+                  {say("Preview", "预览")}
                 </Button>
                 <Button
                   testId="confirm-outbound-action"
                   disabled={!preview?.allowed || saving}
                   onClick={() => void execute()}
                 >
-                  {saving ? "处理中…" : "确认执行"}
+                  {saving
+                    ? copy("处理中…")
+                    : intent === "reserve"
+                      ? say("Reserve", "确认预留")
+                      : intent === "release"
+                        ? say("Release", "确认释放")
+                        : say("Create delivery draft", "创建发货草稿")}
                 </Button>
               </div>
             </>
@@ -1655,13 +1974,15 @@ function OrderDetail({ id }: { id: string }) {
 
 function ShipmentDetail({ id }: { id: string }) {
   const stamp = useStamp();
+  const warehouseName = useWarehouseNames();
+  const place = usePlace();
   const [data, setData] = useState<ShipmentWorkbench | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true),
     [preview, setPreview] = useState<Preview | null>(null),
     [intent, setIntent] = useState(""),
     [intentKey, setIntentKey] = useState(""),
-    [reason, setReason] = useState("业务冲销"),
+    [reason, setReason] = useState(() => copy("业务冲销")),
     [saving, setSaving] = useState(false);
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1737,6 +2058,32 @@ function ShipmentDetail({ id }: { id: string }) {
       </div>
     );
   if (!data) return <div role="alert">{copy(error)}</div>;
+  // A reservation on this shipment by its warehouse and location; its SKU and
+  // unit are known when the shipment has one line.
+  const onlyLine = data.lines.length === 1 ? data.lines[0] : undefined;
+  const reservationFacts = (reservationId: string) => {
+    const allocation = data.allocations.find((row) => row.reservationId === reservationId);
+    return allocation
+      ? { warehouseId: allocation.warehouseId, location: allocation.location, sku: onlyLine?.sku, unit: onlyLine?.unit }
+      : undefined;
+  };
+  const previewLookup: OutboundPreviewLookup = {
+    place,
+    reservation: reservationFacts,
+    unit: (sku) => data.lines.find((row) => row.sku === sku)?.unit,
+  };
+  const knownWarehouses = new Set(
+    [...data.allocations.map((row) => row.warehouseId), ...data.movements.map((row) => row.warehouseId)].filter(
+      Boolean,
+    ) as string[],
+  );
+  const timelinePart = (part: string) => {
+    const reservation = reservationFacts(part);
+    if (reservation) return place(reservation.warehouseId, reservation.location);
+    return knownWarehouses.has(part) ? warehouseName(part) : undefined;
+  };
+  const postedAt = data.shipment.postedAt ? stamp(data.shipment.postedAt) : "—",
+    reversedAt = data.shipment.reversedAt ? stamp(data.shipment.reversedAt) : "—";
   return (
     <div className="space-y-4" data-testid="shipment-workbench">
       {error && (
@@ -1747,32 +2094,29 @@ function ShipmentDetail({ id }: { id: string }) {
       <section className="rounded-xl border bg-white p-5">
         <div className="flex flex-wrap justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold">
-                {data.shipment.shipmentNumber}
-              </h1>
-              <span className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-700">
-                {copy("PostgreSQL 正式记录")}
-              </span>
-            </div>
-            <p className="text-sm text-slate-500">
-              销售订单{" "}
+            <h1 className="text-xl font-semibold">
+              {data.shipment.shipmentNumber}
+            </h1>
+            {/* The shipment version is an internal edit counter, so it is not shown. */}
+            <p className="text-sm text-slate-500" data-testid="shipment-sales-order">
+              {say("Sales order", "销售订单")}{" "}
               <Link
                 className="text-blue-600 underline"
                 to={`/app/sales/orders/${encodeURIComponent(data.shipment.salesOrderId)}`}
               >
                 {data.salesOrder.orderNumber}
-              </Link>{" "}
-              · v{data.shipment.version}
+              </Link>
             </p>
-            <div className="mt-2 flex gap-2">
-              <Badge value={data.shipment.workflowStatus} />
-              <Badge value={data.shipment.postingStatus} />
+            <div className="mt-2 flex gap-2" data-testid="shipment-status">
+              <Badge value={shipmentStatus(data.shipment)} />
             </div>
-            <p className="mt-2 text-xs text-slate-500">
-              过账 {stamp(data.shipment.postedAt)} · 冲销{" "}
-              {stamp(data.shipment.reversedAt)} ·{" "}
-              {data.shipment.reversalReason || copy("无冲销原因")}
+            <p className="mt-2 text-xs text-slate-500" data-testid="shipment-posting-dates">
+              {say("Posted {posted} · Reversed {reversed}", "过账 {posted} · 冲销 {reversed}")
+                .replace("{posted}", postedAt)
+                .replace("{reversed}", reversedAt)}
+              {data.shipment.reversalReason
+                ? ` · ${say("Reason: {reason}", "原因：{reason}").replace("{reason}", data.shipment.reversalReason)}`
+                : ""}
             </p>
           </div>
           <div className="flex gap-2">
@@ -1795,6 +2139,9 @@ function ShipmentDetail({ id }: { id: string }) {
                 {copy("冲销发货")}
               </Button>
             )}
+            {data.shipment.postingStatus === "posted" && (
+              <CreateInvoiceAction shipmentId={id} />
+            )}
           </div>
         </div>
       </section>
@@ -1803,8 +2150,8 @@ function ShipmentDetail({ id }: { id: string }) {
           headers={["SKU / 物料", "请求数量", "已过账", "单位"]}
           rows={data.lines.map((x) => [
             `${x.sku} · ${x.itemName}`,
-            x.requestedQuantity,
-            x.postedQuantity,
+            formatQuantity(x.requestedQuantity),
+            formatQuantity(x.postedQuantity),
             x.unit,
           ])}
         />
@@ -1821,24 +2168,25 @@ function ShipmentDetail({ id }: { id: string }) {
             "冲销流水",
           ]}
           rows={data.allocations.map((x) => [
-            x.reservationId,
-            x.warehouseId,
-            x.location,
-            x.quantity,
-            x.status,
-            x.movementLink || "—",
-            x.reversalMovementLink || "—",
+            shortId(x.reservationId),
+            warehouseName(x.warehouseId),
+            x.location || copy("默认库位"),
+            formatQuantity(x.quantity),
+            status(x.status),
+            x.movementLink ? shortId(x.movementLink) : "—",
+            x.reversalMovementLink ? shortId(x.reversalMovementLink) : "—",
           ])}
         />
         {data.movements.map((x) => (
-          <div className="mt-2 rounded-lg bg-slate-50 p-2 text-xs" key={x.id}>
-            {x.id} · {x.movementType} · {x.itemName} · 入 {x.quantityIn} / 出{" "}
-            {x.quantityOut}
+          <div className="mt-2 rounded-lg bg-slate-50 p-2 text-xs" data-testid="shipment-movement" key={x.id}>
+            {shortId(x.id)} · {movementTypeLabel(x.movementType, activeLanguage)} · {x.itemName} ·{" "}
+            {place(x.warehouseId, x.location)} · {copy("入")}{" "}
+            {formatQuantity(x.quantityIn)} / {copy("出")} {formatQuantity(x.quantityOut)}
           </div>
         ))}
       </Section>
       <Section title={copy("发货证据与时间线")}>
-        <Timeline rows={data.evidence} />
+        <Timeline rows={data.evidence} resolve={timelinePart} />
       </Section>
       <Section title={copy("一致性检查与辅助说明")}>
         <div className="flex items-center gap-2">
@@ -1851,10 +2199,10 @@ function ShipmentDetail({ id }: { id: string }) {
         <ActionDialog
           title={
             intent === "post"
-              ? "发货过账确认"
+              ? say("Post shipment", "发货过账确认")
               : intent === "reverse"
-                ? "发货冲销确认"
-                : "取消发货草稿"
+                ? say("Reverse shipment", "发货冲销确认")
+                : say("Cancel delivery draft", "取消发货草稿")
           }
           onClose={() => {
             setIntent("");
@@ -1872,23 +2220,30 @@ function ShipmentDetail({ id }: { id: string }) {
               />
             </label>
           )}
-          <p className="mt-2 text-xs text-slate-500">
-            {copy("发货时在库量与预留量同时下降，因此可用量不会再次下降。冲销没有“强制绕过”选项。")}
-          </p>
-          {preview && <PreviewView preview={preview} />}
+          {preview ? (
+            <PreviewView preview={preview} lookup={previewLookup} />
+          ) : (
+            <p className="mt-3 text-xs text-slate-500">{previewHint()}</p>
+          )}
           <div className="mt-4 flex gap-2">
             <Button
               testId="shipment-preview"
               onClick={() => void loadPreview()}
             >
-              {copy("读取预览")}
+              {say("Preview", "预览")}
             </Button>
             <Button
               testId="confirm-shipment-action"
               disabled={!preview?.allowed || saving}
               onClick={() => void execute()}
             >
-              {saving ? "处理中…" : "确认执行"}
+              {saving
+                ? copy("处理中…")
+                : intent === "post"
+                  ? say("Post shipment", "过账发货")
+                  : intent === "reverse"
+                    ? say("Reverse shipment", "冲销发货")
+                    : say("Cancel delivery draft", "取消发货草稿")}
             </Button>
           </div>
         </ActionDialog>
@@ -1932,18 +2287,39 @@ function Table({
     </div>
   );
 }
-function Timeline({ rows }: { rows: Workbench["evidence"] }) {
+// The workbench API builds reservation and movement timeline titles when it is
+// read (they are not stored); they are translated here like its other labels.
+// Its summaries name a reservation or warehouse by id, so each such part is
+// shown by its warehouse name and location instead. Audit summaries are shown
+// as recorded.
+function Timeline({
+  rows,
+  resolve,
+}: {
+  rows: Workbench["evidence"];
+  resolve?: (part: string) => string | undefined;
+}) {
   const stamp = useStamp();
+  const summary = (value: string) =>
+    String(value || "")
+      .split(" · ")
+      .map((part) =>
+        part === "未指定仓库"
+          ? say("No warehouse", "未指定仓库")
+          : resolve?.(part) ?? (/^-?\d+(\.\d+)?$/.test(part) ? formatQuantity(part) : part),
+      )
+      .join(" · ");
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-testid="outbound-timeline">
       {rows.map((x, i) => (
         <div
           className="border-l-2 border-blue-200 pl-3 text-sm"
           key={`${x.eventType}-${x.entityId}-${i}`}
         >
-          <div className="font-semibold">{x.title}</div>
+          <div className="font-semibold">{copy(x.title)}</div>
           <div className="text-xs text-slate-500">
-            {stamp(x.occurredAt)} · {x.summary}
+            {stamp(x.occurredAt)}
+            {x.summary && x.summary !== x.title ? ` · ${summary(x.summary)}` : ""}
           </div>
           {x.commandExecutionId && (
             <div className="text-[11px] text-slate-400">
@@ -1956,28 +2332,43 @@ function Timeline({ rows }: { rows: Workbench["evidence"] }) {
     </div>
   );
 }
-function PreviewView({ preview }: { preview: Preview }) {
+const previewHint = () =>
+  say("Preview first to see what will change.", "请先预览，查看将发生的变更。");
+// What the server's preview will do, in plain sentences built from the
+// preview itself. Why it is blocked, when it is. The impact counts stay
+// available under "Technical details".
+function PreviewView({ preview, lookup }: { preview: Preview; lookup: OutboundPreviewLookup }) {
+  const sentences = outboundPreviewSentences(activeLanguage, preview, lookup);
   return (
     <div
       data-testid="outbound-preview-result"
-      className={`mt-3 rounded-lg border p-3 text-xs ${preview.allowed ? "bg-emerald-50" : "bg-amber-50"}`}
+      className={`mt-3 rounded-lg border p-3 text-sm ${preview.allowed ? "bg-emerald-50" : "bg-amber-50"}`}
     >
       <div className="font-semibold">
-        {preview.allowed ? "预览允许执行" : "预览已阻断"}
+        {preview.allowed ? say("What will happen", "将发生的变更") : say("This can't be done yet", "暂时无法执行")}
       </div>
-      {preview.blockingIssues.map((x) => (
-        <div className="mt-1 text-red-700" key={x.code}>
-          {x.message}
+      {preview.blockingIssues.map((x, i) => (
+        <div className="mt-1 text-red-700" key={`${x.code}-${i}`}>
+          {issueMessage(x)}
         </div>
       ))}
-      <div className="mt-2">
-        库存影响 {preview.balanceImpacts.length} · 预留影响{" "}
-        {preview.reservationImpacts.length} · 订单行影响{" "}
-        {preview.salesOrderLineImpacts.length}
-      </div>
-      <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap">
-        {JSON.stringify(preview.factsToCreate, null, 2)}
-      </pre>
+      {sentences.map((sentence, i) => (
+        <p className="mt-1" data-testid="outbound-preview-sentence" key={i}>
+          {sentence}
+        </p>
+      ))}
+      <details className="mt-2 text-xs text-slate-500">
+        <summary className="cursor-pointer">{say("Technical details", "技术细节")}</summary>
+        <div className="mt-1">
+          {say(
+            "Stock balances changed {b} · Reservations changed {r} · Order lines changed {l}",
+            "库存余额变更 {b} · 预留变更 {r} · 订单行变更 {l}",
+          )
+            .replace("{b}", String(preview.balanceImpacts.length))
+            .replace("{r}", String(preview.reservationImpacts.length))
+            .replace("{l}", String(preview.salesOrderLineImpacts.length))}
+        </div>
+      </details>
     </div>
   );
 }

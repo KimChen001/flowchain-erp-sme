@@ -1,6 +1,7 @@
-import { SupplierForm } from "./SupplierForm";
+import { SupplierForm, type PaymentTermOption } from "./SupplierForm";
 import { supplierCopy } from "./supplierCopy";
 import { SupplierPerformancePanel, supplierPerformanceTabLabel } from "./supplierPerformance";
+import { SupplierActivityCards } from "./supplierActivity";
 import { SupplierTierPanel, TierChip, type Tier, type TierHistoryRow } from "./SupplierTier";
 import { formatSuggestionReason, suggestionDiffers, suggestionReasonText, type SupplierInsight, type SupplierInsights } from "./supplierInsights";
 import { useEffect, useState, useRef } from "react";
@@ -12,6 +13,8 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
+import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
+import { DataImportLink } from "../master-data/DataImportLink";
 
 type Supplier = {
   id: string;
@@ -65,8 +68,8 @@ type Relationship = {
   active: boolean;
   approved: boolean;
   preferred: boolean;
-  leadTimeDays: number;
-  minimumOrderQuantity: number;
+  leadTimeDays: number | null;
+  minimumOrderQuantity: number | null;
   referencePrice: number;
   currency: string;
   version: number;
@@ -92,7 +95,8 @@ const empty = (currency = "") => ({
   postalCode: "",
   deliveryCycleDays: "",
   defaultCurrency: currency,
-  paymentTermsId: "NET30",
+  // Empty until someone records the agreed term.
+  paymentTermsId: "",
   settlementMethod: "",
   creditCode: "",
   taxIdentificationNumber: "",
@@ -163,6 +167,14 @@ export default function SupplierMasterPage({
   const [saving, setSaving] = useState(false);
   const [currencyWarning, setCurrencyWarning] = useState(false);
   const [workspaceCurrency, setWorkspaceCurrency] = useState('');
+  // The workspace's payment terms for the form; null when they could not load.
+  const [paymentTerms, setPaymentTerms] = useState<PaymentTermOption[] | null>([]);
+  const loadPaymentTerms = async () => {
+    try {
+      const { options } = await request<{ options: Array<{ id: string; code?: string; label?: string; metadata?: { recordId?: string | null } }> }>('/api/master-data/payment-terms/select');
+      setPaymentTerms(options.map(option => ({ id: option.code || option.id, label: option.label || option.code || option.id, recordId: option.metadata?.recordId ?? null })));
+    } catch { setPaymentTerms(null); }
+  };
   const savingRef = useRef(false);
   const [rows, setRows] = useState<Supplier[]>([]),
     [loading, setLoading] = useState(true),
@@ -204,7 +216,7 @@ export default function SupplierMasterPage({
       approved: true,
       active: true,
       leadTimeDays: "",
-      minimumOrderQuantity: "1",
+      minimumOrderQuantity: "",
       referencePrice: "",
       // Empty means "use the supplier's default currency" when saving.
       currency: "",
@@ -287,6 +299,12 @@ export default function SupplierMasterPage({
       toast.error(e.message);
     }
   };
+  useEffect(() => { loadPaymentTerms(); }, []);
+  // A stored term by its name, whether the supplier holds its code or row id.
+  const termName = (stored: string) => {
+    const term = (paymentTerms || []).find(option => option.id === stored || option.recordId === stored);
+    return term ? `${term.label} (${term.id})` : stored;
+  };
   const startCreate = async () => {
     let currency = '';
     try { currency = (await request<{ company: { currency: string } }>('/api/settings-runtime')).company.currency; } catch { /* Let the user choose explicitly. */ }
@@ -296,6 +314,7 @@ export default function SupplierMasterPage({
     setForm(empty(currency));
     setFieldErrors([]);
     setShowForm(true);
+    loadPaymentTerms();
   };
   const startEdit = (supplier: Supplier) => {
     setEditing(supplier);
@@ -303,6 +322,7 @@ export default function SupplierMasterPage({
     setForm({ ...supplier, categories: (supplier.categories || []).join(",") });
     setFieldErrors([]);
     setShowForm(true);
+    loadPaymentTerms();
   };
   const save = async () => {
     if (savingRef.current) return;
@@ -371,8 +391,9 @@ export default function SupplierMasterPage({
         {
           ...relationForm,
           supplierId: selected.id,
-          leadTimeDays: Number(relationForm.leadTimeDays || 0),
-          minimumOrderQuantity: Number(relationForm.minimumOrderQuantity || 1),
+          // A blank lead time or MOQ is sent as not recorded, never 0 or 1.
+          leadTimeDays: String(relationForm.leadTimeDays ?? "").trim() === "" ? null : Number(relationForm.leadTimeDays),
+          minimumOrderQuantity: String(relationForm.minimumOrderQuantity ?? "").trim() === "" ? null : Number(relationForm.minimumOrderQuantity),
           referencePrice: Number(relationForm.referencePrice || 0),
           currency: relationForm.currency || selected.defaultCurrency || undefined,
         },
@@ -415,8 +436,10 @@ export default function SupplierMasterPage({
   };
   const onTimeCell = (insight?: SupplierInsight) => {
     if (!insight || insight.onTime === null) return hiddenCell;
-    if (insight.onTime.rate === null) return <span title={copy("Fewer than 5 lines in 90 days")} style={{ color: A.sub }}>—</span>;
-    return <span className="tabular-nums" title={`${insight.onTime.count} / ${insight.onTime.of}`}>{new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 }).format(insight.onTime.rate)}</span>;
+    if (insight.onTime.rate === null) return <span title={copy("Fewer than 5 deliveries in 90 days")} style={{ color: A.sub }}>—</span>;
+    // Deliveries measured against the date on the PO, which may be the buyer's need date.
+    const detail = copy("{count} of {of} deliveries on time against the date on the PO, which may be the buyer's need date").replace("{count}", String(insight.onTime.count)).replace("{of}", String(insight.onTime.of));
+    return <span className="tabular-nums" title={detail}>{new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 }).format(insight.onTime.rate)}</span>;
   };
   // The reader chooses the order; it never comes from a hidden weight. Spend
   // sorts by currency, then amount, and never compares across currencies.
@@ -459,7 +482,14 @@ export default function SupplierMasterPage({
     if (accepted) toast.success(`${copy("Accepted")}: ${accepted}`);
     await Promise.all([load(), loadInsights()]);
   };
-  if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
+  // Earlier PO prices of each supplied item from this supplier only, in the
+  // link currency and the item's unit, in one request. Display only.
+  // The item being linked gets the same facts under its reference price, in
+  // the currency the link will be saved in. Never fills the price.
+  const relationshipHistoryKey = (r: Relationship) => (selected ? priceHistoryKey({ itemId: r.itemId, currency: r.currency, supplierId: selected.id }) : "");
+  const relationFormHistoryKey = selected && writes.items ? priceHistoryKey({ itemId: relationForm.itemId, currency: relationForm.currency || selected.defaultCurrency, supplierId: selected.id }) : "";
+  const relationshipHistory = usePriceHistory([...relationships.map(relationshipHistoryKey), relationFormHistoryKey]);
+  if (showForm) return <SupplierForm form={form} editing={!!editing} saving={saving} errors={fieldErrors} currencyWarning={currencyWarning} workspaceCurrency={workspaceCurrency} paymentTerms={paymentTerms} onChange={(key, value) => { setForm((current: any) => ({ ...current, [key]: value })); setFieldErrors(current => current.filter(error => error.field !== key)); }} onSave={save} onCancel={() => setShowForm(false)} />;
   if (selected)
     return (
       <div className="space-y-4">
@@ -517,7 +547,7 @@ export default function SupplierMasterPage({
               ],
               [
                 "商业条款",
-                `${selected.defaultCurrency} · ${selected.paymentTermsId} · ${selected.settlementMethod || "-"}`,
+                `${selected.defaultCurrency || copy("Not recorded")} · ${copy("Payment terms")}: ${selected.paymentTermsId ? termName(selected.paymentTermsId) : copy("Not recorded")} · ${selected.settlementMethod || "-"}`,
               ],
               [
                 "财税与银行",
@@ -570,18 +600,21 @@ export default function SupplierMasterPage({
               />{" "}
               Preferred
             </label>
-            <input
-              aria-label={copy("参考价格")}
-              placeholder={copy("参考价格")}
-              value={relationForm.referencePrice}
-              onChange={(e) =>
-                setRelationForm({
-                  ...relationForm,
-                  referencePrice: e.target.value,
-                })
-              }
-              style={inputStyle}
-            />
+            <div>
+              <input
+                aria-label={copy("参考价格")}
+                placeholder={copy("参考价格")}
+                value={relationForm.referencePrice}
+                onChange={(e) =>
+                  setRelationForm({
+                    ...relationForm,
+                    referencePrice: e.target.value,
+                  })
+                }
+                style={inputStyle}
+              />
+              {relationFormHistoryKey && <PriceHistoryFacts history={relationshipHistory.histories.get(relationFormHistoryKey)} state={relationshipHistory.state} testId="supplied-item-form-price-history" />}
+            </div>
             <button
               onClick={addRelationship}
               className="rounded bg-blue-600 px-3 py-2 text-xs text-white"
@@ -621,10 +654,11 @@ export default function SupplierMasterPage({
                     </td>
                     <td className="p-2">{copy(r.preferred ? "是" : "否")}</td>
                     <td className="p-2">{copy(r.approved ? "是" : "否")}</td>
-                    <td className="p-2">{r.leadTimeDays}</td>
-                    <td className="p-2">{r.minimumOrderQuantity}</td>
+                    <td className="p-2">{r.leadTimeDays ?? "—"}</td>
+                    <td className="p-2">{r.minimumOrderQuantity ?? "—"}</td>
                     <td className="p-2">
                       {r.currency} {r.referencePrice}
+                      {relationshipHistoryKey(r) && <PriceHistoryFacts compact history={relationshipHistory.histories.get(relationshipHistoryKey(r))} state={relationshipHistory.state} testId={`supplied-item-price-history-${r.itemId}`} />}
                     </td>
                     <td className="p-2">{copy(r.active ? "启用" : "停用")}</td>
                     {writes.items && <td className="p-2 space-x-2">
@@ -650,16 +684,11 @@ export default function SupplierMasterPage({
             </table>
           )}
         </Card>
-        <Card className="p-5">
-          <h2 className="text-sm font-semibold">{copy("采购记录")}</h2>
-          <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
-            {copy("暂无采购交易记录")}</div>
-        </Card>
-        <Card className="p-5">
-          <h2 className="text-sm font-semibold">{copy("风险与异常")}</h2>
-          <div className="py-8 text-center text-xs" style={{ color: A.sub }}>
-            {copy("暂无风险或异常")}</div>
-        </Card>
+        <SupplierActivityCards
+          supplierId={selected.id}
+          titles={{ orders: copy("采购记录"), risks: copy("风险与异常") }}
+          empty={{ orders: copy("暂无采购交易记录"), risks: copy("暂无风险或异常") }}
+        />
         </>}
       </div>
     );
@@ -771,6 +800,7 @@ export default function SupplierMasterPage({
             <RefreshCw size={14} />
             {copy("刷新")}
           </button>
+          <DataImportLink type="suppliers" className="inline-flex items-center gap-1 rounded border px-3 text-xs" />
           {writes.suppliers && (
             <button
               onClick={startCreate}
@@ -837,7 +867,7 @@ export default function SupplierMasterPage({
                   "Spend, 12 months",
                   "Open POs",
                   "Overdue POs",
-                  "On time, 90 days",
+                  "On time (PO date), 90 days",
                   "Open issues",
                   "状态",
                   ...(writes.suppliers ? ["操作"] : []),

@@ -1,4 +1,4 @@
-import { aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
+import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { toolsFor } from './ai-skill-registry.mjs'
@@ -64,7 +64,7 @@ export function presentWorkspaceMetrics(result, facts, { skill, language, query 
   const fmt = aiSkillFormatter(facts, language)
   const po = facts.purchaseOrders
   const title = po
-    ? aiSkillText('metrics.title', language, { open: fmt.number(po.open), overdue: fmt.number(po.overdue), date: fmt.day(facts.asOf) })
+    ? aiSkillCountText('metrics.title', po.open, language, { open: fmt.number(po.open), overdue: fmt.number(po.overdue), date: fmt.day(facts.asOf) })
     : aiSkillText('skill.workspace_metrics.title', language)
   const sentences = aiSkillMetricSentences(facts, language)
   return presentAiSkillAnswer({

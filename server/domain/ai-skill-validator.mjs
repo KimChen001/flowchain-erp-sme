@@ -28,8 +28,13 @@ export function aiSkillKnownValues(facts) {
   for (const row of array(facts.purchaseOrders?.rows)) { add(row.id, row.orderNumber, row.supplierId); keep(row.supplier, row.orderNumber, row.sku, row.unit) }
   for (const row of array(facts.purchaseOrders?.index)) { add(row.id, row.orderNumber, row.supplierId); keep(row.supplier, row.orderNumber, row.unit) }
   for (const row of [...array(facts.purchaseOrders?.rows), ...array(facts.purchaseOrders?.index)]) for (const line of array(row.openLines)) keep(line.sku, line.itemName, line.unit)
-  for (const row of array(facts.suppliers)) { add(row.id, row.code); keep(row.name, row.code) }
-  for (const row of array(facts.inventory?.rows)) { add(row.itemId, row.sku, ...array(row.purchaseOrderIds)); keep(row.sku, row.itemName, row.unit) }
+  for (const row of array(facts.suppliers)) { add(row.id, row.code); keep(row.name, row.code, row.contactName, row.email) }
+  for (const row of array(facts.inventory?.rows)) {
+    add(row.itemId, row.sku, ...array(row.purchaseOrderIds))
+    keep(row.sku, row.itemName, row.unit)
+    for (const line of array(row.incomingOtherUnit)) { add(line.purchaseOrderId, line.orderNumber); keep(line.orderNumber, line.unit) }
+  }
+  for (const row of array(facts.inventory?.masterOnly)) { add(row.itemId, row.sku); keep(row.sku, row.itemName, row.unit) }
   for (const row of array(facts.invoices?.variances)) { add(row.id, row.invoiceNumber, row.supplierId, row.poId); keep(row.supplier, row.invoiceNumber) }
   for (const row of array(facts.purchaseRequests?.awaitingApproval)) { add(row.id); keep(row.sku, row.unit) }
   for (const row of [...array(facts.rfqs?.readyToAward), ...array(facts.rfqs?.open)]) { add(row.id); keep(row.title) }
@@ -44,13 +49,13 @@ function visibleTexts(response) {
     ['conclusion.title', response.conclusion?.title], ['conclusion.summary', response.conclusion?.summary],
     ['answerSourceLabel', response.answerSourceLabel], ['checkedLabel', response.checkedLabel], ['dataScopeLabel', response.dataScopeLabel],
   ]
-  for (const [index, item] of array(response.keyEvidence).entries()) for (const key of ['label', 'entityLabel', 'summary', 'status', 'value', 'sourceLabel']) out.push([`keyEvidence.${index}.${key}`, item[key]])
+  for (const [index, item] of array(response.keyEvidence).entries()) for (const key of ['label', 'entityLabel', 'summary', 'status', 'value', 'sourceLabel', 'nextStep']) out.push([`keyEvidence.${index}.${key}`, item[key]])
   for (const [index, item] of array(response.businessImpact).entries()) for (const key of ['area', 'impact', 'explanation']) out.push([`businessImpact.${index}.${key}`, item[key]])
   for (const [index, item] of array(response.navigationLinks).entries()) out.push([`navigationLinks.${index}.label`, item.label])
   for (const [index, item] of array(response.dataLimitations).entries()) for (const key of ['label', 'description', 'consequence']) out.push([`dataLimitations.${index}.${key}`, item[key]])
   for (const [index, item] of array(response.reviewCards).entries()) {
     for (const key of ['title', 'description', 'allowedNextStep', 'draftTitle']) out.push([`reviewCards.${index}.${key}`, item[key]])
-    for (const key of ['message', 'reason']) out.push([`reviewCards.${index}.payload.${key}`, item.payload?.[key]])
+    for (const key of ['message', 'reason', 'subject']) out.push([`reviewCards.${index}.payload.${key}`, item.payload?.[key]])
   }
   for (const [index, item] of array(response.sections).entries()) for (const key of ['title', 'summary']) out.push([`sections.${index}.${key}`, item[key]])
   for (const [index, item] of array(response.followUpSuggestions).entries()) for (const key of ['label', 'prompt']) out.push([`followUpSuggestions.${index}.${key}`, item[key]])
@@ -58,9 +63,13 @@ function visibleTexts(response) {
   return out.filter(([, value]) => value !== undefined && value !== null && value !== '').map(([path, value]) => [path, String(value)])
 }
 
-export function validateAiSkillResponse(response, facts) {
+// `extra` adds the ids and stored names another read service returned for this
+// answer: the supplier business query's records in an agent planning answer.
+export function validateAiSkillResponse(response, facts, extra = {}) {
   const errors = []
   const { ids, stored } = aiSkillKnownValues(facts)
+  for (const value of array(extra.ids)) if (text(value).trim()) { ids.add(text(value).trim()); stored.add(text(value).trim()) }
+  for (const value of array(extra.stored)) if (text(value).trim()) stored.add(text(value).trim())
   const known = (id) => ids.has(text(id).trim())
   for (const item of array(response.keyEvidence)) if (item.entityId && !known(item.entityId)) errors.push(`evidence id not read: ${item.entityId}`)
   for (const link of array(response.navigationLinks)) {
@@ -85,8 +94,8 @@ export function validateAiSkillResponse(response, facts) {
   return { ok: errors.length === 0, errors }
 }
 
-export function assertValidAiSkillResponse(response, facts) {
-  const result = validateAiSkillResponse(response, facts)
+export function assertValidAiSkillResponse(response, facts, extra = {}) {
+  const result = validateAiSkillResponse(response, facts, extra)
   if (!result.ok) throw Object.assign(new Error('The assistant answer failed validation.'), { code: 'AI_SKILL_ANSWER_INVALID', status: 503, details: result.errors })
   return response
 }

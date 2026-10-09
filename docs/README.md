@@ -11,6 +11,7 @@
 
 - [Product language and positioning](product-language-and-positioning-v1.md)
 - [Product narrative](product-narrative-v1.md)
+- [Trial user guide](trial-user-guide.md): for the people using FlowChain in a trial
 - [Current development limitations](current-development-limitations-v1.md)
 - [Product scope / IA review](product-scope-ia-review.md)
 - [System harness and product review](system-harness-and-product-review-v1.md)
@@ -28,6 +29,7 @@
   business commit adapters remain reserved for Phase 5.4C.
 - [Architecture overview](architecture-overview-v1.md)
 - [Repository boundary](repository-boundary-v1.md)
+- [Proposal: browser session in an HttpOnly cookie](session-cookie-migration-proposal.md)
 - [JSON adapter contract tests](json-adapter-contract-tests-v1.md)
 - [Persistence mode and adapter registry](persistence-mode-and-adapter-registry-v1.md)
 - [Full repository risk scan](full-repo-risk-scan-v1.md)
@@ -66,6 +68,7 @@
 
 ## AI
 
+- [AI assistant plan, v4.0](ai-assistant-plan.md): decisions, state, roadmap and stop points for the assistant and knowledge work
 - [AI safety and draft-first explainer](ai-safety-and-draft-first-explainer-v1.md)
 - [AI provider safety gate](ai-provider-safety-gate-v1.md)
 - [AI provider adapter plan](ai-provider-adapter-v1-plan.md)

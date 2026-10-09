@@ -180,6 +180,8 @@ function movementModel(row) {
     locationKey: row.locationKey,
     movementType: row.movementType,
     movementLabel: row.movementLabel || row.movementType,
+    // Inventory adjustments record their reason code here, e.g. opening_balance.
+    reason: row.reason || null,
     quantityIn: decimal(row.quantityIn),
     quantityOut: decimal(row.quantityOut),
     adjustmentQty: decimal(row.adjustmentQty),
@@ -194,6 +196,26 @@ function movementModel(row) {
     occurredAt: iso(row.occurredAt),
     date: iso(row.occurredAt),
   };
+}
+
+// Safety stock and reorder point are recorded on the item (the item form and
+// the import write them there). A stock record carries its own pair only from
+// older data, so the item's value wins and the record's is the fallback, as
+// in the runtime stock status, the reorder list and the assistant. Without
+// this the stock pages read 0 / 0 for every item imported with thresholds.
+export function withItemStockThresholds(rows, items) {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const bySku = new Map(items.map((item) => [item.sku, item]));
+  const recorded = (value) =>
+    value !== null && value !== undefined && Number(value) > 0 ? value : null;
+  return rows.map((row) => {
+    const item = (row.itemId && byId.get(row.itemId)) || bySku.get(row.sku);
+    return {
+      ...row,
+      safetyStock: recorded(item?.safetyStock) ?? row.safetyStock,
+      reorderPoint: recorded(item?.reorderPoint) ?? row.reorderPoint,
+    };
+  });
 }
 
 function balanceModel(row) {
@@ -304,12 +326,28 @@ export function createInventoryAuthoritativeReadService({ prisma } = {}) {
         take: pageSize,
       }),
     ]);
+    const items = rows.length
+      ? await prisma.item.findMany({
+          where: {
+            tenantId: actor.tenantId,
+            OR: [
+              {
+                id: {
+                  in: [...new Set(rows.map((row) => row.itemId).filter(Boolean))],
+                },
+              },
+              { sku: { in: [...new Set(rows.map((row) => row.sku))] } },
+            ],
+          },
+          select: { id: true, sku: true, safetyStock: true, reorderPoint: true },
+        })
+      : [];
     return {
       dataSource: "Authoritative PostgreSQL",
       page,
       pageSize,
       total,
-      balances: rows.map(balanceModel),
+      balances: withItemStockThresholds(rows, items).map(balanceModel),
     };
   }
 

@@ -1,94 +1,68 @@
 import { aiSkillCountText, aiSkillList, aiSkillText } from './ai-skill-copy.mjs'
-import { AI_SKILL_MODULES, aiSkillFormatter, aiSkillNavigation, aiSkillSignalReason, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
-import { buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
-import { matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
+import { aiSkillFormatter, aiSkillNavigation, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
+import { buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
+import { aiSkillFocusName, matchesAiSkillFocus } from './ai-skill-today-priorities.mjs'
+import { AI_SKILL_DRAFT_TYPES, aiSkillCombineFollowups, aiSkillDraftCandidate, aiSkillDraftCard } from './ai-skill-drafts.mjs'
+import { presentStartOrder, runStartOrder } from './ai-skill-start-order.mjs'
 
-// Review-only drafts for the top signals. A draft is never sent, approved or
-// saved by the assistant: each card opens the action draft review, and there
-// is never a purchase order draft (the draft boundary has no PO type).
-//   overdue, due or partially received PO, or a shortage an open PO covers -> po_followup_draft
-//   shortage no open PO or pending request covers                      -> purchase_request_draft
-//   invoice variance                                                    -> supplier_followup_draft
-//   request awaiting approval, RFQ ready to award                       -> a link only
-
-export const AI_SKILL_DRAFT_TYPES = Object.freeze(['po_followup_draft', 'supplier_followup_draft', 'purchase_request_draft'])
+// Review-only drafts for the signals in date order (compareSignalsByDate):
+// the first candidate of each draft type, then the rest in that order, at
+// most three. The candidates and cards are shared with the draft each answer line offers (ai-skill-drafts.mjs). A
+// request to start an order (route mode order) is answered by
+// ai-skill-start-order.mjs.
+// A supplier tier the question names ("follow-ups for our Tier 1 suppliers")
+// keeps the drafts and links to that tier's suppliers, in the same order: a
+// follow-up on one of their orders or invoices. A shortage that none of their
+// orders covers belongs to no supplier and is left out. A supplier the
+// question names ("a message to Acme") narrows the drafts and links to it the
+// same way (plan gap 12). Several follow-ups to one supplier become one
+// message, and a question about partial delivery asks whether what is ready
+// can ship first.
+export { AI_SKILL_DRAFT_TYPES }
 const MAX_CARDS = 3
-const STOCK = new Set(['stock_shortage', 'stock_below_safety', 'stock_below_reorder'])
-const PO = new Set(['po_overdue', 'po_due_7d', 'po_partially_received'])
 const array = (value) => Array.isArray(value) ? value : []
 
-function candidates(facts, ranked) {
-  const poRows = new Map((facts.purchaseOrders?.rows || []).map((row) => [row.id, row]))
-  const out = []
-  for (const item of ranked) {
-    if (PO.has(item.type) && poRows.has(item.entityId)) out.push({ kind: 'po_followup_draft', key: `po:${item.entityId}`, item, po: poRows.get(item.entityId) })
-    else if (STOCK.has(item.type)) {
-      // Prefer the most overdue open PO that brings this SKU.
-      const supplying = (item.data.purchaseOrderIds || []).map((id) => poRows.get(id)).filter(Boolean).sort((a, b) => b.overdueDays - a.overdueDays || a.id.localeCompare(b.id))
-      if (supplying.length) out.push({ kind: 'po_followup_draft', key: `po:${supplying[0].id}`, item, po: supplying[0] })
-      else if (!item.data.pendingRequests) {
-        const target = Math.max(item.data.reorder ?? 0, item.data.safety ?? 0, (item.data.demand ?? 0))
-        const quantity = Math.max(1, Math.ceil(target - (item.data.available ?? 0) - (item.data.incoming ?? 0) - (item.data.pendingRequests ?? 0)))
-        out.push({ kind: 'purchase_request_draft', key: `pr:${item.entityId}`, item, quantity, target })
-      } else out.push({ kind: 'link', key: `link:${item.id}`, item })
-    } else if (item.type === 'invoice_variance') out.push({ kind: 'supplier_followup_draft', key: `inv:${item.entityId}`, item })
-    else out.push({ kind: 'link', key: `link:${item.id}`, item })
-  }
-  return out
-}
+const candidateSupplier = (candidate) => candidate.po?.supplierId || candidate.item.supplierId || null
 
-export function runPrepareActionDraft(facts, { focus = null } = {}) {
-  const ranked = rankAiSkillItems(buildAiSkillSignals(facts)).filter((item) => matchesAiSkillFocus(item, focus))
-  const all = candidates(facts, ranked)
+export function runPrepareActionDraft(facts, { focus = null, route = null } = {}) {
+  if (route?.mode === 'order') return runStartOrder(facts, { focus, route, canDraft: Boolean(facts.visibility?.canDraft) })
+  // The record the drafts are for (focus), or several named ones
+  // (route.focusAny): the drafts for any of them. An order or item keeps the
+  // signals tied to it; a supplier keeps the drafts whose order or invoice is
+  // that supplier's, as a tier does, so a shortage its order covers stays.
+  const any = Array.isArray(route?.focusAny) && route.focusAny.length ? route.focusAny : null
+  const records = any || (focus ? [focus] : [])
+  const supplierIds = new Set(records.filter((one) => one.entityType === 'supplier').map((one) => one.entityId))
+  const others = records.filter((one) => one.entityType !== 'supplier')
+  const wanted = (candidate) => !records.length || others.some((one) => matchesAiSkillFocus(candidate.item, one)) || supplierIds.has(candidateSupplier(candidate))
+  const ranked = rankAiSkillItemsByDate(buildAiSkillSignals(facts))
+  const tier = route?.tier || null
+  const tierIds = tier?.supplierIds ? new Set(tier.supplierIds) : null
+  // The focus filter (wanted) and a supplier the route names are the same
+  // predicate on the candidate's supplier, so applying both never filters twice.
+  const named = array(route?.entities?.suppliers)
+  const namedSupplierIds = named.length ? new Set(named.map((row) => row.id)) : null
+  const all = aiSkillCombineFollowups(ranked.map((item) => aiSkillDraftCandidate(item, facts))
+    .filter((candidate) => wanted(candidate) && (!tierIds || tierIds.has(candidateSupplier(candidate))) && (!namedSupplierIds || namedSupplierIds.has(candidateSupplier(candidate)))))
+  const askPartial = Boolean(route?.signals?.partial)
   const seen = new Set()
   const drafts = []
   const take = (candidate) => { if (drafts.length < MAX_CARDS && !seen.has(candidate.key)) { seen.add(candidate.key); drafts.push(candidate) } }
-  // The best candidate of each draft type first, then the rest by rank.
+  // The first candidate of each draft type, then the rest, all by date.
   for (const kind of AI_SKILL_DRAFT_TYPES) { const first = all.find((candidate) => candidate.kind === kind); if (first) take(first) }
   for (const candidate of all.filter((entry) => entry.kind !== 'link')) take(candidate)
   drafts.sort((a, b) => a.item.rank - b.item.rank)
   const canDraft = Boolean(facts.visibility?.canDraft)
   return {
-    skillId: 'prepare_action_draft', focus, canDraft,
-    drafts: canDraft ? drafts : [],
+    skillId: 'prepare_action_draft', focus, focusAny: any, canDraft, tier,
+    supplier: named.length === 1 ? { id: named[0].id, name: named[0].name || named[0].id } : null,
+    // Asked to draft for one order that is not yet issued: say so, not "no draft needed".
+    focusNotSent: Boolean(focus) && !drafts.length && all.some((candidate) => candidate.kind === 'link' && candidate.notSent),
+    drafts: canDraft ? drafts.map((candidate) => askPartial && candidate.kind === 'po_followup_draft' ? { ...candidate, askPartial } : candidate) : [],
     links: all.filter((candidate) => candidate.kind === 'link').slice(0, 3).map((candidate) => candidate.item),
     items: [...(canDraft ? drafts : all.filter((candidate) => candidate.kind !== 'link').slice(0, MAX_CARDS)).map((candidate) => candidate.item), ...all.filter((candidate) => candidate.kind === 'link').slice(0, 2).map((candidate) => candidate.item)]
       .filter((item, index, rows) => rows.findIndex((row) => row.id === item.id) === index),
   }
-}
-
-// Names each line still to receive with its own remaining quantity, never the
-// first line's SKU with the order total. When the open lines are unknown (no
-// lines, or one without a SKU or a known quantity) the message names none.
-function poFollowupMessage(po, fmt, language) {
-  const lines = array(po.openLines)
-  if (!lines.length || lines.some((line) => !line.sku || line.remaining === null)) return aiSkillText('draft.po_followup.message_generic', language, { po: po.orderNumber })
-  if (lines.length === 1) return aiSkillText('draft.po_followup.message', language, { remaining: fmt.number(lines[0].remaining), unit: lines[0].unit || '', sku: lines[0].sku, po: po.orderNumber }).replace(/\s{2,}/g, ' ')
-  const parts = lines.map((line) => aiSkillText('draft.po_followup.line', language, { quantity: fmt.quantity(line.remaining, line.unit), sku: line.sku }))
-  return aiSkillText('draft.po_followup.message_lines', language, { po: po.orderNumber, lines: aiSkillList(parts, language) })
-}
-
-function card(candidate, facts, language) {
-  const fmt = aiSkillFormatter(facts, language)
-  const { item } = candidate
-  const base = { previewOnly: true, reviewRequired: true, requiresHumanReview: true, prohibitedActions: ['send', 'approve', 'pay', 'issue', 'cancel', 'delete'], allowedNextStep: aiSkillText('draft.review', language) }
-  if (candidate.kind === 'po_followup_draft') {
-    const po = candidate.po
-    const message = poFollowupMessage(po, fmt, language)
-    const title = aiSkillText('draft.po_followup.title', language, { supplier: po.supplier || po.supplierId, po: po.orderNumber })
-    // The open lines travel with the message, for the review form to show.
-    return { ...base, title, draftTitle: title, description: aiSkillSignalReason(item, facts, language), draftType: 'po_followup_draft', targetModule: AI_SKILL_MODULES.purchase_order, targetEntityType: 'purchase_order', targetEntityId: po.id,
-      payload: { poId: po.id, supplierId: po.supplierId, supplierName: po.supplier, message, lines: array(po.openLines).map((line) => ({ ...line })), language, reason: aiSkillSignalReason(item, facts, language) }, originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
-  }
-  if (candidate.kind === 'supplier_followup_draft') {
-    const title = aiSkillText('draft.invoice.title', language, { supplier: item.supplier || item.supplierId, invoice: item.label })
-    return { ...base, title, draftTitle: title, description: aiSkillSignalReason(item, facts, language), draftType: 'supplier_followup_draft', targetModule: AI_SKILL_MODULES.supplier_invoice, targetEntityType: 'supplier_invoice', targetEntityId: item.entityId,
-      payload: { supplierId: item.supplierId, supplierName: item.supplier, invoiceId: item.entityId, poId: item.data.poId, message: item.data.variance === null ? aiSkillText('draft.invoice.message_hidden', language, { invoice: item.label }) : aiSkillText('draft.invoice.message', language, { invoice: item.label, amount: fmt.money(item.data.variance, item.data.currency) }), language, reason: aiSkillSignalReason(item, facts, language) }, originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
-  }
-  const title = aiSkillText('draft.pr.title', language, { quantity: fmt.number(candidate.quantity), unit: '', sku: item.label }).replace(/\s{2,}/g, ' ')
-  const reason = aiSkillText('draft.pr.reason', language, { available: fmt.number(item.data.available), target: fmt.number(candidate.target) })
-  return { ...base, allowedNextStep: aiSkillText('draft.create_pr', language), title, draftTitle: title, description: reason, draftType: 'purchase_request_draft', targetModule: AI_SKILL_MODULES.purchase_request, targetEntityType: 'item', targetEntityId: item.entityId,
-    payload: { itemIdOrSku: item.label, quantity: candidate.quantity, reason, language }, originEvidence: [{ entityType: item.entityType, entityId: item.entityId }] }
 }
 
 // Narrowed to one record, the title names it.
@@ -98,13 +72,20 @@ function focusTitle(id, count, fmt, language) {
 }
 
 export function presentPrepareActionDraft(result, facts, { skill, language, query }) {
+  if (result.mode === 'order') return presentStartOrder(result, facts, { skill, language, query })
   const fmt = aiSkillFormatter(facts, language)
-  const reviewCards = result.drafts.map((candidate) => card(candidate, facts, language))
+  const reviewCards = result.drafts.map((candidate) => aiSkillDraftCard(candidate, facts, language))
   const extraLimitations = result.canDraft ? [] : [{ code: 'draft_permission', label: aiSkillText('limitation.draft_permission.label', language), description: aiSkillText('draft.no_permission', language), severity: 'warning', missingData: [] }]
   return presentAiSkillAnswer({
     skill, facts, language, query,
-    title: !result.canDraft ? aiSkillText('draft.title_blocked', language) : result.focus ? focusTitle(result.focus.entityId, reviewCards.length, fmt, language) : aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }),
-    summary: aiSkillText(!result.canDraft ? 'draft.no_permission' : reviewCards.length ? 'draft.summary' : 'draft.none_summary', language),
+    title: !result.canDraft ? aiSkillText('draft.title_blocked', language)
+      : result.focusNotSent ? aiSkillText('draft.focus_not_sent', language, { id: aiSkillFocusName(result.focus, facts) })
+        : result.focus ? focusTitle(aiSkillFocusName(result.focus, facts), reviewCards.length, fmt, language)
+          : result.focusAny ? focusTitle(aiSkillList(result.focusAny.map((one) => aiSkillFocusName(one, facts)), language), reviewCards.length, fmt, language)
+          : result.tier?.supplierIds ? aiSkillCountText('draft.tier_title', reviewCards.length, language, { count: fmt.number(reviewCards.length), group: aiSkillText(`tier.group_${result.tier.tier}`, language) })
+            : result.supplier ? aiSkillCountText('draft.supplier_title', reviewCards.length, language, { count: fmt.number(reviewCards.length), supplier: result.supplier.name })
+            : aiSkillCountText('draft.title', reviewCards.length, language, { count: fmt.number(reviewCards.length) }),
+    summary: [aiSkillText(!result.canDraft ? 'draft.no_permission' : reviewCards.length ? 'draft.summary' : result.focusNotSent ? 'draft.not_sent_summary' : 'draft.none_summary', language), result.tier && !result.tier.supplierIds ? aiSkillText('tier.unavailable', language) : ''].filter(Boolean).join(language === 'zh-CN' ? '' : ' '),
     severity: result.items[0]?.severity || 'info',
     items: result.items,
     navigation: [...result.drafts.map((candidate) => candidate.item), ...result.links].slice(0, 4).map((item) => aiSkillNavigation(item, language)),

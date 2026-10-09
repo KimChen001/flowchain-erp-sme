@@ -58,6 +58,7 @@ try {
   Object.assign(process.env, {
     DATABASE_URL: url,
     DATABASE_URL_TEST: url,
+    FLOWCHAIN_APPROVAL_EMAILS: process.env.FLOWCHAIN_APPROVAL_EMAILS || "off",
     FLOWCHAIN_PERSISTENCE_MODE: "database",
     FLOWCHAIN_DEFAULT_TENANT_ID: tenantId,
     FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: "false",
@@ -65,6 +66,7 @@ try {
     SCM_API_PORT: String(apiPort),
     NODE_ENV: "test",
     FLOWCHAIN_INTAKE_LOCAL_STORAGE_DIR: artifactDirectory,
+    FLOWCHAIN_ENABLE_DATA_IMPORT: "true",
   });
   await execFileAsync(node, [prismaCli, "migrate", "deploy"], { cwd: root, env: process.env, maxBuffer: 10 * 1024 * 1024 });
   prisma = await createPrismaClient(process.env);

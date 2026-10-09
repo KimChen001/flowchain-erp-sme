@@ -28,6 +28,8 @@ const rendererCopy = {
     evidenceDetails: "View key evidence ({count})",
     impactDetails: "View business impact",
     limitationDetails: "View data limitations",
+    limitedMode: "AI planning was unavailable, so this answer comes from the standard rules and may not cover every part of your question.",
+    overCap: "This workspace reached this month's AI limit, so this answer comes from workspace rules.",
   },
   "zh-CN": {
     severity: { info: "信息", warning: "提醒", risk: "风险", success: "正常" },
@@ -43,6 +45,8 @@ const rendererCopy = {
     evidenceDetails: "查看关键证据（{count}）",
     impactDetails: "查看业务影响",
     limitationDetails: "查看数据限制",
+    limitedMode: "AI 规划暂不可用，本回答来自标准规则，可能没有覆盖问题的每个部分。",
+    overCap: "本工作区本月 AI 用量已达上限，本回答按工作区规则生成。",
   },
 } as const;
 const fill = (template: string, values: Record<string, string | number>) => template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
@@ -77,7 +81,7 @@ function EvidenceLink({ item, children, onNavigate }: { item: AiResponseV2Eviden
 
 function reviewRequest(card: AiResponseV2ReviewCard): ActionDraftPreviewRequest | null {
   if (!card.draftType || !["supplier_followup_draft", "po_followup_draft", "exception_note", "inventory_exception_closure_draft"].includes(card.draftType)) return null;
-  return { type: card.draftType, title: card.draftTitle || card.title, source: "ai_assistant", originEvidence: card.originEvidence || [], payload: { ...(card.payload || {}), reason: card.payload?.reason || card.description || card.allowedNextStep } };
+  return { type: card.draftType, title: card.draftTitle || card.title, source: "ai_assistant", originEvidence: card.originEvidence || [], payload: { ...(card.payload || {}), reason: card.payload?.reason || card.description || card.allowedNextStep } , ...(card.prefill ? { prefill: card.prefill } : {}) };
 }
 
 function NavigationAction({ link, primary = false, onNavigate }: { link: AiResponseV2NavigationLink; primary?: boolean; onNavigate?: Navigate }) {
@@ -102,7 +106,7 @@ function Action({ action, primary, onNavigate, onReviewActionDraft, language }: 
   }
   const request = reviewRequest(action.card);
   if (!request || !onReviewActionDraft) return null;
-  return <button type="button" onClick={() => onReviewActionDraft(request)} data-testid="ai-action-draft-preview" data-action-kind="generate_text_draft" className={primary ? "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold"} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{action.label || rendererCopy[language].textDraft}</button>;
+  return <button type="button" onClick={() => onReviewActionDraft(request)} data-testid="ai-action-draft-preview" data-action-kind="generate_text_draft" data-draft-type={action.card.draftType || ""} className={primary ? "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold"} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{action.label || rendererCopy[language].textDraft}</button>;
 }
 
 // One part of a compound answer: its title and summary, in the answer
@@ -136,6 +140,9 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   return (
     <div data-testid="ai-response-v2" data-answer-mode={focused.answerMode} data-answer-source={response.answerSource || undefined} className="space-y-3 rounded-xl p-3" style={{ background: A.white, border: `1px solid ${A.border}` }}>
       {response.answerSourceLabel ? <div data-testid="ai-answer-source" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" style={{ color: A.gray2 }}><span className="inline-flex rounded-full px-2 py-0.5 font-semibold" style={{ background: A.gray6, color: A.gray1 }}>{response.answerSourceLabel}</span>{response.checkedLabel ? <span data-testid="ai-answer-checked">{response.checkedLabel}</span> : null}</div> : null}
+      {/* A model step was tried and failed; the rules answered (limited mode). */}
+      {response.agentPlanning?.status === "degraded" ? <p data-testid="ai-limited-mode" role="status" className="rounded-md px-2 py-1 text-[11px]" style={{ background: "#FDF1E3", color: "#92400E" }}>{copy.limitedMode}</p> : null}
+      {response.aiModelAccess?.status === "over_cap" ? <p data-testid="ai-over-cap" role="status" className="rounded-md px-2 py-1 text-[11px]" style={{ background: "#FDF1E3", color: "#92400E" }}>{copy.overCap}</p> : null}
       <section data-testid="ai-focused-conclusion">
         <div className="flex items-start justify-between gap-2"><div lang={response.language || undefined}><h3 className="text-sm font-semibold leading-5" style={{ color: A.label }}>{focused.headline}</h3>{focused.summary && !compound ? <p className="mt-1 text-xs leading-5" style={{ color: A.gray1 }}>{focused.summary}</p> : null}</div><Chip tone={focused.severity}>{copy.severity[focused.severity]}</Chip></div>
         {/* The help answer reads no records, so "0 records" would read as a failed lookup. */}
@@ -152,7 +159,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
 
       {compound ? <section data-testid="ai-answer-sections" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy.sections}</div>{sections.map((section) => <AnswerSection key={section.id} section={section} evidence={(section.evidenceIds || []).map((id) => evidenceById.get(id)).filter((item): item is AiResponseV2EvidenceItem => Boolean(item))} language={language} answerLanguage={response.language} onNavigate={onNavigate} />)}</section> : null}
 
-      {!compound && focused.primaryItems.length ? <section data-testid="ai-focused-primary-items" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy.primaryItems}</div>{focused.primaryItems.map((item) => <article key={item.id} className="rounded-lg p-2.5" style={{ background: A.gray6 }}><div className="flex items-start justify-between gap-2"><div className="min-w-0 text-xs font-semibold"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink></div>{item.status ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{item.status}</span> : null}</div><p className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>{item.reason}</p>{item.impact ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>{fill(copy.impact, { impact: item.impact })}</p> : null}</article>)}</section> : null}
+      {!compound && focused.primaryItems.length ? <section data-testid="ai-focused-primary-items" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy.primaryItems}</div>{focused.primaryItems.map((item) => <article key={item.id} className="rounded-lg p-2.5" style={{ background: A.gray6 }}><div className="flex items-start justify-between gap-2"><div className="min-w-0 text-xs font-semibold"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink></div>{item.status ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{item.status}</span> : null}</div><p className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>{item.reason}</p>{item.impact ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>{fill(copy.impact, { impact: item.impact })}</p> : null}{item.nextStep || item.draft ? <div data-testid="ai-line-next-step" className="mt-2 flex flex-wrap items-center gap-2">{item.nextStep ? <span className="text-[11px] font-medium leading-5" lang={response.language || undefined} style={{ color: A.blue }}>{item.nextStep}</span> : null}{item.draft ? <Action action={item.draft} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /> : null}</div> : null}</article>)}</section> : null}
 
       {focused.primaryAction || focused.secondaryActions.length ? <section data-testid="ai-focused-actions"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy.nextStep}</div><div className="mt-2 flex flex-wrap gap-2">{focused.primaryAction ? <Action action={focused.primaryAction} primary onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /> : null}{focused.secondaryActions.map((action, index) => <Action key={`${action.kind}-${action.label}-${index}`} action={action} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} />)}</div></section> : null}
 

@@ -14,7 +14,7 @@
 export const PREFILL_SOURCES = Object.freeze(['record', 'default', 'template', 'history', 'workspace_history', 'model'])
 export const PREFILL_OUTCOMES = Object.freeze(['accepted', 'edited', 'cleared'])
 // Where a prefilled form was opened from.
-export const PREFILL_ORIGINS = Object.freeze(['ai_assistant', 'today_cockpit', 'form'])
+export const PREFILL_ORIGINS = Object.freeze(['ai_assistant', 'today_cockpit', 'reorder_list', 'form'])
 
 const MAX_FIELDS = 40
 const FIELD_PATTERN = /^[a-z][A-Za-z0-9_.]{0,63}$/
@@ -46,6 +46,22 @@ export function buildSuggestionTrail({ origin, prefills = {}, values = {} } = {}
       outcome: prefillOutcome(entry.value, values[field]),
     }))
   return fields.length ? { origin: prefillOrigin(origin), fields } : null
+}
+
+// The suggested fields of a draft or form: { field: { source, ref?, value } }.
+// The value is kept so the review screen can tell whether a field still
+// holds the suggestion; it never goes to an audit row.
+const MAX_PREFILL_VALUE = 4000
+export function sanitizePrefillMap(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out = {}
+  for (const [field, entry] of Object.entries(raw).slice(0, MAX_FIELDS)) {
+    if (!FIELD_PATTERN.test(field) || !entry || typeof entry !== 'object') continue
+    if (!PREFILL_SOURCES.includes(entry.source) || typeof entry.value !== 'string' || entry.value.length > MAX_PREFILL_VALUE) continue
+    const ref = normalize(entry.ref)
+    out[field] = { source: entry.source, ...(REF_PATTERN.test(ref) ? { ref } : {}), value: entry.value }
+  }
+  return Object.keys(out).length ? out : null
 }
 
 // The server's view of a posted trail: unknown codes, oversized or malformed

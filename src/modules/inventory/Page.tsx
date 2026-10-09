@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, RefreshCw } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
@@ -9,6 +9,7 @@ import { useI18n } from "../../i18n/I18n";
 import { A, Card, Chip } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { useReorderListCopy } from "./reorderListCopy";
 
 const copy = (label: string) =>
   workspaceCopy(
@@ -56,6 +57,7 @@ type Serial = {
 type Movement = {
   movementId?: string;
   movementType?: string;
+  reason?: string | null;
   sourceDocumentId?: string;
   relatedGrnId?: string;
   sku?: string;
@@ -125,8 +127,23 @@ function quantity(item: Item) {
 function reorder(item: Item) {
   return Number(item.reorderPoint ?? item.safetyStock ?? 0);
 }
-function isShort(item: Item) {
-  return quantity(item) < reorder(item);
+// The safety stock and reorder point are one figure for the whole item, so
+// they are set against the item's available stock over every location shown,
+// as the reorder list sets them against the item's stock; a location's row is
+// never judged on its own (65 EA over A-01 and an unlocated record is above a
+// reorder point of 40, though each row alone is below it).
+function availableBySku(items: Item[]) {
+  const totals = new Map<string, number>();
+  for (const item of items) totals.set(item.sku, (totals.get(item.sku) || 0) + quantity(item));
+  return totals;
+}
+// Below the safety stock, or at or below the reorder point, as the reorder
+// list and the assistant judge it. 0 means none is recorded.
+function isShort(item: Item, totals: Map<string, number>) {
+  const available = totals.get(item.sku) ?? quantity(item);
+  const safetyStock = Number(item.safetyStock || 0);
+  const reorderPoint = Number(item.reorderPoint || 0);
+  return (safetyStock > 0 && available < safetyStock) || (reorderPoint > 0 && available <= reorderPoint);
 }
 
 export default function InventoryPage({
@@ -142,6 +159,7 @@ export default function InventoryPage({
   const view = endpointFor[initialView] ? initialView : "empty";
   const warehouseName = useWarehouseNames();
   const { language, locale, timezone } = useI18n();
+  const reorderCopy = useReorderListCopy();
   const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState<any[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -206,9 +224,10 @@ export default function InventoryPage({
     if (focus?.entityId) setSelectedSku(focus.entityId);
   }, [focus?.entityId]);
   const items = rows as Item[];
+  const totals = useMemo(() => availableBySku(items), [items]);
   const visible = useMemo(
-    () => (view === "warnings" ? items.filter(isShort) : rows),
-    [items, rows, view],
+    () => (view === "warnings" ? items.filter((item) => isShort(item, totals)) : rows),
+    [items, rows, totals, view],
   );
   const selected =
     view === "overview" || view === "warnings"
@@ -248,7 +267,7 @@ export default function InventoryPage({
         <div>
           <h2 className="text-lg font-semibold">{copy("库存管理")}</h2>
           <p className="mt-1 text-xs" style={{ color: A.sub }}>
-            {copy("仅显示库存运行时仓库中的正式记录；没有记录时保持为空。")}
+            {copy("仅显示已过账的库存记录；没有记录时保持为空。")}
           </p>
         </div>
         <button
@@ -260,6 +279,11 @@ export default function InventoryPage({
           <RefreshCw size={16} />
         </button>
       </div>
+      {view === "warnings" && (
+        <Link to="/app/inventory/reorder" data-testid="inventory-warnings-reorder-link" className="block text-xs font-semibold" style={{ color: A.blue }}>
+          {reorderCopy("fromWarnings")}
+        </Link>
+      )}
       {activeFilters.length > 0 && (
         <Card className="p-4" data-testid="inventory-active-filters">
           <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -285,12 +309,12 @@ export default function InventoryPage({
       )}
       {state === "loading" && (
         <Card className="p-8 text-sm" style={{ color: A.sub }}>
-          {copy("正在读取库存运行时数据...")}
+          {copy("正在读取库存...")}
         </Card>
       )}
       {state === "error" && (
         <Card className="p-8 text-sm" style={{ color: A.red }}>
-          {copy("库存数据读取失败。请检查运行时服务后重试。")}
+          {copy("库存数据读取失败，请稍后重试。")}
         </Card>
       )}
       {state === "ready" && visible.length === 0 && (
@@ -369,7 +393,8 @@ export default function InventoryPage({
                       {Number(item.safetyStock || 0)} / {reorder(item)}
                     </td>
                     <td className="px-4 py-3">
-                      {view === "warnings" && isShort(item) ? (
+                      {/* Both pages say when stock is below safety stock or at the reorder point, as the warnings page lists it. */}
+                      {isShort(item, totals) ? (
                         <Chip label="需补货" color={A.orange} bg="#fff7e8" />
                       ) : (
                         <Chip
@@ -438,7 +463,7 @@ export default function InventoryPage({
           ]}
           rows={(visible as Movement[]).map((row) => [
             // The movement's own id is an internal UUID; show what moved it instead.
-            movementTypeLabel(row.movementType || "", language),
+            movementTypeLabel(row.movementType || "", language, row.reason),
             row.relatedGrnId || (row.sourceDocumentId && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(row.sourceDocumentId) ? row.sourceDocumentId : "—"),
             <EntityLink kind="item" id={row.sku}>
               {row.sku}
@@ -472,7 +497,7 @@ export default function InventoryPage({
             <AlertTriangle
               size={15}
               color={
-                view === "warnings" && isShort(selected) ? A.orange : A.green
+                isShort(selected, totals) ? A.orange : A.green
               }
             />
             <h3 className="text-sm font-semibold">{copy("库存详情")} · {selected.sku}</h3>

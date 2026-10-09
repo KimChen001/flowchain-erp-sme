@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Toaster } from "sonner";
-import { Activity, ArrowLeft, Link2, Loader2, Lock, Mail, ShieldCheck } from "lucide-react";
+import { Activity, ArrowLeft, BarChart3, Boxes, Globe, Info, Link2, Loader2, Lock, Mail, ShieldCheck, ShoppingCart } from "lucide-react";
 import { A } from "../components/ui";
 import { PRODUCT_NAME, PRODUCT_TAGLINE } from "../lib/constants";
 import { ApiError, apiJson, AUTH_TOKEN_KEY, CURRENT_USER_KEY } from "../lib/api-client";
@@ -23,16 +23,19 @@ const RESEND_DELAY_SECONDS = 60;
 
 const COPY = {
   tagline: { en: "AI-powered inventory and supply chain workspace", zh: PRODUCT_TAGLINE },
-  headline: { en: "Connect purchasing, sales, inventory, and business insights in one workspace.", zh: "把基础资料、采购、销售、库存和经营分析连接到同一个工作台。" },
-  intro: { en: "FlowChain brings master data, purchasing, sales, inventory, analytics, and operational finance together for small and medium businesses. Payment, collection, refund, tax, and general-ledger execution are not enabled.", zh: "FlowChain 是面向中小企业的 ERP 进销存协同平台，当前连接基础资料、采购、销售、库存、经营分析和运营财务。付款、收款、退款、税务与总账执行尚未启用。" },
-  buy: { en: "Buy", zh: "采" },
+  // The headline is two lines so Chinese never breaks in the middle of a word.
+  headlineLead: { en: "Purchasing, sales, and inventory,", zh: "采购、销售与库存，" },
+  headlineRest: { en: "connected in one workspace.", zh: "在一个工作台协同完成。" },
+  intro: { en: "An ERP workspace for small and medium businesses. Master data, purchasing, sales, inventory, analytics, and operational finance share one set of records.", zh: "面向中小企业的 ERP 进销存平台。基础资料、采购、销售、库存、经营分析与运营财务共用同一套数据。" },
   buyLabel: { en: "Purchasing", zh: "采购协同" },
-  stock: { en: "Stock", zh: "库" },
+  buyDetail: { en: "Requisitions, purchase orders, receiving, and supplier bills", zh: "采购申请、采购订单、收货与供应商账单" },
   stockLabel: { en: "Inventory", zh: "库存管理" },
-  plan: { en: "Plan", zh: "析" },
+  stockDetail: { en: "Stock by warehouse, reorder points, and movements", zh: "分仓库存、补货点与出入库记录" },
   planLabel: { en: "Business insights", zh: "经营洞察" },
+  planDetail: { en: "Dashboards built from your own transactions", zh: "基于真实业务数据的经营看板" },
+  scopeNote: { en: "Payment, collection, refund, tax, and general-ledger execution are not enabled.", zh: "付款、收款、退款、税务与总账执行尚未启用。" },
   title: { en: "Sign in to your workspace", zh: "登录工作区" },
-  subtitle: { en: "We'll email you a secure sign-in link.", zh: "我们会向你的邮箱发送一个安全登录链接。" },
+  subtitle: { en: "Enter your work email and we'll send you a secure sign-in link.", zh: "输入工作邮箱，我们会发送一个安全登录链接。" },
   language: { en: "Interface language", zh: "界面语言" },
   email: { en: "Work email", zh: "工作邮箱" },
   send: { en: "Email me a sign-in link", zh: "发送登录链接" },
@@ -89,57 +92,116 @@ function useCopy() {
   };
 }
 
+const FEATURES = [
+  { icon: ShoppingCart, label: "buyLabel", detail: "buyDetail" },
+  { icon: Boxes, label: "stockLabel", detail: "stockDetail" },
+  { icon: BarChart3, label: "planLabel", detail: "planDetail" },
+] as const;
+
+const NAVY = "#0f1b33";
+
+function BrandMark({ size }: { size: "sm" | "lg" }) {
+  const box = size === "lg" ? "w-10 h-10 rounded-xl" : "w-8 h-8 rounded-lg";
+  return (
+    <div className={`${box} flex items-center justify-center shrink-0`} style={{ background: A.blue }}>
+      <Activity size={size === "lg" ? 20 : 16} className="text-white" strokeWidth={2.5} />
+    </div>
+  );
+}
+
+function LanguageSelect() {
+  const { language, setGuestLanguage } = useI18n();
+  const copy = useCopy();
+  return (
+    <label className="inline-flex items-center gap-1.5 rounded-lg border bg-white pl-2.5 pr-1 h-9 text-slate-600 focus-within:ring-2 focus-within:ring-blue-500/30" style={{ borderColor: A.gray4 }} title={copy("language")}>
+      <Globe size={14} aria-hidden="true" />
+      <select aria-label="Interface language / 界面语言" value={language} onChange={event => setGuestLanguage(event.target.value as "en-US" | "zh-CN")} className="h-full bg-transparent pr-1 outline-none cursor-pointer" style={{ color: A.label }}>
+        <option value="en-US">English</option>
+        <option value="zh-CN">中文</option>
+      </select>
+    </label>
+  );
+}
+
 function SignInLayout({ children }: { children: React.ReactNode }) {
   const copy = useCopy();
   return (
-    <div className="min-h-screen flex items-center justify-center px-6" style={{ background: A.bg, fontFamily: "var(--fc-font-family)" }}>
+    <>
       <Toaster position="top-right" />
-      <div className="w-full max-w-5xl grid grid-cols-[1.05fr_0.95fr] gap-8 items-center">
-        <section className="space-y-8">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, #0071e3 0%, #32ade6 100%)" }}>
-              <Activity size={20} className="text-white" strokeWidth={2.5} />
-            </div>
+      <div className="min-h-screen lg:grid lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]" style={{ background: "#f5f7fa", fontFamily: "var(--fc-font-family)" }}>
+        <aside
+          className="relative hidden lg:flex flex-col justify-between overflow-hidden px-14 py-12 text-white"
+          style={{
+            background: `radial-gradient(900px 520px at 85% 110%, rgba(37,99,235,0.45), transparent 60%), radial-gradient(600px 400px at -10% -10%, rgba(13,148,136,0.22), transparent 60%), ${NAVY}`,
+          }}
+        >
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.07]" style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.6) 1px, transparent 1px)", backgroundSize: "44px 44px", maskImage: "linear-gradient(180deg, black, transparent 85%)" }} />
+          <div className="relative flex items-center gap-3">
+            <BrandMark size="lg" />
             <div>
-              <div className="text-2xl font-semibold" style={{ color: A.label }}>{PRODUCT_NAME}</div>
-              <div className="text-sm" style={{ color: A.sub }}>{copy("tagline")}</div>
+              <div className="text-lg font-semibold leading-tight">{PRODUCT_NAME}</div>
+              <div className="text-[13px] leading-5" style={{ color: "#a5b4cf" }}>{copy("tagline")}</div>
             </div>
           </div>
-          <div>
-            <h1 className="text-[38px] leading-tight font-semibold mb-4" style={{ color: A.label }}>{copy("headline")}</h1>
-            <p className="text-base leading-7 max-w-xl" style={{ color: A.sub }}>{copy("intro")}</p>
+          <div className="relative max-w-[560px] py-12">
+            <h1 className="text-[36px] leading-[1.25] font-semibold tracking-tight">
+              <span className="block">{copy("headlineLead")}</span>
+              <span className="block" style={{ color: "#93b4ff" }}>{copy("headlineRest")}</span>
+            </h1>
+            <p className="mt-5 text-[15px] leading-7" style={{ color: "#c3cde0" }}>{copy("intro")}</p>
+            <ul className="mt-10 space-y-3">
+              {FEATURES.map(({ icon: Icon, label, detail }) => (
+                <li key={label} className="flex items-start gap-4 rounded-xl px-4 py-3.5" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(37,99,235,0.22)", color: "#93b4ff" }}>
+                    <Icon size={17} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold leading-5">{copy(label)}</div>
+                    <div className="mt-0.5 text-[13px] leading-5" style={{ color: "#a5b4cf" }}>{copy(detail)}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
           </div>
-          <div className="grid grid-cols-3 gap-3 max-w-xl">
-            {([["buy", "buyLabel"], ["stock", "stockLabel"], ["plan", "planLabel"]] as const).map(([value, label]) => (
-              <div key={value} className="rounded-2xl px-4 py-3" style={{ background: A.white, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
-                <div className="text-lg font-semibold" style={{ color: A.label }}>{copy(value)}</div>
-                <div className="text-xs" style={{ color: A.gray1 }}>{copy(label)}</div>
-              </div>
-            ))}
+          <p className="relative flex items-center gap-2 text-xs leading-5" style={{ color: "#8393b0" }}>
+            <Info size={13} className="shrink-0" />{copy("scopeNote")}
+          </p>
+        </aside>
+        <main className="flex min-h-screen flex-col px-4 py-6 sm:px-8 lg:px-12">
+          <div className="flex items-center justify-between gap-3 lg:justify-end">
+            <div className="flex items-center gap-2.5 lg:hidden">
+              <BrandMark size="sm" />
+              <span className="text-base font-semibold" style={{ color: A.label }}>{PRODUCT_NAME}</span>
+            </div>
+            <LanguageSelect />
           </div>
-        </section>
-        <div className="rounded-[20px] p-6 space-y-4" style={{ background: A.white, boxShadow: "0 18px 60px rgba(0,0,0,0.10), 0 0 0 0.5px rgba(0,0,0,0.08)" }}>
-          {children}
-        </div>
+          <div className="flex flex-1 items-center justify-center py-10">
+            <div className="w-full max-w-[420px] rounded-2xl bg-white p-7 sm:p-8 space-y-5" style={{ border: `1px solid ${A.gray4}`, boxShadow: "0 1px 2px rgba(15,23,42,0.04), 0 12px 32px rgba(15,23,42,0.06)" }}>
+              {children}
+            </div>
+          </div>
+          <p className="lg:hidden text-center text-xs leading-5" style={{ color: A.gray1 }}>{copy("scopeNote")}</p>
+        </main>
       </div>
-    </div>
+    </>
   );
 }
 
 function CardHeading({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle?: string }) {
   return (
-    <div className="flex items-center gap-3 pb-2">
-      <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "#f0f6ff", color: A.blue }}>{icon}</div>
+    <div className="space-y-3 pb-1">
+      <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "#eff4ff", color: A.blue }}>{icon}</div>
       <div>
-        <h2 className="text-base font-semibold" style={{ color: A.label }}>{title}</h2>
-        {subtitle && <div className="text-xs" style={{ color: A.gray1 }}>{subtitle}</div>}
+        <h2 className="text-xl font-semibold leading-7" style={{ color: A.label }}>{title}</h2>
+        {subtitle && <div className="mt-1 text-sm leading-6" style={{ color: A.gray1 }}>{subtitle}</div>}
       </div>
     </div>
   );
 }
 
-const primaryButton = "w-full h-11 rounded-xl flex items-center justify-center gap-2 text-sm font-semibold text-white disabled:opacity-70";
-const secondaryButton = "w-full h-10 rounded-xl flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-60";
+const primaryButton = "w-full h-11 rounded-lg flex items-center justify-center gap-2 text-sm font-semibold text-white transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 focus-visible:ring-offset-2 disabled:opacity-70";
+const inputClass = "mt-1.5 w-full h-11 rounded-lg border bg-white px-3 text-sm outline-none transition-shadow focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20";
+const secondaryButton = "w-full h-10 rounded-lg flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-60";
 
 // In local development the outbox holds the email instead of sending it;
 // this reads the latest link for the address from the local-only endpoint.
@@ -156,10 +218,10 @@ function LocalSignInLink({ email }: { email: string }) {
     }
   }
   return (
-    <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900 space-y-2" data-testid="local-sign-in-link">
+    <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs leading-5 text-amber-900 space-y-2" data-testid="local-sign-in-link">
       <div className="font-semibold">{copy("localTitle")}</div>
       <div>{copy("localOnly")}</div>
-      <button type="button" className="rounded-md bg-white px-2 py-1 inline-flex items-center gap-1" onClick={load} disabled={state.status === "loading"}>
+      <button type="button" className="rounded-md border border-amber-200 bg-white px-2 py-1 inline-flex items-center gap-1 hover:bg-amber-100" onClick={load} disabled={state.status === "loading"}>
         <Link2 size={12} />{copy("viewLink")}
       </button>
       {state.status === "ready" && (state.url
@@ -170,7 +232,6 @@ function LocalSignInLink({ email }: { email: string }) {
 }
 
 export function LoginScreen({ localStatus }: { localStatus: LocalDevelopmentStatus | null }) {
-  const { language, setGuestLanguage } = useI18n();
   const copy = useCopy();
   const [email, setEmail] = useState(localStatus?.availableLoginEmails[0] || "");
   const [sentTo, setSentTo] = useState("");
@@ -241,33 +302,31 @@ export function LoginScreen({ localStatus }: { localStatus: LocalDevelopmentStat
     <SignInLayout>
       <form onSubmit={submit} className="space-y-4" data-testid="sign-in-email-form">
         <CardHeading icon={<Lock size={16} />} title={copy("title")} subtitle={copy("subtitle")} />
-        <label className="block text-xs font-medium" style={{ color: A.gray1 }}>
-          {copy("language")}
-          <select aria-label="Interface language / 界面语言" value={language} onChange={event => setGuestLanguage(event.target.value as "en-US" | "zh-CN")} className="mt-1 block w-full rounded-lg border border-slate-200 bg-white p-2">
-            <option value="en-US">English</option>
-            <option value="zh-CN">中文</option>
-          </select>
-        </label>
         {localStatus && (
-          <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900" data-testid="local-login-metadata">
+          <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs leading-5 text-amber-900" data-testid="local-login-metadata">
             <div className="font-semibold">{copy("localTitle")} · {localStatus.workspaceName}</div>
-            <div className="mt-1">{copy("localAccounts")}{localStatus.availableLoginEmails.join(", ")}</div>
-            <div className="mt-2 flex gap-2">
-              {localStatus.availableLoginEmails.map((address) => (
-                <button key={address} type="button" className="rounded-md bg-white px-2 py-1" onClick={() => setEmail(address)}>
-                  {address === "admin@flowchain.local" ? copy("useAdmin") : copy("useManager")}
-                </button>
-              ))}
-            </div>
+            {localStatus.availableLoginEmails.length > 0 && (
+              <>
+                <div className="mt-0.5">{copy("localAccounts")}{localStatus.availableLoginEmails.join(", ")}</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {localStatus.availableLoginEmails.map((address) => (
+                    <button key={address} type="button" className="rounded-md border border-amber-200 bg-white px-2 py-1 hover:bg-amber-100" onClick={() => setEmail(address)}>
+                      {address === "admin@flowchain.local" ? copy("useAdmin") : copy("useManager")}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
         <label className="block">
-          <span className="text-xs font-medium" style={{ color: A.gray1 }}>{copy("email")}</span>
+          <span className="text-sm font-medium" style={{ color: A.label }}>{copy("email")}</span>
           <input
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="mt-1 w-full h-11 rounded-xl px-3 text-sm outline-none"
-            style={{ background: A.gray6, color: A.label, border: "0.5px solid rgba(0,0,0,0.08)" }}
+            className={inputClass}
+            style={{ color: A.label, borderColor: A.gray3 }}
+            placeholder="name@company.com"
             type="email"
             autoComplete="email"
             required
@@ -346,8 +405,8 @@ export function AcceptInvitationScreen({ localStatus }: { localStatus: LocalDeve
       <form onSubmit={accept} className="space-y-4" data-testid="accept-invitation-form">
         <CardHeading icon={<ShieldCheck size={16} />} title={copy("inviteTitle", { workspace: invitation.workspaceName })} subtitle={copy("inviteBody", { role: roleName, email: invitation.email })} />
         <label className="block">
-          <span className="text-xs font-medium" style={{ color: A.gray1 }}>{copy("inviteName")}</span>
-          <input data-testid="accept-invitation-name" value={name} onChange={(event) => setName(event.target.value)} className="mt-1 w-full h-11 rounded-xl px-3 text-sm outline-none" style={{ background: A.gray6, color: A.label, border: "0.5px solid rgba(0,0,0,0.08)" }} autoComplete="name" required />
+          <span className="text-sm font-medium" style={{ color: A.label }}>{copy("inviteName")}</span>
+          <input data-testid="accept-invitation-name" value={name} onChange={(event) => setName(event.target.value)} className={inputClass} style={{ color: A.label, borderColor: A.gray3 }} autoComplete="name" required />
         </label>
         {error && <p className="text-xs" role="alert" style={{ color: A.red }}>{error}</p>}
         <button data-testid="accept-invitation-submit" type="submit" disabled={status === "accepting" || !name.trim()} className={primaryButton} style={{ background: A.blue }}>

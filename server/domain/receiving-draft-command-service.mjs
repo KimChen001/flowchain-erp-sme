@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { sanitizeSuggestionTrail } from '../../shared/prefill-suggestions.mjs'
 import { assertAuthorized } from '../auth/authorization-service.mjs'
 import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { assertWarehouseAccess, hasWarehouseAccess, resolveProvisionedActor } from './pilot-identity.mjs'
@@ -170,6 +171,8 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
   async function createDraft(input = {}, context, channel = RECEIVING_DRAFT_CHANNELS.desktop) {
     const actor = await authorizedActor(prisma, context, channel)
     const warehouseId = text(input.warehouseId)
+    // Which prefilled values the user kept: codes only, for the audit row.
+    const suggestions = sanitizeSuggestionTrail(input.suggestionTrail)
     if (!warehouseId) fail('RECEIVING_WAREHOUSE_REQUIRED', 'A receiving warehouse is required.', 422)
     const warehouseIds = [...new Set([warehouseId, ...(input.lines || []).map((line) => text(line.warehouseId) || warehouseId)])]
     assertWarehouseAccess(actor, warehouseIds, 'operate')
@@ -190,7 +193,7 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
         metadata: { note: text(input.note), ...channel.metadata(input) }, lines: { create: lines },
       } })
       const result = { entityId: document.id, receivingDocument: documentSummary(document), pendingSync: false }
-      await audit(tx, actor, channel, document, 'receiving_draft_created', `Created receiving draft ${document.documentNumber}.`, { commandExecutionId: execution.id, commandType, idempotencyKey: key, poId: po.id, lineCount: lines.length })
+      await audit(tx, actor, channel, document, 'receiving_draft_created', `Created receiving draft ${document.documentNumber}.`, { commandExecutionId: execution.id, commandType, idempotencyKey: key, poId: po.id, lineCount: lines.length, ...(suggestions ? { suggestions } : {}) })
       await changeFeed(tx, actor, channel, document, key)
       return { result, entityId: document.id }
     })
@@ -287,13 +290,55 @@ export function createReceivingDraftCommandService({ prisma, idFactory = randomU
       where: actor.allWarehouses ? { tenantId: actor.tenantId, status: 'active' } : { tenantId: actor.tenantId, status: 'active', id: { in: [...(actor.operateWarehouseIds || [])] } },
       orderBy: { code: 'asc' }, select: { id: true, code: true, name: true },
     })
+    const { stockBySku, locationsByWarehouse } = await receivingLocations(actor.tenantId, rows, warehouses)
     const showSupplier = actor.permissionCodes.has('finance.partner_snapshot.read') || channel === RECEIVING_DRAFT_CHANNELS.desktop
     const items = rows.map((po) => ({
       id: po.id, status: po.status, version: po.version, receivable: isPurchaseOrderReceivable(po.status),
       supplierName: showSupplier ? po.supplierName : null, currency: po.currency, defaultWarehouseId: text(po.metadata?.targetWarehouseId) || null,
-      lines: po.lines.map(receivableLine),
+      lines: po.lines.map((line) => ({ ...receivableLine(line), stockLocations: stockBySku.get(text(line.sku)) || [] })),
     }))
-    return { items, total: items.length, warehouses }
+    return { items, total: items.length, warehouses: warehouses.map((row) => ({ ...row, locations: locationsByWarehouse.get(row.id) || [] })) }
+  }
+
+  // Where each item already sits in the warehouses the actor may receive
+  // into, most stock first, and every location those warehouses know (their
+  // bins and the locations stock is recorded at). The receiving form offers
+  // them so a receipt adds to the item's existing stock record instead of
+  // starting a new one without a location.
+  async function receivingLocations(tenantId, orders, warehouses) {
+    const warehouseIds = warehouses.map((row) => row.id)
+    const skus = [...new Set(orders.flatMap((po) => po.lines.map((line) => text(line.sku))).filter(Boolean))]
+    if (!warehouseIds.length) return { stockBySku: new Map(), locationsByWarehouse: new Map() }
+    const located = { tenantId, warehouseKey: { in: warehouseIds }, NOT: { locationKey: '' } }
+    const [stock, recorded, bins] = await Promise.all([
+      skus.length ? prisma.inventoryBalance.findMany({ where: { ...located, sku: { in: skus } }, select: { sku: true, warehouseKey: true, location: true, onHandQuantity: true } }) : [],
+      prisma.inventoryBalance.findMany({ where: located, distinct: ['warehouseKey', 'locationKey'], select: { warehouseKey: true, location: true } }),
+      prisma.warehouseLocation.findMany({ where: { tenantId, warehouseId: { in: warehouseIds }, status: 'active' }, select: { warehouseId: true, code: true } }),
+    ])
+    const stockBySku = new Map()
+    for (const row of stock) {
+      if (!text(row.location)) continue
+      const list = stockBySku.get(row.sku) || []
+      list.push({ warehouseId: row.warehouseKey, location: text(row.location), onHandQuantity: decimal(row.onHandQuantity) })
+      stockBySku.set(row.sku, list)
+    }
+    for (const list of stockBySku.values()) {
+      list.sort((a, b) => {
+        const diff = receivingDecimalUnits(b.onHandQuantity) - receivingDecimalUnits(a.onHandQuantity)
+        return diff > 0n ? 1 : diff < 0n ? -1 : a.location.localeCompare(b.location)
+      })
+    }
+    const locationsByWarehouse = new Map()
+    for (const [warehouseId, code] of [...bins.map((row) => [row.warehouseId, row.code]), ...recorded.map((row) => [row.warehouseKey, row.location])]) {
+      if (!text(code)) continue
+      const known = locationsByWarehouse.get(warehouseId) || new Map()
+      if (!known.has(text(code).toLowerCase())) known.set(text(code).toLowerCase(), text(code))
+      locationsByWarehouse.set(warehouseId, known)
+    }
+    return {
+      stockBySku,
+      locationsByWarehouse: new Map([...locationsByWarehouse].map(([id, known]) => [id, [...known.values()].sort((a, b) => a.localeCompare(b))])),
+    }
   }
 
   // Receipts of the workspace the actor may read, newest first.

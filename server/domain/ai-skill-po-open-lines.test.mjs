@@ -7,7 +7,7 @@ import { answerAiSkill } from './ai-skills.mjs'
 
 const SEED_DAY = '2026-09-29'
 const { day } = aiSkillSeedDay(SEED_DAY)
-const LINE_KEYS = ['itemId', 'itemName', 'lineId', 'originalPromisedDate', 'promisedDate', 'remaining', 'sku', 'unit']
+const LINE_KEYS = ['itemId', 'itemName', 'lineId', 'ordered', 'originalPromisedDate', 'promisedDate', 'received', 'remaining', 'sku', 'unit']
 
 // PO-001 (Acme Components, 4 days late) with the given lines in place of its
 // one line, and PR-001 (LDM-001, awaiting approval) with any further lines.
@@ -21,21 +21,30 @@ async function withPo001Lines(lines, { requestLines = [], ...options } = {}) {
   scenario.data.purchaseRequests.find((row) => row.id === 'PR-001').lines.push(...requestLines)
   const facts = await readAiSkillFacts(await loadAiSkillContext(scenario.ctx))
   const answer = (skillId, language, focus = null) => answerAiSkill({ skillId, facts, language, query: 'q', actor: scenario.actor, focus }).response
-  const draft = (language) => answer('prepare_action_draft', language).reviewCards.find((card) => card.targetEntityId === 'PO-001')
+  // The draft an order answer offers on PO-001's line: a message about that
+  // order alone. (The draft answer writes one message to Acme about both of
+  // its overdue orders, PO-001 and PO-008.)
+  const draft = (language) => answer('purchase_orders', language).reviewCards.find((card) => card.targetEntityId === 'PO-001')
   return { facts, row: facts.purchaseOrders.rows.find((row) => row.id === 'PO-001'), draft, answer }
 }
 
+// A calendar day as drafts show it: the tenant locale (en-US here), medium style.
+const shown = (value) => new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`))
+
 test('a PO whose first line is fully received names the open line and its own quantity', async () => {
   const { row, draft } = await withPo001Lines([['LDM-001', '20', '20'], ['LDM-002', '40', '0', 'pcs', { originalPromisedDate: `${day(-9)}T00:00:00.000Z` }]])
-  // The order-wide figures are unchanged: the first line's SKU and the total.
-  assert.deepEqual([row.sku, row.remaining, row.unit], ['LDM-001', 40, 'pcs'])
+  // The order's SKU is its first line's; two SKUs have no order-wide total.
+  assert.deepEqual([row.sku, row.remaining, row.unit], ['LDM-001', null, 'multiple_skus'])
   // The open lines, by the report's line rules: the received line is left out.
-  assert.deepEqual(row.openLines, [{ lineId: 'PO-001-L2', sku: 'LDM-002', itemId: 'ITEM-002', itemName: 'LDM-002', remaining: 40, unit: 'pcs', promisedDate: day(-4), originalPromisedDate: day(-9) }])
+  assert.deepEqual(row.openLines, [{ lineId: 'PO-001-L2', sku: 'LDM-002', itemId: 'ITEM-002', itemName: 'LDM-002', ordered: 40, received: 0, remaining: 40, unit: 'pcs', promisedDate: day(-4), originalPromisedDate: day(-9) }])
 
+  // The message is a letter to the supplier: one line per open line, with its
+  // own quantity and promised date, and the original date when it moved.
   const english = draft('en-US')
-  assert.equal(english.payload.message, 'Please confirm a delivery date for the remaining 40 pcs of LDM-002 on PO-001.')
+  assert.deepEqual(english.payload.message.split('\n'), ['Hello Acme Components,', '', 'Please confirm a delivery date for the open line on PO-001:', `- LDM-002: 40 pcs still to deliver, promised ${shown(day(-4))} (originally ${shown(day(-9))})`, '', 'Thank you.'])
   assert.doesNotMatch(english.payload.message, /LDM-001/)
-  assert.equal(draft('zh-CN').payload.message, '请确认 PO-001 上 LDM-002 剩余 40 pcs 的交货日期。')
+  assert.equal(english.payload.subject, 'PO-001: delivery date for LDM-002')
+  assert.deepEqual(draft('zh-CN').payload.message.split('\n'), ['Acme Components，您好：', '', '请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 pcs 未交，承诺日期 ${shown(day(-4))}（原定 ${shown(day(-9))}）`, '', '谢谢。'])
   // The card carries the open lines next to the message, and stays review-only.
   assert.deepEqual(english.payload.lines, row.openLines)
   assert.deepEqual([english.previewOnly, english.reviewRequired, english.requiresHumanReview], [true, true, true])
@@ -47,17 +56,36 @@ test('several open lines are each named with their own remaining quantity and un
   assert.deepEqual([row.remaining, row.unit], [null, 'mixed'])
   assert.deepEqual(row.openLines.map((line) => [line.sku, line.remaining, line.unit]), [['LDM-002', 40, 'pcs'], ['LDM-003', 10, '箱']])
   // A stored unit in Chinese is a stored value, allowed in an English answer.
-  assert.equal(draft('en-US').payload.message, 'Please confirm delivery dates for the remaining quantities on PO-001: 40 pcs of LDM-002 and 10 箱 of LDM-003.')
-  assert.equal(draft('zh-CN').payload.message, '请确认 PO-001 上以下剩余数量的交货日期：LDM-002 剩余 40 pcs和 LDM-003 剩余 10 箱。')
+  const english = draft('en-US')
+  assert.deepEqual(english.payload.message.split('\n').slice(2, 5), ['Please confirm delivery dates for the open lines on PO-001:', `- LDM-002: 40 pcs still to deliver, promised ${shown(day(-4))}`, `- LDM-003: 10 箱 still to deliver (2 of 12 received), promised ${shown(day(-4))}`])
+  assert.equal(english.payload.subject, 'PO-001: delivery dates for 2 open lines')
+  assert.deepEqual(draft('zh-CN').payload.message.split('\n').slice(2, 5), ['请确认 PO-001 上以下未交货行的交货日期：', `- LDM-002：仍有 40 pcs 未交，承诺日期 ${shown(day(-4))}`, `- LDM-003：仍有 10 箱 未交（已收 2/12），承诺日期 ${shown(day(-4))}`])
 })
 
 test('an open line with an unknown quantity or no SKU gets the generic message', async () => {
   for (const lines of [[['LDM-001', '20', '20'], ['LDM-002', '40', null]], [['LDM-001', '20', '20'], ['', '40', '0']]]) {
     const { row, draft } = await withPo001Lines(lines)
     assert.equal(row.openLines.length, 1)
-    assert.equal(draft('en-US').payload.message, 'Please confirm a delivery date for the remaining quantity on PO-001.')
-    assert.equal(draft('zh-CN').payload.message, '请确认 PO-001 剩余数量的交货日期。')
+    assert.equal(draft('en-US').payload.message, 'Hello Acme Components,\n\nPlease confirm a delivery date for the remaining quantity on PO-001.\n\nThank you.')
+    // The subject names the SKU when the line has one.
+    assert.match(draft('en-US').payload.subject, /^PO-001: delivery date( for LDM-002)?$/)
+    assert.equal(draft('zh-CN').payload.message, 'Acme Components，您好：\n\n请确认 PO-001 剩余数量的交货日期。\n\n谢谢。')
   }
+})
+
+test('an order of two SKUs in one unit names each SKU still to receive, never a total', async () => {
+  const { facts, row, answer } = await withPo001Lines([['LDM-001', '10', '0'], ['LDM-002', '5', '0']])
+  const indexed = facts.purchaseOrders.index.find((entry) => entry.id === 'PO-001')
+  for (const entry of [row, indexed]) assert.deepEqual([entry.ordered, entry.received, entry.remaining, entry.unit], [null, null, null, 'multiple_skus'])
+  const single = (language) => answerAiSkill({ skillId: 'purchase_orders', facts, language, query: 'PO-001', route: { mode: 'single', entities: { purchaseOrders: [indexed] } } }).response
+  assert.equal(single('en-US').conclusion.title, 'PO-001: 10 pcs of LDM-001 and 5 pcs of LDM-002 still to receive')
+  assert.equal(single('zh-CN').conclusion.title, 'PO-001：还有 LDM-001 10 pcs和 LDM-002 5 pcs 待收货')
+  const texts = (response) => JSON.stringify([response.conclusion, response.keyEvidence])
+  for (const language of ['en-US', 'zh-CN']) assert.doesNotMatch(texts(single(language)), /15/)
+  // The overdue signal names the lines too.
+  const reason = answer('today_priorities', 'en-US').keyEvidence.find((item) => item.entityId === 'PO-001').summary
+  assert.match(reason, /10 pcs of LDM-001 and 5 pcs of LDM-002 still to receive/)
+  assert.doesNotMatch(reason, /15|unknown/)
 })
 
 test('open lines carry quantities and dates only, for every reader of purchase orders', async () => {
@@ -81,8 +109,9 @@ test('an item focus finds a PO by its open lines and a request by any line, not 
   for (const entityId of ['ITEM-002', 'LDM-002']) {
     assert.deepEqual(focused('today_priorities', entityId), ['PO-001', 'PO-002'], entityId)
     assert.deepEqual(focused('highest_risk_items', entityId), ['PO-001'], entityId)
-    assert.deepEqual(focused('prepare_action_draft', entityId), ['PO-001', 'PO-002'], entityId)
-    assert.equal(answer('prepare_action_draft', 'en-US', { entityType: 'item', entityId }).reviewCards[0].payload.message, 'Please confirm a delivery date for the remaining 40 pcs of LDM-002 on PO-001.')
+    // PO-002 brings LDM-002 too but is not overdue: no follow-up draft.
+    assert.deepEqual(focused('prepare_action_draft', entityId), ['PO-001'], entityId)
+    assert.match(answer('prepare_action_draft', 'en-US', { entityType: 'item', entityId }).reviewCards[0].payload.message, /^- LDM-002: 40 pcs still to deliver/m)
   }
   // Nothing of LDM-001 is left to receive on PO-001. PR-001 is found by its
   // item id as well as its SKU.
@@ -92,4 +121,33 @@ test('an item focus finds a PO by its open lines and a request by any line, not 
   }
   assert.deepEqual(focused('today_priorities', 'ITEM-003'), ['PR-001'])
   assert.deepEqual(focused('today_priorities', 'LDM-003'), ['PR-001'])
+})
+
+test('the draft answer writes one message to a supplier about all of its overdue orders, and none for an order not yet due', async () => {
+  const { draft, answer } = await withPo001Lines([['LDM-001', '20', '5']])
+  const cards = answer('prepare_action_draft', 'en-US').reviewCards.filter((card) => card.draftType === 'po_followup_draft' && card.payload.supplierId === 'SUP-001')
+  assert.equal(cards.length, 1)
+  const [card] = cards
+  // PO-001 (4 days late, partly received) and PO-008 (2 days late); PO-002 is due on Oct 3.
+  assert.deepEqual(card.payload.poIds, ['PO-001', 'PO-008'])
+  assert.deepEqual([card.targetEntityType, card.targetEntityId], ['supplier', 'SUP-001'])
+  assert.equal(card.title, 'Follow up with Acme Components on 2 orders')
+  assert.equal(card.payload.subject, 'Delivery dates for PO-001, PO-008')
+  const message = card.payload.message.split('\n')
+  assert.equal(message[2], 'Please confirm delivery dates for these open lines:')
+  assert.equal(message[3], `- PO-001 · LDM-001: 15 pcs still to deliver (5 of 20 received), promised ${shown(day(-4))}`)
+  assert.match(message[4], /^- PO-008 · /)
+  assert.doesNotMatch(card.payload.message, /PO-002/)
+  assert.deepEqual(card.payload.lines.map((line) => line.po), ['PO-001', ...card.payload.lines.slice(1).map(() => 'PO-008')])
+  // Acme has no email on file: the card says so instead of leaving To empty.
+  assert.equal(card.payload.to, undefined)
+  assert.equal(card.payload.toMissing, true)
+  // In Chinese, the same orders and quantities.
+  const zh = answer('prepare_action_draft', 'zh-CN').reviewCards.find((entry) => entry.payload.supplierId === 'SUP-001')
+  assert.equal(zh.payload.subject, 'PO-001、PO-008 的交货日期')
+  assert.match(zh.payload.message, /- PO-001 · LDM-001：仍有 15 pcs 未交（已收 5\/20）/)
+  // The priorities answer lists PO-002, due soon, and says it needs no follow-up yet.
+  const line = answer('today_priorities', 'en-US').keyEvidence.find((item) => item.entityId === 'PO-002')
+  assert.equal(line?.nextStep, `Next: no follow-up yet; it is due ${shown(day(4))} and not overdue.`)
+  assert.equal(draft('en-US').payload.poIds, undefined)
 })

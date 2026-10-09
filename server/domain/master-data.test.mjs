@@ -2,6 +2,7 @@ import test from 'node:test'
 import { createTestRepositoryRegistry } from './test-fixtures/runtime-repositories.mjs'
 import assert from 'node:assert/strict'
 import { handleMasterDataRoute } from '../routes/master-data.routes.mjs'
+import { createDbMasterDataRepository } from '../repositories/db-master-data-repository.mjs'
 import {
   findMasterItem,
   findMasterSupplier,
@@ -117,7 +118,7 @@ test('master data helper marks missing preferred supplier metadata', () => {
   assert.equal(items[0].preferredSupplierSource, 'missing')
 })
 
-test('master data helper normalizes supplier read models with score source metadata', () => {
+test('master data helper normalizes supplier read models with score source metadata, never deriving a score from rates', () => {
   const suppliers = listMasterSuppliers(createDb())
   assert.equal(suppliers.length, 2)
   assert.deepEqual(suppliers[0], {
@@ -125,10 +126,12 @@ test('master data helper normalizes supplier read models with score source metad
     name: 'ABC Components',
     status: 'active',
     risk: 'medium',
-    score: 'A',
-    scoreSource: 'derived_performance_fallback',
-    defaultCurrency: 'USD',
-    paymentTermsId: 'NET30',
+    // ABC has on-time and quality rates but no recorded score: none is derived.
+    score: '',
+    scoreSource: 'missing',
+    // No recorded currency or payment term: both stay empty, not USD / NET30.
+    defaultCurrency: null,
+    paymentTermsId: null,
     categories: ['Motors'],
     preferred: true,
   })
@@ -142,6 +145,12 @@ test('master data helper marks missing supplier score metadata', () => {
 
   assert.equal(suppliers[0].score, '')
   assert.equal(suppliers[0].scoreSource, 'missing')
+  assert.equal(suppliers[0].paymentTermsId, null)
+})
+
+test('master data helper keeps a recorded supplier payment term and currency', () => {
+  const [supplier] = listMasterSuppliers({ suppliers: [{ id: 'SUP-004', name: 'Termed Supplier', defaultCurrency: 'EUR', paymentTermsId: 'NET45' }] })
+  assert.deepEqual([supplier.defaultCurrency, supplier.paymentTermsId], ['EUR', 'NET45'])
 })
 
 test('GET /api/master-data/items returns item collection', async () => {
@@ -279,6 +288,13 @@ function writeRoute(method, pathname, { actor, role = 'manager', identity = { au
     updateCustomer: record('updateCustomer', (id, input) => ({ id, ...input })),
     createItemSupplier: record('createItemSupplier', (itemId, input) => ({ relationshipId: 'REL-NEW', itemId, ...input })),
     updateItemSupplier: record('updateItemSupplier', (itemId, relationshipId, input) => ({ relationshipId, itemId, ...input })),
+    createWarehouse: record('createWarehouse', (input) => ({ id: 'WH-NEW', ...input, version: 1 })),
+    updateWarehouse: record('updateWarehouse', (id, input) => ({ id, ...input })),
+    setWarehouseStatus: record('setWarehouseStatus', (id, input) => ({ warehouse: { id, status: input.status }, clearedDefaults: 0 })),
+    listWarehouseBins: record('listWarehouseBins', (warehouseId) => [{ id: 'BIN-1', warehouseId, code: 'A-01' }]),
+    createWarehouseBin: record('createWarehouseBin', (warehouseId, input) => ({ id: 'BIN-NEW', warehouseId, ...input })),
+    updateWarehouseBin: record('updateWarehouseBin', (warehouseId, binId, input) => ({ id: binId, warehouseId, ...input })),
+    setWarehouseBinStatus: record('setWarehouseBinStatus', (warehouseId, binId, input) => ({ id: binId, warehouseId, status: input.status })),
   }
   const route = createRouteContext(method, pathname, createDb(), { masterData })
   route.ctx.identity = identity
@@ -354,6 +370,130 @@ test('master data writes refuse signed-out sessions and actors from another work
   assert.deepEqual([incomplete.route.response.status, incomplete.route.response.payload.reasonCode], [403, 'AUTHORIZATION_CONTEXT_INCOMPLETE'])
   assert.deepEqual(incomplete.calls, [])
 })
+
+// Warehouses and bins are workspace setup: settings.workspace.manage, plus
+// operate access to the warehouse for every change after it exists.
+const WAREHOUSE_WRITES = [
+  ['POST', '/api/master-data/warehouses', 201, 'createWarehouse'],
+  ['PATCH', '/api/master-data/warehouses/WH-1', 200, 'updateWarehouse'],
+  ['POST', '/api/master-data/warehouses/WH-1/deactivate', 200, 'setWarehouseStatus'],
+  ['POST', '/api/master-data/warehouses/WH-1/activate', 200, 'setWarehouseStatus'],
+  ['POST', '/api/master-data/warehouses/WH-1/bins', 201, 'createWarehouseBin'],
+  ['PATCH', '/api/master-data/warehouses/WH-1/bins/BIN-1', 200, 'updateWarehouseBin'],
+  ['POST', '/api/master-data/warehouses/WH-1/bins/BIN-1/deactivate', 200, 'setWarehouseBinStatus'],
+  ['POST', '/api/master-data/warehouses/WH-1/bins/BIN-1/activate', 200, 'setWarehouseBinStatus'],
+]
+
+test('warehouse and bin writes need settings.workspace.manage and operate access to the warehouse', async () => {
+  const admin = writer(['settings.workspace.manage'], { readWarehouseIds: new Set(['WH-1']), operateWarehouseIds: new Set(['WH-1']) })
+  for (const [method, path, status, call] of WAREHOUSE_WRITES) {
+    const { route, calls } = writeRoute(method, path, { actor: admin, role: 'admin', body: { code: 'NEW', name: 'Written', expectedVersion: 1 } })
+    assert.equal(await handleMasterDataRoute(route.ctx), true)
+    assert.equal(route.response.status, status, `${method} ${path} ${JSON.stringify(route.response.payload)}`)
+    assert.deepEqual(calls, [call], `${method} ${path}`)
+  }
+  const status = writeRoute('POST', '/api/master-data/warehouses/WH-1/deactivate', { actor: admin, role: 'admin', body: { expectedVersion: 2 } })
+  await handleMasterDataRoute(status.route.ctx)
+  assert.deepEqual(status.route.response.payload, { warehouse: { id: 'WH-1', status: 'inactive' }, clearedDefaults: 0 })
+
+  // Someone who maintains every kind of master data but not the workspace
+  // changes no warehouse, even with operate access to it.
+  const masterData = writer(['master_data.item.manage', 'master_data.supplier.manage', 'master_data.customer.manage'], { operateWarehouseIds: new Set(['WH-1']) })
+  for (const [method, path] of WAREHOUSE_WRITES) {
+    const { route, calls } = writeRoute(method, path, { actor: masterData, role: 'manager' })
+    await handleMasterDataRoute(route.ctx)
+    assert.deepEqual([route.response.status, route.response.payload.code, route.response.payload.permission], [403, 'PERMISSION_DENIED', 'settings.workspace.manage'], `${method} ${path}`)
+    assert.match(route.response.payload.message, /Your roles do not allow changing warehouses and bins/)
+    assert.deepEqual(calls, [], `${method} ${path}`)
+  }
+
+  // An administrator without operate access to the warehouse is refused the
+  // same way whether or not it exists; read access is not enough. Creating a
+  // new warehouse needs no access to an existing one.
+  const readOnlyScope = writer(['settings.workspace.manage'], { readWarehouseIds: new Set(['WH-1']), operateWarehouseIds: new Set() })
+  for (const [method, path] of WAREHOUSE_WRITES.slice(1)) {
+    for (const target of [path, path.replace('WH-1', 'WH-MISSING')]) {
+      const { route, calls } = writeRoute(method, target, { actor: readOnlyScope, role: 'admin' })
+      await handleMasterDataRoute(route.ctx)
+      assert.deepEqual([route.response.status, route.response.payload.code], [403, 'WAREHOUSE_SCOPE_DENIED'], `${method} ${target}`)
+      assert.equal(hasChinese(route.response.payload.message), false)
+      assert.deepEqual(calls, [], `${method} ${target}`)
+    }
+  }
+
+  for (const [method, path] of WAREHOUSE_WRITES) {
+    const { route, calls } = writeRoute(method, path, { actor: admin, identity: { authenticated: false } })
+    await handleMasterDataRoute(route.ctx)
+    assert.deepEqual([route.response.status, route.response.payload.code], [401, 'AUTHENTICATION_REQUIRED'], `${method} ${path}`)
+    assert.deepEqual(calls, [], `${method} ${path}`)
+  }
+})
+
+// The route, the database repository and the bin command together, over a
+// stand-in transaction: a bin is found only inside the warehouse in the path.
+test('a bin of another warehouse is not found through this warehouse', async () => {
+  const env = { FLOWCHAIN_PERSISTENCE_MODE: 'database', DATABASE_URL: 'postgresql://user:pass@localhost:5432/flowchain' }
+  const warehouses = [{ id: 'WH-1', tenantId: 'tenant-a', code: 'ONE', status: 'active' }, { id: 'WH-2', tenantId: 'tenant-a', code: 'TWO', status: 'active' }]
+  const bins = [{ id: 'BIN-2', tenantId: 'tenant-a', warehouseId: 'WH-2', code: 'B-01', locationKey: 'b-01', status: 'active', updatedAt: new Date('2026-10-01T00:00:00Z') }]
+  const writes = []
+  const matches = (row, where) => Object.entries(where).every(([key, value]) => row[key] === value)
+  const tx = {
+    warehouse: { findFirst: async ({ where }) => warehouses.find((row) => matches(row, where)) || null },
+    warehouseLocation: {
+      findFirst: async ({ where }) => bins.find((row) => matches(row, where)) || null,
+      update: async (args) => { writes.push(args); return bins[0] },
+    },
+    auditLog: { create: async (args) => { writes.push(args); return args.data } },
+  }
+  const masterData = createDbMasterDataRepository({ env, prisma: { $transaction: async (work) => work(tx) } })
+  const admin = writer(['settings.workspace.manage'], { readWarehouseIds: new Set(['WH-1', 'WH-2']), operateWarehouseIds: new Set(['WH-1', 'WH-2']) })
+  for (const [method, path, body] of [
+    ['PATCH', '/api/master-data/warehouses/WH-1/bins/BIN-2', { name: 'Moved', expectedUpdatedAt: '2026-10-01T00:00:00.000Z' }],
+    ['POST', '/api/master-data/warehouses/WH-1/bins/BIN-2/deactivate', { expectedUpdatedAt: '2026-10-01T00:00:00.000Z' }],
+  ]) {
+    const route = createRouteContext(method, path, createDb(), { masterData })
+    route.ctx.identity = { authenticated: true, tenantId: 'tenant-a', userId: 'user-a', role: 'admin' }
+    route.ctx.masterDataActor = admin
+    route.ctx.readBody = async () => body
+    await handleMasterDataRoute(route.ctx)
+    assert.deepEqual([route.response.status, route.response.payload.code], [404, 'NOT_FOUND'], `${method} ${path}`)
+  }
+  assert.deepEqual(writes, [])
+})
+
+test('a warehouse write with a body that is not JSON is refused with a structured error', async () => {
+  const admin = writer(['settings.workspace.manage'], { operateWarehouseIds: new Set(['WH-1']) })
+  for (const [method, path] of WAREHOUSE_WRITES) {
+    const { route, calls } = writeRoute(method, path, { actor: admin, role: 'admin' })
+    route.ctx.readBody = async () => JSON.parse('{not json')
+    await handleMasterDataRoute(route.ctx)
+    assert.deepEqual([route.response.status, route.response.payload.code], [400, 'INVALID_JSON'], `${method} ${path}`)
+    assert.deepEqual(calls, [], `${method} ${path}`)
+  }
+})
+
+test('the bins of a warehouse are read with read access to it', async () => {
+  const reader = writer([], { readWarehouseIds: new Set(['WH-1']) })
+  const allowed = writeRoute('GET', '/api/master-data/warehouses/WH-1/bins', { actor: reader, role: 'viewer' })
+  await handleMasterDataRoute(allowed.route.ctx)
+  assert.equal(allowed.route.response.status, 200)
+  assert.deepEqual(allowed.route.response.payload.bins.map((bin) => bin.code), ['A-01'])
+
+  const outside = writeRoute('GET', '/api/master-data/warehouses/WH-2/bins', { actor: reader, role: 'viewer' })
+  await handleMasterDataRoute(outside.route.ctx)
+  assert.deepEqual([outside.route.response.status, outside.route.response.payload.code], [403, 'WAREHOUSE_SCOPE_DENIED'])
+  assert.deepEqual(outside.calls, [])
+
+  const signedOut = writeRoute('GET', '/api/master-data/warehouses/WH-1/bins', { actor: reader, identity: { authenticated: false } })
+  await handleMasterDataRoute(signedOut.route.ctx)
+  assert.deepEqual([signedOut.route.response.status, signedOut.route.response.payload.code], [401, 'AUTHENTICATION_REQUIRED'])
+  assert.deepEqual(signedOut.calls, [])
+
+  const foreign = writeRoute('GET', '/api/master-data/warehouses/WH-1/bins', { actor: writer([], { tenantId: 'tenant-b', readWarehouseIds: new Set(['WH-1']) }) })
+  await handleMasterDataRoute(foreign.route.ctx)
+  assert.deepEqual([foreign.route.response.status, foreign.route.response.payload.code], [403, 'WAREHOUSE_SCOPE_DENIED'])
+})
+
 
 test('GET /api/master-data/suppliers/:id returns 404 for missing supplier', async () => {
   const route = createRouteContext('GET', '/api/master-data/suppliers/SUP-MISSING', createDb(), { masterData: { getSupplier: async () => null } })

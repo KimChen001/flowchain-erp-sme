@@ -22,17 +22,6 @@ import {
   saveFinanceCollaborationNote,
   INVOICE_MATCHING_BASELINE,
 } from './invoice-matching-review.mjs'
-import {
-  buildControlTowerAiInsight,
-  buildSupplierRiskExceptionCaseDraft,
-  buildSupplierRiskExplanation,
-  deriveSupplierRiskSignals,
-  normalizeControlTowerWorkItem,
-  normalizeSupplierRiskSignal,
-  resolveSupplierRiskScore,
-  resolveTodayCockpitWorkItems,
-  SUPPLIER_RISK_BASELINE,
-} from './supplier-risk-control-tower.mjs'
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..')
 const read = (...parts) => fs.readFileSync(path.join(repoRoot, ...parts), 'utf8')
@@ -155,84 +144,16 @@ test('R281-R290 invoice matching review detects variances and blocks approval pa
   assert.equal(draft.sideEffects.postsInvoice, false)
 })
 
-test('R291-R295 supplier risk signal score explanation and case draft are evidence-based and non-mutating', () => {
-  assert.ok(SUPPLIER_RISK_BASELINE.inspectedFiles.includes('src/modules/srm/Page.tsx'))
-  const signal = normalizeSupplierRiskSignal({ supplierName: 'Fast Precision', signalType: 'invoice_mismatch', severity: 'high', linkedRecords: [{ type: 'invoice', id: 'INV-1' }], evidence: [{ type: 'invoice', id: 'INV-1' }] })
-  assert.equal(signal.scoreImpact, 22)
-  assert.throws(() => normalizeSupplierRiskSignal({ signalType: 'opaque_score' }))
-
-  const signals = deriveSupplierRiskSignals({
-    supplierName: 'Fast Precision',
-    purchaseOrders: [{ po: 'PO-LATE', supplier: 'Fast Precision', status: 'overdue', eta: '2026-06-01', sourceSku: 'SKU-CRIT', priority: 'critical' }],
-    receivingDocs: [{ grn: 'GRN-HOLD', supplier: 'Fast Precision', status: 'quality hold' }],
-    supplierInvoices: [{ invoiceNumber: 'INV-MIS', supplier: 'Fast Precision', varianceAmount: 50 }],
-  })
-  assert.ok(signals.some((item) => item.signalType === 'po_delay'))
-  assert.ok(signals.some((item) => item.signalType === 'critical_sku_dependency'))
-  const score = resolveSupplierRiskScore({ supplierName: 'Fast Precision', signals })
-  assert.equal(score.riskLevel, 'high')
-  assert.equal(score.sideEffects.mutatesSupplierMaster, false)
-  const explanation = buildSupplierRiskExplanation({ supplierName: 'Fast Precision', signals })
-  assert.notEqual(explanation.riskLevel, explanation.reason)
-  assert.ok(explanation.evidence.length > 0)
-  const caseDraft = buildSupplierRiskExceptionCaseDraft({ explanation, existingCases: [{ caseId: 'CASE-SUP-1', caseType: 'supplier_risk', status: 'waiting_supplier' }] })
-  assert.equal(caseDraft.autoCreateCase, false)
-  assert.equal(caseDraft.duplicateWarning.existingCaseId, 'CASE-SUP-1')
-  assert.equal(caseDraft.recommendedAction, 'preview_supplier_followup_note')
-  assert.equal(caseDraft.sideEffects.sendsExternalEmail, false)
-})
-
-test('R296-R300 Today Cockpit control tower aggregates work items with case awareness and AI insight guardrails', () => {
-  const item = normalizeControlTowerWorkItem({ category: 'po_delay', priority: 'high', title: 'PO delayed', sourceModule: 'procurement', sourceEntityType: 'po', sourceEntityId: 'PO-1' })
-  assert.equal(item.category, 'po_delay')
-  assert.throws(() => normalizeControlTowerWorkItem({ category: 'command_center' }))
-
-  const workItems = resolveTodayCockpitWorkItems({
-    purchaseOrders: [{ po: 'PO-LATE', supplier: 'Fast Precision', status: 'overdue', eta: '2026-06-01' }],
-    supplierInvoices: [{ invoiceNumber: 'INV-MIS', supplier: 'Fast Precision', varianceAmount: 25, relatedPo: 'PO-LATE' }],
-    receivingDocs: [{ grn: 'GRN-HOLD', supplier: 'Fast Precision', status: 'quality hold', po: 'PO-LATE' }],
-    suppliers: [{ name: 'Fast Precision' }],
-    exceptionCases: [{ caseId: 'CASE-PO-LATE', status: 'open', sourceEntityId: 'PO-LATE' }, { caseId: 'CASE-RES', status: 'resolved', sourceEntityId: 'INV-OLD' }],
-  })
-  assert.ok(workItems.some((w) => w.category === 'po_delay' && w.exceptionCase?.id === 'CASE-PO-LATE'))
-  assert.ok(workItems.some((w) => w.category === 'invoice_mismatch'))
-  assert.ok(workItems.some((w) => w.category === 'receiving_exception'))
-  assert.ok(workItems.some((w) => w.category === 'supplier_risk'))
-  assert.ok(workItems.some((w) => w.title.includes('resolved pending closure')))
-  const insight = buildControlTowerAiInsight({ workItems })
-  assert.equal(insight.intent, 'today_cockpit_control_tower_insight')
-  assert.equal(insight.mutationAllowed, false)
-  assert.equal(insight.standaloneAiNavigation, false)
-  assert.equal(insight.sideEffects.issuesPo, false)
-  assert.equal(insight.sideEffects.postsInventory, false)
-})
-
-test('R313 supplier risk and control tower overdue detection uses injected business date', () => {
-  const futureAsOf = '2026-07-01T00:00:00.000Z'
-  const lateAsOf = '2026-07-20T00:00:00.000Z'
-  const po = { po: 'PO-R313', supplier: 'Fast Precision', status: 'issued', eta: '2026-07-10', sourceSku: 'SKU-R313' }
-
-  assert.equal(deriveSupplierRiskSignals({ supplierName: 'Fast Precision', purchaseOrders: [po], asOfDate: futureAsOf }).some((item) => item.signalType === 'po_delay'), false)
-  assert.equal(deriveSupplierRiskSignals({ supplierName: 'Fast Precision', purchaseOrders: [po], asOfDate: lateAsOf }).some((item) => item.signalType === 'po_delay'), true)
-
-  assert.equal(resolveTodayCockpitWorkItems({ purchaseOrders: [po], asOfDate: futureAsOf }).some((item) => item.category === 'po_delay'), false)
-  assert.equal(resolveTodayCockpitWorkItems({ purchaseOrders: [po], asOfDate: lateAsOf }).some((item) => item.category === 'po_delay'), true)
-
-  assert.doesNotMatch(read('server', 'domain', 'supplier-risk-control-tower.mjs'), /2026-07-03/)
-})
-
 test('R280/R290/R300 source guardrails preserve boundaries no keys and no standalone AI nav', () => {
   const domainSource = [
     read('server', 'domain', 'receiving-inventory-ledger.mjs'),
     read('server', 'domain', 'invoice-matching-review.mjs'),
-    read('server', 'domain', 'supplier-risk-control-tower.mjs'),
   ].join('\n')
   const uiSource = [
     read('src', 'app', 'routeRegistry.tsx'),
     read('src', 'modules', 'receiving', 'Page.tsx'),
     read('src', 'modules', 'inventory', 'Page.tsx'),
     read('src', 'modules', 'srm', 'Page.tsx'),
-    read('src', 'modules', 'srm', 'SupplierDetailModal.tsx'),
     read('src', 'modules', 'overview', 'TodayCockpitPanel.tsx'),
     read('src', 'components', 'ai', 'ContextualAIInsightPanel.tsx'),
     read('src', 'modules', 'action-drafts', 'BusinessActionPlanPanel.tsx'),
@@ -253,7 +174,7 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
   assert.match(relationships, /resolveEntityRelationships/)
   assert.doesNotMatch(relationships, /fetch\(|apiJson|POST|PATCH/)
   assert.doesNotMatch(all, /SKU-00412.*exception/i)
-  assert.match(uiSource, /label: "采购收货"/)
+  assert.match(uiSource, /label: "收货记录"/)
   assert.match(uiSource, /管理采购到货、质检与入库记录/)
   assert.match(uiSource, /打印入库单/)
   assert.doesNotMatch(uiSource, /收货复核边界/)

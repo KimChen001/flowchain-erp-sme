@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { assertAuthorized } from "../auth/authorization-service.mjs";
+import { assertAuthorized, can } from "../auth/authorization-service.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { isPrismaConcurrencyError } from "./prisma-concurrency-error.mjs";
 import {
+  awaitingReceipt,
   buildSupplierCreditMemoPlan,
   buildSupplierInvoicePlan,
   buildSupplierMatchPlan,
@@ -10,6 +11,15 @@ import {
   financeUnits,
   supplierCreditMemoNumberDuplicate,
 } from "./operational-finance-policy.mjs";
+import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
+import {
+  DUPLICATE_KINDS,
+  duplicateFlagView,
+  duplicateReviewIssues,
+  isDuplicateReviewClosed,
+  loadDuplicateChecks,
+  workspaceTimezone,
+} from "./supplier-invoice-duplicates.mjs";
 
 export class OperationalFinanceError extends Error {
   constructor(code, message, status = 400, details) {
@@ -29,10 +39,12 @@ const commandPermission = (commandType) => ({
   create_supplier_invoice: "finance.supplier_invoice.create",
   revise_supplier_invoice: "finance.supplier_invoice.revise",
   cancel_supplier_invoice: "finance.supplier_invoice.revise",
+  link_supplier_invoice_receipt: "finance.supplier_invoice.revise",
   submit_supplier_invoice: "finance.supplier_invoice.submit",
   match_supplier_invoice: "finance.three_way_match.execute",
   review_match_exception: "finance.match_exception.review",
   approve_supplier_invoice: "finance.supplier_invoice.approve",
+  dismiss_supplier_invoice_duplicate: "finance.supplier_invoice.approve",
   hold_payable_obligation: "finance.payable.hold",
   release_payable_obligation: "finance.payable.release",
   mark_export_ready_payable_obligation: "finance.payable.mark_export_ready",
@@ -294,19 +306,33 @@ const isConcurrency = (error) =>
   isPrismaConcurrencyError(error) ||
   /serialization|deadlock|write conflict/i.test(text(error?.message));
 
-// An approval reads the payable numbers it might assign, so two approvals in
-// one workspace can trip a serializable conflict even when their numbers
-// differ, and one that loses a race for a number fails with the retryable
-// PAYABLE_OBLIGATION_NUMBER_CONFLICT. Either way the whole transaction has
-// rolled back, so approval runs again a couple of times, seeing what the
-// other approval committed, before a 409 reaches the user. Only approval
-// assigns numbers this way, so the other P2P commands still return the 409
-// at once, as they did before.
+// An approval reads its idempotency key and the payable numbers it might
+// assign, and Postgres guards those reads with index page locks that other
+// approvals write to. So approvals running at the same time trip serializable
+// conflicts even when their numbers differ, and even in different workspaces:
+// usually only one of them commits and the rest abort, round after round. One
+// that loses a race for a number fails with the retryable
+// PAYABLE_OBLIGATION_NUMBER_CONFLICT instead. Either way the whole transaction
+// has rolled back, so approval runs again, seeing what the others committed,
+// before a 409 reaches the user. With n approvals at once the last one can
+// need n - 1 retries, so the budget leaves room for several. Only approval
+// assigns numbers this way, so the other P2P commands still return the 409 at
+// once, as they did before.
 const isRetryableConflict = (error) =>
   error instanceof OperationalFinanceError
     ? error.details?.retryable === true
     : isConcurrency(error);
-const APPROVAL_RETRIES = 2;
+const APPROVAL_RETRIES = 5;
+
+// Each retry waits about twice as long as the one before (25-50 ms, then
+// 50-100 ms, up to 400-800 ms), and the random part keeps approvals that
+// aborted together from running again in step and colliding once more.
+const retryPause = (retried) => {
+  const step = 25 * 2 ** retried;
+  return new Promise((resolve) =>
+    setTimeout(resolve, step + Math.floor(Math.random() * step)),
+  );
+};
 
 // Reads which unique fields a P2002 violated. The driver adapter reports them
 // on the constraint, while older engines put them in meta.target.
@@ -401,6 +427,60 @@ const payableNumberDuplicate = (obligationNumber) => ({
 const isSupplierCreditMemoNumberConflict = (error) =>
   isUniqueConflictOn(error, "SupplierCreditMemo", "creditMemoNumber");
 
+// Duplicate supplier invoice flags (plan item C1, supplier-invoice-duplicates.mjs).
+// An open flag asks the approver to dismiss it with a reason, or to cancel the
+// bill, before approval; nothing is held on its own and payments are not
+// touched. duplicateReviewIssues lists what approval waits for.
+const DUPLICATE_REASON_MAX = 500;
+
+const duplicateFlagNotFound = () => ({
+  code: "DUPLICATE_FLAG_NOT_FOUND",
+  message: "This bill has no open duplicate flag of that kind against that bill. Reload the bill to see its current flags.",
+  status: 409,
+});
+
+const duplicateFlagChanged = () => ({
+  code: "DUPLICATE_FLAG_CHANGED",
+  message: "The other bill changed after this flag was shown. Reload the bill and review the flag again.",
+  status: 409,
+});
+
+function dismissDuplicateIssues(invoice, version, input) {
+  const issues = [];
+  if (isDuplicateReviewClosed(invoice.status))
+    issues.push({
+      code: "SUPPLIER_INVOICE_STATUS_INVALID",
+      message: "Duplicate flags are dismissed before approval; this bill is already approved, held or cancelled.",
+      status: 409,
+    });
+  if (invoice.version !== version)
+    issues.push({
+      code: "FINANCE_VERSION_CONFLICT",
+      message: "Supplier invoice changed concurrently.",
+      status: 409,
+    });
+  if (!DUPLICATE_KINDS.includes(text(input.kind)) || !text(input.otherInvoiceId))
+    issues.push({
+      code: "FINANCE_VALIDATION_FAILED",
+      message: "Name the flag to dismiss: the other bill and the kind (likely or possible).",
+      status: 422,
+    });
+  const reason = text(input.reason);
+  if (!reason)
+    issues.push({
+      code: "DUPLICATE_DISMISS_REASON_REQUIRED",
+      message: "Enter why this bill is not a duplicate.",
+      status: 422,
+    });
+  else if (reason.length > DUPLICATE_REASON_MAX)
+    issues.push({
+      code: "DUPLICATE_DISMISS_REASON_TOO_LONG",
+      message: `Keep the reason to ${DUPLICATE_REASON_MAX} characters.`,
+      status: 422,
+    });
+  return issues;
+}
+
 export function createOperationalFinanceCommandService({
   prisma,
   env = process.env,
@@ -415,7 +495,7 @@ export function createOperationalFinanceCommandService({
     context,
     payload,
     work,
-    { retries = 0 } = {},
+    { retries = 0, retried = 0 } = {},
   ) {
     assertEnabled(env);
     const identity = assertIdentity(context);
@@ -474,13 +554,11 @@ export function createOperationalFinanceCommandService({
         { isolationLevel: "Serializable", maxWait: 10_000, timeout: 30_000 },
       );
     } catch (error) {
-      if (retries > 0 && isRetryableConflict(error)) {
-        // A short random pause keeps the retries of several losers apart.
-        await new Promise((resolve) =>
-          setTimeout(resolve, 25 + Math.floor(Math.random() * 25)),
-        );
+      if (retried < retries && isRetryableConflict(error)) {
+        await retryPause(retried);
         return execute(commandType, input, context, payload, work, {
-          retries: retries - 1,
+          retries,
+          retried: retried + 1,
         });
       }
       if (error instanceof OperationalFinanceError) throw error;
@@ -510,6 +588,24 @@ export function createOperationalFinanceCommandService({
       throw error;
     }
   }
+
+  const amountsVisible = (actor) =>
+    can({ actor, permission: "finance.amounts.read", tenantId: actor.tenantId });
+
+  async function duplicateChecks(db, tenantId, invoice) {
+    const timezone = await workspaceTimezone(db, tenantId);
+    return loadDuplicateChecks(db, { tenantId, invoice, timezone });
+  }
+
+  // The open flags this approver can see, and the one they name if it still
+  // holds. A same-amount flag is only dismissed by someone who can see the
+  // amounts.
+  const visibleOpenFlags = (checks, actor) =>
+    checks.openFlags.filter((entry) => entry.kind !== "possible" || amountsVisible(actor));
+  const openFlagNamed = (checks, actor, otherInvoiceId, kind) =>
+    visibleOpenFlags(checks, actor).find(
+      (entry) => entry.otherInvoiceId === otherInvoiceId && entry.kind === kind,
+    );
 
   async function previewSupplierInvoice(input, context) {
     assertEnabled(env);
@@ -575,7 +671,9 @@ export function createOperationalFinanceCommandService({
             action: "supplier_invoice_created",
             entityType: result.entityType,
             entityId: result.entityId,
-            summary: "Supplier invoice draft created from authoritative PO and receiving facts.",
+            summary: plan.waitingForReceipt
+              ? "Supplier invoice draft recorded against its purchase order; it waits for the receipt before matching."
+              : "Supplier invoice draft created from authoritative PO and receiving facts.",
             ...command,
             before: null,
             after: result.invoice,
@@ -965,6 +1063,172 @@ export function createOperationalFinanceCommandService({
     );
   }
 
+  // A bill recorded before the goods arrived is linked to its receipt once
+  // the warehouse posts it. Each bill line takes the receipt line of the same
+  // purchase-order line; quantities and prices stay as billed. A receipt that
+  // covers less than the bill is allowed: the three-way match shows the
+  // difference as a quantity exception, which is what the match is for.
+  async function buildLinkReceiptPlan(db, tenantId, invoice, receivingDocumentId, version) {
+    const blockingIssues = [];
+    const warnings = [];
+    const add = (code, message, status = 409) => blockingIssues.push({ code, message, status });
+    if (invoice.version !== version) add("FINANCE_VERSION_CONFLICT", "Supplier invoice changed concurrently.");
+    if (!["draft", "submitted"].includes(invoice.status))
+      add("SUPPLIER_INVOICE_STATUS_INVALID", "Only a draft or submitted bill can be linked to its receipt.");
+    else if (!awaitingReceipt(invoice))
+      add("SUPPLIER_INVOICE_RECEIPT_ALREADY_LINKED", "This bill already names its receipt.");
+    const receipt = receivingDocumentId
+      ? await db.receivingDocument.findFirst({
+          where: { id: receivingDocumentId, tenantId },
+          include: { lines: true },
+        })
+      : null;
+    if (!receipt) {
+      add("RECEIVING_DOCUMENT_NOT_FOUND", "Choose a posted receipt of this purchase order.", 404);
+      return { operation: "link_supplier_invoice_receipt", allowed: false, blockingIssues, warnings, lines: [], paymentExecution: false, ledgerMutation: false };
+    }
+    if (receipt.postingStatus !== "posted" || receipt.reversedAt)
+      add("SUPPLIER_INVOICE_RECEIPT_NOT_POSTED", `Receipt ${receipt.documentNumber || receipt.id} is not posted or was reversed.`);
+    if (receipt.poId !== invoice.relatedPoId)
+      add("SUPPLIER_INVOICE_RECEIPT_OTHER_PO", `Receipt ${receipt.documentNumber || receipt.id} belongs to another purchase order.`);
+    if (receipt.supplierId && receipt.supplierId !== invoice.supplierId)
+      add("SUPPLIER_INVOICE_SOURCE_INVALID", "The receipt is from another supplier.");
+    if (receipt.currency && receipt.currency !== invoice.currency)
+      add("FINANCE_CURRENCY_MISMATCH", "The receipt currency does not match the bill currency.");
+    const receiptLineIds = receipt.lines.map((line) => line.id);
+    const billedRows = receiptLineIds.length
+      ? await db.supplierInvoiceLine.findMany({
+          where: {
+            receivingLineId: { in: receiptLineIds },
+            supplierInvoiceId: { not: invoice.id },
+            supplierInvoice: { tenantId, status: { in: [...RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES] } },
+          },
+          select: { receivingLineId: true, quantity: true },
+        })
+      : [];
+    const billed = new Map();
+    for (const row of billedRows)
+      billed.set(row.receivingLineId, (billed.get(row.receivingLineId) || 0n) + financeUnits(row.quantity || 0));
+    const lines = [];
+    for (const line of invoice.lines) {
+      const candidates = receipt.lines.filter(
+        (entry) => entry.purchaseOrderLineId === line.purchaseOrderLineId && entry.itemId === line.itemId && entry.sku === line.sku,
+      );
+      if (!candidates.length) {
+        add("SUPPLIER_INVOICE_RECEIPT_LINE_MISSING", `Receipt ${receipt.documentNumber || receipt.id} has no goods for line ${line.lineNumber} (${line.sku}). Wait for the receipt that does.`);
+        continue;
+      }
+      if (candidates.length > 1) {
+        add("SUPPLIER_INVOICE_RECEIPT_LINE_AMBIGUOUS", `Receipt ${receipt.documentNumber || receipt.id} splits line ${line.lineNumber} (${line.sku}) over several receipt lines; record this bill again from the receipt instead.`);
+        continue;
+      }
+      const [match] = candidates;
+      const available = financeUnits(match.acceptedQty || 0) - (billed.get(match.id) || 0n);
+      const quantity = financeUnits(line.quantity || 0);
+      if (quantity > available)
+        warnings.push({
+          code: "SUPPLIER_INVOICE_RECEIPT_SHORT",
+          message: `Line ${line.lineNumber} (${line.sku}) bills ${financeFixed(quantity)} but the receipt has ${financeFixed(available > 0n ? available : 0n)} left to bill; the three-way match will show the difference.`,
+        });
+      lines.push({
+        supplierInvoiceLineId: line.id,
+        lineNumber: line.lineNumber,
+        sku: line.sku,
+        receivingLineId: match.id,
+        billedQuantity: financeFixed(quantity),
+        availableQuantity: financeFixed(available > 0n ? available : 0n),
+      });
+    }
+    return {
+      operation: "link_supplier_invoice_receipt",
+      allowed: blockingIssues.length === 0,
+      blockingIssues,
+      warnings,
+      receipt: { id: receipt.id, documentNumber: receipt.documentNumber },
+      lines,
+      expectedVersion: version,
+      paymentExecution: false,
+      ledgerMutation: false,
+    };
+  }
+
+  async function previewLinkReceipt(invoiceId, input, context) {
+    assertEnabled(env);
+    const actor = await resolveProvisionedActor(prisma, assertIdentity(context));
+    assertAuthorized({ actor, permission: "finance.supplier_invoice.revise", tenantId: actor.tenantId });
+    const invoice = await prisma.supplierInvoice.findFirst({
+      where: { id: invoiceId, tenantId: actor.tenantId },
+      include: { lines: { orderBy: { lineNumber: "asc" } } },
+    });
+    if (!invoice)
+      fail("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404);
+    return buildLinkReceiptPlan(prisma, actor.tenantId, invoice, text(input.receivingDocumentId), expectedVersion(input.expectedVersion));
+  }
+
+  async function linkReceipt(invoiceId, input, context) {
+    const payload = {
+      invoiceId: required(invoiceId, "invoiceId"),
+      expectedVersion: expectedVersion(input.expectedVersion),
+      receivingDocumentId: text(input.receivingDocumentId),
+    };
+    return execute(
+      "link_supplier_invoice_receipt",
+      input,
+      context,
+      payload,
+      async (tx, actor, normalized, command) => {
+        await lockTenantRow(
+          tx,
+          "SupplierInvoice",
+          actor.tenantId,
+          normalized.invoiceId,
+          "SUPPLIER_INVOICE_NOT_FOUND",
+        );
+        const current = await tx.supplierInvoice.findUnique({
+          where: { id: normalized.invoiceId },
+          include: { lines: { orderBy: { lineNumber: "asc" } } },
+        });
+        const receiptLines = await tx.receivingLine.findMany({
+          where: { receivingDocumentId: normalized.receivingDocumentId },
+          select: { id: true },
+        });
+        await lockChildRows(tx, "ReceivingLine", receiptLines.map((line) => line.id));
+        const plan = await buildLinkReceiptPlan(tx, actor.tenantId, current, normalized.receivingDocumentId, normalized.expectedVersion);
+        enforce(plan);
+        for (const line of plan.lines)
+          await tx.supplierInvoiceLine.update({
+            where: { id: line.supplierInvoiceLineId },
+            data: { receivingLineId: line.receivingLineId, version: { increment: 1 } },
+          });
+        const invoice = await tx.supplierInvoice.update({
+          where: { id: current.id },
+          data: { relatedGrnId: plan.receipt.id, version: { increment: 1 } },
+        });
+        const result = { ...invoiceResult(invoice), receipt: plan.receipt, warnings: plan.warnings };
+        await tx.auditLog.create({
+          data: audit({
+            idFactory,
+            actor,
+            action: "supplier_invoice_receipt_linked",
+            entityType: result.entityType,
+            entityId: result.entityId,
+            summary: "Bill recorded before the goods arrived is now linked to its posted receipt.",
+            ...command,
+            before: invoiceResult(current).invoice,
+            after: result.invoice,
+            evidence: {
+              purchaseOrderId: current.relatedPoId,
+              receivingDocumentId: plan.receipt.id,
+              lines: plan.lines,
+              warnings: plan.warnings,
+            },
+          }),
+        });
+        return result;
+      },
+    );
+  }
+
   async function previewMatchSupplierInvoice(invoiceId, input, context) {
     assertEnabled(env);
     const actor = await resolveProvisionedActor(prisma, assertIdentity(context));
@@ -1334,6 +1598,8 @@ export function createOperationalFinanceCommandService({
         message: "This supplier invoice already has a payable obligation.",
         status: 409,
       });
+    const { openFlags } = await duplicateChecks(prisma, actor.tenantId, invoice);
+    blockingIssues.push(...duplicateReviewIssues(openFlags, amountsVisible(actor)));
     const typedNumber = text(input.obligationNumber);
     if (typedNumber && (await payableNumberTaken(prisma, actor.tenantId, typedNumber)))
       blockingIssues.push(payableNumberDuplicate(typedNumber));
@@ -1408,6 +1674,11 @@ export function createOperationalFinanceCommandService({
             "Every line-level match exception must be approved before invoice approval.",
             409,
           );
+        // Recomputed here, so a bill entered or edited after the preview is
+        // seen. Not retryable: the approver has to look at the flag.
+        const { openFlags } = await duplicateChecks(tx, actor.tenantId, current);
+        const [issue] = duplicateReviewIssues(openFlags, amountsVisible(actor));
+        if (issue) fail(issue.code, issue.message, issue.status, issue.details);
         const typedNumber = normalized.obligationNumber;
         if (typedNumber && (await payableNumberTaken(tx, actor.tenantId, typedNumber))) {
           const duplicate = payableNumberDuplicate(typedNumber);
@@ -1447,7 +1718,8 @@ export function createOperationalFinanceCommandService({
           // Another approval committed the same number after it was checked
           // above. A typed number is a real duplicate; an assigned one only
           // needs the approval run again to pick the next free number, which
-          // execute does by itself a couple of times before returning this.
+          // execute does by itself up to APPROVAL_RETRIES times before
+          // returning this.
           if (typedNumber) {
             const duplicate = payableNumberDuplicate(typedNumber);
             fail(duplicate.code, duplicate.message, duplicate.status, duplicate.details);
@@ -1483,6 +1755,131 @@ export function createOperationalFinanceCommandService({
         return result;
       },
       { retries: APPROVAL_RETRIES },
+    );
+  }
+
+  // The approver dismisses one duplicate flag of this bill with a reason. The
+  // flag is recomputed, so only a flag that still holds can be dismissed, and
+  // the dismissal keeps the basis it was given on: editing either bill later
+  // reopens it. The bill's version is checked but not changed. The request
+  // names the other bill's version as shown, so a dismissal is never recorded
+  // against a state of the other bill the approver did not see.
+  async function previewDismissDuplicate(invoiceId, input, context) {
+    assertEnabled(env);
+    const actor = await resolveProvisionedActor(prisma, assertIdentity(context));
+    assertAuthorized({ actor, permission: "finance.supplier_invoice.approve", tenantId: actor.tenantId });
+    const invoice = await prisma.supplierInvoice.findFirst({
+      where: { id: invoiceId, tenantId: actor.tenantId },
+    });
+    if (!invoice)
+      fail("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404);
+    const version = expectedVersion(input.expectedVersion);
+    const otherVersion = expectedVersion(input.otherVersion, "otherVersion");
+    const blockingIssues = dismissDuplicateIssues(invoice, version, input);
+    const checks = await duplicateChecks(prisma, actor.tenantId, invoice);
+    const flag = openFlagNamed(checks, actor, text(input.otherInvoiceId), text(input.kind));
+    if (!flag) blockingIssues.push(duplicateFlagNotFound());
+    else if (flag.otherInvoice?.version !== otherVersion) blockingIssues.push(duplicateFlagChanged());
+    return {
+      operation: "dismiss_supplier_invoice_duplicate",
+      allowed: blockingIssues.length === 0,
+      blockingIssues,
+      expectedVersion: version,
+      flag: flag ? duplicateFlagView(flag, amountsVisible(actor)) : null,
+      openFlagsAfter: visibleOpenFlags(checks, actor).length - (flag ? 1 : 0),
+      paymentExecution: false,
+      ledgerMutation: false,
+    };
+  }
+
+  async function dismissDuplicate(invoiceId, input, context) {
+    const payload = {
+      invoiceId: required(invoiceId, "invoiceId"),
+      expectedVersion: expectedVersion(input.expectedVersion),
+      otherInvoiceId: text(input.otherInvoiceId),
+      otherVersion: expectedVersion(input.otherVersion, "otherVersion"),
+      kind: text(input.kind),
+      reason: text(input.reason),
+    };
+    return execute(
+      "dismiss_supplier_invoice_duplicate",
+      input,
+      context,
+      payload,
+      async (tx, actor, normalized, command) => {
+        await lockTenantRow(
+          tx,
+          "SupplierInvoice",
+          actor.tenantId,
+          normalized.invoiceId,
+          "SUPPLIER_INVOICE_NOT_FOUND",
+        );
+        const current = await tx.supplierInvoice.findUnique({
+          where: { id: normalized.invoiceId },
+        });
+        const issues = dismissDuplicateIssues(current, normalized.expectedVersion, normalized);
+        if (issues.length) fail(issues[0].code, issues[0].message, issues[0].status);
+        const checks = await duplicateChecks(tx, actor.tenantId, current);
+        const flag = openFlagNamed(checks, actor, normalized.otherInvoiceId, normalized.kind);
+        if (!flag) {
+          const missing = duplicateFlagNotFound();
+          fail(missing.code, missing.message, missing.status);
+        }
+        if (flag.otherInvoice?.version !== normalized.otherVersion) {
+          const changed = duplicateFlagChanged();
+          fail(changed.code, changed.message, changed.status);
+        }
+        const review = await tx.supplierInvoiceDuplicateReview.create({
+          data: {
+            id: idFactory(),
+            tenantId: actor.tenantId,
+            supplierInvoiceId: current.id,
+            otherInvoiceId: flag.otherInvoiceId,
+            kind: flag.kind,
+            basis: flag.basis,
+            reason: normalized.reason,
+            dismissedById: actor.user.id,
+            dismissedAt: now(),
+          },
+        });
+        const result = {
+          ...invoiceResult(current),
+          review: {
+            id: review.id,
+            otherInvoiceId: review.otherInvoiceId,
+            kind: review.kind,
+            reason: review.reason,
+            dismissedById: review.dismissedById,
+            dismissedAt: review.dismissedAt.toISOString(),
+          },
+          openFlags: visibleOpenFlags(checks, actor).length - 1,
+        };
+        await tx.auditLog.create({
+          data: audit({
+            idFactory,
+            actor,
+            action: "supplier_invoice_duplicate_dismissed",
+            entityType: result.entityType,
+            entityId: result.entityId,
+            summary: "Duplicate flag dismissed with a reason; the bill itself was not changed.",
+            ...command,
+            before: invoiceResult(current).invoice,
+            after: result.invoice,
+            evidence: {
+              reviewId: review.id,
+              otherInvoiceId: flag.otherInvoiceId,
+              otherVersion: normalized.otherVersion,
+              kind: flag.kind,
+              numberKey: flag.numberKey ?? null,
+              daysApart: flag.daysApart,
+              windowDays: flag.windowDays,
+              basis: flag.basis,
+              reason: normalized.reason,
+            },
+          }),
+        });
+        return result;
+      },
     );
   }
 
@@ -1932,6 +2329,10 @@ export function createOperationalFinanceCommandService({
     approveSupplierInvoice,
     previewCancelSupplierInvoice,
     cancelSupplierInvoice,
+    previewDismissDuplicate,
+    dismissDuplicate,
+    previewLinkReceipt,
+    linkReceipt,
     previewPayableAction,
     holdPayable: (id, input, context) =>
       changePayableStatus("hold", id, input, context),

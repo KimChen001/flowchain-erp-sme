@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, Plus, Save, Search, ShieldCheck } from 'lucide-reac
 import { A, Card, RecoveryActions } from '../../components/ui';
 import { BusinessEntityLink } from '../../components/business/BusinessEntityLink';
 import { businessEntityRouteRegistry, type BusinessEntityType } from '../../components/business/businessEntityRoutes';
-import { fetchSettingsAudit, fetchSettingsRuntime, saveSettingsSection, type SettingsAuditEntry, type SettingsRuntime } from './settingsRuntime';
+import { fetchAiWorkspaceStatus, fetchSettingsAudit, fetchSettingsRuntime, saveSettingsSection, type AiWorkspaceStatus, type SettingsAuditEntry, type SettingsRuntime } from './settingsRuntime';
 import WorkspaceSettings from './WorkspaceSettings';
 import { useI18n } from '../../i18n/I18n';
 import CustomFieldsSettings from './CustomFieldsSettings';
@@ -28,7 +28,7 @@ const sectionDescriptions: Record<View, { en: string; zh: string }> = {
   company: { en: 'Basic information for this workspace.', zh: '维护当前业务空间的基础信息。' },
   roles: { en: 'Manage members, roles and whether they are active.', zh: '管理访问成员、角色和启用状态。' },
   numbering: { en: 'Set document prefixes, date segments and sequence numbers.', zh: '设置单据前缀、日期段和流水号。' },
-  review: { en: 'Invoice matching tolerances are in effect. The other review settings are not in effect yet.', zh: '发票匹配容差已生效；其他复核设置尚未生效。' },
+  review: { en: 'Purchase order approval and invoice matching tolerances are in effect. The other review settings are not in effect yet.', zh: '采购订单审批和发票匹配容差已生效；其他复核设置尚未生效。' },
   modules: { en: 'Choose enabled modules, their order, the default entry and which roles see them.', zh: '配置启用模块、顺序、默认入口和角色可见性。' },
   ai: { en: 'Set each AI capability to allowed, allowed after review, or not allowed.', zh: '按能力设置允许、复核或禁止等级。' },
   audit: { en: 'Search recorded settings and business audit entries.', zh: '检索真实设置与业务审计记录。' },
@@ -37,8 +37,10 @@ const sectionDescriptions: Record<View, { en: string; zh: string }> = {
 
 // Sections that nothing reads yet (see OPERATIONAL_SETTINGS_IN_EFFECT in
 // server/domain/workspace-settings-contract.mjs). They are shown read-only so
-// saving never reports success for a setting that changes nothing.
-const NOT_IN_EFFECT_SECTIONS: View[] = ['numbering', 'modules', 'ai', 'advanced'];
+// saving never reports success for a setting that changes nothing. In the AI
+// section only the AI features switch is in effect; its capability levels
+// stay read-only.
+const NOT_IN_EFFECT_SECTIONS: View[] = ['numbering', 'modules', 'advanced'];
 
 const TOLERANCE_FIELDS = [
   { key: 'quantityTolerance', label: 'settings.tolerance.quantity', help: 'settings.tolerance.quantityHelp' },
@@ -101,7 +103,12 @@ function Numbering({ value, onChange }: { value: SettingsRuntime['numbering']; o
 function Review({ value, onChange }: { value: SettingsRuntime['review']; onChange: (v: SettingsRuntime['review']) => void }) {
   const { t } = useI18n();
   const [amount, setAmount] = useState(120000); const requires = value.enabled && amount >= value.amountThreshold;
-  return <div className="space-y-6"><section data-testid="settings-review-tolerances" className="rounded-xl border border-slate-200 p-4">
+  const approvesPo = value.approvedRequestApprovesPurchaseOrder !== false;
+  return <div className="space-y-6"><section data-testid="settings-review-po-approval" className="rounded-xl border border-slate-200 p-4">
+    <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium" style={{ color: A.label }}>{t('settings.poApproval')}</h3><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{t('settings.inEffect')}</span></div>
+    <label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" data-testid="settings-approved-request-approves-po" className="mt-1" checked={approvesPo} onChange={e => onChange({ ...value, approvedRequestApprovesPurchaseOrder: e.target.checked })} /><span><span style={{ color: A.label }}>{t('settings.approvedRequestApprovesPo')}</span><span className="mt-1 block" style={{ color: A.sub }}>{t(approvesPo ? 'settings.approvedRequestApprovesPoOn' : 'settings.approvedRequestApprovesPoOff')}</span></span></label>
+  </section>
+  <section data-testid="settings-review-tolerances" className="rounded-xl border border-slate-200 p-4">
     <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium" style={{ color: A.label }}>{t('settings.matchingTolerances')}</h3><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">{t('settings.inEffect')}</span></div>
     <p className="mt-1 text-sm" style={{ color: A.sub }}>{t('settings.matchingTolerancesHelp')}</p>
     <div className="mt-4 grid gap-4 md:grid-cols-2">{TOLERANCE_FIELDS.map(field => { const error = toleranceError(field.key, value[field.key]); const inputId = `settings-${field.key}`; const helpId = `${inputId}-help`; return <div key={field.key} className="text-sm"><label htmlFor={inputId}>{t(field.label)}</label><input id={inputId} inputMode="decimal" aria-invalid={Boolean(error)} aria-describedby={helpId} className={`${fieldClass} mt-1 ${error ? 'border-red-400' : ''}`} value={value[field.key] ?? ''} onChange={e => onChange({ ...value, [field.key]: e.target.value })} /><span id={helpId} className={`mt-1 block text-xs ${error ? 'text-red-600' : 'text-slate-500'}`}>{error ? t(error) : t(field.help)}</span></div>; })}</div>
@@ -126,6 +133,29 @@ function Modules({ value, onChange }: { value: SettingsRuntime['modules']; onCha
     <label className="text-sm"><input type="radio" name="default-module" checked={value.defaultModule === item.id} onChange={() => onChange({ ...value, defaultModule: item.id })} /> {t('settings.setDefault')}</label>
     <label className="text-sm"><input type="checkbox" checked={item.enabled} disabled={['overview', 'settings'].includes(item.id)} onChange={e => update(item.id, { enabled: e.target.checked })} /> {item.enabled ? t('settings.enabled') : t('settings.disabled')}</label>
   </div>)}</div><div className="rounded-xl bg-slate-900 p-4 text-white"><div className="text-xs text-slate-400">{t('settings.sidebarPreview')}</div><div className="mt-3 space-y-1">{sorted.filter(x => x.enabled).map(x => <div key={x.id} className={`rounded-lg px-3 py-2 text-sm ${x.id === value.defaultModule ? 'bg-blue-600' : 'bg-slate-800'}`}>{labelFor(t, 'settings.module', x.id, x.label)}</div>)}</div></div></div>;
+}
+
+// The AI features switch, in effect: off by default; on, the assistant may call
+// the configured model until this month's spend reaches the cap.
+function AiModelSwitch({ value, onChange }: { value: SettingsRuntime['ai']; onChange: (v: SettingsRuntime['ai']) => void }) {
+  const { t, locale } = useI18n();
+  const [status, setStatus] = useState<AiWorkspaceStatus | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { fetchAiWorkspaceStatus().then(setStatus).catch(() => setFailed(true)); }, []);
+  const money = (amount: number) => new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(amount);
+  return <section data-testid="settings-ai-model" className="mb-5 space-y-3 rounded-xl border border-slate-200 p-4">
+    <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium" style={{ color: A.label }}>{t('settings.aiModel')}</h3><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">{t('settings.inEffect')}</span></div>
+    <p className="text-sm text-slate-600">{t('settings.aiModelHelp')}</p>
+    <label className="flex items-center gap-2 text-sm font-medium"><input id="settings-ai-model-toggle" type="checkbox" checked={value.modelAssistEnabled === true} onChange={e => onChange({ ...value, modelAssistEnabled: e.target.checked })} />{t('settings.aiModelToggle')}</label>
+    <p className="text-xs text-slate-500">{t('settings.aiModelData')}</p>
+    <div role="status" data-testid="settings-ai-model-status" className="text-xs text-slate-600">
+      {failed ? t('settings.aiModelStatusFailed')
+        : !status ? null
+          : !status.providerConfigured ? t('settings.aiModelNoProvider')
+            : !status.optInRequired ? t('settings.aiModelNotRequired')
+              : <>{t('settings.aiModelUsage', { cost: money(status.costUsd), cap: money(status.capUsd), calls: status.calls })}{status.status === 'over_cap' ? <span className="ml-2 text-amber-700">{t('settings.aiModelOverCap')}</span> : null}</>}
+    </div>
+  </section>;
 }
 
 function AiGovernance({ value, onChange }: { value: SettingsRuntime['ai']; onChange: (v: SettingsRuntime['ai']) => void }) {
@@ -164,6 +194,6 @@ export default function SettingsPage({ initialView }: { initialView?: string; on
   const change = <K extends keyof SettingsRuntime>(next: SettingsRuntime[K]) => { setDraft({ ...draft, [section]: next }); setNotice(''); };
   const save = async () => { setSaving(true); setNotice(''); try { const result = await saveSettingsSection(section, draft[section]); setData({ ...data, [section]: result.settings }); setDraft({ ...draft, [section]: result.settings }); setNotice(t('settings.savedAt', { time: new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date()) })); if (section === 'modules') { localStorage.setItem('flowchain:module-settings', JSON.stringify(result.settings)); window.dispatchEvent(new Event('flowchain:module-settings')); } } catch { setNotice(t('settings.saveFailed')); } finally { setSaving(false); } };
   return <Card className="p-5" data-testid={`settings-${view}`}><Header view={view} dirty={dirty} saving={saving} invalid={invalid} onSave={readOnly ? undefined : save} onCancel={() => setDraft(data)} />{notice && <div role="status" className={`mb-4 rounded-lg p-3 text-sm ${notice.startsWith(t('settings.saved').slice(0, 3)) ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'}`}>{notice}</div>}
-    {view === 'numbering' && <NotInEffect><Numbering value={draft.numbering} onChange={change} /></NotInEffect>}{view === 'review' && <Review value={draft.review} onChange={change} />}{view === 'modules' && <NotInEffect><Modules value={draft.modules} onChange={change} /></NotInEffect>}{view === 'ai' && <NotInEffect><AiGovernance value={draft.ai} onChange={change} /></NotInEffect>}{view === 'advanced' && <NotInEffect><Advanced value={draft.advanced} onChange={change} /></NotInEffect>}
+    {view === 'numbering' && <NotInEffect><Numbering value={draft.numbering} onChange={change} /></NotInEffect>}{view === 'review' && <Review value={draft.review} onChange={change} />}{view === 'modules' && <NotInEffect><Modules value={draft.modules} onChange={change} /></NotInEffect>}{view === 'ai' && <><AiModelSwitch value={draft.ai} onChange={change} /><NotInEffect><AiGovernance value={draft.ai} onChange={change} /></NotInEffect></>}{view === 'advanced' && <NotInEffect><Advanced value={draft.advanced} onChange={change} /></NotInEffect>}
     <div className="mt-5 flex items-center gap-2 border-t border-slate-100 pt-4 text-xs text-slate-500"><ShieldCheck size={14} />{t('settings.auditHint')}</div></Card>;
 }

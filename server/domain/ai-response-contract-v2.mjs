@@ -301,9 +301,9 @@ function evidenceFromSupplier(row = {}, overrides = {}) {
     entityId: text(row.supplierId || row.supplierName),
     entityLabel: text(row.supplierName || row.supplierId),
     status: overrides.status || row.risk,
-    value: overrides.value ?? row.score,
-    summary: overrides.summary || `风险信号：PO ${row.openPoCount || 0}，RFQ ${row.pendingRfqResponseCount || 0}，Invoice 差异 ${row.invoiceIssueCount || 0}。`,
-    severity: overrides.severity || (row.risk === '高' || row.signalScore > 3 ? 'risk' : 'warning'),
+    value: overrides.value,
+    summary: overrides.summary || `风险信号：PO ${row.openPoCount || 0}，RFQ ${row.pendingRfqResponseCount || 0}，Invoice 差异 ${row.invoiceIssueCount || 0}${row.since ? `，最早 ${row.since}` : ''}。`,
+    severity: overrides.severity || (row.risk === '高' ? 'risk' : 'warning'),
   })
 }
 
@@ -466,6 +466,15 @@ function supplierMatchesRecord(record = {}, row = {}) {
   return values.some((value) => value && keys.includes(value))
 }
 
+const dayText = (value) => text(value).match(/^\d{4}-\d{2}-\d{2}/)?.[0] || null
+const hasOpenIssue = (row) => row.overduePoCount > 0 || row.pendingRfqResponseCount > 0 || row.invoiceIssueCount > 0 || row.receivingIssueCount > 0
+
+// Each supplier's open problems as recorded, counted side by side and never
+// combined into points (owner decision 2026-10-03). The risk label is the one
+// stored on the supplier; with none stored, a supplier with an open problem is
+// 中 and one without is 低. Suppliers are ordered by their oldest open problem
+// (an overdue PO's date, an invoice's date, a receipt's arrival, a pending
+// RFQ's creation), then A-Z by name.
 function supplierRiskRows(db = {}, models = {}) {
   const index = buildSupplierEntityIndex(db)
   return uniqueBy(index.candidates, (row) => row.supplierId || row.supplierName).map((supplier) => {
@@ -474,31 +483,35 @@ function supplierRiskRows(db = {}, models = {}) {
     const rfqs = docs.filter((doc) => doc.documentType === 'rfq')
     const invoices = docs.filter((doc) => doc.documentType === 'invoice' || doc.documentType === 'threeWayMatch')
     const grns = docs.filter((doc) => doc.documentType === 'grn')
-    const score = toNumber(supplier.score ?? supplier.rating ?? supplier.grade, null)
     const explicitRisk = text(supplier.risk || supplier.riskStatus)
-    const overduePoCount = pos.filter((po) => isPastDue(po.expectedDate || po.dueDate) && !isTerminalStatus(po.status)).length
-    const pendingRfqResponseCount = rfqs.reduce((sum, rfq) => sum + toNumber(rfq.pendingSupplierCount, 0), 0)
-    const invoiceIssueCount = invoices.filter((invoice) => toNumber(invoice.varianceAmount, 0) !== 0 || /差异|异常|待复核|未匹配/.test(text(invoice.matchStatus || invoice.status))).length
-    const receivingIssueCount = grns.filter((grn) => /异常|差异|待|质检/.test(text(grn.status))).length
-    const signalScore =
-      (/高|high/i.test(explicitRisk) ? 5 : /中|medium/i.test(explicitRisk) ? 2 : 0) +
-      overduePoCount * 2 +
-      pendingRfqResponseCount +
-      invoiceIssueCount * 2 +
-      receivingIssueCount
-    return {
-      ...supplier,
-      risk: /高|high/i.test(explicitRisk) || signalScore >= 4 || (score !== null && score < 75) ? '高' : /中|medium/i.test(explicitRisk) || signalScore > 0 ? '中' : '低',
-      score,
+    const overduePos = pos.filter((po) => isPastDue(po.expectedDate || po.dueDate) && !isTerminalStatus(po.status))
+    const pendingRfqs = rfqs.filter((rfq) => toNumber(rfq.pendingSupplierCount, 0) > 0)
+    const issueInvoices = invoices.filter((invoice) => toNumber(invoice.varianceAmount, 0) !== 0 || /差异|异常|待复核|未匹配/.test(text(invoice.matchStatus || invoice.status)))
+    const issueGrns = grns.filter((grn) => /异常|差异|待|质检/.test(text(grn.status)))
+    const since = [
+      ...overduePos.map((po) => dayText(po.expectedDate || po.dueDate)),
+      ...pendingRfqs.map((rfq) => dayText(rfq.createdAt)),
+      ...issueInvoices.map((invoice) => dayText(invoice.invoiceDate || invoice.createdAt)),
+      ...issueGrns.map((grn) => dayText(grn.arrived || grn.createdAt)),
+    ].filter(Boolean).sort()[0] || null
+    // A stored score is not shown or used: it may be a rate seeded as one.
+    const recorded = { ...supplier }
+    delete recorded.score
+    const row = {
+      ...recorded,
       openPoCount: pos.filter((po) => !isTerminalStatus(po.status)).length,
-      overduePoCount,
-      pendingRfqResponseCount,
-      invoiceIssueCount,
-      receivingIssueCount,
-      signalScore,
+      overduePoCount: overduePos.length,
+      pendingRfqResponseCount: pendingRfqs.reduce((sum, rfq) => sum + toNumber(rfq.pendingSupplierCount, 0), 0),
+      invoiceIssueCount: issueInvoices.length,
+      receivingIssueCount: issueGrns.length,
+      since,
       documents: docs,
     }
-  }).sort((a, b) => b.signalScore - a.signalScore || (a.score ?? 100) - (b.score ?? 100) || text(a.supplierName).localeCompare(text(b.supplierName)))
+    return {
+      ...row,
+      risk: /高|high/i.test(explicitRisk) ? '高' : /中|medium/i.test(explicitRisk) ? '中' : /低|low/i.test(explicitRisk) ? '低' : hasOpenIssue(row) ? '中' : '低',
+    }
+  }).sort((a, b) => (a.since && b.since ? a.since.localeCompare(b.since) : a.since ? -1 : b.since ? 1 : 0) || text(a.supplierName).localeCompare(text(b.supplierName)))
 }
 
 function unreceivedPoRows(db = {}, models = {}, now = new Date()) {
@@ -663,12 +676,15 @@ function buildTodayContract(query, db, models, options) {
 
 function buildSupplierRiskContract(query, db, models, singleSupplier = false) {
   const rows = supplierRiskRows(db, models)
-  const target = singleSupplier ? rows[0] : null
-  const selectedRows = target ? [target] : rows.filter((row) => row.risk !== '低' || row.signalScore > 0).slice(0, 5)
+  // One supplier: the one the question names, else the one whose open problem
+  // is oldest.
+  const asked = compact(query)
+  const target = singleSupplier ? rows.find((row) => [row.supplierName, row.supplierId].map(compact).some((key) => key && asked.includes(key))) || rows[0] : null
+  const selectedRows = target ? [target] : rows.filter((row) => row.risk !== '低' || hasOpenIssue(row)).slice(0, 5)
   const fallbackRows = selectedRows.length ? selectedRows : rows.slice(0, 3)
   const relatedDocs = uniqueBy(fallbackRows.flatMap((row) => row.documents || []), (doc) => `${doc.documentType}:${doc.id}`).slice(0, 5)
   const evidence = [
-    ...fallbackRows.map((row) => evidenceFromSupplier(row, { summary: `风险信号：逾期 PO ${row.overduePoCount}、RFQ 待回复 ${row.pendingRfqResponseCount}、收货异常 ${row.receivingIssueCount}、Invoice 差异 ${row.invoiceIssueCount}。` })),
+    ...fallbackRows.map((row) => evidenceFromSupplier(row, { summary: `风险信号：逾期 PO ${row.overduePoCount}、RFQ 待回复 ${row.pendingRfqResponseCount}、收货异常 ${row.receivingIssueCount}、Invoice 差异 ${row.invoiceIssueCount}${row.since ? `；最早 ${row.since}` : ''}。` })),
     ...relatedDocs.map((doc) => evidenceFromDocument(doc, { summary: `${docLabel(doc.documentType, doc.id)} 与供应商风险信号相关。` })),
   ]
   const primary = fallbackRows[0]

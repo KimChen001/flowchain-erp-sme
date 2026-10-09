@@ -4,7 +4,7 @@ import { formatLocaleAmount, todayInTimeZone } from "../../lib/format";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { orderedCurrencyCodes } from "../../lib/currencyOptions";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -13,7 +13,11 @@ import { EntityLink } from "../../components/business/EntityLink";
 import { tableLinkClass } from "../../components/ui/workbenchTable";
 import { createClientTemporaryId } from "../../lib/client-id";
 import { PrefillBanner, PrefillSourceChip } from "../../components/prefill/PrefillSource";
-import { buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin } from "../../lib/prefill";
+import { addCalendarDays, buildSuggestionTrail, planPurchaseRequestPrefill, type PrefillEntry, type PrefillOrigin, type SupplierChoice, type SupplierLastOrder } from "../../lib/prefill";
+import { SupplierChoices } from "../../components/procurement/SupplierChoices";
+import { SupplierOverrideCount, SupplierOverrideFlag, SupplierOverrideReason, hasSupplierOverride, supplierOverrideIssueText, type SupplierOverride } from "../../components/procurement/SupplierOverrideReason";
+import { overrideNeeded, validateSupplierOverride } from "../../../shared/supplier-override-reasons.mjs";
+import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 
 type Item = {
   itemId: string;
@@ -68,6 +72,8 @@ type Line = {
   serviceStartDate: string;
   serviceEndDate: string;
   internalLineComment: string;
+  // Why the line's supplier is not the item's preferred one; null when not needed.
+  supplierOverride?: SupplierOverride | null;
 };
 type PR = {
   id: string;
@@ -81,10 +87,11 @@ type PR = {
   lines: Line[];
   linkedPurchaseOrderIds?: string[];
 };
-type FieldError = { field?: string; message?: string };
+type FieldError = { field?: string; code?: string; message?: string };
+const OVERRIDE_FIELD = /^lines\.(\d+)\.supplierOverride\.(reasonCode|note)$/;
 // The line fields a handoff (the assistant's purchase request draft) can fill.
 type PrefillLineField = "itemId" | "supplierId" | "quantity" | "estimatedUnitPrice" | "targetWarehouseId" | "needByDate" | "internalLineComment";
-type LinePrefill = { origin: PrefillOrigin; intent: string | null; lineId: string; fields: Partial<Record<PrefillLineField, PrefillEntry>> };
+type LinePrefill = { origin: PrefillOrigin; intent: string | null; lineId: string; fields: Partial<Record<PrefillLineField, PrefillEntry>>; supplierChoices: SupplierChoice[] };
 // Today in the workspace timezone (America/New_York when unknown), not UTC.
 const today = (timeZone?: string) => todayInTimeZone(timeZone);
 const makeLine = (date = today()): Line => ({
@@ -107,6 +114,7 @@ const makeLine = (date = today()): Line => ({
   serviceStartDate: "",
   serviceEndDate: "",
   internalLineComment: "",
+  supplierOverride: null,
 });
 const request = <T,>(url: string, method = "GET", body?: unknown) =>
   apiJson<T>(url, {
@@ -122,7 +130,7 @@ export default function CanonicalProcurementPanel({
   focus?: { entityType: string; entityId: string; at: number } | null;
 }) {
   const copy = useWorkspaceCopy();
-  const { timezone, locale } = useI18n();
+  const { timezone, locale, language } = useI18n();
   const warehouseName = useWarehouseNames();
   // Amounts use the document currency; without one they stay a plain number.
   const amount = (value: unknown, currencyCode?: string | null) =>
@@ -130,7 +138,11 @@ export default function CanonicalProcurementPanel({
       ? "—"
       : formatLocaleAmount(Number(value), currencyCode, locale, { maximumFractionDigits: 2 });
   const [searchParams] = useSearchParams();
-  const prefilled = useRef(false);
+  const location = useLocation();
+  // The navigation the form was last filled from: each handoff is a new one,
+  // so a handoff while the page is open (the assistant opening another
+  // request, or the same one again) fills the form again.
+  const prefilled = useRef<string | null>(null);
   const [prefill, setPrefill] = useState<LinePrefill | null>(null);
   const [items, setItems] = useState<Item[]>([]),
     [suppliers, setSuppliers] = useState<Supplier[]>([]),
@@ -153,6 +165,19 @@ export default function CanonicalProcurementPanel({
     [errors, setErrors] = useState<FieldError[]>([]),
     [saving, setSaving] = useState(false);
   const currencyInitialized = useRef(false);
+  // The default date is first set before the workspace timezone loads, on the
+  // browser's own day. Once the timezone is known, a default nobody changed,
+  // and the lines still on it, move to the workspace day, which the
+  // lead-time need-by date also counts from.
+  const untouchedDefault = useRef(defaultDate);
+  useEffect(() => {
+    const workspaceDay = today(timezone);
+    const previous = untouchedDefault.current;
+    if (defaultDate !== previous || workspaceDay === previous) return;
+    untouchedDefault.current = workspaceDay;
+    setDefaultDate(workspaceDay);
+    setLines((current) => current.map((line) => (line.needByDate === previous ? { ...line, needByDate: workspaceDay } : line)));
+  }, [timezone]);
   const selected =
     focus?.entityType === "purchase_request"
       ? rows.find((row) => row.id === focus.entityId)
@@ -204,7 +229,8 @@ export default function CanonicalProcurementPanel({
   // defaults for that item. Every filled field shows where its value came
   // from, and nothing is saved until the user saves.
   useEffect(() => {
-    if (prefilled.current || !items.length) return;
+    const handoff = location.key;
+    if (prefilled.current === handoff || !items.length) return;
     const requestedItem = searchParams.get("itemId") || searchParams.get("sku");
     if (!requestedItem) return;
     const item = items.find(
@@ -212,12 +238,22 @@ export default function CanonicalProcurementPanel({
         (row.itemId || row.id) === requestedItem || row.sku === requestedItem,
     );
     if (!item) return;
-    prefilled.current = true;
+    prefilled.current = handoff;
     const itemId = item.itemId || item.id || "";
-    request<{ suppliers: SupplierOption[] }>(
-      `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
-    )
-      .then((result) => {
+    // The last PO date of each source orders the list a person chooses from
+    // when none is preferred; without them (no PO read rights, or an error)
+    // the list is A-Z and says the dates are not available.
+    Promise.all([
+      request<{ suppliers: SupplierOption[] }>(
+        `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
+      ),
+      request<{ lastOrders: (SupplierLastOrder & { supplierId: string })[] }>(
+        `/api/procurement/item-supplier-orders?itemId=${encodeURIComponent(itemId)}`,
+      )
+        .then((payload) => Object.fromEntries(payload.lastOrders.map((row) => [row.supplierId, row])))
+        .catch(() => null),
+    ])
+      .then(([result, lastOrders]) => {
         setItemSuppliers((current) => ({
           ...current,
           [itemId]: result.suppliers,
@@ -228,6 +264,7 @@ export default function CanonicalProcurementPanel({
           suppliers: result.suppliers,
           today: today(timezone),
           defaultDate,
+          lastOrders,
         });
         const line: Line = {
           ...makeLine(defaultDate),
@@ -246,20 +283,35 @@ export default function CanonicalProcurementPanel({
           internalLineComment: plan.values.internalLineComment,
         };
         setLines([line]);
-        setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields });
+        setPrefill({ origin: plan.origin, intent: plan.intent, lineId: line.lineId, fields: plan.fields, supplierChoices: plan.supplierChoices });
       })
       .catch((error) => toast.error(copy(error.message || "供应商关系读取失败")));
-  }, [items, searchParams]);
+  }, [items, searchParams, location.key]);
   const prefillChip = (line: Line, field: PrefillLineField) =>
     prefill && line.lineId === prefill.lineId ? (
       <PrefillSourceChip entry={prefill.fields[field]} current={line[field] ?? ""} testId={`prefill-source-${field}`} />
     ) : null;
+  // Earlier PO prices for every catalog line, in one request. Never fills a price.
+  const priceHistoryKeyOf = (line: Line) => line.sourceType === "catalog_item" ? priceHistoryKey({ itemId: line.itemId, unit: line.unitSnapshot, currency: line.currency || currency }) : "";
+  const priceHistory = usePriceHistory(lines.map(priceHistoryKeyOf));
   const patchLine = (index: number, patch: Partial<Line>) =>
     setLines((current) =>
       current.map((line, i) => (i === index ? { ...line, ...patch } : line)),
     );
+  // A supplier with a recorded lead time moves the line's need-by date from
+  // the form's default to today + lead time, so a new order is not due on the
+  // day it is placed. A date the person changed is kept.
+  const applyLeadTime = (index: number, supplier?: SupplierOption) => {
+    const days = Number(supplier?.leadTimeDays);
+    if (supplier?.leadTimeDays === null || supplier?.leadTimeDays === undefined || !Number.isInteger(days) || days < 0) return;
+    const leadDate = addCalendarDays(today(timezone), days);
+    setLines((current) =>
+      current.map((line, i) => (i === index && line.needByDate === defaultDate ? { ...line, needByDate: leadDate } : line)),
+    );
+  };
   const selectItem = async (index: number, value: string) => {
     const item = items.find((row) => (row.itemId || row.id) === value);
+    clearOverrideIssues(index);
     if (!item)
       return patchLine(index, {
         itemId: "",
@@ -282,13 +334,17 @@ export default function CanonicalProcurementPanel({
       commodityId: item.category || "",
       targetWarehouseId: item.defaultWarehouseId || "",
       estimatedUnitPrice: "",
+      supplierOverride: null,
     });
     const result = await request<{ suppliers: SupplierOption[] }>(
       `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
     );
     setItemSuppliers((current) => ({ ...current, [itemId]: result.suppliers }));
-    const preferred = result.suppliers.find((s) => s.preferred);
-    if (preferred)
+    // Only one preferred source is filled in; when master data marks more
+    // than one, the person picks (the same rule as the handoff prefill).
+    const preferredSources = result.suppliers.filter((s) => s.preferred);
+    const preferred = preferredSources.length === 1 ? preferredSources[0] : undefined;
+    if (preferred) {
       patchLine(index, {
         supplierId: preferred.id,
         estimatedUnitPrice: preferred.referencePrice
@@ -296,11 +352,56 @@ export default function CanonicalProcurementPanel({
           : "",
         currency: preferred.currency || currency,
       });
+      applyLeadTime(index, preferred);
+    }
   };
   const supplierOptions = (line: Line): SupplierOption[] =>
     line.sourceType === "non_catalog_item"
       ? suppliers
       : itemSuppliers[line.itemId || ""] || [];
+  // A catalog line whose supplier is not the item's preferred one, while one
+  // is preferred, asks why (shared/supplier-override-reasons.mjs). Nothing
+  // else does. Master data can mark more than one source preferred; any of
+  // them needs no reason, the same rule as the server.
+  const preferredOf = (line: Line, options = supplierOptions(line)) =>
+    line.sourceType === "catalog_item" ? options.filter((option) => option.preferred) : [];
+  const preferredNames = (line: Line) =>
+    preferredOf(line).map((option) => option.name || option.supplierName || option.id).join(", ");
+  const needsReason = (line: Line) =>
+    Boolean(line.supplierId) && overrideNeeded({ supplierId: line.supplierId, preferredIds: preferredOf(line).map((option) => option.id) });
+  // A reason given while another supplier was preferred is asked again.
+  const keepOverride = (line: Line, options: SupplierOption[]) => {
+    const stamped = line.supplierOverride?.preferredSupplierId;
+    if (!line.supplierOverride || !stamped) return line.supplierOverride || null;
+    return preferredOf(line, options).some((option) => option.id === stamped) ? line.supplierOverride : null;
+  };
+  const hasOverrideIssue = (index: number) =>
+    errors.some((error) => {
+      const match = OVERRIDE_FIELD.exec(error.field || "");
+      return Boolean(match) && Number(match?.[1]) === index;
+    });
+  // A refused reason belongs to the supplier it was asked for: a new supplier
+  // or item drops it, so the picker follows only the preferred-supplier rule.
+  const clearOverrideIssues = (index: number) =>
+    setErrors((current) => {
+      const kept = current.filter((error) => {
+        const match = OVERRIDE_FIELD.exec(error.field || "");
+        return !match || Number(match[1]) !== index;
+      });
+      return kept.length === current.length ? current : kept;
+    });
+  // A reason belongs to the supplier it was given for.
+  const chooseSupplier = (index: number, supplierId: string) => {
+    patchLine(index, { supplierId, supplierOverride: null });
+    clearOverrideIssues(index);
+    const line = lines[index];
+    applyLeadTime(index, (itemSuppliers[line?.itemId || ""] || []).find((supplier) => supplier.id === supplierId));
+  };
+  const overrideIssues = (index: number) =>
+    Object.fromEntries(errors.flatMap((error) => {
+      const match = OVERRIDE_FIELD.exec(error.field || "");
+      return match && Number(match[1]) === index ? [[match[2], error.code || (match[2] === "note" ? "NOTE_LENGTH" : "REASON_REQUIRED")]] : [];
+    })) as { reasonCode?: string; note?: string };
   const total = useMemo(
     () =>
       lines.reduce(
@@ -323,6 +424,16 @@ export default function CanonicalProcurementPanel({
     setSaving(true);
     setErrors([]);
     try {
+      // The same rule the server applies, so the person sees it before saving.
+      const missingReasons: FieldError[] = lines.flatMap((line, index) =>
+        needsReason(line)
+          ? validateSupplierOverride(line.supplierOverride, true).issues.map((issue) => ({ field: `lines.${index}.supplierOverride.${issue.field}`, code: issue.code }))
+          : [],
+      );
+      if (missingReasons.length) {
+        setErrors(missingReasons);
+        return;
+      }
       const body = {
         departmentId,
         defaultCurrency: currency,
@@ -338,6 +449,10 @@ export default function CanonicalProcurementPanel({
               : Number(l.quantity) * Number(l.estimatedUnitPrice),
           unitSnapshot: l.lineBasis === "amount" ? null : l.unitSnapshot,
           currency: l.currency || currency,
+          // The server keeps a reason only where one is needed.
+          supplierOverride: l.sourceType === "catalog_item" && l.supplierOverride?.reasonCode
+            ? { reasonCode: l.supplierOverride.reasonCode, note: String(l.supplierOverride.note || "").trim() || null }
+            : null,
         })),
       };
       // What became of each prefilled value: codes only, for the audit row.
@@ -370,9 +485,50 @@ export default function CanonicalProcurementPanel({
           ? details
           : [{ message: error instanceof Error ? error.message : "保存失败" }],
       );
-      toast.error(copy(error instanceof Error ? error.message : "保存失败"));
+      // The server asked for a reason the form did not: the item's preferred
+      // supplier changed since the form read it. Read the sources again so
+      // the picker shows, and say it in the interface language.
+      const overrideErrors = (details as FieldError[]).flatMap((detail) => {
+        const match = OVERRIDE_FIELD.exec(detail.field || "");
+        return match ? [{ index: Number(match[1]), code: detail.code }] : [];
+      });
+      if (overrideErrors.length) {
+        const first = overrideErrors[0];
+        toast.error(`${copy("采购行")} ${first.index + 1}: ${supplierOverrideIssueText(first.code, language)}`);
+        await reloadSuppliers([...new Set(overrideErrors.map(({ index }) => lines[index]?.itemId).filter(Boolean))] as string[]);
+      } else {
+        toast.error(copy(error instanceof Error ? error.message : "保存失败"));
+      }
     } finally {
       setSaving(false);
+    }
+  };
+  const readSuppliers = (itemIds: string[]) =>
+    Promise.all(
+      itemIds.map(
+        async (itemId) =>
+          [
+            itemId,
+            (
+              await request<{ suppliers: SupplierOption[] }>(
+                `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
+              )
+            ).suppliers,
+          ] as const,
+      ),
+    );
+  const reloadSuppliers = async (itemIds: string[]) => {
+    if (!itemIds.length) return;
+    try {
+      const fresh: Record<string, SupplierOption[]> = Object.fromEntries(await readSuppliers(itemIds));
+      setItemSuppliers((current) => ({ ...current, ...fresh }));
+      setLines((current) =>
+        current.map((line) =>
+          line.itemId && fresh[line.itemId] ? { ...line, supplierOverride: keepOverride(line, fresh[line.itemId]) } : line,
+        ),
+      );
+    } catch {
+      // The picker still shows for the refused line (hasOverrideIssue).
     }
   };
   const act = async (pr: PR, action: string) => {
@@ -399,22 +555,10 @@ export default function CanonicalProcurementPanel({
     const itemIds = [
       ...new Set(pr.lines.map((line) => line.itemId).filter(Boolean)),
     ] as string[];
-    const payloads = await Promise.all(
-      itemIds.map(
-        async (itemId) =>
-          [
-            itemId,
-            (
-              await request<{ suppliers: SupplierOption[] }>(
-                `/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`,
-              )
-            ).suppliers,
-          ] as const,
-      ),
-    );
+    const payloads: Record<string, SupplierOption[]> = Object.fromEntries(await readSuppliers(itemIds));
     setItemSuppliers((current) => ({
       ...current,
-      ...Object.fromEntries(payloads),
+      ...payloads,
     }));
     setEditing(pr);
     setDepartmentId(pr.departmentId);
@@ -426,6 +570,8 @@ export default function CanonicalProcurementPanel({
         quantity: String(l.quantity ?? ""),
         estimatedUnitPrice: String(l.estimatedUnitPrice ?? ""),
         estimatedAmount: String(l.estimatedAmount ?? ""),
+        // A reason given while another supplier was preferred is asked again.
+        supplierOverride: l.itemId && payloads[l.itemId] ? keepOverride(l, payloads[l.itemId]) : l.supplierOverride || null,
       })),
     );
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -468,8 +614,9 @@ export default function CanonicalProcurementPanel({
               >
                 <span>{line.sku || "Other"}</span>
                 <span>{line.itemNameSnapshot}</span>
-                <span>
-                  {line.supplierSnapshot?.supplierName || line.supplierId}
+                <span className="flex flex-col gap-1">
+                  <span>{line.supplierSnapshot?.supplierName || line.supplierId}</span>
+                  <SupplierOverrideFlag override={line.supplierOverride} testId="pr-line-supplier-override" />
                 </span>
                 <span>
                   {line.lineBasis === "quantity"
@@ -575,9 +722,16 @@ export default function CanonicalProcurementPanel({
             role="alert"
             className="mt-3 rounded-md bg-red-50 p-3 text-xs text-red-700"
           >
-            {errors.map((e, i) => (
-              <div key={i}>{copy(e.message || e.field)}</div>
-            ))}
+            {errors.map((e, i) => {
+              const override = OVERRIDE_FIELD.exec(e.field || "");
+              return (
+                <div key={i}>
+                  {override
+                    ? `${copy("采购行")} ${Number(override[1]) + 1}: ${supplierOverrideIssueText(e.code, language)}`
+                    : copy(e.message || e.field)}
+                </div>
+              );
+            })}
           </div>
         )}
         <div className="mt-4 space-y-3">
@@ -660,9 +814,7 @@ export default function CanonicalProcurementPanel({
                   <select
                     aria-label={`${copy("供应商")} ${index + 1}`}
                     value={line.supplierId}
-                    onChange={(e) =>
-                      patchLine(index, { supplierId: e.target.value })
-                    }
+                    onChange={(e) => chooseSupplier(index, e.target.value)}
                     style={inputStyle}
                   >
                     <option value="">{copy("选择供应商")}</option>
@@ -674,6 +826,34 @@ export default function CanonicalProcurementPanel({
                     ))}
                   </select>
                   {prefillChip(line, "supplierId")}
+                  {prefill && !editing && line.lineId === prefill.lineId && line.itemId && line.itemId === prefill.fields.itemId?.value ? (
+                    <SupplierChoices
+                      choices={prefill.supplierChoices}
+                      preferredOnly={prefill.fields.supplierId?.ref === "item_supplier:choose_preferred"}
+                      selectedId={line.supplierId}
+                      onChoose={(supplierId) => { if (supplierId !== line.supplierId) chooseSupplier(index, supplierId); }}
+                    />
+                  ) : null}
+                  {needsReason(line) || (line.sourceType === "catalog_item" && hasOverrideIssue(index)) ? (
+                    <SupplierOverrideReason
+                      testId={`supplier-override-reason-${index + 1}`}
+                      preferredName={preferredNames(line)}
+                      preferredCount={preferredOf(line).length}
+                      value={line.supplierOverride}
+                      issues={overrideIssues(index)}
+                      onChange={(supplierOverride) =>
+                        patchLine(index, {
+                          supplierOverride: {
+                            ...supplierOverride,
+                            missingReason: false,
+                            preferredSupplierId: preferredOf(line)[0]?.id || null,
+                            preferredSupplierIds: preferredOf(line).map((option) => option.id),
+                            preferredSupplierName: preferredNames(line) || null,
+                          },
+                        })
+                      }
+                    />
+                  ) : null}
                   {line.sourceType === "catalog_item" &&
                     line.itemId &&
                     supplierOptions(line).length === 0 && (
@@ -792,6 +972,12 @@ export default function CanonicalProcurementPanel({
                   {prefillChip(line, "needByDate")}
                 </Field>
               </div>
+              {/* Earlier PO prices for the item, beside the estimated unit price. Display only. */}
+              {line.lineBasis === "quantity" && priceHistoryKeyOf(line) && (
+                <div className="mt-2">
+                  <PriceHistoryFacts history={priceHistory.histories.get(priceHistoryKeyOf(line))} state={priceHistory.state} testId={`pr-line-price-history-${index + 1}`} />
+                </div>
+              )}
               <Field label={copy("行级内部备注")}>
                 <textarea
                   aria-label={`${copy("行级内部备注")} ${index + 1}`}
@@ -847,7 +1033,23 @@ export default function CanonicalProcurementPanel({
                       </EntityLink>
                     </td>
                     <td className="p-3">{pr.requesterId}</td>
-                    <td className="p-3">{copy(pr.status)}</td>
+                    <td className="p-3">
+                      {copy(pr.status)}
+                      <SupplierOverrideCount count={pr.lines.filter((line) => hasSupplierOverride(line.supplierOverride)).length} testId="pr-row-supplier-overrides" />
+                      {/* Approve on this row skips the detail, so the row shows each reason too. */}
+                      {pr.lines.some((line) => hasSupplierOverride(line.supplierOverride)) ? (
+                        <div className="mt-1 flex flex-col items-start gap-1">
+                          {pr.lines.filter((line) => hasSupplierOverride(line.supplierOverride)).map((line, lineIndex) => (
+                            <SupplierOverrideFlag
+                              key={line.lineId || lineIndex}
+                              override={line.supplierOverride}
+                              prefix={`${line.sku || line.itemNameSnapshot} · ${line.supplierSnapshot?.supplierName || line.supplierId}`}
+                              testId="pr-row-supplier-override"
+                            />
+                          ))}
+                        </div>
+                      ) : null}
+                    </td>
                     <td className="p-3">{amount(pr.totalAmount, pr.defaultCurrency)}</td>
                     <td className="p-3 space-x-2">
                       {pr.status === "draft" && (
@@ -866,7 +1068,7 @@ export default function CanonicalProcurementPanel({
                       {pr.status === "approved" && (
                         <button
                           onClick={() => act(pr, "generate-purchase-orders")}
-                        >{copy("生成 Draft PO")}</button>
+                        >{copy("生成采购订单")}</button>
                       )}
                     </td>
                   </tr>

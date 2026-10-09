@@ -93,6 +93,12 @@ projects:
                 value: "false"
               - key: FLOWCHAIN_REQUEST_LOG
                 value: "on"
+              # Optional error alerts: an https incoming-webhook URL (Slack,
+              # Discord or any endpoint that takes JSON). Leave empty for none.
+              # It is a credential: never paste it anywhere else. See
+              # docs/operations-alerts.md.
+              - key: FLOWCHAIN_ERROR_WEBHOOK_URL
+                sync: false
               # US trial capability set (deploy/README.md).
               - key: FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING
                 value: "true"
@@ -103,6 +109,10 @@ projects:
               - key: FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE
                 value: "true"
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS
+                value: "true"
+              # CSV import of master data and opening stock through the
+              # manual-entry commands; opening stock lands as draft adjustments.
+              - key: FLOWCHAIN_ENABLE_DATA_IMPORT
                 value: "true"
               # Mobile Sync stays off; enabling it also needs cursor secrets.
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC
@@ -198,6 +208,12 @@ projects:
                 value: "false"
               - key: FLOWCHAIN_REQUEST_LOG
                 value: "on"
+              # Optional error alerts: an https incoming-webhook URL (Slack,
+              # Discord or any endpoint that takes JSON). Leave empty for none.
+              # It is a credential: never paste it anywhere else. See
+              # docs/operations-alerts.md.
+              - key: FLOWCHAIN_ERROR_WEBHOOK_URL
+                sync: false
               # US trial capability set (deploy/README.md).
               - key: FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING
                 value: "true"
@@ -208,6 +224,10 @@ projects:
               - key: FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE
                 value: "true"
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS
+                value: "true"
+              # CSV import of master data and opening stock through the
+              # manual-entry commands; opening stock lands as draft adjustments.
+              - key: FLOWCHAIN_ENABLE_DATA_IMPORT
                 value: "true"
               # Mobile Sync stays off; enabling it also needs cursor secrets.
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC
