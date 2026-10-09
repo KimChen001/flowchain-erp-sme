@@ -42,10 +42,9 @@ test('no in-page link or search entry points into a frozen or unavailable surfac
     'src/modules/finance/InternalSettlementWorkbench.tsx', 'src/modules/finance/Page.tsx', 'src/modules/forecast/Page.tsx', 'src/modules/imports/Page.tsx',
     'src/modules/sales/DeliveryPage.tsx', 'src/modules/sales/ReceiptPage.tsx',
     // Kept code whose output is filtered: evidence links are hidden at render,
-    // the planning answer and the report catalog drop these targets, the
-    // mobile settlement task loop is switched off, and the reconciliation
-    // evidence builder is no longer called.
-    'src/lib/evidenceLinks.ts', 'src/modules/overview/overviewEvidence.ts', 'server/domain/ai-chat-status.mjs',
+    // the planning answer and the report catalog drop these targets, and the
+    // mobile settlement task loop is switched off.
+    'src/lib/evidenceLinks.ts', 'server/domain/ai-chat-status.mjs',
     'server/domain/mobile-operations-service.mjs', 'server/domain/report-semantic-layer.mjs',
   ])
   const offenders = []
