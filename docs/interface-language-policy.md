@@ -129,6 +129,14 @@ names, or supplier names in place. Translate their presentation where appropriat
   workspace locale (calendar days read in UTC, so the day entered is the day printed).
   Customer contact details, payment terms and payment instructions are printed as
   the workspace recorded them, in whatever language they were entered.
+- The print-layout editor (receive sheet, delivery note, sign receipt) has English and
+  Chinese copy for its toolbar, save, delete and import messages, the read-only and
+  unreadable-template notes, the close prompt and the per-print panel. Elements added
+  from the toolbar and the per-print fields start with text in the interface language.
+  Not yet translated: the element inspector, the canvas placeholders (page number,
+  barcode, QR code) and the built-in templates' element titles. Template names and
+  element text are template content: a template saved to the workspace keeps the text
+  it was saved with in either language.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.
