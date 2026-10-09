@@ -93,10 +93,14 @@ names, or supplier names in place. Translate their presentation where appropriat
   lines; on hold with no customer name), and the spec checks their translated labels
   on the risk and evidence pages in English and their Chinese labels in zh-CN. The
   sales order drawer on these pages and its review panel were removed (2026-10-08): no
-  link opened them, and a sales order focus goes to `/app/sales/orders/:id`. Next part (the PRs it waited for have merged): the rest of the sales order and shipment
-  workbench (`/app/sales/orders`, `OutboundWorkbench.tsx`) beyond its action dialogs; the
-  inventory filter chips (`src/modules/inventory/Page.tsx`); shell strings in
-  `src/app/FlowChainApp.tsx`. Deferred: an order's evidence graph, whose
+  link opened them, and a sales order focus goes to `/app/sales/orders/:id`. Second part (2026-10-09): the sales order and shipment workbench
+  (`OutboundWorkbench.tsx`), the inventory pages and their filter chips
+  (`src/modules/inventory/Page.tsx`), the shell and global search panel
+  (`src/app/FlowChainApp.tsx`) and the purchasing workbench (`ProcurementWorkbench.tsx`)
+  are on the coverage list; the finance status filters and credit note statuses show
+  labels. The global search status and a subtitle that only repeats it are translated
+  where shown; other search subtitles and evidence values the server builds (for
+  example "可用 …" and "安全库存 …" on stock results) are still Chinese. Deferred: an order's evidence graph, whose
   risk summaries the server writes in Chinese. Out of scope because no route renders
   them: `src/modules/overview/overviewEvidence.ts` and `TodayCockpitPanel.tsx`, the
   inventory movement ledger, exception, warning and adjustment page files, the V2

@@ -246,31 +246,31 @@ type ShipmentWorkbench = {
 const key = () =>
   createSecureClientMutationId("outbound");
 const pretty: Record<string, string> = {
-  draft: "草稿",
-  confirmed: "已确认",
-  on_hold: "暂停",
-  ready: "待过账",
-  cancelled: "已取消",
-  unposted: "未过账",
-  posted: "已过账",
-  reversed: "已冲销",
-  not_reserved: "未预留",
-  partially_reserved: "部分预留",
-  fully_reserved: "已预留",
-  not_fulfilled: "未履约",
-  partially_fulfilled: "部分履约",
-  fully_fulfilled: "已履约",
-  matched: "一致",
-  mismatch: "不一致",
-  unavailable: "不可用",
+  "draft": "草稿",
+  "confirmed": "已确认",
+  "on_hold": "暂停",
+  "ready": "待过账",
+  "cancelled": "已取消",
+  "unposted": "未过账",
+  "posted": "已过账",
+  "reversed": "已冲销",
+  "not_reserved": "未预留",
+  "partially_reserved": "部分预留",
+  "fully_reserved": "已预留",
+  "not_fulfilled": "未履约",
+  "partially_fulfilled": "部分履约",
+  "fully_fulfilled": "已履约",
+  "matched": "一致",
+  "mismatch": "不一致",
+  "unavailable": "不可用",
   // Reservation and shipment allocation statuses.
-  active: "有效",
-  allocated: "已分配",
-  partially_allocated: "部分分配",
-  partially_consumed: "部分消耗",
-  consumed: "已消耗",
-  released: "已释放",
-  deallocated: "已取消分配",
+  "active": "有效",
+  "allocated": "已分配",
+  "partially_allocated": "部分分配",
+  "partially_consumed": "部分消耗",
+  "consumed": "已消耗",
+  "released": "已释放",
+  "deallocated": "已取消分配",
 };
 const status = (value: string) => copy(pretty[value] || value);
 // One status for a shipment: cancelled, else posted or reversed, else where
@@ -309,9 +309,6 @@ function useStamp() {
   return (value?: string | null) =>
     value && !Number.isNaN(new Date(value).getTime()) ? formatDateTime(value) : value || "—";
 }
-// Shown both as a preview blocking issue and as a command error.
-const SHIPMENT_INVOICE_BLOCK =
-  "已有客户发票对此发货开票，不能再冲销。如需收回货物，请使用客户退货和贷项通知单。";
 // The message for an error, kept in its source form and translated where it
 // is shown, so it follows a language change made after the error occurred.
 function message(error: unknown) {
@@ -329,28 +326,30 @@ function errorMessage(error: unknown) {
 const issueMessage = (issue: { code: string; message: string }) =>
   codeMessages[issue.code] ? copy(codeMessages[issue.code]) : issue.message;
 const codeMessages: Record<string, string> = {
-  PERMISSION_DENIED: "当前角色只能查看，不能执行此操作。",
-  WAREHOUSE_SCOPE_DENIED: "当前账号没有相关仓库权限。",
-  SALES_ORDER_ON_HOLD: "销售订单当前已暂停，不能执行发货过账。请先恢复订单。",
-  OUTBOUND_CAPABILITY_NOT_AVAILABLE:
+  "PERMISSION_DENIED": "当前角色只能查看，不能执行此操作。",
+  "WAREHOUSE_SCOPE_DENIED": "当前账号没有相关仓库权限。",
+  "SALES_ORDER_ON_HOLD": "销售订单当前已暂停，不能执行发货过账。请先恢复订单。",
+  "OUTBOUND_CAPABILITY_NOT_AVAILABLE":
     "当前销售订单写入能力未启用，页面保持只读。",
-  SALES_ORDER_VERSION_CONFLICT: "订单已发生变化，请刷新后重新预览。",
-  SHIPMENT_VERSION_CONFLICT: "发货单已变化，请刷新后重新预览。",
-  OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT:
+  "SALES_ORDER_VERSION_CONFLICT": "订单已发生变化，请刷新后重新预览。",
+  "SHIPMENT_VERSION_CONFLICT": "发货单已变化，请刷新后重新预览。",
+  "OUTBOUND_CONCURRENT_TRANSACTION_CONFLICT":
     "库存已发生变化，请刷新后重新预览。",
-  IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD:
+  "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD":
     "操作内容已改变，请重新开始该操作。",
-  COMMAND_EXECUTION_IN_PROGRESS: "该操作正在处理中，请稍后重试。",
-  RESERVATION_INSUFFICIENT_AVAILABLE: "可用库存不足，请调整数量。",
-  RESERVATION_OVER_ORDERED: "数量超过该订单行尚待预留的数量。",
-  SHIPMENT_RESERVATION_INSUFFICIENT: "预留数量不足，请调整数量。",
-  SHIPMENT_OVER_FULFILLMENT: "数量超过该订单行尚待发货的数量。",
-  SHIPMENT_REVERSAL_NOT_SAFE: "历史出库事实不一致，系统已阻止冲销。",
-  SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE: SHIPMENT_INVOICE_BLOCK,
-  SHIPMENT_NUMBER_CONFLICT: "发货单号已存在，请更换号码。",
-  SALES_ORDER_NUMBER_CONFLICT: "销售订单号已存在，请更换号码。",
-  SALES_ORDER_INVALID_STATE: "当前订单状态不允许此操作。",
-  SALES_ORDER_ITEM_INVALID: "订单物料与当前工作区主数据不一致。",
+  "COMMAND_EXECUTION_IN_PROGRESS": "该操作正在处理中，请稍后重试。",
+  "RESERVATION_INSUFFICIENT_AVAILABLE": "可用库存不足，请调整数量。",
+  "RESERVATION_OVER_ORDERED": "数量超过该订单行尚待预留的数量。",
+  "SHIPMENT_RESERVATION_INSUFFICIENT": "预留数量不足，请调整数量。",
+  "SHIPMENT_OVER_FULFILLMENT": "数量超过该订单行尚待发货的数量。",
+  "SHIPMENT_REVERSAL_NOT_SAFE": "历史出库事实不一致，系统已阻止冲销。",
+  // Shown both as a preview blocking issue and as a command error.
+  "SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE":
+    "已有客户发票对此发货开票，不能再冲销。如需收回货物，请使用客户退货和贷项通知单。",
+  "SHIPMENT_NUMBER_CONFLICT": "发货单号已存在，请更换号码。",
+  "SALES_ORDER_NUMBER_CONFLICT": "销售订单号已存在，请更换号码。",
+  "SALES_ORDER_INVALID_STATE": "当前订单状态不允许此操作。",
+  "SALES_ORDER_ITEM_INVALID": "订单物料与当前工作区主数据不一致。",
 };
 const Section = ({
   title,
@@ -524,19 +523,19 @@ function OrderList() {
             />
           </label>
           <Filter
-            label="流程状态"
+            label={copy("流程状态")}
             value={value("workflowStatus")}
             onChange={(v) => update({ workflowStatus: v, page: 1 })}
             values={["draft", "confirmed", "on_hold"]}
           />
           <Filter
-            label="预留状态"
+            label={copy("预留状态")}
             value={value("reservationStatus")}
             onChange={(v) => update({ reservationStatus: v, page: 1 })}
             values={["not_reserved", "partially_reserved", "fully_reserved"]}
           />
           <Filter
-            label="履约状态"
+            label={copy("履约状态")}
             value={value("fulfillmentStatus")}
             onChange={(v) => update({ fulfillmentStatus: v, page: 1 })}
             values={["not_fulfilled", "partially_fulfilled", "fully_fulfilled"]}
@@ -580,19 +579,19 @@ function OrderList() {
             <thead>
               <tr className="border-b">
                 {[
-                  "订单号",
-                  "客户",
-                  "流程",
-                  "预留状态",
-                  "履约状态",
-                  "币种",
-                  "行数",
-                  "订购 / 预留 / 履约",
-                  "更新时间",
-                  "操作",
+                  copy("订单号"),
+                  copy("客户"),
+                  copy("流程"),
+                  copy("预留状态"),
+                  copy("履约状态"),
+                  copy("币种"),
+                  copy("行数"),
+                  copy("订购 / 预留 / 履约"),
+                  copy("更新时间"),
+                  copy("操作"),
                 ].map((x) => (
                   <th className={thClass} key={x}>
-                    {copy(x)}
+                    {x}
                   </th>
                 ))}
               </tr>
@@ -685,9 +684,9 @@ function Filter({
 }) {
   return (
     <label className="text-xs">
-      {copy(label)}
+      {label}
       <select
-        aria-label={copy(label)}
+        aria-label={label}
         className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -1522,7 +1521,7 @@ function OrderDetail({ id }: { id: string }) {
             {data.shipments.some((shipment) => shipment.postingStatus === "posted") && (
               <CreateInvoiceAction salesOrderId={id} />
             )}
-            <Button tone="secondary" onClick={() => void refresh()} ariaLabel="刷新销售订单">
+            <Button tone="secondary" onClick={() => void refresh()} ariaLabel={copy("刷新销售订单")}>
               <RefreshCw size={15} />
             </Button>
           </div>
@@ -1560,18 +1559,18 @@ function OrderDetail({ id }: { id: string }) {
             <thead>
               <tr>
                 {[
-                  "SKU / 物料",
-                  "订购",
-                  "已预留",
-                  "已履约",
-                  "待预留",
-                  "待履约",
-                  "现有量",
-                  "库存预留",
-                  "可用量",
+                  copy("SKU / 物料"),
+                  copy("订购"),
+                  copy("已预留"),
+                  copy("已履约"),
+                  copy("待预留"),
+                  copy("待履约"),
+                  copy("现有量"),
+                  copy("库存预留"),
+                  copy("可用量"),
                 ].map((x) => (
                   <th className="p-2 text-left" key={x}>
-                    {copy(x)}
+                    {x}
                   </th>
                 ))}
               </tr>
@@ -1650,15 +1649,15 @@ function OrderDetail({ id }: { id: string }) {
             status(x.status),
           ])}
           headers={[
-            "预留 ID",
-            "仓库",
-            "库位",
-            "预留量",
-            "已分配",
-            "已消耗",
-            "已释放",
-            "可释放",
-            "状态",
+            copy("预留 ID"),
+            copy("仓库"),
+            copy("库位"),
+            copy("预留量"),
+            copy("已分配"),
+            copy("已消耗"),
+            copy("已释放"),
+            copy("可释放"),
+            copy("状态"),
           ]}
         />
       </Section>
@@ -1690,7 +1689,7 @@ function OrderDetail({ id }: { id: string }) {
             formatQuantity(x.quantityOut),
             movementTypeLabel(x.movementType, activeLanguage),
           ])}
-          headers={["流水 ID", "SKU", "仓库", "入", "出", "类型"]}
+          headers={[copy("流水 ID"), "SKU", copy("仓库"), copy("入"), copy("出"), copy("类型")]}
         />
       </Section>
       <Section id="evidence" title={copy("订单证据与时间线")}>
@@ -2147,7 +2146,7 @@ function ShipmentDetail({ id }: { id: string }) {
       </section>
       <Section title={copy("发货行")}>
         <Table
-          headers={["SKU / 物料", "请求数量", "已过账", "单位"]}
+          headers={[copy("SKU / 物料"), copy("请求数量"), copy("已过账"), copy("单位")]}
           rows={data.lines.map((x) => [
             `${x.sku} · ${x.itemName}`,
             formatQuantity(x.requestedQuantity),
@@ -2159,13 +2158,13 @@ function ShipmentDetail({ id }: { id: string }) {
       <Section title={copy("分配与库存流水")}>
         <Table
           headers={[
-            "预留 ID",
-            "仓库",
-            "库位",
-            "数量",
-            "状态",
-            "出库流水",
-            "冲销流水",
+            copy("预留 ID"),
+            copy("仓库"),
+            copy("库位"),
+            copy("数量"),
+            copy("状态"),
+            copy("出库流水"),
+            copy("冲销流水"),
           ]}
           rows={data.allocations.map((x) => [
             shortId(x.reservationId),
@@ -2266,7 +2265,7 @@ function Table({
           <tr className="border-b text-left text-xs text-slate-500">
             {headers.map((x) => (
               <th className="p-2" key={x}>
-                {copy(x)}
+                {x}
               </th>
             ))}
           </tr>

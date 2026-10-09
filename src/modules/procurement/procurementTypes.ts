@@ -331,4 +331,5 @@ export type ProcurementDocument = {
   relatedDocuments?: ProcurementDocumentReference[];
   evidence?: Array<Record<string, unknown>>;
 };
-export type ProcurementWorkItem = { id: string; type: string; status: string; amount: number; bucket: "approval" | "tracking"; kind: EntityKind; signals?: string[] };
+// signals are codes ("invoice_variance", "match_exception"), labelled when shown.
+export type ProcurementWorkItem = { id: string; status: string; amount: number; bucket: "approval" | "tracking"; kind: EntityKind; signals?: string[] };
