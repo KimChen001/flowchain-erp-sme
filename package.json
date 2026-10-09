@@ -34,6 +34,7 @@
     "test:db:inventory-allocation": "node scripts/run-postgres-test-files.mjs tests/postgres/inventory-allocation-walkthrough.test.mjs",
     "test:db:reorder-list": "node scripts/run-postgres-test-files.mjs tests/postgres/reorder-list.test.mjs",
     "test:db:ai-knowledge": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-knowledge.test.mjs",
+    "test:db:warehouse-writes": "node scripts/run-postgres-test-files.mjs tests/postgres/warehouse-writes.test.mjs",
     "test:db:ai-pgvector": "node --test tests/postgres/ai-pgvector-service.test.mjs",
     "test:browser:receiving": "node scripts/run-receiving-playwright.mjs",
     "test:browser:reports": "node scripts/run-reports-playwright.mjs",

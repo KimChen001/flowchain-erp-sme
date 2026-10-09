@@ -56,6 +56,10 @@ names, or supplier names in place. Translate their presentation where appropriat
 - The receiving form (warehouse, arrival time, accepted quantities) and the RFQ supplier
   response dialog (quantities and delivery dates from the RFQ lines) label their prefilled
   values in English and Chinese.
+- Settings > Warehouse access: the Warehouses and Bins section has English and Chinese
+  copy (`src/modules/settings/WarehouseMaster.tsx`). Server messages for these writes are
+  English; the UI shows each known error, validation and in-use reason code in the
+  active language. Warehouse and bin codes and names stay as recorded.
 - The inventory reorder list (`/app/inventory/reorder`) has English and Chinese copy
   (`src/modules/inventory/reorderListCopy.ts`): headings, the scope and rule notes, row
   flags, empty states and its "Create purchase request" action. The purchase request it
@@ -65,6 +69,35 @@ names, or supplier names in place. Translate their presentation where appropriat
   that a purchase order line in another unit than the item's stock unit is not counted
   as incoming is in both languages on the reports page and in the assistant's stock and
   order answers.
+- English trial screens (pilot item 7, first part). Sales delivery risks and order
+  evidence (`src/modules/sales/Page.tsx`) translate the sales order read API's status
+  and risk labels, the unnamed-customer name and the multi-line item name when shown
+  (`src/modules/sales/salesDemandCopy.ts`); the evidence error is translated. The API
+  still sends its Chinese labels; only the display changes. `server/domain/interface-language-coverage.test.mjs` lists the
+  English-covered screens (the five operational finance screens, inventory operations,
+  the reorder list, procurement document detail, three-way match, the receiving list,
+  AI suggestions, sales risks and evidence, and the business object detail panels):
+  every Chinese literal in them must be a dictionary key or the Chinese half of an
+  English/Chinese pair. The browser spec `tests/browser/english-trial.spec.ts` runs
+  with the US trial capability set (`PLAYWRIGHT_US_TRIAL=true`) on the walkthrough
+  data and on an empty workspace, and checks Today, purchasing (workbench, requests,
+  orders, receiving, bills, three-way match), inventory stock, transfers, counts and
+  adjustments (lists and new forms), sales risks, evidence and invoices, finance
+  overview, payables, receivables and aging, the reports overview and the open
+  assistant. On the walkthrough data the harness adds two trial sales orders (three
+  lines; on hold with no customer name), and the spec checks their translated labels
+  on the risk and evidence pages in English and their Chinese labels in zh-CN. The
+  sales order drawer on these pages and its review panel were removed (2026-10-08): no
+  link opened them, and a sales order focus goes to `/app/sales/orders/:id`. Next part (the PRs it waited for have merged): the rest of the sales order and shipment
+  workbench (`/app/sales/orders`, `OutboundWorkbench.tsx`) beyond its action dialogs; the
+  inventory filter chips (`src/modules/inventory/Page.tsx`); shell strings in
+  `src/app/FlowChainApp.tsx`. Deferred: an order's evidence graph, whose
+  risk summaries the server writes in Chinese. Out of scope because no route renders
+  them: `src/modules/overview/overviewEvidence.ts` and `TodayCockpitPanel.tsx`, the
+  inventory movement ledger, exception, warning and adjustment page files, the V2
+  panels under `src/components`, `src/modules/sales/DeliveryPage.tsx` and
+  `ReceiptPage.tsx`, `src/modules/receiving/Page.tsx` (the receiving routes render
+  `ReceivingListPage`) and the procurement panels PR #147 removes.
 - The sales order reserve, release and delivery draft dialogs and the shipment post,
   reverse and cancel dialogs have English and Chinese titles and confirm buttons that
   name the action. Their previews say what will happen in one or two sentences built
