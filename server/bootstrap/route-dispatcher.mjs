@@ -13,6 +13,7 @@ import { handleBusinessReadContextRoute } from "../routes/business-read-context.
 import { handleCapabilitiesRoute } from "../routes/capabilities.routes.mjs";
 import { handleCollaborationNotificationDraftsRoute } from "../routes/collaboration-notification-drafts.routes.mjs";
 import { handleContextRoute } from "../routes/context.routes.mjs";
+import { handleContractsRoute } from "../routes/contracts.routes.mjs";
 import { handleCustomFieldsRoute } from "../routes/custom-fields.routes.mjs";
 import { handleDataAccessQualityRoute } from "../routes/data-access-quality.routes.mjs";
 import { handleDataImportRoute } from "../routes/data-import.routes.mjs";
@@ -100,6 +101,9 @@ const orderedRouteHandlers = Object.freeze([
   handleAiRuntimeObservabilityRoute,
   handleTodayCockpitRoute,
   handleReturnsRoute,
+  // Before the attachment route, which would otherwise take
+  // /api/contracts/:id/attachments.
+  handleContractsRoute,
   handleAttachmentRoute,
   handleBankReconciliationRoute,
   handleOperationalFinanceRoute,
