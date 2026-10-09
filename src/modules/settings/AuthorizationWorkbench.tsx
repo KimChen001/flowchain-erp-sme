@@ -11,8 +11,8 @@ type Model = { permissionCatalog: Permission[]; roles: Role[]; users: User[]; de
 
 const field = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm";
 const button = "inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-50";
-const moduleOrder = ["settings", "master_data", "procurement", "receiving", "sales", "inventory", "returns", "finance", "audit"];
-const moduleLabels: Record<string, [string, string]> = { settings: ["设置", "Settings"], master_data: ["基础资料", "Master data"], procurement: ["采购与收货", "Procurement"], receiving: ["采购与收货", "Receiving"], sales: ["销售与发货", "Sales & outbound"], inventory: ["库存", "Inventory"], returns: ["退货与隔离", "Returns & quarantine"], finance: ["财务", "Finance"], audit: ["审计", "Audit"] };
+const moduleOrder = ["settings", "master_data", "contracts", "procurement", "receiving", "sales", "inventory", "returns", "finance", "audit"];
+const moduleLabels: Record<string, [string, string]> = { settings: ["设置", "Settings"], master_data: ["基础资料", "Master data"], contracts: ["合同", "Contracts"], procurement: ["采购与收货", "Procurement"], receiving: ["采购与收货", "Receiving"], sales: ["销售与发货", "Sales & outbound"], inventory: ["库存", "Inventory"], returns: ["退货与隔离", "Returns & quarantine"], finance: ["财务", "Finance"], audit: ["审计", "Audit"] };
 // Every signed-in user can read master data; its codes only allow editing, so
 // they never hide the module and the visibility preview leaves it out.
 const previewModules = moduleOrder.filter((module) => module !== "master_data");
