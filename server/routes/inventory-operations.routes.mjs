@@ -19,6 +19,7 @@ import {
 } from "../domain/inventory-operations-read-service.mjs";
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { notifyApprovalWaiting } from "../notifications/approval-notifier.mjs";
 
 const capabilityIds = [
   "stock-transfer",
@@ -86,11 +87,13 @@ export async function handleInventoryOperationsRoute(ctx) {
       req.method === "POST" &&
       url.pathname === "/api/inventory/adjustments"
     ) {
-      send(
-        res,
-        201,
-        await command.createAdjustment(await ctx.readBody(req), ctx),
-      );
+      const result = await command.createAdjustment(await ctx.readBody(req), ctx);
+      send(res, 201, result);
+      // A new adjustment waits for someone to ready it (its approval).
+      notifyApprovalWaiting(ctx, result, {
+        documentType: "inventory_adjustment",
+        documentId: result?.entityId,
+      });
       return true;
     }
 

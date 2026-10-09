@@ -28,6 +28,14 @@ checked the first time you do it.
 > answers 404. Because sign-in depends on email, neither service (staging or
 > production; both run the production profile) starts until a mail provider is
 > configured (see the table in step 2).
+>
+> **Approval emails.** The same provider and sender also tell approvers when
+> a purchase request, purchase order, bill or inventory adjustment is waiting
+> for them. The email gives only the document type, its number and a link;
+> it approves nothing. Every user receives them unless they turn them off in
+> System Administration > My Profile, so tell users before the first deploy.
+> To turn them off for the whole service, add `FLOWCHAIN_APPROVAL_EMAILS` =
+> `off` on the **Environment** page (see `deploy/README.md`).
 
 ## 0. What you need
 
@@ -35,7 +43,7 @@ checked the first time you do it.
 - A payment card. Disks and pre-deploy migrations need paid plans, so neither service can use Render's free plan.
 - The tenant id you want for each environment: 3 to 64 lowercase letters, digits or hyphens, for example `flowchain-staging` and the customer's short name for production. It is not secret, but it cannot easily be changed later.
 - The first administrator's email address and name.
-- A Postmark or Resend account with a verified sender domain. Sign-in links are sent through it, and neither service starts without it.
+- A Postmark or Resend account with a verified sender domain. Sign-in links and approval emails are sent through it, and neither service starts without it.
 - Optional: an OpenAI API key.
 
 ## 1. Create the Render account and connect GitHub
@@ -62,7 +70,7 @@ Enter these for both `flowchain-staging` and `flowchain-production`.
 | `FLOWCHAIN_DEFAULT_TENANT_ID` | No | The tenant id for this environment, for example `flowchain-staging`. Use the same value in step 4. |
 | `FLOWCHAIN_PUBLIC_BASE_URL` | No | The address users will open. Before the domain exists, use `https://flowchain-staging.onrender.com` or `https://flowchain-production.onrender.com`. Check the real address on the service page after the first deploy, because Render may add a suffix, and correct the value if it differs. |
 | `FLOWCHAIN_MAIL_PROVIDER` | No | `postmark` or `resend`. Required: the service does not start without it. |
-| `FLOWCHAIN_MAIL_FROM` | No | The sender address, for example `FlowChain <no-reply@getflowchain.com>`. Its domain must be verified with the mail provider. Required. |
+| `FLOWCHAIN_MAIL_FROM` | No | The sender address, for example `FlowChain <no-reply@getflowchain.com>`. It sends sign-in links and approval emails, so a `no-reply@` address suits both. Its domain must be verified with the mail provider. Required. |
 | `POSTMARK_SERVER_TOKEN` | **Yes** | Your Postmark server API token. Required if the provider is `postmark`; otherwise leave it empty. |
 | `RESEND_API_KEY` | **Yes** | Your Resend API key. Required if the provider is `resend`; otherwise leave it empty. |
 | `OPENAI_API_KEY` | **Yes** | Your OpenAI API key, or leave it empty to keep the AI assistant off. |
@@ -218,7 +226,7 @@ Do this after buying `getflowchain.com` and adding it to Cloudflare.
 
 For staging you can do the same with `staging.getflowchain.com` on `flowchain-staging`.
 
-The mail provider will also ask for DNS records (SPF, DKIM and a return-path CNAME) for the sender domain. Add them in Cloudflare exactly as the provider shows them.
+The mail provider will also ask for DNS records (SPF, DKIM and a return-path CNAME) for the sender domain. Add them in Cloudflare exactly as the provider shows them. Sign-in links and approval emails both depend on them. **UNVERIFIED**: no sender domain has been set up yet; this is an owner step.
 
 ## 10. Rough monthly cost
 

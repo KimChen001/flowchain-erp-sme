@@ -28,7 +28,7 @@ const hashToken = token => createHash('sha256').update(token).digest('hex')
 const ALLOWED_ROLES = new Set(['admin', 'manager', 'viewer', 'business-specialist', 'buyer', 'finance-specialist'])
 
 const fail = (code, message, status = 400, details) => { throw new PilotIdentityError(code, message, status, details) }
-const publicUser = user => ({ id: user.id, email: user.email, name: user.name, role: user.role, roleLabel: roleLabel(user.role), jobTitle: user.jobTitle, status: user.status, languagePreference: user.languagePreference, defaultWarehouseId: user.defaultWarehouseId, profileCompletedAt: user.profileCompletedAt, version: user.version, ...(Array.isArray(user.warehouseScopes) ? { warehouseScopes: user.warehouseScopes.map(scope => ({ warehouseId: scope.warehouseId, accessLevel: scope.accessLevel })) } : {}) })
+const publicUser = user => ({ id: user.id, email: user.email, name: user.name, role: user.role, roleLabel: roleLabel(user.role), jobTitle: user.jobTitle, status: user.status, languagePreference: user.languagePreference, approvalEmailsEnabled: user.approvalEmailsEnabled, defaultWarehouseId: user.defaultWarehouseId, profileCompletedAt: user.profileCompletedAt, version: user.version, ...(Array.isArray(user.warehouseScopes) ? { warehouseScopes: user.warehouseScopes.map(scope => ({ warehouseId: scope.warehouseId, accessLevel: scope.accessLevel })) } : {}) })
 const publicInvitation = invitation => ({ id: invitation.id, email: invitation.email, role: invitation.role, roleLabel: roleLabel(invitation.role), status: invitation.status, expiresAt: invitation.expiresAt, invitedById: invitation.invitedById, acceptedById: invitation.acceptedById, createdAt: invitation.createdAt, acceptedAt: invitation.acceptedAt })
 const publicWorkspace = (tenant, baseCurrencyLocked = false) => ({
   id: tenant.id,
@@ -146,9 +146,13 @@ export async function handlePilotWorkspaceRoute(ctx) {
       const body = await ctx.readBody(ctx.req)
       await validateDefaultWarehouse(prisma, actor, text(body.defaultWarehouseId) || null)
       const languagePreference = Object.hasOwn(body, 'languagePreference') ? normalizeLanguagePreference(body.languagePreference) : actor.user.languagePreference
+      // Approval emails: changed only when the request says true or false;
+      // a request without the field keeps the current choice.
+      const approvalEmails = Object.hasOwn(body, 'approvalEmailsEnabled')
+      if (approvalEmails && typeof body.approvalEmailsEnabled !== 'boolean') fail('INVALID_PREFERENCE', 'approvalEmailsEnabled must be true or false.', 400)
       const before = publicUser(actor.user)
       const result = await prisma.$transaction(async tx => {
-        const updated = await tx.user.updateMany({ where: { id: actor.user.id, tenantId: actor.tenantId, version: Number(body.version) }, data: { name: text(body.name), jobTitle: text(body.jobTitle) || null, languagePreference, defaultWarehouseId: text(body.defaultWarehouseId) || null, profileCompletedAt: text(body.name) && text(body.jobTitle) ? new Date() : null, version: { increment: 1 } } })
+        const updated = await tx.user.updateMany({ where: { id: actor.user.id, tenantId: actor.tenantId, version: Number(body.version) }, data: { name: text(body.name), jobTitle: text(body.jobTitle) || null, languagePreference, ...(approvalEmails ? { approvalEmailsEnabled: body.approvalEmailsEnabled } : {}), defaultWarehouseId: text(body.defaultWarehouseId) || null, profileCompletedAt: text(body.name) && text(body.jobTitle) ? new Date() : null, version: { increment: 1 } } })
         if (updated.count !== 1) fail('VERSION_CONFLICT', 'Profile changed concurrently.', 409)
         const user = await tx.user.findUnique({ where: { id: actor.user.id }, include: { warehouseScopes: true } })
         await tx.auditLog.create({ data: auditData({ actor, action: 'profile_settings_updated', entityType: 'User', entityId: actor.user.id, summary: 'User profile and language preference updated.', before, after: publicUser(user) }) })

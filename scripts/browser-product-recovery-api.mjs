@@ -380,6 +380,7 @@ try {
   Object.assign(process.env, {
     DATABASE_URL: url,
     DATABASE_URL_TEST: url,
+    FLOWCHAIN_APPROVAL_EMAILS: process.env.FLOWCHAIN_APPROVAL_EMAILS || "off",
     FLOWCHAIN_PERSISTENCE_MODE: "database",
     FLOWCHAIN_DEV_LOCAL: "true",
     FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: "false",

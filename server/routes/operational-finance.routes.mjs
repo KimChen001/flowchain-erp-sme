@@ -17,6 +17,7 @@ import { createPaymentRecordCommandService } from "../domain/payment-record-comm
 import { createCustomerInvoiceDocumentReadService } from "../domain/customer-invoice-document-read-service.mjs";
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { notifyApprovalWaiting } from "../notifications/approval-notifier.mjs";
 
 const capabilityIds = [
   "supplier-invoice",
@@ -472,11 +473,13 @@ export async function handleOperationalFinanceRoute(ctx) {
       }
       if (ctx.req.method === "POST" && action === "match") {
         if (!ensureCapability(ctx, "three-way-match")) return true;
-        ctx.send(
-          ctx.res,
-          200,
-          await command.matchSupplierInvoice(invoiceId, body, ctx),
-        );
+        const result = await command.matchSupplierInvoice(invoiceId, body, ctx);
+        ctx.send(ctx.res, 200, result);
+        // A clean match makes the bill approvable: its approvers are emailed.
+        notifyApprovalWaiting(ctx, result, {
+          documentType: "supplier_invoice",
+          documentId: result?.entityId,
+        });
         return true;
       }
       if (ctx.req.method === "POST" && action === "approve-preview") {
@@ -511,6 +514,12 @@ export async function handleOperationalFinanceRoute(ctx) {
           ? await command.previewReviewMatchException(exceptionId, body, ctx)
           : await command.reviewMatchException(exceptionId, body, ctx);
       ctx.send(ctx.res, 200, result);
+      // Approving the last open exception makes the bill approvable.
+      if (exceptionMatch[2] === "review")
+        notifyApprovalWaiting(ctx, result, {
+          documentType: "supplier_invoice",
+          matchExceptionId: exceptionId,
+        });
       return true;
     }
 

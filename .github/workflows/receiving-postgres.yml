@@ -58,6 +58,7 @@ jobs:
       - run: npm run test:db:english
       - run: npm run test:db:us-defaults
       - run: npm run test:db:email-link-sign-in
+      - run: npm run test:db:approval-email
       - run: npm run test:db:tenant-provision
       - run: npm run test:db:walkthrough-scenario
       - run: npm run test:db:tenant-scoped-reads
