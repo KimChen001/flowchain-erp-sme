@@ -90,6 +90,19 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     viewId: "ai",
     order: 12,
   }),
+  // What waits for the reader's approval (the Approvals tab on phones).
+  page({
+    id: "overview:approvals",
+    path: "/app/overview/approvals",
+    moduleId: "overview",
+    moduleLabel: "首页",
+    label: "审批收件箱",
+    description: "处理等待我审批的采购申请、采购订单和账单。",
+    parentId: "overview",
+    pageType: "list",
+    viewId: "approvals",
+    order: 13,
+  }),
 
   module({
     id: "master-data",

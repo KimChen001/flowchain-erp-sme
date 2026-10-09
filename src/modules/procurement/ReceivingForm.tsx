@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { Loader2 } from "lucide-react";
+import { Loader2, Minus, Plus } from "lucide-react";
 import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
@@ -9,6 +9,7 @@ import { dateTimeInputInTimeZone, dateTimeInputToIso } from "../../lib/format";
 import { receivingApi, type ReceivableLine, type ReceivablePurchaseOrder, type ReceiptInput, type ReceivingWarehouse } from "./receivingApi";
 import { PrefillSourceChip } from "../../components/prefill/PrefillSource";
 import { buildSuggestionTrail, type PrefillEntry } from "../../lib/prefill";
+import { usePhone } from "../../lib/usePhone";
 
 // English source copy with its Chinese translation.
 const COPY: Record<string, [string, string]> = {
@@ -58,6 +59,11 @@ const COPY: Record<string, [string, string]> = {
   warehouseDenied: ["You cannot receive into this warehouse.", "您无权在该仓库收货。"],
   capability: ["Receiving is not enabled for this workspace.", "当前工作区未启用收货过账。"],
   immutable: ["This receipt was already submitted or posted and can no longer be edited.", "该收货单已提交或过账，无法再编辑。"],
+  // The phone layout, one card per line.
+  decrease: ["One less", "减少一个"],
+  increase: ["One more", "增加一个"],
+  allOpen: ["All open", "全部未收"],
+  someRejected: ["Some arrived damaged or wrong?", "有破损或错发？"],
 };
 
 type Detail = {
@@ -81,6 +87,9 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
   const { language, timezone, formatNumber } = useI18n();
   const tr = (key: string) => COPY[key][language === "en-US" ? 0 : 1];
   const navigate = useNavigate();
+  // On phones each line is a card with a stepper instead of a table row.
+  const phone = usePhone();
+  const [showRejected, setShowRejected] = useState<Record<string, boolean>>({});
   const [po, setPo] = useState<ReceivablePurchaseOrder | null>(null);
   const [warehouses, setWarehouses] = useState<ReceivingWarehouse[]>([]);
   const [draft, setDraft] = useState<Detail["receivingDocument"] | null>(null);
@@ -275,6 +284,74 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
         {!warehouses.length && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{tr("noWarehouse")}</div>}
       </Card>
 
+      {phone ? (
+        <div className="space-y-3" data-testid="receiving-form-cards">
+          {po.lines.map((line) => {
+            const value = lines[line.id];
+            const open = units(line.remainingQuantity) > 0n;
+            const quantity = (text: string) => `${formatNumber(Number(text))}${line.unit ? ` ${line.unit}` : ""}`;
+            const remaining = Number(line.remainingQuantity);
+            const accepted = Number(value?.accepted) || 0;
+            // Whole steps between 0 and the open quantity; a typed decimal stays as typed.
+            const step = (delta: number) => {
+              const next = Math.min(remaining, Math.max(0, accepted + delta));
+              update(line.id, { accepted: String(next), include: next > 0 });
+            };
+            const rejectedOpen = showRejected[line.id] || Number(value?.rejected || 0) > 0;
+            const stepButton = "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border text-slate-700 disabled:opacity-40";
+            return (
+              <Card key={line.id} className={`space-y-3 p-4 ${value?.include ? "" : "opacity-70"}`} data-testid="receiving-form-line">
+                <div className="flex items-start gap-3">
+                  <input type="checkbox" className="mt-1 h-5 w-5" aria-label={`${tr("include")} ${line.sku}`} checked={Boolean(value?.include)} disabled={!open} onChange={(event) => update(line.id, { include: event.target.checked })} />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-[13px] font-medium" style={{ color: A.label }}>{line.sku}</div>
+                    <div className="text-sm" style={{ color: A.sub }}>{line.itemName}</div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="text-[11px]" style={{ color: A.sub }}>{tr("remaining")}</div>
+                    <div className="text-sm font-semibold tabular-nums">{quantity(line.remainingQuantity)}</div>
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-xs" style={{ color: A.sub }}>
+                    <span>{tr("accepted")}</span>
+                    {prefill && <span data-testid="receiving-prefill-accepted" style={{ color: A.blue }}>{tr("acceptedHint")}</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button type="button" aria-label={`${tr("decrease")} ${line.sku}`} disabled={!open || accepted <= 0} onClick={() => step(-1)} className={stepButton}><Minus size={18} /></button>
+                    <input aria-label={`${tr("accepted")} ${line.sku}`} inputMode="decimal" value={value?.accepted || ""} disabled={!value?.include} onChange={(event) => update(line.id, { accepted: event.target.value })} className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-center text-lg font-semibold tabular-nums" />
+                    <button type="button" aria-label={`${tr("increase")} ${line.sku}`} disabled={!open || accepted >= remaining} onClick={() => step(1)} className={stepButton}><Plus size={18} /></button>
+                    <button type="button" disabled={!open} onClick={() => update(line.id, { accepted: String(remaining), include: true })} className="h-11 shrink-0 rounded-xl border px-3 text-xs font-semibold text-slate-700 disabled:opacity-40">{tr("allOpen")}</button>
+                  </div>
+                </div>
+                <label className="block text-xs" style={{ color: A.sub }}>{tr("location")}
+                  <input aria-label={`${tr("location")} ${line.sku}`} list="receiving-locations" value={value?.location || ""} disabled={!value?.include} onChange={(event) => update(line.id, { location: event.target.value })} className={`${inputClass} mt-1 h-11`} />
+                  {value?.include && value.location.trim() ? (
+                    value.location.trim().toLowerCase() === stockedLocation(line, warehouseId).toLowerCase()
+                      ? <span data-testid="receiving-location-stocked" className="mt-1 block text-[11px]" style={{ color: A.blue }}>{tr("locationStocked")}</span>
+                      : !knownLocations.some((known) => known.toLowerCase() === value.location.trim().toLowerCase())
+                        ? <span data-testid="receiving-location-new" className="mt-1 block text-[11px]" style={{ color: A.sub }}>{tr("locationNew")}</span>
+                        : null
+                  ) : null}
+                </label>
+                {rejectedOpen ? (
+                  <div className="grid grid-cols-[110px_1fr] gap-2">
+                    <label className="block text-xs" style={{ color: A.sub }}>{tr("rejected")}
+                      <input aria-label={`${tr("rejected")} ${line.sku}`} inputMode="decimal" value={value?.rejected || ""} disabled={!value?.include} onChange={(event) => update(line.id, { rejected: event.target.value })} className={`${inputClass} mt-1 h-11`} />
+                    </label>
+                    <label className="block text-xs" style={{ color: A.sub }}>{tr("rejectionReason")}
+                      <input aria-label={`${tr("rejectionReason")} ${line.sku}`} value={value?.reason || ""} disabled={!value?.include} onChange={(event) => update(line.id, { reason: event.target.value })} className={`${inputClass} mt-1 h-11`} />
+                    </label>
+                  </div>
+                ) : (
+                  <button type="button" disabled={!value?.include} onClick={() => setShowRejected((current) => ({ ...current, [line.id]: true }))} className="text-xs font-semibold disabled:opacity-40" style={{ color: A.blue }}>{tr("someRejected")}</button>
+                )}
+              </Card>
+            );
+          })}
+          <datalist id="receiving-locations">{knownLocations.map((location) => <option key={location} value={location} />)}</datalist>
+        </div>
+      ) : (
       <Card className="overflow-x-auto">
         <table className="w-full min-w-[960px] text-left text-sm">
           <thead className="bg-gray-50 text-xs" style={{ color: A.sub }}>
@@ -313,6 +390,7 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
         </table>
         <datalist id="receiving-locations">{knownLocations.map((location) => <option key={location} value={location} />)}</datalist>
       </Card>
+      )}
 
       <Card className="space-y-3 p-4">
         <label className="block text-xs"><span style={{ color: A.sub }}>{tr("note")}</span>
@@ -324,8 +402,9 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
             {serverError && <div>{serverError}</div>}
           </div>
         )}
-        {/* Left-aligned so the floating assistant button never covers them. */}
-        <div className="flex flex-wrap gap-2">
+        {/* Left-aligned so the floating assistant button never covers them;
+            pinned above the tabs on phones (fc-detail-actions). */}
+        <div className="fc-detail-actions flex flex-wrap gap-2">
           <button type="button" data-testid="receiving-form-submit" disabled={Boolean(saving) || !po.receivable} onClick={() => { setServerError(""); void save(true); }} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{saving === "submit" ? tr("saving") : tr("saveSubmit")}</button>
           <button type="button" data-testid="receiving-form-save" disabled={Boolean(saving) || !po.receivable} onClick={() => { setServerError(""); void save(false); }} className="rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50">{saving === "draft" ? tr("saving") : tr("saveDraft")}</button>
           <button type="button" onClick={() => navigate(-1)} className="rounded-lg border px-3 py-2 text-xs font-semibold">{tr("cancel")}</button>

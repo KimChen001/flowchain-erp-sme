@@ -3,21 +3,7 @@ import { createPortal } from "react-dom";
 import { SlidersHorizontal, X } from "lucide-react";
 import { A } from "../ui";
 import { useI18n } from "../../i18n/I18n";
-
-const PHONE = "(max-width: 767px)";
-
-function usePhone() {
-  const query = typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(PHONE) : null;
-  const [phone, setPhone] = useState(Boolean(query?.matches));
-  useEffect(() => {
-    if (!query) return;
-    const update = () => setPhone(query.matches);
-    update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, [query]);
-  return phone;
-}
+import { usePhone } from "../../lib/usePhone";
 
 /**
  * A list page's filter fields. On wider screens they render in place, in the

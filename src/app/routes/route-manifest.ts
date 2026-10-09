@@ -13,7 +13,7 @@ const ids = (value: string) =>
 
 export const routeClassificationIds: Record<RouteClassification, Set<string>> = {
   CORE: ids(`
-    overview overview:risks overview:ai
+    overview overview:risks overview:ai overview:approvals
     master-data master-data:items master-data:suppliers master-data:customers
     master-data:warehouses master-data:bins master-data:payment-terms
     master-data:tax-codes master-data:print-templates

@@ -1,10 +1,66 @@
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Link } from "react-router";
+import { PackageCheck, RefreshCw } from "lucide-react";
+import { apiJson } from "../../lib/api-client";
+import { formatCalendarDay } from "../../lib/format";
+import { usePermissionSet } from "../../lib/usePermissionSet";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { A, Card } from "../../components/ui";
 import { receivingApi, type ReceiptListItem } from "./receivingApi";
 import { useI18n } from "../../i18n/I18n";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+
+type OpenOrder = { id: string; orderNumber?: string; status: string; supplier?: string; eta?: string; lines?: Array<{ orderedQuantity?: number; receivedQuantity?: number }> };
+// The statuses the purchase order's own Receive action accepts.
+const RECEIVABLE = new Set(["issued", "partially_received"]);
+
+// Orders still to receive, each with Receive (receiving step 2: what is
+// arriving comes first on the Receive tab). The receipt itself is the usual
+// form at /app/procurement/receiving/new?po=, laid out line by line on phones.
+function OpenOrdersToReceive({ tr }: { tr: (zh: string, en: string) => string }) {
+  const { locale } = useI18n();
+  const permissions = usePermissionSet();
+  const [orders, setOrders] = useState<OpenOrder[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    apiJson<OpenOrder[]>("/api/procurement/orders")
+      .then((rows) => { if (alive) setOrders(rows.filter((row) => RECEIVABLE.has(row.status))); })
+      .catch(() => { if (alive) setOrders([]); });
+    return () => { alive = false; };
+  }, []);
+  if (!orders?.length) return null;
+  const canReceive = Boolean(permissions?.has("receiving.prepare"));
+  return (
+    <Card className="overflow-hidden" data-testid="receiving-open-orders">
+      <div className="flex items-center gap-2 border-b px-4 py-3" style={{ borderColor: A.border }}>
+        <PackageCheck size={16} style={{ color: A.blue }} />
+        <div className="text-sm font-semibold">{tr("待收货的采购订单", "Orders to receive")}</div>
+        <span className="text-xs tabular-nums" style={{ color: A.sub }}>{orders.length}</span>
+      </div>
+      <div className="divide-y">
+        {orders.map((order) => {
+          const open = (order.lines || []).filter((line) => Number(line.orderedQuantity || 0) > Number(line.receivedQuantity || 0)).length;
+          return (
+            <div key={order.id} className="flex flex-wrap items-center gap-3 px-4 py-3" data-testid="receiving-open-order">
+              <div className="min-w-0 flex-1">
+                <BusinessEntityLink entityType="purchase_order" entityId={order.id}>{order.orderNumber || order.id}</BusinessEntityLink>
+                <div className="mt-0.5 text-xs" style={{ color: A.sub }}>
+                  {[order.supplier, open ? tr(`${open} 行待收`, `${open} ${open === 1 ? "line" : "lines"} open`) : "", order.eta ? tr(`预计 ${formatCalendarDay(order.eta.slice(0, 10), locale)}`, `expected ${formatCalendarDay(order.eta.slice(0, 10), locale)}`) : ""].filter(Boolean).join(" · ")}
+                </div>
+              </div>
+              {canReceive && (
+                <Link to={`/app/procurement/receiving/new?po=${encodeURIComponent(order.id)}`} data-testid="receiving-open-order-receive"
+                  className="inline-flex h-9 items-center rounded-lg px-4 text-sm font-semibold text-white" style={{ background: A.blue }}>
+                  {tr("收货", "Receive")}
+                </Link>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
 
 // Receipts come from PostgreSQL through /api/procurement/receiving, drafts
 // included, for the warehouses the signed-in user may read.
@@ -51,6 +107,8 @@ export function ReceivingListPage() {
           {tr("刷新", "Refresh")}
         </button>
       </Card>
+
+      <OpenOrdersToReceive tr={tr} />
 
       <Card className="overflow-hidden" data-testid="receiving-record-list">
         {state === "loading" ? (

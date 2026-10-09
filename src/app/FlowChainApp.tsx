@@ -718,10 +718,10 @@ export default function FlowChainApp() {
     ? hasRoutePermission(activeRoute, effectivePermissionCodes)
     : false;
   // The bottom tab bar's state on phones: its tab, and the pages under More.
-  const mobileTab: MobileTab = activeModule === "overview"
-    ? "today"
-    : activeRoute?.id === "procurement:workbench" && new URLSearchParams(location.search).get("queue") === "approval"
-      ? "approvals"
+  const mobileTab: MobileTab = activeRoute?.id === "overview:approvals"
+    ? "approvals"
+    : activeModule === "overview"
+      ? "today"
       : activeRoute?.id?.startsWith("procurement:receiving")
         ? "receive"
         : "more";
@@ -768,6 +768,21 @@ export default function FlowChainApp() {
       experimentalModuleIds,
     ],
   );
+  // The number on the phone's Approvals tab, read again as the person moves
+  // between pages (a decision made elsewhere shows on the next page).
+  const [approvalsWaiting, setApprovalsWaiting] = useState(0);
+  const approvalsVisible = canOpenRoute("overview:approvals");
+  useEffect(() => {
+    if (!approvalsVisible) { setApprovalsWaiting(0); return; }
+    let alive = true;
+    const read = () => apiJson<{ count?: number }>("/api/me/approvals-waiting")
+      .then((result) => { if (alive) setApprovalsWaiting(Number(result.count) || 0); })
+      .catch(() => {});
+    void read();
+    // A decision in the inbox changes the count without a page change.
+    window.addEventListener("flowchain:approvals-changed", read);
+    return () => { alive = false; window.removeEventListener("flowchain:approvals-changed", read); };
+  }, [approvalsVisible, location.pathname]);
   // Every page the reader may open from the main navigation, for More on phones.
   const mobileNavItems = useMemo(
     () => localizedNavItems.filter((item) => {
@@ -1885,10 +1900,11 @@ export default function FlowChainApp() {
       <MobileTabBar
         items={mobileNavItems}
         activeTab={mobileTab}
+        approvalsWaiting={approvalsWaiting}
         canOpen={canOpenRoute}
         onOpenTab={(tab) => {
           if (tab === "today") navigateTo("overview");
-          else if (tab === "approvals") routerNavigate("/app/procurement/workbench?queue=approval");
+          else if (tab === "approvals") navigateTo("overview:approvals");
           else navigateTo("procurement:receiving");
         }}
         onNavigate={(routeId) => navigateTo(routeId)}

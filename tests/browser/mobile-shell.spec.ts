@@ -52,9 +52,9 @@ test("a phone gets bottom tabs, card lists and a filter sheet", async ({ page })
   await expect(sheet).toHaveCount(0);
   await expect(page.getByTestId("filters-sheet-open")).toContainText("1");
 
-  // Approvals opens the approval queue; More lists the other pages.
+  // Approvals opens the approval inbox; More lists the other pages.
   await page.getByTestId("mobile-tab-approvals").click();
-  await expect(page).toHaveURL(/\/app\/procurement\/workbench\?queue=approval$/);
+  await expect(page).toHaveURL(/\/app\/overview\/approvals$/);
   await expect(page.getByTestId("mobile-tab-approvals")).toHaveAttribute("aria-current", "page");
   await page.getByTestId("mobile-tab-more").click();
   await page.getByTestId("mobile-more-sheet").getByRole("button", { name: "Items" }).click();

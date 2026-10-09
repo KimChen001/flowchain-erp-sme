@@ -15,6 +15,7 @@ export type MobileTab = "today" | "approvals" | "receive" | "more";
 export function MobileTabBar({
   items,
   activeTab,
+  approvalsWaiting = 0,
   canOpen,
   onOpenTab,
   onNavigate,
@@ -22,6 +23,8 @@ export function MobileTabBar({
 }: {
   items: MobileNavItem[];
   activeTab: MobileTab;
+  /** Documents waiting for this person's approval, shown on the Approvals tab. */
+  approvalsWaiting?: number;
   canOpen: (routeId: string) => boolean;
   onOpenTab: (tab: Exclude<MobileTab, "more">) => void;
   onNavigate: (routeId: string) => void;
@@ -38,7 +41,7 @@ export function MobileTabBar({
 
   const tabs: Array<{ id: MobileTab | "assistant"; label: string; icon: React.ElementType; visible: boolean; onClick: () => void }> = [
     { id: "today", label: t("mobile.today"), icon: BarChart3, visible: canOpen("overview"), onClick: () => onOpenTab("today") },
-    { id: "approvals", label: t("mobile.approvals"), icon: CheckSquare, visible: canOpen("procurement:workbench"), onClick: () => onOpenTab("approvals") },
+    { id: "approvals", label: t("mobile.approvals"), icon: CheckSquare, visible: canOpen("overview:approvals"), onClick: () => onOpenTab("approvals") },
     { id: "receive", label: t("mobile.receive"), icon: PackageCheck, visible: canOpen("procurement:receiving"), onClick: () => onOpenTab("receive") },
     { id: "assistant", label: t("mobile.assistant"), icon: MessageCircle, visible: true, onClick: onOpenAssistant },
     { id: "more", label: t("mobile.more"), icon: MoreHorizontal, visible: true, onClick: () => setMoreOpen(true) },
@@ -65,7 +68,14 @@ export function MobileTabBar({
               className="fc-mobile-tab"
               style={{ color: active ? A.blue : A.gray1, fontWeight: active ? 600 : 500 }}
             >
-              <tab.icon size={20} strokeWidth={active ? 2.1 : 1.8} />
+              <span className="relative">
+                <tab.icon size={20} strokeWidth={active ? 2.1 : 1.8} />
+                {tab.id === "approvals" && approvalsWaiting > 0 && (
+                  <span data-testid="mobile-approvals-count" className="absolute -right-3 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full px-1 text-[11px] font-bold leading-none text-white" style={{ background: A.red }}>
+                    {approvalsWaiting > 99 ? "99+" : approvalsWaiting}
+                  </span>
+                )}
+              </span>
               <span>{tab.label}</span>
             </button>
           );
