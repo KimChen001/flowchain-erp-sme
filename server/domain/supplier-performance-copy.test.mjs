@@ -99,7 +99,9 @@ test("the supplier performance panel and table show the PO-date basis in both la
 test("the supplier list's 90-day on-time column says it counts deliveries against the date on the PO", async () => {
   const { supplier } = await loadModules()
   const tooltip = "{count} of {of} deliveries on time against the date on the PO, which may be the buyer's need date"
-  assert.ok(source('src/modules/srm/Page.tsx').includes(`copy("${tooltip}")`))
+  // The list and Supplier evaluation share the cell (supplierMetrics.tsx).
+  assert.ok(source('src/modules/srm/supplierMetrics.tsx').includes(`t("${tooltip}")`))
+  assert.ok(source('src/modules/srm/Page.tsx').includes('useSupplierMetricCells()'))
   assert.equal(supplier.supplierCopy(tooltip, 'zh-CN'), '{of} 次交付中 {count} 次按采购订单日期准时（该日期可能是采购方的需求日期）')
   assert.equal(supplier.supplierCopy('On time (PO date), 90 days', 'zh-CN'), '90 天准时率（按采购订单日期）')
 })

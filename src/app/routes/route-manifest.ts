@@ -15,6 +15,8 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
   CORE: ids(`
     overview overview:risks overview:ai
     master-data master-data:items master-data:suppliers master-data:customers
+    master-data:supplier-evaluation master-data:supplier-risks
+    master-data:item-suppliers
     master-data:warehouses master-data:bins master-data:payment-terms
     master-data:tax-codes master-data:print-templates
     master-data:supplier-detail master-data:item-detail
@@ -165,8 +167,11 @@ const compatibilityRouteIds = ids(`
   finance:bank-statements finance:bank-reconciliation
 `);
 
+// Supplier evaluation writes a supplier's tier (master_data.supplier.manage,
+// with a reason and an audit row).
 const authoritativeWriteRouteIds = ids(`
   master-data master-data:items master-data:suppliers master-data:customers
+  master-data:supplier-evaluation
   master-data:warehouses master-data:payment-terms master-data:tax-codes
   master-data:supplier-detail master-data:item-detail
   master-data:customer-detail master-data:warehouse-detail
@@ -517,6 +522,14 @@ function limitationFor(
     return "Read-only PO document to print or save as PDF; printable from approval on and only with procurement.prices.read. FlowChain does not send it.";
   if (route.id === "sales:invoice-document")
     return "Read-only invoice document to print or save as PDF; printable once issued and only with finance.amounts.read and finance.partner_snapshot.read. FlowChain does not send it.";
+  // Readable by every signed-in user, like the supplier list; what each
+  // reader may not see is hidden by the API, never shown as 0.
+  if (route.id === "master-data:supplier-evaluation")
+    return "Indicators follow the reader's purchase order, price, scorecard and issue access; a hidden one shows as —. Setting a tier needs master_data.supplier.manage and a reason; FlowChain suggests no tier.";
+  if (route.id === "master-data:supplier-risks")
+    return "Read only. Lists the open issues behind the supplier list's Open issues, earliest date first, never by a score; each kind follows the reader's purchase order, receipt or supplier invoice access.";
+  if (route.id === "master-data:item-suppliers")
+    return "Read only; links are edited where they are today. A reference price needs procurement.prices.read, as on the per-item read; without it the price is hidden, never 0.";
   if (compatibilityRouteIds.has(route.id))
     return "Compatibility extension; not part of the default SME Core surface.";
   if (route.id === "imports")
@@ -566,6 +579,12 @@ export function authorityForRoute(
     apiDependency:
       route.id === "master-data:import"
         ? "/api/data-import/*"
+        : route.id === "master-data:supplier-evaluation"
+        ? "/api/master-data/suppliers, /api/master-data/supplier-insights, /api/master-data/suppliers/:id/tier"
+        : route.id === "master-data:supplier-risks"
+        ? "/api/master-data/supplier-risks"
+        : route.id === "master-data:item-suppliers"
+        ? "/api/master-data/item-suppliers"
         : route.id === "procurement:rfq"
         ? "/api/procurement/documents?type=rfq"
         : route.id === "procurement:rfq-detail"

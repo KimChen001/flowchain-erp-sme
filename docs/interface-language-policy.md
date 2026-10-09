@@ -101,8 +101,8 @@ names, or supplier names in place. Translate their presentation where appropriat
   labels. The global search status and a subtitle that only repeats it are translated
   where shown, and results no longer show internal source names
   ("inventoryRuntime") or matched-field codes. The search route reads
-  `server/domain/runtime-business-search.mjs`; `global-business-search.mjs`, whose
-  subtitles are built in Chinese, is used only by its tests. Deferred: an order's evidence graph, whose
+  `server/domain/runtime-business-search.mjs` (the older `global-business-search.mjs`,
+  which only its tests used, was removed). Deferred: an order's evidence graph, whose
   risk summaries the server writes in Chinese. Removed because no route rendered
   them: `overviewEvidence.ts` and the procurement panels (#147); the old receiving
   page, `DeliveryPage.tsx` and `ReceiptPage.tsx` (2026-10-09); the Today cockpit

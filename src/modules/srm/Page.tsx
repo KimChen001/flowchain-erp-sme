@@ -3,7 +3,8 @@ import { supplierCopy } from "./supplierCopy";
 import { SupplierPerformancePanel, supplierPerformanceTabLabel } from "./supplierPerformance";
 import { SupplierActivityCards } from "./supplierActivity";
 import { SupplierTierPanel, TierChip, type Tier, type TierHistoryRow } from "./SupplierTier";
-import { formatSuggestionReason, suggestionDiffers, suggestionReasonText, type SupplierInsight, type SupplierInsights } from "./supplierInsights";
+import type { SupplierInsight, SupplierInsights } from "./supplierInsights";
+import { sortSuppliersBy, useSupplierMetricCells } from "./supplierMetrics";
 import { useEffect, useState, useRef } from "react";
 import { Pencil, Plus, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -49,17 +50,14 @@ type Supplier = {
   businessOwner: { id: string; name: string | null } | null;
   tierHistory?: TierHistoryRow[];
 };
-// The list's tabs: everything, the signed-in user's suppliers, each tier, and
-// suppliers nobody has tiered yet. Counts come from the server.
-type ListTab = "all" | "mine" | "1" | "2" | "3" | "none";
-type TabCounts = { all: number; mine: number; tier1: number; tier2: number; tier3: number; untiered: number };
+// The list's tabs: everything and the signed-in user's suppliers. Counts come
+// from the server. Tiers are not a list tab: what a tier means differs per
+// company, so they live on Supplier evaluation (owner decision 2026-10-09).
+type ListTab = "all" | "mine";
+type TabCounts = { all: number; mine: number };
 const LIST_TABS: Array<{ tab: ListTab; label: string; count: keyof TabCounts }> = [
   { tab: "all", label: "All", count: "all" },
   { tab: "mine", label: "Managed by me", count: "mine" },
-  { tab: "1", label: "Tier 1", count: "tier1" },
-  { tab: "2", label: "Tier 2", count: "tier2" },
-  { tab: "3", label: "Tier 3", count: "tier3" },
-  { tab: "none", label: "Not tiered", count: "untiered" },
 ];
 type Relationship = {
   relationshipId: string;
@@ -160,7 +158,8 @@ export default function SupplierMasterPage({
   onNavigate?: (moduleId: string, focus?: unknown) => void;
   onActiveContextChange?: (context: any) => void;
 }) {
-  const { language, locale } = useI18n();
+  const { language } = useI18n();
+  const { count, spendCell, onTimeCell } = useSupplierMetricCells();
   const copy = (label: string) => supplierCopy(workspaceCopy(label, language), language);
   const listSeparator = language === "en-US" ? ", " : "、";
   // Supplier edits need master_data.supplier.manage; the supplied-item links
@@ -189,15 +188,9 @@ export default function SupplierMasterPage({
     [counts, setCounts] = useState<TabCounts | null>(null);
   // Every owner seen so far, for the owner filter.
   const [knownOwners, setKnownOwners] = useState<Array<{ id: string; name: string | null }>>([]);
-  // Metrics and tier suggestions for every supplier, read once per page load
-  // and after a tier changes, not on every search.
+  // Metrics for every supplier, read once per page load, not on every search.
   const [insights, setInsights] = useState<SupplierInsights | null>(null);
   const [sortBy, setSortBy] = useState<"name" | "spend" | "overdue" | "issues">("name");
-  const [reviewing, setReviewing] = useState(false);
-  const [reviewRows, setReviewRows] = useState<Supplier[]>([]);
-  const [reviewState, setReviewState] = useState<Record<string, "accepted" | "failed">>({});
-  const [confirmAll, setConfirmAll] = useState(false);
-  const [accepting, setAccepting] = useState(false);
   const loadInsights = async () => {
     try { setInsights(await request<SupplierInsights>("/api/master-data/supplier-insights")); }
     catch { setInsights(null); }
@@ -233,7 +226,7 @@ export default function SupplierMasterPage({
     setLoading(true);
     setError("");
     try {
-      const tabFilter = tab === "mine" ? "&owner=me" : tab === "all" ? "" : `&tier=${tab}`;
+      const tabFilter = tab === "mine" ? "&owner=me" : "";
       const ownerFilter = tab !== "mine" && owner ? `&owner=${encodeURIComponent(owner)}` : "";
       const data = await request<{ suppliers: Supplier[]; counts?: TabCounts }>(
         `/api/master-data/suppliers?query=${encodeURIComponent(query)}&status=${status}&category=${encodeURIComponent(category)}${tabFilter}${ownerFilter}`,
@@ -422,68 +415,7 @@ export default function SupplierMasterPage({
     }
   };
   const insightOf = (id: string): SupplierInsight | undefined => insights?.suppliers[id];
-  const hiddenCell = <span title={copy("Hidden for your role")} style={{ color: A.sub }}>—</span>;
-  const count = (value: number | null | undefined) => (value === null || value === undefined ? hiddenCell : <span className="tabular-nums">{value}</span>);
-  const moneyText = (amount: number, currency: string) => {
-    try { return new Intl.NumberFormat(locale, { style: "currency", currency, maximumFractionDigits: 0 }).format(amount); }
-    catch { return `${currency} ${amount}`; }
-  };
-  const spendCell = (insight?: SupplierInsight) => {
-    if (!insight || insight.spend12m === null) return hiddenCell;
-    if (!insight.spend12m.length) return <span className="tabular-nums">0</span>;
-    const [first, ...others] = insight.spend12m;
-    return <span className="tabular-nums" title={insight.spend12m.map((row) => moneyText(row.amount, row.currency)).join(" · ")}>
-      {moneyText(first.amount, first.currency)}{others.length ? <span style={{ color: A.sub }}> +{others.length} {copy("currencies")}</span> : null}
-    </span>;
-  };
-  const onTimeCell = (insight?: SupplierInsight) => {
-    if (!insight || insight.onTime === null) return hiddenCell;
-    if (insight.onTime.rate === null) return <span title={copy("Fewer than 5 deliveries in 90 days")} style={{ color: A.sub }}>—</span>;
-    // Deliveries measured against the date on the PO, which may be the buyer's need date.
-    const detail = copy("{count} of {of} deliveries on time against the date on the PO, which may be the buyer's need date").replace("{count}", String(insight.onTime.count)).replace("{of}", String(insight.onTime.of));
-    return <span className="tabular-nums" title={detail}>{new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 }).format(insight.onTime.rate)}</span>;
-  };
-  // The reader chooses the order; it never comes from a hidden weight. Spend
-  // sorts by currency, then amount, and never compares across currencies.
-  const sortedRows = (() => {
-    if (sortBy === "name") return rows;
-    const value = (row: Supplier) => {
-      const insight = insightOf(row.id);
-      if (sortBy === "overdue") return insight?.overduePos ?? -1;
-      if (sortBy === "issues") return insight?.openIssues ?? -1;
-      return insight?.spend12m?.[0]?.amount ?? -1;
-    };
-    const currencyOf = (row: Supplier) => insightOf(row.id)?.spend12m?.[0]?.currency || "";
-    return [...rows].sort((a, b) => (sortBy === "spend" ? currencyOf(a).localeCompare(currencyOf(b)) : 0) || value(b) - value(a) || a.supplierName.localeCompare(b.supplierName));
-  })();
-  const openReview = async () => {
-    setReviewing(true); setReviewState({}); setConfirmAll(false);
-    try {
-      // The list's search, status and category still apply, so a review can go one group at a time.
-      const data = await request<{ suppliers: Supplier[] }>(`/api/master-data/suppliers?tier=none&query=${encodeURIComponent(query)}&status=${status}&category=${encodeURIComponent(category)}`);
-      setReviewRows((data.suppliers || []).map((supplier) => normalizeSupplier(supplier)));
-    } catch (e: any) { toast.error(e.message); }
-  };
-  // Each acceptance is its own tier change, with the suggestion's facts as the
-  // reason and its own audit row; one that fails does not stop the others.
-  const acceptSuggestions = async (targets: Supplier[]) => {
-    if (accepting) return;
-    setAccepting(true);
-    const next: Record<string, "accepted" | "failed"> = {};
-    for (const supplier of targets) {
-      const suggestion = insightOf(supplier.id)?.suggestion;
-      if (!suggestion || suggestion.tier === null) continue;
-      try {
-        await request(`/api/master-data/suppliers/${encodeURIComponent(supplier.id)}/tier`, "PATCH", { tier: suggestion.tier, reason: suggestionReasonText(suggestion, language, locale), acceptedSuggestion: true, expectedVersion: supplier.version });
-        next[supplier.id] = "accepted";
-      } catch { next[supplier.id] = "failed"; }
-      setReviewState((current) => ({ ...current, ...next }));
-    }
-    setAccepting(false); setConfirmAll(false);
-    const accepted = Object.values(next).filter((value) => value === "accepted").length;
-    if (accepted) toast.success(`${copy("Accepted")}: ${accepted}`);
-    await Promise.all([load(), loadInsights()]);
-  };
+  const sortedRows = sortSuppliersBy(rows, sortBy, insightOf);
   // Earlier PO prices of each supplied item from this supplier only, in the
   // link currency and the item's unit, in one request. Display only.
   // The item being linked gets the same facts under its reference price, in
@@ -565,7 +497,7 @@ export default function SupplierMasterPage({
             ))}
           </div>
         </Card>
-        <SupplierTierPanel supplier={selected} canEdit={writes.suppliers} suggestion={insights?.suppliers[selected.id]?.suggestion || null} onChanged={async () => { await openDetail(selected.id); await load(); await loadInsights(); }} />
+        <SupplierTierPanel supplier={selected} canEdit={writes.suppliers} onChanged={async () => { await openDetail(selected.id); await load(); }} />
         <Card className="p-5">
           <h2 className="text-sm font-semibold">{copy("可供应物料")}</h2>
           {relationshipLimitation && <p role="alert" className="mt-2 text-xs text-amber-700">{copy("Supplied-item links are currently unavailable.")}</p>}
@@ -694,55 +626,9 @@ export default function SupplierMasterPage({
         </>}
       </div>
     );
-  if (reviewing) {
-    const pending = reviewRows.filter((row) => !reviewState[row.id] && insightOf(row.id)?.suggestion?.tier);
-    return (
-      <div className="space-y-4" data-testid="supplier-review-suggestions">
-        <button type="button" onClick={() => setReviewing(false)} className="text-xs text-blue-600">{copy("Back to the list")}</button>
-        <div>
-          <h1 className="text-lg font-semibold">{copy("Review suggestions")}</h1>
-          <p className="mt-1 max-w-3xl text-xs" style={{ color: A.sub }}>{copy("Suppliers not tiered yet, with what FlowChain suggests. Each acceptance is saved with its reasons and its own audit row.")}</p>
-          <p className="mt-1 max-w-3xl text-xs" style={{ color: A.sub }}>{copy("A suggestion states facts only. Delivery performance never changes it.")}</p>
-        </div>
-        {!reviewRows.length ? <Card className="py-10 text-center text-sm" style={{ color: A.sub }}>{copy("Every supplier is tiered.")}</Card> : <>
-          {writes.suppliers && <div className="flex flex-wrap items-center gap-2">
-            {!confirmAll
-              ? <button type="button" data-testid="supplier-accept-all" disabled={!pending.length || accepting} onClick={() => setConfirmAll(true)} className="rounded bg-blue-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">{copy("Accept all shown")} ({pending.length})</button>
-              : <div role="alertdialog" aria-label={copy("Accept all shown")} className="flex flex-wrap items-center gap-2 rounded border p-3 text-xs">
-                <span>{copy("Accept all suggestions shown? Each supplier gets its tier, the suggestion as its reason and its own audit row.")}</span>
-                <button type="button" data-testid="supplier-accept-all-confirm" disabled={accepting} onClick={() => acceptSuggestions(pending)} className="rounded bg-blue-600 px-3 py-1 text-white">{copy("Confirm")}</button>
-                <button type="button" onClick={() => setConfirmAll(false)} className="rounded border px-3 py-1">{copy("Cancel")}</button>
-              </div>}
-          </div>}
-          <Card className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead><tr>{["Supplier", "Suggested", "Reason", ...(writes.suppliers ? [""] : [])].map((h, index) => <th key={index} className="p-3 text-left">{h ? copy(h) : ""}</th>)}</tr></thead>
-              <tbody>
-                {reviewRows.map((row) => {
-                  const suggestion = insightOf(row.id)?.suggestion;
-                  const state = reviewState[row.id];
-                  return <tr key={row.id} className="border-t align-top" data-testid={`supplier-review-row-${row.id}`}>
-                    <td className="p-3"><div className="font-medium">{row.supplierName}</div><div style={{ color: A.sub }}>{row.supplierCode}</div></td>
-                    <td className="p-3">{suggestion?.tier ? <TierChip tier={suggestion.tier} short testId="supplier-suggested-tier" /> : <span style={{ color: A.sub }}>{copy("No suggestion")}</span>}</td>
-                    <td className="p-3"><ul className="list-disc space-y-1 pl-4">{(suggestion?.reasons || []).map((reason, index) => <li key={index}>{formatSuggestionReason(reason, language, locale)}</li>)}</ul>
-                      {suggestion?.partial && <p className="mt-1" style={{ color: A.sub }}>{copy("Based on what you can see: purchase orders are hidden for your role.")}</p>}</td>
-                    {writes.suppliers && <td className="p-3 whitespace-nowrap">
-                      {state === "accepted" ? <span className="font-semibold" style={{ color: "#0F766E" }}>{copy("Accepted")}</span>
-                        : state === "failed" ? <span className="text-red-700">{copy("Not saved")}</span>
-                        : <button type="button" disabled={!suggestion?.tier || accepting} onClick={() => acceptSuggestions([row])} className="rounded border px-3 py-1 disabled:opacity-50">{copy("Accept")}</button>}
-                    </td>}
-                  </tr>;
-                })}
-              </tbody>
-            </table>
-          </Card>
-        </>}
-      </div>
-    );
-  }
   // Laid out like the other list pages (purchase orders, items): a search
-  // card with labelled filters, then the list with its tier tabs. The module
-  // shell already shows the page title.
+  // card with labelled filters, then the list with its tabs. The module shell
+  // already shows the page title.
   const filtersApplied = Boolean(query || status || category || owner || tab !== "all");
   return (
     <div className="space-y-5">
@@ -824,7 +710,7 @@ export default function SupplierMasterPage({
 
       <Card>
         <div className="flex flex-wrap items-end gap-3 px-5 pt-3" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
-          <div role="tablist" aria-label={copy("Supplier tiers")} className="flex flex-wrap gap-1">
+          <div role="tablist" aria-label={copy("Supplier list")} className="flex flex-wrap gap-1">
             {LIST_TABS.map((item) => (
               <button key={item.tab} type="button" role="tab" aria-selected={tab === item.tab} data-testid={`supplier-list-tab-${item.tab}`} onClick={() => setTab(item.tab)}
                 className="px-3 py-2 text-xs font-semibold" style={{ color: tab === item.tab ? A.blue : A.gray1, borderBottom: tab === item.tab ? `2px solid ${A.blue}` : "2px solid transparent" }}>
@@ -842,7 +728,6 @@ export default function SupplierMasterPage({
                 <option value="issues">{copy("Issues")}</option>
               </select>
             </label>
-            {writes.suppliers && <button type="button" data-testid="supplier-review-suggestions-open" onClick={openReview} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700">{copy("Review suggestions")}{counts ? ` (${counts.untiered})` : ""}</button>}
           </div>
         </div>
         {error ? (
@@ -875,7 +760,6 @@ export default function SupplierMasterPage({
                     "供应商编号",
                     "供应商名称",
                     "经营品类",
-                    "Tier",
                     "Business owner",
                     "Spend, 12 months",
                     "Open POs",
@@ -902,10 +786,6 @@ export default function SupplierMasterPage({
                     <td className={`${tdNameClass} max-w-[220px] truncate font-medium`} style={{ color: A.label }} title={row.supplierName}>{row.supplierName}</td>
                     <td className={`${tdNameClass} max-w-[200px] truncate`} style={{ color: A.sub }}>
                       {(row.categories || []).join(listSeparator) || "—"}
-                    </td>
-                    <td className={tdNowrapClass} title={row.tierReason || undefined}>
-                      <TierChip tier={row.tier} short />
-                      {suggestionDiffers(row.tier, insightOf(row.id)?.suggestion) && <span data-testid="supplier-suggestion-differs" title={`${copy("Suggestion differs")}: ${copy(`Tier ${insightOf(row.id)?.suggestion?.tier}`)}`} className="ml-1 inline-block h-2 w-2 rounded-full align-middle" style={{ background: "#2563EB" }} />}
                     </td>
                     <td className={tdNowrapClass} style={{ color: A.sub }}>{row.businessOwner?.name || "—"}</td>
                     <td className={tdNowrapClass}>{spendCell(insightOf(row.id))}</td>
