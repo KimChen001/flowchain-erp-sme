@@ -400,8 +400,9 @@ trial. Tell them the page, the document number and what you expected.
 
 What FlowChain does not do today:
 
-- It prints purchase orders, invoices and receive sheets through your browser (**Print or save
-  as PDF**) but does not send them; you send them yourself. The **Print
+- It prints purchase orders and invoices (**Print or save as PDF**) and receive
+  sheets (**Print**) through your browser but does not send them; you send them
+  yourself. The **Print
   templates** list under Master Data is a preview; it does not produce or save
   documents.
 - It sends only two kinds of email: the sign-in link and approval emails
