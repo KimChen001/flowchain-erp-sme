@@ -25,7 +25,8 @@ const { createSupplierScorecardReadService } = await import('../../server/domain
 const AS_OF = '2026-03-09'
 const DAY = 86_400_000
 const asOfNoon = new Date(`${AS_OF}T12:00:00Z`)
-const env = { ...process.env, FLOWCHAIN_DEFAULT_TENANT_ID: tenantId }
+// Contracts stay off until the contracts check at the end turns them on.
+const env = { ...process.env, FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, FLOWCHAIN_ENABLE_CONTRACTS: 'false' }
 const prefix = { startsWith: 'LOCAL-DEMO-' }
 const countedModels = [
   'purchaseRequest', 'purchaseRequestLine', 'rfq', 'rfqLine', 'rfqSupplierParticipation', 'supplierQuotation', 'supplierQuotationLine',
@@ -290,6 +291,34 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
     const { stdout } = await promisify(execFile)(process.execPath, ['scripts/setup-local-scenario.mjs', `--as-of=${AS_OF}`], { cwd: new URL('../..', import.meta.url), env })
     assert.match(stdout, new RegExp(`purchaseOrders=${purchaseOrders.length} .*asOf=${AS_OF} timeZone=${timeZone}`))
     assert.deepEqual(await rowCounts(prisma), firstCounts)
+
+    // Contracts are seeded only with the contracts capability on, dated from
+    // the same seed day: one ending soon, one with notice due, one in force.
+    assert.equal(await prisma.contract.count({ where: { tenantId } }), 0)
+    const contractsEnv = { ...env, FLOWCHAIN_ENABLE_CONTRACTS: 'true' }
+    assert.equal((await seedLocalScenario(prisma, contractsEnv)).contracts, 3)
+    const contracts = await prisma.contract.findMany({ where: { tenantId }, include: { supplier: true }, orderBy: { id: 'asc' } })
+    assert.deepEqual(contracts.map((row) => [row.id, row.number, row.supplier.name, row.type, row.status, row.version]), [
+      ['LOCAL-DEMO-CT-001', 'CT-DE000001', 'Acme Components', 'purchase_agreement', 'active', 2],
+      ['LOCAL-DEMO-CT-002', 'CT-DE000002', 'Horizon Logistics', 'service_agreement', 'active', 2],
+      ['LOCAL-DEMO-CT-003', 'CT-DE000003', 'Northstar Electronics', 'quality_agreement', 'active', 2],
+    ])
+    const { contractShownState } = await import('../../shared/contract-status.mjs')
+    const shown = contracts.map((row) => contractShownState(row, { today: AS_OF }))
+    assert.deepEqual(shown.map((view) => [view.state, view.daysUntilKeyDate]), [['ending', 45], ['notice_due', 20], ['active', 300]])
+    assert.equal(contracts[2].endDate.toISOString().slice(0, 10), shiftDay(AS_OF, 300))
+    // The owner is the supplier's business owner; Horizon has none.
+    assert.deepEqual(contracts.map((row) => row.ownerId), contracts.map((row) => row.supplier.businessOwnerId))
+    assert.ok(contracts[0].ownerId)
+    assert.equal(contracts[1].ownerId, null)
+    assert.equal(await prisma.auditLog.count({ where: { tenantId, entityType: 'Contract' } }), 6)
+    assert.doesNotMatch(JSON.stringify(contracts), CJK)
+    // A re-seed adds nothing and changes nothing.
+    const contractRows = () => prisma.contract.findMany({ where: { tenantId }, orderBy: { id: 'asc' } })
+    const before = JSON.stringify(await contractRows())
+    await seedLocalScenario(prisma, contractsEnv)
+    assert.equal(JSON.stringify(await contractRows()), before)
+    assert.equal(await prisma.auditLog.count({ where: { tenantId, entityType: 'Contract' } }), 6)
   } finally {
     await prisma.$disconnect()
   }
