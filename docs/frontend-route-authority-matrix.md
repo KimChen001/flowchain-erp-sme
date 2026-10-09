@@ -16,12 +16,12 @@ backend-authorized.
 
 ## Classification summary
 
-- Core: 74
+- Core: 75
 - Extension: 51
 - Internal: 18
 - Frozen: 19
 - Legacy: 14
-- Total: 176
+- Total: 177
 
 ## Default SME navigation
 
@@ -40,7 +40,7 @@ and Internal surfaces remain outside normal navigation.
 The classification summary and the executable route matrix below are
 regenerated with `node scripts/generate-route-authority-matrix.mjs`.
 
-The 176/176 frontend route stability audit verifies
+The 177/177 frontend route stability audit verifies
 resolution, shell rendering, no route-level 404 recovery, no render crash, and
 no observed API 5xx. It does not prove business semantics, data authority,
 permission correctness, capability correctness, or complete functionality.
@@ -80,7 +80,8 @@ classification and navigation metadata.
 | `overview:risks` | `/app/overview/risks` | 首页概览 | `overview` | CORE | SECONDARY | no | overview | `src/modules/overview` | /api/business-read-context | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `overview:ai` | `/app/overview/ai` | AI 重点 | `overview` | CORE | SECONDARY | no | overview | `src/modules/overview` | /api/business-read-context | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `master-data` | `/app/master-data` | 基础资料总览 | `master-data` | CORE | SECONDARY | no | master-data | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
-| `master-data:items` | `/app/master-data/items` | 商品资料 / 物料资料 | `master-data` | CORE | PRIMARY | no | master-data | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `master-data:items` | `/app/master-data/items` | 物料资料 | `master-data` | CORE | PRIMARY | no | master-data | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `master-data:item-suppliers` | `/app/master-data/item-suppliers` | 供应商价格 | `master-data` | CORE | SECONDARY | no | master-data | `src/modules/master-data` | /api/master-data/item-suppliers | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Read only; links are edited where they are today. A reference price needs procurement.prices.read, as on the per-item read; without it the price is hidden, never 0. |
 | `master-data:suppliers` | `/app/master-data/suppliers` | 供应商 | `master-data` | CORE | PRIMARY | no | master-data | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `master-data:supplier-evaluation` | `/app/master-data/supplier-evaluation` | 供应商评估 | `master-data` | CORE | SECONDARY | no | master-data | `src/modules/master-data` | /api/master-data/suppliers, /api/master-data/supplier-insights, /api/master-data/suppliers/:id/tier | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Indicators follow the reader's purchase order, price, scorecard and issue access; a hidden one shows as —. Setting a tier needs master_data.supplier.manage and a reason; FlowChain suggests no tier. |
 | `master-data:supplier-risks` | `/app/master-data/supplier-risks` | 供应商风险 | `master-data` | CORE | SECONDARY | no | master-data | `src/modules/master-data` | /api/master-data/supplier-risks | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Read only. Lists the open issues behind the supplier list's Open issues, earliest date first, never by a score; each kind follows the reader's purchase order, receipt or supplier invoice access. |

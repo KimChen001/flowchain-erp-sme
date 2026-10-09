@@ -403,6 +403,36 @@ export async function handleMasterDataRoute(ctx) {
     return true
   }
 
+  // Every item-supplier link across items, for Supplier prices: search,
+  // supplierId and itemId narrow it, limit and offset page it. Read only.
+  // A reference price needs procurement.prices.read, exactly as on the
+  // per-item read; without it the price is null and named in restrictedFields.
+  if (req.method === 'GET' && url.pathname === '/api/master-data/item-suppliers') {
+    if (!ctx.identity?.authenticated) {
+      send(res, 401, { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in to read supplier prices.' })
+      return true
+    }
+    if (typeof repository.listItemSupplierLinks !== 'function') {
+      send(res, 501, {
+        code: 'FLOWCHAIN_CAPABILITY_NOT_IMPLEMENTED',
+        capability: 'item-supplier-relationships',
+        message: 'Item supplier relationships are not available in this workspace.',
+        limitations: ['Items and suppliers can be read, but the links between them cannot.'],
+      })
+      return true
+    }
+    const page = await repository.listItemSupplierLinks(tenantScope({
+      query: url.searchParams.get('query') || '',
+      supplierId: url.searchParams.get('supplierId') || '',
+      itemId: url.searchParams.get('itemId') || '',
+      limit: url.searchParams.get('limit') ?? '',
+      offset: url.searchParams.get('offset') ?? '',
+    }))
+    const rows = await pricesFor(page.rows)
+    send(res, 200, { ...page, rows, visibility: { prices: Boolean((await readAccess())?.prices) } })
+    return true
+  }
+
   const itemSuppliers = url.pathname.match(/^\/api\/master-data\/items\/([^/]+)\/suppliers$/)
   if (req.method === 'GET' && itemSuppliers) {
     if (typeof repository.listItemSuppliers !== 'function' || typeof repository.approvedSuppliersForItem !== 'function') {

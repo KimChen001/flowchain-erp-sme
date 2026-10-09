@@ -110,12 +110,26 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     path: "/app/master-data/items",
     moduleId: "master-data",
     moduleLabel: "基础资料",
-    label: "商品资料 / 物料资料",
+    // Its tab on the items sub-nav reads "Items" (owner decision 2026-10-09).
+    label: "物料资料",
     description: "维护商品、SKU 和物料属性。",
     parentId: "master-data",
     pageType: "list",
     viewId: "items",
     order: 21,
+  }),
+  // The items surface's second-level tab: every item's suppliers, read only.
+  page({
+    id: "master-data:item-suppliers",
+    path: "/app/master-data/item-suppliers",
+    moduleId: "master-data",
+    moduleLabel: "基础资料",
+    label: "供应商价格",
+    description: "查看所有物料的供应商、参考价格、最小起订量和交期。",
+    parentId: "master-data:items",
+    pageType: "list",
+    panelId: "item-suppliers",
+    order: 21.1,
   }),
   page({
     id: "master-data:suppliers",

@@ -91,6 +91,7 @@ import SupplierEvaluationPage from "../modules/srm/SupplierEvaluationPage";
 import SupplierRisksPage from "../modules/srm/SupplierRisksPage";
 import MasterDataPage from "../modules/master-data/Page";
 import DataImportPage from "../modules/master-data/DataImportPage";
+import ItemSupplierPricesPage from "../modules/master-data/ItemSupplierPricesPage";
 import AiPanel, { type ActiveContext } from "../modules/ai-assistant/Panel";
 import {
   ActionDraftReviewShell,
@@ -1137,6 +1138,7 @@ export default function FlowChainApp() {
     "data-import": <DataImportPage />,
     "supplier-evaluation": <SupplierEvaluationPage />,
     "supplier-risks": <SupplierRisksPage />,
+    "item-suppliers": <ItemSupplierPricesPage />,
     finance: (
       <FinanceWorkbench
         initialView={activeView as any}

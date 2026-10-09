@@ -4,6 +4,7 @@ import { validateDatabasePersistenceConfig } from '../persistence/persistence-co
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
 import { changeSupplierOwner, changeSupplierTier } from '../domain/supplier-tier-command.mjs'
 import { CUSTOMER_NAMESPACE, listItemSupplierRecords, mapItemSupplierRecord, saveCustomerMaster, saveItemMaster, saveItemSupplier } from '../domain/master-data-commands.mjs'
+import { ITEM_SUPPLIER_LINK_READ_CAP, itemSupplierLinkOptions, itemSupplierLinkPage, joinItemSupplierLinks } from '../domain/item-supplier-links.mjs'
 import { saveWarehouse, saveWarehouseBin, setWarehouseBinStatus, setWarehouseStatus, warehouseVersion } from '../domain/warehouse-master-commands.mjs'
 import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
 
@@ -327,6 +328,33 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const items = rows.length ? await client.item.findMany({ where: { ...where, id: { in: rows.map((row) => text(row.payload?.itemId)) } } }) : []
       const byId = new Map(items.map((item) => [item.id, item]))
       return rows.map((row) => mapItemSupplierRecord(row, byId.get(text(row.payload?.itemId)) || null))
+    },
+    // Every item-supplier link with its item and supplier, for Supplier
+    // prices: narrowed to one item or one supplier in the database (by the
+    // record key), then searched and paged. Without either, the filters'
+    // options (the items and suppliers that have links) come along, and
+    // truncated says when the read reached its cap.
+    listItemSupplierLinks: async (filters = {}) => {
+      const client = await resolvePrisma({ env, prisma })
+      const where = tenantWhere(filters)
+      const itemId = text(filters.itemId)
+      const supplierId = text(filters.supplierId)
+      const records = await listItemSupplierRecords(client, where.tenantId, { itemId, supplierId })
+      const links = records.map((row) => mapItemSupplierRecord(row))
+      const ids = (key) => [...new Set(links.map((link) => link[key]).filter(Boolean))]
+      const [items, suppliers] = links.length
+        ? await Promise.all([
+          client.item.findMany({ where: { ...where, id: { in: ids('itemId') } }, select: { id: true, sku: true, name: true, status: true } }),
+          client.supplier.findMany({ where: { ...where, id: { in: ids('supplierId') } }, select: { id: true, code: true, name: true, status: true } }),
+        ])
+        : [[], []]
+      const rows = joinItemSupplierLinks(links, { items, suppliers })
+      const narrowed = Boolean(itemId || supplierId)
+      return {
+        ...itemSupplierLinkPage(rows, { query: filters.query, limit: filters.limit, offset: filters.offset }),
+        truncated: !narrowed && records.length >= ITEM_SUPPLIER_LINK_READ_CAP,
+        ...(narrowed ? {} : { options: itemSupplierLinkOptions(rows) }),
+      }
     },
     listItems: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })

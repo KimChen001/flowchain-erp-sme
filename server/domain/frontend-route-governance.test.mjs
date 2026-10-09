@@ -29,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 176);
+  assert.equal(routes.length, 177);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -46,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    176,
+    177,
   );
   assert.throws(
     () =>
@@ -596,7 +596,7 @@ test("moved bill and invoice routes redirect to their new pages", () => {
   assert.ok(!tabs("finance").includes("finance:invoices"));
 });
 
-test("Suppliers has second-level tabs whose paths never reach its detail route", () => {
+test("Suppliers and Items have second-level tabs whose paths never reach their detail routes", () => {
   const byId = (id) => routes.find((route) => route.id === id);
   // What ModuleShell renders as the sub-nav of a standalone primary surface.
   const subnav = (rootId) =>
@@ -609,15 +609,25 @@ test("Suppliers has second-level tabs whose paths never reach its detail route",
     "master-data:supplier-evaluation",
     "master-data:supplier-risks",
   ]);
+  assert.deepEqual(subnav("master-data:items"), ["master-data:items", "master-data:item-suppliers"]);
+  // The Items tab reads "Items", the surface's own name.
+  assert.equal(byId("master-data:items").label, "物料资料");
   for (const [path, id] of [
     ["/app/master-data/supplier-evaluation", "master-data:supplier-evaluation"],
     ["/app/master-data/supplier-risks", "master-data:supplier-risks"],
+    ["/app/master-data/item-suppliers", "master-data:item-suppliers"],
     ["/app/master-data/suppliers/supplier-evaluation", "master-data:supplier-detail"],
     ["/app/master-data/suppliers/SUP-1", "master-data:supplier-detail"],
+    ["/app/master-data/items/item-suppliers", "master-data:item-detail"],
   ])
     assert.equal(registry.routeByPath(path).id, id, path);
-  for (const id of ["master-data:supplier-evaluation", "master-data:supplier-risks"]) {
+  for (const [id, surface] of [
+    ["master-data:supplier-evaluation", "master-data:suppliers"],
+    ["master-data:supplier-risks", "master-data:suppliers"],
+    ["master-data:item-suppliers", "master-data:items"],
+  ]) {
     const route = byId(id);
+    assert.equal(route.parentId, surface, id);
     assert.equal(route.classification, "CORE", id);
     assert.equal(route.navigationVisibility, "SECONDARY", id);
     assert.equal(route.showInModuleNav, true, id);
@@ -626,11 +636,12 @@ test("Suppliers has second-level tabs whose paths never reach its detail route",
     assert.equal(route.requiredPermission, undefined, id);
     assert.equal(route.requiredCapability, undefined, id);
     assert.equal(route.directAccessBehavior, "RENDER", id);
-    assert.deepEqual(registry.breadcrumbRoutes(route).map((item) => item.id), ["overview", "master-data:suppliers", id]);
+    assert.deepEqual(registry.breadcrumbRoutes(route).map((item) => item.id), ["overview", surface, id]);
   }
-  // Supplier evaluation sets tiers; Supplier risks only reads.
+  // Supplier evaluation sets tiers; Supplier risks and Supplier prices only read.
   assert.equal(byId("master-data:supplier-evaluation").writeMaturity, "AUTHORITATIVE");
   assert.equal(byId("master-data:supplier-risks").writeMaturity, "UNAVAILABLE");
+  assert.equal(byId("master-data:item-suppliers").writeMaturity, "UNAVAILABLE");
 });
 
 test("human-readable route authority matrix covers the executable manifest", () => {
@@ -645,5 +656,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /176\/176 frontend route stability audit/);
+  assert.match(matrix, /177\/177 frontend route stability audit/);
 });
