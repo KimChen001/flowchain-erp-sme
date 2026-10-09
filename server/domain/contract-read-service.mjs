@@ -35,6 +35,10 @@ export const CONTRACT_LIST_MAX_PAGE_SIZE = 200
 // How many contracts one list read considers before filtering by state.
 export const CONTRACT_LIST_SCAN_LIMIT = 5000
 export const CONTRACT_TODAY_SCAN_LIMIT = 500
+// A contract that ended without renewing stays on Today this many days after
+// its end date, so a lapse is seen, then leaves it. One that renews
+// automatically stays until someone records its new end date.
+export const CONTRACT_ENDED_TODAY_DAYS = 30
 const HISTORY_LIMIT = 200
 
 const text = (value) => String(value ?? '').trim()
@@ -176,10 +180,11 @@ export function createContractReadService({ prisma, env = process.env, now = () 
 }
 
 // The contracts Today lists: active ones whose key date is inside the
-// reminder window (notice due, ending) or whose end date has passed with no
-// renewal activated (past its end, or ended with nothing recorded), for their
-// owner, or all of them when ownerId is null (a reader who manages
-// contracts). Rows hold codes, ids and days; the page writes the words.
+// reminder window (notice due, ending), that renew automatically and are past
+// their end date, or that ended with nothing recorded in the last
+// CONTRACT_ENDED_TODAY_DAYS days, for their owner, or all of them when ownerId
+// is null (a reader who manages contracts). Rows hold codes, ids and days;
+// the page writes the words.
 export async function readContractWork(client, { tenantId, today, ownerId = null }) {
   // No key date can be further out than the longest notice plus reminder.
   const horizon = new Date(`${addContractDays(today, CONTRACT_MAX_NOTICE_DAYS + CONTRACT_MAX_REMINDER_DAYS)}T00:00:00.000Z`)
@@ -192,7 +197,7 @@ export async function readContractWork(client, { tenantId, today, ownerId = null
   const truncated = rows.length > CONTRACT_TODAY_SCAN_LIMIT
   const contracts = rows.slice(0, CONTRACT_TODAY_SCAN_LIMIT)
     .map((row) => contractView(row, { today }))
-    .filter((view) => ['notice_due', 'ending', 'past_end', 'ended'].includes(view.state))
+    .filter((view) => ['notice_due', 'ending', 'past_end'].includes(view.state) || (view.state === 'ended' && view.daysUntilKeyDate >= -CONTRACT_ENDED_TODAY_DAYS))
     .map((view) => ({
       id: view.id,
       number: view.number,

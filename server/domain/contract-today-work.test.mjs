@@ -39,6 +39,10 @@ const rows = [
   contract('C-6', { endDate: new Date('2027-06-30T00:00:00.000Z') }),
   // ends today, Oct 9, in New York, although it is Oct 10 in UTC.
   contract('C-7', { endDate: new Date('2026-10-09T00:00:00.000Z'), reminderDays: 0 }),
+  // ended Sep 8, 31 days ago, with nothing recorded: no longer on Today.
+  contract('C-8', { endDate: new Date('2026-09-08T00:00:00.000Z') }),
+  // renews automatically and ended Jun 30: stays until the new end date is recorded.
+  contract('C-0', { renewal: 'automatic', endDate: new Date('2026-06-30T00:00:00.000Z') }),
 ]
 
 test('contract rows name the number, title, supplier and key date, and open the contract', () => {
@@ -118,6 +122,7 @@ test('a reader who manages contracts sees every contract that needs attention, o
   assert.equal(status, 200)
   assert.equal(payload.today, '2026-10-09')
   assert.deepEqual(contractRows(payload), [
+    ['contract_past_end', 'C-0'],
     ['contract_past_end', 'C-4'],
     ['contract_past_end', 'C-3'],
     ['contract_ending', 'C-7'],
@@ -132,7 +137,7 @@ test('a reader who manages contracts sees every contract that needs attention, o
 test('a reader who only reads contracts sees the ones they own', async () => {
   const { payload, queries } = await homeFor(reader('finance-specialist', 'user-owner'))
   assert.equal(queries[0].ownerId, 'user-owner')
-  assert.deepEqual(contractRows(payload).map(([, id]) => id).sort(), ['C-1', 'C-3', 'C-4', 'C-7'])
+  assert.deepEqual(contractRows(payload).map(([, id]) => id).sort(), ['C-0', 'C-1', 'C-3', 'C-4', 'C-7'])
   const other = await homeFor(reader('read-only-viewer', 'user-nobody'))
   assert.deepEqual(contractRows(other.payload), [])
 })
