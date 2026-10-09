@@ -236,6 +236,12 @@ for (const environment of environments) {
     const env = simulatedRenderEnv(service, database);
     assert.deepEqual(enabledCapabilities(env), enabledCapabilities(parseExample("deploy/env.production.example")));
   });
+
+  test(`${environment.name}: contracts are off in the trial (D10)`, () => {
+    const env = simulatedRenderEnv(service, database);
+    assert.equal(env.FLOWCHAIN_ENABLE_CONTRACTS, "false");
+    assert.equal(enabledCapabilities(env).includes("contracts"), false);
+  });
 }
 
 test("staging and production differ only in names, plans, sizes and deploy trigger", () => {
