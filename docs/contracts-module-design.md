@@ -141,8 +141,10 @@ served only through an authorized download; there are no public links.
   - `contract_notice_due`: renews automatically, and the notice deadline is inside the
     window;
   - `contract_ending`: the end date is inside the window;
-  - `contract_past_end`: still Active past its end date (renews automatically, or nobody
-    recorded what happened).
+  - `contract_past_end`: still Active past its end date. If it renews automatically, it
+    stays on Today until someone records the new end date. If it does not, it stays for
+    30 days after the end date, so a lapse is noticed, and then shows only as Ended in the
+    list (decided while building K1, 2026-10-09).
 
   Each row names the contract, supplier and date and opens the contract. The owner of the
   contract sees it; administrators see all.
