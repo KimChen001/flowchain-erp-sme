@@ -46,6 +46,18 @@ const pg = new EmbeddedPostgres({
 });
 let prisma;
 let server;
+// PLAYWRIGHT_US_TRIAL=true turns on the documented US trial capability set
+// (server/domain/us-trial-capabilities.test.mjs) and an English workspace
+// default, so the English trial spec reaches finance, sales and inventory
+// operations. Without it the walkthrough keeps receiving posting only.
+const usTrial = process.env.PLAYWRIGHT_US_TRIAL === "true";
+const usTrialFlags = usTrial ? {
+  FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: "true",
+  FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS: "true",
+  FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
+  FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "true",
+  FLOWCHAIN_ENABLE_DATA_IMPORT: "true",
+} : {};
 
 async function seedComparisonQuotation(client, quote) {
   await client.supplierQuotation.create({
@@ -328,6 +340,32 @@ async function seedCanonicalRfqBrowserScenario(client) {
   }
 }
 
+// US trial only, on the walkthrough data: two more sales orders for the
+// English trial spec's delivery risk checks. One has three lines, so the read
+// API names it after its first item; the other is on hold without a recorded
+// customer name, so it is blocked and shows the unnamed-customer label. No
+// stock is reserved for either, and no other phase sees them.
+async function seedUsTrialSalesOrders(client) {
+  const items = Object.fromEntries((await client.item.findMany({ where: { tenantId, sku: { in: ["LDM-001", "LDM-002", "LDM-003"] } } })).map((item) => [item.sku, item]));
+  const metadata = { browserAcceptance: true, usTrial: true };
+  const promisedDate = new Date(Date.now() + 7 * 86_400_000);
+  const line = (id, sku, orderedQuantity) => ({ id, itemId: items[sku].id, sku, itemName: items[sku].name, orderedQuantity, unit: items[sku].unit || "pcs", metadata });
+  await client.salesOrder.create({
+    data: {
+      id: "LOCAL-TRIAL-SO-101", tenantId, orderNumber: "LOCAL-TRIAL-SO-101", customerName: "Harbor Supply Co", workflowStatus: "confirmed",
+      promisedDate, currency: "USD", metadata,
+      lines: { create: [line("LOCAL-TRIAL-SOL-101-1", "LDM-001", 12), line("LOCAL-TRIAL-SOL-101-2", "LDM-002", 8), line("LOCAL-TRIAL-SOL-101-3", "LDM-003", 20)] },
+    },
+  });
+  await client.salesOrder.create({
+    data: {
+      id: "LOCAL-TRIAL-SO-102", tenantId, orderNumber: "LOCAL-TRIAL-SO-102", customerName: "", workflowStatus: "on_hold",
+      promisedDate, currency: "USD", metadata,
+      lines: { create: [line("LOCAL-TRIAL-SOL-102-1", "LDM-002", 5)] },
+    },
+  });
+}
+
 async function cleanup() {
   await new Promise((resolveClose) => server?.close(resolveClose) || resolveClose());
   await prisma?.$disconnect().catch(() => {});
@@ -342,6 +380,7 @@ try {
   Object.assign(process.env, {
     DATABASE_URL: url,
     DATABASE_URL_TEST: url,
+    FLOWCHAIN_APPROVAL_EMAILS: process.env.FLOWCHAIN_APPROVAL_EMAILS || "off",
     FLOWCHAIN_PERSISTENCE_MODE: "database",
     FLOWCHAIN_DEV_LOCAL: "true",
     FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING: "false",
@@ -351,6 +390,7 @@ try {
     FLOWCHAIN_LOCAL_SESSION_SECRET: `product-recovery-${randomUUID()}-secure`,
     SCM_API_PORT: String(apiPort),
     NODE_ENV: "development",
+    ...usTrialFlags,
   });
   await execFileAsync(process.execPath, [prismaCli, "migrate", "deploy"], {
     cwd: root,
@@ -358,7 +398,7 @@ try {
     maxBuffer: 10 * 1024 * 1024,
   });
   prisma = await createPrismaClient(process.env);
-  await prisma.tenant.create({ data: { id: tenantId, name: "Product Recovery Browser Tenant", defaultLanguage: "zh-CN", countryCode: "US", locale: "en-US", currency: "USD", timezone: "America/New_York" } });
+  await prisma.tenant.create({ data: { id: tenantId, name: "Product Recovery Browser Tenant", defaultLanguage: usTrial ? "en-US" : "zh-CN", countryCode: "US", locale: "en-US", currency: "USD", timezone: "America/New_York" } });
   await prisma.user.create({
     data: {
       id: adminActorId,
@@ -394,6 +434,7 @@ try {
   await seedLocalDemo(prisma, process.env);
   if (process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY !== "true") {
     await seedLocalScenario(prisma, process.env);
+    if (usTrial) await seedUsTrialSalesOrders(prisma);
     if (process.env.PLAYWRIGHT_CANONICAL_RFQ_DETAIL === "true" || process.env.PLAYWRIGHT_CANONICAL_RFQ_COMPARISON === "true" || process.env.PLAYWRIGHT_CANONICAL_RFQ_SUPPLIER_RESPONSE === "true") {
       await seedCanonicalRfqBrowserScenario(prisma);
     }

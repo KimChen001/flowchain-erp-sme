@@ -30,7 +30,6 @@ export const BUSINESS_ACTION_EXECUTION_BASELINE = Object.freeze({
     'server/domain/business-action-draft-contract.mjs',
     'server/domain/business-draft-builders.mjs',
     'server/domain/business-action-intake.mjs',
-    'src/modules/action-drafts/BusinessActionPlanPanel.tsx',
     'src/modules/action-drafts/ActionDraftReviewShell.tsx',
     'server/routes/purchase-requests.routes.mjs',
     'server/routes/rfqs.routes.mjs',

@@ -21,12 +21,14 @@
     "test:db:english": "node scripts/run-postgres-test-files.mjs tests/postgres/english-default-language.test.mjs",
     "test:db:us-defaults": "node scripts/run-postgres-test-files.mjs tests/postgres/us-business-defaults.test.mjs",
     "test:db:email-link-sign-in": "node scripts/run-postgres-test-files.mjs tests/postgres/email-link-sign-in-migration.test.mjs tests/postgres/workspace-sessions.test.mjs tests/postgres/email-link-sign-in.test.mjs",
+    "test:db:approval-email": "node scripts/run-postgres-test-files.mjs tests/postgres/approval-email.test.mjs",
     "test:db:tenant-provision": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-provision.test.mjs",
     "test:db:walkthrough-scenario": "node scripts/run-postgres-test-files.mjs tests/postgres/walkthrough-scenario.test.mjs",
     "test:db:tenant-scoped-reads": "node scripts/run-postgres-test-files.mjs tests/postgres/tenant-scoped-business-reads.test.mjs",
     "test:db:master-data-writes": "node scripts/run-postgres-test-files.mjs tests/postgres/master-data-writes.test.mjs",
     "test:db:data-import": "node scripts/run-postgres-test-files.mjs server/domain/data-import-transaction.test.mjs",
     "test:api:data-import": "node scripts/smoke-data-import-api.mjs",
+    "test:db:golden-path": "node scripts/run-postgres-test-files.mjs tests/postgres/golden-path-fresh-tenant.test.mjs",
     "test:db:supplier-tiers": "node scripts/run-postgres-test-files.mjs tests/postgres/supplier-tiers.test.mjs",
     "test:db:supplier-insights": "node scripts/run-postgres-test-files.mjs tests/postgres/supplier-insights.test.mjs",
     "test:db:ai-workspace-access": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-workspace-access.test.mjs",
@@ -34,6 +36,7 @@
     "test:db:inventory-allocation": "node scripts/run-postgres-test-files.mjs tests/postgres/inventory-allocation-walkthrough.test.mjs",
     "test:db:reorder-list": "node scripts/run-postgres-test-files.mjs tests/postgres/reorder-list.test.mjs",
     "test:db:ai-knowledge": "node scripts/run-postgres-test-files.mjs tests/postgres/ai-knowledge.test.mjs",
+    "test:db:warehouse-writes": "node scripts/run-postgres-test-files.mjs tests/postgres/warehouse-writes.test.mjs",
     "test:db:ai-pgvector": "node --test tests/postgres/ai-pgvector-service.test.mjs",
     "test:browser:receiving": "node scripts/run-receiving-playwright.mjs",
     "test:browser:reports": "node scripts/run-reports-playwright.mjs",
@@ -155,7 +158,8 @@
     "test:db:search-graph-read-scope": "node scripts/run-postgres-test-files.mjs tests/postgres/search-evidence-graph-read-scope.test.mjs",
     "test:db:role-backfill-once": "node scripts/run-postgres-test-files.mjs tests/postgres/role-backfill-once.test.mjs",
     "test:db:po-close-receipt-cancel": "node scripts/run-postgres-test-files.mjs tests/postgres/po-close-receipt-cancel.test.mjs",
-    "test:db:business-documents": "node scripts/run-postgres-test-files.mjs tests/postgres/business-documents.test.mjs"
+    "test:db:business-documents": "node scripts/run-postgres-test-files.mjs tests/postgres/business-documents.test.mjs",
+    "test:db:receiving-locations": "node scripts/run-postgres-test-files.mjs tests/postgres/receiving-locations.test.mjs"
   },
   "dependencies": {
     "@langchain/core": "1.2.9",

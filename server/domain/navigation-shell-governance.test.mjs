@@ -51,18 +51,14 @@ test("business-level inventory, master-data, procurement and finance tabs naviga
 });
 
 test("module content without a standalone workbench does not recreate a separate h1 title shell", () => {
-  for (const path of ["src/modules/overview/Page.tsx", "src/modules/master-data/Page.tsx", "src/modules/receiving/Page.tsx", "src/modules/sales/Page.tsx", "src/modules/inventory/Page.tsx", "src/modules/finance/Page.tsx", "src/modules/reports/Page.tsx", "src/modules/settings/Page.tsx"]) {
+  for (const path of ["src/modules/overview/Page.tsx", "src/modules/master-data/Page.tsx", "src/modules/sales/Page.tsx", "src/modules/inventory/Page.tsx", "src/modules/finance/Page.tsx", "src/modules/reports/Page.tsx", "src/modules/settings/Page.tsx"]) {
     assert.doesNotMatch(read(path), /<h1\b/, path);
   }
 });
 
-test("list context and recent pages use isolated bounded browser storage", () => {
+test("list context uses isolated bounded browser storage", () => {
   const listState = read("src/components/navigation/useListRouteState.ts");
-  const recent = read("src/components/navigation/RecentPages.tsx");
   assert.match(listState, /flowchain:list:\$\{moduleId\}:\$\{routeId\}/);
   assert.match(listState, /useSearchParams/);
   assert.match(listState, /scrollTop/);
-  assert.match(recent, /MAX_RECENT = 8/);
-  assert.match(recent, /localStorage/);
-  assert.match(recent, /current\.pageType === "create"/);
 });

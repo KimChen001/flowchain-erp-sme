@@ -4,7 +4,7 @@ import { AlertTriangle, FilePlus2, RefreshCw } from "lucide-react";
 import { Link } from "react-router";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
-import { StatusChip, TwoStepAction } from "./FinanceControls";
+import { StatusChip, TwoStepAction, useFinanceStatusLabel } from "./FinanceControls";
 import { PaymentRecords } from "./PaymentRecords";
 import { useI18n } from "../../i18n/I18n";
 import { A, Card } from "../../components/ui";
@@ -160,6 +160,7 @@ function Notice({ children }: { children: ReactNode }) {
 
 function Filters() {
   const { t } = useI18n();
+  const statusLabel = useFinanceStatusLabel();
   const params = new URLSearchParams(window.location.search);
   const set = (key: string, value: string) => {
     const next = new URLSearchParams(window.location.search);
@@ -197,7 +198,7 @@ function Filters() {
         {["draft", "submitted", "approved", "issued", "open", "overdue", "disputed"].map(
           (status) => (
             <option value={status} key={status}>
-              {status}
+              {statusLabel(status)}
             </option>
           ),
         )}
@@ -442,6 +443,7 @@ function Aging() {
 
 function CreditNotes() {
   const { t, locale } = useI18n();
+  const statusLabel = useFinanceStatusLabel();
   const [data, setData] = useState<ListPayload<CreditNote> | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -470,7 +472,7 @@ function CreditNotes() {
                 <td className="px-4 py-3">{row.customerName}</td>
                 <td className="px-4 py-3">{row.returnPostingNumber || "—"}</td>
                 <td className="px-4 py-3 font-medium">{money(row.totalAmount, row.currency, locale)}</td>
-                <td className="px-4 py-3">{row.status}</td>
+                <td className="px-4 py-3">{statusLabel(row.status)}</td>
               </tr>
             ))}
             {!data.items.length && <tr><td className="px-4 py-10 text-center text-slate-500" colSpan={5}>{t("common.empty")}</td></tr>}
@@ -694,9 +696,9 @@ function InvoiceDetail() {
           </div>
         </div>
         <div className="mt-4 flex flex-wrap gap-2" data-testid="customer-invoice-actions">
-          {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="customer-invoice-submit" previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={version} onDone={load} />}
-          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="customer-invoice-approve" previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={version} onDone={load} />}
-          {actions.includes("issue") && <TwoStepAction label={t("finance.action.issue")} testId="customer-invoice-issue" previewUrl={`${base}/issue-preview`} runUrl={`${base}/issue`} payload={version} onDone={load} />}
+          {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="customer-invoice-submit" oneStep previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={version} onDone={load} />}
+          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="customer-invoice-approve" oneStep previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={version} onDone={load} />}
+          {actions.includes("issue") && <TwoStepAction label={t("finance.action.issue")} testId="customer-invoice-issue" oneStep previewUrl={`${base}/issue-preview`} runUrl={`${base}/issue`} payload={version} onDone={load} />}
           {/* The invoice as a document to print or save as PDF; a person sends it. An approved invoice opens to be checked before it is issued. */}
           {documentStatuses.includes(data.status) && canOpenRoute("sales:invoice-document") && (
             <Link data-testid="customer-invoice-open-document" to={`/app/sales/invoices/${encodeURIComponent(data.id)}/document`} className="rounded-lg border px-3 py-2 text-xs font-semibold text-slate-700">
