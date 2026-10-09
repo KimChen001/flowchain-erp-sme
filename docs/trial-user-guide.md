@@ -62,6 +62,16 @@ recorded stay exactly as they are.
 **Your profile.** **My Profile** also shows your name, job title, email, role
 and default warehouse.
 
+**Approval emails.** When a purchase request or purchase order is submitted,
+a supplier bill becomes ready to approve (matched, or its last match exception
+approved), or an inventory adjustment is created, FlowChain emails the people
+who may approve it. The email says only the document type and number, with a
+link to it; it holds no amounts, suppliers, customers or items, and it cannot
+approve anything. You approve in FlowChain. It is in your own interface
+language and is on unless you switch off **Email me when something is waiting
+for my approval** in **My Profile**. You never get an email about something
+you did yourself.
+
 ## 2. First day setup
 
 ### Workspace settings
@@ -389,8 +399,9 @@ What FlowChain does not do today:
   as PDF**) but does not send them; you send them yourself. The **Print
   templates** list under Master Data is a preview; it does not produce or save
   documents.
-- It sends no email other than the sign-in link. Approvals are not announced by
-  email; check the lists in FlowChain.
+- It sends only two kinds of email: the sign-in link and approval emails
+  (section 1). Nothing else is announced by email; check the lists in
+  FlowChain.
 - It does not send anything to suppliers or customers.
 - It is not an accounting system: no general ledger, no tax filing, no bank
   connection, and no payment execution. Payment records note payments you made
@@ -405,5 +416,4 @@ The technical list of current limits is in
 These are planned. Dates and details may change.
 
 - Print layouts saved for the whole workspace.
-- Email notifications when something waits for your approval.
 - Further security and alert improvements.
