@@ -262,7 +262,8 @@ test('system harness validates evidence and navigation compatibility surfaces', 
 test('system harness records typography grep boundary for current product scope', () => {
   const typography = readSource('src', 'components', 'ui', 'typography.ts')
   const table = readSource('src', 'components', 'ui', 'workbenchTable.ts')
-  const cockpitPanel = readSource('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
+  // The home page replaced the Today cockpit panel and keeps full amounts.
+  const homePage = readSource('src', 'modules', 'overview', 'Page.tsx')
   const salesPage = readSource('src', 'modules', 'sales', 'Page.tsx')
   const routeRegistry = readSource('src', 'app', 'routeRegistry.tsx')
 
@@ -272,7 +273,7 @@ test('system harness records typography grep boundary for current product scope'
   assert.match(typography, /chip/)
   assert.match(typography, /formLabel/)
   assert.match(table, /tableLinkClass/)
-  assert.doesNotMatch(cockpitPanel, /compactDisplay|notation:\s*["']compact["']|万元|14万/)
+  assert.doesNotMatch(homePage, /compactDisplay|notation:\s*["']compact["']|万元|14万/)
   assert.match(routeRegistry, /id: "sales:risks"[\s\S]*?label: "交付风险"/)
   assert.doesNotMatch(salesPage, /交付风险协同/)
   assert.match(salesPage, /客户订单列表/)

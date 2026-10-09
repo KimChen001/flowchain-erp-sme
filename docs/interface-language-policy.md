@@ -103,12 +103,11 @@ names, or supplier names in place. Translate their presentation where appropriat
   ("inventoryRuntime") or matched-field codes. The search route reads
   `server/domain/runtime-business-search.mjs`; `global-business-search.mjs`, whose
   subtitles are built in Chinese, is used only by its tests. Deferred: an order's evidence graph, whose
-  risk summaries the server writes in Chinese. Out of scope because no route renders
-  them: `src/modules/overview/TodayCockpitPanel.tsx`, the inventory movement ledger,
-  exception, warning and adjustment page files and the V2 panels under `src/components`.
-  Removed because no route rendered them: `overviewEvidence.ts` and the procurement
-  panels (#147); the old receiving page, `DeliveryPage.tsx` and `ReceiptPage.tsx`
-  (2026-10-09).
+  risk summaries the server writes in Chinese. Removed because no route rendered
+  them: `overviewEvidence.ts` and the procurement panels (#147); the old receiving
+  page, `DeliveryPage.tsx` and `ReceiptPage.tsx` (2026-10-09); the Today cockpit
+  panel, the inventory movement ledger, exception, warning and adjustment page files
+  and the unmounted V2 panels under `src/components` (2026-10-09).
 - The sales order reserve, release and delivery draft dialogs and the shipment post,
   reverse and cancel dialogs have English and Chinese titles and confirm buttons that
   name the action. Their previews say what will happen in one or two sentences built

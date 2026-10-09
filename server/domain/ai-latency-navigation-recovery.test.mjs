@@ -7,7 +7,6 @@ const appSource = readFileSync(new URL('../../src/app/FlowChainApp.tsx', import.
 const inventorySource = readFileSync(new URL('../../src/modules/inventory/Page.tsx', import.meta.url), 'utf8')
 const purchasingSource = readFileSync(new URL('../../src/modules/purchasing/Page.tsx', import.meta.url), 'utf8')
 const purchaseRequestsSource = readFileSync(new URL('../../src/modules/purchase-requests/CanonicalProcurementPanel.tsx', import.meta.url), 'utf8')
-const rfqSource = readFileSync(new URL('../../src/modules/rfq/Page.tsx', import.meta.url), 'utf8')
 const actionDraftSource = readFileSync(new URL('../../src/modules/action-drafts/ActionDraftReviewShell.tsx', import.meta.url), 'utf8')
 const uiSource = readFileSync(new URL('../../src/components/ui/index.tsx', import.meta.url), 'utf8')
 
@@ -64,10 +63,8 @@ test('PO detail and draft review shell use shared recovery actions', () => {
   assert.match(actionDraftSource, /不外发/)
 })
 
-test('procurement PR and RFQ details expose canonical recovery paths', () => {
+test('procurement PR details expose canonical recovery paths', () => {
   assert.match(purchaseRequestsSource, /返回采购申请列表/)
   assert.match(purchaseRequestsSource, /"procurement:orders"/)
   assert.match(purchaseRequestsSource, /entityType:\s*"purchase_order"/)
-  assert.match(rfqSource, /<RecoveryActions/)
-  assert.match(rfqSource, /返回采购工作台/)
 })
