@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowRight, Link2, Loader2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowRight, Link2, Loader2, Printer, ShieldCheck } from "lucide-react";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { A } from "../../components/ui";
 import { createSecureClientMutationId } from "../../lib/client-id";
@@ -8,6 +8,9 @@ import { useI18n } from "../../i18n/I18n";
 import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 import { statusCodeLabel } from "../../i18n/statusLabels";
 import { RecordBillAction } from "../../components/business/BillingEntryActions";
+import PrintLayoutEditor from "../print-layout/PrintLayoutEditor";
+import { adaptReceivingDetailSheet } from "../print-layout/printDataAdapters";
+import { formatDecimal, formatInstantDay } from "../business-documents/documentFormat";
 
 type Capability = { enabled?: boolean; maturity?: string };
 type Detail = {
@@ -63,7 +66,7 @@ function errorMessage(error: unknown) {
 }
 
 export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavigate }: { receivingDocumentId: string; onNavigate?: Navigate }) {
-  const { language } = useI18n();
+  const { language, locale, timezone, t } = useI18n();
   const draftCopy = (key: string) => DRAFT_COPY[key][language === "en-US" ? 0 : 1];
   const warehouseName = useWarehouseNames();
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -76,6 +79,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
   const [actionKey, setActionKey] = useState("");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
+  const [printing, setPrinting] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!receivingDocumentId) return;
@@ -166,7 +170,7 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
     <section className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><div className="mb-2 flex items-center gap-2"><h1 className="text-xl font-semibold">{grn.documentNumber}</h1></div><p className="text-sm text-gray-500">{grn.supplier?.name || "Unknown supplier"} · PO <a className="text-blue-600 underline" href={`/app/procurement/orders/${encodeURIComponent(detail.purchaseOrder.id)}`}>{detail.purchaseOrder.id}</a></p></div>
-        <div className="fc-detail-actions flex gap-2">{detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className="rounded-lg border px-4 py-2 text-sm font-semibold">{draftCopy("editDraft")}</a>}{detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}{detail.availableActions.canCancel && <button data-testid="receiving-cancel" disabled={saving} onClick={() => void cancelReceipt()} className="rounded-lg border px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50">{draftCopy("cancelReceipt")}</button>}{canOfferAction && <button data-testid="receiving-primary-action" onClick={() => void openPreview(operation)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">{operation === "post" ? "Post Receipt" : "Reverse Receipt"}</button>}{detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className="rounded-lg bg-gray-100 px-4 py-2 text-sm">View Reversal</button>}{grn.postingStatus === 'posted' && <RecordBillAction receiptId={grn.id} />}</div>
+        <div className="fc-detail-actions flex gap-2"><button data-testid="receiving-print-sheet" aria-label={say(`Print receive sheet ${grn.documentNumber}`, `打印入库单 ${grn.documentNumber}`)} onClick={() => setPrinting(true)} className="flex items-center gap-1 rounded-lg border px-4 py-2 text-sm font-semibold"><Printer size={14} />{say("Print receive sheet", "打印入库单")}</button>{detail.availableActions.canEditDraft && <a data-testid="receiving-edit-draft" href={`/app/procurement/receiving/${encodeURIComponent(receivingDocumentId)}/edit`} className="rounded-lg border px-4 py-2 text-sm font-semibold">{draftCopy("editDraft")}</a>}{detail.availableActions.canSubmit && <button data-testid="receiving-submit-draft" disabled={saving} onClick={() => void submitDraft()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? draftCopy("submitting") : draftCopy("submitDraft")}</button>}{detail.availableActions.canCancel && <button data-testid="receiving-cancel" disabled={saving} onClick={() => void cancelReceipt()} className="rounded-lg border px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50">{draftCopy("cancelReceipt")}</button>}{canOfferAction && <button data-testid="receiving-primary-action" onClick={() => void openPreview(operation)} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">{operation === "post" ? "Post Receipt" : "Reverse Receipt"}</button>}{detail.availableActions.canViewReversal && <button onClick={() => { const link = links.find((item) => item.label === 'Reversal'); if (link?.enabled) onNavigate?.(link.targetRouteId, { entityType: link.targetType, entityId: link.targetId || receivingDocumentId }, { source: 'receiving-smart-link' }); }} className="rounded-lg bg-gray-100 px-4 py-2 text-sm">View Reversal</button>}{grn.postingStatus === 'posted' && <RecordBillAction receiptId={grn.id} />}</div>
       </div>
       {detail.availableActions.canSubmit && <div className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">{draftCopy("draftNote")}</div>}
       {!capability?.enabled && <div className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Read-only. Database receiving capability requires explicit administrator enablement.</div>}
@@ -198,5 +202,6 @@ export default function ReceivingPostingWorkbench({ receivingDocumentId, onNavig
       {preview.operation === 'reverse' && <label className="mt-4 block text-sm font-medium">Reversal reason *<textarea data-testid="reversal-reason" value={reason} onChange={(event) => setReason(event.target.value)} className="mt-1 w-full rounded-lg border p-2" rows={3}/></label>}
       <div className="mt-5 flex justify-end gap-2"><button className="rounded-lg border px-4 py-2 text-sm" onClick={() => setPreview(null)}>Cancel</button><button data-testid="confirm-receiving-action" disabled={!preview.allowed || saving || (preview.operation === 'reverse' && !reason.trim())} onClick={() => void confirm()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">{saving ? 'Saving…' : preview.operation === 'post' ? 'Confirm Post' : 'Confirm Reversal'}</button></div>
     </div></div>}
+    {printing && <PrintLayoutEditor open documentType="receive_sheet" documentNo={grn.documentNumber || grn.id} data={adaptReceivingDetailSheet(detail, { quantity: (value) => formatDecimal(value, locale), rejectedLabel: (qty) => t("printLayout.rejectedQty", { qty }), day: (instant) => formatInstantDay(instant, locale, timezone) })} onClose={() => setPrinting(false)} />}
   </div>;
 }

@@ -80,7 +80,7 @@ export function aiSkillMetricSentences(facts, language, { spend = true, invoices
   const fmt = aiSkillFormatter(facts, language)
   const sentences = []
   const po = facts.purchaseOrders
-  if (po) sentences.push(aiSkillText(po.overdue ? 'metrics.open_pos' : 'metrics.no_overdue', language, { open: fmt.number(po.open), overdue: fmt.number(po.overdue) }))
+  if (po) sentences.push(aiSkillCountText(po.overdue ? 'metrics.open_pos' : 'metrics.no_overdue', po.open, language, { open: fmt.number(po.open), overdue: fmt.number(po.overdue) }))
   if (spend && po?.committedSpend?.amounts?.length) sentences.push(aiSkillText('metrics.committed_spend', language, { amounts: fmt.moneyList(po.committedSpend.amounts) }))
   if (invoices && facts.invoices?.committed?.amounts?.length) sentences.push(aiSkillText('metrics.committed_invoices', language, { amounts: fmt.moneyList(facts.invoices.committed.amounts) }))
   if (atRisk && facts.inventory) sentences.push(aiSkillCountText('metrics.at_risk', facts.inventory.atRisk.length, language, { skus: aiSkillList(facts.inventory.atRisk, language) }))

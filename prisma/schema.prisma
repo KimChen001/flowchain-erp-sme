@@ -548,6 +548,9 @@ model User {
   // When role assignments were first set (legacy backfill or an administrator).
   // Once set, User.role never grants roles again.
   rolesAssignedAt    DateTime?
+  // Email me when a document waits for my approval (Settings > Profile). The
+  // email names only the document type and number and links to it.
+  approvalEmailsEnabled Boolean @default(true)
   version            Int       @default(0)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt

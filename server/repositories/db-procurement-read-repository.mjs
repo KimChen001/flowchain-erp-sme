@@ -482,6 +482,7 @@ function mapReceivingDocument(record = {}) {
   const meta = metadata(record)
   return {
     grn: record.id,
+    documentNumber: text(record.documentNumber),
     po: text(record.poId),
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
@@ -507,6 +508,7 @@ function mapReceivingDocument(record = {}) {
       acceptedQty: numberFrom(entry.acceptedQty, 0),
       rejectedQty: numberFrom(entry.rejectedQty, 0),
       unit: text(entry.unit),
+      lotNumber: text(entry.lotNumber),
       warehouseId: text(entry.warehouseId || record.warehouseId),
       location: text(entry.location),
       status: numberFrom(entry.rejectedQty, 0) > 0 ? 'exception' : 'received',

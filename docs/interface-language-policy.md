@@ -19,6 +19,11 @@ names, or supplier names in place. Translate their presentation where appropriat
   the user's language preference, or else the workspace default, is zh-CN
   (`server/mail/sign-in-email.mjs`). Before sign-in the page follows the
   browser-local selector; the email follows the stored preference.
+- Approval emails are server-generated too, per recipient: US English, or
+  Chinese when that approver's language preference, or else the workspace
+  default, is zh-CN (`server/mail/approval-waiting-email.mjs`). They carry
+  the document type in the recipient's language and the document number as
+  recorded. The Settings > My Profile switch for them has both languages.
 - Existing signed-in profile language selection remains in Settings > Profile.
 - New tenants inherit English from the database default.
 - Migration `20260908120000_english_default_interface` changes existing workspace
@@ -56,6 +61,10 @@ names, or supplier names in place. Translate their presentation where appropriat
 - The receiving form (warehouse, arrival time, accepted quantities) and the RFQ supplier
   response dialog (quantities and delivery dates from the RFQ lines) label their prefilled
   values in English and Chinese.
+- Settings > Warehouse access: the Warehouses and Bins section has English and Chinese
+  copy (`src/modules/settings/WarehouseMaster.tsx`). Server messages for these writes are
+  English; the UI shows each known error, validation and in-use reason code in the
+  active language. Warehouse and bin codes and names stay as recorded.
 - The inventory reorder list (`/app/inventory/reorder`) has English and Chinese copy
   (`src/modules/inventory/reorderListCopy.ts`): headings, the scope and rule notes, row
   flags, empty states and its "Create purchase request" action. The purchase request it
@@ -125,6 +134,17 @@ names, or supplier names in place. Translate their presentation where appropriat
   workspace locale (calendar days read in UTC, so the day entered is the day printed).
   Customer contact details, payment terms and payment instructions are printed as
   the workspace recorded them, in whatever language they were entered.
+- The print-layout editor (receive sheet, delivery note, sign receipt) has English and
+  Chinese copy for its toolbar, save, delete and import messages, the read-only and
+  unreadable-template notes, the close prompt and the per-print panel. Elements added
+  from the toolbar and the per-print fields start with text in the interface language.
+  The built-in templates (`printLayoutPresets.ts`) are built in the interface
+  language: their names, element titles, column titles, signature line and footer.
+  Not yet translated: the element inspector and the canvas placeholders (page number,
+  barcode, QR code). Template names and element text are template content: a template
+  saved to the workspace keeps the text it was saved with in either language. The
+  receive sheet opens from a receipt's detail page (`/app/procurement/receiving/:id`,
+  **Print receive sheet**); the delivery note and sign receipt pages have no route yet.
 
 Deploy this migration once through the normal release process before serving the
 updated interface. Existing sessions pick up the new preference on page reload.

@@ -58,12 +58,15 @@ jobs:
       - run: npm run test:db:english
       - run: npm run test:db:us-defaults
       - run: npm run test:db:email-link-sign-in
+      - run: npm run test:db:approval-email
       - run: npm run test:db:tenant-provision
       - run: npm run test:db:walkthrough-scenario
       - run: npm run test:db:tenant-scoped-reads
       - run: npm run test:db:master-data-writes
+      - run: npm run test:db:warehouse-writes
       - run: npm run test:db:data-import
       - run: npm run test:api:data-import
+      - run: npm run test:db:golden-path
       - run: npm run test:db:reorder-list
       - run: npm run test:db:supplier-tiers
       - run: npm run test:db:supplier-insights
