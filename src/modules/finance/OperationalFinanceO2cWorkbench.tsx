@@ -4,7 +4,7 @@ import { AlertTriangle, FilePlus2, RefreshCw } from "lucide-react";
 import { Link } from "react-router";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
-import { StatusChip, TwoStepAction } from "./FinanceControls";
+import { StatusChip, TwoStepAction, useFinanceStatusLabel } from "./FinanceControls";
 import { PaymentRecords } from "./PaymentRecords";
 import { useI18n } from "../../i18n/I18n";
 import { A, Card } from "../../components/ui";
@@ -160,6 +160,7 @@ function Notice({ children }: { children: ReactNode }) {
 
 function Filters() {
   const { t } = useI18n();
+  const statusLabel = useFinanceStatusLabel();
   const params = new URLSearchParams(window.location.search);
   const set = (key: string, value: string) => {
     const next = new URLSearchParams(window.location.search);
@@ -197,7 +198,7 @@ function Filters() {
         {["draft", "submitted", "approved", "issued", "open", "overdue", "disputed"].map(
           (status) => (
             <option value={status} key={status}>
-              {status}
+              {statusLabel(status)}
             </option>
           ),
         )}
@@ -442,6 +443,7 @@ function Aging() {
 
 function CreditNotes() {
   const { t, locale } = useI18n();
+  const statusLabel = useFinanceStatusLabel();
   const [data, setData] = useState<ListPayload<CreditNote> | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -470,7 +472,7 @@ function CreditNotes() {
                 <td className="px-4 py-3">{row.customerName}</td>
                 <td className="px-4 py-3">{row.returnPostingNumber || "—"}</td>
                 <td className="px-4 py-3 font-medium">{money(row.totalAmount, row.currency, locale)}</td>
-                <td className="px-4 py-3">{row.status}</td>
+                <td className="px-4 py-3">{statusLabel(row.status)}</td>
               </tr>
             ))}
             {!data.items.length && <tr><td className="px-4 py-10 text-center text-slate-500" colSpan={5}>{t("common.empty")}</td></tr>}
