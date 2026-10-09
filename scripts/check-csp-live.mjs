@@ -202,6 +202,9 @@ try {
   await step("reports inventory", visit("/app/reports/inventory"));
   await step("settings: AI", visit("/app/settings/ai"));
   await step("settings: numbering", visit("/app/settings/numbering"));
+  await step("settings: company and documents", visit("/app/settings/company"));
+  await step("settings: warehouse access", visit("/app/settings/warehouse-access"));
+  await step("purchase order document", visit("/app/procurement/orders/LOCAL-DEMO-PO-002/document"));
   await step("print templates", visit("/app/master-data/print-templates"));
   await step("assistant panel", async () => {
     await page.goto("/app/overview/risks");
