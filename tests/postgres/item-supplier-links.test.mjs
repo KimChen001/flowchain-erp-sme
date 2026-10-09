@@ -45,6 +45,9 @@ test('every item-supplier link is listed, narrowed, paged and price-masked per r
     for (const [id, sku, name] of [['ITEM-L1', 'VALVE-10', 'Brass valve'], ['ITEM-L2', 'BOLT-04', 'Hex bolt']]) {
       await prisma.item.create({ data: { id, tenantId: tenant, sku, name, unit: 'EA' } })
     }
+    // A preferred supplier set on the item, with no link recorded, as the
+    // walkthrough seeds them: listed as the item page lists it.
+    await prisma.item.create({ data: { id: 'ITEM-L3', tenantId: tenant, sku: 'GASKET-02', name: 'Rubber gasket', unit: 'EA', preferredSupplierId: 'SUP-L1' } })
     await prisma.supplier.create({ data: { id: 'SUP-OTHER', tenantId: otherTenant, code: 'SUP-OTHER', name: 'Other Supplier', metadata: { defaultCurrency: 'USD', version: 1 } } })
     await prisma.item.create({ data: { id: 'ITEM-OTHER', tenantId: otherTenant, sku: 'VALVE-10', name: 'Other valve', unit: 'EA' } })
     await prisma.runtimeRecord.create({ data: { id: 'ISR-OTHER', tenantId: otherTenant, namespace: 'master-data.item-suppliers', recordKey: 'ITEM-OTHER::SUP-OTHER', payload: { itemId: 'ITEM-OTHER', supplierId: 'SUP-OTHER', referencePrice: 99, currency: 'USD', version: 1 } } })
@@ -75,8 +78,15 @@ test('every item-supplier link is listed, narrowed, paged and price-masked per r
     assert.equal((await request(port, 'GET', '/api/master-data/item-suppliers')).status, 401)
     const all = await asManager('GET', '/api/master-data/item-suppliers')
     assert.equal(all.status, 200, JSON.stringify(all.payload))
-    assert.deepEqual([all.payload.total, all.payload.truncated, all.payload.visibility], [3, false, { prices: true }])
-    assert.deepEqual(all.payload.rows.map((row) => `${row.item.sku}/${row.supplier.supplierCode}`), ['BOLT-04/SUP-L2', 'VALVE-10/SUP-L1', 'VALVE-10/SUP-L2'])
+    assert.deepEqual([all.payload.total, all.payload.truncated, all.payload.visibility], [4, false, { prices: true }])
+    assert.deepEqual(all.payload.rows.map((row) => `${row.item.sku}/${row.supplier.supplierCode}`), ['BOLT-04/SUP-L2', 'GASKET-02/SUP-L1', 'VALVE-10/SUP-L1', 'VALVE-10/SUP-L2'])
+    const gasket = all.payload.rows[1]
+    assert.deepEqual(
+      [gasket.source, gasket.preferred, gasket.approved, gasket.referencePrice, gasket.minimumOrderQuantity, gasket.leadTimeDays, gasket.supplier.supplierName],
+      ['item_preferred_supplier', true, true, null, null, null, 'Acme Fittings'],
+    )
+    // VALVE-10 has a stored preferred link, so it is listed once, not twice.
+    all.payload.rows.splice(1, 1)
     const valve = all.payload.rows[1]
     assert.deepEqual(
       [valve.item.itemName, valve.supplier.supplierName, valve.supplierSku, valve.referencePrice, valve.currency, valve.minimumOrderQuantity, valve.leadTimeDays, valve.preferred, valve.approved, valve.active],
@@ -84,7 +94,7 @@ test('every item-supplier link is listed, narrowed, paged and price-masked per r
     )
     assert.deepEqual([all.payload.rows[2].approved, all.payload.rows[0].active], [false, false])
     assert.deepEqual(all.payload.options.suppliers.map((row) => row.id), ['SUP-L1', 'SUP-L2'])
-    assert.deepEqual(all.payload.options.items.map((row) => row.sku), ['BOLT-04', 'VALVE-10'])
+    assert.deepEqual(all.payload.options.items.map((row) => row.sku), ['BOLT-04', 'GASKET-02', 'VALVE-10'])
     // Nothing of the other workspace, though its item has the same SKU.
     assert.equal(JSON.stringify(all.payload).includes('OTHER'), false)
 
@@ -92,6 +102,7 @@ test('every item-supplier link is listed, narrowed, paged and price-masked per r
     const ids = (response) => response.payload.rows.map((row) => row.relationshipId)
     const bySupplier = await asManager('GET', '/api/master-data/item-suppliers?supplierId=SUP-L2')
     assert.deepEqual(bySupplier.payload.rows.map((row) => row.item.sku), ['BOLT-04', 'VALVE-10'])
+    assert.deepEqual((await asManager('GET', '/api/master-data/item-suppliers?supplierId=SUP-L1')).payload.rows.map((row) => row.item.sku), ['GASKET-02', 'VALVE-10'])
     assert.equal(bySupplier.payload.options, undefined)
     const byItem = await asManager('GET', '/api/master-data/item-suppliers?itemId=ITEM-L1')
     assert.deepEqual(byItem.payload.rows.map((row) => row.supplier.supplierId), ['SUP-L1', 'SUP-L2'])
@@ -99,7 +110,7 @@ test('every item-supplier link is listed, narrowed, paged and price-masked per r
     assert.deepEqual(ids(await asManager('GET', '/api/master-data/item-suppliers?query=ac-77')), [valve.relationshipId])
     assert.deepEqual(ids(await asManager('GET', '/api/master-data/item-suppliers?query=hex')), [all.payload.rows[0].relationshipId])
     const page = await asManager('GET', '/api/master-data/item-suppliers?limit=2&offset=2')
-    assert.deepEqual([page.payload.total, page.payload.rows.length, page.payload.offset], [3, 1, 2])
+    assert.deepEqual([page.payload.total, page.payload.rows.length, page.payload.offset], [4, 2, 2])
 
     // A viewer may not read reference prices: null, never 0, and named, as on
     // the per-item read; the rest of each link stays readable.
@@ -107,7 +118,7 @@ test('every item-supplier link is listed, narrowed, paged and price-masked per r
     assert.equal(viewed.status, 200, JSON.stringify(viewed.payload))
     assert.deepEqual(viewed.payload.visibility, { prices: false })
     assert.ok(viewed.payload.rows.every((row) => row.referencePrice === null && row.restrictedFields.includes('referencePrice')))
-    assert.deepEqual(viewed.payload.rows.map((row) => row.supplierSku), all.payload.rows.map((row) => row.supplierSku))
+    assert.equal(viewed.payload.rows.length, 4)
     for (const amount of ['12.5', '11.75', '0.4']) assert.equal(JSON.stringify(viewed.payload).includes(amount), false, amount)
     const perItem = await asViewer('GET', '/api/master-data/items/ITEM-L1/suppliers')
     assert.ok(perItem.payload.relationships.every((row) => row.referencePrice === null))

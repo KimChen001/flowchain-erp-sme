@@ -4,7 +4,7 @@ import { validateDatabasePersistenceConfig } from '../persistence/persistence-co
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
 import { changeSupplierOwner, changeSupplierTier } from '../domain/supplier-tier-command.mjs'
 import { CUSTOMER_NAMESPACE, listItemSupplierRecords, mapItemSupplierRecord, saveCustomerMaster, saveItemMaster, saveItemSupplier } from '../domain/master-data-commands.mjs'
-import { ITEM_SUPPLIER_LINK_READ_CAP, itemSupplierLinkOptions, itemSupplierLinkPage, joinItemSupplierLinks } from '../domain/item-supplier-links.mjs'
+import { ITEM_SUPPLIER_LINK_READ_CAP, itemSupplierLinkOptions, itemSupplierLinkPage, joinItemSupplierLinks, preferredSupplierLink } from '../domain/item-supplier-links.mjs'
 import { saveWarehouse, saveWarehouseBin, setWarehouseBinStatus, setWarehouseStatus, warehouseVersion } from '../domain/warehouse-master-commands.mjs'
 import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
 
@@ -340,7 +340,21 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const itemId = text(filters.itemId)
       const supplierId = text(filters.supplierId)
       const records = await listItemSupplierRecords(client, where.tenantId, { itemId, supplierId })
-      const links = records.map((row) => mapItemSupplierRecord(row))
+      const stored = records.map((row) => mapItemSupplierRecord(row))
+      // An item's preferred supplier without a stored link is listed too, as
+      // the item page lists it (listItemSuppliers).
+      const linked = new Set(stored.map((link) => `${link.itemId}::${link.supplierId}`))
+      const preferredItems = await client.item.findMany({
+        where: { ...where, ...(itemId ? { id: itemId } : {}), preferredSupplierId: supplierId || { not: null } },
+        select: { id: true, preferredSupplierId: true },
+        take: ITEM_SUPPLIER_LINK_READ_CAP,
+      })
+      const links = [
+        ...stored,
+        ...preferredItems
+          .filter((item) => !linked.has(`${item.id}::${item.preferredSupplierId}`))
+          .map((item) => preferredSupplierLink(item.id, item.preferredSupplierId)),
+      ]
       const ids = (key) => [...new Set(links.map((link) => link[key]).filter(Boolean))]
       const [items, suppliers] = links.length
         ? await Promise.all([
@@ -348,7 +362,9 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
           client.supplier.findMany({ where: { ...where, id: { in: ids('supplierId') } }, select: { id: true, code: true, name: true, status: true } }),
         ])
         : [[], []]
-      const rows = joinItemSupplierLinks(links, { items, suppliers })
+      // As on the item page, a preferred supplier no longer in the workspace is not listed.
+      const known = new Set(suppliers.map((supplier) => supplier.id))
+      const rows = joinItemSupplierLinks(links.filter((link) => link.source !== 'item_preferred_supplier' || known.has(link.supplierId)), { items, suppliers })
       const narrowed = Boolean(itemId || supplierId)
       return {
         ...itemSupplierLinkPage(rows, { query: filters.query, limit: filters.limit, offset: filters.offset }),

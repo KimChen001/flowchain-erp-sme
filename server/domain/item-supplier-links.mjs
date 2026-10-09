@@ -16,6 +16,27 @@ const whole = (value, fallback) => {
   return Number.isInteger(number) && number >= 0 ? number : fallback
 }
 
+// An item's preferred supplier with no stored link, listed as the per-item
+// read lists it (listItemSuppliers): approved and preferred, with nothing
+// recorded, so Supplier prices shows what each item page shows.
+export function preferredSupplierLink(itemId, supplierId) {
+  return {
+    relationshipId: `item-preferred:${itemId}`,
+    itemId,
+    supplierId,
+    supplierSku: '',
+    active: true,
+    approved: true,
+    preferred: true,
+    leadTimeDays: null,
+    minimumOrderQuantity: null,
+    referencePrice: null,
+    currency: '',
+    version: 1,
+    source: 'item_preferred_supplier',
+  }
+}
+
 // Each link (mapItemSupplierRecord) with its item and supplier from the
 // master. A link whose item or supplier is no longer there keeps its ids.
 export function joinItemSupplierLinks(links = [], { items = [], suppliers = [] } = {}) {
