@@ -1,9 +1,10 @@
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
 import { createKnowledgeService, answerKnowledgeQuery, knowledgeResponse, KnowledgeError } from '../domain/ai-knowledge-service.mjs'
-import { parseKnowledgeFile } from '../domain/ai-knowledge-file-parser.mjs'
+import { KNOWLEDGE_FILE_LIMITS, parseKnowledgeFile } from '../domain/ai-knowledge-file-parser.mjs'
 import { classifyQueryScope } from '../domain/ai-query-scope.mjs'
 import { knowledgeProviderEnv } from '../domain/ai-knowledge-config.mjs'
+import { bodyLimitForFile } from '../utils/http.mjs'
 
 async function context(ctx) {
   const prisma = ctx.aiKnowledgePrisma || await getPrismaClient(ctx.env || process.env)
@@ -25,7 +26,7 @@ export async function handleKnowledgeRoute(ctx) {
     if (ctx.req.method === 'GET' && !importing) result = id ? await service.get(actor, id) : await service.list(actor)
     else if (ctx.req.method === 'POST' && reindex && id) result = await service.reindex(actor, id)
     else if (ctx.req.method === 'POST' && importing) {
-      const body = await ctx.readBody(ctx.req)
+      const body = await ctx.readBody(ctx.req, { maxBytes: bodyLimitForFile(KNOWLEDGE_FILE_LIMITS.maximumBytes) })
       const extracted = await parseKnowledgeFile(body)
       result = await service.add(actor, { ...body, title: extracted.title, content: extracted.content })
     }

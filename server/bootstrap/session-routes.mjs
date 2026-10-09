@@ -6,6 +6,14 @@ import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { readBody, send } from "../utils/http.mjs";
 import { roleLabel } from "../../shared/roles.mjs";
 
+// A sign-in body that cannot be read counts as empty, but an oversized one
+// is still refused with its 413.
+const readSignInBody = (req) =>
+  readBody(req).catch((error) => {
+    if (error?.code === "REQUEST_BODY_TOO_LARGE") throw error;
+    return {};
+  });
+
 export function normalizeLogin(body) {
   const email = String(body.email || "")
     .trim()
@@ -40,14 +48,14 @@ export async function handleSessionRoutes({
 }) {
   // Email sign-in links. The request answer never depends on the address.
   if (req.method === "POST" && url.pathname === "/api/auth/email-link") {
-    const body = await readBody(req).catch(() => ({}));
+    const body = await readSignInBody(req);
     await emailLinks.request({ email: body?.email, client: requestClient(req, env), req });
     send(res, 202, EMAIL_LINK_ACCEPTED);
     return true;
   }
 
   if (req.method === "POST" && ["/api/auth/email-link/inspect", "/api/auth/email-link/confirm"].includes(url.pathname)) {
-    const body = await readBody(req).catch(() => ({}));
+    const body = await readSignInBody(req);
     try {
       if (url.pathname.endsWith("/inspect")) {
         send(res, 200, await emailLinks.inspect(body?.token));

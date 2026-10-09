@@ -73,7 +73,8 @@ function knownError(ctx, error) {
     error instanceof OperationalFinanceReadError ||
     error instanceof InternalSettlementError ||
     error instanceof PilotIdentityError ||
-    error?.name === "AuthorizationError"
+    error?.name === "AuthorizationError" ||
+    error?.name === "RequestBodyError"
   ) {
     ctx.send(ctx.res, error.status || 400, {
       code: error.code || "OPERATIONAL_FINANCE_FAILED",

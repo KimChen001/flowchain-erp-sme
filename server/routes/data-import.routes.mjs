@@ -3,6 +3,7 @@ import { DataImportError, assertDataImportType, createDataImportService, dataImp
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { dataImportTemplateCsv } from "../../shared/data-import-columns.mjs";
+import { bodyLimitForFile } from "../utils/http.mjs";
 
 // CSV import through the manual-entry commands:
 //   GET  /api/data-import/templates/:type?language=en-US|zh-CN
@@ -11,8 +12,8 @@ import { dataImportTemplateCsv } from "../../shared/data-import-columns.mjs";
 // The workspace is always the session's; nothing in the body chooses it.
 // Universal Intake (/api/intake/*) and the retired /api/imports* stay as they are.
 
-// The shared readBody has no size limit, so the body is read here with one,
-// as the intake route does. A file arrives as base64, a third larger.
+// The body is read here with the file's own cap (base64 is a third larger
+// than the file), and refusals carry the codes the import page translates.
 async function readBoundedJson(req, maximumBytes) {
   if (Object.prototype.hasOwnProperty.call(req, "__flowchainParsedBody")) return req.__flowchainParsedBody;
   const tooLarge = () => new DataImportError("DATA_IMPORT_REQUEST_TOO_LARGE", "The file is larger than the import limit.", 413, { limitBytes: maximumBytes });
@@ -60,7 +61,7 @@ export async function handleDataImportRoute(ctx) {
     }
     const type = assertDataImportType(decodeURIComponent(action[1]));
     const limits = dataImportLimits(env);
-    const body = await readBoundedJson(req, Math.ceil(limits.maxFileBytes / 3) * 4 + 256 * 1024);
+    const body = await readBoundedJson(req, bodyLimitForFile(limits.maxFileBytes));
     const prisma = ctx.dataImportPrisma || (await getPrismaClient(env));
     const service = createDataImportService({ prisma, env });
     const context = { identity: ctx.identity };

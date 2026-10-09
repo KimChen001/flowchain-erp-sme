@@ -1,8 +1,9 @@
 import { BankStatementParserError } from "../domain/bank-statement-parser.mjs";
-import { BankStatementError, createBankStatementService } from "../domain/bank-statement-service.mjs";
+import { BankStatementError, bankStatementLimits, createBankStatementService } from "../domain/bank-statement-service.mjs";
 import { BankReconciliationError, createBankReconciliationService } from "../domain/bank-reconciliation-service.mjs";
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { bodyLimitForFile } from "../utils/http.mjs";
 
 const query = (url) => Object.fromEntries(url.searchParams.entries());
 const decode = (value) => decodeURIComponent(value);
@@ -12,7 +13,7 @@ function commandInput(ctx, body = {}) {
   return { ...body, ...(idempotencyKey ? { idempotencyKey } : {}), ...(body.expectedVersion == null && ifMatch ? { expectedVersion: Number(ifMatch) } : {}) };
 }
 function knownError(ctx, error) {
-  if (error instanceof BankStatementError || error instanceof BankStatementParserError || error instanceof BankReconciliationError || error instanceof PilotIdentityError || error?.name === "AuthorizationError") {
+  if (error instanceof BankStatementError || error instanceof BankStatementParserError || error instanceof BankReconciliationError || error instanceof PilotIdentityError || error?.name === "AuthorizationError" || error?.name === "RequestBodyError") {
     ctx.send(ctx.res, error.status || 400, { code: error.code || "BANK_RECONCILIATION_FAILED", message: error.message, ...(error.details ? { details: error.details } : {}) }); return;
   }
   ctx.reportError?.(error);
@@ -43,7 +44,7 @@ export async function handleBankReconciliationRoute(ctx) {
       else if (ctx.req.method === "PATCH") ctx.send(ctx.res, 200, await statement.updateMapping(decode(mapping[1]), commandInput(ctx, await ctx.readBody(ctx.req)), ctx));
       else return false; return true;
     }
-    if (path === "/api/finance/bank-statements/uploads" && ctx.req.method === "POST") { ctx.send(ctx.res, 201, await statement.stageUpload(await ctx.readBody(ctx.req), ctx)); return true; }
+    if (path === "/api/finance/bank-statements/uploads" && ctx.req.method === "POST") { ctx.send(ctx.res, 201, await statement.stageUpload(await ctx.readBody(ctx.req, { maxBytes: bodyLimitForFile(bankStatementLimits(ctx.env || process.env).maxFileBytes) }), ctx)); return true; }
     if (path === "/api/finance/bank-statements/batches") {
       if (ctx.req.method === "GET") ctx.send(ctx.res, 200, await statement.listBatches(query(ctx.url), ctx));
       else if (ctx.req.method === "POST") ctx.send(ctx.res, 201, await statement.createBatch(await ctx.readBody(ctx.req), ctx));
