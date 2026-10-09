@@ -43,12 +43,9 @@ test('R203 workflow return context is compact encoded and label-safe', () => {
   assert.doesNotMatch(context, /password|secret|token|apiKey|OPENAI_API_KEY/i)
 })
 
-test('R204-R205 business back link and related records panel render graceful navigation states', () => {
-  const back = source('src', 'components', 'navigation', 'BusinessBackLink.tsx')
+test('R204-R205 related records panel renders graceful navigation states', () => {
   const panel = source('src', 'components', 'navigation', 'RelatedRecordsPanel.tsx')
   const doc = source('src', 'components', 'document', 'DocumentShell.tsx')
-  assert.match(back, /formatReturnLabel/)
-  assert.match(back, /data-testid="business-back-link"/)
   assert.match(panel, /groupBusinessLinkedRecords/)
   assert.match(panel, /record\.routeAvailable/)
   assert.match(panel, /record\.disabledReason/)
@@ -57,15 +54,12 @@ test('R204-R205 business back link and related records panel render graceful nav
   assert.match(doc, /source:\s*"documentEvidence"/)
 })
 
-test('R206-R208 AI insight, cockpit, and transactional links preserve workflow return context', () => {
+test('R206-R208 AI insight and transactional links preserve workflow return context', () => {
   const aiPanel = source('src', 'components', 'ai', 'ContextualAIInsightPanel.tsx')
-  const cockpit = source('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
   const purchasing = source('src', 'modules', 'purchasing', 'Page.tsx')
   assert.match(aiPanel, /onNavigateRecord/)
   assert.match(aiPanel, /source:\s*"contextualAiInsight"/)
   assert.doesNotMatch(aiPanel, /Back to AI Assistant/)
-  assert.match(cockpit, /returnLabel:\s*"返回 今日行动"/)
-  assert.match(cockpit, /source:\s*"todayCockpit"/)
   assert.match(purchasing, /returnLabel:\s*`返回采购订单 \$\{order\.po\}`/)
   assert.match(purchasing, /buildGrnRows\(selectedPO, facts\)/)
   assert.match(purchasing, /buildInvoiceRows\(selectedPO, facts\)/)
@@ -77,7 +71,6 @@ test('R210 guardrails keep AI embedded provider-free and non-mutating', () => {
   const changed = [
     source('src', 'components', 'ai', 'ContextualAIInsightPanel.tsx'),
     source('src', 'components', 'document', 'DocumentShell.tsx'),
-    source('src', 'modules', 'overview', 'TodayCockpitPanel.tsx'),
     source('src', 'modules', 'purchasing', 'Page.tsx'),
     // The contextual AI actions and their review-only guardrails.
     source('src', 'domain', 'contextual-ai', 'actions.ts'),

@@ -32,10 +32,9 @@ test('focused AI presentation limits priorities, actions, evidence and follow-up
 })
 
 test('settings, PO, master data and reports expose consolidated product surfaces', async () => {
-  const [routes, settings, purchasing, masterRoutes, entityRoutes, reports, rfqWorkbench] = await Promise.all([
+  const [routes, settings, purchasing, masterRoutes, entityRoutes, reports] = await Promise.all([
     read('src/app/routeRegistry.tsx'), read('src/modules/settings/Page.tsx'), read('src/modules/purchasing/Page.tsx'),
     read('server/routes/master-data.routes.mjs'), read('src/components/business/businessEntityRoutes.ts'), read('src/modules/reports/BiDashboard.tsx'),
-    read('src/components/procurement/CanonicalDownstreamPanel.tsx'),
   ])
   for (const path of ['company', 'roles', 'numbering', 'review', 'modules', 'ai', 'audit', 'advanced']) assert.match(routes, new RegExp(`/app/settings/${path}`))
   assert.doesNotMatch(settings, /ControlledSettingsView/)
@@ -50,5 +49,4 @@ test('settings, PO, master data and reports expose consolidated product surfaces
   assert.doesNotMatch(reports, /<Card className="flex flex-wrap items-end gap-3 p-3" data-testid="dashboard-configuration"/)
   assert.match(purchasing, /data-testid="po-fulfillment-focus"/)
   assert.match(purchasing, /AI 已定位：收货、发票差异与建议下一步/)
-  assert.match(rfqWorkbench, /data-testid="formal-rfq-draft-form"/)
 })

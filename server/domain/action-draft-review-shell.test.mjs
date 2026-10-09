@@ -11,16 +11,10 @@ function readSource(...parts) {
 
 test('action draft review shell is limited to text drafts and has no generic reviewed-record action', () => {
   const shell = readSource('src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx')
-  const planPanel = readSource('src', 'modules', 'action-drafts', 'BusinessActionPlanPanel.tsx')
 
   assert.match(shell, /export function ActionDraftReviewShell/)
   assert.match(shell, /文本草稿编辑器：仅用于供应商消息或内部备注，不替代正式业务页面/)
   assert.match(shell, /预览 \/ 留存边界/)
-  assert.match(planPanel, /不会自动提交审批/)
-  assert.match(planPanel, /不会下发 PO/)
-  assert.match(planPanel, /不会发送邮件/)
-  assert.match(planPanel, /不会授标/)
-  assert.match(planPanel, /不会自动库存或发票过账/)
   assert.match(shell, /draftButtonClass = `h-8 rounded-lg px-3 \$\{typography\.denseButton\} disabled:cursor-not-allowed`/)
   assert.match(shell, /取消草稿/)
   assert.match(shell, /重置修改/)
@@ -47,7 +41,6 @@ test('action draft review shell renders business payload, validation, audit, and
 
 test('structured AI drafts use formal pages while text drafts retain the editor', () => {
   const app = readSource('src', 'app', 'FlowChainApp.tsx')
-  const cockpit = readSource('src', 'modules', 'overview', 'TodayCockpitPanel.tsx')
   const ai = readSource('src', 'components', 'ai', 'AiResponseV2Renderer.tsx')
   const inventory = readSource('src', 'modules', 'inventory', 'Page.tsx')
 
@@ -66,8 +59,6 @@ test('structured AI drafts use formal pages while text drafts retain the editor'
   assert.match(handoff, /intent: type === "rfq_draft" \? "rfq" : undefined/)
   assert.doesNotMatch(handoff, /procurement:rfq/)
   assert.match(app, /createsBusinessDocument/)
-  assert.match(cockpit, /草稿预览/)
-  assert.match(cockpit, /actionDraftRequest\(item\)/)
   assert.match(ai, /const target = structuredDraftTarget\(action\.card\.draftType \|\| "", action\.card\.payload, "ai_assistant"\)/)
   assert.match(ai, /onClick=\{\(\) => onReviewActionDraft\(request\)\}/)
   assert.match(inventory, /<EntityLink kind="item"/)

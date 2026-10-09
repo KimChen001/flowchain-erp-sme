@@ -167,12 +167,11 @@ test('R258-R260 source guardrails expose route UI and preserve previous safety b
   const route = source('server', 'routes', 'user-confirmed-actions.routes.mjs')
   const registry = source('server', 'repositories', 'adapter-registry.mjs')
   const shell = source('src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx')
-  const planPanel = source('src', 'modules', 'action-drafts', 'BusinessActionPlanPanel.tsx')
   const routes = source('src', 'app', 'routeRegistry.tsx')
   const exceptionPage = source('src', 'modules', 'exception-cases', 'Page.tsx')
   const userDataRoutes = source('server', 'routes', 'user-data.routes.mjs')
   for (const expected of ['供应商跟进备注草稿', 'PO 跟进备注草稿', '工单备注草稿']) {
-    assert.match(`${shell}\n${planPanel}`, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    assert.match(shell, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   }
   assert.doesNotMatch(shell, /PR 复核记录|RFQ 复核记录|已复核内部记录|记录复核结果/)
   for (const forbidden of ['Issue PO', 'Send Email', 'Award Supplier', 'Pay', 'Post']) {
@@ -184,5 +183,5 @@ test('R258-R260 source guardrails expose route UI and preserve previous safety b
   assert.doesNotMatch(exceptionPage, /sourceEntityId:\s*"SKU-00412"|SKU-00412:shortage|demoDraftEvidence/)
   assert.match(userDataRoutes, /getPreviewSnapshot/)
   assert.match(exceptionPage, /确认最终状态变更/)
-  assert.doesNotMatch([route, shell, planPanel].join('\n'), /OPENAI_API_KEY|ARK_API_KEY|DOUBAO_API_KEY|sk-[A-Za-z0-9]/)
+  assert.doesNotMatch([route, shell].join('\n'), /OPENAI_API_KEY|ARK_API_KEY|DOUBAO_API_KEY|sk-[A-Za-z0-9]/)
 })
