@@ -40,6 +40,46 @@ export function adaptReceiveSheet(grn: ReceivingDoc, { rejectedLabel, warehouseN
   };
 }
 
+// The receipt detail page (/app/procurement/receiving/:id) reads the
+// receiving workbench API, whose quantities are decimal strings. The sheet
+// prints each line's accepted quantity on the receipt and its rejected
+// quantity, in the line's own unit, and the arrival day in the workspace
+// timezone. Receipts in this API record no lot numbers, so none is printed.
+export type ReceivingDetailForPrint = {
+  receivingDocument: {
+    id: string;
+    documentNumber?: string | null;
+    arrivedAt?: string | null;
+    receiver?: string | null;
+    supplier?: { name?: string } | null;
+    warehouse?: { name?: string; code?: string } | null;
+  };
+  purchaseOrder: { id: string };
+  lines: Array<{ sku: string; itemName: string; documentAcceptedQuantity: string; rejectedQuantity: string; unit?: string }>;
+};
+
+export function adaptReceivingDetailSheet(detail: ReceivingDetailForPrint, { quantity, rejectedLabel, day }: {
+  quantity: (value: string) => string;
+  rejectedLabel: (quantity: string) => string;
+  day: (instant: string | null | undefined) => string;
+}): PrintDocumentData {
+  const grn = detail.receivingDocument;
+  const arrived = grn.arrivedAt ? day(grn.arrivedAt) : "";
+  return {
+    companyName: "", documentNo: grn.documentNumber || grn.id, documentDate: arrived, supplier: grn.supplier?.name || "",
+    warehouse: grn.warehouse?.name || grn.warehouse?.code || "", sourceOrderNo: detail.purchaseOrder.id, handler: "",
+    receiver: grn.receiver || "", receiveDate: arrived, createdBy: "", reviewedBy: "", remarks: "",
+    lines: detail.lines.map((line) => ({
+      sku: line.sku || "",
+      itemName: line.itemName || "",
+      quantity: quantity(line.documentAcceptedQuantity),
+      unit: line.unit || "",
+      batchNo: "",
+      remarks: Number(line.rejectedQuantity) > 0 ? rejectedLabel(quantity(line.rejectedQuantity)) : "",
+    })),
+  };
+}
+
 export function adaptDeliveryNote(note: DeliveryNote): PrintDocumentData {
   return {
     companyName: "", documentNo: note.deliveryNo, documentDate: note.deliveryDate, customer: note.customerName, warehouse: note.warehouse,
