@@ -58,6 +58,7 @@ try {
   Object.assign(process.env, {
     DATABASE_URL: url,
     DATABASE_URL_TEST: url,
+    FLOWCHAIN_APPROVAL_EMAILS: process.env.FLOWCHAIN_APPROVAL_EMAILS || "off",
     FLOWCHAIN_PERSISTENCE_MODE: "database",
     FLOWCHAIN_DEFAULT_TENANT_ID: tenantId,
     FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: "false",

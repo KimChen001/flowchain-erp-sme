@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
+import { CONTENT_SECURITY_POLICY, STRICT_TRANSPORT_SECURITY } from "../server/bootstrap/security-headers.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
@@ -168,6 +169,14 @@ try {
   assert.equal(health.live, true);
   assert.equal(health.commitSha, commitSha);
   assert.equal(health.authority, "postgresql");
+
+  // The production profile with an https public address sends HSTS, and the
+  // content security policy is enforced on the app shell.
+  const shell = await fetch(`${base}/`);
+  assert.equal(shell.status, 200);
+  assert.equal(shell.headers.get("strict-transport-security"), STRICT_TRANSPORT_SECURITY);
+  assert.equal(shell.headers.get("content-security-policy"), CONTENT_SECURITY_POLICY);
+  assert.equal(shell.headers.get("x-content-type-options"), "nosniff");
 
   const readiness = await waitFor(async () => {
     const response = await fetch(`${base}/api/ready`);

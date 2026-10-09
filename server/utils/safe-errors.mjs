@@ -1,3 +1,5 @@
+import { createErrorReporter, logOnlyEnv } from '../observability/error-reporter.mjs'
+
 export const GENERIC_INTERNAL_ERROR = 'Internal server error'
 export const SAFE_OPERATIONAL_ERROR_CODES = new Set([
   'FLOWCHAIN_DATABASE_CONFIG_MISSING',
@@ -5,46 +7,32 @@ export const SAFE_OPERATIONAL_ERROR_CODES = new Set([
   'TENANT_CONTEXT_REQUIRED',
 ])
 
-const SECRET_PATTERNS = [
-  /Bearer\s+[A-Za-z0-9._~+/=-]+/gi,
-  /sk-[A-Za-z0-9._-]+/gi,
-  // Any NAME=value or NAME: value whose name ends like a credential, so new
-  // provider keys (DASHSCOPE_API_KEY, FLOWCHAIN_AI_PROVIDER_API_KEY, ...) and
-  // session secrets are covered without listing each one.
-  /\b(?:[A-Z0-9]+_)*(?:API_KEY|SECRET|TOKEN|PASSWORD|DATABASE_URL)\s*[:=]\s*[^,\s;]+/gi,
-  /postgres(?:ql)?:\/\/[^,\s;]+/gi,
-  /mysql:\/\/[^,\s;]+/gi,
-]
-
-export function sanitizeErrorSummary(error) {
-  const code = String(error?.code || error?.name || 'Error')
-  const message = String(error?.message || error || '')
-  const sanitized = SECRET_PATTERNS.reduce(
-    (text, pattern) => text.replace(pattern, '[redacted]'),
-    message
-  )
-  return `${code}: ${sanitized}`.slice(0, 240)
-}
+// The redaction lives in its own module, so the error reporter can use it
+// without importing this file.
+export { redactSecrets, sanitizeErrorSummary } from '../observability/redact.mjs'
 
 // One JSON line per unhandled error, carrying the request id so it can be
-// matched to the access log line and to what the caller was shown.
+// matched to the access log line and to what the caller was shown. The line
+// is written by the server's error reporter (server/observability/
+// error-reporter.mjs), which adds the method, path, status, stack and actor
+// ids and may send an alert. Without one, the line goes to options.logger
+// and no alert is sent.
 export function logServerError(error, options = {}) {
-  const logger = options.logger || console
-  const write = typeof logger.error === 'function' ? logger.error : logger.warn
-  if (typeof write !== 'function') return
-  write.call(logger, JSON.stringify({
-    time: new Date().toISOString(),
-    level: 'error',
-    event: 'server_error',
-    ...(options.requestId ? { requestId: options.requestId } : {}),
-    error: sanitizeErrorSummary(error),
-  }))
+  const reporter = options.reporter
+    || createErrorReporter({ logger: options.logger || console, env: logOnlyEnv() })
+  reporter.report(error, {
+    req: options.req,
+    requestId: options.requestId,
+    status: options.status,
+    phase: options.phase,
+  })
 }
 
 export function sendInternalServerError(res, send, error, options = {}) {
-  logServerError(error, options)
+  const safe = SAFE_OPERATIONAL_ERROR_CODES.has(error?.code)
+  logServerError(error, { ...options, status: safe ? error.status || 500 : 500 })
   const reference = options.requestId ? { requestId: options.requestId } : {}
-  if (SAFE_OPERATIONAL_ERROR_CODES.has(error?.code)) {
+  if (safe) {
     return send(res, error.status || 500, {
       error: error.message,
       code: error.code,
