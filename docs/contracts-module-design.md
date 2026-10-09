@@ -1,7 +1,9 @@
 # Contracts module: design
 
-Status: design, 2026-10-09. Written against main at `41788ace`. Nothing is built yet.
-The decisions for the owner are in [§11](#11-decisions-for-the-owner).
+Status: approved, 2026-10-09. Written against main at `41788ace`. On 2026-10-09 the owner
+approved all ten decisions in [§11](#11-decisions-for-the-owner) as recommended ("按推荐").
+K1 is being built on `feat/contracts-k1`. The server part comes first; the pages follow once
+the supplier sub-tab change has merged.
 
 Owner decisions so far (2026-10-09):
 - Contracts get **their own top-level module**. A supplier's contracts can also be seen
