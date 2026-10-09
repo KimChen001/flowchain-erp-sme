@@ -16,7 +16,10 @@ async function openApp(page: Page, language?: "en-US" | "zh-CN") {
   }, session)
   await page.goto('/')
   await expect(page.getByTestId('app-main')).toBeVisible({ timeout: 15_000 })
-  await page.getByTestId('ai-assistant-toggle').click()
+  // Below 1024px the Assistant tab replaces the floating button.
+  const toggle = page.getByTestId('ai-assistant-toggle')
+  if (await toggle.isVisible()) await toggle.click()
+  else await page.getByTestId('mobile-tab-assistant').click()
   await expect(page.getByTestId('ai-assistant-panel')).toBeVisible()
 }
 

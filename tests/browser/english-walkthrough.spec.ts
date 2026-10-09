@@ -11,6 +11,7 @@ const ALLOWED = [/^中文$/, /^简体中文/];
 const ROUTES = [
   "/app/overview/risks",
   "/app/overview/ai",
+  "/app/overview/approvals",
   "/app/procurement/workbench",
   "/app/procurement/orders",
   "/app/procurement/orders/LOCAL-DEMO-PO-002",

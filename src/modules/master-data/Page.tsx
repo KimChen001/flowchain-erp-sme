@@ -10,6 +10,7 @@ import { PRINT_TEMPLATE_CATALOG, type PrintTemplateCatalogItem } from "./standar
 import ItemMasterWorkbench from "./ItemMasterWorkbench";
 import { useMasterDataCopy } from "./masterDataCopy";
 import { DataImportLink } from "./DataImportLink";
+import { ResponsiveFilters } from "../../components/business/ResponsiveFilters";
 import { useMasterDataWriteAccess } from "./writeAccess";
 
 export type MasterDataTab = "overview" | "items" | "suppliers" | "customers" | "warehouses" | "tax-codes" | "payment-terms" | "print-templates";
@@ -158,7 +159,11 @@ export default function MasterDataPage({
             </>}
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <ResponsiveFilters
+          className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4"
+          activeCount={statusFilter ? 1 : 0}
+          onReset={resetFilters}
+          leading={
           <Field label={copy("Search")}>
             <label className="flex items-center gap-2" style={{ ...inputStyle, paddingTop: 0, paddingBottom: 0 }}>
               <Search size={14} style={{ color: A.gray2 }} />
@@ -168,13 +173,15 @@ export default function MasterDataPage({
                 className="h-9 min-w-0 flex-1 bg-transparent outline-none" />
             </label>
           </Field>
+          }
+        >
           <Field label={copy(view.statusLabel)}>
             <select aria-label={copy(view.statusLabel)} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} style={inputStyle}>
               <option value="">{copy(view.allStatuses)}</option>
               {statusOptions.map((value) => <option key={value} value={value}>{copy(value)}</option>)}
             </select>
           </Field>
-        </div>
+        </ResponsiveFilters>
       </Card>
 
       <Card>

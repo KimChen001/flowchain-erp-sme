@@ -16,12 +16,12 @@ backend-authorized.
 
 ## Classification summary
 
-- Core: 72
+- Core: 73
 - Extension: 51
 - Internal: 18
 - Frozen: 19
 - Legacy: 14
-- Total: 174
+- Total: 175
 
 ## Default SME navigation
 
@@ -40,7 +40,7 @@ and Internal surfaces remain outside normal navigation.
 The classification summary and the executable route matrix below are
 regenerated with `node scripts/generate-route-authority-matrix.mjs`.
 
-The 174/174 frontend route stability audit verifies
+The 175/175 frontend route stability audit verifies
 resolution, shell rendering, no route-level 404 recovery, no render crash, and
 no observed API 5xx. It does not prove business semantics, data authority,
 permission correctness, capability correctness, or complete functionality.
@@ -79,6 +79,7 @@ classification and navigation metadata.
 | `overview` | `/app/overview` | 今日待办 | `overview` | CORE | PRIMARY | no | overview | `src/modules/overview` | /api/business-read-context | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `overview:risks` | `/app/overview/risks` | 首页概览 | `overview` | CORE | SECONDARY | no | overview | `src/modules/overview` | /api/business-read-context | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `overview:ai` | `/app/overview/ai` | AI 重点 | `overview` | CORE | SECONDARY | no | overview | `src/modules/overview` | /api/business-read-context | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
+| `overview:approvals` | `/app/overview/approvals` | 审批收件箱 | `overview` | CORE | SECONDARY | no | overview | `src/modules/overview` | /api/business-read-context | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | UNAVAILABLE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `master-data` | `/app/master-data` | 基础资料总览 | `master-data` | CORE | SECONDARY | no | master-data | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `master-data:items` | `/app/master-data/items` | 商品资料 / 物料资料 | `master-data` | CORE | PRIMARY | no | master-data | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |
 | `master-data:suppliers` | `/app/master-data/suppliers` | 供应商 | `master-data` | CORE | PRIMARY | no | master-data | `src/modules/master-data` | /api/master-data/* | Tenant-scoped PostgreSQL repositories | AUTHORITATIVE | AUTHORITATIVE | — | — | RENDER | — | Runtime authorization and tenant scope remain enforced by the API. |

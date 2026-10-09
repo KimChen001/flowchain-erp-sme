@@ -1,3 +1,4 @@
+import { ApprovalInbox } from "./ApprovalInbox";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { ArrowRight, CheckCircle2, Circle, RefreshCw } from "lucide-react";
@@ -80,6 +81,7 @@ function formatDay(day: string, locale: string) {
 }
 
 export default function OverviewPanel({ initialView = "", onNavigate, onOpenAi, onReviewActionDraft }: { initialView?: string; onNavigate: Navigate; onOpenAi: () => void; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void }) {
+  if (initialView === "approvals") return <ApprovalInbox />;
   if (initialView === "ai") return <AiSuggestionsPage onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} onOpenAi={onOpenAi} />;
   return <RuntimeHomepage />;
 }
@@ -195,7 +197,8 @@ function RuntimeHomepage() {
   return (
     <div data-testid="runtime-homepage" className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold">{t("title")}</h2>
+        {/* On phones the page title above already says this. */}
+        <h2 className="text-lg font-semibold max-md:hidden">{t("title")}</h2>
         <p className="text-xs" style={{ color: A.sub }}>{t("subtitle")}</p>
       </div>
 

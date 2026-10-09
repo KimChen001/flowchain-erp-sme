@@ -13,6 +13,7 @@ import {
   thRightClass,
 } from "../../components/ui/workbenchTable";
 import { apiJson } from "../../lib/api-client";
+import { ResponsiveFilters } from "../../components/business/ResponsiveFilters";
 import { formatDateTimeInTimeZone, formatQuantity } from "../../lib/format";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
 import { useI18n } from "../../i18n/I18n";
@@ -149,7 +150,11 @@ export default function BinListPage() {
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <ResponsiveFilters
+          className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4"
+          activeCount={warehouse ? 1 : 0}
+          onReset={() => { setSearch(""); setWarehouse(""); }}
+          leading={
           <Field label={copy("Search")}>
             <label className="flex items-center gap-2" style={{ ...inputStyle, paddingTop: 0, paddingBottom: 0 }}>
               <Search size={14} style={{ color: A.gray2 }} />
@@ -157,13 +162,15 @@ export default function BinListPage() {
                 placeholder={copy("Bin or warehouse")} className="h-9 min-w-0 flex-1 bg-transparent outline-none" />
             </label>
           </Field>
+          }
+        >
           <Field label={copy("Warehouse")}>
             <select aria-label={copy("Warehouse")} value={warehouse} onChange={(event) => setWarehouse(event.target.value)} style={inputStyle}>
               <option value="">{copy("All warehouses")}</option>
               {warehouses.map((id) => <option key={id} value={id}>{warehouseName(id)}</option>)}
             </select>
           </Field>
-        </div>
+        </ResponsiveFilters>
       </Card>
 
       <Card>

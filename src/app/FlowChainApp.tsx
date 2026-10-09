@@ -20,6 +20,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { navGroups, navItems } from "./routes.tsx";
+import { MobileTabBar, type MobileTab } from "../components/navigation/MobileTabBar";
 import {
   currentRouteFor,
   defaultRouteForModule,
@@ -724,6 +725,14 @@ export default function FlowChainApp() {
   const activeRouteHasPermission = activeRoute
     ? hasRoutePermission(activeRoute, effectivePermissionCodes)
     : false;
+  // The bottom tab bar's state on phones: its tab, and the pages under More.
+  const mobileTab: MobileTab = activeRoute?.id === "overview:approvals"
+    ? "approvals"
+    : activeModule === "overview"
+      ? "today"
+      : activeRoute?.id?.startsWith("procurement:receiving")
+        ? "receive"
+        : "more";
   // Mirrors the route gate below so in-page links are hidden instead of
   // landing on the "Access denied" or "Capability unavailable" screens.
   const canOpenRoute = useCallback(
@@ -766,6 +775,29 @@ export default function FlowChainApp() {
       effectivePermissionCodes,
       experimentalModuleIds,
     ],
+  );
+  // The number on the phone's Approvals tab, read again as the person moves
+  // between pages (a decision made elsewhere shows on the next page).
+  const [approvalsWaiting, setApprovalsWaiting] = useState(0);
+  const approvalsVisible = canOpenRoute("overview:approvals");
+  useEffect(() => {
+    if (!approvalsVisible) { setApprovalsWaiting(0); return; }
+    let alive = true;
+    const read = () => apiJson<{ count?: number }>("/api/me/approvals-waiting")
+      .then((result) => { if (alive) setApprovalsWaiting(Number(result.count) || 0); })
+      .catch(() => {});
+    void read();
+    // A decision in the inbox changes the count without a page change.
+    window.addEventListener("flowchain:approvals-changed", read);
+    return () => { alive = false; window.removeEventListener("flowchain:approvals-changed", read); };
+  }, [approvalsVisible, location.pathname]);
+  // Every page the reader may open from the main navigation, for More on phones.
+  const mobileNavItems = useMemo(
+    () => localizedNavItems.filter((item) => {
+      const route = routeById(item.routeId);
+      return Boolean(route && isRouteVisibleInNavigation(route, "PRIMARY", routeAccess));
+    }),
+    [localizedNavItems, routeAccess],
   );
   const contentMaxWidthClass =
     panelModule === "srm"
@@ -1366,34 +1398,17 @@ export default function FlowChainApp() {
           }}
         >
           <div className="flex min-w-0 items-center gap-2 text-sm">
-            <select
-              aria-label={t("nav.primary")}
-              value={activeNavItem?.routeId || activeModule}
-              onChange={(event) => navigateTo(event.target.value)}
-              className="max-w-[150px] rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs lg:hidden"
+            <div
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md lg:hidden"
+              style={{ background: A.blue }}
+              aria-hidden="true"
             >
-              {localizedNavItems
-                .filter((item) => {
-                  const governedRoute = routeById(item.routeId);
-                  return Boolean(
-                    governedRoute &&
-                      isRouteVisibleInNavigation(
-                        governedRoute,
-                        "PRIMARY",
-                        routeAccess,
-                      ),
-                  );
-                })
-                .map((item) => (
-                  <option key={item.id} value={item.routeId}>
-                    {item.label}
-                  </option>
-                ))}
-            </select>
-            <span className="fc-label font-medium" style={{ color: A.label }}>
+              <Activity size={14} className="text-white" strokeWidth={2.5} />
+            </div>
+            <span className="fc-label min-w-0 truncate font-medium" style={{ color: A.label }}>
               {workspaceName || user.company}
             </span>
-            {localStatus && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800" title={`User ${user.email} · Demo ${localStatus.demoMasterDataLoaded ? "loaded" : "not loaded"} · Scenario ${localStatus.demoScenarioLoaded ? "loaded" : "not loaded"} · Universal Intake ${localStatus.universalIntakeEnabled ? "enabled" : "disabled"}`}>Local Development</span>}
+            {localStatus && <span className="shrink-0 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800" title={`User ${user.email} · Demo ${localStatus.demoMasterDataLoaded ? "loaded" : "not loaded"} · Scenario ${localStatus.demoScenarioLoaded ? "loaded" : "not loaded"} · Universal Intake ${localStatus.universalIntakeEnabled ? "enabled" : "disabled"}`}><span className="hidden sm:inline">Local Development</span><span className="sm:hidden">Local</span></span>}
           </div>
           <div className="flex items-center gap-2">
             <form
@@ -1727,7 +1742,7 @@ export default function FlowChainApp() {
         {/* Content */}
         <div className="flex-1 flex overflow-hidden">
           <main
-            className="flex-1 overflow-auto p-3 sm:p-6"
+            className="fc-app-main flex-1 overflow-auto p-3 sm:p-6"
             data-testid="app-main"
           >
             <div
@@ -1895,6 +1910,19 @@ export default function FlowChainApp() {
           </main>
         </div>
       </div>
+      <MobileTabBar
+        items={mobileNavItems}
+        activeTab={mobileTab}
+        approvalsWaiting={approvalsWaiting}
+        canOpen={canOpenRoute}
+        onOpenTab={(tab) => {
+          if (tab === "today") navigateTo("overview");
+          else if (tab === "approvals") navigateTo("overview:approvals");
+          else navigateTo("procurement:receiving");
+        }}
+        onNavigate={(routeId) => navigateTo(routeId)}
+        onOpenAssistant={() => setAiOpenSignal(Date.now())}
+      />
       {/* A rendering error in the assistant must not take the page down. */}
       <PanelErrorBoundary moduleLabel={language === "en-US" ? "AI assistant" : "AI 助手"} language={language}>
         <AiPanel

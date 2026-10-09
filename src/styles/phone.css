@@ -1,0 +1,236 @@
+/*
+ * Phone and small-tablet layout (owner decision, 2026-10-08: mobile step 1).
+ * Below lg (1024px) the sidebar is hidden: five bottom tabs replace it and the
+ * assistant opens full screen. Below md (768px) the module header gets
+ * lighter, card grids drop to two columns, tables become cards and filters
+ * move into a bottom sheet. Desktop layouts are unchanged.
+ *
+ * Not in a cascade layer on purpose: unlayered rules win over Tailwind's
+ * utilities, so the phone rules can undo fixed column counts and table
+ * minimum widths set by utility classes on many pages.
+ */
+
+/* Bottom tab bar and its sheets */
+.fc-mobile-tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: grid;
+  background: #fff;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
+}
+.fc-mobile-tab {
+  display: flex;
+  min-height: 52px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 14px;
+}
+.fc-mobile-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  gap: 14px;
+  max-height: 85vh;
+  overflow-y: auto;
+  border-radius: 20px 20px 0 0;
+  background: #fff;
+  padding: 8px 16px calc(20px + env(safe-area-inset-bottom));
+}
+.fc-mobile-sheet-handle {
+  justify-self: center;
+  width: 38px;
+  height: 4px;
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+@media (min-width: 1024px) {
+  .fc-mobile-tabbar { display: none; }
+}
+
+@media (max-width: 1023px) {
+  /* Room for the tab bar under the last row. */
+  .fc-app-main { padding-bottom: calc(80px + env(safe-area-inset-bottom)) !important; }
+  /* The Assistant tab opens the assistant; no floating button over the rows. */
+  [data-testid="ai-assistant-toggle"] { display: none !important; }
+  /* Already full screen: no expand button. */
+  [data-testid="ai-assistant-panel"] .fc-ai-expand { display: none; }
+  [data-testid="ai-assistant-panel"] {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    width: auto !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Filters: inline on wider screens, a bottom sheet on phones. */
+.fc-filters-toggle,
+.fc-filters-sheet-head,
+.fc-filters-sheet-foot,
+.fc-filters-backdrop { display: none; }
+
+@media (max-width: 767px) {
+  /* One title: the breadcrumb only stays on detail pages, as the way back. */
+  .fc-module-shell:not([data-page-type="detail"]) .fc-breadcrumb { display: none; }
+  .fc-module-shell[data-page-type="detail"] .fc-breadcrumb { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+  .fc-page-header { border: 0; background: transparent; padding: 0; }
+  .fc-page-title, .fc-module-title { font-size: 22px; line-height: 28px; font-weight: 700; }
+  .fc-module-subnav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    scrollbar-width: none;
+  }
+  .fc-module-subnav::-webkit-scrollbar { display: none; }
+  .fc-module-subnav a {
+    flex: none;
+    white-space: nowrap;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 999px;
+    background: #fff;
+    padding: 6px 12px;
+  }
+  .fc-subnav-pill { border-radius: 999px; }
+
+  /* Metric cards show the figure and its label; the icons go. */
+  .fc-module-content .fc-kpi-icons { display: none; }
+
+  /* Card and form grids with a fixed column count drop to two columns. */
+  .fc-module-content .grid-cols-3,
+  .fc-module-content .grid-cols-4,
+  .fc-module-content .grid-cols-5,
+  .fc-module-content .grid-cols-6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  /*
+   * Tables become cards (Fiori's responsive-table pop-in): the first cell is
+   * the card title and every other cell is a "label: value" line. The labels
+   * come from the header row (useTableCardLabels).
+   */
+  .fc-module-content table.fc-cards { display: block; width: 100%; min-width: 0 !important; table-layout: auto !important; }
+  .fc-module-content table.fc-cards thead { display: none; }
+  .fc-module-content table.fc-cards tbody { display: block; }
+  .fc-module-content table.fc-cards tr {
+    display: grid;
+    gap: 4px;
+    height: auto !important;
+    padding: 12px 14px;
+    border: 0 !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06) !important;
+  }
+  .fc-module-content table.fc-cards tr:last-child { border-bottom: 0 !important; }
+  .fc-module-content table.fc-cards td {
+    position: static !important;
+    display: flex;
+    min-width: 0 !important;
+    max-width: none !important;
+    width: auto !important;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 0 !important;
+    background: transparent !important;
+    text-align: right;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+  .fc-module-content table.fc-cards td::before {
+    content: attr(data-label);
+    flex: none;
+    max-width: 45%;
+    color: #6e6e73;
+    font-size: 12px;
+    text-align: left;
+  }
+  .fc-module-content table.fc-cards td:first-child { justify-content: flex-start; text-align: left; font-size: 14px; font-weight: 600; }
+  .fc-module-content table.fc-cards td:first-child::before,
+  .fc-module-content table.fc-cards td[data-label=""]::before { content: none; }
+  .fc-module-content table.fc-cards td[data-label=""] { justify-content: flex-start; text-align: left; }
+  /* Empty states and other full-width rows stay centred. */
+  .fc-module-content table.fc-cards td[colspan] { justify-content: center; text-align: center; font-weight: 400; }
+  .fc-module-content table.fc-cards td .truncate { white-space: normal; }
+
+  /* Filters behind one button; the panel opens as a bottom sheet. */
+  .fc-filters-toggle {
+    display: inline-flex;
+    height: 38px;
+    align-items: center;
+    gap: 6px;
+    border-radius: 10px;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    background: #fff;
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #1d1d1f;
+  }
+  /* The open sheet is rendered on document.body (ResponsiveFilters), so a
+     transformed ancestor cannot break its fixed position. */
+  .fc-filters-portal .fc-filters-backdrop { display: block; position: fixed; inset: 0; z-index: 54; width: 100%; background: rgba(15, 23, 42, 0.45); }
+  .fc-filters-portal .fc-filters-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 55;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 12px;
+    max-height: 85vh;
+    overflow-y: auto;
+    border-radius: 20px 20px 0 0;
+    background: #fff;
+    padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  .fc-filters-portal .fc-filters-sheet-head { display: flex; align-items: center; justify-content: space-between; }
+  .fc-filters-portal .fc-filters-sheet-foot { display: flex; gap: 8px; padding-top: 4px; }
+
+  /*
+   * Detail pages: the links back to related records scroll in one row, and
+   * the record's actions (fc-detail-actions) sit in a bar pinned above the
+   * tabs, within thumb reach, as in Fiori's object page footer.
+   */
+  .fc-module-shell[data-page-type="detail"] .fc-module-subnav { display: none; }
+  .fc-module-content .fc-recovery-actions { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .fc-module-content .fc-recovery-actions::-webkit-scrollbar { display: none; }
+  .fc-module-content .fc-recovery-actions > * { flex: none; }
+  .fc-module-content .fc-detail-actions {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(60px + env(safe-area-inset-bottom));
+    z-index: 35;
+    display: flex;
+    flex-wrap: nowrap !important;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    margin: 0 !important;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    background: #fff;
+    padding: 10px 16px;
+    box-shadow: 0 -4px 12px rgba(15, 23, 42, 0.06);
+  }
+  .fc-module-content .fc-detail-actions:empty { display: none; }
+  .fc-module-content .fc-detail-actions > * { flex: none; }
+  .fc-module-content .fc-detail-actions .fc-action-note { display: none; }
+  .fc-app-main:has(.fc-detail-actions:not(:empty)) { padding-bottom: calc(150px + env(safe-area-inset-bottom)) !important; }
+  /* Fixed bars need an untransformed ancestor; pages only fade in on phones. */
+  [data-testid="page-transition"] { transform: none !important; }
+}

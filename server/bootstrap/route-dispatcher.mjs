@@ -33,6 +33,7 @@ import { handlePilotImportRoute } from "../routes/pilot-import.routes.mjs";
 import { handlePilotOperationsRoute } from "../routes/pilot-operations.routes.mjs";
 import { handlePilotReadinessGovernanceRoute } from "../routes/pilot-readiness-governance.routes.mjs";
 import { handlePilotWorkspaceRoute } from "../routes/pilot-workspace.routes.mjs";
+import { handleApprovalHistoryRoute } from "../routes/approval-history.routes.mjs";
 import { handlePriceHistoryRoute } from "../routes/price-history.routes.mjs";
 import { handleProcurementReadRoute } from "../routes/procurement-read.routes.mjs";
 import { handleProcurementWorkflowRoute } from "../routes/procurement-workflow.routes.mjs";
@@ -89,6 +90,8 @@ const orderedRouteHandlers = Object.freeze([
   handleAiSuggestionsWorkbenchRoute,
   handleCollaborationNotificationDraftsRoute,
   handleWorkspaceSetupConfigRoute,
+  // Before handlePilotWorkspaceRoute, which claims the other /api/me/ paths.
+  handleApprovalHistoryRoute,
   handlePilotWorkspaceRoute,
   handleAuthorizationRoute,
   handleSettingsRuntimeRoute,

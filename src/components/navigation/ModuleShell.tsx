@@ -1,5 +1,5 @@
 import { workspaceCopy } from "../../i18n/workspaceCopy";
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router";
 import { LayoutGroup, motion } from "motion/react";
 import {
@@ -18,6 +18,7 @@ import {
 import { A } from "../ui";
 import { AppBreadcrumb } from "./AppBreadcrumb";
 import { useI18n } from "../../i18n/I18n";
+import { useTableCardLabels } from "./useTableCardLabels";
 
 export function ModuleShell({ route, children, routeAccess }: { route: GovernedAppRouteDefinition; children: React.ReactNode; routeAccess: GovernedRouteAccessContext }) {
   const navigate = useNavigate();
@@ -41,8 +42,32 @@ export function ModuleShell({ route, children, routeAccess }: { route: GovernedA
   const activeMenuId = route.currentActiveMenuId || route.id;
   const showModuleHeader = route.id === root.id;
   const showPageHeader = route.id !== root.id && route.pageType !== "detail" && route.moduleId !== "reports";
+  // Tables in the content show as cards on phones (phone.css).
+  const contentRef = useRef<HTMLDivElement>(null);
+  useTableCardLabels(contentRef);
+  // On phones the sub-pages are one scrolling row; keep the current one in view.
+  const subnavRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const nav = subnavRef.current;
+    if (!nav) return;
+    const center = () => {
+      const current = nav.querySelector<HTMLElement>('[aria-current="page"]');
+      if (!current || nav.scrollWidth <= nav.clientWidth) return;
+      const left = current.getBoundingClientRect().left - nav.getBoundingClientRect().left + nav.scrollLeft;
+      nav.scrollLeft = left - (nav.clientWidth - current.offsetWidth) / 2;
+    };
+    center();
+    // The row only overflows once fonts and labels have laid out.
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(center);
+    observer.observe(nav);
+    nav.querySelectorAll("a").forEach((link) => observer.observe(link));
+    const stop = window.setTimeout(() => observer.disconnect(), 1500);
+    return () => { observer.disconnect(); window.clearTimeout(stop); };
+    // The row appears once access has loaded, after the route is known.
+  }, [route.id, subRoutes.length]);
   return (
-    <div className="fc-module-shell" data-testid="module-shell" data-route-id={route.id}>
+    <div className="fc-module-shell" data-testid="module-shell" data-route-id={route.id} data-page-type={route.pageType}>
       <AppBreadcrumb route={route} />
       {!showModuleHeader && <span className="sr-only" data-testid="module-title">{rootLabel}</span>}
       {showModuleHeader && <div className="fc-module-header">
@@ -51,7 +76,7 @@ export function ModuleShell({ route, children, routeAccess }: { route: GovernedA
         </div>
       </div>}
       {subRoutes.length > 1 && (
-        <nav className="fc-module-subnav" aria-label={language === "en-US" ? `${rootLabel} navigation` : `${rootLabel}二级导航`} data-testid="module-subnav">
+        <nav ref={subnavRef} className="fc-module-subnav" aria-label={language === "en-US" ? `${rootLabel} navigation` : `${rootLabel}二级导航`} data-testid="module-subnav">
           {/* The active tab's background slides to the newly chosen tab. */}
           <LayoutGroup id={`fc-subnav-${root.id}`}>
             {subRoutes.map((item) => {
@@ -71,7 +96,7 @@ export function ModuleShell({ route, children, routeAccess }: { route: GovernedA
           </div>
         </div>
       )}
-      <div className="fc-module-content">{children}</div>
+      <div className="fc-module-content" ref={contentRef}>{children}</div>
     </div>
   );
 }
