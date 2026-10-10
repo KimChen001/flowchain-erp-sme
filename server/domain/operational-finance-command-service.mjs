@@ -435,13 +435,13 @@ const DUPLICATE_REASON_MAX = 500;
 
 const duplicateFlagNotFound = () => ({
   code: "DUPLICATE_FLAG_NOT_FOUND",
-  message: "This bill has no open duplicate flag of that kind against that bill. Reload the bill to see its current flags.",
+  message: "This supplier invoice has no open duplicate flag of that kind against that invoice. Reload the supplier invoice to see its current flags.",
   status: 409,
 });
 
 const duplicateFlagChanged = () => ({
   code: "DUPLICATE_FLAG_CHANGED",
-  message: "The other bill changed after this flag was shown. Reload the bill and review the flag again.",
+  message: "The other supplier invoice changed after this flag was shown. Reload the supplier invoice and review the flag again.",
   status: 409,
 });
 
@@ -450,7 +450,7 @@ function dismissDuplicateIssues(invoice, version, input) {
   if (isDuplicateReviewClosed(invoice.status))
     issues.push({
       code: "SUPPLIER_INVOICE_STATUS_INVALID",
-      message: "Duplicate flags are dismissed before approval; this bill is already approved, held or cancelled.",
+      message: "Duplicate flags are dismissed before approval; this supplier invoice is already approved, held or cancelled.",
       status: 409,
     });
   if (invoice.version !== version)
@@ -462,14 +462,14 @@ function dismissDuplicateIssues(invoice, version, input) {
   if (!DUPLICATE_KINDS.includes(text(input.kind)) || !text(input.otherInvoiceId))
     issues.push({
       code: "FINANCE_VALIDATION_FAILED",
-      message: "Name the flag to dismiss: the other bill and the kind (likely or possible).",
+      message: "Name the flag to dismiss: the other supplier invoice and the kind (likely or possible).",
       status: 422,
     });
   const reason = text(input.reason);
   if (!reason)
     issues.push({
       code: "DUPLICATE_DISMISS_REASON_REQUIRED",
-      message: "Enter why this bill is not a duplicate.",
+      message: "Enter why this supplier invoice is not a duplicate.",
       status: 422,
     });
   else if (reason.length > DUPLICATE_REASON_MAX)
@@ -1074,9 +1074,9 @@ export function createOperationalFinanceCommandService({
     const add = (code, message, status = 409) => blockingIssues.push({ code, message, status });
     if (invoice.version !== version) add("FINANCE_VERSION_CONFLICT", "Supplier invoice changed concurrently.");
     if (!["draft", "submitted"].includes(invoice.status))
-      add("SUPPLIER_INVOICE_STATUS_INVALID", "Only a draft or submitted bill can be linked to its receipt.");
+      add("SUPPLIER_INVOICE_STATUS_INVALID", "Only a draft or submitted supplier invoice can be linked to its receipt.");
     else if (!awaitingReceipt(invoice))
-      add("SUPPLIER_INVOICE_RECEIPT_ALREADY_LINKED", "This bill already names its receipt.");
+      add("SUPPLIER_INVOICE_RECEIPT_ALREADY_LINKED", "This supplier invoice already names its receipt.");
     const receipt = receivingDocumentId
       ? await db.receivingDocument.findFirst({
           where: { id: receivingDocumentId, tenantId },
@@ -1094,7 +1094,7 @@ export function createOperationalFinanceCommandService({
     if (receipt.supplierId && receipt.supplierId !== invoice.supplierId)
       add("SUPPLIER_INVOICE_SOURCE_INVALID", "The receipt is from another supplier.");
     if (receipt.currency && receipt.currency !== invoice.currency)
-      add("FINANCE_CURRENCY_MISMATCH", "The receipt currency does not match the bill currency.");
+      add("FINANCE_CURRENCY_MISMATCH", "The receipt currency does not match the supplier invoice currency.");
     const receiptLineIds = receipt.lines.map((line) => line.id);
     const billedRows = receiptLineIds.length
       ? await db.supplierInvoiceLine.findMany({
@@ -1119,7 +1119,7 @@ export function createOperationalFinanceCommandService({
         continue;
       }
       if (candidates.length > 1) {
-        add("SUPPLIER_INVOICE_RECEIPT_LINE_AMBIGUOUS", `Receipt ${receipt.documentNumber || receipt.id} splits line ${line.lineNumber} (${line.sku}) over several receipt lines; record this bill again from the receipt instead.`);
+        add("SUPPLIER_INVOICE_RECEIPT_LINE_AMBIGUOUS", `Receipt ${receipt.documentNumber || receipt.id} splits line ${line.lineNumber} (${line.sku}) over several receipt lines; record this supplier invoice again from the receipt instead.`);
         continue;
       }
       const [match] = candidates;
@@ -1128,7 +1128,7 @@ export function createOperationalFinanceCommandService({
       if (quantity > available)
         warnings.push({
           code: "SUPPLIER_INVOICE_RECEIPT_SHORT",
-          message: `Line ${line.lineNumber} (${line.sku}) bills ${financeFixed(quantity)} but the receipt has ${financeFixed(available > 0n ? available : 0n)} left to bill; the three-way match will show the difference.`,
+          message: `Line ${line.lineNumber} (${line.sku}) invoices ${financeFixed(quantity)} but the receipt has ${financeFixed(available > 0n ? available : 0n)} left to invoice; the three-way match will show the difference.`,
         });
       lines.push({
         supplierInvoiceLineId: line.id,
@@ -1212,7 +1212,7 @@ export function createOperationalFinanceCommandService({
             action: "supplier_invoice_receipt_linked",
             entityType: result.entityType,
             entityId: result.entityId,
-            summary: "Bill recorded before the goods arrived is now linked to its posted receipt.",
+            summary: "Supplier invoice recorded before the goods arrived is now linked to its posted receipt.",
             ...command,
             before: invoiceResult(current).invoice,
             after: result.invoice,
@@ -1861,7 +1861,7 @@ export function createOperationalFinanceCommandService({
             action: "supplier_invoice_duplicate_dismissed",
             entityType: result.entityType,
             entityId: result.entityId,
-            summary: "Duplicate flag dismissed with a reason; the bill itself was not changed.",
+            summary: "Duplicate flag dismissed with a reason; the supplier invoice itself was not changed.",
             ...command,
             before: invoiceResult(current).invoice,
             after: result.invoice,

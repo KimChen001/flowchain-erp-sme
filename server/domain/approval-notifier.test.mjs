@@ -212,7 +212,7 @@ test("a bill is waiting when matched, or when no open or rejected match exceptio
   const { service, mailer } = notifier({ prisma });
   const matched = await service.documentWaiting({ identity: submitter, documentType: "supplier_invoice", documentId: "bill-matched" }).delivery;
   assert.equal(matched.status, "sent");
-  assert.equal(mailer.sent[0].subject, "Supplier bill INV-881 is waiting for approval");
+  assert.equal(mailer.sent[0].subject, "Supplier invoice INV-881 is waiting for approval");
   assert.ok(mailer.sent[0].text.includes("https://flowchain.test/app/procurement/bills/bill-matched"));
   assert.equal((await service.documentWaiting({ identity: submitter, documentType: "supplier_invoice", documentId: "bill-submitted" }).delivery).reason, "not_waiting");
   assert.equal((await service.documentWaiting({ identity: submitter, documentType: "supplier_invoice", matchExceptionId: "ex-1" }).delivery).reason, "not_waiting", "one exception is still open");
@@ -220,7 +220,7 @@ test("a bill is waiting when matched, or when no open or rejected match exceptio
   prisma.financeMatchException.count = async () => 0;
   const cleared = await service.documentWaiting({ identity: submitter, documentType: "supplier_invoice", matchExceptionId: "ex-2" }).delivery;
   assert.equal(cleared.status, "sent");
-  assert.equal(mailer.sent[1].subject, "Supplier bill bill-exception is waiting for approval", "no invoice number: the id");
+  assert.equal(mailer.sent[1].subject, "Supplier invoice bill-exception is waiting for approval", "no invoice number: the id");
 
   const financeOff = notifier({ prisma, environment: { ...env, FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "false" } });
   assert.equal((await financeOff.service.documentWaiting({ identity: submitter, documentType: "supplier_invoice", documentId: "bill-matched" }).delivery).reason, "capability_disabled");

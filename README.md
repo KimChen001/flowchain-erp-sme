@@ -2,7 +2,7 @@
 
 **Purchasing, inventory and sales operations for small and medium businesses. The AI assistant answers from your own records with sources, and fills in purchase requests and supplier follow-ups for a person to confirm.**
 
-FlowChain is an ERP and inventory-purchase-sales (进销存) collaboration platform for SMEs. One team can take a purchase from request to received goods, a matched bill and a recorded payment, keep inventory accurate, and ship and invoice customer orders. The assistant explains what needs attention, cites the records behind every answer, and prepares the next piece of work for a person to check.
+FlowChain is an ERP and inventory-purchase-sales (进销存) collaboration platform for SMEs. One team can take a purchase from request to received goods, a matched supplier invoice and a recorded payment, keep inventory accurate, and ship and invoice customer orders. The assistant explains what needs attention, cites the records behind every answer, and prepares the next piece of work for a person to check.
 
 [中文简介](#中文简介)
 
@@ -10,14 +10,14 @@ FlowChain is an ERP and inventory-purchase-sales (进销存) collaboration platf
 
 | Area | What you can do |
 | --- | --- |
-| **Today** | The purchase orders, reorders, bills and receivables that need work today, with links to the records, and a first-day checklist for a new workspace. |
+| **Today** | The purchase orders, reorders, supplier invoices and receivables that need work today, with links to the records, and a first-day checklist for a new workspace. |
 | **Purchasing** | Purchase requests, RFQs with supplier quotes and awards, and purchase orders from submit and approval through issue. By default, a PO made from an approved request is approved with it. Earlier PO prices are shown when you enter a price or compare quotes. Promised-date changes keep the original date and need a reason. Purchase orders print or save as PDF. |
 | **Purchase fulfillment** | Receiving (GRN): draft, post and reverse, with an impact preview before posting. |
 | **Inventory** | Opening stock, balances, lots and serials, movements, availability and available-to-promise, plus transfers, cycle counts and adjustments. A reorder list ranks items by the day each one has to be ordered. |
 | **Sales** | Sales orders (confirm, hold, resume), reservations and shipments, each posted after a preview. |
 | **Suppliers** | Supplier tiers 1–3 by importance, set by a person with a reason, with a suggested tier that states why. A scorecard measures on time, in full and OTIF against the original promise. Each supplier shows its recent purchase orders and open issues. |
 | **Items and data import** | Item, warehouse and customer master data. Items, suppliers, customers, item–supplier links and opening stock import from CSV or XLSX. |
-| **Finance** | Supplier bills with three-way match (PO, receipt, bill), payables, customer invoices, receivables and credit notes. A bill can arrive before the goods; payment waits for the match. Bills that may duplicate another are flagged before approval. Payments made outside FlowChain are recorded against bills and receivables. Customer invoices print or save as PDF. |
+| **Finance** | Supplier invoices with three-way match (PO, receipt, invoice), payables, customer invoices, receivables and credit notes. A supplier invoice can arrive before the goods; payment waits for the match. Supplier invoices that may duplicate another are flagged before approval. Payments made outside FlowChain are recorded against supplier invoices and receivables. Customer invoices print or save as PDF. |
 | **Reports** | Dashboards for overview, purchasing, sales, inventory, finance and suppliers, a report catalog and export. |
 | **AI assistant** | Questions about today's work, risks, spend and your own documents, and filled-in drafts for the next step. See [below](#ai-assistant). |
 

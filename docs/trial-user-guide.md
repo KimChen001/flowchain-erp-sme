@@ -63,7 +63,7 @@ recorded stay exactly as they are.
 and default warehouse.
 
 **Approval emails.** When a purchase request or purchase order is submitted,
-a supplier bill becomes ready to approve (matched, or its last match exception
+a supplier invoice becomes ready to approve (matched, or its last match exception
 approved), or an inventory adjustment is created, FlowChain emails the people
 who may approve it. The email says only the document type and number, with a
 link to it; it holds no amounts, suppliers, customers or items, and it cannot
@@ -173,7 +173,7 @@ recorded.
 ## 3. Buying: from request to payment
 
 The usual path is: purchase request → approval → purchase order → approval →
-issue → receipt → bill → three-way match → approval → payment record.
+issue → receipt → supplier invoice → three-way match → approval → payment record.
 
 **1. Purchase request.** **Procurement › Purchase requests › New purchase
 request**. For each line enter the item, quantity, supplier, **Estimated unit
@@ -215,23 +215,25 @@ warehouse, purchase order, receiver, arrival day and each line in its own unit.
 The layout can be adjusted for one print; an administrator can save it as a
 layout everyone in the workspace prints with.
 
-**6. Supplier bill.** Bills are under **Procurement › Bills**. From a posted
-receipt choose **Record bill** (or **New bill**), enter the supplier's invoice
-number, dates and the billed quantities and prices, **Preview**, then **Create
-draft**. A bill can also be recorded before the goods arrive; it then waits for
-the receipt (**Link receipt**) and cannot be paid until it is matched.
-FlowChain flags a bill that looks like a duplicate of another.
+**6. Supplier invoice.** Supplier invoices are under **Procurement › Supplier
+invoices**. From a posted receipt choose **Record supplier invoice** (or **New
+supplier invoice**), enter the supplier's invoice number, dates and the
+invoiced quantities and prices, **Preview**, then **Create draft**. A supplier
+invoice can also be recorded before the goods arrive; it then waits for the
+receipt (**Link receipt**) and cannot be paid until it is matched. FlowChain
+flags a supplier invoice that looks like a duplicate of another.
 
-**7. Three-way match.** On the bill choose **Submit**, then **Match**. The
-match compares the bill with the purchase order and the receipt: quantity
-billed against quantity received and not yet billed, and unit price and line
+**7. Three-way match.** On the supplier invoice choose **Submit**, then
+**Match**. The match compares the supplier invoice with the purchase order and
+the receipt: quantity invoiced against quantity received and not yet invoiced, and unit price and line
 amount against the order. Differences within your **Invoice matching
 tolerances** pass; anything else becomes a **Match exception** for a person to
-review. A matched bill can be **Approve**d, which makes it a bill to pay
-(**Payables & receivables › Bills to pay**).
+review. A matched supplier invoice can be **Approve**d, which makes it a
+supplier invoice to pay (**Payables & receivables › Supplier invoices to
+pay**).
 
 **8. Payment record.** Pay the supplier the way you always do (check, ACH,
-wire or card). Then, on the bill, choose **Record payment** and enter the date,
+wire or card). Then, on the supplier invoice, choose **Record payment** and enter the date,
 amount, method and reference. FlowChain never moves money; it records the
 payment you made. Partial payments are allowed. A wrong entry is voided with a
 reason, never deleted.
@@ -257,8 +259,9 @@ warehouse and location to take the stock from, check the preview and
 open the shipment and choose **Post shipment**. Posting takes the quantity out
 of stock. A posted shipment can be reversed with a reason.
 
-**4. Invoice.** Customer invoices are under **Sales › Invoices**. From the
-shipment choose **Create invoice** (or **New invoice**), choose the shipment,
+**4. Customer invoice.** Customer invoices are under **Sales › Customer
+invoices**. From the shipment choose **Create customer invoice** (or **New
+customer invoice**), choose the shipment,
 enter the quantity and any tax, **Preview** and **Create draft**. The price
 comes from the sales order. Then **Submit**, **Approve** and **Issue
 invoice**. Issuing creates the amount the customer owes under **Payables &
@@ -268,7 +271,7 @@ yourself. An approved invoice that is not issued yet opens as a preview marked
 "Not issued — do not send."
 
 **5. Payment received.** When the customer pays, on the issued invoice choose
-**Record payment received** and enter the date, amount, method and reference. As with bills,
+**Record payment received** and enter the date, amount, method and reference. As with supplier invoices,
 this records a payment; no money moves through FlowChain.
 
 ## 5. Inventory
@@ -376,9 +379,9 @@ The standard roles:
 | --- | --- |
 | Workspace Administrator | Everything, including settings, users and roles |
 | Operations Manager | Approvals, purchasing, receiving, sales, inventory and finance |
-| Operations Specialist | Receiving, sales orders and shipments, bill entry and matching, and inventory drafts (a manager posts counts and adjustments) |
+| Operations Specialist | Receiving, sales orders and shipments, supplier invoice entry and matching, and inventory drafts (a manager posts counts and adjustments) |
 | Procurement Specialist | Purchase requests and orders, items and suppliers |
-| Finance Specialist | Bills, invoices, matching and payment records |
+| Finance Specialist | Supplier and customer invoices, matching and payment records |
 | Read-only Viewer | Looks at records; cannot change them or see amounts |
 
 For example, a Procurement Specialist can submit a purchase request but not
