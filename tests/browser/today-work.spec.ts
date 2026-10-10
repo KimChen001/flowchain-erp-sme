@@ -74,7 +74,7 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
     await expect(first).toContainText(/still to receive|lines? still to receive/);
   }
   // The sales order row says what is left to reserve.
-  if (overview.workItems.length > 10) await root.getByRole("button", { name: /Show all/ }).click();
+  if (overview.workItems.length > 5) await root.getByRole("button", { name: /Show all/ }).click();
   const salesOrder = list.locator('[data-kind="sales_order_to_reserve"]');
   await expect(salesOrder).toContainText("Sales order to reserve");
   await expect(salesOrder).toContainText("35 pcs still to reserve");
@@ -88,7 +88,7 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
 
   // The overdue tile filters the list to overdue rows.
   await root.getByTestId("today-tile-overdue").click();
-  await expect(list.getByTestId("today-work-item")).toHaveCount(Math.min(overview.overdue, 10));
+  await expect(list.getByTestId("today-work-item")).toHaveCount(Math.min(overview.overdue, 5));
   await expect(list.locator('[data-kind="purchase_order_due"]')).toHaveCount(0);
   await root.getByTestId("today-tile-all").click();
 
