@@ -123,6 +123,7 @@ const answerStrings = (response) => [
   response.conclusion.title, response.conclusion.summary,
   ...response.keyEvidence.flatMap((item) => [item.label, item.entityLabel, item.summary, item.status, item.sourceLabel]),
   ...response.navigationLinks.map((link) => link.label),
+  ...response.dataLimitations.flatMap((item) => [item.label, item.description, item.consequence]),
   ...response.businessImpact.flatMap((item) => [item.area, item.impact, item.explanation]),
   response.businessQuery.scopeBadge, ...response.businessQuery.goalLabels,
   ...response.businessQuery.sectionCards.flatMap((card) => [card.label, card.stateLabel, ...card.rows.map((row) => row.supplier?.displayName)]),
@@ -171,5 +172,26 @@ test('a follow-up with a restricted supplier label still scopes by id, not by th
     await handleAiRuntimeGatewayRoute(next.ctx)
     const ids = next.result().payload.resolvedContext.entityRefs.map((ref) => ref.entityId)
     assert.deepEqual(ids, previousEntityRefs[0].entityId ? ['supplier-a'] : [])
+  }
+})
+
+test('a recent or soon business query words the 7-day default in the answer language', async () => {
+  const cases = [
+    { message: 'Which suppliers need payment soon?', code: 'time_window_soon_default', description: '"Soon" means the next 7 days by default; give a date for a narrower window.' },
+    { message: 'Which suppliers have recent payments due?', code: 'time_window_recent_default', description: '"Recent" means the next 7 days by default.' },
+    { message: '哪些供应商很快需要付款？', code: 'time_window_soon_default', description: '“很快”按产品默认的未来 7 天窗口解释；可指定更精确日期。' },
+    { message: '最近哪些供应商需要付款？', code: 'time_window_recent_default', description: '“最近”按产品默认的未来 7 天窗口解释。' },
+  ]
+  for (const { message, code, description } of cases) {
+    const english = !/[\u4e00-\u9fff]/.test(message)
+    const harness = baseContext('/api/ai-runtime/respond', { message, answerLanguage: english ? 'en-US' : 'zh-CN', activeModuleId: 'srm' })
+    await handleAiRuntimeGatewayRoute(harness.ctx)
+    const response = harness.result().payload
+    assert.equal(response.intent, 'business_query_plan_v1', message)
+    assert.equal(response.language, english ? 'en-US' : 'zh-CN', message)
+    assert.deepEqual(response.dataLimitations.map((item) => [item.code, item.description]), [[code, description]], message)
+    const strings = answerStrings(response)
+    if (english) assert.deepEqual(strings.filter((value) => /[\u4e00-\u9fff]/.test(value)), [], message)
+    else assert.ok(strings.includes(description) && strings.includes('查询限制'), message)
   }
 })

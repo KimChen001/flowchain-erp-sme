@@ -110,8 +110,24 @@ const EVIDENCE_REASON_COPY = Object.freeze({
   receiving_exception: ['Receipt has an exception or rejected quantity.', '收货存在异常或拒收数量。'],
 })
 const RESTRICTED_SUPPLIER = Object.freeze(['Restricted supplier', '受限供应商'])
+// Limitation codes from the business time window, as [English, Chinese]. Users
+// see the sentence; the code itself stays in `code`.
+const TIME_WINDOW_LIMITATION_COPY = Object.freeze({
+  time_window_recent_default: ['"Recent" means the next 7 days by default.', '“最近”按产品默认的未来 7 天窗口解释。'],
+  time_window_soon_default: ['"Soon" means the next 7 days by default; give a date for a narrower window.', '“很快”按产品默认的未来 7 天窗口解释；可指定更精确日期。'],
+})
+const timezoneInvalidCopy = (configured, resolved) => [`The workspace timezone ${configured} is not valid, so dates use ${resolved}.`, `无效工作区时区 ${configured}，已按 ${resolved} 解释。`]
 const text = (value) => String(value ?? '').trim()
 const inLanguage = ([en, zh], english) => english ? en : zh
+
+// Words the time window's limitation codes in the answer language; any other
+// limitation keeps the text the executor gave it.
+function limitationDescription(code, english) {
+  if (TIME_WINDOW_LIMITATION_COPY[code]) return inLanguage(TIME_WINDOW_LIMITATION_COPY[code], english)
+  const [head, resolved, ...configured] = code.split(':')
+  if (head === 'workspace_timezone_invalid') return inLanguage(timezoneInvalidCopy(configured.join(':'), resolved), english)
+  return code
+}
 
 // Never returns an unlisted code as is: English gets it as words, Chinese a
 // general label. A stored Chinese status stays as is in Chinese.
@@ -195,7 +211,7 @@ export function buildBusinessQueryResponseV2(pack, planner = {}, request = {}) {
       }
   const evidence = (pack.evidence || []).slice(0, 12).map((item, index) => evidenceItem(item, index, { L, english }))
   const withSupplierLabel = (row) => row?.supplier ? { ...row, supplier: { ...row.supplier, displayName: supplierLabel(row.supplier, english) } } : row
-  const limitations = [...new Set(pack.limitations || [])].map((item) => ({ label: L('查询限制'), description: text(item), severity: 'warning', consequence: L('该限制不会被解释为业务数量 0。') }))
+  const limitations = [...new Set(pack.limitations || [])].map(text).map((code) => ({ code, label: L('查询限制'), description: limitationDescription(code, english), severity: 'warning', consequence: L('该限制不会被解释为业务数量 0。') }))
   const goalLabels = (planner.plan?.goals || sections.map((section) => section.goal)).map((goal) => L(GOAL_LABELS[goal] || goal))
   const sectionCards = sections.map((section) => ({
     goal: section.goal,

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { BUSINESS_QUERY_GOALS, emptyBusinessQueryPlan, validateBusinessQueryPlan } from './ai-business-query-plan.mjs'
-import { resolveBusinessTimeWindow } from './ai-business-time-window.mjs'
+import { detectBusinessTimeWindow, resolveBusinessTimeWindow } from './ai-business-time-window.mjs'
 import { buildDeterministicBusinessQueryPlan, planBusinessQuery } from './ai-semantic-query-planner.mjs'
 
 const suppliers = [
@@ -120,7 +120,15 @@ test('time windows fall back to America/New_York when the workspace timezone is 
   assert.deepEqual(missing.limitations, [])
   const invalid = resolveBusinessTimeWindow('today', { now, timezone: 'Not/AZone' })
   assert.equal(invalid.timezone, 'America/New_York')
-  assert.ok(invalid.limitations.some((item) => item.includes('America/New_York')))
+  assert.deepEqual(invalid.limitations, ['workspace_timezone_invalid:America/New_York:Not/AZone'])
+})
+
+test('recent and soon resolve to the next 7 days with a limitation code, never wording', () => {
+  const now = new Date('2026-07-24T08:00:00.000Z')
+  for (const [expression, code] of [['Which suppliers need payment soon?', 'time_window_soon_default'], ['哪些供应商很快需要付款？', 'time_window_soon_default'], ['Show recent supplier payments.', 'time_window_recent_default'], ['最近哪些供应商需要付款？', 'time_window_recent_default']]) {
+    assert.equal(detectBusinessTimeWindow(expression), 'next_7_days', expression)
+    assert.deepEqual(resolveBusinessTimeWindow('next_7_days', { now, expression }).limitations, [code], expression)
+  }
 })
 
 test('domain words after supplier or vendor are not unresolved supplier names', () => {

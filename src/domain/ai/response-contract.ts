@@ -83,6 +83,8 @@ export type AiResponseV2NavigationLink = {
 };
 
 export type AiResponseV2DataLimitation = {
+  // Machine code behind the description; never shown.
+  code?: string;
   label: string;
   description: string;
   severity: AiResponseV2Severity;

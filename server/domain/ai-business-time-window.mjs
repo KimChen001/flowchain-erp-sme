@@ -112,9 +112,10 @@ export function resolveBusinessTimeWindow(kind = 'all', { now = new Date(), time
     interpretation = 'due before the current workspace-local day'
   }
 
-  if (/最近|近期|recent(?:ly)?/i.test(expression)) limitations.push('“最近”按产品默认的未来 7 天窗口解释。')
-  if (/很快|soon/i.test(expression)) limitations.push('“很快”按产品默认的未来 7 天窗口解释；可指定更精确日期。')
-  if (resolvedTimezone !== timezone) limitations.push(`无效工作区时区 ${timezone}，已按 ${resolvedTimezone} 解释。`)
+  // Limitation codes; the business query response words them in the answer language.
+  if (/最近|近期|recent(?:ly)?/i.test(expression)) limitations.push('time_window_recent_default')
+  if (/很快|soon/i.test(expression)) limitations.push('time_window_soon_default')
+  if (resolvedTimezone !== timezone) limitations.push(`workspace_timezone_invalid:${resolvedTimezone}:${timezone}`)
   return {
     type: normalizedKind,
     startAt: startAt?.toISOString() || null,
