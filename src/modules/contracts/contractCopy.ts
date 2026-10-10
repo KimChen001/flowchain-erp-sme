@@ -17,7 +17,7 @@ const zh: Record<string, string> = {
   // Key dates.
   'Notice by': '通知截止', 'Ends': '到期', 'Terminated on': '终止于', 'No end date': '无到期日',
   // List cards.
-  'Signed and in force': '已签署并生效', 'End date within the reminder window': '到期日在提醒期内',
+  'In force': '有效合同', 'Active, including those with a date coming up': '生效中，含关键日期将至的合同', 'End date within the reminder window': '到期日在提醒期内',
   'Renews automatically unless notice is given': '如不发出通知将自动续约', 'Not active yet': '尚未生效',
   // Search card.
   'Contract search': '合同查询', 'Search contracts by number, their reference, title, supplier, type, state and owner.': '按合同编号、对方编号、标题、供应商、类型、状态和负责人查询合同。',

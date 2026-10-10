@@ -402,7 +402,7 @@ const declaredAppRoutes: AppRouteDefinition[] = [
     path: "/app/contracts/list",
     moduleId: "contracts",
     moduleLabel: "合同",
-    label: "合同",
+    label: "全部合同",
     description: "查看全部供应商合同。",
     parentId: "contracts",
     pageType: "list",

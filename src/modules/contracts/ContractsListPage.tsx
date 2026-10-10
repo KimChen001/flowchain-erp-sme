@@ -118,7 +118,7 @@ export function ContractsListPage({ mode }: { mode: "all" | "ending" }) {
         </Card>
       ) : (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <KpiCard label={t("Active")} value={counts ? String(counts.active + counts.notice_due + counts.ending + counts.past_end) : "—"} sub={t("Signed and in force")} icon={FileSignature} color={A.green} />
+          <KpiCard label={t("In force")} value={counts ? String(counts.active + counts.notice_due + counts.ending + counts.past_end) : "—"} sub={t("Active, including those with a date coming up")} icon={FileSignature} color={A.green} />
           <KpiCard label={t("Ending soon")} value={count(counts?.ending)} sub={t("End date within the reminder window")} icon={CalendarClock} color={A.orange} />
           <KpiCard label={t("Notice due")} value={count(counts?.notice_due)} sub={t("Renews automatically unless notice is given")} icon={AlarmClock} color={A.orange} />
           <KpiCard label={t("Drafts")} value={count(counts?.draft)} sub={t("Not active yet")} icon={FilePen} color={A.gray1} />

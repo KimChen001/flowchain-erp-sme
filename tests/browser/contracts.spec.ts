@@ -59,7 +59,7 @@ test("a manager records a draft, activates it and adds the signed file; Ending s
   const labels = (await sidebar.locator("button").allInnerTexts()).map((label) => label.split(/\s+/)[0]);
   expect(labels.indexOf("Suppliers")).toBeGreaterThan(-1);
   expect(labels.indexOf("Contracts")).toBe(labels.indexOf("Suppliers") + 1);
-  await expect(page.getByTestId("module-subnav").getByRole("link")).toHaveText(["Contracts", "Ending soon"]);
+  await expect(page.getByTestId("module-subnav").getByRole("link")).toHaveText(["All contracts", "Ending soon"]);
   await expect(page.getByTestId("contract-new")).toBeVisible();
 
   // From the supplier: the form starts with the supplier filled in.
@@ -174,7 +174,7 @@ test("the contract pages read in Chinese", async ({ page }) => {
 
   await page.goto("/app/contracts/list");
   await expect(page.locator("aside").getByRole("button", { name: /^合同/ })).toBeVisible();
-  await expect(page.getByTestId("module-subnav").getByRole("link")).toHaveText(["合同", "即将到期"]);
+  await expect(page.getByTestId("module-subnav").getByRole("link")).toHaveText(["全部合同", "即将到期"]);
   await expect(page.getByText("合同查询", { exact: true })).toBeVisible();
   await page.getByLabel("搜索合同", { exact: true }).fill(stamp);
   const row = page.getByTestId("contract-row").filter({ hasText: contract.number });
