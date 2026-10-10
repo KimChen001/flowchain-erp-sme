@@ -270,8 +270,13 @@ function RuntimeHomepage() {
           <ul className="mt-3 divide-y" data-testid="today-work-list">
             {visible.map((item) => (
               <li key={item.id} className="flex items-start gap-3 py-3" data-testid="today-work-item" data-kind={item.kind}>
-                <span className="mt-0.5 shrink-0 rounded px-2 py-1 text-xs font-medium" style={tone(item)}>{dateText(item)}</span>
+                {/* A fixed column, so every row's title starts at the same place;
+                    on a phone the date sits above the title instead. */}
+                <div className="mt-0.5 hidden w-48 shrink-0 sm:block" data-testid="today-work-date">
+                  <span className="inline-block max-w-full rounded px-2 py-1 text-xs font-medium" style={tone(item)}>{dateText(item)}</span>
+                </div>
                 <div className="min-w-0 flex-1">
+                  <span className="mb-1 inline-block rounded px-2 py-0.5 text-xs font-medium sm:hidden" style={tone(item)}>{dateText(item)}</span>
                   <div className="text-sm font-medium">{t(`kind_${item.kind}` as TodayCopyKey)}</div>
                   <Link to={item.href} className={`mt-0.5 inline-block text-xs ${LINK}`}>{item.label}</Link>
                   <div className="text-xs" style={{ color: A.sub }}>{reasons(item).join(" · ")}</div>
