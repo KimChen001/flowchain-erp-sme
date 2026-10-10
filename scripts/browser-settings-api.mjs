@@ -26,6 +26,7 @@ const pgPort = await freePort();
 const password = `settings-browser-${randomUUID()}`;
 const directory = await mkdtemp(join(tmpdir(), "flowchain-settings-browser-"));
 const artifactDirectory = await mkdtemp(join(tmpdir(), "flowchain-intake-browser-artifacts-"));
+const uploadDirectory = await mkdtemp(join(tmpdir(), "flowchain-settings-browser-uploads-"));
 const database = "flowchain_settings_browser";
 const url = `postgresql://flowchain_settings_browser:${encodeURIComponent(password)}@127.0.0.1:${pgPort}/${database}?schema=public`;
 const pg = new EmbeddedPostgres({ databaseDir: directory, user: "flowchain_settings_browser", password, port: pgPort, persistent: false, onLog: () => {}, onError: () => {} });
@@ -38,6 +39,7 @@ async function cleanup() {
   await pg.stop().catch(() => {});
   await rm(directory, { recursive: true, force: true }).catch(() => {});
   await rm(artifactDirectory, { recursive: true, force: true }).catch(() => {});
+  await rm(uploadDirectory, { recursive: true, force: true }).catch(() => {});
 }
 
 async function seed() {
@@ -67,6 +69,10 @@ try {
     NODE_ENV: "test",
     FLOWCHAIN_INTAKE_LOCAL_STORAGE_DIR: artifactDirectory,
     FLOWCHAIN_ENABLE_DATA_IMPORT: "true",
+    // Contracts sit beside the supplier pages these specs cover
+    // (tests/browser/contracts.spec.ts); signed files go to a disposable folder.
+    FLOWCHAIN_ENABLE_CONTRACTS: "true",
+    FLOWCHAIN_UPLOAD_STORAGE_DIR: uploadDirectory,
   });
   await execFileAsync(node, [prismaCli, "migrate", "deploy"], { cwd: root, env: process.env, maxBuffer: 10 * 1024 * 1024 });
   prisma = await createPrismaClient(process.env);
