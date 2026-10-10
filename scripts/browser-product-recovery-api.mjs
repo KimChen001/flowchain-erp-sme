@@ -58,6 +58,11 @@ const usTrialFlags = usTrial ? {
   FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "true",
   FLOWCHAIN_ENABLE_DATA_IMPORT: "true",
 } : {};
+// PLAYWRIGHT_CONTRACTS=true turns contracts on, as the local walkthrough does
+// (they are off in the trial), so the scenario seeds its three contracts.
+const contracts = process.env.PLAYWRIGHT_CONTRACTS === "true";
+const uploadDirectory = contracts ? await mkdtemp(join(tmpdir(), "flowchain-product-recovery-uploads-")) : "";
+const contractFlags = contracts ? { FLOWCHAIN_ENABLE_CONTRACTS: "true", FLOWCHAIN_UPLOAD_STORAGE_DIR: uploadDirectory } : {};
 
 async function seedComparisonQuotation(client, quote) {
   await client.supplierQuotation.create({
@@ -371,6 +376,7 @@ async function cleanup() {
   await prisma?.$disconnect().catch(() => {});
   await pg.stop().catch(() => {});
   await rm(directory, { recursive: true, force: true }).catch(() => {});
+  if (uploadDirectory) await rm(uploadDirectory, { recursive: true, force: true }).catch(() => {});
 }
 
 try {
@@ -391,6 +397,7 @@ try {
     SCM_API_PORT: String(apiPort),
     NODE_ENV: "development",
     ...usTrialFlags,
+    ...contractFlags,
   });
   await execFileAsync(process.execPath, [prismaCli, "migrate", "deploy"], {
     cwd: root,

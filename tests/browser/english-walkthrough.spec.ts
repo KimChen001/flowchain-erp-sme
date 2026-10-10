@@ -36,6 +36,12 @@ const ROUTES = [
   "/app/master-data/suppliers/LOCAL-DEMO-SUP-001",
   "/app/master-data/supplier-evaluation",
   "/app/master-data/supplier-risks",
+  // Contracts are on in the walkthrough (PLAYWRIGHT_CONTRACTS=true).
+  "/app/contracts/list",
+  "/app/contracts/ending",
+  "/app/contracts/new",
+  "/app/contracts/LOCAL-DEMO-CT-001",
+  "/app/contracts/LOCAL-DEMO-CT-002",
   "/app/master-data/customers",
   "/app/master-data/warehouses",
   "/app/master-data/payment-terms",
@@ -126,6 +132,26 @@ test("Supplier risks lists the walkthrough's open issues, the earliest date firs
   await page.getByLabel("Issue type filter", { exact: true }).selectOption("");
   await page.getByLabel("Search suppliers", { exact: true }).fill(overdue.supplierName);
   await expect(rows).toHaveCount(risks.issues.filter((issue: { supplierName: string }) => issue.supplierName.toLowerCase().includes(overdue.supplierName.toLowerCase())).length);
+});
+
+test("the walkthrough's contracts: notice due and ending soon on Ending soon, earliest key date first, and one in force", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/app/contracts/ending");
+  const rows = page.getByTestId("contract-row");
+  // Horizon's notice is due in 20 days, before Acme's end date in 45.
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("CT-DE000002");
+  await expect(rows.nth(0).getByTestId("contract-state-chip")).toHaveText("Notice due");
+  await expect(rows.nth(0)).toContainText("Notice by");
+  await expect(rows.nth(1)).toContainText("CT-DE000001");
+  await expect(rows.nth(1).getByTestId("contract-state-chip")).toHaveText("Ending soon");
+  await page.goto("/app/contracts/list");
+  await expect(page.getByTestId("contracts-count")).toHaveText("3 contracts, 3 shown");
+  await expect(page.getByTestId("contract-row").filter({ hasText: "CT-DE000003" }).getByTestId("contract-state-chip")).toHaveText("Active");
+  await page.goto("/app/contracts/LOCAL-DEMO-CT-002");
+  await expect(page.getByTestId("contract-dates")).toContainText("Renews automatically");
+  await expect(page.getByTestId("contract-history")).toContainText("Activated");
+  await expect(page.getByTestId("contract-renewals")).toContainText("No renewal recorded.");
 });
 
 test("variance types show as labels, not stored codes", async ({ page }) => {
@@ -282,6 +308,9 @@ for (const path of [
   "/app/master-data/supplier-evaluation",
   "/app/master-data/supplier-risks",
   "/app/master-data/item-suppliers",
+  "/app/contracts/list",
+  "/app/contracts/ending",
+  "/app/contracts/LOCAL-DEMO-CT-002",
   "/app/reports/overview",
   "/app/finance/overview",
 ]) {
