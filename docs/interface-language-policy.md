@@ -204,7 +204,10 @@ is phrased by its frame words (English question and function words; Chinese
 question words, particles and pronouns), not by the names it carries: "How many
 未结采购订单 do we have?" is answered in English and "PO-012 的状态是什么？" in
 Chinese. Supplier, item and record names are shown as stored. The original
-`answerLanguage` from the client is kept as `interfaceLanguage`.
+`answerLanguage` from the client is kept as `interfaceLanguage`. The answer card's
+own labels (severity, "Priorities", "Impact:", "Next step", the evidence counts)
+follow the answer's language too, so a Chinese question on the English interface
+reads all in Chinese (`src/components/ai/AiResponseV2Renderer.tsx`).
 
 Checked in both languages: the workspace skill answers (every skill, both
 languages, the same ids, counts and amounts) and the business query labels the

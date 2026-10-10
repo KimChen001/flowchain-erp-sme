@@ -51,8 +51,10 @@ test('every skill answers with the full V2 shape in both languages and the same 
     }
     assert.equal(english.language, 'en-US')
     assert.equal(chinese.language, 'zh-CN')
-    assert.equal(english.answerSourceLabel, 'Answered from your workspace data')
-    assert.equal(chinese.answerSourceLabel, '基于当前工作区数据回答')
+    // The help answer reads no business data and says so.
+    const help = skillId === 'capability_overview'
+    assert.equal(english.answerSourceLabel, help ? 'No workspace data was read for this answer' : 'Answered from your workspace data')
+    assert.equal(chinese.answerSourceLabel, help ? '本次回答没有读取工作区数据' : '基于当前工作区数据回答')
     assert.doesNotMatch(JSON.stringify(english), CJK, `${skillId} English answer has no Chinese`)
     assert.match(chinese.conclusion.title + chinese.conclusion.summary, CJK, `${skillId} Chinese conclusion`)
     assert.deepEqual(invariant(chinese), invariant(english), `${skillId} facts do not depend on the language`)

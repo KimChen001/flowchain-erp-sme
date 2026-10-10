@@ -11,7 +11,13 @@ import { toolsFor } from './ai-skill-registry.mjs'
 
 export function runCapabilityOverview(_facts, { refusal = false, outOfDomain = false, actor = null, route = null } = {}) {
   const unsupported = refusal ? [] : (Array.isArray(route?.unsupportedIds) ? route.unsupportedIds : []).slice(0, 3)
-  return { skillId: 'capability_overview', refusal, outOfDomain: outOfDomain && !refusal, unsupported, skills: toolsFor(actor).map((entry) => entry.id).filter((id) => id !== 'capability_overview') }
+  const outside = outOfDomain && !refusal
+  // A question about contracts, which no skill reads yet.
+  const contracts = !refusal && !outside && Boolean(route?.contracts)
+  // A question no rule, record or model could answer: not a greeting, the
+  // help chip, an instruction or a skill the actor may not use.
+  const unmatched = !refusal && !outside && !contracts && !unsupported.length && Boolean(route) && !route.capability && !route.greeting && !route.skillId
+  return { skillId: 'capability_overview', refusal, outOfDomain: outside, contracts, unmatched, unsupported, skills: toolsFor(actor).map((entry) => entry.id).filter((id) => id !== 'capability_overview') }
 }
 
 // The workspace topic a question names, most specific first, and the skills
@@ -35,22 +41,26 @@ export function aiSkillQuestionTopic(query) {
 export function presentCapabilityOverview(result, _facts, { skill, language, query }) {
   const topic = result.refusal || result.outOfDomain ? null : aiSkillQuestionTopic(query)
   const order = result.refusal ? ['prepare_action_draft', 'today_priorities', 'highest_risk_items', 'records_needing_data', 'workspace_metrics'] : [...(topic?.skills || []), 'today_priorities', 'highest_risk_items', 'records_needing_data', 'workspace_metrics', 'prepare_action_draft']
-  return presentAiSkillAnswer({
+  const answer = presentAiSkillAnswer({
     skill, facts: null, language, query,
-    title: aiSkillText(result.refusal ? 'capability.refusal.title' : 'capability.title', language),
+    title: aiSkillText(result.refusal ? 'capability.refusal.title' : result.contracts ? 'capability.contracts.title' : result.unmatched ? 'capability.unmatched.title' : 'capability.title', language),
     summary: result.refusal
       ? aiSkillSentences([aiSkillText('capability.refusal.summary', language), aiSkillText('capability.summary', language)], language)
       : aiSkillSentences([
+        result.contracts ? aiSkillText('capability.contracts', language) : '',
         result.outOfDomain ? aiSkillText('capability.outside', language) : '',
         result.unsupported?.length ? aiSkillText(result.unsupported.length > 1 ? 'capability.unsupported_ids' : 'capability.unsupported_id', language, { id: aiSkillList(result.unsupported, language) }) : '',
-        topic && !result.unsupported?.length ? aiSkillText('capability.topic', language, { topic: aiSkillText(`topic.${topic.id}`, language) }) : '',
+        topic && !result.contracts && !result.unsupported?.length ? aiSkillText('capability.topic', language, { topic: aiSkillText(`topic.${topic.id}`, language) }) : '',
         aiSkillText('capability.summary', language),
       ], language),
     severity: result.refusal ? 'warning' : 'info',
     items: [],
-    navigation: [],
+    navigation: result.contracts ? [{ label: aiSkillText('capability.contracts.open', language), moduleId: 'contracts:list', returnTo: 'ai-assistant', source: 'ai' }] : [],
     followUpIds: [...new Set(order)].filter((id) => result.skills.includes(id)).slice(0, 4),
   })
+  // It reads no business data, so it does not say "Answered from your workspace data".
+  const label = aiSkillText('answer.source_none', language)
+  return { ...answer, answerSourceLabel: label, runtimeModeLabel: label }
 }
 
 // Open and overdue purchase orders, committed spend and short SKUs, exactly as

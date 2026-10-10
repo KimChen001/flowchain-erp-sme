@@ -12,7 +12,9 @@ import { A } from "../ui";
 import { useI18n } from "../../i18n/I18n";
 
 type Language = "en-US" | "zh-CN";
-// The renderer's own labels, in the UI language. Answer text comes from the server.
+// The renderer's own labels, in the answer's language (the question's), so a
+// Chinese question on the English interface reads all in Chinese; the UI
+// language when the answer has none. Answer text comes from the server.
 const rendererCopy = {
   "en-US": {
     severity: { info: "Info", warning: "Attention", risk: "Risk", success: "OK" },
@@ -127,9 +129,11 @@ function Detail({ title, children, testId }: { title: string; children: ReactNod
 
 export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft, onFollowUp }: { response: AiResponseV2; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; onFollowUp?: (prompt: string, skillHint?: string) => void }) {
   const { language: uiLanguage } = useI18n();
-  const language: Language = uiLanguage === "zh-CN" ? "zh-CN" : "en-US";
+  const language: Language = response?.language === "zh-CN" || response?.language === "en-US" ? response.language : uiLanguage === "zh-CN" ? "zh-CN" : "en-US";
   const copy = rendererCopy[language];
   if (!response || response.version !== "v2") return null;
+  const contextCount = response.contextCardCount ?? response.contextCards?.length ?? 0;
+  const limitationCount = response.limitationCount ?? response.dataLimitations.length;
   if (response.rag) return <RagAnswerCard rag={response.rag} title={response.conclusion.title} summary={response.conclusion.summary} />;
   const focused = toAiFocusedResponse(response, language);
   // A compound answer shows a section per part in place of the summary and
@@ -149,8 +153,9 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
         {isAiCapabilityAnswer(response) ? null : (
           <div className="mt-2 flex gap-2 text-[11px]" style={{ color: A.gray2 }}>
             <span>{fill(copy.evidenceCount, { count: response.realEvidenceCount ?? response.keyEvidence.length })}</span>
-            <span>· {fill(copy.contextCount, { count: response.contextCardCount ?? response.contextCards?.length ?? 0 })}</span>
-            <span>· {fill(copy.limitationCount, { count: response.limitationCount ?? response.dataLimitations.length })}</span>
+            {/* Only what there is: "System notes 0" says nothing. */}
+            {contextCount ? <span>· {fill(copy.contextCount, { count: contextCount })}</span> : null}
+            {limitationCount ? <span>· {fill(copy.limitationCount, { count: limitationCount })}</span> : null}
           </div>
         )}
       </section>

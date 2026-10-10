@@ -73,9 +73,34 @@ function supplierOf(item, facts) {
   return text(row?.supplier) || null
 }
 
+// The totals an answer states: the report figures every data answer carries
+// (metrics) and its own counts without a record or a currency (figures).
+// They count everything the answer is about, not only the records it lists.
+const METRIC_TOTALS = [['open_purchase_orders', 'openPurchaseOrders'], ['overdue_purchase_orders', 'overduePurchaseOrders'], ['short_skus', 'atRiskSkuCount']]
+// The figures that count a whole list the answer shows only the first of.
+const LIST_TOTALS = new Set(['attention_item_count', 'risk_item_count', 'supplier_attention_count', 'overdue_po_count'])
+const slug = (key) => String(key).toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '')
+function totalsOf(response) {
+  const totals = {}
+  for (const [key, field] of METRIC_TOTALS) if (Number.isFinite(response.metrics?.[field])) totals[key] = response.metrics[field]
+  for (const figure of array(response.figures)) {
+    if (!figure || figure.entityId || figure.currency || !Number.isFinite(figure.value) || /amount|price|spend/i.test(`${figure.code} ${figure.key}`)) continue
+    totals[slug(figure.key)] = figure.value
+  }
+  return totals
+}
+// Whether the answer lists only the first records of a longer list ("the
+// first 5 of 21"): then its counts of the listed records are not totals.
+function listCutOff(response, listed) {
+  const listTotals = array(response.figures).filter((figure) => figure && !figure.entityId && LIST_TOTALS.has(figure.code) && Number.isFinite(figure.value))
+  return array(response.keyEvidence).length > listed || listTotals.some((figure) => figure.value > listed)
+}
+
 // The slots: every value the template answer shows, by key, the counts of
-// what it cites, and groups that say which slots belong together. Counts are
-// slots too, so the model never writes a number.
+// what it cites, the totals it states, and groups that say which slots belong
+// together. Counts and totals are slots too, so the model never writes a
+// number. `partial`: the count slots that count only the records listed, when
+// the answer lists the first of more; they never stand for a total.
 export function aiAnswerComposeSlots(response, facts = null) {
   const slots = {}
   const groups = []
@@ -99,21 +124,27 @@ export function aiAnswerComposeSlots(response, facts = null) {
   })
   // How many records of each kind the answer cites, and how many drafts.
   // By kind (count.purchase_order) and by the reason they are cited
-  // (count.po_overdue), so "two orders are late" has a slot.
+  // (count.po_overdue), so "two orders are late" has a slot. A supplier row
+  // cited for an overdue order is a supplier, so it counts as a supplier only.
   const counts = new Map()
   const bump = (key) => counts.set(key, (counts.get(key) || 0) + 1)
-  for (const item of evidence) { bump(text(item.entityType) || 'record'); if (item.statusCode) bump(text(item.statusCode)) }
-  const countSlots = [add('count.records', String(evidence.length)), ...[...counts].map(([key, count]) => add(`count.${key.replace(/[^a-z0-9_]/gi, '')}`, String(count)))]
+  for (const item of evidence) { bump(text(item.entityType) || 'record'); if (item.statusCode && item.entityType !== 'supplier') bump(text(item.statusCode)) }
+  const countSlots = [add('count.records', String(evidence.length)), ...[...counts].map(([key, count]) => add(`count.${key.replace(/[^a-z0-9_]/gi, '')}`, String(count)))].filter(Boolean)
+  const cutOff = listCutOff(response, evidence.length)
+  const partial = cutOff ? countSlots : []
+  groups.push({ about: cutOff ? 'how many of the records above are listed; not totals' : 'how many of the records above are listed', slots: countSlots })
   const cards = array(response.reviewCards).slice(0, AI_COMPOSE_LIMITS.cards)
-  if (cards.length) countSlots.push(add('count.drafts', String(cards.length)))
-  groups.push({ about: 'counts of the records and drafts above', slots: countSlots.filter(Boolean) })
+  if (cards.length) groups.push({ about: 'how many drafts are ready', slots: [add('count.drafts', String(cards.length))] })
+  // Totals the answer states, for "12 orders are overdue" when it lists five.
+  const totalSlots = Object.entries(totalsOf(response)).map(([key, value]) => add(`total.${key}`, String(value))).filter(Boolean)
+  if (totalSlots.length) groups.push({ about: 'totals for the whole workspace or list', slots: totalSlots })
   cards.forEach((card, index) => {
     groups.push({ about: 'draft prepared for review', slots: [add(`c${index + 1}`, card.title || card.draftTitle)].filter(Boolean) })
   })
   array(response.sections).slice(0, AI_COMPOSE_LIMITS.sections).forEach((section, index) => {
     groups.push({ about: 'part of the answer', slots: [add(`s${index + 1}.title`, section.title), add(`s${index + 1}.summary`, section.summary)].filter(Boolean) })
   })
-  return { slots, groups: groups.filter((group) => group.slots.length) }
+  return { slots, groups: groups.filter((group) => group.slots.length), partial }
 }
 
 // The model's reply as { title, summary }: a JSON object, possibly fenced.
@@ -167,22 +198,31 @@ function offends(pattern, value, allowed) {
 // The checks on one field's text. Returns a reason code, or the slots used.
 // Allowed outside the slots: what the question itself says (its words, dates
 // and numbers), a count equal to one of this answer's counts ("两张" when two
-// orders are overdue), and the names this answer shows.
-function checkField(value, { slots, names, language, question, counts }) {
+// orders are overdue), and the names this answer shows. A count of the
+// records listed, when the answer lists the first of more, is not a total:
+// it is written only beside a total ("the first {count.records} of
+// {total.attention_item_count}"), and never as a figure of its own.
+function checkField(value, { slots, names, language, question, counts, partial }) {
   const used = []
   for (const match of value.matchAll(SLOT)) {
     if (!(match[1] in slots)) return 'unknown_slot'
     used.push(match[1])
   }
+  if (used.some((key) => partial.keys.has(key)) && !used.some((key) => key.startsWith('total.'))) return 'partial_count'
   const raw = value.replace(SLOT, ' ')
   if (/[{}]/.test(raw)) return 'unknown_slot'
   const asked = question.toLowerCase()
   const inQuestion = (token) => asked.includes(token.toLowerCase())
   if (names.other.some((name) => raw.includes(name) && !inQuestion(name))) return 'raw_name'
   const outside = names.shown.reduce((rest, name) => rest.split(name).join(' '), raw)
+  const zhOutside = outside.replace(ZH_NOT_A_NUMBER, ' ')
+  const listedOnly = (number) => partial.values.has(number) && !counts.has(number)
+  if (offends(/[0-9０-９]+(?:[.,][0-9]+)*/, outside, (token) => inQuestion(token) || !listedOnly(Number(token)))
+    || offends(EN_NUMBER, outside, (word) => inQuestion(word) || !listedOnly(EN_VALUES[word.toLowerCase()]))
+    || offends(ZH_NUMBER, zhOutside, (word) => inQuestion(word) || !listedOnly(zhValue(word)))) return 'partial_count'
   if (offends(/[0-9０-９]+(?:[.,][0-9]+)*/, outside, (token) => inQuestion(token) || counts.has(Number(token)))) return 'digits'
   if (offends(EN_NUMBER, outside, (word) => inQuestion(word) || counts.has(EN_VALUES[word.toLowerCase()]))) return 'number_words'
-  if (offends(ZH_NUMBER, outside.replace(ZH_NOT_A_NUMBER, ' '), (word) => inQuestion(word) || counts.has(zhValue(word)))) return 'number_words'
+  if (offends(ZH_NUMBER, zhOutside, (word) => inQuestion(word) || counts.has(zhValue(word)))) return 'number_words'
   if (offends(CURRENCY, outside, inQuestion)) return 'currency'
   if (offends(DATES, outside, inQuestion)) return 'date'
   if (FORBIDDEN_AI_RUNTIME_PROVIDER_TECHNICAL_PATTERN.test(outside)) return 'technical'
@@ -226,15 +266,21 @@ const render = (value, slots, language) => tidy(language === 'zh-CN' ? renderChi
 
 // Verifies the reply and returns the answer with the model's title and
 // summary, or a reason code.
-export function verifyAiAnswerComposition(reply, { response, facts, slots, question = '' }) {
+// `partial`: the count slots that are not totals (aiAnswerComposeSlots).
+export function verifyAiAnswerComposition(reply, { response, facts, slots, partial = [], question = '' }) {
   const parsed = parseReply(reply)
   if (!parsed || typeof parsed.title !== 'string' || typeof parsed.summary !== 'string') return { ok: false, reason: 'invalid_reply' }
   const title = text(parsed.title)
   const summary = text(parsed.summary)
   if (!title || !summary) return { ok: false, reason: 'empty' }
   const language = response.language === 'zh-CN' ? 'zh-CN' : 'en-US'
-  const counts = new Set(Object.entries(slots).filter(([key]) => key.startsWith('count.')).map(([, value]) => Number(value)))
-  const context = { slots, names: namesOf(facts, slots), language, question: text(question), counts }
+  // Numbers that may be written out: the counts that are not partial. A
+  // total is written only as its slot, so "4" is never read as one ("4 days
+  // late" when 4 orders are open).
+  const partialKeys = new Set(partial)
+  const counts = new Set(Object.entries(slots).filter(([key]) => key.startsWith('count.') && !partialKeys.has(key)).map(([, value]) => Number(value)))
+  const partialValues = new Set([...partialKeys].filter((key) => key in slots).map((key) => Number(slots[key])))
+  const context = { slots, names: namesOf(facts, slots), language, question: text(question), counts, partial: { keys: partialKeys, values: partialValues } }
   const used = []
   for (const value of [title, summary]) {
     const checked = checkField(value, context)
@@ -274,7 +320,7 @@ export async function composeAiAnswer({ response, facts, message, resolvedQuesti
   if (!aiAnswerComposeEnabled(env)) return { response, compose: null }
   if (!aiAnswerComposable(response)) return { response, compose: { status: 'skipped', reason: 'not_composable' } }
   const started = Date.now()
-  const { slots, groups } = aiAnswerComposeSlots(response, facts)
+  const { slots, groups, partial } = aiAnswerComposeSlots(response, facts)
   const resolved = text(resolvedQuestion) && text(resolvedQuestion) !== text(message) ? text(resolvedQuestion).slice(0, 600) : null
   const previous = text(previousQuestion) && text(previousQuestion) !== text(message) ? text(previousQuestion).slice(0, 300) : null
   const input = { task: { type: 'answer_composition', question: text(message).slice(0, 1200), ...(resolved ? { resolvedQuestion: resolved } : {}), ...(previous ? { previousQuestion: previous } : {}), answerLanguage: response.language === 'zh-CN' ? 'zh-CN' : 'en-US' }, facts: { slots, groups } }
@@ -296,7 +342,7 @@ export async function composeAiAnswer({ response, facts, message, resolvedQuesti
   }
   const base = { provider: providerRuntimeConfig(env).kind, ...(text(env.FLOWCHAIN_AI_COMPOSE_MODEL) ? { model: 'compose_model' } : {}), latencyMs: Date.now() - started, slotsOffered: Object.keys(slots).length, ...(reply?.usage ? { usage: { input: reply.usage.inputTokens ?? null, output: reply.usage.outputTokens ?? null } } : {}) }
   if (!reply?.ok) return { response, compose: { status: 'degraded', reason: reply?.reason || 'provider_error', ...base } }
-  const verified = verifyAiAnswerComposition(reply.rawOutput ?? reply.output, { response, facts, slots, question: [message, resolved].filter(Boolean).join('\n') })
+  const verified = verifyAiAnswerComposition(reply.rawOutput ?? reply.output, { response, facts, slots, partial, question: [message, resolved].filter(Boolean).join('\n') })
   if (!verified.ok) return { response, compose: { status: verified.reason === 'unchanged' ? 'unchanged' : 'rejected', reason: verified.reason, ...base } }
   return { response: verified.response, compose: { status: 'composed', slotsUsed: verified.slotCount, ...base } }
 }
