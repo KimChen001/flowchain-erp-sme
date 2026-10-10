@@ -99,8 +99,10 @@ function listCutOff(response, listed) {
 // The slots: every value the template answer shows, by key, the counts of
 // what it cites, the totals it states, and groups that say which slots belong
 // together. Counts and totals are slots too, so the model never writes a
-// number. `partial`: the count slots that count only the records listed, when
-// the answer lists the first of more; they never stand for a total.
+// number. When the answer lists the first records of a longer list, the counts
+// of the listed records are not offered: the model wrote them as totals ("5
+// orders overdue" of 12). `partial` holds their numbers, which the verifier
+// then rejects written out.
 export function aiAnswerComposeSlots(response, facts = null) {
   const slots = {}
   const groups = []
@@ -129,10 +131,9 @@ export function aiAnswerComposeSlots(response, facts = null) {
   const counts = new Map()
   const bump = (key) => counts.set(key, (counts.get(key) || 0) + 1)
   for (const item of evidence) { bump(text(item.entityType) || 'record'); if (item.statusCode && item.entityType !== 'supplier') bump(text(item.statusCode)) }
-  const countSlots = [add('count.records', String(evidence.length)), ...[...counts].map(([key, count]) => add(`count.${key.replace(/[^a-z0-9_]/gi, '')}`, String(count)))].filter(Boolean)
   const cutOff = listCutOff(response, evidence.length)
-  const partial = cutOff ? countSlots : []
-  groups.push({ about: cutOff ? 'how many of the records above are listed; not totals' : 'how many of the records above are listed', slots: countSlots })
+  const partial = cutOff ? [...new Set([evidence.length, ...counts.values()])] : []
+  if (!cutOff) groups.push({ about: 'how many of the records above there are', slots: [add('count.records', String(evidence.length)), ...[...counts].map(([key, count]) => add(`count.${key.replace(/[^a-z0-9_]/gi, '')}`, String(count)))].filter(Boolean) })
   const cards = array(response.reviewCards).slice(0, AI_COMPOSE_LIMITS.cards)
   if (cards.length) groups.push({ about: 'how many drafts are ready', slots: [add('count.drafts', String(cards.length))] })
   // Totals the answer states, for "12 orders are overdue" when it lists five.
@@ -199,16 +200,14 @@ function offends(pattern, value, allowed) {
 // Allowed outside the slots: what the question itself says (its words, dates
 // and numbers), a count equal to one of this answer's counts ("两张" when two
 // orders are overdue), and the names this answer shows. A count of the
-// records listed, when the answer lists the first of more, is not a total:
-// it is written only beside a total ("the first {count.records} of
-// {total.attention_item_count}"), and never as a figure of its own.
+// records listed, when the answer lists the first of more, is not a total and
+// is never written out (partial_count).
 function checkField(value, { slots, names, language, question, counts, partial }) {
   const used = []
   for (const match of value.matchAll(SLOT)) {
     if (!(match[1] in slots)) return 'unknown_slot'
     used.push(match[1])
   }
-  if (used.some((key) => partial.keys.has(key)) && !used.some((key) => key.startsWith('total.'))) return 'partial_count'
   const raw = value.replace(SLOT, ' ')
   if (/[{}]/.test(raw)) return 'unknown_slot'
   const asked = question.toLowerCase()
@@ -216,7 +215,7 @@ function checkField(value, { slots, names, language, question, counts, partial }
   if (names.other.some((name) => raw.includes(name) && !inQuestion(name))) return 'raw_name'
   const outside = names.shown.reduce((rest, name) => rest.split(name).join(' '), raw)
   const zhOutside = outside.replace(ZH_NOT_A_NUMBER, ' ')
-  const listedOnly = (number) => partial.values.has(number) && !counts.has(number)
+  const listedOnly = (number) => partial.has(number) && !counts.has(number)
   if (offends(/[0-9０-９]+(?:[.,][0-9]+)*/, outside, (token) => inQuestion(token) || !listedOnly(Number(token)))
     || offends(EN_NUMBER, outside, (word) => inQuestion(word) || !listedOnly(EN_VALUES[word.toLowerCase()]))
     || offends(ZH_NUMBER, zhOutside, (word) => inQuestion(word) || !listedOnly(zhValue(word)))) return 'partial_count'
@@ -266,7 +265,7 @@ const render = (value, slots, language) => tidy(language === 'zh-CN' ? renderChi
 
 // Verifies the reply and returns the answer with the model's title and
 // summary, or a reason code.
-// `partial`: the count slots that are not totals (aiAnswerComposeSlots).
+// `partial`: the counts of the records listed that are not totals (aiAnswerComposeSlots).
 export function verifyAiAnswerComposition(reply, { response, facts, slots, partial = [], question = '' }) {
   const parsed = parseReply(reply)
   if (!parsed || typeof parsed.title !== 'string' || typeof parsed.summary !== 'string') return { ok: false, reason: 'invalid_reply' }
@@ -274,13 +273,11 @@ export function verifyAiAnswerComposition(reply, { response, facts, slots, parti
   const summary = text(parsed.summary)
   if (!title || !summary) return { ok: false, reason: 'empty' }
   const language = response.language === 'zh-CN' ? 'zh-CN' : 'en-US'
-  // Numbers that may be written out: the counts that are not partial. A
-  // total is written only as its slot, so "4" is never read as one ("4 days
-  // late" when 4 orders are open).
-  const partialKeys = new Set(partial)
-  const counts = new Set(Object.entries(slots).filter(([key]) => key.startsWith('count.') && !partialKeys.has(key)).map(([, value]) => Number(value)))
-  const partialValues = new Set([...partialKeys].filter((key) => key in slots).map((key) => Number(slots[key])))
-  const context = { slots, names: namesOf(facts, slots), language, question: text(question), counts, partial: { keys: partialKeys, values: partialValues } }
+  // Numbers that may be written out: the counts offered. A total is written
+  // only as its slot, so "4" is never read as one ("4 days late" when 4 orders
+  // are open).
+  const counts = new Set(Object.entries(slots).filter(([key]) => key.startsWith('count.')).map(([, value]) => Number(value)))
+  const context = { slots, names: namesOf(facts, slots), language, question: text(question), counts, partial: new Set(array(partial).map(Number)) }
   const used = []
   for (const value of [title, summary]) {
     const checked = checkField(value, context)

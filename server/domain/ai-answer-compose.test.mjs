@@ -145,30 +145,31 @@ test("counts equal to the answer's own, the question's words and the names the a
 test('an answer that lists the first of more never writes the listed count as a total', async () => {
   const { facts, response } = await priorities()
   assert.match(response.conclusion.summary, /Showing the first 5 of 8/)
-  const { slots, partial, groups } = aiAnswerComposeSlots(response, facts)
+  const { slots, partial } = aiAnswerComposeSlots(response, facts)
   // The totals the answer states are slots: the list, the report figures.
   assert.equal(slots['total.attention_item_count'], '8')
   assert.equal(slots['total.overdue_purchase_orders'], '2')
   assert.equal(slots['total.open_purchase_orders'], '4')
   assert.equal(slots['total.short_skus'], '1')
-  assert.ok(groups.some((group) => group.about.includes('not totals') && group.slots.includes('count.records')))
-  assert.ok(partial.includes('count.records') && !partial.includes('count.drafts'))
+  // The counts of the five listed are not offered; drafts still are.
+  assert.deepEqual(Object.keys(slots).filter((key) => key.startsWith('count.')), ['count.drafts'])
+  assert.ok(partial.includes(5))
   const ask = (title, summary, language = 'en-US', answer = response) => composeAiAnswer({ response: answer, facts, message: language === 'zh-CN' ? '今天先处理什么？' : 'What first?', env: COMPOSE_ENV, provider: reply(title, summary) })
-  // The listed count passed off as a total, as a slot, a digit or a word.
-  for (const [title, summary] of [
-    ['Chase {r1} first: {count.records} orders overdue', '{r1} comes first: {r1.detail}'],
-    ['Chase {r1} first: 5 orders overdue', '{r1} comes first: {r1.detail}'],
-    ['Chase {r1} first', 'Five orders need attention, starting with {r1}.'],
-    ['Chase {r1} first', '{count.po_overdue} orders are overdue, starting with {r1}.'],
+  // The listed count passed off as a total, as a digit or a word, or a
+  // count slot that is not offered.
+  for (const [title, summary, reason] of [
+    ['Chase {r1} first: 5 orders overdue', '{r1} comes first: {r1.detail}', 'partial_count'],
+    ['Chase {r1} first', 'Five orders need attention, starting with {r1}.', 'partial_count'],
+    ['Chase {r1} first: {count.records} orders overdue', '{r1} comes first: {r1.detail}', 'unknown_slot'],
   ]) {
     const result = await ask(title, summary)
-    assert.equal(result.compose.reason, 'partial_count', title + summary)
+    assert.equal(result.compose.reason, reason, title + summary)
     assert.equal(result.response, response)
   }
-  // Beside a total, or the total itself, it is fine, in either language.
-  const shown = await ask('Chase {r1} first', 'Here are the first {count.records} of {total.attention_item_count} items: {r1} comes first. {total.overdue_purchase_orders} orders are overdue in all.')
+  // The totals are fine.
+  const shown = await ask('Chase {r1} first', '{total.attention_item_count} items need attention, and {r1} comes first. {total.overdue_purchase_orders} orders are overdue in all.')
   assert.equal(shown.compose.status, 'composed')
-  assert.equal(shown.response.conclusion.summary, `Here are the first 5 of 8 items: ${response.keyEvidence[0].entityLabel} comes first. 2 orders are overdue in all.`)
+  assert.equal(shown.response.conclusion.summary, `8 items need attention, and ${response.keyEvidence[0].entityLabel} comes first. 2 orders are overdue in all.`)
   // A total is a slot, never a number of its own: "4 days late" when 4 orders are open.
   assert.equal((await ask('Chase {r1} first', '{r1} is 4 days late.')).compose.reason, 'digits')
   const zh = await priorities('zh-CN')
