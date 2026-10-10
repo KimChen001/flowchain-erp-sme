@@ -31,8 +31,11 @@ const ROUTES = [
   "/app/inventory/warnings",
   "/app/sales/orders",
   "/app/master-data/items",
+  "/app/master-data/item-suppliers",
   "/app/master-data/suppliers",
   "/app/master-data/suppliers/LOCAL-DEMO-SUP-001",
+  "/app/master-data/supplier-evaluation",
+  "/app/master-data/supplier-risks",
   "/app/master-data/customers",
   "/app/master-data/warehouses",
   "/app/master-data/payment-terms",
@@ -96,6 +99,33 @@ test("the tax code table keeps every stored digit and shows the recorded tax typ
   await expect(row).toContainText("Sales tax");
   await expect(row).toContainText("US");
   await expect(page.getByRole("row", { name: /TAXEXEMPT/ })).toContainText("Exempt");
+});
+
+test("Supplier risks lists the walkthrough's open issues, the earliest date first, with links", async ({ page }) => {
+  await signIn(page);
+  const risks = await (await page.request.get("/api/master-data/supplier-risks", { headers: await authHeaders(page) })).json();
+  expect(risks.issues.length).toBeGreaterThan(0);
+  await page.goto("/app/master-data/supplier-risks");
+  const rows = page.getByTestId("supplier-risk-row");
+  await expect(rows).toHaveCount(risks.issues.length);
+  await expect(page.getByTestId("supplier-risks-count")).toHaveText(`${risks.issues.length} issues, ${risks.issues.length} shown`);
+  // By date, never by a score: the dated rows ascend.
+  const dates = (await page.getByTestId("supplier-risk-date").evaluateAll((cells) => cells.map((cell) => cell.getAttribute("data-date") || ""))).filter(Boolean);
+  expect(dates).toEqual([...dates].sort());
+  // Each row links its supplier and its document; an overdue order says by how many days.
+  const first = rows.first();
+  await expect(first.locator('a[href^="/app/master-data/suppliers/"]')).toHaveCount(1);
+  await expect(first.locator('a[href^="/app/procurement/"]')).toHaveCount(1);
+  const overdue = risks.issues.find((issue: { type: string }) => issue.type === "po_overdue");
+  await page.getByLabel("Issue type filter", { exact: true }).selectOption("po_overdue");
+  await expect(rows).toHaveCount(risks.issues.filter((issue: { type: string }) => issue.type === "po_overdue").length);
+  const overdueRow = rows.filter({ hasText: overdue.label }).first();
+  await expect(overdueRow.locator("td").last()).toHaveText(String(overdue.when.days));
+  await expect(overdueRow.getByRole("link", { name: overdue.label })).toHaveAttribute("href", `/app/procurement/orders/${overdue.entityId}`);
+  // Search by supplier narrows to that supplier's rows.
+  await page.getByLabel("Issue type filter", { exact: true }).selectOption("");
+  await page.getByLabel("Search suppliers", { exact: true }).fill(overdue.supplierName);
+  await expect(rows).toHaveCount(risks.issues.filter((issue: { supplierName: string }) => issue.supplierName.toLowerCase().includes(overdue.supplierName.toLowerCase())).length);
 });
 
 test("variance types show as labels, not stored codes", async ({ page }) => {
@@ -249,6 +279,9 @@ for (const path of [
   "/app/procurement/three-way-match",
   "/app/inventory/stock",
   "/app/inventory/movements",
+  "/app/master-data/supplier-evaluation",
+  "/app/master-data/supplier-risks",
+  "/app/master-data/item-suppliers",
   "/app/reports/overview",
   "/app/finance/overview",
 ]) {

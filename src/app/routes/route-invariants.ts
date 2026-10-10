@@ -224,6 +224,8 @@ export function validateRouteManifest(
       ![
         "master-data:items",
         "master-data:suppliers",
+        // Sets a supplier's tier, with a reason and an audit row.
+        "master-data:supplier-evaluation",
         "master-data:customers",
         "master-data:warehouses",
         "master-data:payment-terms",

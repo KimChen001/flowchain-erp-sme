@@ -16,7 +16,7 @@ async function createSupplier(page: Page, headers: Record<string, string>, code:
   return (await created.json()).supplier.id as string;
 }
 
-test('a manager sets a tier with a reason and an owner, and the list tabs follow', async ({ page }) => {
+test('a manager sets a tier with a reason and an owner; the list shows no tier and Managed by me follows', async ({ page }) => {
   const { headers, userName } = await login(page);
   const stamp = Date.now();
   const strategic = `Keystone Motors ${stamp}`;
@@ -28,9 +28,13 @@ test('a manager sets a tier with a reason and an owner, and the list tabs follow
   await page.getByLabel('Search suppliers', { exact: true }).fill(String(stamp));
   const row = (name: string) => page.getByRole('row').filter({ hasText: name });
   await expect(row(strategic)).toHaveCount(1);
-  await expect(row(strategic).getByTestId('supplier-tier-chip')).toHaveText('Not tiered');
-  await expect(page.getByTestId('supplier-list-tab-none')).toContainText('2');
-  await expect(page.getByTestId('supplier-list-tab-1')).toContainText('0');
+  // Tiers are not on the supplier list (owner decision 2026-10-09): no tier
+  // tabs, no tier column. They are set on Supplier evaluation.
+  await expect(page.getByTestId('supplier-list-tab-all')).toContainText('2');
+  await expect(page.getByTestId('supplier-list-tab-mine')).toBeVisible();
+  for (const tab of ['1', '2', '3', 'none']) await expect(page.getByTestId(`supplier-list-tab-${tab}`)).toHaveCount(0);
+  await expect(row(strategic).getByTestId('supplier-tier-chip')).toHaveCount(0);
+  await expect(page.getByRole('columnheader', { name: 'Tier', exact: true })).toHaveCount(0);
 
   // The tier needs a reason; the panel says what each tier means.
   await page.goto(`/app/master-data/suppliers/${strategicId}`);
@@ -56,17 +60,11 @@ test('a manager sets a tier with a reason and an owner, and the list tabs follow
   await expect(panel.getByTestId('supplier-owner')).toHaveText(userName);
   await expect(panel.getByTestId('supplier-tier-history')).toContainText(`No owner → ${userName}`);
 
-  // Back on the list: the tier tabs and Managed by me pick it out.
+  // Back on the list: Managed by me picks it out.
   await page.goto('/app/master-data/suppliers');
   await page.getByLabel('Search suppliers', { exact: true }).fill(String(stamp));
-  await expect(page.getByTestId('supplier-list-tab-1')).toContainText('1');
-  await page.getByTestId('supplier-list-tab-1').click();
-  await expect(row(strategic)).toHaveCount(1);
-  await expect(row(other)).toHaveCount(0);
   await expect(row(strategic)).toContainText(userName);
-  await page.getByTestId('supplier-list-tab-none').click();
-  await expect(row(strategic)).toHaveCount(0);
-  await expect(row(other)).toHaveCount(1);
+  await expect(page.getByTestId('supplier-list-tab-mine')).toContainText('1');
   await page.getByTestId('supplier-list-tab-mine').click();
   await expect(row(strategic)).toHaveCount(1);
   await expect(row(other)).toHaveCount(0);
