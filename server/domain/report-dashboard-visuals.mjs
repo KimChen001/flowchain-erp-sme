@@ -180,7 +180,7 @@ function lifecycleVisual(id, pos) {
     reached = reached.filter(test)
     return { name, value: reached.length }
   })
-  return visual(id, 'Purchase order lifecycle', 'funnel', pos.length ? data : [], { drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders in range. Each stage counts the orders that reached it and every stage before it; an order with a bill counts as invoiced while it is still partly received.' })
+  return visual(id, 'Purchase order lifecycle', 'funnel', pos.length ? data : [], { drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders in range. Each stage counts the orders that reached it and every stage before it; an order with a supplier invoice counts as invoiced while it is still partly received.' })
 }
 
 // Ordered value, then what is still to be received, then what is received but

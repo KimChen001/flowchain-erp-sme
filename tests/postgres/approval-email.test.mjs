@@ -239,7 +239,7 @@ test('a matched bill goes to whoever may approve bills, by its invoice number', 
   assert.equal(first.result.body.invoice.status, 'matched')
   assert.deepEqual(first.messages.map((message) => message.to).sort(), [users.approverEn.email, users.approverZh.email, users.finance.email])
   const english = first.messages.find((message) => message.to === users.approverEn.email)
-  assert.equal(english.subject, 'Supplier bill AE-BILL-1 is waiting for approval')
+  assert.equal(english.subject, 'Supplier invoice AE-BILL-1 is waiting for approval')
   assert.equal(first.messages.find((message) => message.to === users.approverZh.email).subject, '采购发票 AE-BILL-1 等待审批')
   for (const message of first.messages) assertOnlyTypeNumberAndLink(message, `https://flowchain.test/app/procurement/bills/${bill.entityId}`, ['100.00', 'Approval Supply', 'GRN-AE-1'])
 
@@ -275,7 +275,7 @@ test('a bill with match exceptions waits for the last one to be approved; previe
   const last = await emailsAfter(() => review(exceptions.at(-1), 'ae-bill2-review-last'), 3)
   assert.equal(last.result.status, 200, describe(last.result))
   assert.deepEqual(last.messages.map((message) => message.to).sort(), [users.approverEn.email, users.approverZh.email, users.finance.email], await deliveryReport(bill.entityId))
-  assert.equal(last.messages.find((message) => message.to === users.approverEn.email).subject, 'Supplier bill AE-BILL-2 is waiting for approval')
+  assert.equal(last.messages.find((message) => message.to === users.approverEn.email).subject, 'Supplier invoice AE-BILL-2 is waiting for approval')
   for (const message of last.messages) assertOnlyTypeNumberAndLink(message, `https://flowchain.test/app/procurement/bills/${bill.entityId}`, ['110.00', '11.00', 'Price agreed', 'GRN-AE-2'])
 })
 

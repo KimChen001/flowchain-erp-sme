@@ -31,8 +31,8 @@ Inventory, Sales, Suppliers, Items, and Reports. Payables & receivables (the
 are conditional on their exact capability and authorization; Payables &
 receivables appears when `FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE=true` (part of
 the US trial capability set) and the user holds `finance.overview.read`.
-Supplier invoices ("Bills") are a Purchasing tab and customer invoices
-("Invoices") a Sales tab; their old Finance and Receiving paths redirect
+Supplier invoices ("Supplier invoices", route `procurement:bills`) are a
+Purchasing tab and customer invoices ("Customer invoices") a Sales tab; their old Finance and Receiving paths redirect
 (`docs/bills-invoices-and-accounting-handoff.md`). Settings remains in the
 profile menu. Mobile Operations remains a hidden Extension; Frozen, Legacy,
 and Internal surfaces remain outside normal navigation.

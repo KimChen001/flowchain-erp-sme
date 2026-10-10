@@ -150,7 +150,7 @@ export async function buildSupplierInvoicePlan({
     blockingIssues.push(
       issue(
         "SUPPLIER_INVOICE_SOURCE_REQUIRED",
-        "Every bill line names the purchase order line it bills.",
+        "Every supplier invoice line names the purchase order line it invoices.",
       ),
     );
   if (receivingIds.length && receivingIds.length !== lines.length)
@@ -301,7 +301,7 @@ export async function buildSupplierInvoicePlan({
         blockingIssues.push(
           issue(
             "SUPPLIER_INVOICE_PO_NOT_OPEN",
-            `Purchase order ${po.id} is ${po.status}. A bill can wait for its receipt only on an approved purchase order that can still be received; otherwise record the bill against its posted receipt.`,
+            `Purchase order ${po.id} is ${po.status}. A supplier invoice can wait for its receipt only on an approved purchase order that can still be received; otherwise record the supplier invoice against its posted receipt.`,
             409,
           ),
         );
@@ -319,7 +319,7 @@ export async function buildSupplierInvoicePlan({
         blockingIssues.push(
           issue(
             "SUPPLIER_INVOICE_QUANTITY_EXCEEDS_ORDERED",
-            `Line ${index + 1} bills more than was ordered and not yet billed.`,
+            `Line ${index + 1} invoices more than was ordered and not yet invoiced.`,
             409,
             {
               purchaseOrderLineId: poLine.id,
@@ -537,7 +537,7 @@ export async function buildSupplierMatchPlan({
     return basePlan("supplier_invoice_match", [
       issue(
         "SUPPLIER_INVOICE_RECEIPT_REQUIRED",
-        "This bill is waiting for its receipt. Link the receipt once the goods are received; the bill can be matched and paid only after that.",
+        "This supplier invoice is waiting for its receipt. Link the receipt once the goods are received; the invoice can be matched and paid only after that.",
         409,
       ),
     ], {

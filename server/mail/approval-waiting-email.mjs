@@ -13,7 +13,7 @@ const COPY = {
     type: {
       purchase_request: "Purchase request",
       purchase_order: "Purchase order",
-      supplier_invoice: "Supplier bill",
+      supplier_invoice: "Supplier invoice",
       inventory_adjustment: "Inventory adjustment",
     },
     subject: (type, number) => `${type} ${number} is waiting for approval`,
