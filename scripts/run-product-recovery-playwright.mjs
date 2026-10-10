@@ -44,8 +44,9 @@ async function phase(name, specs, extraEnv) {
 
 await phase("acceptance", "tests/browser/product-recovery-acceptance.spec.ts");
 // The US walkthrough must stay free of Chinese in the English interface, and
-// Today lists its work by the report and reorder rules.
-await phase("english walkthrough", ["tests/browser/english-walkthrough.spec.ts", "tests/browser/today-work.spec.ts"]);
+// Today lists its work by the report and reorder rules. Contracts are on, as
+// in the local walkthrough.
+await phase("english walkthrough", ["tests/browser/english-walkthrough.spec.ts", "tests/browser/today-work.spec.ts"], { PLAYWRIGHT_CONTRACTS: "true" });
 // The US trial screens (finance, sales, inventory operations on) in English,
 // with the walkthrough data and with an empty workspace.
 await phase("english trial", "tests/browser/english-trial.spec.ts", { PLAYWRIGHT_US_TRIAL: "true" });

@@ -134,6 +134,7 @@ export function buildHomeOverview(context, { now = new Date(), timeZone = DEFAUL
     reorder: sources.reorder,
     customerInvoices: sources.customerInvoices,
     receivables: sources.receivables,
+    contracts: sources.contracts,
   }, { now, timeZone })
   const documents = homeDocuments(context, sources.recentCustomerInvoices)
   const todayChanges = countDocumentsUpdatedToday(documents, { now, timeZone })

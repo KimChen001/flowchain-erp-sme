@@ -18,7 +18,8 @@ type Navigate = (moduleId: string, focus?: { entityType: string; entityId: strin
 type WorkKind =
   | "purchase_order_overdue" | "purchase_order_due" | "reorder_now" | "bill_exception" | "bill_to_approve" | "bill_to_match"
   | "bill_awaiting_receipt" | "customer_invoice_to_issue" | "receivable_overdue" | "sales_order_to_reserve" | "sales_order_to_ship"
-  | "purchase_order_to_approve" | "purchase_request_to_approve" | "purchase_request_to_convert" | "draft_purchase_order";
+  | "purchase_order_to_approve" | "purchase_request_to_approve" | "purchase_request_to_convert" | "draft_purchase_order"
+  | "contract_notice_due" | "contract_ending" | "contract_past_end";
 type WorkItem = {
   id: string;
   kind: WorkKind;
@@ -29,7 +30,7 @@ type WorkItem = {
   href: string;
   actionHref: string | null;
   date: string | null;
-  dateKind: "due" | "order_by" | "invoice" | "promised" | "required";
+  dateKind: "due" | "order_by" | "invoice" | "promised" | "required" | "notice_by" | "ends" | "ended";
   overdueDays: number;
   detail: Record<string, any>;
 };
@@ -56,6 +57,7 @@ const HIDDEN_KEYS: Record<string, TodayCopyKey> = {
   sales_orders: "hiddenSalesOrders",
   customer_invoices: "hiddenCustomerInvoices",
   receivables: "hiddenReceivables",
+  contracts: "hiddenContracts",
 };
 const SOURCE_KEYS: Record<string, TodayCopyKey> = {
   reorder_list: "sourceReorder",
@@ -64,6 +66,7 @@ const SOURCE_KEYS: Record<string, TodayCopyKey> = {
   purchase_orders: "sourcePurchaseOrders",
   setup_counts: "sourceSetup",
   database: "sourceDatabase",
+  contracts: "sourceContracts",
 };
 const LINK = "fc-entity-link font-semibold text-blue-600 underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
 
@@ -128,6 +131,9 @@ function RuntimeHomepage() {
     if (item.dateKind === "order_by") return item.date <= today ? t("orderToday") : t("orderBy", { date: day(item.date) });
     if (item.dateKind === "promised") return item.overdueDays > 0 ? t.count("lateDays", item.overdueDays) : item.date === today ? t("promisedToday") : t("promisedOn", { date: day(item.date) });
     if (item.dateKind === "required") return t("neededBy", { date: day(item.date) });
+    if (item.dateKind === "notice_by") return item.date === today ? t("noticeToday") : t("noticeBy", { date: day(item.date) });
+    if (item.dateKind === "ends") return item.date === today ? t("endsToday") : t("endsOn", { date: day(item.date) });
+    if (item.dateKind === "ended") return t.count("endedDays", item.overdueDays);
     return t("invoiceOn", { date: day(item.date) });
   };
   // Red for what is late or an exception, orange for today and for approvals
@@ -172,6 +178,9 @@ function RuntimeHomepage() {
         case "purchase_request_to_approve": return [amount === null ? null : t("requestAmount", { amount: money(d.amount, d.currency) })];
         case "purchase_request_to_convert": return [t("requestConvert")];
         case "draft_purchase_order": return [supplier];
+        case "contract_notice_due": return [d.title, supplier, d.endDate ? t("renewsUnlessNotice", { date: day(d.endDate) }) : null];
+        case "contract_ending": return [d.title, supplier, d.renewal === "by_agreement" ? t("renewByAgreement") : null];
+        case "contract_past_end": return [d.title, supplier, d.renewal === "automatic" ? t("recordNewEnd") : t("recordOutcome")];
         default: return [];
       }
     })();
@@ -184,8 +193,8 @@ function RuntimeHomepage() {
   const unavailable = (overview?.limitations || []).filter((code) => code.startsWith("today_source_unavailable:")).map((code) => code.slice("today_source_unavailable:".length));
   if (overview?.limitations?.includes("today_database_sources_unavailable")) unavailable.push("database");
   if (unavailable.length) notes.push(t("notChecked", { sources: [...new Set(unavailable)].map((code) => (SOURCE_KEYS[code] ? t(SOURCE_KEYS[code]) : code)).join(", ") }));
-  const truncated = (overview?.limitations || []).filter((code) => /^truncated:(customer_invoices|receivables)$/.test(code));
-  if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
+  const truncated = (overview?.limitations || []).filter((code) => /^truncated:(customer_invoices|receivables|contracts)$/.test(code));
+  if (truncated.length) notes.push(t("truncated", { subjects: truncated.map((code) => t(code.endsWith("contracts") ? "sourceContracts" : code.endsWith("receivables") ? "sourceReceivables" : "sourceCustomerInvoices")).join(", ") }));
 
   const tiles = [
     { id: "all" as const, label: t("tileWork"), value: overview?.workTotal ?? 0 },

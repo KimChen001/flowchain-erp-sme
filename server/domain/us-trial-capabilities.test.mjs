@@ -61,6 +61,19 @@ for (const example of ["deploy/env.production.example", ".env.example", ".env.lo
       .filter((entry) => entry.requiresExplicitEnable && !trialFlags.has(entry.environmentFlag))
       .map((entry) => entry.id);
     assert.ok(outsideTrial.includes("mobile-sync"));
+    assert.ok(outsideTrial.includes("contracts"));
     for (const id of outsideTrial) assert.ok(!enabled.includes(id), `${example} must keep ${id} off`);
+    // Contracts are named and off, so an operator sees the switch (D10).
+    assert.equal(env.FLOWCHAIN_ENABLE_CONTRACTS, "false", `${example} FLOWCHAIN_ENABLE_CONTRACTS`);
   });
 }
+
+test("contracts need an explicit FLOWCHAIN_ENABLE_CONTRACTS=true, and the local walkthrough turns them on", () => {
+  const contracts = capabilityRegistry.find((entry) => entry.id === "contracts");
+  assert.deepEqual([contracts.environmentFlag, contracts.requiresExplicitEnable, contracts.databaseOnly, contracts.enabled], ["FLOWCHAIN_ENABLE_CONTRACTS", true, true, false]);
+  assert.equal(enabledIds({}).includes("contracts"), false);
+  assert.equal(enabledIds({ FLOWCHAIN_ENABLE_CONTRACTS: "false" }).includes("contracts"), false);
+  assert.equal(enabledIds({ FLOWCHAIN_ENABLE_CONTRACTS: "true" }).includes("contracts"), true);
+  const walkthrough = readFileSync(resolve(import.meta.dirname, "../..", "scripts/walkthrough-local.mjs"), "utf8");
+  assert.match(walkthrough, /FLOWCHAIN_ENABLE_CONTRACTS: "true"/);
+});

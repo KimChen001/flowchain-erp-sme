@@ -17,6 +17,9 @@ import { workspaceCopy } from "../../i18n/workspaceCopy";
 import { useMasterDataWriteAccess } from "../master-data/writeAccess";
 import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "../procurement/PriceHistoryFacts";
 import { DataImportLink } from "../master-data/DataImportLink";
+import { useRouteAvailability } from "../../app/routeAvailability";
+import { SupplierContractsPanel } from "../contracts/SupplierContractsPanel";
+import { contractCopy } from "../contracts/contractCopy";
 
 type Supplier = {
   id: string;
@@ -165,6 +168,9 @@ export default function SupplierMasterPage({
   // Supplier edits need master_data.supplier.manage; the supplied-item links
   // are item edits and need master_data.item.manage.
   const writes = useMasterDataWriteAccess();
+  // The Contracts tab shows only with the contracts capability on and
+  // contracts.contract.read, as the Contracts pages themselves do.
+  const canReadContracts = useRouteAvailability()("contracts:list");
   const [saving, setSaving] = useState(false);
   const [currencyWarning, setCurrencyWarning] = useState(false);
   const [workspaceCurrency, setWorkspaceCurrency] = useState('');
@@ -196,7 +202,7 @@ export default function SupplierMasterPage({
     catch { setInsights(null); }
   };
   useEffect(() => { loadInsights(); }, []);
-  const [detailTab, setDetailTab] = useState<"details" | "performance">("details");
+  const [detailTab, setDetailTab] = useState<"details" | "performance" | "contracts">("details");
   const [selected, setSelected] = useState<Supplier | null>(null),
     [editing, setEditing] = useState<Supplier | null>(null),
     [form, setForm] = useState<any>(empty()),
@@ -453,14 +459,14 @@ export default function SupplierMasterPage({
           )}
         </div>
         <div role="tablist" aria-label={selected.supplierName} className="flex gap-1 border-b" style={{ borderColor: A.border }}>
-          {(["details", "performance"] as const).map((tab) => (
+          {(canReadContracts ? (["details", "performance", "contracts"] as const) : (["details", "performance"] as const)).map((tab) => (
             <button key={tab} type="button" role="tab" aria-selected={detailTab === tab} data-testid={`supplier-tab-${tab}`} onClick={() => setDetailTab(tab)}
               className="px-4 py-2 text-xs font-semibold" style={{ color: detailTab === tab ? A.blue : A.gray1, borderBottom: detailTab === tab ? `2px solid ${A.blue}` : "2px solid transparent" }}>
-              {supplierPerformanceTabLabel(language, tab)}
+              {tab === "contracts" ? contractCopy("Contracts", language) : supplierPerformanceTabLabel(language, tab)}
             </button>
           ))}
         </div>
-        {detailTab === "performance" ? <SupplierPerformancePanel supplierId={selected.id} /> : <>
+        {detailTab === "performance" ? <SupplierPerformancePanel supplierId={selected.id} /> : detailTab === "contracts" && canReadContracts ? <SupplierContractsPanel supplierId={selected.id} /> : <>
         <Card className="p-5">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-lg font-semibold">{selected.supplierName}</h1>

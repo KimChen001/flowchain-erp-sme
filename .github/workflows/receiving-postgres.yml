@@ -115,6 +115,7 @@ jobs:
       - run: npm run test:db:po-close-receipt-cancel
       - run: npm run test:db:business-documents
       - run: npm run test:db:receiving-locations
+      - run: npm run test:db:contracts
       - run: npm run test:db:report-views
       - run: npm run test:db:rfq-response-revisions
       - run: npm run test:db:rfq-supplier-response-command
