@@ -38,7 +38,7 @@ function BusinessQueryRow({ row }: { row: Record<string, unknown> }) {
         {typeof priority.since === "string" && priority.since ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{languageIndex ? `自 ${priority.since}` : `Since ${priority.since}`}</span> : null}
       </div>
       {blocks.length ? <div className="mt-1 space-y-0.5">{blocks.slice(0, 3).map((block, index) => <div key={`${String(block.payableId)}-${index}`} className="break-words text-[11px] leading-4" style={{ color: A.red }}>{blockReasonLabels[String(block.reason)]?.[languageIndex] || String(block.reason)}</div>)}</div> : null}
-      {overduePoIds.length ? <div className="mt-1 break-words text-[11px] leading-4" style={{ color: A.gray1 }}>{languageIndex ? "延期 PO：" : "Overdue POs: "}{overduePoIds.slice(0, 4).map(String).join("、")}</div> : null}
+      {overduePoIds.length ? <div className="mt-1 break-words text-[11px] leading-4" style={{ color: A.gray1 }}>{languageIndex ? "延期 PO：" : "Overdue POs: "}{overduePoIds.slice(0, 4).map(String).join(languageIndex ? "、" : ", ")}</div> : null}
     </div>
   );
 }
@@ -56,7 +56,7 @@ function BusinessQuerySection({ section }: { section: AiBusinessQuerySectionCard
       </div>
       {metrics.length ? <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">{metrics.slice(0, 6).map(([key, value]) => <div key={key} className="min-w-0 rounded-lg px-2 py-1.5" style={{ background: A.gray6 }}><div className="truncate text-[11px]" style={{ color: A.gray2 }}>{key.startsWith("amount_") ? `${countLabels[key.slice(7)]?.[languageIndex] || key.slice(7)}${languageIndex ? "金额" : " amount"}` : countLabels[key]?.[languageIndex] || key}</div><div className="truncate text-[11px] font-semibold" style={{ color: A.label }}>{formatNumber(Number(value))}</div></div>)}</div> : null}
       {section.rows?.length ? <div className="space-y-1.5">{section.rows.slice(0, 5).map((row, index) => <BusinessQueryRow key={`${section.goal}-${index}`} row={row} />)}</div> : null}
-      {section.limitations?.length ? <div className="break-words text-[11px] leading-4" style={{ color: A.gray2 }}>{section.limitations.join("；")}</div> : null}
+      {section.limitations?.length ? <div className="break-words text-[11px] leading-4" style={{ color: A.gray2 }}>{section.limitations.join(languageIndex ? "" : " ")}</div> : null}
     </article>
   );
 }
