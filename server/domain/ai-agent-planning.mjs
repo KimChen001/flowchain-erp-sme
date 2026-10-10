@@ -87,7 +87,7 @@ const TIER = Object.freeze({
 
 // The modes a model may ask for. Other skill modes (single, supplier, sku,
 // not_found, hidden, ambiguous) follow from the records the question names.
-const REQUESTABLE_MODES = Object.freeze({ inventory_availability: Object.freeze(['overview', 'short']), spend_analysis: Object.freeze(['suppliers', 'items', 'trend']) })
+const REQUESTABLE_MODES = Object.freeze({ inventory_availability: Object.freeze(['overview', 'short']), spend_analysis: Object.freeze(['suppliers', 'items', 'trend']), supplier_comparison: Object.freeze(['best', 'worst']) })
 const RECORDS = Object.freeze({
   type: 'array',
   items: { type: 'string' },

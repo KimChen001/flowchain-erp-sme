@@ -228,6 +228,26 @@ const isSpendQuestion = (intent) => !matches(NOT_SPEND, intent) && (
   matches(SPEND_ITEMS, intent) || matches(TOP_SUPPLIERS, intent)
   || (matches(SPEND, intent) && (matches(SPEND_BREAKDOWN, intent) || Boolean(spendPeriodOf(intent)) || Boolean(aiSkillSpendSignals(intent).currency) || matches(SUPPLIER, intent))))
 
+// Supplier comparison (ai-skill-supplier-comparison.mjs): how suppliers
+// deliver over time. A performance word ("on-time rate", "reliable", OTIF,
+// 准时率, 交付表现), or comparing suppliers ("compare Acme and Summit", 对比两家
+// 供应商). Open late orders ("which suppliers are late?") stay with the
+// purchase orders and the suppliers needing attention.
+const PERFORMANCE = [
+  /\b(?:otif|reliab\w*|unreliable|scorecard|perform(?:s|ing|ance)?|on.?time (?:rate|delivery|deliveries|performance|record|percentage)|delivery (?:rate|record|performance|reliability)|in.?full rate|fill rate|rejection rate|deliver(?:s|ed)? (?:on time|late) (?:most|more|least|less)\b|(?:most|least) (?:often )?(?:on time|late))\b/i,
+  /准时率|准时交货|按时交货|交付表现|交付绩效|供应商绩效|绩效|靠谱|可靠|评分卡|表现(?:怎么样|如何|好不好)|拒收率|最准时|最不准时|经常(?:迟到|延误|晚到)/,
+]
+const COMPARE = [/\b(?:compare|comparison|versus|vs\.?|better|worse)\b/i, /比较|对比|相比|哪家更|谁更/]
+const PAIR = [/\b(?:and|or|vs\.?|versus)\b/i, /和|与|跟|还是/]
+const WORST = [/\b(?:least|worst|less|unreliable|poor\w*|most (?:often )?late|latest|late (?:most|more) often|delivers? late|(?:is|are|runs?) late)\b/i, /最差|最不|最晚|最慢|不可靠|不靠谱|经常(?:迟到|延误|晚到)|总是(?:迟到|延误|晚)/]
+const isComparisonQuestion = (intent) => !matches(SPEND, intent) && (matches(PERFORMANCE, intent) || (matches(COMPARE, intent) && (matches(SUPPLIER, intent) || matches(PAIR, intent))))
+
+// What a comparison asks: the best or the worst first, and the period.
+export function aiSkillComparisonSignals(message) {
+  const raw = text(message)
+  return { mode: matches(WORST, raw) ? 'worst' : 'best', period: spendPeriodOf(raw) }
+}
+
 // Today's priorities: a task cue, or "today"/"first" together with doing
 // something. A bare "today" ("Apple's stock price today") is not a task.
 const TODAY = [
@@ -407,6 +427,7 @@ function intentRoute(intent, base) {
   if (!base.ids.length && matches(RECEIVING, intent) && !matches(NOT_RECEIPT, intent) && !matches(PAYMENT, intent)) return route('receiving_issues')
   if (matches(STOCK, intent) || (matches(AVAILABLE, intent) && (base.ids.length || matches(AVAILABLE_CONTEXT, intent)))) return route('inventory_availability')
   if (isSpendQuestion(intent)) return { ...route('spend_analysis'), signals: { ...signalsOf(intent), spend: aiSkillSpendSignals(intent) } }
+  if (isComparisonQuestion(intent)) return { ...route('supplier_comparison'), signals: { ...signalsOf(intent), compare: aiSkillComparisonSignals(intent) } }
   if (matches(METRICS, intent) || (late && matches(ORDER_NOUN, intent) && !otherRecord)) return route('workspace_metrics')
   // A tier ("Which Tier 1 suppliers do we have?") is cue enough.
   if (matches(SUPPLIER, intent) && (matches(SUPPLIER_CUE, intent) || tier) && !base.ids.length && !matches(SPECIFIC_ASPECT, intent) && !matches(PREVIOUS_RESULT, intent)) return route('supplier_attention')
