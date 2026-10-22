@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
+import { readAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { resolveProvisionedActor } from '../domain/pilot-identity.mjs'
-import { mergeOperationalSettings, validateOperationalSection } from '../domain/workspace-settings-contract.mjs'
+import { auditSettingsValue, mergeOperationalSettings, validateOperationalSection } from '../domain/workspace-settings-contract.mjs'
 import { roleLabel } from '../../shared/roles.mjs'
 import { assertAuthorized, can } from '../auth/authorization-service.mjs'
 
@@ -39,14 +40,19 @@ async function getDatabaseSettings(ctx) {
 
 async function updateDatabaseSection(ctx, section, next) {
   const { actor, prisma, tenant } = await getDatabaseSettings(ctx)
-  const permission = ({ company: 'settings.workspace.manage', numbering: 'settings.numbering.manage', review: 'settings.review_policy.manage', modules: 'settings.modules.manage' })[section] || 'settings.workspace.manage'
+  const permission = ({ company: 'settings.workspace.manage', numbering: 'settings.numbering.manage', review: 'settings.review_policy.manage', modules: 'settings.modules.manage', ai: 'settings.workspace.manage', documents: 'settings.workspace.manage' })[section] || 'settings.workspace.manage'
   assertAuthorized({ actor, permission, tenantId: actor.tenantId })
-  const validated = validateOperationalSection(section, next)
   return prisma.$transaction(async tx => {
     const current = await tx.tenant.findUnique({ where: { id: actor.tenantId } })
+    // Checked against the section as stored now, in this transaction: the
+    // documents section keeps unreadable print layouts only as stored and
+    // refuses a layout someone else changed in the meantime.
+    const stored = current.operationalSettings && typeof current.operationalSettings === 'object' ? current.operationalSettings[section] ?? null : null
+    const validated = validateOperationalSection(section, next, { stored })
     const operational = mergeOperationalSettings(current.operationalSettings)
-    const before = clone(operational[section])
+    const before = auditSettingsValue(section, operational[section])
     const after = clone(validated)
+    const auditAfter = auditSettingsValue(section, after)
     await tx.tenant.update({ where: { id: actor.tenantId }, data: { operationalSettings: { ...operational, [section]: after }, version: { increment: 1 } } })
     const audit = await tx.auditLog.create({
       data: {
@@ -59,10 +65,10 @@ async function updateDatabaseSection(ctx, section, next) {
         entityId: section,
         actorId: actor.user.id,
         summary: `${section} settings updated.`,
-        metadata: { actor: { id: actor.user.id, name: actor.user.name, role: actor.role }, before, after },
+        metadata: { actor: { id: actor.user.id, name: actor.user.name, role: actor.role }, before, after: auditAfter },
       },
     })
-    return { settings: after, audit: { id: audit.id, timestamp: audit.createdAt, before, after } }
+    return { settings: after, audit: { id: audit.id, timestamp: audit.createdAt, before, after: auditAfter } }
   }, { isolationLevel: 'Serializable' })
 }
 
@@ -77,14 +83,32 @@ export async function handleSettingsRuntimeRoute(ctx) {
     return true
   }
 
+  // The workspace's AI status for Settings › AI: switched on or not, whether a
+  // model is configured and required to be opted into, and this month's spend
+  // against the cap.
+  if (req.method === 'GET' && url.pathname === '/api/settings-runtime/ai-status') {
+    try {
+      const { actor, prisma } = await getDatabaseSettings(ctx)
+      send(res, 200, await readAiWorkspaceAccess({ prisma, tenantId: actor.tenantId, env: ctx.env || process.env }))
+    } catch (error) {
+      send(res, error?.status || error?.statusCode || 500, { code: error?.code, message: error?.message || 'AI status could not be read.' })
+    }
+    return true
+  }
+
   const match = url.pathname.match(/^\/api\/settings-runtime\/([a-z-]+)$/)
+  // PATCH replaces the whole section with the validated body, as for every
+  // section; for documents that is the language, letterhead, PO and invoice templates.
   if (req.method === 'PATCH' && match) {
     try {
       const body = await readBody(req)
       const result = await updateDatabaseSection(ctx, match[1], body.settings)
       send(res, 200, result)
     } catch (error) {
-      send(res, error?.status || error?.statusCode || 400, { code: error?.code, message: error?.message || '设置保存失败' })
+      // A validation error names its field ({ field, limit }); other errors
+      // carry no details, so an authorization decision is never sent.
+      const details = error?.status === 400 && error?.details?.field ? { details: error.details } : {}
+      send(res, error?.status || error?.statusCode || 400, { code: error?.code, message: error?.message || '设置保存失败', ...details })
     }
     return true
   }

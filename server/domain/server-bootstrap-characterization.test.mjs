@@ -73,6 +73,14 @@ test("server bootstrap preserves health, preflight, session, API 404, and SPA bo
     assert.equal(spa.headers["cache-control"], "no-cache");
     assert.equal(missingAsset.status, 404);
     assert.doesNotMatch(missingAsset.headers["content-type"] || "", /^text\/html/);
+    // Browser security headers (server/bootstrap/security-headers.mjs) reach
+    // every kind of answer; outside production there is no HSTS.
+    for (const [label, response] of Object.entries({ health, preflight, session, missingApi, spa, missingAsset })) {
+      assert.match(response.headers["content-security-policy"] || "", /^default-src 'self'; .*frame-ancestors 'none'/, label);
+      assert.equal(response.headers["x-content-type-options"], "nosniff", label);
+      assert.equal(response.headers["x-frame-options"], "DENY", label);
+      assert.equal(response.headers["strict-transport-security"], undefined, label);
+    }
   } finally {
     await close(server);
     if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;

@@ -149,13 +149,15 @@ test('real PostgreSQL supplier action summary returns authoritative cross-domain
     assert.deepEqual(byId['supplier-c'].procurement.overduePoIds, ['PO-C-OVERDUE'])
     assert.equal(byId['supplier-d'].procurement.unreceivedPoCount, 1)
     assert.equal(byId['supplier-d'].receiving.exceptionCount, 1)
-    assert.equal(byId['supplier-d'].receiving.rejectedQuantity, 2)
+    assert.deepEqual(byId['supplier-d'].receiving.rejectedQuantities, [{ sku: null, unit: null, quantity: 2 }])
     assert.equal(byId['supplier-e'].rfq.awaitingResponseCount, 1)
     assert.equal(byId['supplier-e'].rfq.expiredCount, 1)
     assert.equal(byId['supplier-f'].reconciliation.blockingExceptionCount, 1)
     assert.ok(byId['supplier-f'].recommendedActions.includes('review_bank_reconciliation_exceptions'))
     assert.ok(full.recordValiditySummary.incompleteCount >= 1)
-    assert.ok(full.items.every((item) => item.priority.algorithmVersion === 'supplier-action-priority-v1'))
+    // Suppliers carry the date of their oldest open reason, never a score or level.
+    assert.ok(full.items.every((item) => Object.keys(item.priority).sort().join() === 'reasons,since'))
+    assert.ok(full.items.some((item) => item.priority.since))
     assert.ok(full.items.flatMap((item) => item.evidence).every((item) => item.id && item.route))
     assert.ok(!full.items.some((item) => item.supplier.id === 'supplier-cross-tenant'))
 

@@ -6,13 +6,15 @@ import { capabilityRegistry, capabilityRegistryForEnvironment } from "./capabili
 
 // The documented US trial set: receiving posting (desktop receiving), outbound
 // posting, inventory operations, operational finance and mobile operations,
-// which stays available but is not needed to receive. Everything else stays off.
+// which stays available but is not needed to receive, and the CSV import of
+// master data and opening stock. Everything else stays off.
 const US_TRIAL_FLAGS = [
   "FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING",
   "FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING",
   "FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS",
   "FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE",
   "FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS",
+  "FLOWCHAIN_ENABLE_DATA_IMPORT",
 ];
 
 const parseExample = (relativePath) => Object.fromEntries(
@@ -51,6 +53,7 @@ for (const example of ["deploy/env.production.example", ".env.example", ".env.lo
       "customer-invoice",
       "receivable-obligation",
       "mobile-operations",
+      "data-import",
     ]) assert.ok(enabled.includes(id), `${example} ${id}`);
 
     const trialFlags = new Set(US_TRIAL_FLAGS);
@@ -58,6 +61,19 @@ for (const example of ["deploy/env.production.example", ".env.example", ".env.lo
       .filter((entry) => entry.requiresExplicitEnable && !trialFlags.has(entry.environmentFlag))
       .map((entry) => entry.id);
     assert.ok(outsideTrial.includes("mobile-sync"));
+    assert.ok(outsideTrial.includes("contracts"));
     for (const id of outsideTrial) assert.ok(!enabled.includes(id), `${example} must keep ${id} off`);
+    // Contracts are named and off, so an operator sees the switch (D10).
+    assert.equal(env.FLOWCHAIN_ENABLE_CONTRACTS, "false", `${example} FLOWCHAIN_ENABLE_CONTRACTS`);
   });
 }
+
+test("contracts need an explicit FLOWCHAIN_ENABLE_CONTRACTS=true, and the local walkthrough turns them on", () => {
+  const contracts = capabilityRegistry.find((entry) => entry.id === "contracts");
+  assert.deepEqual([contracts.environmentFlag, contracts.requiresExplicitEnable, contracts.databaseOnly, contracts.enabled], ["FLOWCHAIN_ENABLE_CONTRACTS", true, true, false]);
+  assert.equal(enabledIds({}).includes("contracts"), false);
+  assert.equal(enabledIds({ FLOWCHAIN_ENABLE_CONTRACTS: "false" }).includes("contracts"), false);
+  assert.equal(enabledIds({ FLOWCHAIN_ENABLE_CONTRACTS: "true" }).includes("contracts"), true);
+  const walkthrough = readFileSync(resolve(import.meta.dirname, "../..", "scripts/walkthrough-local.mjs"), "utf8");
+  assert.match(walkthrough, /FLOWCHAIN_ENABLE_CONTRACTS: "true"/);
+});

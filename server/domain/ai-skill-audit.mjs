@@ -13,7 +13,14 @@ export function aiSkillQueryHash(message) {
   return createHash('sha256').update(String(message ?? '')).digest('hex').slice(0, 32)
 }
 
-export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal = false, intentShadow = null, intentRouting = null, followUp = null, agent = null }) {
+// A knowledge answer's mode and the documents it cited: ids and counts only,
+// never passages or the answer's text.
+export function aiKnowledgeAuditBlock(rag) {
+  const citations = array(rag?.citations)
+  return { mode: rag?.mode || null, citationCount: citations.length, documentIds: [...new Set(citations.map((citation) => citation.documentId).filter(Boolean))].slice(0, 10) }
+}
+
+export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal = false, intentShadow = null, intentRouting = null, followUp = null, agent = null, knowledge = null, compose = null }) {
   const recordIds = [...new Set([...array(response.keyEvidence).map((item) => item.entityId), ...array(response.reviewCards).map((card) => card.targetEntityId)].filter(Boolean))].slice(0, 25)
   const rowCounts = facts ? {
     purchase_orders: facts.purchaseOrders ? facts.purchaseOrders.rows.length : null,
@@ -29,7 +36,7 @@ export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal
     module: 'ai-assistant',
     action: 'ai_skill_answered',
     entity: { type: 'ai_skill', id: response.intent },
-    summary: `Assistant answered with ${response.intent} from workspace data.`,
+    summary: `Assistant answered with ${response.intent} from workspace ${knowledge ? 'documents' : 'data'}.`,
     metadata: {
       skillId: response.intent,
       skillVersion: response.skill?.version || null,
@@ -51,6 +58,11 @@ export function aiSkillAuditEntry({ response, facts, message, latencyMs, refusal
       ...(followUp ? { followUp } : {}),
       // A compound answer: the skills and modes of its sections, never the parts' text.
       ...(agent ? { agent } : {}),
+      // A knowledge answer: its mode and the documents it cited.
+      ...(knowledge ? { knowledge } : {}),
+      // P3 wording: composed, rejected (with the verifier's reason code),
+      // degraded or skipped; counts and tokens, never the text.
+      ...(compose ? { compose } : {}),
     },
   }
 }

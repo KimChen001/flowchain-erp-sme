@@ -63,5 +63,7 @@ test('the server keeps only known codes, short refs and well-formed fields', () 
 test('origins outside the known list read as a plain form', () => {
   assert.equal(prefillOrigin('ai'), 'ai_assistant')
   assert.equal(prefillOrigin('today_cockpit'), 'today_cockpit')
+  assert.equal(prefillOrigin('reorder_list'), 'reorder_list')
+  assert.equal(sanitizeSuggestionTrail({ origin: 'reorder_list', fields: [{ field: 'line.quantity', source: 'record', ref: 'reorder_list:gap', outcome: 'edited' }] }).origin, 'reorder_list')
   assert.equal(prefillOrigin('<script>'), 'form')
 })

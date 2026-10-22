@@ -58,6 +58,8 @@ export type RouteAuthorityMetadata = {
   requiredPermission?: string;
   compatibilityOnly?: boolean;
   canonicalReplacement?: string;
+  // Query string a redirect uses instead of the visited one.
+  canonicalSearch?: string;
   knownLimitations?: string;
 };
 

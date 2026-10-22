@@ -53,7 +53,9 @@ test('PO currency follows the document; cancelled orders are excluded from open 
 });
 
 for (const language of ['en-US', 'zh-CN']) {
-  test(`invoice and matching states and empty results use ${language}`, async ({ page }) => {
+  // Bills moved to the operational finance list under Purchasing; the
+  // read-only three-way match list keeps these procurement document labels.
+  test(`matching states and empty results use ${language}`, async ({ page }) => {
     await signIn(page, language);
     let records = true;
     await page.route('**/api/procurement/documents?*', route => route.fulfill({ json: { documents: records ? [{
@@ -61,10 +63,6 @@ for (const language of ['en-US', 'zh-CN']) {
       amount: 2400, poAmount: 2000, invoiceAmount: 2400, varianceAmount: 400,
       matchStatus: '差异待处理', blockingReason: 'PO 金额与发票金额存在差异，需复核后处理。',
     }] : [] } }));
-    await page.goto('/app/procurement/invoices');
-    await expect(page.getByTestId('supplier-invoice-record-list')).toContainText('INV-TEST');
-    if (language === 'en-US') await expectEnglish(page);
-    else await expect(page.getByTestId('supplier-invoice-record-list')).toContainText('差异待处理');
     await page.goto('/app/procurement/three-way-match');
     await expect(page.getByTestId('three-way-match-record-list')).toContainText('INV-TEST');
     if (language === 'en-US') await expectEnglish(page);
@@ -119,7 +117,9 @@ test('sales risk and evidence views translate system reasons and preserve custom
 });
 
 for (const financeEnabled of [false, true]) {
-  test(`Finance navigation and PO row finance links are ${financeEnabled ? 'shown' : 'hidden'} when operational finance is ${financeEnabled ? 'on' : 'off'}`, async ({ page }) => {
+  // Payables & receivables follows the capability; reading a PO's bill and
+  // its three-way match does not, so those row links stay either way.
+  test(`Payables & receivables is ${financeEnabled ? 'shown' : 'hidden'} and PO row bill links stay when operational finance is ${financeEnabled ? 'on' : 'off'}`, async ({ page }) => {
     await signIn(page);
     // Grant the read permissions so only the capability decides visibility.
     await page.route('**/api/authorization/context', async route => {
@@ -140,12 +140,11 @@ for (const financeEnabled of [false, true]) {
     await row.locator('summary', { hasText: 'More' }).click();
     await expect(row.getByRole('button', { name: 'View order lines and evidence', exact: true })).toBeVisible();
     await expect(page.locator('aside').getByRole('button', { name: 'Purchasing', exact: true })).toBeVisible();
-    await expect(page.locator('aside').getByRole('button', { name: /^Finance( |$)/ })).toHaveCount(financeEnabled ? 1 : 0);
-    await expect(row.getByRole('button', { name: 'Open invoice record', exact: true })).toHaveCount(financeEnabled ? 1 : 0);
-    await expect(row.getByRole('button', { name: 'Open three-way match', exact: true })).toHaveCount(financeEnabled ? 1 : 0);
-    if (!financeEnabled) return;
+    await expect(page.locator('aside').getByRole('button', { name: /^Payables & receivables( |$)/ })).toHaveCount(financeEnabled ? 1 : 0);
+    await expect(row.getByRole('button', { name: 'Open bill', exact: true })).toHaveCount(1);
+    await expect(row.getByRole('button', { name: 'Open three-way match', exact: true })).toHaveCount(1);
     await row.getByRole('button', { name: 'Open three-way match', exact: true }).click();
-    await expect(page).toHaveURL(/\/app\/finance\/three-way-match/);
+    await expect(page).toHaveURL(/\/app\/procurement\/three-way-match/);
     await expect(page.getByTestId('capability-route-blocked')).toHaveCount(0);
   });
 }

@@ -115,6 +115,23 @@ test('items, customers and item suppliers can be created and edited in PostgreSQ
     const customers = await call('GET', '/api/master-data/customers')
     assert.deepEqual(customers.payload.customers.map((row) => row.code), ['CUST-RED'])
 
+    // The supplier list filters by search text and category in the database.
+    // Search matches code or name, ignoring case; a category matches any of a
+    // supplier's categories, not only the first one stored in the column.
+    await prisma.supplier.update({ where: { id: 'SUP-A' }, data: { category: 'Electronics' } })
+    await prisma.supplier.update({ where: { id: 'SUP-A2' }, data: { category: 'Packaging', metadata: { defaultCurrency: 'EUR', version: 1, categories: ['Packaging', 'Fasteners'] } } })
+    const supplierIds = async (query) => (await call('GET', `/api/master-data/suppliers?${query}`)).payload.suppliers.map((row) => row.id)
+    assert.deepEqual(await supplierIds('query=second'), ['SUP-A2'])
+    assert.deepEqual(await supplierIds('query=sup-a2'), ['SUP-A2'])
+    assert.deepEqual(await supplierIds('query=SUPPLIER'), ['SUP-A2', 'SUP-A'])
+    assert.deepEqual(await supplierIds('query=Supplier%20B'), [])
+    assert.deepEqual(await supplierIds('query=%25'), [])
+    assert.deepEqual(await supplierIds('query=_'), [])
+    assert.deepEqual(await supplierIds('category=Electronics'), ['SUP-A'])
+    assert.deepEqual(await supplierIds('category=Fasteners'), ['SUP-A2'])
+    assert.deepEqual(await supplierIds('query=supplier&category=Packaging&status=active'), ['SUP-A2'])
+    assert.deepEqual(await supplierIds('query=supplier&status=inactive'), [])
+
     // Item suppliers: link two suppliers, move the preferred one, and the
     // item and its approved sources follow.
     const first = await call('POST', `/api/master-data/items/${item.itemId}/suppliers`, { supplierId: 'SUP-A', preferred: true, leadTimeDays: 5, minimumOrderQuantity: 20, referencePrice: 12.5 })
@@ -167,6 +184,32 @@ test('items, customers and item suppliers can be created and edited in PostgreSQ
     assert.ok(hiddenPrices.payload.relationships.every((row) => row.referencePrice === null && row.restrictedFields.includes('referencePrice')))
     const managerPrices = await call('GET', `/api/master-data/items/${item.itemId}/suppliers`)
     assert.ok(managerPrices.payload.relationships.some((row) => row.referencePrice === 12.5))
+
+    // Payment terms are recorded data only: an empty term reads as null (not
+    // NET30), saving without a choice stores nothing, and a chosen term must be
+    // one of this workspace's terms.
+    const termOf = async (id) => (await call('GET', `/api/master-data/suppliers/${id}`)).payload.supplier
+    let termed = await termOf('SUP-A2')
+    assert.deepEqual([termed.paymentTermsId, termed.defaultCurrency], [null, 'EUR'])
+    await prisma.paymentTerm.create({ data: { id: 'PT-A-NET45', tenantId: tenantA, code: 'NET45', name: 'Net 45', days: 45 } })
+    await prisma.paymentTerm.create({ data: { id: 'PT-B-NET60', tenantId: tenantB, code: 'NET60', name: 'Net 60', days: 60 } })
+    const termOptions = await call('GET', '/api/master-data/payment-terms/select')
+    assert.deepEqual(termOptions.payload.options.map((option) => [option.code, option.metadata.recordId]), [['NET45', 'PT-A-NET45']])
+    const foreignTerm = await call('PATCH', '/api/master-data/suppliers/SUP-A2', { paymentTermsId: 'NET60', expectedVersion: termed.version })
+    assert.deepEqual([foreignTerm.status, foreignTerm.payload.details?.[0]?.code], [422, 'PAYMENT_TERM_NOT_FOUND'])
+    const chosen = await call('PATCH', '/api/master-data/suppliers/SUP-A2', { ...termed, paymentTermsId: 'NET45', expectedVersion: termed.version })
+    assert.equal(chosen.status, 200, JSON.stringify(chosen.payload))
+    termed = await termOf('SUP-A2')
+    assert.equal(termed.paymentTermsId, 'NET45')
+    // The edit form sends every field back; an empty term clears it.
+    const cleared = await call('PATCH', '/api/master-data/suppliers/SUP-A2', { ...termed, paymentTermsId: '', expectedVersion: termed.version })
+    assert.equal(cleared.status, 200, JSON.stringify(cleared.payload))
+    assert.equal(Object.hasOwn((await prisma.supplier.findUnique({ where: { id: 'SUP-A2' } })).metadata, 'paymentTermsId'), false)
+    assert.equal((await termOf('SUP-A2')).paymentTermsId, null)
+    const untermed = await call('POST', '/api/master-data/suppliers', { supplierCode: 'SUP-NOTERM', supplierName: 'No Term Supplier', paymentTermsId: '' })
+    assert.equal(untermed.status, 201, JSON.stringify(untermed.payload))
+    assert.equal(Object.hasOwn((await prisma.supplier.findFirst({ where: { tenantId: tenantA, code: 'SUP-NOTERM' } })).metadata, 'paymentTermsId'), false)
+    assert.equal(untermed.payload.supplier.paymentTermsId, null)
 
     // Every write left an audit row in its own workspace.
     const audits = await prisma.auditLog.findMany({ where: { tenantId: tenantA, source: 'master-data' } })

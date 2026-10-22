@@ -13,8 +13,11 @@ import { createInternalSettlementCommandService, InternalSettlementError } from 
 import { createInternalSettlementReadService } from "../domain/internal-settlement-read-service.mjs";
 import { createInternalTransferCommandService } from "../domain/internal-transfer-command-service.mjs";
 import { createAdvanceApplicationCommandService } from "../domain/advance-application-command-service.mjs";
+import { createPaymentRecordCommandService } from "../domain/payment-record-command-service.mjs";
+import { createCustomerInvoiceDocumentReadService } from "../domain/customer-invoice-document-read-service.mjs";
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { notifyApprovalWaiting } from "../notifications/approval-notifier.mjs";
 
 const capabilityIds = [
   "supplier-invoice",
@@ -79,6 +82,7 @@ function knownError(ctx, error) {
     });
     return;
   }
+  ctx.reportError?.(error);
   ctx.send(ctx.res, 500, {
     code: "OPERATIONAL_FINANCE_FAILED",
     message: "Operational finance could not be completed.",
@@ -116,6 +120,8 @@ async function services(ctx) {
       createInternalSettlementCommandService({ prisma, env }),
     transferCommand: ctx.internalTransferCommandService || createInternalTransferCommandService({ prisma, env }),
     advanceCommand: ctx.advanceApplicationCommandService || createAdvanceApplicationCommandService({ prisma, env }),
+    payment: ctx.paymentRecordCommandService || createPaymentRecordCommandService({ prisma, env }),
+    invoiceDocuments: ctx.customerInvoiceDocumentReadService || createCustomerInvoiceDocumentReadService({ prisma, env }),
   };
 }
 
@@ -124,7 +130,7 @@ export async function handleOperationalFinanceRoute(ctx) {
   if (!path.startsWith("/api/finance/")) return false;
   if (!ensureBoundary(ctx)) return true;
   try {
-    const { read, command, o2cRead, o2cCommand, settlementRead, settlementCommand, transferCommand, advanceCommand } = await services(ctx);
+    const { read, command, o2cRead, o2cCommand, settlementRead, settlementCommand, transferCommand, advanceCommand, payment, invoiceDocuments } = await services(ctx);
     if (ctx.req.method === "GET" && path === "/api/finance/entry-data") {
       const [p2p, o2c, settlement] = await Promise.all([
         read.entryData(ctx),
@@ -417,6 +423,28 @@ export async function handleOperationalFinanceRoute(ctx) {
         );
         return true;
       }
+      if (ctx.req.method === "POST" && (action === "duplicate-dismiss-preview" || action === "duplicate-dismiss")) {
+        if (!ensureCapability(ctx, "supplier-invoice")) return true;
+        ctx.send(
+          ctx.res,
+          200,
+          action === "duplicate-dismiss-preview"
+            ? await command.previewDismissDuplicate(invoiceId, body, ctx)
+            : await command.dismissDuplicate(invoiceId, body, ctx),
+        );
+        return true;
+      }
+      if (ctx.req.method === "POST" && (action === "link-receipt-preview" || action === "link-receipt")) {
+        if (!ensureCapability(ctx, "supplier-invoice")) return true;
+        ctx.send(
+          ctx.res,
+          200,
+          action === "link-receipt-preview"
+            ? await command.previewLinkReceipt(invoiceId, body, ctx)
+            : await command.linkReceipt(invoiceId, body, ctx),
+        );
+        return true;
+      }
       if (ctx.req.method === "POST" && action === "submit-preview") {
         if (!ensureCapability(ctx, "supplier-invoice")) return true;
         ctx.send(
@@ -446,11 +474,13 @@ export async function handleOperationalFinanceRoute(ctx) {
       }
       if (ctx.req.method === "POST" && action === "match") {
         if (!ensureCapability(ctx, "three-way-match")) return true;
-        ctx.send(
-          ctx.res,
-          200,
-          await command.matchSupplierInvoice(invoiceId, body, ctx),
-        );
+        const result = await command.matchSupplierInvoice(invoiceId, body, ctx);
+        ctx.send(ctx.res, 200, result);
+        // A clean match makes the bill approvable: its approvers are emailed.
+        notifyApprovalWaiting(ctx, result, {
+          documentType: "supplier_invoice",
+          documentId: result?.entityId,
+        });
         return true;
       }
       if (ctx.req.method === "POST" && action === "approve-preview") {
@@ -485,6 +515,44 @@ export async function handleOperationalFinanceRoute(ctx) {
           ? await command.previewReviewMatchException(exceptionId, body, ctx)
           : await command.reviewMatchException(exceptionId, body, ctx);
       ctx.send(ctx.res, 200, result);
+      // Approving the last open exception makes the bill approvable.
+      if (exceptionMatch[2] === "review")
+        notifyApprovalWaiting(ctx, result, {
+          documentType: "supplier_invoice",
+          matchExceptionId: exceptionId,
+        });
+      return true;
+    }
+
+    // Payments recorded on a bill to pay or a receivable (step 2 of
+    // docs/bills-invoices-and-accounting-handoff.md): record or void, each
+    // previewed first. Nothing here moves money.
+    const paymentMatch = path.match(
+      /^\/api\/finance\/(payables|receivables)\/([^/]+)\/payments(?:\/(preview)|\/([^/]+)\/(void-preview|void))?$/,
+    );
+    if (paymentMatch && ctx.req.method === "POST") {
+      const kind = paymentMatch[1] === "payables" ? "payable" : "receivable";
+      if (!ensureCapability(ctx, kind === "payable" ? "payable-obligation" : "receivable-obligation")) return true;
+      const obligationId = decodeURIComponent(paymentMatch[2]);
+      const body = await ctx.readBody(ctx.req);
+      if (paymentMatch[4]) {
+        const paymentId = decodeURIComponent(paymentMatch[4]);
+        ctx.send(
+          ctx.res,
+          200,
+          paymentMatch[5] === "void-preview"
+            ? await payment.previewVoidPayment(kind, obligationId, paymentId, body, ctx)
+            : await payment.voidPayment(kind, obligationId, paymentId, body, ctx),
+        );
+        return true;
+      }
+      ctx.send(
+        ctx.res,
+        paymentMatch[3] ? 200 : 201,
+        paymentMatch[3]
+          ? await payment.previewRecordPayment(kind, obligationId, body, ctx)
+          : await payment.recordPayment(kind, obligationId, body, ctx),
+      );
       return true;
     }
 
@@ -528,6 +596,26 @@ export async function handleOperationalFinanceRoute(ctx) {
           ? await command.previewApproveSupplierCreditMemo(memoId, body, ctx)
           : await command.approveSupplierCreditMemo(memoId, body, ctx),
       );
+      return true;
+    }
+
+    // The printable invoice a person sends: read exactly as the detail below
+    // (same permission, tenant and field masking), then built from what is
+    // recorded. Without amounts or the customer it comes back not printable.
+    const customerInvoiceDocument = path.match(
+      /^\/api\/finance\/customer-invoices\/([^/]+)\/document$/,
+    );
+    if (customerInvoiceDocument && ctx.req.method === "GET") {
+      const invoice = await o2cRead.customerInvoiceDetail(
+        decodeURIComponent(customerInvoiceDocument[1]),
+        ctx,
+      );
+      ctx.send(ctx.res, 200, {
+        document: await invoiceDocuments.readCustomerInvoiceDocument({
+          tenantId: ctx.identity.tenantId,
+          invoice,
+        }),
+      });
       return true;
     }
 

@@ -35,6 +35,7 @@ const mapPo = (row = {}) => ({
   sourcePrId: row.sourceRequestId,
   sourceRfqId: row.sourceRfqId,
   expectedDate: row.expectedDate?.toISOString?.() || row.expectedDate || null,
+  issuedAt: row.issuedAt?.toISOString?.() || row.issuedAt || null,
   owner: row.owner || '',
   createdAt: row.createdAt?.toISOString?.() || row.createdAt || null,
   updatedAt: row.updatedAt?.toISOString?.() || row.updatedAt || null,
@@ -83,11 +84,14 @@ export function createDbProcurementRuntimeRepository({ prisma, env = process.env
         findManyWithinLimit(dbClient.supplierInvoice, query, bounded("supplier_invoices")),
       ]);
       const iso = value => value?.toISOString?.() || value || null;
-      const receipts = receivingRows.map(row => ({ id: row.id, documentNumber: row.documentNumber, poId: row.poId, supplierId: row.supplierId, supplierName: row.supplierName, status: row.status, workflowStatus: row.workflowStatus, postingStatus: row.postingStatus, warehouseId: row.warehouseId, currency: row.currency, arrivedAt: iso(row.arrivedAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, acceptedQty: decimal(line.acceptedQty), rejectedQty: decimal(line.rejectedQty), unit: line.unit })) }));
+      const receipts = receivingRows.map(row => ({ id: row.id, documentNumber: row.documentNumber, poId: row.poId, supplierId: row.supplierId, supplierName: row.supplierName, status: row.status, workflowStatus: row.workflowStatus, postingStatus: row.postingStatus, warehouseId: row.warehouseId, currency: row.currency, arrivedAt: iso(row.arrivedAt), postedAt: iso(row.postedAt), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, acceptedQty: decimal(line.acceptedQty), rejectedQty: decimal(line.rejectedQty), unit: line.unit })) }));
       const supplierInvoices = invoiceRows.map(row => ({ id: row.id, invoiceNumber: row.invoiceNumber, supplierId: row.supplierId, supplierName: row.supplierName, poId: row.relatedPoId, receiptId: row.relatedGrnId, relatedPo: row.relatedPoId, relatedGrn: row.relatedGrnId, amount: decimal(row.amount), totalAmount: decimal(row.totalAmount), currency: row.currency, status: row.status, matchStatus: row.matchStatus, varianceAmount: decimal(row.varianceAmount), invoiceDate: iso(row.invoiceDate), dueDate: iso(row.dueDate), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt), lines: row.lines.map(line => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, itemId: line.itemId, sku: line.sku, itemName: line.itemName, quantity: decimal(line.quantity), unitPrice: decimal(line.unitPrice), amount: decimal(line.amount), unit: line.unit })) }));
       // Quotation counts back the RFQ response figures when the RFQ row has none.
       const quotations = rfqRows.length ? await dbClient.supplierQuotation.findMany({ where: { tenantId, rfqId: { in: rfqRows.map(row => row.id) } }, select: { rfqId: true } }) : [];
-      return { purchaseRequests: requestRows.map(mapPurchaseRequest), rfqs: rfqRows.map(row => mapRfq(row, quotations)), supplierQuotations: [], purchaseOrders: rows.map(mapPo), receipts, receivingDocs: receipts, supplierInvoices, documentLinks: [], procurementFollowups: [] };
+      // Purchase requests and RFQs carry their update day; the instant is kept
+      // beside it, so the home page orders and dates them like other documents.
+      const withInstant = (mapped, row) => ({ ...mapped, updatedAtInstant: iso(row.updatedAt) });
+      return { purchaseRequests: requestRows.map(row => withInstant(mapPurchaseRequest(row), row)), rfqs: rfqRows.map(row => withInstant(mapRfq(row, quotations), row)), supplierQuotations: [], purchaseOrders: rows.map(mapPo), receipts, receivingDocs: receipts, supplierInvoices, documentLinks: [], procurementFollowups: [] };
     },
     async transact() {
       throw Object.assign(new Error("Database Mode procurementRuntime is read-only; use the PostgreSQL command service."), { code: "PROCUREMENT_DATABASE_COMMAND_REQUIRED", status: 409 });

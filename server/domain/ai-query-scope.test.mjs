@@ -12,6 +12,19 @@ for (const [scope, questions] of Object.entries(cases)) {
     for (const message of questions) assert.equal(classifyQueryScope({ message, queryMode: 'auto' }), scope, message)
   })
 }
+test('product ratings and policy rules go to documents; records named with their state go to business data', () => {
+  const knowledge = ['Can ZX-PRO-SENSOR-100 operate at 70 degrees Celsius?', 'Our room reaches seventy degrees C. Is the ZX-PRO-SENSOR-100 suitable?', 'ZX-PRO-SENSOR-100 在七十摄氏度下可以用吗？', 'What voltage does ZX-PRO-SENSOR-200 need?', 'Is ZX-PRO-SENSOR-100 certified for food-contact use?', 'Can we automatically replace ZX-PRO-SENSOR-100 with model 200?', 'A PO line has no promised date. Should I call it overdue?', 'When should I escalate a supplier follow-up?', 'The invoice total is lower than the PO total. Is that necessarily a price variance?', 'Can I record a supplier invoice before receiving the goods?', '没有承诺日期的采购行算不算逾期？']
+  for (const message of knowledge) assert.equal(classifyQueryScope({ message, queryMode: 'auto' }), 'knowledge', message)
+  // Records and the policy together: business data first, the policy alongside.
+  assert.equal(classifyQueryScope({ message: "Check Acme's outstanding orders, explain which need follow-up under our purchasing policy, and prepare a message asking about partial delivery.", queryMode: 'auto' }), 'mixed')
+  assert.equal(classifyQueryScope({ message: 'Show open POs for Acme', queryMode: 'auto' }), 'business')
+  assert.equal(classifyQueryScope({ message: '逾期的采购单，按政策该怎么跟进？', queryMode: 'auto' }), 'mixed')
+  // The Chinese twin of the Acme follow-up request gets the policy too, with words between 按 and 政策.
+  assert.equal(classifyQueryScope({ message: '查一下 Acme 的未完成订单，按我们的采购政策说明哪些需要跟进，并准备一封询问部分交货的邮件。', queryMode: 'auto' }), 'mixed')
+  for (const message of ['我们的采购政策怎么定义逾期？', '退货政策是什么？', '员工手册在哪里？']) assert.equal(classifyQueryScope({ message, queryMode: 'auto' }), 'knowledge', message)
+  // Item names that contain a product word stay business questions.
+  for (const message of ['How much stock of the Temperature Sensor do we have?', '温度传感器库存多少?', 'Which POs should I chase first?']) assert.equal(classifyQueryScope({ message, queryMode: 'auto' }), 'business', message)
+})
 test('live-data questions escape a stale knowledge selection; explicit business stays business', () => {
   assert.equal(classifyQueryScope({ message: '哪些数据不完整?', queryMode: 'knowledge' }), 'business')
   assert.equal(classifyQueryScope({ message: 'Zephyr', queryMode: 'knowledge' }), 'knowledge')

@@ -365,10 +365,75 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   );
   expect(customerCreditApproved.creditNote.status).toBe("approved");
 
+  // A draft entered for the rest of the CNY shipment is submitted, approved
+  // and issued from its detail page, each step previewed before confirming.
+  const uiDraft = await api(
+    request,
+    specialist.token,
+    "post",
+    "/api/finance/customer-invoices",
+    {
+      invoiceNumber: "CUS-INV-BROWSER-UI",
+      shipmentId: "finance-browser-shipment-CNY",
+      currency: "CNY",
+      invoiceDate: "2026-07-01T00:00:00.000Z",
+      dueDate: "2026-07-10T00:00:00.000Z",
+      totalAmount: "12.5000",
+      lines: [
+        {
+          shipmentLineId: "finance-browser-shipment-line-CNY",
+          quantity: "1.0000",
+          enteredTaxAmount: "0.0000",
+        },
+      ],
+      idempotencyKey: "browser-create-customer-ui",
+    },
+  );
+  await page.goto(`/app/finance/customer-invoices/${uiDraft.entityId}`);
+  await expect(page.getByTestId("customer-invoice-detail")).toContainText("CUS-INV-BROWSER-UI");
+  // Submit, approve and issue only change the invoice's status: one click
+  // each (owner decision D4), and the step is done when its button goes.
+  // A run that fails after an allowed preview (here a forced 409, as when
+  // someone else acted first) opens the panel with the error to retry.
+  await page.route("**/api/finance/customer-invoices/*/submit", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 409, json: { code: "BROWSER_TEST_RUN_FAILED", message: "Someone else changed this invoice first." } })
+      : route.fallback(),
+  );
+  await page.getByTestId("customer-invoice-submit").click();
+  await expect(page.getByTestId("customer-invoice-submit-panel")).toContainText("Someone else changed this invoice first.");
+  // The earlier preview no longer holds, so Confirm waits for a new preview.
+  await expect(page.getByTestId("customer-invoice-submit-confirm")).toBeDisabled();
+  await page.unroute("**/api/finance/customer-invoices/*/submit");
+  await page.getByTestId("customer-invoice-submit-panel").getByRole("button", { name: /^(Close|关闭)$/ }).click();
+  for (const action of ["submit", "approve", "issue"]) {
+    await expect(page.getByTestId(`customer-invoice-${action}`)).toHaveAttribute("data-one-step", "true");
+    await page.getByTestId(`customer-invoice-${action}`).click();
+    await expect(page.getByTestId(`customer-invoice-${action}`)).toHaveCount(0);
+    await expect(page.getByTestId(`customer-invoice-${action}-panel`)).toHaveCount(0);
+  }
+  await expect(page.getByTestId("customer-invoice-actions")).toContainText(/当前状态下没有可执行的操作|No action is available/);
+  const uiIssued = await api(
+    request,
+    manager.token,
+    "get",
+    `/api/finance/customer-invoices/${uiDraft.entityId}`,
+  );
+  expect(uiIssued.status).toBe("issued");
+  expect(uiIssued.receivable.obligationNumber).toBe("AR-CUS-INV-BROWSER-UI");
+
   await page.goto("/app/finance/overview");
   await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
-  await expect(page.getByText("应付义务不代表已付款。")).toBeVisible();
-  await expect(page.getByText("应收义务不代表已收款。")).toBeVisible();
+  // Every receivable here is past its 2026-07-10 due date, so the overdue
+  // card's link must list them although none has the stored status overdue.
+  await page.getByRole("link", { name: /逾期应收义务|Overdue receivables/ }).click();
+  await expect(page).toHaveURL(/\/app\/finance\/receivables\?status=overdue$/);
+  for (const number of ["CUS-INV-BROWSER-CNY", "CUS-INV-BROWSER-USD", "CUS-INV-BROWSER-UI"])
+    await expect(page.getByTestId("receivables-workbench")).toContainText(number);
+  await page.goto("/app/finance/overview");
+  await expect(page.getByTestId("operational-finance-landing")).toBeVisible();
+  await expect(page.getByText("应付款不代表已付款。")).toBeVisible();
+  await expect(page.getByText("应收款不代表已收款。")).toBeVisible();
   await expect(page.getByTestId("finance-currency-limitation")).toContainText(
     "多币种，未折算",
   );
@@ -379,24 +444,26 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
     "USD",
   );
 
+  // Bills live under Purchasing; the old Finance address still lands there.
   await page.goto("/app/finance/invoices?status=approved");
+  await expect(page).toHaveURL(/\/app\/procurement\/bills\?status=approved$/);
   await expect(page.getByTestId("operational-finance-invoice-list")).toContainText(
     "SUP-INV-BROWSER-EXACT",
   );
-  await page.goto("/app/finance/three-way-match?status=approved");
-  await expect(page.getByTestId("operational-finance-match-list")).toContainText(
-    "price",
-  );
+  // Match exceptions are reviewed on the bill they belong to.
+  await page.goto("/app/procurement/bills");
+  await page.getByRole("link", { name: "SUP-INV-BROWSER-VARIANCE", exact: true }).click();
+  await expect(page.getByTestId("supplier-invoice-match")).toContainText("price");
   await page.goto("/app/finance/payables");
   await expect(page.getByTestId("operational-finance-payable-list")).toContainText(
     "AP-BROWSER-EXACT",
   );
-  await expect(page.getByText("应付义务不代表已付款。")).toBeVisible();
+  await expect(page.getByText("应付款不代表已付款。")).toBeVisible();
   await page.goto("/app/finance/credits");
   await expect(page.getByTestId("operational-finance-credit-list")).toContainText(
     "SUP-CREDIT-BROWSER-001",
   );
-  await page.goto("/app/finance/customer-invoices");
+  await page.goto("/app/sales/invoices");
   await expect(page.getByTestId("customer-invoice-workbench")).toContainText(
     "CUS-INV-BROWSER-CNY",
   );
@@ -416,20 +483,29 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   });
   const viewerPage = await viewerContext.newPage();
   await session(viewerPage, viewer);
+  // Customer invoices live under Sales; the old Finance address lands there.
   await viewerPage.goto("/app/finance/customer-invoices");
+  await expect(viewerPage).toHaveURL(/\/app\/sales\/invoices$/);
   await expect(viewerPage.getByTestId("customer-invoice-workbench")).toBeVisible();
+  const salesTabs = viewerPage.getByTestId("module-subnav");
   await expect(
-    viewerPage.getByRole("link", { name: "Operational Finance Overview" }),
-  ).toBeVisible();
+    salesTabs.getByRole("link", { name: "Invoices", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await expect(
-    viewerPage.getByRole("link", { name: "Supplier Invoices" }),
-  ).toBeVisible();
-  await expect(
-    viewerPage.getByRole("link", { name: "供应商发票" }),
-  ).toHaveCount(0);
-  await expect(
-    viewerPage.getByRole("link", { name: "New Customer Invoice" }),
+    viewerPage.getByRole("link", { name: "New invoice" }),
   ).toHaveAttribute("aria-disabled", "true");
+  await viewerPage.goto("/app/finance/overview");
+  const financeTabs = viewerPage.getByTestId("module-subnav");
+  await expect(
+    financeTabs.getByRole("link", { name: "Overview", exact: true }),
+  ).toBeVisible();
+  await expect(
+    financeTabs.getByRole("link", { name: "Bills to pay", exact: true }),
+  ).toBeVisible();
+  // Bills and invoices are not repeated under Payables & receivables.
+  await expect(financeTabs.getByRole("link", { name: "Bills", exact: true })).toHaveCount(0);
+  await expect(financeTabs.getByRole("link", { name: "Invoices", exact: true })).toHaveCount(0);
+  await expect(viewerPage.getByRole("link", { name: "采购发票" })).toHaveCount(0);
   const viewerWrite = await request.post("/api/finance/customer-invoices", {
     headers: { Authorization: `Bearer ${viewer.token}` },
     data: {

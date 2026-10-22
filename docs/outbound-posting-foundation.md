@@ -56,6 +56,8 @@ Posting requires ready/unposted state, allocated reservations, sufficient on-han
 
 Reversal requires a reason and a posted, unreversed shipment. It preserves the original movement, appends a `shipment_reversal` movement, links both facts, restores on-hand and reserved inventory, decreases consumed and fulfilled quantities, and does not restore allocated quantity. The original reservation becomes active reserved inventory; it is not automatically released to available.
 
+A shipment billed by a submitted, approved, issued or disputed customer invoice cannot be reversed (`SHIPMENT_REVERSAL_BLOCKED_BY_INVOICE`, 409), because an issued invoice has already produced a receivable for those goods. Customer invoices have no cancel, so the correction for billed goods is a customer return and credit note. A draft invoice does not hold the shipment; submitting it re-validates that the shipment is still posted. `SHIPMENT_HOLDING_CUSTOMER_INVOICE_STATUSES` defines the holding statuses for both this rule and the customer invoice quantity check.
+
 ## Inventory Movement facts
 
 Posting movements use `sourceDocumentType=ShipmentDocument`, Shipment ID as `sourceDocumentId`, and Shipment Allocation ID as `sourceDocumentLineId`. They use `quantityOut` and a common posting batch. Reversal movements use `quantityIn`, a new batch, and `reversalOfMovementId`; the original only receives `reversedByMovementId`. Original quantities, source identity, SKU, warehouse, and location remain immutable.

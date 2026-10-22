@@ -7,7 +7,7 @@ const rendererSource = readFileSync(new URL('../../src/components/ai/AiResponseV
 
 test('R134 AI assistant empty state exposes business prompt chips', () => {
   assert.match(panelSource, /AI_EMPTY_STATE_PROMPT_CHIPS/)
-  for (const label of ['今天先处理什么', '哪些事项风险最高', '哪些数据需要补齐', '帮我准备一个处理草稿']) {
+  for (const label of ['今天先处理什么', '现在有哪些风险', '哪些数据需要补齐', '帮我准备一个处理草稿']) {
     assert.match(panelSource, new RegExp(label))
   }
   assert.match(panelSource, /data-testid="ai-empty-prompt-chip"/)

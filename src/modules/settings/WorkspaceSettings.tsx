@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Save, ShieldCheck } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { A, Card } from "../../components/ui";
 import { useI18n } from "../../i18n/I18n";
 import AuthorizationWorkbench from "./AuthorizationWorkbench";
+import DocumentTemplateSettings from "./DocumentTemplateSettings";
+import WarehouseMaster from "./WarehouseMaster";
 import WorkspaceMembers from "./WorkspaceMembers";
 
 type Profile = {
@@ -15,6 +17,7 @@ type Profile = {
   jobTitle?: string;
   status: string;
   languagePreference?: "zh-CN" | "en-US" | null;
+  approvalEmailsEnabled?: boolean;
   defaultWarehouseId?: string;
   profileCompletedAt?: string;
   version: number;
@@ -110,6 +113,8 @@ export default function WorkspaceSettings({ view }: { view: string }) {
   const [savedWorkspace, setSavedWorkspace] = useState<Workspace | null>(null);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [users, setUsers] = useState<User[]>([]);
+  // Members as last read from the server, to tell unsaved access edits apart.
+  const loadedUsers = useRef<User[]>([]);
   const [notice, setNotice] = useState("");
   const [profileState, setProfileState] = useState<SaveState>("saved");
   const [workspaceState, setWorkspaceState] = useState<SaveState>("saved");
@@ -147,6 +152,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       setWarehouses(wh.warehouses);
       if (granted.has("settings.users.read")) {
         const u = await apiJson<{ users: User[] }>("/api/workspace/users");
+        loadedUsers.current = u.users;
         setUsers(u.users);
         // Whoever grants access opens on a teammate to edit; someone who may
         // only read it opens on their own access.
@@ -158,6 +164,36 @@ export default function WorkspaceSettings({ view }: { view: string }) {
     }
   }
   useEffect(() => { void load(); }, []);
+  // After a warehouse is added, renamed or set inactive: the warehouse list,
+  // the signed-in user's own access and default, and members' access, without
+  // dropping access edits not yet saved. A member's unsaved edits are kept,
+  // with any access granted on the server since (the creator's access to a
+  // warehouse they just added) added to them.
+  async function refreshWarehouses() {
+    try {
+      const [p, wh] = await Promise.all([
+        apiJson<Profile>("/api/me/profile"),
+        apiJson<{ warehouses: Warehouse[] }>("/api/workspace/warehouses"),
+      ]);
+      setWarehouses(wh.warehouses);
+      const access = { warehouseScopes: p.warehouseScopes, defaultWarehouseId: p.defaultWarehouseId, version: p.version };
+      setProfile(current => current && { ...current, ...access });
+      setSavedProfile(current => current && { ...current, ...access });
+      if (!permissions.has("settings.users.read")) return;
+      const u = await apiJson<{ users: User[] }>("/api/workspace/users");
+      const before = new Map(loadedUsers.current.map(user => [user.id, user]));
+      loadedUsers.current = u.users;
+      setUsers(current => u.users.map(fresh => {
+        const local = current.find(user => user.id === fresh.id);
+        const was = before.get(fresh.id);
+        if (!local || !was || JSON.stringify(local.warehouseScopes) === JSON.stringify(was.warehouseScopes)) return fresh;
+        const granted = fresh.warehouseScopes.filter(scope => !was.warehouseScopes.some(old => old.warehouseId === scope.warehouseId) && !local.warehouseScopes.some(own => own.warehouseId === scope.warehouseId));
+        return { ...fresh, warehouseScopes: [...local.warehouseScopes, ...granted] };
+      }));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : t("settings.loadFailed"));
+    }
+  }
   useEffect(() => {
     if (view === "readiness" && canReadDiagnostics) {
       apiJson<Diagnostics>("/api/admin/pilot-diagnostics").then(setDiagnostics).catch(error => setNotice(error instanceof Error ? error.message : t("settings.loadFailed")));
@@ -223,13 +259,15 @@ export default function WorkspaceSettings({ view }: { view: string }) {
   // Someone who reads or grants warehouse access is sent every warehouse, but
   // their own default warehouse must still be one they can read.
   const ownWarehouseIds = new Set((profile.warehouseScopes || []).map(scope => scope.warehouseId));
+  // A warehouse is maintained by an administrator with operate access to it.
+  const ownOperateIds = new Set((profile.warehouseScopes || []).filter(scope => scope.accessLevel === "operate").map(scope => scope.warehouseId));
   const scopeTarget = canReadUsers ? users.find(user => user.id === scopeUserId) : undefined;
 
   // Members, then roles, permissions and assignments. Both read the actor's
   // effective permissions, not the legacy profile role.
   if (view === "roles") return <div className="space-y-5"><WorkspaceMembers /><AuthorizationWorkbench /></div>;
 
-  return <Card className="p-5" data-testid={`workspace-settings-${view}`}>
+  const settingsCard = <Card className="p-5" data-testid={`workspace-settings-${view}`}>
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h2 className="text-lg font-semibold">{title}</h2><p className="mt-1 text-sm text-slate-500">{workspace.workspaceName}</p></div>
       {view === "profile" && <SaveActions state={profileState} onCancel={() => setProfile(savedProfile)} onSave={saveProfile} />}
@@ -243,6 +281,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       <label>{t("settings.email")}<input className={`${field} bg-slate-50`} value={profile.email} readOnly /></label>
       <label>{t("settings.role")}<input data-testid="profile-roles" className={`${field} bg-slate-50`} value={assignedRoles.map(roleName).join(", ") || t("settings.none")} readOnly /></label>
       <label>{t("settings.interfaceLanguage")}<select aria-label={t("settings.interfaceLanguage")} className={field} value={profile.languagePreference || ""} onChange={event => setProfile({ ...profile, languagePreference: (event.target.value || null) as Profile["languagePreference"] })}><option value="">{t("settings.followWorkspace")}</option>{languageOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+      <label className="flex items-start gap-2 text-sm md:col-span-2"><input data-testid="profile-approval-emails" type="checkbox" className="mt-1" checked={profile.approvalEmailsEnabled !== false} onChange={event => setProfile({ ...profile, approvalEmailsEnabled: event.target.checked })} /><span>{t("settings.approvalEmails")}<span className="block text-xs text-slate-500">{t("settings.approvalEmailsHint")}</span></span></label>
       <label>{t("settings.defaultWarehouse")}<select aria-label={t("settings.defaultWarehouse")} className={field} value={profile.defaultWarehouseId || ""} onChange={event => setProfile({ ...profile, defaultWarehouseId: event.target.value })}><option value="">{t("settings.none")}</option>{warehouses.filter(item => item.status === "active" && ownWarehouseIds.has(item.id)).map(item => <option key={item.id} value={item.id}>{item.code} · {item.name}</option>)}</select></label>
     </div>}
 
@@ -262,6 +301,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       </div>
     </div>}
 
+    {view === "warehouse-access" && canEditWorkspace && <WarehouseMaster operateIds={ownOperateIds} onChanged={() => void refreshWarehouses()} />}
     {view === "warehouse-access" && <div className="mt-5 overflow-x-auto" data-testid="warehouse-access">
       {canReadUsers && <div className="mb-3 flex gap-2"><select aria-label={t("settings.user")} data-testid="warehouse-access-user" className={`${field} max-w-sm`} value={scopeUserId} onChange={event => setScopeUserId(event.target.value)}>{users.map(user => <option key={user.id} value={user.id}>{user.name} · {user.email}</option>)}</select>{canManageUsers && <button data-testid="warehouse-access-save" onClick={saveScopes} className={`${button} text-white`} style={{ background: A.blue }}><Save size={15} />{t("settings.saveAccess")}</button>}</div>}
       <table className="w-full text-sm"><thead><tr><th className="p-2 text-left">{t("settings.warehouse")}</th><th>{t("settings.warehouseScope")}</th><th>{t("settings.defaultWarehouse")}</th></tr></thead><tbody>{warehouses.map(warehouse => {
@@ -270,7 +310,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
         const scopes = scopeTarget ? scopeTarget.warehouseScopes : profile.warehouseScopes || [];
         const access = scopes.find(scope => scope.warehouseId === warehouse.id)?.accessLevel || "";
         const defaultWarehouseId = scopeTarget ? scopeTarget.defaultWarehouseId : profile.defaultWarehouseId;
-        return <tr key={warehouse.id} className="border-t"><td className="p-2">{warehouse.code} · {warehouse.name}</td><td className="text-center">{canManageUsers && scopeTarget ? <select aria-label={`${warehouse.code} ${t("settings.warehouseScope")}`} className={field} value={access} onChange={event => setUsers(rows => rows.map(user => user.id === scopeTarget.id ? { ...user, warehouseScopes: [...user.warehouseScopes.filter(scope => scope.warehouseId !== warehouse.id), ...(event.target.value ? [{ warehouseId: warehouse.id, accessLevel: event.target.value }] : [])] } : user))}><option value="">{t("settings.noAccess")}</option><option value="read">{t("settings.read")}</option><option value="operate">{t("settings.operate")}</option></select> : accessName(access)}</td><td className="text-center">{defaultWarehouseId === warehouse.id ? "✓" : "—"}</td></tr>;
+        return <tr key={warehouse.id} className="border-t"><td className="p-2">{warehouse.code} · {warehouse.name}{warehouse.status !== "active" && <span className="text-slate-500"> · {t("settings.warehouseInactive")}</span>}</td><td className="text-center">{canManageUsers && scopeTarget ? <select aria-label={`${warehouse.code} ${t("settings.warehouseScope")}`} className={field} value={access} onChange={event => setUsers(rows => rows.map(user => user.id === scopeTarget.id ? { ...user, warehouseScopes: [...user.warehouseScopes.filter(scope => scope.warehouseId !== warehouse.id), ...(event.target.value ? [{ warehouseId: warehouse.id, accessLevel: event.target.value }] : [])] } : user))}><option value="">{t("settings.noAccess")}</option><option value="read">{t("settings.read")}</option><option value="operate">{t("settings.operate")}</option></select> : accessName(access)}</td><td className="text-center">{defaultWarehouseId === warehouse.id ? "✓" : "—"}</td></tr>;
       })}</tbody></table>
     </div>}
 
@@ -283,4 +323,7 @@ export default function WorkspaceSettings({ view }: { view: string }) {
       {canReadDiagnostics && diagnostics && <div className="rounded-xl border p-4" data-testid="admin-diagnostics"><div className="flex items-center justify-between"><h3 className="font-semibold">{t("settings.systemReadiness")}</h3><span className="text-xs uppercase">{diagnostics.overall}</span></div><div className="mt-3 grid gap-2 md:grid-cols-2">{diagnostics.checks.map(check => <div key={check.id} className="rounded-lg bg-slate-50 p-3 text-sm"><span className="font-semibold">{check.status.toUpperCase()}</span> · {check.id}</div>)}</div><div className="mt-3 text-xs text-slate-500">{formatDateTime(diagnostics.generatedAt)}</div></div>}
     </div>}
   </Card>;
+  // The letterhead and document templates sit with the company they print.
+  if (view === "company") return <div className="space-y-5">{settingsCard}<DocumentTemplateSettings canEdit={canEditWorkspace} /></div>;
+  return settingsCard;
 }

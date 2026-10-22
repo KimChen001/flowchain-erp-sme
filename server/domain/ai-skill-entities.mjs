@@ -208,7 +208,21 @@ const FOCUS_SKILLS = new Set(['today_priorities', 'highest_risk_items', 'records
 function focusFromIds(found) {
   if (found.purchaseOrders.length === 1) return { entityType: 'purchase_order', entityId: found.purchaseOrders[0].id }
   if (found.skus.length === 1) return { entityType: 'item', entityId: found.skus[0].itemId || found.skus[0].sku }
+  // One supplier and no order or SKU: "draft a chaser for Acme" drafts for
+  // Acme's records only.
+  if (found.suppliers.length === 1 && !found.purchaseOrders.length && !found.skus.length) return { entityType: 'supplier', entityId: found.suppliers[0].id }
   return null
+}
+
+// Several named records ("drafts for PO-001 and PO-008", or the first two of
+// the previous answer): the drafts for any of them, at most five.
+function focusesFromIds(found) {
+  const all = [
+    ...found.purchaseOrders.map((row) => ({ entityType: 'purchase_order', entityId: row.id })),
+    ...found.skus.map((row) => ({ entityType: 'item', entityId: row.itemId || row.sku })),
+    ...found.suppliers.map((row) => ({ entityType: 'supplier', entityId: row.id })),
+  ]
+  return all.length > 1 ? all.slice(0, 5) : null
 }
 
 const missing = (found, source) => [...found.truncated, ...found.absent].some((entry) => entry.source === source)
@@ -263,6 +277,18 @@ function withPageRecord(found, focus, facts) {
   return found
 }
 
+// The suppliers of the tier a question filters by, among the reader's own
+// (supplierIds null when the reader cannot see suppliers, so the answer says
+// it could not filter). The tier filters and labels; it never changes the
+// order (docs/supplier-tiers-design.md §6, decision 8).
+export const AI_SKILL_TIER_SKILLS = new Set(['purchase_orders', 'supplier_attention', 'prepare_action_draft'])
+const TIER_SKILLS = AI_SKILL_TIER_SKILLS
+function tierFilter(tier, facts) {
+  if (!tier) return null
+  if (!Array.isArray(facts.suppliers)) return { tier, supplierIds: null }
+  return { tier, supplierIds: facts.suppliers.filter((row) => (tier === 'none' ? !row.tier : row.tier === tier)).map((row) => row.id) }
+}
+
 // The route after the named records are looked up. A prompt chip or a
 // follow-up's hint keeps its skill and takes a focus only from the page or a
 // record number. A question about orders, stock or approvals is narrowed by
@@ -276,7 +302,9 @@ export function refineAiSkillRoute(route, message, facts) {
   const found = FOCUS_SKILLS.has(route.skillId) ? named : withPageRecord(named, route.focus, facts)
   const short = Boolean(route.signals?.short)
   const orders = Boolean(route.signals?.orders)
-  const as = (skillId, mode, entities = found) => ({ ...route, skillId, mode, entities })
+  // Chips and follow-up hints carry no tier.
+  const tier = route.explicit ? null : tierFilter(route.signals?.tier, facts)
+  const as = (skillId, mode, entities = found) => ({ ...route, skillId, mode, entities, ...(tier && TIER_SKILLS.has(skillId) ? { tier } : {}) })
   const skill = route.skillId
   if (route.explicit) {
     const idsOnly = { ...found, suppliers: [], skus: found.skus.filter((row) => !found.viaName.includes(row.sku)), viaName: [] }
@@ -310,6 +338,8 @@ export function refineAiSkillRoute(route, message, facts) {
     if (!skill && found.unsupported.length) return { capability: true, skillId: 'capability_overview', unsupportedIds: found.unsupported.map((entry) => entry.id), entities: found }
     return skill ? { ...route, entities: found } : null
   }
-  if (FOCUS_SKILLS.has(skill) && !route.focus && focusFromIds(found)) return { ...route, focus: focusFromIds(found), entities: found }
-  return { ...route, entities: found }
+  const tiered = tier && TIER_SKILLS.has(skill) ? { tier } : {}
+  if (FOCUS_SKILLS.has(skill) && !route.focus && focusFromIds(found)) return { ...route, focus: focusFromIds(found), entities: found, ...tiered }
+  if (skill === 'prepare_action_draft' && !route.focus && route.mode !== 'order' && focusesFromIds(found)) return { ...route, focusAny: focusesFromIds(found), entities: found, ...tiered }
+  return { ...route, entities: found, ...tiered }
 }

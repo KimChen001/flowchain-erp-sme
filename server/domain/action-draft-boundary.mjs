@@ -1,3 +1,5 @@
+import { sanitizePrefillMap } from '../../shared/prefill-suggestions.mjs'
+
 export const supportedActionDraftTypes = Object.freeze([
   {
     type: 'purchase_request_draft',
@@ -112,6 +114,7 @@ export function buildActionDraftSuggestion(input = {}, options = {}) {
 
   const payload = cleanObject(input.payload || {})
   const validation = validateActionDraftPayload(type, payload)
+  const prefill = sanitizePrefillMap(input.prefill)
   const draft = {
     id: text(input.id, draftId(type, now)),
     type,
@@ -127,6 +130,7 @@ export function buildActionDraftSuggestion(input = {}, options = {}) {
     requiresConfirmation: true,
     originEvidence: asArray(input.originEvidence).map(toActionDraftEvidence).filter((item) => item.id || item.label || item.summary).slice(0, 6),
     payload,
+    ...(prefill ? { prefill } : {}),
     validation,
     auditTrail: [
       {

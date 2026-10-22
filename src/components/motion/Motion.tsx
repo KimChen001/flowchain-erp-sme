@@ -1,5 +1,5 @@
 import React from "react";
-import { MotionConfig, motion } from "motion/react";
+import { MotionConfig, motion, useReducedMotionConfig } from "motion/react";
 import { A } from "../ui";
 
 // Motion across the app is quiet and short: content fades in with a small
@@ -17,12 +17,15 @@ export function AppMotion({ children }: { children: React.ReactNode }) {
 // The page content under the module header, keyed by the route path by its
 // parent: each page fades in and rises 6px. It never animates out, so a
 // navigation is not delayed. At rest it carries no transform (and no
-// will-change), so dialogs inside it stay fixed to the viewport.
+// will-change), so dialogs inside it stay fixed to the viewport. With reduced
+// motion it only fades: MotionConfig would snap the rise away a frame after
+// mount, but the page would still mount 6px low, so it starts in place.
 export function PageTransition({ children }: { children: React.ReactNode }) {
+  const reduceMotion = useReducedMotionConfig();
   return (
     <motion.div
       data-testid="page-transition"
-      initial={{ opacity: 0, y: 6 }}
+      initial={{ opacity: 0, y: reduceMotion ? 0 : 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: EASE }}
     >

@@ -16,6 +16,7 @@ import {
 } from '../domain/procurement-read-model.mjs'
 import { normalizeProcurementAuthorityStatus } from '../domain/procurement-status-authority.mjs'
 import { exactRfqDecimalString } from '../domain/rfq-commercial-decimal.mjs'
+import { escapeLikePattern } from '../persistence/like-pattern.mjs'
 import { getPrismaClient } from '../persistence/prisma-client.mjs'
 import { validateDatabasePersistenceConfig } from '../persistence/persistence-config.mjs'
 import { requireTenantId } from './repository-read-scope.mjs'
@@ -107,11 +108,13 @@ function decodeDocumentId(value) {
   }
 }
 
+// Case-insensitive equals is an ILIKE in PostgreSQL, so an unescaped "%" in the
+// id would open whichever document came first.
 function documentWhere(tenantId, id) {
   return {
     tenantId,
     id: {
-      equals: id,
+      equals: escapeLikePattern(id),
       mode: 'insensitive',
     },
   }
@@ -148,6 +151,8 @@ export function mapPurchaseRequest(record = {}) {
       serviceStartDate: text(lineMeta.serviceStartDate),
       serviceEndDate: text(lineMeta.serviceEndDate),
       internalLineComment: text(lineMeta.internalLineComment),
+      // Why a supplier other than the item's preferred one was chosen, or null.
+      supplierOverride: lineMeta.supplierOverride || null,
       metadata: lineMeta,
     }
   })
@@ -425,6 +430,11 @@ export function mapPurchaseOrder(record = {}) {
     totalReceivedQty: received,
     status: text(record.status, 'draft'),
     transmissionStatus: text(meta.transmissionStatus, record.status === 'draft' ? 'not_sent' : 'sent'),
+    // The instant the PO was issued to the supplier; null when it was not
+    // recorded. Pages show it as a workspace day.
+    issuedAt: record.issuedAt ? isoDateTime(record.issuedAt) : null,
+    // "approved" when the PO was received without being issued in FlowChain.
+    receivingBaseStatus: text(record.receivingBaseStatus) || null,
     priority: text(record.priority),
     sourceRequest: text(record.sourceRequestId),
     sourceRfq: text(record.sourceRfqId),
@@ -472,6 +482,7 @@ function mapReceivingDocument(record = {}) {
   const meta = metadata(record)
   return {
     grn: record.id,
+    documentNumber: text(record.documentNumber),
     po: text(record.poId),
     supplier: text(record.supplierName || meta.supplier),
     supplierId: text(record.supplierId),
@@ -497,6 +508,7 @@ function mapReceivingDocument(record = {}) {
       acceptedQty: numberFrom(entry.acceptedQty, 0),
       rejectedQty: numberFrom(entry.rejectedQty, 0),
       unit: text(entry.unit),
+      lotNumber: text(entry.lotNumber),
       warehouseId: text(entry.warehouseId || record.warehouseId),
       location: text(entry.location),
       status: numberFrom(entry.rejectedQty, 0) > 0 ? 'exception' : 'received',

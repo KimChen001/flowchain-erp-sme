@@ -29,7 +29,7 @@ after(async () => {
 });
 
 test("frontend route manifest satisfies authority invariants", () => {
-  assert.equal(routes.length, 164);
+  assert.equal(routes.length, 182);
   assert.deepEqual(
     invariants.validateRouteManifest(routes, { permissionCatalog: permissionCodeSet }),
     [],
@@ -46,7 +46,7 @@ test("route classification is explicit, exhaustive, and fail closed", () => {
       (total, routeIds) => total + routeIds.size,
       0,
     ),
-    164,
+    182,
   );
   assert.throws(
     () =>
@@ -78,6 +78,7 @@ test("normal SME navigation is deterministic and excludes non-product surfaces",
       "inventory",
       "sales",
       "master-data:suppliers",
+      "contracts",
       "master-data:items",
       "finance",
       "reports",
@@ -178,13 +179,30 @@ test("capability and permission metadata remain declarative boundaries", () => {
     routes.find((route) => route.id === "procurement:order-lines").requiredPermission,
     "procurement.purchase_order.read",
   );
+  for (const id of ["procurement:bills", "procurement:bill-new", "procurement:bill-detail"])
+    assert.equal(
+      routes.find((route) => route.id === id).requiredPermission,
+      "finance.supplier_invoice.read",
+      id,
+    );
+  for (const id of ["sales:invoices", "sales:invoice-new", "sales:invoice-detail"])
+    assert.equal(
+      routes.find((route) => route.id === id).requiredPermission,
+      "finance.customer_invoice.read",
+      id,
+    );
+  // Recording a bill or an invoice is a transaction; reading one is not.
   assert.equal(
-    routes.find((route) => route.id === "procurement:invoices").requiredPermission,
-    "finance.supplier_invoice.read",
+    routes.find((route) => route.id === "procurement:bill-new").requiredCapability,
+    "supplier-invoice",
   );
   assert.equal(
-    routes.find((route) => route.id === "procurement:invoice-detail").requiredPermission,
-    "finance.supplier_invoice.read",
+    routes.find((route) => route.id === "sales:invoice-new").requiredCapability,
+    "customer-invoice",
+  );
+  assert.equal(
+    routes.find((route) => route.id === "procurement:bills").requiredCapability,
+    undefined,
   );
   assert.equal(
     routes.find((route) => route.id === "procurement:match-detail").requiredPermission,
@@ -194,6 +212,17 @@ test("capability and permission metadata remain declarative boundaries", () => {
     routes.find((route) => route.id === "inventory:transfer").requiredPermission,
     "inventory.transfer.read",
   );
+  // The reorder list reads stock like the warnings page and writes nothing;
+  // its action opens a purchase request a person submits.
+  const reorder = routes.find((route) => route.id === "inventory:reorder");
+  assert.equal(reorder.path, "/app/inventory/reorder");
+  assert.equal(reorder.classification, "CORE");
+  assert.equal(reorder.requiredPermission, "inventory.balance.read");
+  assert.equal(reorder.requiredCapability, undefined);
+  assert.equal(reorder.navigationVisibility, "SECONDARY");
+  assert.equal(reorder.readMaturity, "AUTHORITATIVE");
+  assert.equal(reorder.writeMaturity, "UNAVAILABLE");
+  assert.equal(reorder.directAccessBehavior, "PERMISSION_REQUIRED");
   assert.equal(
     routes.find((route) => route.id === "finance:bank-statements").requiredPermission,
     "finance.bank_statement.read",
@@ -219,7 +248,6 @@ test("hidden and searchable route projections respect classifications", () => {
   assert.ok(searchable.some((route) => route.id === "reports"));
   for (const id of [
     "procurement:rfq-detail",
-    "procurement:contracts",
     "imports",
     "imports:pilot",
     "settings:advanced",
@@ -243,6 +271,49 @@ test("hidden and searchable route projections respect classifications", () => {
           route.requiredPermission,
       ),
   );
+});
+
+test("contracts are their own module, gated by the contracts capability and contracts.contract.read", () => {
+  const byId = (id) => routes.find((route) => route.id === id);
+  const ids = ["contracts", "contracts:list", "contracts:ending", "contracts:new", "contracts:detail"];
+  for (const id of ids) {
+    const route = byId(id);
+    assert.equal(route.classification, "CORE", id);
+    assert.equal(route.requiredCapability, "contracts", id);
+    assert.equal(route.requiredPermission, "contracts.contract.read", id);
+    assert.equal(route.directAccessBehavior, "CAPABILITY_REQUIRED", id);
+    assert.equal(route.owner, "src/modules/contracts", id);
+    assert.equal(route.readMaturity, "AUTHORITATIVE", id);
+  }
+  // The form and the detail page write; the lists only read.
+  assert.deepEqual(ids.map((id) => byId(id).writeMaturity), ["UNAVAILABLE", "UNAVAILABLE", "UNAVAILABLE", "AUTHORITATIVE", "AUTHORITATIVE"]);
+  assert.equal(byId("contracts").entryBehavior, "redirect-to-default-child");
+  assert.equal(byId("contracts").defaultChildId, "contracts:list");
+  assert.deepEqual(registry.routesForModule("contracts").map((route) => route.id), ["contracts:list", "contracts:ending"]);
+  assert.deepEqual(ids.map((id) => byId(id).navigationVisibility), ["PRIMARY", "SECONDARY", "SECONDARY", "CONTEXTUAL", "CONTEXTUAL"]);
+  // Static paths win over the detail path Today links to.
+  assert.equal(registry.routeByPath("/app/contracts/list").id, "contracts:list");
+  assert.equal(registry.routeByPath("/app/contracts/ending").id, "contracts:ending");
+  assert.equal(registry.routeByPath("/app/contracts/new").id, "contracts:new");
+  assert.equal(registry.routeByPath("/app/contracts/3f2a6c1e-0b6d-4c35-9a7e-2f0d8c1b4e55").id, "contracts:detail");
+  assert.equal(registry.entityIdForRoutePath(byId("contracts:detail"), "/app/contracts/LOCAL-DEMO-CT-001"), "LOCAL-DEMO-CT-001");
+  // The old frozen placeholder is gone; its address redirects to the list.
+  const placeholder = byId("procurement:contracts");
+  assert.equal(placeholder.classification, "LEGACY");
+  assert.equal(placeholder.directAccessBehavior, "LEGACY_REDIRECT");
+  assert.equal(placeholder.canonicalReplacement, "contracts:list");
+  assert.equal(registry.redirectTargetForPath("/app/procurement/contracts"), "/app/contracts/list");
+  // Off in the trial: no sidebar entry without the capability or the permission.
+  const contracts = byId("contracts");
+  const access = (capabilities, permissions) => ({
+    capabilityLoadState: "ready",
+    enabledCapabilityIds: new Set(capabilities),
+    authorizationLoadState: "ready",
+    effectivePermissionCodes: new Set(permissions),
+  });
+  assert.equal(invariants.isRouteVisibleInNavigation(contracts, "PRIMARY", access([], ["contracts.contract.read"])), false);
+  assert.equal(invariants.isRouteVisibleInNavigation(contracts, "PRIMARY", access(["contracts"], [])), false);
+  assert.equal(invariants.isRouteVisibleInNavigation(contracts, "PRIMARY", access(["contracts"], ["contracts.contract.read"])), true);
 });
 
 test("legacy redirects and canonical operational deep links remain exact", () => {
@@ -297,13 +368,42 @@ test("legacy redirects and canonical operational deep links remain exact", () =>
     "/app/procurement/three-way-match/:id",
   );
   assert.equal(registry.routeByPath("/app/procurement/orders/PO-002").id, "procurement:order-detail");
+  // The PO document reads with exactly the PO's read permission.
+  assert.equal(registry.routeByPath("/app/procurement/orders/PO-002/document").id, "procurement:order-document");
+  assert.equal(byId("procurement:order-document").requiredPermission, byId("procurement:order-detail").requiredPermission);
+  assert.equal(byId("procurement:order-document").requiredCapability, undefined);
+  assert.equal(byId("procurement:order-document").parentId, "procurement:order-detail");
+  assert.equal(byId("procurement:order-document").navigationVisibility, "CONTEXTUAL");
+  assert.equal(byId("procurement:order-document").apiDependency, "/api/procurement/orders/:id/document");
+  assert.equal(byId("procurement:order-document").writeMaturity, "UNAVAILABLE");
+  // The invoice document reads with exactly the invoice's read permission and
+  // the sales capability of the other invoice pages; it writes nothing.
+  assert.equal(registry.routeByPath("/app/sales/invoices/CI-001/document").id, "sales:invoice-document");
+  assert.equal(registry.routeByPath("/app/sales/invoices/CI-001").id, "sales:invoice-detail");
+  assert.equal(byId("sales:invoice-document").requiredPermission, byId("sales:invoice-detail").requiredPermission);
+  assert.equal(byId("sales:invoice-document").requiredPermission, "finance.customer_invoice.read");
+  assert.equal(byId("sales:invoice-document").requiredCapability, byId("sales:invoice-detail").requiredCapability);
+  assert.equal(byId("sales:invoice-document").requiredCapability, "sales");
+  assert.equal(byId("sales:invoice-document").parentId, "sales:invoice-detail");
+  assert.equal(byId("sales:invoice-document").classification, "CORE");
+  assert.equal(byId("sales:invoice-document").navigationVisibility, "CONTEXTUAL");
+  assert.equal(byId("sales:invoice-document").apiDependency, "/api/finance/customer-invoices/:id/document");
+  assert.equal(byId("sales:invoice-document").writeMaturity, "UNAVAILABLE");
   assert.equal(
     registry.routeByPath("/app/procurement/receiving/GRN-001").id,
     "procurement:receiving-detail",
   );
   assert.equal(
-    registry.routeByPath("/app/procurement/invoices/INV-001").id,
-    "procurement:invoice-detail",
+    registry.routeByPath("/app/procurement/bills/INV-001").id,
+    "procurement:bill-detail",
+  );
+  assert.equal(
+    registry.routeByPath("/app/procurement/bills/new").id,
+    "procurement:bill-new",
+  );
+  assert.equal(
+    registry.routeByPath("/app/sales/invoices/new").id,
+    "sales:invoice-new",
   );
   assert.equal(
     registry.routeByPath("/app/procurement/three-way-match/MATCH-INV-001").id,
@@ -326,7 +426,19 @@ test("read and write maturity are independent from CORE classification", () => {
   }
   assert.equal(byId("procurement:requests").writeMaturity, "AUTHORITATIVE");
   assert.equal(byId("settings:audit").writeMaturity, "UNAVAILABLE");
-  for (const id of ["procurement:invoice-detail", "procurement:match-detail"]) {
+  // Sales pages also need the sales module capability, like the sales order
+  // pages next to them.
+  for (const [id, access] of [
+    ["procurement:bill-detail", "PERMISSION_REQUIRED"],
+    ["sales:invoice-detail", "CAPABILITY_REQUIRED"],
+  ]) {
+    assert.equal(byId(id).classification, "CORE", id);
+    assert.equal(byId(id).readMaturity, "AUTHORITATIVE", id);
+    assert.equal(byId(id).writeMaturity, "CAPABILITY_GATED", id);
+    assert.equal(byId(id).navigationVisibility, "CONTEXTUAL", id);
+    assert.equal(byId(id).directAccessBehavior, access, id);
+  }
+  for (const id of ["procurement:match-detail"]) {
     assert.equal(byId(id).classification, "CORE", id);
     assert.equal(byId(id).readMaturity, "AUTHORITATIVE", id);
     assert.equal(byId(id).writeMaturity, "UNAVAILABLE", id);
@@ -483,6 +595,98 @@ test("procurement details use canonical single-document reads and preserve statu
   assert.doesNotMatch(detailSource, /执行匹配|批准发票|发票过账|付款/);
 });
 
+test("moved bill and invoice routes redirect to their new pages", () => {
+  const byId = (id) => routes.find((route) => route.id === id);
+  for (const [id, replacement] of [
+    ["procurement:invoices", "procurement:bills"],
+    ["procurement:invoice-detail", "procurement:bill-detail"],
+    ["finance:invoices", "procurement:bills"],
+    ["finance:invoice-new", "procurement:bill-new"],
+    ["finance:invoice-detail", "procurement:bill-detail"],
+    ["finance:three-way-match", "procurement:bills"],
+    ["finance:customer-invoices", "sales:invoices"],
+    ["finance:customer-invoice-new", "sales:invoice-new"],
+    ["finance:customer-invoice-detail", "sales:invoice-detail"],
+  ]) {
+    assert.equal(byId(id).classification, "LEGACY", id);
+    assert.equal(byId(id).navigationVisibility, "HIDDEN", id);
+    assert.equal(byId(id).directAccessBehavior, "LEGACY_REDIRECT", id);
+    assert.equal(byId(id).canonicalReplacement, replacement, id);
+    assert.equal(registry.currentRouteFor(byId(id)).id, replacement, id);
+  }
+  // Parameters survive the move; the visited query string is kept unless the
+  // redirect names its own.
+  for (const [from, search, to] of [
+    ["/app/finance/invoices", "?status=matched", "/app/procurement/bills?status=matched"],
+    ["/app/finance/invoices/new", "", "/app/procurement/bills/new"],
+    ["/app/finance/invoices/inv 1", "", "/app/procurement/bills/inv%201"],
+    ["/app/procurement/invoices/LOCAL-DEMO-INV-001", "", "/app/procurement/bills/LOCAL-DEMO-INV-001"],
+    ["/app/finance/three-way-match", "?status=open", "/app/procurement/bills?status=exception"],
+    ["/app/finance/customer-invoices/CI-7", "", "/app/sales/invoices/CI-7"],
+  ])
+    assert.equal(registry.redirectTargetForPath(from, search), to, from);
+  assert.equal(registry.redirectTargetForPath("/app/procurement/bills"), null);
+  assert.equal(registry.routePathForId("finance:invoices"), "/app/procurement/bills");
+  // Bills sit under Purchasing next to three-way match; Receiving keeps receipts.
+  const tabs = (rootId) =>
+    routes
+      .filter((route) => route.parentId === rootId && route.navigationVisibility === "SECONDARY")
+      .map((route) => route.id);
+  assert.ok(tabs("procurement").includes("procurement:bills"));
+  assert.ok(tabs("procurement").includes("procurement:match"));
+  assert.deepEqual(tabs("procurement:receiving"), ["procurement:order-lines"]);
+  assert.ok(tabs("sales").includes("sales:invoices"));
+  assert.ok(!tabs("finance").includes("finance:invoices"));
+});
+
+test("Suppliers and Items have second-level tabs whose paths never reach their detail routes", () => {
+  const byId = (id) => routes.find((route) => route.id === id);
+  // What ModuleShell renders as the sub-nav of a standalone primary surface.
+  const subnav = (rootId) =>
+    registry
+      .routesForPrimarySurface(byId(rootId))
+      .filter((route) => route.id === rootId || route.navigationVisibility === "SECONDARY")
+      .map((route) => route.id);
+  assert.deepEqual(subnav("master-data:suppliers"), [
+    "master-data:suppliers",
+    "master-data:supplier-evaluation",
+    "master-data:supplier-risks",
+  ]);
+  assert.deepEqual(subnav("master-data:items"), ["master-data:items", "master-data:item-suppliers"]);
+  // The Items tab reads "Items", the surface's own name.
+  assert.equal(byId("master-data:items").label, "物料资料");
+  for (const [path, id] of [
+    ["/app/master-data/supplier-evaluation", "master-data:supplier-evaluation"],
+    ["/app/master-data/supplier-risks", "master-data:supplier-risks"],
+    ["/app/master-data/item-suppliers", "master-data:item-suppliers"],
+    ["/app/master-data/suppliers/supplier-evaluation", "master-data:supplier-detail"],
+    ["/app/master-data/suppliers/SUP-1", "master-data:supplier-detail"],
+    ["/app/master-data/items/item-suppliers", "master-data:item-detail"],
+  ])
+    assert.equal(registry.routeByPath(path).id, id, path);
+  for (const [id, surface] of [
+    ["master-data:supplier-evaluation", "master-data:suppliers"],
+    ["master-data:supplier-risks", "master-data:suppliers"],
+    ["master-data:item-suppliers", "master-data:items"],
+  ]) {
+    const route = byId(id);
+    assert.equal(route.parentId, surface, id);
+    assert.equal(route.classification, "CORE", id);
+    assert.equal(route.navigationVisibility, "SECONDARY", id);
+    assert.equal(route.showInModuleNav, true, id);
+    // Readable by every signed-in user, like the supplier list; the API hides
+    // what the reader may not see.
+    assert.equal(route.requiredPermission, undefined, id);
+    assert.equal(route.requiredCapability, undefined, id);
+    assert.equal(route.directAccessBehavior, "RENDER", id);
+    assert.deepEqual(registry.breadcrumbRoutes(route).map((item) => item.id), ["overview", surface, id]);
+  }
+  // Supplier evaluation sets tiers; Supplier risks and Supplier prices only read.
+  assert.equal(byId("master-data:supplier-evaluation").writeMaturity, "AUTHORITATIVE");
+  assert.equal(byId("master-data:supplier-risks").writeMaturity, "UNAVAILABLE");
+  assert.equal(byId("master-data:item-suppliers").writeMaturity, "UNAVAILABLE");
+});
+
 test("human-readable route authority matrix covers the executable manifest", () => {
   const matrix = readFileSync(
     new URL("../../docs/frontend-route-authority-matrix.md", import.meta.url),
@@ -495,5 +699,5 @@ test("human-readable route authority matrix covers the executable manifest", () 
     assert.ok(matrix.includes(expected), route.id);
   }
   assert.match(matrix, /Default SME navigation/);
-  assert.match(matrix, /164\/164 frontend route stability audit/);
+  assert.match(matrix, /182\/182 frontend route stability audit/);
 });

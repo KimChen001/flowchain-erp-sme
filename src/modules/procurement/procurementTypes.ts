@@ -239,6 +239,8 @@ export type RfqSupplierResponseCommandInput = {
   paymentTerms?: string | null;
   lines: RfqResponseLineInput[];
   idempotencyKey: string;
+  // Which prefilled values the user kept (codes only); not part of the command's meaning.
+  suggestionTrail?: { origin: string; fields: { field: string; source: string; ref?: string; outcome: string }[] } | null;
 };
 export type RfqSupplierResponseCommandResult = {
   entityType: "SupplierQuotation";
@@ -329,4 +331,5 @@ export type ProcurementDocument = {
   relatedDocuments?: ProcurementDocumentReference[];
   evidence?: Array<Record<string, unknown>>;
 };
-export type ProcurementWorkItem = { id: string; type: string; status: string; amount: number; bucket: "approval" | "tracking"; kind: EntityKind; signals?: string[] };
+// signals are codes ("invoice_variance", "match_exception"), labelled when shown.
+export type ProcurementWorkItem = { id: string; status: string; amount: number; bucket: "approval" | "tracking"; kind: EntityKind; signals?: string[] };

@@ -400,6 +400,30 @@ async function seed() {
       },
     },
   });
+  // An approved order whose goods have not arrived: its bill is recorded
+  // first and waits for the receipt.
+  await prisma.purchaseOrder.create({
+    data: {
+      id: "finance-browser-po-awaiting",
+      tenantId,
+      status: "approved",
+      supplierId: "finance-browser-supplier",
+      supplierName: "Finance Browser Supplier",
+      currency: "CNY",
+      lines: {
+        create: {
+          id: "finance-browser-po-awaiting-line",
+          itemId: "finance-browser-item",
+          sku: "FIN-BROWSER",
+          itemName: "Finance Browser Item",
+          orderedQuantity: "6.0000",
+          receivedQuantity: "0.0000",
+          unit: "EA",
+          unitPrice: "10.0000",
+        },
+      },
+    },
+  });
   if (process.env.PLAYWRIGHT_MOBILE_OPERATIONS_DB === "true") {
     await prisma.purchaseOrder.create({
       data: {

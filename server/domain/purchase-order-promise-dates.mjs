@@ -9,8 +9,10 @@ import { receivingDecimalUnits } from "./receiving-transaction-policy.mjs";
 //     PurchaseOrder.expectedDate when the line has none; it moves when the
 //     supplier revises the delivery;
 //   - the original promise, PurchaseOrderLine.originalPromisedDate, recorded
-//     once: when the PO is issued with a date, or when a date is first set on an
-//     issued PO. A database trigger refuses any later change.
+//     once: when the PO is approved with a date, when it is issued with a date
+//     the line did not have at approval, or when a date is first set on an
+//     issued PO. A database trigger refuses any later change. A date edited
+//     between approval and issue moves only the current date.
 // Supplier scorecards measure delivery against the original promise, because
 // the current date follows the shipment and makes late deliveries look on time.
 //
@@ -59,8 +61,9 @@ export function currentPromisedDay(line, purchaseOrder) {
 export const isIssuedPurchaseOrder = (purchaseOrder) => ISSUED_PURCHASE_ORDER_STATUSES.includes(purchaseOrder?.status);
 
 // Records the original promise of each line that has a date and none yet.
-// Called when a PO is issued, and by seeds that create issued POs. Idempotent:
-// a line that already has its original promise is left alone.
+// Called when a PO is approved and when it is issued, and by seeds that create
+// issued POs. Idempotent: a line that already has its original promise is left
+// alone, so issuing never overwrites the date recorded at approval.
 export async function recordOriginalPromises(tx, { purchaseOrder, lines = purchaseOrder?.lines || [] }) {
   const recorded = [];
   for (const line of lines) {

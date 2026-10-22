@@ -19,7 +19,7 @@ async function request(base, path, options = {}) { const result = await raw(base
 
 const port = await freePort(), apiPort = await freePort(), password = `local-${randomUUID()}`, directory = await mkdtemp(join(tmpdir(), "flowchain-settlement-api-pg-")), database = "flowchain_settlement_api";
 const url = `postgresql://flowchain_settlement_api:${encodeURIComponent(password)}@127.0.0.1:${port}/${database}?schema=public`;
-const env = { ...process.env, DATABASE_URL: url, DATABASE_URL_TEST: url, SCM_API_PORT: String(apiPort), HOST: "127.0.0.1", FLOWCHAIN_PERSISTENCE_MODE: "database", FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true", FLOWCHAIN_ENABLE_DB_INTERNAL_SETTLEMENT: "true", FLOWCHAIN_LOCAL_SESSION_SECRET: "internal-settlement-api-secret-32-characters", FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: "false", NODE_ENV: "test" };
+const env = { ...process.env, DATABASE_URL: url, DATABASE_URL_TEST: url, FLOWCHAIN_APPROVAL_EMAILS: process.env.FLOWCHAIN_APPROVAL_EMAILS || "off", SCM_API_PORT: String(apiPort), HOST: "127.0.0.1", FLOWCHAIN_PERSISTENCE_MODE: "database", FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true", FLOWCHAIN_ENABLE_DB_INTERNAL_SETTLEMENT: "true", FLOWCHAIN_LOCAL_SESSION_SECRET: "internal-settlement-api-secret-32-characters", FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, FLOWCHAIN_ALLOW_LOCAL_ACTOR_BOOTSTRAP: "false", NODE_ENV: "test" };
 const pg = new EmbeddedPostgres({ databaseDir: directory, user: "flowchain_settlement_api", password, port, persistent: false, onLog: () => {}, onError: () => {} });
 let prisma, server;
 try {

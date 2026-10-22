@@ -62,7 +62,14 @@ Safe controls:
 
 - close;
 - cancel local preview;
-- copy draft content.
+- copy draft content;
+- for supplier message drafts (`po_followup_draft`, `supplier_followup_draft`), edit
+  the recipient, subject and multi-line message, and **Open in email**: a `mailto:` link
+  that starts the message in the user's own mail app. FlowChain sends nothing.
+
+Fields the assistant suggested carry their source (record, default or template) in the
+draft's `prefill` map, and the review shows it next to each field while it still holds
+the suggestion (`docs/ai-prefill-autocomplete-design.md`).
 
 The confirm button is visible but disabled. Real confirmation, submit, send, post, or close behavior remains future work.
 
@@ -79,7 +86,10 @@ The confirm button is visible but disabled. Real confirmation, submit, send, pos
 Current database-mode draft events use:
 
 - `draft_previewed`;
-- `draft_saved`.
+- `draft_saved`;
+- `ai_draft_used` (`POST /api/action-drafts/used`): the user copied a draft or opened it
+  in their mail app. It records the draft type, the use and, for a prefilled draft, which
+  suggested fields were kept, edited or cleared, as codes. It never stores the text.
 
 Future confirmed actions should record audit events that include:
 

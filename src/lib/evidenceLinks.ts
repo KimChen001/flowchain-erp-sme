@@ -43,9 +43,9 @@ const PROCUREMENT_DOCUMENT_TYPES: Record<string, { entityType: string; moduleId:
   grn: { entityType: "receiving_doc", moduleId: "procurement:receiving", label: "GRN" },
   receiving_doc: { entityType: "receiving_doc", moduleId: "procurement:receiving", label: "GRN" },
   receivingDoc: { entityType: "receiving_doc", moduleId: "procurement:receiving", label: "GRN" },
-  invoice: { entityType: "supplier_invoice", moduleId: "finance:invoices", label: "供应商发票" },
-  supplier_invoice: { entityType: "supplier_invoice", moduleId: "finance:invoices", label: "供应商发票" },
-  threeWayMatch: { entityType: "supplier_invoice", moduleId: "finance:invoices", label: "三单匹配" },
+  invoice: { entityType: "supplier_invoice", moduleId: "procurement:bills", label: "采购发票" },
+  supplier_invoice: { entityType: "supplier_invoice", moduleId: "procurement:bills", label: "采购发票" },
+  threeWayMatch: { entityType: "supplier_invoice", moduleId: "procurement:bills", label: "三单匹配" },
 };
 
 const ENTITY_TARGETS: Record<string, { moduleId: string; entityType: string; module: CanonicalEvidenceModule; label: string }> = {
@@ -61,7 +61,7 @@ const ENTITY_TARGETS: Record<string, { moduleId: string; entityType: string; mod
   item_master: { moduleId: "master-data:items", entityType: "item", module: "masterData", label: "SKU" },
   supplier: { moduleId: "srm:master", entityType: "supplier", module: "supplier", label: "供应商" },
   supplier_master: { moduleId: "srm:master", entityType: "supplier", module: "supplier", label: "供应商" },
-  supplier_invoice: { moduleId: "finance:invoices", entityType: "supplier_invoice", module: "procurement", label: "供应商发票" },
+  supplier_invoice: { moduleId: "procurement:bills", entityType: "supplier_invoice", module: "procurement", label: "采购发票" },
   exception_case: { moduleId: "exception-cases", entityType: "exception_case", module: "procurement", label: "异常工单" },
   warehouse: { moduleId: "master-data:warehouses", entityType: "warehouse", module: "masterData", label: "仓库" },
   bin: { moduleId: "master-data:warehouses", entityType: "bin", module: "masterData", label: "库位" },
@@ -174,27 +174,6 @@ export function normalizeEvidenceLinks(items: unknown, options: Parameters<typeo
   return rows
     .map((item) => normalizeEvidenceLink(item as EvidenceLike, options))
     .filter((item): item is CanonicalEvidenceLink => Boolean(item));
-}
-
-export function normalizeTodayCockpitTarget(item: EvidenceLike, options: { source?: string; recovery?: unknown } = {}) {
-  if (!item || typeof item !== "object") return null;
-  const target = typeof item.target === "object" && item.target ? item.target as Record<string, unknown> : {};
-  const evidence = Array.isArray(item.evidence) ? item.evidence[0] as EvidenceLike : null;
-  const documentType = text(target.documentType || item.documentType || item.type || evidence?.type);
-  return normalizeEvidenceLink({
-    ...evidence,
-    ...target,
-    type: documentType || evidence?.type,
-    id: target.entityId || item.entityId || item.id || evidence?.id,
-    label: item.title || evidence?.label || evidence?.summary || item.id,
-    status: item.status || evidence?.status,
-    route: item.route || evidence?.route || target.module,
-  }, {
-    source: options.source || "todayCockpit",
-    fallbackModuleId: text(target.module || item.module),
-    fallbackType: documentType,
-    recovery: options.recovery,
-  });
 }
 
 export function normalizeGlobalSearchResult(result: EvidenceLike) {

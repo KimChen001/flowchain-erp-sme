@@ -42,10 +42,10 @@ test('cited passage is highlighted and mixed results keep business evidence visi
       version: 'v2', intent: 'data_quality', query: 'Which records are incomplete according to company policy?', scope: { module: 'overview', dataScopeLabel: 'Current workspace' },
       conclusion: { title: 'Business records checked', summary: 'Two records need review.', confidence: 'high', severity: 'warning' },
       keyEvidence: [], businessImpact: [], recommendedActions: [], navigationLinks: [], dataLimitations: [], reviewCards: [], followUpQuestions: [],
-      supplementalKnowledge: { title: 'Supporting policy', summary: 'Supplier contacts are required. [2]', rag: { mode: 'retrieved_excerpts', citations: [{ id: 'p2', documentId: 'guide', title: 'Company policy', position: 1, sourceNumber: 2, excerpt: 'Supplier contacts are required.' }] } },
+      supplementalKnowledge: { title: 'Supporting policy', summary: 'Supplier contacts are required. [2]', rag: { mode: 'retrieved_excerpts', citations: [{ id: 'p2', documentId: 'guide', title: 'Company policy', heading: 'Company Policy › Supplier records', position: 1, sourceNumber: 2, excerpt: 'Supplier contacts are required.' }] } },
     } });
   });
-  await page.route('**/api/ai-runtime/knowledge/guide', route => route.fulfill({ json: { title: 'Company policy', chunks: [{ id: 'p1', position: 0, content: 'Introduction.' }, { id: 'p2', position: 1, content: 'Supplier contacts are required.' }] } }));
+  await page.route('**/api/ai-runtime/knowledge/guide', route => route.fulfill({ json: { title: 'Company policy', chunks: [{ id: 'p1', position: 0, content: 'Introduction.', heading: 'Company Policy' }, { id: 'p2', position: 1, content: 'Supplier contacts are required.', heading: 'Company Policy › Supplier records' }] } }));
   await openAssistant(page);
   await page.getByTestId('ai-assistant-input').fill('Which records are incomplete according to company policy?');
   await page.getByTestId('ai-assistant-send').click();
@@ -54,10 +54,35 @@ test('cited passage is highlighted and mixed results keep business evidence visi
   await expect(answer).toContainText('Supporting policy');
   await answer.locator('summary').click();
   await expect(answer.locator('summary')).toContainText('[2]');
+  // The citation names its section instead of a passage number.
+  await expect(answer.locator('summary')).toContainText('Company policy · Company Policy › Supplier records');
   await answer.getByRole('button', { name: 'Open cited passage' }).click();
   const source = page.getByRole('dialog', { name: 'Source document' });
   await expect(source.locator('[data-cited="true"]')).toContainText('Supplier contacts are required.');
-  await expect(source.locator('[data-cited="true"]')).toContainText('Passage 2');
+  await expect(source.locator('[data-cited="true"]')).toContainText('Passage 2 · Company Policy › Supplier records');
   await page.keyboard.press('Escape');
   await expect(source).not.toBeVisible();
+});
+
+test('a no-answer says the documents do not answer and lists the searched passages, not as cited', async ({ page }) => {
+  await page.route('**/api/ai-runtime/respond', route => route.fulfill({ json: {
+    version: 'v2', intent: 'knowledge_retrieval', query: 'What is our approval limit for supplier invoices?', scope: { module: 'ai', dataScopeLabel: 'Accessible workspace documents' },
+    conclusion: { title: 'Not answered by your documents', summary: 'The documents you can access do not answer this question. The passages that were searched are listed below.', severity: 'info', confidence: 'medium' },
+    keyEvidence: [], businessImpact: [], recommendedActions: [], navigationLinks: [], dataLimitations: [], reviewCards: [], followUpQuestions: [],
+    rag: { mode: 'no_answer', citations: [{ id: 'p2', documentId: 'guide', title: 'Company policy', heading: 'Company Policy › Supplier records', position: 1, sourceNumber: 1, excerpt: 'Supplier contacts are required.' }] },
+  } }));
+  await page.route('**/api/ai-runtime/knowledge/guide', route => route.fulfill({ json: { title: 'Company policy', chunks: [{ id: 'p1', position: 0, content: 'Introduction.', heading: 'Company Policy' }, { id: 'p2', position: 1, content: 'Supplier contacts are required.', heading: 'Company Policy › Supplier records' }] } }));
+  await openAssistant(page);
+  await page.getByTestId('ai-assistant-input').fill('What is our approval limit for supplier invoices?');
+  await page.getByTestId('ai-assistant-send').click();
+  const answer = page.getByTestId('ai-knowledge-answer');
+  await expect(answer).toContainText('Not answered by your documents');
+  await expect(answer).toContainText('do not answer this question');
+  // Not the "model unavailable" excerpt banner: a model answered, and said the documents are silent.
+  await expect(answer).not.toContainText('A model is not configured');
+  await answer.locator('summary').click();
+  await answer.getByRole('button', { name: 'Open passage', exact: true }).click();
+  const source = page.getByRole('dialog', { name: 'Source document' });
+  await expect(source.locator('[data-cited="true"]')).toContainText('Passage 2 · Company Policy › Supplier records · Searched passage');
+  await expect(source).not.toContainText('Cited passage');
 });

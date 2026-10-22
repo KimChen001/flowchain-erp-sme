@@ -77,15 +77,20 @@ export function splitAiCompoundQuestion(message) {
 
 const keyOf = (route) => `${route.skillId}:${route.mode || ''}`
 
-// The sections of a compound answer, or null for a one-skill answer.
-// `allowed` is the set of skill ids the actor may use.
-export function planAiCompoundAnswer({ message, route, facts, allowed, focusTarget } = {}) {
-  if (!route || route.capability || route.refusal || route.explicit || route.greeting || !facts) return null
-  // A draft is about one record or one follow-up, however it is worded.
-  if (route.skillId === 'prepare_action_draft') return null
-  const raw = String(message ?? '')
-  const parts = splitAiCompoundQuestion(raw)
-  if (parts.length < 2) return null
+// A part that asks a question of its own ("are any supplier bills off",
+// 库存有没有不够的) rather than narrowing the part before it ("which are from
+// Atlas", "and by how many days", 其中哪些…). Only agent planning reads it, to
+// find a part the rules read with the one before but cannot answer.
+const OWN_QUESTION = [
+  /^(?:are|is|do|does|did|have|has|can|could|will|any|anything|how much)\b(?![^?]*\b(?:them|those|these|they|it|its|that)\b)/iu,
+  /^(?!其中|哪些|这些|那些|它们)[^？?。]{0,12}(?:有没有|是否|有多少)/u,
+]
+
+// The parts the rules route and their sections. `dropped` counts the parts no
+// section answers: a part no rule routes that narrows nothing (a first part,
+// read alone, or a question of its own read with the part before), or one the
+// actor's skills cannot answer.
+function compoundSections({ raw, parts, facts, allowed, focusTarget }) {
   const routed = parts.map((part) => ({ ...part, route: routeSkill({ message: part.text, focusTarget }) }))
   // An instruction anywhere keeps the question on the one-skill path, whose
   // refusal rules read the whole question.
@@ -93,10 +98,14 @@ export function planAiCompoundAnswer({ message, route, facts, allowed, focusTarg
   // A part counts when a rule routes it or it names a record number; any
   // other part narrows the part before it.
   const groups = []
+  let missed = 0
   for (const part of routed) {
     const counts = Boolean(part.route && !part.route.capability && (part.route.skillId || array(part.route.ids).length))
-    if (counts || !groups.length) groups.push({ start: part.start, end: part.end, route: counts ? part.route : null, parts: 1 })
-    else Object.assign(groups.at(-1), { end: part.end, parts: groups.at(-1).parts + 1 })
+    if (counts || !groups.length) { groups.push({ start: part.start, end: part.end, route: counts ? part.route : null, parts: 1 }); continue }
+    Object.assign(groups.at(-1), { end: part.end, parts: groups.at(-1).parts + 1 })
+    // Read with the part before, but a question of its own that names no
+    // record: no section answers it.
+    if (OWN_QUESTION.some((pattern) => pattern.test(part.text)) && !refineAiSkillRoute(part.route || {}, part.text, facts)?.skillId) missed += 1
   }
   const refine = (group) => {
     const question = raw.slice(group.start, group.end)
@@ -107,17 +116,48 @@ export function planAiCompoundAnswer({ message, route, facts, allowed, focusTarg
     return { question, start: group.start, end: group.end, route: refined }
   }
   const sections = []
+  let dropped = missed
   for (const group of groups) {
     const section = refine(group)
-    if (!section) continue
+    if (!section) { dropped += group.parts; continue }
     const same = sections.find((entry) => keyOf(entry.route) === keyOf(section.route))
     if (!same) { sections.push(section); continue }
     // Two parts for the same skill and mode are one question about both.
     const both = refine({ start: same.start, end: section.end, route: null, parts: 2 })
     if (both && keyOf(both.route) === keyOf(same.route)) sections.splice(sections.indexOf(same), 1, both)
   }
-  if (sections.length < 2) return null
+  return { sections, dropped }
+}
+
+// The sections of a compound answer, or null for a one-skill answer.
+// `allowed` is the set of skill ids the actor may use.
+export function planAiCompoundAnswer({ message, route, facts, allowed, focusTarget } = {}) {
+  if (!route || route.capability || route.refusal || route.explicit || route.greeting || !facts) return null
+  // A draft is about one record or one follow-up, however it is worded.
+  if (route.skillId === 'prepare_action_draft') return null
+  const raw = String(message ?? '')
+  const parts = splitAiCompoundQuestion(raw)
+  if (parts.length < 2) return null
+  const planned = compoundSections({ raw, parts, facts, allowed, focusTarget })
+  if (!planned || planned.sections.length < 2) return null
+  const { sections } = planned
   return { sections: sections.slice(0, AI_COMPOUND_MAX_SECTIONS), skipped: Math.max(0, sections.length - AI_COMPOUND_MAX_SECTIONS) }
+}
+
+// What the compound rules could not answer part by part, for agent planning
+// (P2): a draft request among several parts, which keeps the one-skill path
+// here, or parts no section answers. A question whose parts the rules merged
+// on purpose (the same skill twice, a part narrowing the one before) has no
+// gap. `parts` is how many parts the question has.
+export function aiCompoundGaps({ message, route, facts, allowed, focusTarget } = {}) {
+  const raw = String(message ?? '')
+  const parts = splitAiCompoundQuestion(raw)
+  const none = { parts: parts.length, draft: false, dropped: 0 }
+  if (!route || route.capability || route.refusal || route.explicit || route.greeting || !facts || parts.length < 2) return none
+  const planned = compoundSections({ raw, parts, facts, allowed, focusTarget })
+  if (!planned) return none
+  if (route.skillId === 'prepare_action_draft') return { ...none, draft: planned.sections.some((section) => section.route.skillId !== 'prepare_action_draft') || planned.dropped > 0 }
+  return { ...none, dropped: planned.dropped }
 }
 
 const SEVERITY_ORDER = ['success', 'info', 'warning', 'risk']
@@ -141,6 +181,13 @@ const asSentence = (value, language) => {
 // figures, links, limitations and review cards are the sections' own,
 // without repeats; the conclusion lists the section titles. Each section
 // keeps its title, summary and the evidence it cited.
+// A follow-up about one order is left out when a message to its supplier
+// about several orders, from another section, covers it.
+function withoutCoveredOrders(cards) {
+  const covered = new Set(cards.filter((card) => array(card.payload?.poIds).length).flatMap((card) => card.payload.poIds))
+  return cards.filter((card) => !(card.draftType === 'po_followup_draft' && !array(card.payload?.poIds).length && covered.has(card.payload?.poId)))
+}
+
 export function composeAiCompoundAnswer({ sections, facts, language: requested, query, skipped = 0 }) {
   const language = aiSkillLanguage(requested)
   const answers = sections.map((section) => section.response)
@@ -192,7 +239,7 @@ export function composeAiCompoundAnswer({ sections, facts, language: requested, 
     recommendedActions: [],
     navigationLinks: unique(answers.flatMap((answer) => array(answer.navigationLinks)), (link) => `${link.moduleId}|${link.entityId || ''}|${link.label}`).slice(0, 6),
     dataLimitations,
-    reviewCards: unique(answers.flatMap((answer) => array(answer.reviewCards)), (card) => `${card.draftType}|${card.targetEntityId || ''}|${card.title}`),
+    reviewCards: withoutCoveredOrders(unique(answers.flatMap((answer) => array(answer.reviewCards)), (card) => `${card.draftType}|${card.targetEntityId || ''}|${card.title}`)),
     followUpQuestions: [],
     followUpSuggestions: unique(answers.flatMap((answer) => array(answer.followUpSuggestions)), (item) => item.prompt).slice(0, 3),
     contextBreadcrumbs: [],

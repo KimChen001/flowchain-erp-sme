@@ -107,7 +107,20 @@ Official references: [chat completions](https://parley-docs.mit.edu/chat-complet
 ### Retrieval and storage
 
 LangChain `RecursiveCharacterTextSplitter` produces overlapping 1,000-character
-chunks stored in PostgreSQL. A `BaseRetriever` implementation ranks authorized
+chunks stored in PostgreSQL. Markdown headings of levels 1-3 (outside code fences)
+start a new section first: each section is split on its own, and its chunks store the
+heading path (for example `Sensor Guide › ZX-PRO-SENSOR-100`). The path is searched
+with the passage, sent to the model as the passage's section, and shown on the
+citation. Text without headings is split as before, with no heading. Documents
+imported before this change keep their chunks until they are imported again.
+
+A model code in the question (hyphen-joined parts ending in three or more digits,
+such as `LDM-001` or `ZX-PRO-SENSOR-100`) is an exact constraint: a passage that
+names only other codes is never cited for it, while a passage that names no code,
+such as a policy, still can be. With one family of codes named, "model 200" or
+型号200 means that family's 200.
+
+A `BaseRetriever` implementation ranks authorized
 chunks using hybrid reciprocal-rank fusion over lexical BM25 (including Chinese
 bigrams) and optional embedding cosine similarity. `RunnableSequence` connects
 retrieval to the existing bounded provider adapter. Embeddings are stored as
@@ -138,10 +151,22 @@ writes commit together; failures roll back. Native pgvector availability does no
 prove older JSON-only documents have been backfilled: reindex those documents.
 
 The existing provider configuration enables generation. Only the top five passages
-are supplied, as untrusted reference text. Unknown or missing citation IDs, provider
+are supplied, as untrusted reference text. The model returns an answer and the
+passages it used, named by id or by number; inline references are written `[1]`,
+and `[sourceNumber 1]` is read as `[1]`. Every reference, listed or inline, must be
+a passage retrieved for this request. A reply with an empty list is a no-answer: a
+fixed English or Chinese sentence ("The documents you can access do not answer this
+question.") with the passages that were searched; the model's own text is never
+shown. A reference to a passage that was not retrieved, a malformed reply, provider
 failure, or missing provider configuration return explicitly labelled excerpts.
 No matching passages return a no-results message. No business mutations run here.
 Citation validation checks source identity; it does not prove every generated claim.
+
+`npm run test:ai:eval:knowledge` imports the AI master plan's three fictional sample
+documents and runs its starter cases on an embedded PostgreSQL. Offline it scores the
+automatic scope, the cited documents and sections, and workspace, archive and reader
+group isolation; answer wording needs a provider run. See
+`tests/ai-eval/knowledge/README.md`.
 
 File imports are limited to 5 MB; PDFs are limited to 100 pages and scanned PDFs
 need OCR before import. Current retrieval limits are 100,000 extracted characters per

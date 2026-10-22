@@ -21,9 +21,11 @@ import {
 } from "lucide-react";
 import { navGroups, navItems } from "./routes.tsx";
 import {
+  currentRouteFor,
   defaultRouteForModule,
   entityIdForRoutePath,
   primarySurfaceRoute,
+  redirectTargetForPath,
   routeById,
   routeByPath,
   routePathForId,
@@ -73,17 +75,24 @@ import {
   type RouteRegistryLoadState,
 } from "./routes/index.ts";
 
-import ReceivingPanel from "../modules/receiving/Page";
 import ReceivingPostingWorkbench from "../modules/receiving/ReceivingPostingWorkbench";
 import InventoryPanel from "../modules/inventory/Page";
+import BinListPage from "../modules/master-data/BinListPage";
 import ForecastPanel from "../modules/forecast/Page";
 import OverviewPanel from "../modules/overview/Page";
 import ProcurementPanel from "../modules/procurement/Page";
 import { CanonicalRfqDetailPage } from "../modules/procurement/CanonicalRfqDetailPage";
 import { CanonicalRfqComparisonPage } from "../modules/procurement/CanonicalRfqComparisonPage";
+import { PurchaseOrderDocumentPage } from "../modules/business-documents/PurchaseOrderDocumentPage";
+import { CustomerInvoiceDocumentPage } from "../modules/business-documents/CustomerInvoiceDocumentPage";
 import FinanceWorkbench from "../modules/finance/Page";
 import SrmPage from "../modules/srm/Page";
+import SupplierEvaluationPage from "../modules/srm/SupplierEvaluationPage";
+import SupplierRisksPage from "../modules/srm/SupplierRisksPage";
 import MasterDataPage from "../modules/master-data/Page";
+import DataImportPage from "../modules/master-data/DataImportPage";
+import ItemSupplierPricesPage from "../modules/master-data/ItemSupplierPricesPage";
+import ContractsPage from "../modules/contracts/Page";
 import AiPanel, { type ActiveContext } from "../modules/ai-assistant/Panel";
 import {
   ActionDraftReviewShell,
@@ -106,6 +115,7 @@ import {
 } from "../components/business/businessEntityRoutes";
 import OutboundWorkbench from "../modules/sales/OutboundWorkbench";
 import InventoryOperationsWorkbench from "../modules/inventory/InventoryOperationsWorkbench";
+import ReorderListPage from "../modules/inventory/ReorderListPage";
 import MobileOperationsPage from "../modules/mobile/MobileOperationsPage";
 import ReturnQuarantineWorkbench from "../modules/inventory/ReturnQuarantineWorkbench";
 import { useI18n } from "../i18n/I18n";
@@ -165,31 +175,36 @@ type GlobalSearchFocus = {
   at: number;
 };
 
-const SEARCH_TYPE_LABELS: Record<string, string> = {
-  sales_order: "销售订单",
-  purchase_request: "PR",
-  rfq: "RFQ",
-  purchase_order: "PO",
-  receiving_doc: "GRN",
-  supplier_invoice: "发票",
-  supplier: "供应商",
-  item: "物料",
-  inventory_item: "库存",
-  warehouse: "仓库",
-  bin: "库位",
+// Labels in both interface languages, picked with labelIn().
+type LabelPair = { en: string; zh: string };
+const labelIn = (label: LabelPair | undefined, language: string) =>
+  label ? label[language === "en-US" ? "en" : "zh"] : undefined;
+
+const SEARCH_TYPE_LABELS: Record<string, LabelPair> = {
+  sales_order: { en: "Sales order", zh: "销售订单" },
+  purchase_request: { en: "PR", zh: "PR" },
+  rfq: { en: "RFQ", zh: "RFQ" },
+  purchase_order: { en: "PO", zh: "PO" },
+  receiving_doc: { en: "GRN", zh: "GRN" },
+  supplier_invoice: { en: "Bill", zh: "发票" },
+  supplier: { en: "Supplier", zh: "供应商" },
+  item: { en: "Item", zh: "物料" },
+  inventory_item: { en: "Stock", zh: "库存" },
+  warehouse: { en: "Warehouse", zh: "仓库" },
+  bin: { en: "Location", zh: "库位" },
 };
 
-const SEARCH_GROUP_LABELS: Record<string, string> = {
-  sales_order: "销售订单",
-  purchase_request: "采购申请",
-  rfq: "RFQ / 寻源",
-  purchase_order: "采购订单",
-  receiving_doc: "采购收货单",
-  supplier_invoice: "供应商发票",
-  supplier: "供应商资料",
-  item: "物料",
-  inventory_item: "库存",
-  warehouse: "仓库 / 库位",
+const SEARCH_GROUP_LABELS: Record<string, LabelPair> = {
+  sales_order: { en: "Sales orders", zh: "销售订单" },
+  purchase_request: { en: "Purchase requests", zh: "采购申请" },
+  rfq: { en: "RFQs / sourcing", zh: "RFQ / 寻源" },
+  purchase_order: { en: "Purchase orders", zh: "采购订单" },
+  receiving_doc: { en: "Receipts", zh: "采购收货单" },
+  supplier_invoice: { en: "Bills", zh: "供应商发票" },
+  supplier: { en: "Suppliers", zh: "供应商资料" },
+  item: { en: "Items", zh: "物料" },
+  inventory_item: { en: "Inventory", zh: "库存" },
+  warehouse: { en: "Warehouses / locations", zh: "仓库 / 库位" },
 };
 
 const SEARCH_GROUP_ORDER = [
@@ -206,21 +221,25 @@ const SEARCH_GROUP_ORDER = [
 ];
 const SEARCH_GROUP_VISIBLE_LIMIT = 5;
 
-const FOCUS_ENTITY_LABELS: Record<string, string> = {
-  customer_order: "销售订单",
-  sales_order: "销售订单",
-  inventory_availability: "库存可用量",
-  inventory_item: "SKU",
-  item: "SKU",
-  sku: "SKU",
-  purchase_request: "采购申请",
-  rfq: "RFx",
-  purchase_order: "采购订单",
-  receiving_doc: "收货单",
-  supplier: "供应商",
-  supplier_invoice: "供应商发票",
-  exception_case: "异常工单",
+const FOCUS_ENTITY_LABELS: Record<string, LabelPair> = {
+  customer_order: { en: "Sales order", zh: "销售订单" },
+  sales_order: { en: "Sales order", zh: "销售订单" },
+  inventory_availability: { en: "Stock availability", zh: "库存可用量" },
+  inventory_item: { en: "SKU", zh: "SKU" },
+  item: { en: "SKU", zh: "SKU" },
+  sku: { en: "SKU", zh: "SKU" },
+  purchase_request: { en: "Purchase request", zh: "采购申请" },
+  rfq: { en: "RFx", zh: "RFx" },
+  purchase_order: { en: "Purchase order", zh: "采购订单" },
+  receiving_doc: { en: "Receipt", zh: "收货单" },
+  supplier: { en: "Supplier", zh: "供应商" },
+  supplier_invoice: { en: "Bill", zh: "供应商发票" },
+  exception_case: { en: "Exception case", zh: "异常工单" },
+  // Any other record.
+  record: { en: "Business record", zh: "业务对象" },
 };
+const focusEntityLabel = (entityType: string, language: string) =>
+  labelIn(FOCUS_ENTITY_LABELS[entityType] || FOCUS_ENTITY_LABELS.record, language);
 
 function searchGroupKey(type: string) {
   return type === "bin" ? "warehouse" : type;
@@ -519,12 +538,12 @@ export default function FlowChainApp() {
         route?.directAccessBehavior === "LEGACY_REDIRECT" &&
         route.canonicalReplacement
       ) {
-        const destination = routeById(route.canonicalReplacement);
-        if (destination)
-          routerNavigate(
-            `${destination.path}${location.search}${location.hash}`,
-            { replace: true },
-          );
+        const destination = redirectTargetForPath(
+          location.pathname,
+          location.search,
+          location.hash,
+        );
+        if (destination) routerNavigate(destination, { replace: true });
       } else if (
         route &&
         !route.parentId &&
@@ -713,7 +732,8 @@ export default function FlowChainApp() {
   // landing on the "Access denied" or "Capability unavailable" screens.
   const canOpenRoute = useCallback(
     (routeId: string) => {
-      const route = routeById(routeId);
+      // A moved route answers for the page it now redirects to.
+      const route = currentRouteFor(routeById(routeId));
       if (!route) return false;
       // Frozen, retired and internal pages render a lock screen, not the page.
       if (
@@ -752,7 +772,7 @@ export default function FlowChainApp() {
     ],
   );
   const contentMaxWidthClass =
-    panelModule === "srm"
+    ["srm", "supplier-evaluation", "supplier-risks", "contracts"].includes(panelModule)
       ? "max-w-[1440px]"
       : [
             "overview",
@@ -784,11 +804,11 @@ export default function FlowChainApp() {
       })
       .map(([type, results]) => ({
         type,
-        label: SEARCH_GROUP_LABELS[type] || type,
+        label: labelIn(SEARCH_GROUP_LABELS[type], language) || type,
         results: results.slice(0, SEARCH_GROUP_VISIBLE_LIMIT),
         hiddenCount: Math.max(0, results.length - SEARCH_GROUP_VISIBLE_LIMIT),
       }));
-  }, [searchResults]);
+  }, [searchResults, language]);
   const visibleSearchResults = useMemo(
     () => searchGroups.flatMap((group) => group.results),
     [searchGroups],
@@ -847,7 +867,7 @@ export default function FlowChainApp() {
       setActiveSearchIndex(payload.results.length ? 0 : -1);
     } catch (error) {
       setSearchResults([]);
-      setSearchError(error instanceof Error ? error.message : "搜索暂不可用");
+      setSearchError(error instanceof Error ? error.message : t("top.searchUnavailable"));
     } finally {
       setSearchLoading(false);
     }
@@ -883,7 +903,7 @@ export default function FlowChainApp() {
       query?: Record<string, string>;
     } = {},
   ) {
-    const requestedRoute = routeById(moduleId);
+    const requestedRoute = currentRouteFor(routeById(moduleId));
     const navigationRoute =
       requestedRoute &&
       !requestedRoute.parentId &&
@@ -893,7 +913,7 @@ export default function FlowChainApp() {
     const navigationId = navigationRoute?.id || moduleId;
     const sourceLabel = activeChildLabel || activeModuleLabel;
     const focusLabel = focusTarget
-      ? `${FOCUS_ENTITY_LABELS[focusTarget.entityType] || "业务对象"} ${focusTarget.entityId}`
+      ? `${focusEntityLabel(focusTarget.entityType, language)} ${focusTarget.entityId}`
       : "";
     const inferredReturnContext = focusTarget
       ? buildReturnContext({
@@ -904,12 +924,14 @@ export default function FlowChainApp() {
           sourceLabel: searchFocus?.entityLabel || focusLabel || sourceLabel,
           originIntent: options.source || "businessNavigation",
           returnLabel: searchFocus?.entityId
-            ? `返回 ${FOCUS_ENTITY_LABELS[searchFocus.entityType] || "业务对象"} ${searchFocus.entityId}`
+            ? language === "en-US"
+              ? `Back to ${focusEntityLabel(searchFocus.entityType, language)} ${searchFocus.entityId}`
+              : `返回 ${focusEntityLabel(searchFocus.entityType, language)} ${searchFocus.entityId}`
             : options.source === "ai" || options.source === "aiRuntimeGateway"
-              ? "返回 AI 结果"
+              ? language === "en-US" ? "Back to AI results" : "返回 AI 结果"
               : options.source === "globalSearch"
-                ? "返回全局搜索"
-                : `返回${sourceLabel}`,
+                ? language === "en-US" ? "Back to search" : "返回全局搜索"
+                : language === "en-US" ? `Back to ${sourceLabel}` : `返回${sourceLabel}`,
         })
       : null;
     const nextIntent = navigationIntentFromModule(navigationId, {
@@ -1004,7 +1026,7 @@ export default function FlowChainApp() {
         sourceModule: activeModule,
         sourceRoute: active,
         sourceLabel: activeChildLabel || activeModuleLabel,
-        returnLabel: "返回全局搜索",
+        returnLabel: language === "en-US" ? "Back to search" : "返回全局搜索",
         originIntent: "globalSearch",
       },
     );
@@ -1029,7 +1051,8 @@ export default function FlowChainApp() {
         onOpenAi={() => setAiOpenSignal(Date.now())}
       />
     ),
-    inventory: (
+    // Master data > Locations / bins lists the bins found on posted stock.
+    inventory: activeView === "bins" ? <BinListPage /> : (
       <InventoryPanel
         initialView={activeView as any}
         focus={searchFocus}
@@ -1071,7 +1094,6 @@ export default function FlowChainApp() {
         onActiveContextChange={setAiActiveContext}
       />
     ),
-    receiving: <ReceivingPanel focus={searchFocus} onNavigate={navigateTo} />,
     "receiving-workbench": (
       <ReceivingPostingWorkbench
         receivingDocumentId={
@@ -1086,6 +1108,7 @@ export default function FlowChainApp() {
     ),
     "outbound-workbench": <OutboundWorkbench />,
     "inventory-operations": <InventoryOperationsWorkbench />,
+    "inventory-reorder": <ReorderListPage />,
     "returns-quarantine": <ReturnQuarantineWorkbench />,
     procurement: (
       <ProcurementPanel
@@ -1111,6 +1134,16 @@ export default function FlowChainApp() {
         focus={searchFocus}
         onNavigate={navigateTo}
         onActiveContextChange={setAiActiveContext}
+      />
+    ),
+    "data-import": <DataImportPage />,
+    "supplier-evaluation": <SupplierEvaluationPage />,
+    "supplier-risks": <SupplierRisksPage />,
+    "item-suppliers": <ItemSupplierPricesPage />,
+    contracts: (
+      <ContractsPage
+        routeId={activeRoute?.id || ""}
+        contractId={activeRoute ? entityIdForRoutePath(activeRoute, location.pathname) : ""}
       />
     ),
     finance: (
@@ -1301,7 +1334,8 @@ export default function FlowChainApp() {
                               size={15}
                               strokeWidth={isActive ? 2 : 1.8}
                             />
-                            <span className="truncate">{item.label}</span>
+                            {/* Long labels such as "Payables & receivables" wrap instead of being cut off. */}
+                            <span className="min-w-0 text-left leading-snug">{item.label}</span>
                             {governedRoute.requiredCapability &&
                               capabilities[governedRoute.requiredCapability]
                                 ?.maturity === "beta" && (
@@ -1447,7 +1481,7 @@ export default function FlowChainApp() {
                 {searchQuery && (
                   <button
                     type="button"
-                    aria-label="清空搜索"
+                    aria-label={t("top.searchClear")}
                     onClick={() => {
                       setSearchQuery("");
                       setSearchResults([]);
@@ -1476,15 +1510,15 @@ export default function FlowChainApp() {
                       className={typography.searchResultTitle}
                       style={{ color: A.label }}
                     >
-                      搜索结果
+                      {t("top.searchResults")}
                     </span>
                     <span
                       className={typography.searchResultMeta}
                       style={{ color: A.gray2 }}
                     >
                       {searchLoading
-                        ? "搜索中..."
-                        : `${searchResults.length} 条`}
+                        ? t("top.searching")
+                        : t(searchResults.length === 1 ? "top.searchCountOne" : "top.searchCount", { count: searchResults.length })}
                     </span>
                   </div>
                   <div className="max-h-96 overflow-y-auto">
@@ -1493,7 +1527,7 @@ export default function FlowChainApp() {
                         className="px-4 py-6 text-xs flex items-center gap-2"
                         style={{ color: A.gray1 }}
                       >
-                        <Loader2 size={14} className="animate-spin" /> 搜索中...
+                        <Loader2 size={14} className="animate-spin" /> {t("top.searching")}
                       </div>
                     )}
                     {!searchLoading && searchError && (
@@ -1511,7 +1545,7 @@ export default function FlowChainApp() {
                           className="px-4 py-6 text-xs"
                           style={{ color: A.gray2 }}
                         >
-                          未找到匹配的业务记录
+                          {t("top.searchEmpty")}
                         </div>
                       )}
                     {!searchLoading &&
@@ -1531,9 +1565,10 @@ export default function FlowChainApp() {
                               rowIndex += 1;
                               const activeResult =
                                 rowIndex === activeSearchIndex;
+                              // Evidence a person can read; the matched field names are internal.
                               const hint = result.evidence?.[0]
                                 ? `${workspaceCopy(result.evidence[0].label, language)}: ${result.evidence[0].value}`
-                                : result.matchedFields.slice(0, 2).join(" / ");
+                                : "";
                               return (
                                 <button
                                   key={result.id}
@@ -1560,7 +1595,7 @@ export default function FlowChainApp() {
                                             color: A.blue,
                                           }}
                                         >
-                                          {SEARCH_TYPE_LABELS[result.type] ||
+                                          {labelIn(SEARCH_TYPE_LABELS[result.type], language) ||
                                             result.type}
                                         </span>
                                         <span
@@ -1574,7 +1609,10 @@ export default function FlowChainApp() {
                                         className={`${typography.searchResultMeta} mt-1 truncate`}
                                         style={{ color: A.sub }}
                                       >
-                                        {result.subtitle || result.entityLabel}
+                                        {/* Runtime results repeat the server's status label as the subtitle. */}
+                                        {result.subtitle && result.subtitle === result.status
+                                          ? workspaceCopy(result.status, language)
+                                          : result.subtitle || result.entityLabel}
                                       </div>
                                       {hint && (
                                         <div
@@ -1593,7 +1631,7 @@ export default function FlowChainApp() {
                                           color: A.gray1,
                                         }}
                                       >
-                                        {result.status}
+                                        {workspaceCopy(result.status, language)}
                                       </span>
                                     )}
                                   </div>
@@ -1608,7 +1646,7 @@ export default function FlowChainApp() {
                                   borderBottom: `1px solid ${A.border}`,
                                 }}
                               >
-                                还有 {group.hiddenCount} 条，请进入对应模块查看
+                                {t("top.searchMore", { count: group.hiddenCount })}
                               </div>
                             )}
                           </div>
@@ -1716,7 +1754,7 @@ export default function FlowChainApp() {
                   {activeRoute.directAccessBehavior === "LEGACY_REDIRECT" ? (
                     <Card className="p-10 text-center" data-testid="legacy-route-redirecting">
                       <Loader2 className="mx-auto animate-spin text-slate-500" size={32} />
-                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "Opening the supported data intake page" : "正在转到正式数据接入页面"}</h2>
+                      <h2 className="mt-3 text-lg font-semibold">{language === "en-US" ? "This page has moved. Opening its new location…" : "页面已迁移，正在打开新位置…"}</h2>
                     </Card>
                   ) : activeRoute.directAccessBehavior === "NOT_IMPLEMENTED" ? (
                     <Card className="p-10 text-center" data-testid="route-not-implemented">
@@ -1826,6 +1864,10 @@ export default function FlowChainApp() {
                             effectivePermissionCodes={effectivePermissionCodes}
                             authorizationLoadState={authorizationLoadState}
                           />
+                        ) : activeRoute.id === "procurement:order-document" ? (
+                          <PurchaseOrderDocumentPage orderId={entityIdForRoutePath(activeRoute, location.pathname)} />
+                        ) : activeRoute.id === "sales:invoice-document" ? (
+                          <CustomerInvoiceDocumentPage invoiceId={entityIdForRoutePath(activeRoute, location.pathname)} />
                         ) : activeRoute.panelId === "receiving-workbench" ? (
                           panels["receiving-workbench"]
                         ) : activeRoute.panelId === "outbound-workbench" ? (
@@ -1843,7 +1885,9 @@ export default function FlowChainApp() {
                             "item",
                             "settlement_document",
                             "supplier_invoice",
+                            "customer_invoice",
                             "three_way_match",
+                            "contract",
                           ].includes(activeRoute.entityType) ? (
                           <BusinessEntityDetailPage route={activeRoute} />
                         ) : (
@@ -1866,7 +1910,7 @@ export default function FlowChainApp() {
         </div>
       </div>
       {/* A rendering error in the assistant must not take the page down. */}
-      <PanelErrorBoundary moduleLabel={language === "zh-CN" ? "AI 助手" : "AI assistant"} language={language}>
+      <PanelErrorBoundary moduleLabel={language === "en-US" ? "AI assistant" : "AI 助手"} language={language}>
         <AiPanel
           moduleId={activeModule}
           activeContext={aiActiveContext}

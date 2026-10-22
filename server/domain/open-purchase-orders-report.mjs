@@ -11,15 +11,39 @@ const round = value => Math.round(value * 10000) / 10000
 const sumKnown = values => values.length && values.every(value => value !== null) ? round(values.reduce((a, b) => a + b, 0)) : null
 const daysLate = (due, today) => due && Number.isFinite(Date.parse(due)) ? Math.max(0, Math.floor((Date.parse(today) - Date.parse(due)) / 86400000)) : null
 
-// One purchase order line by this report's rules: its quantities, its unit and
-// the promised day the report counts lateness from (the line's, else the
+// One purchase order line by this report's rules: its SKU, quantities, unit
+// and the promised day the report counts lateness from (the line's, else the
 // order's expected date). A line is still to receive when its remaining
 // quantity is above zero or unknown.
 export function purchaseOrderReportLine(line, po) {
   const ordered = numeric(line.orderedQuantity ?? line.quantity)
   const received = numeric(line.receivedQuantity)
   const remaining = purchaseOrderLineRemaining(line)
-  return { ordered, received, remaining, open: remaining === null || remaining > 0, unit: text(line.unit || line.unitSnapshot), due: day(line.promisedDate || line.metadata?.promisedDate || po?.expectedDate) }
+  return { sku: text(line.sku || line.itemId), ordered, received, remaining, open: remaining === null || remaining > 0, unit: text(line.unit || line.unitSnapshot), due: day(line.promisedDate || line.metadata?.promisedDate || po?.expectedDate) }
+}
+
+// An order's quantities are its lines' totals only while every line is the
+// same SKU in the same recorded unit, as on the analytics detail rows. Lines in
+// different units read 'mixed', lines of different SKUs (or several lines that
+// do not all name their SKU) 'multiple_skus', and neither has totals.
+function orderQuantities(lines) {
+  const units = [...new Set(lines.map(line => line.unit))]
+  if (units.length > 1) return { ordered: null, received: null, remaining: null, unit: 'mixed' }
+  const skus = new Set(lines.map(line => line.sku))
+  if (skus.size > 1 || (lines.length > 1 && skus.has(''))) return { ordered: null, received: null, remaining: null, unit: 'multiple_skus' }
+  if (!units[0]) return { ordered: null, received: null, remaining: null, unit: '' }
+  return { ordered: sumKnown(lines.map(line => line.ordered)), received: sumKnown(lines.map(line => line.received)), remaining: sumKnown(lines.map(line => line.remaining)), unit: units[0] }
+}
+
+// The day a purchase order is due, shared by this report and the dashboards'
+// overdue KPI: the earliest promised day of its lines still to receive (each
+// line's own date, else the order's expected date), or the expected date of an
+// order without lines. A received line's date no longer counts. '' when no
+// open line has a date.
+export function purchaseOrderDueDay(po) {
+  const lines = (po?.lines || []).map(line => purchaseOrderReportLine(line, po))
+  const dates = lines.filter(line => line.open).map(line => line.due).filter(Boolean).sort()
+  return dates[0] || (!lines.length ? day(po?.expectedDate) : '')
 }
 
 // Overdue days count to the tenant's calendar day (options.timeZone, the
@@ -37,19 +61,13 @@ export function buildOpenPurchaseOrdersReport(purchaseOrders = [], filters = {},
     // One definition shared with the overview card, the analytics KPI, the
     // supplier risk table and saved views: committed and still to receive.
     const isOpen = isOpenPurchaseOrder(po)
-    const units = [...new Set(lines.map(line => line.unit))]
-    const sameUnit = units.length === 1 && Boolean(units[0])
-    const dates = openLines.map(line => line.due).filter(Boolean).sort()
-    const dueDate = dates[0] || (!lines.length ? day(po.expectedDate) : '')
+    const dueDate = purchaseOrderDueDay(po)
     const overdueDays = isOpen ? daysLate(dueDate, asOf) : 0
     const dataIncomplete = !lines.length || lines.some(line => line.ordered === null || line.received === null) || (isOpen && (!dueDate || openLines.some(line => !line.due)))
     return {
       id: text(po.id), orderNumber: text(po.orderNumber || po.id), supplier: text(po.supplierSnapshot?.supplierName || po.supplierName || po.supplierId),
-      supplierId: text(po.supplierId), createdDate: purchaseOrderBusinessDate(po), dueDate, overdueDays, owner: text(po.owner),
-      ordered: sameUnit ? sumKnown(lines.map(line => line.ordered)) : null,
-      received: sameUnit ? sumKnown(lines.map(line => line.received)) : null,
-      remaining: sameUnit ? sumKnown(lines.map(line => line.remaining)) : null,
-      unit: sameUnit ? units[0] : units.length > 1 ? 'mixed' : '',
+      supplierId: text(po.supplierId), createdDate: purchaseOrderBusinessDate(po, timezone), dueDate, overdueDays, owner: text(po.owner),
+      ...orderQuantities(lines),
       amount: numeric(po.totalAmount ?? po.amount), currency: text(po.currency), status: text(po.status), isOpen, dataIncomplete,
     }
   })

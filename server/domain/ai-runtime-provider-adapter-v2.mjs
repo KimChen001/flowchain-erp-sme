@@ -1,3 +1,4 @@
+import { recordAiProviderCall } from './ai-usage-meter.mjs'
 import {
   callProviderSpecificAdapter,
   isProviderSpecificKind,
@@ -336,9 +337,14 @@ export function selectProviderAdapter(envOrConfig = {}) {
   return selectProviderSpecificAdapter(config.kind)
 }
 
+// Each call made inside an assistant request is counted for its workspace's
+// spend cap (ai-usage-meter.mjs), whether or not it succeeded.
 export async function callConfiguredProvider(providerInput, env = {}, fetchImpl = globalThis.fetch) {
   const config = providerRuntimeConfig(env)
-  if (config.kind === 'generic_http') return callGenericHttpProvider(providerInput, env, fetchImpl)
-  if (isProviderSpecificKind(config.kind)) return callProviderSpecificAdapter(providerInput, env, fetchImpl)
-  return { ok: false, reason: 'not_configured' }
+  const call = config.kind === 'generic_http' ? () => callGenericHttpProvider(providerInput, env, fetchImpl)
+    : isProviderSpecificKind(config.kind) ? () => callProviderSpecificAdapter(providerInput, env, fetchImpl) : null
+  if (!call) return { ok: false, reason: 'not_configured' }
+  const response = await call()
+  await recordAiProviderCall(response)
+  return response
 }

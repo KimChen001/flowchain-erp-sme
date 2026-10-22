@@ -111,6 +111,19 @@ try {
       },
     ],
   });
+  // Orders are placed for customers from Customers master data.
+  await prisma.runtimeRecord.createMany({
+    data: [
+      ["CUST-PW", "Playwright Customer", "Net 30"],
+      ["CUST-CANCEL", "Cancelling Customer", null],
+    ].map(([code, name, paymentTerms]) => ({
+      id: randomUUID(),
+      tenantId,
+      namespace: "master-data.customers",
+      recordKey: code,
+      payload: { id: `${code}-ID`, code, name, status: "active", currency: "USD", ...(paymentTerms ? { paymentTerms } : {}), version: 1 },
+    })),
+  });
   await prisma.warehouse.create({
     data: {
       id: "outbound-browser-warehouse",

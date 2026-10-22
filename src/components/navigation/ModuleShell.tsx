@@ -39,8 +39,12 @@ export function ModuleShell({ route, children, routeAccess }: { route: GovernedA
           isRouteVisibleInNavigation(item, "SECONDARY", routeAccess),
       );
   const activeMenuId = route.currentActiveMenuId || route.id;
-  const showModuleHeader = route.id === root.id;
-  const showPageHeader = route.id !== root.id && route.pageType !== "detail" && route.moduleId !== "reports";
+  // A sidebar entry that is itself a list with sub-pages (Suppliers, Items)
+  // is laid out like its sub-pages, as Inventory is: the sub-nav, then the
+  // page title card, so the title does not move when the tab changes.
+  const rootWithTabs = route.id === root.id && subRoutes.length > 1 && route.pageType !== "detail";
+  const showModuleHeader = route.id === root.id && !rootWithTabs;
+  const showPageHeader = (route.id !== root.id || rootWithTabs) && route.pageType !== "detail" && route.moduleId !== "reports";
   return (
     <div className="fc-module-shell" data-testid="module-shell" data-route-id={route.id}>
       <AppBreadcrumb route={route} />

@@ -5,6 +5,9 @@ import { ApiError } from "../../lib/api-client";
 import { procurementApi } from "./procurementApi";
 import { useI18n } from "../../i18n/I18n";
 import { useWorkspaceCurrency } from "../../lib/useWorkspaceCurrency";
+import { PrefillSourceChip } from "../../components/prefill/PrefillSource";
+import { buildSuggestionTrail, type PrefillEntry } from "../../lib/prefill";
+import { PriceHistoryFacts, priceHistoryKey, usePriceHistory } from "./PriceHistoryFacts";
 import type {
   ProcurementRfqDocument,
   ProcurementRfqParticipant,
@@ -83,15 +86,31 @@ function latestQuotation(record: ProcurementRfqDocument, supplierId: string) {
   return record.quotations.find((quotation) => quotation.supplierId === supplierId) || null;
 }
 
-function initialLines(record: ProcurementRfqDocument, quotation: ProcurementRfqQuotation | null): EditableLine[] {
+// A first response starts from the RFQ: each line's requested quantity and
+// required date, labelled as such (docs/ai-prefill-autocomplete-design.md, J5).
+// Prices are never prefilled. A revision starts from the previous revision.
+type LinePrefill = Record<string, { quantity?: PrefillEntry; deliveryDate?: PrefillEntry }>;
+function rfqLinePrefill(record: ProcurementRfqDocument, quotation: ProcurementRfqQuotation | null): LinePrefill {
+  if (quotation?.latestRevision) return {};
+  return Object.fromEntries(record.lines.map((line) => {
+    const quantity = line.quantity === null || line.quantity === undefined || !Number.isFinite(Number(line.quantity)) || Number(line.quantity) <= 0 ? "" : String(line.quantity);
+    const deliveryDate = dateInput(line.requiredDate);
+    return [line.id, {
+      ...(quantity ? { quantity: { source: "record" as const, ref: "rfq:quantity", value: quantity } } : {}),
+      ...(/^\d{4}-\d{2}-\d{2}$/.test(deliveryDate) ? { deliveryDate: { source: "record" as const, ref: "rfq:required_date", value: deliveryDate } } : {}),
+    }];
+  }));
+}
+
+function initialLines(record: ProcurementRfqDocument, quotation: ProcurementRfqQuotation | null, prefill: LinePrefill): EditableLine[] {
   const previous = new Map((quotation?.latestRevision?.lines || []).map((line) => [line.rfqLineId || "", line]));
   return record.lines.map((line) => {
     const prior = previous.get(line.id);
     return {
       rfqLineId: line.id,
-      quantity: prior?.quantity ?? "",
+      quantity: prior?.quantity ?? prefill[line.id]?.quantity?.value ?? "",
       unitPrice: prior?.unitPrice ?? "",
-      deliveryDate: dateInput(prior?.deliveryDate),
+      deliveryDate: dateInput(prior?.deliveryDate) || prefill[line.id]?.deliveryDate?.value || "",
       selected: Boolean(prior),
     };
   });
@@ -133,9 +152,14 @@ export function RfqSupplierResponseDialog({
   const [paymentTerms, setPaymentTerms] = useState(quotation?.latestRevision?.paymentTerms || "");
   const [validUntil, setValidUntil] = useState(dateInput(quotation?.latestRevision?.validity));
   const [deliveryDate, setDeliveryDate] = useState(dateInput(quotation?.latestRevision?.deliveryDate));
-  const [lines, setLines] = useState<EditableLine[]>(() => initialLines(record, quotation));
+  const [linePrefill] = useState<LinePrefill>(() => rfqLinePrefill(record, quotation));
+  const [lines, setLines] = useState<EditableLine[]>(() => initialLines(record, quotation, linePrefill));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // The item's earlier PO prices in the quotation currency and the RFQ line's
+  // unit, beside each price being entered. Never fills a price.
+  const historyKeyOf = (line: ProcurementRfqDocument["lines"][number]) => priceHistoryKey({ itemId: line.itemId, unit: line.unit, currency: /^[A-Za-z]{3}$/.test(currency.trim()) ? currency : "" });
+  const priceHistory = usePriceHistory(open ? record.lines.map(historyKeyOf) : []);
   const attemptRef = useRef<Attempt | null>(null);
   const submittingRef = useRef(false);
 
@@ -179,7 +203,14 @@ export function RfqSupplierResponseDialog({
       ? attemptRef.current
       : { payloadHash, idempotencyKey: globalThis.crypto.randomUUID() };
     attemptRef.current = attempt;
-    const payload: RfqSupplierResponseCommandInput = { ...payloadWithoutKey, idempotencyKey: attempt.idempotencyKey };
+    // Which prefilled values were kept: codes only, outside the hashed payload.
+    const position = new Map(record.lines.map((line, index) => [line.id, index + 1]));
+    const suggestionTrail = buildSuggestionTrail({
+      origin: "form",
+      prefills: Object.fromEntries(Object.entries(linePrefill).flatMap(([lineId, entries]) => Object.entries(entries).map(([field, entry]) => [`line${position.get(lineId)}.${field}`, entry as PrefillEntry])).slice(0, 40)),
+      values: Object.fromEntries(lines.flatMap((line) => [[`line${position.get(line.rfqLineId)}.quantity`, line.selected ? line.quantity : ""], [`line${position.get(line.rfqLineId)}.deliveryDate`, line.selected ? line.deliveryDate || "" : ""]])),
+    });
+    const payload: RfqSupplierResponseCommandInput = { ...payloadWithoutKey, idempotencyKey: attempt.idempotencyKey, ...(suggestionTrail ? { suggestionTrail } : {}) };
     submittingRef.current = true;
     setSubmitting(true);
     setError(null);
@@ -228,7 +259,7 @@ export function RfqSupplierResponseDialog({
         </div>
         <Card className="overflow-hidden" data-testid="rfq-response-line-editor">
           <div className="border-b p-4"><h3 className="text-sm font-semibold">{tr("RFQ 行项目", "RFQ line items")}</h3><p className="mt-1 text-xs" style={{ color: A.sub }}>{tr("RFQ 行 ID、SKU、物料和需求数量是只读源事实；只填写供应商报价字段。", "RFQ line ID, SKU, item, and required quantity are read-only source facts. Enter supplier quotation fields only.")}</p></div>
-          <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-xs"><thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("录入", "Include"), tr("RFQ 行 / SKU / 物料", "RFQ line / SKU / item"), tr("需求数量", "Required quantity"), tr("报价数量", "Quoted quantity"), tr("单价", "Unit price"), tr("行交期", "Line delivery date")].map((label) => <th className="p-3 font-medium" key={label}>{label}</th>)}</tr></thead><tbody>{record.lines.map((line) => { const editable = lines.find((item) => item.rfqLineId === line.id); if (!editable) return null; return <tr className="border-t align-top" data-testid={`rfq-response-editor-line-${line.id}`} key={line.id}><td className="p-3"><input aria-label={`${tr("选择", "Select")} ${line.id}`} type="checkbox" checked={editable.selected} onChange={(event) => updateLine(line.id, "selected", event.target.checked)} /></td><td className="p-3"><div className="font-medium">{line.id}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || "—"} · {line.itemName || line.itemId || "—"}</div></td><td className="p-3 tabular-nums">{line.quantity ?? "—"} {line.unit || ""}</td><td className="p-3"><input aria-label={`${tr("报价数量", "Quoted quantity")} ${line.id}`} className="h-9 w-32 rounded-lg border px-2 tabular-nums" inputMode="decimal" value={editable.quantity} onChange={(event) => updateLine(line.id, "quantity", event.target.value)} placeholder="0.0000" /></td><td className="p-3"><input aria-label={`${tr("单价", "Unit price")} ${line.id}`} className="h-9 w-32 rounded-lg border px-2 tabular-nums" inputMode="decimal" value={editable.unitPrice} onChange={(event) => updateLine(line.id, "unitPrice", event.target.value)} placeholder="0.0000" /></td><td className="p-3"><input aria-label={`${tr("行交期", "Line delivery date")} ${line.id}`} type="date" className="h-9 rounded-lg border px-2" value={editable.deliveryDate || ""} onChange={(event) => updateLine(line.id, "deliveryDate", event.target.value)} /></td></tr>; })}</tbody></table></div>
+          <div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-xs"><thead className="bg-slate-50" style={{ color: A.sub }}><tr>{[tr("录入", "Include"), tr("RFQ 行 / SKU / 物料", "RFQ line / SKU / item"), tr("需求数量", "Required quantity"), tr("报价数量", "Quoted quantity"), tr("单价", "Unit price"), tr("行交期", "Line delivery date")].map((label) => <th className="p-3 font-medium" key={label}>{label}</th>)}</tr></thead><tbody>{record.lines.map((line) => { const editable = lines.find((item) => item.rfqLineId === line.id); if (!editable) return null; return <tr className="border-t align-top" data-testid={`rfq-response-editor-line-${line.id}`} key={line.id}><td className="p-3"><input aria-label={`${tr("选择", "Select")} ${line.id}`} type="checkbox" checked={editable.selected} onChange={(event) => updateLine(line.id, "selected", event.target.checked)} /></td><td className="p-3"><div className="font-medium">{line.id}</div><div className="mt-1" style={{ color: A.sub }}>{line.sku || "—"} · {line.itemName || line.itemId || "—"}</div></td><td className="p-3 tabular-nums">{line.quantity ?? "—"} {line.unit || ""}</td><td className="p-3"><input aria-label={`${tr("报价数量", "Quoted quantity")} ${line.id}`} className="h-9 w-32 rounded-lg border px-2 tabular-nums" inputMode="decimal" value={editable.quantity} onChange={(event) => updateLine(line.id, "quantity", event.target.value)} placeholder="0.0000" /><div><PrefillSourceChip entry={linePrefill[line.id]?.quantity} current={editable.quantity} testId={`rfq-response-prefill-quantity-${line.id}`} /></div></td><td className="p-3"><input aria-label={`${tr("单价", "Unit price")} ${line.id}`} className="h-9 w-32 rounded-lg border px-2 tabular-nums" inputMode="decimal" value={editable.unitPrice} onChange={(event) => updateLine(line.id, "unitPrice", event.target.value)} placeholder="0.0000" />{historyKeyOf(line) && <div className="max-w-[260px]"><PriceHistoryFacts history={priceHistory.histories.get(historyKeyOf(line))} state={priceHistory.state} testId={`rfq-response-price-history-${line.id}`} /></div>}</td><td className="p-3"><input aria-label={`${tr("行交期", "Line delivery date")} ${line.id}`} type="date" className="h-9 rounded-lg border px-2" value={editable.deliveryDate || ""} onChange={(event) => updateLine(line.id, "deliveryDate", event.target.value)} /><div><PrefillSourceChip entry={linePrefill[line.id]?.deliveryDate} current={editable.deliveryDate || ""} testId={`rfq-response-prefill-date-${line.id}`} /></div></td></tr>; })}</tbody></table></div>
         </Card>
         {error && <div className="space-y-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800" data-testid="rfq-response-error"><div className="flex items-start gap-2"><AlertTriangle size={15} className="mt-0.5" />{error}</div>{/重新加载|reload/i.test(error) && <button type="button" className="inline-flex items-center gap-2 font-semibold text-rose-800" onClick={async () => { await onReload(); onClose(); }}><RefreshCw size={14} />{tr("重新加载", "Reload")}</button>}</div>}
         {submitting && <div className="flex items-center gap-2 text-xs" style={{ color: A.sub }}><Check size={14} />{tr("正在等待服务器确认，成功后将重新读取 RFQ。", "Waiting for server confirmation. The RFQ will reload after a successful save.")}</div>}

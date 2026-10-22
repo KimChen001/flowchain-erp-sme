@@ -35,7 +35,7 @@ test('every skill copy key has an English and a Chinese text', () => {
 })
 
 test('every registry entry is read-only, bilingual and uses known permission codes', () => {
-  assert.deepEqual(AI_SKILL_IDS, ['today_priorities', 'highest_risk_items', 'records_needing_data', 'prepare_action_draft', 'workspace_metrics', 'purchase_orders', 'pending_approvals', 'inventory_availability', 'invoice_summary', 'rfq_followups', 'receiving_issues', 'supplier_attention', 'capability_overview'])
+  assert.deepEqual(AI_SKILL_IDS, ['today_priorities', 'highest_risk_items', 'records_needing_data', 'prepare_action_draft', 'workspace_metrics', 'purchase_orders', 'pending_approvals', 'inventory_availability', 'invoice_summary', 'rfq_followups', 'receiving_issues', 'supplier_attention', 'spend_analysis', 'capability_overview'])
   // None contains "missing", which the client reads as an insufficient-data answer.
   for (const id of AI_SKILL_IDS) assert.doesNotMatch(id, /missing/)
   assert.match(AI_SKILL_IDS.find((id) => id.includes('draft')), /draft/)
@@ -90,6 +90,7 @@ test('tool descriptors are stable, read-only and filtered by the actor', () => {
     { name: 'rfq_followups', mode: 'read', writesBusinessData: false, requiresUserReview: false, sensitivityGroups: [] },
     { name: 'receiving_issues', mode: 'read', writesBusinessData: false, requiresUserReview: false, sensitivityGroups: [] },
     { name: 'supplier_attention', mode: 'read', writesBusinessData: false, requiresUserReview: false, sensitivityGroups: ['finance_amounts'] },
+    { name: 'spend_analysis', mode: 'read', writesBusinessData: false, requiresUserReview: false, sensitivityGroups: ['procurement_prices'] },
     { name: 'capability_overview', mode: 'read', writesBusinessData: false, requiresUserReview: false, sensitivityGroups: [] },
   ])
   for (const descriptor of descriptors) assert.doesNotMatch(descriptor.description, CJK)

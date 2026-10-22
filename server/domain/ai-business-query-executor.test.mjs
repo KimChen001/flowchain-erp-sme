@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { emptyBusinessQueryPlan } from './ai-business-query-plan.mjs'
+import { assertValidBusinessQueryPlan, emptyBusinessQueryPlan } from './ai-business-query-plan.mjs'
 import { executeBusinessQueryPlan } from './ai-business-query-executor.mjs'
 import { assertReadOnlyGoalRegistry, goalDefinition } from './ai-business-goal-registry.mjs'
 import { buildBusinessQueryResponseV2 } from './ai-business-query-response.mjs'
@@ -11,11 +11,11 @@ const summary = {
   payment: { state: 'confirmed', dueCount: 1, dueAmount: 100, overdueCount: 1, overdueAmount: 100, readyCount: 0, blockedCount: 1, blocks: [{ payableId: 'p1', reason: 'invoice_disputed' }] },
   invoice: { state: 'confirmed', openCount: 1, mismatchCount: 1, disputedCount: 1, missingEvidenceCount: 0 },
   procurement: { state: 'confirmed_zero', openPoCount: 0, overduePoCount: 0, overduePoIds: [], unreceivedPoCount: 0 },
-  receiving: { state: 'confirmed_zero', exceptionCount: 0, rejectedQuantity: 0, pendingEvidenceCount: 0 },
+  receiving: { state: 'confirmed_zero', exceptionCount: 0, rejectedQuantities: [], pendingEvidenceCount: 0 },
   rfq: { state: 'confirmed_zero', awaitingResponseCount: 0, expiredCount: 0 },
   reconciliation: { state: 'hidden', unreconciledPaymentCount: null, blockingExceptionCount: null },
   dataQuality: { incompleteRecordCount: 0, limitations: ['bank_reconciliation_hidden'] },
-  priority: { level: 'high', score: 50, reasons: [], algorithmVersion: 'supplier-action-priority-v1' },
+  priority: { since: '2026-07-01', reasons: [{ code: 'payment_overdue', since: '2026-07-01', count: 1 }] },
   recommendedActions: ['review_payment_blocks'],
   evidence: [{ type: 'payable_obligation', id: 'p1', label: 'PAY-1' }],
 }
@@ -86,10 +86,15 @@ test('unsupported filters ask for clarification without executing a broader quer
   assert.match(pack.clarification.questionEn, /not supported/)
 })
 
-test('priority ranking applies a stable limit and hides unrelated zero-result suppliers', async () => {
-  const lower = { ...structuredClone(summary), supplier: { id: 's2' }, priority: { score: 1, level: 'low' } }
-  const pack = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ goals: ['supplier_priority'], ranking: { enabled: true, limit: 1 } }), { summaryService: { read: async () => ({ items: [lower, summary] }) } })
-  assert.deepEqual(pack.sections[0].rows.map(row => row.supplier.id), ['s1'])
+test('priority ranking takes the oldest open reason first, then applies a stable limit', async () => {
+  const later = { ...structuredClone(summary), supplier: { id: 's2' }, priority: { since: '2026-07-15', reasons: [{ code: 'invoice_exception', since: '2026-07-15', count: 1 }] } }
+  const undated = { ...structuredClone(summary), supplier: { id: 's0' }, priority: { since: null, reasons: [] } }
+  const pack = await executeBusinessQueryPlan(emptyBusinessQueryPlan({ goals: ['supplier_priority'], ranking: { enabled: true, limit: 2 } }), { summaryService: { read: async () => ({ items: [undated, later, summary] }) } })
+  assert.deepEqual(pack.sections[0].rows.map(row => [row.supplier.id, row.priority.since]), [['s1', '2026-07-01'], ['s2', '2026-07-15']])
+})
+
+test('a plan that filters by risk level is refused: suppliers carry no level or score', () => {
+  assert.throws(() => assertValidBusinessQueryPlan(emptyBusinessQueryPlan({ goals: ['supplier_priority'], filters: { timeWindow: 'all', dueState: [], riskLevels: ['high'], statuses: [], currencies: [] } })), (error) => error.details.some((detail) => detail.startsWith('filters.riskLevels')))
 })
 
 

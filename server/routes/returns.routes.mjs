@@ -66,6 +66,7 @@ function knownError(ctx, error) {
     });
     return;
   }
+  ctx.reportError?.(error);
   ctx.send(ctx.res, 500, {
     code: "RETURN_GOVERNANCE_FAILED",
     message: "Return governance could not be completed.",

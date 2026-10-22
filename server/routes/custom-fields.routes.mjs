@@ -33,6 +33,7 @@ function sendError(ctx, error) {
   } else if (error?.code === "P2002") {
     ctx.send(ctx.res, 409, { code: "CUSTOM_FIELD_CONFLICT", message: "A custom field with this stable key already exists." });
   } else {
+    ctx.reportError?.(error);
     ctx.send(ctx.res, 500, { code: "CUSTOM_FIELD_REQUEST_FAILED", message: "The custom field request could not be completed." });
   }
 }

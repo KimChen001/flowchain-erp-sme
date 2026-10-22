@@ -110,7 +110,7 @@ async function readyAndPost(page: any) {
   await confirmPreview(page);
   await expect(page.getByTestId("preview-reverse-return")).toBeEnabled();
   await expect(page.getByTestId("return-reconciliation")).toContainText(
-    "matched",
+    "已匹配",
   );
 }
 

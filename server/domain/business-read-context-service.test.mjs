@@ -43,20 +43,23 @@ test('BusinessReadContext aggregates only runtime repositories and reports unava
   assert.equal(context.runtimeAdapters.procurement, 'durable-procurement-runtime-v2')
 })
 
-test('home overview is server-derived, uses canonical routes and does not manufacture risk zero', async () => {
+test('home overview is server-derived, uses canonical routes and counts overdue work from its rows', async () => {
   const context = await createBusinessReadContextService({ repositories: repositories(), dataMode: 'user' }).read()
-  const overview = buildHomeOverview(context)
-  assert.equal(overview.workItems.length, 2)
-  assert.equal(overview.unresolvedRisks, null)
-  assert.equal(overview.counts.unresolvedRisks, null)
-  assert.equal(overview.recentDocuments.length, 2)
+  const overview = buildHomeOverview(context, { now: new Date('2026-07-14T12:00:00Z') })
+  // Neither has a date; a tie keeps the fixed order of kinds.
+  assert.deepEqual(overview.workItems.map(row => [row.kind, row.recordId]), [['purchase_request_to_approve', 'PR-1'], ['draft_purchase_order', 'PO-1']])
+  assert.equal(overview.workTotal, 2)
+  assert.equal(overview.overdue, 0)
+  assert.equal(overview.counts.overdue, 0)
+  // Sales orders are recent documents too.
+  assert.deepEqual(overview.recentDocuments.map(row => row.type).sort(), ['purchase_order', 'purchase_request', 'sales_order'])
   assert.ok(overview.recentDocuments.every(row => row.canonicalRoute.startsWith('/app/')))
-  assert.ok(overview.limitations.includes('unresolved_risk_metric_not_connected'))
+  assert.ok(overview.workItems.every(row => row.href.startsWith('/app/')))
   // Amounts carry the document currency so the page can format them; a document
   // without a stored currency carries none rather than a guess.
-  const request = overview.workItems.find(row => row.id === 'PR-1')
-  assert.equal(request.amount, 120)
-  assert.equal(request.currency, 'USD')
+  const request = overview.workItems.find(row => row.recordId === 'PR-1')
+  assert.equal(request.detail.amount, 120)
+  assert.equal(request.detail.currency, 'USD')
   assert.equal(overview.recentDocuments.find(row => row.id === 'PR-1').currency, 'USD')
   assert.equal(overview.recentDocuments.find(row => row.id === 'PO-1').currency, '')
 })
@@ -86,4 +89,20 @@ test('changes today count documents updated on the tenant day, not the UTC day',
 test('recent RFQs link to the RFQ detail route, which is /app/procurement/rfq/:id', () => {
   const overview = buildHomeOverview({ purchaseRequests: [], purchaseOrders: [], rfqs: [{ id: 'RFQ-1', status: 'open', updatedAt: '2026-07-14T02:00:00.000Z' }], dataLimitations: [] })
   assert.equal(overview.recentDocuments[0].canonicalRoute, '/app/procurement/rfq/RFQ-1')
+})
+
+test('the context carries the recorded unit of every item a purchase order line names, apart from the item list', async () => {
+  const repos = repositories()
+  let asked = null
+  repos.masterData.listRecordedItemUnits = async (filters) => { asked = filters; return [{ sku: 'ZZ-100', itemId: 'ITEM-ZZ', unit: 'pcs' }] }
+  repos.procurementRuntime.snapshot = async () => ({ purchaseOrders: [{ id: 'PO-40', status: 'issued', lines: [{ sku: 'ZZ-100', itemId: 'ITEM-ZZ', unit: 'CASE' }, { sku: '', itemId: 'ITEM-Y' }] }] })
+  const context = await createBusinessReadContextService({ repositories: repos }).read({ tenantId: 'tenant-1' })
+  assert.deepEqual(asked.keys, ['ZZ-100', 'ITEM-ZZ', 'ITEM-Y'])
+  assert.equal(asked.tenantId, 'tenant-1')
+  assert.deepEqual(context.itemUnits, [{ sku: 'ZZ-100', itemId: 'ITEM-ZZ', unit: 'pcs' }])
+  // Without purchase order lines nothing is read.
+  repos.procurementRuntime.snapshot = async () => ({ purchaseOrders: [] })
+  asked = null
+  assert.deepEqual((await createBusinessReadContextService({ repositories: repos }).read({ tenantId: 'tenant-1' })).itemUnits, [])
+  assert.equal(asked, null)
 })

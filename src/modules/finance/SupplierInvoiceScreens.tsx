@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, FilePlus2, RefreshCw } from "lucide-react";
-import { A, Card, Chip } from "../../components/ui";
+import { FilePlus2, RefreshCw } from "lucide-react";
+import { A, Card } from "../../components/ui";
+import { BusinessEntityLink } from "../../components/business/BusinessEntityLink";
 import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
+import { formatDateTimeInTimeZone } from "../../lib/format";
+import { Notice, StatusChip, TwoStepAction, button, field, message } from "./FinanceControls";
+import { PaymentRecords } from "./PaymentRecords";
+import { addCalendarDays } from "../../lib/prefill";
+import { useDetailCrumb } from "../../components/navigation/detailCrumb";
 
 // The supplier invoice screens of the trial's procure-to-pay chain: enter an
 // invoice against a posted receipt, then submit, match, review exceptions,
@@ -12,30 +17,19 @@ import { createSecureClientMutationId } from "../../lib/client-id";
 // the server's plan first and confirms exactly that operation; the server
 // checks permissions, versions and the three-way rules.
 
-type TranslationKey = Parameters<ReturnType<typeof useI18n>["t"]>[0];
-type Issue = { code?: string; message?: string };
+type Issue = { code?: string; message?: string; details?: unknown };
 type Plan = { allowed: boolean; blockingIssues?: Issue[]; invoice?: { totalAmount?: string; currency?: string }; nextStatus?: string };
 type EntryData = {
-  suppliers: Array<{ id: string; code?: string | null; name: string }>;
-  purchaseOrders: Array<{ id: string; supplierId: string; currency: string; lines: Array<{ id: string; sku: string; itemName: string; unitPrice: string | null; unit: string | null }> }>;
+  suppliers: Array<{ id: string; code?: string | null; name: string; paymentTerm?: { code: string; name: string; days: number | null } | null }>;
+  purchaseOrders: Array<{ id: string; supplierId: string; currency: string; status: string; lines: Array<{ id: string; sku: string; itemName: string; orderedQuantity: string; billedQuantity: string; unitPrice: string | null; unit: string | null }> }>;
   receivingDocuments: Array<{ id: string; documentNumber: string | null; poId: string | null; supplierId: string; supplierName: string | null; currency: string | null; lines: Array<{ id: string; purchaseOrderLineId: string | null; sku: string; itemName: string; acceptedQuantity: string; unit: string | null }> }>;
   capabilities: Record<string, { enabled?: boolean }>;
 };
+type Order = EntryData["purchaseOrders"][number];
 
-const field = "rounded-lg border border-slate-200 px-3 py-2 text-sm";
-const button = "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium disabled:opacity-50";
-const STATUS_KEYS: Record<string, TranslationKey> = {
-  draft: "finance.status.draft",
-  submitted: "finance.status.submitted",
-  matched: "finance.status.matched",
-  exception: "finance.status.exception",
-  approved: "finance.status.approved",
-  held: "finance.status.held",
-  export_ready: "finance.status.export_ready",
-  open: "finance.status.open",
-  resolved: "finance.status.resolved",
-  cancelled: "finance.status.cancelled",
-};
+// Purchase orders a bill can be recorded against before their goods arrive
+// (BILL_BEFORE_RECEIPT_PO_STATUSES in operational-finance-policy.mjs).
+const BILL_BEFORE_RECEIPT_PO_STATUSES = new Set(["approved", "issued", "partially_received", "fully_received", "received", "open"]);
 
 const money = (amount: unknown, currency: unknown, locale: string) => {
   if (amount === null || amount === undefined || amount === "") return "—";
@@ -47,22 +41,18 @@ const money = (amount: unknown, currency: unknown, locale: string) => {
     : `${amount} ${code}`.trim();
 };
 const fixed = (value: number) => (Number.isFinite(value) ? value.toFixed(4) : "0.0000");
-const message = (reason: unknown, fallback: string) => (reason instanceof Error ? reason.message : fallback);
-
-function Notice({ children, tone = "warning" }: { children: ReactNode; tone?: "warning" | "success" }) {
-  const colors = tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900";
-  return (
-    <div role={tone === "warning" ? "alert" : "status"} className={`flex gap-2 rounded-xl border p-3 text-sm ${colors}`}>
-      {tone === "success" ? <CheckCircle2 className="mt-0.5 shrink-0" size={16} /> : <AlertTriangle className="mt-0.5 shrink-0" size={16} />}
-      <span>{children}</span>
-    </div>
-  );
-}
-
-function StatusChip({ status }: { status: string }) {
-  const { t } = useI18n();
-  return <Chip label={STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status || "—"} color={A.blue} bg="#eff6ff" />;
-}
+// Today on the user's calendar, not in UTC.
+const localToday = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
+// Each line of a receipt starts at its accepted quantity; the user can lower it.
+const receivedQuantities = (receipt: EntryData["receivingDocuments"][number]) =>
+  Object.fromEntries(receipt.lines.map((line) => [line.id, { quantity: String(Number(line.acceptedQuantity)) }]));
+// A bill recorded before the goods arrive starts at what was ordered and not
+// yet billed.
+const unbilledQuantities = (order: Order) =>
+  Object.fromEntries(order.lines.map((line) => [line.id, { quantity: String(Math.max(0, Number(line.orderedQuantity) - Number(line.billedQuantity || 0))) }]));
 
 // -------------------------------------------------------------- new invoice
 
@@ -70,33 +60,83 @@ export function NewSupplierInvoice() {
   const { t, locale } = useI18n();
   const [entry, setEntry] = useState<EntryData | null>(null);
   const [supplierId, setSupplierId] = useState("");
+  // The purchase order narrows the receipts; with no receipt chosen the bill
+  // is recorded against the order and waits for its receipt.
+  const [poId, setPoId] = useState("");
   const [receiptId, setReceiptId] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [invoiceDate, setInvoiceDate] = useState(localToday);
   const [dueDate, setDueDate] = useState("");
+  // Until someone types a due date, it follows the supplier's payment term:
+  // the invoice date plus the term's days.
+  const [dueTyped, setDueTyped] = useState(false);
   const [lines, setLines] = useState<Record<string, { quantity?: string; unitPrice?: string; tax?: string }>>({});
   const [plan, setPlan] = useState<Plan | null>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sourceNotice, setSourceNotice] = useState("");
   useEffect(() => {
     void apiJson<EntryData>("/api/finance/entry-data")
       .then(setEntry)
       .catch((reason) => setNotice(message(reason, t("finance.loadFailed"))));
   }, []);
-  const receipts = useMemo(() => (entry?.receivingDocuments || []).filter((row) => !supplierId || row.supplierId === supplierId), [entry, supplierId]);
+  // Opened from a receipt (?receipt=) or a purchase order (?po=): choose the
+  // supplier, order and receipt and offer each received quantity. A purchase
+  // order without a posted receipt offers what was ordered instead: the bill
+  // waits for the receipt before it can be matched and paid.
+  useEffect(() => {
+    if (!entry) return;
+    const params = new URLSearchParams(window.location.search);
+    const receiptParam = params.get("receipt");
+    const poParam = params.get("po");
+    if (receiptParam) {
+      const found = entry.receivingDocuments.find((row) => row.id === receiptParam || row.documentNumber === receiptParam);
+      if (!found) { setSourceNotice(`${receiptParam}: ${t("finance.receiptNotBillable")}`); return; }
+      setSupplierId(found.supplierId);
+      setPoId(found.poId || "");
+      setReceiptId(found.id);
+      setLines(receivedQuantities(found));
+    } else if (poParam) {
+      const order = entry.purchaseOrders.find((row) => row.id === poParam);
+      const forPo = entry.receivingDocuments.filter((row) => row.poId === poParam);
+      if (!order && !forPo.length) { setSourceNotice(`${poParam}: ${t("finance.poNotBillable")}`); return; }
+      setSupplierId(order?.supplierId || forPo[0].supplierId);
+      setPoId(poParam);
+      if (forPo.length === 1) {
+        setReceiptId(forPo[0].id);
+        setLines(receivedQuantities(forPo[0]));
+      } else if (!forPo.length && order) setLines(unbilledQuantities(order));
+    }
+  }, [entry]);
+  const orders = useMemo(
+    () => (entry?.purchaseOrders || []).filter((row) => row.supplierId === supplierId && (BILL_BEFORE_RECEIPT_PO_STATUSES.has(row.status) || entry?.receivingDocuments.some((receipt) => receipt.poId === row.id) || row.id === poId)),
+    [entry, supplierId, poId],
+  );
+  const receipts = useMemo(
+    () => (entry?.receivingDocuments || []).filter((row) => (!supplierId || row.supplierId === supplierId) && (!poId || row.poId === poId)),
+    [entry, supplierId, poId],
+  );
   const receipt = receipts.find((row) => row.id === receiptId) || null;
-  const order = entry?.purchaseOrders.find((row) => row.id === receipt?.poId) || null;
+  const order = entry?.purchaseOrders.find((row) => row.id === (receipt?.poId || poId)) || null;
+  // No receipt yet: the bill is recorded against the order's lines.
+  const beforeReceipt = !receipt && Boolean(order);
+  const orderOpen = Boolean(order && BILL_BEFORE_RECEIPT_PO_STATUSES.has(order.status));
   const poLine = (id: string | null) => order?.lines.find((line) => line.id === id) || null;
   const currency = receipt?.currency || order?.currency || "";
   const linePrice = (lineId: string, purchaseOrderLineId: string | null) => lines[lineId]?.unitPrice ?? poLine(purchaseOrderLineId)?.unitPrice ?? "";
+  const formLines = receipt
+    ? receipt.lines.map((line) => ({ id: line.id, purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.id, sku: line.sku, itemName: line.itemName, unit: line.unit, context: `${t("finance.received")} ${line.acceptedQuantity} ${line.unit || ""}` }))
+    : beforeReceipt && orderOpen && order
+      ? order.lines.map((line) => ({ id: line.id, purchaseOrderLineId: line.id, receivingLineId: "", sku: line.sku, itemName: line.itemName, unit: line.unit, context: `${t("finance.ordered")} ${Number(line.orderedQuantity)} ${line.unit || ""} · ${t("finance.billed")} ${Number(line.billedQuantity || 0)}` }))
+      : [];
   const body = () => {
-    const chosen = (receipt?.lines || [])
+    const chosen = formLines
       .filter((line) => Number(lines[line.id]?.quantity || 0) > 0)
       .map((line) => {
         const quantity = lines[line.id]?.quantity || "0";
         const unitPrice = linePrice(line.id, line.purchaseOrderLineId) || "0";
         const tax = lines[line.id]?.tax || "0";
-        return { purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.id, quantity, unitPrice, lineAmount: fixed(Number(quantity) * Number(unitPrice)), enteredTaxAmount: tax };
+        return { purchaseOrderLineId: line.purchaseOrderLineId, receivingLineId: line.receivingLineId, quantity, unitPrice, lineAmount: fixed(Number(quantity) * Number(unitPrice)), enteredTaxAmount: tax };
       });
     const total = chosen.reduce((sum, line) => sum + Number(line.lineAmount) + Number(line.enteredTaxAmount || 0), 0);
     return {
@@ -110,6 +150,25 @@ export function NewSupplierInvoice() {
     };
   };
   const reset = () => setPlan(null);
+  const term = entry?.suppliers.find((row) => row.id === supplierId)?.paymentTerm || null;
+  const termDue = term && term.days !== null && /^\d{4}-\d{2}-\d{2}$/.test(invoiceDate) ? addCalendarDays(invoiceDate, term.days) : "";
+  useEffect(() => {
+    if (!dueTyped && termDue) setDueDate(termDue);
+  }, [termDue, dueTyped]);
+  const chooseOrder = (id: string) => {
+    const next = entry?.purchaseOrders.find((row) => row.id === id);
+    const forPo = (entry?.receivingDocuments || []).filter((row) => row.poId === id);
+    setPoId(id);
+    setReceiptId(forPo.length === 1 ? forPo[0].id : "");
+    setLines(forPo.length === 1 ? receivedQuantities(forPo[0]) : !forPo.length && next ? unbilledQuantities(next) : {});
+    reset();
+  };
+  const chooseReceipt = (id: string) => {
+    const next = receipts.find((row) => row.id === id);
+    setReceiptId(id);
+    setLines(next ? receivedQuantities(next) : order ? unbilledQuantities(order) : {});
+    reset();
+  };
   const preview = async () => {
     setNotice("");
     try {
@@ -126,7 +185,7 @@ export function NewSupplierInvoice() {
         method: "POST",
         body: JSON.stringify({ ...body(), idempotencyKey: createSecureClientMutationId("p2p") }),
       });
-      window.location.assign(`/app/finance/invoices/${encodeURIComponent(result.entityId)}`);
+      window.location.assign(`/app/procurement/bills/${encodeURIComponent(result.entityId)}`);
     } catch (reason) {
       setNotice(message(reason, t("finance.loadFailed")));
     } finally {
@@ -139,17 +198,24 @@ export function NewSupplierInvoice() {
     <div className="space-y-4" data-testid="new-supplier-invoice">
       {!enabled && <Notice>{t("finance.capabilityDisabled")}</Notice>}
       {notice && <Notice>{notice}</Notice>}
+      {sourceNotice && <Notice>{sourceNotice}</Notice>}
       <Card className="space-y-4 p-5">
         <div className="grid gap-3 md:grid-cols-3">
           <label className="text-xs">{t("finance.supplier")}
-            <select data-testid="supplier-invoice-supplier" className={`${field} mt-1 w-full`} value={supplierId} onChange={(event) => { setSupplierId(event.target.value); setReceiptId(""); setLines({}); reset(); }}>
+            <select data-testid="supplier-invoice-supplier" className={`${field} mt-1 w-full`} value={supplierId} onChange={(event) => { setSupplierId(event.target.value); setPoId(""); setReceiptId(""); setLines({}); reset(); }}>
               <option value="">—</option>
               {entry.suppliers.map((row) => <option key={row.id} value={row.id}>{row.name}{row.code ? ` · ${row.code}` : ""}</option>)}
             </select>
           </label>
+          <label className="text-xs">{t("finance.purchaseOrder")}
+            <select data-testid="supplier-invoice-po" className={`${field} mt-1 w-full`} value={poId} onChange={(event) => chooseOrder(event.target.value)}>
+              <option value="">{t("finance.anyPurchaseOrder")}</option>
+              {orders.map((row) => <option key={row.id} value={row.id}>{row.id} · {row.currency}</option>)}
+            </select>
+          </label>
           <label className="text-xs">{t("finance.postedReceipt")}
-            <select data-testid="supplier-invoice-receipt" className={`${field} mt-1 w-full`} value={receiptId} onChange={(event) => { setReceiptId(event.target.value); setLines({}); reset(); }}>
-              <option value="">—</option>
+            <select data-testid="supplier-invoice-receipt" className={`${field} mt-1 w-full`} value={receiptId} onChange={(event) => chooseReceipt(event.target.value)}>
+              <option value="">{poId ? t("finance.noReceiptYet") : "—"}</option>
               {receipts.map((row) => <option key={row.id} value={row.id}>{row.documentNumber || row.id} · {row.poId || "—"}{row.supplierName ? ` · ${row.supplierName}` : ""}</option>)}
             </select>
           </label>
@@ -160,18 +226,21 @@ export function NewSupplierInvoice() {
             <input type="date" className={`${field} mt-1 w-full`} value={invoiceDate} onChange={(event) => { setInvoiceDate(event.target.value); reset(); }} />
           </label>
           <label className="text-xs">{t("finance.dueDate")}
-            <input type="date" data-testid="supplier-invoice-due" className={`${field} mt-1 w-full`} value={dueDate} onChange={(event) => { setDueDate(event.target.value); reset(); }} />
+            <input type="date" data-testid="supplier-invoice-due" className={`${field} mt-1 w-full`} value={dueDate} onChange={(event) => { setDueDate(event.target.value); setDueTyped(true); reset(); }} />
+            {!dueTyped && termDue && dueDate === termDue && term && <span className="mt-1 block text-slate-500" data-testid="supplier-invoice-due-terms">{t("finance.dueFromTerms", { term: term.name, days: String(term.days) })}</span>}
           </label>
           <div className="text-xs">{t("finance.currency")}<div className="mt-1 rounded-lg bg-slate-50 px-3 py-2 text-sm">{currency || "—"}</div></div>
         </div>
+        {beforeReceipt && orderOpen && <div data-testid="supplier-invoice-before-receipt"><Notice>{t("finance.billBeforeReceipt")}</Notice></div>}
+        {beforeReceipt && !orderOpen && <Notice>{order?.id}: {t("finance.poNotBillable")}</Notice>}
         {receipt && !receipt.lines.length && <Notice>{t("finance.noReceiptLines")}</Notice>}
-        {receipt?.lines.map((line) => {
+        {formLines.map((line) => {
           const po = poLine(line.purchaseOrderLineId);
           return (
             <div key={line.id} data-testid="supplier-invoice-line" className="grid items-end gap-3 rounded-xl bg-slate-50 p-3 md:grid-cols-5">
               <div className="md:col-span-2">
                 <div className="font-medium">{line.sku} · {line.itemName}</div>
-                <div className="text-xs text-slate-500">{t("finance.received")} {line.acceptedQuantity} {line.unit || ""} · {t("finance.poPrice")} {po?.unitPrice === null || po?.unitPrice === undefined ? "—" : money(po.unitPrice, currency, locale)}</div>
+                <div className="text-xs text-slate-500">{line.context} · {t("finance.poPrice")} {po?.unitPrice === null || po?.unitPrice === undefined ? "—" : money(po.unitPrice, currency, locale)}</div>
               </div>
               <label className="text-xs">{t("finance.quantity")}
                 <input inputMode="decimal" aria-label={`${t("finance.quantity")} ${line.sku}`} className={`${field} mt-1 w-full`} value={lines[line.id]?.quantity || ""} onChange={(event) => { setLines({ ...lines, [line.id]: { ...lines[line.id], quantity: event.target.value } }); reset(); }} />
@@ -186,7 +255,7 @@ export function NewSupplierInvoice() {
           );
         })}
         <div className="flex flex-wrap gap-2">
-          <button type="button" data-testid="supplier-invoice-preview" className={`${button} border border-slate-200`} disabled={!enabled || !receipt} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
+          <button type="button" data-testid="supplier-invoice-preview" className={`${button} border border-slate-200`} disabled={!enabled || !formLines.length} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
           <button type="button" data-testid="supplier-invoice-create" className={`${button} text-white`} style={{ background: A.blue }} disabled={!enabled || !plan?.allowed || busy} onClick={() => void create()}><FilePlus2 size={14} />{t("finance.createDraft")}</button>
         </div>
         {plan && (
@@ -199,74 +268,248 @@ export function NewSupplierInvoice() {
   );
 }
 
-// -------------------------------------------------------------- actions
+// -------------------------------------------------------------- detail
 
-// One operation: an optional reason, a preview of the server's plan, then a
-// confirm that runs exactly the previewed operation.
-function TwoStepAction({ label, testId, previewUrl, runUrl, payload, reasonLabel, onDone, tone = "primary" }: {
-  label: string; testId: string; previewUrl: string; runUrl: string; payload: () => Record<string, unknown>;
-  reasonLabel?: string; onDone: () => void; tone?: "primary" | "secondary";
-}) {
+type LinkPlan = Plan & { warnings?: Issue[]; receipt?: { documentNumber?: string | null } };
+
+// A bill recorded before the goods arrived is linked to its receipt once the
+// warehouse posts it; only then can it be matched, approved and paid.
+function LinkReceipt({ invoice, onDone }: { invoice: { id: string; version: number; relatedPoId: string; receiptCandidates?: Array<{ id: string; documentNumber: string | null }> }; onDone: () => void }) {
   const { t } = useI18n();
+  const candidates = invoice.receiptCandidates || [];
   const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
-  const [plan, setPlan] = useState<Plan | null>(null);
+  const [receiptId, setReceiptId] = useState(candidates[0]?.id || "");
+  const [plan, setPlan] = useState<LinkPlan | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const body = () => ({ ...payload(), ...(reasonLabel ? { reason, resolution: reason } : {}) });
+  const base = `/api/finance/supplier-invoices/${encodeURIComponent(invoice.id)}`;
+  const body = () => ({ expectedVersion: invoice.version, receivingDocumentId: receiptId });
+  if (!candidates.length) return <p className="text-xs text-slate-500" data-testid="link-receipt-none">{t("finance.noReceiptToLink", { po: invoice.relatedPoId })}</p>;
+  if (!open) return <button type="button" data-testid="link-receipt" className={`${button} text-white`} style={{ background: A.blue }} onClick={() => setOpen(true)}>{t("finance.action.link_receipt")}</button>;
   const preview = async () => {
     setError("");
-    try { setPlan(await apiJson<Plan>(previewUrl, { method: "POST", body: JSON.stringify(body()) })); } catch (reason) { setError(message(reason, t("finance.loadFailed"))); }
+    try { setPlan(await apiJson<LinkPlan>(`${base}/link-receipt-preview`, { method: "POST", body: JSON.stringify(body()) })); } catch (reason) { setError(message(reason, t("finance.loadFailed"))); }
   };
   const confirm = async () => {
     setError("");
     setBusy(true);
     try {
-      await apiJson(runUrl, { method: "POST", body: JSON.stringify({ ...body(), idempotencyKey: createSecureClientMutationId("p2p") }) });
+      await apiJson(`${base}/link-receipt`, { method: "POST", body: JSON.stringify({ ...body(), idempotencyKey: createSecureClientMutationId("p2p") }) });
       setOpen(false);
-      setPlan(null);
-      setReason("");
       onDone();
-    } catch (cause) {
-      setError(cause instanceof ApiError || cause instanceof Error ? cause.message : t("finance.loadFailed"));
+    } catch (reason) {
+      setError(reason instanceof ApiError || reason instanceof Error ? reason.message : t("finance.loadFailed"));
     } finally {
       setBusy(false);
     }
   };
-  if (!open) return <button type="button" data-testid={testId} className={`${button} ${tone === "primary" ? "text-white" : "border border-slate-200"}`} style={tone === "primary" ? { background: A.blue } : undefined} onClick={() => setOpen(true)}>{label}</button>;
   return (
-    <div className="w-full space-y-2 rounded-xl border border-slate-200 p-3" data-testid={`${testId}-panel`}>
-      <div className="text-sm font-semibold">{label}</div>
-      {reasonLabel && (
-        <label className="block text-xs">{reasonLabel}
-          <input data-testid={`${testId}-reason`} className={`${field} mt-1 w-full`} value={reason} onChange={(event) => { setReason(event.target.value); setPlan(null); }} />
-        </label>
-      )}
+    <div className="w-full space-y-2 rounded-xl border border-slate-200 p-3" data-testid="link-receipt-panel">
+      <label className="block text-xs">{t("finance.postedReceipt")}
+        <select data-testid="link-receipt-select" className={`${field} mt-1 w-full`} value={receiptId} onChange={(event) => { setReceiptId(event.target.value); setPlan(null); }}>
+          {candidates.map((row) => <option key={row.id} value={row.id}>{row.documentNumber || row.id}</option>)}
+        </select>
+      </label>
       <div className="flex flex-wrap gap-2">
-        <button type="button" data-testid={`${testId}-preview`} className={`${button} border border-slate-200`} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
-        <button type="button" data-testid={`${testId}-confirm`} className={`${button} text-white`} style={{ background: A.blue }} disabled={!plan?.allowed || busy} onClick={() => void confirm()}>{t("finance.confirm")}</button>
+        <button type="button" data-testid="link-receipt-preview" className={`${button} border border-slate-200`} onClick={() => void preview()}><RefreshCw size={14} />{t("finance.preview")}</button>
+        <button type="button" data-testid="link-receipt-confirm" className={`${button} text-white`} style={{ background: A.blue }} disabled={!plan?.allowed || busy} onClick={() => void confirm()}>{t("finance.confirm")}</button>
         <button type="button" className={`${button} text-slate-600`} onClick={() => { setOpen(false); setPlan(null); setError(""); }}>{t("finance.close")}</button>
       </div>
-      {plan && (plan.allowed ? <Notice tone="success">{t("finance.previewAllowed")}</Notice> : <Notice>{(plan.blockingIssues || []).map((issue) => issue.message).join(" · ")}</Notice>)}
+      {plan && (plan.allowed
+        ? <Notice tone="success">{t("finance.previewAllowed")}</Notice>
+        : <Notice>{(plan.blockingIssues || []).map((issue) => issue.message).join(" · ")}</Notice>)}
+      {plan?.allowed && Boolean(plan.warnings?.length) && <Notice>{(plan.warnings || []).map((issue) => issue.message).join(" · ")}</Notice>}
       {error && <Notice>{error}</Notice>}
     </div>
   );
 }
 
-// -------------------------------------------------------------- detail
+// ------------------------------------------------------- duplicate checks
+
+type DuplicateBill = { id: string; invoiceNumber: string; invoiceDate: string | null; totalAmount: string | null; currency: string; status: string; version?: number | null };
+type DuplicateReview = { id: string; otherInvoiceId: string; otherInvoice: DuplicateBill | null; kind: "likely" | "possible"; reason: string; dismissedByName: string; dismissedAt: string; stale: boolean };
+type DuplicateFlag = { kind: "likely" | "possible"; otherInvoiceId: string; otherInvoice: DuplicateBill | null; daysApart: number | null; windowDays: number; status: "open" | "dismissed" | "closed"; dismissal: DuplicateReview | null; otherSideDismissal?: DuplicateReview | null };
+type DuplicateChecksData = { windowDays: number; notChecked: string[]; possibleHidden: boolean; openCount: number; flags: DuplicateFlag[]; reviews: DuplicateReview[] };
+type DuplicateIssueFlag = Pick<DuplicateFlag, "kind" | "otherInvoiceId" | "otherInvoice" | "daysApart">;
+type Translate = ReturnType<typeof useI18n>["t"];
+
+const DUPLICATE_REASON_MAX = 500;
+
+// A bill date is a calendar date (YYYY-MM-DD), shown as entered with no
+// timezone shift.
+const billDate = (value: string | null | undefined, locale: string) =>
+  value && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(`${value}T00:00:00.000Z`))
+    : value || "—";
+
+const duplicateFlagLabel = (flag: Pick<DuplicateFlag, "kind" | "daysApart">, t: Translate) =>
+  flag.kind === "likely" ? t("finance.duplicates.likely")
+    : flag.daysApart === 0 ? t("finance.duplicates.possibleSameDay")
+    : flag.daysApart === 1 ? t("finance.duplicates.possibleOneDay")
+    : t("finance.duplicates.possibleDays", { days: flag.daysApart ?? "—" });
+
+// The other bill as the approver reads it: number (a link), date, amount and
+// status. The amount is blank for a reader who cannot see amounts.
+function DuplicateOtherBill({ other, id }: { other: DuplicateBill | null; id: string }) {
+  const { locale } = useI18n();
+  if (!other) return <span>{id}</span>;
+  return <><a className="font-medium text-blue-600 hover:underline" href={`/app/procurement/bills/${encodeURIComponent(other.id)}`}>{other.invoiceNumber}</a>{" · "}{billDate(other.invoiceDate, locale)}{" · "}{money(other.totalAmount, other.currency, locale)}{" "}<StatusChip status={other.status} /></>;
+}
+
+// The translated text of the duplicate issues the server returns.
+const duplicateIssueText = (t: Translate) => (code: string | undefined) =>
+  code === "DUPLICATE_REVIEW_REQUIRED" ? t("finance.duplicates.reviewRequired")
+    : code === "DUPLICATE_REVIEW_HIDDEN" ? t("finance.duplicates.reviewHidden")
+    : code === "DUPLICATE_FLAG_NOT_FOUND" ? t("finance.duplicates.flagNotFound")
+    : code === "DUPLICATE_FLAG_CHANGED" ? t("finance.duplicates.flagChanged")
+    : code === "DUPLICATE_DISMISS_REASON_REQUIRED" ? t("finance.duplicates.reasonRequired")
+    : code === "DUPLICATE_DISMISS_REASON_TOO_LONG" ? t("finance.duplicates.reasonTooLong", { max: DUPLICATE_REASON_MAX })
+    : undefined;
+
+// At the approval step: each open flag the approver can see, with the other
+// bill, so they need not look for it on the page.
+function DuplicateApprovalDetail({ issue }: { issue: Issue }) {
+  const { t } = useI18n();
+  if (issue.code !== "DUPLICATE_REVIEW_REQUIRED") return null;
+  const flags = (issue.details as { flags?: DuplicateIssueFlag[] } | undefined)?.flags || [];
+  if (!flags.length) return null;
+  return (
+    <ul className="space-y-1 text-sm" data-testid="invoice-approve-duplicates">
+      {flags.map((flag) => (
+        <li key={`${flag.kind}-${flag.otherInvoiceId}`} className="flex flex-wrap items-center gap-1 rounded-lg bg-amber-50 p-2" data-testid="invoice-approve-duplicate" data-kind={flag.kind}>
+          <span className="font-medium">{duplicateFlagLabel(flag, t)}</span>
+          {" · "}{t("finance.duplicates.otherBill")}: <DuplicateOtherBill other={flag.otherInvoice} id={flag.otherInvoiceId} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Another bill of the same supplier that may be the same invoice (plan item
+// C1): the same number once format is set aside, or the same amount in the
+// same currency within the printed number of days. The approver dismisses a
+// flag with a reason or cancels this bill; nothing is held on its own. Once
+// this bill is past approval (approved, held or cancelled) its flags are
+// shown for information.
+function DuplicateChecks({ invoice, checks, canDismiss, onDone }: { invoice: { id: string; version: number; invoiceNumber?: string }; checks: DuplicateChecksData; canDismiss: boolean; onDone: () => void }) {
+  const { t, locale } = useI18n();
+  const base = `/api/finance/supplier-invoices/${encodeURIComponent(invoice.id)}`;
+  const notCheckedText: Record<string, string> = {
+    no_supplier: t("finance.duplicates.noSupplier"),
+    no_date: t("finance.duplicates.noDate"),
+    no_number: t("finance.duplicates.noNumber"),
+    no_amount: t("finance.duplicates.noAmount"),
+  };
+  const dismissedText = (review: DuplicateReview) => t("finance.duplicates.dismissed", { name: review.dismissedByName, date: formatDateTimeInTimeZone(review.dismissedAt, locale), reason: review.reason });
+  const otherSideText = (review: DuplicateReview) => t("finance.duplicates.otherSideDismissed", { name: review.dismissedByName, date: formatDateTimeInTimeZone(review.dismissedAt, locale), reason: review.reason });
+  const baseIssueText = duplicateIssueText(t);
+  const issueText = (code: string | undefined) =>
+    code === "SUPPLIER_INVOICE_STATUS_INVALID" ? t("finance.duplicates.pastApproval")
+      : code === "FINANCE_VALIDATION_FAILED" ? t("finance.duplicates.nameFlag")
+      : baseIssueText(code);
+  const statusText = (flag: DuplicateFlag) =>
+    flag.status === "open" ? t("finance.status.open")
+      : flag.status === "dismissed" ? t("finance.duplicates.statusDismissed")
+      : t("finance.duplicates.statusClosed");
+  // "None" is said only of the checks that were run and are shown.
+  const numberChecked = !checks.notChecked.includes("no_number");
+  const amountChecked = !checks.possibleHidden && !checks.notChecked.some((code) => code === "no_date" || code === "no_amount");
+  const showNone = !checks.flags.length && !checks.notChecked.includes("no_supplier");
+  const stale = checks.reviews.filter((review) => review.stale);
+  return (
+    <Card className="space-y-3 p-5" data-testid="supplier-invoice-duplicates">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="font-semibold">{t("finance.duplicates.title")}</h3>
+        <span className="text-xs text-slate-500" data-testid="duplicate-window">{t("finance.duplicates.window", { days: checks.windowDays })}</span>
+      </div>
+      {checks.notChecked.map((code) => <p key={code} className="text-xs text-amber-700" data-testid={`duplicate-not-checked-${code}`}>{notCheckedText[code] || code}</p>)}
+      {checks.possibleHidden && <p className="text-xs text-slate-500" data-testid="duplicate-amount-hidden">{t("finance.duplicates.amountHidden")}</p>}
+      {showNone && numberChecked && <p className="text-sm text-slate-500" data-testid="duplicate-none-number">{t("finance.duplicates.noneNumber")}</p>}
+      {showNone && amountChecked && <p className="text-sm text-slate-500" data-testid="duplicate-none-amount">{t("finance.duplicates.noneAmount", { days: checks.windowDays })}</p>}
+      {checks.flags.map((flag) => (
+        <div key={`${flag.kind}-${flag.otherInvoiceId}`} className={`space-y-2 rounded-xl p-3 text-sm ${flag.status === "open" ? "border border-amber-200 bg-amber-50" : "bg-slate-50"}`} data-testid="duplicate-flag" data-kind={flag.kind} data-status={flag.status}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-medium">{duplicateFlagLabel(flag, t)}</span>
+            <span className="text-xs text-slate-600" data-testid="duplicate-flag-status">{statusText(flag)}</span>
+          </div>
+          {flag.kind === "likely" && invoice.invoiceNumber && <div className="text-slate-600">{t("finance.duplicates.thisBill")}: <span className="font-medium">{invoice.invoiceNumber}</span></div>}
+          <div className="flex flex-wrap items-center gap-1 text-slate-600">{t("finance.duplicates.otherBill")}: <DuplicateOtherBill other={flag.otherInvoice} id={flag.otherInvoiceId} /></div>
+          {flag.dismissal && <div className="text-xs text-slate-600" data-testid="duplicate-dismissal">{dismissedText(flag.dismissal)}</div>}
+          {flag.otherSideDismissal && <div className="text-xs text-slate-600" data-testid="duplicate-other-side-dismissal">{otherSideText(flag.otherSideDismissal)}</div>}
+          {flag.status === "open" && canDismiss && (
+            <div className="flex flex-wrap gap-2">
+              <TwoStepAction
+                label={t("finance.duplicates.dismiss")}
+                testId={`duplicate-dismiss-${flag.kind}`}
+                tone="secondary"
+                previewUrl={`${base}/duplicate-dismiss-preview`}
+                runUrl={`${base}/duplicate-dismiss`}
+                payload={() => ({ expectedVersion: invoice.version, otherInvoiceId: flag.otherInvoiceId, otherVersion: flag.otherInvoice?.version, kind: flag.kind })}
+                reasonLabel={t("finance.duplicates.dismissReason")}
+                reasonMaxLength={DUPLICATE_REASON_MAX}
+                issueText={issueText}
+                onDone={onDone}
+              />
+            </div>
+          )}
+        </div>
+      ))}
+      {stale.length > 0 && (
+        <div className="space-y-1" data-testid="duplicate-history">
+          <h4 className="text-xs font-semibold text-slate-500">{t("finance.duplicates.history")}</h4>
+          {stale.map((review) => (
+            <div key={review.id} className="rounded-lg bg-slate-50 p-2 text-xs text-slate-500" data-testid="duplicate-stale-review">
+              <div>{review.kind === "likely" ? t("finance.duplicates.likely") : t("finance.duplicates.possible")} · <DuplicateOtherBill other={review.otherInvoice} id={review.otherInvoiceId} /></div>
+              <div>{dismissedText(review)}</div>
+              <div className="font-medium">{t("finance.duplicates.stale")}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+type BillReadFailure = "notFound" | "unauthenticated" | "forbidden" | "error";
+
+function billReadFailure(reason: unknown): BillReadFailure {
+  if (!(reason instanceof ApiError)) return "error";
+  if (reason.status === 404) return "notFound";
+  if (reason.status === 401) return "unauthenticated";
+  if (reason.status === 403) return "forbidden";
+  return "error";
+}
 
 export function SupplierInvoiceDetail() {
   const { t, locale } = useI18n();
   const id = decodeURIComponent(window.location.pathname.split("/").filter(Boolean).at(-1) || "");
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
+  // Why the first read failed; a failed reload after an action keeps the bill
+  // on screen and shows the error above it instead.
+  const [failure, setFailure] = useState<BillReadFailure | null>(null);
   const load = useCallback(() => {
+    setFailure(null);
     void apiJson(`/api/finance/supplier-invoices/${encodeURIComponent(id)}`)
       .then((next) => { setData(next); setError(""); })
-      .catch((reason) => setError(message(reason, t("finance.loadFailed"))));
+      .catch((reason) => {
+        setError(message(reason, t("finance.loadFailed")));
+        setFailure(billReadFailure(reason));
+      });
   }, [id]);
   useEffect(() => { load(); }, [load]);
-  if (error && !data) return <Notice>{error}</Notice>;
+  useDetailCrumb(data?.invoiceNumber);
+  if (failure && !data) {
+    const testId = { notFound: "supplier-invoice-not-found", unauthenticated: "supplier-invoice-unauthenticated", forbidden: "supplier-invoice-forbidden", error: "supplier-invoice-read-error" }[failure];
+    const text = { notFound: t("finance.billNotFound"), unauthenticated: t("finance.billSignedOut"), forbidden: t("finance.billForbidden"), error: t("finance.billReadError") }[failure];
+    return (
+      <Card className="py-16 text-center" data-testid={testId}>
+        <div className="text-sm font-semibold">{text}</div>
+        <div className="mt-2 text-xs text-slate-500">{id}</div>
+        {failure === "error" && <button type="button" onClick={load} className="mt-3 text-sm font-semibold text-blue-600">{t("finance.retry")}</button>}
+      </Card>
+    );
+  }
   if (!data) return <Card className="p-6">{t("common.loading")}</Card>;
   const base = `/api/finance/supplier-invoices/${encodeURIComponent(data.id)}`;
   const actions: string[] = Array.isArray(data.availableActions) ? data.availableActions : [];
@@ -281,21 +524,34 @@ export function SupplierInvoiceDetail() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="font-semibold">{data.invoiceNumber}</h2>
-            <p className="mt-1 text-sm text-slate-500">{data.supplierName || "—"} · {data.relatedPoId || "—"} · {data.relatedGrnId || "—"}</p>
+            <p className="mt-1 text-sm text-slate-500" data-testid="supplier-invoice-sources">
+              {data.supplierName || "—"}
+              {" · "}{t("finance.purchaseOrder")} {data.relatedPoId ? <BusinessEntityLink entityType="purchase_order" entityId={data.relatedPoId} /> : "—"}
+              {" · "}{t("finance.receipt")} {data.relatedGrnId ? <BusinessEntityLink entityType="receiving_doc" entityId={data.relatedGrnId}>{data.relatedGrnNumber || data.relatedGrnId}</BusinessEntityLink> : data.awaitingReceipt ? <span className="font-medium text-amber-700">{t("finance.awaitingReceipt")}</span> : "—"}
+              {data.relatedPoId && <>{" · "}<BusinessEntityLink entityType="three_way_match" entityId={`MATCH-${data.id}`}>{t("finance.threeWayMatch")}</BusinessEntityLink></>}
+            </p>
           </div>
           <div className="text-right">
             <strong>{money(data.totalAmount, data.currency, locale)}</strong>
             <div className="mt-1"><StatusChip status={data.status} /></div>
           </div>
         </div>
+        {data.awaitingReceipt && (
+          <div className="mt-4 space-y-2" data-testid="supplier-invoice-awaiting-receipt">
+            <Notice>{t("finance.awaitingReceiptNote")}</Notice>
+            {actions.includes("link_receipt") && <LinkReceipt invoice={data} onDone={load} />}
+          </div>
+        )}
         <div className="mt-4 flex flex-wrap gap-2" data-testid="supplier-invoice-actions">
-          {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="invoice-submit" previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={() => version} onDone={load} />}
-          {actions.includes("match") && <TwoStepAction label={t("finance.action.match")} testId="invoice-match" previewUrl={`${base}/match-preview`} runUrl={`${base}/match`} payload={() => version} onDone={load} />}
-          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="invoice-approve" previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={() => version} onDone={load} />}
+          {actions.includes("submit") && <TwoStepAction label={t("finance.action.submit")} testId="invoice-submit" oneStep previewUrl={`${base}/submit-preview`} runUrl={`${base}/submit`} payload={() => version} onDone={load} />}
+          {actions.includes("match") && <TwoStepAction label={t("finance.action.match")} testId="invoice-match" oneStep previewUrl={`${base}/match-preview`} runUrl={`${base}/match`} payload={() => version} onDone={load} />}
+          {actions.includes("approve") && <TwoStepAction label={t("finance.action.approve")} testId="invoice-approve" oneStep previewUrl={`${base}/approve-preview`} runUrl={`${base}/approve`} payload={() => version} issueText={duplicateIssueText(t)} issueDetail={(issue) => <DuplicateApprovalDetail issue={issue} />} onDone={load} />}
           {actions.includes("cancel") && <TwoStepAction label={t("finance.action.cancel")} testId="invoice-cancel" tone="secondary" previewUrl={`${base}/cancel-preview`} runUrl={`${base}/cancel`} payload={() => version} reasonLabel={t("finance.cancelReason")} onDone={load} />}
-          {!actions.length && <span className="text-xs text-slate-500">{t("finance.noActions")}</span>}
+          {!actions.filter((action) => !["link_receipt", "revise", "dismiss_duplicate"].includes(action)).length && <span className="text-xs text-slate-500">{t("finance.noActions")}</span>}
         </div>
       </Card>
+
+      {data.duplicateChecks && <DuplicateChecks invoice={data} checks={data.duplicateChecks} canDismiss={actions.includes("dismiss_duplicate")} onDone={load} />}
 
       <Card className="overflow-x-auto p-5">
         <h3 className="mb-3 font-semibold">{t("finance.lines")}</h3>
@@ -337,9 +593,9 @@ export function SupplierInvoiceDetail() {
             <h3 className="font-semibold">{t("finance.payables")} · {payable.obligationNumber || payable.id}</h3>
             <div className="flex items-center gap-2"><strong>{money(payable.outstandingAmount, payable.currency, locale)}</strong><StatusChip status={payable.status} /></div>
           </div>
-          <Notice>{t("finance.notPaid")}</Notice>
+          <PaymentRecords kind="payable" obligation={payable} onDone={load} />
           <div className="flex flex-wrap gap-2">
-            {payableActions.map((action) => (
+            {payableActions.filter((action) => action !== "record_payment").map((action) => (
               <TwoStepAction
                 key={action}
                 label={t(action === "hold" ? "finance.action.hold" : action === "release" ? "finance.action.release" : "finance.action.mark_export_ready")}

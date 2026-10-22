@@ -6,7 +6,9 @@ import { useI18n } from "../../i18n/I18n";
 import { ApiError, apiJson } from "../../lib/api-client";
 import { createSecureClientMutationId } from "../../lib/client-id";
 import { dateTimeInputInTimeZone, dateTimeInputToIso } from "../../lib/format";
-import { receivingApi, type ReceivablePurchaseOrder, type ReceiptInput, type ReceivingWarehouse } from "./receivingApi";
+import { receivingApi, type ReceivableLine, type ReceivablePurchaseOrder, type ReceiptInput, type ReceivingWarehouse } from "./receivingApi";
+import { PrefillSourceChip } from "../../components/prefill/PrefillSource";
+import { buildSuggestionTrail, type PrefillEntry } from "../../lib/prefill";
 
 // English source copy with its Chinese translation.
 const COPY: Record<string, [string, string]> = {
@@ -33,9 +35,12 @@ const COPY: Record<string, [string, string]> = {
   received: ["Received", "已收"],
   remaining: ["Open", "未收"],
   accepted: ["Accepted", "合格"],
+  acceptedHint: ["Starts at the quantity still to receive", "默认为待收数量"],
   rejected: ["Rejected", "拒收"],
   rejectionReason: ["Rejection reason", "拒收原因"],
   location: ["Location", "库位"],
+  locationStocked: ["Where this item is stocked", "该物料现有库位"],
+  locationNew: ["New location in this warehouse", "此仓库的新库位"],
   saveDraft: ["Save draft", "保存草稿"],
   saveSubmit: ["Save and submit for posting", "保存并提交过账"],
   saving: ["Saving…", "正在保存…"],
@@ -63,6 +68,9 @@ type Detail = {
 type LineState = { include: boolean; accepted: string; rejected: string; reason: string; location: string };
 
 const QUANTITY = /^\d+(?:\.\d{1,4})?$/;
+// The location holding most of the item in the warehouse, so a receipt adds to
+// that stock record instead of starting one without a location.
+const stockedLocation = (line: ReceivableLine, warehouseId: string) => line.stockLocations?.find((row) => row.warehouseId === warehouseId)?.location || "";
 // Four-decimal quantities compared as integers of 1/10000, as the server does.
 const units = (value: string) => {
   const [whole, fraction = ""] = value.split(".");
@@ -86,6 +94,8 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
   const [saving, setSaving] = useState<"" | "draft" | "submit">("");
   // One key per form: a resend after a lost response replays the same receipt.
   const [createKey] = useState(() => createSecureClientMutationId("receipt"));
+  // What a new receipt was prefilled with, and from where (docs/ai-prefill-autocomplete-design.md, J4).
+  const [prefill, setPrefill] = useState<{ warehouseId?: PrefillEntry; arrivedAt?: PrefillEntry; accepted: Record<string, string> } | null>(null);
   const [createdId, setCreatedId] = useState("");
 
   const load = useCallback(async () => {
@@ -98,7 +108,11 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
         poId = detail.purchaseOrder.id;
       }
       if (!poId) { setState("error"); return; }
-      const receivable = await receivingApi.receivableLines(poId);
+      const [receivable, profile] = await Promise.all([
+        receivingApi.receivableLines(poId),
+        // The user's default warehouse, the fallback for a new receipt.
+        mode === "new" ? apiJson<{ defaultWarehouseId?: string | null }>("/api/me/profile").catch(() => null) : Promise.resolve(null),
+      ]);
       const existing = new Map((detail?.lines || []).map((line) => [line.poLineId, line]));
       setPo(receivable.purchaseOrder);
       setWarehouses(receivable.warehouses);
@@ -109,9 +123,28 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
           ? { include: true, accepted: String(Number(saved.acceptedQuantity)), rejected: String(Number(saved.rejectedQuantity)), reason: saved.rejectionReason || "", location: saved.location || "" }
           : { include: mode === "new" && units(line.remainingQuantity) > 0n, accepted: mode === "new" ? String(Number(line.remainingQuantity)) : "", rejected: "0", reason: "", location: "" }];
       })));
-      const preferred = detail?.receivingDocument.warehouse?.id || receivable.purchaseOrder.defaultWarehouseId || "";
-      setWarehouseId(receivable.warehouses.some((row) => row.id === preferred) ? preferred : receivable.warehouses.length === 1 ? receivable.warehouses[0].id : "");
-      setArrivedAt(dateTimeInputInTimeZone(detail?.receivingDocument.arrivedAt ? new Date(detail.receivingDocument.arrivedAt) : new Date(), timezone));
+      // The saved warehouse; for a new receipt, the purchase order's, else the
+      // user's default, else the only one the user may receive into.
+      const usable = (id?: string | null) => Boolean(id) && receivable.warehouses.some((row) => row.id === id);
+      const saved = detail?.receivingDocument.warehouse?.id || "";
+      const fromPo = receivable.purchaseOrder.defaultWarehouseId || "";
+      const fromUser = profile?.defaultWarehouseId || "";
+      const [chosen, ref] = usable(saved) ? [saved, ""]
+        : usable(fromPo) ? [fromPo, "purchase_order:warehouse"]
+          : usable(fromUser) ? [fromUser, "user:default_warehouse"]
+            : receivable.warehouses.length === 1 ? [receivable.warehouses[0].id, "workspace:only_warehouse"] : ["", ""];
+      setWarehouseId(chosen);
+      if (mode === "new") setLines((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => {
+        const line = receivable.purchaseOrder.lines.find((row) => row.id === id);
+        return [id, line ? { ...value, location: stockedLocation(line, chosen) } : value];
+      })));
+      const arrival = dateTimeInputInTimeZone(detail?.receivingDocument.arrivedAt ? new Date(detail.receivingDocument.arrivedAt) : new Date(), timezone);
+      setArrivedAt(arrival);
+      setPrefill(mode === "new" ? {
+        ...(chosen && ref ? { warehouseId: { source: "default", ref, value: chosen } } : {}),
+        arrivedAt: { source: "default", ref: "clock:now", value: arrival },
+        accepted: Object.fromEntries(receivable.purchaseOrder.lines.filter((line) => units(line.remainingQuantity) > 0n).map((line) => [line.id, String(Number(line.remainingQuantity))])),
+      } : null);
       setState("ready");
     } catch {
       setState("error");
@@ -121,6 +154,17 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
   useEffect(() => { void load(); }, [load]);
 
   const update = (lineId: string, patch: Partial<LineState>) => setLines((current) => ({ ...current, [lineId]: { ...current[lineId], ...patch } }));
+  // A location left empty or still on the old warehouse's stocked location
+  // follows the new warehouse; one the person typed stays.
+  const changeWarehouse = (next: string) => {
+    if (po) setLines((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => {
+      const line = po.lines.find((row) => row.id === id);
+      const untouched = line && (!value.location.trim() || value.location === stockedLocation(line, warehouseId));
+      return [id, line && untouched ? { ...value, location: stockedLocation(line, next) } : value];
+    })));
+    setWarehouseId(next);
+  };
+  const knownLocations = warehouses.find((row) => row.id === warehouseId)?.locations || [];
 
   const validation = useMemo(() => {
     const found: string[] = [];
@@ -168,9 +212,23 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
     setSaving(submit ? "submit" : "draft");
     try {
       const id = draft?.id || createdId;
+      // A new receipt says which prefilled values were kept: codes only.
+      const suggestionTrail = !id && prefill ? buildSuggestionTrail({
+        origin: "form",
+        prefills: {
+          ...(prefill.warehouseId ? { warehouseId: prefill.warehouseId } : {}),
+          ...(prefill.arrivedAt ? { arrivedAt: prefill.arrivedAt } : {}),
+          ...Object.fromEntries(po.lines.map((line, index) => [line.id, index] as const).filter(([lineId]) => prefill.accepted[lineId] !== undefined).slice(0, 30)
+            .map(([lineId, index]) => [`line${index + 1}.acceptedQuantity`, { source: "record" as const, ref: "purchase_order:remaining", value: prefill.accepted[lineId] }])),
+        },
+        values: {
+          warehouseId, arrivedAt,
+          ...Object.fromEntries(po.lines.map((line, index) => [`line${index + 1}.acceptedQuantity`, lines[line.id]?.include ? lines[line.id].accepted.trim() : ""])),
+        },
+      }) : null;
       const saved = id
         ? await receivingApi.revise(id, input, draft?.version ?? 0, createSecureClientMutationId("receipt-revise"))
-        : await receivingApi.create(po.id, input, createKey);
+        : await receivingApi.create(po.id, suggestionTrail ? { ...input, suggestionTrail } : input, createKey);
       setCreatedId(saved.entityId);
       setDraft({ ...(draft || { warehouse: null, arrivedAt: null }), ...saved.receivingDocument });
       if (submit) await receivingApi.submit(saved.entityId, saved.receivingDocument.version, createSecureClientMutationId("receipt-submit"));
@@ -201,14 +259,16 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
           <div><dt style={{ color: A.sub }}>{tr("purchaseOrder")}</dt><dd className="mt-1 font-medium">{po.id}</dd></div>
           <div><dt style={{ color: A.sub }}>{tr("supplier")}</dt><dd className="mt-1 font-medium">{po.supplierName || "—"}</dd></div>
           <label className="block"><span style={{ color: A.sub }}>{tr("warehouse")} *</span>
-            <select aria-label={tr("warehouse")} value={warehouseId} onChange={(event) => setWarehouseId(event.target.value)} className={`${inputClass} mt-1`}>
+            <select aria-label={tr("warehouse")} value={warehouseId} onChange={(event) => changeWarehouse(event.target.value)} className={`${inputClass} mt-1`}>
               <option value="">{tr("selectWarehouse")}</option>
               {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.code} · {warehouse.name}</option>)}
             </select>
+            <PrefillSourceChip entry={prefill?.warehouseId} current={warehouseId} testId="receiving-prefill-warehouse" />
           </label>
           <label className="block"><span style={{ color: A.sub }}>{tr("arrivedAt")} *</span>
             <input aria-label={tr("arrivedAt")} type="datetime-local" value={arrivedAt} onChange={(event) => setArrivedAt(event.target.value)} className={`${inputClass} mt-1`} />
             <span className="mt-1 block text-[11px]" style={{ color: A.sub }}>{tr("timezone")}: {timezone}</span>
+            <PrefillSourceChip entry={prefill?.arrivedAt} current={arrivedAt} testId="receiving-prefill-arrival" />
           </label>
         </dl>
         {!po.receivable && <div className="mt-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{tr("notReceivable")}</div>}
@@ -218,7 +278,7 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
       <Card className="overflow-x-auto">
         <table className="w-full min-w-[960px] text-left text-sm">
           <thead className="bg-gray-50 text-xs" style={{ color: A.sub }}>
-            <tr>{["include", "sku", "item", "ordered", "received", "remaining", "accepted", "rejected", "rejectionReason", "location"].map((key) => <th key={key} className="px-3 py-2 font-medium">{tr(key)}</th>)}</tr>
+            <tr>{["include", "sku", "item", "ordered", "received", "remaining", "accepted", "rejected", "rejectionReason", "location"].map((key) => <th key={key} className="px-3 py-2 font-medium">{tr(key)}{key === "accepted" && prefill ? <span data-testid="receiving-prefill-accepted" className="block text-[11px] font-normal" style={{ color: A.blue }}>{tr("acceptedHint")}</span> : null}</th>)}</tr>
           </thead>
           <tbody>
             {po.lines.map((line) => {
@@ -236,12 +296,22 @@ export function ReceivingForm({ mode, purchaseOrderId = "", receiptId = "" }: { 
                   <td className="px-3 py-2"><input aria-label={`${tr("accepted")} ${line.sku}`} inputMode="decimal" value={value?.accepted || ""} disabled={!value?.include} onChange={(event) => update(line.id, { accepted: event.target.value })} className={`${inputClass} w-24`} /></td>
                   <td className="px-3 py-2"><input aria-label={`${tr("rejected")} ${line.sku}`} inputMode="decimal" value={value?.rejected || ""} disabled={!value?.include} onChange={(event) => update(line.id, { rejected: event.target.value })} className={`${inputClass} w-24`} /></td>
                   <td className="px-3 py-2"><input aria-label={`${tr("rejectionReason")} ${line.sku}`} value={value?.reason || ""} disabled={!value?.include} onChange={(event) => update(line.id, { reason: event.target.value })} className={inputClass} /></td>
-                  <td className="px-3 py-2"><input aria-label={`${tr("location")} ${line.sku}`} value={value?.location || ""} disabled={!value?.include} onChange={(event) => update(line.id, { location: event.target.value })} className={`${inputClass} w-28`} /></td>
+                  <td className="px-3 py-2">
+                    <input aria-label={`${tr("location")} ${line.sku}`} list="receiving-locations" value={value?.location || ""} disabled={!value?.include} onChange={(event) => update(line.id, { location: event.target.value })} className={`${inputClass} w-28`} />
+                    {value?.include && value.location.trim() ? (
+                      value.location.trim().toLowerCase() === stockedLocation(line, warehouseId).toLowerCase()
+                        ? <span data-testid="receiving-location-stocked" className="mt-1 block text-[11px]" style={{ color: A.blue }}>{tr("locationStocked")}</span>
+                        : !knownLocations.some((known) => known.toLowerCase() === value.location.trim().toLowerCase())
+                          ? <span data-testid="receiving-location-new" className="mt-1 block text-[11px]" style={{ color: A.sub }}>{tr("locationNew")}</span>
+                          : null
+                    ) : null}
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+        <datalist id="receiving-locations">{knownLocations.map((location) => <option key={location} value={location} />)}</datalist>
       </Card>
 
       <Card className="space-y-3 p-4">

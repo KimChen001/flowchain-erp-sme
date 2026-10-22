@@ -112,7 +112,17 @@ test("real PostgreSQL RFQ Supplier Response command kernel", async (t) => {
 
     await t.test("initial response commits participation, revision authority, audit, feed, and command result atomically", async () => {
       const submittedAt = "2026-07-29T09:00:00.000Z";
-      const input = responseInput({ key: "initial-main", supplierId: "supplier-command-main", submittedAt });
+      // The dialog sends which prefilled values were kept. Only known codes reach
+      // the audit row, and the trail is not part of the command's payload: the
+      // replay below, sent without it, is still the same command.
+      const input = {
+        ...responseInput({ key: "initial-main", supplierId: "supplier-command-main", submittedAt }),
+        suggestionTrail: { origin: "form", note: "free text is dropped", fields: [
+          { field: "line1.quantity", source: "record", ref: "rfq:quantity", outcome: "accepted", value: "3.3333" },
+          { field: "line1.deliveryDate", source: "record", ref: "rfq:required_date", outcome: "cleared" },
+          { field: "line2.unitPrice", source: "guess", outcome: "accepted" },
+        ] },
+      };
       const result = await service.recordInitialResponse("rfq-command-main", input, context);
       assert.equal(result.entityVersion, 1);
       assert.equal(result.revisionNumber, 1);
@@ -128,6 +138,14 @@ test("real PostgreSQL RFQ Supplier Response command kernel", async (t) => {
         prisma.auditLog.findFirst({ where: { tenantId, source: "rfq_supplier_response_command_service", entityId: result.quotationId } }),
         prisma.domainChangeFeed.findFirst({ where: { tenantId, source: "rfq_supplier_response_command_service", entityId: result.quotationId } }),
       ]);
+      assert.deepEqual(audit.metadata.suggestions, {
+        origin: "form",
+        fields: [
+          { field: "line1.quantity", source: "record", ref: "rfq:quantity", outcome: "accepted" },
+          { field: "line1.deliveryDate", source: "record", ref: "rfq:required_date", outcome: "cleared" },
+        ],
+        counts: { prefilled: 2, accepted: 1, edited: 0, cleared: 1 },
+      });
       assert.equal(participation.status, "response_recorded");
       assert.equal(participation.invitedAt, null);
       assert.equal(participation.respondedAt.toISOString(), submittedAt);

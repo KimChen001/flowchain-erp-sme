@@ -43,6 +43,25 @@ export function isKnowledgeQuestion(body = {}) {
   return classifyQueryScope(body) === 'knowledge'
 }
 
+// Knowledge search for agent planning (docs/ai-assistant-plan.md, PR-3): null
+// without database storage or without a document the actor may read;
+// otherwise the languages of those documents, which the planner writes its
+// search words in, and a search with those words. The search shows the
+// passages found, with their sources, and asks no model to write an answer.
+export async function aiAgentKnowledge(ctx) {
+  if (ctx.repositories?.mode !== 'database' && (ctx.env || process.env).FLOWCHAIN_PERSISTENCE_MODE !== 'database') return null
+  const { actor, service, env } = await context(ctx)
+  const documents = (await service.list(actor)).items || []
+  if (!documents.length) return null
+  return {
+    languages: [...new Set(documents.map((document) => document.language === 'zh-CN' ? 'zh-CN' : 'en-US'))].sort(),
+    async search({ query, question, language }) {
+      const result = await answerKnowledgeQuery({ question, retrievalQuery: query, generate: false, language, actor, service, env })
+      return knowledgeResponse(result, question, language)
+    },
+  }
+}
+
 export async function runKnowledgeQuery(ctx, body = {}, { force = false } = {}) {
   if (!force && !isKnowledgeQuestion(body)) return null
   if (ctx.repositories?.mode !== 'database' && (ctx.env || process.env).FLOWCHAIN_PERSISTENCE_MODE !== 'database') throw new KnowledgeError('KNOWLEDGE_UNAVAILABLE', 'Knowledge requires database storage.', 503)

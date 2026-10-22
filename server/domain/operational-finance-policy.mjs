@@ -3,7 +3,10 @@ import {
   outboundDecimalUnits as decimalUnits,
 } from "./outbound-transaction-policy.mjs";
 import { mergeOperationalSettings } from "./workspace-settings-contract.mjs";
-import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
+import {
+  PURCHASE_ORDER_STATUS,
+  RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES,
+} from "./procurement-status-authority.mjs";
 
 const SCALE = 10_000n;
 const ZERO = 0n;
@@ -75,6 +78,25 @@ function normalizedInvoiceLines(lines = []) {
   }));
 }
 
+// A supplier's bill often arrives before the goods (owner decision of
+// 2026-10-03): it is recorded against the purchase order and waits for the
+// receipt. Until the receipt is linked it cannot be matched, approved or paid,
+// so payment still needs the three-way match. Such a bill needs a purchase
+// order the supplier can still deliver against.
+export const BILL_BEFORE_RECEIPT_PO_STATUSES = Object.freeze([
+  PURCHASE_ORDER_STATUS.APPROVED,
+  PURCHASE_ORDER_STATUS.ISSUED,
+  PURCHASE_ORDER_STATUS.PARTIALLY_RECEIVED,
+  PURCHASE_ORDER_STATUS.FULLY_RECEIVED,
+  "received",
+  "open",
+]);
+
+export const awaitingReceipt = (invoice) =>
+  ["draft", "submitted"].includes(invoice?.status) &&
+  Boolean(invoice?.relatedPoId) &&
+  !invoice?.relatedGrnId;
+
 export async function buildSupplierInvoicePlan({
   prisma,
   tenantId,
@@ -108,8 +130,12 @@ export async function buildSupplierInvoicePlan({
     blockingIssues.push(
       issue("SUPPLIER_INVOICE_LINES_REQUIRED", "At least one invoice line is required."),
     );
-  const receivingIds = lines.map((line) => line.receivingLineId);
+  // Every line names its purchase-order line. The receiving lines are named
+  // for every line or for none: a bill recorded before the goods arrive waits
+  // for its receipt as a whole.
+  const receivingIds = lines.map((line) => line.receivingLineId).filter(Boolean);
   const poLineIds = lines.map((line) => line.purchaseOrderLineId);
+  const waitingForReceipt = lines.length > 0 && receivingIds.length === 0;
   if (
     unique(receivingIds).length !== receivingIds.length ||
     unique(poLineIds).length !== poLineIds.length
@@ -120,22 +146,31 @@ export async function buildSupplierInvoicePlan({
         "A source line may appear only once in an invoice.",
       ),
     );
-  if (lines.some((line) => !line.receivingLineId || !line.purchaseOrderLineId))
+  if (lines.some((line) => !line.purchaseOrderLineId))
     blockingIssues.push(
       issue(
         "SUPPLIER_INVOICE_SOURCE_REQUIRED",
-        "Every invoice line requires explicit purchase-order and receiving lines.",
+        "Every bill line names the purchase order line it bills.",
+      ),
+    );
+  if (receivingIds.length && receivingIds.length !== lines.length)
+    blockingIssues.push(
+      issue(
+        "SUPPLIER_INVOICE_RECEIPT_PARTIAL",
+        "Link every line to the receipt, or none until the goods arrive.",
       ),
     );
   if (blockingIssues.length)
     return basePlan("supplier_invoice_draft", blockingIssues, { lines: [] });
 
   const [receivingRows, poRows, supplier, tenant] = await Promise.all([
-    prisma.receivingLine.findMany({
-      where: { id: { in: receivingIds } },
-      include: { receivingDocument: true },
-      orderBy: { id: "asc" },
-    }),
+    receivingIds.length
+      ? prisma.receivingLine.findMany({
+          where: { id: { in: receivingIds } },
+          include: { receivingDocument: true },
+          orderBy: { id: "asc" },
+        })
+      : [],
     prisma.purchaseOrderLine.findMany({
       where: { id: { in: poLineIds } },
       include: { purchaseOrder: true },
@@ -167,7 +202,7 @@ export async function buildSupplierInvoicePlan({
   const relatedGrnIds = unique(
     receivingRows.map((row) => row.receivingDocumentId),
   );
-  if (relatedPoIds.length !== 1 || relatedGrnIds.length !== 1)
+  if (relatedPoIds.length !== 1 || (!waitingForReceipt && relatedGrnIds.length !== 1))
     blockingIssues.push(
       issue(
         "SUPPLIER_INVOICE_SOURCE_MIXED",
@@ -177,6 +212,30 @@ export async function buildSupplierInvoicePlan({
   const consumingStatuses = countCommittedOnly
     ? []
     : [...RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES];
+  // A bill waiting for its receipt is checked against what was ordered,
+  // less what other bills already claim on the same purchase-order lines.
+  const previousPoRows = waitingForReceipt && consumingStatuses.length
+    ? await prisma.supplierInvoiceLine.findMany({
+        where: {
+          purchaseOrderLineId: { in: poLineIds },
+          ...(currentInvoiceId
+            ? { supplierInvoiceId: { not: currentInvoiceId } }
+            : {}),
+          supplierInvoice: {
+            tenantId,
+            status: { in: consumingStatuses },
+          },
+        },
+        select: { purchaseOrderLineId: true, quantity: true },
+      })
+    : [];
+  const previousByPoLine = new Map();
+  for (const row of previousPoRows)
+    previousByPoLine.set(
+      row.purchaseOrderLineId,
+      (previousByPoLine.get(row.purchaseOrderLineId) || ZERO) +
+        decimalUnits(row.quantity || 0),
+    );
   const previousRows = receivingIds.length && consumingStatuses.length
     ? await prisma.supplierInvoiceLine.findMany({
         where: {
@@ -228,6 +287,84 @@ export async function buildSupplierInvoicePlan({
       `Line ${index + 1} entered tax`,
       { nonNegative: true },
     );
+    if (waitingForReceipt && poLine) {
+      const po = poLine.purchaseOrder;
+      if (po.tenantId !== tenantId || po.supplierId !== supplier?.id)
+        blockingIssues.push(
+          issue(
+            "SUPPLIER_INVOICE_SOURCE_INVALID",
+            `Line ${index + 1} does not match the purchase order and supplier.`,
+            409,
+          ),
+        );
+      if (!BILL_BEFORE_RECEIPT_PO_STATUSES.includes(text(po.status)))
+        blockingIssues.push(
+          issue(
+            "SUPPLIER_INVOICE_PO_NOT_OPEN",
+            `Purchase order ${po.id} is ${po.status}. A bill can wait for its receipt only on an approved purchase order that can still be received; otherwise record the bill against its posted receipt.`,
+            409,
+          ),
+        );
+      if (po.currency !== currency)
+        blockingIssues.push(
+          issue(
+            "FINANCE_CURRENCY_MISMATCH",
+            `Line ${index + 1} source currency does not match invoice currency.`,
+            409,
+          ),
+        );
+      const ordered = decimalUnits(poLine.orderedQuantity || 0);
+      const billedElsewhere = previousByPoLine.get(poLine.id) || ZERO;
+      if (quantity !== null && quantity + billedElsewhere > ordered)
+        blockingIssues.push(
+          issue(
+            "SUPPLIER_INVOICE_QUANTITY_EXCEEDS_ORDERED",
+            `Line ${index + 1} bills more than was ordered and not yet billed.`,
+            409,
+            {
+              purchaseOrderLineId: poLine.id,
+              orderedQuantity: decimalString(ordered),
+              previouslyInvoicedQuantity: decimalString(billedElsewhere),
+            },
+          ),
+        );
+      if (
+        quantity !== null &&
+        unitPrice !== null &&
+        lineAmount !== null &&
+        multiply(quantity, unitPrice) !== lineAmount
+      )
+        blockingIssues.push(
+          issue(
+            "SUPPLIER_INVOICE_LINE_AMOUNT_MISMATCH",
+            `Line ${index + 1} amount must equal quantity multiplied by entered unit price.`,
+          ),
+        );
+      if (lineAmount !== null) subtotal += lineAmount;
+      if (enteredTaxAmount !== null) tax += enteredTaxAmount;
+      authoritativeLines.push({
+        lineNumber: index + 1,
+        purchaseOrderLineId: poLine.id,
+        receivingLineId: null,
+        itemId: poLine.itemId,
+        sku: poLine.sku,
+        itemName: poLine.itemName,
+        unit: poLine.unit,
+        quantity: quantity === null ? "0.0000" : decimalString(quantity),
+        unitPrice: unitPrice === null ? "0.0000" : decimalString(unitPrice),
+        lineAmount: lineAmount === null ? "0.0000" : decimalString(lineAmount),
+        enteredTaxAmount:
+          enteredTaxAmount === null ? "0.0000" : decimalString(enteredTaxAmount),
+        amount:
+          lineAmount === null || enteredTaxAmount === null
+            ? "0.0000"
+            : decimalString(lineAmount + enteredTaxAmount),
+        orderedQuantity: decimalString(ordered),
+        receivedQuantity: null,
+        poUnitPrice: decimalString(decimalUnits(poLine.unitPrice || 0)),
+      });
+      continue;
+    }
     if (!receiving || !poLine) continue;
     const receivingDocument = receiving.receivingDocument;
     const po = poLine.purchaseOrder;
@@ -343,8 +480,9 @@ export async function buildSupplierInvoicePlan({
           }
         : null,
       purchaseOrderId: relatedPoIds[0] || null,
-      receivingDocumentId: relatedGrnIds[0] || null,
+      receivingDocumentId: waitingForReceipt ? null : relatedGrnIds[0] || null,
     },
+    waitingForReceipt,
     invoice: {
       invoiceNumber: text(input.invoiceNumber),
       supplierId: supplier?.id || text(input.supplierId),
@@ -393,6 +531,23 @@ export async function buildSupplierMatchPlan({
     return basePlan("supplier_invoice_match", [
       issue("SUPPLIER_INVOICE_NOT_FOUND", "Supplier invoice was not found.", 404),
     ]);
+  // A bill recorded before the goods arrived waits for its receipt: nothing
+  // to match against yet, and so nothing to approve or pay.
+  if (invoice.lines.some((line) => !line.receivingLineId))
+    return basePlan("supplier_invoice_match", [
+      issue(
+        "SUPPLIER_INVOICE_RECEIPT_REQUIRED",
+        "This bill is waiting for its receipt. Link the receipt once the goods are received; the bill can be matched and paid only after that.",
+        409,
+      ),
+    ], {
+      invoice: {
+        id: invoice.id,
+        version: invoice.version,
+        currency: invoice.currency,
+        status: invoice.status,
+      },
+    });
   // The same rule as the match command: only a submitted invoice starts a
   // match run. An exception invoice is cancelled and entered again instead.
   if (invoice.status !== "submitted")

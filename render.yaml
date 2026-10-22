@@ -93,6 +93,12 @@ projects:
                 value: "false"
               - key: FLOWCHAIN_REQUEST_LOG
                 value: "on"
+              # Optional error alerts: an https incoming-webhook URL (Slack,
+              # Discord or any endpoint that takes JSON). Leave empty for none.
+              # It is a credential: never paste it anywhere else. See
+              # docs/operations-alerts.md.
+              - key: FLOWCHAIN_ERROR_WEBHOOK_URL
+                sync: false
               # US trial capability set (deploy/README.md).
               - key: FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING
                 value: "true"
@@ -104,8 +110,16 @@ projects:
                 value: "true"
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS
                 value: "true"
+              # CSV import of master data and opening stock through the
+              # manual-entry commands; opening stock lands as draft adjustments.
+              - key: FLOWCHAIN_ENABLE_DATA_IMPORT
+                value: "true"
               # Mobile Sync stays off; enabling it also needs cursor secrets.
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC
+                value: "false"
+              # Contracts (docs/contracts-module-design.md) stay off in the 10/25
+              # trial (D10) until their tests and a walkthrough pass.
+              - key: FLOWCHAIN_ENABLE_CONTRACTS
                 value: "false"
               # Render terminates HTTPS at its proxy, which appends the client
               # address to X-Forwarded-For. The sign-in rate limit reads that
@@ -198,6 +212,12 @@ projects:
                 value: "false"
               - key: FLOWCHAIN_REQUEST_LOG
                 value: "on"
+              # Optional error alerts: an https incoming-webhook URL (Slack,
+              # Discord or any endpoint that takes JSON). Leave empty for none.
+              # It is a credential: never paste it anywhere else. See
+              # docs/operations-alerts.md.
+              - key: FLOWCHAIN_ERROR_WEBHOOK_URL
+                sync: false
               # US trial capability set (deploy/README.md).
               - key: FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING
                 value: "true"
@@ -209,8 +229,16 @@ projects:
                 value: "true"
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS
                 value: "true"
+              # CSV import of master data and opening stock through the
+              # manual-entry commands; opening stock lands as draft adjustments.
+              - key: FLOWCHAIN_ENABLE_DATA_IMPORT
+                value: "true"
               # Mobile Sync stays off; enabling it also needs cursor secrets.
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC
+                value: "false"
+              # Contracts (docs/contracts-module-design.md) stay off in the 10/25
+              # trial (D10) until their tests and a walkthrough pass.
+              - key: FLOWCHAIN_ENABLE_CONTRACTS
                 value: "false"
               # Render terminates HTTPS at its proxy, which appends the client
               # address to X-Forwarded-For. The sign-in rate limit reads that

@@ -2,10 +2,12 @@ import { getPrismaClient, disconnectPrismaClient } from '../server/persistence/p
 import { assertLocalDevelopment } from '../server/domain/local-development-contract.mjs'
 import { localDemoSupplier } from './setup-local-demo.mjs'
 import { PURCHASE_ORDER_STATUS, PURCHASE_REQUEST_STATUS } from '../server/domain/procurement-status-authority.mjs'
+import { isCommittedPurchaseOrder } from '../server/domain/open-purchase-order.mjs'
 import { createReceivingPostingCommandService } from '../server/domain/receiving-posting-command-service.mjs'
 import { applyPromisedDateChanges, recordOriginalPromises } from '../server/domain/purchase-order-promise-dates.mjs'
 import { resolveProvisionedActor } from '../server/domain/pilot-identity.mjs'
 import { authorize } from '../server/auth/authorization-service.mjs'
+import { contractsEnabled } from '../server/domain/contract-policy.mjs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
@@ -20,7 +22,7 @@ import { resolve } from 'node:path'
 // inventory movements agree. Posted receipts are inventory history: once they
 // exist the scenario keeps its first seed day and refuses a different one.
 // No payables, payments or journal entries are created.
-export const LOCAL_SCENARIO_VERSION = 6
+export const LOCAL_SCENARIO_VERSION = 7
 const WAREHOUSE = 'LOCAL-DEMO-WH-001'
 const BUYERS = ['Kim', 'Dana Whitfield']
 const RECEIVER = 'Luis Ortega'
@@ -107,6 +109,26 @@ const purchaseOrders = [
     revised: [-30, -36, 'Carrier capacity shortage delayed the pickup'], receipts: [[16, -30, '13:20', 500, 0]] },
   { n: 35, supplier: NORTHSTAR, sku: 'LDM-005', qty: 800, price: 1.82, status: S.FULLY_RECEIVED, created: -28, promised: -14,
     receipts: [[17, -14, '09:40', 800, 0]] },
+]
+
+// Contracts (docs/contracts-module-design.md, K1), seeded only while the
+// contracts capability is on (the walkthrough turns it on; the trial does
+// not). Dates are day offsets from the seed day, like the orders, so the
+// walkthrough always shows one ending soon, one with notice due and one in
+// force: Acme's purchase agreement ends in 45 days (inside its 60-day
+// reminder), Horizon's service agreement renews automatically with 30 days'
+// notice and ends in 50, so notice is due in 20, and Northstar's quality
+// agreement runs into next year. Each is created once, active, with its
+// audit rows; a contract already there is never changed by a re-seed. No
+// values or files: those are entered by people.
+const HORIZON = 'LOCAL-DEMO-SUP-004'
+const contracts = [
+  { n: 1, supplier: ACME, type: 'purchase_agreement', title: 'Electronic components supply agreement', reference: 'ACME-SA-2025-118',
+    signed: -322, start: -320, end: 45, renewal: 'by_agreement', noticeDays: 0, paymentTermsId: 'NET30' },
+  { n: 2, supplier: HORIZON, type: 'service_agreement', title: 'Freight and warehousing services agreement', reference: 'HL-SVC-0457',
+    signed: -318, start: -315, end: 50, renewal: 'automatic', noticeDays: 30, paymentTermsId: 'NET30' },
+  { n: 3, supplier: NORTHSTAR, type: 'quality_agreement', title: 'Supplier quality agreement', reference: 'NSE-QA-2026',
+    signed: -68, start: -65, end: 300, renewal: 'by_agreement', noticeDays: 0, paymentTermsId: null },
 ]
 
 const pad = (value) => String(value).padStart(3, '0')
@@ -307,25 +329,33 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
       // An order with receipts is seeded as issued with nothing received;
       // posting its receipts moves it to partially or fully received.
       const status = receipts.length ? S.ISSUED : po.status
+      // A sent order records when it was issued, as the Issue action does: at
+      // 11:00 on its order day. Written once; a later seed keeps the recorded
+      // date, which the database refuses to change.
+      const sent = sentStatuses.has(po.status) || po.sent
+      const recordedIssuedAt = (await tx.purchaseOrder.findUnique({ where: { id }, select: { issuedAt: true } }))?.issuedAt || null
+      const issuedAt = recordedIssuedAt || (sent ? at(po.created, '11:00') : null)
       const poMetadata = {
         ...metadata,
         targetWarehouseId: WAREHOUSE,
-        transmissionStatus: sentStatuses.has(po.status) || po.sent ? 'sent' : 'not_sent',
+        transmissionStatus: sent ? 'sent' : 'not_sent',
+        ...(issuedAt ? { issuedAt: new Date(issuedAt).toISOString() } : {}),
         ...(po.cancellationReason ? { cancellationReason: po.cancellationReason } : {}),
       }
       if (await put('purchaseOrder', id, {
         tenantId, status, supplierId: po.supplier, supplierName, sourceRequestId: po.request ? 'LOCAL-DEMO-PR-001' : null,
         expectedDate: day(po.promised), amount, currency: 'USD', owner: BUYERS[po.n % BUYERS.length], priority: po.priority || 'medium', metadata: poMetadata,
-        createdAt: at(po.created, '09:30'), receivingBaseStatus: null,
+        createdAt: at(po.created, '09:30'), receivingBaseStatus: null, issuedAt,
       })) {
         await put('purchaseOrderLine', lineId, {
           purchaseOrderId: id, itemId: item.id, sku: po.sku, itemName: item.name, orderedQuantity: po.qty, receivedQuantity: 0, unit: item.unit, unitPrice: po.price, amount,
           metadata: { ...metadata, targetWarehouseId: WAREHOUSE, requestedDate: promisedDate, promisedDate },
         })
       }
-      // An order issued to the supplier keeps its first promised date, as the
-      // issue command records it. Recorded once; a later seed leaves it alone.
-      if (sentStatuses.has(po.status) || po.sent) {
+      // A committed order keeps its first promised date, as the approve and
+      // issue commands record it; so does a cancelled order that was sent first.
+      // Recorded once; a later seed leaves it alone.
+      if (isCommittedPurchaseOrder({ status: po.status }) || po.sent) {
         await recordOriginalPromises(tx, { purchaseOrder: await tx.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { lines: true } }) })
       }
       // A revised promise goes through the same helper as the revise command:
@@ -410,7 +440,48 @@ export async function seedLocalScenario(prisma, env = process.env, options = {})
       }
     }
   }, { timeout: 60000 })
-  return { ...LOCAL_SCENARIO_COUNTS, postedReceipts: unpostedReceipts.length, asOf: calendar.seedDay, timeZone }
+  // 4. Contracts, when the contracts capability is on.
+  const seededContracts = contractsEnabled(env) ? await seedLocalContracts(prisma, { tenantId, calendar, actorId: receiver.userId, metadata }) : null
+  return { ...LOCAL_SCENARIO_COUNTS, ...(seededContracts === null ? {} : { contracts: seededContracts }), postedReceipts: unpostedReceipts.length, asOf: calendar.seedDay, timeZone }
+}
+
+// The walkthrough's contracts, as the contract commands would leave them
+// after a create and an activate: version 2, the owner the supplier's
+// business owner, and an audit row for each step. Returns how many there are.
+export async function seedLocalContracts(prisma, { tenantId, calendar, actorId, metadata = {} }) {
+  const { isoDay, at } = calendar
+  const day = (offset) => new Date(`${isoDay(offset)}T00:00:00.000Z`)
+  await prisma.$transaction(async (tx) => {
+    for (const contract of contracts) {
+      const id = `LOCAL-DEMO-CT-${pad(contract.n)}`
+      if (await tx.contract.findUnique({ where: { id } })) continue
+      // Numbers follow the CT- plus eight hexadecimal characters rule; DE for demo.
+      const number = `CT-DE${String(contract.n).padStart(6, '0')}`
+      if (await tx.contract.findFirst({ where: { tenantId, number } })) throw new Error(`Refusing to reuse contract number ${number}.`)
+      const supplier = await tx.supplier.findUnique({ where: { id: contract.supplier }, select: { businessOwnerId: true } })
+      const owner = supplier?.businessOwnerId ? await tx.user.findFirst({ where: { id: supplier.businessOwnerId, tenantId, status: 'active' }, select: { id: true } }) : null
+      const recordedAt = at(contract.signed, '09:00')
+      const activatedAt = at(contract.signed, '09:05')
+      const fields = {
+        title: contract.title, externalReference: contract.reference, type: contract.type, supplierId: contract.supplier, ownerId: owner?.id ?? null,
+        startDate: isoDay(contract.start), endDate: isoDay(contract.end), signedOn: isoDay(contract.signed), renewal: contract.renewal,
+        noticeDays: contract.noticeDays, reminderDays: 60, paymentTermsId: contract.paymentTermsId, currency: null, totalValue: null, notes: null,
+      }
+      await tx.contract.create({
+        data: {
+          id, tenantId, number, counterpartyType: 'supplier', status: 'active', ...fields,
+          startDate: day(contract.start), endDate: day(contract.end), signedOn: day(contract.signed),
+          version: 2, createdById: actorId, updatedById: actorId, activatedById: actorId, activatedAt, createdAt: recordedAt,
+        },
+      })
+      const audit = (suffix, action, summary, createdAt, details) => tx.auditLog.create({
+        data: { id: `${id}-AUDIT-${suffix}`, tenantId, actorId, source: 'local_walkthrough_scenario', module: 'contracts', entityType: 'Contract', entityId: id, action, summary, createdAt, metadata: { ...metadata, number, ...details } },
+      })
+      await audit('CREATED', 'contract_created', `Created contract ${number}.`, recordedAt, { version: 1, after: { ...fields, signedOn: null } })
+      await audit('ACTIVATED', 'contract_activated', `Activated contract ${number}.`, activatedAt, { version: 2, signedOn: fields.signedOn, startDate: fields.startDate })
+    }
+  }, { timeout: 60000 })
+  return prisma.contract.count({ where: { tenantId, id: { startsWith: 'LOCAL-DEMO-CT-' } } })
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
