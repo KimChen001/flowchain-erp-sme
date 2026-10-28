@@ -93,6 +93,10 @@ A later phase may introduce controlled confirmation workflows. That future work 
 - preview-to-confirm separation;
 - repository-backed persistence boundaries.
 
+The proposed design for this path, limited to a draft purchase request and a draft RFQ
+from an approved request, is [Assistant actions: propose, confirm, execute](ai-confirmed-actions-design.md)
+(2026-10-05, not built yet).
+
 ## Non-goals
 
 - Do not enable external AI providers by default.
