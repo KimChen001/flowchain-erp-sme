@@ -44,7 +44,7 @@ export const operationsEnglish: Record<string, string> = {
   '选择地点': 'Select location', '行级内部备注': 'Internal line notes', '新增采购行': 'Add purchase line',
   '预计总额': 'Estimated total', '张': 'requests', '暂无采购申请': 'No purchase requests',
   '点击“新建采购申请”开始录入。': 'Select New purchase request to get started.', '申请编号': 'Request number',
-  '提交': 'Submit', '批准': 'Approve', '撤回': 'Withdraw', '生成 Draft PO': 'Create draft PO',
+  '提交': 'Submit', '批准': 'Approve', '撤回': 'Withdraw', '生成采购订单': 'Create purchase order',
   '运营部': 'Operations', '采购部': 'Purchasing', '财务部': 'Finance', '销售部': 'Sales', '仓储部': 'Warehousing',
   '当前工作区缺少完整库存分配记录': 'Complete inventory allocation records are unavailable in this workspace',
   '当前工作区缺少完整采购订单关联': 'Complete purchase order links are unavailable in this workspace',

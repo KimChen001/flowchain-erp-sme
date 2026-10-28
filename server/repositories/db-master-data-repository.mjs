@@ -4,6 +4,8 @@ import { validateDatabasePersistenceConfig } from '../persistence/persistence-co
 import { saveSupplierMaster } from '../domain/supplier-master-command.mjs'
 import { changeSupplierOwner, changeSupplierTier } from '../domain/supplier-tier-command.mjs'
 import { CUSTOMER_NAMESPACE, listItemSupplierRecords, mapItemSupplierRecord, saveCustomerMaster, saveItemMaster, saveItemSupplier } from '../domain/master-data-commands.mjs'
+import { ITEM_SUPPLIER_LINK_READ_CAP, itemSupplierLinkOptions, itemSupplierLinkPage, joinItemSupplierLinks, preferredSupplierLink } from '../domain/item-supplier-links.mjs'
+import { saveWarehouse, saveWarehouseBin, setWarehouseBinStatus, setWarehouseStatus, warehouseVersion } from '../domain/warehouse-master-commands.mjs'
 import { findManyWithinLimit, requireTenantId } from './repository-read-scope.mjs'
 
 function requireDatabaseConfig(env = process.env) {
@@ -119,8 +121,10 @@ function mapSupplier(record = {}) {
     risk: record.riskLevel || meta.risk || 'medium',
     score,
     scoreSource: score ? 'explicit' : meta.scoreSource || 'missing',
-    defaultCurrency: meta.defaultCurrency || meta.currency || 'USD',
-    paymentTermsId: meta.paymentTermsId || meta.paymentTerms || 'NET30',
+    // Only recorded values: an empty currency or payment term stays null
+    // ("not recorded"), never a USD or NET30 default.
+    defaultCurrency: text(meta.defaultCurrency || meta.currency) || null,
+    paymentTermsId: text(meta.paymentTermsId || meta.paymentTerms) || null,
     categories: Array.isArray(meta.categories) ? meta.categories : [record.category || meta.category || 'General'].filter(Boolean),
     contactName: text(meta.contactName || meta.contact),
     telephone: text(meta.telephone || meta.phone),
@@ -175,11 +179,28 @@ function mapWarehouse(record = {}) {
   const meta = metadata(record)
   return {
     id: record.id,
+    code: text(record.code),
     name: record.name || record.code || record.id,
     type: meta.type || 'warehouse',
     status: record.status || 'active',
     parentId: meta.parentId ?? null,
     sourceType: meta.sourceType || 'database',
+    // Warehouses keep their optimistic version in metadata (no column).
+    version: warehouseVersion(record),
+    updatedAt: record.updatedAt ?? null,
+  }
+}
+
+// A bin: one WarehouseLocation row. Edits send updatedAt back as their version.
+function mapWarehouseBin(record = {}) {
+  return {
+    id: record.id,
+    warehouseId: record.warehouseId,
+    code: text(record.code),
+    locationKey: text(record.locationKey),
+    name: record.name ?? null,
+    status: record.status || 'active',
+    updatedAt: record.updatedAt ?? null,
   }
 }
 
@@ -187,6 +208,8 @@ function mapPaymentTerm(record = {}) {
   const meta = metadata(record)
   return {
     id: record.code || record.id,
+    // The row id, which the supplier import stores as a supplier's term.
+    recordId: record.id,
     label: record.name || record.code || record.id,
     days: numberFrom(record.days, 30),
     status: meta.status || 'active',
@@ -305,6 +328,49 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
       const items = rows.length ? await client.item.findMany({ where: { ...where, id: { in: rows.map((row) => text(row.payload?.itemId)) } } }) : []
       const byId = new Map(items.map((item) => [item.id, item]))
       return rows.map((row) => mapItemSupplierRecord(row, byId.get(text(row.payload?.itemId)) || null))
+    },
+    // Every item-supplier link with its item and supplier, for Supplier
+    // prices: narrowed to one item or one supplier in the database (by the
+    // record key), then searched and paged. Without either, the filters'
+    // options (the items and suppliers that have links) come along, and
+    // truncated says when the read reached its cap.
+    listItemSupplierLinks: async (filters = {}) => {
+      const client = await resolvePrisma({ env, prisma })
+      const where = tenantWhere(filters)
+      const itemId = text(filters.itemId)
+      const supplierId = text(filters.supplierId)
+      const records = await listItemSupplierRecords(client, where.tenantId, { itemId, supplierId })
+      const stored = records.map((row) => mapItemSupplierRecord(row))
+      // An item's preferred supplier without a stored link is listed too, as
+      // the item page lists it (listItemSuppliers).
+      const linked = new Set(stored.map((link) => `${link.itemId}::${link.supplierId}`))
+      const preferredItems = await client.item.findMany({
+        where: { ...where, ...(itemId ? { id: itemId } : {}), preferredSupplierId: supplierId || { not: null } },
+        select: { id: true, preferredSupplierId: true },
+        take: ITEM_SUPPLIER_LINK_READ_CAP,
+      })
+      const links = [
+        ...stored,
+        ...preferredItems
+          .filter((item) => !linked.has(`${item.id}::${item.preferredSupplierId}`))
+          .map((item) => preferredSupplierLink(item.id, item.preferredSupplierId)),
+      ]
+      const ids = (key) => [...new Set(links.map((link) => link[key]).filter(Boolean))]
+      const [items, suppliers] = links.length
+        ? await Promise.all([
+          client.item.findMany({ where: { ...where, id: { in: ids('itemId') } }, select: { id: true, sku: true, name: true, status: true } }),
+          client.supplier.findMany({ where: { ...where, id: { in: ids('supplierId') } }, select: { id: true, code: true, name: true, status: true } }),
+        ])
+        : [[], []]
+      // As on the item page, a preferred supplier no longer in the workspace is not listed.
+      const known = new Set(suppliers.map((supplier) => supplier.id))
+      const rows = joinItemSupplierLinks(links.filter((link) => link.source !== 'item_preferred_supplier' || known.has(link.supplierId)), { items, suppliers })
+      const narrowed = Boolean(itemId || supplierId)
+      return {
+        ...itemSupplierLinkPage(rows, { query: filters.query, limit: filters.limit, offset: filters.offset }),
+        truncated: !narrowed && records.length >= ITEM_SUPPLIER_LINK_READ_CAP,
+        ...(narrowed ? {} : { options: itemSupplierLinkOptions(rows) }),
+      }
     },
     listItems: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })
@@ -445,6 +511,43 @@ export function createDbMasterDataRepository({ env = process.env, prisma } = {})
         take: safeLimit(filters.limit),
       })
       return records.map(mapWarehouse)
+    },
+    // Warehouse and bin writes (warehouse-master-commands.mjs). Each one is
+    // checked for a tenant before the database is touched.
+    createWarehouse: async (input, actorId, scope) => {
+      tenantWhere(scope)
+      return mapWarehouse(await saveWarehouse(await resolvePrisma({ env, prisma }), null, input, actorId, scope))
+    },
+    updateWarehouse: async (id, input, actorId, scope) => {
+      tenantWhere(scope)
+      return mapWarehouse(await saveWarehouse(await resolvePrisma({ env, prisma }), text(id), input, actorId, scope))
+    },
+    setWarehouseStatus: async (id, input, actorId, scope) => {
+      tenantWhere(scope)
+      const { warehouse, clearedDefaults } = await setWarehouseStatus(await resolvePrisma({ env, prisma }), text(id), input, actorId, scope)
+      return { warehouse: mapWarehouse(warehouse), clearedDefaults }
+    },
+    listWarehouseBins: async (warehouseId = '', options = {}) => {
+      const where = tenantWhere(options)
+      const client = await resolvePrisma({ env, prisma })
+      const records = await client.warehouseLocation.findMany({
+        where: { ...where, warehouseId: text(warehouseId) },
+        orderBy: [{ code: 'asc' }],
+        take: safeLimit(options.limit, 500),
+      })
+      return records.map(mapWarehouseBin)
+    },
+    createWarehouseBin: async (warehouseId, input, actorId, scope) => {
+      tenantWhere(scope)
+      return mapWarehouseBin(await saveWarehouseBin(await resolvePrisma({ env, prisma }), text(warehouseId), null, input, actorId, scope))
+    },
+    updateWarehouseBin: async (warehouseId, binId, input, actorId, scope) => {
+      tenantWhere(scope)
+      return mapWarehouseBin(await saveWarehouseBin(await resolvePrisma({ env, prisma }), text(warehouseId), text(binId), input, actorId, scope))
+    },
+    setWarehouseBinStatus: async (warehouseId, binId, input, actorId, scope) => {
+      tenantWhere(scope)
+      return mapWarehouseBin(await setWarehouseBinStatus(await resolvePrisma({ env, prisma }), text(warehouseId), text(binId), input, actorId, scope))
     },
     listPaymentTerms: async (filters = {}) => {
       const client = await resolvePrisma({ env, prisma })

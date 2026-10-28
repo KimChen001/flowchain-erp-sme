@@ -15,24 +15,28 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
   CORE: ids(`
     overview overview:risks overview:ai
     master-data master-data:items master-data:suppliers master-data:customers
+    master-data:supplier-evaluation master-data:supplier-risks
+    master-data:item-suppliers
     master-data:warehouses master-data:bins master-data:payment-terms
     master-data:tax-codes master-data:print-templates
     master-data:supplier-detail master-data:item-detail
     master-data:customer-detail master-data:warehouse-detail
     master-data:bin-detail master-data:payment-term-detail
     master-data:tax-code-detail
+    contracts contracts:list contracts:ending contracts:new contracts:detail
     procurement procurement:workbench procurement:requests procurement:rfq
     procurement:orders procurement:receiving procurement:order-lines
     procurement:bills procurement:bill-detail
     procurement:match procurement:request-detail
     procurement:rfq-detail procurement:rfq-comparison procurement:order-detail
+    procurement:order-document
     procurement:receiving-detail
     procurement:match-detail
     inventory inventory:stock inventory:movements inventory:warnings
     inventory:reorder inventory:lots inventory:serials inventory:bins
     inventory:exceptions
     sales sales:orders sales:risks sales:evidence sales:order-detail
-    sales:invoices sales:invoice-detail
+    sales:invoices sales:invoice-detail sales:invoice-document
     reports reports:overview reports:procurement reports:sales
     reports:inventory reports:finance reports:suppliers reports:library
     settings settings:profile settings:warehouse-access settings:readiness
@@ -80,7 +84,6 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
   // (FROZEN_PRODUCT_ROUTE_IDS); forecast / MRP is unavailable.
   FROZEN: new Set([
     ...ids(`
-    procurement:contracts
     forecast forecast:cockpit forecast:demand forecast:mrp
     forecast:replenishment forecast:parameters
   `),
@@ -93,6 +96,7 @@ export const routeClassificationIds: Record<RouteClassification, Set<string>> = 
     finance:three-way-match
     finance:customer-invoices finance:customer-invoice-new
     finance:customer-invoice-detail
+    procurement:contracts
   `),
 };
 
@@ -123,6 +127,10 @@ const primaryNavigation: Record<
     navigationOrder: 60,
     navigationLabel: "供应商",
   },
+  // Contracts sit right after Suppliers (docs/contracts-module-design.md, D8),
+  // shown only while the contracts capability and contracts.contract.read are
+  // both present.
+  contracts: { navigationOrder: 65, navigationLabel: "合同" },
   "master-data:items": { navigationOrder: 70, navigationLabel: "物料" },
   // Money owed to suppliers and by customers. Shown only while the
   // operational finance capability and the finance.overview.read permission
@@ -152,6 +160,9 @@ export const legacyRouteRedirects: Record<
   "finance:customer-invoices": { to: "sales:invoices" },
   "finance:customer-invoice-new": { to: "sales:invoice-new" },
   "finance:customer-invoice-detail": { to: "sales:invoice-detail" },
+  // The frozen "framework agreements" placeholder gave way to the Contracts
+  // module on 2026-10-09 (docs/contracts-module-design.md).
+  "procurement:contracts": { to: "contracts:list" },
 };
 
 // Bill and invoice pages anyone with the read permission can open; recording,
@@ -164,8 +175,14 @@ const compatibilityRouteIds = ids(`
   finance:bank-statements finance:bank-reconciliation
 `);
 
+// Supplier evaluation writes a supplier's tier (master_data.supplier.manage,
+// with a reason and an audit row). The contract form and detail page record,
+// activate, renew and terminate contracts and their files
+// (contracts.contract.manage).
 const authoritativeWriteRouteIds = ids(`
   master-data master-data:items master-data:suppliers master-data:customers
+  master-data:supplier-evaluation
+  contracts:new contracts:detail
   master-data:warehouses master-data:payment-terms master-data:tax-codes
   master-data:supplier-detail master-data:item-detail
   master-data:customer-detail master-data:warehouse-detail
@@ -177,9 +194,16 @@ const authoritativeWriteRouteIds = ids(`
   settings:ai
 `);
 
+// The printable business documents live in their own module, whatever
+// module their route sits under.
+const businessDocumentRouteIds = ids(`
+  procurement:order-document sales:invoice-document
+`);
+
 const ownerByModule: Record<string, string> = {
   overview: "src/modules/overview",
   "master-data": "src/modules/master-data",
+  contracts: "src/modules/contracts",
   procurement: "src/modules/procurement",
   sales: "src/modules/sales",
   inventory: "src/modules/inventory",
@@ -200,6 +224,7 @@ const ownerByModule: Record<string, string> = {
 const apiByModule: Record<string, string> = {
   overview: "/api/business-read-context",
   "master-data": "/api/master-data/*",
+  contracts: "/api/contracts/*",
   procurement: "/api/procurement/*",
   sales: "/api/sales-orders/*",
   inventory: "/api/inventory-*",
@@ -239,7 +264,7 @@ const mapCapability = (capability: string, routeIds: string) => {
 };
 mapCapability(
   "sales",
-  "sales sales:orders sales:risks sales:evidence sales:order-detail sales:invoices sales:invoice-detail",
+  "sales sales:orders sales:risks sales:evidence sales:order-detail sales:invoices sales:invoice-detail sales:invoice-document",
 );
 mapCapability(
   "stock-transfer",
@@ -303,6 +328,11 @@ mapCapability(
   "review-actions",
   "review-actions review-actions:waiting review-actions:data-limited",
 );
+// Off in the trial and on in the walkthrough until verified (D10).
+mapCapability(
+  "contracts",
+  "contracts contracts:list contracts:ending contracts:new contracts:detail",
+);
 
 const routePermission = new Map<string, string>();
 const mapPermission = (permission: string, routeIds: string) => {
@@ -311,7 +341,7 @@ const mapPermission = (permission: string, routeIds: string) => {
 };
 mapPermission(
   "procurement.purchase_order.read",
-  "procurement procurement:workbench procurement:orders procurement:order-lines procurement:order-detail",
+  "procurement procurement:workbench procurement:orders procurement:order-lines procurement:order-detail procurement:order-document",
 );
 mapPermission(
   "receiving.read",
@@ -368,7 +398,7 @@ mapPermission("finance.overview.read", "finance finance:overview");
 mapPermission("finance.payable.read", "finance:payables");
 mapPermission(
   "finance.customer_invoice.read",
-  "sales:invoices sales:invoice-new sales:invoice-detail",
+  "sales:invoices sales:invoice-new sales:invoice-detail sales:invoice-document",
 );
 mapPermission("finance.receivable.read", "finance:receivables finance:aging");
 mapPermission("finance.customer_credit.read", "finance:customer-credit-notes");
@@ -409,6 +439,10 @@ mapPermission("custom_field.read", "settings:custom-fields");
 mapPermission("settings.review_policy.read", "settings:review");
 mapPermission("settings.modules.read", "settings:modules");
 mapPermission("audit.read", "settings:audit audit-history audit-history:ai audit-history:drafts audit-history:data audit-history:objects");
+mapPermission(
+  "contracts.contract.read",
+  "contracts contracts:list contracts:ending contracts:new contracts:detail",
+);
 
 export function classificationForRouteId(routeId: string) {
   return classificationById.get(routeId);
@@ -506,6 +540,20 @@ function limitationFor(
     return "只读展示当前租户的 RFQ、行项目、参与记录、最大 revisionNumber 报价和明确证据关系；内部 response/revision command 与 Comparison read contract 不在此 UI 路由内。";
   if (route.id === "procurement:rfq-comparison")
     return "只读展示当前租户 RFQ 的供应商报价比较、Participation 摘要与非有效响应；不排名、不推荐、不授标、不转换 PO，币种不做汇率换算。";
+  if (route.id === "procurement:order-document")
+    return "Read-only PO document to print or save as PDF; printable from approval on and only with procurement.prices.read. FlowChain does not send it.";
+  if (route.id === "sales:invoice-document")
+    return "Read-only invoice document to print or save as PDF; printable once issued and only with finance.amounts.read and finance.partner_snapshot.read. FlowChain does not send it.";
+  // Readable by every signed-in user, like the supplier list; what each
+  // reader may not see is hidden by the API, never shown as 0.
+  if (route.id === "master-data:supplier-evaluation")
+    return "Indicators follow the reader's purchase order, price, scorecard and issue access; a hidden one shows as —. Setting a tier needs master_data.supplier.manage and a reason; FlowChain suggests no tier.";
+  if (route.id === "master-data:supplier-risks")
+    return "Read only. Lists the open issues behind the supplier list's Open issues, earliest date first, never by a score; each kind follows the reader's purchase order, receipt or supplier invoice access.";
+  if (route.id === "master-data:item-suppliers")
+    return "Read only; links are edited where they are today. A reference price needs procurement.prices.read, as on the per-item read; without it the price is hidden, never 0.";
+  if (route.moduleId === "contracts")
+    return "Needs the contracts capability and contracts.contract.read; recording, activating, renewing, terminating and files need contracts.contract.manage; the total value needs procurement.prices.read and is hidden, never 0, without it. States are read from the dates on the workspace day; FlowChain never moves a date.";
   if (compatibilityRouteIds.has(route.id))
     return "Compatibility extension; not part of the default SME Core surface.";
   if (route.id === "imports")
@@ -548,17 +596,31 @@ export function authorityForRoute(
       requiredCapability,
       requiredPermission,
     ),
-    owner: ownerByModule[route.moduleId] || "src/app/FlowChainApp.tsx",
+    owner: businessDocumentRouteIds.has(route.id)
+      ? "src/modules/business-documents"
+      : ownerByModule[route.moduleId] || "src/app/FlowChainApp.tsx",
     businessObject: route.entityType || route.moduleId,
     apiDependency:
       route.id === "master-data:import"
         ? "/api/data-import/*"
+        : route.id === "master-data:supplier-evaluation"
+        ? "/api/master-data/suppliers, /api/master-data/supplier-insights, /api/master-data/suppliers/:id/tier"
+        : route.id === "master-data:supplier-risks"
+        ? "/api/master-data/supplier-risks"
+        : route.id === "master-data:item-suppliers"
+        ? "/api/master-data/item-suppliers"
+        : route.id === "contracts:detail"
+        ? "/api/contracts/:id, /api/uploads/stage, /api/attachments/:id/download"
         : route.id === "procurement:rfq"
         ? "/api/procurement/documents?type=rfq"
         : route.id === "procurement:rfq-detail"
           ? "/api/procurement/documents/rfq/:id"
           : route.id === "procurement:rfq-comparison"
             ? "/api/procurement/rfqs/:rfqId/comparison"
+          : route.id === "procurement:order-document"
+            ? "/api/procurement/orders/:id/document"
+          : route.id === "sales:invoice-document"
+            ? "/api/finance/customer-invoices/:id/document"
           : apiByModule[route.panelId === "finance" ? "finance" : route.moduleId],
     repositoryAuthority:
       classification === "LEGACY"

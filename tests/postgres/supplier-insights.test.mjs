@@ -2,8 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 
-// Supplier list metrics and tier suggestions (docs/supplier-tiers-design.md,
-// T2) on the walkthrough scenario, for readers with different access.
+// Supplier list metrics (docs/supplier-tiers-design.md, T2) on the walkthrough
+// scenario, for readers with different access. FlowChain suggests no tier.
 const tenantId = 'tenant-supplier-insights'
 const timeZone = 'America/New_York'
 process.env.FLOWCHAIN_DEFAULT_TENANT_ID = tenantId
@@ -40,7 +40,7 @@ async function request(port, method, path, { headers = {}, body } = {}) {
   })
 }
 
-test('supplier metrics agree with the reports and suggestions state their facts, per reader', async () => {
+test('supplier metrics agree with the reports, per reader', async () => {
   assert.ok(process.env.DATABASE_URL_TEST, 'An isolated test database is required')
   const prisma = await createPrismaClient(env)
   let server
@@ -55,7 +55,6 @@ test('supplier metrics agree with the reports and suggestions state their facts,
     const repositories = createDatabaseRepositoryRegistry({ env, prisma })
     const service = createSupplierInsightsReadService({ prisma, listPurchaseOrders: repositories.procurementRuntime.listForReport, now: () => asOfNoon })
     const read = (key) => service.read({ env, repositories, identity: { authenticated: true, tenantId, userId: `${tenantId}-${key}`, role: people[key], name: `Insights ${key}`, source: 'test-suite' } })
-    const tiers = (insights) => Object.fromEntries(Object.entries(insights.suppliers).map(([id, row]) => [id, row.suggestion?.tier ?? null]))
 
     // The administrator sees everything.
     const admin = await read('admin')
@@ -82,35 +81,19 @@ test('supplier metrics agree with the reports and suggestions state their facts,
     assert.equal(admin.suppliers[SUP(1)].onTime.rate, null)
     assert.equal(admin.suppliers[SUP(1)].onTime.sampleStatus, 'insufficient_sample')
 
-    // Suggestions on the walkthrough, as docs/supplier-tiers-design.md section 7 states them.
-    assert.deepEqual(tiers(admin), { [SUP(1)]: 1, [SUP(2)]: 2, [SUP(3)]: 2, [SUP(4)]: 3, [SUP(5)]: 1, [SUP(6)]: 1, [SUP(7)]: 2, [SUP(8)]: 3, [SUP(9)]: 3, [SUP(10)]: 3 })
-    assert.deepEqual(admin.suppliers[SUP(1)].suggestion, {
-      tier: 1,
-      partial: false,
-      reasons: [
-        { code: 'spend_share', share: 0.24, rank: 2, of: 6, basis: 'amount', currency: 'USD' },
-        { code: 'sources_not_recorded', skus: ['LDM-001', 'LDM-002', 'LDM-005'], more: 0 },
-      ],
-    })
-    assert.deepEqual(admin.suppliers[SUP(4)].suggestion.reasons, [{ code: 'no_orders' }, { code: 'not_a_source' }])
-    assert.deepEqual(admin.suppliers[SUP(7)].suggestion.reasons, [{ code: 'orders', orders: 3 }])
+    // No tier is suggested to anyone (owner decision 2026-10-09).
+    assert.ok(Object.values(admin.suppliers).every((row) => !('suggestion' in row)))
 
-    // A viewer reads orders but not their prices: no spend, and the share is
-    // measured in orders.
+    // A viewer reads orders but not their prices: no spend.
     const viewer = await read('viewer')
     assert.deepEqual(viewer.visibility, { orders: true, amounts: false, onTime: true, issues: true })
     assert.ok(Object.values(viewer.suppliers).every((row) => row.spend12m === null && row.orders12m !== null))
-    const viewerShares = Object.values(viewer.suppliers).flatMap((row) => row.suggestion.reasons.filter((reason) => reason.code === 'spend_share'))
-    assert.ok(viewerShares.length > 0 && viewerShares.every((reason) => reason.basis === 'orders' && !reason.currency))
     assert.equal(JSON.stringify(viewer).includes('19120'), false)
 
-    // Finance reads no purchase orders: no order metrics, and the suggestion
-    // rests on item sources alone and says so; it never claims "no orders".
+    // Finance reads no purchase orders: no order metrics.
     const finance = await read('finance')
     assert.deepEqual(finance.visibility, { orders: false, amounts: false, onTime: false, issues: true })
-    assert.ok(Object.values(finance.suppliers).every((row) => row.openPos === null && row.overduePos === null && row.orders12m === null && row.onTime === null && row.suggestion.partial))
-    assert.deepEqual(finance.suppliers[SUP(1)].suggestion, { tier: 2, partial: true, reasons: [{ code: 'sources_not_recorded', skus: ['LDM-001', 'LDM-002', 'LDM-005'], more: 0 }] })
-    assert.deepEqual(finance.suppliers[SUP(4)].suggestion, { tier: null, partial: true, reasons: [] })
+    assert.ok(Object.values(finance.suppliers).every((row) => row.openPos === null && row.overduePos === null && row.orders12m === null && row.onTime === null))
 
     // Operations reads receipts but not purchase orders.
     const operations = await read('operations')
@@ -153,6 +136,34 @@ test('supplier metrics agree with the reports and suggestions state their facts,
     assert.equal((await activity('operations', SUP(1))).invoices, null)
     await assert.rejects(activity('admin', 'LOCAL-DEMO-SUP-404'), (error) => error.status === 404)
 
+    // Supplier risks: every supplier's open issues on one list, the earliest
+    // date first, never by a score; the same issues the list counts, per reader.
+    const risks = (key) => service.readRisks({ env, repositories, identity: { authenticated: true, tenantId, userId: `${tenantId}-${key}`, role: people[key], name: `Insights ${key}`, source: 'test-suite' } })
+    const totalIssues = (insights) => Object.values(insights.suppliers).reduce((sum, row) => sum + (row.openIssues || 0), 0)
+    const adminRisks = await risks('admin')
+    assert.deepEqual(adminRisks.visibility, { orders: true, receipts: true, invoices: true, issues: true })
+    assert.equal(adminRisks.asOf, AS_OF)
+    assert.ok(adminRisks.issues.length > 0)
+    assert.equal(adminRisks.issues.length, totalIssues(admin))
+    for (const [supplierId, row] of Object.entries(admin.suppliers)) assert.equal(adminRisks.issues.filter((issue) => issue.supplierId === supplierId).length, row.openIssues, supplierId)
+    const dated = adminRisks.issues.filter((issue) => issue.when.date).map((issue) => issue.when.date)
+    assert.deepEqual(dated, [...dated].sort(), 'earliest date first')
+    assert.ok(adminRisks.issues.slice(dated.length).every((issue) => !issue.when.date), 'undated issues last')
+    assert.ok(new Set(adminRisks.issues.map((issue) => issue.type)).size > 1)
+    assert.ok(adminRisks.issues.every((issue) => issue.supplierName && issue.supplierCode && issue.label && !('severity' in issue) && !('score' in issue)))
+    const overdueRow = adminRisks.issues.find((issue) => issue.type === 'po_overdue')
+    assert.equal(overdueRow.when.kind, 'overdue')
+    assert.equal(overdueRow.when.days, report.find((po) => po.id === overdueRow.entityId).overdueDays)
+    // A viewer sees what their own counts show.
+    const viewerRisks = await risks('viewer')
+    assert.equal(viewerRisks.issues.length, totalIssues(viewer))
+    // Finance reads no purchase orders: no overdue order is listed, and the
+    // page is told so rather than showing none.
+    const financeRisks = await risks('finance')
+    assert.equal(financeRisks.visibility.orders, false)
+    assert.ok(financeRisks.issues.every((issue) => issue.type !== 'po_overdue'))
+    assert.equal(financeRisks.issues.length, totalIssues(finance))
+
     // The route serves the same read to the signed-in user.
     server = createScmServer()
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -170,6 +181,12 @@ test('supplier metrics agree with the reports and suggestions state their facts,
     assert.deepEqual(detail.payload.visibility, viewerAcme.visibility)
     assert.equal(detail.payload.purchaseOrders.total, acmeOrders.length)
     assert.equal((await request(port, 'GET', '/api/master-data/suppliers/LOCAL-DEMO-SUP-404/activity', { headers: { Authorization: `Bearer ${login.payload.token}` } })).status, 404)
+    assert.equal((await request(port, 'GET', '/api/master-data/supplier-risks')).status, 401)
+    const servedRisks = await request(port, 'GET', '/api/master-data/supplier-risks', { headers: { Authorization: `Bearer ${login.payload.token}` } })
+    assert.equal(servedRisks.status, 200, JSON.stringify(servedRisks.payload))
+    // The route reads as of today, not the scenario day: its access, not its rows, is compared.
+    assert.deepEqual(servedRisks.payload.visibility, viewerRisks.visibility)
+    assert.ok(Array.isArray(servedRisks.payload.issues))
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve))
     await disconnectPrismaClient()

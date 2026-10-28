@@ -107,6 +107,9 @@ const env = {
   FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE: "true",
   FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS: "true",
   FLOWCHAIN_ENABLE_DATA_IMPORT: "true",
+  // Contracts are on in the walkthrough and off in the trial
+  // (docs/contracts-module-design.md, D10).
+  FLOWCHAIN_ENABLE_CONTRACTS: "true",
   // No model provider: the assistant answers from workspace data only,
   // unless --ai-env opts in.
   OPENAI_API_KEY: "",

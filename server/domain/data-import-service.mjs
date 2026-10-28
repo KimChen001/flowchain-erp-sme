@@ -21,6 +21,7 @@ import {
   saveItemSupplier,
 } from './master-data-commands.mjs'
 import { hasWarehouseAccess, resolveProvisionedActor } from './pilot-identity.mjs'
+import { findPaymentTerm } from './standard-payment-terms.mjs'
 import { parseCsvArtifact, parseXlsxArtifact } from './structured-intake-parser.mjs'
 import { saveSupplierMaster, supplierCurrencyIssue, supplierInputIssues } from './supplier-master-command.mjs'
 
@@ -242,11 +243,15 @@ function checkSupplier(values, lookups) {
   for (const key of ['contactName', 'telephone', 'email', 'address']) put(input, key, text(values[key]) || undefined)
   const currency = text(values.defaultCurrency).toUpperCase()
   if (currency) input.defaultCurrency = currency
+  // A code or a name: "NET30", "Net 30" and "net-30" are the same term.
   const termCode = text(values.paymentTermCode)
   if (termCode) {
-    const term = lookups.paymentTermsByCode.get(termCode)
+    const term = findPaymentTerm(lookups.paymentTerms, termCode)
     if (term) input.paymentTermsId = term.id
-    else issues.push(issue('paymentTermCode', 'PAYMENT_TERM_NOT_FOUND', 'No payment term has this code. Add it under Payment terms first.'))
+    else if (lookups.paymentTerms.length) {
+      const codes = lookups.paymentTerms.map((known) => known.code).join(', ')
+      issues.push(issue('paymentTermCode', 'PAYMENT_TERM_NOT_FOUND', `No payment term matches this. Use one of these codes: ${codes}.`, { codes }))
+    } else issues.push(issue('paymentTermCode', 'PAYMENT_TERMS_NONE', 'This workspace has no payment terms. Leave this column blank.'))
   }
   const leadTime = numberCell(values, 'leadTimeDays', issues)
   if (leadTime !== undefined) input.deliveryCycleDays = Number(leadTime)
@@ -430,7 +435,7 @@ export function createDataImportService({
   async function loadLookups(type, rows, tenantId, actor) {
     const distinct = (key) => [...new Set(rows.map((row) => text(row.values[key])).filter(Boolean))]
     const lookups = {
-      itemsBySku: new Map(), suppliersByCode: new Map(), customersByCode: new Map(), paymentTermsByCode: new Map(),
+      itemsBySku: new Map(), suppliersByCode: new Map(), customersByCode: new Map(), paymentTerms: [],
       itemSupplierKeys: new Map(), preferredSuppliersByItemId: new Map(), warehousesByCode: new Map(), balancesByKey: new Map(), openingDraftsByKey: new Map(),
       workspaceCurrency: null,
     }
@@ -445,10 +450,10 @@ export function createDataImportService({
       for (const supplier of suppliers) lookups.suppliersByCode.set(supplier.code, supplier)
     }
     if (type === 'suppliers') {
-      const termCodes = distinct('paymentTermCode')
-      if (termCodes.length) {
-        const terms = await prisma.paymentTerm.findMany({ where: { tenantId, code: { in: termCodes } }, select: { id: true, code: true } })
-        for (const term of terms) lookups.paymentTermsByCode.set(term.code, term)
+      // All of the workspace's terms (a handful), to match names as well as
+      // codes and to list the codes when a cell matches none.
+      if (distinct('paymentTermCode').length) {
+        lookups.paymentTerms = await prisma.paymentTerm.findMany({ where: { tenantId }, select: { id: true, code: true, name: true }, orderBy: { code: 'asc' } })
       }
       const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { currency: true } })
       lookups.workspaceCurrency = tenant?.currency || null

@@ -115,8 +115,12 @@ test('a Chinese answer is worded in Chinese, and "第一" or "唯一" is not a c
 })
 
 test("counts equal to the answer's own, the question's words and the names the answer shows may be written out", async () => {
-  const { facts, response } = await priorities()
-  const { slots } = aiAnswerComposeSlots(response, facts)
+  const listed = await priorities()
+  const { facts } = listed
+  // The list in full (no count of a longer list): its counts are totals.
+  const response = { ...listed.response, figures: [] }
+  const { slots, partial } = aiAnswerComposeSlots(response, facts)
+  assert.deepEqual(partial, [])
   const overdue = Number(slots['count.po_overdue'])
   assert.equal(overdue, 2)
   // "Two orders are overdue": the answer cites two overdue orders.
@@ -134,6 +138,55 @@ test("counts equal to the answer's own, the question's words and the names the a
     const wrong = await composeAiAnswer({ response, facts, message: 'What first?', env: COMPOSE_ENV, provider: reply('Start with {r1}', summary) })
     assert.equal(wrong.compose.status, 'rejected', summary)
   }
+})
+
+// The walkthrough on 2026-10-09: "Chase PO-020 first—5 orders overdue" when the
+// answer listed the first 5 of 21 and 12 orders were overdue.
+test('an answer that lists the first of more never writes the listed count as a total', async () => {
+  const { facts, response } = await priorities()
+  assert.match(response.conclusion.summary, /Showing the first 5 of 8/)
+  const { slots, partial } = aiAnswerComposeSlots(response, facts)
+  // The totals the answer states are slots: the list, the report figures.
+  assert.equal(slots['total.attention_item_count'], '8')
+  assert.equal(slots['total.overdue_purchase_orders'], '2')
+  assert.equal(slots['total.open_purchase_orders'], '4')
+  assert.equal(slots['total.short_skus'], '1')
+  // The counts of the five listed are not offered; drafts still are.
+  assert.deepEqual(Object.keys(slots).filter((key) => key.startsWith('count.')), ['count.drafts'])
+  assert.ok(partial.includes(5))
+  const ask = (title, summary, language = 'en-US', answer = response) => composeAiAnswer({ response: answer, facts, message: language === 'zh-CN' ? '今天先处理什么？' : 'What first?', env: COMPOSE_ENV, provider: reply(title, summary) })
+  // The listed count passed off as a total, as a digit or a word, or a
+  // count slot that is not offered.
+  for (const [title, summary, reason] of [
+    ['Chase {r1} first: 5 orders overdue', '{r1} comes first: {r1.detail}', 'partial_count'],
+    ['Chase {r1} first', 'Five orders need attention, starting with {r1}.', 'partial_count'],
+    ['Chase {r1} first: {count.records} orders overdue', '{r1} comes first: {r1.detail}', 'unknown_slot'],
+  ]) {
+    const result = await ask(title, summary)
+    assert.equal(result.compose.reason, reason, title + summary)
+    assert.equal(result.response, response)
+  }
+  // The totals are fine.
+  const shown = await ask('Chase {r1} first', '{total.attention_item_count} items need attention, and {r1} comes first. {total.overdue_purchase_orders} orders are overdue in all.')
+  assert.equal(shown.compose.status, 'composed')
+  assert.equal(shown.response.conclusion.summary, `8 items need attention, and ${response.keyEvidence[0].entityLabel} comes first. 2 orders are overdue in all.`)
+  // A total is a slot, never a number of its own: "4 days late" when 4 orders are open.
+  assert.equal((await ask('Chase {r1} first', '{r1} is 4 days late.')).compose.reason, 'digits')
+  const zh = await priorities('zh-CN')
+  const chinese = await composeAiAnswer({ response: zh.response, facts: zh.facts, message: '今天先处理什么？', env: COMPOSE_ENV, provider: reply('先处理 {r1}', '共有 {total.overdue_purchase_orders} 张采购订单逾期，先看 {r1}。') })
+  assert.equal(chinese.compose.status, 'composed')
+  const zhListed = await composeAiAnswer({ response: zh.response, facts: zh.facts, message: '今天先处理什么？', env: COMPOSE_ENV, provider: reply('先处理 {r1}', '有五项需要处理，先看 {r1}。') })
+  assert.equal(zhListed.compose.reason, 'partial_count')
+})
+
+test('a supplier row cited for a late order counts as a supplier, not as a late order', async () => {
+  const scenario = aiSkillScenario()
+  const facts = await readAiSkillFacts(await loadAiSkillContext(scenario.ctx))
+  const response = answerAiSkill({ skillId: 'supplier_attention', facts, language: 'en-US', query: 'q', actor: scenario.actor }).response
+  const { slots } = aiAnswerComposeSlots(response, facts)
+  assert.equal(slots['count.supplier'], String(response.keyEvidence.length))
+  assert.equal(slots['count.po_overdue'], undefined)
+  assert.equal(slots['total.supplier_attention_count'], String(response.figures.find((row) => row.code === 'supplier_attention_count').value))
 })
 
 test("a sentence slot's full stop is not doubled, and Chinese punctuation is full width", async () => {

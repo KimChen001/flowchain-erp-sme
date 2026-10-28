@@ -43,10 +43,21 @@ async function phase(name, specs, extraEnv) {
 }
 
 await phase("acceptance", "tests/browser/product-recovery-acceptance.spec.ts");
-// The US walkthrough must stay free of Chinese in the English interface.
-await phase("english walkthrough", "tests/browser/english-walkthrough.spec.ts");
+// The US walkthrough must stay free of Chinese in the English interface, and
+// Today lists its work by the report and reorder rules. Contracts are on, as
+// in the local walkthrough.
+await phase("english walkthrough", ["tests/browser/english-walkthrough.spec.ts", "tests/browser/today-work.spec.ts"], { PLAYWRIGHT_CONTRACTS: "true" });
+// The US trial screens (finance, sales, inventory operations on) in English,
+// with the walkthrough data and with an empty workspace.
+await phase("english trial", "tests/browser/english-trial.spec.ts", { PLAYWRIGHT_US_TRIAL: "true" });
+await phase("english trial empty", "tests/browser/english-trial.spec.ts", {
+  PLAYWRIGHT_US_TRIAL: "true",
+  PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY: "true",
+});
 // Supplier performance against the original promise, in English.
 await phase("supplier performance", ["tests/browser/supplier-performance-english.spec.ts", "tests/browser/supplier-activity.spec.ts"]);
+// The PO document: printed alone, labels in the document language, figures unchanged.
+await phase("po document", "tests/browser/purchase-order-document.spec.ts");
 // The assistant answers the walkthrough prompt chips in English from workspace data.
 await phase("english assistant", "tests/browser/ai-assistant-english.spec.ts");
 // Shell, routing, capability and authorization checks on the walkthrough data.
@@ -65,7 +76,9 @@ await phase("shell and routing", [
 const outboxPath = join(tmpdir(), `flowchain-mail-outbox-${process.pid}.json`);
 await phase("email link sign-in", ["tests/browser/email-link-sign-in.spec.ts", "tests/browser/workspace-invitation.spec.ts"], { FLOWCHAIN_MAIL_OUTBOX_PATH: outboxPath });
 await rm(outboxPath, { force: true });
-await phase("outbound read states", "tests/browser/outbound-read-states.spec.ts", {
+// A workspace with master data only: truthful empty sales list, and Today's
+// first-day checklist.
+await phase("outbound read states", ["tests/browser/outbound-read-states.spec.ts", "tests/browser/today-first-run.spec.ts"], {
   PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY: "true",
 });
 

@@ -12,10 +12,12 @@ import { statusCodeLabel } from "../../i18n/statusLabels";
 // is never shown as empty. Risks are the assistant's own signals in its date
 // order, so they match the list's "Open issues".
 
-type When = { kind: "overdue" | "due" | "open" | "undated"; days: number | null; date: string | null };
+export type When = { kind: "overdue" | "due" | "open" | "undated"; days: number | null; date: string | null };
 type PurchaseRecord = { id: string; orderNumber: string; date: string | null; status: string; promisedDate: string | null; overdueDays: number; amount: number | null; currency: string | null };
 type InvoiceRecord = { id: string; invoiceNumber: string; invoiceDate: string | null; dueDate: string | null; status: string; matchStatus: string | null; amount: number | null; currency: string | null };
-type Issue = { id: string; type: "po_overdue" | "grn_rejected_qty" | "grn_received_unposted" | "invoice_variance"; entityType: "purchase_order" | "receiving_doc" | "supplier_invoice"; entityId: string; label: string; when: When; data: { days?: number; rejected?: number; unit?: string; variance?: number | null; currency?: string } };
+export type SupplierIssueType = "po_overdue" | "grn_rejected_qty" | "grn_received_unposted" | "invoice_variance";
+export type SupplierIssue = { id: string; type: SupplierIssueType; entityType: "purchase_order" | "receiving_doc" | "supplier_invoice"; entityId: string; label: string; when: When; data: { days?: number; rejected?: number; unit?: string; variance?: number | null; currency?: string } };
+type Issue = SupplierIssue;
 export type SupplierActivity = {
   asOf: string;
   supplierId: string;
@@ -59,7 +61,7 @@ function useCopy() {
   };
 }
 
-function useFormat() {
+export function useSupplierActivityFormat() {
   const { locale, language } = useI18n();
   return useMemo(() => {
     const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
@@ -96,6 +98,21 @@ function useSupplierActivity(supplierId: string) {
   return { data, error, loading, reload: () => setTick((value) => value + 1) };
 }
 
+// One open issue as a sentence in the interface language: what the detail
+// page's "Risks and exceptions" and the Supplier risks page both print.
+export function useSupplierIssueText() {
+  const t = useCopy();
+  const f = useSupplierActivityFormat();
+  return {
+    issueText: (issue: Issue) => {
+      if (issue.type === "po_overdue") return t("po_overdue", { n: issue.data.days ?? issue.when.days ?? 0 });
+      if (issue.type === "grn_rejected_qty") return t("grn_rejected_qty", { qty: `${f.number(issue.data.rejected)}${issue.data.unit ? ` ${issue.data.unit}` : ""}` });
+      if (issue.type === "invoice_variance") return issue.data.variance === null || issue.data.variance === undefined ? t("invoice_variance_hidden") : t("invoice_variance", { amount: f.money(issue.data.variance, issue.data.currency || null) });
+      return t("grn_received_unposted");
+    },
+  };
+}
+
 const Note = ({ children, testId }: { children: React.ReactNode; testId?: string }) => (
   <p data-testid={testId} className="mt-2 text-xs" style={{ color: A.sub }}>{children}</p>
 );
@@ -104,7 +121,8 @@ const Note = ({ children, testId }: { children: React.ReactNode; testId?: string
 // which keeps its existing copy.
 export function SupplierActivityCards({ supplierId, titles, empty }: { supplierId: string; titles: { orders: string; risks: string }; empty: { orders: string; risks: string } }) {
   const t = useCopy();
-  const f = useFormat();
+  const f = useSupplierActivityFormat();
+  const { issueText } = useSupplierIssueText();
   const { data, error, loading, reload } = useSupplierActivity(supplierId);
   const status = (testId: string) => (loading && !data
     ? <Note testId={`${testId}-loading`}>{t("loading")}</Note>
@@ -114,12 +132,6 @@ export function SupplierActivityCards({ supplierId, titles, empty }: { supplierI
   const orders = data?.purchaseOrders;
   const invoices = data?.invoices;
   const issues = data?.issues;
-  const issueText = (issue: Issue) => {
-    if (issue.type === "po_overdue") return t("po_overdue", { n: issue.data.days ?? issue.when.days ?? 0 });
-    if (issue.type === "grn_rejected_qty") return t("grn_rejected_qty", { qty: `${f.number(issue.data.rejected)}${issue.data.unit ? ` ${issue.data.unit}` : ""}` });
-    if (issue.type === "invoice_variance") return issue.data.variance === null || issue.data.variance === undefined ? t("invoice_variance_hidden") : t("invoice_variance", { amount: f.money(issue.data.variance, issue.data.currency || null) });
-    return t("grn_received_unposted");
-  };
   const issueDate = (issue: Issue) => (issue.when.date ? t(issue.when.kind === "open" ? "since" : "due", { date: f.day(issue.when.date) }) : "");
   return (
     <>

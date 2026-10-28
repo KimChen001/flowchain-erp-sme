@@ -163,21 +163,24 @@ function purchaseOrderFacts(context, all, receiptsByPo, invoicesByPo, timeZone) 
 }
 
 // Each stage counts the orders that reached it and every stage before it, so
-// the stages narrow like a funnel.
+// the stages narrow like a funnel. A partly received order is billed for what
+// arrived, so invoicing and matching come before full receipt: a bill on a
+// partly received order counts as invoiced, and the last stage is the order
+// that is fully received, invoiced and matched.
 function lifecycleVisual(id, pos) {
   const stages = [
     ['Committed', () => true],
     ['Receiving started', po => po.receivingStarted],
-    ['Fully received', po => po.fullyReceived],
     ['Invoiced', po => po.invoiced],
     ['Invoice matched', po => po.matched],
+    ['Fully received', po => po.fullyReceived],
   ]
   let reached = pos
   const data = stages.map(([name, test]) => {
     reached = reached.filter(test)
     return { name, value: reached.length }
   })
-  return visual(id, 'Purchase order lifecycle', 'funnel', pos.length ? data : [], { drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders in range. Each stage counts the orders that reached it and every stage before it.' })
+  return visual(id, 'Purchase order lifecycle', 'funnel', pos.length ? data : [], { drilldownPath: '/app/procurement/orders', description: 'Committed purchase orders in range. Each stage counts the orders that reached it and every stage before it; an order with a bill counts as invoiced while it is still partly received.' })
 }
 
 // Ordered value, then what is still to be received, then what is received but
@@ -434,7 +437,7 @@ function fulfillmentGaugeVisual(id, orders) {
 }
 
 // Stock position per SKU. Quantities are never added across SKUs. "Short now"
-// is the shortage the "SKUs short now" KPI counts: open demand that available
+// is the shortage the "SKUs short for sales orders" KPI counts: open demand that available
 // stock does not cover, before incoming purchase orders (those are in ATP).
 function stockPositionVisual(id, balances) {
   const rows = balances.filter(row => row.quantity !== null).map(row => ({ name: row.id, Available: Math.max(0, known(row.available) ?? 0), 'Reserved quantity': Math.max(0, known(row.reserved) ?? 0), 'Short now': Math.max(0, known(row.shortage) ?? 0) }))

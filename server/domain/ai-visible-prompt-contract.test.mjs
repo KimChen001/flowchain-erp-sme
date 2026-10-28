@@ -1,42 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { build } from 'esbuild'
 import { handleAiRoute } from '../routes/ai.routes.mjs'
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..')
 
-let promptModulePromise
-
-async function loadPromptModule() {
-  if (promptModulePromise) return promptModulePromise
-  promptModulePromise = (async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'ai-visible-prompts-'))
-    const outfile = path.join(dir, 'prompts.mjs')
-    await build({
-      entryPoints: ['src/modules/ai-assistant/prompts.ts'],
-      outfile,
-      bundle: true,
-      platform: 'node',
-      format: 'esm',
-      logLevel: 'silent',
-    })
-    const mod = await import(pathToFileURL(outfile).href)
-    return { mod, cleanup: () => rm(dir, { recursive: true, force: true }) }
-  })()
-  return promptModulePromise
-}
-
-test.after(async () => {
-  if (!promptModulePromise) return
-  const loaded = await promptModulePromise
-  await loaded.cleanup()
-})
-
+// These were the panel's contextual quick prompts. The prompt module is gone,
+// but the questions stay as a regression set for the real chat route.
 const visiblePromptContract = Object.freeze([
   { surface: 'overview', input: { moduleId: 'overview' }, prompts: ['今天最需要处理什么？', '哪些采购单据有风险？', '哪些库存项目需要关注？'], classification: 'supported_deterministic', modules: ['overview', 'procurement', 'inventory'] },
   { surface: 'procurement', input: { moduleId: 'procurement' }, prompts: ['今天采购有什么要跟？', '哪些 PO 快逾期？', '哪些 RFQ 没回复？'], classification: 'supported_deterministic', modules: ['procurement'] },
@@ -159,15 +130,6 @@ function businessSnapshot(db) {
     forecastPlans: db.forecastPlans,
   })
 }
-
-test('R76 enumerates every visible AI quick prompt and classifies the Alpha surface', async () => {
-  const { mod } = await loadPromptModule()
-  for (const entry of visiblePromptContract) {
-    assert.deepEqual(mod.getContextualQuickPrompts(entry.input), entry.prompts, entry.surface)
-    assert.ok(['supported_deterministic', 'supported_boundary_response', 'hidden_or_not_alpha', 'blocker'].includes(entry.classification), entry.surface)
-    assert.notEqual(entry.classification, 'blocker', entry.surface)
-  }
-})
 
 test('R76 visible AI quick prompts do not fall through to provider_disabled on the real chat route', async () => {
   for (const prompt of routePromptCases) {

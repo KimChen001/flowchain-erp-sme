@@ -129,8 +129,9 @@ export function normalizeMasterSupplier(supplier = {}, index = 0) {
     risk: normalizeRisk(supplier.risk),
     score: score.score,
     scoreSource: score.scoreSource,
-    defaultCurrency: supplier.defaultCurrency || supplier.currency || 'USD',
-    paymentTermsId: supplier.paymentTermsId || supplier.paymentTerms || 'NET30',
+    // Only recorded values: no USD or NET30 default.
+    defaultCurrency: String(supplier.defaultCurrency || supplier.currency || '').trim() || null,
+    paymentTermsId: String(supplier.paymentTermsId || supplier.paymentTerms || '').trim() || null,
     categories: Array.isArray(supplier.categories) ? supplier.categories : [category].filter(Boolean),
     preferred: Boolean(supplier.preferred),
   }

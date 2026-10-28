@@ -14,6 +14,7 @@ const ROUTES = [
   "/app/procurement/workbench",
   "/app/procurement/orders",
   "/app/procurement/orders/LOCAL-DEMO-PO-002",
+  "/app/procurement/orders/LOCAL-DEMO-PO-021/document",
   "/app/procurement/requests",
   "/app/procurement/requests/LOCAL-DEMO-PR-001",
   "/app/procurement/rfq",
@@ -30,13 +31,24 @@ const ROUTES = [
   "/app/inventory/warnings",
   "/app/sales/orders",
   "/app/master-data/items",
+  "/app/master-data/item-suppliers",
   "/app/master-data/suppliers",
   "/app/master-data/suppliers/LOCAL-DEMO-SUP-001",
+  "/app/master-data/supplier-evaluation",
+  "/app/master-data/supplier-risks",
+  // Contracts are on in the walkthrough (PLAYWRIGHT_CONTRACTS=true).
+  "/app/contracts/list",
+  "/app/contracts/ending",
+  "/app/contracts/new",
+  "/app/contracts/LOCAL-DEMO-CT-001",
+  "/app/contracts/LOCAL-DEMO-CT-002",
   "/app/master-data/customers",
   "/app/master-data/warehouses",
   "/app/master-data/payment-terms",
   "/app/master-data/tax-codes",
   "/app/master-data/print-templates",
+  "/app/master-data/bins",
+  "/app/master-data/import",
   "/app/reports/overview",
   "/app/reports/procurement",
   "/app/settings/numbering",
@@ -93,6 +105,53 @@ test("the tax code table keeps every stored digit and shows the recorded tax typ
   await expect(row).toContainText("Sales tax");
   await expect(row).toContainText("US");
   await expect(page.getByRole("row", { name: /TAXEXEMPT/ })).toContainText("Exempt");
+});
+
+test("Supplier risks lists the walkthrough's open issues, the earliest date first, with links", async ({ page }) => {
+  await signIn(page);
+  const risks = await (await page.request.get("/api/master-data/supplier-risks", { headers: await authHeaders(page) })).json();
+  expect(risks.issues.length).toBeGreaterThan(0);
+  await page.goto("/app/master-data/supplier-risks");
+  const rows = page.getByTestId("supplier-risk-row");
+  await expect(rows).toHaveCount(risks.issues.length);
+  await expect(page.getByTestId("supplier-risks-count")).toHaveText(`${risks.issues.length} issues, ${risks.issues.length} shown`);
+  // By date, never by a score: the dated rows ascend.
+  const dates = (await page.getByTestId("supplier-risk-date").evaluateAll((cells) => cells.map((cell) => cell.getAttribute("data-date") || ""))).filter(Boolean);
+  expect(dates).toEqual([...dates].sort());
+  // Each row links its supplier and its document; an overdue order says by how many days.
+  const first = rows.first();
+  await expect(first.locator('a[href^="/app/master-data/suppliers/"]')).toHaveCount(1);
+  await expect(first.locator('a[href^="/app/procurement/"]')).toHaveCount(1);
+  const overdue = risks.issues.find((issue: { type: string }) => issue.type === "po_overdue");
+  await page.getByLabel("Issue type filter", { exact: true }).selectOption("po_overdue");
+  await expect(rows).toHaveCount(risks.issues.filter((issue: { type: string }) => issue.type === "po_overdue").length);
+  const overdueRow = rows.filter({ hasText: overdue.label }).first();
+  await expect(overdueRow.locator("td").last()).toHaveText(String(overdue.when.days));
+  await expect(overdueRow.getByRole("link", { name: overdue.label })).toHaveAttribute("href", `/app/procurement/orders/${overdue.entityId}`);
+  // Search by supplier narrows to that supplier's rows.
+  await page.getByLabel("Issue type filter", { exact: true }).selectOption("");
+  await page.getByLabel("Search suppliers", { exact: true }).fill(overdue.supplierName);
+  await expect(rows).toHaveCount(risks.issues.filter((issue: { supplierName: string }) => issue.supplierName.toLowerCase().includes(overdue.supplierName.toLowerCase())).length);
+});
+
+test("the walkthrough's contracts: notice due and ending soon on Ending soon, earliest key date first, and one in force", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/app/contracts/ending");
+  const rows = page.getByTestId("contract-row");
+  // Horizon's notice is due in 20 days, before Acme's end date in 45.
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("CT-DE000002");
+  await expect(rows.nth(0).getByTestId("contract-state-chip")).toHaveText("Notice due");
+  await expect(rows.nth(0)).toContainText("Notice by");
+  await expect(rows.nth(1)).toContainText("CT-DE000001");
+  await expect(rows.nth(1).getByTestId("contract-state-chip")).toHaveText("Ending soon");
+  await page.goto("/app/contracts/list");
+  await expect(page.getByTestId("contracts-count")).toHaveText("3 contracts, 3 shown");
+  await expect(page.getByTestId("contract-row").filter({ hasText: "CT-DE000003" }).getByTestId("contract-state-chip")).toHaveText("Active");
+  await page.goto("/app/contracts/LOCAL-DEMO-CT-002");
+  await expect(page.getByTestId("contract-dates")).toContainText("Renews automatically");
+  await expect(page.getByTestId("contract-history")).toContainText("Activated");
+  await expect(page.getByTestId("contract-renewals")).toContainText("No renewal recorded.");
 });
 
 test("variance types show as labels, not stored codes", async ({ page }) => {
@@ -173,9 +232,17 @@ test("purchase request amounts use the document currency", async ({ page }) => {
   await page.goto("/app/procurement/requests/LOCAL-DEMO-PR-001");
   await expect(page.getByText("$5,000.00").first()).toBeVisible();
   await page.goto("/app/overview/risks");
+  // Today lists the request among the day's work, earliest date first. The
+  // list and its Show all button render together once the work has loaded,
+  // so wait for the list before deciding whether to expand it.
+  await expect(page.getByTestId("today-work-item").first()).toBeVisible();
+  const showAll = page.getByRole("button", { name: /^Show all \d+$/ });
+  if (await showAll.count()) await showAll.click();
   await expect(page.getByText("Request amount $5,000.00")).toBeVisible();
-  await expect(page.getByRole("row", { name: /LOCAL-DEMO-PO-013/ })).toContainText("$2,460.00");
-  await expect(page.locator("main").first()).not.toContainText(/Request amount 5000|\b2460\.0000\b/);
+  // Recent documents of every type show the amount in the document's
+  // currency; on the walkthrough the bills written last lead the list.
+  await expect(page.getByTestId("recent-documents").locator("tbody tr").first()).toContainText(/\$\d{1,3}(,\d{3})*\.\d{2}/);
+  await expect(page.locator("main").first()).not.toContainText(/Request amount 5000|\b\d+\.\d{4}\b/);
 });
 
 test("the purchase orders header totals committed orders only, per currency", async ({ page }) => {
@@ -238,6 +305,12 @@ for (const path of [
   "/app/procurement/three-way-match",
   "/app/inventory/stock",
   "/app/inventory/movements",
+  "/app/master-data/supplier-evaluation",
+  "/app/master-data/supplier-risks",
+  "/app/master-data/item-suppliers",
+  "/app/contracts/list",
+  "/app/contracts/ending",
+  "/app/contracts/LOCAL-DEMO-CT-002",
   "/app/reports/overview",
   "/app/finance/overview",
 ]) {

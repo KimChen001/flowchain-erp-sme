@@ -512,8 +512,7 @@ export function createOutboundWorkbenchReadService({
       canEditDraft:
         lifecycleEnabled &&
         permission(actor, "sales_order.revise") &&
-        order.workflowStatus === "draft" &&
-        order.lines.length === 1,
+        order.workflowStatus === "draft",
       canConfirm:
         lifecycleEnabled &&
         permission(actor, "sales_order.submit") &&
@@ -551,10 +550,6 @@ export function createOutboundWorkbenchReadService({
       blockingReasonCodes: [],
       primaryAction: null,
     };
-    if (order.workflowStatus === "draft" && order.lines.length > 1)
-      availableActions.blockingReasonCodes.push(
-        "MULTI_LINE_DRAFT_EDITOR_NOT_AVAILABLE",
-      );
     if (
       !lifecycleEnabled ||
       !reservationEnabled ||

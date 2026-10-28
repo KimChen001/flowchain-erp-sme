@@ -118,12 +118,16 @@ test('reports and the business read context return only the signed-in workspace 
     const procurementB = await request(port, 'POST', '/api/reports/query', { headers: headersB, body: { subject: 'procurement', filters: {} } })
     assert.deepEqual(procurementB.payload.exportRows.map((row) => row.id), ['PO-B'])
 
-    // The home overview is built from the same context, so it now lists the
-    // workspace's purchase request and RFQ next to its purchase order.
+    // The home overview is built from the same context, so it lists the
+    // workspace's purchase request, RFQ, purchase order, receipt, bill and
+    // sales order, and none of workspace B's.
     const home = await request(port, 'GET', '/api/home/overview', { headers: signedInA })
     assert.equal(home.status, 200)
-    assert.deepEqual(home.payload.recentDocuments.map((row) => row.id).sort(), ['PO-A', 'PR-A', 'RFQ-A'])
-    assert.ok(home.payload.workItems.some((row) => row.id === 'PR-A'))
+    assert.deepEqual(home.payload.recentDocuments.map((row) => row.id).sort(), ['GRN-A', 'INV-A', 'PO-A', 'PR-A', 'RFQ-A', 'SO-A'])
+    assert.ok(home.payload.workItems.some((row) => row.recordId === 'PR-A'))
+    assert.ok(!/\b(?:PO|PR|RFQ|GRN|INV|SO)-B\b/.test(JSON.stringify(home.payload)))
+    // Every source Today reads from the database was read.
+    assert.deepEqual(home.payload.limitations.filter((code) => code.startsWith('today_')), [])
 
     const anonymous = await request(port, 'GET', '/api/business/read-context')
     assert.equal(anonymous.status, 401)

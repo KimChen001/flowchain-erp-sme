@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n/I18n";
 // skip reasons) are never shown raw when a label exists for them.
 const chinese: Record<string, string> = {
   "Import data": "导入数据",
+  "Import a file": "导入文件",
   Import: "导入",
   "Import opening stock": "导入期初库存",
   "Create records from a CSV or XLSX file. Existing records are skipped, never changed.": "从 CSV 或 XLSX 文件新建记录。已存在的记录会跳过，不会被修改。",
@@ -157,7 +158,8 @@ const issueText: Record<string, [string, string]> = {
   EMAIL_INVALID: ["Enter a valid email address.", "请填写有效邮箱。"],
   CURRENCY_INVALID: ["Use a three-letter currency code, such as USD.", "请填写三位币种代码，例如 USD。"],
   WORKSPACE_CURRENCY_MISSING: ["Enter a currency; the workspace has none to use.", "请填写币种；工作区未设置本位币。"],
-  PAYMENT_TERM_NOT_FOUND: ["No payment term has this code. Add it under Payment terms first.", "没有此编码的付款条款，请先在付款条款中添加。"],
+  PAYMENT_TERM_NOT_FOUND: ["No payment term matches this. Use one of these codes: {codes}.", "没有匹配的付款条款，请使用以下编码之一：{codes}。"],
+  PAYMENT_TERMS_NONE: ["This workspace has no payment terms. Leave this column blank.", "此工作区没有付款条款，请将此列留空。"],
   SUPPLIER_NOT_FOUND: ["No supplier has this code. Import or create the supplier first.", "没有此编号的供应商，请先导入或新建供应商。"],
   SUPPLIER_INACTIVE: ["This supplier is not active.", "该供应商未启用。"],
   ITEM_NOT_FOUND: ["No item has this SKU. Import or create the item first.", "没有此 SKU 的物料，请先导入或新建物料。"],

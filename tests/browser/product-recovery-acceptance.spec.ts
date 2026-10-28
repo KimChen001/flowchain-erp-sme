@@ -193,8 +193,11 @@ test("authoritative Product Recovery pages remain useful and truthful", async ({
   // orders that still need work: 32 orders less 8 fully received and 3 cancelled.
   await expect(page.getByRole("heading", { name: "今日采购待办：22", exact: true })).toBeVisible();
   const workbenchRow = (id: string) => page.getByRole("row").filter({ has: page.getByText(id, { exact: true }) });
-  await expect(workbenchRow("LOCAL-DEMO-PO-001")).toContainText("partially_received");
-  await expect(workbenchRow("LOCAL-DEMO-PO-002")).toContainText("issued");
+  // Statuses read as labels in the interface language, not stored codes.
+  await expect(workbenchRow("LOCAL-DEMO-PO-001")).toContainText("部分收货");
+  await expect(workbenchRow("LOCAL-DEMO-PO-001")).not.toContainText("partially_received");
+  await expect(workbenchRow("LOCAL-DEMO-PO-002")).toContainText("已下达");
+  await expect(workbenchRow("LOCAL-DEMO-PO-002")).not.toContainText("issued");
   await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("发票差异", { exact: true })).toBeVisible();
   await expect(workbenchRow("LOCAL-DEMO-PO-001").getByText("三单匹配异常", { exact: true })).toBeVisible();
   await expect(workbenchRow("LOCAL-DEMO-PO-002").getByText("发票差异", { exact: true })).toHaveCount(0);
