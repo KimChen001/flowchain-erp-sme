@@ -298,6 +298,12 @@ const RECEIVING = [/\b(?:receipts?|receiving|grns?|goods receipts?)\b/i, /收货
 const GREETING_OR_TEST = [/\b(?:hi|hello|hey|test|testing|ping)\b/i, /你好|您好|测试|在吗/]
 const isGreetingOrTest = (raw) => !/[?？]/.test(raw) && raw.split(/\s+/).filter(Boolean).length <= 3 && matches(GREETING_OR_TEST, raw)
 // Sales orders are not purchase orders; no skill answers for them yet.
+// A user under pressure ("I'm stressed", "i had the big pressure", 我压力大)
+// gets the first few of today's priorities, when no other rule matched.
+const UNDER_PRESSURE = [/\b(?:stress(?:ed|ful)?|overwhelm(?:ed|ing)?|swamped|burn(?:ed|t)[ -]?out|exhausted)\b|\b(?:big|huge|lot of|so much|too much|under)\s+(?:the\s+)?pressure\b|\bi(?:'m|’m| am| had| have| feel)\b[^.?!]{0,20}\bpressure\b/i, /压力|焦虑|崩溃|忙不过来|做不完|太累|好累|累死|头大|烦死|喘不过气/]
+// Contracts have their own module; no skill reads them yet, so a question
+// about them gets the help answer that says so, never another skill's.
+const CONTRACT = [/\b(?:contracts?|agreements?|bpas?)\b/i, /合同|协议/]
 const SALES_ORDER = [/\b(?:sales|customer) orders?\b/i, /销售订单|客户订单/]
 const NOT_RECEIPT = [/\b(?:invoices?|payments?|payables?|sales orders?|rfqs?|quotes?|quotations?)\b/i, /发票|付款|应付|销售订单|询价|报价/]
 const AVAILABLE = [/\b(available|availability|promise|short)\b/i, /可用|可以承诺|能承诺/]
@@ -434,6 +440,9 @@ export function routeSkill({ message, skillHint, focusTarget } = {}) {
   // A draft request keeps its signals, so a tier it names narrows the drafts.
   if (matches(DRAFT, raw)) return { skillId: 'prepare_action_draft', focus, ids, signals: signalsOf(raw.toLowerCase()) }
   const base = { focus, ids }
+  // Contracts first: "supplier agreements" asks about contracts, not about
+  // the suppliers' open work.
+  if (matches(CONTRACT, raw)) return { capability: true, contracts: true }
   // The question as typed first. With misspelled workspace words corrected
   // only when that matches nothing, or only a general rule that a corrected
   // reading makes specific ("how many POs are pendng aproval").
@@ -443,6 +452,7 @@ export function routeSkill({ message, skillHint, focusTarget } = {}) {
   const corrected = general ? intentRoute(aiSkillIntentText(raw), base) : null
   const route = corrected && (!typed || (corrected.skillId && !['workspace_metrics', 'today_priorities'].includes(corrected.skillId))) ? corrected : typed
   if (route) return route
+  if (matches(UNDER_PRESSURE, raw)) return { ...base, skillId: 'today_priorities', signals: { ...signalsOf(plain), calm: true } }
   // No rule matched. The entity step may still find a record the question
   // names (a supplier, a SKU, an order) once it has read the data.
   return { skillId: null, focus, ids, signals: signalsOf(plain), excluded: excludedSkills(plain), ...(isGreetingOrTest(raw) ? { greeting: true } : {}) }

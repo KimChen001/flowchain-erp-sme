@@ -214,7 +214,9 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
     const sections = compound.sections.map((section) => ({ ...section, response: answerAiSkill({ skillId: section.route.skillId, facts, language, query: section.question, focus: section.route.focus || null, actor: context.actor, route: section.route }).response }))
     response = assertValidAiSkillResponse(composeAiCompoundAnswer({ sections, facts, language, query: message, skipped: compound.skipped }), facts)
   } else {
-    const answered = answerAiSkill({ skillId, facts: answerFacts, language, query: message, focus: refined?.focus || null, refusal, outOfDomain: Boolean(route?.outOfDomain), actor: context.actor, route: refined }).response
+    // The entity step returns no route when nothing matched; the help answer
+    // then reads the question's own route (a greeting, an unmatched question).
+    const answered = answerAiSkill({ skillId, facts: answerFacts, language, query: message, focus: refined?.focus || null, refusal, outOfDomain: Boolean(route?.outOfDomain), actor: context.actor, route: refined || route }).response
     const modelRouted = intentRouting?.status === 'routed' && skillId === intentRouting.skillId
     const routed = agentServed
       ? { ...answered, skillRouting: { source: 'model', modelStatus: 'planned' } }
