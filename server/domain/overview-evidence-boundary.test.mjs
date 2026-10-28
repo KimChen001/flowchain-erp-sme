@@ -27,9 +27,9 @@ test('homepage composition contains only overview work, status, the first-day ch
   const page = readSource('src', 'modules', 'overview', 'Page.tsx')
   const copy = readSource('src', 'modules', 'overview', 'todayCopy.ts')
 
-  assert.match(copy, /首页概览/)
   assert.match(copy, /今日需处理/)
-  assert.match(copy, /今日状态/)
+  assert.match(copy, /待处理/)
+  assert.match(copy, /今日更新的单据/)
   assert.match(copy, /最近单据/)
   assert.match(copy, /暂无待处理事项/)
   assert.match(copy, /暂无近期单据/)

@@ -87,8 +87,12 @@ import { PurchaseOrderDocumentPage } from "../modules/business-documents/Purchas
 import { CustomerInvoiceDocumentPage } from "../modules/business-documents/CustomerInvoiceDocumentPage";
 import FinanceWorkbench from "../modules/finance/Page";
 import SrmPage from "../modules/srm/Page";
+import SupplierEvaluationPage from "../modules/srm/SupplierEvaluationPage";
+import SupplierRisksPage from "../modules/srm/SupplierRisksPage";
 import MasterDataPage from "../modules/master-data/Page";
 import DataImportPage from "../modules/master-data/DataImportPage";
+import ItemSupplierPricesPage from "../modules/master-data/ItemSupplierPricesPage";
+import ContractsPage from "../modules/contracts/Page";
 import AiPanel, { type ActiveContext } from "../modules/ai-assistant/Panel";
 import {
   ActionDraftReviewShell,
@@ -182,7 +186,7 @@ const SEARCH_TYPE_LABELS: Record<string, LabelPair> = {
   rfq: { en: "RFQ", zh: "RFQ" },
   purchase_order: { en: "PO", zh: "PO" },
   receiving_doc: { en: "GRN", zh: "GRN" },
-  supplier_invoice: { en: "Bill", zh: "发票" },
+  supplier_invoice: { en: "Supplier invoice", zh: "发票" },
   supplier: { en: "Supplier", zh: "供应商" },
   item: { en: "Item", zh: "物料" },
   inventory_item: { en: "Stock", zh: "库存" },
@@ -196,7 +200,7 @@ const SEARCH_GROUP_LABELS: Record<string, LabelPair> = {
   rfq: { en: "RFQs / sourcing", zh: "RFQ / 寻源" },
   purchase_order: { en: "Purchase orders", zh: "采购订单" },
   receiving_doc: { en: "Receipts", zh: "采购收货单" },
-  supplier_invoice: { en: "Bills", zh: "供应商发票" },
+  supplier_invoice: { en: "Supplier invoices", zh: "供应商发票" },
   supplier: { en: "Suppliers", zh: "供应商资料" },
   item: { en: "Items", zh: "物料" },
   inventory_item: { en: "Inventory", zh: "库存" },
@@ -229,7 +233,7 @@ const FOCUS_ENTITY_LABELS: Record<string, LabelPair> = {
   purchase_order: { en: "Purchase order", zh: "采购订单" },
   receiving_doc: { en: "Receipt", zh: "收货单" },
   supplier: { en: "Supplier", zh: "供应商" },
-  supplier_invoice: { en: "Bill", zh: "供应商发票" },
+  supplier_invoice: { en: "Supplier invoice", zh: "供应商发票" },
   exception_case: { en: "Exception case", zh: "异常工单" },
   // Any other record.
   record: { en: "Business record", zh: "业务对象" },
@@ -768,7 +772,7 @@ export default function FlowChainApp() {
     ],
   );
   const contentMaxWidthClass =
-    panelModule === "srm"
+    ["srm", "supplier-evaluation", "supplier-risks", "contracts"].includes(panelModule)
       ? "max-w-[1440px]"
       : [
             "overview",
@@ -1133,6 +1137,15 @@ export default function FlowChainApp() {
       />
     ),
     "data-import": <DataImportPage />,
+    "supplier-evaluation": <SupplierEvaluationPage />,
+    "supplier-risks": <SupplierRisksPage />,
+    "item-suppliers": <ItemSupplierPricesPage />,
+    contracts: (
+      <ContractsPage
+        routeId={activeRoute?.id || ""}
+        contractId={activeRoute ? entityIdForRoutePath(activeRoute, location.pathname) : ""}
+      />
+    ),
     finance: (
       <FinanceWorkbench
         initialView={activeView as any}
@@ -1874,6 +1887,7 @@ export default function FlowChainApp() {
                             "supplier_invoice",
                             "customer_invoice",
                             "three_way_match",
+                            "contract",
                           ].includes(activeRoute.entityType) ? (
                           <BusinessEntityDetailPage route={activeRoute} />
                         ) : (

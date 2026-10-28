@@ -74,7 +74,7 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
     await expect(first).toContainText(/still to receive|lines? still to receive/);
   }
   // The sales order row says what is left to reserve.
-  if (overview.workItems.length > 10) await root.getByRole("button", { name: /Show all/ }).click();
+  if (overview.workItems.length > 5) await root.getByRole("button", { name: /Show all/ }).click();
   const salesOrder = list.locator('[data-kind="sales_order_to_reserve"]');
   await expect(salesOrder).toContainText("Sales order to reserve");
   await expect(salesOrder).toContainText("35 pcs still to reserve");
@@ -88,7 +88,7 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
 
   // The overdue tile filters the list to overdue rows.
   await root.getByTestId("today-tile-overdue").click();
-  await expect(list.getByTestId("today-work-item")).toHaveCount(Math.min(overview.overdue, 10));
+  await expect(list.getByTestId("today-work-item")).toHaveCount(Math.min(overview.overdue, 5));
   await expect(list.locator('[data-kind="purchase_order_due"]')).toHaveCount(0);
   await root.getByTestId("today-tile-all").click();
 
@@ -97,7 +97,7 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
   // date and time format.
   const table = root.getByTestId("recent-documents");
   const types = await table.locator("tbody tr td:first-child").allInnerTexts();
-  const labels: Record<string, string> = { purchase_request: "Purchase request", rfq: "RFQ", purchase_order: "Purchase order", receipt: "Receipt", supplier_invoice: "Bill", sales_order: "Sales order", customer_invoice: "Invoice" };
+  const labels: Record<string, string> = { purchase_request: "Purchase request", rfq: "RFQ", purchase_order: "Purchase order", receipt: "Receipt", supplier_invoice: "Supplier invoice", sales_order: "Sales order", customer_invoice: "Customer invoice" };
   expect(types).toEqual(overview.recentDocuments.map((row) => labels[row.type]));
   expect(overview.recentDocuments.some((row) => ["receipt", "supplier_invoice", "sales_order", "customer_invoice"].includes(row.type))).toBe(true);
   const changes = overview.recentDocuments.map((row) => Date.parse(row.updatedAt));

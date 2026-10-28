@@ -580,3 +580,68 @@ test('master data helper marks explicit tax code source metadata', () => {
     sourceType: 'explicit_data',
   })
 })
+
+test('GET /api/master-data/supplier-risks needs a signed-in reader and serves the reader-scoped read', async () => {
+  const signedOut = createRouteContext('GET', '/api/master-data/supplier-risks', createDb())
+  signedOut.ctx.supplierInsightsService = { readRisks: async () => assert.fail('read without a session') }
+  assert.equal(await handleMasterDataRoute(signedOut.ctx), true)
+  assert.equal(signedOut.response.status, 401)
+
+  const seen = []
+  const payload = { asOf: '2026-10-09', visibility: { orders: true, receipts: false, invoices: false, issues: true }, issueTypes: [], issues: [] }
+  const route = createRouteContext('GET', '/api/master-data/supplier-risks', createDb())
+  route.ctx.identity = { authenticated: true, tenantId: 'tenant-a', userId: 'user-a' }
+  route.ctx.supplierInsightsService = { readRisks: async (ctx) => { seen.push(ctx.identity.userId); return payload } }
+  await handleMasterDataRoute(route.ctx)
+  assert.equal(route.response.status, 200)
+  assert.deepEqual(route.response.payload, payload)
+  assert.deepEqual(seen, ['user-a'])
+
+  // A failure says the page is unavailable without leaking the cause.
+  const failing = createRouteContext('GET', '/api/master-data/supplier-risks', createDb())
+  failing.ctx.identity = { authenticated: true, tenantId: 'tenant-a', userId: 'user-a' }
+  failing.ctx.supplierInsightsService = { readRisks: async () => { throw new Error('connection reset at 10.0.0.5') } }
+  await handleMasterDataRoute(failing.ctx)
+  assert.equal(failing.response.status, 500)
+  assert.deepEqual(failing.response.payload, { code: 'SUPPLIER_RISKS_UNAVAILABLE', message: 'Supplier risks are unavailable. Try again.' })
+})
+
+test('GET /api/master-data/item-suppliers lists every link, narrowed and paged, with prices masked as on the per-item read', async () => {
+  const signedIn = { authenticated: true, tenantId: 'tenant-a', userId: 'user-a' }
+  const asked = []
+  const row = { relationshipId: 'ISR-1', itemId: 'ITEM-1', supplierId: 'SUP-1', supplierSku: 'AC-1', referencePrice: 12.5, currency: 'USD', preferred: true, approved: true, active: true, item: { itemId: 'ITEM-1', sku: 'SKU-1', itemName: 'Valve', status: 'active' }, supplier: { supplierId: 'SUP-1', supplierCode: 'SUP-1', supplierName: 'Acme', status: 'active' } }
+  const repositories = { masterData: { listItemSupplierLinks: async (filters) => { asked.push(filters); return { rows: [row], total: 1, limit: 50, offset: 0, truncated: false } } } }
+  const read = async (path, access, identity = signedIn) => {
+    const route = createRouteContext('GET', path, createDb(), repositories)
+    route.ctx.identity = identity
+    route.ctx.masterDataReadAccess = access
+    assert.equal(await handleMasterDataRoute(route.ctx), true)
+    return route.response
+  }
+
+  assert.equal((await read('/api/master-data/item-suppliers', { partner: true, prices: true }, { authenticated: false })).status, 401)
+  assert.equal(asked.length, 0)
+
+  const visible = await read('/api/master-data/item-suppliers?query=valve&supplierId=SUP-1&itemId=ITEM-1&limit=50&offset=0', { partner: false, prices: true })
+  assert.equal(visible.status, 200)
+  assert.deepEqual(asked.at(-1), { tenantId: 'tenant-a', query: 'valve', supplierId: 'SUP-1', itemId: 'ITEM-1', limit: '50', offset: '0' })
+  assert.equal(visible.payload.rows[0].referencePrice, 12.5)
+  assert.equal(visible.payload.rows[0].restrictedFields, undefined)
+  assert.deepEqual(visible.payload.visibility, { prices: true })
+  assert.deepEqual([visible.payload.total, visible.payload.truncated], [1, false])
+
+  // Without procurement.prices.read the price is null, never 0, and named.
+  const hidden = await read('/api/master-data/item-suppliers', { partner: true, prices: false })
+  assert.equal(hidden.payload.rows[0].referencePrice, null)
+  assert.deepEqual(hidden.payload.rows[0].restrictedFields, ['referencePrice'])
+  assert.deepEqual(hidden.payload.visibility, { prices: false })
+  assert.equal(JSON.stringify(hidden.payload).includes('12.5'), false)
+  // Everything else on the link stays readable.
+  assert.deepEqual([hidden.payload.rows[0].supplierSku, hidden.payload.rows[0].currency, hidden.payload.rows[0].item.sku], ['AC-1', 'USD', 'SKU-1'])
+
+  // A workspace without the read model says so instead of listing nothing.
+  const unsupported = createRouteContext('GET', '/api/master-data/item-suppliers', createDb(), { masterData: {} })
+  unsupported.ctx.identity = signedIn
+  await handleMasterDataRoute(unsupported.ctx)
+  assert.equal(unsupported.response.status, 501)
+})

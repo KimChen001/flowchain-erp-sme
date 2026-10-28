@@ -64,6 +64,8 @@ model Tenant {
   cashbookEntries                       CashbookEntry[]
   stagedUploads                         StagedUpload[]
   receivingAttachments                  ReceivingAttachment[]
+  contracts                             Contract[]
+  contractAttachments                   ContractAttachment[]
   domainChangeFeed                      DomainChangeFeed[]
   syncClients                           SyncClient[]
   syncSnapshotSessions                  SyncSnapshotSession[]
@@ -580,6 +582,7 @@ model User {
   shipmentsReversed    ShipmentDocument[]          @relation("ShipmentReversedBy")
   quotationRevisionsCreated SupplierQuotationRevision[] @relation("SupplierQuotationRevisionCreator")
   rfqAwardDecisionsMade     RfqAwardDecision[]          @relation("RfqAwardDecisionActor")
+  contractsOwned            Contract[]                  @relation("ContractOwner")
 
   @@unique([tenantId, email])
   @@unique([tenantId, id])
@@ -676,6 +679,7 @@ model Supplier {
   rfqParticipations RfqSupplierParticipation[]
   quotations SupplierQuotation[]
   rfqAwardDecisions RfqAwardDecision[]
+  contracts         Contract[]
 
   @@unique([tenantId, id])
   @@unique([tenantId, code])
@@ -2118,6 +2122,7 @@ model StagedUpload {
   tenant                     Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   settlementAttachments      SettlementAttachment[]
   receivingAttachments       ReceivingAttachment[]
+  contractAttachments        ContractAttachment[]
   bankStatementImportBatches BankStatementImportBatch[]
 
   @@unique([tenantId, id])
@@ -2147,6 +2152,94 @@ model ReceivingAttachment {
 
   @@unique([tenantId, id])
   @@index([tenantId, receivingDocumentId, status])
+}
+
+// A signed agreement recorded in FlowChain (docs/contracts-module-design.md,
+// K1). FlowChain records what was signed elsewhere; it does not draft or sign.
+// People set three statuses (draft, active, terminated); what a contract shows
+// (notice due, ending, ended, renewed...) is read from its dates on each read
+// (shared/contract-status.mjs). Database checks keep the type, status and
+// renewal codes, and what activation and termination require.
+model Contract {
+  id                String    @id
+  tenantId          String
+  // CT- plus eight characters, unique in the workspace.
+  number            String
+  // The number on the signed document, often the supplier's.
+  externalReference String?
+  title             String
+  type              String
+  // Suppliers only in K1; customer contracts come later on the same model.
+  counterpartyType  String    @default("supplier")
+  supplierId        String?
+  // An active user of the same workspace; gets the contract's reminders.
+  ownerId           String?
+  status            String    @default("draft")
+  // Calendar days, stored at 00:00 UTC as entered, like due dates (#170).
+  // An empty end date is open-ended.
+  startDate         DateTime?
+  endDate           DateTime?
+  signedOn          DateTime?
+  renewal           String    @default("none")
+  noticeDays        Int       @default(0)
+  reminderDays      Int       @default(60)
+  // A payment term of the workspace, by code or id, as suppliers keep it.
+  paymentTermsId    String?
+  currency          String?
+  totalValue        Decimal?  @db.Decimal(18, 4)
+  notes             String?
+  renewsContractId  String?
+  terminatedOn      DateTime?
+  terminationReason String?
+  version           Int       @default(1)
+  createdById       String
+  updatedById       String?
+  activatedById     String?
+  activatedAt       DateTime?
+  terminatedById    String?
+  terminatedAt      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant      Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  supplier    Supplier?            @relation(fields: [tenantId, supplierId], references: [tenantId, id], onDelete: Restrict)
+  owner       User?                @relation("ContractOwner", fields: [tenantId, ownerId], references: [tenantId, id], onDelete: Restrict)
+  renews      Contract?            @relation("ContractRenewal", fields: [tenantId, renewsContractId], references: [tenantId, id], onDelete: Restrict)
+  renewals    Contract[]           @relation("ContractRenewal")
+  attachments ContractAttachment[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, number])
+  @@index([tenantId, supplierId])
+  @@index([tenantId, status, endDate])
+  @@index([tenantId, ownerId])
+  @@index([tenantId, renewsContractId])
+}
+
+// A signed file of a contract: a staged upload bound to it, as receiving
+// evidence is (ReceivingAttachment). Removing a file marks it deleted.
+model ContractAttachment {
+  id          String    @id
+  tenantId    String
+  contractId  String
+  uploadId    String
+  fileName    String
+  mimeType    String
+  sizeBytes   Int
+  sha256      String
+  status      String    @default("active")
+  createdById String
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+  deletedById String?
+  metadata    Json?
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  contract Contract     @relation(fields: [tenantId, contractId], references: [tenantId, id], onDelete: Restrict)
+  upload   StagedUpload @relation(fields: [tenantId, uploadId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, contractId, status])
 }
 
 model DomainChangeFeed {

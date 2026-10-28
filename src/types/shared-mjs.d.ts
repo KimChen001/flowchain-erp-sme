@@ -168,3 +168,32 @@ declare module '../../../shared/business-documents.mjs' {
   export function recordedDayOrInstant(value: unknown): RecordedDayOrInstant;
   export function recordedPaymentTerms(value: unknown, terms?: ReadonlyArray<{ id?: string | null; code?: string | null; name?: string | null }>): string | null;
 }
+declare module '../../../shared/contract-status.mjs' {
+  export type ContractType = 'purchase_agreement' | 'service_agreement' | 'nda' | 'quality_agreement' | 'other';
+  export type ContractStatus = 'draft' | 'active' | 'terminated';
+  export type ContractRenewal = 'none' | 'automatic' | 'by_agreement';
+  export type ContractState = 'draft' | 'active' | 'notice_due' | 'ending' | 'ended' | 'past_end' | 'renewed' | 'terminated';
+  export type ContractKeyDateKind = 'notice_deadline' | 'end' | 'terminated';
+  export type ContractShownState = {
+    state: ContractState;
+    keyDate: string | null;
+    keyDateKind: ContractKeyDateKind | null;
+    daysUntilKeyDate: number | null;
+    noticeDeadline: string | null;
+    inReminderWindow: boolean;
+  };
+  export const CONTRACT_TYPES: readonly ContractType[];
+  export const CONTRACT_STATUSES: readonly ContractStatus[];
+  export const CONTRACT_RENEWALS: readonly ContractRenewal[];
+  export const CONTRACT_STATES: readonly ContractState[];
+  export const CONTRACT_DEFAULT_REMINDER_DAYS: number;
+  export const CONTRACT_MAX_NOTICE_DAYS: number;
+  export const CONTRACT_MAX_REMINDER_DAYS: number;
+  export function contractCalendarDay(value: string | Date | null | undefined): string;
+  export function contractDaysBetween(from: string, to: string): number;
+  export function addContractDays(day: string, days: number): string;
+  export function contractShownState(
+    contract: { status?: string; renewal?: string; endDate?: string | Date | null; noticeDays?: number | null; reminderDays?: number | null; terminatedOn?: string | Date | null },
+    options: { today: string; renewalActivated?: boolean },
+  ): ContractShownState;
+}

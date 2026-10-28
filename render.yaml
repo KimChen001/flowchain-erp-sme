@@ -117,6 +117,10 @@ projects:
               # Mobile Sync stays off; enabling it also needs cursor secrets.
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC
                 value: "false"
+              # Contracts (docs/contracts-module-design.md) stay off in the 10/25
+              # trial (D10) until their tests and a walkthrough pass.
+              - key: FLOWCHAIN_ENABLE_CONTRACTS
+                value: "false"
               # Render terminates HTTPS at its proxy, which appends the client
               # address to X-Forwarded-For. The sign-in rate limit reads that
               # last entry; see docs/deploy-render.md before putting another
@@ -231,6 +235,10 @@ projects:
                 value: "true"
               # Mobile Sync stays off; enabling it also needs cursor secrets.
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_SYNC
+                value: "false"
+              # Contracts (docs/contracts-module-design.md) stay off in the 10/25
+              # trial (D10) until their tests and a walkthrough pass.
+              - key: FLOWCHAIN_ENABLE_CONTRACTS
                 value: "false"
               # Render terminates HTTPS at its proxy, which appends the client
               # address to X-Forwarded-For. The sign-in rate limit reads that

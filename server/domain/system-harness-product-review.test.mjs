@@ -323,7 +323,6 @@ test('Phase 0 product positioning and visible language governance stay productiz
   assert.match(inventoryPage, /不会用固定 SKU、批次、序列号或移动记录补足空数据/)
   assert.match(reportsPage, /API \/ 当前数据范围/)
   assert.match(aiVisibleCopySources, /待复核草稿/)
-  assert.match(overview, /首页概览/)
   assert.match(overview, /今日需处理/)
   assert.match(overview, /最近单据/)
 

@@ -73,6 +73,21 @@ const zh: Record<string, string> = {
   "Loading bins…": "正在加载库位…", "Could not load the bins.": "库位加载失败。", "Try again": "重试",
   "No bins yet. A bin is listed once stock is received or opening stock is posted into it.": "暂无库位。库位在收货或期初库存过账后才会列出。",
   "SKUs": "SKU 数", "On hand": "在手", "No bin recorded": "未记录库位", "View stock": "查看库存",
+  // Supplier prices: every item-supplier link, read only.
+  "Supplier price search": "供应商价格查询",
+  "Read only. Search every item's suppliers by item, supplier or supplier SKU.": "只读。按物料、供应商或供应商料号查询所有物料的供应商。",
+  "Search supplier prices": "搜索供应商价格", "SKU, item, supplier or supplier SKU": "SKU、物料、供应商或供应商料号",
+  "Supplier": "供应商", "All suppliers": "全部供应商", "Filter by supplier": "按供应商筛选",
+  "Item": "物料", "All items": "全部物料", "Filter by item": "按物料筛选",
+  "Supplier price list": "供应商价格列表", "{total} links, {shown} shown": "共 {total} 条供应关系，当前显示 {shown} 条",
+  "1 link, {shown} shown": "共 1 条供应关系，当前显示 {shown} 条",
+  "Supplier SKU": "供应商料号", "Reference price": "参考价格", "Preferred": "首选", "Approved": "已批准", "Not approved": "未批准",
+  "Hidden for your role": "你的角色不可见", "Not recorded": "未记录", "Reference prices are hidden for your role.": "你的角色看不到参考价格。",
+  "Load {count} more": "再加载 {count} 条", "No supplier prices yet": "暂无供应商价格",
+  "Link items to a supplier under Supplied items on the supplier's page, or import a file of item–supplier links.": "在供应商页的“可供应物料”中关联物料，或导入物料–供应商关系文件。",
+  "No supplier prices match these filters": "没有符合筛选条件的供应商价格", "Reset the filters to see every link.": "重置筛选即可查看全部供应关系。",
+  "Could not load supplier prices.": "供应商价格加载失败。", "Loading supplier prices…": "正在加载供应商价格…",
+  "Not every link could be read at once. Choose a supplier or an item to see all of its links.": "供应关系过多，未能一次全部读取。选择供应商或物料即可查看其全部供应关系。",
 };
 const en = Object.fromEntries(Object.entries(zh).map(([english, chinese]) => [chinese, english]));
 

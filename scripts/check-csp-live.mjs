@@ -42,7 +42,9 @@ const port = await freePort();
 const base = `http://127.0.0.1:${port}`;
 const api = spawn(process.execPath, ["scripts/browser-product-recovery-api.mjs"], {
   cwd: root,
-  env: { ...process.env, PLAYWRIGHT_API_PORT: String(port) },
+  // Contracts on, as in the local walkthrough, so their pages and signed
+  // files are checked too.
+  env: { ...process.env, PLAYWRIGHT_API_PORT: String(port), PLAYWRIGHT_CONTRACTS: "true" },
   stdio: ["ignore", "inherit", "inherit"],
 });
 
@@ -206,6 +208,15 @@ try {
   await step("settings: warehouse access", visit("/app/settings/warehouse-access"));
   await step("purchase order document", visit("/app/procurement/orders/LOCAL-DEMO-PO-002/document"));
   await step("print templates", visit("/app/master-data/print-templates"));
+  await step("contracts", visit("/app/contracts/list"));
+  await step("contract signed file upload and download", async () => {
+    await page.goto("/app/contracts/LOCAL-DEMO-CT-001");
+    await page.getByTestId("contract-file-input").setInputFiles({ name: "csp-check.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 csp check") });
+    await page.getByTestId("contract-file-name").first().waitFor();
+    const download = page.waitForEvent("download");
+    await page.getByTestId("contract-file-download").first().click();
+    if (!(await download).suggestedFilename().endsWith(".pdf")) throw new Error("the signed file did not download");
+  });
   await step("assistant panel", async () => {
     await page.goto("/app/overview/risks");
     await page.getByTestId("ai-assistant-toggle").click();

@@ -3,11 +3,14 @@ import { reportReadAccessFor, scopeBusinessContext } from './report-read-access.
 import { buildOpenPurchaseOrdersReport, purchaseOrderReportLine } from './open-purchase-orders-report.mjs'
 import { isOpenPurchaseOrder } from './open-purchase-order.mjs'
 import { buildRuntimeGovernedReport } from './runtime-report-read-model.mjs'
+import { createSupplierScorecardReadService } from './supplier-scorecard.mjs'
 import { buildRuntimeInventoryAllocation, isInventoryRiskSku } from './runtime-inventory-allocation-read-model.mjs'
 import { PURCHASE_ORDER_STATUS, RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES, normalizeProcurementAuthorityStatus } from './procurement-status-authority.mjs'
 import { classifyBusinessRecord } from './ai-business-record-validity.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
 import { AI_SKILL_RECENT_DAYS, aiSkillDaysBetween } from './ai-skill-signals.mjs'
+import { itemStockUnit, preferredSupplierFor, requestMinimumOf } from './reorder-list.mjs'
+import { listItemSupplierRecords } from './master-data-commands.mjs'
 
 // The facts every workspace skill reads, through the same definitions the
 // reports use, so an answer can never disagree with a report:
@@ -72,10 +75,35 @@ async function rawRecordColumns(prisma, tenantId, visible, limitations, warehous
   if (!prisma || !visible.inventory) return { items: null, balances: null }
   const balanceWhere = warehouseIds ? { tenantId, warehouseId: { in: warehouseIds } } : { tenantId }
   const [items, balances] = await Promise.all([
-    boundedRaw(prisma.item, { where: { tenantId }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'items', limitations),
+    boundedRaw(prisma.item, { where: { tenantId }, select: { id: true, sku: true, name: true, unit: true, preferredSupplierId: true, safetyStock: true, reorderPoint: true, metadata: true }, orderBy: [{ id: 'asc' }] }, 'items', limitations),
     boundedRaw(prisma.inventoryBalance, { where: balanceWhere, select: { id: true, sku: true, itemId: true, availableQuantity: true, safetyStock: true, reorderPoint: true }, orderBy: [{ id: 'asc' }] }, 'inventory', limitations),
   ])
   return { items, balances }
+}
+
+// The preferred supplier's minimum order of each item, by SKU: the reorder
+// list's own rule (requestMinimumOf, preferredSupplierFor in reorder-list.mjs)
+// over the same reads (reorder-list-read-service.mjs). A purchase request the
+// assistant suggests asks for at least it. The supplier is named only for
+// readers who may see suppliers. Empty when it cannot be read.
+async function orderMinimums(prisma, tenantId, items, { names = false } = {}) {
+  if (!prisma || !array(items).length) return new Map()
+  try {
+    const [links, suppliers] = await Promise.all([
+      listItemSupplierRecords(prisma, tenantId),
+      prisma.supplier.findMany({ where: { tenantId }, select: { id: true, code: true, name: true, status: true } }),
+    ])
+    const suppliersById = new Map(array(suppliers).map((row) => [text(row.id), row]))
+    const minimums = new Map()
+    for (const item of array(items)) {
+      const supplier = preferredSupplierFor(item, links, suppliersById)
+      const quantity = requestMinimumOf(item, supplier, itemStockUnit(item))
+      if (quantity > 0) minimums.set(text(item.sku), { quantity, supplier: names ? text(supplier.name) || null : null })
+    }
+    return minimums
+  } catch {
+    return new Map()
+  }
 }
 
 // RFQ responses and awards from their own tables: the RFQ row's response
@@ -210,6 +238,19 @@ export async function readAiSkillFacts(skillContext) {
   // filters: the spend analysis (ai-skill-spend-analysis.mjs) reads its
   // charts, so its figures are the dashboard's. A function, so only a spend
   // question builds it, and not enumerable, so it is never read as a fact.
+  // The supplier scorecard (supplier-scorecard.mjs), the one the supplier page
+  // and Reports › Supplier analytics show, for the supplier comparison
+  // (ai-skill-supplier-comparison.mjs): delivery performance against the
+  // original promise, for a period. It reads the database itself, under the
+  // same permission checks as its route, so the runtime reads it before the
+  // skill answers (aiSkillPrepareRoute). A reader who may not see purchase
+  // orders and receipts has none.
+  if (visible.purchase_orders && visible.receipts && prisma) {
+    Object.defineProperty(facts, 'supplierScorecard', {
+      enumerable: false,
+      value: (query = {}) => createSupplierScorecardReadService({ prisma, now: () => now }).read(query, { actor }),
+    })
+  }
   if (visible.purchase_orders) {
     Object.defineProperty(facts, 'procurementReport', {
       enumerable: false,
@@ -283,7 +324,10 @@ export async function readAiSkillFacts(skillContext) {
   if (visible.inventory) {
     const allocation = buildRuntimeInventoryAllocation(access.collections.inventoryItems ? allocationContext : business)
     const unitBySku = new Map(array(business.items).map((row) => [text(row.sku), text(row.unit) || null]))
+    const minimums = await orderMinimums(prisma, tenantId, raw.items ?? array(business.items), { names: visible.purchase_orders })
     const rows = allocation.availability.map((row) => ({
+      // The preferred supplier's minimum order ({ quantity, supplier }), or null.
+      orderMinimum: minimums.get(text(row.sku)) || null,
       sku: row.sku, itemId: row.itemId, itemName: row.itemName, unit: unitBySku.get(text(row.sku)) || null, onHand: row.onHand, reserved: row.reserved, available: row.available,
       openSalesDemand: row.openSalesDemand, incomingApprovedPo: row.incomingApprovedPo, shortage: row.shortage,
       availableToPromise: row.availableToPromise, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint,
@@ -305,6 +349,18 @@ export async function readAiSkillFacts(skillContext) {
       masterOnly,
       atRisk: rows.filter(isInventoryRiskSku).map((row) => row.sku).sort(),
       atRiskCount: kpi(overview, 'inventory_risk_sku')?.currentValue ?? rows.filter(isInventoryRiskSku).length,
+    }
+    // The open sales orders the stock is set against, for readers of sales
+    // orders: each with its customer, the day promised to the customer and, per
+    // SKU, the quantity not yet shipped or reserved (the allocation's unreserved
+    // demand). The late order impact (ai-skill-late-order-impact.mjs) names them.
+    if (access.collections.salesOrders) {
+      const open = new Set(rows.flatMap((row) => row.salesOrderIds))
+      const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
+      facts.salesOrders = array(business.salesOrders).filter((row) => open.has(text(row.salesOrderId || row.id))).map((row) => ({
+        id: text(row.salesOrderId || row.id), number: text(row.orderNumber || row.salesOrderId || row.id), customer: text(row.customerName) || null, promisedDate: dayOf(row.promisedDate),
+        lines: array(row.lines).map((line) => ({ sku: text(line.sku || line.itemId), open: Math.max(0, count(line.orderedQuantity ?? line.orderedQty ?? line.quantity) - count(line.fulfilledQuantity ?? line.fulfilledQty ?? line.shippedQty) - count(line.reservedQuantity ?? line.reservedQty)) })).filter((line) => line.sku),
+      }))
     }
   }
 

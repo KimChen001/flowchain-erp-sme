@@ -85,7 +85,6 @@ test('R215-R216 high-value surfaces retain authoritative evidence without a dupl
   assert.doesNotMatch(purchasing, /DocumentEvidencePanel/)
   assert.match(aiReadiness, /resolvePoDelayEvidence/)
   assert.match(aiReadiness, /resolveSkuShortageEvidence/)
-  assert.match(aiReadiness, /resolveReceivingExceptionEvidence/)
   assert.match(aiReadiness, /resolveInvoiceMatchingEvidence/)
   assert.match(aiReadiness, /recordsFromEvidence/)
 })

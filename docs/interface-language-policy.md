@@ -39,9 +39,12 @@ names, or supplier names in place. Translate their presentation where appropriat
 - The report dashboards' visuals, KPIs, key insights, chart data tables and
   downloads use the active language; status codes use the shared status labels and
   business names stay as recorded (`docs/report-dashboards.md`).
-- Supplier invoices are "Bills" / 采购发票 and customer invoices "Invoices" /
-  销售发票 in navigation, page titles, buttons and links; Finance is "Payables &
-  receivables" / 应付与应收 (`docs/bills-invoices-and-accounting-handoff.md`).
+- Supplier invoices are "Supplier invoices" / 采购发票 and customer invoices
+  "Customer invoices" / 销售发票 in navigation, page titles, buttons and links
+  (owner decision 2026-10-10, replacing "Bills" / "Invoices"); Finance is
+  "Payables & receivables" / 应付与应收
+  (`docs/bills-invoices-and-accounting-handoff.md`). Route paths and ids such
+  as `/app/procurement/bills` are unchanged.
   Field labels that name the supplier's own number still say "Invoice number".
 - The assistant's compound answers (a question with several parts) have English and
   Chinese copy for the answer title, the "first parts only" limitation and the card's
@@ -101,8 +104,8 @@ names, or supplier names in place. Translate their presentation where appropriat
   labels. The global search status and a subtitle that only repeats it are translated
   where shown, and results no longer show internal source names
   ("inventoryRuntime") or matched-field codes. The search route reads
-  `server/domain/runtime-business-search.mjs`; `global-business-search.mjs`, whose
-  subtitles are built in Chinese, is used only by its tests. Deferred: an order's evidence graph, whose
+  `server/domain/runtime-business-search.mjs` (the older `global-business-search.mjs`,
+  which only its tests used, was removed). Deferred: an order's evidence graph, whose
   risk summaries the server writes in Chinese. Removed because no route rendered
   them: `overviewEvidence.ts` and the procurement panels (#147); the old receiving
   page, `DeliveryPage.tsx` and `ReceiptPage.tsx` (2026-10-09); the Today cockpit
@@ -204,9 +207,23 @@ is phrased by its frame words (English question and function words; Chinese
 question words, particles and pronouns), not by the names it carries: "How many
 未结采购订单 do we have?" is answered in English and "PO-012 的状态是什么？" in
 Chinese. Supplier, item and record names are shown as stored. The original
-`answerLanguage` from the client is kept as `interfaceLanguage`.
+`answerLanguage` from the client is kept as `interfaceLanguage`. The answer card's
+own labels (severity, "Priorities", "Impact:", "Next step", the evidence counts)
+follow the answer's language too, so a Chinese question on the English interface
+reads all in Chinese (`src/components/ai/AiResponseV2Renderer.tsx`).
 
 Checked in both languages: the workspace skill answers (every skill, both
 languages, the same ids, counts and amounts) and the business query labels the
 assistant evaluation reaches. Knowledge answers depend on the configured provider
 and are not covered by the offline evaluation.
+
+Business query limitations are codes that the answer words in its language
+(`limitationDescription` in `server/domain/ai-business-query-response.mjs`): the
+time window ("recent", "soon", an invalid workspace timezone), the supplier
+summary (`<source>_unavailable`, `amounts_hidden`, `partner_snapshot_hidden`),
+the executor (a goal it could not complete) and the planner ambiguities a
+clarification shows (`supplier_not_found:<names>`, `supplier_scope_unspecified`,
+...). A code without its own sentence gets a general one, so no code is shown as
+is. Each `dataLimitations` item keeps its code in `code`, and a section card keeps
+its codes in `limitationCodes` next to the sentences in `limitations`. The
+inventory rows' own `limitations` stay codes; the panel does not show them.
