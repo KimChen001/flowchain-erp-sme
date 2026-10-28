@@ -37,15 +37,25 @@ export function aiCallCostMicros(usage, prices = AI_PRICE_DEFAULTS) {
 
 // Runs fn with a recorder for the provider calls it makes. record(usage)
 // receives { inputTokens, outputTokens } or null when the provider reported
-// none; the call is still counted.
+// none; the call is still counted. Without a recorder nothing is counted, but
+// the calls that failed are still noted for the answer (aiProviderFailures).
 export function runWithAiUsageScope(record, fn) {
-  return typeof record === 'function' ? scope.run({ record }, fn) : fn()
+  return scope.run({ record: typeof record === 'function' ? record : null, failures: [] }, fn)
 }
 
 export async function recordAiProviderCall(response) {
   const context = scope.getStore()
   if (!context) return
+  // 'budget' when the provider refused for its spending limit (HTTP 402).
+  if (response?.ok === false) context.failures.push(response.budgetExceeded ? 'budget' : 'error')
+  if (!context.record) return
   try { await context.record(response?.usage || null) } catch { /* best effort */ }
+}
+
+// The provider calls that failed so far in this request: 'budget' or 'error'
+// for each. Empty outside a scope.
+export function aiProviderFailures() {
+  return [...(scope.getStore()?.failures || [])]
 }
 
 // The recorder for one workspace: an atomic increment of its month's row.
