@@ -1,7 +1,7 @@
 {
   "note": "Written by npm run test:ai:eval -- --update-baseline. Update it only when a change is meant to move a case.",
-  "commit": "b5e01d55",
-  "asOf": "2026-10-08",
+  "commit": "473f9c37",
+  "asOf": "2026-10-28",
   "mustPass": [
     "compare-most-reliable-en",
     "compare-most-reliable-zh",
