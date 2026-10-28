@@ -70,6 +70,8 @@ test('an order request says whether it asks for advice or says anyway, and the q
   assert.equal(aiSkillOrderRequest('order 1,200 more LDM-004').quantity, 1200)
   assert.equal(aiSkillOrderRequest('create a PO for LDM-001').quantity, null)
   assert.equal(aiSkillOrderRequest('Raise a PR for 200 pcs of LDM-003').quantity, 200)
+  assert.equal(aiSkillOrderRequest('帮我给 Acme Components 建一个 200 件 LDM-001 的采购申请').quantity, 200)
+  assert.equal(aiSkillOrderRequest('做一个关于订单的分析'), null)
   assert.equal(aiSkillOrderRequest('帮我生成 50 个 LDM-001 的采购申请').quantity, 50)
   assert.equal(aiSkillOrderRequest('What is the reorder point of LDM-001?'), null)
   // A record the question names, or the page's when it points at it, is the focus.

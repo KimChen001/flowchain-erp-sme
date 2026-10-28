@@ -123,6 +123,9 @@ const entries = {
   'capability.contracts.open': ['Open Contracts', '打开合同'],
   'capability.outside': ['I can only answer questions about your workspace data.', '我只能回答与当前工作区数据有关的问题。'],
   'capability.topic': ["I couldn't tell what you want to know about {topic}.", '我没能确定你想了解{topic}的哪方面。'],
+  // No skill reads sales orders, shipments or what customers owe yet.
+  'capability.sales': ["I don't answer questions about sales orders, shipments or customer payments yet.", '销售订单、发货和客户付款的问题，我暂时还答不了。'],
+  'topic.sales': ['sales orders and customers', '销售订单和客户'],
   'topic.suppliers': ['suppliers', '供应商'],
   'topic.purchase_orders': ['purchase orders', '采购订单'],
   'topic.inventory': ['stock', '库存'],

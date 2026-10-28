@@ -60,6 +60,9 @@ test('a question splits at clause ends and connectors, keeping its own words', (
   assert.deepEqual(parts('Is 1.5 pcs short, e.g. for LDM-001?'), ['Is 1.5 pcs short', 'e.g. for LDM-001'])
   assert.deepEqual(parts('Prepare a draft for jane.doe@example.com about PO-001'), ['Prepare a draft for jane.doe@example.com about PO-001'])
   assert.deepEqual(parts('LDM-001 还有多少库存？'), ['LDM-001 还有多少库存'])
+  // A condition is read with the clause after it.
+  assert.deepEqual(parts('如果 PO-020 再晚一周，会影响哪些客户订单？'), ['如果 PO-020 再晚一周，会影响哪些客户订单'])
+  assert.deepEqual(parts('If PO-020 slips a week, which customer orders are hit, and which RFQs are open?'), ['If PO-020 slips a week, which customer orders are hit', 'which RFQs are open'])
   assert.deepEqual(parts('Which SKUs are short. Which RFQs are open.'), ['Which SKUs are short', 'Which RFQs are open'])
   const message = 'Which SKUs are short, and which invoices have variances?'
   for (const part of splitAiCompoundQuestion(message)) assert.equal(message.slice(part.start, part.end), part.text)
