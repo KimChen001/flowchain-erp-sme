@@ -151,13 +151,10 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
   ].join('\n')
   const uiSource = [
     read('src', 'app', 'routeRegistry.tsx'),
-    read('src', 'modules', 'receiving', 'Page.tsx'),
+    read('src', 'modules', 'receiving', 'ReceivingPostingWorkbench.tsx'),
     read('src', 'modules', 'inventory', 'Page.tsx'),
-    read('src', 'modules', 'procurement', 'ThreeWayMatchPanel.tsx'),
     read('src', 'modules', 'srm', 'Page.tsx'),
-    read('src', 'modules', 'overview', 'TodayCockpitPanel.tsx'),
     read('src', 'components', 'ai', 'ContextualAIInsightPanel.tsx'),
-    read('src', 'modules', 'action-drafts', 'BusinessActionPlanPanel.tsx'),
     read('src', 'modules', 'action-drafts', 'ActionDraftReviewShell.tsx'),
   ].join('\n')
   const all = [domainSource, uiSource].join('\n')
@@ -183,19 +180,11 @@ test('R280/R290/R300 source guardrails preserve boundaries no keys and no standa
   assert.match(uiSource, /需补货/)
   assert.match(uiSource, /质检/)
   assert.match(uiSource, /可用量/)
-  assert.match(uiSource, /发票三单匹配复核/)
-  assert.match(uiSource, /保存财务协同备注/)
-  assert.match(uiSource, /预览发票异常工单/)
-  assert.match(uiSource, /不审批、不付款、不过账/)
   assert.match(uiSource, /风险与异常/)
   assert.match(uiSource, /供应商跟进备注草稿/)
   assert.match(uiSource, /新增供应商关系/)
   assert.match(uiSource, /设为首选/)
   assert.match(uiSource, /暂无采购交易记录/)
-  assert.match(uiSource, /运营控制塔/)
-  assert.match(uiSource, /紧急、需复核、等待供应商、等待内部、已解决待关闭和数据缺口/)
-  assert.match(uiSource, /生成内部跟进草稿/)
-  assert.match(uiSource, /风险信号/)
   for (const forbidden of [
     /Operations Control Tower/,
     /Receiving Review Boundary/,

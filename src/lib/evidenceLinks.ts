@@ -176,27 +176,6 @@ export function normalizeEvidenceLinks(items: unknown, options: Parameters<typeo
     .filter((item): item is CanonicalEvidenceLink => Boolean(item));
 }
 
-export function normalizeTodayCockpitTarget(item: EvidenceLike, options: { source?: string; recovery?: unknown } = {}) {
-  if (!item || typeof item !== "object") return null;
-  const target = typeof item.target === "object" && item.target ? item.target as Record<string, unknown> : {};
-  const evidence = Array.isArray(item.evidence) ? item.evidence[0] as EvidenceLike : null;
-  const documentType = text(target.documentType || item.documentType || item.type || evidence?.type);
-  return normalizeEvidenceLink({
-    ...evidence,
-    ...target,
-    type: documentType || evidence?.type,
-    id: target.entityId || item.entityId || item.id || evidence?.id,
-    label: item.title || evidence?.label || evidence?.summary || item.id,
-    status: item.status || evidence?.status,
-    route: item.route || evidence?.route || target.module,
-  }, {
-    source: options.source || "todayCockpit",
-    fallbackModuleId: text(target.module || item.module),
-    fallbackType: documentType,
-    recovery: options.recovery,
-  });
-}
-
 export function normalizeGlobalSearchResult(result: EvidenceLike) {
   if (!result || typeof result !== "object") return null;
   return normalizeEvidenceLink({

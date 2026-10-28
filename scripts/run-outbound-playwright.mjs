@@ -22,7 +22,7 @@ function run(spec, extraEnv = {}) {
   });
 }
 
-const workbench = await run(["tests/browser/outbound-workbench.spec.ts", "tests/browser/sales-order-cancel.spec.ts"]);
+const workbench = await run(["tests/browser/outbound-workbench.spec.ts", "tests/browser/sales-order-cancel.spec.ts", "tests/browser/sales-order-entry.spec.ts"]);
 if (workbench !== 0) process.exit(workbench);
 process.exit(
   await run("tests/browser/outbound-capability-disabled.spec.ts", {

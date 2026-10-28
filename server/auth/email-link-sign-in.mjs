@@ -3,6 +3,7 @@ import { effectiveLanguage } from "../domain/workspace-settings-contract.mjs";
 import { resolveServerTenantId } from "../domain/local-signed-session.mjs";
 import { createMailer } from "../mail/mailer.mjs";
 import { buildSignInEmail, SIGN_IN_LINK_TTL_MINUTES } from "../mail/sign-in-email.mjs";
+import { publicBaseUrl } from "../mail/public-base-url.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 import { sha256Hex } from "./workspace-sessions.mjs";
 
@@ -32,31 +33,15 @@ export class SignInLinkInvalidError extends Error {
 }
 
 const text = (value) => String(value ?? "").trim();
-const isProduction = (env) => text(env.NODE_ENV).toLowerCase() === "production" || text(env.FLOWCHAIN_DEPLOYMENT_PROFILE).toLowerCase() === "production";
-const isLoopbackOrigin = (value) => {
-  try {
-    const url = new URL(value);
-    return ["http:", "https:"].includes(url.protocol) && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ? url.origin : null;
-  } catch {
-    return null;
-  }
-};
 
 export function normalizeSignInEmail(value) {
   const email = text(value).toLowerCase();
   return email.length <= 320 && /^[^\s@]+@[^\s@]+$/.test(email) ? email : "";
 }
 
-// Links point at FLOWCHAIN_PUBLIC_BASE_URL, which production requires.
-// Outside production they may fall back to the loopback origin the request
-// came from, so a local sign-in link opens the local app.
-export function signInLinkBaseUrl(env, req) {
-  const configured = text(env.FLOWCHAIN_PUBLIC_BASE_URL).replace(/\/+$/, "");
-  if (configured || isProduction(env)) return configured;
-  return isLoopbackOrigin(req?.headers?.origin)
-    || isLoopbackOrigin(`http://${req?.headers?.host || ""}`)
-    || "http://localhost";
-}
+// Sign-in links use the same public origin as every other email link
+// (server/mail/public-base-url.mjs).
+export { publicBaseUrl as signInLinkBaseUrl };
 
 // Creates a single-use link for a user and invalidates their earlier unused
 // ones. Returns the raw token, which only the email (or a test harness that
@@ -162,7 +147,7 @@ export function createEmailLinkService({
     if (result.outcome !== "sent") return { outcome: result.outcome, delivery: Promise.resolve() };
 
     const { user, token } = result;
-    const linkUrl = `${signInLinkBaseUrl(env, req)}/sign-in/confirm?token=${encodeURIComponent(token)}`;
+    const linkUrl = `${publicBaseUrl(env, req)}/sign-in/confirm?token=${encodeURIComponent(token)}`;
     let language = "en-US";
     try {
       language = effectiveLanguage(user, user.tenant);

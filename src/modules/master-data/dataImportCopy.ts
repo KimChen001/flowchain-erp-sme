@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n/I18n";
 // skip reasons) are never shown raw when a label exists for them.
 const chinese: Record<string, string> = {
   "Import data": "导入数据",
+  "Import a file": "导入文件",
   Import: "导入",
   "Import opening stock": "导入期初库存",
   "Create records from a CSV or XLSX file. Existing records are skipped, never changed.": "从 CSV 或 XLSX 文件新建记录。已存在的记录会跳过，不会被修改。",

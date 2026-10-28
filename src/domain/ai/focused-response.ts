@@ -44,6 +44,7 @@ export type AiFocusedResponseModel = {
 };
 
 type Language = "en-US" | "zh-CN";
+const PRIMARY_LIMIT = 8;
 const focusedCopy = {
   "en-US": { rfqDraft: "Create RFQ draft", taskDraft: "Create task draft", prDraft: "Create purchase request draft", textDraft: "Prepare text draft", reason: "Review it against the current business status.", headline: "Business review complete", summary: "Review the priorities and suggested next steps." },
   "zh-CN": { rfqDraft: "创建正式 RFQ 草稿", taskDraft: "创建正式任务草稿", prDraft: "创建正式 PR 草稿", textDraft: "生成文本草稿", reason: "需要结合当前业务状态处理。", headline: "已完成业务分析", summary: "请查看重点事项和建议下一步。" },
@@ -100,7 +101,9 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
   // A workspace skill answer always carries its own summary, in the answer
   // language; it is never filled with interface-language text.
   const answerCopy = focusedCopy[response.language === "zh-CN" || response.language === "en-US" ? response.language : language];
-  const impacts = (response.businessImpact || []).slice(0, 3);
+  // Every line the server lists (it caps them: 5 priorities, 8 records), so
+  // an answer titled "4 items need attention" shows four.
+  const impacts = (response.businessImpact || []).slice(0, PRIMARY_LIMIT);
   // The server's rank, when it gives one, is the order; otherwise the server's
   // own order (by date). The page never re-sorts by a severity or amount score.
   const ranked = (response.keyEvidence || []).every((item) => typeof item.rank === "number");
@@ -108,7 +111,7 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
   // A compound answer shows sections, not lines, so its drafts stay actions.
   const lineCards = new Set<AiResponseV2ReviewCard>();
   const compound = (response.sections || []).filter((section) => Boolean(section?.title)).length > 1;
-  const primaryItems = evidence.slice(0, 3).map((item, index) => {
+  const primaryItems = evidence.slice(0, PRIMARY_LIMIT).map((item, index) => {
     const card = compound ? null : draftForLine(item, response.reviewCards || [], lineCards);
     if (card) lineCards.add(card);
     return {
@@ -138,7 +141,7 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
     primaryItems,
     primaryAction: availableActions[0] || null,
     secondaryActions: availableActions.slice(1, 3),
-    evidence: evidence.slice(0, 5),
+    evidence: evidence.slice(0, PRIMARY_LIMIT),
     businessImpact: impacts,
     limitations: (response.dataLimitations || []).slice(0, 4),
     reviewDraft: response.reviewCards?.[0] || null,

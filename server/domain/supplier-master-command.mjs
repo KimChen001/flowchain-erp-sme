@@ -18,6 +18,12 @@ export function supplierInputIssues(input = {}, old = null) {
   // A masked value ("****1234") is what a reader without
   // finance.partner_snapshot.read was shown; saving it keeps the stored value.
   for (const key of SUPPLIER_SENSITIVE_FIELDS) if (isMaskedValue(next[key])) next[key] = meta[key] || '';
+  // An empty payment term is not recorded: nothing is stored, and a legacy
+  // "paymentTerms" value is replaced by the field the form sends.
+  if (Object.hasOwn(input, 'paymentTermsId')) {
+    delete next.paymentTerms;
+    if (!next.paymentTermsId) delete next.paymentTermsId;
+  }
   if (Object.hasOwn(input, 'categories')) next.categories = Array.isArray(input.categories) ? [...new Set(input.categories.map(value => String(value).trim()).filter(Boolean))] : [];
   if (Object.hasOwn(input, 'deliveryCycleDays')) next.deliveryCycleDays = Number(input.deliveryCycleDays);
   const issues = [];
@@ -46,6 +52,12 @@ export async function saveSupplierMaster(prisma, id, input, actorId, scope) {
       if (!next.defaultCurrency) next.defaultCurrency = (await tx.tenant.findUnique({ where: { id: scope.tenantId } })).currency;
       const currencyIssue = supplierCurrencyIssue(next.defaultCurrency);
       if (currencyIssue) issues.push(currencyIssue);
+      // A newly chosen payment term must be one of the workspace's terms (by
+      // code, or by id as the import stores it). An unchanged one is kept as is.
+      if (next.paymentTermsId && next.paymentTermsId !== (meta.paymentTermsId || meta.paymentTerms)) {
+        const term = await tx.paymentTerm.findFirst({ where: { tenantId: scope.tenantId, OR: [{ code: next.paymentTermsId }, { id: next.paymentTermsId }] }, select: { id: true } });
+        if (!term) issues.push({ field: 'paymentTermsId', code: 'PAYMENT_TERM_NOT_FOUND', message: 'Choose one of the workspace payment terms.' });
+      }
       if (issues.length) throw fail(422, 'VALIDATION_ERROR', 'Check the highlighted fields.', issues);
       next.version = Number(meta.version || 0) + 1;
       if (old) next.version = Number(meta.version || 1) + 1;

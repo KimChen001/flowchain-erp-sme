@@ -7,8 +7,6 @@ function unique(values = []) { return [...new Set(values.filter(Boolean))] }
 export const INVOICE_MATCHING_BASELINE = Object.freeze({
   inspectedFiles: [
     'src/domain/procurement/invoice-matching.ts',
-    'src/modules/procurement/ThreeWayMatchPanel.tsx',
-    'src/modules/procurement/SupplierInvoiceRegister.tsx',
     'server/domain/procurement-read-model.mjs',
     'server/domain/today-cockpit-read-model.mjs',
     'src/domain/relationships/resolver.ts',

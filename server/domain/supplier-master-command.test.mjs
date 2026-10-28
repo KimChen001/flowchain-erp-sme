@@ -51,3 +51,34 @@ test('an empty supplier currency becomes the workspace currency, and the checks 
     { field: 'defaultCurrency', message: 'Choose a valid currency.' },
   ]);
 });
+
+// An empty payment term is not recorded: nothing is stored, never NET30.
+test('a supplier saved without a payment term stores none, and a chosen term must be a workspace term', async () => {
+  let saved;
+  const terms = [{ id: 'PT-1', code: 'NET45' }];
+  const tx = (old = null) => ({
+    supplier: { findFirst: async () => old, create: async ({ data }) => (saved = data), update: async ({ data }) => (saved = data) },
+    tenant: { findUnique: async () => ({ currency: 'USD' }) },
+    paymentTerm: { findFirst: async ({ where }) => terms.find(term => where.tenantId === 'tenant' && where.OR.some(match => match.code === term.code || match.id === term.id)) || null },
+    auditLog: { create: async () => ({}) },
+  });
+  const prisma = old => ({ $transaction: callback => callback(tx(old)) });
+  await saveSupplierMaster(prisma(), null, { supplierCode: 'SUP-1', supplierName: 'Boston Components', paymentTermsId: '' }, 'user', { tenantId: 'tenant' });
+  assert.equal(Object.hasOwn(saved.metadata, 'paymentTermsId'), false);
+  await saveSupplierMaster(prisma(), null, { supplierCode: 'SUP-1', supplierName: 'Boston Components', paymentTermsId: 'NET45' }, 'user', { tenantId: 'tenant' });
+  assert.equal(saved.metadata.paymentTermsId, 'NET45');
+  // The import stores the term's id; that is a workspace term too.
+  await saveSupplierMaster(prisma(), null, { supplierCode: 'SUP-1', supplierName: 'Boston Components', paymentTermsId: 'PT-1' }, 'user', { tenantId: 'tenant' });
+  assert.equal(saved.metadata.paymentTermsId, 'PT-1');
+  const error = await saveSupplierMaster(prisma(), null, { supplierCode: 'SUP-1', supplierName: 'Boston Components', paymentTermsId: 'NET90' }, 'user', { tenantId: 'tenant' }).catch(cause => cause);
+  assert.equal(error.status, 422);
+  assert.deepEqual(error.details, [{ field: 'paymentTermsId', code: 'PAYMENT_TERM_NOT_FOUND', message: 'Choose one of the workspace payment terms.' }]);
+  // Clearing a stored term (including a legacy "paymentTerms" value) removes it.
+  const old = { id: 'SUP-X', code: 'SUP-1', name: 'Boston Components', metadata: { version: 2, defaultCurrency: 'USD', paymentTerms: 'NET30' } };
+  await saveSupplierMaster(prisma(old), 'SUP-X', { expectedVersion: 2, paymentTermsId: '' }, 'user', { tenantId: 'tenant' });
+  assert.equal(Object.hasOwn(saved.metadata, 'paymentTermsId') || Object.hasOwn(saved.metadata, 'paymentTerms'), false);
+  // An unchanged stored term is kept without a lookup, even if no such term row exists.
+  const legacy = { id: 'SUP-Y', code: 'SUP-2', name: 'Legacy Supplier', metadata: { version: 1, defaultCurrency: 'USD', paymentTermsId: 'NET30' } };
+  await saveSupplierMaster(prisma(legacy), 'SUP-Y', { expectedVersion: 1, paymentTermsId: 'NET30', email: 'ap@legacy.example' }, 'user', { tenantId: 'tenant' });
+  assert.equal(saved.metadata.paymentTermsId, 'NET30');
+});

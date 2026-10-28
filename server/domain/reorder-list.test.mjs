@@ -256,3 +256,20 @@ test('order-by day arithmetic runs on whole ten-thousandths', () => {
   assert.equal(orderByDay({ positionUnits: 10, reorderPointUnits: 20, shippedUnits: null, today: TODAY }).orderNow, true)
   assert.equal(orderByDay({ positionUnits: 30, reorderPointUnits: 20, shippedUnits: null, today: TODAY }), null)
 })
+
+// Walkthrough 2026-10-07: FIT-300 was 50 short with a supplier minimum of 100,
+// and "Create purchase request" asked for 50, which the supplier would refuse.
+test('the purchase request asks for at least the supplier minimum, and the shortfall stays as computed', () => {
+  const suppliers = [{ id: 'SUP-1', code: 'S1', name: 'Midwest Pipe Supply', status: 'active' }]
+  const links = [
+    { id: 'r1', payload: { itemId: 'ITEM-A', supplierId: 'SUP-1', preferred: true, minimumOrderQuantity: 100 } },
+    { id: 'r2', payload: { itemId: 'ITEM-B', supplierId: 'SUP-1', preferred: true, minimumOrderQuantity: 100 } },
+    { id: 'r3', payload: { itemId: 'ITEM-C', supplierId: 'SUP-1', preferred: true } },
+  ]
+  const items = [item('A', { reorderPoint: 200 }), item('B', { reorderPoint: 200 }), item('C', { reorderPoint: 200 })]
+  const list = build({ items, allocationRows: [allocation('A', { onHand: 150 }), allocation('B', { onHand: 40 }), allocation('C', { onHand: 150 })], supplierLinks: links, suppliers })
+  const request = (sku) => { const row = rowOf(list, sku); return [row.shortfall, row.purchaseRequest.quantity, row.purchaseRequest.raisedToMinimum] }
+  assert.deepEqual(request('A'), [50, 100, true])
+  assert.deepEqual(request('B'), [160, 160, false])
+  assert.deepEqual(request('C'), [50, 50, false], 'no minimum recorded')
+})

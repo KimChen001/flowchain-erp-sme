@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { ITEM_SUPPLIER_LINK_READ_CAP } from './item-supplier-links.mjs'
 
 // Writes for the item, customer and item-supplier master data, in the shape
 // of saveSupplierMaster: tenant-scoped, one serializable transaction,
@@ -246,7 +247,7 @@ export async function listItemSupplierRecords(prisma, tenantId, { itemId = '', s
   const rows = await prisma.runtimeRecord.findMany({
     where: { tenantId, namespace: ITEM_SUPPLIER_NAMESPACE, ...(recordKey ? { recordKey } : {}) },
     orderBy: [{ recordKey: 'asc' }],
-    ...(recordKey ? {} : { take: 2000 }),
+    ...(recordKey ? {} : { take: ITEM_SUPPLIER_LINK_READ_CAP }),
   })
   return rows.filter((row) => (!itemId || text(row.payload?.itemId) === itemId) && (!supplierId || text(row.payload?.supplierId) === supplierId))
 }

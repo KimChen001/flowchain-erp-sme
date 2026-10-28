@@ -59,6 +59,18 @@ The older email-only sign-in, `POST /api/auth/login`, exists only in local devel
 
 `POST /api/auth/email-link` always answers `202` with the same body, whether or not the address belongs to an active user, so it cannot be used to discover accounts. It accepts at most 5 requests per email address and 20 per client IP per hour, counted in PostgreSQL; requests over the limit still get `202`, send nothing, and are logged. Issuing a link invalidates the user's earlier unused links. Requests, used links, new sessions, sign-outs and revoked sessions are written to the audit log by user id, without the email address.
 
+## Approval emails
+
+The same provider and `FLOWCHAIN_MAIL_FROM` also send approval emails. When a purchase request or purchase order is submitted, a bill is matched (or its last match exception is approved), or an inventory adjustment is created, each person who may approve it is emailed once: active users holding the approve permission through an active role (for an adjustment, with operate access to every warehouse on it), other than the person who acted, who have not turned the emails off in System Administration > My Profile. They are on for every user by default; tell users before the first deploy that has them.
+
+The email says which document is waiting, gives its number and links to its page at `FLOWCHAIN_PUBLIC_BASE_URL`. It has no amounts, suppliers, customers, items or names and no approve or reject link; people decide in FlowChain. It is sent after the command has been saved and never holds it up: a failed send is logged (`approval_email_failed`, by user id) and the command still succeeds, and a message still being sent when the server stops is lost. The approval lists in FlowChain remain the record of what is waiting. One audit row per waiting document (source `approval_notifications`) lists the user ids the email was sent to and those whose send failed. A replayed command sends nothing.
+
+| Variable | Value |
+| --- | --- |
+| `FLOWCHAIN_APPROVAL_EMAILS` | Optional. `off` stops approval emails for the whole deployment; sign-in links are unaffected. Unset means on. |
+
+Because sign-in links and approval emails now share the sender, an address such as `FlowChain <no-reply@your-domain.com>` reads better than `sign-in@`. The sender domain and its DNS records are set up with the provider by the owner; this repository has not verified any (**UNVERIFIED**).
+
 ## Release order
 
 Run from this directory:

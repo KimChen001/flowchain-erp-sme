@@ -39,9 +39,23 @@ test('the purchase order lifecycle narrows stage by stage over committed orders 
   assert.deepEqual(chart(report, 'procurement_lifecycle').data, [
     { name: 'Committed', value: 3 },
     { name: 'Receiving started', value: 2 },
-    { name: 'Fully received', value: 1 },
     { name: 'Invoiced', value: 1 },
     { name: 'Invoice matched', value: 1 },
+    { name: 'Fully received', value: 1 },
+  ])
+})
+
+test('a bill on a partly received purchase order counts it as invoiced in the lifecycle', () => {
+  // The 2026-10-08 walkthrough: 30 of 50 received and billed showed "Invoiced 0"
+  // while invoicing waited behind full receipt.
+  const base = procurementContext()
+  const report = buildRuntimeGovernedReport({ ...base, supplierInvoices: [...base.supplierInvoices, invoice('INV-2', 'PO-2', 'Acme', 'submitted', 'pending', 40)] }, { subject: 'procurement' })
+  assert.deepEqual(chart(report, 'procurement_lifecycle').data, [
+    { name: 'Committed', value: 3 },
+    { name: 'Receiving started', value: 2 },
+    { name: 'Invoiced', value: 2 },
+    { name: 'Invoice matched', value: 1 },
+    { name: 'Fully received', value: 1 },
   ])
 })
 

@@ -110,7 +110,7 @@ test('the reorder list ranks items by order-by day from recorded data over every
     const c = admin.body.rows.find((row) => row.sku === 'RL-C')
     assert.equal(c.demand.enough, false)
     assert.equal(c.demand.shipmentDays, 0)
-    assert.deepEqual(c.purchaseRequest, { itemId: 'RL-ITEM-C', supplierId: 'RL-SUP', quantity: 15 })
+    assert.deepEqual(c.purchaseRequest, { itemId: 'RL-ITEM-C', supplierId: 'RL-SUP', quantity: 15, raisedToMinimum: false })
     assert.deepEqual([c.supplier.leadTimeDays, c.supplier.minimumOrderQuantity], [null, null])
     // 201 items without a reorder point: the first 50 by SKU are named.
     assert.equal(admin.body.noReorderPoint.count, 201)

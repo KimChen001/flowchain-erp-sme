@@ -3,11 +3,20 @@ import { assertAuthorized } from "../auth/authorization-service.mjs";
 import { resolveProvisionedActor } from "./pilot-identity.mjs";
 import { InternalSettlementError } from "./internal-settlement-command-service.mjs";
 import { createLocalDurableAttachmentStorage } from "./attachment-storage-provider.mjs";
+import { CONTRACT_FILE_MIME_TYPES, CONTRACT_PERMISSIONS } from "./contract-policy.mjs";
 
 const text = (value) => String(value ?? "").trim();
 const fail = (code, message, status = 400, details) => { throw new InternalSettlementError(code, message, status, details); };
 const allowedMime = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain"]);
 const digest = (buffer) => createHash("sha256").update(buffer).digest("hex");
+// What a staged upload is for. Mobile and settlement evidence (no purpose)
+// needs mobile.sync.use; a contract's signed file needs
+// contracts.contract.manage and is a PDF or an image
+// (docs/contracts-module-design.md §6). The purpose is kept on the upload.
+const CONTRACT_PURPOSE = "contract";
+const stagePolicy = (purpose) => purpose === CONTRACT_PURPOSE
+  ? { permission: CONTRACT_PERMISSIONS.manage, mimeTypes: new Set(CONTRACT_FILE_MIME_TYPES) }
+  : { permission: "mobile.sync.use", mimeTypes: allowedMime };
 
 export function createAttachmentService({ prisma, env = process.env, idFactory = randomUUID, now = () => new Date(), storageProvider } = {}) {
   if (!prisma) throw new Error("prisma is required");
@@ -23,19 +32,22 @@ export function createAttachmentService({ prisma, env = process.env, idFactory =
   }
   async function stageUpload(input, context) {
     const actor = await actorFor(context);
-    assertAuthorized({ actor, permission: "mobile.sync.use", tenantId: actor.tenantId });
+    const purpose = text(input.purpose) === CONTRACT_PURPOSE ? CONTRACT_PURPOSE : null;
+    const policy = stagePolicy(purpose);
+    assertAuthorized({ actor, permission: policy.permission, tenantId: actor.tenantId });
     const fileName = text(input.fileName), mimeType = text(input.mimeType).toLowerCase();
-    if (!fileName || !allowedMime.has(mimeType)) fail("UPLOAD_TYPE_NOT_ALLOWED", "The file type is not allowed.", 422);
+    if (!fileName || !policy.mimeTypes.has(mimeType)) fail("UPLOAD_TYPE_NOT_ALLOWED", "The file type is not allowed.", 422);
     let bytes; try { bytes = Buffer.from(text(input.contentBase64), "base64"); } catch { fail("UPLOAD_CONTENT_INVALID", "Upload content is invalid.", 422); }
     if (!bytes.length || bytes.length > 20 * 1024 * 1024) fail("UPLOAD_SIZE_INVALID", "Upload size must be between 1 byte and 20 MB.", 422);
     const sha256 = digest(bytes), suppliedHash = text(input.sha256).toLowerCase();
     if (suppliedHash && suppliedHash !== sha256) fail("UPLOAD_HASH_MISMATCH", "The supplied SHA-256 does not match the file.", 422);
     await cleanupExpiredUploads();
     const replay = await prisma.stagedUpload.findFirst({ where: { tenantId: actor.tenantId, createdById: actor.user.id, sha256, status: "staged", expiresAt: { gt: now() } }, orderBy: { createdAt: "desc" } });
-    if (replay) return { uploadId: replay.id, fileName: replay.fileName, mimeType: replay.mimeType, sizeBytes: replay.sizeBytes, sha256: replay.sha256, status: replay.status, expiresAt: replay.expiresAt.toISOString(), idempotentReplay: true };
+    // A contract file replays only an upload of a type a contract takes.
+    if (replay && (!purpose || policy.mimeTypes.has(replay.mimeType))) return { uploadId: replay.id, fileName: replay.fileName, mimeType: replay.mimeType, sizeBytes: replay.sizeBytes, sha256: replay.sha256, status: replay.status, expiresAt: replay.expiresAt.toISOString(), idempotentReplay: true };
     const id = idFactory(), storageKey = `${actor.tenantId}/${id}`;
     await storage.put(storageKey, bytes, sha256);
-    const upload = await prisma.stagedUpload.create({ data: { id, tenantId: actor.tenantId, fileName, mimeType, sizeBytes: bytes.length, sha256, storageKey, storageProvider: storage.provider, storageVersion: "v1", persistedAt: now(), storageHealthStatus: "healthy", createdById: actor.user.id, expiresAt: new Date(now().getTime() + 24 * 60 * 60 * 1000), metadata: { binaryInBusinessJson: false } } });
+    const upload = await prisma.stagedUpload.create({ data: { id, tenantId: actor.tenantId, fileName, mimeType, sizeBytes: bytes.length, sha256, storageKey, storageProvider: storage.provider, storageVersion: "v1", persistedAt: now(), storageHealthStatus: "healthy", createdById: actor.user.id, expiresAt: new Date(now().getTime() + 24 * 60 * 60 * 1000), metadata: { binaryInBusinessJson: false, ...(purpose ? { purpose } : {}) } } });
     return { uploadId: upload.id, fileName, mimeType, sizeBytes: bytes.length, sha256, status: upload.status, expiresAt: upload.expiresAt.toISOString() };
   }
   async function status(uploadId, context) {
@@ -77,16 +89,26 @@ export function createAttachmentService({ prisma, env = process.env, idFactory =
       return { attachmentId: attachment.id, receivingDocumentId: receiving.id, uploadId: upload.id, fileName: upload.fileName, mimeType: upload.mimeType, sizeBytes: upload.sizeBytes, sha256: upload.sha256, status: attachment.status };
     }, { isolationLevel: "Serializable" });
   }
-  async function download(attachmentId, context) {
+  // A contract's signed file needs contracts.contract.read and the contracts
+  // capability; settlement and receiving evidence need their own permission
+  // and mobile operations or the settlement workflow, as before (with those
+  // off they are not looked up). Every lookup is in the reader's workspace.
+  async function download(attachmentId, context, { legacyEnabled = true, contractsEnabled = false } = {}) {
     const actor = await actorFor(context);
-    let attachment = await prisma.settlementAttachment.findFirst({ where: { id: text(attachmentId), tenantId: actor.tenantId, status: "active" }, include: { upload: true } });
-    let module = "finance";
-    if (attachment) assertAuthorized({ actor, permission: "finance.settlement_attachment.read", tenantId: actor.tenantId });
-    if (!attachment) { attachment = await prisma.receivingAttachment.findFirst({ where: { id: text(attachmentId), tenantId: actor.tenantId, status: "active" }, include: { upload: true } }); module = "procurement_receiving"; if (attachment) assertAuthorized({ actor, permission: "receiving.read", tenantId: actor.tenantId }); }
+    let attachment = null, module = "finance", entityType = "SettlementAttachment";
+    if (contractsEnabled) {
+      attachment = await prisma.contractAttachment.findFirst({ where: { id: text(attachmentId), tenantId: actor.tenantId, status: "active" }, include: { upload: true } });
+      if (attachment) { module = "contracts"; entityType = "ContractAttachment"; assertAuthorized({ actor, permission: CONTRACT_PERMISSIONS.read, tenantId: actor.tenantId }); }
+    }
+    if (!attachment && legacyEnabled) {
+      attachment = await prisma.settlementAttachment.findFirst({ where: { id: text(attachmentId), tenantId: actor.tenantId, status: "active" }, include: { upload: true } });
+      if (attachment) assertAuthorized({ actor, permission: "finance.settlement_attachment.read", tenantId: actor.tenantId });
+      if (!attachment) { attachment = await prisma.receivingAttachment.findFirst({ where: { id: text(attachmentId), tenantId: actor.tenantId, status: "active" }, include: { upload: true } }); module = "procurement_receiving"; entityType = "ReceivingAttachment"; if (attachment) assertAuthorized({ actor, permission: "receiving.read", tenantId: actor.tenantId }); }
+    }
     if (!attachment) fail("ATTACHMENT_NOT_FOUND", "Attachment was not found.", 404);
     const bytes = await storage.get(attachment.upload.storageKey);
     if (digest(bytes) !== attachment.sha256) fail("ATTACHMENT_HASH_MISMATCH", "Attachment evidence failed integrity verification.", 409);
-    await prisma.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: "attachment_service", module, action: "attachment_downloaded", entityType: attachment.settlementId ? "SettlementAttachment" : "ReceivingAttachment", entityId: attachment.id, summary: `Downloaded attachment ${attachment.fileName}.`, metadata: { sha256: attachment.sha256 } } });
+    await prisma.auditLog.create({ data: { id: idFactory(), tenantId: actor.tenantId, actorId: actor.user.id, source: "attachment_service", module, action: "attachment_downloaded", entityType, entityId: attachment.id, summary: `Downloaded attachment ${attachment.fileName}.`, metadata: { sha256: attachment.sha256, ...(attachment.contractId ? { contractId: attachment.contractId } : {}) } } });
     return { bytes, fileName: attachment.fileName, mimeType: attachment.mimeType, sha256: attachment.sha256 };
   }
   async function deleteAttachment(attachmentId, context) {

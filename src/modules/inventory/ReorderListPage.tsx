@@ -32,7 +32,7 @@ type ReorderRow = {
   demand: { averageDailyDemand: number | null; shipmentDays: number; shippedQuantity: number; windowDays: number; enough: boolean };
   supplier: Supplier | null;
   flags: Flag[];
-  purchaseRequest: { itemId: string; supplierId: string | null; quantity: number | null };
+  purchaseRequest: { itemId: string; supplierId: string | null; quantity: number | null; raisedToMinimum?: boolean };
 };
 type ItemRef = { itemId: string; sku: string; itemName: string };
 type NotChecked = ItemRef & { reason: "stock_incomplete" | "stock_unit_not_recorded" | "warehouse_scope" };
@@ -263,7 +263,14 @@ export default function ReorderListPage() {
                             <div style={{ color: A.sub }}>{t.count("notEnoughHistory", row.demand.shipmentDays)}</div>
                           )}
                         </td>
-                        <td className="px-3 py-3">{withUnit(row.shortfall, row.unit)}</td>
+                        <td className="px-3 py-3">
+                          {withUnit(row.shortfall, row.unit)}
+                          {row.purchaseRequest.raisedToMinimum && row.purchaseRequest.quantity !== null && (
+                            <div style={{ color: A.sub }} data-testid={`reorder-order-minimum-${row.sku}`}>
+                              {t("orderMinimum", { n: formatQuantity(row.purchaseRequest.quantity), unit: row.unit })}
+                            </div>
+                          )}
+                        </td>
                         <td className="px-3 py-3" data-testid="reorder-supplier">
                           {row.supplier ? (
                             <>

@@ -221,7 +221,9 @@ export async function runAiSkillRuntime(ctx, body = {}, { agentFirst = null, ski
     // A skill that answers from facts it reads first (the supplier scorecard)
     // reads them now, for this question.
     if (refined?.skillId === skillId) refined = await aiSkillPrepareComparison(refined, facts)
-    const answered = answerAiSkill({ skillId, facts: answerFacts, language, query: message, focus: refined?.focus || null, refusal, outOfDomain: Boolean(route?.outOfDomain), actor: context.actor, route: refined }).response
+    // The entity step returns no route when nothing matched; the help answer
+    // then reads the question's own route (a greeting, an unmatched question).
+    const answered = answerAiSkill({ skillId, facts: answerFacts, language, query: message, focus: refined?.focus || null, refusal, outOfDomain: Boolean(route?.outOfDomain), actor: context.actor, route: refined || route }).response
     const modelRouted = intentRouting?.status === 'routed' && skillId === intentRouting.skillId
     const routed = agentServed
       ? { ...answered, skillRouting: { source: 'model', modelStatus: 'planned' } }

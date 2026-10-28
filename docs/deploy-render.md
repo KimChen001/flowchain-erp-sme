@@ -28,6 +28,14 @@ checked the first time you do it.
 > answers 404. Because sign-in depends on email, neither service (staging or
 > production; both run the production profile) starts until a mail provider is
 > configured (see the table in step 2).
+>
+> **Approval emails.** The same provider and sender also tell approvers when
+> a purchase request, purchase order, bill or inventory adjustment is waiting
+> for them. The email gives only the document type, its number and a link;
+> it approves nothing. Every user receives them unless they turn them off in
+> System Administration > My Profile, so tell users before the first deploy.
+> To turn them off for the whole service, add `FLOWCHAIN_APPROVAL_EMAILS` =
+> `off` on the **Environment** page (see `deploy/README.md`).
 
 ## 0. What you need
 
@@ -35,7 +43,7 @@ checked the first time you do it.
 - A payment card. Disks and pre-deploy migrations need paid plans, so neither service can use Render's free plan.
 - The tenant id you want for each environment: 3 to 64 lowercase letters, digits or hyphens, for example `flowchain-staging` and the customer's short name for production. It is not secret, but it cannot easily be changed later.
 - The first administrator's email address and name.
-- A Postmark or Resend account with a verified sender domain. Sign-in links are sent through it, and neither service starts without it.
+- A Postmark or Resend account with a verified sender domain. Sign-in links and approval emails are sent through it, and neither service starts without it.
 - Optional: an OpenAI API key.
 
 ## 1. Create the Render account and connect GitHub
@@ -62,7 +70,7 @@ Enter these for both `flowchain-staging` and `flowchain-production`.
 | `FLOWCHAIN_DEFAULT_TENANT_ID` | No | The tenant id for this environment, for example `flowchain-staging`. Use the same value in step 4. |
 | `FLOWCHAIN_PUBLIC_BASE_URL` | No | The address users will open. Before the domain exists, use `https://flowchain-staging.onrender.com` or `https://flowchain-production.onrender.com`. Check the real address on the service page after the first deploy, because Render may add a suffix, and correct the value if it differs. |
 | `FLOWCHAIN_MAIL_PROVIDER` | No | `postmark` or `resend`. Required: the service does not start without it. |
-| `FLOWCHAIN_MAIL_FROM` | No | The sender address, for example `FlowChain <no-reply@getflowchain.com>`. Its domain must be verified with the mail provider. Required. |
+| `FLOWCHAIN_MAIL_FROM` | No | The sender address, for example `FlowChain <no-reply@getflowchain.com>`. It sends sign-in links and approval emails, so a `no-reply@` address suits both. Its domain must be verified with the mail provider. Required. |
 | `POSTMARK_SERVER_TOKEN` | **Yes** | Your Postmark server API token. Required if the provider is `postmark`; otherwise leave it empty. |
 | `RESEND_API_KEY` | **Yes** | Your Resend API key. Required if the provider is `resend`; otherwise leave it empty. |
 | `OPENAI_API_KEY` | **Yes** | Your OpenAI API key, or leave it empty to keep the AI assistant off. |
@@ -142,6 +150,10 @@ Sessions are stored in PostgreSQL, so a deploy or restart does not sign anyone o
 
 Repeat steps 4 and 5 for `flowchain-production`.
 
+Once both environments pass, set up error alerts and Render's notifications as
+described in [operations-alerts.md](operations-alerts.md). It also lists the log
+searches that find errors, crashes and restarts.
+
 ## 6. PostgreSQL backups
 
 Render keeps these backups for paid databases. Both Blueprint databases are on paid plans.
@@ -218,7 +230,43 @@ Do this after buying `getflowchain.com` and adding it to Cloudflare.
 
 For staging you can do the same with `staging.getflowchain.com` on `flowchain-staging`.
 
-The mail provider will also ask for DNS records (SPF, DKIM and a return-path CNAME) for the sender domain. Add them in Cloudflare exactly as the provider shows them.
+The mail provider will also ask for DNS records (SPF, DKIM and a return-path CNAME) for the sender domain. Add them in Cloudflare exactly as the provider shows them. Sign-in links and approval emails both depend on them. **UNVERIFIED**: no sender domain has been set up yet; this is an owner step.
+
+### Security headers
+
+Every response from the service carries browser security headers, set in
+`server/bootstrap/security-headers.mjs`. There is nothing to configure:
+
+- **Content-Security-Policy.** The browser runs scripts and makes API calls
+  only to the service's own address. Images may also be `data:` or `blob:`.
+  Inline styles and Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`)
+  are allowed. Plugins, framing by other sites, and forms that post elsewhere
+  are refused.
+- `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Cross-Origin-Opener-Policy: same-origin`, and a `Permissions-Policy` that
+  turns off camera, microphone, location, payment, USB and ad topics.
+- `Referrer-Policy: strict-origin-when-cross-origin`. The sign-in confirm page
+  keeps `no-referrer`, because its address holds the single-use token.
+- **HSTS:** `Strict-Transport-Security: max-age=31536000` (one year), only when
+  the service runs the production profile and `FLOWCHAIN_PUBLIC_BASE_URL`
+  starts with `https://`. Both Render services meet both conditions. It covers
+  only the host users open. It has no `includeSubDomains` and no `preload`, so
+  other names under `getflowchain.com` are not affected. A browser that has
+  seen it will refuse plain HTTP for that host for a year.
+
+If a page stops working after a release and the browser console shows
+"Content Security Policy" errors, set `FLOWCHAIN_CSP_MODE` on the service's
+**Environment** page and save (saving redeploys):
+
+| Value | Effect |
+| --- | --- |
+| unset or `enforce` | The policy is enforced. This is the normal setting. |
+| `report-only` | The browser allows everything and only lists the violations in its console. Use this while a fix is prepared. |
+| `off` | No policy is sent. The other headers stay. |
+
+Any other value enforces the policy, so a typo never turns it off. Delete the
+variable once the fix is deployed. To check the headers, run
+`curl -sI https://<service address>/` and read the response.
 
 ## 10. Rough monthly cost
 

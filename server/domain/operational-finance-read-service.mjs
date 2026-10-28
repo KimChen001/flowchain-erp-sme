@@ -360,6 +360,13 @@ export function createOperationalFinanceReadService({
           take: 20,
         })
       : [];
+    // The receipt by its GRN number, as the rest of the app names it.
+    const receipt = invoice.relatedGrnId
+      ? await prisma.receivingDocument.findFirst({
+          where: { tenantId: current.tenantId, id: invoice.relatedGrnId },
+          select: { documentNumber: true },
+        })
+      : null;
     const partner = protectFinanceFields({ supplierSnapshot: invoice.supplierSnapshot }, current);
     // The match result is part of the three-way match, which has its own read
     // permission; without it the invoice shows no match lines or variances.
@@ -384,6 +391,7 @@ export function createOperationalFinanceReadService({
         enteredTaxAmount: decimal(line.enteredTaxAmount ?? 0),
         totalAmount: decimal(line.amount),
       }, current)),
+      relatedGrnNumber: receipt?.documentNumber || null,
       receiptCandidates: receiptCandidates.map((row) => ({ id: row.id, documentNumber: row.documentNumber, postedAt: serial(row.postedAt) })),
       duplicateChecks,
       matchVisible,
@@ -590,6 +598,20 @@ export function createOperationalFinanceReadService({
     };
   }
 
+  // A supplier's recorded payment term, so a new bill's due date can start
+  // from the invoice date plus the term's days. Only the term goes out, not
+  // the rest of the supplier's metadata.
+  async function withPaymentTerms(suppliers, tenantId) {
+    const termIds = [...new Set(suppliers.map((row) => row.metadata?.paymentTermsId).filter(Boolean))];
+    const terms = termIds.length
+      ? await prisma.paymentTerm.findMany({ where: { tenantId, id: { in: termIds } }, select: { id: true, code: true, name: true, days: true } })
+      : [];
+    const byId = new Map(terms.map((term) => [term.id, term]));
+    return suppliers.map(({ metadata, ...supplier }) => {
+      const term = byId.get(metadata?.paymentTermsId);
+      return { ...supplier, paymentTerm: term ? { code: term.code, name: term.name, days: term.days ?? null } : null };
+    });
+  }
   async function entryData(context) {
     const current = await actor(context);
     // Entry data serves the supplier invoice and credit memo forms; the endpoint is shared, so a role
@@ -601,7 +623,7 @@ export function createOperationalFinanceReadService({
       await Promise.all([
         prisma.supplier.findMany({
           where: { tenantId: current.tenantId, status: "active" },
-          select: { id: true, code: true, name: true },
+          select: { id: true, code: true, name: true, metadata: true },
           orderBy: { name: "asc" },
           take: 100,
         }),
@@ -646,7 +668,7 @@ export function createOperationalFinanceReadService({
     for (const row of billedRows)
       billed.set(row.purchaseOrderLineId, (billed.get(row.purchaseOrderLineId) || 0n) + financeUnits(row.quantity || 0));
     return {
-      suppliers,
+      suppliers: await withPaymentTerms(suppliers, current.tenantId),
       purchaseOrders: purchaseOrders.map((row) => ({
         id: row.id,
         supplierId: row.supplierId,

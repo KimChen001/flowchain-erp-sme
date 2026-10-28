@@ -1,7 +1,7 @@
 // Typed access to the shared prefill rules (shared/prefill-suggestions.mjs),
 // which the server applies to the same trail.
 import { buildSuggestionTrail as buildTrail, prefillOrigin as originOf } from "../../shared/prefill-suggestions.mjs";
-import { planPurchaseRequestPrefill as planRequest } from "../../shared/purchase-request-prefill.mjs";
+import { addCalendarDays as addDays, planPurchaseRequestPrefill as planRequest } from "../../shared/purchase-request-prefill.mjs";
 
 export type PrefillSource = "record" | "default" | "template" | "history" | "workspace_history" | "model";
 export type PrefillOutcome = "accepted" | "edited" | "cleared";
@@ -9,6 +9,11 @@ export type PrefillOrigin = "ai_assistant" | "today_cockpit" | "reorder_list" | 
 // A suggested value, where it came from, and an id that lets anyone recompute it.
 export type PrefillEntry = { source: PrefillSource; ref?: string; value: string };
 export type SuggestionTrail = { origin: PrefillOrigin; fields: { field: string; source: PrefillSource; ref?: string; outcome: PrefillOutcome }[] };
+
+/** A calendar day (YYYY-MM-DD) a whole number of days later. */
+export function addCalendarDays(day: string, days: number): string {
+  return addDays(day, days);
+}
 
 export function prefillOrigin(value: unknown): PrefillOrigin {
   return originOf(value);

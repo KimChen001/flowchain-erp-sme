@@ -15,6 +15,7 @@ import { analyticsCopy, analyticsCopyPairs } from '../../src/modules/reports/ana
 import { reportWorkbook } from '../../src/modules/reports/reportWorkbook.ts'
 import { metricDisplayValue } from '../../src/modules/reports/metricDisplay.ts'
 import { supplierCopyPairs } from '../../src/modules/srm/supplierCopy.ts'
+import { contractCopy, contractCopyPairs } from '../../src/modules/contracts/contractCopy.ts'
 import { chinese as inventoryChinese, chineseCodes, english as inventoryEnglish, englishCodes } from '../../src/modules/inventory/inventoryOperationsCopyMaps.ts'
 import { statusCodeLabel } from '../../src/i18n/statusLabels.ts'
 
@@ -278,9 +279,16 @@ function assertPaired(name, pairs) {
   }
 }
 
-test('rule 5: the reports and supplier copy have English and Chinese for every entry', () => {
+test('rule 5: the reports, supplier and contract copy have English and Chinese for every entry', () => {
   assertPaired('analyticsCopy', analyticsCopyPairs)
   assertPaired('supplierCopy', supplierCopyPairs)
+  assertPaired('contractCopy', contractCopyPairs)
+  // English is the source text; Chinese keeps every {placeholder}.
+  for (const [english, chinese] of Object.entries(contractCopyPairs)) {
+    assert.equal(contractCopy(english, 'en-US'), english)
+    assert.equal(contractCopy(english, 'zh-CN'), chinese)
+    assert.deepEqual((chinese.match(/\{\w+\}/g) || []).sort(), (english.match(/\{\w+\}/g) || []).sort(), `contractCopy: "${english}" keeps its placeholders`)
+  }
   for (const [english, chinese] of Object.entries(analyticsCopyPairs)) assert.equal(analyticsCopy(chinese, 'en-US'), english)
   // The English labels a KPI shows when it has no total (mixed units, several
   // SKUs, too few lines) have Chinese. The Chinese-source ones are translated
