@@ -15,6 +15,7 @@ import { presentReceivingIssues, runReceivingIssues } from './ai-skill-receiving
 import { presentSupplierAttention, runSupplierAttention } from './ai-skill-supplier-attention.mjs'
 import { presentSpendAnalysis, runSpendAnalysis } from './ai-skill-spend-analysis.mjs'
 import { presentSupplierComparison, runSupplierComparison } from './ai-skill-supplier-comparison.mjs'
+import { presentLateOrderImpact, runLateOrderImpact } from './ai-skill-late-order-impact.mjs'
 
 // Attaches each skill's run and present to its registry entry. Import this
 // module (or anything that imports it) before calling a skill.
@@ -33,6 +34,7 @@ attachAiSkillHandlers('receiving_issues', { run: runReceivingIssues, present: pr
 attachAiSkillHandlers('supplier_attention', { run: runSupplierAttention, present: presentSupplierAttention })
 attachAiSkillHandlers('spend_analysis', { run: runSpendAnalysis, present: presentSpendAnalysis })
 attachAiSkillHandlers('supplier_comparison', { run: runSupplierComparison, present: presentSupplierComparison })
+attachAiSkillHandlers('late_order_impact', { run: runLateOrderImpact, present: presentLateOrderImpact })
 
 export { aiSkillById, AI_SKILL_REGISTRY, toolsFor } from './ai-skill-registry.mjs'
 
