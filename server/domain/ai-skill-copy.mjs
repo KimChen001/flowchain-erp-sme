@@ -69,6 +69,8 @@ const entries = {
   'scope.label': ['Your workspace data', '当前工作区数据'],
   'answer.source': ['Answered from your workspace data', '基于当前工作区数据回答'],
   // P3: the model worded the answer around the workspace's own figures, which the server checked (docs/ai-agent-mode-design.md §4).
+  // The help answer reads no business data, so it never says it did.
+  'answer.source_none': ['No workspace data was read for this answer', '本次回答没有读取工作区数据'],
   'answer.source_agent': ['Answered from your workspace data. Worded by AI; figures checked.', '基于当前工作区数据回答，由 AI 组织语言，数字已核对'],
   'answer.checked': ['Checked: {sources}', '已检查：{sources}'],
   'answer.review_boundary': ['This answer does not send, approve or change anything.', '本回答不会发送、批准或修改任何内容。'],
@@ -110,6 +112,11 @@ const entries = {
   'capability.summary': ['Ask me about priorities, risks, purchase orders, suppliers, invoices, RFQs, receiving or stock, or try a suggestion below.', '可以问我优先事项、风险、采购订单、供应商、发票、询价、收货或库存，也可以试试下面的建议。'],
   'capability.unsupported_id': ["I can't look up {id} by its number yet.", '暂时无法按编号查询 {id}。'],
   'capability.unsupported_ids': ["I can't look up {id} by their numbers yet.", '暂时无法按编号查询 {id}。'],
+  'capability.unmatched.title': ["I can't answer that from your workspace data yet", '这个问题我还不能用工作区数据回答'],
+  // Contracts have their own module (#218); no skill reads them yet.
+  'capability.contracts.title': ["I can't read contracts yet", '我暂时还不能读取合同'],
+  'capability.contracts': ['Contracts are in their own module for now: open it to see them.', '合同目前在单独的“合同”模块中，可以打开查看。'],
+  'capability.contracts.open': ['Open Contracts', '打开合同'],
   'capability.outside': ['I can only answer questions about your workspace data.', '我只能回答与当前工作区数据有关的问题。'],
   'capability.topic': ["I couldn't tell what you want to know about {topic}.", '我没能确定你想了解{topic}的哪方面。'],
   'topic.suppliers': ['suppliers', '供应商'],
@@ -139,6 +146,11 @@ const entries = {
   'today.title': ['{count} items need attention today (as of {date})', '今天需要关注 {count} 项（截至 {date}）'],
   'answer.showing': ['Showing the first {shown} of {total}, earliest date first.', '按日期先列出 {total} 项中的 {shown} 项。'],
   'answer.showing_plain': ['Showing {shown} of {total}.', '列出 {total} 项中的 {shown} 项。'],
+  // A user under pressure ("I'm stressed", 我压力大): the first few only.
+  'today.calm_title': ["That's a lot at once. Start with these {count}", '事情确实不少，先从这 {count} 件开始'],
+  'today.calm_title_one': ["That's a lot at once. Start with this one", '事情确实不少，先从这一件开始'],
+  'today.calm_more': ["These are the earliest of {total} open items. Take them one at a time; the rest stay on Today's priorities.", '这是 {total} 项待办里最早的几项。一件一件来，其余的都在“今日优先事项”里。'],
+  'today.calm_all': ['That is everything open today.', '今天待处理的就是这些。'],
   'today.title_one': ['1 item needs attention today (as of {date})', '今天需要关注 1 项（截至 {date}）'],
   'today.title_none': ['Nothing needs attention today (as of {date})', '今天没有需要优先处理的事项（截至 {date}）'],
   'today.focus_title': ['Why {id} needs attention', '{id} 需要关注的原因'],
