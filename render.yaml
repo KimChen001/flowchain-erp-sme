@@ -108,8 +108,9 @@ projects:
                 value: "true"
               - key: FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE
                 value: "true"
+              # Mobile operations stay off in the trial (decision R4, 2026-10-04).
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS
-                value: "true"
+                value: "false"
               # CSV import of master data and opening stock through the
               # manual-entry commands; opening stock lands as draft adjustments.
               - key: FLOWCHAIN_ENABLE_DATA_IMPORT
@@ -142,9 +143,9 @@ projects:
               # for now, https://app.getflowchain.com once the domain is added.
               - key: FLOWCHAIN_PUBLIC_BASE_URL
                 sync: false
-              # Optional AI assistant key. Leave empty until AI is configured.
-              - key: OPENAI_API_KEY
-                sync: false
+              # No AI or knowledge provider key: the trial calls no model
+              # (decision V4, 2026-10-04). Do not add one in the dashboard
+              # until a hosted provider is decided.
         databases:
           - name: flowchain-staging-db
             region: virginia
@@ -227,8 +228,9 @@ projects:
                 value: "true"
               - key: FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE
                 value: "true"
+              # Mobile operations stay off in the trial (decision R4, 2026-10-04).
               - key: FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS
-                value: "true"
+                value: "false"
               # CSV import of master data and opening stock through the
               # manual-entry commands; opening stock lands as draft adjustments.
               - key: FLOWCHAIN_ENABLE_DATA_IMPORT
@@ -261,9 +263,9 @@ projects:
               # for now, https://app.getflowchain.com once the domain is added.
               - key: FLOWCHAIN_PUBLIC_BASE_URL
                 sync: false
-              # Optional AI assistant key. Leave empty until AI is configured.
-              - key: OPENAI_API_KEY
-                sync: false
+              # No AI or knowledge provider key: the trial calls no model
+              # (decision V4, 2026-10-04). Do not add one in the dashboard
+              # until a hosted provider is decided.
         databases:
           - name: flowchain-production-db
             region: virginia
