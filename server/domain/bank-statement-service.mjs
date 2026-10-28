@@ -33,7 +33,7 @@ function identity(context) {
 
 const has = (actor, permission) => Boolean(actor.permissionCodes?.has(permission));
 const authorize = (actor, permission) => assertAuthorized({ actor, permission, tenantId: actor.tenantId });
-const limits = (env) => ({ maxFileBytes: Number(env.FLOWCHAIN_BANK_IMPORT_MAX_FILE_BYTES || 20 * 1024 * 1024), maxRows: Number(env.FLOWCHAIN_BANK_IMPORT_MAX_ROWS || 10_000), maxSheets: Number(env.FLOWCHAIN_BANK_IMPORT_MAX_SHEETS || 3) });
+export const bankStatementLimits = (env) => ({ maxFileBytes: Number(env.FLOWCHAIN_BANK_IMPORT_MAX_FILE_BYTES || 20 * 1024 * 1024), maxRows: Number(env.FLOWCHAIN_BANK_IMPORT_MAX_ROWS || 10_000), maxSheets: Number(env.FLOWCHAIN_BANK_IMPORT_MAX_SHEETS || 3) });
 const mimeAllowed = (name, mime) => (/\.csv$/i.test(name) && /csv|text\/plain|octet-stream/i.test(mime)) || (/\.xlsx$/i.test(name) && /spreadsheetml|octet-stream/i.test(mime));
 const serial = (value) => value?.toISOString?.() || value || null;
 const batchProjection = buildBankImportBatchDto;
@@ -84,7 +84,7 @@ export function createBankStatementService({ prisma, env = process.env, storageP
     const actor = await actorFor(context, "finance.bank_statement.import"); const fileName = text(input.fileName), mimeType = text(input.mimeType).toLowerCase();
     if (!fileName || !mimeAllowed(fileName, mimeType) || /\.xlsm$/i.test(fileName)) fail("BANK_STATEMENT_FILE_TYPE_UNSUPPORTED", "Only CSV and XLSX statement files are accepted.", 422);
     let bytes; try { bytes = Buffer.from(text(input.contentBase64), "base64"); } catch { fail("BANK_STATEMENT_UPLOAD_INVALID", "Upload content is invalid.", 422); }
-    const configured = limits(env); if (!bytes.length || bytes.length > configured.maxFileBytes) fail("BANK_STATEMENT_FILE_SIZE_INVALID", "Statement file is empty or too large.", 413);
+    const configured = bankStatementLimits(env); if (!bytes.length || bytes.length > configured.maxFileBytes) fail("BANK_STATEMENT_FILE_SIZE_INVALID", "Statement file is empty or too large.", 413);
     const sha256 = digest(bytes); if (text(input.sha256) && text(input.sha256).toLowerCase() !== sha256) fail("BANK_STATEMENT_UPLOAD_HASH_MISMATCH", "Supplied SHA-256 does not match the file.", 422);
     const id = idFactory(), storageKey = `${actor.tenantId}/${id}`; await storage.put(storageKey, bytes, sha256);
     const upload = await prisma.stagedUpload.create({ data: { id, tenantId: actor.tenantId, fileName, mimeType, sizeBytes: bytes.length, sha256, storageKey, status: "staged", createdById: actor.user.id, expiresAt: new Date(now().getTime() + 24 * 60 * 60 * 1000), storageProvider: storage.provider, storageVersion: "v1", persistedAt: now(), storageHealthStatus: "healthy", metadata: { bankStatement: true, binaryInBusinessJson: false } } });
@@ -114,7 +114,7 @@ export function createBankStatementService({ prisma, env = process.env, storageP
     if (batch.workflowStatus !== "draft") fail("BANK_STATEMENT_BATCH_IMMUTABLE", "Only a draft batch may be parsed.", 409);
     const bytes = await storage.get(batch.upload.storageKey); if (digest(bytes) !== batch.fileSha256) fail("BANK_STATEMENT_UPLOAD_HASH_MISMATCH", "Stored statement hash does not match batch evidence.", 409);
     const tenant = await prisma.tenant.findUnique({ where: { id: actor.tenantId }, select: { locale: true } });
-    const parsed = parseBankStatement({ bytes, fileName: batch.fileName, mimeType: batch.fileMimeType, mapping: batch.mappingTemplate, limits: limits(env), tenantLocale: tenant?.locale });
+    const parsed = parseBankStatement({ bytes, fileName: batch.fileName, mimeType: batch.fileMimeType, mapping: batch.mappingTemplate, limits: bankStatementLimits(env), tenantLocale: tenant?.locale });
     const updated = await prisma.$transaction(async (tx) => {
       await tx.bankStatementImportRow.deleteMany({ where: { tenantId: actor.tenantId, batchId: batch.id } });
       await tx.bankStatementImportRow.createMany({ data: parsed.rows.map((row) => ({ id: idFactory(), tenantId: actor.tenantId, batchId: batch.id, sourceSheet: row.sourceSheet, sourceRowNumber: row.sourceRowNumber, rawRowHash: row.rawRowHash, rawData: row.rawData, normalizedTransactionId: row.normalizedTransactionId, normalizedTransactionDate: row.normalizedTransactionDate, normalizedPostingDate: row.normalizedPostingDate, normalizedValueDate: row.normalizedValueDate, normalizedDirection: row.normalizedDirection, normalizedAmount: row.normalizedAmount, normalizedCurrency: row.normalizedCurrency || batch.currency, normalizedCounterpartyName: row.normalizedCounterpartyName, normalizedCounterpartyAccountMasked: row.normalizedCounterpartyAccountMasked, normalizedCounterpartyAccountHash: row.normalizedCounterpartyAccountHash, normalizedDescription: row.normalizedDescription, normalizedBankReference: row.normalizedBankReference, normalizedCustomerReference: row.normalizedCustomerReference, normalizedRunningBalance: row.normalizedRunningBalance, validationStatus: row.validationStatus, duplicateStatus: row.duplicateStatus, issueCodes: row.issueCodes, overrideData: row.issue ? { issue: row.issue } : undefined })) });

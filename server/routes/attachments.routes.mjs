@@ -1,13 +1,14 @@
 import { capabilityForEnvironment } from "../domain/capability-registry.mjs";
-import { createAttachmentService } from "../domain/attachment-service.mjs";
+import { MAX_UPLOAD_BYTES, createAttachmentService } from "../domain/attachment-service.mjs";
 import { contractsEnabled } from "../domain/contract-policy.mjs";
 import { InternalSettlementError } from "../domain/internal-settlement-command-service.mjs";
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
+import { bodyLimitForFile } from "../utils/http.mjs";
 import { CONTRACT_UPLOAD_MAX_REQUEST_BYTES, readBoundedJson } from "./contracts.routes.mjs";
 
 const error = (ctx, caught) => {
-  if (caught instanceof InternalSettlementError || caught instanceof PilotIdentityError || caught?.name === "AttachmentStorageError" || caught?.name === "AuthorizationError" || caught?.name === "ContractError") ctx.send(ctx.res, caught.status || 400, { code: caught.code || "ATTACHMENT_FAILED", message: caught.message, ...(caught.details ? { details: caught.details } : {}) });
+  if (caught instanceof InternalSettlementError || caught instanceof PilotIdentityError || caught?.name === "AttachmentStorageError" || caught?.name === "AuthorizationError" || caught?.name === "ContractError" || caught?.name === "RequestBodyError") ctx.send(ctx.res, caught.status || 400, { code: caught.code || "ATTACHMENT_FAILED", message: caught.message, ...(caught.details ? { details: caught.details } : {}) });
   else { ctx.reportError?.(caught); ctx.send(ctx.res, 500, { code: "ATTACHMENT_FAILED", message: "The attachment operation could not be completed." }); }
 };
 
@@ -33,8 +34,9 @@ export async function handleAttachmentRoute(ctx) {
     if (ctx.req.method === "GET" && path === "/api/attachments/orphans") { ctx.send(ctx.res, 200, await service.orphanCheck()); return true; }
     if (ctx.req.method === "POST" && path === "/api/uploads/stage") {
       // With contracts on, a staged file may be a contract's, so the body is
-      // read with a limit; without them the request is read as before.
-      const input = contracts ? await readBoundedJson(ctx.req, CONTRACT_UPLOAD_MAX_REQUEST_BYTES) : await ctx.readBody(ctx.req);
+      // read with the contract reader's limit; without them, with the upload
+      // limit. Both fit a 20 MB file in base64.
+      const input = contracts ? await readBoundedJson(ctx.req, CONTRACT_UPLOAD_MAX_REQUEST_BYTES) : await ctx.readBody(ctx.req, { maxBytes: bodyLimitForFile(MAX_UPLOAD_BYTES) });
       if (String(input?.purpose ?? "").trim() === "contract" ? !contracts : !legacy) return unavailable();
       ctx.send(ctx.res, 201, await service.stageUpload(input, ctx)); return true;
     }
