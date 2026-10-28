@@ -11,7 +11,7 @@ const expected = {
   "en-US": {
     purchase_request: "Purchase request PR-7 is waiting for approval",
     purchase_order: "Purchase order PR-7 is waiting for approval",
-    supplier_invoice: "Supplier bill PR-7 is waiting for approval",
+    supplier_invoice: "Supplier invoice PR-7 is waiting for approval",
     inventory_adjustment: "Inventory adjustment PR-7 is waiting for approval",
   },
   "zh-CN": {

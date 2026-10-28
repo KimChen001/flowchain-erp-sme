@@ -64,7 +64,7 @@ const chinese: Record<string, string> = {
   'Committed purchase orders by order date. Bars are amounts, the line is the number of orders.': '已承诺采购订单，按订单日期统计。柱形为金额，折线为订单数。',
   'Sorted by amount. The line is the running share of the total; A, B and C classes split at 80% and 95%.': '按金额排序。折线为累计占比；A、B、C 类以 80% 和 95% 划分。',
   'Amounts need one currency, so documents are counted. The line is the running share of the total.': '金额需要单一币种，因此按单据数量统计。折线为累计占比。',
-  'Committed purchase orders in range. Each stage counts the orders that reached it and every stage before it; an order with a bill counts as invoiced while it is still partly received.': '当前范围内的已承诺采购订单。每个阶段统计已到达该阶段及之前所有阶段的订单；部分收货的订单只要有账单就算已开票。',
+  'Committed purchase orders in range. Each stage counts the orders that reached it and every stage before it; an order with a supplier invoice counts as invoiced while it is still partly received.': '当前范围内的已承诺采购订单。每个阶段统计已到达该阶段及之前所有阶段的订单；部分收货的订单只要有账单就算已开票。',
   'Committed purchase orders in range, net of tax: ordered and received quantities at the order price, and the invoice lines linked to each order.': '当前范围内的已承诺采购订单（不含税）：订购和收货数量按订单单价计算，开票为关联到各订单的发票行。',
   'Select a currency to compare amounts.': '请选择币种以比较金额。',
   'Some order lines have no quantity or price, so the value bridge is not shown.': '部分订单行缺少数量或单价，因此不显示金额桥。',
