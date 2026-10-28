@@ -10,7 +10,7 @@ function unavailable(ctx) {
 }
 
 function sendError(ctx, error) {
-  if (error instanceof MobileSyncError || error instanceof PilotIdentityError || error?.name === "AuthorizationError") {
+  if (error instanceof MobileSyncError || error instanceof PilotIdentityError || error?.name === "AuthorizationError" || error?.name === "RequestBodyError") {
     ctx.send(ctx.res, error.status || 400, { code: error.code || "MOBILE_SYNC_FAILED", message: error.message, ...(error.details ? { details: error.details } : {}) });
     return;
   }

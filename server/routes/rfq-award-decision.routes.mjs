@@ -2,7 +2,7 @@ import { RfqAwardDecisionError, createRfqAwardDecisionService } from "../domain/
 import { PilotIdentityError } from "../domain/pilot-identity.mjs";
 import { getPrismaClient } from "../persistence/prisma-client.mjs";
 
-const knownError = (error) => error instanceof RfqAwardDecisionError || error instanceof PilotIdentityError || error?.name === "AuthorizationError";
+const knownError = (error) => error instanceof RfqAwardDecisionError || error instanceof PilotIdentityError || error?.name === "AuthorizationError" || error?.name === "RequestBodyError";
 
 function sendError(ctx, error) {
   if (error instanceof SyntaxError) {
