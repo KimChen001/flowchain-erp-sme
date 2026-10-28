@@ -28,7 +28,7 @@ const COPY = {
   headlineRest: { en: "connected in one workspace.", zh: "在一个工作台协同完成。" },
   intro: { en: "An ERP workspace for small and medium businesses. Master data, purchasing, sales, inventory, analytics, and operational finance share one set of records.", zh: "面向中小企业的 ERP 进销存平台。基础资料、采购、销售、库存、经营分析与运营财务共用同一套数据。" },
   buyLabel: { en: "Purchasing", zh: "采购协同" },
-  buyDetail: { en: "Requisitions, purchase orders, receiving, and supplier bills", zh: "采购申请、采购订单、收货与供应商账单" },
+  buyDetail: { en: "Requisitions, purchase orders, receiving, and supplier invoices", zh: "采购申请、采购订单、收货与供应商账单" },
   stockLabel: { en: "Inventory", zh: "库存管理" },
   stockDetail: { en: "Stock by warehouse, reorder points, and movements", zh: "分仓库存、补货点与出入库记录" },
   planLabel: { en: "Business insights", zh: "经营洞察" },
