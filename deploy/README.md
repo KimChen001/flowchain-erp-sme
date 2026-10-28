@@ -32,10 +32,11 @@ Capabilities outside the stable core stay off until their switch is `true`. `env
 | `FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING` | `sales-order-lifecycle`, `sales-reservation`, `sales-shipment-draft`, `sales-shipment-posting`, `sales-shipment-reversal` |
 | `FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS` | `stock-transfer`, `cycle-count`, `inventory-adjustment-document` |
 | `FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE` | `finance` (main navigation entry), `supplier-invoice`, `three-way-match`, `payable-obligation`, `supplier-credit-memo`, `customer-invoice`, `receivable-obligation`, `customer-credit-note` |
+| `FLOWCHAIN_ENABLE_DATA_IMPORT` | `data-import`: CSV or XLSX import of items, suppliers, customers, item suppliers and opening stock through the manual-entry commands, create only. Opening stock becomes draft adjustments that a person readies and posts. Limits: `FLOWCHAIN_DATA_IMPORT_MAX_FILE_BYTES` (default 2 MB) and `FLOWCHAIN_DATA_IMPORT_MAX_ROWS` (default 2,000). |
 
 Operational finance records invoices, matching, payables and receivables; it does not execute payments, collections, refunds, FX, tax filing or general-ledger postings. Mobile operations (`FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS`: mobile tasks, PO approval and receiving, attachment evidence) stay off in the trial (decision R4, 2026-10-04); the desktop approves POs and creates receipts without them. Returns and quarantine, internal settlement, settlement workflow, bank reconciliation, Mobile Sync and Universal Intake also stay off. When a capability is off, its navigation entry and in-page links are hidden; a direct link still shows "Capability unavailable". `server/domain/us-trial-capabilities.test.mjs` keeps the three example files and the registry in step.
 
-The trial calls no AI model (decision V4, 2026-10-04): the assistant answers from workspace data and knowledge search is keyword-only. `render.yaml` declares no provider key or endpoint, and `server/domain/render-blueprint.test.mjs` fails if one is added. Do not set `OPENAI_API_KEY`, `AI_PROVIDER_ENABLED`, `FLOWCHAIN_KNOWLEDGE_*` or `FLOWCHAIN_AI_PROVIDER_*` in a deployed environment until a hosted provider is decided (see `docs/ai-assistant-plan.md`).
+The trial calls no AI model (decision V4, 2026-10-04): the assistant answers from workspace data and knowledge search is keyword-only. `render.yaml` declares no provider key or endpoint, and `server/domain/render-blueprint.test.mjs` fails if one is added. Do not set `OPENAI_API_KEY`, `AI_PROVIDER_ENABLED`, `FLOWCHAIN_KNOWLEDGE_*` or `FLOWCHAIN_AI_PROVIDER_*` in a deployed environment. AI for the workspaces the owner opts in (decision of 2026-10-05) is turned on in a separate step, once the owner has provided the key and a monthly budget; that step adds exactly those keys and changes the test to allow them (`docs/ai-workspace-access.md`).
 
 ## Sign-in email
 
@@ -58,6 +59,18 @@ Keep provider keys in the secret mechanism that fills `env.production`; never co
 The older email-only sign-in, `POST /api/auth/login`, exists only in local development (`NODE_ENV=development`, `FLOWCHAIN_DEV_LOCAL=true` and a localhost database) and in test mode (`NODE_ENV=test`). In production it answers `404`, and the server refuses to start with `NODE_ENV=test` or `FLOWCHAIN_DEV_LOCAL=true`.
 
 `POST /api/auth/email-link` always answers `202` with the same body, whether or not the address belongs to an active user, so it cannot be used to discover accounts. It accepts at most 5 requests per email address and 20 per client IP per hour, counted in PostgreSQL; requests over the limit still get `202`, send nothing, and are logged. Issuing a link invalidates the user's earlier unused links. Requests, used links, new sessions, sign-outs and revoked sessions are written to the audit log by user id, without the email address.
+
+## Approval emails
+
+The same provider and `FLOWCHAIN_MAIL_FROM` also send approval emails. When a purchase request or purchase order is submitted, a bill is matched (or its last match exception is approved), or an inventory adjustment is created, each person who may approve it is emailed once: active users holding the approve permission through an active role (for an adjustment, with operate access to every warehouse on it), other than the person who acted, who have not turned the emails off in System Administration > My Profile. They are on for every user by default; tell users before the first deploy that has them.
+
+The email says which document is waiting, gives its number and links to its page at `FLOWCHAIN_PUBLIC_BASE_URL`. It has no amounts, suppliers, customers, items or names and no approve or reject link; people decide in FlowChain. It is sent after the command has been saved and never holds it up: a failed send is logged (`approval_email_failed`, by user id) and the command still succeeds, and a message still being sent when the server stops is lost. The approval lists in FlowChain remain the record of what is waiting. One audit row per waiting document (source `approval_notifications`) lists the user ids the email was sent to and those whose send failed. A replayed command sends nothing.
+
+| Variable | Value |
+| --- | --- |
+| `FLOWCHAIN_APPROVAL_EMAILS` | Optional. `off` stops approval emails for the whole deployment; sign-in links are unaffected. Unset means on. |
+
+Because sign-in links and approval emails now share the sender, an address such as `FlowChain <no-reply@your-domain.com>` reads better than `sign-in@`. The sender domain and its DNS records are set up with the provider by the owner; this repository has not verified any (**UNVERIFIED**).
 
 ## Release order
 

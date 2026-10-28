@@ -3,6 +3,7 @@ import {
   recordDatabaseAuditBestEffort,
 } from "../domain/audit-policy.mjs";
 import { createEmptyDataset } from "../domain/data-mode.mjs";
+import { createErrorReporter, logOnlyEnv } from "../observability/error-reporter.mjs";
 import { resolveRequestIdentity } from "../domain/local-signed-session.mjs";
 import {
   isDatabaseModeWriteBlocked,
@@ -26,12 +27,14 @@ export function createHttpRequestHandler({
   readinessCheck,
   sessionStore,
   emailLinks,
+  approvalNotifier = null,
   localSessionSecret,
   domain,
   runtime,
   env = process.env,
+  errorReporter = createErrorReporter({ env: logOnlyEnv(env) }),
 }) {
-  return async function handleHttpRequest(req, res) {
+  async function handleHttpRequest(req, res) {
     if (req.method === "OPTIONS") return send(res, 204, {});
 
     const url = new URL(req.url || "/", `http://localhost:${port}`);
@@ -89,15 +92,20 @@ export function createHttpRequestHandler({
       repositories,
       identity,
       sessionStore,
+      approvalNotifier,
       dataMode: dataMode.mode,
       runtime,
       domain,
       env,
+      errorReporter,
     });
 
     if (await dispatchApiRoute(routeContext)) return;
     if (!url.pathname.startsWith("/api/"))
       return sendStaticAsset({ req, res, url, distDir });
     return send(res, 404, { error: "Not found" });
-  };
+  }
+  // withServerErrorBoundary reads this, so one reporter serves both.
+  handleHttpRequest.errorReporter = errorReporter;
+  return handleHttpRequest;
 }

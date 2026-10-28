@@ -445,6 +445,12 @@ function parseBusinessDate(value = '', now = new Date()) {
   return null
 }
 
+// The calendar day of a business date, or '' when it has none.
+function businessDay(value = '', now = new Date()) {
+  const parsed = parseBusinessDate(value, now)
+  return parsed ? parsed.toISOString().slice(0, 10) : ''
+}
+
 function dateState(value = '', now = new Date()) {
   const parsed = parseBusinessDate(value, now)
   if (!parsed) return { overdue: false, dueSoon: false, parseable: false }
@@ -551,6 +557,8 @@ function buildPoSummary(db = {}, supplier = {}, now = new Date()) {
         totalPoCount: orders.length,
         openPoCount: open.length,
         overduePoCount: overdue.length,
+        // The date of the longest-late open PO.
+        oldestOverdueDate: overdue.map((row) => businessDay(poDateFor(row.po), now)).filter(Boolean).sort()[0] || '',
         dueSoonPoCount: dueSoon.length,
         topPurchaseOrders: orders.slice(0, 3).map((po) => {
           const state = dateState(poDateFor(po), now)
@@ -591,6 +599,8 @@ function buildInvoiceSummary(db = {}, supplier = {}) {
         supplierId: supplier.supplierId,
         invoiceCount: invoices.length,
         invoiceVarianceCount: issueInvoices.length,
+        // The date of the oldest invoice with a variance.
+        oldestIssueDate: issueInvoices.map((invoice) => businessDay(invoice.invoiceDate || invoice.date)).filter(Boolean).sort()[0] || '',
         pendingReviewCount: pendingReview.length,
         creditMemoAmount,
         reconciliationStatus: reconciliation?.status || reconciliation?.settlementStatus || '',
@@ -830,23 +840,13 @@ export function detectAiSupplierOperationalIntent(message = '', body = {}) {
   return null
 }
 
+// The risk label recorded on the supplier, read as stored. No score or rate
+// is turned into a label (owner decision 2026-10-03).
 function supplierRiskLevel(supplier = {}) {
   const raw = cleanText(supplier.risk || supplier.riskStatus || supplier.status)
-  const score = toNumber(supplier.score ?? supplier.rating ?? supplier.grade, null)
   if (/高|high|整改|暂停|disabled|blocked/i.test(raw)) return '高'
-  if (score !== null && score < 70) return '高'
   if (/中|medium|待完善|warning/i.test(raw)) return '中'
-  if (score !== null && score < 82) return '中'
   return raw || '低'
-}
-
-function supplierScoreValue(supplier = {}) {
-  const score = toNumber(supplier.score ?? supplier.rating ?? supplier.grade, null)
-  if (score !== null) return score
-  const onTime = toNumber(supplier.onTimeRate, null)
-  const quality = toNumber(supplier.qualityRate, null)
-  if (onTime !== null && quality !== null) return Math.round((onTime * 0.6) + (quality * 0.4))
-  return null
 }
 
 function buildModuleSupplierRows(db = {}, options = {}) {
@@ -855,23 +855,14 @@ function buildModuleSupplierRows(db = {}, options = {}) {
   return uniqueCandidates(index.candidates).map((supplier) => {
     const sections = buildSections(db, supplier, { ...options, now })
     const summary = supplierSummaryCard(supplier, sections).data
-    const score = supplierScoreValue(supplier)
-    const risk = supplierRiskLevel({ ...supplier, score })
+    const risk = supplierRiskLevel(supplier)
     const pendingRfqCount = sections.rfq.card.data.pendingResponseCount || 0
-    const deliveryRiskCount = (sections.po.card.data.overduePoCount || 0) + (sections.po.card.data.dueSoonPoCount || 0)
     const invoiceIssueCount = sections.invoice.card.data.invoiceVarianceCount || 0
     const inventoryRiskItemCount = sections.inventory.card.data.inventoryRiskItemCount || 0
-    const signalScore =
-      (risk === '高' ? 5 : risk === '中' ? 2 : 0) +
-      deliveryRiskCount * 2 +
-      pendingRfqCount +
-      invoiceIssueCount +
-      inventoryRiskItemCount
     return {
       supplierId: supplier.supplierId,
       supplierName: supplier.supplierName,
       risk,
-      score,
       openPoCount: summary.openPoCount,
       overduePoCount: summary.overduePoCount,
       dueSoonPoCount: sections.po.card.data.dueSoonPoCount,
@@ -879,35 +870,39 @@ function buildModuleSupplierRows(db = {}, options = {}) {
       invoiceIssueCount,
       inventoryRiskItemCount,
       nextAction: nextActionFor(summary),
-      signalScore,
+      // The date of the supplier's oldest open problem: its longest-late PO or
+      // its oldest invoice variance.
+      since: [sections.po.card.data.oldestOverdueDate, sections.invoice.card.data.oldestIssueDate].filter(Boolean).sort()[0] || '',
     }
-  }).sort((a, b) => b.signalScore - a.signalScore || (a.score ?? 100) - (b.score ?? 100) || a.supplierName.localeCompare(b.supplierName))
+  // Counts are shown side by side, never combined into a score. Suppliers with
+  // a dated open problem first, the oldest first; then A-Z by name.
+  }).sort((a, b) => (a.since && b.since ? a.since.localeCompare(b.since) : a.since ? -1 : b.since ? 1 : 0) || a.supplierName.localeCompare(b.supplierName) || cleanText(a.supplierId).localeCompare(cleanText(b.supplierId)))
 }
+
+// A supplier with something to follow up: a stored high risk label, a late or
+// soon-due PO, an RFQ awaiting its reply, an invoice variance or a related
+// item below its stock level.
+const needsAttention = (row) => row.risk === '高' || row.overduePoCount > 0 || row.pendingRfqResponseCount > 0 || row.invoiceIssueCount > 0 || row.inventoryRiskItemCount > 0
+const needsFollowUp = (row) => needsAttention(row) || row.dueSoonPoCount > 0
 
 function scoringExplanationCard(rows = []) {
   return {
     type: 'supplier_scoring_explanation',
-    title: '供应商评分规则',
+    title: '供应商列表规则',
     data: {
       message: '评分解释基于本地 SRM/采购可见数据，不重算或写回供应商评分。',
       rules: [
-        '评分字段优先读取供应商主数据；缺失时用准时率和质量率估算展示值。',
-        '风险排序会叠加高/中风险标签、逾期或临期 PO、RFQ 待回复、发票差异和关联库存风险。',
-        '结果仅用于内部跟进排序，最终供应商评级和审批仍由业务用户确认。',
+        '不计算或估算供应商评分，也不把准时率和质量率合并成一个分数。',
+        '有未结问题的供应商按最早的问题日期排列（逾期 PO 的承诺日期、发票差异的发票日期），其余按名称排列；逾期或临期 PO、RFQ 待回复、发票差异和关联库存风险分别列出数量。',
+        '最终供应商评级和审批仍由业务用户确认。',
       ],
-      scoredSupplierCount: rows.filter((row) => row.score !== null).length,
+      supplierCount: rows.length,
     },
   }
 }
 
 function highRiskSupplierCard(rows = []) {
-  const highRiskRows = rows.filter((row) =>
-    row.risk === '高' ||
-    row.overduePoCount > 0 ||
-    row.pendingRfqResponseCount > 0 ||
-    row.invoiceIssueCount > 0 ||
-    row.inventoryRiskItemCount > 0
-  )
+  const highRiskRows = rows.filter(needsAttention)
   const targetRows = highRiskRows.length ? highRiskRows : rows
   return {
     type: 'supplier_high_risk_summary',
@@ -922,7 +917,7 @@ function highRiskSupplierCard(rows = []) {
         supplierId: row.supplierId,
         supplierName: row.supplierName,
         risk: row.risk,
-        score: row.score,
+        since: row.since,
         overduePoCount: row.overduePoCount,
         pendingRfqResponseCount: row.pendingRfqResponseCount,
         invoiceIssueCount: row.invoiceIssueCount,
@@ -933,22 +928,27 @@ function highRiskSupplierCard(rows = []) {
   }
 }
 
+// The actions cover every supplier with something to follow up, not only the
+// first five listed.
 function supplierNextActionsCard(rows = []) {
-  const top = rows.slice(0, 5)
+  const open = rows.filter(needsFollowUp)
+  const top = open.slice(0, 5)
   const actions = []
-  if (top.some((row) => row.overduePoCount > 0 || row.dueSoonPoCount > 0)) actions.push('先跟进逾期或 7 天内到期 PO 的承诺交期。')
-  if (top.some((row) => row.pendingRfqResponseCount > 0)) actions.push('对 RFQ 待回复供应商发起人工确认，避免自动创建或发送消息。')
-  if (top.some((row) => row.invoiceIssueCount > 0)) actions.push('把发票差异交给采购和财务共同复核。')
-  if (top.some((row) => row.inventoryRiskItemCount > 0)) actions.push('复核关联物料库存风险，并准备可审阅的补货或询价草稿。')
-  if (!actions.length) actions.push('保持常规供应商绩效复盘，优先查看评分缺失或主数据待完善项。')
+  if (open.some((row) => row.overduePoCount > 0 || row.dueSoonPoCount > 0)) actions.push('先跟进逾期或 7 天内到期 PO 的承诺交期。')
+  if (open.some((row) => row.pendingRfqResponseCount > 0)) actions.push('对 RFQ 待回复供应商发起人工确认，避免自动创建或发送消息。')
+  if (open.some((row) => row.invoiceIssueCount > 0)) actions.push('把发票差异交给采购和财务共同复核。')
+  if (open.some((row) => row.inventoryRiskItemCount > 0)) actions.push('复核关联物料库存风险，并准备可审阅的补货或询价草稿。')
+  if (!actions.length) actions.push('保持常规供应商绩效复盘，优先查看主数据待完善项。')
   return {
     type: 'supplier_next_actions',
     title: 'SRM 下一步跟进',
     data: {
       actions,
+      followUpSupplierCount: open.length,
       topSuppliers: top.map((row) => ({
         supplierId: row.supplierId,
         supplierName: row.supplierName,
+        since: row.since,
         nextAction: row.nextAction,
       })),
     },
@@ -979,7 +979,7 @@ function buildSupplierModuleResponse(db = {}, intentName = 'supplier_high_risk_s
     cards.splice(2, 0, supplierNextActionsCard(rows))
   }
   const message = intentName === 'supplier_scoring_rule_query'
-    ? `我按本地 SRM 数据解释评分规则，并列出当前排序靠前的供应商风险。${SUPPLIER_ALPHA_BOUNDARY}`
+    ? `我按本地 SRM 数据说明供应商列表的规则，并按最早的未结问题日期列出各供应商的待跟进事项。${SUPPLIER_ALPHA_BOUNDARY}`
     : intentName === 'supplier_next_actions_query'
       ? `我整理了 SRM 下一步内部跟进事项。${SUPPLIER_ALPHA_BOUNDARY}`
       : `我列出当前高风险供应商、RFQ 待回复和交付风险信号。${SUPPLIER_ALPHA_BOUNDARY}`

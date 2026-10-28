@@ -8,6 +8,7 @@ import { isInventoryRiskSku } from './runtime-inventory-allocation-read-model.mj
 // Quantities stay in each SKU's own unit and are never added across SKUs.
 
 const array = (value) => Array.isArray(value) ? value : []
+const text = (value) => String(value ?? '').trim()
 const MAX_EVIDENCE = 8
 const STATUSES = new Set(['out_of_stock', 'below_safety_stock', 'below_reorder_point', 'ok', 'unknown'])
 const STATUS_ORDER = { out_of_stock: 0, below_safety_stock: 1, below_reorder_point: 2, unknown: 3, ok: 4 }
@@ -15,6 +16,16 @@ const needsAttention = (row) => isInventoryRiskSku(row) || ['out_of_stock', 'bel
 const worstFirst = (a, b) => (b.shortage || 0) - (a.shortage || 0) || (STATUS_ORDER[a.stockStatus] ?? 5) - (STATUS_ORDER[b.stockStatus] ?? 5) || String(a.sku).localeCompare(String(b.sku))
 
 const statusText = (status, language) => aiSkillText(`stock_status.${STATUSES.has(status) ? status : 'unknown'}`, language)
+
+// Open purchase order lines of a SKU in another unit than its stock unit,
+// which incoming leaves out: "PO-0040 (12 CASE)", or "12 CASE" for a reader
+// who cannot read purchase orders. '' when there are none.
+export function aiSkillOtherUnitLines(row, fmt, language) {
+  return aiSkillList(array(row?.incomingOtherUnit).map((line) => {
+    const amount = line.remaining === null || line.remaining === undefined ? text(line.unit) : fmt.quantity(line.remaining, line.unit)
+    return line.orderNumber ? `${line.orderNumber} (${amount})` : amount
+  }), language)
+}
 
 const figure = (code, entityId, value, extra = {}) => ({ key: entityId ? `${code}:${entityId}` : code, code, entityId: entityId || null, value, ...extra })
 
@@ -64,6 +75,8 @@ function skuTitle(row, fmt, language) {
 function singleSentences(row, fmt, language) {
   const quantity = (value) => fmt.quantity(value, row.unit)
   const sentences = [aiSkillText('stock.single_summary', language, { onHand: quantity(row.onHand), reserved: quantity(row.reserved), available: quantity(row.available), demand: quantity(row.openSalesDemand), incoming: quantity(row.incomingApprovedPo) })]
+  const otherUnit = aiSkillOtherUnitLines(row, fmt, language)
+  if (otherUnit) sentences.push(aiSkillText('stock.other_unit', language, { lines: otherUnit }))
   if (isInventoryRiskSku(row)) sentences.push(aiSkillText('stock.short', language, { shortage: quantity(row.shortage) }))
   sentences.push(aiSkillText('stock.status', language, { status: statusText(row.stockStatus, language) }))
   sentences.push(aiSkillText('stock.atp_definition', language))

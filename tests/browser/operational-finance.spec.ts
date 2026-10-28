@@ -391,10 +391,25 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   );
   await page.goto(`/app/finance/customer-invoices/${uiDraft.entityId}`);
   await expect(page.getByTestId("customer-invoice-detail")).toContainText("CUS-INV-BROWSER-UI");
+  // Submit, approve and issue only change the invoice's status: one click
+  // each (owner decision D4), and the step is done when its button goes.
+  // A run that fails after an allowed preview (here a forced 409, as when
+  // someone else acted first) opens the panel with the error to retry.
+  await page.route("**/api/finance/customer-invoices/*/submit", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 409, json: { code: "BROWSER_TEST_RUN_FAILED", message: "Someone else changed this invoice first." } })
+      : route.fallback(),
+  );
+  await page.getByTestId("customer-invoice-submit").click();
+  await expect(page.getByTestId("customer-invoice-submit-panel")).toContainText("Someone else changed this invoice first.");
+  // The earlier preview no longer holds, so Confirm waits for a new preview.
+  await expect(page.getByTestId("customer-invoice-submit-confirm")).toBeDisabled();
+  await page.unroute("**/api/finance/customer-invoices/*/submit");
+  await page.getByTestId("customer-invoice-submit-panel").getByRole("button", { name: /^(Close|关闭)$/ }).click();
   for (const action of ["submit", "approve", "issue"]) {
+    await expect(page.getByTestId(`customer-invoice-${action}`)).toHaveAttribute("data-one-step", "true");
     await page.getByTestId(`customer-invoice-${action}`).click();
-    await page.getByTestId(`customer-invoice-${action}-preview`).click();
-    await page.getByTestId(`customer-invoice-${action}-confirm`).click();
+    await expect(page.getByTestId(`customer-invoice-${action}`)).toHaveCount(0);
     await expect(page.getByTestId(`customer-invoice-${action}-panel`)).toHaveCount(0);
   }
   await expect(page.getByTestId("customer-invoice-actions")).toContainText(/当前状态下没有可执行的操作|No action is available/);
@@ -474,10 +489,10 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
   await expect(viewerPage.getByTestId("customer-invoice-workbench")).toBeVisible();
   const salesTabs = viewerPage.getByTestId("module-subnav");
   await expect(
-    salesTabs.getByRole("link", { name: "Invoices", exact: true }),
+    salesTabs.getByRole("link", { name: "Customer invoices", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await expect(
-    viewerPage.getByRole("link", { name: "New invoice" }),
+    viewerPage.getByRole("link", { name: "New customer invoice" }),
   ).toHaveAttribute("aria-disabled", "true");
   await viewerPage.goto("/app/finance/overview");
   const financeTabs = viewerPage.getByTestId("module-subnav");
@@ -485,11 +500,11 @@ test("operational finance closes P2P, O2C, credit, aging, role, evidence, and cu
     financeTabs.getByRole("link", { name: "Overview", exact: true }),
   ).toBeVisible();
   await expect(
-    financeTabs.getByRole("link", { name: "Bills to pay", exact: true }),
+    financeTabs.getByRole("link", { name: "Supplier invoices to pay", exact: true }),
   ).toBeVisible();
-  // Bills and invoices are not repeated under Payables & receivables.
-  await expect(financeTabs.getByRole("link", { name: "Bills", exact: true })).toHaveCount(0);
-  await expect(financeTabs.getByRole("link", { name: "Invoices", exact: true })).toHaveCount(0);
+  // Supplier and customer invoices are not repeated under Payables & receivables.
+  await expect(financeTabs.getByRole("link", { name: "Supplier invoices", exact: true })).toHaveCount(0);
+  await expect(financeTabs.getByRole("link", { name: "Customer invoices", exact: true })).toHaveCount(0);
   await expect(viewerPage.getByRole("link", { name: "采购发票" })).toHaveCount(0);
   const viewerWrite = await request.post("/api/finance/customer-invoices", {
     headers: { Authorization: `Bearer ${viewer.token}` },

@@ -20,3 +20,21 @@ export function tenantCalendarDay(instant, timeZone = DEFAULT_TENANT_TIMEZONE) {
     }
   }
 }
+
+// The workspace calendar day of a stored instant: a creation, arrival or
+// posting time. A PO entered at 21:00 in New York on Sep 30 is 01:00 UTC on
+// Oct 1, and belongs to September. A bare YYYY-MM-DD is already a calendar
+// day and is kept as it is. '' when the value is not a real date or time.
+// Date-only fields (expected, promised and invoice dates, stored at 00:00 or
+// 12:00 UTC) are not instants: they are read with reportCalendarDay instead,
+// so they do not move a day earlier in US timezones.
+export function instantCalendarDay(value, timeZone = DEFAULT_TENANT_TIMEZONE) {
+  if (value === null || value === undefined || value === '') return ''
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    const candidate = value.trim()
+    const parsed = new Date(`${candidate}T12:00:00Z`)
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === candidate ? candidate : ''
+  }
+  const instant = value instanceof Date ? value : new Date(String(value))
+  return Number.isFinite(instant.getTime()) ? tenantCalendarDay(instant, timeZone) : ''
+}

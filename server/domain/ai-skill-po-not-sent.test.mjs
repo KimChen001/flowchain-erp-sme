@@ -6,6 +6,7 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { answerAiSkill } from './ai-skills.mjs'
 import { aiSkillPurchaseOrderNotSent, buildAiSkillSignals } from './ai-skill-signals.mjs'
 import { runPrepareActionDraft } from './ai-skill-prepare-action-draft.mjs'
+import { aiSkillDraftOrders } from './ai-skill-drafts.mjs'
 
 // Decision V5 (2026-10-04): only an order issued to its supplier is chased.
 // An approved order that was never issued still counts as open, and past its
@@ -54,8 +55,9 @@ test('no supplier follow-up is drafted for an unissued order; issued orders keep
   const { answer } = await withUnissuedOverdue()
   const drafts = answer('prepare_action_draft').reviewCards
   assert.ok(drafts.length > 0)
-  assert.ok(!drafts.some((card) => card.targetEntityId === 'PO-009'), 'PO-009 gets no draft')
-  assert.ok(drafts.some((card) => card.draftType === 'po_followup_draft' && ['PO-001', 'PO-008'].includes(card.targetEntityId)))
+  assert.ok(!drafts.some((card) => card.targetEntityId === 'PO-009' || aiSkillDraftOrders(card).includes('PO-009')), 'PO-009 gets no draft')
+  // Acme's issued, overdue orders keep theirs: one message about both.
+  assert.ok(drafts.some((card) => card.draftType === 'po_followup_draft' && aiSkillDraftOrders(card).some((id) => ['PO-001', 'PO-008'].includes(id))))
 })
 
 test('asked to draft for the unissued order, the answer says it has not been issued yet', async () => {
@@ -85,8 +87,13 @@ test('a shortage only an unissued order covers links to that order: no follow-up
   const result = runPrepareActionDraft(facts)
   assert.deepEqual(result.drafts.map((candidate) => candidate.kind), [])
   assert.ok(result.links.some((item) => item.entityId === 'ITEM-1'))
-  // Once issued, the same shortage gets the supplier follow-up.
+  // Issued and not late yet, it is on order: still nothing to chase (owner
+  // decision, 2026-10-06), and still no second request.
   facts.purchaseOrders.rows[0].status = 'issued'
+  assert.deepEqual(runPrepareActionDraft(facts).drafts, [])
+  assert.ok(runPrepareActionDraft(facts).links.some((item) => item.entityId === 'ITEM-1'))
+  // Once overdue, the same shortage gets the supplier follow-up.
+  Object.assign(facts.purchaseOrders.rows[0], { dueDate: day(-3), overdueDays: 3 })
   assert.deepEqual(runPrepareActionDraft(facts).drafts.map((candidate) => [candidate.kind, candidate.po?.id]), [['po_followup_draft', 'PO-X']])
 })
 

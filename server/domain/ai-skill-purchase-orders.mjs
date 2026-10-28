@@ -73,14 +73,14 @@ function orderEvidence(row, fmt, language, rank, facts) {
   const open = row.isOpen !== false
   const supplier = aiSkillSupplierWithTier(row.supplier, row.supplierId, facts, language)
   const summary = row.overdueDays > 0
-    ? aiSkillText('po.evidence_late', language, { status, supplier, days: fmt.number(row.overdueDays) })
+    ? aiSkillText('po.evidence_late', language, { status, supplier, date: fmt.day(row.dueDate), days: fmt.number(row.overdueDays) })
     : open && row.dueDate
       ? aiSkillText('po.evidence_due', language, { status, supplier, date: fmt.day(row.dueDate) })
       : aiSkillText('po.evidence_plain', language, { status, supplier })
   return {
     evidence: aiSkillRecordEvidence({
       evidenceType: 'purchase_order', entityType: 'purchase_order', entityId: row.id, label: row.orderNumber || row.id, status, summary,
-      value: open && row.remaining !== null && row.remaining !== undefined ? aiSkillText('po.value_remaining', language, { remaining: fmt.quantity(row.remaining, row.unit) }) : null,
+      value: open && fmt.remaining(row) !== null ? aiSkillText('po.value_remaining', language, { remaining: fmt.remaining(row) }) : null,
       severity: row.overdueDays > 0 ? 'risk' : open ? 'warning' : 'info', rank,
     }, language),
     impact: aiSkillRecordImpact({
@@ -97,7 +97,11 @@ function orderEvidence(row, fmt, language, rank, facts) {
 function singleTitle(row, fmt, language) {
   const po = row.orderNumber || row.id
   const status = aiSkillPurchaseOrderStatus(row.status, language)
-  if (row.isOpen) return row.remaining === null || row.remaining === undefined ? aiSkillText('po.single_mixed', language, { po }) : aiSkillText('po.single_remaining', language, { po, remaining: fmt.quantity(row.remaining, row.unit) })
+  if (row.isOpen) {
+    const remaining = fmt.remaining(row)
+    if (remaining !== null) return aiSkillText('po.single_remaining', language, { po, remaining })
+    return aiSkillText(row.unit === 'multiple_skus' ? 'po.single_skus' : 'po.single_mixed', language, { po })
+  }
   if (row.status === 'fully_received') return aiSkillText('po.single_received', language, { po })
   if (['cancelled', 'rejected'].includes(row.status)) return aiSkillText('po.single_closed', language, { po, status })
   if (['draft', 'pending_approval'].includes(row.status)) return aiSkillText('po.single_not_committed', language, { po, status, ordered: fmt.quantity(row.ordered, row.unit) })

@@ -27,7 +27,7 @@ test('a complete report shows no truncation notice', async ({ page }) => {
   await login(page, 'en-US')
   await page.goto('/app/reports/overview')
   await expect(page.getByTestId('bi-dashboard')).toHaveAttribute('data-view', 'overview')
-  await expect(page.getByRole('button', { name: /Purchase order amount/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Committed PO amount/ })).toBeVisible()
   await expect(page.getByTestId('reports-truncation-notice')).toHaveCount(0)
 })
 

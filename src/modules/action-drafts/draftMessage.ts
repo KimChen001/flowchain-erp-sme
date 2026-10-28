@@ -5,10 +5,14 @@ import { buildSuggestionTrail, type PrefillEntry } from "../../lib/prefill";
 // with a recipient and a subject (docs/ai-prefill-autocomplete-design.md, J1/J2).
 export const MESSAGE_DRAFT_TYPES = new Set(["po_followup_draft", "supplier_followup_draft"]);
 // Payload fields the message section shows instead of the generic field grid.
-export const MESSAGE_FIELDS = new Set(["to", "contactName", "subject", "message", "messageDraft", "lines", "language"]);
+export const MESSAGE_FIELDS = new Set(["to", "toMissing", "contactName", "subject", "message", "messageDraft", "lines", "language", "basis", "poIds"]);
 
+// `po`: the order a line belongs to, in a message about several orders.
 export type DraftLine = {
   lineId?: string;
+  po?: string | null;
+  ordered?: number | null;
+  received?: number | null;
   sku?: string | null;
   itemName?: string | null;
   remaining?: number | null;
@@ -22,6 +26,14 @@ const text = (value: unknown) => (typeof value === "string" ? value : value === 
 // The supplier follow-up preview stores the text as messageDraft.
 export function messageKey(payload: Record<string, unknown>) {
   return "messageDraft" in payload ? "messageDraft" : "message";
+}
+
+// The document sections the answer cited, which the draft follows (shown
+// with the draft, never in the message).
+export type DraftBasis = { title?: string; section?: string | null; citationId?: string };
+
+export function draftBasis(payload: Record<string, unknown>): DraftBasis[] {
+  return Array.isArray(payload.basis) ? (payload.basis as DraftBasis[]).filter((entry) => entry && typeof entry === "object" && entry.title).slice(0, 2) : [];
 }
 
 export function draftLines(payload: Record<string, unknown>): DraftLine[] {

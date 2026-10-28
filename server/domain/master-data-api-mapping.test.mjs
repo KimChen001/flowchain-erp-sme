@@ -279,6 +279,9 @@ test('normalizers show only recorded facts and never assume a country, currency 
   assert.deepEqual({ discountRule: term.discountRule, dueDateRule: term.dueDateRule, netDays: term.netDays }, { discountRule: '', dueDateRule: '', netDays: 30 })
 
   const [warehouse] = mod.normalizeWarehouseRows([{ id: 'WH-1', name: 'Main Warehouse', type: 'warehouse', status: 'active' }], [])
+  // The readable code is shown and the record id kept for links.
+  const [coded] = mod.normalizeWarehouseRows([{ id: 'WH-63a144d0', code: 'MAIN', name: 'Main Warehouse', status: 'active' }], [])
+  assert.deepEqual({ code: coded.warehouseCode, id: coded.warehouseId }, { code: 'MAIN', id: 'WH-63a144d0' })
   assert.deepEqual({ zone: warehouse.zone, bin: warehouse.bin, temperature: warehouse.temperatureRequirement }, { zone: '', bin: '', temperature: '' })
 
   const [supplier] = mod.normalizeSupplierRows([{ id: 'SUP-1', name: 'Northstar', preferred: true }], [])

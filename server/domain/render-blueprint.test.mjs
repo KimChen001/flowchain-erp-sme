@@ -113,7 +113,8 @@ const IMAGE_ENV = { NODE_ENV: "production", FLOWCHAIN_DEPLOYMENT_PROFILE: "produ
 const RENDER_PLATFORM_ENV = { RENDER: "true", RENDER_GIT_COMMIT: RENDER_SHA, RENDER_GIT_BRANCH: "main" };
 // Keys the guard requires that Render satisfies without a Blueprint entry.
 const PLATFORM_SATISFIED = { FLOWCHAIN_COMMIT_SHA: "RENDER_GIT_COMMIT" };
-const SECRET_KEYS = ["POSTMARK_SERVER_TOKEN", "RESEND_API_KEY"];
+// FLOWCHAIN_ERROR_WEBHOOK_URL is a credential too: anyone holding it can post to the channel.
+const SECRET_KEYS = ["POSTMARK_SERVER_TOKEN", "RESEND_API_KEY", "FLOWCHAIN_ERROR_WEBHOOK_URL"];
 // Any setting that would let a deployed site call a model: provider keys and
 // endpoints, the knowledge presets and the model switches. The trial calls no
 // model (decision V4, 2026-10-04), so render.yaml declares none of them.
@@ -252,6 +253,12 @@ for (const environment of environments) {
   test(`${environment.name}: the US trial capability set matches deploy/env.production.example`, () => {
     const env = simulatedRenderEnv(service, database);
     assert.deepEqual(enabledCapabilities(env), enabledCapabilities(parseExample("deploy/env.production.example")));
+  });
+
+  test(`${environment.name}: contracts are off in the trial (D10)`, () => {
+    const env = simulatedRenderEnv(service, database);
+    assert.equal(env.FLOWCHAIN_ENABLE_CONTRACTS, "false");
+    assert.equal(enabledCapabilities(env).includes("contracts"), false);
   });
 }
 

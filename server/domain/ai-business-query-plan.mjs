@@ -28,7 +28,9 @@ const WINDOWS = new Set(BUSINESS_QUERY_TIME_WINDOWS)
 const ENTITIES = new Set(['supplier', 'inventory', 'procurement', 'workspace'])
 const SOURCES = new Set(['explicit', 'global', 'current_context', 'previous_result', 'clarification'])
 const DUE_STATES = new Set(['due_now', 'due_this_week', 'overdue', 'future_due', 'ready_for_payment', 'blocked', 'partially_settled', 'settled', 'disputed', 'held', 'missing_evidence'])
-const RISK_LEVELS = new Set(['critical', 'high', 'medium', 'low'])
+// Suppliers carry no risk level or score any more (owner decision 2026-10-03):
+// a plan that filters by one is invalid.
+const RISK_LEVELS = new Set()
 const GROUPING = new Set(['supplier', 'currency', 'priority', 'goal', 'status'])
 const COMPARISON = new Set(['priority', 'payment_readiness', 'payment_blocks', 'operational_risk', 'data_quality'])
 const TOP_LEVEL_KEYS = new Set(['planningVersion', 'scope', 'goals', 'filters', 'grouping', 'comparison', 'ranking', 'requestedEvidence', 'requestedActions', 'ambiguities', 'clarificationNeeded', 'clarificationQuestion', 'confidence'])
@@ -95,7 +97,7 @@ export function validateBusinessQueryPlan(candidate) {
     extraKeys(filters, FILTER_KEYS, 'filters', errors)
     if (!WINDOWS.has(filters.timeWindow)) errors.push('filters.timeWindow: unsupported time window')
     allowedArray(filters.dueState, DUE_STATES, 'filters.dueState', errors, { max: 10 })
-    allowedArray(filters.riskLevels, RISK_LEVELS, 'filters.riskLevels', errors, { max: 4 })
+    allowedArray(filters.riskLevels, RISK_LEVELS, 'filters.riskLevels', errors, { max: 0 })
     if (!Array.isArray(filters.statuses) || filters.statuses.length > 20) errors.push('filters.statuses: invalid list')
     if (!Array.isArray(filters.currencies) || filters.currencies.length > 10 || filters.currencies.some((item) => !/^[A-Z]{3}$/.test(text(item)))) errors.push('filters.currencies: invalid currency list')
   }

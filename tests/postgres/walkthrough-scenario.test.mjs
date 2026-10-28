@@ -25,7 +25,8 @@ const { createSupplierScorecardReadService } = await import('../../server/domain
 const AS_OF = '2026-03-09'
 const DAY = 86_400_000
 const asOfNoon = new Date(`${AS_OF}T12:00:00Z`)
-const env = { ...process.env, FLOWCHAIN_DEFAULT_TENANT_ID: tenantId }
+// Contracts stay off until the contracts check at the end turns them on.
+const env = { ...process.env, FLOWCHAIN_DEFAULT_TENANT_ID: tenantId, FLOWCHAIN_ENABLE_CONTRACTS: 'false' }
 const prefix = { startsWith: 'LOCAL-DEMO-' }
 const countedModels = [
   'purchaseRequest', 'purchaseRequestLine', 'rfq', 'rfqLine', 'rfqSupplierParticipation', 'supplierQuotation', 'supplierQuotationLine',
@@ -211,15 +212,28 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
       assert.ok(dataScope.currencyAmounts[0].amount > 0, `${subject} report amount is not zero`)
     }
 
-    // Issued orders keep their first promised date; orders never issued have none.
+    // Committed orders (approved, issued or received) keep their first promised
+    // date, as the approve and issue commands record it, and so do cancelled
+    // orders that were sent first; drafts, pending approvals and orders
+    // cancelled before they were sent have none. Issued orders also keep their
+    // issue date, on their order day; orders never issued have none.
     for (const po of purchaseOrders) {
+      const committed = ['approved', 'issued', 'partially_received', 'fully_received'].includes(po.status) || po.metadata.transmissionStatus === 'sent'
       const issued = ['issued', 'partially_received', 'fully_received'].includes(po.status) || po.metadata.transmissionStatus === 'sent'
-      for (const line of po.lines) assert.equal(Boolean(line.originalPromisedDate), issued, `${line.id} original promise`)
+      for (const line of po.lines) assert.equal(Boolean(line.originalPromisedDate), committed, `${line.id} original promise`)
+      assert.equal(Boolean(po.issuedAt), issued, `${po.id} issue date`)
+      if (issued) {
+        assert.equal(po.metadata.issuedAt, po.issuedAt.toISOString(), `${po.id} issue date in metadata`)
+        assert.ok(po.issuedAt > po.createdAt, `${po.id} issued after it was created`)
+      }
     }
     // Two Northstar orders were re-promised after issue, with a reason, and
     // delivered on the new date. Its scorecard is late against the original
-    // promise and on time against the current date: on time 4 of 6 against 6
-    // of 6, OTIF 3 of 6 against 5 of 6.
+    // promise and on time against the current date. PO-023, approved and
+    // promised for yesterday, was never sent to the supplier and has nothing
+    // received: outside every figure, listed as not sent (owner decision
+    // 2026-10-06). Six deliveries of one PO line each: on time 4 of 6 against
+    // 6 of 6, OTIF 3 of 6 against 5 of 6.
     const revisions = await prisma.purchaseOrderPromiseRevision.findMany({ where: { tenantId }, orderBy: { id: 'asc' } })
     assert.deepEqual(revisions.map((row) => [row.purchaseOrderId, row.previousDate.toISOString().slice(0, 10), row.newDate.toISOString().slice(0, 10), Boolean(row.reason)]), [
       ['LOCAL-DEMO-PO-033', shiftDay(AS_OF, -45), shiftDay(AS_OF, -40), true],
@@ -229,9 +243,15 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
     const scorecard = await createSupplierScorecardReadService({ prisma, now: () => new Date(`${AS_OF}T17:00:00Z`) }).read({}, { identity: { authenticated: true, tenantId, userId: `${tenantId}-admin`, role: 'admin' } })
     const northstar = scorecard.suppliers.find((row) => row.supplierId === 'LOCAL-DEMO-SUP-005')
     assert.equal(northstar.sampleStatus, 'ok')
-    assert.deepEqual([northstar.metrics.onTime.count, northstar.metrics.onTimeCurrent.count, northstar.sampleSize], [4, 6, 6])
+    assert.deepEqual([northstar.metrics.onTime.count, northstar.metrics.onTimeCurrent.count, northstar.sampleSize, northstar.lineCount], [4, 6, 6, 6])
     assert.deepEqual([northstar.metrics.otif.count, northstar.metrics.otifCurrent.count], [3, 5])
+    assert.equal(northstar.overdueUndeliveredCount, 0)
+    assert.ok(northstar.obligations.every((row) => row.purchaseOrderId !== 'LOCAL-DEMO-PO-023'))
+    assert.deepEqual([northstar.notSentCount, northstar.notSentPurchaseOrders.map((row) => [row.purchaseOrderId, row.status])], [1, [['LOCAL-DEMO-PO-023', 'approved']]])
     assert.ok(northstar.metrics.onTime.rate < northstar.metrics.onTimeCurrent.rate)
+    // The other approved orders are promised after today, outside the 90 days:
+    // no supplier lists one as not sent.
+    assert.deepEqual(scorecard.suppliers.filter((row) => row.notSentCount).map((row) => row.supplierId), ['LOCAL-DEMO-SUP-005'])
 
     // Stored business values are English codes and names, not Chinese values.
     const stored = JSON.stringify({ purchaseOrders, receipts, invoices, requests: await prisma.purchaseRequest.findMany({ where: { id: prefix }, include: { lines: true } }), salesOrders: await prisma.salesOrder.findMany({ where: { id: prefix }, include: { lines: true } }) })
@@ -271,6 +291,34 @@ test('the walkthrough scenario gives date-driven views real, relative, idempoten
     const { stdout } = await promisify(execFile)(process.execPath, ['scripts/setup-local-scenario.mjs', `--as-of=${AS_OF}`], { cwd: new URL('../..', import.meta.url), env })
     assert.match(stdout, new RegExp(`purchaseOrders=${purchaseOrders.length} .*asOf=${AS_OF} timeZone=${timeZone}`))
     assert.deepEqual(await rowCounts(prisma), firstCounts)
+
+    // Contracts are seeded only with the contracts capability on, dated from
+    // the same seed day: one ending soon, one with notice due, one in force.
+    assert.equal(await prisma.contract.count({ where: { tenantId } }), 0)
+    const contractsEnv = { ...env, FLOWCHAIN_ENABLE_CONTRACTS: 'true' }
+    assert.equal((await seedLocalScenario(prisma, contractsEnv)).contracts, 3)
+    const contracts = await prisma.contract.findMany({ where: { tenantId }, include: { supplier: true }, orderBy: { id: 'asc' } })
+    assert.deepEqual(contracts.map((row) => [row.id, row.number, row.supplier.name, row.type, row.status, row.version]), [
+      ['LOCAL-DEMO-CT-001', 'CT-DE000001', 'Acme Components', 'purchase_agreement', 'active', 2],
+      ['LOCAL-DEMO-CT-002', 'CT-DE000002', 'Horizon Logistics', 'service_agreement', 'active', 2],
+      ['LOCAL-DEMO-CT-003', 'CT-DE000003', 'Northstar Electronics', 'quality_agreement', 'active', 2],
+    ])
+    const { contractShownState } = await import('../../shared/contract-status.mjs')
+    const shown = contracts.map((row) => contractShownState(row, { today: AS_OF }))
+    assert.deepEqual(shown.map((view) => [view.state, view.daysUntilKeyDate]), [['ending', 45], ['notice_due', 20], ['active', 300]])
+    assert.equal(contracts[2].endDate.toISOString().slice(0, 10), shiftDay(AS_OF, 300))
+    // The owner is the supplier's business owner; Horizon has none.
+    assert.deepEqual(contracts.map((row) => row.ownerId), contracts.map((row) => row.supplier.businessOwnerId))
+    assert.ok(contracts[0].ownerId)
+    assert.equal(contracts[1].ownerId, null)
+    assert.equal(await prisma.auditLog.count({ where: { tenantId, entityType: 'Contract' } }), 6)
+    assert.doesNotMatch(JSON.stringify(contracts), CJK)
+    // A re-seed adds nothing and changes nothing.
+    const contractRows = () => prisma.contract.findMany({ where: { tenantId }, orderBy: { id: 'asc' } })
+    const before = JSON.stringify(await contractRows())
+    await seedLocalScenario(prisma, contractsEnv)
+    assert.equal(JSON.stringify(await contractRows()), before)
+    assert.equal(await prisma.auditLog.count({ where: { tenantId, entityType: 'Contract' } }), 6)
   } finally {
     await prisma.$disconnect()
   }

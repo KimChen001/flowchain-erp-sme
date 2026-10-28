@@ -2,7 +2,6 @@ import {
   listMasterItems,
   listMasterSuppliers,
   listMasterWarehouses,
-  listPaymentTerms,
 } from './master-data.mjs'
 import { currentTenantContext, resolveCurrentUser } from './context.mjs'
 
@@ -310,13 +309,11 @@ function ambiguousCards(itemResolution, supplierResolution) {
   return cards
 }
 
-function paymentTermsFor(db = {}, supplier = null) {
-  if (supplier?.paymentTermsId) {
-    return { paymentTermsId: supplier.paymentTermsId, paymentTermsSource: 'supplier_default', confidence: 'medium' }
-  }
-  const term = listPaymentTerms(db)[0]
-  return term
-    ? { paymentTermsId: term.id, paymentTermsSource: term.sourceType || 'default_reference', confidence: term.sourceType === 'default_reference' ? 'low' : 'medium' }
+// Only the supplier's recorded term. Without one the draft leaves the term
+// empty for a person to choose; the workspace's first term is not a choice.
+function paymentTermsFor(supplier = null) {
+  return supplier?.paymentTermsId
+    ? { paymentTermsId: supplier.paymentTermsId, paymentTermsSource: 'supplier_default', confidence: 'medium' }
     : { paymentTermsId: '', paymentTermsSource: 'missing', confidence: 'missing' }
 }
 
@@ -480,7 +477,7 @@ function buildPurchaseRequestDraft(db = {}, body = {}, options = {}) {
 function buildRfqDraft(db = {}, body = {}, options = {}) {
   const common = buildCommon(db, body, options)
   const suppliers = rfqSupplierCandidates(db, common.message, common.item)
-  const payment = paymentTermsFor(db, suppliers.matches.length === 1 ? suppliers.matches[0] : null)
+  const payment = paymentTermsFor(suppliers.matches.length === 1 ? suppliers.matches[0] : null)
   const missing = []
   if (!common.item) missing.push(missingField('item', common.itemResolution.matches.length > 1 ? '多个物料匹配项需要人工复核。' : '未匹配到物料主数据。'))
   if (common.quantity === null) missing.push(missingField('quantity', '缺少数量。'))

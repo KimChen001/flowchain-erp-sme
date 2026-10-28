@@ -12,7 +12,9 @@ import { A } from "../ui";
 import { useI18n } from "../../i18n/I18n";
 
 type Language = "en-US" | "zh-CN";
-// The renderer's own labels, in the UI language. Answer text comes from the server.
+// The renderer's own labels, in the answer's language (the question's), so a
+// Chinese question on the English interface reads all in Chinese; the UI
+// language when the answer has none. Answer text comes from the server.
 const rendererCopy = {
   "en-US": {
     severity: { info: "Info", warning: "Attention", risk: "Risk", success: "OK" },
@@ -106,7 +108,7 @@ function Action({ action, primary, onNavigate, onReviewActionDraft, language }: 
   }
   const request = reviewRequest(action.card);
   if (!request || !onReviewActionDraft) return null;
-  return <button type="button" onClick={() => onReviewActionDraft(request)} data-testid="ai-action-draft-preview" data-action-kind="generate_text_draft" className={primary ? "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold"} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{action.label || rendererCopy[language].textDraft}</button>;
+  return <button type="button" onClick={() => onReviewActionDraft(request)} data-testid="ai-action-draft-preview" data-action-kind="generate_text_draft" data-draft-type={action.card.draftType || ""} className={primary ? "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold text-white" : "min-h-9 rounded-lg px-3 py-2 text-xs font-semibold"} style={primary ? { background: A.blue } : { background: A.gray6, color: A.blue }}>{action.label || rendererCopy[language].textDraft}</button>;
 }
 
 // One part of a compound answer: its title and summary, in the answer
@@ -127,9 +129,11 @@ function Detail({ title, children, testId }: { title: string; children: ReactNod
 
 export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft, onFollowUp }: { response: AiResponseV2; onNavigate?: Navigate; onReviewActionDraft?: (request: ActionDraftPreviewRequest) => void; onFollowUp?: (prompt: string, skillHint?: string) => void }) {
   const { language: uiLanguage } = useI18n();
-  const language: Language = uiLanguage === "zh-CN" ? "zh-CN" : "en-US";
+  const language: Language = response?.language === "zh-CN" || response?.language === "en-US" ? response.language : uiLanguage === "zh-CN" ? "zh-CN" : "en-US";
   const copy = rendererCopy[language];
   if (!response || response.version !== "v2") return null;
+  const contextCount = response.contextCardCount ?? response.contextCards?.length ?? 0;
+  const limitationCount = response.limitationCount ?? response.dataLimitations.length;
   if (response.rag) return <RagAnswerCard rag={response.rag} title={response.conclusion.title} summary={response.conclusion.summary} />;
   const focused = toAiFocusedResponse(response, language);
   // A compound answer shows a section per part in place of the summary and
@@ -149,8 +153,9 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
         {isAiCapabilityAnswer(response) ? null : (
           <div className="mt-2 flex gap-2 text-[11px]" style={{ color: A.gray2 }}>
             <span>{fill(copy.evidenceCount, { count: response.realEvidenceCount ?? response.keyEvidence.length })}</span>
-            <span>· {fill(copy.contextCount, { count: response.contextCardCount ?? response.contextCards?.length ?? 0 })}</span>
-            <span>· {fill(copy.limitationCount, { count: response.limitationCount ?? response.dataLimitations.length })}</span>
+            {/* Only what there is: "System notes 0" says nothing. */}
+            {contextCount ? <span>· {fill(copy.contextCount, { count: contextCount })}</span> : null}
+            {limitationCount ? <span>· {fill(copy.limitationCount, { count: limitationCount })}</span> : null}
           </div>
         )}
       </section>
@@ -168,7 +173,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
       {focused.evidence.length || focused.businessImpact.length || focused.limitations.length ? <section className="space-y-2" data-testid="ai-focused-details">
         {focused.evidence.length ? <Detail title={fill(copy.evidenceDetails, { count: Math.min(5, focused.evidence.length) })} testId="ai-evidence-details">{focused.evidence.map((item) => <div key={item.id} className="text-[11px] leading-5"><EvidenceLink item={item} onNavigate={onNavigate} /><div style={{ color: A.gray2 }}>{[item.status, item.value, item.sourceLabel].filter((value) => value !== undefined && value !== null && value !== "").join(" · ")}</div></div>)}</Detail> : null}
         {focused.businessImpact.length ? <Detail title={copy.impactDetails} testId="ai-impact-details">{focused.businessImpact.map((item, index) => <div key={`${index}-${item.area}-${item.impact}`} className="text-[11px] leading-5"><div className="font-semibold" style={{ color: A.label }}>{item.area} · {item.impact}</div><div style={{ color: A.gray1 }}>{item.explanation}</div></div>)}</Detail> : null}
-        {focused.limitations.length ? <Detail title={copy.limitationDetails} testId="ai-limitations-details">{focused.limitations.map((item) => <div key={item.label} className="text-[11px] leading-5"><div className="font-semibold" style={{ color: A.label }}>{item.label}</div><div style={{ color: A.gray1 }}>{item.description}</div>{item.consequence ? <div style={{ color: A.gray2 }}>{item.consequence}</div> : null}</div>)}</Detail> : null}
+        {focused.limitations.length ? <Detail title={copy.limitationDetails} testId="ai-limitations-details">{focused.limitations.map((item, index) => <div key={item.code || `${item.label}-${index}`} className="text-[11px] leading-5"><div className="font-semibold" style={{ color: A.label }}>{item.label}</div><div style={{ color: A.gray1 }}>{item.description}</div>{item.consequence ? <div style={{ color: A.gray2 }}>{item.consequence}</div> : null}</div>)}</Detail> : null}
       </section> : null}
 
       {response.supplementalKnowledge && <RagAnswerCard rag={response.supplementalKnowledge.rag} title={response.supplementalKnowledge.title} summary={response.supplementalKnowledge.summary} />}

@@ -25,6 +25,7 @@ export function poLinesOf(po?: PurchaseOrder | null): PurchaseOrderLine[] {
       requiredDate: line.requiredDate,
       promisedDate: line.promisedDate || po.eta,
       status: line.status || "open",
+      supplierOverride: line.supplierOverride || null,
     }));
   }
 

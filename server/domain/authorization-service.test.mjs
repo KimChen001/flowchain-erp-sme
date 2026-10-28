@@ -61,6 +61,36 @@ test("master data write codes go to the roles that maintain master data, and nev
   assert.equal(viewer.permissions.some((code) => !["read", "read_sensitive"].includes(permissionCatalog.find((permission) => permission.code === code).action)), false)
 })
 
+test("contract codes follow the design's role table: three roles manage, everyone else reads, no amounts for viewers", () => {
+  const contracts = permissionCatalog.filter((permission) => permission.module === "contracts")
+  assert.deepEqual(contracts.map(({ code, resource, action, riskLevel }) => [code, resource, action, riskLevel]), [
+    ["contracts.contract.read", "contract", "read", "low"],
+    ["contracts.contract.manage", "contract", "manage", "high"],
+  ])
+  const grants = Object.fromEntries(defaultRoleTemplates.map((role) => [role.roleKey, role.permissions.filter((code) => code.startsWith("contracts.")).sort()]))
+  assert.deepEqual(grants, {
+    "workspace-administrator": ["contracts.contract.manage", "contracts.contract.read"],
+    "intake-uploader": [],
+    "intake-reviewer": [],
+    "operations-manager": ["contracts.contract.manage", "contracts.contract.read"],
+    "operations-specialist": ["contracts.contract.read"],
+    "procurement-specialist": ["contracts.contract.manage", "contracts.contract.read"],
+    "finance-specialist": ["contracts.contract.read"],
+    "read-only-viewer": ["contracts.contract.read"],
+  })
+  // Amounts on contracts follow procurement.prices.read, which the viewer lacks.
+  assert.equal(defaultRoleTemplates.find((role) => role.roleKey === "read-only-viewer").permissions.includes("procurement.prices.read"), false)
+  // Each code appears once in every template.
+  for (const role of defaultRoleTemplates) assert.equal(new Set(role.permissions).size, role.permissions.length, role.roleKey)
+})
+
+test("the contracts module shows for a reader of contracts when the capability is on", () => {
+  const capabilities = { contracts: { enabled: true, readReady: true } }
+  assert.equal(moduleVisibilityFor(actor(["contracts.contract.read"]), capabilities).contracts.visible, true)
+  assert.equal(moduleVisibilityFor(actor(["contracts.contract.read"]), { contracts: { enabled: false, readReady: true } }).contracts.visible, false)
+  assert.equal(moduleVisibilityFor(actor(["procurement.purchase_order.read"]), capabilities).contracts.visible, false)
+})
+
 test("operations manager can review sensitive approval evidence without settlement posting authority", () => {
   const manager = defaultRoleTemplates.find((role) => role.roleKey === "operations-manager")
   for (const permission of ["procurement.prices.read", "finance.amounts.read", "finance.partner_snapshot.read", "procurement.purchase_order.approve", "finance.settlement.approve"]) assert.ok(manager.permissions.includes(permission), permission)

@@ -58,7 +58,8 @@ test('an English skill answer renders with no Chinese, the source badge and the 
     const markup = client.render(answer(skillId))
     assert.doesNotMatch(markup, CJK, `${skillId} renders without Chinese`)
     assert.match(markup, /data-answer-source="workspace_rules"/, skillId)
-    assert.match(markup, /Answered from your workspace data/, skillId)
+    // The help answer reads no business data and says so.
+    assert.match(markup, skillId === 'capability_overview' ? /No workspace data was read for this answer/ : /Answered from your workspace data/, skillId)
   }
   // The help answer reads no records: no "Verifiable records 0" line.
   assert.doesNotMatch(client.render(answer('capability_overview')), /Verifiable records/)
@@ -120,4 +121,20 @@ test('a compound answer renders a section per part in place of the summary and t
   const single = client.render((await answers())('today_priorities'))
   assert.match(single, /data-testid="ai-focused-primary-items"/)
   assert.doesNotMatch(single, /data-testid="ai-answer-sections"/)
+})
+
+// The walkthrough on 2026-10-09: a Chinese question on the English interface
+// got a Chinese answer inside English labels ("Priorities", "Impact:", "Next
+// step"). The card's labels follow the answer's language.
+test("a Chinese answer on the English interface gets Chinese labels, and no count of nothing", async () => {
+  const client = await loadClient()
+  const answer = await answers()
+  const chinese = client.render(answer('today_priorities', { language: 'zh-CN' }))
+  for (const label of ['重点事项', '影响：', '下一步', '可核验业务证据']) assert.ok(chinese.includes(label), label)
+  for (const label of ['Priorities', 'Impact:', 'Next step', 'Verifiable records', 'View key evidence']) assert.ok(!chinese.includes(label), label)
+  const english = client.render(answer('today_priorities'))
+  assert.match(english, /Verifiable records 5/)
+  // "System notes 0" says nothing, so it is not shown.
+  assert.doesNotMatch(english, /System notes 0/)
+  assert.doesNotMatch(chinese, /系统说明 0/)
 })

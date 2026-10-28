@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, RefreshCw } from "lucide-react";
 import { apiJson } from "../../lib/api-client";
 import { useWarehouseNames } from "../../lib/useWarehouseNames";
@@ -9,6 +9,7 @@ import { useI18n } from "../../i18n/I18n";
 import { A, Card, Chip } from "../../components/ui";
 import { EntityLink } from "../../components/business/EntityLink";
 import { workspaceCopy } from "../../i18n/workspaceCopy";
+import { useReorderListCopy } from "./reorderListCopy";
 
 const copy = (label: string) =>
   workspaceCopy(
@@ -56,6 +57,7 @@ type Serial = {
 type Movement = {
   movementId?: string;
   movementType?: string;
+  reason?: string | null;
   sourceDocumentId?: string;
   relatedGrnId?: string;
   sku?: string;
@@ -92,32 +94,33 @@ const endpointFor: Record<string, { url: string; key: string }> = {
   exceptions: { url: "/api/inventory/exceptions", key: "exceptions" },
 };
 
-const emptyStateFor: Record<string, { title: string; description: string }> = {
+// Built when the page renders, so the copy follows the interface language.
+const emptyStateFor = (): Record<string, { title: string; description: string }> => ({
   overview: {
-    title: "当前工作区暂无库存余额",
-    description: "尚未读取到当前用户有权查看的仓库库存余额。",
+    title: copy("当前工作区暂无库存余额"),
+    description: copy("尚未读取到当前用户有权查看的仓库库存余额。"),
   },
   movements: {
-    title: "当前工作区暂无库存流水",
-    description: "库存余额可以由本地场景显式加载；只有正式入库、出库、调拨或调整过账后才会产生流水。",
+    title: copy("当前工作区暂无库存流水"),
+    description: copy("库存余额可以由本地场景显式加载；只有正式入库、出库、调拨或调整过账后才会产生流水。"),
   },
   warnings: {
-    title: "当前没有库存预警",
-    description: "当前可见库存余额未低于安全库存或再订货点。",
+    title: copy("当前没有库存预警"),
+    description: copy("当前可见库存余额未低于安全库存或再订货点。"),
   },
   lots: {
-    title: "当前工作区暂无批次记录",
-    description: "只有启用批次管理并完成正式库存过账后才会出现批次记录。",
+    title: copy("当前工作区暂无批次记录"),
+    description: copy("只有启用批次管理并完成正式库存过账后才会出现批次记录。"),
   },
   serials: {
-    title: "当前工作区暂无序列号记录",
-    description: "只有启用序列号管理并完成正式库存过账后才会出现序列号记录。",
+    title: copy("当前工作区暂无序列号记录"),
+    description: copy("只有启用序列号管理并完成正式库存过账后才会出现序列号记录。"),
   },
   exceptions: {
-    title: "当前没有库存异常",
-    description: "当前可见库存记录未产生需要处理的异常。",
+    title: copy("当前没有库存异常"),
+    description: copy("当前可见库存记录未产生需要处理的异常。"),
   },
-};
+});
 
 function quantity(item: Item) {
   return Number(item.availableQuantity ?? item.onHandQuantity ?? 0);
@@ -125,8 +128,23 @@ function quantity(item: Item) {
 function reorder(item: Item) {
   return Number(item.reorderPoint ?? item.safetyStock ?? 0);
 }
-function isShort(item: Item) {
-  return quantity(item) < reorder(item);
+// The safety stock and reorder point are one figure for the whole item, so
+// they are set against the item's available stock over every location shown,
+// as the reorder list sets them against the item's stock; a location's row is
+// never judged on its own (65 EA over A-01 and an unlocated record is above a
+// reorder point of 40, though each row alone is below it).
+function availableBySku(items: Item[]) {
+  const totals = new Map<string, number>();
+  for (const item of items) totals.set(item.sku, (totals.get(item.sku) || 0) + quantity(item));
+  return totals;
+}
+// Below the safety stock, or at or below the reorder point, as the reorder
+// list and the assistant judge it. 0 means none is recorded.
+function isShort(item: Item, totals: Map<string, number>) {
+  const available = totals.get(item.sku) ?? quantity(item);
+  const safetyStock = Number(item.safetyStock || 0);
+  const reorderPoint = Number(item.reorderPoint || 0);
+  return (safetyStock > 0 && available < safetyStock) || (reorderPoint > 0 && available <= reorderPoint);
 }
 
 export default function InventoryPage({
@@ -142,6 +160,7 @@ export default function InventoryPage({
   const view = endpointFor[initialView] ? initialView : "empty";
   const warehouseName = useWarehouseNames();
   const { language, locale, timezone } = useI18n();
+  const reorderCopy = useReorderListCopy();
   const [searchParams, setSearchParams] = useSearchParams();
   const [rows, setRows] = useState<any[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -206,9 +225,10 @@ export default function InventoryPage({
     if (focus?.entityId) setSelectedSku(focus.entityId);
   }, [focus?.entityId]);
   const items = rows as Item[];
+  const totals = useMemo(() => availableBySku(items), [items]);
   const visible = useMemo(
-    () => (view === "warnings" ? items.filter(isShort) : rows),
-    [items, rows, view],
+    () => (view === "warnings" ? items.filter((item) => isShort(item, totals)) : rows),
+    [items, rows, totals, view],
   );
   const selected =
     view === "overview" || view === "warnings"
@@ -216,20 +236,22 @@ export default function InventoryPage({
           (row) => row.sku === selectedSku || row.itemId === selectedSku,
         )
       : null;
+  // Each filter chip names one value, so its label is singular.
+  const english = document.documentElement.lang === "en-US";
   const activeFilters = [
-    ["relatedSalesOrderId", "销售订单"],
-    ["sourceDocumentId", "来源单据"],
-    ["sourceDocumentLineId", "来源行"],
-    ["postingBatchId", "Posting Batch"],
-    ["sku", "SKU"],
-    ["warehouseId", "仓库"],
-    ["locationKey", "库位"],
-    ["movementType", "流水类型"],
-    ["itemId", "物料"],
-    ["status", "状态"],
-  ].flatMap(([name, label]) =>
+    { name: "relatedSalesOrderId", en: "Sales order", zh: "销售订单" },
+    { name: "sourceDocumentId", en: "Source document", zh: "来源单据" },
+    { name: "sourceDocumentLineId", en: "Source line", zh: "来源行" },
+    { name: "postingBatchId", en: "Posting batch", zh: "过账批次" },
+    { name: "sku", en: "SKU", zh: "SKU" },
+    { name: "warehouseId", en: "Warehouse", zh: "仓库" },
+    { name: "locationKey", en: "Location", zh: "库位" },
+    { name: "movementType", en: "Movement type", zh: "流水类型" },
+    { name: "itemId", en: "Item", zh: "物料" },
+    { name: "status", en: "Status", zh: "状态" },
+  ].flatMap(({ name, en, zh }) =>
     searchParams.get(name)
-      ? [{ name, label, value: searchParams.get(name)! }]
+      ? [{ name, label: english ? en : zh, value: searchParams.get(name)! }]
       : [],
   );
   const clearFilters = () => {
@@ -237,9 +259,9 @@ export default function InventoryPage({
     supportedFilterNames.forEach((name) => next.delete(name));
     setSearchParams(next);
   };
-  const emptyState = emptyStateFor[view] || {
-    title: "当前工作区暂无库存记录",
-    description: "页面不会用固定 SKU、批次、序列号或移动记录补足空数据。",
+  const emptyState = emptyStateFor()[view] || {
+    title: copy("当前工作区暂无库存记录"),
+    description: copy("页面不会用固定 SKU、批次、序列号或移动记录补足空数据。"),
   };
 
   return (
@@ -248,7 +270,7 @@ export default function InventoryPage({
         <div>
           <h2 className="text-lg font-semibold">{copy("库存管理")}</h2>
           <p className="mt-1 text-xs" style={{ color: A.sub }}>
-            {copy("仅显示库存运行时仓库中的正式记录；没有记录时保持为空。")}
+            {copy("仅显示已过账的库存记录；没有记录时保持为空。")}
           </p>
         </div>
         <button
@@ -260,6 +282,11 @@ export default function InventoryPage({
           <RefreshCw size={16} />
         </button>
       </div>
+      {view === "warnings" && (
+        <Link to="/app/inventory/reorder" data-testid="inventory-warnings-reorder-link" className="block text-xs font-semibold" style={{ color: A.blue }}>
+          {reorderCopy("fromWarnings")}
+        </Link>
+      )}
       {activeFilters.length > 0 && (
         <Card className="p-4" data-testid="inventory-active-filters">
           <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -267,7 +294,7 @@ export default function InventoryPage({
             {activeFilters.map((filter) => (
               <Chip
                 key={filter.name}
-                label={`${copy(filter.label)}: ${filter.value}`}
+                label={`${filter.label}: ${filter.value}`}
                 color={A.blue}
                 bg="#eef5ff"
               />
@@ -285,20 +312,20 @@ export default function InventoryPage({
       )}
       {state === "loading" && (
         <Card className="p-8 text-sm" style={{ color: A.sub }}>
-          {copy("正在读取库存运行时数据...")}
+          {copy("正在读取库存...")}
         </Card>
       )}
       {state === "error" && (
         <Card className="p-8 text-sm" style={{ color: A.red }}>
-          {copy("库存数据读取失败。请检查运行时服务后重试。")}
+          {copy("库存数据读取失败，请稍后重试。")}
         </Card>
       )}
       {state === "ready" && visible.length === 0 && (
         <Card className="p-10 text-center">
           <Boxes className="mx-auto mb-3" size={28} color={A.gray2} />
-          <div className="text-sm font-semibold">{copy(emptyState.title)}</div>
+          <div className="text-sm font-semibold">{emptyState.title}</div>
           <p className="mt-2 text-xs" style={{ color: A.sub }}>
-            {copy(emptyState.description)}
+            {emptyState.description}
           </p>
         </Card>
       )}
@@ -310,17 +337,17 @@ export default function InventoryPage({
               <thead>
                 <tr style={{ borderBottom: `1px solid ${A.border}` }}>
                   {[
-                    "SKU / 物料",
-                    "仓库 / 库位",
-                    "在手量",
-                    "预留量",
-                    "可用量",
-                    "安全库存 / 再订货点",
-                    "状态",
-                    "操作",
+                    copy("SKU / 物料"),
+                    copy("仓库 / 库位"),
+                    copy("在手量"),
+                    copy("预留量"),
+                    copy("可用量"),
+                    copy("安全库存 / 再订货点"),
+                    copy("状态"),
+                    copy("操作"),
                   ].map((h) => (
                     <th key={h} className="px-4 py-3 text-left">
-                      {copy(h)}
+                      {h}
                     </th>
                   ))}
                 </tr>
@@ -369,7 +396,8 @@ export default function InventoryPage({
                       {Number(item.safetyStock || 0)} / {reorder(item)}
                     </td>
                     <td className="px-4 py-3">
-                      {view === "warnings" && isShort(item) ? (
+                      {/* Both pages say when stock is below safety stock or at the reorder point, as the warnings page lists it. */}
+                      {isShort(item, totals) ? (
                         <Chip label="需补货" color={A.orange} bg="#fff7e8" />
                       ) : (
                         <Chip
@@ -398,7 +426,7 @@ export default function InventoryPage({
         )}
       {state === "ready" && visible.length > 0 && view === "lots" && (
         <SimpleTable
-          headers={["批次", "SKU", "物料", "数量", "到期日", "状态"]}
+          headers={[copy("批次"), "SKU", copy("物料"), copy("数量"), copy("到期日"), copy("状态")]}
           rows={(visible as Lot[]).map((row) => [
             row.lotId || row.lot,
             <EntityLink kind="item" id={row.sku}>
@@ -413,7 +441,7 @@ export default function InventoryPage({
       )}
       {state === "ready" && visible.length > 0 && view === "serials" && (
         <SimpleTable
-          headers={["序列号", "SKU", "仓库", "状态"]}
+          headers={[copy("序列号"), "SKU", copy("仓库"), copy("状态")]}
           rows={(visible as Serial[]).map((row) => [
             row.serialId || row.sn,
             <EntityLink kind="item" id={row.sku}>
@@ -427,18 +455,18 @@ export default function InventoryPage({
       {state === "ready" && visible.length > 0 && view === "movements" && (
         <SimpleTable
           headers={[
-            "移动类型",
-            "来源单据",
+            copy("移动类型"),
+            copy("来源单据"),
             "SKU",
-            "仓库 / 库位",
-            "入库",
-            "出库",
-            "日期",
-            "状态",
+            copy("仓库 / 库位"),
+            copy("入库"),
+            copy("出库"),
+            copy("日期"),
+            copy("状态"),
           ]}
           rows={(visible as Movement[]).map((row) => [
             // The movement's own id is an internal UUID; show what moved it instead.
-            movementTypeLabel(row.movementType || "", language),
+            movementTypeLabel(row.movementType || "", language, row.reason),
             row.relatedGrnId || (row.sourceDocumentId && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(row.sourceDocumentId) ? row.sourceDocumentId : "—"),
             <EntityLink kind="item" id={row.sku}>
               {row.sku}
@@ -453,7 +481,7 @@ export default function InventoryPage({
       )}
       {state === "ready" && visible.length > 0 && view === "exceptions" && (
         <SimpleTable
-          headers={["异常单号", "SKU", "物料", "数量影响", "原因", "状态"]}
+          headers={[copy("异常单号"), "SKU", copy("物料"), copy("数量影响"), copy("原因"), copy("状态")]}
           rows={(visible as InventoryException[]).map((row) => [
             row.id,
             <EntityLink kind="item" id={row.sku}>
@@ -472,7 +500,7 @@ export default function InventoryPage({
             <AlertTriangle
               size={15}
               color={
-                view === "warnings" && isShort(selected) ? A.orange : A.green
+                isShort(selected, totals) ? A.orange : A.green
               }
             />
             <h3 className="text-sm font-semibold">{copy("库存详情")} · {selected.sku}</h3>
@@ -507,7 +535,7 @@ function SimpleTable({ headers, rows }: { headers: string[]; rows: any[][] }) {
           <tr style={{ borderBottom: `1px solid ${A.border}` }}>
             {headers.map((h) => (
               <th key={h} className="px-4 py-3 text-left">
-                {copy(h)}
+                {h}
               </th>
             ))}
           </tr>

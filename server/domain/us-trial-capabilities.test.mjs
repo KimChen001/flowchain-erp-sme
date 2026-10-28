@@ -5,14 +5,16 @@ import test from "node:test";
 import { capabilityRegistry, capabilityRegistryForEnvironment } from "./capability-registry.mjs";
 
 // The documented US trial set: receiving posting (desktop receiving), outbound
-// posting, inventory operations and operational finance. Everything else stays
-// off, mobile operations included (decision R4, 2026-10-04): POs are approved
-// and received on the desktop.
+// posting, inventory operations, operational finance, and the CSV import of
+// master data and opening stock. Everything else stays off, mobile operations
+// included (decision R4, 2026-10-04): POs are approved and received on the
+// desktop.
 const US_TRIAL_FLAGS = [
   "FLOWCHAIN_ENABLE_DB_RECEIVING_POSTING",
   "FLOWCHAIN_ENABLE_DB_OUTBOUND_POSTING",
   "FLOWCHAIN_ENABLE_DB_INVENTORY_OPERATIONS",
   "FLOWCHAIN_ENABLE_DB_OPERATIONAL_FINANCE",
+  "FLOWCHAIN_ENABLE_DATA_IMPORT",
 ];
 
 const parseExample = (relativePath) => Object.fromEntries(
@@ -50,6 +52,7 @@ for (const example of ["deploy/env.production.example", ".env.example", ".env.lo
       "payable-obligation",
       "customer-invoice",
       "receivable-obligation",
+      "data-import",
     ]) assert.ok(enabled.includes(id), `${example} ${id}`);
 
     const trialFlags = new Set(US_TRIAL_FLAGS);
@@ -59,6 +62,19 @@ for (const example of ["deploy/env.production.example", ".env.example", ".env.lo
     assert.ok(outsideTrial.includes("mobile-sync"));
     assert.ok(outsideTrial.includes("mobile-operations"));
     assert.equal(env.FLOWCHAIN_ENABLE_DB_MOBILE_OPERATIONS, "false", `${example} keeps mobile operations off`);
+    assert.ok(outsideTrial.includes("contracts"));
     for (const id of outsideTrial) assert.ok(!enabled.includes(id), `${example} must keep ${id} off`);
+    // Contracts are named and off, so an operator sees the switch (D10).
+    assert.equal(env.FLOWCHAIN_ENABLE_CONTRACTS, "false", `${example} FLOWCHAIN_ENABLE_CONTRACTS`);
   });
 }
+
+test("contracts need an explicit FLOWCHAIN_ENABLE_CONTRACTS=true, and the local walkthrough turns them on", () => {
+  const contracts = capabilityRegistry.find((entry) => entry.id === "contracts");
+  assert.deepEqual([contracts.environmentFlag, contracts.requiresExplicitEnable, contracts.databaseOnly, contracts.enabled], ["FLOWCHAIN_ENABLE_CONTRACTS", true, true, false]);
+  assert.equal(enabledIds({}).includes("contracts"), false);
+  assert.equal(enabledIds({ FLOWCHAIN_ENABLE_CONTRACTS: "false" }).includes("contracts"), false);
+  assert.equal(enabledIds({ FLOWCHAIN_ENABLE_CONTRACTS: "true" }).includes("contracts"), true);
+  const walkthrough = readFileSync(resolve(import.meta.dirname, "../..", "scripts/walkthrough-local.mjs"), "utf8");
+  assert.match(walkthrough, /FLOWCHAIN_ENABLE_CONTRACTS: "true"/);
+});

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { BUSINESS_QUERY_GOALS, emptyBusinessQueryPlan, validateBusinessQueryPlan } from './ai-business-query-plan.mjs'
-import { resolveBusinessTimeWindow } from './ai-business-time-window.mjs'
+import { detectBusinessTimeWindow, resolveBusinessTimeWindow } from './ai-business-time-window.mjs'
 import { buildDeterministicBusinessQueryPlan, planBusinessQuery } from './ai-semantic-query-planner.mjs'
 
 const suppliers = [
@@ -120,7 +120,15 @@ test('time windows fall back to America/New_York when the workspace timezone is 
   assert.deepEqual(missing.limitations, [])
   const invalid = resolveBusinessTimeWindow('today', { now, timezone: 'Not/AZone' })
   assert.equal(invalid.timezone, 'America/New_York')
-  assert.ok(invalid.limitations.some((item) => item.includes('America/New_York')))
+  assert.deepEqual(invalid.limitations, ['workspace_timezone_invalid:America/New_York:Not/AZone'])
+})
+
+test('recent and soon resolve to the next 7 days with a limitation code, never wording', () => {
+  const now = new Date('2026-07-24T08:00:00.000Z')
+  for (const [expression, code] of [['Which suppliers need payment soon?', 'time_window_soon_default'], ['哪些供应商很快需要付款？', 'time_window_soon_default'], ['Show recent supplier payments.', 'time_window_recent_default'], ['最近哪些供应商需要付款？', 'time_window_recent_default']]) {
+    assert.equal(detectBusinessTimeWindow(expression), 'next_7_days', expression)
+    assert.deepEqual(resolveBusinessTimeWindow('next_7_days', { now, expression }).limitations, [code], expression)
+  }
 })
 
 test('domain words after supplier or vendor are not unresolved supplier names', () => {
@@ -177,4 +185,17 @@ test('a supplier code or name matches only as a whole phrase', () => {
   assert.deepEqual(shortScope('Which payments to HP are blocked?').entityIds, ['supplier-hp'])
   assert.deepEqual(shortScope('HP 的付款被阻断了吗？').entityIds, ['supplier-hp'])
   assert.notEqual(shortScope('Which supplier payments are due in March?').source, 'explicit')
+})
+
+test('time windows also give their workspace calendar days, both included', () => {
+  // 22:00 on Wednesday Oct 7 in New York is already Oct 8 in UTC.
+  const now = new Date('2026-10-08T02:00:00.000Z')
+  const days = (kind) => { const window = resolveBusinessTimeWindow(kind, { now, timezone: 'America/New_York' }); return [window.startDay, window.endDay] }
+  assert.deepEqual(days('today'), ['2026-10-07', '2026-10-07'])
+  assert.deepEqual(days('current_week'), ['2026-10-05', '2026-10-11'])
+  assert.deepEqual(days('next_7_days'), ['2026-10-07', '2026-10-13'])
+  assert.deepEqual(days('next_30_days'), ['2026-10-07', '2026-11-05'])
+  assert.deepEqual(days('month_end'), ['2026-10-07', '2026-10-31'])
+  assert.deepEqual(days('overdue'), [null, '2026-10-06'])
+  assert.deepEqual(days('all'), [null, null])
 })

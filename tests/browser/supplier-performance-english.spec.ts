@@ -2,9 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 
 // The supplier Performance tab and the Suppliers performance table in English,
 // on the walkthrough scenario (seeded for today by the product recovery API).
-// Northstar has 6 received lines in the last 90 days: 4 on time against the
-// date first promised and 6 against the current date (OTIF 3 against 5),
-// because two orders were re-promised and arrived on the new date.
+// Northstar has 6 deliveries (one PO line each) in the last 90 days: 4 on time
+// against the date first on the PO and 6 against the current date (OTIF 3
+// against 5), because two orders were re-promised and arrived on the new date.
+// PO-023, approved and due yesterday, was never sent to the supplier and has
+// nothing received: it is in no figure and is listed as not sent (owner
+// decision 2026-10-06).
 const CJK = /[㐀-鿿]/;
 
 async function signIn(page: Page, language: "en-US" | "zh-CN" = "en-US") {
@@ -22,39 +25,51 @@ async function signIn(page: Page, language: "en-US" | "zh-CN" = "en-US") {
   }, session);
 }
 
-test("the supplier Performance tab shows on time against the original promise and the current date, with the lines behind it", async ({ page }) => {
+test("the supplier Performance tab shows on time against the date on the PO and the current date, with the deliveries behind it", async ({ page }) => {
   await signIn(page);
   await page.goto("/app/master-data/suppliers/LOCAL-DEMO-SUP-005");
   await page.getByTestId("supplier-tab-performance").click();
   const panel = page.getByTestId("supplier-performance-panel");
   await expect(panel.getByRole("heading", { name: "Supplier performance" })).toBeVisible();
+  // Until suppliers confirm dates, the measure names the date on the PO.
+  await expect(panel.getByTestId("supplier-performance-basis")).toContainText("Measured against the date on the PO, which may be the buyer's need date.");
   const onTime = panel.getByTestId("supplier-performance-on-time");
-  await expect(onTime).toContainText("On time vs original promise · vs current date");
+  await expect(onTime).toContainText("On time vs the date on the PO · vs current date");
   await expect(onTime).toContainText("66.7% · 100%");
   await expect(onTime).toContainText("4/6 · 6/6");
+  await expect(onTime).not.toContainText("overdue");
   const otif = panel.getByTestId("supplier-performance-otif");
-  await expect(otif).toContainText("OTIF vs original promise · vs current date");
+  await expect(otif).toContainText("OTIF vs the date on the PO · vs current date");
   await expect(otif).toContainText("50% · 83.3%");
   await expect(panel).toContainText("2 lines had their promised date revised after the PO was issued.");
   await expect(panel.getByTestId("supplier-performance-on-time-interval")).toContainText("95% range");
 
-  // The figure drills down to its lines: the re-promised orders are marked.
+  // The figure drills down to its deliveries and their lines: the re-promised
+  // orders are marked.
   await onTime.click();
   const drilldown = panel.getByTestId("supplier-performance-drilldown");
-  await expect(drilldown).toContainText("Lines behind On time vs original promise");
+  await expect(drilldown).toContainText("Deliveries behind On time vs the date on the PO");
   await panel.getByTestId("supplier-performance-lines").click();
   const revised = drilldown.getByTestId("supplier-performance-line-LOCAL-DEMO-PO-033-LINE-001");
   await expect(revised).toContainText("Revised");
   await expect(revised).toContainText("Late");
+  await expect(drilldown.getByTestId("supplier-performance-line-LOCAL-DEMO-PO-023-LINE-001")).toHaveCount(0);
+
+  // PO-023 is listed apart, as not sent to the supplier.
+  await panel.getByTestId("supplier-performance-not-sent").click();
+  await expect(panel.getByTestId("supplier-performance-not-sent")).toHaveText("Not sent to supplier: 1");
+  await expect(drilldown.getByRole("heading", { name: "Not sent to supplier" })).toBeVisible();
+  await expect(drilldown.getByTestId("supplier-performance-not-sent-LOCAL-DEMO-PO-023-LINE-001")).toContainText("LDM-005");
 
   // The definition explains the rule in plain English.
   await panel.getByTestId("supplier-performance-definition-toggle").click();
   await expect(panel.getByTestId("supplier-performance-definition")).toContainText("original promised date");
+  await expect(panel.getByTestId("supplier-performance-definition")).toContainText("may be the buyer's need date");
 
-  // A shorter period has too few lines for percentages.
+  // A shorter period has too few deliveries for percentages.
   await panel.getByRole("button", { name: "Last 30 days" }).click();
-  await expect(panel.getByTestId("supplier-performance-insufficient")).toContainText("Insufficient sample · 3 lines");
-  await expect(panel.getByTestId("supplier-performance-on-time")).toContainText("Insufficient sample");
+  await expect(panel.getByTestId("supplier-performance-insufficient")).toContainText("Fewer than 5 deliveries · 3 deliveries");
+  await expect(panel.getByTestId("supplier-performance-on-time")).toContainText("Fewer than 5 deliveries");
 
   const text = await panel.innerText();
   expect(text.split(/\n+/).filter((line) => CJK.test(line))).toEqual([]);
@@ -64,11 +79,12 @@ test("Reports › Supplier analytics lists every supplier's performance for the 
   await signIn(page);
   await page.goto("/app/reports/suppliers");
   const table = page.getByTestId("supplier-performance-table");
+  await expect(table.getByTestId("supplier-performance-basis")).toContainText("may be the buyer's need date");
   const northstar = table.getByTestId("supplier-performance-row-LOCAL-DEMO-SUP-005");
   await expect(northstar).toContainText("66.7%");
   await expect(northstar).toContainText("100%");
   await expect(northstar).toContainText("83.3%");
-  await expect(table.getByTestId("supplier-performance-row-LOCAL-DEMO-SUP-001")).toContainText("Insufficient sample");
+  await expect(table.getByTestId("supplier-performance-row-LOCAL-DEMO-SUP-001")).toContainText("Fewer than 5 deliveries");
   await northstar.getByRole("button", { name: "View lines" }).click();
   await expect(table.getByTestId("supplier-performance-figures")).toBeVisible();
   const text = await table.innerText();
@@ -81,14 +97,17 @@ test("the Performance tab reads in Chinese with the same figures and number form
   await page.getByTestId("supplier-tab-performance").click();
   const panel = page.getByTestId("supplier-performance-panel");
   await expect(panel.getByRole("heading", { name: "供应商绩效" })).toBeVisible();
+  await expect(panel.getByTestId("supplier-performance-basis")).toContainText("采购方的需求日期");
   const onTime = panel.getByTestId("supplier-performance-on-time");
-  await expect(onTime).toContainText("按原始承诺准时率 · 按当前日期");
+  await expect(onTime).toContainText("按采购订单日期准时率 · 按当前日期");
   // Language changes the copy, not the workspace's number format.
   await expect(onTime).toContainText("66.7% · 100%");
-  await expect(panel.getByTestId("supplier-performance-otif")).toContainText("按原始承诺 OTIF");
+  await expect(panel.getByTestId("supplier-performance-otif")).toContainText("按采购订单日期 OTIF");
+  await expect(panel.getByTestId("supplier-performance-not-sent")).toHaveText("未发给供应商：1 张");
   await panel.getByTestId("supplier-performance-definition-toggle").click();
   await expect(panel.getByTestId("supplier-performance-definition")).toContainText("原始承诺交期");
-  await expect(panel).not.toContainText("On time vs original promise");
+  await expect(panel.getByTestId("supplier-performance-definition")).toContainText("采购方的需求日期");
+  await expect(panel).not.toContainText("On time vs the date on the PO");
 });
 
 test("changing a promised date on an issued PO needs a reason and records a revision", async ({ page }) => {

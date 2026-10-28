@@ -1,0 +1,56 @@
+import { PilotIdentityError } from "../domain/pilot-identity.mjs";
+import { PriceHistoryError, createPriceHistoryReadService } from "../domain/price-history-read-service.mjs";
+import { getPrismaClient } from "../persistence/prisma-client.mjs";
+
+// GET /api/procurement/price-history?key=itemId|unit|currency (repeated, at
+// most 50): each item's latest prices on the workspace's own issued purchase
+// orders, for the forms where a person enters or reviews a price. A PO page
+// passes excludePurchaseOrder=<its id>: its own PO is left out and, once it
+// is issued, so is every PO dated after it. A supplier's page reads that
+// supplier's POs only: each key may end in |supplierId, or supplierId=<id>
+// names the supplier for every key without one (answered under the key
+// with |supplierId appended). Display only: no form fills a price from it.
+
+function knownError(error) {
+  return error instanceof PriceHistoryError ||
+    error instanceof PilotIdentityError ||
+    error?.name === "AuthorizationError";
+}
+
+async function priceHistoryService(ctx) {
+  if (ctx.priceHistoryService) return ctx.priceHistoryService;
+  const prisma = ctx.priceHistoryPrisma || await getPrismaClient(ctx.env || process.env);
+  return createPriceHistoryReadService({ prisma, env: ctx.env || process.env });
+}
+
+// GET /api/procurement/item-supplier-orders?itemId=<id>: the last issued
+// purchase order of that item with each supplier (date and PO number, no
+// prices), for the purchase request form that lists an item's approved
+// sources when none is preferred.
+const LAST_ORDERS_PATH = "/api/procurement/item-supplier-orders";
+
+export async function handlePriceHistoryRoute(ctx) {
+  if (ctx.req.method !== "GET" || !["/api/procurement/price-history", LAST_ORDERS_PATH].includes(ctx.url.pathname)) return false;
+  if (!ctx.identity?.authenticated) {
+    ctx.send(ctx.res, 401, { code: "AUTHENTICATION_REQUIRED", message: "Authentication is required." });
+    return true;
+  }
+  try {
+    const service = await priceHistoryService(ctx);
+    if (ctx.url.pathname === LAST_ORDERS_PATH) {
+      ctx.send(ctx.res, 200, await service.lastOrders(ctx.url.searchParams.get("itemId") || "", { identity: ctx.identity }));
+      return true;
+    }
+    const excludePurchaseOrderId = ctx.url.searchParams.get("excludePurchaseOrder") || null;
+    const supplierId = ctx.url.searchParams.get("supplierId") || null;
+    ctx.send(ctx.res, 200, await service.read(ctx.url.searchParams.getAll("key"), { identity: ctx.identity }, { excludePurchaseOrderId, supplierId }));
+  } catch (error) {
+    if (knownError(error)) {
+      ctx.send(ctx.res, error.status || 400, { code: error.code || "PRICE_HISTORY_FAILED", message: error.message });
+    } else {
+      ctx.reportError?.(error);
+      ctx.send(ctx.res, 500, { code: "PRICE_HISTORY_FAILED", message: "The price history could not be loaded." });
+    }
+  }
+  return true;
+}

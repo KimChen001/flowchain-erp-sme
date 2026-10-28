@@ -6,7 +6,7 @@ import { useI18n } from "../../i18n/I18n";
 import { navigationIntentFromEvidenceLink, normalizeEvidenceLinks, type CanonicalFocusTarget } from "../../lib/evidenceLinks";
 import type { PrefillEntry } from "../../lib/prefill";
 import { PrefillSourceChip } from "../../components/prefill/PrefillSource";
-import { MESSAGE_DRAFT_TYPES, MESSAGE_FIELDS, draftLines, mailtoLink, messageKey, messageText, recordActionDraftUse } from "./draftMessage";
+import { MESSAGE_DRAFT_TYPES, MESSAGE_FIELDS, draftBasis, draftLines, mailtoLink, messageKey, messageText, recordActionDraftUse } from "./draftMessage";
 
 export type ActionDraftPreviewRequest = {
   type: string;
@@ -79,6 +79,9 @@ const ZH: Record<string, string> = {
   "No draft preview": "暂无草稿预览",
   "Supplier message": "供应商消息", "To": "收件人", "Subject": "主题", "Message": "消息内容",
   "Open lines": "未到货明细", "Item": "物料", "Remaining": "未到数量", "Promised date": "承诺日期", "Originally {date}": "原定 {date}",
+  "Order": "订单", "Received": "已收", "{received} of {ordered}": "{received}/{ordered}",
+  "No email on file for this supplier. Add one to the supplier record, or type it here.": "该供应商没有登记邮箱。请在供应商资料中补充，或在此填写。",
+  "Based on your documents": "依据的资料",
   "Open in email": "在邮件中打开", "Copied": "已复制",
   "Purchase order": "采购订单", "Invoice": "发票",
   "Open in email starts a message in your own mail app. FlowChain does not send anything.": "“在邮件中打开”会在你自己的邮件程序中新建邮件；FlowChain 不会发送任何内容。",
@@ -229,6 +232,11 @@ export function ActionDraftReviewShell({
   const messagePayload = activeDraft?.payload || {};
   const bodyKey = messageKey(messagePayload);
   const lines = draftLines(messagePayload);
+  // A message about several orders names each line's order; a line partly
+  // received says how much arrived.
+  const showOrder = lines.some((line) => line.po);
+  const showReceived = lines.some((line) => Number(line.received) > 0);
+  const basis = draftBasis(messagePayload);
   const mailto = isMessageDraft ? mailtoLink(messagePayload) : null;
   const suggestion = (field: string) => activeDraft?.prefill?.[field];
 
@@ -371,6 +379,7 @@ export function ActionDraftReviewShell({
                   <span className="fc-caption" style={{ color: A.gray2 }}>{tr("To")}{messagePayload.contactName ? ` · ${String(messagePayload.contactName)}` : ""}</span>
                   <input data-testid="action-draft-to" type="email" value={String(messagePayload.to ?? "")} onChange={(event) => updatePayloadField("to", event.target.value, "")} className="mt-1 w-full rounded-md border px-2 py-1 text-[12px] font-semibold outline-none" style={{ borderColor: A.border, color: A.label }} />
                   <PrefillSourceChip entry={suggestion("to")} current={String(messagePayload.to ?? "")} testId="action-draft-source-to" />
+                  {messagePayload.toMissing && !String(messagePayload.to ?? "").trim() ? <span data-testid="action-draft-to-missing" className="mt-1 block text-[11px] leading-4" style={{ color: A.orange }}>{tr("No email on file for this supplier. Add one to the supplier record, or type it here.")}</span> : null}
                 </label>
                 <label className="block rounded-lg border px-3 py-2" style={{ borderColor: A.border }}>
                   <span className="fc-caption" style={{ color: A.gray2 }}>{tr("Subject")}</span>
@@ -387,13 +396,15 @@ export function ActionDraftReviewShell({
                 <div className="overflow-x-auto rounded-lg border" style={{ borderColor: A.border }} data-testid="action-draft-lines">
                   <table className="w-full text-left text-[11px]">
                     <caption className="px-3 pt-2 text-left text-[11px] font-semibold" style={{ color: A.gray1 }}>{tr("Open lines")}</caption>
-                    <thead><tr style={{ color: A.gray2 }}><th className="px-3 py-1 font-medium">SKU</th><th className="px-3 py-1 font-medium">{tr("Item")}</th><th className="px-3 py-1 text-right font-medium">{tr("Remaining")}</th><th className="px-3 py-1 font-medium">{tr("Promised date")}</th></tr></thead>
+                    <thead><tr style={{ color: A.gray2 }}>{showOrder ? <th className="px-3 py-1 font-medium">{tr("Order")}</th> : null}<th className="px-3 py-1 font-medium">SKU</th><th className="px-3 py-1 font-medium">{tr("Item")}</th><th className="px-3 py-1 text-right font-medium">{tr("Remaining")}</th>{showReceived ? <th className="px-3 py-1 text-right font-medium">{tr("Received")}</th> : null}<th className="px-3 py-1 font-medium">{tr("Promised date")}</th></tr></thead>
                     <tbody>
                       {lines.map((line, index) => (
                         <tr key={line.lineId || `${line.sku}-${index}`} className="border-t" style={{ borderColor: A.border, color: A.label }}>
+                          {showOrder ? <td className="px-3 py-1">{line.po || "—"}</td> : null}
                           <td className="px-3 py-1 font-semibold">{line.sku || "—"}</td>
                           <td className="px-3 py-1">{line.itemName || "—"}</td>
                           <td className="px-3 py-1 text-right">{line.remaining === null || line.remaining === undefined ? "—" : `${Number(line.remaining).toLocaleString(locale)}${line.unit ? ` ${line.unit}` : ""}`}</td>
+                          {showReceived ? <td className="px-3 py-1 text-right">{Number(line.received) > 0 && Number(line.ordered) > 0 ? tr("{received} of {ordered}", { received: Number(line.received).toLocaleString(locale), ordered: Number(line.ordered).toLocaleString(locale) }) : "—"}</td> : null}
                           <td className="px-3 py-1">{line.promisedDate ? dayText(line.promisedDate, locale) : "—"}{line.originalPromisedDate && line.originalPromisedDate !== line.promisedDate ? <span style={{ color: A.gray2 }}> · {tr("Originally {date}", { date: dayText(line.originalPromisedDate, locale) })}</span> : null}</td>
                         </tr>
                       ))}
@@ -401,6 +412,7 @@ export function ActionDraftReviewShell({
                   </table>
                 </div>
               ) : null}
+              {basis.length ? <p data-testid="action-draft-basis" className="text-[11px] leading-5" style={{ color: A.gray1 }}>{tr("Based on your documents")}: {basis.map((entry) => `${entry.title}${entry.section ? ` › ${entry.section}` : ""}`).join("; ")}</p> : null}
               <p className="text-[11px] leading-5" style={{ color: A.gray2 }}>
                 {tr("Open in email starts a message in your own mail app. FlowChain does not send anything.")}
                 {mailto?.shortened ? ` ${tr("This message is long, so your mail app gets a shortened copy. Use Copy draft for the full text.")}` : ""}

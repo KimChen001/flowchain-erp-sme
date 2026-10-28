@@ -116,10 +116,12 @@ export function buildMasterDataSeedRows(db = {}, options = {}) {
     category: text(supplier.category),
     status: text(supplier.status, 'active'),
     riskLevel: text(supplier.riskLevel || supplier.risk),
-    score: supplier.score ?? supplier.onTimeRate ?? null,
+    // Only a recorded score; an on-time rate is not a score.
+    score: supplier.score ?? null,
     metadata: {
       defaultCurrency: text(supplier.defaultCurrency || supplier.currency, text(options.currency, 'USD')),
-      paymentTermsId: text(supplier.paymentTermsId || supplier.paymentTerms, 'NET30'),
+      // Only a recorded term; an empty one is left out, not seeded as NET30.
+      ...(text(supplier.paymentTermsId || supplier.paymentTerms) ? { paymentTermsId: text(supplier.paymentTermsId || supplier.paymentTerms) } : {}),
       preferred: Boolean(supplier.preferred),
       sourceKey: supplierKey(supplier, index),
     },

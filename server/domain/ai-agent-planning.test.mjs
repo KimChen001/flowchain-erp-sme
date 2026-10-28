@@ -4,7 +4,8 @@ import { aiSkillActor, aiSkillScenario } from './test-fixtures/ai-skill-scenario
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 import { AI_AGENT_KNOWLEDGE, AI_AGENT_LIMITS, AI_AGENT_NO_SKILL, aiAgentPlanningEnabled, aiAgentTools, planAiAgentTools, validateAiAgentToolCalls } from './ai-agent-planning.mjs'
 import { knowledgeResponse } from './ai-knowledge-service.mjs'
-import { parleyChatAdapter } from './ai-runtime-provider-specific-adapters-v2.mjs'
+import { aiSkillDraftOrders } from './ai-skill-drafts.mjs'
+import { anthropicChatAdapter, parleyChatAdapter } from './ai-runtime-provider-specific-adapters-v2.mjs'
 
 // Placeholder provider settings: the provider is a scripted stub, so nothing
 // is ever sent anywhere.
@@ -60,6 +61,8 @@ test('agent planning is off unless switched on with a tool-calling provider', ()
   assert.equal(aiAgentPlanningEnabled({ ...AGENT_ENV, FLOWCHAIN_AI_PROVIDER_KIND: 'generic_http' }), false)
   assert.equal(aiAgentPlanningEnabled({ ...AGENT_ENV, FLOWCHAIN_AI_RUNTIME_MODE: 'local' }), false)
   assert.equal(aiAgentPlanningEnabled(AGENT_ENV), true)
+  // The trial's Anthropic endpoint plans too.
+  assert.equal(aiAgentPlanningEnabled({ ...AGENT_ENV, FLOWCHAIN_AI_PROVIDER_KIND: 'anthropic_chat' }), true)
 })
 
 test("the tools are the actor's own skills, with records and only the inventory mode as arguments", () => {
@@ -112,6 +115,14 @@ test('the Acme request goes to the planner and gets one answer: its orders and d
   assert.match(orders, /PO-008/)
   assert.ok(payload.reviewCards.length > 0)
   assert.ok(payload.reviewCards.every((card) => card.payload?.supplierId === 'SUP-001'), 'drafts follow the supplier the question names')
+  // One message to Acme about both overdue orders, not one per order, asking
+  // about partial delivery as the question does. PO-002 is due soon, not
+  // overdue: no draft.
+  const followUps = payload.reviewCards.filter((card) => card.draftType === 'po_followup_draft')
+  assert.equal(followUps.length, 1)
+  assert.deepEqual(followUps[0].payload.poIds, ['PO-001', 'PO-008'])
+  assert.match(followUps[0].payload.message, /could you ship what is ready now/)
+  assert.ok(!payload.reviewCards.some((card) => aiSkillDraftOrders(card).includes('PO-002')))
   // The model saw the question and the tools, never business data.
   const seen = JSON.stringify(run.plans[0])
   assert.equal(run.plans[0].task.type, 'agent_planning')
@@ -174,6 +185,12 @@ test('the model declines with a short tool call, never with written text', async
   await planAiAgentTools({ message: 'is anything stuck at receiving', actor: aiSkillActor(), env: { ...AGENT_ENV, FLOWCHAIN_AI_PROVIDER_KIND: 'qwen_chat' }, provider: (input) => { qwen.push(input); return { ok: true, toolCalls: [] } } })
   assert.equal(qwen[0].toolChoice, undefined)
   assert.equal(qwen[0].tools.some((tool) => tool.function.name === AI_AGENT_NO_SKILL), false)
+  // Anthropic's compatible endpoint too, until a real call confirms "required".
+  const anthropic = []
+  await planAiAgentTools({ message: 'is anything stuck at receiving', actor: aiSkillActor(), env: { ...AGENT_ENV, FLOWCHAIN_AI_PROVIDER_KIND: 'anthropic_chat' }, provider: (input) => { anthropic.push(input); return { ok: true, toolCalls: [] } } })
+  assert.equal(anthropic.length, 1)
+  assert.equal(anthropic[0].toolChoice, undefined)
+  assert.equal(anthropicChatAdapter.buildRequestBody({ ...anthropic[0] }, { model: 'placeholder-model' }).tool_choice, 'auto')
   // The request body: tool_choice as asked, and a short output cap.
   const body = parleyChatAdapter.buildRequestBody({ ...seen[0] }, { model: 'placeholder-model' })
   assert.equal(body.tool_choice, 'required')

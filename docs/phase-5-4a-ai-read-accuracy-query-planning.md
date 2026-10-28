@@ -61,7 +61,7 @@ Add a closed goal registry and read-only executor. Each goal maps server-side to
 
 Add a cross-domain read service that joins authorized valid supplier, payable, invoice, settlement, purchase order, receiving, RFQ, and safe bank reconciliation summaries. Database mode does not backfill formal finance or transaction facts from JSON fixtures. Missing sources are unavailable rather than zero.
 
-Payment readiness and block reasons are deterministic. Priority uses version `supplier-action-priority-v1`, is stable and explainable, and may use authorized backend amounts without exposing them when amount visibility is absent.
+Payment readiness and block reasons are deterministic. Since 2026-10-06 there is no priority score or level. Each supplier lists its open reasons (overdue or blocked payables, overdue purchase orders, invoice and receiving exceptions, blocking bank exceptions, incomplete records), each dated by its oldest open record, and suppliers are ordered by the oldest of those dates, ties A-Z by name. Amounts never order the list.
 
 ## Time and result semantics
 

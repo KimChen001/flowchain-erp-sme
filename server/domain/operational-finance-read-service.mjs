@@ -4,6 +4,7 @@ import { paymentRecordsView } from "./payment-record-command-service.mjs";
 import { awaitingReceipt, financeFixed, financeUnits } from "./operational-finance-policy.mjs";
 import { RECEIPT_HOLDING_SUPPLIER_INVOICE_STATUSES } from "./procurement-status-authority.mjs";
 import { escapeLikePattern } from "../persistence/like-pattern.mjs";
+import { invoiceDayKey, isDuplicateReviewClosed, loadDuplicateChecks, workspaceTimezone } from "./supplier-invoice-duplicates.mjs";
 
 export class OperationalFinanceReadError extends Error {
   constructor(code, message, status = 400, details) {
@@ -236,6 +237,80 @@ export function createOperationalFinanceReadService({
     };
   }
 
+  // The duplicate flags of one bill (plan item C1): each with the other
+  // bill's number, date, amount, status and version; open, dismissed, or
+  // closed once this bill is past approval (approved, held or cancelled); the dismissal given on
+  // this bill and the one given on the other bill, when their basis still
+  // holds; and every dismissal on record, stale ones marked. A same-amount flag would reveal
+  // that two totals are equal, so without finance.amounts.read those flags
+  // and their dismissals are left out and possibleHidden says so.
+  async function duplicateChecksView(invoice, current) {
+    const amountsVisible = can({ actor: current, permission: "finance.amounts.read", tenantId: current.tenantId });
+    const timezone = await workspaceTimezone(prisma, current.tenantId);
+    const checks = await loadDuplicateChecks(prisma, { tenantId: current.tenantId, invoice, timezone });
+    const visible = (entry) => amountsVisible || entry.kind !== "possible";
+    const flags = checks.flags.filter(visible);
+    const reviews = checks.reviews.filter(visible);
+    const otherIds = [...new Set([...flags, ...reviews].map((entry) => entry.otherInvoiceId))];
+    const otherSide = flags.map((flag) => flag.otherSideDismissal).filter(Boolean);
+    const userIds = [...new Set([...reviews, ...otherSide].map((entry) => entry.dismissedById))];
+    const [others, users] = await Promise.all([
+      otherIds.length
+        ? prisma.supplierInvoice.findMany({
+            where: { tenantId: current.tenantId, id: { in: otherIds } },
+            select: { id: true, invoiceNumber: true, invoiceDate: true, totalAmount: true, amount: true, currency: true, status: true, version: true },
+          })
+        : [],
+      userIds.length
+        ? prisma.user.findMany({ where: { tenantId: current.tenantId, id: { in: userIds } }, select: { id: true, name: true, email: true } })
+        : [],
+    ]);
+    const otherById = new Map(others.map((row) => [row.id, row]));
+    const userById = new Map(users.map((row) => [row.id, row]));
+    const other = (id) => {
+      const row = otherById.get(id);
+      return row
+        ? protectFinanceFields({
+            id: row.id,
+            invoiceNumber: row.invoiceNumber || row.id,
+            invoiceDate: invoiceDayKey(row.invoiceDate, timezone),
+            totalAmount: decimal(row.totalAmount ?? row.amount),
+            currency: row.currency,
+            status: row.status,
+            version: row.version,
+          }, current)
+        : null;
+    };
+    const review = (entry) => ({
+      id: entry.id,
+      otherInvoiceId: entry.otherInvoiceId,
+      otherInvoice: other(entry.otherInvoiceId),
+      kind: entry.kind,
+      reason: entry.reason,
+      dismissedById: entry.dismissedById,
+      dismissedByName: text(userById.get(entry.dismissedById)?.name) || text(userById.get(entry.dismissedById)?.email) || entry.dismissedById,
+      dismissedAt: serial(entry.dismissedAt),
+      stale: Boolean(entry.stale),
+    });
+    return {
+      windowDays: checks.windowDays,
+      notChecked: checks.notChecked,
+      possibleHidden: !amountsVisible,
+      openCount: flags.filter((flag) => flag.status === "open").length,
+      flags: flags.map((flag) => ({
+        kind: flag.kind,
+        otherInvoiceId: flag.otherInvoiceId,
+        otherInvoice: other(flag.otherInvoiceId),
+        daysApart: flag.daysApart,
+        windowDays: flag.windowDays,
+        status: flag.status,
+        dismissal: flag.dismissal ? review(flag.dismissal) : null,
+        otherSideDismissal: flag.otherSideDismissal ? review(flag.otherSideDismissal) : null,
+      })),
+      reviews: reviews.map(review),
+    };
+  }
+
   async function supplierInvoiceDetail(invoiceId, context) {
     const current = await actor(context);
     assertRead(current, "finance.supplier_invoice.read");
@@ -265,6 +340,16 @@ export function createOperationalFinanceReadService({
       .flatMap((run) => run.exceptions || [])
       .filter((entry) => ["open", "rejected"].includes(entry.status)).length;
     const summary = invoiceSummary({ ...invoice, blockingExceptionCount }, current, capabilities);
+    const duplicateChecks = await duplicateChecksView(invoice, current);
+    // An approver dismisses an open flag with a reason before approval; an
+    // approved, held or cancelled bill is past that step.
+    if (
+      capabilities["supplier-invoice"]?.enabled &&
+      can({ actor: current, permission: "finance.supplier_invoice.approve", tenantId: current.tenantId }) &&
+      !isDuplicateReviewClosed(invoice.status) &&
+      duplicateChecks.openCount > 0
+    )
+      summary.availableActions = [...summary.availableActions, "dismiss_duplicate"];
     // Posted receipts of the purchase order that a waiting bill can be linked
     // to, newest first.
     const receiptCandidates = summary.availableActions.includes("link_receipt")
@@ -275,6 +360,13 @@ export function createOperationalFinanceReadService({
           take: 20,
         })
       : [];
+    // The receipt by its GRN number, as the rest of the app names it.
+    const receipt = invoice.relatedGrnId
+      ? await prisma.receivingDocument.findFirst({
+          where: { tenantId: current.tenantId, id: invoice.relatedGrnId },
+          select: { documentNumber: true },
+        })
+      : null;
     const partner = protectFinanceFields({ supplierSnapshot: invoice.supplierSnapshot }, current);
     // The match result is part of the three-way match, which has its own read
     // permission; without it the invoice shows no match lines or variances.
@@ -299,7 +391,9 @@ export function createOperationalFinanceReadService({
         enteredTaxAmount: decimal(line.enteredTaxAmount ?? 0),
         totalAmount: decimal(line.amount),
       }, current)),
+      relatedGrnNumber: receipt?.documentNumber || null,
       receiptCandidates: receiptCandidates.map((row) => ({ id: row.id, documentNumber: row.documentNumber, postedAt: serial(row.postedAt) })),
+      duplicateChecks,
       matchVisible,
       match: match
         ? {
@@ -504,6 +598,20 @@ export function createOperationalFinanceReadService({
     };
   }
 
+  // A supplier's recorded payment term, so a new bill's due date can start
+  // from the invoice date plus the term's days. Only the term goes out, not
+  // the rest of the supplier's metadata.
+  async function withPaymentTerms(suppliers, tenantId) {
+    const termIds = [...new Set(suppliers.map((row) => row.metadata?.paymentTermsId).filter(Boolean))];
+    const terms = termIds.length
+      ? await prisma.paymentTerm.findMany({ where: { tenantId, id: { in: termIds } }, select: { id: true, code: true, name: true, days: true } })
+      : [];
+    const byId = new Map(terms.map((term) => [term.id, term]));
+    return suppliers.map(({ metadata, ...supplier }) => {
+      const term = byId.get(metadata?.paymentTermsId);
+      return { ...supplier, paymentTerm: term ? { code: term.code, name: term.name, days: term.days ?? null } : null };
+    });
+  }
   async function entryData(context) {
     const current = await actor(context);
     // Entry data serves the supplier invoice and credit memo forms; the endpoint is shared, so a role
@@ -515,7 +623,7 @@ export function createOperationalFinanceReadService({
       await Promise.all([
         prisma.supplier.findMany({
           where: { tenantId: current.tenantId, status: "active" },
-          select: { id: true, code: true, name: true },
+          select: { id: true, code: true, name: true, metadata: true },
           orderBy: { name: "asc" },
           take: 100,
         }),
@@ -560,7 +668,7 @@ export function createOperationalFinanceReadService({
     for (const row of billedRows)
       billed.set(row.purchaseOrderLineId, (billed.get(row.purchaseOrderLineId) || 0n) + financeUnits(row.quantity || 0));
     return {
-      suppliers,
+      suppliers: await withPaymentTerms(suppliers, current.tenantId),
       purchaseOrders: purchaseOrders.map((row) => ({
         id: row.id,
         supplierId: row.supplierId,

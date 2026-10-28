@@ -254,3 +254,14 @@ test('semantic planning tells the model the server-owned goal names and keeps pr
   assert.deepEqual(request.responseShape.properties.goals.items.enum, [...BUSINESS_QUERY_GOALS]);
   assert.deepEqual(request.task.previousResult, [{ entityType: '', entityId: 'supplier-a', entityLabel: 'Supplier A' }]);
 });
+
+test('usage counts every prompt token: cached ones reported apart (Parley) or inside prompt_tokens (OpenAI)', () => {
+  // Parley caches Claude prompts itself: prompt_tokens is the uncached part only.
+  const parley = extractCandidateFromProviderResponse({ choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 4, completion_tokens: 187, total_tokens: 2278, prompt_tokens_details: { cache_read_input_tokens: 720, cache_write_input_tokens: 1367 } } })
+  assert.deepEqual(parley.usage, { inputTokens: 2091, outputTokens: 187 })
+  // OpenAI style: cached tokens are already inside prompt_tokens.
+  const openai = extractCandidateFromProviderResponse({ choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 1596, completion_tokens: 110, total_tokens: 1706, prompt_tokens_details: { cached_tokens: 1024 } } })
+  assert.deepEqual(openai.usage, { inputTokens: 1596, outputTokens: 110 })
+  // No total: the prompt count as reported.
+  assert.deepEqual(extractCandidateFromProviderResponse({ choices: [{ message: { content: 'ok' } }], usage: { input_tokens: 10, output_tokens: 2 } }).usage, { inputTokens: 10, outputTokens: 2 })
+})

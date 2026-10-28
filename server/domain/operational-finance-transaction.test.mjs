@@ -123,12 +123,13 @@ function invoicePayload(sourceFacts, suffix, {
   total = "42.0000",
   currency = sourceFacts.currency,
   invoiceNumber = `SUP-INV-${suffix}`,
+  invoiceDate = "2026-07-17T00:00:00.000Z",
 } = {}) {
   return {
     invoiceNumber,
     supplierId: sourceFacts.supplierId,
     currency,
-    invoiceDate: "2026-07-17T00:00:00.000Z",
+    invoiceDate,
     dueDate: "2026-08-16T00:00:00.000Z",
     totalAmount: total,
     lines: [
@@ -889,10 +890,13 @@ test(
       const command = createOperationalFinanceCommandService({ prisma, env });
       // Received facts come from source(); this records, submits and matches
       // an invoice against them so it is ready for approval.
-      const matchedInvoice = async (key, invoiceNumber, { label, sources, clerk } = main) => {
+      // A second invoice of the same supplier and total is dated later than
+      // the duplicate check's 7-day window, so it is not flagged.
+      const later = "2026-07-27T00:00:00.000Z";
+      const matchedInvoice = async (key, invoiceNumber, { label, sources, clerk } = main, invoiceDate) => {
         const tag = `${label}-${key}-${invoiceNumber}`;
         const created = await command.createSupplierInvoice(
-          { ...invoicePayload(sources[key], tag, { invoiceNumber }), idempotencyKey: `create-${tag}` },
+          { ...invoicePayload(sources[key], tag, { invoiceNumber, invoiceDate }), idempotencyKey: `create-${tag}` },
           clerk,
         );
         await command.submitSupplierInvoice(
@@ -957,7 +961,7 @@ test(
         (await approve(typedForC, "approve-payable-C-typed", { obligationNumber: "AP-SUP-PAY-C-1001" })).payable.obligationNumber,
         "AP-SUP-PAY-C-1001",
       );
-      const fromC = await matchedInvoice("C", "1001");
+      const fromC = await matchedInvoice("C", "1001", main, later);
       assert.equal(await previewThenApprove(fromC, "approve-payable-C"), "AP-SUP-PAY-C-1001-2");
 
       // The same holds when the supplier code contains a backslash: the
@@ -967,7 +971,7 @@ test(
         (await approve(typedForS, "approve-payable-S-typed", { obligationNumber: "AP-SUP\\PAY-S-1001" })).payable.obligationNumber,
         "AP-SUP\\PAY-S-1001",
       );
-      const fromS = await matchedInvoice("S", "1001");
+      const fromS = await matchedInvoice("S", "1001", main, later);
       assert.equal(await previewThenApprove(fromS, "approve-payable-S"), "AP-SUP\\PAY-S-1001-2");
 
       // A typed number that is already used is refused with its number, in
@@ -1071,7 +1075,7 @@ test(
         }),
         env,
       });
-      const guarded = await matchedInvoice("D", "1001");
+      const guarded = await matchedInvoice("D", "1001", main, later);
       await assert.rejects(
         blindCommand.approveSupplierInvoice(
           guarded,

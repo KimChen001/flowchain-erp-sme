@@ -38,7 +38,7 @@ test('pagination, totals, supplier ranking and export cover all 601 matching ord
 
 test('overdue uses outstanding line promises, excludes terminal orders and preserves unknowns', () => {
   const result = report([
-    po('PO-PARTIAL', { lines: [{ quantity: 10, receivedQuantity: 10, unit: 'pcs', promisedDate: '2026-08-01' }, { quantity: 10, receivedQuantity: 2, unit: 'pcs', promisedDate: '2026-09-10' }] }),
+    po('PO-PARTIAL', { lines: [{ sku: 'BOLT', quantity: 10, receivedQuantity: 10, unit: 'pcs', promisedDate: '2026-08-01' }, { sku: 'BOLT', quantity: 10, receivedQuantity: 2, unit: 'pcs', promisedDate: '2026-09-10' }] }),
     po('PO-MISSING', { expectedDate: null, lines: [{ quantity: 10, receivedQuantity: null, unit: 'pcs' }] }),
     po('PO-CANCELLED', { status: 'cancelled' }), po('PO-REJECTED', { status: 'rejected' }),
     po('PO-DONE', { lines: [{ quantity: 10, receivedQuantity: 10, unit: 'pcs' }] }),
@@ -58,6 +58,19 @@ test('mixed units and currencies are never added together; zero remains a known 
   assert.deepEqual(result.summary.totals, [{ currency: 'CNY', amount: 125.5 }, { currency: 'USD', amount: 0 }])
   assert.equal(result.rows.find(row => row.id === 'B').remaining, null)
   assert.equal(result.rows.find(row => row.id === 'B').unit, 'mixed')
+})
+
+test('an order of several SKUs in one unit has no quantity totals', () => {
+  const result = report([
+    po('PO-7', { lines: [{ sku: 'BOLT', quantity: 10, receivedQuantity: 0, unit: 'pcs' }, { sku: 'MOTOR', quantity: 5, receivedQuantity: 0, unit: 'pcs' }] }),
+    po('PO-UNNAMED', { lines: [{ quantity: 10, receivedQuantity: 0, unit: 'pcs' }, { quantity: 5, receivedQuantity: 0, unit: 'pcs' }] }),
+    po('PO-ONE-SKU', { lines: [{ itemId: 'item-bolt', quantity: 10, receivedQuantity: 4, unit: 'pcs' }, { itemId: 'item-bolt', quantity: 5, receivedQuantity: 0, unit: 'pcs' }] }),
+  ], { scope: 'all' })
+  const row = id => result.rows.find(entry => entry.id === id)
+  assert.deepEqual([row('PO-7').ordered, row('PO-7').received, row('PO-7').remaining, row('PO-7').unit], [null, null, null, 'multiple_skus'])
+  assert.deepEqual([row('PO-UNNAMED').remaining, row('PO-UNNAMED').unit], [null, 'multiple_skus'])
+  assert.deepEqual([row('PO-ONE-SKU').ordered, row('PO-ONE-SKU').received, row('PO-ONE-SKU').remaining, row('PO-ONE-SKU').unit], [15, 4, 11, 'pcs'])
+  assert.equal(row('PO-7').isOpen, true)
 })
 
 test('filters and sorting apply before paging, ranking and export', () => {

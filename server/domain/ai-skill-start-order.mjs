@@ -1,7 +1,8 @@
 import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillEvidence, aiSkillFormatter, aiSkillNavigation, aiSkillRecordEvidence, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
-import { aiSkillPurchaseOrderNotSent, buildAiSkillSignals, rankAiSkillItems } from './ai-skill-signals.mjs'
-import { aiSkillDraftCard } from './ai-skill-drafts.mjs'
+import { aiSkillPurchaseOrderNotSent, buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
+import { aiSkillDraftCard, aiSkillMinimumText } from './ai-skill-drafts.mjs'
+import { aiSkillOtherUnitLines } from './ai-skill-inventory-availability.mjs'
 
 // Starting an order: prepare_action_draft in mode `order`, for "can you help
 // me generate the order?", "create a PO for LDM-001", 帮我下单 (the router's
@@ -19,6 +20,9 @@ import { aiSkillDraftCard } from './ai-skill-drafts.mjs'
 //                                                 order and a request card, none opened
 //                                                 unless the question says "anyway"
 //   nothing needs ordering                      -> a blank request card, not opened
+//   the SKU is on open PO lines in another unit -> those lines named first, and the
+//                                                 card not opened: they are not
+//                                                 counted as incoming, but are on order
 // A question that asks whether or what to order ("should I reorder LDM-001?")
 // gets the same cards, none opened.
 //
@@ -43,7 +47,9 @@ function stockPlan(facts, row, item = null) {
   const pending = data.pendingRequests ?? 0
   const target = Math.max(data.reorder ?? 0, data.safety ?? 0, data.demand ?? 0)
   const gap = Math.ceil(target - available - incoming - pending)
-  return { target, available, incoming, pending, gap, onTop: Math.ceil(target - available), purchaseOrderIds: array(data.purchaseOrderIds) }
+  // The preferred supplier's minimum order (the reorder list's rule).
+  const minimum = Number(data.minimum ?? row.orderMinimum?.quantity) > 0 ? Number(data.minimum ?? row.orderMinimum?.quantity) : 0
+  return { target, available, incoming, pending, gap, onTop: Math.ceil(target - available), purchaseOrderIds: array(data.purchaseOrderIds), minimum, minimumSupplier: data.minimumSupplier ?? row.orderMinimum?.supplier ?? null }
 }
 
 // The SKU a focus names: the item, or the item a named purchase order buys.
@@ -68,7 +74,7 @@ export function runStartOrder(facts, { focus = null, route = null, canDraft = fa
   const request = route?.order || {}
   const base = { skillId: 'prepare_action_draft', mode: 'order', canDraft, advice: Boolean(request.advice), quantity: request.quantity ?? null }
   if (!facts.inventory) return { ...base, outcome: 'no_stock', targets: [] }
-  const stockItems = rankAiSkillItems(buildAiSkillSignals(facts)).filter((item) => STOCK.has(item.type))
+  const stockItems = rankAiSkillItemsByDate(buildAiSkillSignals(facts)).filter((item) => STOCK.has(item.type))
   const rowOf = (item) => facts.inventory.rows.find((row) => row.itemId === item.entityId || row.sku === item.label)
   const named = focusRow(facts, focus)
   if (named) {
@@ -85,13 +91,21 @@ export function runStartOrder(facts, { focus = null, route = null, canDraft = fa
 
 // The quantity to open the form with: the one the question names, else the
 // gap, else (ordered on top of what is coming) the target less what is
-// available. null leaves it to the user.
+// available, raised to the supplier's minimum order. null leaves it to the user.
 function quantityFor(target, result) {
   if (result.quantity) return result.quantity
   const plan = target.plan
   if (!plan) return null
-  if (plan.gap > 0) return plan.gap
-  return plan.onTop > 0 ? plan.onTop : null
+  const need = plan.gap > 0 ? plan.gap : plan.onTop > 0 ? plan.onTop : null
+  return need === null ? null : Math.max(need, plan.minimum || 0)
+}
+
+// The minimum the quantity was raised to, or null.
+function raisedToMinimum(target, result) {
+  const plan = target.plan
+  if (result.quantity || !plan || !plan.minimum) return null
+  const need = plan.gap > 0 ? plan.gap : plan.onTop > 0 ? plan.onTop : null
+  return need !== null && plan.minimum > need ? { minimum: plan.minimum, gap: need, supplier: plan.minimumSupplier } : null
 }
 
 function requestCard(target, result, facts, language, { autoOpen, anyway = false }) {
@@ -105,13 +119,15 @@ function requestCard(target, result, facts, language, { autoOpen, anyway = false
     : result.quantity ? aiSkillText('order.reason.asked', language, values)
       : plan.gap > 0 ? aiSkillText(plan.incoming || plan.pending ? 'order.reason.gap_after_incoming' : 'draft.pr.reason', language, values)
         : aiSkillText(plan.onTop > 0 ? 'order.reason.on_top' : 'order.reason.not_needed', language, values)
+  const raised = raisedToMinimum(target, result)
+  const why = raised ? [reason, aiSkillMinimumText(raised, fmt, language)].join(language === 'zh-CN' ? '' : ' ') : reason
   const title = aiSkillText(amount ? 'order.card.title' : 'order.card.title_no_quantity', language, values)
   return {
     previewOnly: true, reviewRequired: true, requiresHumanReview: true, prohibitedActions: PROHIBITED,
     allowedNextStep: aiSkillText(anyway ? 'order.action.anyway' : amount ? 'order.action.open' : 'order.action.open_no_quantity', language, values),
-    title, draftTitle: title, description: reason,
+    title, draftTitle: title, description: why,
     draftType: 'purchase_request_draft', targetModule: AI_SKILL_MODULES.purchase_request, targetEntityType: 'item', targetEntityId: row.itemId || row.sku,
-    payload: { itemIdOrSku: row.sku, ...(quantity ? { quantity } : {}), reason, language },
+    payload: { itemIdOrSku: row.sku, ...(quantity ? { quantity } : {}), reason: why, language },
     originEvidence: [{ entityType: 'item', entityId: row.itemId || row.sku }],
     autoOpen,
   }
@@ -196,6 +212,10 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
   const [target] = result.targets
   const plan = target.plan
   const sku = target.row.sku
+  // Open lines in another unit are not counted as incoming, yet they are on
+  // order: the answer names them before anything else and opens nothing.
+  const otherUnit = aiSkillOtherUnitLines(target.row, fmt, language)
+  const otherUnitSentences = otherUnit ? [aiSkillText('order.other_unit', language, { sku, lines: otherUnit })] : []
   if (result.outcome === 'covered' && !result.anyway) {
     // Open orders already bring enough. The answer says so first; then the
     // latest issued order is chased, and a request is one click away, not
@@ -207,13 +227,16 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
     const next = latest ? 'order.covered_next' : unsent ? 'order.covered_next_not_sent' : 'order.covered_next_no_po'
     return answer(aiSkillText(plan.incoming > 0 ? 'order.title_covered' : 'order.title_covered_requested', language, { sku }), [
       ...onOrderSentences(target, facts, language),
+      ...otherUnitSentences,
       aiSkillText('order.covered_why', language),
       aiSkillText('order.position', language, { available: fmt.number(plan.available), target: fmt.number(plan.target) }),
       aiSkillText(next, language, { po: (latest || unsent)?.orderNumber }),
     ], cards, unsent ? { navigation: [aiSkillNavigation({ label: unsent.orderNumber, entityType: 'purchase_order', entityId: unsent.id }, language), ...navigation].slice(0, 3) } : {})
   }
-  // One SKU: named, the only one that needs ordering, or ordered anyway.
-  const card = requestCard(target, result, facts, language, { autoOpen: ask })
+  // One SKU: named, the only one that needs ordering, or ordered anyway. With
+  // open lines in another unit it is answered as advice, nothing opened.
+  const open = ask && !otherUnit
+  const card = requestCard(target, result, facts, language, { autoOpen: open })
   const quantity = card.payload.quantity ? fmt.quantity(card.payload.quantity, target.row.unit) : ''
   // Asked whether to order: yes (the gap), covered by what is on order, not
   // needed, or no stock levels to judge by.
@@ -222,10 +245,11 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
   // say what is already on order.
   const onTop = plan?.gap <= 0 && onOrder(plan)
   const opening = !quantity ? 'order.title_open_no_quantity' : onTop ? 'order.title_open_on_top' : 'order.title_open'
-  const title = aiSkillText(ask ? opening : advice, language, { sku, quantity })
+  const title = aiSkillText(open ? opening : advice, language, { sku, quantity })
   return answer(title, [
+    ...otherUnitSentences,
     ...(onTop ? onOrderSentences(target, facts, language) : []),
     card.description,
-    aiSkillText(ask ? 'order.open_summary' : 'order.advice_summary', language),
+    aiSkillText(open ? 'order.open_summary' : 'order.advice_summary', language),
   ], [card])
 }

@@ -18,6 +18,25 @@ test('receiving workbench posts and reverses through real PostgreSQL APIs', asyn
   await expect(page.getByText('Posting', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Unposted', { exact: true }).first()).toBeVisible()
 
+  // The receive sheet prints from the receipt: its number, the line and the
+  // receiver as recorded. The print rules apply only while the editor is open.
+  await page.getByTestId('receiving-print-sheet').click()
+  const editor = page.getByTestId('print-layout-editor')
+  await expect(editor).toBeVisible()
+  await expect(editor).toContainText('GRN-BROWSER-001')
+  await expect(editor).toContainText('BROWSER-SKU')
+  await expect(editor).toContainText('Receiving Browser Manager')
+  // The built-in sheet is in the interface language.
+  await expect(editor).toContainText('Goods Receipt')
+  await expect(editor).toContainText('Received by')
+  await expect(page.locator('body')).toHaveClass(/fc-print-layout-open/)
+  await page.evaluate(() => { (window as unknown as { __printed?: boolean }).__printed = false; window.print = () => { (window as unknown as { __printed?: boolean }).__printed = true } })
+  await editor.getByTestId('print-document-button').click()
+  expect(await page.evaluate(() => (window as unknown as { __printed?: boolean }).__printed)).toBe(true)
+  await editor.getByRole('button', { name: 'Back to document' }).click()
+  await expect(editor).toHaveCount(0)
+  await expect(page.locator('body')).not.toHaveClass(/fc-print-layout-open/)
+
   await page.getByTestId('receiving-primary-action').click()
   await expect(page.getByTestId('impact-preview')).toBeVisible()
   await expect(page.getByTestId('balance-impact')).toContainText('0.0000 → 4.0000')

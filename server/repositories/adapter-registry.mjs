@@ -7,6 +7,7 @@ import { createDisabledUserDataRuntimeRepository } from './user-data-runtime-rep
 import { createDbUserConfirmedActionRepository } from './db-user-confirmed-action-repository.mjs'
 import { createDbExceptionCaseRepository } from './db-exception-case-repository.mjs'
 import { createDbProcurementCommandService } from '../domain/procurement-db-command-service.mjs'
+import { createPurchaseOrderDocumentReadService } from '../domain/purchase-order-document-read-service.mjs'
 import { createDbProcurementRuntimeRepository } from './db-procurement-runtime-repository.mjs'
 import { createDbIntakeRepository } from './db-intake-repository.mjs'
 import { createDbSalesOrderReadRepository } from './db-sales-order-read-repository.mjs'
@@ -56,6 +57,7 @@ export function createDatabaseRepositoryRegistry({ db = {}, env = process.env, p
     procurementRead: createDbProcurementReadRepository({ env, prisma }),
     procurementRuntime: createDbProcurementRuntimeRepository({ env, prisma }),
     procurementAuthority: createDbProcurementCommandService({ env, prisma }),
+    purchaseOrderDocuments: createPurchaseOrderDocumentReadService({ env, prisma }),
     procurementRequests: createProcurementRequestCommandService({ env, prisma, masterData }),
     salesOrders: createDbSalesOrderReadRepository({ env, prisma }),
     actionDrafts: createDbActionDraftRepository({ db, env, prisma }),
