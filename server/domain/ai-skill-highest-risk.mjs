@@ -57,5 +57,5 @@ export function presentHighestRisk(result, facts, { skill, language, query }) {
     showingSentence(result, fmt, language, 'answer.showing'),
     ...aiSkillMetricSentences(facts, language, { spend: false, invoices: false }),
   ], language)
-  return presentAiSkillAnswer({ skill, facts, language, query, title, summary, severity: first?.severity || 'success', items: result.items, followUpIds: ['prepare_action_draft', 'today_priorities'] })
+  return presentAiSkillAnswer({ skill, facts, language, query, title, summary, severity: first?.severity || 'success', items: result.items, figures: [{ key: 'risk_item_count', code: 'risk_item_count', entityId: null, value: result.total }], followUpIds: ['prepare_action_draft', 'today_priorities'] })
 }

@@ -97,7 +97,7 @@ test("Today lists the walkthrough's work from the report and reorder rules, earl
   // date and time format.
   const table = root.getByTestId("recent-documents");
   const types = await table.locator("tbody tr td:first-child").allInnerTexts();
-  const labels: Record<string, string> = { purchase_request: "Purchase request", rfq: "RFQ", purchase_order: "Purchase order", receipt: "Receipt", supplier_invoice: "Bill", sales_order: "Sales order", customer_invoice: "Invoice" };
+  const labels: Record<string, string> = { purchase_request: "Purchase request", rfq: "RFQ", purchase_order: "Purchase order", receipt: "Receipt", supplier_invoice: "Supplier invoice", sales_order: "Sales order", customer_invoice: "Customer invoice" };
   expect(types).toEqual(overview.recentDocuments.map((row) => labels[row.type]));
   expect(overview.recentDocuments.some((row) => ["receipt", "supplier_invoice", "sales_order", "customer_invoice"].includes(row.type))).toBe(true);
   const changes = overview.recentDocuments.map((row) => Date.parse(row.updatedAt));

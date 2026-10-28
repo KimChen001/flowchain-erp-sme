@@ -59,7 +59,7 @@ const VOID_REASON_LIMIT = 500;
 
 function kindOf(kind) {
   const config = KINDS[text(kind)];
-  if (!config) fail("PAYMENT_OBLIGATION_TYPE_INVALID", "Payments are recorded on a bill to pay or a receivable.", 404);
+  if (!config) fail("PAYMENT_OBLIGATION_TYPE_INVALID", "Payments are recorded on a supplier invoice to pay or a receivable.", 404);
   return config;
 }
 
@@ -132,9 +132,9 @@ export function buildPaymentPlan({ kind, obligation, input, asOf, expected }) {
   const config = KINDS[kind];
   const blockingIssues = [];
   if (expected !== undefined && obligation.version !== expected)
-    blockingIssues.push(issue("FINANCE_VERSION_CONFLICT", "The bill to pay or receivable changed concurrently. Reload and retry.", 409));
+    blockingIssues.push(issue("FINANCE_VERSION_CONFLICT", "The supplier invoice to pay or receivable changed concurrently. Reload and retry.", 409));
   if (kind === "payable" && obligation.status === "held")
-    blockingIssues.push(issue("PAYMENT_OBLIGATION_HELD", "This bill to pay is on hold. Release it before recording a payment.", 409));
+    blockingIssues.push(issue("PAYMENT_OBLIGATION_HELD", "This supplier invoice to pay is on hold. Release it before recording a payment.", 409));
   else if (kind === "receivable" && (obligation.status === "disputed" || obligation.disputeStatus === "open"))
     blockingIssues.push(issue("PAYMENT_OBLIGATION_DISPUTED", "This receivable is disputed. Resolve the dispute before recording a payment.", 409));
   else if (obligation.status === "settled")
@@ -257,7 +257,7 @@ export function createPaymentRecordCommandService({
 
   async function findObligation(db, config, tenantId, id) {
     const row = await db[config.model].findFirst({ where: { id: text(id), tenantId } });
-    if (!row) fail(config.notFound, "The bill to pay or receivable was not found.", 404);
+    if (!row) fail(config.notFound, "The supplier invoice to pay or receivable was not found.", 404);
     return row;
   }
 
