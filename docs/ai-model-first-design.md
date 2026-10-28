@@ -189,7 +189,11 @@ purchase orders…").
   - The newest Claude models reject forced tool choice, so the design does not rely on it.
   - Haiku 5.5 thinks by default, at medium effort. The loop runs at low effort unless S3 shows that costs quality.
   - Anthropic does not position the OpenAI-compatible endpoint, which the 10/05 design used, for long-term production.
-- **Parley, local only:** stays on the chat-completions tool-call adapter that P2 uses. Its model list on 10/07 had Haiku 4.5 and Sonnet 5.5, not Haiku 5.5.
+- **OpenCode Go, local development and the model-on evaluation (the owner's choice, 2026-10-28).** It is a USD 10 a month subscription with an API key from the OpenCode Console.
+  - It serves `claude-haiku-5-5`, GLM, Kimi, Qwen, DeepSeek and others, through an OpenAI-compatible endpoint (`https://opencode.ai/inference/go/openai/v1/chat/completions`) and an Anthropic Messages endpoint. So both the chat-completions adapter that P2 uses and the native adapter can reach it.
+  - OpenCode describes Go as "designed for OpenCode and other coding agents". It asks clients to send their own user agent, and it is for single-member workspaces. FlowChain therefore uses it for the owner's own local runs and evaluations, never for trial customers, and sends its own `User-Agent`.
+  - **Privacy settings:** OpenCode lists most of its models as not used for training. Claude Haiku 5.5 is kept for 30 days. The owner saves the privacy settings with training models off and regions limited to the US and Europe.
+- **Parley, local only:** replaced by OpenCode Go while its monthly budget is used up. Its model list on 10/07 had Haiku 4.5 and Sonnet 5.5, not Haiku 5.5.
 
 ## 6. Data that leaves the workspace
 
@@ -282,8 +286,8 @@ owner's word, after the course report.
 | M3 (c) | The grounding check (§3) replaces the slot templates for model-first answers: one retry, then the rules answer. Ranking and "all/none" claims stay a measured residual risk. | Yes |
 | M4 (d) | Freeze new rules and skills. They stay as the fallback, with bug fixes, and as the guards (refusal, permissions, injection). | Yes. #223 and #224 are fallback work; merging them is the owner's call |
 | M5 (e) | The order relative to #151 (A1–A8 approved 2026-10-28). | Model-first read v1 (S0–S4) first; C1 after it in December; the proposal tools (S5) on top. One assistant lane at a time, so the owner reviews one PR a week |
-| M6 | The model. | `claude-haiku-5-5` on Anthropic; Sonnet 5.5 only if Haiku misses the §7 bar; locally Parley's Sonnet 5.5 or Haiku 4.5 |
-| M7 | The key. | An Anthropic key with a USD 10 monthly limit now: S0 and S2 need it, and the trial will too. Otherwise wait for Parley's monthly reset; another project used up this month's budget |
+| M6 | The model. | `claude-haiku-5-5`, the same model locally (through OpenCode Go) and on the trial. Sonnet 5.5 only if Haiku misses the §7 bar. OpenCode Go's other models (GLM, Kimi, Qwen) can be compared in S3 at no extra cost |
+| M7 | The key. | **Local and evaluation: OpenCode Go** (owner, 2026-10-28). The owner pastes its key into `.local/opencode-go.env`. **Trial workspaces:** a direct provider key (Anthropic) when the trial date is set, not before |
 
 ## 11. Risks
 
