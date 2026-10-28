@@ -23,7 +23,7 @@ function signalFor(evidence, byId, byEntity, bySupplier) {
 
 // Lines that state a figure (the spend analysis' suppliers, items and months)
 // name no problem, so they get no next step and offer no draft.
-const FIGURE_LINES = new Set(['spend', 'spend_item', 'spend_month'])
+const FIGURE_LINES = new Set(['spend', 'spend_item', 'spend_month', 'supplier_performance'])
 
 export function attachAiSkillNextSteps(response, facts) {
   if (!facts || !response || !array(response.keyEvidence).length) return response

@@ -109,6 +109,12 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     inventoryBalance: { findMany: ({ where, take }) => data.balances.filter(() => where.tenantId === AI_SKILL_TENANT).slice(0, take) },
     rfqSupplierParticipation: { findMany: ({ where }) => data.participations.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
     rfqAwardDecision: { findMany: ({ where }) => data.awards.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
+    // The supplier scorecard's reads (supplier-scorecard.mjs), by supplier and
+    // status as it asks; the fixture lines record no original promise.
+    purchaseOrder: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.purchaseOrders.filter((row) => !where.status?.notIn?.includes(row.status) && (typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : Boolean(row.supplierId))) },
+    receivingDocument: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.receipts.filter((row) => where.poId.in.includes(row.poId) && (!where.postingStatus || row.postingStatus === where.postingStatus)) },
+    supplierInvoice: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.supplierInvoices.filter((row) => typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : true).map((row) => ({ ...row, lines: row.lines || [], matchRuns: [] })) },
+    supplier: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.suppliers.filter((row) => !where.id || row.id === where.id).map((row) => ({ id: row.id, name: row.name })) },
   }
   return new Proxy({}, {
     get(_target, model) {
