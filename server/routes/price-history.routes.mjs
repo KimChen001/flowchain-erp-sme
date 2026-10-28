@@ -48,6 +48,7 @@ export async function handlePriceHistoryRoute(ctx) {
     if (knownError(error)) {
       ctx.send(ctx.res, error.status || 400, { code: error.code || "PRICE_HISTORY_FAILED", message: error.message });
     } else {
+      ctx.reportError?.(error);
       ctx.send(ctx.res, 500, { code: "PRICE_HISTORY_FAILED", message: "The price history could not be loaded." });
     }
   }

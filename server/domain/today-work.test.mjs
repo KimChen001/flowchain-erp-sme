@@ -312,6 +312,20 @@ async function homeFor(access, { now = MORNING, database = fakeDatabase() } = {}
   return response
 }
 
+test('a sales order with no recorded customer shows no partner, not the read model placeholder', () => {
+  const overview = buildHomeOverview({
+    purchaseRequests: [],
+    rfqs: [],
+    purchaseOrders: [],
+    salesOrders: [
+      { id: 'SO-ID-2', orderNumber: 'SO-1002', workflowStatus: 'on_hold', customerName: '未命名客户', updatedAt: '2026-10-07T17:00:00.000Z' },
+      { id: 'SO-ID-3', orderNumber: 'SO-1003', workflowStatus: 'confirmed', customerName: 'Harbor Foods', updatedAt: '2026-10-07T16:00:00.000Z' },
+    ],
+    dataLimitations: [],
+  }, { now: EVENING, timeZone: NY })
+  assert.deepEqual(overview.recentDocuments.map((row) => [row.number, row.partner]), [['SO-1002', null], ['SO-1003', 'Harbor Foods']])
+})
+
 test('the home overview lists the first day\'s work for a reader who may see everything', async () => {
   const { status, payload } = await homeFor(roleAccess('*'))
   assert.equal(status, 200)

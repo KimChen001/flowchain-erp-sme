@@ -141,7 +141,7 @@ for (const financeEnabled of [false, true]) {
     await expect(row.getByRole('button', { name: 'View order lines and evidence', exact: true })).toBeVisible();
     await expect(page.locator('aside').getByRole('button', { name: 'Purchasing', exact: true })).toBeVisible();
     await expect(page.locator('aside').getByRole('button', { name: /^Payables & receivables( |$)/ })).toHaveCount(financeEnabled ? 1 : 0);
-    await expect(row.getByRole('button', { name: 'Open bill', exact: true })).toHaveCount(1);
+    await expect(row.getByRole('button', { name: 'Open supplier invoice', exact: true })).toHaveCount(1);
     await expect(row.getByRole('button', { name: 'Open three-way match', exact: true })).toHaveCount(1);
     await row.getByRole('button', { name: 'Open three-way match', exact: true }).click();
     await expect(page).toHaveURL(/\/app\/procurement\/three-way-match/);

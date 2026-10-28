@@ -1,4 +1,6 @@
 import { capabilityForEnvironment } from './capability-registry.mjs'
+import { contractsEnabled } from './contract-policy.mjs'
+import { readContractWork } from './contract-read-service.mjs'
 import { CUSTOMER_NAMESPACE } from './master-data-commands.mjs'
 import { overdueReceivableWhere } from './operational-finance-o2c-read-service.mjs'
 import { createReorderListReadService } from './reorder-list-read-service.mjs'
@@ -22,6 +24,12 @@ import { getPrismaClient } from '../persistence/prisma-client.mjs'
 //                     (overdueReceivableWhere) at the start of the workspace
 //                     day, so a receivable due today is not overdue;
 //                     finance.receivable.read.
+//   contracts         with the contracts capability on and
+//                     contracts.contract.read: active contracts whose notice
+//                     deadline or end date is inside their reminder window,
+//                     or whose end date passed with no renewal activated
+//                     (readContractWork), the reader's own as owner, or every
+//                     one for a reader with contracts.contract.manage.
 //   setup counts      items, suppliers, customers, items with stock on hand,
 //                     active users and pending invitations, for the first-day
 //                     checklist.
@@ -136,6 +144,14 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
       }))
     }))
   }
+  const contracts = home.contracts || {}
+  if (contractsEnabled(ctx.env || process.env) && contracts.read && (contracts.manage || contracts.userId)) {
+    reads.push(attempt('contracts', async () => {
+      const work = await readContractWork(prisma, { tenantId, today, ownerId: contracts.manage ? null : contracts.userId })
+      sources.contracts = work.contracts
+      if (work.truncated) limitations.push('truncated:contracts')
+    }))
+  }
   let setup = null
   reads.push(attempt('setup_counts', async () => {
     const [items, suppliers, customers, stockedItems, activeUsers, pendingInvitations] = await Promise.all([
@@ -163,8 +179,9 @@ export async function readTodayWorkSources(ctx, { access, rawContext, now, today
 }
 
 // The kinds of work the reader's role cannot open, so the page can say they
-// are not listed rather than suggest there is none.
-export function todayHiddenWork(access) {
+// are not listed rather than suggest there is none. Contracts count only
+// while the contracts capability is on.
+export function todayHiddenWork(access, env = process.env) {
   const home = access.home || {}
   return [
     ...(access.collections.purchaseOrders ? [] : ['purchasing']),
@@ -173,6 +190,7 @@ export function todayHiddenWork(access) {
     ...(access.collections.salesOrders ? [] : ['sales_orders']),
     ...(home.customerInvoices ? [] : ['customer_invoices']),
     ...(home.receivables ? [] : ['receivables']),
+    ...(contractsEnabled(env) && !home.contracts?.read ? ['contracts'] : []),
   ]
 }
 

@@ -2,7 +2,6 @@ import { useWorkspaceCopy } from "../../i18n/useWorkspaceCopy";
 import { useI18n } from "../../i18n/I18n";
 import React, { useEffect, useState } from "react";
 import { ArrowDownRight, ArrowLeft, ArrowUpRight, ChevronDown, History, Home, List, X } from "lucide-react";
-import { toast } from "sonner";
 import { apiJson } from "../../lib/api-client";
 import type { AuditEntry } from "../../types/scm";
 import { A } from "./tokens";
@@ -301,35 +300,6 @@ export const AppleTooltip = ({ active, payload, label }: any) => {
     </div>
   );
 };
-
-export function SubTabs<T extends string>({ tabs, value, onChange }: {
-  tabs: { id: T; label: string; count?: number | string; icon?: React.ElementType }[];
-  value: T; onChange: (v: T) => void;
-}) {
-  return (
-    <div className="flex items-center gap-0 overflow-x-auto" style={{ borderBottom: "0.5px solid rgba(0,0,0,0.08)" }}>
-      {tabs.map((t) => {
-        const Icon = t.icon;
-        const isActive = value === t.id;
-        return (
-          <button key={t.id} onClick={() => onChange(t.id)}
-            className="px-4 py-2.5 fc-body font-medium flex items-center gap-1.5 shrink-0 transition-colors relative"
-            style={{ color: isActive ? A.blue : A.gray1, background: "transparent" }}>
-            {Icon && <Icon size={12} strokeWidth={isActive ? 2 : 1.8} />}
-            {copy(t.label)}
-            {t.count !== undefined && (
-              <span className="fc-caption px-1.5 py-px rounded-full font-semibold tabular-nums"
-                style={{ background: isActive ? "#f0f6ff" : A.gray6, color: isActive ? A.blue : A.gray1 }}>
-                {t.count}
-              </span>
-            )}
-            {isActive && <div className="absolute left-3 right-3 -bottom-px h-0.5 rounded-full" style={{ background: A.blue }} />}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 export function SectionHeader({ title, right }: { title: string; right?: React.ReactNode }) {
   return (

@@ -32,8 +32,10 @@
 @media print {
   body.fc-business-document-open *:not(:has(.business-document-print-target)):not(.business-document-print-target):not(.business-document-print-target *) { display: none !important; }
   body.fc-business-document-open :has(.business-document-print-target) { display: block !important; position: static !important; overflow: visible !important; width: auto !important; min-width: 0 !important; max-width: none !important; height: auto !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; border: 0 !important; box-shadow: none !important; transform: none !important; opacity: 1 !important; animation: none !important; background: white !important; }
-  /* The receive-sheet print rules (print-layout.css) hide every element with
-     visibility once that stylesheet is loaded; the print target stays visible. */
+  /* The print-layout editor's rules (print-layout.css) hide every element
+     only while that editor is open (body.fc-print-layout-open), so they no
+     longer reach this page. Kept as a guard: the print target stays visible
+     even if a hide-everything rule ever applies again. */
   body.fc-business-document-open .business-document-print-target, body.fc-business-document-open .business-document-print-target * { visibility: visible !important; }
   body.fc-business-document-open .business-document-sheet { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
   .business-document-lines thead { display: table-header-group; }

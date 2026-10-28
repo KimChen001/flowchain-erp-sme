@@ -1,7 +1,13 @@
 import { Eye, EyeOff, Trash2 } from "lucide-react";
+import { PRINT_LAYOUT_LIMITS, PRINT_LAYOUT_STYLE_LIMITS } from "../../../shared/business-documents.mjs";
+import { clampLayoutNumber } from "./printLayoutElements";
 import type { PrintFieldOption, PrintLayoutElement } from "./printLayoutTypes";
 
 const numberKeys = ["x", "y", "width", "height"] as const;
+
+const FONT = PRINT_LAYOUT_STYLE_LIMITS.fontSize;
+const LINE = PRINT_LAYOUT_STYLE_LIMITS.lineHeight;
+const COORDINATE = PRINT_LAYOUT_LIMITS.coordinate;
 
 export default function PrintElementInspector({
   elements, selected, fieldOptions, instanceValue, onSelect, onChange, onInstanceValueChange, onDelete,
@@ -49,11 +55,11 @@ export default function PrintElementInspector({
           )}
           <div className="print-property-grid">
             {numberKeys.map((key) => (
-              <label key={key}>{key}<input data-testid={`print-${key}-input`} type="number" min={0} value={selected[key]} onChange={(event) => onChange({ [key]: Math.max(0, Number(event.target.value)) })} /></label>
+              <label key={key}>{key}<input data-testid={`print-${key}-input`} type="number" min={0} value={selected[key]} onChange={(event) => onChange({ [key]: clampLayoutNumber(event.target.value, 0, COORDINATE) })} /></label>
             ))}
           </div>
-          <label>字号<input data-testid="print-font-size-input" type="number" min={8} max={48} value={selected.style?.fontSize || 12} onChange={(event) => onChange({ style: { ...selected.style, fontSize: Number(event.target.value) } })} /></label>
-          <label>行高<input data-testid="print-line-height-input" type="number" min={1} max={3} step={0.1} value={selected.style?.lineHeight || 1.45} onChange={(event) => onChange({ style: { ...selected.style, lineHeight: Number(event.target.value) } })} /></label>
+          <label>字号<input data-testid="print-font-size-input" type="number" min={FONT.min} max={FONT.max} value={selected.style?.fontSize || 12} onChange={(event) => onChange({ style: { ...selected.style, fontSize: clampLayoutNumber(event.target.value, FONT.min, FONT.max) } })} /></label>
+          <label>行高<input data-testid="print-line-height-input" type="number" min={LINE.min} max={LINE.max} step={0.1} value={selected.style?.lineHeight || 1.45} onChange={(event) => onChange({ style: { ...selected.style, lineHeight: clampLayoutNumber(event.target.value, LINE.min, LINE.max) } })} /></label>
           <label>对齐<select data-testid="print-align-select" value={selected.style?.align || "left"} onChange={(event) => onChange({ style: { ...selected.style, align: event.target.value as "left" | "center" | "right" } })}>
             <option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option>
           </select></label>
@@ -69,7 +75,7 @@ export default function PrintElementInspector({
                     const tableColumns = [...(selected.tableColumns || [])]; tableColumns[index] = { ...column, title: event.target.value }; onChange({ tableColumns });
                   }} />
                   <input aria-label={`${column.key}列宽`} type="number" min={40} value={column.width || 80} onChange={(event) => {
-                    const tableColumns = [...(selected.tableColumns || [])]; tableColumns[index] = { ...column, width: Number(event.target.value) }; onChange({ tableColumns });
+                    const tableColumns = [...(selected.tableColumns || [])]; tableColumns[index] = { ...column, width: clampLayoutNumber(event.target.value, 0, COORDINATE) }; onChange({ tableColumns });
                   }} />
                   <label className="print-check"><input aria-label={`${column.key}列显示`} type="checkbox" checked={column.visible} onChange={(event) => {
                     const tableColumns = [...(selected.tableColumns || [])]; tableColumns[index] = { ...column, visible: event.target.checked }; onChange({ tableColumns });

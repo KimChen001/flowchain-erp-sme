@@ -86,7 +86,25 @@ declare module '../../../shared/business-documents.mjs' {
     letterhead: { companyName: string | null; addressLines: string[]; phone: string | null; email: string | null; taxId: string | null };
     purchaseOrder: { title: string | null; columns: PurchaseOrderColumns; termsText: string; footerText: string; signatureBlock: boolean };
     customerInvoice: { title: string | null; columns: CustomerInvoiceColumns; showPaymentSummary: boolean; paymentInstructions: string; termsText: string; footerText: string };
+    // Saved print layouts; their shape is PrintLayoutTemplate (src/modules/print-layout/printLayoutTypes.ts).
+    layouts: StoredPrintLayout[];
+    // Stored layouts that no longer pass the check, kept exactly as stored and sent back unchanged.
+    unreadableLayouts: unknown[];
   };
+  export type StoredPrintLayout = {
+    id: string;
+    name: string;
+    documentType: 'receive_sheet' | 'delivery_note' | 'sign_receipt';
+    version: number;
+    page: { paper: 'A4'; orientation: 'portrait' | 'landscape'; width: number; height: number; margin: number };
+    elements: Array<Record<string, unknown> & { id: string; type: string }>;
+    updatedAt?: string;
+  };
+  export const PRINT_LAYOUT_LIMITS: Readonly<{ templates: number; bytes: number; elements: number; columns: number; id: number; name: number; title: number; value: number; field: number; placeholder: number; coordinate: number }>;
+  export const PRINT_LAYOUT_DOCUMENT_TYPES: readonly StoredPrintLayout['documentType'][];
+  export function validatePrintLayout(value: unknown, field?: string): StoredPrintLayout;
+  export function validatePrintLayouts(value: unknown, options?: { unreadableLayouts?: unknown[]; stored?: unknown }): StoredPrintLayout[];
+  export const PRINT_LAYOUT_STYLE_LIMITS: Readonly<{ fontSize: Readonly<{ min: number; max: number }>; lineHeight: Readonly<{ min: number; max: number }> }>;
   // Every value is the recorded one or null; amounts and quantities are decimal strings.
   export type PurchaseOrderDocument = {
     kind: 'purchase_order';
@@ -144,9 +162,38 @@ declare module '../../../shared/business-documents.mjs' {
   export const DOCUMENT_SETTINGS_LIMITS: Readonly<{ companyName: number; addressLines: number; addressLine: number; phone: number; email: number; taxId: number; title: number; termsText: number; footerText: number; paymentInstructions: number }>;
   export const documentSettingsSeed: DocumentSettings;
   export function normalizeDocumentSettings(value: unknown): DocumentSettings;
-  export function validateDocumentSettings(value: unknown): DocumentSettings;
+  export function validateDocumentSettings(value: unknown, options?: { stored?: unknown }): DocumentSettings;
   export function buildPurchaseOrderDocument(input: unknown): PurchaseOrderDocument;
   export function buildCustomerInvoiceDocument(input: unknown): CustomerInvoiceDocument;
   export function recordedDayOrInstant(value: unknown): RecordedDayOrInstant;
   export function recordedPaymentTerms(value: unknown, terms?: ReadonlyArray<{ id?: string | null; code?: string | null; name?: string | null }>): string | null;
+}
+declare module '../../../shared/contract-status.mjs' {
+  export type ContractType = 'purchase_agreement' | 'service_agreement' | 'nda' | 'quality_agreement' | 'other';
+  export type ContractStatus = 'draft' | 'active' | 'terminated';
+  export type ContractRenewal = 'none' | 'automatic' | 'by_agreement';
+  export type ContractState = 'draft' | 'active' | 'notice_due' | 'ending' | 'ended' | 'past_end' | 'renewed' | 'terminated';
+  export type ContractKeyDateKind = 'notice_deadline' | 'end' | 'terminated';
+  export type ContractShownState = {
+    state: ContractState;
+    keyDate: string | null;
+    keyDateKind: ContractKeyDateKind | null;
+    daysUntilKeyDate: number | null;
+    noticeDeadline: string | null;
+    inReminderWindow: boolean;
+  };
+  export const CONTRACT_TYPES: readonly ContractType[];
+  export const CONTRACT_STATUSES: readonly ContractStatus[];
+  export const CONTRACT_RENEWALS: readonly ContractRenewal[];
+  export const CONTRACT_STATES: readonly ContractState[];
+  export const CONTRACT_DEFAULT_REMINDER_DAYS: number;
+  export const CONTRACT_MAX_NOTICE_DAYS: number;
+  export const CONTRACT_MAX_REMINDER_DAYS: number;
+  export function contractCalendarDay(value: string | Date | null | undefined): string;
+  export function contractDaysBetween(from: string, to: string): number;
+  export function addContractDays(day: string, days: number): string;
+  export function contractShownState(
+    contract: { status?: string; renewal?: string; endDate?: string | Date | null; noticeDays?: number | null; reminderDays?: number | null; terminatedOn?: string | Date | null },
+    options: { today: string; renewalActivated?: boolean },
+  ): ContractShownState;
 }

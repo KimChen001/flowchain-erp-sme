@@ -57,7 +57,7 @@ for (const language of ['en-US', 'zh-CN']) {
       await expect(root.getByText('Pending approval', { exact: true })).toBeVisible();
       await expect(root.getByText('Confirmed', { exact: true })).toBeVisible();
       await expect(root.getByText('Sales order', { exact: true })).toBeVisible();
-      await expect(root.getByText('Bill', { exact: true })).toBeVisible();
+      await expect(root.getByText('Supplier invoice', { exact: true })).toBeVisible();
       await expect(root.getByTestId('recent-documents').locator('tbody tr').first()).toContainText('Oct 7, 2026, 12:59 PM');
       const checklist = root.getByTestId('first-run-checklist');
       await expect(checklist).toContainText('3 of 5 steps done');

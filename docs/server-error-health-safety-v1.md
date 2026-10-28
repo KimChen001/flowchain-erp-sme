@@ -33,6 +33,8 @@ Exports:
 
 - `GENERIC_INTERNAL_ERROR`
 - `sanitizeErrorSummary(error)`
+- `redactSecrets(text)`
+- `logServerError(error, options)`, which hands the error to `options.reporter` (or a log-only reporter for `options.logger`)
 - `sendInternalServerError(res, send, error, options)`
 
 `server/routes/scm-legacy.routes.mjs` now uses this helper in the global catch block.
@@ -55,13 +57,27 @@ Every response carries an `X-Request-Id` header. A forwarded `X-Request-Id` is k
 - Requests with status 5xx are logged at `level: "error"`. A request the client abandoned carries `"aborted": true`.
 - Set `FLOWCHAIN_REQUEST_LOG=off` to disable the access log. In-process servers from `createScmServer()`, used by tests and browser runners, do not write it unless a `requestLogger` is passed.
 
-Unhandled errors are always logged as one JSON line:
+Unhandled errors are always logged as one JSON line, by the error reporter in `server/observability/error-reporter.mjs`:
 
 ```json
-{"time":"...","level":"error","event":"server_error","requestId":"3f0c2c8e-...","error":"P1001: connect failed [redacted]"}
+{"time":"...","level":"error","event":"server_error","requestId":"3f0c2c8e-...","method":"GET","path":"/api/home/overview","status":500,"phase":"boundary","error":"P1001: connect failed [redacted]","errorName":"PrismaClientInitializationError","errorCode":"P1001","stack":"at ...
+at ...","tenantId":"tenant-a","userId":"user-1","commitSha":"..."}
 ```
 
-This includes errors thrown after the response has started streaming. The caller cannot be told about those, and they used to go unrecorded. The `error` summary passes through `sanitizeErrorSummary`, which redacts bearer tokens, `sk-` keys, database URLs, and any `NAME=value` or `NAME: value` whose name ends in `API_KEY`, `SECRET`, `TOKEN` or `PASSWORD`.
+This includes errors thrown after the response has started streaming. The caller cannot be told about those, and they used to go unrecorded. The `error` summary passes through `sanitizeErrorSummary`, which redacts bearer tokens, `sk-` keys, database URLs, and any `NAME=value` or `NAME: value` whose name ends in `API_KEY`, `SECRET`, `TOKEN` or `PASSWORD`. Since the error tracking round the patterns live in `server/observability/redact.mjs` and also cover `Authorization:` and basic credentials, camelCase and header-style key names, JSON secret fields, Redis and MongoDB connection strings, credentials in any URL, and Slack and Discord webhook URLs ([operations-alerts.md](operations-alerts.md) has the list).
+
+Fields added in the error tracking round:
+
+- `method`, `path` (no query string) and `status` (what the caller was sent) when the error belongs to a request.
+- `phase`: `boundary` (thrown out of the request handler), `route` (a route caught it and answered 500 after calling `ctx.reportError`), `after_headers` (thrown after the response started), `response` (a 500 that no code reported, logged as `UnreportedServerError` without a stack).
+- `errorName` and `errorCode`: the error's class name and code, limited to identifier characters.
+- `stack`: the stack frames only (the message is already in `error`), with the same redaction. Production keeps the first 8 frames; other environments keep all of them.
+- `tenantId` and `userId` for signed-in requests, as ids only, as in the access log.
+- `commitSha` of the running build.
+
+Uncaught exceptions and unhandled promise rejections are logged the same way with `"event":"process_error"` and `"fatal":true`; the process then exits with code 1, as it did before.
+
+When `FLOWCHAIN_ERROR_WEBHOOK_URL` is an https URL, each logged error also sends a short, rate-limited alert without the message, stack or ids. See [operations-alerts.md](operations-alerts.md).
 
 To trace a report, take the `requestId` from the 500 response or the response header and search the logs for it.
 

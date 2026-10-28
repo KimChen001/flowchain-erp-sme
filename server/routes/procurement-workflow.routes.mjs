@@ -3,6 +3,7 @@ const denied = (send, res) => send(res, 403, { code: "PERMISSION_DENIED", messag
 import { createHash } from "node:crypto";
 import { createProcurementRequestCommandService } from "../services/procurement-request-command-service.mjs";
 import { recommendProcurementPath } from "../domain/procurement-workflow.mjs";
+import { notifyApprovalWaiting } from "../notifications/approval-notifier.mjs";
 import { createPurchaseOrderDocumentReadService } from "../domain/purchase-order-document-read-service.mjs";
 const PROCUREMENT_PATH_POLICY = Object.freeze({
   directPurchaseThreshold: 50000,
@@ -45,12 +46,17 @@ const failure = (send, res, e) => {
     expectedVersion: e.expectedVersion,
   });
 };
-const respond = async (ctx, status, run) => {
+// afterSend runs once the answer is sent; it must not throw or wait.
+const respond = async (ctx, status, run, afterSend) => {
+  let result;
   try {
-    ctx.send(ctx.res, status, await run());
+    result = await run();
+    ctx.send(ctx.res, status, result);
   } catch (e) {
     failure(ctx.send, ctx.res, e);
+    return true;
   }
+  afterSend?.(result);
   return true;
 };
 const commandBody = async (ctx) => {
@@ -81,8 +87,11 @@ export async function handleProcurementWorkflowRoute(ctx) {
   const action = url.pathname.match(
     /^\/api\/procurement\/requests\/([^/]+)\/(submit|approve|reject|withdraw|cancel)$/,
   );
+  // A submitted PR waits for approval; its approvers are emailed after the
+  // answer, and a replayed submit sends nothing.
   if (req.method === "POST" && action)
-    return respond(ctx, 200, async () => requestCommands(ctx).transitionPurchaseRequest(decodeURIComponent(action[1]), action[2], await commandBody(ctx), ctx));
+    return respond(ctx, 200, async () => requestCommands(ctx).transitionPurchaseRequest(decodeURIComponent(action[1]), action[2], await commandBody(ctx), ctx),
+      (result) => action[2] === "submit" && notifyApprovalWaiting(ctx, result, { documentType: "purchase_request", documentId: result?.id }));
   const recommendation = url.pathname.match(
     /^\/api\/procurement\/requests\/([^/]+)\/path-recommendation$/,
   );
@@ -130,7 +139,7 @@ export async function handleProcurementWorkflowRoute(ctx) {
       // reason is the same command.
       const idempotencyKey = body.idempotencyKey || `desktop.${poAction[2]}:${id}:v${body.expectedVersion}:${createHash("sha256").update(String(body.reason || "")).digest("hex").slice(0, 16)}`;
       return purchaseOrderCommands(ctx)[command](id, { ...body, idempotencyKey }, ctx);
-    });
+    }, (result) => poAction[2] === "submit" && notifyApprovalWaiting(ctx, result, { documentType: "purchase_order", documentId: result?.entityId }));
   }
   // Revising a promised date on an issued PO keeps the original promise and
   // records the revision with its reason.

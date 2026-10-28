@@ -285,7 +285,10 @@ test("SME navigation, direct access and browser history follow the route manifes
     page.getByRole("link", { name: "LOCAL-DEMO-PR-001", exact: true }),
   ).toHaveClass(/text-blue-600/);
 
+  // The old contracts placeholder redirects to the Contracts module, which
+  // is off here (contracts capability not enabled).
   await page.goto("/app/procurement/contracts");
+  await expect(page).toHaveURL(/\/app\/contracts\/list$/);
   await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
 
   await page.goto("/app/universal-intake");
@@ -502,7 +505,8 @@ test("capability registry failure and frozen routes fail closed", async ({
   ).toHaveCount(0);
 
   await page.goto("/app/procurement/contracts");
-  await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
+  await expect(page).toHaveURL(/\/app\/contracts\/list$/);
+  await expect(page.getByTestId("capability-registry-unavailable")).toBeVisible();
   await page.goto("/app/forecast/mrp");
   await expect(page.getByTestId("capability-route-blocked")).toBeVisible();
 });

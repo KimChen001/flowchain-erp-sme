@@ -21,6 +21,12 @@ async function signIn(page: Page, email: string) {
 }
 
 async function run(page: Page, id: string) {
+  // A status-only step runs on one click (D4); the step is done when its button goes.
+  if ((await page.getByTestId(id).getAttribute("data-one-step")) === "true") {
+    await page.getByTestId(id).click();
+    await expect(page.getByTestId(id)).toHaveCount(0);
+    return;
+  }
   await page.getByTestId(id).click();
   await page.getByTestId(`${id}-preview`).click();
   await expect(page.getByTestId(`${id}-confirm`)).toBeEnabled();

@@ -23,3 +23,15 @@ test('overview charts and attention respect currency and date filters', () => {
   assert.deepEqual(empty.charts[0].data, []);
   assert.equal(empty.attention[0].count, 0);
 });
+test('the overview counts the reorder list\'s order-now items, and names the sales-order shortage as such', () => {
+  // The 2026-10-08 walkthrough: Today and the reorder list said "order now"
+  // for 4 items while the overview showed "Inventory shortages 0".
+  const report = buildRuntimeGovernedReport(context, { subject: 'overview' }, { reorder: { orderNow: 4 } });
+  assert.deepEqual(report.attention.map((item) => item.id), ['open_orders', 'items_to_reorder', 'inventory_shortages', 'unfulfilled_sales']);
+  assert.deepEqual(report.attention[1], { id: 'items_to_reorder', label: 'Items to reorder', count: 4, path: '/app/inventory/reorder', action: 'Open reorder list' });
+  assert.equal(report.attention[2].label, 'Short for sales orders');
+  assert.equal(report.kpis.find((item) => item.id === 'inventory_risk_sku').label, 'SKUs short for sales orders');
+  // Without the reorder list (no database, or a reader of only some warehouses) the card is left out.
+  assert.equal(buildRuntimeGovernedReport(context, { subject: 'overview' }).attention.some((item) => item.id === 'items_to_reorder'), false);
+  assert.equal(buildRuntimeGovernedReport(context, { subject: 'procurement' }, { reorder: { orderNow: 4 } }).attention.length, 0);
+});

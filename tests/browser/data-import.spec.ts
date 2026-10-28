@@ -22,7 +22,7 @@ test('items: download the template, see a bad row, fix the file and import it', 
   await page.getByTestId('data-import-link-items').click();
   await expect(page).toHaveURL(/\/app\/master-data\/import\?type=items$/);
   const importPage = page.getByTestId('data-import-page');
-  await expect(importPage.getByRole('heading', { name: 'Import data' })).toBeVisible();
+  await expect(importPage.getByRole('heading', { name: 'Import a file' })).toBeVisible();
   await expect(importPage).not.toContainText(/[㐀-鿿]/);
 
   const downloading = page.waitForEvent('download');
@@ -71,7 +71,7 @@ test('the import page and its results read in Chinese', async ({ page }) => {
   await login(page, 'zh-CN');
   await page.goto('/app/master-data/import?type=customers');
   const importPage = page.getByTestId('data-import-page');
-  await expect(importPage.getByRole('heading', { name: '导入数据' })).toBeVisible();
+  await expect(importPage.getByRole('heading', { name: '导入文件' })).toBeVisible();
   await expect(page.getByTestId('data-import-type-customers')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByTestId('data-import-type-opening-stock')).toHaveText('期初库存');
   await expect(page.getByTestId('data-import-template')).toHaveText('下载模板');

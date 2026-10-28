@@ -28,6 +28,6 @@ export async function handleBusinessReadContextRoute(ctx) {
   const timeZone = await readTenantTimezone(ctx)
   const now = ctx.homeOverviewNow instanceof Date ? ctx.homeOverviewNow : new Date()
   const read = await readTodayWorkSources(ctx, { access, rawContext: raw, now, today: tenantCalendarDay(now, timeZone), timeZone })
-  send(res, 200, buildHomeOverview(context, { now, timeZone, ...read, hidden: todayHiddenWork(access) }))
+  send(res, 200, buildHomeOverview(context, { now, timeZone, ...read, hidden: todayHiddenWork(access, ctx.env || process.env) }))
   return true
 }

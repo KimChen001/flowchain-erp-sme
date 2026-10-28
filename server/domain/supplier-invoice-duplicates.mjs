@@ -275,7 +275,7 @@ export function duplicateReviewIssues(openFlags, amountsVisible) {
   if (shown.length)
     issues.push({
       code: "DUPLICATE_REVIEW_REQUIRED",
-      message: "This bill may duplicate another bill from the same supplier. Dismiss each open duplicate flag with a reason, or cancel the bill, before approving it.",
+      message: "This supplier invoice may duplicate another invoice from the same supplier. Dismiss each open duplicate flag with a reason, or cancel the supplier invoice, before approving it.",
       status: 409,
       details: {
         flags: shown.map((flag) => duplicateFlagView(flag, amountsVisible)),
@@ -286,7 +286,7 @@ export function duplicateReviewIssues(openFlags, amountsVisible) {
   if (hidden)
     issues.push({
       code: "DUPLICATE_REVIEW_HIDDEN",
-      message: "A same-amount duplicate check on this bill needs review by someone who can see amounts before approval.",
+      message: "A same-amount duplicate check on this supplier invoice needs review by someone who can see amounts before approval.",
       status: 409,
       details: { flags: [], possibleHidden: true, hiddenOpen: true },
     });

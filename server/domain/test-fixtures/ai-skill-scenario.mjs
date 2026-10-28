@@ -110,9 +110,15 @@ export function readOnlyPrisma(data, calls = [], tenant = { locale: 'en-US', cur
     inventoryBalance: { findMany: ({ where, take }) => data.balances.filter(() => where.tenantId === AI_SKILL_TENANT).slice(0, take) },
     rfqSupplierParticipation: { findMany: ({ where }) => data.participations.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
     rfqAwardDecision: { findMany: ({ where }) => data.awards.filter((row) => row.tenantId === where.tenantId && where.rfqId.in.includes(row.rfqId)) },
-    // Item-supplier links (master-data-commands.mjs listItemSupplierRecords)
-    // and suppliers, for the preferred supplier's minimum order.
+    // Item-supplier links (master-data-commands.mjs listItemSupplierRecords),
+    // for the preferred supplier's minimum order.
     runtimeRecord: { findMany: ({ where }) => where.tenantId === AI_SKILL_TENANT ? array(data.supplierLinks) : [] },
+    // The supplier scorecard's reads (supplier-scorecard.mjs), by supplier and
+    // status as it asks; the fixture lines record no original promise.
+    purchaseOrder: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.purchaseOrders.filter((row) => !where.status?.notIn?.includes(row.status) && (typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : Boolean(row.supplierId))) },
+    receivingDocument: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.receipts.filter((row) => where.poId.in.includes(row.poId) && (!where.postingStatus || row.postingStatus === where.postingStatus)) },
+    supplierInvoice: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.supplierInvoices.filter((row) => typeof where.supplierId === 'string' ? row.supplierId === where.supplierId : true).map((row) => ({ ...row, lines: row.lines || [], matchRuns: [] })) },
+    // Suppliers, read by both the minimum order and the scorecard.
     supplier: { findMany: ({ where }) => where.tenantId !== AI_SKILL_TENANT ? [] : data.suppliers.filter((row) => !where.id || row.id === where.id).map((row) => ({ id: row.id, code: row.supplierCode || row.id, name: row.name, status: row.status || 'active' })) },
   }
   return new Proxy({}, {

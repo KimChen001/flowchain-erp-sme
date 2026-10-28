@@ -36,6 +36,12 @@ async function enterInvoice(page: Page, number: string, quantity: string, unitPr
 }
 
 async function run(page: Page, id: string, reason?: string) {
+  // A status-only step runs on one click (D4); the step is done when its button goes.
+  if ((await page.getByTestId(id).getAttribute("data-one-step")) === "true") {
+    await page.getByTestId(id).click();
+    await expect(page.getByTestId(id)).toHaveCount(0);
+    return;
+  }
   await page.getByTestId(id).click();
   if (reason) await page.getByTestId(`${id}-reason`).fill(reason);
   await page.getByTestId(`${id}-preview`).click();
@@ -87,7 +93,7 @@ test("a second bill numbered as a format variant is flagged, dismissed with a re
   await expect(checks).toContainText("UI-DUP-007");
   await expect(checks.getByRole("link", { name: "UI-DUP-007" })).toHaveAttribute("href", `/app/procurement/bills/${original}`);
   await expect(page.getByTestId("duplicate-window")).toContainText("7");
-  await expect(page.getByTestId("duplicate-window")).toContainText(/cancelled bills not compared|已取消的账单不比较/);
+  await expect(page.getByTestId("duplicate-window")).toContainText(/cancelled invoices not compared|已取消的账单不比较/);
   await run(page, "invoice-submit");
   await run(page, "invoice-match");
 
@@ -104,7 +110,7 @@ test("a second bill numbered as a format variant is flagged, dismissed with a re
   // A reason is required; the dismissal shows who and why.
   await page.getByTestId("duplicate-dismiss-likely").click();
   await page.getByTestId("duplicate-dismiss-likely-preview").click();
-  await expect(page.getByTestId("duplicate-dismiss-likely-panel")).toContainText(/Enter why this bill is not a duplicate|请填写不是重复的原因/);
+  await expect(page.getByTestId("duplicate-dismiss-likely-panel")).toContainText(/Enter why this supplier invoice is not a duplicate|请填写不是重复的原因/);
   await page.getByTestId("duplicate-dismiss-likely-reason").fill("The draft UI-DUP-007 was entered by mistake");
   await page.getByTestId("duplicate-dismiss-likely-preview").click();
   await expect(page.getByTestId("duplicate-dismiss-likely-confirm")).toBeEnabled();

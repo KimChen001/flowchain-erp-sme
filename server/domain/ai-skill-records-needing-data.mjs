@@ -1,6 +1,6 @@
-import { aiSkillCountText, aiSkillList, aiSkillText } from './ai-skill-copy.mjs'
+import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES, aiSkillFormatter, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
-import { aiSkillFocusName } from './ai-skill-today-priorities.mjs'
+import { aiSkillFocusName, showingSentence } from './ai-skill-today-priorities.mjs'
 
 const TOP = 8
 const SOURCE_AREA = { items: 'master_data', inventory: 'inventory', purchase_orders: 'purchasing', purchase_requests: 'purchasing', supplier_invoices: 'finance', receipts: 'receiving' }
@@ -26,7 +26,7 @@ export function presentRecordsNeedingData(result, facts, { skill, language, quer
     title: result.focus
       ? aiSkillText(result.total ? 'records.focus_title' : 'records.focus_none', language, { id: aiSkillFocusName(result.focus, facts) })
       : aiSkillCountText('records.title', result.total, language, { count: fmt.number(result.total) }),
-    summary: aiSkillText('records.summary', language, { checked: fmt.number(result.checked), sources: fmt.number(result.sources) }),
+    summary: aiSkillSentences([aiSkillText('records.summary', language, { checked: fmt.number(result.checked), sources: fmt.number(result.sources) }), showingSentence(result, fmt, language, 'answer.showing_plain')], language),
     severity: result.total ? 'warning' : 'success',
     evidence,
     impacts: result.items.map((record) => ({ area: aiSkillText(`area.${SOURCE_AREA[record.source] || 'master_data'}`, language), impact: status, severity: 'warning', explanation: reason(record), affectedObjects: [record.entityId] })),
