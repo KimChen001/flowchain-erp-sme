@@ -277,6 +277,8 @@ Each phase is one PR behind the flag, so the main path does not change in
 November. Switching it on for a trial workspace waits for the bar in §7 and the
 owner's word, after the course report.
 
+This design is the first of four levels of automation (§13).
+
 ## 10. Decisions for the owner
 
 | # | Decision | Recommendation |
@@ -311,3 +313,74 @@ owner's word, after the course report.
 - Tools that call outside services, including web search.
 - Model-first answers on Render before the §7 bar and the owner's word.
 - Retiring skills or templates.
+
+## 13. Roadmap: from answers to automation (L1–L4)
+
+Added at the owner's request on 2026-10-28.
+- **Where this goes:** the owner sees the conversational assistant as the core of
+  FlowChain. It gives analysis and decisions, and typing what you want starts
+  the work, so a small company needs little training to use the ERP.
+- **The four levels:** each level is a separate decision for the owner, and none
+  is approved by this document.
+
+| Level | What the user does | What FlowChain does | Example | Where it is |
+| --- | --- | --- | --- | --- |
+| L1 | Asks | Reads the records, compares, and writes a grounded answer with its sources | "Why did we spend so much this month?" | This design (§3–§8) |
+| L2 | Asks for something done | Shows a proposal card; a person confirms; the system runs the existing command | "Order 200 valves from Acme" gives a purchase request draft | #151 (track C), then S5 |
+| L3 | States a standing instruction in chat | Turns the sentence into a structured rule the user confirms, runs it on a schedule, and leaves the results as drafts in Today for review | "Every Monday, draft the purchase orders for what needs reordering" | Later; needs L2 |
+| L4 | Sets limits once | Acts on its own within the company's limits, with an audit trail and undo | "Routine reorders under $500 go out directly" | Not before the first trial |
+
+**L3: instructions instead of configuration screens.** The user writes what they
+want, not which settings to change.
+- The rule is shown back in plain words and in its structured form, and the user
+  confirms it.
+- It keeps an owner and an on/off switch, and it can be edited by chat or on a page.
+- What it produces are drafts, which wait in Today like any other work.
+
+**L4 changes the balance of 2026-10-05.** Today the model never acts unattended.
+- L4 needs an explicit owner decision that revises that rule, for named action
+  types and amounts only.
+- It needs evidence from L2 and L3 that proposals are accepted unchanged and that
+  the data is right.
+- Payments, approvals and deletes stay outside it, as in §12.
+
+### Three conditions at every level
+
+1. **Data quality.** An assistant working on wrong records answers wrongly, and
+   sounds sure.
+   - ERP correctness is what makes it trustworthy: inventory balances, three-way
+     match, permissions.
+   - The grounding check (§3) proves only that a figure came from the records, not
+     that the records are right.
+   - ERP defects come before assistant features.
+2. **Trust.** A person confirms every write, which is the rule of 2026-10-05: the
+   model proposes, the system supplies the facts and executes, a person confirms.
+   - Amount limits per action type.
+   - An audit row for each proposal and each run.
+   - Undo, where the command allows it.
+3. **Measurement.**
+   - The model-on evaluation (§7).
+   - For L2 and L3: how often proposals are accepted unchanged, edited, or rejected, stored as codes and counts (agent mode decision 9).
+   - Those logs are also research data. Collecting them from trial users needs COUHES review first.
+
+### Chat and tables together
+
+Tables and forms stay. They are better for scanning, bulk approval and
+reconciliation: start and analyse in chat; review and confirm in tables. A chat
+answer links to the rows it used, and a table can hand its selection to the chat.
+
+### A later candidate: onboarding by chat
+
+A new company uploads its Excel file in the chat. The assistant maps the columns
+onto the existing CSV import and shows the mapping for confirmation. The import
+itself runs as today. This joins the two themes: less training, and the data
+quality the levels depend on.
+
+### Suggested timing
+
+| When | What |
+| --- | --- |
+| November 2026 | The decisions M1–M7 (§10); the first deployment; S0–S4 behind the flag, locally |
+| December 2026 | L1 model-first answers for opted-in trial workspaces, once the §7 bar is met; L2 confirmed drafts (C1) |
+| Q1 2027 | L3 standing instructions; onboarding by chat |
+| Later | L4, only after a separate owner decision and L2/L3 evidence |
