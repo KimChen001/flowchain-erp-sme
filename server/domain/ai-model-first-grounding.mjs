@@ -38,6 +38,8 @@ const DATE_PATTERNS = [
   { pattern: /(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)/g, read: (m) => ({ year: +m[1], month: +m[2], day: +m[3] }) },
   { pattern: /(?<!\d)(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g, read: (m) => ({ year: m[1] ? +m[1] : null, month: +m[2], day: +m[3] }) },
   { pattern: /(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月/g, read: (m) => ({ year: +m[1], month: +m[2], day: null }) },
+  // A month alone (上季度 7月至9月), not a count of months (3 个月).
+  { pattern: /(?<![\d.])(\d{1,2})\s*月(?!\s*\d)/g, read: (m) => ({ year: null, month: +m[1], day: null }) },
   { pattern: new RegExp(`\\b${MONTH}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?(?!\\d)`, 'gi'), read: (m) => ({ year: m[3] ? +m[3] : null, month: MONTHS[m[1].slice(0, 3).toLowerCase()], day: +m[2] }) },
   { pattern: new RegExp(`(?<!\\d)(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH}\\b\\.?(?:,?\\s+(\\d{4}))?`, 'gi'), read: (m) => ({ year: m[3] ? +m[3] : null, month: MONTHS[m[2].slice(0, 3).toLowerCase()], day: +m[1] }) },
   { pattern: new RegExp(`\\b${MONTH}\\s+(\\d{4})(?!\\d)`, 'gi'), read: (m) => ({ year: +m[2], month: MONTHS[m[1].slice(0, 3).toLowerCase()], day: null }) },

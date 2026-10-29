@@ -65,6 +65,9 @@ test('the grounding check reads numbers, dates, record numbers and names in thei
   // Formats normalised: a number's end for a record, rounding, thousands, k and 万, dates in English and Chinese.
   assert.equal(check('1. PO-020 from Precision Fastener Works is 15 days overdue (due Oct 13, 2026).\n2. 8 orders are overdue, $47,249 committed (about $47.2k). Acme Components has a 32.6% share; 72.1% are matched. Here are the top 3.', [{ type: 'purchase_order', id: 'po-20' }]).ok, true)
   assert.equal(check('LOCAL-DEMO-PO-020 已逾期 15 天（10月13日到期），共 8 张，金额 4.72万美元，今天是 2026-10-28。').ok, true)
+  // A month written alone is a date: one the results hold passes, others fail.
+  assert.equal(check('本月（10月）有 8 张逾期。').ok, true)
+  assert.deepEqual(check('上季度（7月至9月）没有交货。').problems, [{ kind: 'date', value: '7月' }, { kind: 'date', value: '9月' }])
   // Anything not in the results fails, with its kind.
   const bad = check('PO-099 from Globex Supply is 16 days late, due Nov 3, €47,249, 3PL aside.', [{ type: 'purchase_order', id: 'po-99' }])
   assert.equal(bad.ok, false)
