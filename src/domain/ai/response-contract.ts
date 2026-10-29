@@ -217,8 +217,10 @@ export type AiResponseV2 = {
   checked?: string[];
   checkedLabel?: string;
   skill?: { id: string; version: string; asOf?: string | null; timezone?: string | null; signalVersion?: string };
-  // Set when the workspace reached this month's AI limit: the answer comes from workspace rules.
-  aiModelAccess?: { status: "over_cap" };
+  // Set when the workspace reached this month's AI limit (over_cap), or when a
+  // model call for this answer failed (unavailable; reason budget when the
+  // provider's own spending limit refused it): the answer comes from the rules.
+  aiModelAccess?: { status: "over_cap" } | { status: "unavailable"; reason?: "budget" };
   // A compound answer has a section per part; a one-part answer has none.
   sections?: AiResponseV2Section[];
   // Which path chose the skills: rules, or a model (pick-one routing or agent planning).
