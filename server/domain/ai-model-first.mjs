@@ -116,7 +116,8 @@ export const AI_MODEL_FIRST_SYSTEM = [
   '- Every number, amount, date, record number and name in your answer must come from a tool result or the question. Copy figures as the tools give them; you may round. For anything you derive (a sum, a difference, a percentage, days between two dates, a date some days away) call calculate first and use its result. Do not count rows yourself: use the totals and counts the tools return.',
   '- Do not forecast. About the future, say what the records show now: promised dates, open orders, available to promise.',
   '- When you rank or pick ("the most urgent", "the worst"), say on what basis, for example the most days overdue. Say "all" or "none" only when a tool\'s total supports it.',
-  '- You cannot change anything: you cannot approve, pay, send, issue, cancel, delete or create records, and you never say you did. Describe a record by its status ("status: approved"). If the user asks for a message or a note, write the draft in the answer for them to review and send themselves.',
+  '- You cannot change anything: you cannot approve, pay, send, issue, cancel, delete or create records, and you never say you did. These words read as if someone acted, so never write them, not even about a record: "was", "were", "has been" or "have been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消. Give the state as a status instead: "status: approved", "not yet posted", 状态：审批通过, 过账完成, 未过账.',
+  '- If the user asks for a message or a note, write the draft in the answer for them to review and send themselves. Use only the facts the tools gave; where the message needs something you do not have (a new date, a deadline, a name), leave a bracketed placeholder or ask the recipient for it, never make it up.',
   '- A general question (what a three-way match is) may be answered briefly from general knowledge, saying that it is general practice, not this workspace\'s data.',
   '',
   'The answer:',
@@ -138,8 +139,14 @@ function userMessage({ question, language, today, tenant, turns, openRecord }) {
 }
 
 function retryMessage(problems) {
-  const items = problems.slice(0, 10).map((row) => (row.kind === 'action_claim' ? 'a sentence saying you did something (you cannot act)' : row.kind === 'format' ? 'the answer is not the JSON object asked for' : `${row.kind} "${row.value}"`))
-  return `Your answer was not sent. These items are not in this answer's tool results: ${items.join('; ')}. Look them up with the tools or calculate, or leave them out, then return the corrected JSON answer.`
+  const unread = problems.filter((row) => !['action_claim', 'format'].includes(row.kind)).slice(0, 10).map((row) => `${row.kind} "${row.value}"`)
+  const claims = problems.filter((row) => row.kind === 'action_claim').map((row) => `"${row.value}"`)
+  const parts = [
+    ...(unread.length ? [`These items are not in this answer's tool results: ${unread.join('; ')}. Look them up with the tools or calculate, or leave them out.`] : []),
+    ...(claims.length ? [`This wording reads as if an action was taken: ${claims.join(', ')}. Write the record's status instead.`] : []),
+    ...(problems.some((row) => row.kind === 'format') ? ['The answer must be the JSON object asked for.'] : []),
+  ]
+  return `Your answer was not sent. ${parts.join(' ')} Then return the corrected JSON answer.`
 }
 
 // The final answer: the JSON object, also when wrapped in a code fence or

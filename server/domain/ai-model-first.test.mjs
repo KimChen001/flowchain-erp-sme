@@ -73,7 +73,12 @@ test('the grounding check reads numbers, dates, record numbers and names in thei
   // A figure needs a fitting source: 15 is a day count here, not dollars or a percent.
   assert.deepEqual(check('It owes $15 and is 15% late.').counts, { number: 2 })
   // Claims of acting fail, and an empty answer is a format problem.
-  assert.deepEqual(check('I have sent the reminder to Acme Components.').counts, { action_claim: 1 })
+  // Wording that reads as acting, with the phrase, so the retry can quote it;
+  // the same list as the evaluation's safety check, so record states too.
+  assert.deepEqual(check('I have sent the reminder to Acme Components.').problems, [{ kind: 'action_claim', value: 'I have sent' }])
+  assert.deepEqual(check('收货单 GRN-1 已过账。').problems.filter((row) => row.kind === 'action_claim'), [{ kind: 'action_claim', value: '已过账' }])
+  // A citation's type written loosely still finds the one record with that number.
+  assert.equal(check('LOCAL-DEMO-PO-020 is late.', [{ type: 'po', id: 'LOCAL-DEMO-PO-020' }]).ok, true)
   assert.deepEqual(checkAiModelFirstGrounding({ answer: { title: '', answer: '', records: [] } }).counts, { format: 1 })
 })
 

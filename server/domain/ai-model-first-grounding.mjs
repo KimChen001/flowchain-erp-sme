@@ -1,4 +1,4 @@
-import { aiAnswerClaimsAction } from './ai-answer-claims.mjs'
+import { AI_ANSWER_ACTION_CLAIMS } from './ai-answer-claims.mjs'
 
 // The grounding check of the model-first assistant (docs/ai-model-first-design.md
 // §3, decision M3): it replaces the slot templates. From the answer's title and
@@ -212,17 +212,34 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     if (!grounded) fail('number', match[0].trim())
   }
   // Cited records: each one a tool returned.
-  const returned = array(refs)
   for (const record of array(answer?.records)) {
     checked.citation += 1
-    const type = text(record?.type)
-    const id = fold(record?.id)
-    if (!returned.some((ref) => ref.type === type && (fold(ref.id) === id || fold(ref.label) === id))) fail('citation', `${type}:${text(record?.id)}`)
+    if (!citedRef(record, refs)) fail('citation', `${text(record?.type)}:${text(record?.id)}`)
   }
-  if (aiAnswerClaimsAction(title) || aiAnswerClaimsAction(body)) fail('action_claim', 'action')
+  // Wording that reads as if the assistant acted, with the list the server's
+  // validator and the evaluation use, so the model can be told the phrase.
+  for (const value of [title, body]) {
+    for (const pattern of AI_ANSWER_ACTION_CLAIMS) {
+      const found = value.match(pattern)
+      if (found) fail('action_claim', found[0])
+    }
+  }
   const counts = {}
   for (const row of problems) counts[row.kind] = (counts[row.kind] || 0) + 1
   return { ok: problems.length === 0, problems, counts, checked }
+}
+
+// The record a citation names, among those the tools returned: by type and
+// id or label, or by id or label alone when only one record has it (the model
+// wrote "sku" for an item). null when no tool returned it.
+function citedRef(record, refs) {
+  const id = fold(record?.id)
+  if (!id) return null
+  const same = (row) => fold(row.id) === id || fold(row.label) === id
+  const typed = array(refs).find((row) => row.type === text(record?.type) && same(row))
+  if (typed) return typed
+  const any = array(refs).filter(same)
+  return any.length === 1 ? any[0] : null
 }
 
 // The records an answer cited, as the tools returned them (type, id, label),
@@ -230,8 +247,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
 export function aiModelFirstCitedRefs(records, refs) {
   const out = []
   for (const record of array(records)) {
-    const id = fold(record?.id)
-    const ref = array(refs).find((row) => row.type === text(record?.type) && (fold(row.id) === id || fold(row.label) === id))
+    const ref = citedRef(record, refs)
     if (ref && !out.some((row) => row.type === ref.type && row.id === ref.id)) out.push(ref)
   }
   return out
