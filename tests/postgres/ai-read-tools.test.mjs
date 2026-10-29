@@ -16,6 +16,9 @@ const { readAiSkillFacts } = await import('../../server/domain/ai-skill-readers.
 const { aiReadToolsFor, aiReadToolRefs, runAiReadTool } = await import('../../server/domain/ai-read-tool-runner.mjs')
 const { seedLocalDemo } = await import('../../scripts/setup-local-demo.mjs')
 const { seedLocalScenario } = await import('../../scripts/setup-local-scenario.mjs')
+const { createKnowledgeService } = await import('../../server/domain/ai-knowledge-service.mjs')
+const { parseKnowledgeFile } = await import('../../server/domain/ai-knowledge-file-parser.mjs')
+const { readFileSync } = await import('node:fs')
 
 const AS_OF = '2026-09-29'
 const NOW = new Date(`${AS_OF}T16:00:00Z`)
@@ -32,7 +35,10 @@ const ARGS = {
   calculate: { operation: 'days_between', dates: ['2026-09-29', '2026-10-13'] },
   search_records: { query: 'Acme' },
   price_history: { sku: 'LDM-001' },
+  search_documents: { query: 'escalation of a late supplier' },
 }
+// The assistant evaluation's three fictional documents (tests/ai-eval/knowledge).
+const DOCUMENTS = ['product-guide.md', 'purchasing-policy.md', 'invoice-policy.md']
 
 test('the read tools answer from the seeded workspace, each role reading only what it may', async () => {
   assert.ok(process.env.DATABASE_URL_TEST, 'An isolated test database is required')
@@ -43,6 +49,12 @@ test('the read tools answer from the seeded workspace, each role reading only wh
     await backfillTenantAuthorization(prisma, tenantId, { actorId: `${tenantId}-admin` })
     await seedLocalDemo(prisma, env)
     await seedLocalScenario(prisma, env, { asOf: AS_OF })
+    const knowledge = createKnowledgeService(prisma, { env })
+    const knowledgeAdmin = { tenantId, userId: `${tenantId}-admin`, permissionCodes: new Set(['settings.workspace.manage']) }
+    for (const file of DOCUMENTS) {
+      const extracted = await parseKnowledgeFile({ fileName: file, contentBase64: readFileSync(new URL(`../ai-eval/knowledge/documents/${file}`, import.meta.url)).toString('base64') })
+      await knowledge.add(knowledgeAdmin, { title: extracted.title, content: extracted.content })
+    }
     const repositories = createDatabaseRepositoryRegistry({ env, prisma })
     const contextFor = async (key) => {
       const ctx = { repositories, identity: { authenticated: true, tenantId, userId: `${tenantId}-${key}`, role: users[key], source: 'local_session' }, dataMode: 'user', env, db: {}, aiSkillPrisma: prisma, aiSkillNow: NOW }
@@ -55,7 +67,7 @@ test('the read tools answer from the seeded workspace, each role reading only wh
     // The administrator: every tool, every one answers.
     const admin = await contextFor('admin')
     const offered = aiReadToolsFor(admin.facts, admin.context).map((tool) => tool.name)
-    for (const name of ['search_records', 'reorder_list', 'list_receivables', 'list_contracts', 'price_history', 'stock_projection']) assert.ok(offered.includes(name), `${name} is offered`)
+    for (const name of ['search_records', 'reorder_list', 'list_receivables', 'list_contracts', 'price_history', 'stock_projection', 'search_documents']) assert.ok(offered.includes(name), `${name} is offered`)
     const results = {}
     for (const name of offered) {
       const output = await runAiReadTool(name, ARGS[name] || {}, admin)
@@ -71,6 +83,14 @@ test('the read tools answer from the seeded workspace, each role reading only wh
     assert.ok((await runAiReadTool('list_contracts', { state: 'notice_due' }, admin)).result.rows.every((row) => row.state === 'notice_due'))
     assert.equal(results.stock_projection.weeks.length, 4)
     assert.deepEqual(results.calculate, { result: 14, unit: 'days' })
+    // The purchasing policy's escalation section, found in English; a Chinese
+    // search over English documents is sent back to search in English.
+    assert.ok(results.search_documents.documents >= DOCUMENTS.length, 'the walkthrough has its own documents too')
+    assert.deepEqual(results.search_documents.documentLanguages, ['en-US'])
+    assert.ok(results.search_documents.passages.some((row) => /purchasing/i.test(row.document) && /escalation/i.test(row.section) && row.ref.type === 'document'), JSON.stringify(results.search_documents.passages.map((row) => [row.document, row.section])))
+    const chinese = await runAiReadTool('search_documents', { query: '紧急采购怎么规定' }, admin)
+    assert.equal(chinese.error, 'query_language')
+    assert.match(chinese.details[0], /en-US/)
     // PO-020 buys LDM-004, which no open sales order needs.
     assert.ok(results.late_order_impact.skus.every((row) => row.sku !== 'LDM-001'))
     assert.ok(aiReadToolRefs(results.list_purchase_orders).length > 0)

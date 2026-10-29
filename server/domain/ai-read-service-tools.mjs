@@ -9,6 +9,8 @@ import { searchRuntimeBusinessContext } from './runtime-business-search.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
 import { readBusinessContext } from '../services/runtime-business-read-service.mjs'
 import { CONTRACT_STATES } from '../../shared/contract-status.mjs'
+import { answerKnowledgeQuery, createKnowledgeService } from './ai-knowledge-service.mjs'
+import { knowledgeProviderEnv } from './ai-knowledge-config.mjs'
 
 // Read tools that need more than the user's facts (docs/ai-model-first-design.md
 // §4): the request's context (the actor, the database and the route context
@@ -186,4 +188,48 @@ const priceHistory = defineAiTool({
   },
 })
 
-export const AI_READ_SERVICE_TOOLS = Object.freeze([searchRecords, reorderList, listReceivables, listContracts, priceHistory])
+// The workspace's own documents (policies, product guides, procedures), as
+// the knowledge search for agent planning reads them (aiAgentKnowledge,
+// PR-3): only the documents the user may read, passages with their document
+// and section, and no model asked to write an answer. Keyword search does not
+// cross languages, so a search in Chinese over documents in English comes
+// back as an error naming their language, for the model to search again.
+// Passages are document text: the loop hands them to the model as data.
+const CJK = /[㐀-鿿]/u
+const PASSAGES = 5
+const knowledge = new WeakMap()
+function knowledgeOf(context) {
+  if (!knowledge.has(context)) {
+    knowledge.set(context, (async () => {
+      const env = knowledgeProviderEnv(context.routeContext?.env || process.env)
+      const service = context.routeContext?.aiReadServices?.knowledge || createKnowledgeService(context.prisma, { env })
+      const documents = array((await service.list(context.actor))?.items)
+      return { env, service, languages: [...new Set(documents.map((row) => (row.language === 'zh-CN' ? 'zh-CN' : 'en-US')))].sort(), count: documents.length }
+    })())
+  }
+  return knowledge.get(context)
+}
+const databaseMode = (context) => context?.routeContext?.repositories?.mode === 'database' || (context?.routeContext?.env || process.env).FLOWCHAIN_PERSISTENCE_MODE === 'database'
+
+const searchDocuments = defineAiTool({
+  name: 'search_documents',
+  description: 'Searches the workspace\'s own documents that the user may read (policies, product guides, procedures) and returns the matching passages with their document and section. Write the search words in the documents\' language; the result names it, and a search in another language finds nothing. State only what the passages say, citing the document and section; if they do not answer the question, say the documents do not cover it.',
+  parameters: { query: { type: 'string', maxLength: 200, description: 'Search words in the documents\' language, for example "urgent purchase approval".' } },
+  required: ['query'],
+  available: (_facts, context) => Boolean(context?.actor && (context.prisma || context.routeContext?.aiReadServices?.knowledge)) && (databaseMode(context) || Boolean(context.routeContext?.aiReadServices?.knowledge)),
+  async run(args, { context }) {
+    const { env, service, languages, count } = await knowledgeOf(context)
+    if (!count) return { documents: 0, passages: [], note: 'This workspace has no documents the user may read.' }
+    if (CJK.test(args.query) && !languages.includes('zh-CN')) return { error: 'query_language', details: [`The documents are in ${languages.join(', ')}. Search again with words in that language.`] }
+    const result = await answerKnowledgeQuery({ question: args.query, retrievalQuery: args.query, generate: false, actor: context.actor, service, env })
+    const citations = array(result.citations)
+    return {
+      documents: count,
+      documentLanguages: languages,
+      found: citations.length,
+      passages: citations.slice(0, PASSAGES).map((row) => ({ document: row.title, section: row.heading || null, excerpt: text(row.excerpt).slice(0, 900), ref: aiToolRef('document', row.documentId, row.title) })),
+    }
+  },
+})
+
+export const AI_READ_SERVICE_TOOLS = Object.freeze([searchRecords, reorderList, listReceivables, listContracts, priceHistory, searchDocuments])
