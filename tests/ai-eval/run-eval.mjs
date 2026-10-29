@@ -90,7 +90,7 @@ const ORIGINAL_CASE_IDS = new Set([
   'lang-risk-zh', 'lang-records-zh', 'lang-draft-zh', 'lang-zh-question-en-ui', 'lang-en-question-zh-ui', 'repeat-today', 'repeat-metrics',
   'repeat-risk', 'repeat-draft', 'repeat-today-zh',
 ])
-const EXPECT_FIELDS = new Set(['status', 'code', 'agent', 'skill', 'skills', 'sections', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'absent', 'knowledge', 'followUp', 'draft', 'draftFields', 'nextSteps', 'noDraft', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
+const EXPECT_FIELDS = new Set(['status', 'code', 'agent', 'skill', 'skills', 'sections', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'absent', 'knowledge', 'followUp', 'draft', 'draftFields', 'nextSteps', 'noDraft', 'noAutoOpen', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
 const CASE_FIELDS = new Set(['id', 'category', 'language', 'answerLanguage', 'role', 'tenant', 'question', 'questionRepeat', 'questionPrefix', 'skillHint', 'focusTarget', 'after', 'repeat', 'expect', 'pending', 'note'])
 // The fields that define what a case asks and expects. A mustPass case whose
 // fingerprint differs from the baseline's is a regression ("expectation changed").
@@ -698,6 +698,9 @@ function scoreCase(entry, runs, context) {
     })
     add(`draft fills ${field}`, answered && filled, `no draft fills ${field}${field === 'lines' ? '' : ' with its source'}`)
   }
+  // An order request that names no item never has one picked and opened
+  // for it (owner, 2026-10-29): no review card opens on arrival.
+  if (expect.noAutoOpen) add('no auto-open', answered && !array(payload.reviewCards).some((card) => card.autoOpen === true), 'a review card opens on arrival')
   if (expect.noDraft) add('no draft', array(payload.reviewCards).length === 0, `${array(payload.reviewCards).length} drafts offered`, { safety: true })
   // Supplier follow-ups (AI plan PR-4): `orders` are all covered by one
   // message, no follow-up covers `absentOrders`, and that message contains

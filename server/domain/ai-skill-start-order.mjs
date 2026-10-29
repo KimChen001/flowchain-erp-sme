@@ -14,7 +14,8 @@ import { aiSkillOtherUnitLines } from './ai-skill-inventory-availability.mjs'
 // A card with `autoOpen: true` is opened by the assistant as the answer
 // arrives, when the choice is clear and the question asks for the order:
 //   a SKU the question or the page names       -> that SKU, opened
-//   no SKU, one SKU needs ordering              -> that SKU, opened
+//   no SKU, one SKU short or covered            -> asked which item: that SKU offered as a
+//                                                 choice beside a blank request, none opened
 //   no SKU, several need ordering               -> a card each (up to three), none opened
 //   short, but open orders or requests cover it -> a follow-up on the latest supplying
 //                                                 order and a request card, none opened
@@ -23,8 +24,10 @@ import { aiSkillOtherUnitLines } from './ai-skill-inventory-availability.mjs'
 //   the SKU is on open PO lines in another unit -> those lines named first, and the
 //                                                 card not opened: they are not
 //                                                 counted as incoming, but are on order
-// A question that asks whether or what to order ("should I reorder LDM-001?")
-// gets the same cards, none opened.
+// A request to order never has its item picked for it (owner, 2026-10-29,
+// revising decision 10 of 2026-10-04 for a request that names no item). A
+// question that asks whether or what to order ("should I reorder LDM-001?")
+// gets the cards below, none opened.
 //
 // A SKU needs ordering when its target, the highest of the reorder point, the
 // safety stock and open sales demand (as for the drafts), is above what is
@@ -216,6 +219,33 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
   // order: the answer names them before anything else and opens nothing.
   const otherUnit = aiSkillOtherUnitLines(target.row, fmt, language)
   const otherUnitSentences = otherUnit ? [aiSkillText('order.other_unit', language, { sku, lines: otherUnit })] : []
+  // A request to order that names no SKU: the answer asks which one. Each SKU
+  // below its target is a choice, with how short it is, or with what is
+  // already on order for it, said first as for a named SKU (owner,
+  // 2026-10-04), and any open lines in another unit. Beside it: chasing the
+  // latest issued order of a covered SKU (an order not yet sent is sent
+  // first, decision V5) and a blank request. Nothing opens.
+  if (ask && (result.outcome === 'one' || result.outcome === 'covered')) {
+    const [target] = result.targets
+    const { row, plan } = target
+    const covered = result.outcome === 'covered'
+    const latest = covered ? target.supplying.find((po) => !aiSkillPurchaseOrderNotSent(po)) : null
+    const unsent = covered && !latest ? target.supplying[0] || null : null
+    const otherUnit = aiSkillOtherUnitLines(row, fmt, language)
+    const cards = [
+      requestCard(target, result, facts, language, { autoOpen: false, anyway: covered }),
+      ...(latest ? [followUpCard(target, latest, facts, language)] : []),
+      blankCard(language),
+    ]
+    return answer(aiSkillText('order.title_choose', language), [
+      aiSkillText('order.choose_lead', language),
+      covered ? aiSkillText('order.choice_covered', language, { sku: row.sku }) : aiSkillText('order.choice_short', language, { sku: row.sku, gap: fmt.quantity(plan.gap, row.unit) }),
+      ...(covered ? onOrderSentences(target, facts, language) : []),
+      ...(otherUnit ? [aiSkillText('order.other_unit', language, { sku: row.sku, lines: otherUnit })] : []),
+      ...(covered ? [aiSkillText(latest ? 'order.covered_next' : unsent ? 'order.covered_next_not_sent' : 'order.covered_next_no_po', language, { po: (latest || unsent)?.orderNumber })] : []),
+      aiSkillText('order.choose_next', language),
+    ], cards, unsent ? { navigation: [aiSkillNavigation({ label: unsent.orderNumber, entityType: 'purchase_order', entityId: unsent.id }, language), ...navigation].slice(0, 3) } : {})
+  }
   if (result.outcome === 'covered' && !result.anyway) {
     // Open orders already bring enough. The answer says so first; then the
     // latest issued order is chased, and a request is one click away, not
@@ -233,7 +263,8 @@ export function presentStartOrder(result, facts, { skill, language, query }) {
       aiSkillText(next, language, { po: (latest || unsent)?.orderNumber }),
     ], cards, unsent ? { navigation: [aiSkillNavigation({ label: unsent.orderNumber, entityType: 'purchase_order', entityId: unsent.id }, language), ...navigation].slice(0, 3) } : {})
   }
-  // One SKU: named, the only one that needs ordering, or ordered anyway. With
+  // One SKU: named, or the only one that needs ordering when asked whether to
+  // order. With
   // open lines in another unit it is answered as advice, nothing opened.
   const open = ask && !otherUnit
   const card = requestCard(target, result, facts, language, { autoOpen: open })
