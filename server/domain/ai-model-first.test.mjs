@@ -244,6 +244,8 @@ test('the guards keep their own answers: refusals, the outside world, injection,
   assert.equal(entry('What should I handle first today?', { skillHint: 'today_priorities' }).reason, 'chip')
   assert.equal(entry('你好').reason, 'greeting')
   assert.equal(entry('帮我下单').reason, 'order_request')
+  // A contract question is the loop's when it can read contracts (list_contracts).
+  assert.deepEqual(entry('我们和 Acme 的合同什么时候到期？'), { eligible: true, reason: null, requires: ['list_contracts'] })
   // A question about the documents is the loop's too: it searches them.
   assert.equal(entry('What does our purchasing policy say about urgent purchases?', { queryMode: 'knowledge' }).eligible, true)
   for (const message of ['Which purchase orders are overdue?', '哪家供应商的问题对客户订单影响最大？', 'Write a short note to Acme asking for a new date for PO-001']) assert.equal(entry(message).eligible, true, message)
@@ -455,6 +457,32 @@ test('through the gateway: without a document tool, a document question keeps th
   const withLoop = await run(ANTHROPIC)
   assert.equal(stub.requests.length, 0)
   assert.deepEqual({ status: withLoop.status, code: withLoop.payload.code }, { status: (await run(off)).status, code: 'KNOWLEDGE_UNAVAILABLE' })
+})
+
+test('through the gateway: a contract question goes to the loop only where contracts can be read', async () => {
+  const question = 'When does our contract with Acme Components end, and how much notice do we need to give?'
+  const contracts = {
+    list: async () => ({
+      today: '2026-09-29', counts: { all: 1 },
+      contracts: [{ id: 'CT-1', number: 'CT-ACME0001', name: 'Acme supply agreement', status: 'active', state: 'in_force', endDate: '2026-12-31', noticeDays: 60, counterpartyType: 'supplier', supplier: { name: 'Acme Components' }, renewal: { type: 'manual' } }],
+    }),
+  }
+  const answer = { title: 'The Acme agreement ends on 2026-12-31', answer: 'Contract CT-ACME0001 with Acme Components ends on 2026-12-31. It needs 60 days of notice.', records: [{ type: 'contract', id: 'CT-1' }] }
+  // Contracts module off: the loop steps aside, and the rules answer as before.
+  const off = scripted([final(answer)])
+  const closed = gatewayContext({ message: question, fetchImpl: off.fetchImpl, ctxExtra: { aiReadServices: { contracts } } })
+  await handleAiRuntimeGatewayRoute(closed.ctx)
+  assert.equal(off.requests.length, 0)
+  assert.notEqual(closed.sent.at(-1).payload.intent, 'model_first')
+  assert.deepEqual(closed.audits.at(-1).metadata.modelFirst, { status: 'skipped', reason: 'tool_not_offered', tool: 'list_contracts' })
+  // Contracts module on: the model reads them.
+  const on = scripted([toolUse([['list_contracts', { supplier: 'Acme Components' }]]), final(answer)])
+  const open = gatewayContext({ message: question, fetchImpl: on.fetchImpl, env: { ...ANTHROPIC, FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, ctxExtra: { aiReadServices: { contracts } } })
+  await handleAiRuntimeGatewayRoute(open.ctx)
+  const { payload } = open.sent.at(-1)
+  assert.equal(payload.intent, 'model_first')
+  assert.ok(on.requests[0].body.tools.some((tool) => tool.name === 'list_contracts'))
+  assert.deepEqual(payload.keyEvidence.map((item) => [item.entityType, item.entityLabel]), [['contract', 'CT-ACME0001']])
 })
 
 test('off by default: without the mode the gateway answers as before', async () => {

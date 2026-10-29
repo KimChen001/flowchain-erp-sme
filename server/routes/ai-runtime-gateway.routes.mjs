@@ -165,13 +165,14 @@ async function handleGatewayRequest(requestCtx) {
       // the guards let through is answered by the tool loop. When it gives no
       // checked answer, the knowledge path, then the rules answer below, with
       // no model call and a notice; a guarded question goes there directly. A
-      // document question the loop cannot search for (no document tool for
-      // this user) goes to the knowledge path as before, with no notice.
-      // Either way the audit row carries the loop's codes and counts.
+      // question that needs a tool this user is not offered (search_documents
+      // without database storage, list_contracts without the contracts
+      // module) goes to the knowledge path or the rules as before, with no
+      // notice. Either way the audit row carries the loop's codes and counts.
       if (modelFirstEntry) {
         if (!modelFirstEntry.eligible) ctx = { ...ctx, aiModelFirstAudit: { status: 'guarded', reason: modelFirstEntry.reason } }
         else {
-          const modelFirst = await answerAiModelFirst(ctx, body, { documents: isKnowledgeQuestion(body) })
+          const modelFirst = await answerAiModelFirst(ctx, body, { documents: isKnowledgeQuestion(body), requires: modelFirstEntry.requires })
           if (modelFirst.response) {
             await recordAiSkillAudit(ctx, { response: modelFirst.response, facts: modelFirst.facts, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, modelFirst: modelFirst.audit })
             // The loop searched the documents itself when it could; otherwise

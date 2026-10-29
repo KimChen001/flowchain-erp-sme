@@ -73,11 +73,14 @@ lets the workspace call a model.
 - **Entry.** A free-text question goes to a tool loop. The deterministic guards
   answer first and keep their answers: an instruction to act, a question about
   the outside world, injection phrasing (overriding the rules, other tenants or
-  workspaces, SQL), a greeting, contracts and an order request. Prompt chips keep
-  their skills. Document and mixed questions go to the loop too, which searches
-  the documents with `search_documents`. Where that tool is not offered (no
-  database storage) the knowledge path answers them as before; it is also the
-  fallback, without a model, when the loop gives no checked answer.
+  workspaces, SQL), a greeting and an order request. Prompt chips keep their
+  skills. Document and mixed questions go to the loop too, which searches the
+  documents with `search_documents`; where that tool is not offered (no database
+  storage) the knowledge path answers them as before, and it is also the
+  fallback, without a model, when the loop gives no checked answer. A contract
+  question goes to the loop when `list_contracts` is offered (the contracts
+  module is on and the user may read contracts); otherwise the rules answer it
+  as before.
 - **The loop.** The model reads through the read tools
   (`server/domain/ai-read-tools.mjs`), which hold only what the asking user may
   read. At most 4 rounds, 8 tool calls and 20 s per answer, plus the token

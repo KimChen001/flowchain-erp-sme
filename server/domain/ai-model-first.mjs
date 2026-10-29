@@ -76,7 +76,10 @@ const INJECTION = [
 export const aiModelFirstInjection = (message) => INJECTION.some((pattern) => pattern.test(text(message)))
 
 // Whether the loop answers this request, and if not why (a code for the audit
-// row): { eligible, reason }.
+// row): { eligible, reason, requires }. `requires`: the tools the question
+// needs; without them the loop steps aside and the rules answer as before (a
+// contract question without the contracts module gets the rules' answer that
+// says where contracts are kept).
 export function aiModelFirstEntry(body = {}) {
   const message = text(body.message || body.question)
   if (text(body.skillHint)) return { eligible: false, reason: 'chip' }
@@ -87,9 +90,8 @@ export function aiModelFirstEntry(body = {}) {
   if (route.outOfDomain) return { eligible: false, reason: 'outside_world' }
   if (route.explicit) return { eligible: false, reason: 'chip' }
   if (route.greeting) return { eligible: false, reason: 'greeting' }
-  if (route.contracts) return { eligible: false, reason: 'contracts' }
   if (route.mode === 'order') return { eligible: false, reason: 'order_request' }
-  return { eligible: true, reason: null }
+  return { eligible: true, reason: null, requires: route.contracts ? ['list_contracts'] : [] }
 }
 
 // The earlier turns of the user's panel, as text: the panel's previousTurns,
@@ -342,18 +344,19 @@ export function aiModelFirstAudit(outcome, { env = {}, turns = 0 } = {}) {
 // One free-text question through the loop, as the asking user. Returns
 // { response, audit, facts, searchedDocuments } when the model's answer passed
 // the check, or { response: null, audit, facts, reason } when the rules
-// should answer. `documents`: a question about the workspace's documents;
-// without a document tool for this user the loop steps aside
-// ({ skipped: true }) and the knowledge path answers it as before.
-export async function answerAiModelFirst(ctx, body = {}, { documents = false } = {}) {
+// should answer. `documents`: a question about the workspace's documents,
+// which needs search_documents; `requires`: other tools the question needs
+// (aiModelFirstEntry). Without one of them for this user the loop steps aside
+// ({ skipped: true }) and the knowledge path or the rules answer as before.
+export async function answerAiModelFirst(ctx, body = {}, { documents = false, requires = [] } = {}) {
   const env = ctx.env || process.env
   const message = text(body.message || body.question)
   const language = aiSkillQuestionLanguage(message, body.answerLanguage)
   const context = await loadAiSkillContext(ctx)
   const facts = await readAiSkillFacts(context)
-  if (documents && !aiReadToolsFor(facts, context).some((tool) => tool.name === 'search_documents')) {
-    return { response: null, skipped: true, reason: 'no_document_tool', audit: { status: 'skipped', reason: 'no_document_tool' }, facts }
-  }
+  const offered = new Set(aiReadToolsFor(facts, context).map((tool) => tool.name))
+  const missing = [...(documents ? ['search_documents'] : []), ...array(requires)].find((name) => !offered.has(name))
+  if (missing) return { response: null, skipped: true, reason: 'tool_not_offered', audit: { status: 'skipped', reason: 'tool_not_offered', tool: missing }, facts }
   const turns = aiModelFirstTurns(body.conversationContext)
   const focus = body.focusTarget && typeof body.focusTarget === 'object' && text(body.focusTarget.entityType) ? { type: text(body.focusTarget.entityType), label: clip(body.focusTarget.entityLabel || body.focusTarget.entityId, 120) } : null
   // Signing in and reading the facts fail as for any answer; anything that
