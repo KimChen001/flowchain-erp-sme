@@ -4,6 +4,7 @@ import { createContractReadService } from './contract-read-service.mjs'
 import { createOperationalFinanceO2cReadService } from './operational-finance-o2c-read-service.mjs'
 import { createPriceHistoryReadService } from './price-history-read-service.mjs'
 import { createReorderListReadService } from './reorder-list-read-service.mjs'
+import { SUPPLIER_ISSUE_TYPES, createSupplierInsightsReadService } from './supplier-insights.mjs'
 import { reportReadAccessFor, scopeBusinessContext } from './report-read-access.mjs'
 import { searchRuntimeBusinessContext } from './runtime-business-search.mjs'
 import { buildRuntimeInventoryAllocation } from './runtime-inventory-allocation-read-model.mjs'
@@ -33,6 +34,18 @@ const identityOf = (context) => ({ identity: context.routeContext?.identity })
 // nested records, ids of other tables or free-text fields that could carry
 // instructions.
 const primitives = (row, keep) => Object.fromEntries(keep.filter((key) => row?.[key] !== undefined && (row[key] === null || typeof row[key] !== 'object')).map((key) => [key, row[key]]))
+// Payment terms with their code, name and days, from the workspace's own
+// terms. A contract holds a term's id or its code, as the contract commands
+// accept either (contract-command-service.mjs); one the workspace does not
+// hold is given as its code.
+async function paymentTermsOf(context, keys) {
+  const wanted = [...new Set(keys.map(text).filter(Boolean))]
+  if (!wanted.length || typeof context.prisma?.paymentTerm?.findMany !== 'function') return new Map()
+  const rows = await context.prisma.paymentTerm.findMany({ where: { tenantId: context.tenantId, OR: [{ id: { in: wanted } }, { code: { in: wanted } }] }, select: { id: true, code: true, name: true, days: true } })
+  const terms = new Map()
+  for (const row of rows) for (const key of [row.code, row.id]) terms.set(key, { code: row.code, name: row.name, days: row.days ?? null })
+  return terms
+}
 
 // The user's business context, scoped as the reports scope it, read once per
 // request: the record search and the reorder list read it.
@@ -118,9 +131,14 @@ const listReceivables = defineAiTool({
   },
 })
 
+// A contract's money and dates as the contract service returns them: the
+// total value is null, and named in restrictedFields, for a user without
+// procurement.prices.read (maskContract). K1 stores no per-item prices. The
+// title and their reference are short entered text, which the loop hands to
+// the model as data; the notes are not passed.
 const listContracts = defineAiTool({
   name: 'list_contracts',
-  description: 'Signed supplier contracts: number, name, supplier, state, end date, notice period and renewal, soonest key date first. Filter by supplier, state or words.',
+  description: 'Signed supplier contracts: number, title, their reference, type, supplier, state, start, end and signing dates, notice period, renewal, total contract value with its currency, and payment terms, soonest key date first. Contracts hold no per-item prices; use price_history for what an item cost. The total value is null for users who may not see prices. Filter by supplier, state or words.',
   parameters: {
     supplier: { type: 'string', description: 'A supplier name or code.' },
     state: { type: 'string', enum: CONTRACT_STATES },
@@ -136,12 +154,16 @@ const listContracts = defineAiTool({
       supplierId = found.supplier.id
     }
     const page = await serviceOf(context, 'contracts', createContractReadService).list({ search: args.search || '', state: args.state || '', supplierId, sort: 'key_date', pageSize: 100 }, identityOf(context))
+    const contracts = array(page.contracts)
+    const terms = await paymentTermsOf(context, contracts.map((row) => row.paymentTermsId))
     return {
       today: page.today,
       counts: page.counts,
-      ...aiToolList(array(page.contracts).map((row) => ({
-        ...primitives(row, ['number', 'name', 'status', 'state', 'endDate', 'noticeDays', 'counterpartyType']),
+      pricesHidden: !page.access?.prices,
+      ...aiToolList(contracts.map((row) => ({
+        ...primitives(row, ['number', 'title', 'externalReference', 'type', 'status', 'state', 'startDate', 'endDate', 'signedOn', 'noticeDays', 'counterpartyType', 'totalValue', 'currency']),
         supplier: text(row.supplier?.name) || null,
+        paymentTerms: row.paymentTermsId ? terms.get(row.paymentTermsId) || { code: row.paymentTermsId } : null,
         renewal: row.renewal && typeof row.renewal === 'object' ? primitives(row.renewal, ['type', 'term', 'termMonths', 'noticeDate']) : row.renewal ?? null,
         ref: aiToolRef('contract', row.id, row.number),
       })), args.limit),
@@ -184,6 +206,52 @@ const priceHistory = defineAiTool({
       otherCurrencies: array(history.otherCurrencies), otherUnits: array(history.otherUnits),
       pricesHidden: Boolean(read.restrictedFields?.length),
       lastOrderBySupplier: array(last.lastOrders).map((row) => ({ supplier: supplierName(row.supplierId), orderNumber: row.orderNumber, day: row.day, ref: aiToolRef('purchase_order', row.purchaseOrderId, row.orderNumber) })),
+    }
+  },
+})
+
+// The Supplier risks page (supplier-insights.mjs readRisks), read as the page
+// reads it for this user: each supplier's open issues, earliest date first,
+// never a score (owner rule 2026-10-03). The issues come from the kinds of
+// records the user may read; the others are named in `hidden`.
+const supplierRisks = defineAiTool({
+  name: 'supplier_risks',
+  description: 'The Supplier risks list: each supplier\'s open issues (overdue purchase orders, rejected receipt quantities, receipts received but not posted, supplier invoice variances) with a count per supplier, earliest date first. It does not score or rank suppliers. Filter by supplier or issue type. Record kinds the user may not read are named in hidden: their issues are missing, not zero.',
+  parameters: {
+    supplier: { type: 'string', description: 'A supplier name or code.' },
+    type: { type: 'string', enum: SUPPLIER_ISSUE_TYPES },
+    limit: limitParam,
+  },
+  available: (_facts, context) => {
+    if (!context?.actor || !(context.prisma || context.routeContext?.aiReadServices?.supplierInsights)) return false
+    const { collections = {} } = context.routeContext?.reportReadAccess || reportReadAccessFor(context.actor)
+    return Boolean(collections.purchaseOrders || collections.receipts || collections.supplierInvoices)
+  },
+  async run(args, { facts, context }) {
+    const read = await serviceOf(context, 'supplierInsights', createSupplierInsightsReadService).readRisks(context.routeContext)
+    let rows = array(read.issues)
+    if (args.supplier) {
+      // Among the suppliers the user may read when the facts hold them;
+      // otherwise among the suppliers the list names.
+      const listed = [...new Map(rows.map((row) => [row.supplierId, { id: row.supplierId, code: row.supplierCode, name: row.supplierName }])).values()]
+      const found = aiToolSupplier(Array.isArray(facts?.suppliers) ? facts : { suppliers: listed }, args.supplier)
+      if (found.supplier) rows = rows.filter((row) => row.supplierId === found.supplier.id)
+      else if (Array.isArray(facts?.suppliers) || found.error === 'supplier_ambiguous') return { error: found.error, candidates: found.candidates || [] }
+      else rows = []
+    }
+    if (args.type) rows = rows.filter((row) => row.type === args.type)
+    const bySupplier = new Map()
+    for (const row of rows) {
+      const entry = bySupplier.get(row.supplierId) || { supplier: row.supplierName, code: row.supplierCode, issues: 0, byType: {}, ref: aiToolRef('supplier', row.supplierId, row.supplierName) }
+      entry.issues += 1
+      entry.byType[row.type] = (entry.byType[row.type] || 0) + 1
+      bySupplier.set(row.supplierId, entry)
+    }
+    return {
+      asOf: read.asOf,
+      hidden: Object.entries(read.visibility || {}).filter(([key, visible]) => key !== 'issues' && !visible).map(([key]) => key),
+      suppliers: [...bySupplier.values()],
+      ...aiToolList(rows.map((row) => ({ supplier: row.supplierName, type: row.type, record: row.label, when: row.when ?? null, ...row.data, ref: aiToolRef(row.entityType, row.entityId, row.label) })), args.limit),
     }
   },
 })
@@ -232,4 +300,4 @@ const searchDocuments = defineAiTool({
   },
 })
 
-export const AI_READ_SERVICE_TOOLS = Object.freeze([searchRecords, reorderList, listReceivables, listContracts, priceHistory, searchDocuments])
+export const AI_READ_SERVICE_TOOLS = Object.freeze([searchRecords, reorderList, listReceivables, listContracts, priceHistory, supplierRisks, searchDocuments])

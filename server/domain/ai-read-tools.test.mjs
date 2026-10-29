@@ -7,6 +7,7 @@ import { validateAiToolArgs, aiToolList, AI_TOOL_LIMITS } from './ai-read-tool-c
 import { AI_READ_TOOLS } from './ai-read-tools.mjs'
 import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
+import { createSupplierInsightsReadService } from './supplier-insights.mjs'
 
 async function factsFor(roleKey = 'workspace-administrator') {
   const scenario = aiSkillScenario({ roleKey })
@@ -140,4 +141,50 @@ test('the stock projection places only dated lines in a week and lists the rest 
   for (const entry of projection.notPlacedInAWeek.incomingPastPromisedDate) assert.ok(!placed.has(entry.orderNumber))
   assert.ok(projection.notPlacedInAWeek.incomingPastPromisedDate.some((entry) => entry.orderNumber === 'PO-001'), 'PO-001 is overdue')
   assert.deepEqual(await runAiReadTool('stock_projection', { sku: 'NOPE-1' }, { facts }), { ok: false, error: 'not_found' })
+})
+
+test('supplier_risks lists the Supplier risks page\'s issues, counted per supplier and never scored', async () => {
+  const scenario = aiSkillScenario()
+  const context = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(context)
+  assert.ok(aiReadToolsFor(facts, context).some((tool) => tool.name === 'supplier_risks'))
+  const risks = (await runAiReadTool('supplier_risks', {}, { facts, context })).result
+  // The page's own rows, in its order: earliest date first.
+  const page = await createSupplierInsightsReadService({ prisma: context.prisma, now: () => context.now }).readRisks(scenario.ctx)
+  assert.ok(page.issues.length > 0)
+  assert.equal(risks.total, page.issues.length)
+  assert.deepEqual(risks.rows.map((row) => row.ref.id), page.issues.slice(0, risks.rows.length).map((row) => row.entityId))
+  assert.equal(risks.suppliers.reduce((sum, row) => sum + row.issues, 0), page.issues.length)
+  assert.ok(risks.suppliers.every((row) => row.ref.type === 'supplier' && !('score' in row)))
+  assert.deepEqual(risks.hidden, [])
+  const acme = (await runAiReadTool('supplier_risks', { supplier: 'acme' }, { facts, context })).result
+  assert.ok(acme.rows.length > 0 && acme.rows.every((row) => row.supplier === 'Acme Components'))
+  assert.equal((await runAiReadTool('supplier_risks', { supplier: 'Nobody Ltd' }, { facts, context })).error, 'supplier_not_found')
+  const overdue = (await runAiReadTool('supplier_risks', { type: 'po_overdue' }, { facts, context })).result
+  assert.ok(overdue.rows.length > 0 && overdue.rows.every((row) => row.type === 'po_overdue' && row.ref.type === 'purchase_order'))
+  // Finance reads supplier invoices only: the other kinds are named hidden.
+  const financeContext = await loadAiSkillContext(aiSkillScenario({ roleKey: 'finance-specialist' }).ctx)
+  const finance = (await runAiReadTool('supplier_risks', {}, { facts: await readAiSkillFacts(financeContext), context: financeContext })).result
+  assert.ok(finance.hidden.includes('orders') && finance.hidden.includes('receipts'))
+  assert.doesNotMatch(JSON.stringify(finance), /PO-0\d\d|GRN-0\d\d/, 'no purchase order or receipt reaches finance')
+})
+
+test('list_contracts gives a contract\'s title, dates, value and terms, the value only to users who may see prices', async () => {
+  const row = { id: 'CON-1', number: 'CON-0001', title: 'Flow controllers 2026', externalReference: 'ACME-MSA-7', type: 'supply', status: 'active', state: 'active', startDate: '2026-01-01', endDate: '2026-12-31', signedOn: '2025-12-15', noticeDays: 60, renewal: 'manual', counterpartyType: 'supplier', totalValue: '125000.0000', currency: 'USD', paymentTermsId: 'TERMS-30', notes: 'Free text the model never reads', supplier: { id: 'SUP-001', name: 'Acme Components' } }
+  const run = async (prices) => {
+    const scenario = aiSkillScenario()
+    const contracts = { list: async () => ({ today: '2026-09-29', counts: { all: 1 }, access: { prices }, contracts: [prices ? row : { ...row, totalValue: null, restrictedFields: ['totalValue'] }] }) }
+    const context = await loadAiSkillContext({ ...scenario.ctx, env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { contracts } })
+    return (await runAiReadTool('list_contracts', {}, { facts: await readAiSkillFacts(context), context })).result
+  }
+  const buyer = await run(true)
+  assert.equal(buyer.pricesHidden, false)
+  assert.deepEqual(buyer.rows[0], {
+    number: 'CON-0001', title: 'Flow controllers 2026', externalReference: 'ACME-MSA-7', type: 'supply', status: 'active', state: 'active', startDate: '2026-01-01', endDate: '2026-12-31', signedOn: '2025-12-15', noticeDays: 60, counterpartyType: 'supplier', totalValue: '125000.0000', currency: 'USD',
+    supplier: 'Acme Components', paymentTerms: { code: 'TERMS-30' }, renewal: 'manual', ref: { type: 'contract', id: 'CON-1', label: 'CON-0001' },
+  })
+  const viewer = await run(false)
+  assert.equal(viewer.pricesHidden, true)
+  assert.equal(viewer.rows[0].totalValue, null)
+  assert.equal(viewer.rows[0].currency, 'USD')
 })

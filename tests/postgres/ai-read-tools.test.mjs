@@ -67,7 +67,7 @@ test('the read tools answer from the seeded workspace, each role reading only wh
     // The administrator: every tool, every one answers.
     const admin = await contextFor('admin')
     const offered = aiReadToolsFor(admin.facts, admin.context).map((tool) => tool.name)
-    for (const name of ['search_records', 'reorder_list', 'list_receivables', 'list_contracts', 'price_history', 'stock_projection', 'search_documents']) assert.ok(offered.includes(name), `${name} is offered`)
+    for (const name of ['search_records', 'reorder_list', 'list_receivables', 'list_contracts', 'price_history', 'stock_projection', 'supplier_risks', 'search_documents']) assert.ok(offered.includes(name), `${name} is offered`)
     const results = {}
     for (const name of offered) {
       const output = await runAiReadTool(name, ARGS[name] || {}, admin)
@@ -77,6 +77,16 @@ test('the read tools answer from the seeded workspace, each role reading only wh
     assert.equal(results.get_purchase_order.order.orderNumber.endsWith('PO-020'), true)
     assert.ok(results.search_records.rows.some((row) => row.type === 'supplier' && /Acme/.test(row.name)))
     assert.ok(results.list_contracts.rows.length >= 1, 'the walkthrough has contracts')
+    // A contract's title, dates and terms (the walkthrough's record no value);
+    // its terms are held by code and read from the workspace's terms.
+    assert.equal(results.list_contracts.pricesHidden, false)
+    assert.ok(results.list_contracts.rows.every((row) => row.title && row.startDate && 'totalValue' in row && row.ref.type === 'contract'))
+    const termed = results.list_contracts.rows.filter((row) => row.paymentTerms)
+    assert.ok(termed.length >= 1 && termed.every((row) => row.paymentTerms.name === 'Net 30' && row.paymentTerms.days === 30), JSON.stringify(termed.map((row) => row.paymentTerms)))
+    // The Supplier risks page's issues, counted per supplier: PO-020 is late.
+    assert.equal(results.supplier_risks.suppliers.reduce((sum, row) => sum + row.issues, 0), results.supplier_risks.total)
+    const precision = await runAiReadTool('supplier_risks', { supplier: 'Precision Fastener Works', type: 'po_overdue' }, admin)
+    assert.ok(precision.result.rows.some((row) => /PO-020$/.test(row.record) && row.ref.type === 'purchase_order'), JSON.stringify(precision))
     assert.ok(results.price_history.latest?.unitPrice, 'an administrator sees the latest price')
     assert.ok(results.reorder_list.rows.every((row) => row.sku && row.ref.type === 'item'))
     assert.ok(results.reorder_list.summary, 'the reorder list summary is read')
@@ -103,6 +113,9 @@ test('the read tools answer from the seeded workspace, each role reading only wh
     assert.equal(viewerPrices.result.latest?.unitPrice ?? null, null)
     const viewerOrders = await runAiReadTool('list_purchase_orders', { status: 'all' }, viewer)
     assert.ok(viewerOrders.result.rows.every((row) => row.amount === null))
+    const viewerContracts = await runAiReadTool('list_contracts', {}, viewer)
+    assert.equal(viewerContracts.result.pricesHidden, true)
+    assert.ok(viewerContracts.result.rows.every((row) => row.totalValue === null))
 
     // Finance reads invoices and receivables, not purchase orders or stock.
     const finance = await contextFor('finance')
@@ -115,7 +128,7 @@ test('the read tools answer from the seeded workspace, each role reading only wh
     assert.doesNotMatch(JSON.stringify(financeOutputs), /LOCAL-[A-Z]+-PO-\d+/, 'no purchase order number reaches finance')
 
     // No tool returns a contact's email address, and nothing was written.
-    for (const output of [results, viewerPrices, viewerOrders, financeOutputs]) assert.doesNotMatch(JSON.stringify(output), /@/)
+    for (const output of [results, viewerPrices, viewerOrders, viewerContracts, financeOutputs]) assert.doesNotMatch(JSON.stringify(output), /@/)
     assert.deepEqual(await state(), before)
   } finally {
     await prisma.$disconnect()
