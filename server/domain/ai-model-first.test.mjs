@@ -429,11 +429,13 @@ test('through the gateway: a question about the documents goes to the loop, whic
   const question = 'What does our purchasing policy say about urgent purchases?'
   const answer = { title: 'The policy does not cover urgent purchases', answer: 'The documents do not cover urgent purchases. The nearest section is Follow-up and escalation in the Purchasing Policy: escalate to the buyer manager when a supplier is 3 business days past the promised date.', records: [{ type: 'document', id: 'DOC-1' }] }
   const stub = scripted([toolUse([['search_documents', { query: 'supplier escalation' }]]), final(answer)])
-  const { ctx, sent, audits } = gatewayContext({ message: question, fetchImpl: stub.fetchImpl, ctxExtra: { aiReadServices: { knowledge: POLICY_SERVICE } } })
+  const { ctx, sent, audits } = gatewayContext({ message: question, fetchImpl: stub.fetchImpl, ctxExtra: { aiReadServices: { knowledge: POLICY_SERVICE }, aiAgentKnowledge: { languages: ['en-US'] } } })
   await handleAiRuntimeGatewayRoute(ctx)
   const { payload } = sent.at(-1)
   assert.equal(payload.intent, 'model_first')
   assert.ok(stub.requests[0].body.tools.some((tool) => tool.name === 'search_documents'))
+  // The documents' languages come with the question, so the first search can be in English.
+  assert.deepEqual(JSON.parse(stub.requests[0].body.messages[0].content[0].text).documentLanguages, ['en-US'])
   const searched = JSON.parse(stub.requests[1].body.messages[2].content[0].content)
   assert.deepEqual(searched.passages.map((row) => [row.document, row.section]), [['Purchasing Policy', 'Follow-up and escalation']])
   assert.equal(payload.checkedLabel, 'Checked: documents')

@@ -120,7 +120,7 @@ export const AI_MODEL_FIRST_SYSTEM = [
   '- Tools can count related things on different bases: the supplier scorecard counts only deliveries promised in its period, judged against the original promised date, while list_purchase_orders gives the orders overdue today. Give the count the question asks about, with its basis or period. Never state two different counts as if they measured the same thing; if you give both, say what each one counts.',
   '- You cannot change anything: you cannot approve, pay, send, issue, cancel, delete or create records, and you never say you did. These words read as if someone acted, so never write them, not even about a record: "was", "were", "has been" or "have been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消. Give the state as a status instead: "status: approved", "not yet posted", 状态：审批通过, 过账完成, 未过账.',
   '- If the user asks for a message or a note, write the draft in the answer for them to review and send themselves. Use only the facts the tools gave; where the message needs something you do not have (a new date, a deadline, a name), leave a bracketed placeholder or ask the recipient for it, never make it up.',
-  '- What the workspace\'s own policies, procedures or product documents say: search them with search_documents, in the language the documents are written in, and state only what the passages say, naming the document and section. If no passage answers it, say the documents do not cover it, and name the nearest section when there is one.',
+  '- What the workspace\'s own policies, procedures or product documents say: search them with search_documents, writing the search words in a language the documents are written in (documentLanguages, when given; translate the terms of the question), and state only what the passages say, naming the document and section. If no passage answers it, say the documents do not cover it, and name the nearest section when there is one.',
   '- A general question (what a three-way match is) may be answered briefly from general knowledge, saying that it is general practice, not this workspace\'s data.',
   '',
   'The answer:',
@@ -130,7 +130,7 @@ export const AI_MODEL_FIRST_SYSTEM = [
 
 const CHAT_FORMAT_NOTE = '\n- Write the JSON object alone, with no text or code fence around it.'
 
-function userMessage({ question, language, today, tenant, turns, openRecord }) {
+function userMessage({ question, language, today, tenant, turns, openRecord, documentLanguages }) {
   return JSON.stringify({
     question: clip(question, AI_MODEL_FIRST_LIMITS.question),
     answerLanguage: language,
@@ -138,6 +138,7 @@ function userMessage({ question, language, today, tenant, turns, openRecord }) {
     workspace: { currency: tenant?.currency || null, timezone: tenant?.timezone || null },
     ...(turns.length ? { earlierTurns: turns } : {}),
     ...(openRecord ? { openRecord } : {}),
+    ...(documentLanguages?.length ? { documentLanguages } : {}),
   })
 }
 
@@ -180,14 +181,14 @@ const toolContent = (outcome) => {
 // else. Returns { status: 'answered', answer, refs, stats } or
 // { status: 'failed', reason, stats }. `model` is the provider call (tests
 // script it through `fetchImpl`).
-export async function runAiModelFirstLoop({ question, language, turns = [], openRecord = null, facts, context = null, tenant = null, today = null, env = {}, fetchImpl = globalThis.fetch, model = callAiModelFirstModel, clock = Date.now } = {}) {
+export async function runAiModelFirstLoop({ question, language, turns = [], openRecord = null, documentLanguages = null, facts, context = null, tenant = null, today = null, env = {}, fetchImpl = globalThis.fetch, model = callAiModelFirstModel, clock = Date.now } = {}) {
   const limits = aiModelFirstLimits(env)
   const started = clock()
   const deadline = started + limits.timeoutMs
   const format = aiModelFirstProviderFormat(env)
   const tools = aiReadToolDefinitions(facts, { format: 'anthropic', context })
   const system = format === 'chat_completions' ? `${AI_MODEL_FIRST_SYSTEM}${CHAT_FORMAT_NOTE}` : AI_MODEL_FIRST_SYSTEM
-  const transcript = [{ role: 'user', text: userMessage({ question, language, today, tenant, turns, openRecord }) }]
+  const transcript = [{ role: 'user', text: userMessage({ question, language, today, tenant, turns, openRecord, documentLanguages }) }]
   const results = []
   const refs = []
   const stats = { modelCalls: 0, rounds: 0, calls: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, grounding: { outcome: 'not_checked', first: null, retry: null, checked: null }, latencyMs: 0 }
@@ -349,7 +350,10 @@ export function aiModelFirstAudit(outcome, { env = {}, turns = 0 } = {}) {
 // which needs search_documents; `requires`: other tools the question needs
 // (aiModelFirstEntry). Without one of them for this user the loop steps aside
 // ({ skipped: true }) and the knowledge path or the rules answer as before.
-export async function answerAiModelFirst(ctx, body = {}, { documents = false, requires = [] } = {}) {
+// `documentLanguages`: the languages of the documents the user may read, sent
+// with the question when search_documents is offered, so the first search is
+// in a language that finds something.
+export async function answerAiModelFirst(ctx, body = {}, { documents = false, requires = [], documentLanguages = null } = {}) {
   const env = ctx.env || process.env
   const message = text(body.message || body.question)
   const language = aiSkillQuestionLanguage(message, body.answerLanguage)
@@ -364,7 +368,7 @@ export async function answerAiModelFirst(ctx, body = {}, { documents = false, re
   // goes wrong inside the loop leaves the question to the rules.
   let outcome
   try {
-    outcome = await runAiModelFirstLoop({ question: message, language, turns, openRecord: focus, facts, context, tenant: context.tenant, today: context.today, env, fetchImpl: ctx.aiModelFirstFetch || globalThis.fetch })
+    outcome = await runAiModelFirstLoop({ question: message, language, turns, openRecord: focus, documentLanguages: offered.has('search_documents') ? documentLanguages : null, facts, context, tenant: context.tenant, today: context.today, env, fetchImpl: ctx.aiModelFirstFetch || globalThis.fetch })
   } catch {
     outcome = { status: 'failed', reason: 'error', stats: null }
   }
