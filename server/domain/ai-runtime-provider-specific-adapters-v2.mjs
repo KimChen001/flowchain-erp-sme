@@ -250,7 +250,7 @@ function extractToolCalls(raw) {
 // OpenAI-style reply counts cached tokens inside prompt_tokens. So when the
 // total is more than prompt plus completion, input is the total less the
 // completion. For the spend cap a cache read counts as a full input token.
-function extractUsage(raw) {
+export function extractUsage(raw) {
   const usage = raw?.usage
   if (!usage || typeof usage !== 'object') return null
   const number = (value) => (Number.isFinite(Number(value)) ? Number(value) : null)
@@ -269,7 +269,7 @@ export function extractCandidateFromProviderResponse(rawResponse) {
   if (!candidate) return { ok: false, reason: 'malformed_output', ...reported }
   return { ok: true, ...reported, rawOutput: { conclusion: { summary: candidate } } }
 }
-async function parseResponse(response, config) {
+async function parseResponse(response, config, extract = extractCandidateFromProviderResponse) {
   // 402: the provider's spending limit is reached (the answer says so).
   if (!response.ok) return { ok: false, reason: 'non_success_status', ...(response.status === 402 ? { budgetExceeded: true } : {}) }
   const contentType = response.headers?.get?.('content-type') || ''
@@ -280,7 +280,7 @@ async function parseResponse(response, config) {
   if (raw?.status === 'incomplete' || raw?.status === 'failed') return { ok: false, reason: 'incomplete_output' }
   const serialized = typeof raw === 'string' ? raw : JSON.stringify(raw)
   if (serialized.length > config.maxOutputChars) return { ok: false, reason: 'output_too_long' }
-  return extractCandidateFromProviderResponse(raw)
+  return extract(raw)
 }
 async function callSpecificAdapter(adapter, providerInputPackage, env = {}, fetchImpl = globalThis.fetch) {
   const config = providerConfig(env)
@@ -294,7 +294,7 @@ async function callSpecificAdapter(adapter, providerInputPackage, env = {}, fetc
       body: JSON.stringify(adapter.buildRequestBody(providerInputPackage, config)),
       signal: controller.signal,
     })
-    return await parseResponse(response, config)
+    return await parseResponse(response, config, adapter.extractCandidateFromResponse)
   } catch (error) {
     return { ok: false, reason: error?.name === 'AbortError' ? 'timeout' : 'network_error' }
   } finally {
@@ -364,13 +364,58 @@ export const openaiResponsesAdapter = {
   extractCandidateFromResponse: extractCandidateFromProviderResponse,
   call(providerInputPackage, env, fetchImpl) { return callSpecificAdapter(this, providerInputPackage, env, fetchImpl) },
 }
+// Anthropic's native Messages API (anthropic_messages), the trial provider of
+// the model-first assistant (docs/ai-model-first-design.md §5). The
+// model-first loop builds its own requests (ai-model-first-provider.mjs); the
+// other paths send one system and one user message, as to a chat model.
+// Current Claude models reject sampling settings, so none is sent, and the
+// reply is read by content block type: it may start with thinking blocks.
+export const ANTHROPIC_MESSAGES_VERSION = '2023-06-01'
+export function anthropicMessagesHeaders(config) {
+  return { 'content-type': 'application/json', 'x-api-key': config.apiKey, 'anthropic-version': ANTHROPIC_MESSAGES_VERSION, ...config.identityHeaders }
+}
+// Tokens as the meter counts them: input is every prompt token, cached or not,
+// with the cache reads and writes inside it, so they can be priced apart.
+export function anthropicMessagesUsage(raw) {
+  const usage = raw?.usage
+  if (!usage || typeof usage !== 'object') return null
+  const number = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
+  const cacheReadTokens = number(usage.cache_read_input_tokens)
+  const cacheWriteTokens = number(usage.cache_creation_input_tokens)
+  return { inputTokens: number(usage.input_tokens) + cacheReadTokens + cacheWriteTokens, outputTokens: number(usage.output_tokens), cacheReadTokens, cacheWriteTokens }
+}
+export const anthropicMessagesText = (raw) => asArray(raw?.content).filter((block) => block?.type === 'text').map((block) => block.text || '').join('')
+export const anthropicMessagesAdapter = {
+  kind: 'anthropic_messages',
+  label: 'server-side messages adapter',
+  isEnabled(config) { return config.mode === 'provider_assisted' && config.kind === this.kind },
+  canCall: canCallProvider,
+  buildRequestBody(input, config) {
+    return {
+      model: config.model,
+      max_tokens: input.task?.type === 'agent_planning' ? 1000 : 2000,
+      output_config: { effort: 'low' },
+      system: instructionText(input),
+      messages: [{ role: 'user', content: JSON.stringify(buildBoundedProviderRequestCore(input)) }],
+    }
+  },
+  buildHeaders: anthropicMessagesHeaders,
+  extractCandidateFromResponse(raw) {
+    const candidate = text(anthropicMessagesText(raw))
+    const usage = anthropicMessagesUsage(raw)
+    if (!candidate) return { ok: false, reason: 'malformed_output', ...(usage ? { usage } : {}) }
+    return { ok: true, ...(usage ? { usage } : {}), rawOutput: { conclusion: { summary: candidate } } }
+  },
+  call(providerInputPackage, env, fetchImpl) { return callSpecificAdapter(this, providerInputPackage, env, fetchImpl) },
+}
+
 export const deepseekChatAdapter = createChatAdapter('deepseek_chat', 'server-side chat adapter')
 export const doubaoChatAdapter = createChatAdapter('doubao_chat', 'server-side chat adapter')
 export const qwenChatAdapter = createChatAdapter('qwen_chat', 'server-side chat adapter')
 export const parleyChatAdapter = createChatAdapter('parley_chat', 'server-side chat adapter')
 export const anthropicChatAdapter = createChatAdapter('anthropic_chat', 'server-side chat adapter')
 
-export const providerSpecificAdapters = [openaiResponsesAdapter, deepseekChatAdapter, doubaoChatAdapter, qwenChatAdapter, parleyChatAdapter, anthropicChatAdapter]
+export const providerSpecificAdapters = [openaiResponsesAdapter, deepseekChatAdapter, doubaoChatAdapter, qwenChatAdapter, parleyChatAdapter, anthropicChatAdapter, anthropicMessagesAdapter]
 
 export function selectProviderSpecificAdapter(kind = '') {
   return providerSpecificAdapters.find((adapter) => adapter.kind === kind) || null

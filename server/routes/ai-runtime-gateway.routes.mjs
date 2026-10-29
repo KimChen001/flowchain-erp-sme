@@ -1,6 +1,7 @@
 import { aiSkillDraftBasis } from '../domain/ai-skill-drafts.mjs'
 import { withoutUnavailableProductLinks } from '../../shared/unavailable-product-routes.mjs'
-import { withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
+import { modelFreeEnv, withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
+import { aiModelFirstEnabled, aiModelFirstEntry, answerAiModelFirst } from '../domain/ai-model-first.mjs'
 import { aiProviderFailures } from '../domain/ai-usage-meter.mjs'
 import { aiAgentKnowledge, handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
 import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
@@ -100,9 +101,18 @@ function modelAccessSend(send, overCap) {
   }
 }
 
-async function handleGatewayRequest(ctx) {
+// A model-first answer that could not be given (the check failed twice, or a
+// limit ran out) is answered by the rules, and says so. A failed provider call
+// is noted by modelAccessSend, more specifically.
+function modelFirstFallbackSend(send) {
+  return (res, status, payload) => send(res, status, isAnswer(status, payload) && !payload.aiModelAccess ? { ...payload, aiModelAccess: { status: 'unavailable', reason: 'unchecked' } } : payload)
+}
+
+async function handleGatewayRequest(requestCtx) {
+  let ctx = requestCtx
   if (await handleKnowledgeRoute(ctx)) return true
-  const { req, res, url, db, send, readBody, repositories, identity } = ctx
+  const { req, res, url, db, readBody, repositories, identity } = ctx
+  let send = ctx.send
 
   if (req.method === 'GET' && url.pathname === '/api/ai-runtime/readiness') {
     send(res, 200, buildAiRuntimeReadinessV2(db, process.env))
@@ -144,6 +154,25 @@ async function handleGatewayRequest(ctx) {
         const tooLong = String(body.message || body.question || '').trim().length > 1200
         send(res, validation.status, errorBody(tooLong ? 'AI_QUESTION_TOO_LONG' : 'AI_QUESTION_TOO_SHORT', body))
         return true
+      }
+      // Model-first (docs/ai-model-first-design.md §3): a free-text question
+      // the guards let through is answered by the tool loop. When it gives no
+      // checked answer, the rules answer below, with no model call and a
+      // notice; a guarded question goes there directly. Either way the audit
+      // row carries the loop's codes and counts.
+      if (!actionRequest && aiModelFirstEnabled(ctx.env || process.env)) {
+        const entry = aiModelFirstEntry(body)
+        if (!entry.eligible) ctx = { ...ctx, aiModelFirstAudit: { status: 'guarded', reason: entry.reason } }
+        else {
+          const modelFirst = await answerAiModelFirst(ctx, body)
+          if (modelFirst.response) {
+            await recordAiSkillAudit(ctx, { response: modelFirst.response, facts: modelFirst.facts, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, modelFirst: modelFirst.audit })
+            send(res, 200, await addKnowledgeContext(ctx, body, modelFirst.response))
+            return true
+          }
+          ctx = { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: modelFirstFallbackSend(ctx.send), aiModelFirstAudit: modelFirst.audit }
+          send = ctx.send
+        }
       }
       // Agent planning (P2) on: a question with several parts that the
       // business query path would take goes to the planner first, which has

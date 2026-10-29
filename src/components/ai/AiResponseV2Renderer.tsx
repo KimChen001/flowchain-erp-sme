@@ -34,6 +34,7 @@ const rendererCopy = {
     overCap: "This workspace reached this month's AI limit, so this answer comes from workspace rules.",
     modelUnavailable: "The AI model did not respond, so this answer comes from the standard rules.",
     modelBudget: "The AI service has reached its usage limit, so this answer comes from the standard rules.",
+    modelUnchecked: "The AI answer could not be checked against your records, so this answer comes from the standard rules.",
   },
   "zh-CN": {
     severity: { info: "信息", warning: "提醒", risk: "风险", success: "正常" },
@@ -53,6 +54,7 @@ const rendererCopy = {
     overCap: "本工作区本月 AI 用量已达上限，本回答按工作区规则生成。",
     modelUnavailable: "AI 模型没有响应，本回答来自标准规则。",
     modelBudget: "AI 服务的用量额度已用完，本回答来自标准规则。",
+    modelUnchecked: "AI 的回答未能与你的记录核对一致，本回答来自标准规则。",
   },
 } as const;
 const fill = (template: string, values: Record<string, string | number>) => template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? ""));
@@ -150,7 +152,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
       {response.answerSourceLabel ? <div data-testid="ai-answer-source" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" style={{ color: A.gray2 }}><span className="inline-flex rounded-full px-2 py-0.5 font-semibold" style={{ background: A.gray6, color: A.gray1 }}>{response.answerSourceLabel}</span>{response.checkedLabel ? <span data-testid="ai-answer-checked">{response.checkedLabel}</span> : null}</div> : null}
       {/* A model call failed (the provider down, slow or out of budget), or agent planning was tried and failed: the rules answered. One line, the most specific. */}
       {response.aiModelAccess?.status === "unavailable"
-        ? <p data-testid="ai-model-unavailable" role="status" className="rounded-md px-2 py-1 text-[11px]" style={{ background: "#FDF1E3", color: "#92400E" }}>{response.aiModelAccess.reason === "budget" ? copy.modelBudget : copy.modelUnavailable}</p>
+        ? <p data-testid="ai-model-unavailable" role="status" className="rounded-md px-2 py-1 text-[11px]" style={{ background: "#FDF1E3", color: "#92400E" }}>{response.aiModelAccess.reason === "budget" ? copy.modelBudget : response.aiModelAccess.reason === "unchecked" ? copy.modelUnchecked : copy.modelUnavailable}</p>
         : response.agentPlanning?.status === "degraded" ? <p data-testid="ai-limited-mode" role="status" className="rounded-md px-2 py-1 text-[11px]" style={{ background: "#FDF1E3", color: "#92400E" }}>{copy.limitedMode}</p> : null}
       {response.aiModelAccess?.status === "over_cap" ? <p data-testid="ai-over-cap" role="status" className="rounded-md px-2 py-1 text-[11px]" style={{ background: "#FDF1E3", color: "#92400E" }}>{copy.overCap}</p> : null}
       <section data-testid="ai-focused-conclusion">

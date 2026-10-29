@@ -21,6 +21,7 @@
 //   npm run test:ai:eval -- --as-of=2026-09-29 --only=refuse-approve,num-item-atp --report=out.json
 //   npm run test:ai:eval -- --provider-env=<env file with FLOWCHAIN_AI_PROVIDER_*>
 //   npm run test:ai:eval -- --provider-env=<env file> --agent   (also agent planning, P2)
+//   npm run test:ai:eval -- --provider-env=<env file> --model-first   (the model-first tool loop, S2)
 //
 // Writes ai-eval-report.json (default: <os tmpdir>/flowchain-ai-eval/) and a
 // table to stdout. Exit codes: 0 pass; 1 a safety check failed (or the run
@@ -301,8 +302,10 @@ if (updateBaseline && asOf !== startDay) usageError(`--update-baseline needs the
 
 // --provider-env: only the provider settings are taken from the file (never
 // mail, proxy or knowledge settings), and their values are never printed.
-const PROVIDER_SETTING = /^(FLOWCHAIN_AI_PROVIDER_[A-Z_]+|FLOWCHAIN_AI_RUNTIME_MODE)$/
-function readProviderEnv(path, { agent = false } = {}) {
+// --model-first also takes the loop's own settings (FLOWCHAIN_AI_ASSISTANT_*,
+// such as the reasoning effort) and switches the loop on.
+const PROVIDER_SETTING = /^(FLOWCHAIN_AI_PROVIDER_[A-Z_]+|FLOWCHAIN_AI_RUNTIME_MODE|FLOWCHAIN_AI_ASSISTANT_(?!MODE)[A-Z_]+)$/
+function readProviderEnv(path, { agent = false, modelFirst = false } = {}) {
   if (!existsSync(path)) usageError(`--provider-env: ${path} does not exist.`)
   const settings = {}
   for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
@@ -311,12 +314,13 @@ function readProviderEnv(path, { agent = false } = {}) {
   }
   let host = ''
   try { host = new URL(settings.FLOWCHAIN_AI_PROVIDER_ENDPOINT).hostname.toLowerCase() } catch { usageError('--provider-env: the file has no valid FLOWCHAIN_AI_PROVIDER_ENDPOINT.') }
-  return { host, agent, env: { ...settings, FLOWCHAIN_AI_INTENT_ROUTING: 'true', ...(agent ? { FLOWCHAIN_AI_AGENT_MODE: 'plan' } : {}), FLOWCHAIN_AI_EVAL_ALLOW_HOST: host } }
+  return { host, agent, modelFirst, env: { ...settings, FLOWCHAIN_AI_INTENT_ROUTING: 'true', ...(agent ? { FLOWCHAIN_AI_AGENT_MODE: 'plan' } : {}), ...(modelFirst ? { FLOWCHAIN_AI_ASSISTANT_MODE: 'model_first' } : {}), FLOWCHAIN_AI_EVAL_ALLOW_HOST: host } }
 }
 const providerEnvPath = argument('provider-env')
 if (providerEnvPath && updateBaseline) usageError('--update-baseline needs an offline run; drop --provider-env.')
 if (flag('agent') && !providerEnvPath) usageError('--agent needs --provider-env: agent planning calls the provider.')
-const provider = providerEnvPath ? readProviderEnv(resolve(providerEnvPath), { agent: flag('agent') }) : null
+if (flag('model-first') && !providerEnvPath) usageError('--model-first needs --provider-env: the tool loop calls the provider.')
+const provider = providerEnvPath ? readProviderEnv(resolve(providerEnvPath), { agent: flag('agent'), modelFirst: flag('model-first') }) : null
 
 const pgPort = await freePort()
 const password = `ai-eval-${randomUUID()}`
