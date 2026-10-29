@@ -1,7 +1,7 @@
 # Model-first assistant: design and decisions
 
-Status: proposal, 2026-10-28. Nothing in it is built. The owner decides M1–M7 (§10)
-before any code.
+Status: approved by the owner on 2026-10-28 (M1–M7 as recommended, §10); the build
+starts with S1. L2–L4 in §13 are each still a separate decision.
 
 On 2026-10-28 the owner said the assistant feels "hard-coded with too many rules"
 and asked for the chat to be a general-purpose window onto the workspace. They
@@ -290,6 +290,11 @@ This design is the first of four levels of automation (§13).
 | M5 (e) | The order relative to #151 (A1–A8 approved 2026-10-28). | Model-first read v1 (S0–S4) first; C1 after it in December; the proposal tools (S5) on top. One assistant lane at a time, so the owner reviews one PR a week |
 | M6 | The model. | `claude-haiku-5-5`, the same model locally (through OpenCode Go) and on the trial. Sonnet 5.5 only if Haiku misses the §7 bar. OpenCode Go's other models (GLM, Kimi, Qwen) can be compared in S3 at no extra cost |
 | M7 | The key. | **Local and evaluation: OpenCode Go** (owner, 2026-10-28). The owner pastes its key into `.local/opencode-go.env`. **Trial workspaces:** a direct provider key (Anthropic) when the trial date is set, not before |
+
+**Decided 2026-10-28.**
+- **M1–M7: approved as recommended.** The owner wrote "这些就做吧" and asked for faster progress ("进度要快一点").
+- **M5 amended for speed:** independent pieces may run in parallel sessions. Two are independent when they share no files, for example the read tools (S1) and the loop with its adapter and grounding check (S2), which work against the tool contract in `server/domain/ai-tools/`. Each piece is still one PR.
+- **The model comparison** of the same evening (§5) keeps `claude-haiku-5-5` as the main model and DeepSeek V4.1 Flash as the second model in the S3 evaluation lane.
 
 ## 11. Risks
 
