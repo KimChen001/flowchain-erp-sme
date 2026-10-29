@@ -68,6 +68,11 @@ test('the grounding check reads numbers, dates, record numbers and names in thei
   // A month written alone is a date: one the results hold passes, others fail.
   assert.equal(check('本月（10月）有 8 张逾期。').ok, true)
   assert.deepEqual(check('上季度（7月至9月）没有交货。').problems, [{ kind: 'date', value: '7月' }, { kind: 'date', value: '9月' }])
+  // A document's own words: a number or a date written in a passage is given.
+  const passage = { passages: [{ document: 'Purchasing Policy', section: 'Follow-up and escalation', excerpt: 'Escalate to the buyer manager when a supplier is 3 business days past the promised date. Effective March 1.', ref: { type: 'document', id: 'DOC-1', label: 'Purchasing Policy' } }] }
+  const fromPolicy = (answer) => checkAiModelFirstGrounding({ answer: { title: 'Policy', answer, records: [{ type: 'document', id: 'DOC-1' }] }, results: [passage], refs: [passage.passages[0].ref], question: 'What does our policy say about urgent purchases?' })
+  assert.equal(fromPolicy('The documents do not cover urgent purchases. The nearest section, Follow-up and escalation, says to escalate after 3 business days (effective March 1, 2026).').ok, true)
+  assert.deepEqual(fromPolicy('Escalate after 5 days, from April 1.').problems, [{ kind: 'date', value: 'April 1' }, { kind: 'number', value: '5 days' }])
   // Anything not in the results fails, with its kind.
   const bad = check('PO-099 from Globex Supply is 16 days late, due Nov 3, €47,249, 3PL aside.', [{ type: 'purchase_order', id: 'po-99' }])
   assert.equal(bad.ok, false)
@@ -239,7 +244,8 @@ test('the guards keep their own answers: refusals, the outside world, injection,
   assert.equal(entry('What should I handle first today?', { skillHint: 'today_priorities' }).reason, 'chip')
   assert.equal(entry('你好').reason, 'greeting')
   assert.equal(entry('帮我下单').reason, 'order_request')
-  assert.equal(entry('Which question?', { queryMode: 'knowledge' }).reason, 'knowledge')
+  // A question about the documents is the loop's too: it searches them.
+  assert.equal(entry('What does our purchasing policy say about urgent purchases?', { queryMode: 'knowledge' }).eligible, true)
   for (const message of ['Which purchase orders are overdue?', '哪家供应商的问题对客户订单影响最大？', 'Write a short note to Acme asking for a new date for PO-001']) assert.equal(entry(message).eligible, true, message)
   // On only when switched on and a provider that can run the loop is set.
   assert.equal(aiModelFirstEnabled(ANTHROPIC), true)
@@ -311,7 +317,13 @@ test('no data crosses roles: a role gets only its tools, and the provider never 
   assert.equal(invented.reason, 'grounding')
 })
 
-function gatewayContext({ message, env = ANTHROPIC, fetchImpl, extra = {} }) {
+// The workspace's documents, in memory, as the knowledge service reads them.
+const POLICY_SERVICE = {
+  list: async () => ({ items: [{ id: 'DOC-1', title: 'Purchasing Policy', language: 'en-US' }] }),
+  documents: async () => [{ pageContent: 'Escalate to the buyer manager when a supplier is 3 business days past the promised date.', metadata: { id: 'DOC-1-0', documentId: 'DOC-1', title: 'Purchasing Policy', heading: 'Follow-up and escalation', position: 0, language: 'en-US', contentHash: 'h1' } }],
+}
+
+function gatewayContext({ message, env = ANTHROPIC, fetchImpl, extra = {}, ctxExtra = {}, persistence = 'database' }) {
   const scenario = aiSkillScenario()
   const sent = []
   const audits = []
@@ -320,13 +332,14 @@ function gatewayContext({ message, env = ANTHROPIC, fetchImpl, extra = {} }) {
     ...scenario.ctx,
     req: { method: 'POST', headers: {} }, res: {}, url: new URL('http://local/api/ai-runtime/respond'),
     db: { __dataMode: 'user', purchaseOrders: [], products: [], suppliers: [] },
-    env: { ...env, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_AI_INTENT_ROUTING: 'true', FLOWCHAIN_AI_AGENT_MODE: 'compose' },
+    env: { ...env, FLOWCHAIN_PERSISTENCE_MODE: persistence, FLOWCHAIN_AI_INTENT_ROUTING: 'true', FLOWCHAIN_AI_AGENT_MODE: 'compose' },
     aiModelFirstFetch: fetchImpl,
     aiSkillIntentProvider: async () => { counted.intent += 1; return { ok: false } },
     send: (_res, status, payload) => sent.push({ status, payload }),
     readBody: async () => ({ message, answerLanguage: 'en-US', ...extra }),
+    ...ctxExtra,
   }
-  ctx.repositories = { ...ctx.repositories, auditLog: { mode: 'database', recordAuditEntry: async (entry) => { audits.push(entry); return entry } } }
+  ctx.repositories = { ...ctx.repositories, ...(persistence === 'database' ? {} : { mode: persistence }), auditLog: { mode: 'database', recordAuditEntry: async (entry) => { audits.push(entry); return entry } } }
   return { ctx, sent, audits, counted }
 }
 
@@ -408,6 +421,40 @@ test('through the gateway: guarded questions and chips never reach the model', a
     // An instruction to act is refused before the model-first entry is asked.
     assert.deepEqual(audits.at(-1).metadata.modelFirst || null, reason ? { status: 'guarded', reason } : null, message)
   }
+})
+
+test('through the gateway: a question about the documents goes to the loop, which searches them', async () => {
+  const question = 'What does our purchasing policy say about urgent purchases?'
+  const answer = { title: 'The policy does not cover urgent purchases', answer: 'The documents do not cover urgent purchases. The nearest section is Follow-up and escalation in the Purchasing Policy: escalate to the buyer manager when a supplier is 3 business days past the promised date.', records: [{ type: 'document', id: 'DOC-1' }] }
+  const stub = scripted([toolUse([['search_documents', { query: 'supplier escalation' }]]), final(answer)])
+  const { ctx, sent, audits } = gatewayContext({ message: question, fetchImpl: stub.fetchImpl, ctxExtra: { aiReadServices: { knowledge: POLICY_SERVICE } } })
+  await handleAiRuntimeGatewayRoute(ctx)
+  const { payload } = sent.at(-1)
+  assert.equal(payload.intent, 'model_first')
+  assert.ok(stub.requests[0].body.tools.some((tool) => tool.name === 'search_documents'))
+  const searched = JSON.parse(stub.requests[1].body.messages[2].content[0].content)
+  assert.deepEqual(searched.passages.map((row) => [row.document, row.section]), [['Purchasing Policy', 'Follow-up and escalation']])
+  assert.equal(payload.checkedLabel, 'Checked: documents')
+  assert.deepEqual(payload.keyEvidence.map((item) => [item.entityType, item.entityId]), [['document', 'DOC-1']])
+  // The loop searched the documents itself, so no second set of passages is added.
+  assert.equal(payload.supplementalKnowledge, undefined)
+  assert.equal(audits.at(-1).metadata.modelFirst.status, 'answered')
+  assert.deepEqual(audits.at(-1).metadata.modelFirst.tools, [{ tool: 'search_documents', status: 'ok' }])
+})
+
+test('through the gateway: without a document tool, a document question keeps the knowledge path', async () => {
+  // No database and no document service: search_documents is not offered,
+  // the loop steps aside, and the knowledge path answers as it did before.
+  const stub = scripted([final({ title: 'x', answer: 'x', records: [] })])
+  const run = async (env) => {
+    const { ctx, sent } = gatewayContext({ message: 'What does our purchasing policy say about urgent purchases?', fetchImpl: stub.fetchImpl, env, persistence: 'memory' })
+    await handleAiRuntimeGatewayRoute(ctx)
+    return sent.at(-1)
+  }
+  const { FLOWCHAIN_AI_ASSISTANT_MODE: _mode, ...off } = ANTHROPIC
+  const withLoop = await run(ANTHROPIC)
+  assert.equal(stub.requests.length, 0)
+  assert.deepEqual({ status: withLoop.status, code: withLoop.payload.code }, { status: (await run(off)).status, code: 'KNOWLEDGE_UNAVAILABLE' })
 })
 
 test('off by default: without the mode the gateway answers as before', async () => {

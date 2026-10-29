@@ -63,9 +63,15 @@ function currencyCodes(word) {
   return found ? found[1] : null
 }
 
+// Fields that hold a document's own words (search_documents passages): a
+// number or a date written in them counts as given, whatever it measures.
+const PROSE_KEYS = new Set(['excerpt', 'section', 'document'])
+const PROSE_NUMBER = /(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w.])\d+(?:\.\d+)?/g
+
 // Everything the tool results of this answer hold: their strings (one text to
 // search), their numbers with the key and currency they came with, and their
-// dates and months.
+// dates and months. A date written in a passage without its year is kept as
+// ????-MM-DD, which matches the same day in any year.
 export function aiGroundingSources(results = []) {
   const strings = []
   const numbers = []
@@ -77,6 +83,21 @@ export function aiGroundingSources(results = []) {
       if (match[3]) days.add(`${match[1]}-${match[2]}-${match[3]}`)
     }
   }
+  const addProse = (value) => {
+    let rest = value.normalize('NFKC')
+    for (const { pattern, read } of DATE_PATTERNS) {
+      rest = rest.replace(pattern, (...match) => {
+        const date = read(match)
+        if (!date.month || date.month > 12) return match[0]
+        const year = date.year ? String(date.year) : '????'
+        const month = String(date.month).padStart(2, '0')
+        months.add(`${year}-${month}`)
+        if (date.day) days.add(`${year}-${month}-${String(date.day).padStart(2, '0')}`)
+        return ' '.repeat(match[0].length)
+      })
+    }
+    for (const match of rest.matchAll(PROSE_NUMBER)) numbers.push({ value: Number(match[0].replace(/,/g, '')), key: 'text', currency: null, unit: null })
+  }
   const walk = (value, key = '', parent = null) => {
     if (value === null || value === undefined) return
     if (typeof value === 'number') { if (Number.isFinite(value)) numbers.push({ value, key, currency: text(parent?.currency).toUpperCase() || null, unit: text(parent?.unit).toLowerCase() || null }); return }
@@ -84,6 +105,7 @@ export function aiGroundingSources(results = []) {
       strings.push(fold(value))
       addDates(value)
       if (/^-?[\d,]+(?:\.\d+)?$/.test(value.trim())) numbers.push({ value: Number(value.replace(/,/g, '')), key, currency: text(parent?.currency).toUpperCase() || null, unit: null })
+      else if (PROSE_KEYS.has(key)) addProse(value)
       return
     }
     if (typeof value === 'boolean') return
@@ -123,6 +145,8 @@ function nameMatch(name) {
 }
 
 function numberKindFits(source, kind, currencies) {
+  // A number in a document's own words measures what the passage says.
+  if (source.key === 'text') return true
   // An amount comes from a money field (amount, total, difference…), in the
   // currency written when the result names one.
   if (kind === 'money') return MONEY_KEY.test(source.key) && (!currencies || !source.currency || currencies.includes(source.currency))
@@ -173,7 +197,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     const pad = (value) => String(value).padStart(2, '0')
     const pool = day ? [...sources.days, ...given.days] : [...sources.months, ...given.months]
     const tail = day ? `-${pad(month)}-${pad(day)}` : `-${pad(month)}`
-    return pool.some((value) => (year ? value === `${year}${tail}` : value.endsWith(tail)))
+    return pool.some((value) => (year && !value.startsWith('????') ? value === `${year}${tail}` : value.endsWith(tail)))
   }
   for (const { pattern, read } of DATE_PATTERNS) {
     rest = rest.replace(pattern, (...match) => {

@@ -438,6 +438,7 @@ const entries = {
   'source.items': ['items', '物料'],
   'source.suppliers': ['suppliers', '供应商'],
   'source.sales_orders': ['sales orders', '销售订单'],
+  'source.documents': ['documents', '文档'],
   'source.workspace': ['workspace skills', '工作区技能'],
 
   // Fields checked by records_needing_data

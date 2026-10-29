@@ -140,14 +140,20 @@ async function handleGatewayRequest(requestCtx) {
       // to the supplier query planner) and never refuse.
       // Only the first 1,201 characters: a longer question is rejected below.
       const actionRequest = detectAiActionRequest(String(body?.message || body?.question || '').slice(0, 1201))
-      const knowledge = actionRequest ? null : await runKnowledgeQuery(ctx, body)
-      if (knowledge) {
-        // The same audit row as a skill answer, with the knowledge answer's mode
-        // and the documents it cited (ids and counts only).
+      // Model-first: a question the guards let through goes to the tool loop,
+      // which searches the documents itself; the knowledge path below then
+      // answers only when the loop does not.
+      const modelFirstEntry = !actionRequest && aiModelFirstEnabled(ctx.env || process.env) ? aiModelFirstEntry(body) : null
+      // The same audit row as a skill answer, with the knowledge answer's mode
+      // and the documents it cited (ids and counts only).
+      const answerFromDocuments = async () => {
+        const knowledge = await runKnowledgeQuery(ctx, body)
+        if (!knowledge) return false
         await recordAiSkillAudit(ctx, { response: { ...knowledge, answerSource: 'knowledge', language: body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, knowledge: aiKnowledgeAuditBlock(knowledge.rag) })
         send(res, 200, knowledge)
         return true
       }
+      if (!actionRequest && !modelFirstEntry?.eligible && await answerFromDocuments()) return true
       // Reject empty or oversized questions before any tenant data is read.
       const validation = validateAiRuntimeRequest(body)
       if (!validation.ok) {
@@ -157,21 +163,27 @@ async function handleGatewayRequest(requestCtx) {
       }
       // Model-first (docs/ai-model-first-design.md §3): a free-text question
       // the guards let through is answered by the tool loop. When it gives no
-      // checked answer, the rules answer below, with no model call and a
-      // notice; a guarded question goes there directly. Either way the audit
-      // row carries the loop's codes and counts.
-      if (!actionRequest && aiModelFirstEnabled(ctx.env || process.env)) {
-        const entry = aiModelFirstEntry(body)
-        if (!entry.eligible) ctx = { ...ctx, aiModelFirstAudit: { status: 'guarded', reason: entry.reason } }
+      // checked answer, the knowledge path, then the rules answer below, with
+      // no model call and a notice; a guarded question goes there directly. A
+      // document question the loop cannot search for (no document tool for
+      // this user) goes to the knowledge path as before, with no notice.
+      // Either way the audit row carries the loop's codes and counts.
+      if (modelFirstEntry) {
+        if (!modelFirstEntry.eligible) ctx = { ...ctx, aiModelFirstAudit: { status: 'guarded', reason: modelFirstEntry.reason } }
         else {
-          const modelFirst = await answerAiModelFirst(ctx, body)
+          const modelFirst = await answerAiModelFirst(ctx, body, { documents: isKnowledgeQuestion(body) })
           if (modelFirst.response) {
             await recordAiSkillAudit(ctx, { response: modelFirst.response, facts: modelFirst.facts, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, modelFirst: modelFirst.audit })
-            send(res, 200, await addKnowledgeContext(ctx, body, modelFirst.response))
+            // The loop searched the documents itself when it could; otherwise
+            // a question about records and documents gets their passages.
+            send(res, 200, modelFirst.searchedDocuments ? modelFirst.response : await addKnowledgeContext(ctx, body, modelFirst.response))
             return true
           }
-          ctx = { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: modelFirstFallbackSend(ctx.send), aiModelFirstAudit: modelFirst.audit }
+          ctx = modelFirst.skipped
+            ? { ...ctx, aiModelFirstAudit: modelFirst.audit }
+            : { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: modelFirstFallbackSend(ctx.send), aiModelFirstAudit: modelFirst.audit }
           send = ctx.send
+          if (await answerFromDocuments()) return true
         }
       }
       // Agent planning (P2) on: a question with several parts that the

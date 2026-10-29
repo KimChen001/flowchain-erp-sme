@@ -5,7 +5,7 @@ import { detectAiActionRequest, routeSkill } from './ai-skill-router.mjs'
 import { PROMPT_INJECTION } from './ai-semantic-query-planner.mjs'
 import { aiSkillList, aiSkillQuestionLanguage, aiSkillText } from './ai-skill-copy.mjs'
 import { AI_SKILL_MODULES } from './ai-skill-presenter.mjs'
-import { aiReadToolDefinitions, aiReadToolRefs, runAiReadTool } from './ai-read-tool-runner.mjs'
+import { aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { aiModelFirstCitedRefs, checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
 import { aiModelFirstEffort, aiModelFirstProviderFormat, callAiModelFirstModel } from './ai-model-first-provider.mjs'
 import { providerRuntimeConfig } from './ai-runtime-provider-adapter-v2.mjs'
@@ -80,7 +80,6 @@ export const aiModelFirstInjection = (message) => INJECTION.some((pattern) => pa
 export function aiModelFirstEntry(body = {}) {
   const message = text(body.message || body.question)
   if (text(body.skillHint)) return { eligible: false, reason: 'chip' }
-  if (body.queryMode === 'knowledge') return { eligible: false, reason: 'knowledge' }
   if (aiModelFirstInjection(message)) return { eligible: false, reason: 'injection' }
   if (detectAiActionRequest(message)) return { eligible: false, reason: 'refusal' }
   const route = routeSkill({ message, focusTarget: body.focusTarget }) || {}
@@ -119,6 +118,7 @@ export const AI_MODEL_FIRST_SYSTEM = [
   '- Tools can count related things on different bases: the supplier scorecard counts only deliveries promised in its period, judged against the original promised date, while list_purchase_orders gives the orders overdue today. Give the count the question asks about, with its basis or period. Never state two different counts as if they measured the same thing; if you give both, say what each one counts.',
   '- You cannot change anything: you cannot approve, pay, send, issue, cancel, delete or create records, and you never say you did. These words read as if someone acted, so never write them, not even about a record: "was", "were", "has been" or "have been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消. Give the state as a status instead: "status: approved", "not yet posted", 状态：审批通过, 过账完成, 未过账.',
   '- If the user asks for a message or a note, write the draft in the answer for them to review and send themselves. Use only the facts the tools gave; where the message needs something you do not have (a new date, a deadline, a name), leave a bracketed placeholder or ask the recipient for it, never make it up.',
+  '- What the workspace\'s own policies, procedures or product documents say: search them with search_documents, in the language the documents are written in, and state only what the passages say, naming the document and section. If no passage answers it, say the documents do not cover it, and name the nearest section when there is one.',
   '- A general question (what a three-way match is) may be answered briefly from general knowledge, saying that it is general practice, not this workspace\'s data.',
   '',
   'The answer:',
@@ -261,7 +261,7 @@ const TOOL_SOURCES = Object.freeze({
   list_purchase_orders: 'purchase_orders', get_purchase_order: 'purchase_orders', late_order_impact: 'purchase_orders', spend_analysis: 'purchase_orders',
   stock_position: 'inventory', stock_projection: 'inventory', reorder_list: 'inventory', price_history: 'purchase_orders',
   list_sales_orders: 'sales_orders', list_receipts: 'receipts', supplier_performance: 'receipts',
-  list_supplier_invoices: 'supplier_invoices', list_purchase_requests: 'purchase_requests', list_rfqs: 'rfqs', list_suppliers: 'suppliers',
+  list_supplier_invoices: 'supplier_invoices', list_purchase_requests: 'purchase_requests', list_rfqs: 'rfqs', list_suppliers: 'suppliers', search_documents: 'documents',
 })
 const LINK_MODULES = Object.freeze({ ...AI_SKILL_MODULES, sales_order: 'sales:orders', customer: 'master-data:customers', warehouse: 'master-data:warehouses' })
 
@@ -340,14 +340,20 @@ export function aiModelFirstAudit(outcome, { env = {}, turns = 0 } = {}) {
 }
 
 // One free-text question through the loop, as the asking user. Returns
-// { response, audit, facts } when the model's answer passed the check, or
-// { response: null, audit, facts, reason } when the rules should answer.
-export async function answerAiModelFirst(ctx, body = {}) {
+// { response, audit, facts, searchedDocuments } when the model's answer passed
+// the check, or { response: null, audit, facts, reason } when the rules
+// should answer. `documents`: a question about the workspace's documents;
+// without a document tool for this user the loop steps aside
+// ({ skipped: true }) and the knowledge path answers it as before.
+export async function answerAiModelFirst(ctx, body = {}, { documents = false } = {}) {
   const env = ctx.env || process.env
   const message = text(body.message || body.question)
   const language = aiSkillQuestionLanguage(message, body.answerLanguage)
   const context = await loadAiSkillContext(ctx)
   const facts = await readAiSkillFacts(context)
+  if (documents && !aiReadToolsFor(facts, context).some((tool) => tool.name === 'search_documents')) {
+    return { response: null, skipped: true, reason: 'no_document_tool', audit: { status: 'skipped', reason: 'no_document_tool' }, facts }
+  }
   const turns = aiModelFirstTurns(body.conversationContext)
   const focus = body.focusTarget && typeof body.focusTarget === 'object' && text(body.focusTarget.entityType) ? { type: text(body.focusTarget.entityType), label: clip(body.focusTarget.entityLabel || body.focusTarget.entityId, 120) } : null
   // Signing in and reading the facts fail as for any answer; anything that
@@ -360,5 +366,6 @@ export async function answerAiModelFirst(ctx, body = {}) {
   }
   const audit = aiModelFirstAudit(outcome, { env, turns: turns.length })
   if (outcome.status !== 'answered') return { response: null, audit, facts, reason: outcome.reason }
-  return { response: presentAiModelFirstAnswer({ answer: outcome.answer, refs: outcome.refs, stats: outcome.stats, facts, language, query: message }), audit, facts }
+  const searchedDocuments = outcome.stats.calls.some((call) => call.tool === 'search_documents')
+  return { response: presentAiModelFirstAnswer({ answer: outcome.answer, refs: outcome.refs, stats: outcome.stats, facts, language, query: message }), audit, facts, searchedDocuments }
 }
