@@ -6,7 +6,7 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { runAiReadTool } from './ai-read-tool-runner.mjs'
 import { aiCallCostMicros, aiUsagePrices, runWithAiUsageScope } from './ai-usage-meter.mjs'
 import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
-import { AI_MODEL_FIRST_LIMITS, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstTurns, parseAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
+import { AI_MODEL_FIRST_LIMITS, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstTurns, parseAiModelFirstAnswer, presentAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 
 // The model-first loop (docs/ai-model-first-design.md §3) against a scripted
@@ -243,7 +243,8 @@ test('the guards keep their own answers: refusals, the outside world, injection,
   assert.equal(entry("What's the weather in Boston tomorrow?").reason, 'outside_world')
   assert.equal(entry('What should I handle first today?', { skillHint: 'today_priorities' }).reason, 'chip')
   assert.equal(entry('你好').reason, 'greeting')
-  assert.equal(entry('帮我下单').reason, 'order_request')
+  // An order request is the loop's: it asks, or proposes a purchase request.
+  for (const message of ['帮我下单', '帮我起草一份PO', '我要重新创建一个PO', 'Create a purchase order for 50 LDM-001']) assert.equal(entry(message).eligible, true, message)
   // A contract question is the loop's when it can read contracts (list_contracts).
   assert.deepEqual(entry('我们和 Acme 的合同什么时候到期？'), { eligible: true, reason: null, requires: ['list_contracts'] })
   // A question about the documents is the loop's too: it searches them.
@@ -297,7 +298,58 @@ test('a follow-up about the same supplier is answered from its records read agai
   assert.equal(outcome.stats.grounding.outcome, 'passed_on_retry')
   assert.deepEqual(outcome.answer.records.map((row) => row.id), [first.ref.id, second.ref.id])
   // The prompt asks for each count with its basis.
-  assert.match(stub.requests[0].body.system[0].text, /never state two different counts as if they measured the same thing/i)
+  assert.match(stub.requests[0].body.system[0].text, /never state two different figures as if they measured the same thing/i)
+})
+
+test('an order request with no item gets a question; a named or chosen item opens a filled-in purchase request', async () => {
+  const { facts, context, today } = await factsFor()
+  // No item named: the proposal is refused, so the model asks instead of assuming.
+  const ask = { title: 'Which item?', answer: 'Which item should the request be for? LDM-001 is below its safety stock.', records: [] }
+  const vague = scripted([toolUse([['propose_purchase_request', { sku: 'LDM-001' }], ['stock_position', { only: 'at_risk' }]]), final(ask)])
+  const asked = await runAiModelFirstLoop(loop(vague, { facts, context, today, question: '帮我起草一份PO' }))
+  assert.equal(asked.status, 'answered')
+  assert.deepEqual(asked.stats.calls.map((call) => [call.tool, call.status]), [['propose_purchase_request', 'item_not_named'], ['stock_position', 'ok']])
+  assert.deepEqual(asked.proposals, [])
+  assert.ok(vague.requests[0].body.tools.some((tool) => tool.name === 'propose_purchase_request'))
+  // Named item, quantity and supplier: the form opens with them; nothing is saved.
+  const named = scripted([toolUse([['propose_purchase_request', { sku: 'LDM-001', quantity: 200, supplier: 'Acme Components' }]]), final({ title: 'A request for 200 LDM-001 is ready', answer: 'A purchase request form for 200 pcs of LDM-001 from Acme Components is open for you to review and submit. After approval it becomes a purchase order.', records: [{ type: 'item', id: 'LDM-001' }] })])
+  const proposed = await runAiModelFirstLoop(loop(named, { facts, context, today, question: '帮我给 Acme Components 建一个 200 件 LDM-001 的采购申请' }))
+  assert.equal(proposed.status, 'answered')
+  assert.deepEqual(proposed.proposals.map((row) => [row.sku, row.quantity, row.supplierId]), [['LDM-001', 200, 'SUP-001']])
+  const card = presentAiModelFirstAnswer({ answer: proposed.answer, refs: proposed.refs, stats: proposed.stats, facts, language: 'zh-CN', query: 'q', proposals: proposed.proposals }).reviewCards[0]
+  assert.deepEqual({ type: card.draftType, autoOpen: card.autoOpen, payload: { sku: card.payload.itemIdOrSku, quantity: card.payload.quantity, supplierId: card.payload.supplierId }, reviewRequired: card.reviewRequired }, { type: 'purchase_request_draft', autoOpen: true, payload: { sku: 'LDM-001', quantity: 200, supplierId: 'SUP-001' }, reviewRequired: true })
+  // A quantity or supplier the user did not give is left out of the form.
+  const guessed = scripted([toolUse([['propose_purchase_request', { sku: 'LDM-001', quantity: 7, supplier: 'Summit Packaging' }]]), final({ title: 'A request for LDM-001 is ready', answer: 'A purchase request form for LDM-001 is open; enter the quantity.', records: [] })])
+  const partial = await runAiModelFirstLoop(loop(guessed, { facts, context, today, question: 'Create a purchase request for LDM-001' }))
+  assert.deepEqual(partial.proposals.map((row) => [row.quantity, row.supplierId]), [[null, null]])
+  // Picking from the choices the previous answer offered counts as naming.
+  const turns = aiModelFirstTurns({ previousTurns: [{ question: '帮我起草一份PO', answer: '要为哪个物料建采购申请？可选：LDM-001（低于安全库存）。' }] })
+  const picked = scripted([toolUse([['propose_purchase_request', { sku: 'LDM-001', quantity: 50 }]]), final({ title: 'LDM-001 采购申请已打开', answer: '已为你打开 LDM-001 50 件的采购申请表，请核对后提交。', records: [] })])
+  const chosen = await runAiModelFirstLoop(loop(picked, { facts, context, today, turns, question: '就这个，50 件' }))
+  assert.deepEqual(chosen.proposals.map((row) => [row.sku, row.quantity]), [['LDM-001', 50]])
+  // A longer question that only mentions 可以 is not a pick: LDM-001 from the earlier answer is not assumed.
+  const assumed = await runAiModelFirstLoop(loop(scripted([toolUse([['propose_purchase_request', { sku: 'LDM-001' }]]), final(ask)]), { facts, context, today, turns, question: '可以帮我重新建一个吗' }))
+  assert.deepEqual(assumed.stats.calls.map((call) => call.status), ['item_not_named'])
+  // A viewer may not draft: no proposal is offered.
+  const viewer = await factsFor('read-only-viewer')
+  const offered = scripted([final(ask)])
+  await runAiModelFirstLoop(loop(offered, { facts: viewer.facts, context: viewer.context, today, question: '帮我下单' }))
+  assert.ok(!offered.requests[0].body.tools.some((tool) => tool.name === 'propose_purchase_request'))
+})
+
+test('the prompt and the retry ask for records read again, never a disclaimer or a "system limit"', async () => {
+  const { facts, today } = await factsFor()
+  const stub = scripted([final({ title: 'Late', answer: 'PO-777 is 99 days overdue.', records: [] }), final({ title: 'Late', answer: 'Nothing to report.', records: [] })])
+  await runAiModelFirstLoop(loop(stub, { facts, today }))
+  const system = stub.requests[0].body.system[0].text
+  assert.doesNotMatch(system, /create records/)
+  assert.match(system, /propose_purchase_request/)
+  assert.match(system, /never call it a system limit/)
+  assert.match(system, /Read a correction from the user as a correction/)
+  const retry = stub.requests[1].body.messages.at(-1).content[0].text
+  assert.match(retry, /Look them up again with the tools/)
+  assert.match(retry, /Do not mention this check to the user/)
+  assert.doesNotMatch(retry, /or leave them out\./)
 })
 
 test('no data crosses roles: a role gets only its tools, and the provider never sees what it may not read', async () => {
