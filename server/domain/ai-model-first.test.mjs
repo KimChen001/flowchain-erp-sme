@@ -256,6 +256,39 @@ test('up to 3 earlier turns of the panel go to the model as text', async () => {
   assert.deepEqual(JSON.parse(stub.requests[0].body.messages[0].content[0].text).earlierTurns.map((turn) => turn.answer), ['Answer 3', 'Answer 4', 'Answer 5'])
 })
 
+test('a follow-up about the same supplier is answered from its records read again, each count on its own basis', async () => {
+  const { facts, context, today } = await factsFor()
+  // The fixture's two counts for Acme differ: no delivery promised in the
+  // scorecard's period is still undelivered, while 2 orders are overdue today.
+  const scorecard = (await runAiReadTool('supplier_performance', { suppliers: ['Acme Components'] }, { facts, context })).result
+  const overdue = (await runAiReadTool('list_purchase_orders', { supplier: 'Acme Components', status: 'overdue' }, { facts, context })).result
+  assert.equal(scorecard.suppliers[0].undeliveredPastOriginalPromiseInPeriod, 0)
+  assert.equal(overdue.total, 2)
+  const turns = aiModelFirstTurns({ previousTurns: [{ question: 'How has Acme Components been delivering lately?', answer: 'Acme Components: no deliveries in the scorecard period.' }] })
+  const [first, second] = overdue.rows
+  const fromMemory = { title: 'Acme Components has 2 late orders', answer: 'Acme Components has 2 orders overdue today.', records: [] }
+  const fromRecords = {
+    title: 'Acme Components: 2 orders overdue today',
+    answer: `Acme Components has ${overdue.total} orders overdue today: ${first.orderNumber} (${first.overdueDays} days) and ${second.orderNumber} (${second.overdueDays} days). The scorecard, which counts only deliveries promised from ${scorecard.period.from} to ${scorecard.period.to}, shows ${scorecard.suppliers[0].undeliveredPastOriginalPromiseInPeriod} still undelivered past their original date.`,
+    records: [{ type: 'purchase_order', id: first.ref.id }, { type: 'purchase_order', id: second.ref.id }],
+  }
+  const stub = scripted([
+    final(fromMemory),
+    toolUse([['list_purchase_orders', { supplier: 'Acme Components', status: 'overdue' }], ['supplier_performance', { suppliers: ['Acme Components'] }]]),
+    final(fromRecords),
+  ])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts, context, today, turns, question: 'Which of its orders are overdue now?' }))
+  assert.equal(outcome.status, 'answered')
+  assert.equal(JSON.parse(stub.requests[0].body.messages[0].content[0].text).earlierTurns[0].question, 'How has Acme Components been delivering lately?')
+  // An earlier turn says who "its" is, but is not a source: the supplier's
+  // name and count had to be read again before the answer could pass.
+  assert.deepEqual(outcome.stats.grounding.first, { name: 1, number: 1 })
+  assert.equal(outcome.stats.grounding.outcome, 'passed_on_retry')
+  assert.deepEqual(outcome.answer.records.map((row) => row.id), [first.ref.id, second.ref.id])
+  // The prompt asks for each count with its basis.
+  assert.match(stub.requests[0].body.system[0].text, /never state two different counts as if they measured the same thing/i)
+})
+
 test('no data crosses roles: a role gets only its tools, and the provider never sees what it may not read', async () => {
   const { facts, context, today } = await factsFor('finance-specialist')
   const stub = scripted([
@@ -341,6 +374,9 @@ test('through the gateway: after two failed checks the rules answer, with no fur
   assert.equal(status, 200)
   assert.notEqual(payload.intent, 'model_first')
   assert.deepEqual(payload.aiModelAccess, { status: 'unavailable', reason: 'unchecked' })
+  // The rules answered, and the answer never says the AI wrote it.
+  assert.notEqual(payload.answerSource, 'workspace_model')
+  assert.doesNotMatch(`${payload.answerSourceLabel} ${payload.runtimeModeLabel}`, /AI/)
   assert.equal(stub.requests.length, 2, 'the answer and its one retry')
   assert.equal(counted.intent, 0, 'the rules answer without a model')
   const row = audits.at(-1).metadata.modelFirst

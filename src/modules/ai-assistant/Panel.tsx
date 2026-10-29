@@ -731,12 +731,14 @@ export default function FloatingAiAssistant({
     setAsking(true);
     setInput("");
     setMessages((current) => [...current, { role: "user", content: message }]);
-    // A model-first answer may take up to 20 s before the rules answer instead.
+    // A chip answers from its skill and keeps the 12 s limit. A typed question
+    // may go to the model-first loop, which takes up to 20 s before the rules
+    // answer instead.
     const timeout = window.setTimeout(() => {
       timeoutHit = true;
       abortReasonRef.current = "timeout";
       controller.abort();
-    }, 25000);
+    }, skillHint ? 12000 : 25000);
 
     try {
       const safeConversationContext = buildSafeConversationContext(messages, context, sessionGrounding, language);
