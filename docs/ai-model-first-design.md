@@ -293,7 +293,7 @@ This design is the first of four levels of automation (§13).
 
 **Decided 2026-10-28.**
 - **M1–M7: approved as recommended.** The owner wrote "这些就做吧" and asked for faster progress ("进度要快一点").
-- **M5 amended for speed:** independent pieces may run in parallel sessions. Two are independent when they share no files, for example the read tools (S1) and the loop with its adapter and grounding check (S2), which work against the tool contract in `server/domain/ai-tools/`. Each piece is still one PR.
+- **M5 amended for speed:** independent pieces may run in parallel sessions. Two are independent when they share no files, for example the read tools (S1) and the loop with its adapter and grounding check (S2), which work against the tool contract in `server/domain/ai-read-tool-*.mjs` (#227). Each piece is still one PR.
 - **The model comparison** of the same evening (§5) keeps `claude-haiku-5-5` as the main model and DeepSeek V4.1 Flash as the second model in the S3 evaluation lane.
 
 ## 11. Risks
