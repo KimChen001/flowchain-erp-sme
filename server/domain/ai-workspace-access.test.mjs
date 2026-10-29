@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { canCallConfiguredProvider, callConfiguredProvider } from './ai-runtime-provider-adapter-v2.mjs'
-import { anthropicChatAdapter } from './ai-runtime-provider-specific-adapters-v2.mjs'
+import { AI_PROVIDER_USER_AGENT, anthropicChatAdapter } from './ai-runtime-provider-specific-adapters-v2.mjs'
 import { knowledgeProviderEnv } from './ai-knowledge-config.mjs'
 import { AI_MONTHLY_CAP_DEFAULT_USD, aiMonthlyCapUsd, aiOptInRequired, modelFreeEnv, readAiWorkspaceAccess, withAiWorkspaceAccess } from './ai-workspace-access.mjs'
 import { aiCallCostMicros, aiProviderFailures, aiUsageMonth } from './ai-usage-meter.mjs'
@@ -175,4 +175,31 @@ test('an answer whose model call failed says the rules answered, and why when th
   assert.deepEqual(budget.payload.aiModelAccess, { status: 'unavailable', reason: 'budget' })
   const down = await ask(503)
   assert.deepEqual(down.payload.aiModelAccess, { status: 'unavailable' })
+})
+
+test('provider calls say they come from FlowChain, and share one session id per request when the provider asks for it', async () => {
+  const seen = []
+  const capture = async (_url, init) => { seen.push(init.headers); return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200, headers: { 'content-type': 'application/json' } }) }
+  const input = { task: { type: 'skill_intent_classification', question: 'hi' } }
+  const ctx = (env) => ({ env, identity: { authenticated: true, tenantId: TENANT }, aiWorkspacePrisma: fakePrisma() })
+  const env = { ...PROVIDER, FLOWCHAIN_AI_PROVIDER_SESSION_HEADER: 'x-opencode-session' }
+  await withAiWorkspaceAccess(ctx(env), async (scoped) => {
+    await callConfiguredProvider(input, scoped.env, capture)
+    await callConfiguredProvider(input, scoped.env, capture)
+  })
+  await withAiWorkspaceAccess(ctx(env), async (scoped) => callConfiguredProvider(input, scoped.env, capture))
+  const [first, second, other] = seen
+  assert.equal(first['user-agent'], AI_PROVIDER_USER_AGENT)
+  assert.match(first['x-opencode-session'], /^[0-9a-f-]{36}$/)
+  assert.equal(second['x-opencode-session'], first['x-opencode-session'], 'one id for every call of a request')
+  assert.notEqual(other['x-opencode-session'], first['x-opencode-session'], 'a new id for the next request')
+  // No session header unless the provider settings name one, and never a header that is not x-…
+  seen.length = 0
+  await withAiWorkspaceAccess(ctx(PROVIDER), async (scoped) => callConfiguredProvider(input, scoped.env, capture))
+  await withAiWorkspaceAccess(ctx({ ...PROVIDER, FLOWCHAIN_AI_PROVIDER_SESSION_HEADER: 'authorization' }), async (scoped) => callConfiguredProvider(input, scoped.env, capture))
+  for (const headers of seen) {
+    assert.equal(headers['user-agent'], AI_PROVIDER_USER_AGENT)
+    assert.deepEqual(Object.keys(headers).sort(), ['authorization', 'content-type', 'user-agent'])
+    assert.equal(headers.authorization, 'Bearer placeholder')
+  }
 })
