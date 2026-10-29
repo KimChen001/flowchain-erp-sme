@@ -439,6 +439,8 @@ const entries = {
   'source.suppliers': ['suppliers', '供应商'],
   'source.sales_orders': ['sales orders', '销售订单'],
   'source.documents': ['documents', '文档'],
+  'source.contracts': ['contracts', '合同'],
+  'source.supplier_risks': ['supplier risks', '供应商风险'],
   'source.workspace': ['workspace skills', '工作区技能'],
 
   // Fields checked by records_needing_data

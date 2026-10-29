@@ -264,6 +264,7 @@ const TOOL_SOURCES = Object.freeze({
   stock_position: 'inventory', stock_projection: 'inventory', reorder_list: 'inventory', price_history: 'purchase_orders',
   list_sales_orders: 'sales_orders', list_receipts: 'receipts', supplier_performance: 'receipts',
   list_supplier_invoices: 'supplier_invoices', list_purchase_requests: 'purchase_requests', list_rfqs: 'rfqs', list_suppliers: 'suppliers', search_documents: 'documents',
+  list_contracts: 'contracts', supplier_risks: 'supplier_risks',
 })
 const LINK_MODULES = Object.freeze({ ...AI_SKILL_MODULES, sales_order: 'sales:orders', customer: 'master-data:customers', warehouse: 'master-data:warehouses' })
 

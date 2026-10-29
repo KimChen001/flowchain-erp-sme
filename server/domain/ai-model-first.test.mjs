@@ -483,6 +483,7 @@ test('through the gateway: a contract question goes to the loop only where contr
   assert.equal(payload.intent, 'model_first')
   assert.ok(on.requests[0].body.tools.some((tool) => tool.name === 'list_contracts'))
   assert.deepEqual(payload.keyEvidence.map((item) => [item.entityType, item.entityLabel]), [['contract', 'CT-ACME0001']])
+  assert.equal(payload.checkedLabel, 'Checked: contracts')
 })
 
 test('off by default: without the mode the gateway answers as before', async () => {
