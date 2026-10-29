@@ -252,7 +252,7 @@ const spendAnalysis = defineAiTool({
 
 const supplierPerformance = defineAiTool({
   name: 'supplier_performance',
-  description: 'Delivery performance from the supplier scorecard: on-time, in-full and on-time-in-full rates with their counts, rejection rate, average delay and overdue orders, judged against the original promised date. A rate needs at least 5 deliveries in the period. Name up to 5 suppliers to compare them, or none for the best or worst.',
+  description: 'Delivery performance from the supplier scorecard: on-time, in-full and on-time-in-full rates with their counts, rejection rate and average delay. Every figure counts only deliveries promised in the period and judges them against the original promised date, so its count of deliveries still undelivered past that date can differ from the orders overdue today; for those, use list_purchase_orders. A rate needs at least 5 deliveries in the period. Name up to 5 suppliers to compare them, or none for the best or worst.',
   parameters: {
     suppliers: { type: 'array', items: { type: 'string' }, maxItems: 5, description: 'Supplier names or codes.' },
     order: { type: 'string', enum: ['best', 'worst'], description: 'Without suppliers: best (default) or worst on time first.' },
@@ -276,7 +276,9 @@ const supplierPerformance = defineAiTool({
       minimumDeliveriesForARate: 5,
       suppliers: array(result.suppliers).map((row) => ({
         name: row.name, deliveries: row.deliveries, onTime: rate(row.onTime), inFull: rate(row.inFull), onTimeInFull: rate(row.otif), rejection: rate(row.rejection),
-        averageDelayDays: row.delay?.value ?? null, lateDeliveries: row.delay?.lateCount ?? null, overdueOrders: row.overdue,
+        averageDelayDays: row.delay?.value ?? null, lateDeliveries: row.delay?.lateCount ?? null,
+        // The scorecard's count, in its own terms (see the description).
+        undeliveredPastOriginalPromiseInPeriod: row.overdue,
         spend: row.spend ? { amount: row.spend.amount, sharePercent: round1(row.spend.share) } : null, ref: aiToolRef('supplier', row.id, row.name),
       })),
       currency: result.currency,
