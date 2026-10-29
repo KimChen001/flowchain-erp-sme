@@ -1,7 +1,7 @@
 # New-user onboarding and standing instructions (L3): design and decisions
 
-Status: proposal of 2026-10-29. Documents only; nothing here is approved or built.
-The owner's decisions are listed in §9, each with a recommendation.
+Status: approved by the owner on 2026-10-29: O1–O6 and A1–A8 as recommended (§9).
+Nothing is built by this document. The build follows the order and timing in §7.
 
 This design continues the roadmap in `ai-model-first-design.md` §13 (PR #225),
 which names two Q1 2027 items:
@@ -29,7 +29,7 @@ Both rest on L2 confirmed actions, the design in `ai-confirmed-actions-design.md
   - 每个会改设置的回答都先出一张确认卡；
   - 定时指令只用于固定模板，创建时可以用模型把一句话转成规则，按时执行时不调用模型；
   - 输出只有草稿，有数量和金额上限、试运行、一键停用；连续被全部拒绝时自动暂停，并问用户原因。
-- **需要你定的事：** §9 共 14 项，每项都有推荐。最关键的三项是：
+- **决定（2026-10-29 已按推荐批准）：** §9 共 14 项。最关键的三项是：
   - 试用期是否开放自助注册（推荐先不开放）；
   - 第一批模板（推荐每周补货草稿）；
   - 定时任务放在哪里（推荐先在应用进程里跑，用数据库锁保证只跑一次）。
@@ -346,7 +346,12 @@ Timing per #225 §13: after the first deployment and L1/L2, in Q1 2027.
 
 ## 9. Decisions for the owner
 
-Each has a recommendation. None is decided by this document.
+**Decided 2026-10-29:** the owner approved every decision below as recommended
+("按推荐"). Two of them change what happens before the trial:
+- **O1:** trial workspaces stay operator-provisioned;
+- **O5:** invitation emails are sent through the existing mailer now, as §7 step 0.
+
+The rest wait for the §7 order, after L1/L2.
 
 ### Onboarding
 
