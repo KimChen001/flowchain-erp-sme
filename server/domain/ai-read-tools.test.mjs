@@ -5,6 +5,7 @@ import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { validateAiToolArgs, aiToolList, AI_TOOL_LIMITS } from './ai-read-tool-contract.mjs'
 import { AI_READ_TOOLS } from './ai-read-tools.mjs'
+import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 
 async function factsFor(roleKey = 'workspace-administrator') {
@@ -27,7 +28,15 @@ async function everyOutput(facts) {
 
 test('an administrator is offered every read tool, and each answers with capped rows and record refs', async () => {
   const facts = await factsFor()
-  assert.deepEqual(aiReadToolsFor(facts).map((tool) => tool.name), AI_READ_TOOLS.map((tool) => tool.name))
+  // Without the request's context only the tools over the facts are offered;
+  // the service tools (tests/postgres/ai-read-tools.test.mjs) need it.
+  const service = new Set(AI_READ_SERVICE_TOOLS.map((tool) => tool.name))
+  assert.deepEqual(aiReadToolsFor(facts).map((tool) => tool.name), AI_READ_TOOLS.map((tool) => tool.name).filter((name) => !service.has(name)))
+  assert.equal((await runAiReadTool('search_records', { query: 'Acme' }, { facts })).error, 'not_allowed')
+  const scenario = aiSkillScenario()
+  const context = await loadAiSkillContext(scenario.ctx)
+  assert.ok(aiReadToolsFor(facts, context).some((tool) => tool.name === 'search_records'))
+  assert.equal((await runAiReadTool('search_records', { query: 'Acme' }, { facts, context })).result.rows[0].ref.id.startsWith('PO-'), true)
   const overdue = await runAiReadTool('list_purchase_orders', { status: 'overdue' }, { facts })
   assert.equal(overdue.ok, true)
   assert.equal(overdue.result.total, facts.purchaseOrders.overdue)
@@ -112,4 +121,23 @@ test('tool definitions are offered in both provider formats, with closed schemas
 test('refs are collected once each from a nested result', () => {
   const ref = (id) => ({ type: 'purchase_order', id, label: id })
   assert.deepEqual(aiReadToolRefs({ rows: [{ ref: ref('A') }, { ref: ref('B'), lines: [{ ref: ref('A') }] }], other: { ref: ref('C') } }).map((entry) => entry.id), ['A', 'B', 'C'])
+})
+
+test('the stock projection places only dated lines in a week and lists the rest apart', async () => {
+  const facts = await factsFor()
+  const projection = (await runAiReadTool('stock_projection', { sku: 'LDM-001', weeks: 3 }, { facts })).result
+  assert.equal(projection.weeks.length, 3)
+  assert.equal(projection.weeks[0].from, facts.asOf)
+  // Each week ends with the week before's balance plus what arrives less what is due.
+  let balance = projection.availableToday
+  for (const week of projection.weeks) {
+    balance += week.incoming - week.demand
+    assert.equal(week.endAvailable, balance)
+    assert.equal(week.belowSafetyStock, balance < projection.safetyStock)
+  }
+  // An order past its promised day is never placed in a week: no arrival date is guessed.
+  const placed = new Set(projection.weeks.flatMap((week) => week.purchaseOrders))
+  for (const entry of projection.notPlacedInAWeek.incomingPastPromisedDate) assert.ok(!placed.has(entry.orderNumber))
+  assert.ok(projection.notPlacedInAWeek.incomingPastPromisedDate.some((entry) => entry.orderNumber === 'PO-001'), 'PO-001 is overdue')
+  assert.deepEqual(await runAiReadTool('stock_projection', { sku: 'NOPE-1' }, { facts }), { ok: false, error: 'not_found' })
 })

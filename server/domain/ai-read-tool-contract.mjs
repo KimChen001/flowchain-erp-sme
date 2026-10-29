@@ -15,6 +15,8 @@ export const AI_TOOL_LIMITS = Object.freeze({ rows: 20, maxRows: 50, text: 200, 
 const text = (value) => String(value ?? '').trim()
 const array = (value) => (Array.isArray(value) ? value : [])
 
+// `available(facts, context)` says whether the asking user may use the tool;
+// `run(args, { facts, context })` reads and returns plain JSON.
 export function defineAiTool({ name, description, parameters = {}, required = [], available = () => true, run }) {
   if (!/^[a-z][a-z0-9_]{2,63}$/.test(name)) throw new Error(`Invalid tool name ${name}`)
   return Object.freeze({
