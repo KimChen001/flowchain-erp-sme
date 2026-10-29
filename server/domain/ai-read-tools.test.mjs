@@ -37,7 +37,11 @@ test('an administrator is offered every read tool, and each answers with capped 
   const scenario = aiSkillScenario()
   const context = await loadAiSkillContext(scenario.ctx)
   assert.ok(aiReadToolsFor(facts, context).some((tool) => tool.name === 'search_records'))
-  assert.equal((await runAiReadTool('search_records', { query: 'Acme' }, { facts, context })).result.rows[0].ref.id.startsWith('PO-'), true)
+  const found = (await runAiReadTool('search_records', { query: 'Acme' }, { facts, context })).result.rows
+  assert.equal(found[0].ref.id.startsWith('PO-'), true)
+  // A document's link reads its number; a supplier's reads its name.
+  assert.equal(found[0].ref.label, found[0].number)
+  assert.equal(found.find((row) => row.type === 'supplier')?.ref.label, 'Acme Components')
   const overdue = await runAiReadTool('list_purchase_orders', { status: 'overdue' }, { facts })
   assert.equal(overdue.ok, true)
   assert.equal(overdue.result.total, facts.purchaseOrders.overdue)

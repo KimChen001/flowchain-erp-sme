@@ -71,9 +71,12 @@ const searchRecords = defineAiTool({
   async run(args, { context }) {
     const { business } = await scopedBusiness(context)
     const results = searchRuntimeBusinessContext(business, args.query, { limit: AI_TOOL_LIMITS.maxRows })
-    return aiToolList(results.map((row) => ({ type: row.entityType, number: row.entityId, name: row.label, status: row.status || null, ref: aiToolRef(row.entityType, row.entityId, row.entityId) })), args.limit)
+    return aiToolList(results.map((row) => ({ type: row.entityType, number: row.entityId, name: row.label, status: row.status || null, ref: aiToolRef(row.entityType, row.entityId, NAMED_RECORDS.has(row.entityType) ? row.label : row.entityId) })), args.limit)
   },
 })
+// Records a link names by their name: their id is internal. Documents are
+// named by their number, and items by their SKU.
+const NAMED_RECORDS = new Set(['supplier', 'customer', 'warehouse'])
 
 const reorderList = defineAiTool({
   name: 'reorder_list',
@@ -288,7 +291,7 @@ const searchDocuments = defineAiTool({
   async run(args, { context }) {
     const { env, service, languages, count } = await knowledgeOf(context)
     if (!count) return { documents: 0, passages: [], note: 'This workspace has no documents the user may read.' }
-    if (CJK.test(args.query) && !languages.includes('zh-CN')) return { error: 'query_language', details: [`The documents are in ${languages.join(', ')}. Search again with words in that language.`] }
+    if (CJK.test(args.query) && !languages.includes('zh-CN')) return { error: 'query_language', details: [`The documents are in ${languages.join(', ')}. A search in Chinese finds nothing in them: translate the search words and search again now, in that language.`] }
     const result = await answerKnowledgeQuery({ question: args.query, retrievalQuery: args.query, generate: false, actor: context.actor, service, env })
     const citations = array(result.citations)
     return {
