@@ -15,7 +15,7 @@ const english: Record<string, string> = {
   "返回库位资料": "Back to locations", "返回付款条款": "Back to payment terms", "返回税码": "Back to tax codes",
   "返回销售订单": "Back to sales orders", "返回发货单": "Back to deliveries", "返回签收单": "Back to receipts",
   "返回库存调整单": "Back to inventory adjustments", "返回采购退货": "Back to purchase returns", "返回贷项通知": "Back to credit memos",
-  "返回全局搜索": "Back to search",
+  "返回全局搜索": "Back to search", "合同": "Contract", "返回合同": "Back to contracts",
 };
 
 export function businessEntityCopy(label: string, language: string): string {

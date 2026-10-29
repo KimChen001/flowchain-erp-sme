@@ -486,6 +486,76 @@ test('through the gateway: a contract question goes to the loop only where contr
   assert.ok(on.requests[0].body.tools.some((tool) => tool.name === 'list_contracts'))
   assert.deepEqual(payload.keyEvidence.map((item) => [item.entityType, item.entityLabel]), [['contract', 'CT-ACME0001']])
   assert.equal(payload.checkedLabel, 'Checked: contracts')
+  // The contract opens its own page.
+  assert.deepEqual(payload.navigationLinks.map((link) => [link.moduleId, link.entityType, link.entityId]), [['contracts:list', 'contract', 'CT-1']])
+})
+
+test('progress: the loop says what it reads, then that it writes and checks the answer, in codes only', async () => {
+  const { first } = await overdueFacts()
+  const events = []
+  const stub = scripted([
+    toolUse([['list_purchase_orders', { status: 'overdue' }], ['search_records', { query: 'Acme' }], ['calculate', { operation: 'sum', values: [1, 2] }]]),
+    final({ title: 'x', answer: 'PO-777 is 99 days overdue.', records: [] }),
+    final({ title: `${first.orderNumber} is overdue`, answer: `${first.orderNumber} is ${first.overdueDays} days overdue.`, records: [{ type: 'purchase_order', id: first.ref.id }] }),
+  ])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts: (await factsFor()).facts, onProgress: (event) => events.push(event) }))
+  assert.equal(outcome.status, 'answered')
+  // A failed check and its rewrite stay "checking"; nothing about the records.
+  assert.deepEqual(events, [{ step: 'reading', sources: ['purchase_orders', 'records', 'calculation'] }, { step: 'writing' }, { step: 'checking' }])
+  // A listener that throws never stops the answer.
+  const again = scripted([final({ title: 'Hello', answer: 'I can read your purchase orders.', records: [] })])
+  assert.equal((await runAiModelFirstLoop(loop(again, { facts: (await factsFor()).facts, onProgress: () => { throw new Error('gone') } }))).status, 'answered')
+})
+
+// A response the stream writes to, as http.ServerResponse would take it.
+function streamResponse() {
+  const res = { headers: null, chunks: [], ended: false, destroyed: false, writableEnded: false, on: () => res }
+  res.writeHead = (status, headers) => { res.status = status; res.headers = headers }
+  res.write = (chunk) => { res.chunks.push(chunk); return true }
+  res.end = () => { res.ended = true; res.writableEnded = true }
+  res.lines = () => res.chunks.join('').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+  return res
+}
+
+test('streaming: a client that accepts NDJSON gets the loop\'s progress, then the answer; anything else stays JSON', async () => {
+  const { first } = await overdueFacts()
+  const question = 'Which purchase order is the most overdue?'
+  const answer = { title: `${first.orderNumber} is the most overdue`, answer: `${first.orderNumber}: ${first.overdueDays} days past its promised date, the most days overdue.`, records: [{ type: 'purchase_order', id: first.ref.id }] }
+  const stream = { req: { method: 'POST', headers: { accept: 'application/x-ndjson, application/json' } } }
+  const res = streamResponse()
+  const streamed = gatewayContext({ message: question, fetchImpl: scripted([toolUse([['list_purchase_orders', { status: 'overdue' }]]), final(answer)]).fetchImpl, ctxExtra: { ...stream, res } })
+  await handleAiRuntimeGatewayRoute(streamed.ctx)
+  assert.equal(streamed.sent.length, 0, 'the answer goes down the stream')
+  assert.equal(res.status, 200)
+  assert.match(res.headers['Content-Type'], /^application\/x-ndjson/)
+  const lines = res.lines()
+  assert.deepEqual(lines.slice(0, -1), [
+    { type: 'progress', step: 'reading', sources: ['purchase_orders'] }, { type: 'progress', step: 'writing' }, { type: 'progress', step: 'checking' },
+  ])
+  assert.deepEqual({ type: lines.at(-1).type, status: lines.at(-1).status, intent: lines.at(-1).body.intent }, { type: 'answer', status: 200, intent: 'model_first' })
+  assert.ok(res.ended)
+  assert.ok(!res.chunks.slice(0, -1).join('').includes(first.orderNumber), 'progress lines carry no record')
+
+  // The rules answer after a failed loop goes down the same stream, with its notice.
+  const fallbackRes = streamResponse()
+  const fallback = gatewayContext({ message: 'Which purchase orders are overdue?', fetchImpl: scripted([final({ title: 'Late', answer: 'PO-777 is 99 days overdue.', records: [] })]).fetchImpl, ctxExtra: { ...stream, res: fallbackRes } })
+  await handleAiRuntimeGatewayRoute(fallback.ctx)
+  const last = fallbackRes.lines().at(-1)
+  assert.equal(last.type, 'answer')
+  assert.notEqual(last.body.intent, 'model_first')
+  assert.deepEqual(last.body.aiModelAccess, { status: 'unavailable', reason: 'unchecked' })
+
+  // A chip never reaches the loop: no stream, the usual JSON answer.
+  const chipRes = streamResponse()
+  const chip = gatewayContext({ message: 'What should I handle first today?', extra: { skillHint: 'today_priorities' }, fetchImpl: scripted([]).fetchImpl, ctxExtra: { ...stream, res: chipRes } })
+  await handleAiRuntimeGatewayRoute(chip.ctx)
+  assert.equal(chipRes.chunks.length, 0)
+  assert.equal(chip.sent.at(-1).status, 200)
+
+  // Without the NDJSON header the loop's answer is the usual JSON.
+  const plain = gatewayContext({ message: question, fetchImpl: scripted([toolUse([['list_purchase_orders', { status: 'overdue' }]]), final(answer)]).fetchImpl })
+  await handleAiRuntimeGatewayRoute(plain.ctx)
+  assert.equal(plain.sent.at(-1).payload.intent, 'model_first')
 })
 
 test('off by default: without the mode the gateway answers as before', async () => {

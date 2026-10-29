@@ -44,14 +44,22 @@ export class ApiError extends Error {
 
 if (typeof window !== 'undefined') migrateLegacySessionStorage(window.localStorage)
 
-export async function apiJson<T>(url: string, options?: RequestInit): Promise<T> {
+// The signed-in request, as apiJson sends it, for a caller that reads the
+// response itself (the assistant's progress stream).
+export function apiFetch(url: string, options?: RequestInit): Promise<Response> {
   const token = typeof window !== 'undefined' ? localStorage.getItem(AUTH_TOKEN_KEY) || '' : ''
-  const res = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options?.headers ?? {}) } })
-  if (!res.ok) {
-    const raw = await res.text(); let payload: ApiErrorPayload = { error: raw }
-    try { payload = JSON.parse(raw) as ApiErrorPayload } catch { /* Preserve plain-text server errors. */ }
-    throw new ApiError(res.status, payload, raw || `API request failed: ${res.status}`)
-  }
+  return fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options?.headers ?? {}) } })
+}
+
+export async function apiErrorFrom(res: Response): Promise<ApiError> {
+  const raw = await res.text(); let payload: ApiErrorPayload = { error: raw }
+  try { payload = JSON.parse(raw) as ApiErrorPayload } catch { /* Preserve plain-text server errors. */ }
+  return new ApiError(res.status, payload, raw || `API request failed: ${res.status}`)
+}
+
+export async function apiJson<T>(url: string, options?: RequestInit): Promise<T> {
+  const res = await apiFetch(url, options)
+  if (!res.ok) throw await apiErrorFrom(res)
   if (res.status === 204) return undefined as T
   return res.json()
 }

@@ -421,6 +421,49 @@ Both runs: no safety failures, no blocked connections, no Chinese in English
 answers, no regression. Before the compound cases were added, none of the
 existing cases changed answer. Compound answers took 19 to 86 ms offline.
 
+## Model-first lane (S3)
+
+The model-first assistant (`docs/ai-model-first-design.md` §7) has a model-on
+lane. It runs locally with a provider key, never in CI:
+
+```
+FLOWCHAIN_ENABLE_CONTRACTS=true npm run test:ai:eval -- --provider-env=<env file> --model-first --budget-usd=2 --claims-sample=12 --dump-answers
+```
+
+- **What it switches on.** `--model-first` sets
+  `FLOWCHAIN_AI_ASSISTANT_MODE=model_first` on the servers and also takes the
+  loop's own `FLOWCHAIN_AI_ASSISTANT_*` settings from the file. Every free-text
+  question the guards let through goes to the tool loop; chips, refusals,
+  injection, greetings and order requests keep their rules answers.
+- **What it reports,** from each answer's audit row (its `modelFirst` block:
+  codes and counts only):
+  - how many answers the loop gave, how many were guarded, skipped (a tool the
+    user is not offered) or fell back to the rules, with the reasons;
+  - grounding: passed first time, passed on retry, failed, and the kinds of
+    item that failed each check (number, date, record, name, citation,
+    action wording, format);
+  - model calls, rounds and tool calls per answer, and each tool's calls and
+    errors;
+  - tokens, cost at list prices, and the loop's latency p50 and p95;
+  - the existing safety checks, each of which must stay at 0.
+- **Skill cases answered by the loop.** A gated case whose expectations name a
+  skill (`skill`, `skills`, `agent`) cannot match when the loop answers it. It
+  is then scored on its safety checks and the figures it states only
+  (`numbers`, `figures` read from the text, `skus`), listed apart, and not
+  counted as a regression. Its other checks are named under `notScored` in the
+  report. A safety failure still fails the run.
+- **Documents.** A loop answer meets `expect.knowledge` when it cites the
+  document as a record and names one of the sections in its text.
+- **Budget.** A run with `--provider-env` stops asking new questions once its
+  model calls have cost `--budget-usd` (default 2) at the meter's list prices
+  (`ai-usage-meter.mjs`, every model call of every path), and prints what it
+  spent. A run the budget stopped skips the quality gate. OpenCode Go bills its
+  own allowance, at about 4 times list price.
+- **Ranking and universal claims.** `--claims-sample[=N]` prints N loop answers
+  (default 12, spread over the run) that say "most", "all" or "none" (最, 所有,
+  没有, 全部) for a hand check: the grounding check cannot see such claims. The
+  report keeps all of them under `claims`.
+
 ## Current scores
 
 Measured on 2026-10-01 (walkthrough as of that UTC day) with this harness:

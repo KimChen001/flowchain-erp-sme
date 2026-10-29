@@ -30,6 +30,10 @@ import { aiCallCostMicros, aiUsagePrices } from './ai-usage-meter.mjs'
 // ("ignore previous instructions", every tenant), a greeting, contracts and an
 // order request. The prompt chips keep their skills: they are buttons with a
 // fixed meaning, instant and free.
+//
+// Step S3: the loop reports its steps (what it reads, then writing and
+// checking), which the gateway streams to the panel's progress line
+// (server/routes/ai-runtime-stream.mjs).
 
 export const AI_MODEL_FIRST_VERSION = '2026-10-28'
 // Rounds, calls and time (decision M2); the token budget counts every token
@@ -175,13 +179,21 @@ const toolContent = (outcome) => {
   return content.length > AI_MODEL_FIRST_LIMITS.resultChars ? JSON.stringify({ error: 'result_too_large', details: ['Ask for fewer rows with limit, or narrow the filter.'] }) : content
 }
 
+// What the panel's progress line names while a tool runs (step S3): what each
+// tool reads, as for the "Checked:" line, plus the tools that line leaves out.
+const PROGRESS_SOURCES = Object.freeze({ search_records: 'records', calculate: 'calculation', list_receivables: 'receivables', workspace_summary: 'workspace', supplier_performance: 'suppliers' })
+export const aiModelFirstProgressSources = (names) => [...new Set(array(names).map((name) => PROGRESS_SOURCES[name] || TOOL_SOURCES[name] || 'records'))]
+
 // The tool loop. `facts` are the asking user's facts and `context` the
 // request's skill context (the actor and the database), which the service
 // tools read through with the user's own read checks; the tools read nothing
 // else. Returns { status: 'answered', answer, refs, stats } or
 // { status: 'failed', reason, stats }. `model` is the provider call (tests
-// script it through `fetchImpl`).
-export async function runAiModelFirstLoop({ question, language, turns = [], openRecord = null, documentLanguages = null, facts, context = null, tenant = null, today = null, env = {}, fetchImpl = globalThis.fetch, model = callAiModelFirstModel, clock = Date.now } = {}) {
+// script it through `fetchImpl`). `onProgress` hears the loop's steps, codes
+// only: { step: 'reading', sources } before a round of tool calls,
+// { step: 'writing' } when the model reads their results, { step: 'checking' }
+// when an answer is checked (and rewritten after a failed check).
+export async function runAiModelFirstLoop({ question, language, turns = [], openRecord = null, documentLanguages = null, facts, context = null, tenant = null, today = null, env = {}, fetchImpl = globalThis.fetch, model = callAiModelFirstModel, clock = Date.now, onProgress = null } = {}) {
   const limits = aiModelFirstLimits(env)
   const started = clock()
   const deadline = started + limits.timeoutMs
@@ -194,6 +206,8 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
   const stats = { modelCalls: 0, rounds: 0, calls: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, grounding: { outcome: 'not_checked', first: null, retry: null, checked: null }, latencyMs: 0 }
   const finish = (outcome) => ({ ...outcome, stats: { ...stats, latencyMs: clock() - started } })
   const fail = (reason) => finish({ status: 'failed', reason })
+  // A listener that fails never stops the answer.
+  const progress = (event) => { try { onProgress?.(event) } catch { /* the answer goes on */ } }
   let retried = false
   while (true) {
     const remaining = deadline - clock()
@@ -201,6 +215,7 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
     if (stats.usage.input + stats.usage.output >= limits.tokens) return fail('token_budget')
     if (stats.modelCalls >= limits.modelCalls) return fail('limits')
     const toolsLeft = stats.rounds < limits.rounds && stats.calls.length < limits.toolCalls
+    if (transcript.at(-1).role === 'tool') progress({ step: 'writing' })
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), remaining)
     let reply
@@ -220,7 +235,10 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
       // A round: its calls run together, up to the answer's call limit. Every
       // call gets a result, an error included, so the model can correct it.
       const round = toolsLeft
-      if (round) stats.rounds += 1
+      if (round) {
+        stats.rounds += 1
+        progress({ step: 'reading', sources: aiModelFirstProgressSources(reply.calls.map((call) => call.name)) })
+      }
       const outcomes = await Promise.all(reply.calls.map(async (call) => {
         if (!round || stats.calls.length >= limits.toolCalls) return { call, outcome: { ok: false, error: 'call_limit', details: ['No more tool calls are available for this answer.'] }, counted: false }
         stats.calls.push({ tool: call.name, status: 'pending' })
@@ -243,6 +261,7 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
       continue
     }
     // The final answer, checked against this answer's tool results.
+    if (!retried) progress({ step: 'checking' })
     const answer = parseAiModelFirstAnswer(reply.text)
     const check = answer
       ? checkAiModelFirstGrounding({ answer, results, refs, question, facts, today })
@@ -267,7 +286,9 @@ const TOOL_SOURCES = Object.freeze({
   list_supplier_invoices: 'supplier_invoices', list_purchase_requests: 'purchase_requests', list_rfqs: 'rfqs', list_suppliers: 'suppliers', search_documents: 'documents',
   list_contracts: 'contracts', supplier_risks: 'supplier_risks',
 })
-const LINK_MODULES = Object.freeze({ ...AI_SKILL_MODULES, sales_order: 'sales:orders', customer: 'master-data:customers', warehouse: 'master-data:warehouses' })
+// A contract opens its own page; a document has none (the knowledge library is
+// a dialog), so it stays a named source without a link.
+const LINK_MODULES = Object.freeze({ ...AI_SKILL_MODULES, sales_order: 'sales:orders', customer: 'master-data:customers', warehouse: 'master-data:warehouses', contract: 'contracts:list' })
 
 // The answer as the panel renders it (AiResponseV2): the model's headline and
 // text, the records it relied on as evidence and links (built by the server
@@ -352,8 +373,8 @@ export function aiModelFirstAudit(outcome, { env = {}, turns = 0 } = {}) {
 // ({ skipped: true }) and the knowledge path or the rules answer as before.
 // `documentLanguages`: the languages of the documents the user may read, sent
 // with the question when search_documents is offered, so the first search is
-// in a language that finds something.
-export async function answerAiModelFirst(ctx, body = {}, { documents = false, requires = [], documentLanguages = null } = {}) {
+// in a language that finds something. `onProgress`: see runAiModelFirstLoop.
+export async function answerAiModelFirst(ctx, body = {}, { documents = false, requires = [], documentLanguages = null, onProgress = null } = {}) {
   const env = ctx.env || process.env
   const message = text(body.message || body.question)
   const language = aiSkillQuestionLanguage(message, body.answerLanguage)
@@ -368,7 +389,7 @@ export async function answerAiModelFirst(ctx, body = {}, { documents = false, re
   // goes wrong inside the loop leaves the question to the rules.
   let outcome
   try {
-    outcome = await runAiModelFirstLoop({ question: message, language, turns, openRecord: focus, documentLanguages: offered.has('search_documents') ? documentLanguages : null, facts, context, tenant: context.tenant, today: context.today, env, fetchImpl: ctx.aiModelFirstFetch || globalThis.fetch })
+    outcome = await runAiModelFirstLoop({ question: message, language, turns, openRecord: focus, documentLanguages: offered.has('search_documents') ? documentLanguages : null, facts, context, tenant: context.tenant, today: context.today, env, fetchImpl: ctx.aiModelFirstFetch || globalThis.fetch, onProgress })
   } catch {
     outcome = { status: 'failed', reason: 'error', stats: null }
   }
