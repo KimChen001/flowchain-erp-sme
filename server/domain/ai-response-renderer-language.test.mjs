@@ -138,3 +138,40 @@ test("a Chinese answer on the English interface gets Chinese labels, and no coun
   assert.doesNotMatch(english, /System notes 0/)
   assert.doesNotMatch(chinese, /系统说明 0/)
 })
+
+// The owner's chat in the local walkthrough on 2026-10-29: a model-first answer's "1. 2. 3." ran
+// together in one paragraph, and each record it cited became a card reading
+// "需要结合当前业务状态处理。". The text keeps its lines and lists; cited
+// records are links, with no stock sentence.
+test('a model-first answer keeps its lines and lists, and its cited records are links with no stock sentence', async () => {
+  const client = await loadClient()
+  const record = (id, label, status) => ({ id: `purchase_order:${id}`, entityType: 'purchase_order', entityId: id, entityLabel: label, label, status, sourceLabel: 'Purchase orders' })
+  const response = {
+    version: 'v2', language: 'zh-CN', answerSource: 'workspace_model', answerSourceLabel: '由 AI 根据你的记录撰写，数字已核对', query: '现在有什么需要我注意的吗',
+    conclusion: { title: '有三件事需要你注意', summary: '目前最需要关注的是：\n1. 8 张采购订单已逾期。\n2. LDM-001 低于安全库存。\n3、INV-001 有 $200 价差。\n\n建议先处理逾期订单。', severity: 'info', confidence: 'medium' },
+    keyEvidence: [record('PO-020', 'PO-020', 'Overdue'), record('PO-021', 'PO-021', 'Overdue')],
+    dataLimitations: [], reviewCards: [], navigationLinks: [], followUpSuggestions: [],
+  }
+  const markup = client.render(response)
+  assert.match(markup, /<ol start="1" class="list-decimal[^"]*"><li>8 张采购订单已逾期。<\/li><li>LDM-001 低于安全库存。<\/li><li>INV-001 有 \$200 价差。<\/li><\/ol>/)
+  assert.match(markup, /<p>目前最需要关注的是：<\/p>/)
+  assert.match(markup, /<p>建议先处理逾期订单。<\/p>/)
+  assert.doesNotMatch(markup, /需要结合当前业务状态处理|Review it against the current business status/)
+  assert.match(markup, /data-records="cited"/)
+  assert.equal((markup.match(/data-testid="ai-cited-record"/g) || []).length, 2)
+  assert.ok(markup.includes('相关记录') && !markup.includes('重点事项'))
+  // A rules answer's lines say why each matters, so they stay cards.
+  const rules = client.render((await answers())('today_priorities', { language: 'zh-CN' }))
+  assert.match(rules, /data-records="priorities"/)
+  assert.doesNotMatch(rules, /需要结合当前业务状态处理/)
+})
+
+test('answer text splits into paragraphs, numbered lists and bulleted lists', async () => {
+  const client = await loadClient()
+  const render = (summary) => client.render({ version: 'v2', language: 'en-US', conclusion: { title: 'T', summary, severity: 'info' }, keyEvidence: [], dataLimitations: [], reviewCards: [], navigationLinks: [] })
+  assert.match(render('First.\n- one\n- two'), /<p>First\.<\/p><ul class="list-disc[^"]*"><li>one<\/li><li>two<\/li><\/ul>/)
+  // A list that starts at 2 keeps its numbers; "1.5 kg" is not a list item.
+  assert.match(render('2. later\n3. last'), /<ol start="2"/)
+  assert.match(render('1.5 kg arrived.'), /<p>1\.5 kg arrived\.<\/p>/)
+  assert.match(render('（1）甲\n（2）乙'), /<ol start="1"[^>]*><li>甲<\/li><li>乙<\/li><\/ol>/)
+})
