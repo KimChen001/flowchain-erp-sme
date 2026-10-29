@@ -42,7 +42,7 @@ const final = (answer, usage = USAGE) => ({ content: [{ type: 'text', text: JSON
 async function factsFor(roleKey = 'workspace-administrator') {
   const scenario = aiSkillScenario({ roleKey })
   const context = await loadAiSkillContext(scenario.ctx)
-  return { facts: await readAiSkillFacts(context), today: context.today }
+  return { facts: await readAiSkillFacts(context), context, today: context.today }
 }
 
 async function overdueFacts() {
@@ -252,15 +252,18 @@ test('up to 3 earlier turns of the panel go to the model as text', async () => {
 })
 
 test('no data crosses roles: a role gets only its tools, and the provider never sees what it may not read', async () => {
-  const { facts, today } = await factsFor('finance-specialist')
+  const { facts, context, today } = await factsFor('finance-specialist')
   const stub = scripted([
-    toolUse([['list_purchase_orders', { status: 'overdue' }], ['list_supplier_invoices', { kind: 'differences' }]]),
+    toolUse([['list_purchase_orders', { status: 'overdue' }], ['list_supplier_invoices', { kind: 'differences' }], ['search_records', { query: 'PO' }]]),
     final({ title: 'Purchase orders are not readable', answer: 'You cannot read purchase orders, so I cannot say which are overdue.', records: [] }),
   ])
-  const outcome = await runAiModelFirstLoop(loop(stub, { facts, today }))
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts, context, today }))
   assert.equal(outcome.status, 'answered')
-  assert.deepEqual(outcome.stats.calls.map((call) => call.status), ['not_allowed', 'ok'])
-  assert.ok(!stub.requests[0].body.tools.some((tool) => ['list_purchase_orders', 'get_purchase_order', 'stock_position'].includes(tool.name)))
+  assert.deepEqual(outcome.stats.calls.map((call) => call.status), ['not_allowed', 'ok', 'ok'])
+  // With the request context the service tools are offered too, as the user.
+  const offered = stub.requests[0].body.tools.map((tool) => tool.name)
+  assert.ok(offered.includes('search_records'))
+  assert.ok(!offered.some((name) => ['list_purchase_orders', 'get_purchase_order', 'stock_position', 'stock_projection'].includes(name)))
   for (const request of stub.requests) assert.doesNotMatch(JSON.stringify(request.body), /PO-0\d\d/, 'no purchase order number reaches the provider for finance')
   // A model that names a purchase order anyway fails the check: no tool returned it.
   const invented = await runAiModelFirstLoop(loop(scripted([final({ title: 'Late', answer: 'PO-001 is overdue.', records: [] })]), { facts, today }))

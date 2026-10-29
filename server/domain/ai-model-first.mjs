@@ -164,16 +164,18 @@ const toolContent = (outcome) => {
   return content.length > AI_MODEL_FIRST_LIMITS.resultChars ? JSON.stringify({ error: 'result_too_large', details: ['Ask for fewer rows with limit, or narrow the filter.'] }) : content
 }
 
-// The tool loop. `facts` are the asking user's facts; the tools read nothing
+// The tool loop. `facts` are the asking user's facts and `context` the
+// request's skill context (the actor and the database), which the service
+// tools read through with the user's own read checks; the tools read nothing
 // else. Returns { status: 'answered', answer, refs, stats } or
 // { status: 'failed', reason, stats }. `model` is the provider call (tests
 // script it through `fetchImpl`).
-export async function runAiModelFirstLoop({ question, language, turns = [], openRecord = null, facts, tenant = null, today = null, env = {}, fetchImpl = globalThis.fetch, model = callAiModelFirstModel, clock = Date.now } = {}) {
+export async function runAiModelFirstLoop({ question, language, turns = [], openRecord = null, facts, context = null, tenant = null, today = null, env = {}, fetchImpl = globalThis.fetch, model = callAiModelFirstModel, clock = Date.now } = {}) {
   const limits = aiModelFirstLimits(env)
   const started = clock()
   const deadline = started + limits.timeoutMs
   const format = aiModelFirstProviderFormat(env)
-  const tools = aiReadToolDefinitions(facts, { format: 'anthropic' })
+  const tools = aiReadToolDefinitions(facts, { format: 'anthropic', context })
   const system = format === 'chat_completions' ? `${AI_MODEL_FIRST_SYSTEM}${CHAT_FORMAT_NOTE}` : AI_MODEL_FIRST_SYSTEM
   const transcript = [{ role: 'user', text: userMessage({ question, language, today, tenant, turns, openRecord }) }]
   const results = []
@@ -212,7 +214,7 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
         if (!round || stats.calls.length >= limits.toolCalls) return { call, outcome: { ok: false, error: 'call_limit', details: ['No more tool calls are available for this answer.'] }, counted: false }
         stats.calls.push({ tool: call.name, status: 'pending' })
         const entry = stats.calls.at(-1)
-        const outcome = call.args ? await runAiReadTool(call.name, call.args, { facts }) : { ok: false, error: 'invalid_arguments', details: ['arguments must be a JSON object'] }
+        const outcome = call.args ? await runAiReadTool(call.name, call.args, { facts, context }) : { ok: false, error: 'invalid_arguments', details: ['arguments must be a JSON object'] }
         entry.status = outcome.ok ? 'ok' : text(outcome.error) || 'error'
         return { call, outcome, counted: true }
       }))
@@ -249,10 +251,11 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
 // What each tool reads, for the answer's "Checked:" line.
 const TOOL_SOURCES = Object.freeze({
   list_purchase_orders: 'purchase_orders', get_purchase_order: 'purchase_orders', late_order_impact: 'purchase_orders', spend_analysis: 'purchase_orders',
-  stock_position: 'inventory', list_sales_orders: 'sales_orders', list_receipts: 'receipts', supplier_performance: 'receipts',
+  stock_position: 'inventory', stock_projection: 'inventory', reorder_list: 'inventory', price_history: 'purchase_orders',
+  list_sales_orders: 'sales_orders', list_receipts: 'receipts', supplier_performance: 'receipts',
   list_supplier_invoices: 'supplier_invoices', list_purchase_requests: 'purchase_requests', list_rfqs: 'rfqs', list_suppliers: 'suppliers',
 })
-const LINK_MODULES = Object.freeze({ ...AI_SKILL_MODULES, sales_order: 'sales:orders' })
+const LINK_MODULES = Object.freeze({ ...AI_SKILL_MODULES, sales_order: 'sales:orders', customer: 'master-data:customers', warehouse: 'master-data:warehouses' })
 
 // The answer as the panel renders it (AiResponseV2): the model's headline and
 // text, the records it relied on as evidence and links (built by the server
@@ -343,7 +346,7 @@ export async function answerAiModelFirst(ctx, body = {}) {
   // goes wrong inside the loop leaves the question to the rules.
   let outcome
   try {
-    outcome = await runAiModelFirstLoop({ question: message, language, turns, openRecord: focus, facts, tenant: context.tenant, today: context.today, env, fetchImpl: ctx.aiModelFirstFetch || globalThis.fetch })
+    outcome = await runAiModelFirstLoop({ question: message, language, turns, openRecord: focus, facts, context, tenant: context.tenant, today: context.today, env, fetchImpl: ctx.aiModelFirstFetch || globalThis.fetch })
   } catch {
     outcome = { status: 'failed', reason: 'error', stats: null }
   }
