@@ -14,6 +14,7 @@ import { detectAiActionRequest } from '../domain/ai-skill-router.mjs'
 import { aiSkillQuestionLanguage } from '../domain/ai-skill-copy.mjs'
 import { aiKnowledgeAuditBlock, recordAiSkillAudit } from '../domain/ai-skill-audit.mjs'
 import { reportReadAccess, scopeBusinessContext } from '../domain/report-read-access.mjs'
+import { aiRuntimeProgressStream } from './ai-runtime-stream.mjs'
 
 // Stable codes with an English message, or a Chinese one when the question
 // was asked in Chinese. The client maps the codes to its own recovery text.
@@ -85,9 +86,12 @@ export async function loadAiRuntimeFacts(repositories = {}, tenantId = '', acces
 // month's cap is answered without a model, and its answers say so. So is an
 // answer for which a model call failed (the provider down, slow, or out of
 // budget): it came from the rules, and may read less naturally or miss a part.
+// A typed question whose client accepts NDJSON gets the tool loop's progress
+// as it runs, then the answer (ai-runtime-stream.mjs).
 export async function handleAiRuntimeGatewayRoute(ctx) {
   if (!ctx.url?.pathname?.startsWith('/api/ai-runtime/')) return false
-  return withAiWorkspaceAccess(ctx, (scoped) => handleGatewayRequest({ ...scoped, send: modelAccessSend(scoped.send, scoped.aiModelAccess === 'over_cap') }))
+  const stream = ctx.url.pathname === '/api/ai-runtime/respond' ? aiRuntimeProgressStream(ctx.req, ctx.res, ctx.send) : { send: ctx.send, progress: null }
+  return withAiWorkspaceAccess({ ...ctx, send: stream.send }, (scoped) => handleGatewayRequest({ ...scoped, send: modelAccessSend(scoped.send, scoped.aiModelAccess === 'over_cap'), aiProgress: stream.progress }))
 }
 
 const isAnswer = (status, payload) => status === 200 && payload && typeof payload === 'object' && !Array.isArray(payload) && payload.version === 'v2'
@@ -144,6 +148,9 @@ async function handleGatewayRequest(requestCtx) {
       // which searches the documents itself; the knowledge path below then
       // answers only when the loop does not.
       const modelFirstEntry = !actionRequest && aiModelFirstEnabled(ctx.env || process.env) ? aiModelFirstEntry(body) : null
+      // A guarded question's audit row says why the loop did not answer it,
+      // also when the knowledge path answers it next.
+      if (modelFirstEntry && !modelFirstEntry.eligible) ctx = { ...ctx, aiModelFirstAudit: { status: 'guarded', reason: modelFirstEntry.reason } }
       // The same audit row as a skill answer, with the knowledge answer's mode
       // and the documents it cited (ids and counts only).
       const answerFromDocuments = async () => {
@@ -169,25 +176,22 @@ async function handleGatewayRequest(requestCtx) {
       // without database storage, list_contracts without the contracts
       // module) goes to the knowledge path or the rules as before, with no
       // notice. Either way the audit row carries the loop's codes and counts.
-      if (modelFirstEntry) {
-        if (!modelFirstEntry.eligible) ctx = { ...ctx, aiModelFirstAudit: { status: 'guarded', reason: modelFirstEntry.reason } }
-        else {
-          // The languages of the documents the user may read (null without any).
-          const documents = await (ctx.aiAgentKnowledge !== undefined ? ctx.aiAgentKnowledge : aiAgentKnowledge(ctx).catch(() => null))
-          const modelFirst = await answerAiModelFirst(ctx, body, { documents: isKnowledgeQuestion(body), requires: modelFirstEntry.requires, documentLanguages: documents?.languages || null })
-          if (modelFirst.response) {
-            await recordAiSkillAudit(ctx, { response: modelFirst.response, facts: modelFirst.facts, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, modelFirst: modelFirst.audit })
-            // The loop searched the documents itself when it could; otherwise
-            // a question about records and documents gets their passages.
-            send(res, 200, modelFirst.searchedDocuments ? modelFirst.response : await addKnowledgeContext(ctx, body, modelFirst.response))
-            return true
-          }
-          ctx = modelFirst.skipped
-            ? { ...ctx, aiModelFirstAudit: modelFirst.audit }
-            : { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: modelFirstFallbackSend(ctx.send), aiModelFirstAudit: modelFirst.audit }
-          send = ctx.send
-          if (await answerFromDocuments()) return true
+      if (modelFirstEntry?.eligible) {
+        // The languages of the documents the user may read (null without any).
+        const documents = await (ctx.aiAgentKnowledge !== undefined ? ctx.aiAgentKnowledge : aiAgentKnowledge(ctx).catch(() => null))
+        const modelFirst = await answerAiModelFirst(ctx, body, { documents: isKnowledgeQuestion(body), requires: modelFirstEntry.requires, documentLanguages: documents?.languages || null, onProgress: ctx.aiProgress || null })
+        if (modelFirst.response) {
+          await recordAiSkillAudit(ctx, { response: modelFirst.response, facts: modelFirst.facts, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, modelFirst: modelFirst.audit })
+          // The loop searched the documents itself when it could; otherwise
+          // a question about records and documents gets their passages.
+          send(res, 200, modelFirst.searchedDocuments ? modelFirst.response : await addKnowledgeContext(ctx, body, modelFirst.response))
+          return true
         }
+        ctx = modelFirst.skipped
+          ? { ...ctx, aiModelFirstAudit: modelFirst.audit }
+          : { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: modelFirstFallbackSend(ctx.send), aiModelFirstAudit: modelFirst.audit }
+        send = ctx.send
+        if (await answerFromDocuments()) return true
       }
       // Agent planning (P2) on: a question with several parts that the
       // business query path would take goes to the planner first, which has

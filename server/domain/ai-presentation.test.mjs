@@ -103,3 +103,23 @@ test('sanitization preserves document and item ids', async () => {
     assert.match(output, new RegExp(id))
   }
 })
+
+test('the progress line names what the assistant reads, in English and in Chinese', async () => {
+  const { mod } = await loadPresentationModule()
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['purchase_orders'] }, 'en-US'), 'Reading purchase orders…')
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['purchase_orders'] }, 'zh-CN'), '正在读取采购订单…')
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['purchase_orders', 'suppliers', 'calculation'] }, 'en-US'), 'Reading purchase orders and suppliers…')
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['inventory', 'sales_orders', 'purchase_orders'] }, 'zh-CN'), '正在读取库存、销售订单、采购订单…')
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['documents'] }, 'en-US'), 'Searching your documents…')
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['calculation'] }, 'zh-CN'), '正在计算…')
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['something_new'] }, 'en-US'), 'Searching your records…')
+  assert.equal(mod.aiProgressLine({ step: 'writing' }, 'en-US'), 'Writing the answer…')
+  assert.equal(mod.aiProgressLine({ step: 'checking' }, 'zh-CN'), '正在核对数字…')
+})
+
+test('the progress line names filling in a purchase request only when nothing is read with it', async () => {
+  const { mod } = await loadPresentationModule()
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['proposal'] }, 'en-US'), 'Filling in a purchase request…')
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['proposal'] }, 'zh-CN'), '正在填写采购申请…')
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['inventory', 'proposal'] }, 'en-US'), 'Reading inventory…')
+})

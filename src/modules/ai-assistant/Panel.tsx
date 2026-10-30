@@ -8,9 +8,9 @@ import { AiResponseV2Renderer } from "../../components/ai/AiResponseV2Renderer";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import type { AiResponseV2 } from "../../domain/ai/response-contract";
 import { autoOpenDraftCard, structuredDraftTarget } from "../action-drafts/structuredDraftHandoff";
-import { focusTargetFromActiveContext, postAiRuntimeResponse } from "./aiRuntimeGateway";
+import { focusTargetFromActiveContext, postAiRuntimeResponse, type AiRuntimeProgress } from "./aiRuntimeGateway";
 import { ApiError } from "../../lib/api-client";
-import { looksLikeRawJson, sanitizeAiMessage } from "./presentation";
+import { aiProgressLine, looksLikeRawJson, sanitizeAiMessage } from "./presentation";
 
 export type ActiveContext = {
   module?: string;
@@ -524,7 +524,10 @@ export function getAiFollowUpChips(message: AiChatMessage, language: "en-US" | "
   if (message.role !== "assistant" || !message.cards?.length) return [];
   if (hasRuntimeFollowUpSuggestions(message)) return [];
   if (message.cards.some((card) => card.type === "ai_response_v2" && (card.data as AiResponseV2 | undefined)?.rag?.mode === "no_results")) return [];
-  const zh = language === "zh-CN";
+  // The chips follow the answer's language (a Chinese question in the English
+  // interface gets Chinese chips), else the interface language.
+  const answerLanguage = message.cards.map((card) => (card.data as AiResponseV2 | undefined)?.language).find((value) => value === "en-US" || value === "zh-CN");
+  const zh = (answerLanguage || language) === "zh-CN";
   const localizedChip = (zhLabel: string, enLabel: string, zhPrompt: string, enPrompt: string) => ({
     label: zh ? zhLabel : enLabel,
     prompt: zh ? zhPrompt : enPrompt,
@@ -610,6 +613,8 @@ export default function FloatingAiAssistant({
   const [input, setInput] = useState("");
   const [asking, setAsking] = useState(false);
   const [slowRequest, setSlowRequest] = useState(false);
+  // What the model-first assistant is reading, while it answers a typed question.
+  const [progress, setProgress] = useState<AiRuntimeProgress | null>(null);
   const [messages, setMessages] = useState<AiChatMessage[]>([]);
   const [dismissedContextKey, setDismissedContextKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -705,6 +710,7 @@ export default function FloatingAiAssistant({
     requestInFlightRef.current = false;
     setAsking(false);
     setSlowRequest(false);
+    setProgress(null);
     setMessages([]);
     setInput("");
   }
@@ -729,6 +735,7 @@ export default function FloatingAiAssistant({
     abortRef.current?.abort();
     abortRef.current = controller;
     setAsking(true);
+    setProgress(null);
     setInput("");
     setMessages((current) => [...current, { role: "user", content: message }]);
     // A chip answers from its skill and keeps the 12 s limit. A typed question
@@ -758,7 +765,9 @@ export default function FloatingAiAssistant({
         },
         sessionGrounding,
         returnTo: "ai-assistant",
-      }, controller.signal);
+        // A typed question may go to the model-first loop, which says what it
+        // reads while it answers; a chip answers at once from its skill.
+      }, controller.signal, skillHint ? undefined : (event) => { if (requestSeqRef.current === requestId) setProgress(event); });
       const rawContent = response.runtimeModeLabel || "";
       const content = "";
       if (looksLikeRawJson(rawContent)) console.debug("AI assistant raw content suppressed", rawContent);
@@ -809,6 +818,7 @@ export default function FloatingAiAssistant({
         abortRef.current = null;
         abortReasonRef.current = null;
         setAsking(false);
+        setProgress(null);
       }
     }
   }
@@ -921,9 +931,9 @@ export default function FloatingAiAssistant({
             ))}
             {asking && (
               <div className="flex justify-start">
-                <div className="rounded-2xl px-3 py-2 text-sm flex items-center gap-2" style={{ background: A.gray6, color: A.gray1 }}>
+                <div data-testid="ai-progress-line" aria-live="polite" className="rounded-2xl px-3 py-2 text-sm flex items-center gap-2" style={{ background: A.gray6, color: A.gray1 }}>
                   <Loader2 size={14} className="animate-spin" />
-                  {slowRequest ? currentRequestLabel : (language === "zh-CN" ? "正在确认查询范围" : "Checking your question")}
+                  {progress ? aiProgressLine(progress, language) : slowRequest ? currentRequestLabel : (language === "zh-CN" ? "正在确认查询范围" : "Checking your question")}
                 </div>
               </div>
             )}
