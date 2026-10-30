@@ -554,6 +554,8 @@ test('through the gateway: a question about the documents goes to the loop, whic
   assert.deepEqual(searched.passages.map((row) => [row.document, row.section]), [['Purchasing Policy', 'Follow-up and escalation']])
   assert.equal(payload.checkedLabel, 'Checked: documents')
   assert.deepEqual(payload.keyEvidence.map((item) => [item.entityType, item.entityId]), [['document', 'DOC-1']])
+  // The cited document names the section its passage came from.
+  assert.equal(payload.keyEvidence[0].summary, 'Follow-up and escalation')
   // The loop searched the documents itself, so no second set of passages is added.
   assert.equal(payload.supplementalKnowledge, undefined)
   assert.equal(audits.at(-1).metadata.modelFirst.status, 'answered')
