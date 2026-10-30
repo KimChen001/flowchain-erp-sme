@@ -465,23 +465,31 @@ FLOWCHAIN_ENABLE_CONTRACTS=true npm run test:ai:eval -- --provider-env=<env file
   report keeps all of them under `claims`.
 
 Measured on 2026-10-29 (OpenCode Go, chat completions, `claude-haiku-5-5`,
-reasoning off, contracts on; 267 cases, 277 answers):
+reasoning off, contracts on; 267 cases, 277 answers). Run 1 is the lane's own
+commit; run 2 adds order requests in the loop and the correction prompt
+(`feat/ai-model-first-orders`).
 
-| Loop answers | Grounding (first / retry / failed) | Per answer | Cost | Loop latency p50 / p95 | Pending |
-| --- | --- | --- | --- | --- | --- |
-| 197 answered, 4 fell back; 53 guarded, 23 refused before the loop | 168 / 29 / 4 | 2.37 model calls, 1.21 rounds, 2.23 tool calls | $0.24 for the run, $0.0012 per loop answer (list) | 4.2 / 8.1 s | 27/30 (offline 3/30) |
+| Run | Loop answers | Grounding (first / retry / failed) | Per answer | Cost (list) | Loop latency p50 / p95 / max | Pending |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 (c045d4f8) | 197 answered, 4 fell back; 53 guarded, 23 refused before the loop | 168 / 29 / 4 | 2.37 model calls, 1.21 rounds, 2.23 tool calls | $0.24 for the run, $0.0012 per loop answer | 4.2 / 8.1 / 12.0 s | 27/30 (offline 3/30) |
+| 2 (1b790162) | 198 answered, 6 fell back; 50 guarded, 23 refused before the loop | 172 / 26 / 6 | 2.36, 1.21, 2.17 | $0.26, $0.0013 | 4.1 / 8.4 / 16.6 s | 27/30 |
 
-- The safety counters (leaks, writes, network, action claims, refusals,
-  injection) were all 0, but 3 cases failed a safety check: a finance user told
-  "couldn't find" a purchase order its role cannot read, and two existence-oracle
-  pairs whose not-found answers were worded differently.
-- The loop answered 113 gated skill cases; 108 passed their safety and figure checks.
-- The gate had 13 case regressions: answers that do not say what the role
-  cannot see (5), capability questions answered with unasked figures (5), and
-  one each for an existence-oracle pair, a quoted policy rule matching a banned
-  claim, and no per-line next step.
-- Of 12 sampled "most/all/none" answers, 1 was wrong ("none" of three receipts
-  had a rejection; one had 500 pcs rejected).
+- Both runs: the safety counters (leaks, writes, network, action claims,
+  refusals, injection) were all 0, but the same 3 cases failed a safety check:
+  a finance user told "couldn't find" a purchase order its role cannot read, and
+  two existence-oracle pairs whose not-found answers were worded differently.
+- Gated skill cases answered by the loop passing their safety and figure
+  checks: 108/113, then 114/115.
+- Case regressions in the gate: 13, then 11. Mostly answers that do not say
+  what the role cannot see, and capability questions answered with an honest
+  "can't" plus unasked figures; also an existence-oracle pair, a missing
+  per-line next step, and in one run each a quoted policy rule matching a
+  banned claim and a document section not named.
+- Fallbacks after a failed retry: 4 (2.0%), then 6 (2.9%); 8 of the 10 were
+  Chinese questions.
+- Of 12 sampled "most/all/none" answers per run, 1 was wrong in each: "none" of
+  three receipts had a rejection (one had 500 pcs rejected), and "the most
+  issues" naming two of three suppliers tied at 3.
 
 ## Current scores
 
