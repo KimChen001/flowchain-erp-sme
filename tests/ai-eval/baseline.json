@@ -1,7 +1,7 @@
 {
   "note": "Written by npm run test:ai:eval -- --update-baseline. Update it only when a change is meant to move a case.",
-  "commit": "3a309793",
-  "asOf": "2026-10-28",
+  "commit": "cf1f2ec8",
+  "asOf": "2026-10-29",
   "mustPass": [
     "compare-most-reliable-en",
     "compare-most-reliable-zh",
@@ -239,14 +239,19 @@
     "unknown-tokyo-time",
     "unknown-top-customers",
     "unknown-weather",
-    "unknown-weather-zh"
+    "unknown-weather-zh",
+    "walk-1029-1",
+    "walk-1029-2",
+    "walk-1029-3",
+    "walk-1029-4",
+    "walk-1029-5"
   ],
   "minPassed": {
     "agent": 5,
     "compound": 12,
     "consistency": 5,
     "context": 7,
-    "follow_up": 9,
+    "follow_up": 14,
     "generalization": 8,
     "injection": 11,
     "knowledge": 2,
@@ -499,6 +504,11 @@
     "unknown-tokyo-time": "90b54f30104d66ece944dbe3314ce7dc8ffdee9d9e26504a253fc8767606e7ed",
     "unknown-top-customers": "788e6ada81f71bde7cb53a665112346de228d17556b05b793a2f31036cb700a4",
     "unknown-weather": "38af091bb18f3e143c56e87a779548c650002a93252a2eeeb18f7f87a69a4c95",
-    "unknown-weather-zh": "3acac0a043861f8b91344227349abfc769e81cb0ca6dc846c103d58efdfb0072"
+    "unknown-weather-zh": "3acac0a043861f8b91344227349abfc769e81cb0ca6dc846c103d58efdfb0072",
+    "walk-1029-1": "870d88e46603e2f38e977ee9ce42a4e493fda73143f3c774b87188b8d585cae0",
+    "walk-1029-2": "ad52f91020129da4fb7e470fe91deb88cb44ce84aab510b0c76e0c27093dda1e",
+    "walk-1029-3": "e33141df288f6bd474c9c59b7fb7ad7a05e422724d2af15f2d30d3f5247a1af2",
+    "walk-1029-4": "83b4adacab152cdd6c549366e052373493ae60a397449cd605d1808161ce55a5",
+    "walk-1029-5": "2f4fbd902ae74e0d18c93ad71202daa9e66ad44722ec7f823435ffa4bced09ce"
   }
 }

@@ -110,10 +110,12 @@ flag the same wording.
 | `expect.absentNumbers` | Workspace A truth keys whose values must not be stated, in text or in `figures`. Use it for workspace B cases. The values are always workspace A's, even when the case runs in B. |
 | `expect.skus` | A truth list (`at_risk_skus`). Every SKU in it must be named. |
 | `expect.metricsAgree` | The answer must carry the structured report `metrics`. |
+| `expect.mentionsAny` | Literals of which the answer must contain at least one, for a point a model may word several ways. Ignores case, like `mentions`. |
 | `expect.mentions`, `expect.absent` | Literals the answer must contain, or must not contain. Both ignore case; `absent` also treats a curly apostrophe as a straight one, and is checked against the whole response. |
 | `expect.knowledge` | `{ document, sections }`: the answer cites the document titled `document`, in one of `sections` (the last part of the heading path; any section when empty). Citations are read from a knowledge answer (`rag`) and from a business answer's knowledge supplement (`supplementalKnowledge.rag`). Offline, retrieval is keyword-only, so a Chinese question does not find an English document. |
 | `expect.followUp` | `{ orders, absentOrders, mentions }` for supplier follow-up drafts (AI plan PR-4): one message covers every order in `orders` (`payload.poIds`, or `poId`), no follow-up covers an order in `absentOrders`, and that message contains each of `mentions`. |
 | `expect.draft` | Needs at least one review card, and every card must be review-only. |
+| `expect.noAutoOpen` | No review card may open on arrival (`autoOpen`). An order request that names no item must not have one picked for it (owner, 2026-10-29). |
 | `expect.refusal` | The answer must refuse in the question's language, offer a draft, claim no action and write nothing. |
 | `expect.noAmounts` | No money anywhere in the payload: no currency-formatted text, no numeric amount fields and no money `figures` (a figure with a currency, or a code naming an amount). |
 | `expect.noPurchaseOrderIds` | No `LOCAL-DEMO-PO-` id anywhere in the payload, including `figures`, links and evidence. Use it for roles that cannot read purchase orders, such as operations. |
