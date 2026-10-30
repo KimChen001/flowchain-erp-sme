@@ -618,8 +618,12 @@ function questionOf(entry) {
 // The previous answer as the panel sends it back with the next question
 // (Panel.tsx buildSafeConversationContext), with the panel's record type names.
 const PANEL_TYPES = { purchase_order: 'PO', item: 'SKU', supplier: 'Supplier', supplier_invoice: 'Invoice', receiving_doc: 'GRN', rfq: 'RFQ', purchase_request: 'PR' }
-function conversationContextOf(payload) {
+function conversationContextOf(payload, turns = []) {
   return {
+    // Up to three earlier turns as text, as the panel sends them for the
+    // model-first assistant (Panel.tsx previousTurns): each question with the
+    // headline and summary of the answer that followed it.
+    ...(turns.length ? { previousTurns: turns } : {}),
     previousIntent: payload?.intent,
     previousQuestion: payload?.query,
     previousConclusionTitle: payload?.conclusion?.title,
@@ -627,8 +631,21 @@ function conversationContextOf(payload) {
   }
 }
 
-async function ask(token, server, entry, previous = null) {
-  const body = { message: questionOf(entry), answerLanguage: entry.answerLanguage || entry.language, ...(entry.skillHint ? { skillHint: entry.skillHint } : {}), ...(entry.focusTarget ? { focusTarget: entry.focusTarget } : {}), ...(previous ? { conversationContext: conversationContextOf(previous) } : {}) }
+// The earlier turns of a chain of follow-ups (`after`), oldest first, at most
+// three, each as the panel writes it.
+function previousTurnsOf(entry, results, byId) {
+  const turns = []
+  for (let id = entry.after; id && turns.length < 3; id = byId.get(id)?.after) {
+    const payload = results.get(id)?.runs?.[0]?.payload
+    if (!payload) break
+    const answer = [payload.conclusion?.title, payload.conclusion?.summary].filter(Boolean).join(' — ')
+    turns.unshift({ question: questionOf(byId.get(id)).slice(0, 300), answer: answer.slice(0, 800) })
+  }
+  return turns
+}
+
+async function ask(token, server, entry, previous = null, turns = []) {
+  const body = { message: questionOf(entry), answerLanguage: entry.answerLanguage || entry.language, ...(entry.skillHint ? { skillHint: entry.skillHint } : {}), ...(entry.focusTarget ? { focusTarget: entry.focusTarget } : {}), ...(previous ? { conversationContext: conversationContextOf(previous, turns) } : {}) }
   const started = performance.now()
   const response = await fetch(`http://127.0.0.1:${server.port}/api/ai-runtime/respond`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) })
   const raw = await response.text()
@@ -1172,6 +1189,7 @@ try {
 
   const auditBefore = await prisma.auditLog.count({ where: { action: 'ai_skill_answered' } })
   const results = new Map()
+  const byId = new Map(selected.map((entry) => [entry.id, entry]))
   let state = await businessState()
   // With a provider: each answer's modelFirst block, from the audit row it
   // wrote, and the run's spend so far, from the usage meter, which counts
@@ -1196,7 +1214,7 @@ try {
     if (!token) throw new Error(`Case ${entry.id}: no ${tenant}/${entry.role} user`)
     const runs = []
     for (let index = 0; index < (entry.repeat || 1); index++) {
-      const run = await ask(token, tenant === 'A' ? serverA : serverB, entry, entry.after ? results.get(entry.after)?.runs?.[0]?.payload : null)
+      const run = await ask(token, tenant === 'A' ? serverA : serverB, entry, entry.after ? results.get(entry.after)?.runs?.[0]?.payload : null, previousTurnsOf(entry, results, byId))
       const after = await businessState()
       const changed = Object.keys(after).filter((model) => !isDeepStrictEqual(after[model], state[model]))
       run.wrote = changed.length ? changed.join(', ') : null

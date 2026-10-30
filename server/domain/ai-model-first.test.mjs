@@ -360,10 +360,12 @@ test('the prompt and the retry ask for records read again, never a disclaimer or
   assert.doesNotMatch(system, /create records/)
   assert.match(system, /propose_purchase_request/)
   assert.match(system, /never call it a system limit/)
-  assert.match(system, /Read a correction from the user as a correction/)
+  assert.match(system, /When the user changes what they want now/)
+  assert.doesNotMatch(system, /Read a correction from the user as a correction/)
   // A claim about an earlier answer is checked against it, never just admitted.
-  assert.match(system, /check that answer in earlierTurns first/)
-  assert.match(system, /Never admit to something the earlier answer did not do/)
+  assert.match(system, /the user may be mistaken: check that answer in earlierTurns first/)
+  assert.match(system, /without apologising/)
+  assert.match(system, /Never admit to or apologise for something earlierTurns do not show/)
   const retry = stub.requests[1].body.messages.at(-1).content[0].text
   assert.match(retry, /Look them up again with the tools/)
   assert.match(retry, /Do not mention this check to the user/)
