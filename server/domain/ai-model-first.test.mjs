@@ -85,6 +85,21 @@ test('the grounding check reads numbers, dates, record numbers and names in thei
   // the same list as the evaluation's safety check, so record states too.
   assert.deepEqual(check('I have sent the reminder to Acme Components.').problems, [{ kind: 'action_claim', value: 'I have sent' }])
   assert.deepEqual(check('收货单 GRN-1 已过账。').problems.filter((row) => row.kind === 'action_claim'), [{ kind: 'action_claim', value: '已过账' }])
+  // A record number the question wrote without its hyphen ("LDM001") is the user's own words.
+  assert.equal(check('I did not choose LDM-001 for you.', [], '你为什么默认是LDM001').ok, true)
+  // Record numbers and names the conversation already used are given; its figures are not.
+  const earlier = 'Which items need attention? — LDM-001 is short 7 against Acme Components orders.'
+  assert.equal(checkAiModelFirstGrounding({ answer: { title: 'Sorry', answer: 'I should not have picked LDM-001 or Acme Components for you.', records: [] }, conversation: earlier, facts }).ok, true)
+  assert.deepEqual(checkAiModelFirstGrounding({ answer: { title: 'Short', answer: 'LDM-001 is short 7.', records: [] }, conversation: earlier, facts }).counts, { number: 1 })
+  // Blaming a permission or a system limit fails where the assistant could propose instead.
+  const excuse = (answer) => checkAiModelFirstGrounding({ answer: { title: 'Why', answer, records: [] }, limitClaims: true })
+  assert.deepEqual(excuse('我没有保存或修改记录的权限，这是系统设定的限制。').counts, { limit_claim: 1 })
+  assert.deepEqual(excuse("I don't have permission to create records.").counts, { limit_claim: 1 })
+  assert.deepEqual(excuse('我目前的权限只能查询和整理数据。').counts, { limit_claim: 1 })
+  assert.deepEqual(excuse('我无法直接创建采购单。').counts, { limit_claim: 1 })
+  assert.deepEqual(excuse("I can't create a purchase order directly.").counts, { limit_claim: 1 })
+  assert.equal(excuse('我会为你打开一张填好的采购申请表，由你核对后提交。').ok, true)
+  assert.equal(checkAiModelFirstGrounding({ answer: { title: 'Why', answer: '你的角色没有创建采购申请的权限。', records: [] } }).ok, true, 'not checked where no proposal is offered')
   // A citation's type written loosely still finds the one record with that number.
   assert.equal(check('LOCAL-DEMO-PO-020 is late.', [{ type: 'po', id: 'LOCAL-DEMO-PO-020' }]).ok, true)
   assert.deepEqual(checkAiModelFirstGrounding({ answer: { title: '', answer: '', records: [] } }).counts, { format: 1 })
@@ -292,9 +307,9 @@ test('a follow-up about the same supplier is answered from its records read agai
   const outcome = await runAiModelFirstLoop(loop(stub, { facts, context, today, turns, question: 'Which of its orders are overdue now?' }))
   assert.equal(outcome.status, 'answered')
   assert.equal(JSON.parse(stub.requests[0].body.messages[0].content[0].text).earlierTurns[0].question, 'How has Acme Components been delivering lately?')
-  // An earlier turn says who "its" is, but is not a source: the supplier's
-  // name and count had to be read again before the answer could pass.
-  assert.deepEqual(outcome.stats.grounding.first, { name: 1, number: 1 })
+  // An earlier turn says who "its" is, and its names may be repeated, but it
+  // is not a source of figures: the count had to be read again.
+  assert.deepEqual(outcome.stats.grounding.first, { number: 1 })
   assert.equal(outcome.stats.grounding.outcome, 'passed_on_retry')
   assert.deepEqual(outcome.answer.records.map((row) => row.id), [first.ref.id, second.ref.id])
   // The prompt asks for each count with its basis.
@@ -350,6 +365,8 @@ test('the prompt and the retry ask for records read again, never a disclaimer or
   assert.match(retry, /Look them up again with the tools/)
   assert.match(retry, /Do not mention this check to the user/)
   assert.doesNotMatch(retry, /or leave them out\./)
+  // The answer read nothing, so the retry says to call the tools first.
+  assert.match(retry, /You have read no records in this answer/)
 })
 
 test('no data crosses roles: a role gets only its tools, and the provider never sees what it may not read', async () => {
