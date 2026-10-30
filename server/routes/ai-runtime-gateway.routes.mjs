@@ -1,6 +1,8 @@
 import { aiSkillDraftBasis } from '../domain/ai-skill-drafts.mjs'
 import { withoutUnavailableProductLinks } from '../../shared/unavailable-product-routes.mjs'
-import { withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
+import { modelFreeEnv, withAiWorkspaceAccess } from '../domain/ai-workspace-access.mjs'
+import { aiModelFirstEnabled, aiModelFirstEntry, answerAiModelFirst } from '../domain/ai-model-first.mjs'
+import { aiProviderFailures } from '../domain/ai-usage-meter.mjs'
 import { aiAgentKnowledge, handleKnowledgeRoute, runKnowledgeQuery, isKnowledgeQuestion } from './ai-knowledge.routes.mjs'
 import { buildAiRuntimeReadinessV2, buildAiRuntimeResponseV2Async, validateAiRuntimeRequest } from '../domain/ai-runtime-gateway-v2.mjs'
 import { runBusinessQueryRuntime, shouldUseSemanticBusinessQuery } from '../domain/ai-business-query-runtime.mjs'
@@ -80,19 +82,37 @@ export async function loadAiRuntimeFacts(repositories = {}, tenantId = '', acces
 
 // Every assistant request (answers, knowledge, readiness) runs with the model
 // access its workspace has (ai-workspace-access.mjs). A workspace over this
-// month's cap is answered without a model, and its answers say so.
+// month's cap is answered without a model, and its answers say so. So is an
+// answer for which a model call failed (the provider down, slow, or out of
+// budget): it came from the rules, and may read less naturally or miss a part.
 export async function handleAiRuntimeGatewayRoute(ctx) {
   if (!ctx.url?.pathname?.startsWith('/api/ai-runtime/')) return false
-  return withAiWorkspaceAccess(ctx, (scoped) => handleGatewayRequest(scoped.aiModelAccess === 'over_cap' ? { ...scoped, send: overCapSend(scoped.send) } : scoped))
+  return withAiWorkspaceAccess(ctx, (scoped) => handleGatewayRequest({ ...scoped, send: modelAccessSend(scoped.send, scoped.aiModelAccess === 'over_cap') }))
 }
 
-function overCapSend(send) {
-  return (res, status, payload) => send(res, status, status === 200 && payload && typeof payload === 'object' && !Array.isArray(payload) && payload.version === 'v2' ? { ...payload, aiModelAccess: { status: 'over_cap' } } : payload)
+const isAnswer = (status, payload) => status === 200 && payload && typeof payload === 'object' && !Array.isArray(payload) && payload.version === 'v2'
+function modelAccessSend(send, overCap) {
+  return (res, status, payload) => {
+    if (!isAnswer(status, payload)) return send(res, status, payload)
+    if (overCap) return send(res, status, { ...payload, aiModelAccess: { status: 'over_cap' } })
+    const failures = aiProviderFailures()
+    if (!failures.length) return send(res, status, payload)
+    return send(res, status, { ...payload, aiModelAccess: { status: 'unavailable', ...(failures.includes('budget') ? { reason: 'budget' } : {}) } })
+  }
 }
 
-async function handleGatewayRequest(ctx) {
+// A model-first answer that could not be given (the check failed twice, or a
+// limit ran out) is answered by the rules, and says so. A failed provider call
+// is noted by modelAccessSend, more specifically.
+function modelFirstFallbackSend(send) {
+  return (res, status, payload) => send(res, status, isAnswer(status, payload) && !payload.aiModelAccess ? { ...payload, aiModelAccess: { status: 'unavailable', reason: 'unchecked' } } : payload)
+}
+
+async function handleGatewayRequest(requestCtx) {
+  let ctx = requestCtx
   if (await handleKnowledgeRoute(ctx)) return true
-  const { req, res, url, db, send, readBody, repositories, identity } = ctx
+  const { req, res, url, db, readBody, repositories, identity } = ctx
+  let send = ctx.send
 
   if (req.method === 'GET' && url.pathname === '/api/ai-runtime/readiness') {
     send(res, 200, buildAiRuntimeReadinessV2(db, process.env))
@@ -120,20 +140,54 @@ async function handleGatewayRequest(ctx) {
       // to the supplier query planner) and never refuse.
       // Only the first 1,201 characters: a longer question is rejected below.
       const actionRequest = detectAiActionRequest(String(body?.message || body?.question || '').slice(0, 1201))
-      const knowledge = actionRequest ? null : await runKnowledgeQuery(ctx, body)
-      if (knowledge) {
-        // The same audit row as a skill answer, with the knowledge answer's mode
-        // and the documents it cited (ids and counts only).
+      // Model-first: a question the guards let through goes to the tool loop,
+      // which searches the documents itself; the knowledge path below then
+      // answers only when the loop does not.
+      const modelFirstEntry = !actionRequest && aiModelFirstEnabled(ctx.env || process.env) ? aiModelFirstEntry(body) : null
+      // The same audit row as a skill answer, with the knowledge answer's mode
+      // and the documents it cited (ids and counts only).
+      const answerFromDocuments = async () => {
+        const knowledge = await runKnowledgeQuery(ctx, body)
+        if (!knowledge) return false
         await recordAiSkillAudit(ctx, { response: { ...knowledge, answerSource: 'knowledge', language: body.answerLanguage }, facts: null, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, knowledge: aiKnowledgeAuditBlock(knowledge.rag) })
         send(res, 200, knowledge)
         return true
       }
+      if (!actionRequest && !modelFirstEntry?.eligible && await answerFromDocuments()) return true
       // Reject empty or oversized questions before any tenant data is read.
       const validation = validateAiRuntimeRequest(body)
       if (!validation.ok) {
         const tooLong = String(body.message || body.question || '').trim().length > 1200
         send(res, validation.status, errorBody(tooLong ? 'AI_QUESTION_TOO_LONG' : 'AI_QUESTION_TOO_SHORT', body))
         return true
+      }
+      // Model-first (docs/ai-model-first-design.md §3): a free-text question
+      // the guards let through is answered by the tool loop. When it gives no
+      // checked answer, the knowledge path, then the rules answer below, with
+      // no model call and a notice; a guarded question goes there directly. A
+      // question that needs a tool this user is not offered (search_documents
+      // without database storage, list_contracts without the contracts
+      // module) goes to the knowledge path or the rules as before, with no
+      // notice. Either way the audit row carries the loop's codes and counts.
+      if (modelFirstEntry) {
+        if (!modelFirstEntry.eligible) ctx = { ...ctx, aiModelFirstAudit: { status: 'guarded', reason: modelFirstEntry.reason } }
+        else {
+          // The languages of the documents the user may read (null without any).
+          const documents = await (ctx.aiAgentKnowledge !== undefined ? ctx.aiAgentKnowledge : aiAgentKnowledge(ctx).catch(() => null))
+          const modelFirst = await answerAiModelFirst(ctx, body, { documents: isKnowledgeQuestion(body), requires: modelFirstEntry.requires, documentLanguages: documents?.languages || null })
+          if (modelFirst.response) {
+            await recordAiSkillAudit(ctx, { response: modelFirst.response, facts: modelFirst.facts, message: String(body.message || body.question || '').trim(), latencyMs: Date.now() - started, modelFirst: modelFirst.audit })
+            // The loop searched the documents itself when it could; otherwise
+            // a question about records and documents gets their passages.
+            send(res, 200, modelFirst.searchedDocuments ? modelFirst.response : await addKnowledgeContext(ctx, body, modelFirst.response))
+            return true
+          }
+          ctx = modelFirst.skipped
+            ? { ...ctx, aiModelFirstAudit: modelFirst.audit }
+            : { ...ctx, env: modelFreeEnv(ctx.env || process.env), send: modelFirstFallbackSend(ctx.send), aiModelFirstAudit: modelFirst.audit }
+          send = ctx.send
+          if (await answerFromDocuments()) return true
+        }
       }
       // Agent planning (P2) on: a question with several parts that the
       // business query path would take goes to the planner first, which has

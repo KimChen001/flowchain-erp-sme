@@ -35,12 +35,15 @@ separate step, once the owner has provided the key and a budget.
 | --- | --- | --- |
 | `FLOWCHAIN_AI_WORKSPACE_OPT_IN` | `required` in production, otherwise not | `required`: only switched-on workspaces under the cap call a model. `not_required`: every workspace may (local development, the eval runner). |
 | `FLOWCHAIN_AI_MONTHLY_CAP_USD` | `20` | Spend per workspace per calendar month (UTC). |
-| `FLOWCHAIN_AI_PRICE_INPUT_PER_MTOK`, `FLOWCHAIN_AI_PRICE_OUTPUT_PER_MTOK` | `1`, `5` | US dollars per million tokens: claude-haiku-4-5 list prices. |
-| `FLOWCHAIN_AI_PROVIDER_KIND` | — | `anthropic_chat` for the Anthropic API. |
+| `FLOWCHAIN_AI_PRICE_INPUT_PER_MTOK`, `FLOWCHAIN_AI_PRICE_OUTPUT_PER_MTOK` | the configured model's list prices | US dollars per million tokens. Listed: claude-haiku-5-5 (`0.1`, `0.5`), claude-haiku-4-5 (`1`, `5`), claude-sonnet-5-5 (`2`, `10`); another model is priced as claude-haiku-4-5. A cache read costs a tenth of an input token, a cache write 1.25 times one. |
+| `FLOWCHAIN_AI_PROVIDER_KIND` | — | `anthropic_messages` for Anthropic's native Messages API (the model-first assistant), or `anthropic_chat` for its OpenAI-compatible endpoint. |
 | `FLOWCHAIN_AI_PROVIDER_ENDPOINT` | — | `https://api.anthropic.com/v1/chat/completions` (Anthropic's OpenAI-compatible endpoint). |
 | `FLOWCHAIN_AI_PROVIDER_MODEL` | — | `claude-haiku-4-5` |
 | `FLOWCHAIN_AI_PROVIDER_API_KEY` | — | The owner's Anthropic key. Set it as a secret, never in a file in the repository. |
 | `FLOWCHAIN_AI_RUNTIME_MODE` | `local` | `provider_assisted` |
+| `FLOWCHAIN_AI_ASSISTANT_MODE` | off | `model_first`: free-text questions go to the model-first tool loop (below). |
+| `FLOWCHAIN_AI_ASSISTANT_REASONING_EFFORT` | `low` (native), `none` (chat completions) | How much the loop's model reasons: `none`, `low`, `medium` or `high`. |
+| `FLOWCHAIN_AI_ASSISTANT_TIMEOUT_MS`, `FLOWCHAIN_AI_ASSISTANT_TOKEN_BUDGET` | `20000`, `80000` | One answer's time (at most 30 s) and tokens read and written. |
 
 Check a configuration without calling the provider: `npm run check:ai-provider-env`.
 
@@ -62,7 +65,45 @@ Check a configuration without calling the provider: `npm run check:ai-provider-e
 - **No embeddings:** Anthropic has no embeddings endpoint, so knowledge search
   stays keyword search; the answer is written by the model.
 
+## The model-first assistant
+
+Step S2 of `docs/ai-model-first-design.md` (decisions M1–M7, 2026-10-28), off
+unless `FLOWCHAIN_AI_ASSISTANT_MODE=model_first`, and only where the switch above
+lets the workspace call a model.
+- **Entry.** A free-text question goes to a tool loop. The deterministic guards
+  answer first and keep their answers: an instruction to act, a question about
+  the outside world, injection phrasing (overriding the rules, other tenants or
+  workspaces, SQL), a greeting and an order request. Prompt chips keep their
+  skills. Document and mixed questions go to the loop too, which searches the
+  documents with `search_documents`; where that tool is not offered (no database
+  storage) the knowledge path answers them as before, and it is also the
+  fallback, without a model, when the loop gives no checked answer. A contract
+  question goes to the loop when `list_contracts` is offered (the contracts
+  module is on and the user may read contracts); otherwise the rules answer it
+  as before.
+- **The loop.** The model reads through the read tools
+  (`server/domain/ai-read-tools.mjs`), which hold only what the asking user may
+  read. At most 4 rounds, 8 tool calls and 20 s per answer, plus the token
+  budget; the calls of one round run together, and a tool error goes back to the
+  model as the tool's result.
+- **The check.** Every number with its currency, percent sign or days, every
+  date, record number and known supplier, customer or item name in the answer
+  must be in this answer's tool results (or the question, or `calculate`), and
+  every cited record one a tool returned. On a failure the model gets one retry
+  with the list; after a second, the rules answer, with no model call, and say
+  so. The audit row keeps the kinds and counts, never the text.
+- **Providers.** `anthropic_messages` (the trial): tools with `tool_choice:
+  auto`, low effort, the answer as structured output, the system prompt, tools
+  and conversation cached; no sampling settings, which current Claude models
+  reject. The chat kinds (`deepseek_chat` on OpenCode Go locally): native tool
+  calls with `reasoning_effort`.
+
 ## What leaves the workspace
+
+- **The model-first assistant** sends the question, up to 3 earlier questions
+  and answers of the user's panel as text, the open record's type and name, the
+  tool definitions, and the tool results: the asking user's own records, with
+  the fields the tools list. Contact emails and phone numbers are never in them.
 
 - **Agent planning and intent routing** send the question and the list of
   skills.
