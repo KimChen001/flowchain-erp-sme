@@ -1,7 +1,7 @@
 # Reports as a decision loop: human–AI collaboration design and decisions
 
-Status: proposal of 2026-10-30. Nothing is built by this document. The decisions
-in §11 (R1–R12) wait for the owner, and the build follows the order in §9.
+Status: approved by the owner on 2026-10-30: R1–R12 as recommended (§11).
+Nothing is built by this document. The build follows the order and timing in §9.
 
 On 2026-10-30 the owner said the reports are "not very good" and asked for a
 better approach to human–AI collaboration in reporting, and to deploying AI in a
@@ -33,7 +33,7 @@ company. This design answers that request. It builds on:
   4. **行动：** 每条发现连到过滤好的清单，L2 上线后连到确认卡；
   5. **推送：** 每周简报和阈值提醒，运行时不调模型。
   - 贯穿五层：每个数字都标出覆盖了多少记录，以及缺什么数据。
-- **需要你决定的：** §11 共 12 项。最关键的三项：
+- **决定（2026-10-30 已按推荐批准）：** §11 共 12 项。最关键的三项：
   - 指标定义合并成一套（推荐合并）；
   - 每周简报先做站内版、不调模型，邮件只带数量和链接（推荐）；
   - 阈值默认不设，由管理员自己设（推荐，这样"不按假设目标评判"的规则继续成立）。
@@ -369,6 +369,10 @@ These are codes and counts only. Collecting them from trial users as research da
 needs COUHES review first.
 
 ## 11. Decisions for the owner
+
+**Decided 2026-10-30:** the owner approved every decision below as recommended
+("按推荐"). Nothing changes before the first deployment: under R12 the build
+starts with steps 0–1 in December, and steps 0–3 may move earlier when there is room.
 
 | # | Decision | Recommendation |
 | --- | --- | --- |
