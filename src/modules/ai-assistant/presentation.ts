@@ -81,6 +81,7 @@ const PROGRESS_COPY = {
     documents: "Searching your documents…",
     records: "Searching your records…",
     calculation: "Calculating…",
+    proposal: "Filling in a purchase request…",
     writing: "Writing the answer…",
     checking: "Checking the figures…",
   },
@@ -94,6 +95,7 @@ const PROGRESS_COPY = {
     documents: "正在检索文档…",
     records: "正在查找记录…",
     calculation: "正在计算…",
+    proposal: "正在填写采购申请…",
     writing: "正在撰写回答…",
     checking: "正在核对数字…",
   },
@@ -109,8 +111,9 @@ export function aiProgressLine(progress: { step?: string; sources?: string[] } |
   if (progress?.step === "writing") return copy.writing;
   if (progress?.step === "checking") return copy.checking;
   const sources = [...new Set(progress?.sources || [])];
-  const read = sources.filter((source) => source !== "calculation" && copy.sources[source]);
-  if (!read.length) return sources.includes("calculation") ? copy.calculation : copy.records;
+  // Filling in a form or calculating is named only when nothing is read with it.
+  const read = sources.filter((source) => copy.sources[source]);
+  if (!read.length) return sources.includes("proposal") ? copy.proposal : sources.includes("calculation") ? copy.calculation : copy.records;
   if (read.length === 1 && read[0] === "documents") return copy.documents;
   if (read.length === 1 && read[0] === "records") return copy.records;
   return copy.reading.replace("{sources}", listOf(read.slice(0, 3).map((source) => copy.sources[source]), language));

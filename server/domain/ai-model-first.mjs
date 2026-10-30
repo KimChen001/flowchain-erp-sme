@@ -190,8 +190,9 @@ const toolContent = (outcome) => {
 }
 
 // What the panel's progress line names while a tool runs (step S3): what each
-// tool reads, as for the "Checked:" line, plus the tools that line leaves out.
-const PROGRESS_SOURCES = Object.freeze({ search_records: 'records', calculate: 'calculation', list_receivables: 'receivables', workspace_summary: 'workspace', supplier_performance: 'suppliers' })
+// tool reads, as for the "Checked:" line, plus the tools that line leaves out
+// ('proposal': filling in a purchase request form).
+const PROGRESS_SOURCES = Object.freeze({ search_records: 'records', calculate: 'calculation', list_receivables: 'receivables', workspace_summary: 'workspace', supplier_performance: 'suppliers', [AI_PROPOSE_PURCHASE_REQUEST]: 'proposal' })
 export const aiModelFirstProgressSources = (names) => [...new Set(array(names).map((name) => PROGRESS_SOURCES[name] || TOOL_SOURCES[name] || 'records'))]
 
 // The tool loop. `facts` are the asking user's facts and `context` the

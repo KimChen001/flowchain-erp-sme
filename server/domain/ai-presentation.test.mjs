@@ -116,3 +116,10 @@ test('the progress line names what the assistant reads, in English and in Chines
   assert.equal(mod.aiProgressLine({ step: 'writing' }, 'en-US'), 'Writing the answer…')
   assert.equal(mod.aiProgressLine({ step: 'checking' }, 'zh-CN'), '正在核对数字…')
 })
+
+test('the progress line names filling in a purchase request only when nothing is read with it', async () => {
+  const { mod } = await loadPresentationModule()
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['proposal'] }, 'en-US'), 'Filling in a purchase request…')
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['proposal'] }, 'zh-CN'), '正在填写采购申请…')
+  assert.equal(mod.aiProgressLine({ step: 'reading', sources: ['inventory', 'proposal'] }, 'en-US'), 'Reading inventory…')
+})

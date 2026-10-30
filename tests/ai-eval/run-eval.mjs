@@ -930,6 +930,8 @@ function modelFirstSummary(asked) {
     perAnswer: { modelCalls: statsOf(loop.map((block) => block.modelCalls)), rounds: statsOf(loop.map((block) => block.rounds)), toolCalls: statsOf(loop.map((block) => array(block.tools).length)) },
     tools: Object.fromEntries(Object.entries(tools).sort(([, a], [, b]) => b.calls - a.calls)),
     usage: { input: sum('input'), output: sum('output'), cacheRead: sum('cacheRead'), cacheWrite: sum('cacheWrite') },
+    // Purchase request forms the loop filled in for the user to review (S5 proposals).
+    proposals: loop.reduce((total, block) => total + (Number(block.proposals) || 0), 0),
     costMicros,
     costPerAnswerMicros: loop.length ? Math.round(costMicros / loop.length) : null,
     latencyMs: { loop: statsOf(loop.map((block) => block.latencyMs)), loopAnswers: statsOf(withStatus('answered').map(({ run }) => run.latencyMs)) },
@@ -1130,6 +1132,7 @@ function printModelFirst(summary) {
   console.log(`    first check failed on:  ${counts(g.firstCheckKinds)}`)
   console.log(`    retry failed on:        ${counts(g.retryKinds)}`)
   console.log(`  Per answer:               model calls ${stat(summary.perAnswer.modelCalls)}; rounds ${stat(summary.perAnswer.rounds)}; tool calls ${stat(summary.perAnswer.toolCalls)}`)
+  console.log(`  Proposals:                ${summary.proposals} purchase request form(s) filled in for review`)
   console.log(`  Tools:                    ${Object.entries(summary.tools).map(([tool, row]) => `${tool} ${row.calls}${Object.keys(row.errors).length ? ` (${counts(row.errors)})` : ''}`).join(', ') || 'none'}`)
   console.log(`  Tokens:                   ${summary.usage.input} in (${summary.usage.cacheRead} cache read, ${summary.usage.cacheWrite} cache write), ${summary.usage.output} out`)
   console.log(`  Cost (list prices):       $${(summary.costMicros / 1e6).toFixed(4)} in the loop, $${((summary.costPerAnswerMicros ?? 0) / 1e6).toFixed(5)} per loop answer`)

@@ -524,7 +524,10 @@ export function getAiFollowUpChips(message: AiChatMessage, language: "en-US" | "
   if (message.role !== "assistant" || !message.cards?.length) return [];
   if (hasRuntimeFollowUpSuggestions(message)) return [];
   if (message.cards.some((card) => card.type === "ai_response_v2" && (card.data as AiResponseV2 | undefined)?.rag?.mode === "no_results")) return [];
-  const zh = language === "zh-CN";
+  // The chips follow the answer's language (a Chinese question in the English
+  // interface gets Chinese chips), else the interface language.
+  const answerLanguage = message.cards.map((card) => (card.data as AiResponseV2 | undefined)?.language).find((value) => value === "en-US" || value === "zh-CN");
+  const zh = (answerLanguage || language) === "zh-CN";
   const localizedChip = (zhLabel: string, enLabel: string, zhPrompt: string, enPrompt: string) => ({
     label: zh ? zhLabel : enLabel,
     prompt: zh ? zhPrompt : enPrompt,
