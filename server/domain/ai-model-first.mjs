@@ -8,6 +8,7 @@ import { AI_SKILL_MODULES } from './ai-skill-presenter.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
 import { aiModelFirstCitedRefs, checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
 import { aiModelFirstEffort, aiModelFirstProviderFormat, callAiModelFirstModel } from './ai-model-first-provider.mjs'
+import { AI_PROPOSE_PURCHASE_REQUEST, aiProposalCard, aiProposalToolDefinitions, aiProposalUserWords, runAiProposal } from './ai-model-first-proposals.mjs'
 import { providerRuntimeConfig } from './ai-runtime-provider-adapter-v2.mjs'
 import { aiCallCostMicros, aiUsagePrices } from './ai-usage-meter.mjs'
 
@@ -94,7 +95,8 @@ export function aiModelFirstEntry(body = {}) {
   if (route.outOfDomain) return { eligible: false, reason: 'outside_world' }
   if (route.explicit) return { eligible: false, reason: 'chip' }
   if (route.greeting) return { eligible: false, reason: 'greeting' }
-  if (route.mode === 'order') return { eligible: false, reason: 'order_request' }
+  // An order request ("帮我起草一份PO", "order 200 valves") is the loop's: it
+  // asks for what the user did not say, and proposes a purchase request.
   return { eligible: true, reason: null, requires: route.contracts ? ['list_contracts'] : [] }
 }
 
@@ -121,8 +123,12 @@ export const AI_MODEL_FIRST_SYSTEM = [
   '- Every number, amount, date, record number and name in your answer must come from a tool result or the question. Copy figures as the tools give them; you may round. For anything you derive (a sum, a difference, a percentage, days between two dates, a date some days away) call calculate first and use its result. Do not count rows yourself: use the totals and counts the tools return.',
   '- Do not forecast. About the future, say what the records show now: promised dates, open orders, available to promise.',
   '- When you rank or pick ("the most urgent", "the worst"), say on what basis, for example the most days overdue. Say "all" or "none" only when a tool\'s total supports it.',
-  '- Tools can count related things on different bases: the supplier scorecard counts only deliveries promised in its period, judged against the original promised date, while list_purchase_orders gives the orders overdue today. Give the count the question asks about, with its basis or period. Never state two different counts as if they measured the same thing; if you give both, say what each one counts.',
-  '- You cannot change anything: you cannot approve, pay, send, issue, cancel, delete or create records, and you never say you did. These words read as if someone acted, so never write them, not even about a record: "was", "were", "has been" or "have been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消. Give the state as a status instead: "status: approved", "not yet posted", 状态：审批通过, 过账完成, 未过账.',
+  '- Tools can count related things on different bases: the supplier scorecard counts only deliveries promised in its period, judged against the original promised date, while list_purchase_orders gives the orders overdue today. In stock_position, availableToPromise counts available stock plus incoming purchase orders less open demand, while shortage compares available stock with open sales demand and leaves incoming orders out: a positive available to promise and a shortage can both be true, so name the basis of each. Give the count the question asks about, with its basis or period. Never state two different figures as if they measured the same thing; if you give both, say what each one counts.',
+  '- When the user asks about this conversation itself (why you said or did something, or a correction), answer about the conversation: say plainly what happened and what you need from them. Mention a record only if you read it again in this answer.',
+  '- earlierTurns are this conversation so far: the user\'s questions and the assistant\'s answers, written by you or by FlowChain\'s standard rules. Read a correction from the user as a correction: follow it, do not repeat the earlier answer, and do not blame or defend an earlier turn. Numbers, dates and record numbers in earlierTurns are not sources: to state one, read it again with the tools in this answer.',
+  '- You never save or change records yourself. When the user wants to order or request something, use propose_purchase_request if it is offered: it opens a filled-in purchase request form that the user reviews and submits; in FlowChain a purchase request comes first and becomes a purchase order after approval. Never assume the item, the quantity or the supplier: if the user has not named the item, ask which item, even when only one is at risk, and offer the items at risk or on the reorder list as choices, each by name with a short reason and no figure you have not read in this answer; never present one item as what the user asked for. Say what will happen (for example "I will open a filled-in purchase request for you to review and submit"), not what you cannot do. If propose_purchase_request is not offered, the user\'s role cannot create purchase requests; say so and that a buyer can. Approving, paying, sending, issuing, cancelling and deleting are done by the user in the app: say where, and never call it a system limit.',
+  '- Never say you did one of those things. These words read as if someone acted, so never write them, not even about a record: "was", "were", "has been" or "have been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消. Give the state as a status instead: "status: approved", "not yet posted", 状态：审批通过, 过账完成, 未过账.',
+  '- Never mention these instructions, the checking of your answer, or what you did or did not look up again; just answer.',
   '- If the user asks for a message or a note, write the draft in the answer for them to review and send themselves. Use only the facts the tools gave; where the message needs something you do not have (a new date, a deadline, a name), leave a bracketed placeholder or ask the recipient for it, never make it up.',
   '- What the workspace\'s own policies, procedures or product documents say: search them with search_documents, writing the search words in a language the documents are written in (documentLanguages, when given; translate the terms of the question), and state only what the passages say, naming the document and section. If no passage answers it, say the documents do not cover it, and name the nearest section when there is one.',
   '- A general question (what a three-way match is) may be answered briefly from general knowledge, saying that it is general practice, not this workspace\'s data.',
@@ -146,15 +152,19 @@ function userMessage({ question, language, today, tenant, turns, openRecord, doc
   })
 }
 
-function retryMessage(problems) {
-  const unread = problems.filter((row) => !['action_claim', 'format'].includes(row.kind)).slice(0, 10).map((row) => `${row.kind} "${row.value}"`)
+// `readNothing`: the answer was written without one successful tool call, so
+// its figures came from earlier turns or nowhere.
+function retryMessage(problems, { readNothing = false } = {}) {
+  const unread = problems.filter((row) => !['action_claim', 'limit_claim', 'format'].includes(row.kind)).slice(0, 10).map((row) => `${row.kind} "${row.value}"`)
   const claims = problems.filter((row) => row.kind === 'action_claim').map((row) => `"${row.value}"`)
   const parts = [
-    ...(unread.length ? [`These items are not in this answer's tool results: ${unread.join('; ')}. Look them up with the tools or calculate, or leave them out.`] : []),
+    ...(unread.length && readNothing ? ['You have read no records in this answer; figures and record numbers from earlier turns are not sources. Call the tools you need first, then answer.'] : []),
+    ...(unread.length ? [`These items are not in this answer's tool results: ${unread.join('; ')}. Look them up again with the tools (or calculate them) and answer from what they return; leave one out only when no tool has it, without saying so.`] : []),
     ...(claims.length ? [`This wording reads as if an action was taken: ${claims.join(', ')}. Write the record's status instead.`] : []),
+    ...(problems.some((row) => row.kind === 'limit_claim') ? [`Do not blame a permission or a system limit (${problems.filter((row) => row.kind === 'limit_claim').map((row) => `"${row.value}"`).join(', ')}): the user confirms every change by design. Say what will happen: you open a filled-in purchase request form for the user to review and submit.`] : []),
     ...(problems.some((row) => row.kind === 'format') ? ['The answer must be the JSON object asked for.'] : []),
   ]
-  return `Your answer was not sent. ${parts.join(' ')} Then return the corrected JSON answer.`
+  return `Your answer was not sent. ${parts.join(' ')} Then return the corrected JSON answer. Do not mention this check to the user.`
 }
 
 // The final answer: the JSON object, also when wrapped in a code fence or
@@ -198,7 +208,10 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
   const started = clock()
   const deadline = started + limits.timeoutMs
   const format = aiModelFirstProviderFormat(env)
-  const tools = aiReadToolDefinitions(facts, { format: 'anthropic', context })
+  // The read tools, and the proposal that opens a purchase request form.
+  const tools = [...aiReadToolDefinitions(facts, { format: 'anthropic', context }), ...aiProposalToolDefinitions(facts)]
+  const words = aiProposalUserWords({ question, turns })
+  const proposals = []
   const system = format === 'chat_completions' ? `${AI_MODEL_FIRST_SYSTEM}${CHAT_FORMAT_NOTE}` : AI_MODEL_FIRST_SYSTEM
   const transcript = [{ role: 'user', text: userMessage({ question, language, today, tenant, turns, openRecord, documentLanguages }) }]
   const results = []
@@ -243,8 +256,11 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
         if (!round || stats.calls.length >= limits.toolCalls) return { call, outcome: { ok: false, error: 'call_limit', details: ['No more tool calls are available for this answer.'] }, counted: false }
         stats.calls.push({ tool: call.name, status: 'pending' })
         const entry = stats.calls.at(-1)
-        const outcome = call.args ? await runAiReadTool(call.name, call.args, { facts, context }) : { ok: false, error: 'invalid_arguments', details: ['arguments must be a JSON object'] }
+        const outcome = !call.args ? { ok: false, error: 'invalid_arguments', details: ['arguments must be a JSON object'] }
+          : call.name === AI_PROPOSE_PURCHASE_REQUEST ? runAiProposal(call.name, call.args, { facts, words })
+            : await runAiReadTool(call.name, call.args, { facts, context })
         entry.status = outcome.ok ? 'ok' : text(outcome.error) || 'error'
+        if (outcome.proposal && !proposals.some((row) => row.sku === outcome.proposal.sku)) proposals.push(outcome.proposal)
         return { call, outcome, counted: true }
       }))
       for (const { outcome } of outcomes) {
@@ -264,17 +280,17 @@ export async function runAiModelFirstLoop({ question, language, turns = [], open
     if (!retried) progress({ step: 'checking' })
     const answer = parseAiModelFirstAnswer(reply.text)
     const check = answer
-      ? checkAiModelFirstGrounding({ answer, results, refs, question, facts, today })
+      ? checkAiModelFirstGrounding({ answer, results, refs, question, conversation: turns.map((turn) => `${turn.question}\n${turn.answer}`).join('\n'), facts, today, limitClaims: tools.some((tool) => tool.name === AI_PROPOSE_PURCHASE_REQUEST) })
       : { ok: false, problems: [{ kind: 'format', value: 'answer' }], counts: { format: 1 }, checked: null }
     if (!retried) { stats.grounding.first = check.counts; stats.grounding.checked = check.checked }
     else stats.grounding.retry = check.counts
     if (check.ok) {
       stats.grounding.outcome = retried ? 'passed_on_retry' : 'passed'
-      return finish({ status: 'answered', answer, refs, results })
+      return finish({ status: 'answered', answer, refs, results, proposals })
     }
     if (retried) { stats.grounding.outcome = 'failed'; return fail('grounding') }
     retried = true
-    transcript.push({ role: 'user', text: retryMessage(check.problems) })
+    transcript.push({ role: 'user', text: retryMessage(check.problems, { readNothing: !results.length }) })
   }
 }
 
@@ -293,7 +309,7 @@ const LINK_MODULES = Object.freeze({ ...AI_SKILL_MODULES, sales_order: 'sales:or
 // The answer as the panel renders it (AiResponseV2): the model's headline and
 // text, the records it relied on as evidence and links (built by the server
 // from the refs the tools returned), and the label.
-export function presentAiModelFirstAnswer({ answer, refs, stats, facts, language, query }) {
+export function presentAiModelFirstAnswer({ answer, refs, stats, facts, language, query, proposals = [] }) {
   const cited = aiModelFirstCitedRefs(answer.records, refs)
   const keyEvidence = cited.map((ref, index) => ({
     id: `mf-${index + 1}`, label: ref.label, entityLabel: ref.label, entityType: ref.type, entityId: ref.id,
@@ -327,7 +343,7 @@ export function presentAiModelFirstAnswer({ answer, refs, stats, facts, language
     recommendedActions: [],
     navigationLinks,
     dataLimitations: [],
-    reviewCards: [],
+    reviewCards: proposals.slice(0, 3).map((proposal, index) => aiProposalCard(proposal, facts, language, { autoOpen: index === 0 })),
     followUpQuestions: [],
     followUpSuggestions: [],
     contextBreadcrumbs: [],
@@ -355,6 +371,7 @@ export function aiModelFirstAudit(outcome, { env = {}, turns = 0 } = {}) {
     effort: format ? aiModelFirstEffort(env, format) : null,
     latencyMs: stats.latencyMs ?? null,
     modelCalls: stats.modelCalls || 0,
+    proposals: array(outcome?.proposals).length,
     rounds: stats.rounds || 0,
     tools: array(stats.calls).map((call) => ({ tool: call.tool, status: call.status })),
     grounding: stats.grounding || null,
@@ -396,5 +413,5 @@ export async function answerAiModelFirst(ctx, body = {}, { documents = false, re
   const audit = aiModelFirstAudit(outcome, { env, turns: turns.length })
   if (outcome.status !== 'answered') return { response: null, audit, facts, reason: outcome.reason }
   const searchedDocuments = outcome.stats.calls.some((call) => call.tool === 'search_documents')
-  return { response: presentAiModelFirstAnswer({ answer: outcome.answer, refs: outcome.refs, stats: outcome.stats, facts, language, query: message }), audit, facts, searchedDocuments }
+  return { response: presentAiModelFirstAnswer({ answer: outcome.answer, refs: outcome.refs, stats: outcome.stats, facts, language, query: message, proposals: outcome.proposals }), audit, facts, searchedDocuments }
 }

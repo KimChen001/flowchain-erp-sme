@@ -16,6 +16,11 @@ import { AI_ANSWER_ACTION_CLAIMS } from './ai-answer-claims.mjs'
 // listed with its kind; the loop gives the model one retry with the list, and
 // the audit row keeps the kinds and counts only, never the text.
 //
+// The conversation so far (the earlier questions and answers) counts as given
+// for record numbers and known names only: they name what was discussed, so
+// "I did not mean to choose LDM-001 for you" passes. A figure or a date from an
+// earlier turn must be read again.
+//
 // What it cannot see: rankings ("the most urgent"), "all" or "none" claims,
 // numbers written as words (three, 三), a shortened name ("Acme" for Acme
 // Components), and reasoning between correct numbers. The prompt asks for the
@@ -27,7 +32,16 @@ const fold = (value) => text(value).normalize('NFKC').toLowerCase()
 const CJK = /[㐀-鿿]/u
 const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-export const AI_GROUNDING_KINDS = Object.freeze(['record', 'name', 'date', 'number', 'citation', 'action_claim', 'format'])
+export const AI_GROUNDING_KINDS = Object.freeze(['record', 'name', 'date', 'number', 'citation', 'action_claim', 'limit_claim', 'format'])
+
+// Wording that blames a permission or a system limit for what the assistant
+// does not do itself. Where it can propose (it opens a filled-in form for the
+// user to submit), that is not why: the user confirms every change by design.
+const LIMIT_CLAIMS = [
+  /没有[^。，！？,.!?]{0,8}权限|无权|权限不足|权限(?:只能|仅能|有限|不够)|系统(?:设定|设置)?的?限制|系统不允许|不被允许|(?:无法|不能)(?:直接|帮你|帮您|为你|为您)?(?:创建|新建|建立)/,
+  /\b(?:cannot|can't|am unable to|unable to)\s+(?:directly\s+)?(?:create|make)\b/i,
+  /\b(?:do not|don't|cannot|can't)\s+have\s+(?:the\s+)?permission\b|\bno permission\b|\bmy permissions? (?:only|are limited)\b|\bnot (?:allowed|permitted) to\b|\bsystem (?:limit|limits|restriction|restrictions)\b/i,
+]
 
 // Record numbers: letters, then hyphenated parts ending in digits.
 const RECORD = /(?<![\w-])[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+[A-Za-z0-9]*(?![\w-])/g
@@ -160,7 +174,9 @@ function numberKindFits(source, kind, currencies) {
 // they returned; `question` the user's question; `facts` the asking user's
 // facts (for the names); `today` the day the model was given. Returns
 // { ok, problems: [{ kind, value }], counts: { kind: n }, checked: { kind: n } }.
-export function checkAiModelFirstGrounding({ answer, results = [], refs = [], question = '', facts = null, today = null }) {
+// `limitClaims`: the assistant could propose this answer's action, so a
+// permission or system-limit excuse fails the check.
+export function checkAiModelFirstGrounding({ answer, results = [], refs = [], question = '', conversation = '', facts = null, today = null, limitClaims = false }) {
   const problems = []
   const checked = { record: 0, name: 0, date: 0, number: 0, citation: 0 }
   const fail = (kind, value) => { if (!problems.some((row) => row.kind === kind && row.value === value)) problems.push({ kind, value }) }
@@ -169,6 +185,8 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   if (!body) fail('format', 'answer')
   const sources = aiGroundingSources(results)
   const asked = fold(question)
+  // Record numbers and names may also come from the conversation so far.
+  const named = fold(`${question}\n${conversation}`)
   const given = aiGroundingSources([question])
   if (today) { sources.days.add(today); sources.months.add(today.slice(0, 7)) }
   let rest = `${title}\n${body}`.normalize('NFKC').replace(/^\s*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
@@ -180,7 +198,9 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     if (NOT_RECORD.test(token)) return token
     checked.record += 1
     const value = fold(token)
-    const found = inText(sources.haystack, value) || new RegExp(`-${escape(value)}($|[^a-z0-9])`, 'u').test(sources.haystack) || inText(asked, value)
+    // The question may write it without the hyphen ("LDM001").
+    const squeezed = (value) => value.replace(/[-\s]/g, '')
+    const found = inText(sources.haystack, value) || new RegExp(`-${escape(value)}($|[^a-z0-9])`, 'u').test(sources.haystack) || inText(named, value) || inText(squeezed(named), squeezed(value))
     if (!found) fail('record', token)
     return blank(token)
   })
@@ -188,7 +208,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   for (const name of aiGroundingNames(facts)) {
     rest = rest.replace(nameMatch(name), (found) => {
       checked.name += 1
-      if (!inText(sources.haystack, name) && !inText(asked, name)) fail('name', found)
+      if (!inText(sources.haystack, name) && !inText(named, name)) fail('name', found)
       return blank(found)
     })
   }
@@ -240,7 +260,17 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   // Cited records: each one a tool returned.
   for (const record of array(answer?.records)) {
     checked.citation += 1
-    if (!citedRef(record, refs)) fail('citation', `${text(record?.type)}:${text(record?.id)}`)
+    // A record a tool named without its own ref (a SKU in a list of SKUs at
+    // risk) is grounded too; only records with a ref get a link.
+    if (!citedRef(record, refs) && !inText(sources.haystack, text(record?.id))) fail('citation', `${text(record?.type)}:${text(record?.id)}`)
+  }
+  if (limitClaims) {
+    for (const value of [title, body]) {
+      for (const pattern of LIMIT_CLAIMS) {
+        const found = value.match(pattern)
+        if (found) fail('limit_claim', found[0])
+      }
+    }
   }
   // Wording that reads as if the assistant acted, with the list the server's
   // validator and the evaluation use, so the model can be told the phrase.

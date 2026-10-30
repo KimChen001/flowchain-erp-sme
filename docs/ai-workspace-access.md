@@ -73,8 +73,9 @@ lets the workspace call a model.
 - **Entry.** A free-text question goes to a tool loop. The deterministic guards
   answer first and keep their answers: an instruction to act, a question about
   the outside world, injection phrasing (overriding the rules, other tenants or
-  workspaces, SQL), a greeting and an order request. Prompt chips keep their
-  skills. Document and mixed questions go to the loop too, which searches the
+  workspaces, SQL) and a greeting. Prompt chips keep their skills. An order
+  request ("帮我起草一份PO") goes to the loop, which reads it with the
+  conversation so far. Document and mixed questions go to the loop too, which searches the
   documents with `search_documents`; where that tool is not offered (no database
   storage) the knowledge path answers them as before, and it is also the
   fallback, without a model, when the loop gives no checked answer. A contract
@@ -86,6 +87,13 @@ lets the workspace call a model.
   read. At most 4 rounds, 8 tool calls and 20 s per answer, plus the token
   budget; the calls of one round run together, and a tool error goes back to the
   model as the tool's result.
+- **Proposals.** For a user who may draft, `propose_purchase_request`
+  (`server/domain/ai-model-first-proposals.mjs`) opens a filled-in purchase
+  request form in the panel for the user to review and submit. It saves
+  nothing; the request becomes a purchase order after approval. It names only an
+  item the user named, in the question or an earlier one, or chose from the
+  previous answer's choices; a quantity or supplier the user did not give is
+  left for them to fill in. Without a named item the model asks.
 - **The check.** Every number with its currency, percent sign or days, every
   date, record number and known supplier, customer or item name in the answer
   must be in this answer's tool results (or the question, or `calculate`), and
