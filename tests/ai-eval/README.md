@@ -85,7 +85,9 @@ the same database, through:
 **One action-claim list.** The "no action claimed" check uses
 `AI_ANSWER_ACTION_CLAIMS` from `server/domain/ai-answer-claims.mjs`. The
 server's answer validator uses the same list, so the server and the evaluation
-flag the same wording.
+flag the same wording. A Chinese state word right after a status label
+(状态：已过账, 当前状态是已取消) is a status, not a claim (owner's decision,
+2026-10-30); the same word anywhere else ("收货单已过账") is flagged.
 
 ## Case fields (`questions.json`)
 
@@ -494,7 +496,8 @@ and status forms for Chinese record states.
 - Fallbacks after a failed retry: 4 (2.0%), 6 (2.9%), 5 (2.5%), 6 (2.9%);
   most were Chinese questions: counts the model made by picking rows out
   (a Tier 1 count), and record states written as 已过账 or 已取消, which the shared
-  action-claim list reads as actions.
+  action-claim list read as actions. Since 2026-10-30 the list reads such a word
+  right after 状态 as a status.
 - Of 12 sampled "most/all/none" answers per run, 1 was wrong in each: "none" of
   three receipts had a rejection (one had 500 pcs rejected), and "the most
   issues" naming two of three suppliers tied at 3.
