@@ -1,0 +1,196 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
+import { loadAiSkillContext } from './ai-skill-context.mjs'
+import { readAiSkillFacts } from './ai-skill-readers.mjs'
+import { validateAiToolArgs, aiToolList, AI_TOOL_LIMITS } from './ai-read-tool-contract.mjs'
+import { AI_READ_TOOLS } from './ai-read-tools.mjs'
+import { AI_READ_SERVICE_TOOLS } from './ai-read-service-tools.mjs'
+import { aiReadToolDefinitions, aiReadToolRefs, aiReadToolsFor, runAiReadTool } from './ai-read-tool-runner.mjs'
+import { createSupplierInsightsReadService } from './supplier-insights.mjs'
+
+async function factsFor(roleKey = 'workspace-administrator') {
+  const scenario = aiSkillScenario({ roleKey })
+  return readAiSkillFacts(await loadAiSkillContext(scenario.ctx))
+}
+
+// Every tool the role is offered, called with no arguments (and the tools
+// that need one with a record the fixture has), as one JSON string.
+async function everyOutput(facts) {
+  const outputs = []
+  for (const tool of aiReadToolsFor(facts)) {
+    const args = tool.name === 'get_purchase_order' ? { order: 'PO-001' } : tool.name === 'calculate' ? { operation: 'sum', values: [1, 2] } : {}
+    outputs.push(await runAiReadTool(tool.name, args, { facts }))
+  }
+  for (const kind of ['rejected', 'unposted', 'recent']) if (facts.receipts) outputs.push(await runAiReadTool('list_receipts', { kind }, { facts }))
+  for (const kind of ['differences', 'recent']) if (facts.invoices) outputs.push(await runAiReadTool('list_supplier_invoices', { kind }, { facts }))
+  return JSON.stringify(outputs)
+}
+
+test('an administrator is offered every read tool, and each answers with capped rows and record refs', async () => {
+  const facts = await factsFor()
+  // Without the request's context only the tools over the facts are offered;
+  // the service tools (tests/postgres/ai-read-tools.test.mjs) need it.
+  const service = new Set(AI_READ_SERVICE_TOOLS.map((tool) => tool.name))
+  assert.deepEqual(aiReadToolsFor(facts).map((tool) => tool.name), AI_READ_TOOLS.map((tool) => tool.name).filter((name) => !service.has(name)))
+  assert.equal((await runAiReadTool('search_records', { query: 'Acme' }, { facts })).error, 'not_allowed')
+  const scenario = aiSkillScenario()
+  const context = await loadAiSkillContext(scenario.ctx)
+  assert.ok(aiReadToolsFor(facts, context).some((tool) => tool.name === 'search_records'))
+  const found = (await runAiReadTool('search_records', { query: 'Acme' }, { facts, context })).result.rows
+  assert.equal(found[0].ref.id.startsWith('PO-'), true)
+  // A document's link reads its number; a supplier's reads its name.
+  assert.equal(found[0].ref.label, found[0].number)
+  assert.equal(found.find((row) => row.type === 'supplier')?.ref.label, 'Acme Components')
+  const overdue = await runAiReadTool('list_purchase_orders', { status: 'overdue' }, { facts })
+  assert.equal(overdue.ok, true)
+  assert.equal(overdue.result.total, facts.purchaseOrders.overdue)
+  // Most overdue first: the date rule, never a score.
+  const days = overdue.result.rows.map((row) => row.overdueDays)
+  assert.deepEqual(days, [...days].sort((a, b) => b - a))
+  assert.ok(overdue.result.rows.every((row) => row.ref.type === 'purchase_order' && row.ref.label === row.orderNumber))
+  // A number's end finds the order, whatever its case.
+  const order = await runAiReadTool('get_purchase_order', { order: 'po-001' }, { facts })
+  assert.equal(order.result.order.orderNumber, 'PO-001')
+  assert.ok(order.result.openLines.length > 0)
+  // As people type it: without zero padding or separators.
+  for (const typed of ['PO-1', 'po 1', 'PO1']) assert.equal((await runAiReadTool('get_purchase_order', { order: typed }, { facts })).result?.order.orderNumber, 'PO-001', typed)
+  assert.deepEqual(await runAiReadTool('get_purchase_order', { order: 'PO-999' }, { facts }), { ok: false, error: 'not_found' })
+  // The late order impact judges a named order on its own.
+  const impact = await runAiReadTool('late_order_impact', { orders: ['PO-001'] }, { facts })
+  assert.equal(impact.result.judged, 'each named order on its own')
+  assert.deepEqual(impact.result.orders.map((row) => row.orderNumber), ['PO-001'])
+  // Spend shares are percents, as an answer would write them.
+  const spend = await runAiReadTool('spend_analysis', {}, { facts })
+  assert.ok(spend.result.suppliers.every((row) => row.sharePercent > 0 && row.sharePercent <= 100))
+  assert.ok(aiReadToolRefs(spend.result).every((ref) => ref.type === 'supplier'))
+})
+
+test('arguments are checked against the schema before a tool runs', async () => {
+  const facts = await factsFor()
+  const bad = async (name, args) => (await runAiReadTool(name, args, { facts })).error
+  assert.equal(await bad('list_purchase_orders', { status: 'late' }), 'invalid_arguments')
+  assert.equal(await bad('list_purchase_orders', { status: 'open', extra: true }), 'invalid_arguments')
+  assert.equal(await bad('list_purchase_orders', { limit: 0 }), 'invalid_arguments')
+  assert.equal(await bad('list_purchase_orders', { limit: 2.5 }), 'invalid_arguments')
+  assert.equal(await bad('get_purchase_order', {}), 'invalid_arguments')
+  assert.equal(await bad('spend_analysis', { currency: 'dollars' }), 'invalid_arguments')
+  assert.equal(await bad('calculate', { operation: 'days_between', dates: ['28/10/2026', '2026-11-01'] }), 'invalid_arguments')
+  assert.equal(await bad('drop_tables', {}), 'unknown_tool')
+  assert.equal((await runAiReadTool('list_purchase_orders', { supplier: 'Nobody Ltd' }, { facts })).error, 'supplier_not_found')
+  assert.deepEqual(validateAiToolArgs({ properties: {}, required: [] }, null), { ok: true, args: {} })
+  assert.deepEqual(aiToolList([1, 2, 3], 2), { rows: [1, 2], total: 3, more: 1 })
+  assert.equal(aiToolList(Array.from({ length: 80 }, (_, index) => index), 500).rows.length, AI_TOOL_LIMITS.maxRows)
+})
+
+test('calculate does the arithmetic an answer derives', async () => {
+  const facts = await factsFor()
+  const calc = async (args) => (await runAiReadTool('calculate', args, { facts })).result
+  assert.deepEqual(await calc({ operation: 'sum', values: [1.1, 2.2] }), { result: 3.3 })
+  assert.deepEqual(await calc({ operation: 'difference', values: [10, 4] }), { result: 6 })
+  assert.deepEqual(await calc({ operation: 'percent', values: [12920, 17920] }), { result: 72.0982, unit: 'percent' })
+  assert.deepEqual(await calc({ operation: 'percent_change', values: [100, 125] }), { result: 25, unit: 'percent' })
+  assert.deepEqual(await calc({ operation: 'days_between', dates: ['2026-10-13', '2026-10-28'] }), { result: 15, unit: 'days' })
+  assert.deepEqual(await calc({ operation: 'add_days', dates: ['2026-10-28'], values: [7] }), { result: '2026-11-04' })
+  assert.equal((await runAiReadTool('calculate', { operation: 'ratio', values: [1, 0] }, { facts })).error, 'division_by_zero')
+})
+
+test('a role gets only the tools and the fields it may read', async () => {
+  // Finance reads supplier invoices, not purchase orders or stock.
+  const finance = await factsFor('finance-specialist')
+  assert.deepEqual(aiReadToolsFor(finance).map((tool) => tool.name).sort(), ['calculate', 'list_supplier_invoices', 'list_suppliers', 'workspace_summary'])
+  assert.equal((await runAiReadTool('list_purchase_orders', {}, { facts: finance })).error, 'not_allowed')
+  assert.doesNotMatch(await everyOutput(finance), /PO-0\d\d/, 'no purchase order number reaches a finance user')
+  // Operations reads stock and receipts, not purchase orders.
+  const operations = await factsFor('operations-specialist')
+  assert.ok(!aiReadToolsFor(operations).some((tool) => ['list_purchase_orders', 'get_purchase_order', 'spend_analysis', 'late_order_impact'].includes(tool.name)))
+  assert.doesNotMatch(await everyOutput(operations), /PO-0\d\d/, 'no purchase order number reaches operations')
+  // A viewer reads records without amounts.
+  const viewer = await factsFor('read-only-viewer')
+  const orders = await runAiReadTool('list_purchase_orders', { status: 'all' }, { facts: viewer })
+  assert.ok(orders.result.rows.length > 0)
+  assert.ok(orders.result.rows.every((row) => row.amount === null))
+  assert.equal(orders.result.workspace.committedSpend, null)
+  // Nobody gets a contact's email address from a tool.
+  for (const facts of [await factsFor(), finance, operations, viewer]) assert.doesNotMatch(await everyOutput(facts), /@/)
+})
+
+test('tool definitions are offered in both provider formats, with closed schemas', async () => {
+  const facts = await factsFor('finance-specialist')
+  const anthropic = aiReadToolDefinitions(facts)
+  assert.ok(anthropic.every((tool) => tool.name && tool.description && tool.input_schema.type === 'object' && tool.input_schema.additionalProperties === false))
+  const chat = aiReadToolDefinitions(facts, { format: 'chat_completions' })
+  assert.deepEqual(chat.map((tool) => tool.function.name), anthropic.map((tool) => tool.name))
+  assert.ok(chat.every((tool) => tool.type === 'function' && tool.function.parameters === anthropic.find((entry) => entry.name === tool.function.name).input_schema))
+  assert.deepEqual(aiReadToolsFor(null), [])
+})
+
+test('refs are collected once each from a nested result', () => {
+  const ref = (id) => ({ type: 'purchase_order', id, label: id })
+  assert.deepEqual(aiReadToolRefs({ rows: [{ ref: ref('A') }, { ref: ref('B'), lines: [{ ref: ref('A') }] }], other: { ref: ref('C') } }).map((entry) => entry.id), ['A', 'B', 'C'])
+})
+
+test('the stock projection places only dated lines in a week and lists the rest apart', async () => {
+  const facts = await factsFor()
+  const projection = (await runAiReadTool('stock_projection', { sku: 'LDM-001', weeks: 3 }, { facts })).result
+  assert.equal(projection.weeks.length, 3)
+  assert.equal(projection.weeks[0].from, facts.asOf)
+  // Each week ends with the week before's balance plus what arrives less what is due.
+  let balance = projection.availableToday
+  for (const week of projection.weeks) {
+    balance += week.incoming - week.demand
+    assert.equal(week.endAvailable, balance)
+    assert.equal(week.belowSafetyStock, balance < projection.safetyStock)
+  }
+  // An order past its promised day is never placed in a week: no arrival date is guessed.
+  const placed = new Set(projection.weeks.flatMap((week) => week.purchaseOrders))
+  for (const entry of projection.notPlacedInAWeek.incomingPastPromisedDate) assert.ok(!placed.has(entry.orderNumber))
+  assert.ok(projection.notPlacedInAWeek.incomingPastPromisedDate.some((entry) => entry.orderNumber === 'PO-001'), 'PO-001 is overdue')
+  assert.deepEqual(await runAiReadTool('stock_projection', { sku: 'NOPE-1' }, { facts }), { ok: false, error: 'not_found' })
+})
+
+test('supplier_risks lists the Supplier risks page\'s issues, counted per supplier and never scored', async () => {
+  const scenario = aiSkillScenario()
+  const context = await loadAiSkillContext(scenario.ctx)
+  const facts = await readAiSkillFacts(context)
+  assert.ok(aiReadToolsFor(facts, context).some((tool) => tool.name === 'supplier_risks'))
+  const risks = (await runAiReadTool('supplier_risks', {}, { facts, context })).result
+  // The page's own rows, in its order: earliest date first.
+  const page = await createSupplierInsightsReadService({ prisma: context.prisma, now: () => context.now }).readRisks(scenario.ctx)
+  assert.ok(page.issues.length > 0)
+  assert.equal(risks.total, page.issues.length)
+  assert.deepEqual(risks.rows.map((row) => row.ref.id), page.issues.slice(0, risks.rows.length).map((row) => row.entityId))
+  assert.equal(risks.suppliers.reduce((sum, row) => sum + row.issues, 0), page.issues.length)
+  assert.ok(risks.suppliers.every((row) => row.ref.type === 'supplier' && !('score' in row)))
+  assert.deepEqual(risks.hidden, [])
+  const acme = (await runAiReadTool('supplier_risks', { supplier: 'acme' }, { facts, context })).result
+  assert.ok(acme.rows.length > 0 && acme.rows.every((row) => row.supplier === 'Acme Components'))
+  assert.equal((await runAiReadTool('supplier_risks', { supplier: 'Nobody Ltd' }, { facts, context })).error, 'supplier_not_found')
+  const overdue = (await runAiReadTool('supplier_risks', { type: 'po_overdue' }, { facts, context })).result
+  assert.ok(overdue.rows.length > 0 && overdue.rows.every((row) => row.type === 'po_overdue' && row.ref.type === 'purchase_order'))
+  // Finance reads supplier invoices only: the other kinds are named hidden.
+  const financeContext = await loadAiSkillContext(aiSkillScenario({ roleKey: 'finance-specialist' }).ctx)
+  const finance = (await runAiReadTool('supplier_risks', {}, { facts: await readAiSkillFacts(financeContext), context: financeContext })).result
+  assert.ok(finance.hidden.includes('orders') && finance.hidden.includes('receipts'))
+  assert.doesNotMatch(JSON.stringify(finance), /PO-0\d\d|GRN-0\d\d/, 'no purchase order or receipt reaches finance')
+})
+
+test('list_contracts gives a contract\'s title, dates, value and terms, the value only to users who may see prices', async () => {
+  const row = { id: 'CON-1', number: 'CON-0001', title: 'Flow controllers 2026', externalReference: 'ACME-MSA-7', type: 'supply', status: 'active', state: 'active', startDate: '2026-01-01', endDate: '2026-12-31', signedOn: '2025-12-15', noticeDays: 60, renewal: 'manual', counterpartyType: 'supplier', totalValue: '125000.0000', currency: 'USD', paymentTermsId: 'TERMS-30', notes: 'Free text the model never reads', supplier: { id: 'SUP-001', name: 'Acme Components' } }
+  const run = async (prices) => {
+    const scenario = aiSkillScenario()
+    const contracts = { list: async () => ({ today: '2026-09-29', counts: { all: 1 }, access: { prices }, contracts: [prices ? row : { ...row, totalValue: null, restrictedFields: ['totalValue'] }] }) }
+    const context = await loadAiSkillContext({ ...scenario.ctx, env: { FLOWCHAIN_ENABLE_CONTRACTS: 'true' }, aiReadServices: { contracts } })
+    return (await runAiReadTool('list_contracts', {}, { facts: await readAiSkillFacts(context), context })).result
+  }
+  const buyer = await run(true)
+  assert.equal(buyer.pricesHidden, false)
+  assert.deepEqual(buyer.rows[0], {
+    number: 'CON-0001', title: 'Flow controllers 2026', externalReference: 'ACME-MSA-7', type: 'supply', status: 'active', state: 'active', startDate: '2026-01-01', endDate: '2026-12-31', signedOn: '2025-12-15', noticeDays: 60, counterpartyType: 'supplier', totalValue: '125000.0000', currency: 'USD',
+    supplier: 'Acme Components', paymentTerms: { code: 'TERMS-30' }, renewal: 'manual', ref: { type: 'contract', id: 'CON-1', label: 'CON-0001' },
+  })
+  const viewer = await run(false)
+  assert.equal(viewer.pricesHidden, true)
+  assert.equal(viewer.rows[0].totalValue, null)
+  assert.equal(viewer.rows[0].currency, 'USD')
+})
