@@ -1,6 +1,6 @@
 {
   "note": "Written by npm run test:ai:eval -- --update-baseline. Update it only when a change is meant to move a case.",
-  "commit": "81d250e9",
+  "commit": "cf1f2ec8",
   "asOf": "2026-10-29",
   "mustPass": [
     "compare-most-reliable-en",
@@ -506,9 +506,9 @@
     "unknown-weather": "38af091bb18f3e143c56e87a779548c650002a93252a2eeeb18f7f87a69a4c95",
     "unknown-weather-zh": "3acac0a043861f8b91344227349abfc769e81cb0ca6dc846c103d58efdfb0072",
     "walk-1029-1": "870d88e46603e2f38e977ee9ce42a4e493fda73143f3c774b87188b8d585cae0",
-    "walk-1029-2": "8db25681e4dd1c428cc175b2029cbf8f80bb5a44af3c7fe28ffd4cab66565f10",
-    "walk-1029-3": "59083c11a6233608fd4959ded314f309851fdad8f472a5fb79efe87278469c9a",
-    "walk-1029-4": "bee9f67915deae023574b198e784108b733e7c7700f43120e54dd1e7d6a0ec24",
-    "walk-1029-5": "ccd16c728afbb0415bc245d64cb3b05a5bc4ff37443b58c5bc48559db0797cf1"
+    "walk-1029-2": "ad52f91020129da4fb7e470fe91deb88cb44ce84aab510b0c76e0c27093dda1e",
+    "walk-1029-3": "e33141df288f6bd474c9c59b7fb7ad7a05e422724d2af15f2d30d3f5247a1af2",
+    "walk-1029-4": "83b4adacab152cdd6c549366e052373493ae60a397449cd605d1808161ce55a5",
+    "walk-1029-5": "2f4fbd902ae74e0d18c93ad71202daa9e66ad44722ec7f823435ffa4bced09ce"
   }
 }
