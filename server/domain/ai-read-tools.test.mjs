@@ -53,6 +53,8 @@ test('an administrator is offered every read tool, and each answers with capped 
   const order = await runAiReadTool('get_purchase_order', { order: 'po-001' }, { facts })
   assert.equal(order.result.order.orderNumber, 'PO-001')
   assert.ok(order.result.openLines.length > 0)
+  // As people type it: without zero padding or separators.
+  for (const typed of ['PO-1', 'po 1', 'PO1']) assert.equal((await runAiReadTool('get_purchase_order', { order: typed }, { facts })).result?.order.orderNumber, 'PO-001', typed)
   assert.deepEqual(await runAiReadTool('get_purchase_order', { order: 'PO-999' }, { facts }), { ok: false, error: 'not_found' })
   // The late order impact judges a named order on its own.
   const impact = await runAiReadTool('late_order_impact', { orders: ['PO-001'] }, { facts })
