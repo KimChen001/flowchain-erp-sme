@@ -92,6 +92,7 @@
 
 ## Domain Notes
 
+- [Reports as a decision loop](report-collaboration-design.md): proposal of 2026-10-30; one metric registry, change breakdowns, "Ask about this", a weekly brief and thresholds; decisions R1–R12 approved 2026-10-30
 - [Global business search](global-business-search-v1.md)
 - [Supplier operational search](supplier-operational-search-v1.md)
 - [SRM supplier API migration notes](srm-supplier-api-migration-notes.md)
