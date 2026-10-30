@@ -75,6 +75,8 @@ test('the read tools answer from the seeded workspace, each role reading only wh
       results[name] = output.result
     }
     assert.equal(results.get_purchase_order.order.orderNumber.endsWith('PO-020'), true)
+    // "PO-20", as typed, is the walkthrough's zero-padded PO-020.
+    assert.equal((await runAiReadTool('get_purchase_order', { order: 'PO-20' }, admin)).result?.order.orderNumber.endsWith('PO-020'), true)
     assert.ok(results.search_records.rows.some((row) => row.type === 'supplier' && /Acme/.test(row.name)))
     assert.ok(results.list_contracts.rows.length >= 1, 'the walkthrough has contracts')
     // A contract's title, dates and terms (the walkthrough's record no value);
