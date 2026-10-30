@@ -393,6 +393,17 @@ test('no data crosses roles: a role gets only its tools, and the provider never 
   assert.equal(invented.reason, 'grounding')
 })
 
+test('a Chinese record state that reads as an action gets its status form in the retry', async () => {
+  const { facts, context, today } = await factsFor()
+  // The first answer writes 已过账; the retry quotes the status form to use.
+  const posted = scripted([toolUse([['list_receipts', {}]]), final({ title: '收货单', answer: '收货单状态已过账。', records: [] }), final({ title: '收货单', answer: '收货单状态：过账完成。', records: [] })])
+  const outcome = await runAiModelFirstLoop(loop(posted, { facts, context, today, language: 'zh-CN', question: '哪些收货单需要处理？' }))
+  assert.equal(outcome.status, 'answered')
+  assert.equal(outcome.stats.grounding.outcome, 'passed_on_retry')
+  assert.match(posted.requests[2].body.messages.at(-1).content[0].text, /"已过账" → "状态：过账完成"/)
+  assert.match(posted.requests[0].body.system[0].text, /状态：取消/)
+})
+
 test('what the role cannot see goes with the question, the answer says so, and carries the rules\' notice', async () => {
   const admin = await factsFor()
   const finance = await factsFor('finance-specialist')
