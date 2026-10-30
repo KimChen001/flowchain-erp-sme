@@ -46,8 +46,8 @@ export type AiFocusedResponseModel = {
 type Language = "en-US" | "zh-CN";
 const PRIMARY_LIMIT = 8;
 const focusedCopy = {
-  "en-US": { rfqDraft: "Create RFQ draft", taskDraft: "Create task draft", prDraft: "Create purchase request draft", textDraft: "Prepare text draft", reason: "Review it against the current business status.", headline: "Business review complete", summary: "Review the priorities and suggested next steps." },
-  "zh-CN": { rfqDraft: "创建正式 RFQ 草稿", taskDraft: "创建正式任务草稿", prDraft: "创建正式 PR 草稿", textDraft: "生成文本草稿", reason: "需要结合当前业务状态处理。", headline: "已完成业务分析", summary: "请查看重点事项和建议下一步。" },
+  "en-US": { rfqDraft: "Create RFQ draft", taskDraft: "Create task draft", prDraft: "Create purchase request draft", textDraft: "Prepare text draft", headline: "Business review complete", summary: "Review the priorities and suggested next steps." },
+  "zh-CN": { rfqDraft: "创建正式 RFQ 草稿", taskDraft: "创建正式任务草稿", prDraft: "创建正式 PR 草稿", textDraft: "生成文本草稿", headline: "已完成业务分析", summary: "请查看重点事项和建议下一步。" },
 } as const;
 
 function answerMode(response: AiResponseV2): AiFocusedAnswerMode {
@@ -97,7 +97,6 @@ export function isAiCapabilityAnswer(response: AiResponseV2) {
 }
 
 export function toAiFocusedResponse(response: AiResponseV2, language: Language = "en-US"): AiFocusedResponseModel {
-  const copy = focusedCopy[language];
   // A workspace skill answer always carries its own summary, in the answer
   // language; it is never filled with interface-language text.
   const answerCopy = focusedCopy[response.language === "zh-CN" || response.language === "en-US" ? response.language : language];
@@ -117,7 +116,9 @@ export function toAiFocusedResponse(response: AiResponseV2, language: Language =
     return {
       id: item.id || `${item.entityType}-${item.entityId}-${index}`,
       title: item.entityLabel || item.label || item.entityId,
-      reason: item.summary || copy.reason,
+      // The server's own line, or none: a record the answer only cites (a
+      // model-first answer's) gets no stock sentence.
+      reason: item.summary || "",
       impact: impacts[index]?.explanation || impacts[index]?.impact || "",
       status: item.status || "",
       severity: item.severity || impacts[index]?.severity || "info",
