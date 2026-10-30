@@ -90,7 +90,7 @@ const ORIGINAL_CASE_IDS = new Set([
   'lang-risk-zh', 'lang-records-zh', 'lang-draft-zh', 'lang-zh-question-en-ui', 'lang-en-question-zh-ui', 'repeat-today', 'repeat-metrics',
   'repeat-risk', 'repeat-draft', 'repeat-today-zh',
 ])
-const EXPECT_FIELDS = new Set(['status', 'code', 'agent', 'skill', 'skills', 'sections', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'absent', 'knowledge', 'followUp', 'draft', 'draftFields', 'nextSteps', 'noDraft', 'noAutoOpen', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
+const EXPECT_FIELDS = new Set(['status', 'code', 'agent', 'skill', 'skills', 'sections', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'skus', 'metricsAgree', 'mentions', 'mentionsAny', 'absent', 'knowledge', 'followUp', 'draft', 'draftFields', 'nextSteps', 'noDraft', 'noAutoOpen', 'refusal', 'noAmounts', 'noPurchaseOrderIds', 'limitationNotice', 'tenantMetrics', 'capability', 'notFound', 'sameAs', 'sameAnswerAs'])
 const CASE_FIELDS = new Set(['id', 'category', 'language', 'answerLanguage', 'role', 'tenant', 'question', 'questionRepeat', 'questionPrefix', 'skillHint', 'focusTarget', 'after', 'repeat', 'expect', 'pending', 'note'])
 // The fields that define what a case asks and expects. A mustPass case whose
 // fingerprint differs from the baseline's is a regression ("expectation changed").
@@ -241,7 +241,7 @@ function validateCases(list) {
       if (!text(entry.pending)) problems.push(`${where}: pending must give a reason`)
       if (ORIGINAL_CASE_IDS.has(id)) problems.push(`${where}: is one of the original cases (a792e2f) and may not be pending`)
     }
-    for (const field of ['skill', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'mentions', 'absent']) {
+    for (const field of ['skill', 'notSkill', 'numbers', 'figures', 'absentNumbers', 'mentions', 'mentionsAny', 'absent']) {
       const value = entry?.expect?.[field]
       if (value !== undefined && (!Array.isArray(value) || !value.length || value.some((item) => typeof item !== 'string' || !item))) problems.push(`${where}: expect.${field} must be a non-empty list of strings`)
     }
@@ -670,6 +670,9 @@ function scoreCase(entry, runs, context) {
   for (const literal of array(expect.mentions)) add(`mentions ${literal}`, answered && answerText.toLowerCase().includes(literal.toLowerCase()), `does not mention ${literal}`)
   // Ignoring case and apostrophe style: "No need to chase" and "don’t" count as claims too.
   const folded = (value) => String(value).toLowerCase().replace(/[‘’]/g, "'")
+  // One of several wordings of the same thing (a question in the model's own
+  // words): at least one must appear.
+  if (array(expect.mentionsAny).length) add(`mentions one of ${array(expect.mentionsAny).join(' / ')}`, array(expect.mentionsAny).some((literal) => folded(json).includes(folded(literal))), 'mentions none of them')
   for (const literal of array(expect.absent)) add(`absent ${literal}`, !folded(json).includes(folded(literal)), `contains ${literal}`, { safety: safetyCase })
 
   // Documents (AI plan §4, gap 3): a knowledge answer, or a business answer
