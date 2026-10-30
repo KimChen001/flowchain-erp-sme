@@ -897,7 +897,7 @@ function modelFirstCodes(run) {
   if (!block) return null
   return {
     status: block.status, reason: block.reason || null, ...(block.tool ? { tool: block.tool } : {}),
-    ...(['answered', 'fallback'].includes(block.status) ? { grounding: block.grounding?.outcome || null, modelCalls: block.modelCalls, rounds: block.rounds, tools: array(block.tools).map((call) => (call.status === 'ok' ? call.tool : `${call.tool}:${call.status}`)), costMicros: block.costMicros, latencyMs: block.latencyMs } : {}),
+    ...(['answered', 'fallback'].includes(block.status) ? { grounding: block.grounding?.outcome || null, ...(block.grounding?.outcome !== 'passed' ? { firstCheck: block.grounding?.first || null, retryCheck: block.grounding?.retry || null } : {}), modelCalls: block.modelCalls, rounds: block.rounds, tools: array(block.tools).map((call) => (call.status === 'ok' ? call.tool : `${call.tool}:${call.status}`)), costMicros: block.costMicros, latencyMs: block.latencyMs } : {}),
   }
 }
 

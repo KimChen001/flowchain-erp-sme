@@ -6,7 +6,7 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { runAiReadTool } from './ai-read-tool-runner.mjs'
 import { aiCallCostMicros, aiUsagePrices, runWithAiUsageScope } from './ai-usage-meter.mjs'
 import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
-import { AI_MODEL_FIRST_LIMITS, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstTurns, parseAiModelFirstAnswer, presentAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
+import { AI_MODEL_FIRST_LIMITS, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstHidden, aiModelFirstTurns, parseAiModelFirstAnswer, presentAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 
 // The model-first loop (docs/ai-model-first-design.md §3) against a scripted
@@ -389,6 +389,46 @@ test('no data crosses roles: a role gets only its tools, and the provider never 
   // A model that names a purchase order anyway fails the check: no tool returned it.
   const invented = await runAiModelFirstLoop(loop(scripted([final({ title: 'Late', answer: 'PO-001 is overdue.', records: [] })]), { facts, today }))
   assert.equal(invented.reason, 'grounding')
+})
+
+test('what the role cannot see goes with the question, the answer says so, and carries the rules\' notice', async () => {
+  const admin = await factsFor()
+  const finance = await factsFor('finance-specialist')
+  const viewer = await factsFor('read-only-viewer')
+  assert.equal(aiModelFirstHidden(admin.facts), null)
+  assert.deepEqual(aiModelFirstHidden(finance.facts), { sources: ['purchase_orders', 'purchase_requests', 'rfqs', 'inventory', 'receipts'], amountsOn: [] })
+  assert.deepEqual(aiModelFirstHidden(viewer.facts), { sources: [], amountsOn: ['purchase_orders', 'supplier_invoices'] })
+  const hidden = { title: 'Not visible to your role', answer: "Your role can't see purchase orders, so I can't answer this. Someone whose role can see purchase orders can help.", records: [] }
+  const stub = scripted([final(hidden)])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts: finance.facts, context: finance.context, today: finance.today, question: 'How much is still to receive on PO-012?' }))
+  assert.equal(outcome.status, 'answered')
+  assert.deepEqual(JSON.parse(stub.requests[0].body.messages[0].content[0].text).hiddenForRole, aiModelFirstHidden(finance.facts))
+  const system = stub.requests[0].body.system[0].text
+  assert.match(system, /Never call such data missing, blank, not recorded or not found/)
+  assert.match(system, /I couldn't find \{number\} in the records you can see/)
+  assert.match(system, /FlowChain does not record it/)
+  // Nothing hidden: no hiddenForRole.
+  const open = scripted([final({ title: 'x', answer: 'x', records: [] })])
+  await runAiModelFirstLoop(loop(open, { facts: admin.facts, today: admin.today }))
+  assert.equal(JSON.parse(open.requests[0].body.messages[0].content[0].text).hiddenForRole, undefined)
+  // The server says what is hidden, as the skills' answers do.
+  const present = (facts) => presentAiModelFirstAnswer({ answer: hidden, refs: [], stats: outcome.stats, facts, language: 'en-US', query: 'q' })
+  const notices = present(finance.facts).dataLimitations
+  assert.deepEqual(notices.map((row) => row.code), ['hidden_by_permission'])
+  assert.match(notices[0].description, /^Your role cannot view purchase orders/)
+  assert.deepEqual(present(viewer.facts).dataLimitations.map((row) => row.code), ['amounts_hidden', 'amounts_hidden'])
+  assert.deepEqual(present(admin.facts).dataLimitations, [])
+  assert.equal(present(finance.facts).limitationCount, 1)
+})
+
+test('a record number nobody can find gets the fixed not-found answer, which passes the check', async () => {
+  const { facts, context, today } = await factsFor()
+  const notFound = { title: 'EVAL-B-PO-999 not found', answer: "I couldn't find EVAL-B-PO-999 in the records you can see. Check the number, or tell me the supplier or item.", records: [] }
+  const stub = scripted([toolUse([['get_purchase_order', { order: 'EVAL-B-PO-999' }]]), final(notFound)])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts, context, today, question: 'What is the status of EVAL-B-PO-999?' }))
+  assert.deepEqual(outcome.stats.calls.map((call) => call.status), ['not_found'])
+  assert.equal(outcome.status, 'answered')
+  assert.equal(outcome.stats.grounding.outcome, 'passed')
 })
 
 // The workspace's documents, in memory, as the knowledge service reads them.
