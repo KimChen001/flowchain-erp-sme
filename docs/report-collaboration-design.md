@@ -2,6 +2,8 @@
 
 Status: approved by the owner on 2026-10-30: R1–R12 as recommended (§11).
 Nothing is built by this document. The build follows the order and timing in §9.
+The presentation layer in §13 was added on 2026-10-31, after the owner approved
+the direction of the overview mockup; its decisions P1–P5 are open.
 
 On 2026-10-30 the owner said the reports are "not very good" and asked for a
 better approach to human–AI collaboration in reporting, and to deploying AI in a
@@ -38,6 +40,14 @@ company. This design answers that request. It builds on:
   - 每周简报先做站内版、不调模型，邮件只带数量和链接（推荐）；
   - 阈值默认不设，由管理员自己设（推荐，这样"不按假设目标评判"的规则继续成立）。
 - **时间：** 11 月不做（首次部署和课程报告优先）。12 月和 L1/L2 并行做第 0–1 步，1 月做第 2–4 步，2027 年第一季度和 L3 一起做第 5–8 步。
+- **呈现层（§13，2026-10-31 新增）：** 你认可了总览页样稿的方向。§13 把它拆成 5 个 PR（V1–V5）：
+  - V1 统一图表配色；
+  - V2 首屏和 KPI 卡；
+  - V3 有主次的版式，环形图、漏斗图和瀑布图改成横条；
+  - V4 关键发现条，以及"需要处理"和"待补数据"；
+  - V5 新的总览 KPI 和涨跌，要等第 0–1 步完成。
+
+  合计约 10–13 个工作日。另有 P1–P5 五项决定待你确认。
 
 ## 1. What is wrong today
 
@@ -402,3 +412,77 @@ starts with steps 0–1 in December, and steps 0–3 may move earlier when there
 | Truncated reads | When the business context is truncated (`truncatedSubjects`), the brief and the answer say so and do not compare |
 | The model overstates in "Ask about this" | The grounding check, the existing safety checks and new eval cases for change questions in both languages |
 | Report work crowds out the first deployment | Nothing in November; steps 0–3 need no model and no scheduler |
+
+## 13. Presentation layer (added 2026-10-31)
+
+On 2026-10-30 the owner asked how the reports could look more polished ("更加的
+fancy"). A mockup of the overview, drawn with the local workspace's recorded
+figures, went to the owner as a private canvas
+(https://claude.ai/artifact/Q28vF84UJVxPUUaRKALpoE). On 2026-10-31 the owner
+approved its direction ("方向可以"). Layers 1–5 make the reports useful; this
+section makes them read well. It changes how figures are shown, never how they
+are counted, and every rule in `report-dashboards.md` and §3 holds.
+
+### 13.1 What the mockup changes, and why
+
+Each point was seen on the overview and procurement dashboards at 1440 px on 2026-10-30.
+
+| Today | In the mockup | Why |
+| --- | --- | --- |
+| The page title card, two sub-links and a full filter card take the top 40% of the screen; KPIs start mid-screen | One header row (title, scope line, Export, Save view, Ask about this page); one filter row: date presets as a segmented control, comparison, filter chips, "+ Filter" | The first screen shows figures |
+| Every KPI card reads "Comparison is off · Select to drill down"; only the first has a sparkline | Each card: the figure, one badge, one small visual (sparkline, share bar or meter) and one line of context | A card states what the figure means |
+| Ten-plus hues: blue, orange, green, teal, purple, pink; a purple-to-green funnel | The brand palette (decision of 2026-10-03): blue scale for amounts, teal for the second series, status colors only for status | Restraint reads as quality; color carries meaning |
+| Every chart the same size, in one long column | A 2/3 main chart with a 1/3 ranked list beside it, then three equal cards | The eye knows where to start |
+| Truncated supplier names, a paged donut legend (1/3), heavy grid lines | Full names, every status listed, light grid lines | Nothing hidden behind a click |
+| Key insights as one line of small text | A dark "Key findings" band: a large figure, one sentence and two links ("open the records", "ask why") per finding | The most useful text is the most visible |
+| Needs attention at the bottom; no word on missing data | Attention tiles, with a "Data to fix" note beside them | Gaps are visible (principle 4) |
+
+**Changes are neutral.** A rise in spend gets a blue badge, not green or red,
+because no target is set (principle 5). Red and orange mark status only:
+overdue, waiting.
+
+### 13.2 The build, file by file
+
+Each row is one PR with green CI and before/after screenshots in English and
+Chinese. Sizes are rough, in working days.
+
+| PR | What | Files | Size | Needs |
+| --- | --- | --- | --- | --- |
+| V1 | Chart theme: brand palette, status colors per the 2026-10-03 rules, blue-scale stages, light grid, full category labels, at most 6 categories then "Other", legends without paging | `src/modules/reports/charts/chartOptions.ts` (`PALETTE`, `SEMANTIC`, `FUNNEL` and the axis, legend and tooltip helpers) | 1.5–2 | — |
+| V2 | Header and filter row; KPI card shell (badge, small visual, context line) without the "Comparison is off" caption; en/zh copy | `BiDashboard.tsx` (header, `bi-global-filters`, the KPI grid at line 250), `ReportDateInput.tsx`, `analyticsCopy.ts` | 2–3 | — |
+| V3 | Layout with a main chart; new visual forms: segmented status bar (for every donut), horizontal stage bars (for every funnel), horizontal value bridge (for the waterfall) | `BiDashboard.tsx` (`SPAN_CLASS`), `VisualCard.tsx`, `chartOptions.ts`; visual types in `server/domain/report-dashboard-visuals.mjs` (donuts at 131, 386, 543; funnels at 183, 430; the waterfall at 191–198) and its tests | 2.5–3 | V1 |
+| V4 | Key findings band built from `reportInsights.ts`; attention tiles; a "Data to fix" note from the limitation codes | `reportInsights.ts`, `OverviewAttention.tsx`, `BiDashboard.tsx` | 1.5–2 | V2 |
+| V5 | The overview KPI set of P1 and the change badges | `metricDefinitions` and `dashboardMetrics` in `runtime-report-read-model.mjs`, `BiDashboard.tsx` | 2 | §9 steps 0 and 1 |
+
+- **About 10–13 working days in all,** including the browser suite: the 5 specs that `npm run test:browser:reports` runs.
+- **V1 stands alone.** It touches one client file and no figures, so it can go first.
+- **V5 waits for the registry and period comparison** (§9 steps 0–1): its new
+  metric and its change badges come from them.
+
+### 13.3 Later tiers
+
+- **Interactions,** with §9 steps 2–4 (January):
+  - highlighting across every visual on a selection;
+  - brushing a period on the time axis;
+  - drill paths from supplier to item to order on bar charts;
+  - a pivot table (AntV S2);
+  - layouts people can drag and resize, saved as views;
+  - event marks on charts;
+  - a one-click PDF of a dashboard.
+- **Supply-chain visuals,** in Q1 2027:
+  - a delivery timeline of open orders, promise against expected;
+  - a stock water line per SKU over `stock_projection`;
+  - price small multiples per main item;
+  - the supplier matrix as a main chart with named quadrants;
+  - material flow from supplier to warehouse to customer.
+- **A meeting mode** (full screen, dark, large type, rotating dashboards), with the weekly brief (§8).
+
+### 13.4 Decisions for the owner
+
+| # | Decision | Recommendation |
+| --- | --- | --- |
+| P1 | The overview's four KPIs | Committed spend; open purchase orders with the overdue count as its badge; on-time deliveries; received, not invoiced (a new registry metric from the value bridge). "SKUs short for sales orders" and the sales order count move to the attention tiles |
+| P2 | Visual forms | Segmented bars instead of every donut, horizontal stage bars instead of every funnel, a horizontal bridge instead of the waterfall, on all six dashboards |
+| P3 | Palette | Brand-led as in §13.1. At most 6 categories in a visual, the rest as "Other" |
+| P4 | Change badges | Neutral (blue) for changes in amounts and counts; red and orange only for status |
+| P5 | Timing | V1 whenever there is room, since it is isolated; V2–V4 in December beside §9 steps 0–1; V5 after them. Interactions in January, supply-chain visuals in Q1 2027 |
