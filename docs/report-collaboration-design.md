@@ -3,7 +3,8 @@
 Status: approved by the owner on 2026-10-30: R1–R12 as recommended (§11).
 Nothing is built by this document. The build follows the order and timing in §9.
 The presentation layer in §13 was added on 2026-10-31, after the owner approved
-the direction of the overview mockup; its decisions P1–P5 are open.
+the direction of the overview mockup; its decisions P1–P5 were approved as
+recommended the same day (§13.4).
 
 On 2026-10-30 the owner said the reports are "not very good" and asked for a
 better approach to human–AI collaboration in reporting, and to deploying AI in a
@@ -47,7 +48,7 @@ company. This design answers that request. It builds on:
   - V4 关键发现条，以及"需要处理"和"待补数据"；
   - V5 新的总览 KPI 和涨跌，要等第 0–1 步完成。
 
-  合计约 10–13 个工作日。另有 P1–P5 五项决定待你确认。
+  合计约 10–13 个工作日。P1–P5 五项决定已于 2026-10-31 按推荐批准。
 
 ## 1. What is wrong today
 
@@ -478,6 +479,10 @@ Chinese. Sizes are rough, in working days.
 - **A meeting mode** (full screen, dark, large type, rotating dashboards), with the weekly brief (§8).
 
 ### 13.4 Decisions for the owner
+
+**Decided 2026-10-31:** the owner approved every decision below as recommended
+("按推荐"). Under P5, V1 may be built whenever there is room; the rest follow
+§9 steps 0–1 in December.
 
 | # | Decision | Recommendation |
 | --- | --- | --- |
