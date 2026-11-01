@@ -6,7 +6,7 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { runAiReadTool } from './ai-read-tool-runner.mjs'
 import { aiCallCostMicros, aiUsagePrices, runWithAiUsageScope } from './ai-usage-meter.mjs'
 import { checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
-import { AI_MODEL_FIRST_LIMITS, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstTurns, parseAiModelFirstAnswer, presentAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
+import { AI_MODEL_FIRST_LIMITS, aiModelFirstEnabled, aiModelFirstEntry, aiModelFirstHidden, aiModelFirstTurns, parseAiModelFirstAnswer, presentAiModelFirstAnswer, runAiModelFirstLoop } from './ai-model-first.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 
 // The model-first loop (docs/ai-model-first-design.md §3) against a scripted
@@ -393,6 +393,71 @@ test('no data crosses roles: a role gets only its tools, and the provider never 
   assert.equal(invented.reason, 'grounding')
 })
 
+test('a Chinese record state that reads as an action gets its status form in the retry', async () => {
+  const { facts, context, today } = await factsFor()
+  // The first answer writes 已过账 as if it acted; the retry quotes the status form to use.
+  const posted = scripted([toolUse([['list_receipts', {}]]), final({ title: '收货单', answer: '收货单已过账。', records: [] }), final({ title: '收货单', answer: '收货单状态：已过账。', records: [] })])
+  const outcome = await runAiModelFirstLoop(loop(posted, { facts, context, today, language: 'zh-CN', question: '哪些收货单需要处理？' }))
+  assert.equal(outcome.status, 'answered')
+  assert.equal(outcome.stats.grounding.outcome, 'passed_on_retry')
+  assert.match(posted.requests[2].body.messages.at(-1).content[0].text, /"已过账" → "状态：已过账"/)
+  assert.match(posted.requests[0].body.system[0].text, /状态：已取消/)
+})
+
+test('what the role cannot see goes with the question, the answer says so, and carries the rules\' notice', async () => {
+  const admin = await factsFor()
+  const finance = await factsFor('finance-specialist')
+  const viewer = await factsFor('read-only-viewer')
+  assert.equal(aiModelFirstHidden(admin.facts), null)
+  assert.deepEqual(aiModelFirstHidden(finance.facts), { sources: ['purchase_orders', 'purchase_requests', 'rfqs', 'inventory', 'receipts'], amountsOn: [] })
+  assert.deepEqual(aiModelFirstHidden(viewer.facts), { sources: [], amountsOn: ['purchase_orders', 'supplier_invoices'] })
+  const hidden = { title: 'Not visible to your role', answer: "Your role can't see purchase orders, so I can't answer this. Someone whose role can see purchase orders can help.", records: [] }
+  const stub = scripted([final(hidden)])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts: finance.facts, context: finance.context, today: finance.today, question: 'How much is still to receive on PO-012?' }))
+  assert.equal(outcome.status, 'answered')
+  assert.deepEqual(JSON.parse(stub.requests[0].body.messages[0].content[0].text).hiddenForRole, aiModelFirstHidden(finance.facts))
+  const system = stub.requests[0].body.system[0].text
+  assert.match(system, /Never call such data missing, blank, not recorded or not found/)
+  assert.match(system, /I couldn't find \{number\} in the records you can see/)
+  assert.match(system, /FlowChain does not record it/)
+  // Nothing hidden: no hiddenForRole.
+  const open = scripted([final({ title: 'x', answer: 'x', records: [] })])
+  await runAiModelFirstLoop(loop(open, { facts: admin.facts, today: admin.today }))
+  assert.equal(JSON.parse(open.requests[0].body.messages[0].content[0].text).hiddenForRole, undefined)
+  // The server says what is hidden, as the skills' answers do.
+  const present = (facts) => presentAiModelFirstAnswer({ answer: hidden, refs: [], stats: outcome.stats, facts, language: 'en-US', query: 'q' })
+  const notices = present(finance.facts).dataLimitations
+  assert.deepEqual(notices.map((row) => row.code), ['hidden_by_permission'])
+  assert.match(notices[0].description, /^Your role cannot view purchase orders/)
+  assert.deepEqual(present(viewer.facts).dataLimitations.map((row) => row.code), ['amounts_hidden', 'amounts_hidden'])
+  assert.deepEqual(present(admin.facts).dataLimitations, [])
+  assert.equal(present(finance.facts).limitationCount, 1)
+})
+
+test('a cited record that needs attention says what to do next, as a skill answer line does, and offers no draft', async () => {
+  // The lane's prefill-viewer-no-draft: a viewer's loop answer named the
+  // overdue orders but no line said what to do next.
+  for (const roleKey of ['read-only-viewer', 'workspace-administrator']) {
+    const { facts } = await factsFor(roleKey)
+    const overdue = facts.purchaseOrders.index.find((row) => row.isOpen && row.overdueDays > 0)
+    const ref = { type: 'purchase_order', id: overdue.id, label: overdue.orderNumber }
+    const answer = { title: `${overdue.orderNumber} is overdue`, answer: `${overdue.orderNumber} is overdue.`, records: [{ type: 'purchase_order', id: overdue.orderNumber }] }
+    const response = presentAiModelFirstAnswer({ answer, refs: [ref], stats: { calls: [] }, facts, language: 'en-US', query: 'Which purchase orders are overdue?' })
+    assert.ok(response.keyEvidence[0].nextStep, roleKey)
+    assert.deepEqual(response.reviewCards, [], roleKey)
+  }
+})
+
+test('a record number nobody can find gets the fixed not-found answer, which passes the check', async () => {
+  const { facts, context, today } = await factsFor()
+  const notFound = { title: 'EVAL-B-PO-999 not found', answer: "I couldn't find EVAL-B-PO-999 in the records you can see. Check the number, or tell me the supplier or item.", records: [] }
+  const stub = scripted([toolUse([['get_purchase_order', { order: 'EVAL-B-PO-999' }]]), final(notFound)])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts, context, today, question: 'What is the status of EVAL-B-PO-999?' }))
+  assert.deepEqual(outcome.stats.calls.map((call) => call.status), ['not_found'])
+  assert.equal(outcome.status, 'answered')
+  assert.equal(outcome.stats.grounding.outcome, 'passed')
+})
+
 // The workspace's documents, in memory, as the knowledge service reads them.
 const POLICY_SERVICE = {
   list: async () => ({ items: [{ id: 'DOC-1', title: 'Purchasing Policy', language: 'en-US' }] }),
@@ -514,6 +579,8 @@ test('through the gateway: a question about the documents goes to the loop, whic
   assert.deepEqual(searched.passages.map((row) => [row.document, row.section]), [['Purchasing Policy', 'Follow-up and escalation']])
   assert.equal(payload.checkedLabel, 'Checked: documents')
   assert.deepEqual(payload.keyEvidence.map((item) => [item.entityType, item.entityId]), [['document', 'DOC-1']])
+  // The cited document names the section its passage came from.
+  assert.equal(payload.keyEvidence[0].summary, 'Follow-up and escalation')
   // The loop searched the documents itself, so no second set of passages is added.
   assert.equal(payload.supplementalKnowledge, undefined)
   assert.equal(audits.at(-1).metadata.modelFirst.status, 'answered')
@@ -560,6 +627,76 @@ test('through the gateway: a contract question goes to the loop only where contr
   assert.ok(on.requests[0].body.tools.some((tool) => tool.name === 'list_contracts'))
   assert.deepEqual(payload.keyEvidence.map((item) => [item.entityType, item.entityLabel]), [['contract', 'CT-ACME0001']])
   assert.equal(payload.checkedLabel, 'Checked: contracts')
+  // The contract opens its own page.
+  assert.deepEqual(payload.navigationLinks.map((link) => [link.moduleId, link.entityType, link.entityId]), [['contracts:list', 'contract', 'CT-1']])
+})
+
+test('progress: the loop says what it reads, then that it writes and checks the answer, in codes only', async () => {
+  const { first } = await overdueFacts()
+  const events = []
+  const stub = scripted([
+    toolUse([['list_purchase_orders', { status: 'overdue' }], ['search_records', { query: 'Acme' }], ['calculate', { operation: 'sum', values: [1, 2] }]]),
+    final({ title: 'x', answer: 'PO-777 is 99 days overdue.', records: [] }),
+    final({ title: `${first.orderNumber} is overdue`, answer: `${first.orderNumber} is ${first.overdueDays} days overdue.`, records: [{ type: 'purchase_order', id: first.ref.id }] }),
+  ])
+  const outcome = await runAiModelFirstLoop(loop(stub, { facts: (await factsFor()).facts, onProgress: (event) => events.push(event) }))
+  assert.equal(outcome.status, 'answered')
+  // A failed check and its rewrite stay "checking"; nothing about the records.
+  assert.deepEqual(events, [{ step: 'reading', sources: ['purchase_orders', 'records', 'calculation'] }, { step: 'writing' }, { step: 'checking' }])
+  // A listener that throws never stops the answer.
+  const again = scripted([final({ title: 'Hello', answer: 'I can read your purchase orders.', records: [] })])
+  assert.equal((await runAiModelFirstLoop(loop(again, { facts: (await factsFor()).facts, onProgress: () => { throw new Error('gone') } }))).status, 'answered')
+})
+
+// A response the stream writes to, as http.ServerResponse would take it.
+function streamResponse() {
+  const res = { headers: null, chunks: [], ended: false, destroyed: false, writableEnded: false, on: () => res }
+  res.writeHead = (status, headers) => { res.status = status; res.headers = headers }
+  res.write = (chunk) => { res.chunks.push(chunk); return true }
+  res.end = () => { res.ended = true; res.writableEnded = true }
+  res.lines = () => res.chunks.join('').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+  return res
+}
+
+test('streaming: a client that accepts NDJSON gets the loop\'s progress, then the answer; anything else stays JSON', async () => {
+  const { first } = await overdueFacts()
+  const question = 'Which purchase order is the most overdue?'
+  const answer = { title: `${first.orderNumber} is the most overdue`, answer: `${first.orderNumber}: ${first.overdueDays} days past its promised date, the most days overdue.`, records: [{ type: 'purchase_order', id: first.ref.id }] }
+  const stream = { req: { method: 'POST', headers: { accept: 'application/x-ndjson, application/json' } } }
+  const res = streamResponse()
+  const streamed = gatewayContext({ message: question, fetchImpl: scripted([toolUse([['list_purchase_orders', { status: 'overdue' }]]), final(answer)]).fetchImpl, ctxExtra: { ...stream, res } })
+  await handleAiRuntimeGatewayRoute(streamed.ctx)
+  assert.equal(streamed.sent.length, 0, 'the answer goes down the stream')
+  assert.equal(res.status, 200)
+  assert.match(res.headers['Content-Type'], /^application\/x-ndjson/)
+  const lines = res.lines()
+  assert.deepEqual(lines.slice(0, -1), [
+    { type: 'progress', step: 'reading', sources: ['purchase_orders'] }, { type: 'progress', step: 'writing' }, { type: 'progress', step: 'checking' },
+  ])
+  assert.deepEqual({ type: lines.at(-1).type, status: lines.at(-1).status, intent: lines.at(-1).body.intent }, { type: 'answer', status: 200, intent: 'model_first' })
+  assert.ok(res.ended)
+  assert.ok(!res.chunks.slice(0, -1).join('').includes(first.orderNumber), 'progress lines carry no record')
+
+  // The rules answer after a failed loop goes down the same stream, with its notice.
+  const fallbackRes = streamResponse()
+  const fallback = gatewayContext({ message: 'Which purchase orders are overdue?', fetchImpl: scripted([final({ title: 'Late', answer: 'PO-777 is 99 days overdue.', records: [] })]).fetchImpl, ctxExtra: { ...stream, res: fallbackRes } })
+  await handleAiRuntimeGatewayRoute(fallback.ctx)
+  const last = fallbackRes.lines().at(-1)
+  assert.equal(last.type, 'answer')
+  assert.notEqual(last.body.intent, 'model_first')
+  assert.deepEqual(last.body.aiModelAccess, { status: 'unavailable', reason: 'unchecked' })
+
+  // A chip never reaches the loop: no stream, the usual JSON answer.
+  const chipRes = streamResponse()
+  const chip = gatewayContext({ message: 'What should I handle first today?', extra: { skillHint: 'today_priorities' }, fetchImpl: scripted([]).fetchImpl, ctxExtra: { ...stream, res: chipRes } })
+  await handleAiRuntimeGatewayRoute(chip.ctx)
+  assert.equal(chipRes.chunks.length, 0)
+  assert.equal(chip.sent.at(-1).status, 200)
+
+  // Without the NDJSON header the loop's answer is the usual JSON.
+  const plain = gatewayContext({ message: question, fetchImpl: scripted([toolUse([['list_purchase_orders', { status: 'overdue' }]]), final(answer)]).fetchImpl })
+  await handleAiRuntimeGatewayRoute(plain.ctx)
+  assert.equal(plain.sent.at(-1).payload.intent, 'model_first')
 })
 
 test('off by default: without the mode the gateway answers as before', async () => {

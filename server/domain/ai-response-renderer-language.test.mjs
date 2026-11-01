@@ -24,11 +24,11 @@ async function loadClient() {
     import { createElement } from 'react'
     import { renderToStaticMarkup } from 'react-dom/server'
     import { AiResponseV2Renderer } from './src/components/ai/AiResponseV2Renderer.tsx'
-    import { aiRecoveryReason, displaySafeAssistantRecoveryMessage } from './src/modules/ai-assistant/Panel.tsx'
+    import { aiRecoveryReason, displaySafeAssistantRecoveryMessage, getAiFollowUpChips } from './src/modules/ai-assistant/Panel.tsx'
     import { ApiError } from './src/lib/api-client.ts'
     import { autoOpenDraftCard, structuredDraftTarget } from './src/modules/action-drafts/structuredDraftHandoff.ts'
     export const render = (response) => renderToStaticMarkup(createElement(AiResponseV2Renderer, { response, onNavigate: () => {}, onReviewActionDraft: () => {}, onFollowUp: () => {} }))
-    export { aiRecoveryReason, displaySafeAssistantRecoveryMessage, ApiError, autoOpenDraftCard, structuredDraftTarget }
+    export { aiRecoveryReason, displaySafeAssistantRecoveryMessage, getAiFollowUpChips, ApiError, autoOpenDraftCard, structuredDraftTarget }
   `
   const result = await build({
     stdin: { contents: entry, resolveDir: root, loader: 'tsx', sourcefile: 'renderer-entry.tsx' },
@@ -137,4 +137,17 @@ test("a Chinese answer on the English interface gets Chinese labels, and no coun
   // "System notes 0" says nothing, so it is not shown.
   assert.doesNotMatch(english, /System notes 0/)
   assert.doesNotMatch(chinese, /系统说明 0/)
+})
+
+test("follow-up chips follow the answer's language, not the interface language", async () => {
+  const client = await loadClient()
+  const message = (language) => ({ role: 'assistant', content: '', cards: [{ type: 'ai_response_v2', data: { version: 'v2', intent: 'model_first', language, keyEvidence: [{ id: 'e1', entityType: 'purchase_order', entityId: 'PO-012', label: 'PO-012' }], navigationLinks: [], followUpSuggestions: [] } }] })
+  const chinese = client.getAiFollowUpChips(message('zh-CN'), 'en-US')
+  assert.ok(chinese.length > 0)
+  assert.ok(chinese.every((chip) => CJK.test(chip.label) && CJK.test(chip.prompt)), 'a Chinese answer on the English interface gets Chinese chips')
+  const english = client.getAiFollowUpChips(message('en-US'), 'zh-CN')
+  assert.ok(english.every((chip) => !CJK.test(chip.label) && !CJK.test(chip.prompt)), 'an English answer on the Chinese interface gets English chips')
+  // Without an answer language, the interface language decides.
+  const { language: _language, ...unlabelled } = message('en-US').cards[0].data
+  assert.ok(client.getAiFollowUpChips({ ...message('en-US'), cards: [{ type: 'ai_response_v2', data: unlabelled }] }, 'en-US').every((chip) => !CJK.test(chip.label)))
 })
