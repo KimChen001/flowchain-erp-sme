@@ -9,9 +9,21 @@ import { randomUUID } from 'node:crypto'
 
 const scope = new AsyncLocalStorage()
 
-// claude-haiku-4-5 list prices, US dollars per million tokens. Overridable
-// with FLOWCHAIN_AI_PRICE_INPUT_PER_MTOK / FLOWCHAIN_AI_PRICE_OUTPUT_PER_MTOK.
+// claude-haiku-4-5 list prices, US dollars per million tokens: the prices of a
+// model not listed below. Overridable with FLOWCHAIN_AI_PRICE_INPUT_PER_MTOK /
+// FLOWCHAIN_AI_PRICE_OUTPUT_PER_MTOK.
 export const AI_PRICE_DEFAULTS = Object.freeze({ inputPerMillion: 1, outputPerMillion: 5 })
+// The configured model's list prices (Anthropic, October 2026; Haiku 5.5 for
+// prompts up to 100K tokens), so the meter follows the model
+// (docs/ai-model-first-design.md §5). A cache read costs a tenth of an input
+// token and a five-minute cache write 1.25 times one.
+export const AI_MODEL_PRICES = Object.freeze({
+  'claude-haiku-5-5': Object.freeze({ inputPerMillion: 0.1, outputPerMillion: 0.5 }),
+  'claude-haiku-4-5': AI_PRICE_DEFAULTS,
+  'claude-sonnet-5-5': Object.freeze({ inputPerMillion: 2, outputPerMillion: 10 }),
+})
+const CACHE_READ_FACTOR = 0.1
+const CACHE_WRITE_FACTOR = 1.25
 
 const nonNegative = (value, fallback) => {
   const number = Number(value)
@@ -23,17 +35,23 @@ export function aiUsageMonth(date = new Date()) {
 }
 
 export function aiUsagePrices(env = {}) {
+  const listed = AI_MODEL_PRICES[String(env.FLOWCHAIN_AI_PROVIDER_MODEL ?? '').trim()] || AI_PRICE_DEFAULTS
   return {
-    inputPerMillion: nonNegative(env.FLOWCHAIN_AI_PRICE_INPUT_PER_MTOK, AI_PRICE_DEFAULTS.inputPerMillion),
-    outputPerMillion: nonNegative(env.FLOWCHAIN_AI_PRICE_OUTPUT_PER_MTOK, AI_PRICE_DEFAULTS.outputPerMillion),
+    inputPerMillion: nonNegative(env.FLOWCHAIN_AI_PRICE_INPUT_PER_MTOK, listed.inputPerMillion),
+    outputPerMillion: nonNegative(env.FLOWCHAIN_AI_PRICE_OUTPUT_PER_MTOK, listed.outputPerMillion),
   }
 }
 
-// Millionths of a dollar: tokens times dollars per million tokens.
+// Millionths of a dollar: tokens times dollars per million tokens. Input
+// counts every prompt token; the cache reads and writes inside it, when the
+// provider reports them, are priced as such.
 export function aiCallCostMicros(usage, prices = AI_PRICE_DEFAULTS) {
   const input = nonNegative(usage?.inputTokens, 0)
   const output = nonNegative(usage?.outputTokens, 0)
-  return Math.round(input * prices.inputPerMillion + output * prices.outputPerMillion)
+  const read = Math.min(input, nonNegative(usage?.cacheReadTokens, 0))
+  const write = Math.min(input - read, nonNegative(usage?.cacheWriteTokens, 0))
+  const prompt = (input - read - write) + read * CACHE_READ_FACTOR + write * CACHE_WRITE_FACTOR
+  return Math.round(prompt * prices.inputPerMillion + output * prices.outputPerMillion)
 }
 
 // Runs fn with a recorder for the provider calls it makes. record(usage)

@@ -38,7 +38,7 @@ export function aiProviderConfigured(env = {}) {
 // The same settings with every model path switched off: no provider mode, no
 // knowledge or embedding provider, and every model feature flag off.
 export function modelFreeEnv(env = {}) {
-  const next = { ...env, FLOWCHAIN_AI_RUNTIME_MODE: 'local', FLOWCHAIN_ENABLE_AI_SEMANTIC_PLANNER: 'false', FLOWCHAIN_AI_INTENT_ROUTING: 'false', FLOWCHAIN_AI_INTENT_SHADOW: 'false', FLOWCHAIN_AI_AGENT_MODE: 'off' }
+  const next = { ...env, FLOWCHAIN_AI_RUNTIME_MODE: 'local', FLOWCHAIN_ENABLE_AI_SEMANTIC_PLANNER: 'false', FLOWCHAIN_AI_INTENT_ROUTING: 'false', FLOWCHAIN_AI_INTENT_SHADOW: 'false', FLOWCHAIN_AI_AGENT_MODE: 'off', FLOWCHAIN_AI_ASSISTANT_MODE: 'rules' }
   for (const key of Object.keys(next)) if (key === 'FLOWCHAIN_KNOWLEDGE_PROVIDER' || key.startsWith('FLOWCHAIN_AI_EMBEDDING_')) delete next[key]
   return next
 }

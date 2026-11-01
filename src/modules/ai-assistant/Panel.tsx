@@ -79,6 +79,9 @@ type SafeConversationContext = {
   breadcrumbTrail?: Array<{ label: string; moduleId?: string; entityLabel?: string; returnTo: "ai-assistant" }>;
   lastResponseId?: string;
   returnContext?: { returnTo: "ai-assistant"; returnLabel: string; sourceModuleId?: string; sourceViewId?: string };
+  // The last few questions and answers of this panel, as text, so the
+  // model-first assistant reads a follow-up with what came before.
+  previousTurns?: Array<{ question: string; answer: string }>;
 };
 
 export const AI_EMPTY_STATE_PROMPT_CHIPS = [
@@ -312,6 +315,21 @@ function latestAiRuntimeResponse(messages: AiChatMessage[]): AiResponseV2 | null
   return aiRuntimeResponses(messages).at(-1) || null;
 }
 
+// Up to three earlier turns: each question with the headline and summary of
+// the answer that followed it.
+function previousTurns(messages: AiChatMessage[]) {
+  const turns: Array<{ question: string; answer: string }> = [];
+  messages.forEach((message, index) => {
+    if (message.role !== "user") return;
+    const reply = messages[index + 1];
+    const response = reply?.role === "assistant" ? (reply.cards || []).find((card) => card.type === "ai_response_v2" && card.data)?.data as unknown as AiResponseV2 | undefined : undefined;
+    if (!response) return;
+    const answer = [response.conclusion?.title, response.conclusion?.summary].filter(Boolean).join(" — ");
+    turns.push({ question: message.content.slice(0, 300), answer: answer.slice(0, 800) });
+  });
+  return turns.slice(-3);
+}
+
 function evidenceRefs(response: AiResponseV2 | null | undefined) {
   return (response?.keyEvidence || []).slice(0, 8).map((item) => ({
     id: item.id,
@@ -394,6 +412,7 @@ function buildSafeConversationContext(messages: AiChatMessage[], activeContext: 
       returnTo: "ai-assistant",
     })),
     lastResponseId: (response as (AiResponseV2 & { responseId?: string }) | null)?.responseId,
+    previousTurns: previousTurns(messages),
     returnContext: {
       returnTo: "ai-assistant",
       returnLabel: language === "zh-CN" ? "返回 AI 助手" : "Back to AI assistant",
@@ -712,11 +731,14 @@ export default function FloatingAiAssistant({
     setAsking(true);
     setInput("");
     setMessages((current) => [...current, { role: "user", content: message }]);
+    // A chip answers from its skill and keeps the 12 s limit. A typed question
+    // may go to the model-first loop, which takes up to 20 s before the rules
+    // answer instead.
     const timeout = window.setTimeout(() => {
       timeoutHit = true;
       abortReasonRef.current = "timeout";
       controller.abort();
-    }, 12000);
+    }, skillHint ? 12000 : 25000);
 
     try {
       const safeConversationContext = buildSafeConversationContext(messages, context, sessionGrounding, language);

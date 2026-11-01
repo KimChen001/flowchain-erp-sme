@@ -31,6 +31,7 @@ export type AiRuntimeRequestV2 = {
     breadcrumbTrail?: Array<Record<string, unknown>>;
     lastResponseId?: string;
     returnContext?: Record<string, unknown> | null;
+    previousTurns?: Array<{ question: string; answer: string }>;
   };
   sessionGrounding?: unknown;
   returnTo?: string;
