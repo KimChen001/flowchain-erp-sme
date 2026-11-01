@@ -23,6 +23,7 @@ const rendererCopy = {
     contextCount: "System notes {count}",
     limitationCount: "Data limitations {count}",
     primaryItems: "Priorities",
+    records: "Records",
     sections: "Answer by part",
     impact: "Impact: {impact}",
     nextStep: "Next step",
@@ -43,6 +44,7 @@ const rendererCopy = {
     contextCount: "系统说明 {count}",
     limitationCount: "数据限制 {count}",
     primaryItems: "重点事项",
+    records: "相关记录",
     sections: "分项回答",
     impact: "影响：{impact}",
     nextStep: "下一步",
@@ -129,6 +131,38 @@ function AnswerSection({ section, evidence, language, answerLanguage, onNavigate
   );
 }
 
+// The answer's own text as written: its line breaks kept, and its numbered or
+// bulleted lines shown as a list ("1.", "1、", "（1）", "-", "•").
+const LIST_LINE = /^(?:(\d{1,2})(?:[.)．]\s+|、\s*)|[（(](\d{1,2})[)）]\s*|[-•*·]\s+)/u;
+type TextBlock = { kind: "p" | "ol" | "ul"; start: number; lines: string[] };
+export function answerTextBlocks(text: string): TextBlock[] {
+  const blocks: TextBlock[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const match = line.match(LIST_LINE);
+    const number = match ? Number(match[1] || match[2] || 0) : 0;
+    const kind = match ? (number ? "ol" : "ul") : "p";
+    const content = match ? line.slice(match[0].length) : line;
+    const last = blocks[blocks.length - 1];
+    if (last && kind !== "p" && last.kind === kind) last.lines.push(content);
+    else blocks.push({ kind, start: number || 1, lines: [content] });
+  }
+  return blocks;
+}
+
+function AnswerText({ text, lang }: { text: string; lang?: string }) {
+  return (
+    <div data-testid="ai-answer-text" lang={lang} className="mt-1 space-y-1 text-xs leading-5" style={{ color: A.gray1 }}>
+      {answerTextBlocks(text).map((block, index) => block.kind === "p"
+        ? <p key={index}>{block.lines[0]}</p>
+        : block.kind === "ol"
+          ? <ol key={index} start={block.start} className="list-decimal space-y-0.5 pl-5">{block.lines.map((line, row) => <li key={row}>{line}</li>)}</ol>
+          : <ul key={index} className="list-disc space-y-0.5 pl-5">{block.lines.map((line, row) => <li key={row}>{line}</li>)}</ul>)}
+    </div>
+  );
+}
+
 function Detail({ title, children, testId }: { title: string; children: ReactNode; testId: string }) {
   return <details data-testid={testId} className="rounded-lg" style={{ border: `1px solid ${A.border}` }}><summary className="cursor-pointer px-3 py-2 text-xs font-semibold" style={{ color: A.gray1 }}>{title}</summary><div className="space-y-2 px-3 pb-3">{children}</div></details>;
 }
@@ -147,6 +181,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
   const sections = (response.sections || []).filter((section) => Boolean(section?.title));
   const compound = sections.length > 1;
   const evidenceById = new Map((response.keyEvidence || []).map((item) => [item.id, item]));
+  const citedOnly = focused.primaryItems.every((item) => !item.reason && !item.impact && !item.nextStep && !item.draft);
   return (
     <div data-testid="ai-response-v2" data-answer-mode={focused.answerMode} data-answer-source={response.answerSource || undefined} className="space-y-3 rounded-xl p-3" style={{ background: A.white, border: `1px solid ${A.border}` }}>
       {response.answerSourceLabel ? <div data-testid="ai-answer-source" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" style={{ color: A.gray2 }}><span className="inline-flex rounded-full px-2 py-0.5 font-semibold" style={{ background: A.gray6, color: A.gray1 }}>{response.answerSourceLabel}</span>{response.checkedLabel ? <span data-testid="ai-answer-checked">{response.checkedLabel}</span> : null}</div> : null}
@@ -156,7 +191,7 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
         : response.agentPlanning?.status === "degraded" ? <p data-testid="ai-limited-mode" role="status" className="rounded-md px-2 py-1 text-[11px]" style={{ background: "#FDF1E3", color: "#92400E" }}>{copy.limitedMode}</p> : null}
       {response.aiModelAccess?.status === "over_cap" ? <p data-testid="ai-over-cap" role="status" className="rounded-md px-2 py-1 text-[11px]" style={{ background: "#FDF1E3", color: "#92400E" }}>{copy.overCap}</p> : null}
       <section data-testid="ai-focused-conclusion">
-        <div className="flex items-start justify-between gap-2"><div lang={response.language || undefined}><h3 className="text-sm font-semibold leading-5" style={{ color: A.label }}>{focused.headline}</h3>{focused.summary && !compound ? <p className="mt-1 text-xs leading-5" style={{ color: A.gray1 }}>{focused.summary}</p> : null}</div><Chip tone={focused.severity}>{copy.severity[focused.severity]}</Chip></div>
+        <div className="flex items-start justify-between gap-2"><div lang={response.language || undefined}><h3 className="text-sm font-semibold leading-5" style={{ color: A.label }}>{focused.headline}</h3>{focused.summary && !compound ? <AnswerText text={focused.summary} /> : null}</div><Chip tone={focused.severity}>{copy.severity[focused.severity]}</Chip></div>
         {/* The help answer reads no records, so "0 records" would read as a failed lookup. */}
         {isAiCapabilityAnswer(response) ? null : (
           <div className="mt-2 flex gap-2 text-[11px]" style={{ color: A.gray2 }}>
@@ -172,7 +207,8 @@ export function AiResponseV2Renderer({ response, onNavigate, onReviewActionDraft
 
       {compound ? <section data-testid="ai-answer-sections" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy.sections}</div>{sections.map((section) => <AnswerSection key={section.id} section={section} evidence={(section.evidenceIds || []).map((id) => evidenceById.get(id)).filter((item): item is AiResponseV2EvidenceItem => Boolean(item))} language={language} answerLanguage={response.language} onNavigate={onNavigate} />)}</section> : null}
 
-      {!compound && focused.primaryItems.length ? <section data-testid="ai-focused-primary-items" className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy.primaryItems}</div>{focused.primaryItems.map((item) => <article key={item.id} className="rounded-lg p-2.5" style={{ background: A.gray6 }}><div className="flex items-start justify-between gap-2"><div className="min-w-0 text-xs font-semibold"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink></div>{item.status ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{item.status}</span> : null}</div><p className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>{item.reason}</p>{item.impact ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>{fill(copy.impact, { impact: item.impact })}</p> : null}{item.nextStep || item.draft ? <div data-testid="ai-line-next-step" className="mt-2 flex flex-wrap items-center gap-2">{item.nextStep ? <span className="text-[11px] font-medium leading-5" lang={response.language || undefined} style={{ color: A.blue }}>{item.nextStep}</span> : null}{item.draft ? <Action action={item.draft} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /> : null}</div> : null}</article>)}</section> : null}
+      {/* A line with something of its own to say (a reason, an impact, a next step or a draft) is a card under "Priorities". Records the answer only cites are a compact list of links under "Records": no stock sentence fills them. */}
+      {!compound && focused.primaryItems.length ? <section data-testid="ai-focused-primary-items" data-records={citedOnly ? "cited" : "priorities"} className="space-y-2"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{citedOnly ? copy.records : copy.primaryItems}</div>{citedOnly ? <ul className="space-y-1">{focused.primaryItems.map((item) => <li key={item.id} data-testid="ai-cited-record" className="flex items-start justify-between gap-2 text-[11px] leading-5"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink>{item.status ? <span className="shrink-0" style={{ color: A.gray2 }}>{item.status}</span> : null}</li>)}</ul> : focused.primaryItems.map((item) => <article key={item.id} className="rounded-lg p-2.5" style={{ background: A.gray6 }}><div className="flex items-start justify-between gap-2"><div className="min-w-0 text-xs font-semibold"><EvidenceLink item={item.evidence} onNavigate={onNavigate}>{item.title}</EvidenceLink></div>{item.status ? <span className="shrink-0 text-[11px]" style={{ color: A.gray2 }}>{item.status}</span> : null}</div>{item.reason ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.gray1 }}>{item.reason}</p> : null}{item.impact ? <p className="mt-1 text-[11px] leading-5" style={{ color: A.sub }}>{fill(copy.impact, { impact: item.impact })}</p> : null}{item.nextStep || item.draft ? <div data-testid="ai-line-next-step" className="mt-2 flex flex-wrap items-center gap-2">{item.nextStep ? <span className="text-[11px] font-medium leading-5" lang={response.language || undefined} style={{ color: A.blue }}>{item.nextStep}</span> : null}{item.draft ? <Action action={item.draft} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /> : null}</div> : null}</article>)}</section> : null}
 
       {focused.primaryAction || focused.secondaryActions.length ? <section data-testid="ai-focused-actions"><div className="text-[11px] font-semibold" style={{ color: A.gray1 }}>{copy.nextStep}</div><div className="mt-2 flex flex-wrap gap-2">{focused.primaryAction ? <Action action={focused.primaryAction} primary onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} /> : null}{focused.secondaryActions.map((action, index) => <Action key={`${action.kind}-${action.label}-${index}`} action={action} onNavigate={onNavigate} onReviewActionDraft={onReviewActionDraft} language={language} />)}</div></section> : null}
 
