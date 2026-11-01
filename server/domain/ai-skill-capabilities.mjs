@@ -2,6 +2,7 @@ import { aiSkillCountText, aiSkillList, aiSkillSentences, aiSkillText } from './
 import { aiSkillFormatter, aiSkillMetricSentences, presentAiSkillAnswer } from './ai-skill-presenter.mjs'
 import { buildAiSkillSignals, rankAiSkillItemsByDate } from './ai-skill-signals.mjs'
 import { toolsFor } from './ai-skill-registry.mjs'
+import { aiSkillAboutCustomers } from './ai-skill-router.mjs'
 
 // The capability answer: what the assistant can do, as follow-up prompts for
 // the skills this actor may use. It answers any question no skill matches,
@@ -32,8 +33,14 @@ const TOPICS = [
   ['suppliers', [/\b(?:suppliers?|vendors?)\b/i, /供应商|供方/], ['supplier_attention', 'purchase_orders', 'invoice_summary', 'receiving_issues']],
 ]
 
+// Customers, their orders, shipments and what they owe: no skill answers them
+// yet, so the capability answer says so rather than guessing at a topic.
+const SHIPPING = [/\bshipments?\b|\bship(?:ping)?\s+(?:to|for)\s+customers?\b/i, /发货|出货/]
+const SUPPLIER_WORD = /\b(?:suppliers?|vendors?)\b|供应商|供方/i
+
 export function aiSkillQuestionTopic(query) {
   const question = String(query ?? '')
+  if (aiSkillAboutCustomers(question) || (SHIPPING.some((pattern) => pattern.test(question)) && !SUPPLIER_WORD.test(question))) return { id: 'sales', skills: [] }
   const topic = TOPICS.find(([, patterns]) => patterns.some((pattern) => pattern.test(question)))
   return topic ? { id: topic[0], skills: topic[2] } : null
 }
@@ -50,7 +57,7 @@ export function presentCapabilityOverview(result, _facts, { skill, language, que
         result.contracts ? aiSkillText('capability.contracts', language) : '',
         result.outOfDomain ? aiSkillText('capability.outside', language) : '',
         result.unsupported?.length ? aiSkillText(result.unsupported.length > 1 ? 'capability.unsupported_ids' : 'capability.unsupported_id', language, { id: aiSkillList(result.unsupported, language) }) : '',
-        topic && !result.contracts && !result.unsupported?.length ? aiSkillText('capability.topic', language, { topic: aiSkillText(`topic.${topic.id}`, language) }) : '',
+        topic && !result.contracts && !result.unsupported?.length ? (topic.id === 'sales' ? aiSkillText('capability.sales', language) : aiSkillText('capability.topic', language, { topic: aiSkillText(`topic.${topic.id}`, language) })) : '',
         aiSkillText('capability.summary', language),
       ], language),
     severity: result.refusal ? 'warning' : 'info',
