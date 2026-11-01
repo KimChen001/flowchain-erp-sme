@@ -81,6 +81,18 @@ function currencyCodes(word) {
 // number or a date written in them counts as given, whatever it measures.
 const PROSE_KEYS = new Set(['excerpt', 'section', 'document'])
 const PROSE_NUMBER = /(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w.])\d+(?:\.\d+)?/g
+// A count a passage writes as a word ("within three business days",
+// 三个工作日), which an answer writes as 3. From two to twenty only: "one" and
+// 一 mean much else in prose, and a compound ("three-way match") is no count.
+const PROSE_WORDS = Object.freeze({ two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20 })
+const PROSE_WORD = new RegExp(`\\b(${Object.keys(PROSE_WORDS).join('|')})\\b(?!-)`, 'gi')
+const ZH_DIGITS = Object.freeze({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 })
+const ZH_COUNT = /([二两三四五六七八九]?十[一二三四五六七八九]?|[二两三四五六七八九])\s*(?=个|天|日|周|次|件|家|笔|名|项|条|份|小时|工作日|月|年)/g
+const zhCount = (value) => {
+  if (!value.includes('十')) return ZH_DIGITS[value]
+  const [tens, ones] = value.split('十')
+  return (tens ? ZH_DIGITS[tens] : 1) * 10 + (ones ? ZH_DIGITS[ones] : 0)
+}
 
 // Everything the tool results of this answer hold: their strings (one text to
 // search), their numbers with the key and currency they came with, and their
@@ -111,6 +123,8 @@ export function aiGroundingSources(results = []) {
       })
     }
     for (const match of rest.matchAll(PROSE_NUMBER)) numbers.push({ value: Number(match[0].replace(/,/g, '')), key: 'text', currency: null, unit: null })
+    for (const match of rest.matchAll(PROSE_WORD)) numbers.push({ value: PROSE_WORDS[match[1].toLowerCase()], key: 'text', currency: null, unit: null })
+    for (const match of rest.matchAll(ZH_COUNT)) numbers.push({ value: zhCount(match[1]), key: 'text', currency: null, unit: null })
   }
   const walk = (value, key = '', parent = null) => {
     if (value === null || value === undefined) return

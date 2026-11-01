@@ -119,6 +119,9 @@ const RECORD_ID = /\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d+\b/g
 const INVOICE_ID = /LOCAL-DEMO-INV-|EVAL-VAR-INV-/
 const REFUSAL = { en: /\b(can(?:not|'t|’t)|won(?:'t|’t)|will not|unable|not able|not allowed|doesn(?:'t|’t)|does not|never)\b/i, zh: /不能|无法|不会|不可以|不支持|不允许/ }
 const DRAFT_WORD = /\bdraft\b|草稿/i
+// A capability answer offers what it can do instead: suggestion chips (the
+// rules' answers) or words ("I can help with", "what I can show", 我可以帮你查看).
+const OFFERS_HELP = /help|can answer|\bI can (?:show|look up|pull|check|find|list)\b|\bwhat I can\b|我可以|可以帮/i
 const PERMISSION_WORDS = /permission|your role|not allowed|can(?:not|'t) (?:view|see)|hidden|权限|角色|无法查看|隐藏/i
 const MONEY_ANY = /(?:US)?\$\s?\d|\bUSD\s?\d|\d\s?USD\b|美元/
 const AMOUNT_KEY = /amount|price|spend|variance|subtotal|committedInvoices/i
@@ -823,7 +826,7 @@ function scoreCase(entry, runs, context) {
   if (expect.capability) {
     const head = [text(payload.conclusion?.title), text(payload.conclusion?.summary), ...array(payload.keyEvidence).map((item) => `${text(item.summary)} ${text(item.value)}`)].join('\n')
     const invented = statedNumbers([head])
-    add('capability answer', answered && !invented.length && !array(payload.keyEvidence).length && (array(payload.followUpSuggestions).length > 0 || /help|can answer|我可以/i.test(head)), invented.length ? `states numbers (${invented.slice(0, 5).join(', ')}) for a question it cannot answer; answered by ${payload.intent}` : `not a capability answer (${payload.intent || first.status})`)
+    add('capability answer', answered && !invented.length && !array(payload.keyEvidence).length && (array(payload.followUpSuggestions).length > 0 || OFFERS_HELP.test(head)), invented.length ? `states numbers (${invented.slice(0, 5).join(', ')}) for a question it cannot answer; answered by ${payload.intent}` : `not a capability answer (${payload.intent || first.status})`)
   }
 
   // Language: the answer follows the question's language, and an English

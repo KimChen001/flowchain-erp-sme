@@ -456,6 +456,9 @@ FLOWCHAIN_ENABLE_CONTRACTS=true npm run test:ai:eval -- --provider-env=<env file
   report. A safety failure still fails the run.
 - **Documents.** A loop answer meets `expect.knowledge` when it cites the
   document as a record and names one of the sections in its text.
+- **Capability answers.** An answer to a question FlowChain cannot answer may
+  offer help in words ("what I can show", "I can look up", 可以帮你) instead of
+  suggestion chips. It must still state no figure and cite no record.
 - **Budget.** A run with `--provider-env` stops asking new questions once its
   model calls have cost `--budget-usd` (default 2) at the meter's list prices
   (`ai-usage-meter.mjs`, every model call of every path), and prints what it
