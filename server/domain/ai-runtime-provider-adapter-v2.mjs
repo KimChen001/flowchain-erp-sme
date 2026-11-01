@@ -1,5 +1,6 @@
 import { recordAiProviderCall } from './ai-usage-meter.mjs'
 import {
+  aiProviderIdentityHeaders,
   callProviderSpecificAdapter,
   isProviderSpecificKind,
   selectProviderSpecificAdapter,
@@ -206,6 +207,7 @@ export async function callGenericHttpProvider(providerInput, env = {}, fetchImpl
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${config.apiKey}`,
+        ...aiProviderIdentityHeaders(env),
       },
       body: JSON.stringify(providerInput),
       signal: controller.signal,

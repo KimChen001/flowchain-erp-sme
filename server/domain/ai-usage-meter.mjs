@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { randomUUID } from 'node:crypto'
 
 // Model usage per workspace and calendar month (UTC), for the AI spend cap
 // (ai-workspace-access.mjs). The assistant gateway opens a scope for each
@@ -39,8 +40,16 @@ export function aiCallCostMicros(usage, prices = AI_PRICE_DEFAULTS) {
 // receives { inputTokens, outputTokens } or null when the provider reported
 // none; the call is still counted. Without a recorder nothing is counted, but
 // the calls that failed are still noted for the answer (aiProviderFailures).
+// Each scope also has a random session id, which the provider calls of this
+// request share (a provider that routes by conversation asks for one; see
+// FLOWCHAIN_AI_PROVIDER_SESSION_HEADER). It says nothing about the workspace.
 export function runWithAiUsageScope(record, fn) {
-  return scope.run({ record: typeof record === 'function' ? record : null, failures: [] }, fn)
+  return scope.run({ record: typeof record === 'function' ? record : null, failures: [], sessionId: randomUUID() }, fn)
+}
+
+// This request's session id, or null outside an assistant request.
+export function aiProviderSessionId() {
+  return scope.getStore()?.sessionId || null
 }
 
 export async function recordAiProviderCall(response) {
