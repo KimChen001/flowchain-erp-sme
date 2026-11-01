@@ -106,6 +106,18 @@ test('the read tools answer from the seeded workspace, each role reading only wh
     // PO-020 buys LDM-004, which no open sales order needs.
     assert.ok(results.late_order_impact.skus.every((row) => row.sku !== 'LDM-001'))
     assert.ok(aiReadToolRefs(results.list_purchase_orders).length > 0)
+    // Tier 1 suppliers' overdue orders, counted by the tool: the eval's
+    // tier_overdue_po:1, which the model otherwise counts by picking rows.
+    const tierOneNames = (await runAiReadTool('list_suppliers', { tier: 1, limit: 50 }, admin)).result.rows.map((row) => row.name)
+    assert.ok(tierOneNames.length > 0, 'the walkthrough has Tier 1 suppliers')
+    const allOverdue = (await runAiReadTool('list_purchase_orders', { status: 'overdue', limit: 50 }, admin)).result.rows
+    const tierOne = (await runAiReadTool('list_purchase_orders', { status: 'overdue', tier: 1, limit: 50 }, admin)).result
+    const expected = allOverdue.filter((row) => tierOneNames.includes(row.supplier)).map((row) => row.orderNumber)
+    assert.ok(expected.length > 0 && expected.length < allOverdue.length, `${expected.length} of ${allOverdue.length} overdue orders are Tier 1`)
+    assert.equal(tierOne.total, expected.length)
+    assert.deepEqual(tierOne.rows.map((row) => row.orderNumber), expected)
+    assert.equal(tierOne.bySupplier.reduce((sum, row) => sum + row.orders, 0), expected.length)
+    assert.ok(tierOne.bySupplier.every((row) => tierOneNames.includes(row.supplier)))
 
     // A viewer reads the same records without prices or amounts.
     const viewer = await contextFor('viewer')
