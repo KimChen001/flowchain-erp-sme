@@ -255,7 +255,8 @@ export function extractCandidateFromProviderResponse(rawResponse) {
   return { ok: true, ...reported, rawOutput: { conclusion: { summary: candidate } } }
 }
 async function parseResponse(response, config) {
-  if (!response.ok) return { ok: false, reason: 'non_success_status' }
+  // 402: the provider's spending limit is reached (the answer says so).
+  if (!response.ok) return { ok: false, reason: 'non_success_status', ...(response.status === 402 ? { budgetExceeded: true } : {}) }
   const contentType = response.headers?.get?.('content-type') || ''
   let raw
   if (/application\/json/i.test(contentType)) raw = await response.json()

@@ -4,7 +4,7 @@ import { canCallConfiguredProvider, callConfiguredProvider } from './ai-runtime-
 import { anthropicChatAdapter } from './ai-runtime-provider-specific-adapters-v2.mjs'
 import { knowledgeProviderEnv } from './ai-knowledge-config.mjs'
 import { AI_MONTHLY_CAP_DEFAULT_USD, aiMonthlyCapUsd, aiOptInRequired, modelFreeEnv, readAiWorkspaceAccess, withAiWorkspaceAccess } from './ai-workspace-access.mjs'
-import { aiCallCostMicros, aiUsageMonth } from './ai-usage-meter.mjs'
+import { aiCallCostMicros, aiProviderFailures, aiUsageMonth } from './ai-usage-meter.mjs'
 import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { handleAiRuntimeGatewayRoute } from '../routes/ai-runtime-gateway.routes.mjs'
 
@@ -125,4 +125,54 @@ test('over the cap, the assistant answers without a model and says so', async ()
   assert.equal(picks.length, 0, 'intent routing is off over the cap')
   // Other routes are not looked at, and pass through untouched.
   assert.equal(await handleAiRuntimeGatewayRoute({ ...ctx, url: new URL('http://local/api/reports/overview') }), false)
+})
+
+test('a failed model call is noted for the answer, and a provider out of budget is told apart', async () => {
+  const env = { ...PROVIDER }
+  const ctx = { env, identity: { authenticated: true, tenantId: TENANT }, aiWorkspacePrisma: fakePrisma() }
+  const status = (code) => async () => new Response('{"error":{"code":"BUDGET_EXCEEDED"}}', { status: code, headers: { 'content-type': 'application/json' } })
+  const input = { task: { type: 'skill_intent_classification', question: 'hi' } }
+  await withAiWorkspaceAccess(ctx, async (scoped) => {
+    assert.deepEqual(aiProviderFailures(), [])
+    await callConfiguredProvider(input, scoped.env, reply({ prompt_tokens: 10, completion_tokens: 1 }))
+    assert.deepEqual(aiProviderFailures(), [], 'a call that answered is not a failure')
+    assert.deepEqual(await callConfiguredProvider(input, scoped.env, status(500)), { ok: false, reason: 'non_success_status' })
+    assert.deepEqual(await callConfiguredProvider(input, scoped.env, status(402)), { ok: false, reason: 'non_success_status', budgetExceeded: true })
+    assert.deepEqual(aiProviderFailures(), ['error', 'budget'])
+  })
+  // Without a database the calls are not counted, but failures are still noted.
+  await withAiWorkspaceAccess({ env, identity: { authenticated: true, tenantId: TENANT } }, async (scoped) => {
+    await callConfiguredProvider(input, scoped.env, status(503))
+    assert.deepEqual(aiProviderFailures(), ['error'])
+  })
+  // Each request starts afresh, and outside one nothing is noted.
+  await withAiWorkspaceAccess(ctx, async () => assert.deepEqual(aiProviderFailures(), []))
+  assert.deepEqual(aiProviderFailures(), [])
+})
+
+test('an answer whose model call failed says the rules answered, and why when the provider is out of budget', async () => {
+  const scenario = aiSkillScenario()
+  const sent = []
+  const status = (code) => async () => new Response('{}', { status: code, headers: { 'content-type': 'application/json' } })
+  const ask = async (code) => {
+    const ctx = {
+      ...scenario.ctx,
+      req: { method: 'POST', headers: {} }, res: {}, url: new URL('http://local/api/ai-runtime/respond'),
+      db: { __dataMode: 'user', purchaseOrders: [], products: [], suppliers: [] },
+      env: { ...PROVIDER, FLOWCHAIN_PERSISTENCE_MODE: 'database', FLOWCHAIN_AI_INTENT_ROUTING: 'true' },
+      aiWorkspacePrisma: fakePrisma({ tenantId: scenario.ctx.identity.tenantId }),
+      // Intent routing calls the provider, which refuses with this status.
+      aiSkillIntentProvider: async (input, env) => callConfiguredProvider(input, env, status(code)),
+      send: (_res, statusCode, payload) => sent.push({ status: statusCode, payload }),
+      readBody: async () => ({ message: 'is there anything I should chase with the warehouse folks', answerLanguage: 'en-US' }),
+    }
+    ctx.repositories = { ...ctx.repositories, auditLog: { mode: 'database', recordAuditEntry: async (entry) => entry } }
+    assert.equal(await handleAiRuntimeGatewayRoute(ctx), true)
+    return sent.at(-1)
+  }
+  const budget = await ask(402)
+  assert.equal(budget.status, 200)
+  assert.deepEqual(budget.payload.aiModelAccess, { status: 'unavailable', reason: 'budget' })
+  const down = await ask(503)
+  assert.deepEqual(down.payload.aiModelAccess, { status: 'unavailable' })
 })
