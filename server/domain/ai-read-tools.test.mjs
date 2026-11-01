@@ -49,10 +49,27 @@ test('an administrator is offered every read tool, and each answers with capped 
   const days = overdue.result.rows.map((row) => row.overdueDays)
   assert.deepEqual(days, [...days].sort((a, b) => b - a))
   assert.ok(overdue.result.rows.every((row) => row.ref.type === 'purchase_order' && row.ref.label === row.orderNumber))
+  // Counts per supplier are the tool's own, over every matching order.
+  assert.equal(overdue.result.bySupplier.reduce((sum, row) => sum + row.orders, 0), overdue.result.total)
+  assert.ok(overdue.result.bySupplier.every((row) => row.ref.type === 'supplier'))
+  // A supplier tier's orders, with their own total: "which Tier 1 suppliers
+  // have overdue orders" needs a count no other field holds.
+  const first = facts.purchaseOrders.index.find((row) => row.isOpen && row.overdueDays > 0)
+  const tiered = { ...facts, suppliers: facts.suppliers.map((row) => ({ ...row, tier: row.id === first.supplierId ? 1 : 3 })) }
+  const tierOne = (await runAiReadTool('list_purchase_orders', { status: 'overdue', tier: 1 }, { facts: tiered })).result
+  const own = facts.purchaseOrders.index.filter((row) => row.isOpen && row.overdueDays > 0 && row.supplierId === first.supplierId)
+  assert.equal(tierOne.total, own.length)
+  assert.deepEqual(tierOne.rows.map((row) => row.orderNumber).sort(), own.map((row) => row.orderNumber).sort())
+  assert.deepEqual(tierOne.bySupplier.map((row) => [row.supplier, row.orders]), [[first.supplier, own.length]])
+  const tierTwo = (await runAiReadTool('list_purchase_orders', { status: 'overdue', tier: 2 }, { facts: tiered })).result
+  assert.deepEqual([tierTwo.total, tierTwo.rows, tierTwo.bySupplier], [0, [], []])
+  assert.equal((await runAiReadTool('list_purchase_orders', { tier: 1 }, { facts: { ...facts, suppliers: null } })).error, 'tiers_not_readable')
   // A number's end finds the order, whatever its case.
   const order = await runAiReadTool('get_purchase_order', { order: 'po-001' }, { facts })
   assert.equal(order.result.order.orderNumber, 'PO-001')
   assert.ok(order.result.openLines.length > 0)
+  // As people type it: without zero padding or separators.
+  for (const typed of ['PO-1', 'po 1', 'PO1']) assert.equal((await runAiReadTool('get_purchase_order', { order: typed }, { facts })).result?.order.orderNumber, 'PO-001', typed)
   assert.deepEqual(await runAiReadTool('get_purchase_order', { order: 'PO-999' }, { facts }), { ok: false, error: 'not_found' })
   // The late order impact judges a named order on its own.
   const impact = await runAiReadTool('late_order_impact', { orders: ['PO-001'] }, { facts })
@@ -71,6 +88,7 @@ test('arguments are checked against the schema before a tool runs', async () => 
   assert.equal(await bad('list_purchase_orders', { status: 'open', extra: true }), 'invalid_arguments')
   assert.equal(await bad('list_purchase_orders', { limit: 0 }), 'invalid_arguments')
   assert.equal(await bad('list_purchase_orders', { limit: 2.5 }), 'invalid_arguments')
+  assert.equal(await bad('list_purchase_orders', { tier: 4 }), 'invalid_arguments')
   assert.equal(await bad('get_purchase_order', {}), 'invalid_arguments')
   assert.equal(await bad('spend_analysis', { currency: 'dollars' }), 'invalid_arguments')
   assert.equal(await bad('calculate', { operation: 'days_between', dates: ['28/10/2026', '2026-11-01'] }), 'invalid_arguments')

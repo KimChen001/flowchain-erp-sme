@@ -98,7 +98,9 @@ export function aiToolSupplier(facts, query) {
 }
 
 // A purchase order the model named, by id or order number, or by the number's
-// end ("PO-020" for ACME-PO-020) when only one order ends that way.
+// end ("PO-020" for ACME-PO-020) when only one order ends that way. Failing
+// those, by its number without zero padding or separators ("PO-12", "po 12"
+// or "PO12" for ACME-PO-012), again only when one order matches.
 export function aiToolPurchaseOrder(facts, query) {
   const index = array(facts?.purchaseOrders?.index)
   const wanted = fold(query)
@@ -106,5 +108,19 @@ export function aiToolPurchaseOrder(facts, query) {
   const exact = index.find((row) => fold(row.id) === wanted || fold(row.orderNumber) === wanted)
   if (exact) return exact
   const ending = index.filter((row) => fold(row.orderNumber).endsWith(`-${wanted}`) || fold(row.orderNumber).endsWith(wanted))
-  return ending.length === 1 ? ending[0] : null
+  if (ending.length) return ending.length === 1 ? ending[0] : null
+  const asked = numbered(wanted)
+  if (!asked) return null
+  const same = index.filter((row) => {
+    const own = numbered(row.orderNumber)
+    return own && own.number === asked.number && own.prefix.endsWith(asked.prefix)
+  })
+  return same.length === 1 ? same[0] : null
+}
+
+// A record number's letters before its trailing digits, without separators,
+// and the digits as a number: "LOCAL-ACME-PO-012" is localacmepo and 12.
+function numbered(value) {
+  const match = fold(value).match(/^(.*?)(\d+)$/)
+  return match ? { prefix: match[1].replace(/[\s_-]+/g, ''), number: Number(match[2]) } : null
 }

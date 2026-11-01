@@ -1,4 +1,4 @@
-import { AI_ANSWER_ACTION_CLAIMS } from './ai-answer-claims.mjs'
+import { aiAnswerActionClaims, aiAnswerRecordStates } from './ai-answer-claims.mjs'
 
 // The grounding check of the model-first assistant (docs/ai-model-first-design.md
 // §3, decision M3): it replaces the slot templates. From the answer's title and
@@ -16,6 +16,11 @@ import { AI_ANSWER_ACTION_CLAIMS } from './ai-answer-claims.mjs'
 // listed with its kind; the loop gives the model one retry with the list, and
 // the audit row keeps the kinds and counts only, never the text.
 //
+// The conversation so far (the earlier questions and answers) counts as given
+// for record numbers and known names only: they name what was discussed, so
+// "I did not mean to choose LDM-001 for you" passes. A figure or a date from an
+// earlier turn must be read again.
+//
 // What it cannot see: rankings ("the most urgent"), "all" or "none" claims,
 // numbers written as words (three, 三), a shortened name ("Acme" for Acme
 // Components), and reasoning between correct numbers. The prompt asks for the
@@ -27,7 +32,16 @@ const fold = (value) => text(value).normalize('NFKC').toLowerCase()
 const CJK = /[㐀-鿿]/u
 const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-export const AI_GROUNDING_KINDS = Object.freeze(['record', 'name', 'date', 'number', 'citation', 'action_claim', 'format'])
+export const AI_GROUNDING_KINDS = Object.freeze(['record', 'name', 'date', 'number', 'citation', 'action_claim', 'limit_claim', 'format'])
+
+// Wording that blames a permission or a system limit for what the assistant
+// does not do itself. Where it can propose (it opens a filled-in form for the
+// user to submit), that is not why: the user confirms every change by design.
+const LIMIT_CLAIMS = [
+  /没有[^。，！？,.!?]{0,8}权限|无权|权限不足|权限(?:只能|仅能|有限|不够)|系统(?:设定|设置)?的?限制|系统不允许|不被允许|(?:无法|不能)(?:直接|帮你|帮您|为你|为您)?(?:创建|新建|建立)/,
+  /\b(?:cannot|can't|am unable to|unable to)\s+(?:directly\s+)?(?:create|make)\b/i,
+  /\b(?:do not|don't|cannot|can't)\s+have\s+(?:the\s+)?permission\b|\bno permission\b|\bmy permissions? (?:only|are limited)\b|\bnot (?:allowed|permitted) to\b|\bsystem (?:limit|limits|restriction|restrictions)\b/i,
+]
 
 // Record numbers: letters, then hyphenated parts ending in digits.
 const RECORD = /(?<![\w-])[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+[A-Za-z0-9]*(?![\w-])/g
@@ -67,6 +81,18 @@ function currencyCodes(word) {
 // number or a date written in them counts as given, whatever it measures.
 const PROSE_KEYS = new Set(['excerpt', 'section', 'document'])
 const PROSE_NUMBER = /(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w.])\d+(?:\.\d+)?/g
+// A count a passage writes as a word ("within three business days",
+// 三个工作日), which an answer writes as 3. From two to twenty only: "one" and
+// 一 mean much else in prose, and a compound ("three-way match") is no count.
+const PROSE_WORDS = Object.freeze({ two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20 })
+const PROSE_WORD = new RegExp(`\\b(${Object.keys(PROSE_WORDS).join('|')})\\b(?!-)`, 'gi')
+const ZH_DIGITS = Object.freeze({ 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 })
+const ZH_COUNT = /([二两三四五六七八九]?十[一二三四五六七八九]?|[二两三四五六七八九])\s*(?=个|天|日|周|次|件|家|笔|名|项|条|份|小时|工作日|月|年)/g
+const zhCount = (value) => {
+  if (!value.includes('十')) return ZH_DIGITS[value]
+  const [tens, ones] = value.split('十')
+  return (tens ? ZH_DIGITS[tens] : 1) * 10 + (ones ? ZH_DIGITS[ones] : 0)
+}
 
 // Everything the tool results of this answer hold: their strings (one text to
 // search), their numbers with the key and currency they came with, and their
@@ -97,6 +123,8 @@ export function aiGroundingSources(results = []) {
       })
     }
     for (const match of rest.matchAll(PROSE_NUMBER)) numbers.push({ value: Number(match[0].replace(/,/g, '')), key: 'text', currency: null, unit: null })
+    for (const match of rest.matchAll(PROSE_WORD)) numbers.push({ value: PROSE_WORDS[match[1].toLowerCase()], key: 'text', currency: null, unit: null })
+    for (const match of rest.matchAll(ZH_COUNT)) numbers.push({ value: zhCount(match[1]), key: 'text', currency: null, unit: null })
   }
   const walk = (value, key = '', parent = null) => {
     if (value === null || value === undefined) return
@@ -160,7 +188,9 @@ function numberKindFits(source, kind, currencies) {
 // they returned; `question` the user's question; `facts` the asking user's
 // facts (for the names); `today` the day the model was given. Returns
 // { ok, problems: [{ kind, value }], counts: { kind: n }, checked: { kind: n } }.
-export function checkAiModelFirstGrounding({ answer, results = [], refs = [], question = '', facts = null, today = null }) {
+// `limitClaims`: the assistant could propose this answer's action, so a
+// permission or system-limit excuse fails the check.
+export function checkAiModelFirstGrounding({ answer, results = [], refs = [], question = '', conversation = '', facts = null, today = null, limitClaims = false }) {
   const problems = []
   const checked = { record: 0, name: 0, date: 0, number: 0, citation: 0 }
   const fail = (kind, value) => { if (!problems.some((row) => row.kind === kind && row.value === value)) problems.push({ kind, value }) }
@@ -169,6 +199,8 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   if (!body) fail('format', 'answer')
   const sources = aiGroundingSources(results)
   const asked = fold(question)
+  // Record numbers and names may also come from the conversation so far.
+  const named = fold(`${question}\n${conversation}`)
   const given = aiGroundingSources([question])
   if (today) { sources.days.add(today); sources.months.add(today.slice(0, 7)) }
   let rest = `${title}\n${body}`.normalize('NFKC').replace(/^\s*(?:\d{1,2}[.)]|[-*•])\s+/gm, ' ')
@@ -180,7 +212,9 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     if (NOT_RECORD.test(token)) return token
     checked.record += 1
     const value = fold(token)
-    const found = inText(sources.haystack, value) || new RegExp(`-${escape(value)}($|[^a-z0-9])`, 'u').test(sources.haystack) || inText(asked, value)
+    // The question may write it without the hyphen ("LDM001").
+    const squeezed = (value) => value.replace(/[-\s]/g, '')
+    const found = inText(sources.haystack, value) || new RegExp(`-${escape(value)}($|[^a-z0-9])`, 'u').test(sources.haystack) || inText(named, value) || inText(squeezed(named), squeezed(value))
     if (!found) fail('record', token)
     return blank(token)
   })
@@ -188,7 +222,7 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   for (const name of aiGroundingNames(facts)) {
     rest = rest.replace(nameMatch(name), (found) => {
       checked.name += 1
-      if (!inText(sources.haystack, name) && !inText(asked, name)) fail('name', found)
+      if (!inText(sources.haystack, name) && !inText(named, name)) fail('name', found)
       return blank(found)
     })
   }
@@ -240,19 +274,45 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
   // Cited records: each one a tool returned.
   for (const record of array(answer?.records)) {
     checked.citation += 1
-    if (!citedRef(record, refs)) fail('citation', `${text(record?.type)}:${text(record?.id)}`)
+    // A record a tool named without its own ref (a SKU in a list of SKUs at
+    // risk) is grounded too; only records with a ref get a link.
+    if (!citedRef(record, refs) && !inText(sources.haystack, text(record?.id))) fail('citation', `${text(record?.type)}:${text(record?.id)}`)
+  }
+  if (limitClaims) {
+    for (const value of [title, body]) {
+      for (const pattern of LIMIT_CLAIMS) {
+        const found = value.match(pattern)
+        if (found) fail('limit_claim', found[0])
+      }
+    }
   }
   // Wording that reads as if the assistant acted, with the list the server's
-  // validator and the evaluation use, so the model can be told the phrase.
+  // validator and the evaluation use, so the model can be told the phrase. A
+  // state word about a record a tool returned in that state is its status.
+  const states = recordStates(results)
   for (const value of [title, body]) {
-    for (const pattern of AI_ANSWER_ACTION_CLAIMS) {
-      const found = value.match(pattern)
-      if (found) fail('action_claim', found[0])
-    }
+    for (const found of aiAnswerActionClaims(value, states)) fail('action_claim', found)
   }
   const counts = {}
   for (const row of problems) counts[row.kind] = (counts[row.kind] || 0) + 1
   return { ok: problems.length === 0, problems, counts, checked }
+}
+
+// The records the tools returned with a status (status, postingStatus,
+// matchStatus), by their id and label.
+function recordStates(results) {
+  const records = []
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return }
+    if (!value || typeof value !== 'object') return
+    if (value.ref?.type && value.ref?.id) {
+      const states = Object.entries(value).filter(([key, entry]) => /status$/i.test(key) && typeof entry === 'string').map(([, entry]) => entry)
+      if (states.length) records.push({ type: value.ref.type, numbers: [value.ref.id, value.ref.label], states })
+    }
+    for (const entry of Object.values(value)) walk(entry)
+  }
+  walk(results)
+  return aiAnswerRecordStates(records)
 }
 
 // The record a citation names, among those the tools returned: by type and

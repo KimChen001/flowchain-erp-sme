@@ -31,15 +31,28 @@ const orderRow = (row) => ({
   amount: row.amount ?? null, currency: row.currency || null, open: Boolean(row.isOpen), skus: array(row.skus),
   ref: aiToolRef('purchase_order', row.id, row.orderNumber),
 })
+// How many of the matching orders each supplier has, counted over every
+// matching order and not only the rows returned, so a count per supplier
+// ("Acme has 2") is the tool's own figure.
+const ordersBySupplier = (rows) => {
+  const counts = new Map()
+  for (const row of rows) {
+    const entry = counts.get(row.supplierId) || { supplier: row.supplier, orders: 0, ref: aiToolRef('supplier', row.supplierId, row.supplier) }
+    entry.orders += 1
+    counts.set(row.supplierId, entry)
+  }
+  return [...counts.values()].sort((a, b) => b.orders - a.orders || text(a.supplier).localeCompare(text(b.supplier))).slice(0, AI_TOOL_LIMITS.maxRows)
+}
 const orderNumberOf = (facts, id) => array(facts.purchaseOrders?.index).find((row) => row.id === id)?.orderNumber || null
 const salesOrderNumberOf = (facts, id) => array(facts.salesOrders).find((row) => row.id === id)?.number || null
 
 const listPurchaseOrders = defineAiTool({
   name: 'list_purchase_orders',
-  description: 'Purchase orders the user may read, with supplier, status, promised date, days overdue, quantities still to receive and amount. Filter by status, supplier or SKU. Most overdue first, then by promised date.',
+  description: 'Purchase orders the user may read, with supplier, status, promised date, days overdue, quantities still to receive and amount. Filter by status, supplier, supplier tier or SKU. Most overdue first, then by promised date. total counts every matching order and bySupplier counts them per supplier.',
   parameters: {
     status: { type: 'string', enum: ['open', 'overdue', 'pending_approval', 'all'], description: 'open (default): not closed or fully received; overdue: open and past the promised date; pending_approval; all.' },
     supplier: { type: 'string', description: 'A supplier name, code or id.' },
+    tier: { type: 'integer', minimum: 1, maximum: 3, description: 'Only orders from suppliers of this tier (1 strategic, 2 core, 3 transactional).' },
     sku: { type: 'string', description: 'Only orders with a line for this SKU.' },
     limit: limitParam,
   },
@@ -54,12 +67,20 @@ const listPurchaseOrders = defineAiTool({
       if (!found.supplier) return supplierError(found)
       rows = rows.filter((row) => row.supplierId === found.supplier.id)
     }
+    if (args.tier) {
+      // Tiers are the suppliers' own field; a role that cannot read suppliers
+      // cannot filter by them.
+      if (!Array.isArray(facts.suppliers)) return { error: 'tiers_not_readable' }
+      const tiered = new Set(facts.suppliers.filter((row) => row.tier === args.tier).map((row) => row.id))
+      rows = rows.filter((row) => tiered.has(row.supplierId))
+    }
     if (args.sku) rows = rows.filter((row) => array(row.skus).some((sku) => fold(sku) === fold(args.sku)))
     rows = [...rows].sort((a, b) => (b.overdueDays || 0) - (a.overdueDays || 0) || byDue(a, b))
     return {
       asOf: facts.asOf,
       workspace: { open: facts.purchaseOrders.open, overdue: facts.purchaseOrders.overdue, committedSpend: facts.purchaseOrders.committedSpend ?? null },
       ...aiToolList(rows.map(orderRow), args.limit),
+      bySupplier: ordersBySupplier(rows),
     }
   },
 })

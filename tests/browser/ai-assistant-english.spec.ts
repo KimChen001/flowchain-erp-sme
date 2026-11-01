@@ -168,6 +168,98 @@ test("a failed or slow answer shows an English recovery message", async ({ page 
   expect(await chineseLines(panel)).toEqual([]);
 });
 
+// The model-first assistant's progress stream (server/routes/ai-runtime-stream.mjs),
+// played line by line through the page's fetch: no model runs here.
+async function streamAnswers(page: Page) {
+  await page.evaluate(() => {
+    const original = window.fetch.bind(window);
+    const state = window as unknown as { __aiAccepts: string[]; __aiPush: (line: unknown) => void; __aiClose: () => void };
+    state.__aiAccepts = [];
+    window.fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const accept = String(new Headers(init?.headers).get("accept") || "");
+      if (!url.includes("/api/ai-runtime/respond")) return original(input, init);
+      state.__aiAccepts.push(accept);
+      if (!accept.includes("application/x-ndjson")) return original(input, init);
+      const encoder = new TextEncoder();
+      const body = new ReadableStream({
+        start(controller) {
+          state.__aiPush = (line) => controller.enqueue(encoder.encode(`${JSON.stringify(line)}\n`));
+          state.__aiClose = () => controller.close();
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "application/x-ndjson; charset=utf-8" } });
+    };
+  });
+  return {
+    push: (line: unknown) => page.evaluate((value) => (window as unknown as { __aiPush: (line: unknown) => void }).__aiPush(value), line),
+    close: () => page.evaluate(() => (window as unknown as { __aiClose: () => void }).__aiClose()),
+    accepts: () => page.evaluate(() => (window as unknown as { __aiAccepts: string[] }).__aiAccepts),
+  };
+}
+
+test("a typed question shows what the assistant reads, then its checked answer with a contract link", async ({ page }) => {
+  await signIn(page);
+  const panel = await openAssistant(page);
+  const stream = await streamAnswers(page);
+  await panel.getByTestId("ai-assistant-input").fill("When does our contract with Acme end?");
+  await panel.getByTestId("ai-assistant-input").press("Enter");
+  const progress = panel.getByTestId("ai-progress-line");
+  await expect(progress).toBeVisible();
+  await stream.push({ type: "progress", step: "reading", sources: ["contracts", "purchase_orders"] });
+  await expect(progress).toHaveText("Reading contracts and purchase orders…");
+  await stream.push({ type: "progress", step: "writing" });
+  await expect(progress).toHaveText("Writing the answer…");
+  await stream.push({ type: "progress", step: "checking" });
+  await expect(progress).toHaveText("Checking the figures…");
+  await stream.push({ type: "answer", status: 200, body: {
+    version: "v2", responseId: "ai-model-first-test", query: "When does our contract with Acme end?", intent: "model_first", language: "en-US",
+    answerSource: "workspace_model", answerSourceLabel: "Written by AI from your records; figures checked", runtimeModeLabel: "Written by AI from your records; figures checked",
+    checked: ["contracts"], checkedLabel: "Checked: contracts", figures: [],
+    scope: { module: "workspace", dataScopeLabel: "Your workspace" },
+    conclusion: { title: "The Acme agreement ends on 2026-12-31", summary: "Contract CT-ACME0001 with Acme Components ends on 2026-12-31 and needs 60 days of notice.", severity: "info", confidence: "medium" },
+    keyEvidence: [{ id: "mf-1", label: "CT-ACME0001", entityLabel: "CT-ACME0001", entityType: "contract", entityId: "CT-1", moduleId: "contracts:list", severity: "info", sourceLabel: "Your workspace" }],
+    contextCards: [], realEvidenceCount: 1, contextCardCount: 0, limitationCount: 0, businessImpact: [], recommendedActions: [],
+    navigationLinks: [{ label: "Open CT-ACME0001", moduleId: "contracts:list", entityType: "contract", entityId: "CT-1", returnTo: "ai-assistant", source: "ai" }],
+    dataLimitations: [], reviewCards: [], followUpQuestions: [], followUpSuggestions: [], contextBreadcrumbs: [],
+    safetyBoundaries: [], sourceSummary: [], readinessSignals: [], generatedAt: new Date().toISOString(), dataScopeLabel: "Your workspace",
+  } });
+  await stream.close();
+  const answer = panel.locator('[data-answer-source="workspace_model"]');
+  await expect(answer.getByTestId("ai-answer-source")).toContainText("Written by AI from your records; figures checked");
+  await expect(answer.getByTestId("ai-focused-conclusion").locator("h3")).toHaveText("The Acme agreement ends on 2026-12-31");
+  await expect(progress).toHaveCount(0);
+  expect(await chineseLines(panel)).toEqual([]);
+  // A chip keeps the plain JSON answer.
+  await newConversation(panel, "New conversation");
+  await askChip(panel, "What should I handle first today?");
+  const accepts = await stream.accepts();
+  expect(accepts[0]).toContain("application/x-ndjson");
+  expect(accepts[1]).not.toContain("application/x-ndjson");
+});
+
+test("the record link of a model-first answer opens the contract", async ({ page }) => {
+  await signIn(page);
+  const panel = await openAssistant(page);
+  const stream = await streamAnswers(page);
+  await panel.getByTestId("ai-assistant-input").fill("When does our contract with Acme end?");
+  await panel.getByTestId("ai-assistant-input").press("Enter");
+  await expect(panel.getByTestId("ai-progress-line")).toBeVisible();
+  await stream.push({ type: "answer", status: 200, body: {
+    version: "v2", responseId: "ai-model-first-link", query: "When does our contract with Acme end?", intent: "model_first", language: "en-US",
+    answerSource: "workspace_model", answerSourceLabel: "Written by AI from your records; figures checked", runtimeModeLabel: "Written by AI from your records; figures checked",
+    checked: ["contracts"], checkedLabel: "Checked: contracts", figures: [], scope: { module: "workspace", dataScopeLabel: "Your workspace" },
+    conclusion: { title: "The Acme agreement ends on 2026-12-31", summary: "Contract CT-ACME0001 ends on 2026-12-31.", severity: "info", confidence: "medium" },
+    keyEvidence: [], contextCards: [], realEvidenceCount: 0, contextCardCount: 0, limitationCount: 0, businessImpact: [], recommendedActions: [],
+    navigationLinks: [{ label: "Open CT-ACME0001", moduleId: "contracts:list", entityType: "contract", entityId: "CT-1", returnTo: "ai-assistant", source: "ai" }],
+    dataLimitations: [], reviewCards: [], followUpQuestions: [], followUpSuggestions: [], contextBreadcrumbs: [],
+    safetyBoundaries: [], sourceSummary: [], readinessSignals: [], generatedAt: new Date().toISOString(), dataScopeLabel: "Your workspace",
+  } });
+  await stream.close();
+  await panel.getByTestId("ai-business-navigation-action").filter({ hasText: "Open CT-ACME0001" }).click();
+  await expect(page).toHaveURL(/\/app\/contracts\/CT-1$/);
+});
+
 test("in Chinese the same chip answers in Chinese", async ({ page }) => {
   await signIn(page, "zh-CN");
   const panel = await openAssistant(page);

@@ -102,4 +102,13 @@ export const aiSkillRoutingCases = [
   { id: 'negative-delivered', prompt: 'delivered quantity', expected: null },
   { id: 'negative-schedule', prompt: 'production schedule', expected: null },
   { id: 'empty', prompt: '   ', expected: null },
+  // Found by the capability probe of 2026-10-28.
+  { id: 'help-en', prompt: 'What can you do?', expected: 'capability' },
+  { id: 'help-zh', prompt: '你能帮我做什么？', expected: 'capability' },
+  { id: 'help-about-record', prompt: 'What can you do about PO-020?', expected: null },
+  { id: 'order-pr-named-zh', prompt: '帮我给 Acme Components 建一个 200 件 LDM-001 的采购申请', expected: 'prepare_action_draft', mode: 'order' },
+  { id: 'orders-zh-caigoudan', prompt: '哪些采购单逾期了', expected: 'purchase_orders' },
+  { id: 'unit-price-not-order', prompt: '采购单价是多少？', expected: null },
+  { id: 'components-not-po', prompt: 'Compare Acme Components and Precision Fastener Works on late deliveries', expected: 'supplier_comparison' },
+  { id: 'customer-payments-zh', prompt: '哪些客户还没付款？', expected: null },
 ]
