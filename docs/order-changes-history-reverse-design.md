@@ -1,7 +1,7 @@
 # Order changes, history import and reverse flows: design and decisions
 
-Status: proposal of 2026-11-01. Nothing is built by this document. The decisions
-in §6 wait for the owner.
+Status: approved by the owner on 2026-11-01: every decision in §6 as recommended.
+Nothing is built by this document. The build follows the order and timing in §5.
 
 On 2026-10-30 the owner asked what is wrong with FlowChain's features themselves.
 The answer, from a code check of `main` (70891206), ranked three gaps first. A real
@@ -47,7 +47,7 @@ On 2026-11-01 the owner asked for this design.
     - 红字单可以基于退货开，也可以不退货直接开（价格错误、多开、折扣）；
     - 客户发票开出后不作废，只用红字单冲销，全额冲销后这批发货可以重新开票；
     - 供应商发票批准后，在未付款、未标记导出之前可以撤回审批。
-- **决定：** §6 共 22 项（订单变更 OC1–OC8，历史导入 HI1–HI8，反向流程 RV1–RV6）。
+- **决定（2026-11-01 已按推荐批准）：** §6 共 22 项（订单变更 OC1–OC8，历史导入 HI1–HI8，反向流程 RV1–RV6）。
 - **工作量和顺序：** 合计约 45–55 个工作日。建议分三批：
   - 12 月：在途采购单导入和两个缺陷修复；
   - 1 月：采购单变更单、历史采购单导入、打开退货；
@@ -443,6 +443,9 @@ Each step is its own PR with green CI. Sizes are rough, in working days.
   phase-2 list of 2026-09-30 with a concrete order.
 
 ## 6. Decisions for the owner
+
+**Decided 2026-11-01:** the owner approved every decision below as recommended
+("按推荐"). The build starts with §5 steps 1–4 in December.
 
 ### Order changes
 
