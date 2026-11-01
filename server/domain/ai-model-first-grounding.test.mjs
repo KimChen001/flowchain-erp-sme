@@ -57,11 +57,22 @@ test('still refused: a figure carried over from an earlier turn without reading 
   assert.deepEqual(kinds(check('HV-PO-101 是逾期最久的订单。', [], { conversation })), [])
 })
 
-test('status words: a labelled state passes; the same word as an event, in brackets or as an adjective is still flagged', () => {
-  const receipt = { rows: [{ receipt: 'GRN-77', received: '2026-10-28', rejected: 500, posting: 'posted', ref: { type: 'receiving_doc', id: 'GRN-77', label: 'GRN-77' } }] }
-  assert.deepEqual(kinds(check('GRN-77 拒收 500 pcs，过账状态：已过账。', [receipt])), [])
-  assert.deepEqual(kinds(check('GRN-77（2026-10-28，已过账）拒收 500 pcs。', [receipt])), ['action_claim:已过账'])
-  assert.deepEqual(kinds(check('GRN-77 拒收了 500 pcs，已过账。', [receipt])), ['action_claim:已过账'])
+test('status words: a labelled state passes, and so does a state word about a named record in that state; otherwise flagged', () => {
+  const receipt = (postingStatus) => ({ rows: [{ receipt: 'GRN-77', received: '2026-10-28', rejected: 500, postingStatus, purchaseOrder: 'HV-PO-101', ref: { type: 'receiving_doc', id: 'GRN-77', label: 'GRN-77' } }] })
+  assert.deepEqual(kinds(check('GRN-77 拒收 500 pcs，过账状态：已过账。', [receipt('posted')])), [])
+  // The owner's rule of 2026-11-01: the sentence names GRN-77, which is posted.
+  assert.deepEqual(kinds(check('GRN-77（2026-10-28，已过账）拒收 500 pcs。', [receipt('posted')])), [])
+  assert.deepEqual(kinds(check('GRN-77（HV-PO-101）拒收了 500 pcs，已过账。', [receipt('posted'), orders])), [])
+  // Not posted, or not named in that sentence: an event, flagged.
+  assert.deepEqual(kinds(check('GRN-77 拒收了 500 pcs，已过账。', [receipt('unposted')])), ['action_claim:已过账'])
+  assert.deepEqual(kinds(check('GRN-77 拒收了 500 pcs。已过账。', [receipt('posted')])), ['action_claim:已过账'])
+  const issued = { order: { orderNumber: 'HV-PO-101', status: 'issued', ref: { type: 'purchase_order', id: 'HV-PO-101', label: 'HV-PO-101' } } }
+  const approved = { order: { orderNumber: 'HV-PO-102', status: 'approved', ref: { type: 'purchase_order', id: 'HV-PO-102', label: 'HV-PO-102' } } }
+  assert.deepEqual(kinds(check('Yes, HV-PO-101 has been issued to Harbor Valve Co.', [issued])), [])
+  assert.deepEqual(kinds(check('HV-PO-102 has been issued to Harbor Valve Co.', [approved])), ['action_claim:has been issued'])
+  assert.deepEqual(kinds(check('HV-PO-101 and HV-PO-102 have been issued.', [issued, approved])), ['action_claim:have been issued'])
+  // "I" always claims the assistant acted, whatever the record's state.
+  assert.deepEqual(kinds(check('I issued HV-PO-101.', [issued])), ['action_claim:I issued'])
   assert.deepEqual(kinds(check('Harbor Valve Co 有 2 笔已下达且逾期的订单。', [orders, { rows: [{ supplier: 'Harbor Valve Co', overdue: 2 }] }])), ['action_claim:已下达'])
   assert.deepEqual(kinds(check('HV-PO-101 状态：已取消。因为订单已取消，它不计入逾期。', [orders])), ['action_claim:已取消'])
 })

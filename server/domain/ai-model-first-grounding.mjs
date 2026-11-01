@@ -1,4 +1,4 @@
-import { AI_ANSWER_ACTION_CLAIMS } from './ai-answer-claims.mjs'
+import { aiAnswerActionClaims, aiAnswerRecordStates } from './ai-answer-claims.mjs'
 
 // The grounding check of the model-first assistant (docs/ai-model-first-design.md
 // §3, decision M3): it replaces the slot templates. From the answer's title and
@@ -287,16 +287,32 @@ export function checkAiModelFirstGrounding({ answer, results = [], refs = [], qu
     }
   }
   // Wording that reads as if the assistant acted, with the list the server's
-  // validator and the evaluation use, so the model can be told the phrase.
+  // validator and the evaluation use, so the model can be told the phrase. A
+  // state word about a record a tool returned in that state is its status.
+  const states = recordStates(results)
   for (const value of [title, body]) {
-    for (const pattern of AI_ANSWER_ACTION_CLAIMS) {
-      const found = value.match(pattern)
-      if (found) fail('action_claim', found[0])
-    }
+    for (const found of aiAnswerActionClaims(value, states)) fail('action_claim', found)
   }
   const counts = {}
   for (const row of problems) counts[row.kind] = (counts[row.kind] || 0) + 1
   return { ok: problems.length === 0, problems, counts, checked }
+}
+
+// The records the tools returned with a status (status, postingStatus,
+// matchStatus), by their id and label.
+function recordStates(results) {
+  const records = []
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return }
+    if (!value || typeof value !== 'object') return
+    if (value.ref?.type && value.ref?.id) {
+      const states = Object.entries(value).filter(([key, entry]) => /status$/i.test(key) && typeof entry === 'string').map(([, entry]) => entry)
+      if (states.length) records.push({ type: value.ref.type, numbers: [value.ref.id, value.ref.label], states })
+    }
+    for (const entry of Object.values(value)) walk(entry)
+  }
+  walk(results)
+  return aiAnswerRecordStates(records)
 }
 
 // The record a citation names, among those the tools returned: by type and

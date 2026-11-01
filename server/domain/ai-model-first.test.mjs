@@ -434,6 +434,20 @@ test('what the role cannot see goes with the question, the answer says so, and c
   assert.equal(present(finance.facts).limitationCount, 1)
 })
 
+test('a cited record that needs attention says what to do next, as a skill answer line does, and offers no draft', async () => {
+  // The lane's prefill-viewer-no-draft: a viewer's loop answer named the
+  // overdue orders but no line said what to do next.
+  for (const roleKey of ['read-only-viewer', 'workspace-administrator']) {
+    const { facts } = await factsFor(roleKey)
+    const overdue = facts.purchaseOrders.index.find((row) => row.isOpen && row.overdueDays > 0)
+    const ref = { type: 'purchase_order', id: overdue.id, label: overdue.orderNumber }
+    const answer = { title: `${overdue.orderNumber} is overdue`, answer: `${overdue.orderNumber} is overdue.`, records: [{ type: 'purchase_order', id: overdue.orderNumber }] }
+    const response = presentAiModelFirstAnswer({ answer, refs: [ref], stats: { calls: [] }, facts, language: 'en-US', query: 'Which purchase orders are overdue?' })
+    assert.ok(response.keyEvidence[0].nextStep, roleKey)
+    assert.deepEqual(response.reviewCards, [], roleKey)
+  }
+})
+
 test('a record number nobody can find gets the fixed not-found answer, which passes the check', async () => {
   const { facts, context, today } = await factsFor()
   const notFound = { title: 'EVAL-B-PO-999 not found', answer: "I couldn't find EVAL-B-PO-999 in the records you can see. Check the number, or tell me the supplier or item.", records: [] }

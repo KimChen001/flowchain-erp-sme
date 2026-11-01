@@ -11,6 +11,7 @@ import { aiModelFirstEffort, aiModelFirstProviderFormat, callAiModelFirstModel }
 import { AI_PROPOSE_PURCHASE_REQUEST, aiProposalCard, aiProposalToolDefinitions, aiProposalUserWords, runAiProposal } from './ai-model-first-proposals.mjs'
 import { providerRuntimeConfig } from './ai-runtime-provider-adapter-v2.mjs'
 import { aiCallCostMicros, aiUsagePrices } from './ai-usage-meter.mjs'
+import { attachAiSkillNextSteps } from './ai-skill-next-steps.mjs'
 
 // The model-first assistant, step S2 (docs/ai-model-first-design.md §3,
 // decisions M1–M7 approved by the owner on 2026-10-28). Behind
@@ -357,7 +358,7 @@ export function presentAiModelFirstAnswer({ answer, refs, stats, facts, language
   // What the role cannot see, and lists cut short, said by the server as the
   // skills' answers say it, whatever the model wrote.
   const dataLimitations = aiSkillLimitations(facts || {}, language).filter((row) => LOOP_LIMITATIONS.has(row.code))
-  return {
+  const response = {
     version: 'v2',
     responseId: `ai-model-first-${randomUUID()}`,
     query: String(query ?? ''),
@@ -391,6 +392,9 @@ export function presentAiModelFirstAnswer({ answer, refs, stats, facts, language
     generatedAt: facts?.generatedAt || new Date().toISOString(),
     dataScopeLabel: aiSkillText('scope.label', language),
   }
+  // Each cited record that needs attention says what to do next, as the
+  // skills' answer lines do (owner decision 2, 2026-10-03).
+  return attachAiSkillNextSteps(response, facts, { drafts: false })
 }
 
 // The audit block: codes and counts only (agent mode decision 9), never the
