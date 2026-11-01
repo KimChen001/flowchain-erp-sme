@@ -38,7 +38,7 @@ export function aiProviderConfigured(env = {}) {
 // The same settings with every model path switched off: no provider mode, no
 // knowledge or embedding provider, and every model feature flag off.
 export function modelFreeEnv(env = {}) {
-  const next = { ...env, FLOWCHAIN_AI_RUNTIME_MODE: 'local', FLOWCHAIN_ENABLE_AI_SEMANTIC_PLANNER: 'false', FLOWCHAIN_AI_INTENT_ROUTING: 'false', FLOWCHAIN_AI_INTENT_SHADOW: 'false', FLOWCHAIN_AI_AGENT_MODE: 'off' }
+  const next = { ...env, FLOWCHAIN_AI_RUNTIME_MODE: 'local', FLOWCHAIN_ENABLE_AI_SEMANTIC_PLANNER: 'false', FLOWCHAIN_AI_INTENT_ROUTING: 'false', FLOWCHAIN_AI_INTENT_SHADOW: 'false', FLOWCHAIN_AI_AGENT_MODE: 'off', FLOWCHAIN_AI_ASSISTANT_MODE: 'rules' }
   for (const key of Object.keys(next)) if (key === 'FLOWCHAIN_KNOWLEDGE_PROVIDER' || key.startsWith('FLOWCHAIN_AI_EMBEDDING_')) delete next[key]
   return next
 }
@@ -77,7 +77,9 @@ export async function withAiWorkspaceAccess(ctx, run) {
   const tenantId = text(ctx.identity?.tenantId)
   const required = aiOptInRequired(env)
   const prisma = ctx.aiWorkspacePrisma || (text(env.DATABASE_URL) ? await getPrismaClient(env).catch(() => null) : null)
-  if (!tenantId || !prisma) return run(required || !tenantId ? { ...ctx, env: modelFreeEnv(env) } : ctx)
+  if (!tenantId || (required && !prisma)) return run({ ...ctx, env: modelFreeEnv(env) })
+  // Without a database nothing is counted, but a failed call is still noted.
+  if (!prisma) return runWithAiUsageScope(null, () => run(ctx))
   let access = null
   if (required) {
     try { access = await readAiWorkspaceAccess({ prisma, tenantId, env }) } catch { access = null }

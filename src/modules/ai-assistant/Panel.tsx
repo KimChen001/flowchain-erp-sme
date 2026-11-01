@@ -8,9 +8,9 @@ import { AiResponseV2Renderer } from "../../components/ai/AiResponseV2Renderer";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import type { AiResponseV2 } from "../../domain/ai/response-contract";
 import { autoOpenDraftCard, structuredDraftTarget } from "../action-drafts/structuredDraftHandoff";
-import { focusTargetFromActiveContext, postAiRuntimeResponse } from "./aiRuntimeGateway";
+import { focusTargetFromActiveContext, postAiRuntimeResponse, type AiRuntimeProgress } from "./aiRuntimeGateway";
 import { ApiError } from "../../lib/api-client";
-import { looksLikeRawJson, sanitizeAiMessage } from "./presentation";
+import { aiProgressLine, looksLikeRawJson, sanitizeAiMessage } from "./presentation";
 
 export type ActiveContext = {
   module?: string;
@@ -79,6 +79,9 @@ type SafeConversationContext = {
   breadcrumbTrail?: Array<{ label: string; moduleId?: string; entityLabel?: string; returnTo: "ai-assistant" }>;
   lastResponseId?: string;
   returnContext?: { returnTo: "ai-assistant"; returnLabel: string; sourceModuleId?: string; sourceViewId?: string };
+  // The last few questions and answers of this panel, as text, so the
+  // model-first assistant reads a follow-up with what came before.
+  previousTurns?: Array<{ question: string; answer: string }>;
 };
 
 export const AI_EMPTY_STATE_PROMPT_CHIPS = [
@@ -312,6 +315,21 @@ function latestAiRuntimeResponse(messages: AiChatMessage[]): AiResponseV2 | null
   return aiRuntimeResponses(messages).at(-1) || null;
 }
 
+// Up to three earlier turns: each question with the headline and summary of
+// the answer that followed it.
+function previousTurns(messages: AiChatMessage[]) {
+  const turns: Array<{ question: string; answer: string }> = [];
+  messages.forEach((message, index) => {
+    if (message.role !== "user") return;
+    const reply = messages[index + 1];
+    const response = reply?.role === "assistant" ? (reply.cards || []).find((card) => card.type === "ai_response_v2" && card.data)?.data as unknown as AiResponseV2 | undefined : undefined;
+    if (!response) return;
+    const answer = [response.conclusion?.title, response.conclusion?.summary].filter(Boolean).join(" — ");
+    turns.push({ question: message.content.slice(0, 300), answer: answer.slice(0, 800) });
+  });
+  return turns.slice(-3);
+}
+
 function evidenceRefs(response: AiResponseV2 | null | undefined) {
   return (response?.keyEvidence || []).slice(0, 8).map((item) => ({
     id: item.id,
@@ -394,6 +412,7 @@ function buildSafeConversationContext(messages: AiChatMessage[], activeContext: 
       returnTo: "ai-assistant",
     })),
     lastResponseId: (response as (AiResponseV2 & { responseId?: string }) | null)?.responseId,
+    previousTurns: previousTurns(messages),
     returnContext: {
       returnTo: "ai-assistant",
       returnLabel: language === "zh-CN" ? "返回 AI 助手" : "Back to AI assistant",
@@ -505,7 +524,10 @@ export function getAiFollowUpChips(message: AiChatMessage, language: "en-US" | "
   if (message.role !== "assistant" || !message.cards?.length) return [];
   if (hasRuntimeFollowUpSuggestions(message)) return [];
   if (message.cards.some((card) => card.type === "ai_response_v2" && (card.data as AiResponseV2 | undefined)?.rag?.mode === "no_results")) return [];
-  const zh = language === "zh-CN";
+  // The chips follow the answer's language (a Chinese question in the English
+  // interface gets Chinese chips), else the interface language.
+  const answerLanguage = message.cards.map((card) => (card.data as AiResponseV2 | undefined)?.language).find((value) => value === "en-US" || value === "zh-CN");
+  const zh = (answerLanguage || language) === "zh-CN";
   const localizedChip = (zhLabel: string, enLabel: string, zhPrompt: string, enPrompt: string) => ({
     label: zh ? zhLabel : enLabel,
     prompt: zh ? zhPrompt : enPrompt,
@@ -591,6 +613,8 @@ export default function FloatingAiAssistant({
   const [input, setInput] = useState("");
   const [asking, setAsking] = useState(false);
   const [slowRequest, setSlowRequest] = useState(false);
+  // What the model-first assistant is reading, while it answers a typed question.
+  const [progress, setProgress] = useState<AiRuntimeProgress | null>(null);
   const [messages, setMessages] = useState<AiChatMessage[]>([]);
   const [dismissedContextKey, setDismissedContextKey] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -686,6 +710,7 @@ export default function FloatingAiAssistant({
     requestInFlightRef.current = false;
     setAsking(false);
     setSlowRequest(false);
+    setProgress(null);
     setMessages([]);
     setInput("");
   }
@@ -710,13 +735,17 @@ export default function FloatingAiAssistant({
     abortRef.current?.abort();
     abortRef.current = controller;
     setAsking(true);
+    setProgress(null);
     setInput("");
     setMessages((current) => [...current, { role: "user", content: message }]);
+    // A chip answers from its skill and keeps the 12 s limit. A typed question
+    // may go to the model-first loop, which takes up to 20 s before the rules
+    // answer instead.
     const timeout = window.setTimeout(() => {
       timeoutHit = true;
       abortReasonRef.current = "timeout";
       controller.abort();
-    }, 12000);
+    }, skillHint ? 12000 : 25000);
 
     try {
       const safeConversationContext = buildSafeConversationContext(messages, context, sessionGrounding, language);
@@ -736,7 +765,9 @@ export default function FloatingAiAssistant({
         },
         sessionGrounding,
         returnTo: "ai-assistant",
-      }, controller.signal);
+        // A typed question may go to the model-first loop, which says what it
+        // reads while it answers; a chip answers at once from its skill.
+      }, controller.signal, skillHint ? undefined : (event) => { if (requestSeqRef.current === requestId) setProgress(event); });
       const rawContent = response.runtimeModeLabel || "";
       const content = "";
       if (looksLikeRawJson(rawContent)) console.debug("AI assistant raw content suppressed", rawContent);
@@ -787,6 +818,7 @@ export default function FloatingAiAssistant({
         abortRef.current = null;
         abortReasonRef.current = null;
         setAsking(false);
+        setProgress(null);
       }
     }
   }
@@ -899,9 +931,9 @@ export default function FloatingAiAssistant({
             ))}
             {asking && (
               <div className="flex justify-start">
-                <div className="rounded-2xl px-3 py-2 text-sm flex items-center gap-2" style={{ background: A.gray6, color: A.gray1 }}>
+                <div data-testid="ai-progress-line" aria-live="polite" className="rounded-2xl px-3 py-2 text-sm flex items-center gap-2" style={{ background: A.gray6, color: A.gray1 }}>
                   <Loader2 size={14} className="animate-spin" />
-                  {slowRequest ? currentRequestLabel : (language === "zh-CN" ? "正在确认查询范围" : "Checking your question")}
+                  {progress ? aiProgressLine(progress, language) : slowRequest ? currentRequestLabel : (language === "zh-CN" ? "正在确认查询范围" : "Checking your question")}
                 </div>
               </div>
             )}

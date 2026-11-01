@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import test from 'node:test'
 import {
+  anthropicMessagesAdapter,
   buildBoundedProviderRequestCore,
   deepseekChatAdapter,
   doubaoChatAdapter,
@@ -98,7 +99,8 @@ function responseFor(kind, text = '建议查看来源证据、数据限制和人
 }
 
 test('provider-specific registry supports configured kinds and disables unknown kinds', () => {
-  assert.deepEqual(providerSpecificAdapters.map((item) => item.kind), providerKinds)
+  // The chat-style kinds below, and Anthropic's native Messages API (tested on its own).
+  assert.deepEqual(providerSpecificAdapters.map((item) => item.kind), [...providerKinds, 'anthropic_messages'])
   assert.equal(isProviderSpecificKind('openai_responses'), true)
   assert.equal(isProviderSpecificKind('deepseek_chat'), true)
   assert.equal(isProviderSpecificKind('doubao_chat'), true)
@@ -264,4 +266,23 @@ test('usage counts every prompt token: cached ones reported apart (Parley) or in
   assert.deepEqual(openai.usage, { inputTokens: 1596, outputTokens: 110 })
   // No total: the prompt count as reported.
   assert.deepEqual(extractCandidateFromProviderResponse({ choices: [{ message: { content: 'ok' } }], usage: { input_tokens: 10, output_tokens: 2 } }).usage, { inputTokens: 10, outputTokens: 2 })
+})
+
+test("Anthropic's Messages API gets a system prompt, one user message, low effort, an API key header and no sampling settings", async () => {
+  const config = { model: 'claude-haiku-5-5', apiKey: 'placeholder', identityHeaders: { 'user-agent': 'FlowChain-assistant/1.0' } }
+  const body = anthropicMessagesAdapter.buildRequestBody({ task: { type: 'knowledge_rag', question: 'What is the policy?' }, evidencePackage: { citations: [] } }, config)
+  assert.equal(body.model, 'claude-haiku-5-5')
+  assert.equal(typeof body.system, 'string')
+  assert.deepEqual(body.messages.map((message) => message.role), ['user'])
+  assert.deepEqual(body.output_config, { effort: 'low' })
+  for (const key of ['temperature', 'top_p', 'top_k', 'response_format']) assert.equal(body[key], undefined, key)
+  assert.deepEqual(anthropicMessagesAdapter.buildHeaders(config), { 'content-type': 'application/json', 'x-api-key': 'placeholder', 'anthropic-version': '2023-06-01', 'user-agent': 'FlowChain-assistant/1.0' })
+  // The reply is read by block type: thinking first, then the text. Input
+  // counts the cache reads and writes, which are reported apart.
+  const reply = anthropicMessagesAdapter.extractCandidateFromResponse({ content: [{ type: 'thinking', thinking: '', signature: 's' }, { type: 'text', text: '{"answer":"ok","citationIds":[]}' }], usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 900, cache_creation_input_tokens: 50 } })
+  assert.equal(reply.ok, true)
+  assert.equal(reply.rawOutput.conclusion.summary, '{"answer":"ok","citationIds":[]}')
+  assert.deepEqual(reply.usage, { inputTokens: 1050, outputTokens: 20, cacheReadTokens: 900, cacheWriteTokens: 50 })
+  assert.equal(anthropicMessagesAdapter.extractCandidateFromResponse({ content: [{ type: 'thinking', thinking: '' }], stop_reason: 'max_tokens' }).ok, false)
+  assert.equal(canCallConfiguredProvider({ FLOWCHAIN_AI_RUNTIME_MODE: 'provider_assisted', FLOWCHAIN_AI_PROVIDER_KIND: 'anthropic_messages', FLOWCHAIN_AI_PROVIDER_ENDPOINT: 'https://api.anthropic.com/v1/messages', FLOWCHAIN_AI_PROVIDER_API_KEY: 'placeholder', FLOWCHAIN_AI_PROVIDER_MODEL: 'claude-haiku-5-5' }), true)
 })

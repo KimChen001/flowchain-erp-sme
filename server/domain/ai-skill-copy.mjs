@@ -72,6 +72,10 @@ const entries = {
   // The help answer reads no business data, so it never says it did.
   'answer.source_none': ['No workspace data was read for this answer', '本次回答没有读取工作区数据'],
   'answer.source_agent': ['Answered from your workspace data. Worded by AI; figures checked.', '基于当前工作区数据回答，由 AI 组织语言，数字已核对'],
+  // Model-first: the model read the records through tools and wrote the answer; the server checked every figure, date and name against what the tools returned (docs/ai-model-first-design.md §3).
+  'answer.source_model_first': ['Written by AI from your records; figures checked', '由 AI 根据你的记录撰写，数字已核对'],
+  // A purchase request the model-first assistant proposed: the reason line of the prefilled form.
+  'model_first.request.reason': ['Requested in the assistant. Review it before you submit.', '在 AI 助手中提出，提交前请核对。'],
   'answer.checked': ['Checked: {sources}', '已检查：{sources}'],
   'answer.review_boundary': ['This answer does not send, approve or change anything.', '本回答不会发送、批准或修改任何内容。'],
   // A question with several parts, answered part by part (ai-skill-compound.mjs).
@@ -123,6 +127,9 @@ const entries = {
   'capability.contracts.open': ['Open Contracts', '打开合同'],
   'capability.outside': ['I can only answer questions about your workspace data.', '我只能回答与当前工作区数据有关的问题。'],
   'capability.topic': ["I couldn't tell what you want to know about {topic}.", '我没能确定你想了解{topic}的哪方面。'],
+  // No skill reads sales orders, shipments or what customers owe yet.
+  'capability.sales': ["I don't answer questions about sales orders, shipments or customer payments yet.", '销售订单、发货和客户付款的问题，我暂时还答不了。'],
+  'topic.sales': ['sales orders and customers', '销售订单和客户'],
   'topic.suppliers': ['suppliers', '供应商'],
   'topic.purchase_orders': ['purchase orders', '采购订单'],
   'topic.inventory': ['stock', '库存'],
@@ -441,6 +448,9 @@ const entries = {
   'source.items': ['items', '物料'],
   'source.suppliers': ['suppliers', '供应商'],
   'source.sales_orders': ['sales orders', '销售订单'],
+  'source.documents': ['documents', '文档'],
+  'source.contracts': ['contracts', '合同'],
+  'source.supplier_risks': ['supplier risks', '供应商风险'],
   'source.workspace': ['workspace skills', '工作区技能'],
 
   // Fields checked by records_needing_data
