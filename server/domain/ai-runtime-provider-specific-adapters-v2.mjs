@@ -1,4 +1,5 @@
 import businessQueryPlanSchema from "./ai-business-query-plan.schema.json" with { type: "json" };
+import { aiProviderSessionId } from './ai-usage-meter.mjs'
 const DATA_SCOPE = '当前工作区数据'
 const DEFAULT_TIMEOUT_MS = 8000
 const MAX_TIMEOUT_MS = 15000
@@ -24,6 +25,7 @@ function providerConfig(env = {}) {
     model: text(env.FLOWCHAIN_AI_PROVIDER_MODEL),
     timeoutMs: clampNumber(env.FLOWCHAIN_AI_PROVIDER_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS),
     maxOutputChars: clampNumber(env.FLOWCHAIN_AI_PROVIDER_MAX_OUTPUT_CHARS, DEFAULT_MAX_OUTPUT_CHARS, MAX_OUTPUT_CHARS),
+    identityHeaders: aiProviderIdentityHeaders(env),
   }
 }
 function boundedEvidencePackage(input = {}) {
@@ -197,10 +199,23 @@ function chatMessages(input = {}) {
     { role: 'user', content: JSON.stringify(core) },
   ]
 }
+// Every provider call says it comes from FlowChain, not from a generic HTTP
+// library. A provider that routes by conversation (OpenCode Go asks for
+// `x-opencode-session`) gets the request's random session id in the header
+// FLOWCHAIN_AI_PROVIDER_SESSION_HEADER names: one id per assistant request,
+// shared by its planning, wording and knowledge calls, and nothing else.
+export const AI_PROVIDER_USER_AGENT = 'FlowChain-assistant/1.0'
+const SESSION_HEADER = /^x-[a-z0-9-]{1,60}$/i
+export function aiProviderIdentityHeaders(env = {}) {
+  const name = text(env.FLOWCHAIN_AI_PROVIDER_SESSION_HEADER).toLowerCase()
+  const session = SESSION_HEADER.test(name) ? aiProviderSessionId() : null
+  return { 'user-agent': AI_PROVIDER_USER_AGENT, ...(session ? { [name]: session } : {}) }
+}
 function jsonHeaders(config) {
   return {
     'content-type': 'application/json',
     authorization: `Bearer ${config.apiKey}`,
+    ...config.identityHeaders,
   }
 }
 function extractString(value) {
@@ -255,7 +270,8 @@ export function extractCandidateFromProviderResponse(rawResponse) {
   return { ok: true, ...reported, rawOutput: { conclusion: { summary: candidate } } }
 }
 async function parseResponse(response, config) {
-  if (!response.ok) return { ok: false, reason: 'non_success_status' }
+  // 402: the provider's spending limit is reached (the answer says so).
+  if (!response.ok) return { ok: false, reason: 'non_success_status', ...(response.status === 402 ? { budgetExceeded: true } : {}) }
   const contentType = response.headers?.get?.('content-type') || ''
   let raw
   if (/application\/json/i.test(contentType)) raw = await response.json()

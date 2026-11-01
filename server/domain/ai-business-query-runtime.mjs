@@ -5,7 +5,8 @@ import { executeBusinessQueryPlan } from './ai-business-query-executor.mjs'
 import { buildBusinessQueryResponseV2, buildLegacyBusinessQueryChatResponse } from './ai-business-query-response.mjs'
 import { isComplexBusinessQuery, planBusinessQuery } from './ai-semantic-query-planner.mjs'
 import { isTechnicalProviderDiagnosticPrompt } from './ai-business-intent-router.mjs'
-import { aiSkillTierOf, routeSkill } from './ai-skill-router.mjs'
+import { aiSkillAboutCustomers, aiSkillTierOf, routeSkill } from './ai-skill-router.mjs'
+import { splitAiCompoundQuestion } from './ai-skill-compound.mjs'
 import { aiSkillQuestionLanguage } from './ai-skill-copy.mjs'
 
 const text = (value) => String(value ?? '').trim()
@@ -25,9 +26,16 @@ export function shouldUseSemanticBusinessQuery(message, body = {}) {
   // A supplier tier ("Tier 1 suppliers") is read by the skills; the business
   // query plan has no tier scope, and would answer for every supplier.
   if (aiSkillTierOf(message)) return false
+  // The plan reads suppliers only; what customers owe ("哪些客户还没付款？") is
+  // not a supplier payment.
+  if (aiSkillAboutCustomers(message)) return false
   const hasPaymentSignal = /付款|应付|付钱|payment|payable|pay\b|paid\b/.test(input)
   const route = routeSkill({ message })
   if (!hasPaymentSignal && (SKILL_FIRST.has(route?.skillId) || route?.ids?.length)) return false
+  // A question in parts that the skills' rules each route ("哪些采购单逾期了？
+  // 另外哪个供应商最需要关注？") gets a compound answer from those skills.
+  const parts = splitAiCompoundQuestion(message)
+  if (!hasPaymentSignal && parts.length >= 2 && parts.every((part) => { const partRoute = routeSkill({ message: part.text }); return Boolean(partRoute?.skillId) && !partRoute.capability })) return false
   const hasPreviousResult = /这些|上述|刚才|上一轮|those|these|previous result|them\b/.test(input)
   const hasSupplierScope = /supplier|vendor|供应商|供方/.test(input)
   return hasPaymentSignal || hasPreviousResult || hasSupplierScope

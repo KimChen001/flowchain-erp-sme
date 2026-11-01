@@ -77,7 +77,9 @@ export async function withAiWorkspaceAccess(ctx, run) {
   const tenantId = text(ctx.identity?.tenantId)
   const required = aiOptInRequired(env)
   const prisma = ctx.aiWorkspacePrisma || (text(env.DATABASE_URL) ? await getPrismaClient(env).catch(() => null) : null)
-  if (!tenantId || !prisma) return run(required || !tenantId ? { ...ctx, env: modelFreeEnv(env) } : ctx)
+  if (!tenantId || (required && !prisma)) return run({ ...ctx, env: modelFreeEnv(env) })
+  // Without a database nothing is counted, but a failed call is still noted.
+  if (!prisma) return runWithAiUsageScope(null, () => run(ctx))
   let access = null
   if (required) {
     try { access = await readAiWorkspaceAccess({ prisma, tenantId, env }) } catch { access = null }
