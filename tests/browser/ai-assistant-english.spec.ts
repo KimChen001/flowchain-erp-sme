@@ -47,32 +47,64 @@ const chineseLines = async (locator: Locator) => (await locator.innerText()).spl
 test("the assistant answers every prompt chip in English from the workspace data", async ({ page }) => {
   await signIn(page);
   const panel = await openAssistant(page);
+  // Docked to the right at full height beside the page; the launcher is hidden.
+  await expect(panel).toHaveAttribute("data-docked", "true");
+  const box = await panel.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box && viewport && Math.round(box.x + box.width)).toBe(viewport?.width);
+  expect(box?.height).toBe(viewport?.height);
+  await expect(page.getByTestId("ai-assistant-toggle")).toHaveCount(0);
+  await expect(panel.getByTestId("ai-query-mode")).toHaveCount(0);
+  await expect(panel.getByTestId("ai-welcome")).toContainText("I can look up purchasing, inventory and invoices");
   for (const [chip, headline] of [
     ["What should I handle first today?", /items? needs? attention today|Nothing needs attention today/],
-    ["What is at risk right now?", /^Oldest open problem: |No open problems found/],
-    ["Which records need more data?", /records? needs? more data|No records are missing required fields/],
-    ["Prepare an action draft", /drafts? ready for your review|No draft is needed right now/],
+    ["Which purchase orders are overdue?", /purchase orders? (?:is|are) overdue/],
   ] as const) {
     const answer = await askChip(panel, chip);
     await expect(answer.getByTestId("ai-answer-source")).toContainText("Answered from your workspace data");
     await expect(answer.getByTestId("ai-answer-checked")).toContainText("Checked:");
     await expect(answer.getByTestId("ai-focused-conclusion").locator("h3")).toHaveText(headline);
+    // One trust line, no severity chip or evidence count.
+    await expect(answer.getByTestId("ai-trust-line").locator("summary")).toContainText("From your records");
+    await expect(answer).not.toContainText(/Verifiable records|View key evidence/);
     expect(await chineseLines(panel), chip).toEqual([]);
-    if (chip === "Prepare an action draft") {
+    if (chip === "Which purchase orders are overdue?") {
       const draft = answer.getByTestId("ai-action-draft-preview").first();
       await expect(draft).toHaveText("Review draft");
     }
     await newConversation(panel, "New conversation");
   }
 
-  // An evidence link opens the record and minimizes the assistant.
+  // The request card is asked as typed: without an item, the assistant asks which one.
+  const request = await askChip(panel, "Draft a purchase request");
+  await expect(request.getByTestId("ai-focused-conclusion")).toBeVisible();
+  expect(await chineseLines(panel)).toEqual([]);
+  await newConversation(panel, "New conversation");
+
+  // A record chip opens the record; docked beside the page, the assistant stays open.
   const answer = await askChip(panel, "What should I handle first today?");
   const link = answer.getByTestId("ai-focused-primary-items").locator('[data-action-kind="view_evidence"]').first();
   await expect(link).toBeVisible();
   const before = page.url();
   await link.click();
   await expect(page).not.toHaveURL(before);
+  await expect(page.getByTestId("ai-assistant-panel")).toBeVisible();
+});
+
+test("on a phone the assistant fills the screen and gets out of the way when a record opens", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page);
+  const panel = await openAssistant(page);
+  await expect(panel).toHaveAttribute("data-docked", "false");
+  const box = await panel.boundingBox();
+  expect(box?.width).toBe(390);
+  expect(box?.height).toBe(844);
+  const answer = await askChip(panel, "What should I handle first today?");
+  const before = page.url();
+  await answer.getByTestId("ai-focused-primary-items").locator('[data-action-kind="view_evidence"]').first().click();
+  await expect(page).not.toHaveURL(before);
   await expect(page.getByTestId("ai-assistant-panel")).toHaveCount(0);
+  await expect(page.getByTestId("ai-assistant-toggle")).toBeVisible();
 });
 
 test("a prepared draft opens as a supplier message for the user's own mail app", async ({ page }) => {
@@ -228,6 +260,9 @@ test("a typed question shows what the assistant reads, then its checked answer w
   const answer = panel.locator('[data-answer-source="workspace_model"]');
   await expect(answer.getByTestId("ai-answer-source")).toContainText("Written by AI from your records; figures checked");
   await expect(answer.getByTestId("ai-focused-conclusion").locator("h3")).toHaveText("The Acme agreement ends on 2026-12-31");
+  // The contract number in the text is a chip; one line says the figures were checked.
+  await expect(answer.getByTestId("ai-answer-text").getByTestId("ai-record-chip")).toHaveText("CT-ACME0001");
+  await expect(answer.getByTestId("ai-trust-line").locator("summary")).toHaveText(/Figures checked\s*· 1 source/);
   await expect(progress).toHaveCount(0);
   expect(await chineseLines(panel)).toEqual([]);
   // A chip keeps the plain JSON answer.
@@ -256,7 +291,9 @@ test("the record link of a model-first answer opens the contract", async ({ page
     safetyBoundaries: [], sourceSummary: [], readinessSignals: [], generatedAt: new Date().toISOString(), dataScopeLabel: "Your workspace",
   } });
   await stream.close();
-  await panel.getByTestId("ai-business-navigation-action").filter({ hasText: "Open CT-ACME0001" }).click();
+  // The chip in the text is the link; it is not repeated as an "Open" button.
+  await expect(panel.getByTestId("ai-business-navigation-action")).toHaveCount(0);
+  await panel.getByTestId("ai-record-chip").filter({ hasText: "CT-ACME0001" }).click();
   await expect(page).toHaveURL(/\/app\/contracts\/CT-1$/);
 });
 
