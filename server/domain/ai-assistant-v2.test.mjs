@@ -36,6 +36,15 @@ const showRecords = Object.freeze({
   },
 })
 
+// Follow-up chips: the model's own words, as the UI tools module passes them.
+const followups = Object.freeze({
+  name: 'suggest_followups',
+  kind: 'ui',
+  description: 'Offers follow-up questions.',
+  inputSchema: { type: 'object', properties: { questions: { type: 'array', items: { type: 'string', maxLength: 90 }, maxItems: 3 } }, required: ['questions'], additionalProperties: false },
+  build: (input) => ({ component: 'followups', props: { questions: input.questions }, refs: [] }),
+})
+
 async function ask(turns, { roleKey = 'workspace-administrator', question = 'Which purchase orders are overdue?', thread = { messages: [], results: new Map() }, uiTools = [showRecords], limits, signal, onEvent, client, body = {} } = {}) {
   const scenario = aiSkillScenario({ roleKey })
   const modelClient = client || createScriptedModelClient(turns)
@@ -62,7 +71,8 @@ test('text streams as deltas in order, the start comes first and the answer last
   assert.equal(events[0].model, 'scripted')
   assert.equal(events.at(-1).type, 'answer')
   assert.equal(events.at(-1).status, 200)
-  assert.deepEqual(ofType(events, 'text_delta').map((event) => event.text), ['PO-001 is ', '4 days overdue', ' and PO-008 is 2.'])
+  // Text is sent up to its last word break, so no figure leaves in pieces.
+  assert.deepEqual(ofType(events, 'text_delta').map((event) => event.text), ['PO-001 is ', '4 days ', 'overdue and PO-008 is ', '2.'])
   assert.ok(ofType(events, 'text_delta').every((event) => event.partId === 'p1'))
   assert.equal(body.version, 'v2')
   assert.equal(body.intent, 'assistant_v2')
@@ -94,8 +104,8 @@ test('a data tool, then a UI tool on its result: the part shows where the model 
   const order = events.filter((event) => ['tool', 'progress', 'text_delta', 'ui', 'flag'].includes(event.type)).map((event) => `${event.type}:${event.partId || event.name || event.step}${event.state ? `:${event.state}` : ''}`)
   assert.deepEqual(order, [
     'tool:list_purchase_orders:running', 'progress:reading', 'tool:list_purchase_orders:done',
-    'progress:writing', 'text_delta:p1', 'flag:p1', 'tool:show_records:running', 'ui:p2', 'tool:show_records:done',
-    'progress:writing', 'text_delta:p3', 'flag:p3',
+    'progress:writing', 'text_delta:p1', 'text_delta:p1', 'flag:p1', 'tool:show_records:running', 'ui:p2', 'tool:show_records:done',
+    'progress:writing', 'text_delta:p3', 'text_delta:p3', 'flag:p3',
   ])
   assert.equal(ofType(events, 'tool').find((event) => event.state === 'done').rows, 2)
   const ui = ofType(events, 'ui')[0]
@@ -160,13 +170,24 @@ test('the round limit: after the last round the model must answer, and a further
   ], { limits: { rounds: 2 } })
   assertProtocol(events)
   assert.equal(client.requests.length, 3)
-  assert.equal(client.requests[2].messages.at(-1).content.at(-1).text, 'No more tool calls are available for this answer. Answer now from these results.')
+  assert.equal(client.requests[2].messages.at(-1).content.at(-1).text, 'No more tool calls are available for this answer, display tools and suggest_followups included. Answer now from these results, in prose.')
   assert.equal(audit.rounds, 2)
   assert.equal(audit.stopReason, 'limits')
   assert.deepEqual(ofType(events, 'error'), [{ type: 'error', code: 'limits', retryable: false }])
   assert.equal(events.at(-1).type, 'answer')
   // The refused call still has its result, so the thread stays valid.
   assert.equal(JSON.parse(thread.messages.at(-1).content[0].content).error, 'call_limit')
+  // Follow-up chips asked for after the last round do not spoil an answer
+  // already written: it ends without an error.
+  const chips = await ask([
+    OVERDUE,
+    [...say('PO-001 is late.'), ...call('tu_more', 'suggest_followups', { questions: ['Which supplier is it?'] }), end()],
+  ], { limits: { rounds: 1 }, uiTools: [showRecords, followups] })
+  assertProtocol(chips.events)
+  assert.equal(ofType(chips.events, 'error').length, 0)
+  assert.equal(chips.audit.stopReason, 'end_turn')
+  assert.equal(chips.body.conclusion.summary, 'PO-001 is late.')
+  assert.equal(chips.client.requests.length, 2)
 })
 
 test('the tool call limit: calls past it get an error result, in the order the model wrote them', async () => {
@@ -236,11 +257,13 @@ test('the wall-time deadline stops a slow model call with a retryable error', as
     await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))
     throw new DOMException('stopped', 'AbortError')
   } }
-  const { events, audit } = await ask([], { client: slow, limits: { timeoutMs: 30 } })
+  const { events, audit, metered } = await ask([], { client: slow, limits: { timeoutMs: 30 } })
   assertProtocol(events)
   assert.deepEqual(ofType(events, 'error'), [{ type: 'error', code: 'timeout', retryable: true }])
   assert.equal(events.at(-1).type, 'answer')
   assert.equal(audit.stopReason, 'timeout')
+  // The provider ran the stopped call, so the meter counts it.
+  assert.deepEqual(metered, [null])
 })
 
 test('a provider failure before anything is shown leaves the answer to the rules; after text it ends with an error', async () => {
@@ -256,6 +279,26 @@ test('a provider failure before anything is shown leaves the answer to the rules
   assert.deepEqual(ofType(late.events, 'error'), [{ type: 'error', code: 'non_success_status', retryable: true }])
   assert.equal(late.events.at(-1).type, 'answer')
   assert.equal(late.body.conclusion.summary, 'PO-001 is late.')
+  // A failure in the second round after a round of tools only: the round's
+  // results leave the thread with its messages, and the gateway is told that
+  // status events already went out.
+  const firstRound = createScriptedModelClient([OVERDUE])
+  const rounds = { model: 'scripted', calls: 0, async *stream(request, signal) {
+    this.calls += 1
+    if (this.calls === 1) { yield* firstRound.stream(request, signal); return }
+    throw new AssistantModelError('network_error')
+  } }
+  const second = { messages: [], results: new Map() }
+  await assert.rejects(ask([], { client: rounds, thread: second }), (error) => error instanceof AssistantModelError && error.emitted === true)
+  assert.deepEqual(second.messages, [])
+  assert.deepEqual([...second.results.keys()], [])
+  // A stream that ends without its message is a provider failure too.
+  await assert.rejects(ask([], { client: { model: 'scripted', async *stream() { yield { type: 'tool_use_start', id: 'tu_x', name: 'list_purchase_orders' } } } }), (error) => error instanceof AssistantModelError && error.reason === 'malformed_output')
+  // A failure of the loop itself is not the provider's: not metered, no fallback audit.
+  const metered = []
+  const broken = { model: 'scripted', async *stream() { yield { type: 'text_delta', text: 'PO-001 ' }; throw new TypeError('loop bug') } }
+  await assert.rejects(runWithAiUsageScope((usage) => { metered.push(usage) }, () => answerAssistantV2({ ...aiSkillScenario({}).ctx, env: ENV }, { message: 'Which orders are late?' }, { modelClient: broken })), (error) => error instanceof TypeError && !error.audit)
+  assert.deepEqual(metered, [])
 })
 
 test('a figure the results do not hold is flagged, not dropped', async () => {
@@ -270,7 +313,10 @@ test('a figure the results do not hold is flagged, not dropped', async () => {
 })
 
 test('a claim that something was done is replaced with the fixed text', async () => {
-  for (const claim of ['I submitted the request for LDM-001.', 'I have created a purchase order for you.', 'PO-008 was cancelled.', '我已为你提交采购申请。']) {
+  for (const claim of [
+    'I submitted the request for LDM-001.', 'I have created a purchase order for you.', 'PO-008 was cancelled.', '我已为你提交采购申请。',
+    'I created the request.', 'Your purchase request has been created.', 'I\'ve gone ahead and submitted it for approval.', 'I created the draft for LDM-001.',
+  ]) {
     const { events, body, audit } = await ask([OVERDUE, [...say(claim), end()]])
     const replace = ofType(events, 'replace')
     assert.equal(replace.length, 1, claim)
@@ -282,6 +328,26 @@ test('a claim that something was done is replaced with the fixed text', async ()
   // A state the record is in is its status, not a claim.
   const status = await ask([OVERDUE, [...say('PO-008 has been issued and is 2 days overdue.'), end()]])
   assert.equal(ofType(status.events, 'replace').length, 0)
+  const REQUESTS = [...call('tu_prs', 'list_purchase_requests', { status: 'all' }), end()]
+  const submitted = await ask([REQUESTS, [...say('PR-001 has been submitted.'), end()]], { question: 'Which requests are open?' })
+  assert.equal(ofType(submitted.events, 'replace').length, 0)
+  const draft = await ask([REQUESTS, [...say('PR-002 has been submitted.'), end()]], { question: 'Which requests are open?' })
+  assert.equal(ofType(draft.events, 'replace')[0].code, 'unbacked_action_claim')
+  // A follow-up chip that claims an action is refused; a question about a state is not.
+  const chip = (question) => ask([OVERDUE, [...say('PO-001 is late.'), ...call('tu_chips', 'suggest_followups', { questions: [question] }), end()], [...say('Ask me more.'), end()]], { uiTools: [followups] })
+  const claimChip = await chip('I\'ve submitted PO-001, want to see it?')
+  assert.equal(JSON.parse(lastToolResults(claimChip.client.requests[2])[0].content).error, 'invalid_part')
+  const stateChip = await chip('Which orders were approved last week?')
+  assert.deepEqual(ofType(stateChip.events, 'ui').map((event) => event.props.questions), [['Which orders were approved last week?']])
+  // Describing the form the answer opened is no claim.
+  for (const form of [
+    'I\'ve opened a purchase request form below for you to review.', 'I have opened a request form with LDM-001 ticked.',
+    'I\'ve created a request form with LDM-001 for you to check.', '我已为你创建了一张采购申请表单，请核对后提交。', '我已为你创建了一份采购申请表单，请核对后提交。',
+  ]) {
+    const { events, body } = await ask([OVERDUE, [...say(form), end()]], { question: 'What should I reorder?' })
+    assert.equal(ofType(events, 'replace').length, 0, form)
+    assert.equal(body.conclusion.summary, form)
+  }
 })
 
 test('a record no result of this workspace holds is withheld', async () => {
@@ -294,6 +360,22 @@ test('a record no result of this workspace holds is withheld', async () => {
   const flagged = await ask([OVERDUE, [...say('PO-002 is due soon.'), end()]])
   assert.equal(ofType(flagged.events, 'replace').length, 0)
   assert.deepEqual(ofType(flagged.events, 'flag')[0].spans, [{ text: 'PO-002', kind: 'record', reason: 'not_in_results' }])
+  // A general term shaped like a record number is no record of this workspace.
+  const general = 'Spend in Q3-2026 is up; a three-way match is common ISO-9001 practice.'
+  const term = await ask([OVERDUE, [...say(general), end()]])
+  assert.equal(ofType(term.events, 'replace').length, 0)
+  assert.equal(term.body.conclusion.summary, general)
+  assert.equal(term.audit.replaces.length, 0)
+  // Written in fullwidth, the record is still withheld where it is written.
+  const wide = await ask([OVERDUE, [...say('ＰＯ-777 is late.'), end()]])
+  assert.equal(ofType(wide.events, 'replace')[0].text, '[not shown] is late.')
+  // Withheld in one turn, it is not given in the next.
+  const thread = { messages: [], results: new Map() }
+  await ask([OVERDUE, [...say('PO-001 is late, and so is PO-777.'), end()]], { thread })
+  const next = await ask([[...say('PO-777 is the second one.'), end()]], { thread, question: 'Which is the second?' })
+  assert.equal(ofType(next.events, 'replace')[0].code, 'foreign_record')
+  assert.equal(next.body.conclusion.summary, '[not shown] is the second one.')
+  assert.ok(!ofType(next.events, 'text_delta').some((event) => event.text.includes('777')), 'the id never goes out in a delta')
 })
 
 test('a viewer gets no prices: the tools hide them, and an amount in the text is withheld', async () => {
@@ -308,6 +390,26 @@ test('a viewer gets no prices: the tools hide them, and an amount in the text is
   assert.equal(replace.code, 'hidden_value')
   assert.equal(replace.text, 'PO-001 is worth [not shown] and 4 days overdue.')
   assert.doesNotMatch(body.conclusion.summary, /5,000/)
+  assert.ok(!ofType(events, 'text_delta').some((event) => /5,000/.test(event.text)), 'the amount never goes out in a delta')
+  // As a Chinese answer writes it: the fullwidth yen sign and fullwidth digits.
+  for (const [written, shown] of [['PO-001 的金额为￥5,000。', 'PO-001 的金额为[不显示]。'], ['PO-001 金额 ５０００ 元，已逾期。', 'PO-001 金额 [不显示]，已逾期。']]) {
+    const zh = await ask([OVERDUE, [...say(written), end()]], { roleKey: 'read-only-viewer', question: '哪些采购订单逾期了？', body: { answerLanguage: 'zh-CN' } })
+    const [withheld] = ofType(zh.events, 'replace')
+    assert.equal(withheld.code, 'hidden_value', written)
+    assert.equal(withheld.text, shown)
+    assert.equal(zh.body.conclusion.summary, shown)
+    assert.ok(!ofType(zh.events, 'text_delta').some((event) => /5,000|５０００/.test(event.text)))
+  }
+  // Follow-up chips get the same scans before they are shown.
+  const chips = await ask([OVERDUE, [...say('PO-001 is late.'), ...call('tu_chips', 'suggest_followups', { questions: ['Shall I chase PO-001 about the $5,000?'] }), end()], [...say('Ask me more.'), end()]], { roleKey: 'read-only-viewer', uiTools: [followups] })
+  assert.equal(JSON.parse(lastToolResults(chips.client.requests[2])[0].content).error, 'invalid_part')
+  assert.equal(ofType(chips.events, 'ui').length, 0)
+  // The form is not offered to a role that cannot create purchase requests.
+  const form = { ...followups, name: 'suggest_purchase_request' }
+  const viewer = await ask([[...say('Ask a buyer.'), end()]], { roleKey: 'read-only-viewer', uiTools: [form] })
+  assert.ok(!viewer.client.requests[0].tools.some((tool) => tool.name === 'suggest_purchase_request'))
+  const buyer = await ask([[...say('Here it is.'), end()]], { uiTools: [form] })
+  assert.ok(buyer.client.requests[0].tools.some((tool) => tool.name === 'suggest_purchase_request'))
   // An administrator's invented amount is only flagged.
   const admin = await ask([OVERDUE, [...say('PO-001 is worth $6,000.'), end()]])
   assert.equal(ofType(admin.events, 'replace').length, 0)
@@ -331,7 +433,10 @@ test('the thread carries to the next turn: the transcript, the results and the i
   assert.deepEqual(request.messages[6].content, [{ type: 'text', text: 'And the oldest one?' }])
   assert.doesNotMatch(request.messages[5].content[0].text, /earlierTurns/)
   assert.deepEqual([...thread.results.keys()], ['tu_po', 'tu_po_again'])
-  assert.deepEqual(named, [['LDM-001']])
+  // An item named in an earlier turn is not ticked later; one named in the question is.
+  assert.deepEqual(named, [[]])
+  await ask([OVERDUE, [...call('tu_show_named', 'show_records', { source: 'tu_po', refs: ['PO-001'] }), end()], [...say('Here.'), end()]], { question: 'Reorder LDM-001', uiTools: [recordNamed] })
+  assert.deepEqual(named, [[], ['LDM-001']])
   assert.equal(thread.messages.length, 12)
   // A record named in an earlier turn of this thread is no foreign record.
   const third = await ask([[...say('PO-008 was the other one.'), end()]], { thread, question: 'Which was the other?' })

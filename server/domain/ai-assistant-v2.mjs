@@ -5,7 +5,10 @@ import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { aiSkillQuestionLanguage, aiSkillText } from './ai-skill-copy.mjs'
 import { validateAiToolArgs } from './ai-read-tool-contract.mjs'
 import { aiReadToolDefinitions, aiReadToolRefs, runAiReadTool } from './ai-read-tool-runner.mjs'
-import { aiGroundingSources, checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
+import { aiGroundingRecordNumbers, aiGroundingSources, checkAiModelFirstGrounding } from './ai-model-first-grounding.mjs'
+import { aiAnswerActionClaims, aiAnswerClaimsAction } from './ai-answer-claims.mjs'
+import { aiSkillVisibility } from './ai-skill-registry.mjs'
+import { AssistantModelError } from './ai-assistant-v2-model/model-error.mjs'
 import { aiModelFirstHidden, aiModelFirstProgressSources, aiModelFirstTurns, presentAiModelFirstAnswer } from './ai-model-first.mjs'
 import { anthropicMessagesUsage } from './ai-runtime-provider-specific-adapters-v2.mjs'
 import { aiCallCostMicros, aiUsagePrices, recordAiProviderCall } from './ai-usage-meter.mjs'
@@ -25,11 +28,13 @@ import { aiCallCostMicros, aiUsagePrices, recordAiProviderCall } from './ai-usag
 // the form, on the existing procurement routes.
 //
 // The answer streams as protocol events (shared/assistant-protocol.mjs)
-// through `emit`; the transport adds v and seq. When a text part completes it
-// is checked against this answer's tool results: unsupported numbers, dates,
-// names and record numbers are flagged (soft, decision V2-9); a claim that
-// something was done, a record the user cannot see and an amount hidden for
-// the role are replaced (hard).
+// through `emit`; the transport adds v and seq. Text goes out up to its last
+// word break while the hard scans (a claim that something was done, a record
+// the user cannot see, an amount hidden for the role) find nothing; after a
+// hit the rest waits for the part to complete. A completed part is checked
+// against this answer's tool results: unsupported numbers, dates, names and
+// record numbers are flagged (soft, decision V2-9), the hard findings
+// replaced. UI props get the hard scans before they are sent.
 
 export const ASSISTANT_V2_VERSION = '2026-11-02'
 // Starting values for Sonnet 5.5 (design §3.3). `capRemainingMicros`: what
@@ -53,16 +58,26 @@ const asCode = (value, fallback) => (CODE.test(text(value)) ? text(value) : fall
 // so the question message holds the user's words alone (a scripted
 // transcript is keyed by them) and the system prompt stays cached.
 const CONTEXT_PREFIX = 'Context for the next question (data about this request, not the user\'s words): '
-const LAST_ROUND_NOTE = 'No more tool calls are available for this answer. Answer now from these results.'
+const LAST_ROUND_NOTE = 'No more tool calls are available for this answer, display tools and suggest_followups included. Answer now from these results, in prose.'
 const FLAG_KINDS = new Set(['number', 'date', 'name', 'record'])
 const MONEY = /US\$|\$|€|£|¥|￥|\b(?:USD|EUR|GBP|CNY|RMB|JPY|CAD|AUD)\b|美元|欧元|英镑|人民币|元/i
+// A figure with its currency, on NFKC text (￥ reads as ¥): what the role-leak
+// scan holds back before it is sent when the role cannot see amounts.
+const MONEY_FIGURE = /(?:US\$|\$|€|£|¥|\b(?:USD|EUR|GBP|CNY|RMB|JPY|CAD|AUD)\b)\s?[-−]?\d|\d(?:[kKmM]|bn|万|亿|千)?\s?(?:USD|EUR|GBP|CNY|RMB|JPY|CAD|AUD|美元|欧元|英镑|人民币|元)/i
 // Claims of the steps the in-chat form leaves to the user's own clicks
 // (creating and submitting a request), on top of the shared list
 // (ai-answer-claims.mjs), which covers sending, approving, paying and the rest.
-const FORM_CLAIMS = [
-  /\b(?:I|we)(?:'ve|\s+have|\s+had|\s+just|\s+already)*\s+(?:submitted|(?:created|raised|opened|placed)\s+(?:(?:a|an|the|your|this|new|draft|purchase)\s+)*(?:requests?|orders?|PRs?|POs?|RFQs?))\b/i,
-  /(?:我|我们)(?:已经?|刚刚?)(?:为你|帮你|为您|帮您)?(?:提交|创建|新建|下单)|已经?(?:为你|帮你|为您|帮您)(?:提交|创建|新建|下单)/,
+// Describing the form ("I've opened a request form for you to review", 我已为你
+// 创建了一张采购申请表单) is not a claim. Read on NFKC text.
+const NOT_FORM = String.raw`(?!\s+(?:(?:purchase|requests?|orders?|drafts?)\s+)*forms?\b)`
+const ZH_CREATE = '(?:提交|(?:创建|新建)(?![^。！？；，,\\n]{0,12}?(?:表单|表格))|下单)'
+const SELF_CLAIMS = [
+  new RegExp(String.raw`\b(?:I|we)(?:['’]ve|['’]d|\s+have|\s+had)?(?:\s+(?:just|already|now|also|then|(?:gone|went)\s+ahead\s+and))*\s+(?:submitted|(?:created|raised|opened|placed)\s+(?:(?:a|an|the|your|this|that|new|draft|purchase)\s+)*(?:requests?|orders?|PRs?|POs?|RFQs?|drafts?)\b${NOT_FORM})`, 'i'),
+  new RegExp(`(?:我|我们)(?:已经?|刚刚?)(?:为你|帮你|为您|帮您)?${ZH_CREATE}|已经?(?:为你|帮你|为您|帮您)${ZH_CREATE}`),
 ]
+// "Your request has been submitted" claims the step was done, unless the
+// sentence names the records and the tools returned each in a state that fits.
+const PASSIVE_CLAIM = /\b(?:has|have|had)\s+(?:now\s+|already\s+|just\s+)?been\s+(submitted|created|raised)\b/i
 
 export const ASSISTANT_V2_SYSTEM = [
   'You are the assistant inside FlowChain, an ERP for small companies: purchasing, receiving, supplier invoices with three-way match, inventory and sales. You answer the signed-in user\'s questions about their own workspace, in a conversation.',
@@ -98,12 +113,74 @@ export const ASSISTANT_V2_SYSTEM = [
   '- End every answer with suggest_followups: one to three short questions the user may want to ask next, in answerLanguage.',
 ].join('\n')
 
-// The SKUs the user named in this conversation, as the facts hold them: only
-// these may be ticked in a purchase request form (decision V2-4).
+// The SKUs the user named in the question, as the facts hold them: only these
+// may be ticked in a purchase request form (decision V2-4). An item named in
+// an earlier turn arrives unticked.
 function namedSkus(facts, questions) {
   const words = fold(questions.join('\n'))
   const skus = [...array(facts?.inventory?.rows), ...array(facts?.inventory?.masterOnly)].map((row) => text(row.sku)).filter(Boolean)
   return [...new Set(skus.filter((sku) => new RegExp(`(^|[^\\p{L}\\p{N}])${escape(fold(sku))}($|[^\\p{L}\\p{N}])`, 'u').test(words)))]
+}
+
+// Where `value`, as the NFKC-normalised check read it, sits in the text as
+// written (￥ for ¥, fullwidth digits, a no-break space): [start, end] pairs.
+function spansOf(source, value) {
+  const target = text(value).normalize('NFKC')
+  if (!target) return []
+  let normal = ''
+  const from = []
+  let index = 0
+  for (const char of source) {
+    const mapped = char.normalize('NFKC')
+    for (let unit = 0; unit < mapped.length; unit += 1) from.push([index, index + char.length])
+    normal += mapped
+    index += char.length
+  }
+  const spans = []
+  for (let at = normal.indexOf(target); at !== -1; at = normal.indexOf(target, at + target.length)) spans.push([from[at][0], from[at + target.length - 1][1]])
+  return spans
+}
+
+// Each value replaced by the marker where it is written. A value the map
+// cannot place (a combining sequence) is found in the NFKC text instead, so
+// it is never left visible.
+function withhold(source, values, marker) {
+  let result = source
+  const missing = values.filter((value) => !spansOf(source, value).length)
+  if (missing.length) result = result.normalize('NFKC')
+  const spans = values.flatMap((value) => spansOf(result, value)).sort((a, b) => a[0] - b[0])
+  let out = ''
+  let at = 0
+  for (const [start, end] of spans) {
+    if (end <= at) continue
+    if (start >= at) out += `${result.slice(at, start)}${marker}`
+    at = end
+  }
+  return out + result.slice(at)
+}
+
+const SENTENCE_BREAK = /[.!?。！？；;\n]/u
+function sentenceAround(value, index) {
+  let start = index
+  while (start > 0 && !SENTENCE_BREAK.test(value[start - 1])) start -= 1
+  let end = index
+  while (end < value.length && !SENTENCE_BREAK.test(value[end])) end += 1
+  return value.slice(start, end)
+}
+
+// Text streams up to the last word or clause break, so a figure or a record
+// number is never sent in pieces before the scans have seen it whole.
+const BREAK = /[\s。！？；，、：]/u
+function lastBreak(value, from) {
+  for (let at = value.length; at > from; at -= 1) if (BREAK.test(value[at - 1])) return at
+  return from
+}
+
+function propStrings(value, out = []) {
+  if (typeof value === 'string') out.push(value)
+  else if (Array.isArray(value)) value.forEach((entry) => propStrings(entry, out))
+  else if (value && typeof value === 'object') Object.values(value).forEach((entry) => propStrings(entry, out))
+  return out
 }
 
 const messageText = (message) => blocks(message?.content).filter((block) => block?.type === 'text').map((block) => text(block.text)).filter(Boolean).join('\n')
@@ -130,9 +207,11 @@ const firstSentence = (value) => text(value).split(/(?<=[.!?。！？])\s*/u)[0]
 // One answer. `ctx` is the request's context (identity, env, the database or
 // the test stand-ins); `body` the client's { threadId, message, activeContext,
 // answerLanguage }. Returns { body, audit }: the folded AiResponseV2 with its
-// parts, and the codes-only audit block. A provider failure before anything
-// was shown throws the AssistantModelError, with `audit` on it, so the
-// gateway can answer with the rules instead; the thread is left as it was.
+// parts, and the codes-only audit block. A provider failure before any text
+// or part was shown throws the AssistantModelError, with `audit` on it, so the
+// gateway can answer with the rules instead; `emitted` on it says whether
+// status events (start, tool, progress) already went out. Any other failure
+// is rethrown unmetered. Either way the thread is left as it was.
 export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = null, modelClient, uiTools = [], thread = { messages: [], results: new Map() }, limits: overrides = {} } = {}) {
   if (typeof modelClient?.stream !== 'function') throw new TypeError('answerAssistantV2 needs a model client.')
   const env = ctx.env || process.env
@@ -156,8 +235,16 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
   signal?.addEventListener?.('abort', onAbort, { once: true })
   if (aborted) controller.abort()
   const timer = setTimeout(() => { timedOut = true; controller.abort() }, limits.timeoutMs)
-  // A listener that fails never stops the answer.
-  const send = (event) => { if (!aborted) try { emit?.(event) } catch { /* the answer goes on */ } }
+  // What went out so far, for the rules fallback: content (text, parts) or
+  // only status lines. A listener that fails never stops the answer.
+  let sentStatus = false
+  let sentContent = false
+  const send = (event) => {
+    if (aborted) return
+    if (['text_delta', 'ui', 'replace'].includes(event.type)) sentContent = true
+    else sentStatus = true
+    try { emit?.(event) } catch { /* the answer goes on */ }
+  }
 
   const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null }
   const parts = []
@@ -176,9 +263,33 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     const facts = await readAiSkillFacts(context, { openPurchaseRequests: true })
     const hidden = aiModelFirstHidden(facts)
     const restartTurns = earlier.length ? [] : aiModelFirstTurns(body.conversationContext)
+
+    // Records the user cannot read anywhere in this workspace: shaped like its
+    // record numbers (a prefix such as PO- or LDM- that the facts or results
+    // use, so ISO-9001 or Q3-2026 is no record) and in neither. Read on
+    // demand, again after each round's results.
+    let known = null
+    const verdicts = new Map()
+    const segments = (token) => fold(token).split('-').filter((part) => /^[a-z]+$/.test(part))
+    const foreign = (token) => {
+      if (!known) {
+        const haystack = aiGroundingSources([facts, ...[...thread.results.values()].map((entry) => entry.output)]).haystack
+        known = { haystack, prefixes: new Set(aiGroundingRecordNumbers(haystack).flatMap(segments)) }
+        verdicts.clear()
+      }
+      const value = fold(token)
+      if (!verdicts.has(value)) verdicts.set(value, segments(value).some((part) => known.prefixes.has(part)) && !new RegExp(`(^|[^a-z0-9])${escape(value)}($|[^a-z0-9])`, 'u').test(known.haystack))
+      return verdicts.get(value)
+    }
+    // Earlier answers count as given for record numbers, except a number the
+    // check withheld there: the transcript keeps the model's own words.
+    const withoutForeign = (value) => aiGroundingRecordNumbers(value).filter(foreign).reduce((rest, token) => rest.split(token).join(' '), text(value).normalize('NFKC'))
     const earlierQuestions = [...earlier.filter(isQuestion).map(messageText), ...restartTurns.map((turn) => turn.question)]
-    const conversation = [...earlier.filter((message) => isQuestion(message) || message.role === 'assistant').map(messageText), ...restartTurns.map((turn) => `${turn.question}\n${turn.answer}`)].join('\n')
-    const userNamedSkus = namedSkus(facts, [question, ...earlierQuestions])
+    const earlierAnswers = [...earlier.filter((message) => message.role === 'assistant').map(messageText), ...restartTurns.map((turn) => turn.answer)]
+    const conversation = [...earlierQuestions, ...earlierAnswers.map(withoutForeign)].join('\n')
+    const given = fold(`${question}\n${conversation}`)
+    const isNamed = (token) => new RegExp(`(^|[^a-z0-9])${escape(fold(token))}($|[^a-z0-9])`, 'u').test(given)
+    const userNamedSkus = namedSkus(facts, [question])
     const active = body.activeContext && typeof body.activeContext === 'object' ? body.activeContext : null
     const openRecord = active && (text(active.moduleId) || text(active.entityType)) ? { moduleId: clip(active.moduleId, 80) || null, entityType: clip(active.entityType, 40) || null, entityId: clip(active.entityId, 120) || null } : null
     thread.messages.push(
@@ -188,24 +299,70 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
 
     const dataTools = aiReadToolDefinitions(facts, { format: 'anthropic', context, assistantV2: true })
     const dataNames = new Set(dataTools.map((tool) => tool.name))
-    const ui = new Map(array(uiTools).filter((tool) => tool?.kind === 'ui' && !dataNames.has(tool.name)).map((tool) => [tool.name, tool]))
+    // A role that cannot create purchase requests is not offered the form at
+    // all (design §4.1 item 5), as the prompt tells the model.
+    const canDraft = Boolean(aiSkillVisibility(context.actor).canDraft)
+    const ui = new Map(array(uiTools).filter((tool) => tool?.kind === 'ui' && !dataNames.has(tool.name) && (canDraft || tool.name !== 'suggest_purchase_request')).map((tool) => [tool.name, tool]))
     const tools = [...dataTools, ...[...ui.values()].map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }))]
 
-    // Records the user cannot read anywhere in this workspace: not in the
-    // facts and not in any result of this conversation. Read once, on demand.
-    let known = null
-    const foreign = (token) => {
-      known ??= aiGroundingSources([facts, ...[...thread.results.values()].map((entry) => entry.output)]).haystack
-      const value = fold(token)
-      return !new RegExp(`(^|[^a-z0-9])${escape(value)}($|[^a-z0-9])`, 'u').test(known)
+    // The statuses of the records this answer's tools returned, by number.
+    const statuses = () => {
+      const index = new Map()
+      const walk = (value) => {
+        if (Array.isArray(value)) { value.forEach(walk); return }
+        if (!value || typeof value !== 'object') return
+        if (value.ref?.id) {
+          const states = Object.entries(value).filter(([key, entry]) => /status$/i.test(key) && typeof entry === 'string').map(([, entry]) => fold(entry))
+          for (const number of [value.ref.id, value.ref.label]) if (text(number)) index.set(fold(number), states)
+        }
+        Object.values(value).forEach(walk)
+      }
+      results.forEach(walk)
+      return index
+    }
+    const passiveClaims = (value) => {
+      const normal = value.normalize('NFKC')
+      const found = [...normal.matchAll(new RegExp(PASSIVE_CLAIM.source, 'gi'))]
+      if (!found.length) return false
+      const index = statuses()
+      return found.some((match) => {
+        const numbers = aiGroundingRecordNumbers(sentenceAround(normal, match.index))
+        return !numbers.length || !numbers.every((number) => {
+          const states = index.get(fold(number))
+          return states && (match[1].toLowerCase() !== 'submitted' || (states.length > 0 && !states.includes('draft')))
+        })
+      })
+    }
+    const selfClaim = (value) => SELF_CLAIMS.some((pattern) => pattern.test(value.normalize('NFKC')))
+    const amountsHidden = Boolean(hidden?.amountsOn?.length)
+    // The hard scans, conservative, on text not yet sent: wording that may
+    // claim an action, an amount the role cannot see, a record of no result.
+    const unsafe = (value) => selfClaim(value) || PASSIVE_CLAIM.test(value.normalize('NFKC')) || aiAnswerClaimsAction(value)
+      || (amountsHidden && MONEY_FIGURE.test(value.normalize('NFKC')))
+      || aiGroundingRecordNumbers(value).some((token) => !isNamed(token) && foreign(token))
+
+    // Text is sent up to its last word break while the part so far passes the
+    // hard scans; after a scan stops it, the rest waits for the check below.
+    const release = (part, upTo) => {
+      if (upTo <= part.sent) return
+      const chunk = part.text.slice(part.sent, upTo)
+      part.sent = upTo
+      for (let at = 0; at < chunk.length; at += 4000) send({ type: 'text_delta', partId: part.id, text: chunk.slice(at, at + 4000) })
+    }
+    const stream = (part) => {
+      if (part.held) return
+      const upTo = lastBreak(part.text, part.sent)
+      if (upTo <= part.sent) return
+      if (unsafe(part.text.slice(0, upTo))) part.held = true
+      else release(part, upTo)
     }
 
-    // A text part is complete: check it against this answer's results.
+    // A text part is complete: check it against this answer's results. A
+    // hard finding replaces it; otherwise its held rest is sent, then flags.
     const checkText = (part) => {
-      if (!text(part.text)) return
+      if (!text(part.text)) { release(part, part.text.length); return }
       const check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results, refs, question, conversation, facts, today: context.today })
-      const claimed = check.problems.some((row) => row.kind === 'action_claim') || FORM_CLAIMS.some((pattern) => pattern.test(part.text))
-      if (claimed) {
+      if (check.problems.some((row) => row.kind === 'action_claim') || selfClaim(part.text) || passiveClaims(part.text)) {
         part.text = aiSkillText('assistant_v2.replace.action_claim', language)
         stats.replaces.push('unbacked_action_claim')
         send({ type: 'replace', partId: part.id, text: part.text, code: 'unbacked_action_claim' })
@@ -216,17 +373,20 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       const spans = []
       for (const row of check.problems) {
         if (!FLAG_KINDS.has(row.kind)) continue
-        if (row.kind === 'number' && hidden?.amountsOn?.length && MONEY.test(row.value)) withheld.push({ value: row.value, code: 'hidden_value' })
+        if (row.kind === 'number' && amountsHidden && MONEY.test(row.value)) withheld.push({ value: row.value, code: 'hidden_value' })
         else if (row.kind === 'record' && foreign(row.value)) withheld.push({ value: row.value, code: 'foreign_record' })
-        else spans.push({ text: row.value.slice(0, 200), kind: row.kind, reason: 'not_in_results' })
+        else {
+          // The span as the part shows it, not as the check normalised it.
+          const [span] = spansOf(part.text, row.value)
+          spans.push({ text: (span ? part.text.slice(...span) : row.value).slice(0, 200), kind: row.kind, reason: 'not_in_results' })
+        }
       }
-      if (withheld.length) {
-        const marker = aiSkillText('assistant_v2.replace.withheld', language)
-        for (const row of withheld) part.text = part.text.split(row.value).join(marker)
-        const code = withheld.some((row) => row.code === 'foreign_record') ? 'foreign_record' : 'hidden_value'
+      const before = part.text
+      if (withheld.length) part.text = withhold(part.text, withheld.map((row) => row.value), aiSkillText('assistant_v2.replace.withheld', language))
+      if (part.text !== before) {
         stats.replaces.push(...withheld.map((row) => row.code))
-        send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code })
-      }
+        send({ type: 'replace', partId: part.id, text: part.text.slice(0, 4000), code: withheld.some((row) => row.code === 'foreign_record') ? 'foreign_record' : 'hidden_value' })
+      } else release(part, part.text.length)
       stats.flags += spans.length
       send({ type: 'flag', partId: part.id, spans: spans.slice(0, 50) })
     }
@@ -255,6 +415,13 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       if (built?.error) return { ok: false, error: asCode(built.error.code, 'invalid_arguments'), details: [clip(built.error.message, 300)].filter(Boolean) }
       const event = { type: 'ui', partId, component: built?.component, schemaVersion: PART_SCHEMA_VERSION, props: built?.props, refs: array(built?.refs) }
       if (!safeParseStreamEvent({ v: 2, seq: 0, ...event }).success) return { ok: false, error: 'invalid_part', details: ['The part could not be built from that source; check the source id and the codes.'] }
+      // The hard scans over the props before they are sent. The follow-up
+      // questions are the model's own words, so they get the claim check too
+      // (questions about a state, "which were approved?", are no claim).
+      const strings = propStrings(event.props)
+      const leaks = strings.some((value) => (amountsHidden && MONEY_FIGURE.test(value.normalize('NFKC'))) || aiGroundingRecordNumbers(value).some((token) => !isNamed(token) && foreign(token)))
+      const claims = event.component === 'followups' && strings.some((value) => selfClaim(value) || aiAnswerActionClaims(value).some((found) => /^(?:I|we)\b/i.test(found)))
+      if (leaks || claims) return { ok: false, error: 'invalid_part', details: [claims ? 'A follow-up question read as if something had been done; ask questions only.' : 'The part named an amount this role cannot see or a record no result holds; leave it out.'] }
       return { ok: true, event, result: { shown: event.component, partId } }
     }
 
@@ -310,11 +477,11 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
           if (aborted || timedOut) break
           if (event.type === 'text_delta' && event.text) {
             if (!openText) {
-              openText = { id: `p${parts.length + 1}`, type: 'text', text: '' }
+              openText = { id: `p${parts.length + 1}`, type: 'text', text: '', sent: 0, held: false }
               parts.push(openText)
             }
             openText.text += event.text
-            for (let at = 0; at < event.text.length; at += 4000) send({ type: 'text_delta', partId: openText.id, text: event.text.slice(at, at + 4000) })
+            stream(openText)
           } else if (event.type === 'tool_use_start') {
             closeText()
             send({ type: 'tool', id: event.id, name: asCode(event.name, 'unknown_tool'), state: 'running' })
@@ -325,24 +492,42 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
             end = event
           }
         }
-        if (!end && !aborted && !timedOut) throw Object.assign(new Error('The model stream ended without its message.'), { reason: 'malformed_output' })
+        if (!end && !aborted && !timedOut) throw new AssistantModelError('malformed_output')
       } catch (error) {
         if (!aborted && !timedOut) {
-          await recordAiProviderCall({ ok: false, ...(error?.budgetExceeded ? { budgetExceeded: true } : {}), usage: null })
-          closeText()
-          // Nothing shown yet: the gateway answers with the rules instead.
-          if (!parts.length) {
+          // The thread as it was before this answer, its results included.
+          const rollback = () => {
             thread.messages.length = turnStart
-            if (error && typeof error === 'object') error.audit = auditBlock({ stats: { ...stats, stopReason: 'provider_error' }, model, aborted: false, started })
+            for (const id of answerResults.keys()) thread.results.delete(id)
+          }
+          // A failure of the loop itself is no provider call: not metered,
+          // no rules fallback.
+          if (!(error instanceof AssistantModelError)) { rollback(); throw error }
+          await recordAiProviderCall({ ok: false, ...(error.budgetExceeded ? { budgetExceeded: true } : {}), usage: null })
+          // Nothing shown yet (held text included): the gateway answers with
+          // the rules instead.
+          if (!sentContent) {
+            rollback()
+            error.audit = auditBlock({ stats: { ...stats, stopReason: 'provider_error' }, model, aborted: false, started })
+            error.emitted = sentStatus
             throw error
           }
+          closeText()
           stop('provider_error')
-          send({ type: 'error', code: error?.budgetExceeded ? 'budget' : asCode(error?.reason, 'provider_error'), retryable: true })
+          send({ type: 'error', code: error.budgetExceeded ? 'budget' : asCode(error.reason, 'provider_error'), retryable: true })
           break
         }
       }
       if (aborted) break
-      if (!end) { closeText(); stop('timeout'); send({ type: 'error', code: 'timeout', retryable: true }); break }
+      if (!end) {
+        // The deadline stopped the call in flight: the provider ran it, so it
+        // is metered, as a failed call.
+        await recordAiProviderCall({ ok: false, usage: null })
+        closeText()
+        stop('timeout')
+        send({ type: 'error', code: 'timeout', retryable: true })
+        break
+      }
 
       // A completed call: counted and metered, and its content appended to
       // the transcript unchanged, thinking blocks included.
@@ -397,6 +582,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         if (outcome.ok) {
           answerResults.set(call.id, { tool: call.name, output: outcome.result })
           thread.results.set(call.id, { tool: call.name, output: outcome.result })
+          known = null
           results.push(outcome.result)
           for (const ref of aiReadToolRefs(outcome.result)) if (!refs.some((row) => row.type === ref.type && row.id === ref.id)) refs.push(ref)
         }
@@ -404,8 +590,11 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       }
       if (aborted) { closeToolUses(toolUses, outcomes, 'stopped'); break }
       if (!admitted.size) {
-        // The model kept calling tools after the last round: stop here.
+        // The model kept calling tools after the last round: stop here. Only
+        // display calls (the follow-up chips the prompt asks for) after text
+        // end a complete answer, without an error.
         closeToolUses(toolUses, outcomes, 'call_limit')
+        if (toolUses.every((block) => ui.has(block.name)) && parts.some((part) => part.type === 'text' && text(part.text))) { stop('end_turn'); break }
         stop('limits')
         send({ type: 'error', code: 'limits', retryable: false })
         break

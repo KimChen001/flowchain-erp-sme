@@ -46,6 +46,11 @@ const LIMIT_CLAIMS = [
 // Record numbers: letters, then hyphenated parts ending in digits.
 const RECORD = /(?<![\w-])[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*-\d+[A-Za-z0-9]*(?![\w-])/g
 const NOT_RECORD = /^tier-\d$/i
+
+// The record numbers in a text as this check reads them, NFKC-normalised.
+export function aiGroundingRecordNumbers(value) {
+  return [...String(value ?? '').normalize('NFKC').matchAll(RECORD)].map((match) => match[0]).filter((token) => !NOT_RECORD.test(token))
+}
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 }
 const MONTH = '(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
 const DATE_PATTERNS = [
