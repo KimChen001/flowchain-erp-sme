@@ -13,7 +13,9 @@ import { mergeOperationalSettings } from './workspace-settings-contract.mjs'
 // per assistant request, before any path runs, by handing the request a
 // model-free environment, so knowledge, intent routing, the business query
 // planner and agent planning are all covered. Local development keeps the
-// provider settings as they are, without the opt-in.
+// provider settings as they are, without the opt-in, but wherever a database
+// is present the monthly cap still holds (docs/ai-assistant-v2-design.md §8.5):
+// spend is never unlimited because the opt-in is not required.
 
 export const AI_MONTHLY_CAP_DEFAULT_USD = 20
 const text = (value) => String(value ?? '').trim()
@@ -48,7 +50,7 @@ export function modelFreeEnv(env = {}) {
 //   no_provider  no model is configured on this server
 //   on           requests may call the model
 //   off          the opt-in is required and the workspace has not switched it on
-//   over_cap     switched on, but this month's spend reached the cap
+//   over_cap     this month's spend reached the cap (switched on, or no opt-in required)
 export async function readAiWorkspaceAccess({ prisma, tenantId, env = {}, now = () => new Date() }) {
   const providerConfigured = aiProviderConfigured(env)
   const optInRequired = aiOptInRequired(env)
@@ -61,29 +63,29 @@ export async function readAiWorkspaceAccess({ prisma, tenantId, env = {}, now = 
   const enabled = mergeOperationalSettings(tenant?.operationalSettings).ai.modelAssistEnabled === true
   const costUsd = Math.round(Number(usage?.costMicros || 0)) / 1e6
   const status = !providerConfigured ? 'no_provider'
-    : !optInRequired ? 'on'
-      : !enabled ? 'off'
-        : costUsd >= capUsd ? 'over_cap' : 'on'
+    : optInRequired && !enabled ? 'off'
+      : costUsd >= capUsd ? 'over_cap' : 'on'
   return { status, providerConfigured, optInRequired, enabled, month, calls: usage?.calls || 0, costUsd, capUsd }
 }
 
 // Runs an assistant request with the environment its workspace may use, and
 // counts its model calls. Without a provider nothing is looked up. A request
 // with no workspace, or whose workspace cannot be read while the opt-in is
-// required, gets no model.
+// required, gets no model; with a database, neither does one whose access
+// cannot be read or is over the cap. The request carries the outcome for the
+// paths that check it themselves (assistant v2): aiWorkspaceAccessStatus,
+// and aiWorkspaceAccess, the status read from the database (null without one).
 export async function withAiWorkspaceAccess(ctx, run) {
   const env = ctx.env || process.env
-  if (!aiProviderConfigured(env)) return run(ctx)
+  if (!aiProviderConfigured(env)) return run({ ...ctx, aiWorkspaceAccessStatus: 'no_provider', aiWorkspaceAccess: null })
   const tenantId = text(ctx.identity?.tenantId)
   const required = aiOptInRequired(env)
   const prisma = ctx.aiWorkspacePrisma || (text(env.DATABASE_URL) ? await getPrismaClient(env).catch(() => null) : null)
-  if (!tenantId || (required && !prisma)) return run({ ...ctx, env: modelFreeEnv(env) })
+  if (!tenantId || (required && !prisma)) return run({ ...ctx, env: modelFreeEnv(env), aiWorkspaceAccessStatus: 'off', aiWorkspaceAccess: null })
   // Without a database nothing is counted, but a failed call is still noted.
-  if (!prisma) return runWithAiUsageScope(null, () => run(ctx))
+  if (!prisma) return runWithAiUsageScope(null, () => run({ ...ctx, aiWorkspaceAccessStatus: 'on', aiWorkspaceAccess: null }))
   let access = null
-  if (required) {
-    try { access = await readAiWorkspaceAccess({ prisma, tenantId, env }) } catch { access = null }
-    if (access?.status !== 'on') return run({ ...ctx, env: modelFreeEnv(env), aiModelAccess: access?.status || 'off' })
-  }
-  return runWithAiUsageScope(aiUsageRecorder({ prisma, tenantId, env }), () => run(ctx))
+  try { access = await readAiWorkspaceAccess({ prisma, tenantId, env }) } catch { access = null }
+  if (access?.status !== 'on') return run({ ...ctx, env: modelFreeEnv(env), aiModelAccess: access?.status || 'off', aiWorkspaceAccessStatus: access?.status || 'off', aiWorkspaceAccess: access })
+  return runWithAiUsageScope(aiUsageRecorder({ prisma, tenantId, env }), () => run({ ...ctx, aiWorkspaceAccessStatus: 'on', aiWorkspaceAccess: access }))
 }
