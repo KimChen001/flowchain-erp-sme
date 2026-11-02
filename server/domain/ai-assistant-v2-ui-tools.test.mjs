@@ -4,8 +4,11 @@ import { aiSkillScenario } from './test-fixtures/ai-skill-scenario.mjs'
 import { loadAiSkillContext } from './ai-skill-context.mjs'
 import { readAiSkillFacts } from './ai-skill-readers.mjs'
 import { AI_READ_TOOL_COLUMNS, runAiReadTool } from './ai-read-tool-runner.mjs'
-import { AI_ASSISTANT_V2_UI_TOOLS, aiUiColumnCode } from './ai-assistant-v2-ui-tools.mjs'
+import { AI_ASSISTANT_V2_UI_TOOLS, aiUiColumnCode, aiUiToolsFor } from './ai-assistant-v2-ui-tools.mjs'
+import { AI_SKILL_SIGNAL_SEVERITY } from './ai-skill-signals.mjs'
 import { safeParsePartProps } from '../../shared/assistant-protocol.mjs'
+import { PURCHASE_SUGGESTION_SOURCES } from '../../shared/purchase-suggestion.mjs'
+import { readFileSync } from 'node:fs'
 
 // LDM-001's link to its preferred supplier: 12 days' lead time, a minimum
 // order of 100 and a reference price of 95 USD. With a reorder point of 200
@@ -58,7 +61,36 @@ test('every UI tool follows the contract: kind ui, a closed input schema, frozen
     assert.ok(entry.description.length > 20)
     assert.equal(entry.inputSchema.additionalProperties, false)
     assert.equal(typeof entry.build, 'function')
+    assert.equal(typeof entry.available, 'function')
   }
+})
+
+test('the request form is not offered to a user who may not create requests', async () => {
+  const admin = await workspace()
+  assert.deepEqual(aiUiToolsFor(admin.ctx.actor).map((entry) => entry.name), AI_ASSISTANT_V2_UI_TOOLS.map((entry) => entry.name))
+  const viewer = await workspace({ roleKey: 'read-only-viewer' })
+  const offered = aiUiToolsFor(viewer.ctx.actor).map((entry) => entry.name)
+  assert.ok(!offered.includes('suggest_purchase_request'))
+  assert.ok(offered.includes('show_table'))
+})
+
+// Every label a part looks up, in both languages: a code with no key would
+// show as humanized English in a Chinese answer.
+test('every column, KPI and status code the UI tools emit has a label in English and Chinese', () => {
+  const source = readFileSync(new URL('../../src/i18n/I18n.tsx', import.meta.url), 'utf8')
+  const labelled = (key) => source.split(`"${key}":`).length - 1 === 2
+  const missing = []
+  for (const [name, tables] of Object.entries(AI_READ_TOOL_COLUMNS)) {
+    for (const keys of Object.values(tables)) {
+      for (const key of keys) {
+        const label = `ai.v2.${name === 'workspace_summary' ? 'kpi' : 'column'}.${aiUiColumnCode(key)}`
+        if (!labelled(label)) missing.push(label)
+      }
+    }
+  }
+  const statuses = [...Object.values(PURCHASE_SUGGESTION_SOURCES).filter((code) => !code.startsWith('lead_time')), ...new Set(Object.values(AI_SKILL_SIGNAL_SEVERITY)), 'overdue', 'due', 'undated', 'yes', 'no']
+  for (const code of statuses) if (!labelled(`ai.v2.status.${code}`)) missing.push(`ai.v2.status.${code}`)
+  assert.deepEqual(missing, [])
 })
 
 test('every declared column has a part code the protocol accepts, one per column of a list', () => {
@@ -363,4 +395,102 @@ test('every value a part shows is in its source result', async () => {
     }
   }
   assert.deepEqual(built.refs, source.map((row) => row.ref))
+})
+
+test('show_records keeps the currency of every amount, whichever tool the record comes from', async () => {
+  const { call, build } = await workspace()
+  await call('toolu_po9', 'get_purchase_order', { order: 'PO-009' })
+  const [order] = assertPart(build('show_records', { source: 'toolu_po9', refs: [{ type: 'purchase_order', id: 'PO-009' }] }), 'records').cards
+  assert.deepEqual(order.figures, [{ code: 'remaining_quantity', value: 10, unit: 'quantity', unitLabel: 'pcs' }, { code: 'amount', value: 500, unit: 'money', currency: 'EUR' }])
+  const risks = await call('toolu_risks', 'supplier_risks')
+  const variance = risks.rows.find((row) => row.record === 'INV-001')
+  const [invoice] = assertPart(build('show_records', { source: 'toolu_risks', refs: [variance.ref] }), 'records').cards
+  assert.deepEqual(invoice.figures, [{ code: 'variance', value: variance.variance, unit: 'money', currency: variance.currency }])
+  // An amount whose currency is not known is left out, never shown as a count.
+  const { ctx } = await workspace()
+  ctx.results.set('toolu_bare', { tool: 'supplier_risks', output: { rows: [{ supplier: 'Acme Components', type: 'invoice_variance', record: 'INV-001', variance: 200, ref: variance.ref }] } })
+  const [bare] = assertPart(tool('show_records').build({ source: 'toolu_bare', refs: [variance.ref] }, ctx), 'records').cards
+  assert.equal(bare.figures, undefined)
+})
+
+test('supplier_risks rows keep their date in cards and tables', async () => {
+  const { call, build } = await workspace()
+  const risks = await call('toolu_risks', 'supplier_risks')
+  const overdue = risks.rows.find((row) => row.record === 'PO-001')
+  const open = risks.rows.find((row) => row.record === 'INV-001')
+  const cards = assertPart(build('show_records', { source: 'toolu_risks', refs: [overdue.ref, open.ref] }), 'records').cards
+  assert.deepEqual(cards.map((card) => card.date), [{ kind: 'overdue', days: overdue.when.days }, { kind: 'waiting', days: open.when.days }])
+  const table = assertPart(build('show_table', { source: 'toolu_risks', columns: ['record', 'when'], sort: { column: 'when', direction: 'desc' } }), 'table')
+  assert.deepEqual(table.columns, [{ code: 'record', kind: 'ref' }, { code: 'when', kind: 'date' }])
+  const days = risks.rows.map((row) => row.when.date).sort().reverse()
+  assert.deepEqual(table.rows.map((row) => row.when), days)
+})
+
+test('amounts and quantities recorded as decimal strings are shown, charted and carded as numbers', async () => {
+  const { ctx } = await workspace()
+  const build = (name, input) => tool(name).build(input, ctx)
+  const purchase = (orderNumber, unitPrice, orderedQuantity, date) => ({ unitPrice, currency: 'USD', unit: 'pcs', orderedQuantity, date, orderNumber, supplierName: 'Acme Components', ref: { type: 'purchase_order', id: orderNumber, label: orderNumber } })
+  ctx.results.set('toolu_prices', { tool: 'price_history', output: { sku: 'LDM-001', unit: 'pcs', currency: 'USD', earlier: [purchase('PO-001', '4.2000', '100.0000', '2026-08-01'), purchase('PO-002', '4.1500', '20.5000', '2026-09-01')] } })
+  const table = assertPart(build('show_table', { source: 'toolu_prices', columns: ['orderNumber', 'unitPrice', 'orderedQuantity'], sort: { column: 'orderedQuantity' } }), 'table')
+  assert.deepEqual(table.columns.map((column) => column.kind), ['ref', 'money', 'quantity'])
+  assert.deepEqual(table.rows.map((row) => [row.order.id, row.unit_price, row.ordered_quantity]), [['PO-002', { amount: 4.15, currency: 'USD' }, 20.5], ['PO-001', { amount: 4.2, currency: 'USD' }, 100]])
+  const chart = assertPart(build('show_chart', { source: 'toolu_prices', kind: 'line', x: 'date', series: ['unitPrice'] }), 'chart')
+  assert.deepEqual([chart.unit, chart.currency, chart.series[0].values, chart.x.values], ['money', 'USD', [4.2, 4.15], ['2026-08-01', '2026-09-01']])
+  const [card] = assertPart(build('show_records', { source: 'toolu_prices', refs: [{ type: 'purchase_order', id: 'PO-001' }] }), 'records').cards
+  assert.deepEqual(card.figures, [{ code: 'unit_price', value: 4.2, unit: 'money', currency: 'USD' }])
+  // Receivables aging buckets, as the finance service returns them.
+  const bucket = (currency, amounts) => ({ currency, current: amounts[0], '1_30': amounts[1], '31_60': '0.00', '61_90': '0.00', '90_plus': '0.00', total: amounts[2], count: 2 })
+  ctx.results.set('toolu_ar', { tool: 'list_receivables', output: { rows: [], aging: [bucket('USD', ['1200.00', '300.50', '1500.50'])] } })
+  const aging = assertPart(build('show_chart', { source: 'toolu_ar', kind: 'bar', x: 'currency', series: ['current', '1_30', '31_60'], list: 'aging' }), 'chart')
+  assert.deepEqual([aging.unit, aging.currency, aging.series.map((series) => series.values[0])], ['money', 'USD', [1200, 300.5, 0]])
+  ctx.results.set('toolu_contracts', { tool: 'list_contracts', output: { rows: [{ number: 'CT-001', title: 'Frame agreement', totalValue: '12000.0000', currency: 'USD', ref: { type: 'contract', id: 'CT-001', label: 'CT-001' } }] } })
+  const [contract] = assertPart(build('show_records', { source: 'toolu_contracts', refs: [{ type: 'contract', id: 'CT-001' }] }), 'records').cards
+  assert.deepEqual(contract.figures, [{ code: 'total_value', value: 12000, unit: 'money', currency: 'USD' }])
+})
+
+test('columns of a list the result does not hold are refused with the lists it holds', async () => {
+  const { ctx, call, build } = await workspace()
+  // spend_analysis for one supplier holds items only; its suppliers list has the same keys.
+  const spend = await call('toolu_acme', 'spend_analysis', { supplier: 'Acme' })
+  assert.equal(spend.suppliers, undefined)
+  const items = assertPart(build('show_table', { source: 'toolu_acme', columns: ['name', 'amount'] }), 'table')
+  assert.deepEqual(items.rows.map((row) => [row.name, row.amount.amount]), spend.items.map((row) => [row.name, row.amount]))
+  assert.equal(assertPart(build('show_chart', { source: 'toolu_acme', kind: 'bar', x: 'name', series: ['amount'] }), 'chart').series[0].values.length, spend.items.length)
+  const named = build('show_table', { source: 'toolu_acme', columns: ['name', 'amount'], list: 'suppliers' })
+  assertError(named, 'list_missing')
+  assert.match(named.error.message, /no list suppliers; it holds items/)
+  // A result kept in its envelope holds no list at all: never an empty table.
+  ctx.results.set('toolu_wrapped', { tool: 'list_purchase_orders', output: { ok: true, result: { rows: [] } } })
+  assertError(build('show_table', { source: 'toolu_wrapped', columns: ['orderNumber'] }), 'list_missing')
+  assertError(build('show_chart', { source: 'toolu_wrapped', kind: 'bar', x: 'orderNumber', series: ['remaining'] }), 'list_missing')
+})
+
+test('suggest_purchase_request treats a reference price without a currency as missing', async () => {
+  for (const currency of [null, 'usd']) {
+    const { call, build } = await workspace()
+    const output = await call('toolu_lines', 'suggest_purchase_lines')
+    output.rows[0].estimatedUnitPrice.currency = currency
+    for (const entry of output.rows[0].approvedSuppliers) entry.currency = currency
+    const [row] = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'suggestions' }), 'pr_form').suggested
+    assert.deepEqual(row.estimatedUnitPrice, { value: null, currency: null, source: 'missing' })
+    assert.ok(row.suppliers.every((supplier) => supplier.unitPrice === null && supplier.currency === null))
+  }
+})
+
+test('suggest_purchase_request lists every approved supplier and keeps another one the user named, with its own figures', async () => {
+  const second = { id: 'ITEM-001::SUP-002', payload: { itemId: 'ITEM-001', supplierId: 'SUP-002', preferred: false, active: true, approved: true, leadTimeDays: 5, referencePrice: 80, currency: 'USD' } }
+  const { ctx, call, build } = await workspace({ supplierLinks: [link(), second], userNamedSkus: ['LDM-001'] })
+  await call('toolu_lines', 'suggest_purchase_lines', { skus: ['LDM-001'] })
+  const [plain] = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001' }] }), 'pr_form').lines
+  assert.deepEqual(plain.supplier, { id: 'SUP-001', name: 'Acme Components', source: 'preferred' })
+  assert.deepEqual(plain.suppliers, [
+    { id: 'SUP-001', name: 'Acme Components', preferred: true, leadTimeDays: 12, unitPrice: 95, currency: 'USD' },
+    { id: 'SUP-002', name: 'Summit Packaging', preferred: false, leadTimeDays: 5, unitPrice: 80, currency: 'USD' },
+  ])
+  const [picked] = assertPart(build('suggest_purchase_request', { source: 'toolu_lines', from: 'user_named', lines: [{ sku: 'LDM-001', quantity: 120, supplier: 'Summit Packaging' }] }), 'pr_form').lines
+  assert.deepEqual(picked.supplier, { id: 'SUP-002', name: 'Summit Packaging', source: 'user_named' })
+  assert.deepEqual(picked.estimatedUnitPrice, { value: 80, currency: 'USD', source: 'reference_price' })
+  const fiveDays = new Date(Date.parse(`${ctx.facts.today}T00:00:00Z`) + 5 * 86400000).toISOString().slice(0, 10)
+  assert.deepEqual(picked.needByDate, { value: fiveDays, source: 'lead_time', leadTimeDays: 5, shortWeekOf: null })
+  assert.equal(picked.checked, true)
 })

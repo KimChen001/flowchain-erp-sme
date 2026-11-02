@@ -1,5 +1,5 @@
 import { CHART_KINDS, CHOICE_PROMPTS, RECORD_EMPHASES, refSchema, safeParsePartProps } from '../../shared/assistant-protocol.mjs'
-import { PURCHASE_SUGGESTION_SOURCES } from '../../shared/purchase-suggestion.mjs'
+import { PURCHASE_SUGGESTION_SOURCES, suggestNeedByDate } from '../../shared/purchase-suggestion.mjs'
 import { AI_READ_TOOL_COLUMNS } from './ai-read-tool-runner.mjs'
 import { aiSkillVisibility } from './ai-skill-registry.mjs'
 
@@ -21,6 +21,8 @@ const array = (value) => (Array.isArray(value) ? value : [])
 const fold = (value) => text(value).toLowerCase()
 const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value)
+// A number as recorded: several services return decimals as strings ("4.2000").
+const numberOf = (value) => (isNumber(value) ? value : typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : null)
 // A calendar day, or a timestamp on one; 2026-02-30 is not a day.
 function isDay(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(value)) return false
@@ -31,6 +33,12 @@ const isCode = (value) => typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.
 const currencyCode = (value) => (typeof value === 'string' && /^[A-Z]{3}$/.test(value) ? value : null)
 const at = (value, path) => (path ? path.split('.').reduce((entry, key) => (entry === null || entry === undefined ? undefined : entry[key]), value) : value)
 const missing = (value) => value === null || value === undefined
+// A dated signal ({ kind, days, date }, as supplier_risks returns it) reads as its day.
+const isWhen = (value) => isObject(value) && typeof value.kind === 'string' && 'date' in value && !('ref' in value)
+const valueAt = (row, key) => {
+  const value = at(row, key)
+  return isWhen(value) ? value.date ?? null : value
+}
 const fail = (code, message) => ({ error: { code, message } })
 const MAX_TEXT = 200
 const TABLE_ROWS = 20
@@ -104,17 +112,15 @@ export function aiUiColumnCode(key) {
   return CODE_ALIASES[key] || snakeCase(key)
 }
 
-// The amounts each data tool returns, with the currency beside them in the
-// row or, failing that, on the result. Spend counted in orders (no permission
-// to see prices) is a count.
+// Amounts, with the currency beside them in the row or, failing that, on the
+// result: the keys that name an amount in every tool (get_purchase_order's
+// order and supplier_risks rows carry them too), and the keys that are
+// amounts in one tool only. Spend counted in orders (no permission to see
+// prices) is a count.
+const MONEY_KEYS = new Set(['amount', 'outstandingAmount', 'paidAmount', 'originalAmount', 'totalValue', 'difference', 'variance', 'unitPrice'])
 const MONEY_COLUMNS = Object.freeze({
-  list_purchase_orders: ['amount'],
-  get_purchase_order: ['variance'],
-  list_supplier_invoices: ['difference'],
-  spend_analysis: ['amount', 'value'],
-  list_receivables: ['outstandingAmount', 'paidAmount', 'originalAmount', 'current', '1_30', '31_60', '61_90', '90_plus', 'total'],
-  list_contracts: ['totalValue'],
-  price_history: ['unitPrice'],
+  spend_analysis: ['value'],
+  list_receivables: ['current', '1_30', '31_60', '61_90', '90_plus', 'total'],
   suggest_purchase_lines: ['estimatedUnitPrice.value'],
 })
 const QUANTITY_COLUMNS = new Set([
@@ -125,7 +131,7 @@ const QUANTITY_COLUMNS = new Set([
 const STATUS_COLUMNS = new Set(['status', 'postingStatus', 'matchStatus', 'state', 'disputeStatus', 'severity', 'whenKind', 'suggestedQuantity.source'])
 const NUMERIC_KINDS = Object.freeze({ number: 'count', quantity: 'quantity', money: 'money', percent: 'percent', days: 'days' })
 
-const isMoneyColumn = (tool, key, output) => Boolean(MONEY_COLUMNS[tool]?.includes(key)) && !(tool === 'spend_analysis' && output.amounts === false)
+const isMoneyColumn = (tool, key, output) => (MONEY_KEYS.has(key) || Boolean(MONEY_COLUMNS[tool]?.includes(key))) && !(tool === 'spend_analysis' && output.amounts === false)
 const currencyBeside = (row, key, output) => currencyCode(at(row, key.includes('.') ? key.replace(/[^.]+$/, 'currency') : 'currency')) || currencyCode(output.currency)
 
 function columnKind(tool, key, values, output) {
@@ -150,15 +156,17 @@ const refOf = (value) => {
 // One table cell from a row value, as recorded: a missing or role-hidden value
 // is null, an amount keeps its own currency, a record's code becomes its ref.
 // undefined: an amount whose currency is not known, which is never shown bare.
+const NUMBER_KINDS = new Set(['number', 'quantity', 'percent', 'days'])
 function cellOf(kind, row, key, output) {
-  const value = at(row, key)
+  const value = valueAt(row, key)
   if (kind === 'money') {
-    const amount = missing(value) || value === '' || !Number.isFinite(Number(value)) ? null : Number(value)
+    const amount = numberOf(value)
     const currency = currencyBeside(row, key, output)
     if (!currency) return amount === null ? null : undefined
     return { amount, currency }
   }
   if (missing(value)) return null
+  if (NUMBER_KINDS.has(kind) && numberOf(value) !== null) return numberOf(value)
   if (typeof value === 'boolean') return { code: value ? 'yes' : 'no', tone: 'neutral' }
   if (Array.isArray(value)) return value.every((entry) => typeof entry === 'string' || isNumber(entry)) ? value.join(', ').slice(0, MAX_TEXT) : null
   if (isObject(value)) return refOf(value) || (typeof value.name === 'string' ? value.name.slice(0, MAX_TEXT) : null)
@@ -176,14 +184,25 @@ const declaredOf = (tool) => Object.entries(AI_READ_TOOL_COLUMNS[tool])
 const keyIn = (keys, name) => keys.find((key) => key === name || aiUiColumnCode(key) === name || snakeCase(key) === name)
 const describeColumns = (tool) => declaredOf(tool).map(([path, keys]) => `${path || 'result'}: ${keys.join(', ')}`).join('; ')
 
-// The list of the result the columns come from, and their keys there.
-function resolveColumns(tool, names, list) {
+// The list of the result the columns come from, and their keys there. A list
+// the result does not hold (spend_analysis for one supplier has items only)
+// is never read as empty: the lists it holds are tried first, and the model is
+// told which they are.
+function resolveColumns(tool, names, list, output) {
   const declared = declaredOf(tool)
   if (list !== undefined && list !== null && !declared.some(([path]) => path === list)) return fail('unknown_list', `${tool} has no list ${list}. Its columns: ${describeColumns(tool)}.`)
+  const held = (path) => !path || Array.isArray(at(output, path))
   const candidates = list ? declared.filter(([path]) => path === list) : declared
-  for (const [path, keys] of candidates) {
+  let absent = null
+  for (const [path, keys] of [...candidates.filter(([path]) => held(path)), ...candidates.filter(([path]) => !held(path))]) {
     const found = names.map((name) => keyIn(keys, name))
-    if (found.every(Boolean)) return { path, keys: [...new Set(found)] }
+    if (!found.every(Boolean)) continue
+    if (held(path)) return { path, keys: [...new Set(found)] }
+    absent ??= path
+  }
+  if (absent) {
+    const lists = declared.map(([path]) => path).filter((path) => path && held(path))
+    return fail('list_missing', `This ${tool} result has no list ${absent}${lists.length ? `; it holds ${lists.join(', ')}. Pass list to name one` : ''}.`)
   }
   const unknown = names.filter((name) => !candidates.some(([, keys]) => keyIn(keys, name)))
   return fail('unknown_column', unknown.length
@@ -233,18 +252,21 @@ function part(component, props, refs) {
   return { component, props: parsed.data, refs: uniqueRefs(refs) }
 }
 
-const defineUiTool = ({ name, description, inputSchema, build }) => Object.freeze({
+// available(actor): whether the tool is offered to this user at all; build
+// checks again, so a tool offered by mistake still refuses.
+const defineUiTool = ({ name, description, inputSchema, available = () => true, build }) => Object.freeze({
   name,
   kind: 'ui',
   description,
   inputSchema: Object.freeze(inputSchema),
+  available,
   build(input, ctx) {
     const problem = invalidInput(inputSchema, input)
     return problem ? fail('invalid_input', `${problem}.`) : build(input, ctx)
   },
 })
 
-const compare = (left, right) => (isNumber(left) && isNumber(right) ? left - right : String(left).localeCompare(String(right), 'en', { numeric: true }))
+const compare = (left, right) => (numberOf(left) !== null && numberOf(right) !== null ? numberOf(left) - numberOf(right) : String(left).localeCompare(String(right), 'en', { numeric: true }))
 
 const showTable = defineUiTool({
   name: 'show_table',
@@ -266,7 +288,7 @@ const showTable = defineUiTool({
     const source = sourceOf(ctx, input.source)
     if (source.error) return source
     const { tool, output } = source
-    const table = resolveColumns(tool, input.sort ? [...input.columns, input.sort.column] : input.columns, input.list)
+    const table = resolveColumns(tool, input.sort ? [...input.columns, input.sort.column] : input.columns, input.list, output)
     if (table.error) return table
     let rows = rowsAt(output, table.path)
     if (input.sort) {
@@ -274,7 +296,7 @@ const showTable = defineUiTool({
       const direction = input.sort.direction === 'desc' ? -1 : 1
       // Missing values go last whichever way the column sorts.
       rows = [...rows].sort((left, right) => {
-        const [a, b] = [at(left, key), at(right, key)]
+        const [a, b] = [valueAt(left, key), valueAt(right, key)]
         return missing(a) || missing(b) ? Number(missing(a)) - Number(missing(b)) : compare(a, b) * direction
       })
     }
@@ -283,7 +305,7 @@ const showTable = defineUiTool({
     const columns = []
     const cells = shown.map(() => ({}))
     for (const key of keys) {
-      const kind = columnKind(tool, key, shown.map((row) => at(row, key)), output)
+      const kind = columnKind(tool, key, shown.map((row) => valueAt(row, key)), output)
       const code = aiUiColumnCode(key)
       for (const [index, row] of shown.entries()) {
         const cell = cellOf(kind, row, key, output)
@@ -301,11 +323,13 @@ const showTable = defineUiTool({
 })
 
 // A record's date as the cards say it: days overdue, due or waiting, or the day.
-const CARD_DATES = ['dueDate', 'promisedDate', 'requiredDate', 'due', 'date', 'needByDate.value', 'orderByDate', 'invoiceDate', 'arrived', 'endDate', 'when']
+const CARD_DATES = ['dueDate', 'promisedDate', 'requiredDate', 'due', 'date', 'needByDate.value', 'orderByDate', 'invoiceDate', 'arrived', 'endDate', 'when.date']
 const WHEN_KINDS = Object.freeze({ overdue: 'overdue', due: 'due', waiting: 'waiting', open: 'waiting' })
 function cardDate(row) {
   if (isNumber(row.overdueDays) && row.overdueDays > 0) return { kind: 'overdue', days: Math.round(row.overdueDays) }
-  if (WHEN_KINDS[row.whenKind] && Number.isInteger(row.days) && row.days >= 0) return { kind: WHEN_KINDS[row.whenKind], days: row.days }
+  // attention_list flattens the signal's when; supplier_risks keeps it whole.
+  const [whenKind, days] = isWhen(row.when) ? [row.when.kind, row.when.days] : [row.whenKind, row.days]
+  if (WHEN_KINDS[whenKind] && Number.isInteger(days) && days >= 0) return { kind: WHEN_KINDS[whenKind], days }
   const day = CARD_DATES.map((key) => at(row, key)).find(isDay)
   return day ? { kind: 'on', value: day.slice(0, 10) } : undefined
 }
@@ -322,8 +346,8 @@ const CARD_FIGURES = [
 function cardFigures(tool, row, output) {
   const figures = []
   for (const key of CARD_FIGURES) {
-    const value = at(row, key)
-    if (!isNumber(value) || figures.length === 2) continue
+    const value = numberOf(at(row, key))
+    if (value === null || figures.length === 2) continue
     const unit = NUMERIC_KINDS[columnKind(tool, key, [value], output)]
     if (!unit) continue
     const currency = unit === 'money' ? currencyBeside(row, key, output) : null
@@ -385,7 +409,7 @@ const showChart = defineUiTool({
     const source = sourceOf(ctx, input.source)
     if (source.error) return source
     const { tool, output } = source
-    const resolved = resolveColumns(tool, [input.x, ...input.series], input.list)
+    const resolved = resolveColumns(tool, [input.x, ...input.series], input.list, output)
     if (resolved.error) return resolved
     const xKey = keyIn(resolved.keys, input.x)
     const seriesKeys = [...new Set(input.series.map((name) => keyIn(resolved.keys, name)))].filter((key) => key !== xKey)
@@ -395,7 +419,7 @@ const showChart = defineUiTool({
     if (rows.length > CHART_POINTS) return fail('too_many_points', `A chart takes up to ${CHART_POINTS} points; ${input.source} has ${rows.length}. Use show_table.`)
     const units = new Set()
     for (const key of seriesKeys) {
-      const unit = NUMERIC_KINDS[columnKind(tool, key, rows.map((row) => at(row, key)), output)]
+      const unit = NUMERIC_KINDS[columnKind(tool, key, rows.map((row) => numberOf(at(row, key)) ?? at(row, key)), output)]
       if (!unit) return fail('not_numeric', `${key} is not a number column.`)
       units.add(unit)
     }
@@ -406,9 +430,10 @@ const showChart = defineUiTool({
     for (const key of seriesKeys) {
       const values = []
       for (const row of rows) {
-        const value = at(row, key)
-        if (missing(value)) { values.push(null); continue }
-        if (!isNumber(value)) return fail('not_numeric', `${key} has a value that is not a number.`)
+        const raw = at(row, key)
+        if (missing(raw)) { values.push(null); continue }
+        const value = numberOf(raw)
+        if (value === null) return fail('not_numeric', `${key} has a value that is not a number.`)
         if (unit === 'money') {
           const currency = currencyBeside(row, key, output)
           if (!currency) return fail('currency_missing', `${key} has an amount without a currency.`)
@@ -421,7 +446,7 @@ const showChart = defineUiTool({
     if (currencies.size > 1) return fail('mixed_currencies', `The amounts are in ${[...currencies].sort().join(' and ')}; a chart shows one currency. Ask the data tool for one currency, or use show_table.`)
     const currency = unit === 'money' ? [...currencies][0] || currencyCode(output.currency) : null
     if (unit === 'money' && !currency) return fail('currency_missing', `${input.source} does not say the currency of its amounts.`)
-    const x = { code: aiUiColumnCode(xKey), values: rows.map((row) => { const value = at(row, xKey); return isDay(value) ? value.slice(0, 10) : missing(value) ? '' : String(value).slice(0, 60) }) }
+    const x = { code: aiUiColumnCode(xKey), values: rows.map((row) => { const value = valueAt(row, xKey); return isDay(value) ? value.slice(0, 10) : missing(value) ? '' : String(value).slice(0, 60) }) }
     const props = { source: input.source, kind: input.kind, ...(input.title ? { title: input.title } : {}), x, series, unit, ...(currency ? { currency } : {}) }
     return part('chart', props, rows.map((row) => refOf(row.ref)))
   },
@@ -443,7 +468,7 @@ const showKpis = defineUiTool({
     const source = sourceOf(ctx, input.source)
     if (source.error) return source
     if (source.tool !== 'workspace_summary') return fail('wrong_source', `show_kpis takes a workspace_summary result; ${input.source} is ${source.tool}.`)
-    const resolved = resolveColumns(source.tool, input.keys)
+    const resolved = resolveColumns(source.tool, input.keys, undefined, source.output)
     if (resolved.error) return resolved
     if (resolved.keys.length < 2) return fail('invalid_input', 'keys takes 2 to 6 different keys.')
     // The summary leaves out (null) what the role may not read: no value goes with it.
@@ -492,6 +517,7 @@ const QUANTITY_SOURCE = Object.freeze({
   [PURCHASE_SUGGESTION_SOURCES.userTyped]: 'user_named',
 })
 const SUPPLIER_SOURCE = Object.freeze({ preferred_supplier: 'preferred', only_approved_supplier: 'only_approved' })
+const canDraft = (actor) => aiSkillVisibility(actor).canDraft
 const MAX_FORM_LINES = 8
 
 function suggestedQuantity(row) {
@@ -500,25 +526,35 @@ function suggestedQuantity(row) {
   return { value, source: QUANTITY_SOURCE[source], ...(source === PURCHASE_SUGGESTION_SOURCES.raisedToMoq ? { minimum: value } : {}) }
 }
 
-// The item's approved suppliers as the result lists them: the one the server
-// chose (preferred or the only approved), or the ones a person chooses from.
-// Only the chosen one carries its lead time and price.
+// A reference price as the form takes it: never a model value, and never an
+// amount without its currency. Masked for the role, missing, or with no
+// currency recorded, it has no value, so the form sends the user to the full
+// form rather than assume a currency.
+function priceOf(value, currency, output) {
+  if (output.pricesHidden) return { value: null, currency: null, source: 'masked' }
+  const amount = numberOf(value)
+  return amount !== null && amount >= 0 && currencyCode(currency) ? { value: amount, currency, source: 'reference_price' } : { value: null, currency: null, source: 'missing' }
+}
+
+const referencePrice = (row, output) => (isObject(row.estimatedUnitPrice) ? priceOf(row.estimatedUnitPrice.value, row.estimatedUnitPrice.currency, output) : priceOf(null, null, output))
+
+// The item's approved suppliers as the result lists them, each with its own
+// lead time and price, so a user who picks another one gets that supplier's
+// figures. A result without that list gives the chosen supplier only, or the
+// ones a person chooses from.
 function approvedSuppliers(row, output, price) {
   if (output.suppliersHidden) return []
+  if (Array.isArray(row.approvedSuppliers) && row.approvedSuppliers.length) {
+    return row.approvedSuppliers.map((entry) => {
+      const own = priceOf(entry.unitPrice, entry.currency, output)
+      return { id: entry.id, name: entry.name, preferred: Boolean(entry.preferred), leadTimeDays: Number.isInteger(entry.leadTimeDays) && entry.leadTimeDays >= 0 ? entry.leadTimeDays : null, unitPrice: own.value, currency: own.currency }
+    })
+  }
   const chosen = isObject(row.supplier) ? row.supplier : null
   if (chosen) {
     return [{ id: chosen.id, name: chosen.name, preferred: chosen.source === 'preferred_supplier', leadTimeDays: row.needByDate?.leadTimeDays ?? null, unitPrice: price.value, currency: price.currency }]
   }
   return array(row.supplierChoices).map((choice) => ({ id: choice.id, name: choice.name, preferred: false }))
-}
-
-// The reference price of the server's supplier, never a model value. Masked
-// for the role, or missing, it has no value.
-function referencePrice(row, output) {
-  if (output.pricesHidden) return { value: null, currency: null, source: 'masked' }
-  const price = isObject(row.estimatedUnitPrice) ? row.estimatedUnitPrice : null
-  if (price && isNumber(price.value) && price.value >= 0) return { value: price.value, currency: currencyCode(price.currency), source: 'reference_price' }
-  return { value: null, currency: null, source: 'missing' }
 }
 
 const matchSupplier = (suppliers, wanted) => suppliers.find((supplier) => fold(supplier.id) === fold(wanted) || fold(supplier.name) === fold(wanted))
@@ -531,19 +567,27 @@ function formRow(row, output, { named, line }) {
   const chosen = isObject(row.supplier) && !output.suppliersHidden ? row.supplier : null
   let supplier = chosen && SUPPLIER_SOURCE[chosen.source] ? { id: chosen.id, name: chosen.name, source: SUPPLIER_SOURCE[chosen.source] } : null
   let estimatedUnitPrice = price
+  let lead = row.needByDate?.leadTimeDays ?? null
+  let shortWeekOf = isDay(row.needByDate?.warning?.weekOf) ? row.needByDate.warning.weekOf : null
+  let leadDate = row.needByDate?.source === PURCHASE_SUGGESTION_SOURCES.leadTime && isDay(row.needByDate.value) ? row.needByDate.value : null
   if (named && line?.supplier) {
     const picked = matchSupplier(suppliers, line.supplier)
-    if (!picked) return fail('supplier_not_listed', `${line.supplier} is not among the suppliers the result lists for ${row.item.sku} (${suppliers.map((entry) => entry.name).join(', ') || 'none'}). Leave supplier out; the user can choose in the form.`)
+    if (!picked) return fail('supplier_not_listed', `${line.supplier} is not among the approved suppliers the result lists for ${row.item.sku} (${suppliers.map((entry) => entry.name).join(', ') || 'none'}). Leave supplier out; the user can choose in the form.`)
     supplier = { id: picked.id, name: picked.name, source: 'user_named' }
-    // Another supplier's price is not in the result, so none is filled.
-    if (!chosen || picked.id !== chosen.id) estimatedUnitPrice = { value: null, currency: null, source: price.source === 'masked' ? 'masked' : 'missing' }
+    if (!chosen || picked.id !== chosen.id) {
+      // That supplier's own price and lead time; the need-by date follows its
+      // lead time as the form does when the user changes the supplier.
+      estimatedUnitPrice = picked.unitPrice !== null && picked.unitPrice !== undefined ? { value: picked.unitPrice, currency: picked.currency, source: 'reference_price' } : { value: null, currency: null, source: price.source === 'masked' ? 'masked' : 'missing' }
+      const moved = suggestNeedByDate({ today: output.today, leadTimeDays: picked.leadTimeDays ?? null, firstShortWeek: shortWeekOf })
+      lead = moved.leadTimeDays
+      leadDate = moved.source === PURCHASE_SUGGESTION_SOURCES.leadTime ? moved.value : null
+      shortWeekOf = moved.warning?.weekOf ?? null
+    }
   }
-  const lead = row.needByDate?.leadTimeDays ?? null
-  const shortWeekOf = isDay(row.needByDate?.warning?.weekOf) ? row.needByDate.warning.weekOf : null
   const needByDate = named && line?.needByDate
     ? { value: line.needByDate, source: 'user_named', leadTimeDays: lead, shortWeekOf }
-    : row.needByDate?.source === PURCHASE_SUGGESTION_SOURCES.leadTime && isDay(row.needByDate.value)
-      ? { value: row.needByDate.value, source: 'lead_time', leadTimeDays: lead, shortWeekOf }
+    : leadDate
+      ? { value: leadDate, source: 'lead_time', leadTimeDays: lead, shortWeekOf }
       : { value: output.today, source: 'today', leadTimeDays: null, shortWeekOf }
   const cover = isObject(row.covered) ? refOf(array(row.covered.by)[0]?.ref) : null
   return {
@@ -591,9 +635,10 @@ const suggestPurchaseRequest = defineUiTool({
     required: ['source', 'from'],
     additionalProperties: false,
   },
+  available: (actor) => canDraft(actor),
   build(input, ctx) {
     // Nothing is offered to someone who could not create the request.
-    if (!aiSkillVisibility(ctx?.actor).canDraft) return fail('not_allowed', 'The user may not create purchase requests; explain and link to the record instead.')
+    if (!canDraft(ctx?.actor)) return fail('not_allowed', 'The user may not create purchase requests; explain and link to the record instead.')
     const source = sourceOf(ctx, input.source)
     if (source.error) return source
     if (source.tool !== 'suggest_purchase_lines') return fail('wrong_source', `suggest_purchase_request takes a suggest_purchase_lines result; ${input.source} is ${source.tool}.`)
@@ -648,3 +693,9 @@ const suggestFollowups = defineUiTool({
 })
 
 export const AI_ASSISTANT_V2_UI_TOOLS = Object.freeze([showTable, showRecords, showChart, showKpis, offerChoices, suggestPurchaseRequest, suggestFollowups])
+
+// The UI tools the model is offered for this user (design §4.1: the request
+// form is not offered to a user who may not create requests).
+export function aiUiToolsFor(actor) {
+  return AI_ASSISTANT_V2_UI_TOOLS.filter((entry) => entry.available(actor))
+}
