@@ -52,12 +52,45 @@ export function createAssistantV2RateLimiter({ now = () => Date.now(), limits = 
   }
 }
 
-// The cost reservation: what is left of this month's cap must cover the worst
-// case of one answer (its cost ceiling). { ok, capRemainingMicros }, with null
-// when no cap applies: without a database nothing is counted, so there is no
-// spend to hold an answer against.
-export function assistantV2CostReservation(access, { ceilingMicros = ASSISTANT_V2_LIMITS.costCeilingMicros } = {}) {
+// The cost check: what is left of this month's cap, less what answers still
+// running hold (reservedMicros), must cover the worst case of one answer (its
+// cost ceiling). { ok, capRemainingMicros }, with null when no cap applies:
+// without a database nothing is counted, so there is no spend to hold an
+// answer against.
+export function assistantV2CostReservation(access, { ceilingMicros = ASSISTANT_V2_LIMITS.costCeilingMicros, reservedMicros = 0 } = {}) {
   if (!access || !Number.isFinite(Number(access.capUsd))) return { ok: true, capRemainingMicros: null }
-  const remaining = Math.round(Number(access.capUsd) * 1e6) - Math.round(Number(access.costUsd || 0) * 1e6)
+  const remaining = Math.round(Number(access.capUsd) * 1e6) - Math.round(Number(access.costUsd || 0) * 1e6) - reservedMicros
   return { ok: remaining >= ceilingMicros, capRemainingMicros: Math.max(0, remaining) }
+}
+
+// The reservations of the answers running in this process, per workspace
+// (P1 runs one instance). An answer let through holds its ceiling until it
+// ends, so answers running together cannot each spend the same remaining
+// budget: each one's in-loop cap check starts from the cap less the
+// month-to-date spend and the others' holds. The spend is read once per
+// request, so an answer that ended between that read and this reservation is
+// counted by neither; that window is at most one answer's ceiling.
+// reserve() → { ok, capRemainingMicros, release() }; release is idempotent.
+export function createAssistantV2CostLedger({ ceilingMicros = ASSISTANT_V2_LIMITS.costCeilingMicros } = {}) {
+  const held = new Map()
+  return {
+    reserve(tenantId, access) {
+      const key = text(tenantId)
+      const check = assistantV2CostReservation(access, { ceilingMicros, reservedMicros: held.get(key) || 0 })
+      if (!check.ok || check.capRemainingMicros === null) return { ...check, release() {} }
+      held.set(key, (held.get(key) || 0) + ceilingMicros)
+      let released = false
+      return {
+        ...check,
+        release() {
+          if (released) return
+          released = true
+          const left = (held.get(key) || 0) - ceilingMicros
+          if (left > 0) held.set(key, left)
+          else held.delete(key)
+        },
+      }
+    },
+    heldMicros: (tenantId) => held.get(text(tenantId)) || 0,
+  }
 }

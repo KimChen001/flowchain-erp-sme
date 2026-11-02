@@ -31,8 +31,10 @@ export function assistantV2PermissionFingerprint(actor = {}) {
 
 export function createAssistantV2ThreadStore({ now = () => Date.now(), limits = ASSISTANT_V2_THREAD_LIMITS } = {}) {
   const threads = new Map()
+  // A thread with an answer running is never swept: the answer would write
+  // into an orphaned entry, and a second request would find no busy thread.
   const sweep = (at) => {
-    for (const [key, entry] of threads) if (at - entry.usedAt >= limits.ttlMs) threads.delete(key)
+    for (const [key, entry] of threads) if (!entry.busy && at - entry.usedAt >= limits.ttlMs) threads.delete(key)
   }
   return {
     // The thread for this user's thread id: the stored one when it is still
@@ -40,6 +42,12 @@ export function createAssistantV2ThreadStore({ now = () => Date.now(), limits = 
     // While an answer runs on a thread, a second request on it gets a
     // detached copy that is never stored, so two answers never interleave in
     // one transcript.
+    //
+    // `forms` holds the forms whose created request the server confirmed
+    // (formId → { purchaseRequestId, status }), shared with a detached copy so
+    // a form is noted once; `note` adds one, with its message to the
+    // transcript. A note taken on a detached copy is also added to the stored
+    // transcript before its next answer, as the client reports each form once.
     open({ tenantId, userId, threadId, fingerprint }) {
       const at = now()
       sweep(at)
@@ -49,17 +57,36 @@ export function createAssistantV2ThreadStore({ now = () => Date.now(), limits = 
         threads.delete(key)
         entry = null
       }
-      if (entry?.busy) return { thread: { messages: [], results: new Map() }, notedForms: new Set(), detached: true, close() {} }
+      if (entry?.busy) {
+        const stored = entry
+        const thread = { messages: [], results: new Map() }
+        return {
+          thread,
+          forms: stored.forms,
+          detached: true,
+          note(formId, form, message) {
+            stored.forms.set(formId, form)
+            stored.pendingNotes.push(message)
+            thread.messages.push(message)
+          },
+          close() {},
+        }
+      }
       if (!entry) {
-        entry = { fingerprint, usedAt: at, busy: false, turnStarts: [], notedForms: new Set(), thread: { messages: [], results: new Map() } }
+        entry = { fingerprint, usedAt: at, busy: false, turnStarts: [], forms: new Map(), pendingNotes: [], thread: { messages: [], results: new Map() } }
         threads.set(key, entry)
       }
       entry.busy = true
+      entry.thread.messages.push(...entry.pendingNotes.splice(0))
       const start = entry.thread.messages.length
       return {
         thread: entry.thread,
-        notedForms: entry.notedForms,
+        forms: entry.forms,
         detached: false,
+        note(formId, form, message) {
+          entry.forms.set(formId, form)
+          entry.thread.messages.push(message)
+        },
         // After the answer: the turn is counted when it added to the
         // transcript, and the oldest turns beyond the limit are dropped with
         // the tool results they held.

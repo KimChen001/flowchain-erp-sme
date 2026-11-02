@@ -78,6 +78,9 @@ const SELF_CLAIMS = [
 // "Your request has been submitted" claims the step was done, unless the
 // sentence names the records and the tools returned each in a state that fits.
 const PASSIVE_CLAIM = /\b(?:has|have|had)\s+(?:now\s+|already\s+|just\s+)?been\s+(submitted|created|raised)\b/i
+// The step a claim names, for a form note to back it: creating a request or
+// submitting it. Placing an order (下单) is never backed by a form.
+const claimStep = (wording) => (/submitted|提交/i.test(wording) ? 'submit' : /created|raised|opened|创建|新建/i.test(wording) ? 'create' : null)
 
 export const ASSISTANT_V2_SYSTEM = [
   'You are the assistant inside FlowChain, an ERP for small companies: purchasing, receiving, supplier invoices with three-way match, inventory and sales. You answer the signed-in user\'s questions about their own workspace, in a conversation.',
@@ -96,6 +99,7 @@ export const ASSISTANT_V2_SYSTEM = [
   '- When the user changes what they want (another item, a new order, "not that one"), follow it and do not repeat the earlier answer. Numbers, dates and record numbers from earlier turns are not sources: to state one, read it again with the tools in this answer.',
   '- You never save, create, submit or change records, and you have no tool that does. Never say an action was done, by you or anyone: not "I submitted the request", "I created a purchase order", and not "was" or "has been" followed by sent, emailed, approved, paid, issued, placed, posted, cancelled or deleted; nor 已发送, 已批准, 已付款, 已支付, 已下单, 已下达, 已过账, 已删除, 已取消 except right after a status label. Give a record\'s state as a status: "status: approved"; 状态：已批准.',
   '- When the user asks you to approve, pay, send, issue, cancel or delete something, explain that they do it themselves in the app and where, naming the record by its number so its link shows. Never call it a system limit.',
+  '- The one exception: a "Note from the server" in the conversation says a form in this chat created a purchase request, which the user did with their own click. You may then say that they created it, naming its number, with the status the note gives.',
   '- When the user wants to order or reorder, call suggest_purchase_lines, then suggest_purchase_request with that result as source. It opens a purchase request form in the answer: the user reviews the lines, creates a draft request and submits it for approval with their own clicks. Pass from user_named with the SKUs the user named (and a quantity, supplier or date only when the user typed it); otherwise pass from suggestions, which leaves every line unticked: never choose an item for the user. Say what the form is for ("I\'ve filled in a request form for you to review"), never that a request exists. If suggest_purchase_request is not offered, the user\'s role cannot create purchase requests; say so and that a buyer can.',
   '- hiddenForRole, when given, is what this user\'s role cannot see: whole sources, and the amounts on sources it can otherwise see. When the question needs any of it, say so plainly ("Your role can\'t see amounts on purchase orders"; 你的角色无法查看采购订单金额) and answer whatever else it asks. Never call such data missing, blank or not found, never say whether a record of that kind exists, and do not look for it with other tools. When the question is only about something hidden, answer exactly: "Your role can\'t see {what}, so I can\'t answer this. Someone whose role can see {what} can help." (你的角色无法查看{what}，因此无法回答。可以请能查看{what}的同事帮忙。), with {what} the hidden source in words.',
   '- A record of a kind in hiddenForRole always gets that hidden reply, whether or not the tools find it; never the not-found reply below.',
@@ -206,13 +210,16 @@ const firstSentence = (value) => text(value).split(/(?<=[.!?。！？])\s*/u)[0]
 
 // One answer. `ctx` is the request's context (identity, env, the database or
 // the test stand-ins); `body` the client's { threadId, message, activeContext,
-// answerLanguage }. Returns { body, audit }: the folded AiResponseV2 with its
+// answerLanguage }. `formNotes` are the forms of this thread whose created
+// request the server confirmed ({ purchaseRequestId, status }): the only
+// backing in P1 for saying a request was created or submitted (design §8.4).
+// Returns { body, audit }: the folded AiResponseV2 with its
 // parts, and the codes-only audit block. A provider failure before any text
 // or part was shown throws the AssistantModelError, with `audit` on it, so the
 // gateway can answer with the rules instead; `emitted` on it says whether
 // status events (start, tool, progress) already went out. Any other failure
 // is rethrown unmetered. Either way the thread is left as it was.
-export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = null, modelClient, uiTools = [], thread = { messages: [], results: new Map() }, limits: overrides = {} } = {}) {
+export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = null, modelClient, uiTools = [], thread = { messages: [], results: new Map() }, formNotes = [], limits: overrides = {} } = {}) {
   if (typeof modelClient?.stream !== 'function') throw new TypeError('answerAssistantV2 needs a model client.')
   const env = ctx.env || process.env
   const limits = { ...ASSISTANT_V2_LIMITS, ...overrides }
@@ -246,7 +253,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     try { emit?.(event) } catch { /* the answer goes on */ }
   }
 
-  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null }
+  const stats = { modelCalls: 0, rounds: 0, calls: [], ui: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costMicros: 0, flags: 0, replaces: [], refusal: false, stopReason: null, providerFailed: null }
   const parts = []
   const results = []
   const refs = []
@@ -320,6 +327,10 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       results.forEach(walk)
       return index
     }
+    // A request a form of this thread created backs a claim of that step:
+    // created, and submitted once the note's status is past draft.
+    const noted = new Map(array(formNotes).filter((note) => text(note?.purchaseRequestId)).map((note) => [fold(note.purchaseRequestId), fold(note.status)]))
+    const notedStep = (number, step) => noted.has(fold(number)) && (step === 'create' || !['draft', 'unknown'].includes(noted.get(fold(number))))
     const passiveClaims = (value) => {
       const normal = value.normalize('NFKC')
       const found = [...normal.matchAll(new RegExp(PASSIVE_CLAIM.source, 'gi'))]
@@ -329,11 +340,21 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         const numbers = aiGroundingRecordNumbers(sentenceAround(normal, match.index))
         return !numbers.length || !numbers.every((number) => {
           const states = index.get(fold(number))
-          return states && (match[1].toLowerCase() !== 'submitted' || (states.length > 0 && !states.includes('draft')))
+          return (states && (match[1].toLowerCase() !== 'submitted' || (states.length > 0 && !states.includes('draft')))) || notedStep(number, claimStep(match[1]))
         })
       })
     }
     const selfClaim = (value) => SELF_CLAIMS.some((pattern) => pattern.test(value.normalize('NFKC')))
+    // A self claim stands only when its sentence names records and a form
+    // note backs the step for each of them.
+    const unbackedSelfClaim = (value) => {
+      const normal = value.normalize('NFKC')
+      return SELF_CLAIMS.some((pattern) => [...normal.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))].some((match) => {
+        const step = claimStep(match[0])
+        const numbers = aiGroundingRecordNumbers(sentenceAround(normal, match.index))
+        return !step || !numbers.length || !numbers.every((number) => notedStep(number, step))
+      }))
+    }
     const amountsHidden = Boolean(hidden?.amountsOn?.length)
     // The hard scans, conservative, on text not yet sent: wording that may
     // claim an action, an amount the role cannot see, a record of no result.
@@ -362,7 +383,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
     const checkText = (part) => {
       if (!text(part.text)) { release(part, part.text.length); return }
       const check = checkAiModelFirstGrounding({ answer: { title: '', answer: part.text, records: [] }, results, refs, question, conversation, facts, today: context.today })
-      if (check.problems.some((row) => row.kind === 'action_claim') || selfClaim(part.text) || passiveClaims(part.text)) {
+      if (check.problems.some((row) => row.kind === 'action_claim') || unbackedSelfClaim(part.text) || passiveClaims(part.text)) {
         part.text = aiSkillText('assistant_v2.replace.action_claim', language)
         stats.replaces.push('unbacked_action_claim')
         send({ type: 'replace', partId: part.id, text: part.text, code: 'unbacked_action_claim' })
@@ -504,6 +525,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
           // no rules fallback.
           if (!(error instanceof AssistantModelError)) { rollback(); throw error }
           await recordAiProviderCall({ ok: false, ...(error.budgetExceeded ? { budgetExceeded: true } : {}), usage: null })
+          stats.providerFailed = error.budgetExceeded ? 'budget' : 'failed'
           // Nothing shown yet (held text included): the gateway answers with
           // the rules instead.
           if (!sentContent) {
@@ -523,6 +545,7 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
         // The deadline stopped the call in flight: the provider ran it, so it
         // is metered, as a failed call.
         await recordAiProviderCall({ ok: false, usage: null })
+        stats.providerFailed ||= 'failed'
         closeText()
         stop('timeout')
         send({ type: 'error', code: 'timeout', retryable: true })
@@ -628,7 +651,9 @@ export async function answerAssistantV2(ctx, body = {}, { emit = null, signal = 
       threadId,
       messageId,
       parts: parts.map((part) => ({ id: part.id, type: part.type, ...(part.component ? { component: part.component } : {}) })),
-      aiModelAccess: { status: 'on' },
+      // As the JSON transport reports it (the gateway's modelAccessSend): a
+      // failed provider call makes the answer's model access unavailable.
+      aiModelAccess: stats.providerFailed ? { status: 'unavailable', ...(stats.providerFailed === 'budget' ? { reason: 'budget' } : {}) } : { status: 'on' },
     }
     send({ type: 'answer', status: 200, body: answer })
     return { body: answer, audit: auditBlock({ stats, model, aborted, started }) }
