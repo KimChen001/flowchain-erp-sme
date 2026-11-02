@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import EmbeddedPostgres from "embedded-postgres";
 import { backfillTenantAuthorization } from "../server/auth/authorization-backfill.mjs";
 import { createPrismaClient } from "../server/persistence/prisma-client.mjs";
+import { saveItemSupplier } from "../server/domain/master-data-commands.mjs";
 import { localDemoSupplier, seedLocalDemo } from "./setup-local-demo.mjs";
 import { seedLocalScenario } from "./setup-local-scenario.mjs";
 
@@ -63,6 +64,11 @@ const usTrialFlags = usTrial ? {
 const contracts = process.env.PLAYWRIGHT_CONTRACTS === "true";
 const uploadDirectory = contracts ? await mkdtemp(join(tmpdir(), "flowchain-product-recovery-uploads-")) : "";
 const contractFlags = contracts ? { FLOWCHAIN_ENABLE_CONTRACTS: "true", FLOWCHAIN_UPLOAD_STORAGE_DIR: uploadDirectory } : {};
+// PLAYWRIGHT_ASSISTANT_V2=true adds the assistant v2 reorder showcase to the
+// walkthrough data (seedAssistantV2Showcase). The phase that sets it also
+// passes FLOWCHAIN_AI_ASSISTANT_MODE=assistant_v2 and the recorded turns
+// (FLOWCHAIN_AI_ASSISTANT_SCRIPTED), which this process keeps.
+const assistantV2Showcase = process.env.PLAYWRIGHT_ASSISTANT_V2 === "true";
 
 async function seedComparisonQuotation(client, quote) {
   await client.supplierQuotation.create({
@@ -371,6 +377,20 @@ async function seedUsTrialSalesOrders(client) {
   });
 }
 
+// The reorder showcase of assistant v2 (docs/ai-assistant-v2-design.md §11
+// S4), on the walkthrough data: two more items fall below their stock levels,
+// and each item the form suggests has a preferred supplier with a reference
+// price and a lead time, so the in-chat form can create the request. LDM-001
+// stays covered by the walkthrough's open request. No other phase sees it.
+async function seedAssistantV2Showcase(client) {
+  for (const [sku, levels] of [["LDM-002", { safetyStock: 1500, reorderPoint: 2000 }], ["LDM-006", { safetyStock: 1200, reorderPoint: 1500 }]]) {
+    await client.item.updateMany({ where: { tenantId, sku }, data: levels });
+  }
+  for (const [sku, supplierId, referencePrice, leadTimeDays] of [["LDM-001", "LOCAL-DEMO-SUP-001", 42.5, 14], ["LDM-002", "LOCAL-DEMO-SUP-001", 18.75, 14], ["LDM-006", "LOCAL-DEMO-SUP-002", 0.85, 10]]) {
+    await saveItemSupplier(client, sku, null, { supplierId, preferred: true, referencePrice, leadTimeDays, currency: "USD" }, adminActorId, { tenantId });
+  }
+}
+
 async function cleanup() {
   await new Promise((resolveClose) => server?.close(resolveClose) || resolveClose());
   await prisma?.$disconnect().catch(() => {});
@@ -442,6 +462,7 @@ try {
   if (process.env.PLAYWRIGHT_PRODUCT_RECOVERY_EMPTY !== "true") {
     await seedLocalScenario(prisma, process.env);
     if (usTrial) await seedUsTrialSalesOrders(prisma);
+    if (assistantV2Showcase) await seedAssistantV2Showcase(prisma);
     if (process.env.PLAYWRIGHT_CANONICAL_RFQ_DETAIL === "true" || process.env.PLAYWRIGHT_CANONICAL_RFQ_COMPARISON === "true" || process.env.PLAYWRIGHT_CANONICAL_RFQ_SUPPLIER_RESPONSE === "true") {
       await seedCanonicalRfqBrowserScenario(prisma);
     }

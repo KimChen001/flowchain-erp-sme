@@ -431,6 +431,27 @@ test('a script keyed by question picks each turn from the request, whatever clie
   }
 })
 
+test('a scripted pause holds the replay until its time is up or the call is stopped', async () => {
+  const turn = [{ type: 'text_delta', text: 'Here is ' }, { type: 'pause', ms: 30 }, { type: 'text_delta', text: 'the rest.' }]
+  const started = Date.now()
+  const events = await collect(createScriptedModelClient([turn]).stream(request(), undefined))
+  assert.ok(Date.now() - started >= 25)
+  assert.deepEqual(events.map((event) => event.type), ['text_delta', 'text_delta', 'message_end'])
+  assert.deepEqual(events.at(-1).content, [{ type: 'text', text: 'Here is the rest.' }])
+
+  const stopped = new AbortController()
+  const seen = []
+  const held = Date.now()
+  await assert.rejects(async () => {
+    for await (const event of createScriptedModelClient([[turn[0], { type: 'pause', ms: 50000 }, turn[2]]]).stream(request(), stopped.signal)) {
+      seen.push(event)
+      setTimeout(() => stopped.abort(), 10)
+    }
+  }, (error) => error.name === 'AbortError')
+  assert.ok(Date.now() - held < 5000)
+  assert.deepEqual(seen, [turn[0]])
+})
+
 test('a scripted turn built from tool events ends in tool use', () => {
   const [, , end] = completeScriptedTurn([{ type: 'tool_use_start', id: 't1', name: 'attention_list' }, { type: 'tool_use_end', id: 't1', name: 'attention_list', input: null }])
   assert.deepEqual(end, { type: 'message_end', stopReason: 'tool_use', usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, content: [{ type: 'tool_use', id: 't1', name: 'attention_list', input: {} }] })
