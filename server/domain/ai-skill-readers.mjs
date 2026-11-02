@@ -11,6 +11,7 @@ import { aiSkillVisibility } from './ai-skill-registry.mjs'
 import { AI_SKILL_RECENT_DAYS, aiSkillDaysBetween } from './ai-skill-signals.mjs'
 import { itemStockUnit, preferredSupplierFor, requestMinimumOf } from './reorder-list.mjs'
 import { listItemSupplierRecords } from './master-data-commands.mjs'
+import { OPEN_PURCHASE_REQUEST_STATUSES } from '../../shared/purchase-suggestion.mjs'
 
 // The facts every workspace skill reads, through the same definitions the
 // reports use, so an answer can never disagree with a report:
@@ -193,7 +194,12 @@ function recordsNeedingData({ reportRows, openReport, business, raw, visible, vi
   return { records, checked }
 }
 
-export async function readAiSkillFacts(skillContext) {
+// openPurchaseRequests (assistant v2 only): also every open purchase request,
+// draft, submitted or approved, with all its lines, as facts.purchaseRequests
+// .open. A request the assistant created as a draft then counts as cover, so
+// it is not suggested twice. The skills and the model-first loop read without
+// it, so their answers stay as they are.
+export async function readAiSkillFacts(skillContext, { openPurchaseRequests = false } = {}) {
   const { actor, tenantId, tenant, now, today, prisma, routeContext = {} } = skillContext
   const visibility = aiSkillVisibility(actor)
   const visible = visibility.sources
@@ -388,6 +394,12 @@ export async function readAiSkillFacts(skillContext) {
         const line = array(row.lines)[0] || {}
         return { id: text(row.id), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null, sku: text(line.sku) || null, skus: [...new Set(array(row.lines).map((entry) => text(entry.sku)).filter(Boolean))], itemIds: [...new Set(array(row.lines).map((entry) => text(entry.itemId)).filter(Boolean))], quantity: amount(line.quantity), unit: text(line.unit) || null }
       }),
+    }
+    if (openPurchaseRequests) {
+      facts.purchaseRequests.open = array(business.purchaseRequests).filter((row) => OPEN_PURCHASE_REQUEST_STATUSES.includes(text(row.status))).map((row) => ({
+        id: text(row.id), status: text(row.status), priority: text(row.priority) || null, requiredDate: text(row.requiredDate).slice(0, 10) || null,
+        lines: array(row.lines).map((line) => ({ sku: text(line.sku) || null, itemId: text(line.itemId) || null, quantity: amount(line.quantity), unit: text(line.unit) || null })),
+      }))
     }
   }
 

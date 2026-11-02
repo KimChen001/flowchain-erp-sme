@@ -78,10 +78,17 @@ const searchRecords = defineAiTool({
 // named by their number, and items by their SKU.
 const NAMED_RECORDS = new Set(['supplier', 'customer', 'warehouse'])
 
+// The preferred supplier's lead time and minimum order come from the item's
+// supplier link (preferredSupplierFor in reorder-list.mjs), so they are read
+// from the row's supplier, never from the row itself.
 const reorderList = defineAiTool({
   name: 'reorder_list',
-  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, the lead time and the quantity it suggests. Transfers between warehouses are not considered.',
-  parameters: { limit: limitParam },
+  description: 'The reorder list as the inventory page shows it: the items to order now or soon, by the day they must be ordered, with the preferred supplier, its lead time and minimum order quantity, the quantity it suggests (raised to the minimum when the shortfall is smaller) and flags on lines it could not count. Filter by SKU or supplier. Transfers between warehouses are not considered.',
+  parameters: {
+    sku: { type: 'string', description: 'Only this SKU.' },
+    supplier: { type: 'string', description: 'Only items whose preferred supplier is this one: a name or code.' },
+    limit: limitParam,
+  },
   available: (facts, context) => Boolean(facts?.inventory) && Boolean(context?.actor) && can(context, 'inventory.balance.read'),
   async run(args, { facts, context }) {
     const { access, allocationContext, business } = await scopedBusiness(context)
@@ -91,11 +98,27 @@ const reorderList = defineAiTool({
       allocationRows: allocation.availability, showPurchaseOrders: Boolean(access.collections.purchaseOrders),
       truncatedSubjects: array(allocationContext.truncatedSubjects).filter((entry) => ['inventory_items', 'sales_orders', 'purchase_orders'].includes(entry?.subject)),
     })
-    const rows = array(list.rows).map((row) => ({
-      ...primitives(row, ['sku', 'itemName', 'name', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'position', 'reorderPoint', 'shortfall', 'leadTimeDays']),
+    let listed = array(list.rows)
+    if (args.sku) listed = listed.filter((row) => fold(row.sku) === fold(args.sku))
+    if (args.supplier) {
+      // Among the suppliers the user may read when the facts hold them;
+      // otherwise among the preferred suppliers the list names.
+      const named = [...new Map(listed.filter((row) => row.supplier?.id).map((row) => [row.supplier.id, row.supplier])).values()]
+      const found = aiToolSupplier(Array.isArray(facts.suppliers) ? facts : { suppliers: named }, args.supplier)
+      if (!found.supplier) return { error: found.error, candidates: found.candidates || [] }
+      listed = listed.filter((row) => text(row.supplier?.id) === found.supplier.id)
+    }
+    const rows = listed.map((row) => ({
+      ...primitives(row, ['sku', 'itemName', 'name', 'unit', 'orderByDate', 'orderNow', 'daysUntilOrderBy', 'onHand', 'reserved', 'incoming', 'position', 'reorderPoint', 'shortfall']),
       averageDailyDemand: row.demand?.averageDailyDemand ?? null,
       supplier: text(row.supplier?.name) || null,
+      supplierId: text(row.supplier?.id) || null,
+      leadTimeDays: row.supplier?.leadTimeDays ?? null,
+      minimumOrderQuantity: row.supplier?.minimumOrderQuantity ?? null,
+      moqUnit: row.supplier?.moqUnit ?? null,
       requestQuantity: row.purchaseRequest?.quantity ?? null,
+      raisedToMinimum: Boolean(row.purchaseRequest?.raisedToMinimum),
+      flags: array(row.flags).map((flag) => primitives(flag, ['code', 'orderNumber', 'unit', 'dueDay', 'count'])),
       incomingLines: array(row.incomingLines).map((line) => primitives(line, ['orderNumber', 'remaining', 'dueDay', 'counted'])),
       ref: aiToolRef('item', row.itemId || row.purchaseRequest?.itemId || row.sku, row.sku),
     }))

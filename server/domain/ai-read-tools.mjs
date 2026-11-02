@@ -369,6 +369,60 @@ const workspaceSummary = defineAiTool({
 // as the inventory page leaves them out of incoming.
 const dayIndex = (day) => Math.round(Date.parse(`${day}T00:00:00Z`) / 86400000)
 const dayOfIndex = (index) => new Date(index * 86400000).toISOString().slice(0, 10)
+// Exported for the assistant's purchase suggestions (ai-assistant-v2-data-tools.mjs),
+// which warn when the stock runs short before the need-by date.
+export function aiStockProjection(facts, { sku, weeks = 4 }) {
+  const row = array(facts.inventory?.rows).find((entry) => fold(entry.sku) === fold(sku))
+  if (!row) return array(facts.inventory?.masterOnly).some((entry) => fold(entry.sku) === fold(sku)) ? { asOf: facts.asOf, sku, noStockOrOrders: true } : { error: 'not_found' }
+  const start = dayIndex(facts.asOf || facts.today)
+  const sameUnit = (unit) => !unit || !row.unit || fold(unit) === fold(row.unit)
+  const incoming = []
+  const apart = { incomingPastPromisedDate: [], incomingWithoutDate: [], demandWithoutDate: [] }
+  if (facts.purchaseOrders) {
+    for (const po of array(facts.purchaseOrders.index).filter((entry) => entry.isOpen)) {
+      for (const line of array(po.openLines).filter((entry) => fold(entry.sku) === fold(row.sku) && sameUnit(entry.unit) && (entry.remaining || 0) > 0)) {
+        const entry = { orderNumber: po.orderNumber, quantity: line.remaining, promisedDate: line.promisedDate || null, ref: aiToolRef('purchase_order', po.id, po.orderNumber) }
+        if (!line.promisedDate) apart.incomingWithoutDate.push(entry)
+        else if (dayIndex(line.promisedDate) < start) apart.incomingPastPromisedDate.push(entry)
+        else incoming.push(entry)
+      }
+    }
+  } else apart.incomingDatesNotReadable = row.incomingApprovedPo ?? null
+  const demand = []
+  if (Array.isArray(facts.salesOrders)) {
+    for (const order of facts.salesOrders) {
+      const open = array(order.lines).filter((line) => fold(line.sku) === fold(row.sku)).reduce((sum, line) => sum + (line.open || 0), 0)
+      if (!open) continue
+      const entry = { orderNumber: order.number, customer: order.customer, quantity: open, promisedDate: order.promisedDate || null, ref: aiToolRef('sales_order', order.id, order.number) }
+      if (order.promisedDate) demand.push(entry)
+      else apart.demandWithoutDate.push(entry)
+    }
+  } else apart.demandDatesNotReadable = row.openSalesDemand ?? null
+  const projected = []
+  let balance = row.available ?? 0
+  for (let week = 0; week < weeks; week += 1) {
+    const from = start + week * 7
+    const to = from + 6
+    const inWeek = (entry) => { const day = dayIndex(entry.promisedDate); return day >= from && day <= to }
+    const arriving = incoming.filter(inWeek)
+    const due = demand.filter((entry) => inWeek(entry) || (week === 0 && dayIndex(entry.promisedDate) < start))
+    const received = arriving.reduce((sum, entry) => sum + entry.quantity, 0)
+    const shipped = due.reduce((sum, entry) => sum + entry.quantity, 0)
+    balance += received - shipped
+    projected.push({ from: dayOfIndex(from), to: dayOfIndex(to), incoming: received, demand: shipped, endAvailable: balance, belowSafetyStock: row.safetyStock !== null && row.safetyStock !== undefined && balance < row.safetyStock, short: balance < 0, purchaseOrders: arriving.map((entry) => entry.orderNumber), salesOrders: due.map((entry) => entry.orderNumber) })
+  }
+  return {
+    asOf: facts.asOf, sku: row.sku, itemName: row.itemName, unit: row.unit,
+    availableToday: row.available, onHand: row.onHand, reserved: row.reserved, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint,
+    weeks: projected,
+    firstWeekBelowSafetyStock: projected.find((entry) => entry.belowSafetyStock)?.from || null,
+    firstWeekShort: projected.find((entry) => entry.short)?.from || null,
+    dated: { incoming, demand },
+    notPlacedInAWeek: apart,
+    ref: aiToolRef('item', row.itemId || row.sku, row.sku),
+  }
+}
+
 const stockProjection = defineAiTool({
   name: 'stock_projection',
   description: 'How one SKU\'s available stock moves over the next weeks: from what is available today, adding open purchase order lines in the week they are promised and taking off open sales order demand in the week promised to the customer. Lines already past their promised date, or with none, are listed apart and not placed in a week, because no arrival date is guessed. Gives the first week the SKU falls below safety stock or short.',
@@ -376,55 +430,7 @@ const stockProjection = defineAiTool({
   required: ['sku'],
   available: (facts) => Boolean(facts.inventory) && Boolean(facts.asOf || facts.today),
   run(args, { facts }) {
-    const row = array(facts.inventory.rows).find((entry) => fold(entry.sku) === fold(args.sku))
-    if (!row) return array(facts.inventory.masterOnly).some((entry) => fold(entry.sku) === fold(args.sku)) ? { asOf: facts.asOf, sku: args.sku, noStockOrOrders: true } : { error: 'not_found' }
-    const start = dayIndex(facts.asOf || facts.today)
-    const sameUnit = (unit) => !unit || !row.unit || fold(unit) === fold(row.unit)
-    const incoming = []
-    const apart = { incomingPastPromisedDate: [], incomingWithoutDate: [], demandWithoutDate: [] }
-    if (facts.purchaseOrders) {
-      for (const po of array(facts.purchaseOrders.index).filter((entry) => entry.isOpen)) {
-        for (const line of array(po.openLines).filter((entry) => fold(entry.sku) === fold(row.sku) && sameUnit(entry.unit) && (entry.remaining || 0) > 0)) {
-          const entry = { orderNumber: po.orderNumber, quantity: line.remaining, promisedDate: line.promisedDate || null, ref: aiToolRef('purchase_order', po.id, po.orderNumber) }
-          if (!line.promisedDate) apart.incomingWithoutDate.push(entry)
-          else if (dayIndex(line.promisedDate) < start) apart.incomingPastPromisedDate.push(entry)
-          else incoming.push(entry)
-        }
-      }
-    } else apart.incomingDatesNotReadable = row.incomingApprovedPo ?? null
-    const demand = []
-    if (Array.isArray(facts.salesOrders)) {
-      for (const order of facts.salesOrders) {
-        const open = array(order.lines).filter((line) => fold(line.sku) === fold(row.sku)).reduce((sum, line) => sum + (line.open || 0), 0)
-        if (!open) continue
-        const entry = { orderNumber: order.number, customer: order.customer, quantity: open, promisedDate: order.promisedDate || null, ref: aiToolRef('sales_order', order.id, order.number) }
-        if (order.promisedDate) demand.push(entry)
-        else apart.demandWithoutDate.push(entry)
-      }
-    } else apart.demandDatesNotReadable = row.openSalesDemand ?? null
-    const weeks = []
-    let balance = row.available ?? 0
-    for (let week = 0; week < (args.weeks || 4); week += 1) {
-      const from = start + week * 7
-      const to = from + 6
-      const inWeek = (entry) => { const day = dayIndex(entry.promisedDate); return day >= from && day <= to }
-      const arriving = incoming.filter(inWeek)
-      const due = demand.filter((entry) => inWeek(entry) || (week === 0 && dayIndex(entry.promisedDate) < start))
-      const received = arriving.reduce((sum, entry) => sum + entry.quantity, 0)
-      const shipped = due.reduce((sum, entry) => sum + entry.quantity, 0)
-      balance += received - shipped
-      weeks.push({ from: dayOfIndex(from), to: dayOfIndex(to), incoming: received, demand: shipped, endAvailable: balance, belowSafetyStock: row.safetyStock !== null && row.safetyStock !== undefined && balance < row.safetyStock, short: balance < 0, purchaseOrders: arriving.map((entry) => entry.orderNumber), salesOrders: due.map((entry) => entry.orderNumber) })
-    }
-    return {
-      asOf: facts.asOf, sku: row.sku, itemName: row.itemName, unit: row.unit,
-      availableToday: row.available, onHand: row.onHand, reserved: row.reserved, safetyStock: row.safetyStock, reorderPoint: row.reorderPoint,
-      weeks,
-      firstWeekBelowSafetyStock: weeks.find((week) => week.belowSafetyStock)?.from || null,
-      firstWeekShort: weeks.find((week) => week.short)?.from || null,
-      dated: { incoming, demand },
-      notPlacedInAWeek: apart,
-      ref: aiToolRef('item', row.itemId || row.sku, row.sku),
-    }
+    return aiStockProjection(facts, { sku: args.sku, weeks: args.weeks || 4 })
   },
 })
 
