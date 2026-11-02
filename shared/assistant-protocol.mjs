@@ -94,9 +94,11 @@ const chartProps = z.object({
   })
 })
 
+// A tile hidden for the role carries no value, so a builder slip cannot put it on screen.
 const kpisProps = z.object({
   source: id.optional(),
-  tiles: z.array(z.object({ code, value: amount.nullable(), unit: z.enum(VALUE_UNITS), currency: currency.optional(), hidden: z.boolean().optional(), route: route.optional() })).min(2).max(6),
+  tiles: z.array(z.object({ code, value: amount.nullable(), unit: z.enum(VALUE_UNITS), currency: currency.optional(), hidden: z.boolean().optional(), route: route.optional() })
+    .refine((tile) => !tile.hidden || tile.value === null, { message: 'a hidden tile has no value', path: ['value'] })).min(2).max(6),
 })
 
 const choicesProps = z.object({ source: id.optional(), promptCode: z.enum(CHOICE_PROMPTS), options: z.array(refSchema).min(2).max(6) })
@@ -128,7 +130,10 @@ export const prFormRowSchema = z.object({
   suppliers: z.array(approvedSupplier).max(20).optional(),
   needByDate: z.object({ value: day, source: z.enum(NEED_BY_SOURCES), leadTimeDays: z.number().int().nonnegative().nullable().optional(), shortWeekOf: day.nullable().optional() }),
   orderByDate: day.nullable().optional(),
-  estimatedUnitPrice: z.object({ value: amount.nonnegative().nullable(), currency: currency.nullable(), source: z.enum(PRICE_SOURCES) }),
+  // A masked or missing price has no value, and a reference price has one, so a
+  // price hidden for the role never reaches the browser.
+  estimatedUnitPrice: z.object({ value: amount.nonnegative().nullable(), currency: currency.nullable(), source: z.enum(PRICE_SOURCES) })
+    .refine((price) => (price.source === 'reference_price') === (price.value !== null), { message: 'only a reference price has a value', path: ['value'] }),
   warehouse: z.object({ id, label }).nullable().optional(),
   // An open request or order already covers the item.
   covered: z.object({ ref: refSchema }).nullable(),

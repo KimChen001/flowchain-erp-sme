@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
-import { PROGRESS_STEPS, STREAM_EVENT_TYPES, UI_COMPONENTS, parsePartProps, safeParsePartProps, safeParseStreamEvent, safeParseStreamLine } from '../../shared/assistant-protocol.mjs'
+import { PROGRESS_STEPS, STREAM_EVENT_TYPES, UI_COMPONENTS, parsePartProps, prFormRowSchema, safeParsePartProps, safeParseStreamEvent, safeParseStreamLine } from '../../shared/assistant-protocol.mjs'
 import { sanitizeSuggestionTrail } from '../../shared/prefill-suggestions.mjs'
 
 // The assistant v2 stream protocol and answer parts (docs/ai-assistant-v2-design.md
@@ -22,12 +22,12 @@ async function loadClient() {
     import { renderToStaticMarkup } from 'react-dom/server'
     import { AnswerParts } from './src/modules/ai-assistant/v2/parts/AnswerParts.tsx'
     import { StreamingText } from './src/modules/ai-assistant/v2/parts/StreamingText.tsx'
-    import { PurchaseRequestFormPart, draftRequestBody, initialFormLines } from './src/modules/ai-assistant/v2/parts/PurchaseRequestFormPart.tsx'
+    import { PurchaseRequestFormPart, addedFormRow, draftRequestBody, initialFormLines } from './src/modules/ai-assistant/v2/parts/PurchaseRequestFormPart.tsx'
     const navigate = () => {}
     export const text = (props) => renderToStaticMarkup(createElement(StreamingText, { onNavigate: navigate, ...props }))
     export const answer = (props) => renderToStaticMarkup(createElement(AnswerParts, { threadId: 'thr_7f2c', messageId: 'msg_19', onNavigate: navigate, onFollowUp: () => {}, onChoose: () => {}, ...props }))
     export const form = (props) => renderToStaticMarkup(createElement(PurchaseRequestFormPart, { partId: 'p2', threadId: 'thr_7f2c', messageId: 'msg_19', onNavigate: navigate, ...props }))
-    export { draftRequestBody, initialFormLines }
+    export { addedFormRow, draftRequestBody, initialFormLines }
   `
   const result = await build({
     stdin: { contents: entry, resolveDir: root, loader: 'tsx', sourcefile: 'assistant-v2-parts-entry.tsx' },
@@ -160,6 +160,10 @@ test('the protocol rejects malformed events and props', () => {
     { ...form, schemaVersion: 2 },
     { ...form, props: { ...form.props, formId: undefined } },
     { ...form, props: { ...form.props, suggested: [{ ...form.props.suggested[0], estimatedUnitPrice: { value: -1, currency: 'USD', source: 'reference_price' } }] } },
+    // A price hidden for the role, or missing, carries no value; a reference price carries one.
+    { ...form, props: { ...form.props, suggested: [{ ...form.props.suggested[0], estimatedUnitPrice: { value: 0.42, currency: 'USD', source: 'masked' } }] } },
+    { ...form, props: { ...form.props, suggested: [{ ...form.props.suggested[0], estimatedUnitPrice: { value: 0.42, currency: 'USD', source: 'missing' } }] } },
+    { ...form, props: { ...form.props, suggested: [{ ...form.props.suggested[0], estimatedUnitPrice: { value: null, currency: null, source: 'reference_price' } }] } },
     { ...form, refs: [{ type: 'item', id: 'itm_42' }] },
   ]
   for (const event of malformed) assert.equal(safeParseStreamEvent(event).success, false, JSON.stringify(event).slice(0, 120))
@@ -172,6 +176,7 @@ test('the protocol rejects malformed events and props', () => {
   assert.equal(safeParsePartProps('followups', { questions: ['x'.repeat(91)] }).success, false)
   assert.equal(safeParsePartProps('followups', { questions: ['a', 'b', 'c', 'd'] }).success, false)
   assert.equal(safeParsePartProps('kpis', { tiles: [kpisProps.tiles[0]] }).success, false)
+  assert.equal(safeParsePartProps('kpis', { tiles: [kpisProps.tiles[0], { ...kpisProps.tiles[1], value: 1800 }] }).success, false, 'a hidden tile carries no value')
   assert.equal(safeParsePartProps('table', { ...tableProps, total: 1 }).success, false)
   assert.equal(safeParsePartProps('table', { ...tableProps, listRoute: { moduleId: 'https://example.com' } }).success, false)
   assert.equal(safeParsePartProps('records', { cards: [] }).success, false)
@@ -277,6 +282,58 @@ test('a named item arrives ticked; a missing price, a masked price or an unclear
   assert.match(unclear, /data-testid="ai-v2-pr-create" data-primary="true" disabled=""/)
 })
 
+test('every field of a ticked line says where its value came from', async () => {
+  const client = await loadClient()
+  const named = (over) => formProps({ suggested: [], lines: [row({ checked: true, suggestedQuantity: { value: 5, source: 'user_named' }, ...over })] })
+  const fieldsOf = (markup) => markup.split('data-testid="ai-v2-pr-field"').slice(1).map((block) => [block.match(/^ data-field="(\w+)"/)[1], block.split('data-testid="ai-v2-pr-search"')[0]])
+  const chip = (markup, field) => fieldsOf(markup).find(([name]) => name === field)[1].match(/data-testid="ai-v2-pr-source"[^>]*>([^<]+)</)?.[1]
+  const ready = client.form({ props: named({}) })
+  const fields = fieldsOf(ready)
+  assert.deepEqual(fields.map(([field]) => field), ['quantity', 'supplier', 'needBy', 'price', 'warehouse'])
+  for (const [field, block] of fields) assert.equal(count(block, /data-testid="ai-v2-pr-source"/g), 1, field)
+  assert.deepEqual(['quantity', 'supplier', 'needBy', 'price', 'warehouse'].map((field) => chip(ready, field)), ['You asked for this', 'Preferred supplier', 'Lead time 14 days', 'Reference price', 'Item default'])
+  const other = client.form({ props: named({ supplier: { id: 'sup_3', name: 'Acme Packaging', source: 'only_approved' }, needByDate: { value: '2026-11-03', source: 'today', leadTimeDays: null } }) })
+  assert.deepEqual([chip(other, 'supplier'), chip(other, 'needBy')], ['Only approved supplier', 'Today (no lead time recorded)'])
+  const asked = client.form({ props: named({ supplier: { id: 'sup_3', name: 'Acme Packaging', source: 'user_named' }, needByDate: { value: '2026-11-30', source: 'user_named', leadTimeDays: 14 } }) })
+  assert.deepEqual([chip(asked, 'supplier'), chip(asked, 'needBy')], ['You asked for this', 'You asked for this'])
+  const chinese = client.form({ props: named({}), language: 'zh-CN' })
+  for (const text of ['首选供应商', '物料默认仓库', '按你的要求']) assert.ok(chinese.includes(text), text)
+})
+
+test('"Open full form" carries the line that turned create off, and says so when several are ticked', async () => {
+  const client = await loadClient()
+  const props = formProps({ suggested: [], lines: [
+    row({ checked: true }),
+    row({ item: item('itm_43', 'SKU-1010', 'Packing tape 48mm'), checked: true, estimatedUnitPrice: { value: null, currency: null, source: 'masked' } }),
+  ] })
+  const markup = client.form({ props })
+  assert.match(markup, /data-testid="ai-v2-pr-create" data-primary="true" disabled=""/)
+  assert.match(markup, /data-testid="ai-v2-pr-handoff-line"[^>]*>The full form opens with SKU-1010 only.</)
+  assert.doesNotMatch(client.form({ props: formProps({ suggested: [], lines: [row({ checked: true })] }) }), /ai-v2-pr-handoff-line/)
+})
+
+test('an item added from the search reads the reference price the item suppliers read sends as a string', async () => {
+  const client = await loadClient()
+  const catalog = { itemId: 'itm_50', sku: 'SKU-2001', itemName: 'Pallet wrap', purchaseUnit: 'roll', defaultWarehouseId: 'WH-1' }
+  const added = client.addedFormRow(catalog, [
+    { id: 'sup_3', name: 'Acme Packaging', preferred: true, referencePrice: '0.42', currency: 'USD', leadTimeDays: 14 },
+    { id: 'sup_4', name: 'Delta Packaging', preferred: false, referencePrice: null, currency: null, leadTimeDays: null },
+  ], '2026-11-02')
+  assert.deepEqual(added.estimatedUnitPrice, { value: 0.42, currency: 'USD', source: 'reference_price' })
+  assert.deepEqual(added.supplier, { id: 'sup_3', name: 'Acme Packaging', source: 'preferred' })
+  assert.deepEqual(added.suppliers.map((supplier) => supplier.unitPrice), [0.42, null])
+  assert.deepEqual(added.needByDate, { value: '2026-11-16', source: 'lead_time', leadTimeDays: 14 })
+  // The row the client builds meets the same protocol the server's rows do.
+  assert.ok(prFormRowSchema.safeParse(added).success)
+  const masked = client.addedFormRow(catalog, [{ id: 'sup_3', name: 'Acme Packaging', preferred: true, referencePrice: null, currency: 'USD', leadTimeDays: 14, restrictedFields: ['referencePrice'] }], '2026-11-02')
+  assert.deepEqual(masked.estimatedUnitPrice, { value: null, currency: null, source: 'masked' })
+  assert.ok(prFormRowSchema.safeParse(masked).success)
+  const addedProps = formProps({ suggested: [], lines: [added] })
+  const lines = client.initialFormLines(addedProps, 'p2')
+  const body = client.draftRequestBody([{ ...lines[0], quantity: '10' }], addedProps, { threadId: 'thr_7f2c', messageId: 'msg_19', partId: 'p2' })
+  assert.deepEqual([body.lines[0].estimatedUnitPrice, body.lines[0].estimatedAmount, body.lines[0].currency], [0.42, 4.2, 'USD'])
+})
+
 test('the receipt has Submit as its one primary button, and submitting says the approvers were emailed', async () => {
   const client = await loadClient()
   const draft = client.form({ props: formProps(), receipt: { id: 'PR-0231', version: 1, status: 'draft' } })
@@ -315,6 +372,11 @@ test('create posts the classic form body with one key per form and an assistant 
   assert.deepEqual(trail.fields.find((field) => field.field === 'lines.0.quantity'), { field: 'lines.0.quantity', source: 'record', ref: 'toolu_01', outcome: 'accepted' })
   const edited = client.draftRequestBody([{ ...ticked[0], quantity: '650' }], props, { threadId: 'thr_7f2c', messageId: 'msg_19', partId: 'p2' })
   assert.equal(sanitizeSuggestionTrail(edited.suggestionTrail).fields.find((field) => field.field === 'lines.0.quantity').outcome, 'edited')
+  assert.deepEqual(trail.fields.find((field) => field.field === 'lines.0.supplierId'), { field: 'lines.0.supplierId', source: 'default', ref: 'toolu_01', outcome: 'accepted' })
+  // A supplier the user named is theirs, not a suggestion.
+  const namedProps = formProps({ suggested: [], lines: [row({ checked: true, supplier: { id: 'sup_3', name: 'Acme Packaging', source: 'user_named' } })] })
+  const namedBody = client.draftRequestBody(client.initialFormLines(namedProps, 'p2'), namedProps, { threadId: 'thr_7f2c', messageId: 'msg_19', partId: 'p2' })
+  assert.equal(sanitizeSuggestionTrail(namedBody.suggestionTrail).fields.some((field) => field.field === 'lines.0.supplierId'), false)
 })
 
 test('the answer renders parts in order, chips text from the parts\' refs, and ignores unknown or malformed parts', async () => {

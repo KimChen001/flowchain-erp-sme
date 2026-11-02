@@ -31,7 +31,7 @@ export type FormLine = {
 };
 type Block = "quantity" | "supplier" | "override" | "price";
 type CatalogItem = { itemId?: string; id?: string; sku: string; itemName?: string; name?: string; purchaseUnit?: string; baseUnit?: string; defaultWarehouseId?: string };
-type ItemSupplier = { id: string; name?: string; supplierName?: string; preferred?: boolean; referencePrice?: number | null; currency?: string | null; leadTimeDays?: number | null; restrictedFields?: string[] };
+export type ItemSupplier = { id: string; name?: string; supplierName?: string; preferred?: boolean; referencePrice?: number | string | null; currency?: string | null; leadTimeDays?: number | string | null; restrictedFields?: string[] };
 
 const TEAL_TEXT = "#0F766E";
 const ORANGE = toneStyle("warning");
@@ -100,7 +100,7 @@ export function draftRequestBody(ticked: FormLine[], props: PrFormProps, ids: { 
     const quantity = Number(line.quantity);
     const { row } = line;
     if (row.suggestedQuantity.value !== null && row.suggestedQuantity.source !== "user_named") suggested(`lines.${index}.quantity`, "record", String(row.suggestedQuantity.value), line.quantity);
-    if (row.supplier) suggested(`lines.${index}.supplierId`, "default", row.supplier.id, line.supplierId);
+    if (row.supplier && row.supplier.source !== "user_named") suggested(`lines.${index}.supplierId`, "default", row.supplier.id, line.supplierId);
     if (row.needByDate.source !== "user_named") suggested(`lines.${index}.needByDate`, "default", row.needByDate.value, line.needByDate);
     if (row.estimatedUnitPrice.value !== null) suggested(`lines.${index}.estimatedUnitPrice`, "default", String(row.estimatedUnitPrice.value), String(price.value));
     if (row.warehouse) suggested(`lines.${index}.targetWarehouseId`, "default", row.warehouse.id, row.warehouse.id);
@@ -147,6 +147,7 @@ function errorText(error: unknown, copy: PartCopy) {
 const chipStyle = { background: "#F0FDFA", color: TEAL_TEXT };
 const Chip = ({ children, style = chipStyle, testId }: { children: ReactNode; style?: { background: string; color: string }; testId?: string }) =>
   <span data-testid={testId} className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-medium leading-4" style={style}>{children}</span>;
+const SourceChip = ({ children }: { children: ReactNode }) => <Chip testId="ai-v2-pr-source">{children}</Chip>;
 const linkClass = "text-[13px] font-medium hover:underline disabled:cursor-not-allowed disabled:opacity-50";
 const inputClass = "w-full rounded-lg px-2 py-1.5 text-[13px]";
 const inputStyle = { border: `1px solid ${A.gray4}`, background: A.white, color: A.label };
@@ -196,29 +197,34 @@ function ItemSearch({ copy, exclude, onAdd }: { copy: PartCopy; exclude: Set<str
   );
 }
 
+// A recorded number, or null. The item suppliers read sends the reference
+// price as a string ("0.42"), as the classic form's prefill expects.
+function recordedNumber(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 // An item the user added from the search, filled from its approved sources
-// the same way the classic form fills a line.
-async function addedRow(item: CatalogItem, timezone: string): Promise<PrFormRow> {
+// (GET /api/master-data/items/:id/suppliers) the same way the classic form fills a line.
+export function addedFormRow(item: CatalogItem, sources: ItemSupplier[], today: string): PrFormRow {
   const itemId = item.itemId || item.id || "";
-  let sources: ItemSupplier[] = [];
-  try {
-    sources = (await apiJson<{ suppliers: ItemSupplier[] }>(`/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`)).suppliers || [];
-  } catch {
-    sources = [];
-  }
-  const suppliers: ApprovedSupplier[] = sources.map((source) => ({
-    id: source.id,
-    name: source.name || source.supplierName || source.id,
-    preferred: Boolean(source.preferred),
-    leadTimeDays: Number.isInteger(source.leadTimeDays) ? source.leadTimeDays : null,
-    unitPrice: typeof source.referencePrice === "number" ? source.referencePrice : null,
-    currency: source.currency || null,
-  }));
+  const suppliers: ApprovedSupplier[] = sources.map((source) => {
+    const lead = recordedNumber(source.leadTimeDays);
+    const price = recordedNumber(source.referencePrice);
+    return {
+      id: source.id,
+      name: source.name || source.supplierName || source.id,
+      preferred: Boolean(source.preferred),
+      leadTimeDays: lead !== null && Number.isInteger(lead) && lead >= 0 ? lead : null,
+      unitPrice: price !== null && price >= 0 ? price : null,
+      currency: source.currency || null,
+    };
+  });
   const preferred = suppliers.filter((supplier) => supplier.preferred);
   // One preferred source, or the only approved one; several preferred leave the choice to the user.
   const chosen = preferred.length === 1 ? preferred[0] : !preferred.length && suppliers.length === 1 ? suppliers[0] : null;
   const masked = sources.some((source) => source.restrictedFields?.includes("referencePrice"));
-  const today = todayInTimeZone(timezone);
   const lead = chosen?.leadTimeDays ?? null;
   return {
     item: { id: itemId, sku: item.sku, name: item.itemName || item.name || "", unit: item.purchaseUnit || item.baseUnit || null },
@@ -231,6 +237,17 @@ async function addedRow(item: CatalogItem, timezone: string): Promise<PrFormRow>
     covered: null,
     checked: true,
   };
+}
+
+async function addedRow(item: CatalogItem, timezone: string): Promise<PrFormRow> {
+  const itemId = item.itemId || item.id || "";
+  let sources: ItemSupplier[] = [];
+  try {
+    sources = (await apiJson<{ suppliers: ItemSupplier[] }>(`/api/master-data/items/${encodeURIComponent(itemId)}/suppliers`)).suppliers || [];
+  } catch {
+    sources = [];
+  }
+  return addedFormRow(item, sources, todayInTimeZone(timezone));
 }
 
 export function PurchaseRequestFormPart({ props, partId, threadId, messageId, language, onNavigate, receipt: initialReceipt = null, onReceipt }: {
@@ -254,8 +271,9 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
   const update = (key: string, patch: Partial<FormLine>) => setLines((current) => current.map((line) => line.key === key ? { ...line, ...patch } : line));
   const chooseSupplier = (line: FormLine, supplierId: string) => {
     const lead = supplierOptions(line.row).find((supplier) => supplier.id === supplierId)?.leadTimeDays;
-    // A date the user changed is kept; otherwise it follows the new supplier's lead time.
-    const needByDate = !line.needByEdited && lead !== null && lead !== undefined ? addCalendarDays(todayInTimeZone(copy.timezone), lead) : line.needByDate;
+    // A date the user asked for or changed is kept; otherwise it follows the new supplier's lead time.
+    const followsLead = !line.needByEdited && line.row.needByDate.source !== "user_named" && lead !== null && lead !== undefined;
+    const needByDate = followsLead ? addCalendarDays(todayInTimeZone(copy.timezone), lead) : line.needByDate;
     update(line.key, { supplierId, needByDate });
   };
   const addItem = async (item: CatalogItem) => {
@@ -268,10 +286,11 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
   const canAddAll = lines.some((line) => line.origin === "suggested" && !line.checked && !line.row.covered);
   const createDisabled = busy || !ticked.length || blocks.length > 0 || !props.canCreate;
 
+  // The handoff carries one line: the one that turned Create off, when there is one.
+  const handoffLine = ticked.find((line) => blockOf(line)) || ticked[0] || lines[0];
   const openFullForm = () => {
-    const line = ticked[0] || lines[0];
-    if (!onNavigate || !line) return;
-    const target = structuredDraftTarget("purchase_request_draft", { itemIdOrSku: line.row.item.sku, quantity: line.quantity, supplierId: line.supplierId }, "ai_assistant");
+    if (!onNavigate || !handoffLine) return;
+    const target = structuredDraftTarget("purchase_request_draft", { itemIdOrSku: handoffLine.row.item.sku, quantity: handoffLine.quantity, supplierId: handoffLine.supplierId, requestedDeliveryDate: handoffLine.needByDate }, "ai_assistant");
     onNavigate(target.moduleId, null, { returnTo: "ai", source: "ai", entityLabel: copy.t("ai.v2.form.title"), query: target.query });
   };
 
@@ -285,8 +304,10 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
     setBusy(true);
     setError("");
     try {
-      const created = await apiJson<PrReceipt>("/api/procurement/requests", { method: "POST", body: JSON.stringify(draftRequestBody(ticked, props, { threadId, messageId, partId })) });
-      record({ id: created.id, version: created.version, status: created.status || "draft" });
+      const created = await apiJson<PrReceipt & { idempotentReplay?: boolean }>("/api/procurement/requests", { method: "POST", body: JSON.stringify(draftRequestBody(ticked, props, { threadId, messageId, partId })) });
+      // A replay returns the request as it was first created; it may have been submitted or cancelled since.
+      const current = created.idempotentReplay ? await apiJson<PrReceipt>(`/api/procurement/requests/${encodeURIComponent(created.id)}`) : created;
+      record({ id: current.id || created.id, version: current.version, status: current.status || "draft" });
     } catch (failure) {
       setError(errorText(failure, copy));
     } finally {
@@ -353,9 +374,21 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
           const lead = leadTimeOf(line);
           const options = supplierOptions(row);
           const unit = row.item.unit || "";
-          const quantitySource = row.suggestedQuantity.value !== null && line.quantity === String(row.suggestedQuantity.value)
-            ? copy.t(`ai.v2.form.source.${row.suggestedQuantity.source}`, { minimum: copy.number(row.suggestedQuantity.minimum ?? row.suggestedQuantity.value) })
-            : line.quantity && row.suggestedQuantity.value !== null ? copy.t("ai.v2.form.source.edited") : "";
+          // Where each field's value came from: the server's source while it is
+          // unchanged, then "Edited", or "Your choice" where nothing was suggested.
+          const quantitySource = !line.quantity ? ""
+            : row.suggestedQuantity.value !== null && line.quantity === String(row.suggestedQuantity.value)
+              ? copy.t(`ai.v2.form.source.${row.suggestedQuantity.source}`, { minimum: copy.number(row.suggestedQuantity.minimum ?? row.suggestedQuantity.value) })
+              : copy.t(row.suggestedQuantity.value !== null ? "ai.v2.form.source.edited" : "ai.v2.form.source.chosen");
+          const supplierSource = !line.supplierId ? ""
+            : row.supplier && line.supplierId === row.supplier.id ? copy.t(`ai.v2.form.source.${row.supplier.source}`)
+              : copy.t(row.supplier ? "ai.v2.form.source.edited" : "ai.v2.form.source.chosen");
+          // A date that moved with a newly chosen supplier follows that supplier's lead time.
+          const needByMoved = line.needByDate !== row.needByDate.value;
+          const leadDays = needByMoved ? lead : row.needByDate.leadTimeDays ?? lead;
+          const needBySource = line.needByEdited ? copy.t("ai.v2.form.source.edited")
+            : needByMoved || row.needByDate.source === "lead_time" ? (leadDays !== null ? copy.t("ai.v2.form.leadTime", { days: copy.number(leadDays) }) : "")
+              : copy.t(`ai.v2.form.source.${row.needByDate.source}`);
           const facts = [
             row.onHand !== undefined && row.onHand !== null ? copy.t("ai.v2.form.onHand", { value: copy.number(row.onHand) }) : "",
             row.safetyStock !== undefined && row.safetyStock !== null ? copy.t("ai.v2.form.safetyStock", { value: copy.number(row.safetyStock) }) : "",
@@ -385,36 +418,39 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
               </div>
               {line.checked ? (
                 <div data-testid="ai-v2-pr-line-fields" className="grid gap-2 pl-6">
-                  <label className="space-y-0.5">
+                  <label data-testid="ai-v2-pr-field" data-field="quantity" className="space-y-0.5">
                     <span className="block text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.quantity")}{unit ? ` (${unit})` : ""}</span>
                     <span className="flex flex-wrap items-center gap-1.5">
                       <input type="number" min="0" step="any" inputMode="decimal" value={line.quantity} onChange={(event) => update(line.key, { quantity: event.target.value })} className={`${inputClass} max-w-[8rem]`} style={inputStyle} />
-                      {quantitySource ? <Chip testId="ai-v2-pr-quantity-source">{quantitySource}</Chip> : null}
+                      {quantitySource ? <SourceChip>{quantitySource}</SourceChip> : null}
                     </span>
                   </label>
-                  <label className="space-y-0.5">
+                  <label data-testid="ai-v2-pr-field" data-field="supplier" className="space-y-0.5">
                     <span className="block text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.supplier")}</span>
-                    <select value={line.supplierId} onChange={(event) => chooseSupplier(line, event.target.value)} className={inputClass} style={inputStyle}>
-                      {!line.supplierId ? <option value="">{copy.t("ai.v2.form.pickSupplier")}</option> : null}
-                      {options.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.preferred ? copy.t("ai.v2.form.preferred", { name: supplier.name }) : supplier.name}</option>)}
-                    </select>
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <select value={line.supplierId} onChange={(event) => chooseSupplier(line, event.target.value)} className={`${inputClass} max-w-[16rem]`} style={inputStyle}>
+                        {!line.supplierId ? <option value="">{copy.t("ai.v2.form.pickSupplier")}</option> : null}
+                        {options.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.preferred ? copy.t("ai.v2.form.preferred", { name: supplier.name }) : supplier.name}</option>)}
+                      </select>
+                      {supplierSource ? <SourceChip>{supplierSource}</SourceChip> : null}
+                    </span>
                   </label>
-                  <label className="space-y-0.5">
+                  <label data-testid="ai-v2-pr-field" data-field="needBy" className="space-y-0.5">
                     <span className="block text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.needBy")}</span>
                     <span className="flex flex-wrap items-center gap-1.5">
                       <input type="date" value={line.needByDate} onChange={(event) => update(line.key, { needByDate: event.target.value, needByEdited: true })} className={`${inputClass} max-w-[10rem]`} style={inputStyle} />
-                      {!line.needByEdited && lead !== null ? <Chip>{copy.t("ai.v2.form.leadTime", { days: copy.number(lead) })}</Chip> : null}
+                      {needBySource ? <SourceChip>{needBySource}</SourceChip> : null}
                       {shortSoon ? <Chip testId="ai-v2-pr-short-week" style={ORANGE}><AlertTriangle size={11} aria-hidden />{copy.t("ai.v2.form.shortWeek", { date: copy.day(String(row.needByDate.shortWeekOf)) })}</Chip> : null}
                     </span>
                   </label>
                   <div className="flex flex-wrap gap-x-4 gap-y-1">
-                    <span>
+                    <span data-testid="ai-v2-pr-field" data-field="price">
                       <span className="text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.price")} </span>
                       {price.value !== null
-                        ? <><span className="tabular-nums" style={{ color: A.label }}>{copy.value(price.value, "money", price.currency)}</span> <Chip>{copy.t("ai.v2.form.referencePrice")}</Chip></>
+                        ? <><span className="tabular-nums" style={{ color: A.label }}>{copy.value(price.value, "money", price.currency)}</span> <SourceChip>{copy.t("ai.v2.form.referencePrice")}</SourceChip></>
                         : <span data-testid="ai-v2-pr-price-unavailable" style={{ color: ORANGE.color }}>{copy.t(price.source === "masked" ? "ai.v2.form.priceMasked" : "ai.v2.form.priceMissing")}</span>}
                     </span>
-                    {row.warehouse ? <span><span className="text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.warehouse")} </span><span style={{ color: A.label }}>{row.warehouse.label === row.warehouse.id ? warehouseName(row.warehouse.id) : row.warehouse.label}</span></span> : null}
+                    {row.warehouse ? <span data-testid="ai-v2-pr-field" data-field="warehouse"><span className="text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.warehouse")} </span><span style={{ color: A.label }}>{row.warehouse.label === row.warehouse.id ? warehouseName(row.warehouse.id) : row.warehouse.label}</span> <SourceChip>{copy.t("ai.v2.form.source.item_default")}</SourceChip></span> : null}
                   </div>
                 </div>
               ) : null}
@@ -428,6 +464,7 @@ export function PurchaseRequestFormPart({ props, partId, threadId, messageId, la
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         {primaryButton(createLabel, createDisabled, () => void create(), "ai-v2-pr-create")}
         {onNavigate ? secondary(copy.t("ai.v2.form.openFullForm"), openFullForm, "ai-v2-pr-open-full-form") : null}
+        {onNavigate && ticked.length > 1 && handoffLine ? <span data-testid="ai-v2-pr-handoff-line" className="text-[12px]" style={{ color: A.sub }}>{copy.t("ai.v2.form.openFullFormLine", { sku: handoffLine.row.item.sku })}</span> : null}
       </div>
     </section>
   );
