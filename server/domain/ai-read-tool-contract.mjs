@@ -17,7 +17,9 @@ const array = (value) => (Array.isArray(value) ? value : [])
 
 // `available(facts, context)` says whether the asking user may use the tool;
 // `run(args, { facts, context })` reads and returns plain JSON.
-export function defineAiTool({ name, description, parameters = {}, required = [], available = () => true, run }) {
+// `assistantV2Only`: offered to assistant v2 alone, never to the model-first
+// loop (ai-read-tool-runner.mjs).
+export function defineAiTool({ name, description, parameters = {}, required = [], available = () => true, run, assistantV2Only = false }) {
   if (!/^[a-z][a-z0-9_]{2,63}$/.test(name)) throw new Error(`Invalid tool name ${name}`)
   return Object.freeze({
     name,
@@ -25,6 +27,7 @@ export function defineAiTool({ name, description, parameters = {}, required = []
     schema: Object.freeze({ type: 'object', properties: parameters, required, additionalProperties: false }),
     available,
     run,
+    ...(assistantV2Only ? { assistantV2Only: true } : {}),
   })
 }
 
