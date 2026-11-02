@@ -31,14 +31,15 @@ function supplierExposure(signals) {
   })
 }
 
-export function runHighestRisk(facts, { focus = null } = {}) {
+// `top` as for runTodayPriorities.
+export function runHighestRisk(facts, { focus = null, top = TOP } = {}) {
   const signals = buildAiSkillSignals(facts)
   const exposure = signals.filter((item) => EXPOSURE_TYPES.has(item.type))
   const ranked = [...rankAiSkillItemsByDate(exposure), ...supplierExposure(exposure)]
     .filter((item) => matchesAiSkillFocus(item, focus))
     .sort(compareSignalsByPrintedDate)
     .map((item, index) => ({ ...item, also: item.also || [], rank: index + 1 }))
-  return { skillId: 'highest_risk_items', focus, total: ranked.length, items: ranked.slice(0, TOP) }
+  return { skillId: 'highest_risk_items', focus, total: ranked.length, items: ranked.slice(0, top) }
 }
 
 export function presentHighestRisk(result, facts, { skill, language, query }) {

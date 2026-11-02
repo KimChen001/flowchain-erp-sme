@@ -60,7 +60,8 @@ export function itemStockUnit(item) {
   return text(item?.unit || meta.baseUom || meta.uom)
 }
 
-const isActiveItem = (item) => text(item?.status || 'active') === 'active' && metadataOf(item).inventoryItem !== false
+// An item the reorder list considers: active, and kept in stock.
+export const isActiveItem = (item) => text(item?.status || 'active') === 'active' && metadataOf(item).inventoryItem !== false
 
 // Daily demand from posted shipment lines: { itemId, unit, quantity, postedAt }.
 // A line in another unit than the stock unit is never added. Without a stock
