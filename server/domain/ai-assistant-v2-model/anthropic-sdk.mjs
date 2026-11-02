@@ -68,7 +68,9 @@ function parseToolInput(json) {
 function modelError(error, signal) {
   if (signal?.aborted || error instanceof Anthropic.APIUserAbortError) return modelAbortError()
   if (error instanceof Anthropic.APIConnectionError) return new AssistantModelError('network_error', { cause: error })
-  if (error instanceof Anthropic.APIError && error.status) return new AssistantModelError('non_success_status', { status: error.status, cause: error })
+  // An error event inside a 200 stream, such as an overload, has a type but no
+  // status; it is the provider failing, not the model's output.
+  if (error instanceof Anthropic.APIError && (error.status || error.type)) return new AssistantModelError('non_success_status', { status: error.status, errorType: error.type, cause: error })
   return new AssistantModelError('malformed_output', { cause: error })
 }
 
@@ -89,7 +91,10 @@ export function createAnthropicSdkModelClient(env = {}, { maxRetries } = {}) {
       final.catch(() => {})
       const toolBlocks = new Map()
       try {
+        // The SDK hands out the events it has already read before it reports
+        // an abort, so the signal is checked before each one goes to the loop.
         for await (const event of stream) {
+          if (signal?.aborted) throw modelAbortError()
           if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') {
             const block = { id: event.content_block.id, name: event.content_block.name, json: '' }
             toolBlocks.set(event.index, block)
@@ -107,6 +112,7 @@ export function createAnthropicSdkModelClient(env = {}, { maxRetries } = {}) {
           }
         }
         const message = await final
+        if (signal?.aborted) throw modelAbortError()
         // The content goes back into the transcript as it came, thinking blocks
         // included: Sonnet 5.5 checks them against the conversation that made them.
         yield { type: 'message_end', stopReason: message.stop_reason, usage: message.usage, content: message.content }

@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { AssistantModelError, createAssistantV2ModelClient } from './ai-assistant-v2-model/index.mjs'
 import { assistantV2SdkBaseUrl, buildAssistantV2MessagesRequest, createAnthropicSdkModelClient } from './ai-assistant-v2-model/anthropic-sdk.mjs'
 import { createChatCompletionsModelClient, isLocalOnlyProviderEndpoint } from './ai-assistant-v2-model/chat-completions.mjs'
-import { completeScriptedTurn, createScriptedModelClient, startScriptedMessagesServer } from './ai-assistant-v2-model/scripted.mjs'
+import { completeScriptedTurn, createScriptedModelClient, scriptedTurnFor, startScriptedMessagesServer } from './ai-assistant-v2-model/scripted.mjs'
 
 // The assistant v2 model seam (docs/ai-assistant-v2-design.md §3.4): the SDK
 // client end to end against a localhost server speaking the Messages API's
@@ -131,6 +131,30 @@ test('stopping the SDK client ends the stream and closes the connection', async 
   }
 })
 
+test('nothing reaches the loop after a stop, even events the SDK has already read', async () => {
+  // No delay between frames, so the whole turn sits in the SDK's buffer when
+  // the first text arrives.
+  const turn = [{ type: 'message_end', stopReason: 'tool_use', content: [
+    { type: 'text', text: Array.from({ length: 30 }, (_, index) => `word${index}`).join(' ') },
+    { type: 'tool_use', id: 'toolu_9', name: 'stock_on_hand', input: { sku: 'BOLT-M8' } },
+  ] }]
+  const server = await startScriptedMessagesServer([turn])
+  try {
+    const client = createAnthropicSdkModelClient(providerEnv(server.endpoint), { maxRetries: 0 })
+    const controller = new AbortController()
+    const seen = []
+    await assert.rejects(async () => {
+      for await (const event of client.stream(request(), controller.signal)) {
+        seen.push(event)
+        controller.abort()
+      }
+    }, (error) => error.name === 'AbortError')
+    assert.deepEqual(seen.map((event) => event.type), ['text_delta'])
+  } finally {
+    await server.close()
+  }
+})
+
 test('an SDK client failure is an AssistantModelError with the reply status', async () => {
   const server = await startScriptedMessagesServer([])
   try {
@@ -138,6 +162,22 @@ test('an SDK client failure is an AssistantModelError with the reply status', as
     await assert.rejects(collect(client.stream(request(), undefined)), (error) => error instanceof AssistantModelError && error.reason === 'non_success_status' && error.status === 500)
   } finally {
     await server.close()
+  }
+  // An error the API streams after a 200 is the provider failing, with its type.
+  const overloaded = http.createServer((req, res) => {
+    req.resume()
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+      res.write(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } })}\n\n`)
+      res.end(`event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } })}\n\n`)
+    })
+  })
+  await new Promise((resolve) => overloaded.listen(0, '127.0.0.1', resolve))
+  try {
+    const client = createAnthropicSdkModelClient(providerEnv(`http://127.0.0.1:${overloaded.address().port}/v1/messages`), { maxRetries: 0 })
+    await assert.rejects(collect(client.stream(request(), undefined)), (error) => error instanceof AssistantModelError && error.reason === 'non_success_status' && error.errorType === 'overloaded_error' && error.status === undefined)
+  } finally {
+    await new Promise((resolve) => overloaded.close(resolve))
   }
   const unreachable = createAnthropicSdkModelClient(providerEnv('http://127.0.0.1:9/v1/messages'), { maxRetries: 0 })
   await assert.rejects(collect(unreachable.stream(request(), undefined)), (error) => error instanceof AssistantModelError && error.reason === 'network_error')
@@ -243,6 +283,49 @@ test('the chat completions client reports failures and a stop the same way as th
   }
 })
 
+test('a stop or a dropped connection while the chat reply arrives is not bad output', async () => {
+  // The reply's headers and the start of its body arrive, then the rest is
+  // held back, or on the /drop path the connection drops.
+  const sockets = new Set()
+  const slow = http.createServer((req, res) => {
+    req.resume()
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.write('{"choices":[')
+      if (req.url.startsWith('/drop/')) setTimeout(() => res.destroy(), 50)
+    })
+  })
+  slow.on('connection', (socket) => sockets.add(socket))
+  await new Promise((resolve) => slow.listen(0, '127.0.0.1', resolve))
+  const origin = `http://127.0.0.1:${slow.address().port}`
+  try {
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(), 100)
+    await assert.rejects(collect(createChatCompletionsModelClient(chatEnv(`${origin}/v1/chat/completions`)).stream(request(), controller.signal)), (error) => error.name === 'AbortError')
+    const dropped = createChatCompletionsModelClient(chatEnv(`${origin}/drop/v1/chat/completions`))
+    await assert.rejects(collect(dropped.stream(request(), new AbortController().signal)), (error) => error instanceof AssistantModelError && error.reason === 'network_error')
+  } finally {
+    for (const socket of sockets) socket.destroy()
+    await new Promise((resolve) => slow.close(resolve))
+  }
+
+  // A stop after the first event ends the stream there.
+  const stub = await chatStub({ body: { choices: [{ finish_reason: 'tool_calls', message: { content: 'Let me check.', tool_calls: [{ id: 'call_a', type: 'function', function: { name: 'attention_list', arguments: '{}' } }] } }] } })
+  try {
+    const controller = new AbortController()
+    const seen = []
+    await assert.rejects(async () => {
+      for await (const event of createChatCompletionsModelClient(chatEnv(stub.endpoint)).stream(request(), controller.signal)) {
+        seen.push(event)
+        controller.abort()
+      }
+    }, (error) => error.name === 'AbortError')
+    assert.deepEqual(seen.map((event) => event.type), ['text_delta'])
+  } finally {
+    await stub.close()
+  }
+})
+
 test('OpenCode Go and Parley endpoints are refused in production', () => {
   assert.equal(isLocalOnlyProviderEndpoint('https://parley.api.mit.edu/v1/chat/completions'), true)
   assert.equal(isLocalOnlyProviderEndpoint('https://opencode.ai/zen/go/v1/chat/completions'), true)
@@ -304,6 +387,48 @@ test('the scripted client replays one turn per call and records the requests', a
     }
   }, (error) => error.name === 'AbortError')
   assert.deepEqual(seen, [{ type: 'text_delta', text: 'One' }])
+})
+
+test('a script keyed by question picks each turn from the request, whatever client replays it', async () => {
+  const script = {
+    'How many M8 bolts are left?': [TOOL_ROUND, [{ type: 'text_delta', text: 'There are 12 left.' }]],
+    'And the washers?': [[{ type: 'text_delta', text: 'No washers on hand.' }]],
+  }
+  const firstRound = { role: 'assistant', content: TOOL_ROUND[0].content }
+  const toolResult = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: '{"onHand":12}' }] }
+  const answered = [{ role: 'user', content: 'How many M8 bolts are left?' }, firstRound, toolResult]
+
+  // The call count plays no part: the question and the rounds after it pick
+  // the turn, and the question matches whatever its case or spacing.
+  assert.equal(scriptedTurnFor(script, request(), 5), TOOL_ROUND)
+  assert.equal(scriptedTurnFor(script, request({ messages: answered }), 0), script['How many M8 bolts are left?'][1])
+  const later = [...answered, { role: 'assistant', content: [{ type: 'text', text: 'There are 12 left.' }] }, { role: 'user', content: [{ type: 'text', text: '  and the   WASHERS? ' }] }]
+  const events = await collect(createScriptedModelClient(script).stream(request({ messages: later }), undefined))
+  assert.equal(events[0].text, 'No washers on hand.')
+  // A question with no recording, or a round past the recording, fails as bad output.
+  assert.equal(scriptedTurnFor(script, request({ messages: [{ role: 'user', content: 'Something else?' }] }), 0), undefined)
+  await assert.rejects(collect(createScriptedModelClient(script).stream(request({ messages: [...answered, { role: 'assistant', content: 'Done.' }, toolResult] }), undefined)), (error) => error.reason === 'malformed_output')
+
+  // The localhost Messages server and the environment take the same form.
+  const server = await startScriptedMessagesServer(script)
+  try {
+    const client = createAnthropicSdkModelClient(providerEnv(server.endpoint), { maxRetries: 0 })
+    const second = await collect(client.stream(request({ messages: answered }), undefined))
+    assert.equal(second.filter((event) => event.type === 'text_delta').map((event) => event.text).join(''), 'There are 12 left.')
+  } finally {
+    await server.close()
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'flowchain-assistant-v2-model-'))
+  try {
+    const file = join(dir, 'script.json')
+    writeFileSync(file, JSON.stringify(script))
+    const replayed = await collect(createAssistantV2ModelClient({ FLOWCHAIN_AI_ASSISTANT_SCRIPTED: file }).stream(request(), undefined))
+    assert.equal(replayed.at(-1).stopReason, 'tool_use')
+    writeFileSync(file, JSON.stringify({ 'How many M8 bolts are left?': [{ type: 'text_delta', text: 'Not a list of turns.' }] }))
+    assert.throws(() => createAssistantV2ModelClient({ FLOWCHAIN_AI_ASSISTANT_SCRIPTED: file }), /list of turns/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('a scripted turn built from tool events ends in tool use', () => {

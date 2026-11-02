@@ -67,7 +67,7 @@ for (let call = 1; call <= 2; call += 1) {
       else if (event.type === 'message_end') end = event
     }
   } catch (error) {
-    fail(`Call ${call} failed: ${error.name}${error.reason ? ` ${error.reason}` : ''}${error.status ? ` ${error.status}` : ''}.`)
+    fail(`Call ${call} failed: ${error.name}${error.reason ? ` ${error.reason}` : ''}${error.status ? ` ${error.status}` : ''}${error.errorType ? ` ${error.errorType}` : ''}.`)
   }
   console.log(`Call ${call}: first text ${firstText === null ? 'none' : round(firstText)}, total ${round(performance.now() - started)}, stop reason ${end.stopReason}`)
   console.log(`  usage ${JSON.stringify(end.usage)}`)

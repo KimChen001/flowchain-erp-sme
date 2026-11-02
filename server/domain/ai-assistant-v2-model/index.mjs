@@ -22,8 +22,10 @@ export { AssistantModelError } from './model-error.mjs'
 // AssistantModelError. The client never records usage: the loop does, so no
 // call is metered after the user stops an answer.
 //
-// The client follows the environment, never the question:
-//   FLOWCHAIN_AI_ASSISTANT_SCRIPTED=<file>          replays recorded turns
+// Which client runs follows the environment, never the question:
+//   FLOWCHAIN_AI_ASSISTANT_SCRIPTED=<file>          replays recorded turns; a file
+//     keyed by question picks each turn from the request, so it holds up when
+//     a client is made per answer (scripted.mjs)
 //   FLOWCHAIN_AI_PROVIDER_KIND=anthropic_messages   the official SDK
 //   a chat kind (deepseek_chat, parley_chat, ...)   chat completions, local only
 // and is null when no provider can run the loop.

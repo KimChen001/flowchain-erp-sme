@@ -69,6 +69,10 @@ export function buildAssistantV2ChatRequest({ system, messages, tools = [], maxT
   }
 }
 
+function parseJson(value) {
+  try { return JSON.parse(value) } catch { return null }
+}
+
 // Arguments as the provider sent them (a JSON string, or an object); null
 // when they do not parse, for the loop to report back to the model.
 function parseArguments(raw) {
@@ -98,34 +102,42 @@ export function createChatCompletionsModelClient(env = {}) {
     async *stream(request, signal) {
       const body = buildAssistantV2ChatRequest(request, { model: config.model, effort })
       const headers = { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}`, ...aiProviderIdentityHeaders(env) }
-      let raw
+      // The body is read inside the try, so a stop or a dropped connection
+      // while it arrives is an abort or a network error, not bad output.
+      let replyText
       try {
         const reply = await fetch(config.endpoint, { method: 'POST', headers, body: JSON.stringify(body), signal })
         if (!reply.ok) {
           await reply.body?.cancel()
           throw new AssistantModelError('non_success_status', { status: reply.status })
         }
-        raw = await reply.json().catch(() => null)
+        replyText = await reply.text()
       } catch (error) {
         if (signal?.aborted) throw modelAbortError()
         throw error instanceof AssistantModelError ? error : new AssistantModelError('network_error', { cause: error })
       }
+      if (signal?.aborted) throw modelAbortError()
+      const raw = parseJson(replyText)
       const choice = raw?.choices?.[0]
       if (!choice?.message) throw new AssistantModelError('malformed_output')
       const answer = typeof choice.message.content === 'string' ? choice.message.content : ''
       const calls = array(choice.message.tool_calls).filter((call) => call?.function)
         .map((call, index) => ({ id: text(call.id) || `call_${index}`, name: text(call.function.name), input: parseArguments(call.function.arguments) }))
-      if (answer) yield { type: 'text_delta', text: answer }
-      for (const call of calls) {
-        yield { type: 'tool_use_start', id: call.id, name: call.name }
-        yield { type: 'tool_use_end', id: call.id, name: call.name, input: call.input }
-      }
       const content = [
         ...(answer ? [{ type: 'text', text: answer }] : []),
         ...calls.map((call) => ({ type: 'tool_use', id: call.id, name: call.name, input: call.input ?? {} })),
       ]
       const stopReason = calls.length ? 'tool_use' : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn'
-      yield { type: 'message_end', stopReason, usage: messagesUsage(raw), content }
+      const events = [
+        ...(answer ? [{ type: 'text_delta', text: answer }] : []),
+        ...calls.flatMap((call) => [{ type: 'tool_use_start', id: call.id, name: call.name }, { type: 'tool_use_end', id: call.id, name: call.name, input: call.input }]),
+        { type: 'message_end', stopReason, usage: messagesUsage(raw), content },
+      ]
+      // As with the other clients, nothing reaches the loop after a stop.
+      for (const event of events) {
+        if (signal?.aborted) throw modelAbortError()
+        yield event
+      }
     },
   }
 }
