@@ -85,7 +85,7 @@ const LINE_LIMIT = 3;
 
 type NavigateOptions = { returnTo?: string; entityLabel?: string; source?: string; returnContext?: unknown; query?: Record<string, string> };
 type FocusTarget = { entityType: string; entityId: string; focusArea?: "exception" | "receiving" | "invoice" | "inventory" | "evidence" | "receiving-invoice-variance" };
-type Navigate = (moduleId: string, focusTarget?: FocusTarget | null, options?: NavigateOptions) => void;
+export type Navigate = (moduleId: string, focusTarget?: FocusTarget | null, options?: NavigateOptions) => void;
 
 function entityType(value = ""): BusinessEntityType | null {
   const aliases: Record<string, BusinessEntityType> = { inventory_item: "item", sku: "item", po: "purchase_order", pr: "purchase_request", grn: "receiving_doc", invoice: "supplier_invoice" };
@@ -96,7 +96,7 @@ function entityType(value = ""): BusinessEntityType | null {
 const chipClass = "inline-flex max-w-full items-center rounded px-1 align-baseline text-[12.5px] font-semibold leading-5";
 
 // A record as a small chip that opens it; plain text when it has no page.
-function EvidenceLink({ item, children, onNavigate }: { item: AiResponseV2EvidenceItem; children?: ReactNode; onNavigate?: Navigate }) {
+export function EvidenceLink({ item, children, onNavigate }: { item: AiResponseV2EvidenceItem; children?: ReactNode; onNavigate?: Navigate }) {
   const type = entityType(item.entityType);
   const route = type ? businessEntityRouteRegistry[type] : null;
   if (!route || !item.entityId || !onNavigate || isUnavailableProductRoute(route.listRouteId)) return <span className="font-medium" style={{ color: A.label }}>{children || item.entityLabel || item.label}</span>;
