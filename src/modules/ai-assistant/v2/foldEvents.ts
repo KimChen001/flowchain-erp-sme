@@ -86,7 +86,8 @@ export function foldAssistantV2Event(message: AssistantV2Message, event: Assista
       const finished = { ...message, done: true, toolStatus: null };
       if (event.status >= 400) return { ...finished, error: message.error || failureOfStatus(event.status) };
       const summary = summaryOf(event.body);
-      const parts = !message.parts.length && !message.notices.length && Array.isArray(event.body.parts) && summary
+      // After an error (withheld, say) the summary may hold what the error stopped.
+      const parts = !message.parts.length && !message.notices.length && !message.error && Array.isArray(event.body.parts) && summary
         ? [{ id: "summary", kind: "text" as const, text: summary, flags: [] }]
         : message.parts;
       return { ...finished, parts, body: event.body };

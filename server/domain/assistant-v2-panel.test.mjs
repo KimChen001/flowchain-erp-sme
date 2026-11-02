@@ -146,6 +146,9 @@ test('ui parts keep their order, a resent part is swapped in place, notices are 
   assert.deepEqual(summary.parts, [{ id: 'summary', kind: 'text', text: 'Nothing is overdue.', flags: [] }])
   const refused = fold([event({ type: 'notice', code: 'injection_refused' }), event({ type: 'answer', status: 200, body: { parts: [], conclusion: { summary: 'Not answered.' } } })])
   assert.deepEqual(refused.parts, [])
+  // Nor after an error: a withheld answer never shows its summary.
+  const withheld = fold([event({ type: 'error', code: 'withheld', retryable: false }), event({ type: 'answer', status: 200, body: { parts: [], conclusion: { summary: 'PO-020 costs 4,200 USD.' } } })])
+  assert.deepEqual([withheld.parts, withheld.error], [[], { code: 'withheld', retryable: false }])
 
   // A rules answer (no parts at all) is drawn as the classic card.
   const rules = fold([{ type: 'answer', status: 200, body: { version: 'v2', answerSource: 'workspace_rules' } }])

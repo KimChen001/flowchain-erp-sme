@@ -64,6 +64,11 @@ type AiNavigateOptions = {
 
 type AiNavigate = (moduleId: string, focusTarget?: CanonicalFocusTarget | null, options?: AiNavigateOptions) => void;
 
+// Which assistant a conversation asks: the rules-first one (v1) or assistant v2.
+type AssistantPath = "v1" | "v2";
+// How long a first question waits for readiness before it asks v1.
+const READINESS_WAIT_MS = 4000;
+
 type AiSessionGrounding = {
   lastIntent?: string;
   lastPrimaryEntity?: { type?: string; id?: string; label?: string } | null;
@@ -680,9 +685,15 @@ export default function FloatingAiAssistant({
   const requestSeqRef = useRef(0);
   const abortReasonRef = useRef<"timeout" | "superseded" | "unmount" | "stopped" | null>(null);
   // Assistant v2 (docs/ai-assistant-v2-design.md): on only when the server says
-  // so for this user; until it answers, and if it fails, the panel asks as before.
-  const [assistantV2, setAssistantV2] = useState(false);
-  const readinessAskedRef = useRef(false);
+  // so for this user. The first question of a conversation waits for that
+  // answer and fixes the conversation's path, so one conversation never mixes
+  // the two; if readiness fails or is slow, the panel asks as before.
+  const readinessRef = useRef<Promise<AssistantPath> | null>(null);
+  const [conversationPath, setConversationPath] = useState<AssistantPath | null>(null);
+  const conversationPathRef = useRef<AssistantPath | null>(null);
+  // Bumped by a new conversation or a cancel, to drop a question still waiting for readiness.
+  const pendingAskRef = useRef(0);
+  const assistantV2 = conversationPath === "v2";
   const [threadId, setThreadId] = useState(newThreadId);
   // In-chat form receipts by form id, and the requests the forms created that
   // the next question reports to the server.
@@ -694,10 +705,13 @@ export default function FloatingAiAssistant({
     if (openSignal) setOpen(true);
   }, [openSignal]);
 
+  function assistantPath() {
+    readinessRef.current ??= fetchAiRuntimeReadiness().then((readiness): AssistantPath => readiness.assistantV2 === true ? "v2" : "v1", (): AssistantPath => "v1");
+    return readinessRef.current;
+  }
+
   useEffect(() => {
-    if (!open || readinessAskedRef.current) return;
-    readinessAskedRef.current = true;
-    fetchAiRuntimeReadiness().then((readiness) => setAssistantV2(readiness.assistantV2 === true), () => setAssistantV2(false));
+    if (open) void assistantPath();
   }, [open]);
 
   const minimizeAssistant = () => setOpen(false);
@@ -795,6 +809,9 @@ export default function FloatingAiAssistant({
   function startNewConversation() {
     abortReasonRef.current = "superseded";
     abortRef.current?.abort();
+    pendingAskRef.current += 1;
+    conversationPathRef.current = null;
+    setConversationPath(null);
     requestInFlightRef.current = false;
     setAsking(false);
     setSlowRequest(false);
@@ -808,8 +825,16 @@ export default function FloatingAiAssistant({
   }
 
   function cancelRequest() {
-    abortReasonRef.current = assistantV2 ? "stopped" : "superseded";
-    abortRef.current?.abort();
+    if (!abortRef.current) {
+      // Still waiting for readiness: nothing was sent, the question stays in the box.
+      pendingAskRef.current += 1;
+      requestInFlightRef.current = false;
+      setAsking(false);
+      return;
+    }
+    // The in-flight request belongs to this conversation, so its path decides.
+    abortReasonRef.current = conversationPathRef.current === "v2" ? "stopped" : "superseded";
+    abortRef.current.abort();
   }
 
   // A form's first receipt is a request it created: reported once, with the next question.
@@ -824,8 +849,20 @@ export default function FloatingAiAssistant({
   async function askAi(text: string, skillHint?: string) {
     const message = text.trim();
     if (!message || requestInFlightRef.current) return;
+    let path = conversationPathRef.current;
+    if (!path) {
+      const pending = pendingAskRef.current + 1;
+      pendingAskRef.current = pending;
+      requestInFlightRef.current = true;
+      setAsking(true);
+      path = await Promise.race([assistantPath(), new Promise<AssistantPath>((done) => window.setTimeout(() => done("v1"), READINESS_WAIT_MS))]);
+      if (pendingAskRef.current !== pending || abortReasonRef.current === "unmount") return;
+      requestInFlightRef.current = false;
+      conversationPathRef.current = path;
+      setConversationPath(path);
+    }
     // The model reads every question as typed: no skill hint goes with v2.
-    if (assistantV2) {
+    if (path === "v2") {
       await askAssistantV2(message);
       return;
     }
@@ -964,9 +1001,10 @@ export default function FloatingAiAssistant({
         show(foldAssistantV2Event(answer, event));
       }
     } catch (error) {
+      // A new conversation dropped this one, forms included.
+      if (abortReasonRef.current === "unmount" || abortReasonRef.current === "superseded") return;
       // Not read by the server: the next question reports these forms again.
       if (!received) pendingFormResultsRef.current = [...formResults, ...pendingFormResultsRef.current];
-      if (abortReasonRef.current === "unmount" || abortReasonRef.current === "superseded") return;
       show(finishAssistantV2Message(answer, abortReasonRef.current === "stopped" ? { notice: "cancelled" } : { error: assistantV2Failure(error) }));
     } finally {
       if (requestSeqRef.current === requestId) {
