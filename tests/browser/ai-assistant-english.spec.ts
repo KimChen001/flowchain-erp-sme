@@ -110,7 +110,7 @@ test("on a phone the assistant fills the screen and gets out of the way when a r
 test("a prepared draft opens as a supplier message for the user's own mail app", async ({ page }) => {
   await signIn(page);
   const panel = await openAssistant(page);
-  const answer = await askChip(panel, "Prepare an action draft");
+  const answer = await askChip(panel, "Which purchase orders are overdue?");
   await answer.getByTestId("ai-action-draft-preview").first().click();
   const shell = page.getByTestId("action-draft-review-shell");
   await expect(shell.getByTestId("action-draft-message")).toContainText("Supplier message");
@@ -157,8 +157,7 @@ test("one message to a supplier covers its overdue orders, says how much arrived
 
   // Asked under the purchasing policy, the answer cites the workspace's policy
   // document, and the draft review shows it as the basis, outside the message.
-  // (Reviewing a draft closed the assistant; it opens again on the same conversation.)
-  await page.getByTestId("ai-assistant-toggle").click();
+  // (Docked beside the page, the assistant stays open while a draft is reviewed.)
   await expect(panel).toBeVisible();
   const count = await answers.count();
   await page.getByTestId("ai-assistant-input").fill("Under our purchasing policy, prepare a message to Acme Components about its overdue orders.");
