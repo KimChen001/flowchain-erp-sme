@@ -1,5 +1,5 @@
 import { KnowledgeLibrary } from "./KnowledgeLibrary";
-import { useI18n } from "../../i18n/I18n";
+import { translate, useI18n } from "../../i18n/I18n";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { BookOpen, Clock3, FilePlus2, ListChecks, Loader2, Maximize2, MessageSquareText, Minimize2, MoreHorizontal, RotateCcw, Send, Square, SquarePen, Sparkles, X, type LucideIcon } from "lucide-react";
 import type { CanonicalFocusTarget } from "../../lib/evidenceLinks";
@@ -8,9 +8,13 @@ import { AiResponseV2Renderer } from "../../components/ai/AiResponseV2Renderer";
 import type { ActionDraftPreviewRequest } from "../action-drafts/ActionDraftReviewShell";
 import type { AiResponseV2 } from "../../domain/ai/response-contract";
 import { autoOpenDraftCard, structuredDraftTarget } from "../action-drafts/structuredDraftHandoff";
-import { focusTargetFromActiveContext, postAiRuntimeResponse, type AiRuntimeProgress } from "./aiRuntimeGateway";
+import { fetchAiRuntimeReadiness, focusTargetFromActiveContext, postAiRuntimeResponse, type AiRuntimeProgress } from "./aiRuntimeGateway";
 import { ApiError } from "../../lib/api-client";
 import { aiProgressLine, looksLikeRawJson, sanitizeAiMessage } from "./presentation";
+import { AssistantV2Answer } from "./v2/AssistantV2Answer";
+import { emptyAssistantV2Message, finishAssistantV2Message, foldAssistantV2Event, type AssistantV2Message } from "./v2/foldEvents";
+import type { PrReceipt } from "./v2/parts/types";
+import { assistantV2Failure, newThreadId, streamAssistantV2, type AssistantV2FormResult } from "./v2/streamClient";
 
 export type ActiveContext = {
   module?: string;
@@ -28,6 +32,11 @@ type AiChatMessage = {
   retryPrompt?: string;
   // The skill the failed question asked for, so a retry asks for it again.
   retrySkillHint?: string;
+  // An assistant v2 answer: its id in the panel, the question it answers
+  // (for Retry) and the answer as its events built it.
+  id?: string;
+  question?: string;
+  v2?: AssistantV2Message;
 };
 
 type AiChatCard = {
@@ -54,6 +63,11 @@ type AiNavigateOptions = {
 };
 
 type AiNavigate = (moduleId: string, focusTarget?: CanonicalFocusTarget | null, options?: AiNavigateOptions) => void;
+
+// Which assistant a conversation asks: the rules-first one (v1) or assistant v2.
+type AssistantPath = "v1" | "v2";
+// How long a first question waits for readiness before it asks v1.
+const READINESS_WAIT_MS = 4000;
 
 type AiSessionGrounding = {
   lastIntent?: string;
@@ -669,11 +683,36 @@ export default function FloatingAiAssistant({
   const requestInFlightRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const requestSeqRef = useRef(0);
-  const abortReasonRef = useRef<"timeout" | "superseded" | "unmount" | null>(null);
+  const abortReasonRef = useRef<"timeout" | "superseded" | "unmount" | "stopped" | null>(null);
+  // Assistant v2 (docs/ai-assistant-v2-design.md): on only when the server says
+  // so for this user. The first question of a conversation waits for that
+  // answer and fixes the conversation's path, so one conversation never mixes
+  // the two; if readiness fails or is slow, the panel asks as before.
+  const readinessRef = useRef<Promise<AssistantPath> | null>(null);
+  const [conversationPath, setConversationPath] = useState<AssistantPath | null>(null);
+  const conversationPathRef = useRef<AssistantPath | null>(null);
+  // Bumped by a new conversation or a cancel, to drop a question still waiting for readiness.
+  const pendingAskRef = useRef(0);
+  const assistantV2 = conversationPath === "v2";
+  const [threadId, setThreadId] = useState(newThreadId);
+  // In-chat form receipts by form id, and the requests the forms created that
+  // the next question reports to the server.
+  const [formReceipts, setFormReceipts] = useState<Record<string, PrReceipt>>({});
+  const reportedFormsRef = useRef(new Set<string>());
+  const pendingFormResultsRef = useRef<AssistantV2FormResult[]>([]);
 
   useEffect(() => {
     if (openSignal) setOpen(true);
   }, [openSignal]);
+
+  function assistantPath() {
+    readinessRef.current ??= fetchAiRuntimeReadiness().then((readiness): AssistantPath => readiness.assistantV2 === true ? "v2" : "v1", (): AssistantPath => "v1");
+    return readinessRef.current;
+  }
+
+  useEffect(() => {
+    if (open) void assistantPath();
+  }, [open]);
 
   const minimizeAssistant = () => setOpen(false);
   const restoreAssistant = () => setOpen(true);
@@ -770,22 +809,63 @@ export default function FloatingAiAssistant({
   function startNewConversation() {
     abortReasonRef.current = "superseded";
     abortRef.current?.abort();
+    pendingAskRef.current += 1;
+    conversationPathRef.current = null;
+    setConversationPath(null);
     requestInFlightRef.current = false;
     setAsking(false);
     setSlowRequest(false);
     setProgress(null);
     setMessages([]);
     setInput("");
+    setThreadId(newThreadId());
+    setFormReceipts({});
+    reportedFormsRef.current = new Set();
+    pendingFormResultsRef.current = [];
   }
 
   function cancelRequest() {
-    abortReasonRef.current = "superseded";
-    abortRef.current?.abort();
+    if (!abortRef.current) {
+      // Still waiting for readiness: nothing was sent, the question stays in the box.
+      pendingAskRef.current += 1;
+      requestInFlightRef.current = false;
+      setAsking(false);
+      return;
+    }
+    // The in-flight request belongs to this conversation, so its path decides.
+    abortReasonRef.current = conversationPathRef.current === "v2" ? "stopped" : "superseded";
+    abortRef.current.abort();
+  }
+
+  // A form's first receipt is a request it created: reported once, with the next question.
+  function recordFormReceipt(formId: string, receipt: PrReceipt) {
+    if (!reportedFormsRef.current.has(formId)) {
+      reportedFormsRef.current.add(formId);
+      pendingFormResultsRef.current = [...pendingFormResultsRef.current, { formId, purchaseRequestId: receipt.id }];
+    }
+    setFormReceipts((current) => ({ ...current, [formId]: receipt }));
   }
 
   async function askAi(text: string, skillHint?: string) {
     const message = text.trim();
     if (!message || requestInFlightRef.current) return;
+    let path = conversationPathRef.current;
+    if (!path) {
+      const pending = pendingAskRef.current + 1;
+      pendingAskRef.current = pending;
+      requestInFlightRef.current = true;
+      setAsking(true);
+      path = await Promise.race([assistantPath(), new Promise<AssistantPath>((done) => window.setTimeout(() => done("v1"), READINESS_WAIT_MS))]);
+      if (pendingAskRef.current !== pending || abortReasonRef.current === "unmount") return;
+      requestInFlightRef.current = false;
+      conversationPathRef.current = path;
+      setConversationPath(path);
+    }
+    // The model reads every question as typed: no skill hint goes with v2.
+    if (path === "v2") {
+      await askAssistantV2(message);
+      return;
+    }
 
     const context = currentContext;
     const requestStartedAt = performance.now();
@@ -887,6 +967,55 @@ export default function FloatingAiAssistant({
     }
   }
 
+  async function askAssistantV2(message: string) {
+    const context = currentContext;
+    const requestId = requestSeqRef.current + 1;
+    const controller = new AbortController();
+    const answerId = `answer-${requestId}`;
+    const formResults = pendingFormResultsRef.current;
+    let answer = emptyAssistantV2Message();
+    let received = false;
+    requestSeqRef.current = requestId;
+    requestInFlightRef.current = true;
+    pendingFormResultsRef.current = [];
+    abortReasonRef.current = null;
+    abortRef.current?.abort();
+    abortRef.current = controller;
+    const show = (next: AssistantV2Message) => {
+      answer = next;
+      if (requestSeqRef.current === requestId) setMessages((current) => current.map((item) => item.id === answerId ? { ...item, v2: next } : item));
+    };
+    setAsking(true);
+    setInput("");
+    setMessages((current) => [...current, { role: "user", content: message }, { role: "assistant", content: "", id: answerId, question: message, v2: answer }]);
+    try {
+      const events = streamAssistantV2({
+        threadId,
+        message,
+        activeContext: { moduleId, entityType: context?.entityType ?? null, entityId: context?.entityId ?? null },
+        answerLanguage: language,
+        ...(formResults.length ? { formResults } : {}),
+      }, { signal: controller.signal });
+      for await (const event of events) {
+        received = true;
+        show(foldAssistantV2Event(answer, event));
+      }
+    } catch (error) {
+      // A new conversation dropped this one, forms included.
+      if (abortReasonRef.current === "unmount" || abortReasonRef.current === "superseded") return;
+      // Not read by the server: the next question reports these forms again.
+      if (!received) pendingFormResultsRef.current = [...formResults, ...pendingFormResultsRef.current];
+      show(finishAssistantV2Message(answer, abortReasonRef.current === "stopped" ? { notice: "cancelled" } : { error: assistantV2Failure(error) }));
+    } finally {
+      if (requestSeqRef.current === requestId) {
+        requestInFlightRef.current = false;
+        abortRef.current = null;
+        abortReasonRef.current = null;
+        setAsking(false);
+      }
+    }
+  }
+
   return (
     <div className="contents" data-testid="ai-assistant-root">
       {knowledgeOpen && <KnowledgeLibrary onClose={() => setKnowledgeOpen(false)} />}
@@ -967,6 +1096,21 @@ export default function FloatingAiAssistant({
                       {message.content}
                     </div>
                   </div>
+                ) : message.v2 ? (
+                  <div key={message.id || `${message.role}-${index}`} data-testid="ai-message-assistant" className="text-sm leading-relaxed" style={{ color: A.label }}>
+                    <AssistantV2Answer
+                      message={message.v2}
+                      threadId={threadId}
+                      fallbackMessageId={message.id || `answer-${index}`}
+                      latest={index === lastAssistantIndex}
+                      receipts={formReceipts}
+                      onReceipt={recordFormReceipt}
+                      onNavigate={minimizeAfterNavigate}
+                      onFollowUp={askAi}
+                      onRetry={message.question ? () => askAi(message.question || "") : undefined}
+                      onReviewActionDraft={onReviewActionDraft}
+                    />
+                  </div>
                 ) : (
                   <div key={`${message.role}-${index}`} data-testid="ai-message-assistant" className="space-y-3 text-sm leading-relaxed" style={{ color: A.label }}>
                     {message.content ? <div className="whitespace-pre-wrap">{message.content}</div> : null}
@@ -1003,7 +1147,8 @@ export default function FloatingAiAssistant({
                     ) : null}
                   </div>
                 ))}
-                {asking && (
+                {/* An assistant v2 answer shows its own status line. */}
+                {asking && !assistantV2 && (
                   <div data-testid="ai-progress-line" aria-live="polite" className="flex items-center gap-2 text-[13px]" style={{ color: A.gray1 }}>
                     <Loader2 size={14} className="animate-spin" aria-hidden />
                     {progress ? aiProgressLine(progress, language) : slowRequest ? currentRequestLabel : (language === "zh-CN" ? "正在确认查询范围" : "Checking your question")}
@@ -1040,10 +1185,11 @@ export default function FloatingAiAssistant({
                   type="button"
                   onClick={() => asking ? cancelRequest() : askAi(input)}
                   disabled={!asking && !input.trim()}
-                  data-testid="ai-assistant-send"
+                  data-testid={asking && assistantV2 ? "ai-assistant-stop" : "ai-assistant-send"}
                   className="flex h-8 w-8 items-center justify-center rounded-lg text-white disabled:cursor-not-allowed"
                   style={{ background: asking || input.trim() ? A.blue : A.gray3 }}
-                  aria-label={asking ? (language === "zh-CN" ? "取消请求" : "Cancel request") : (language === "zh-CN" ? "发送" : "Send")}
+                  aria-label={asking ? (assistantV2 ? translate(language, "ai.v2.stop") : language === "zh-CN" ? "取消请求" : "Cancel request") : (language === "zh-CN" ? "发送" : "Send")}
+                  title={asking && assistantV2 ? translate(language, "ai.v2.stop") : undefined}
                 >
                   {asking ? <Square size={13} /> : <Send size={15} />}
                 </button>
