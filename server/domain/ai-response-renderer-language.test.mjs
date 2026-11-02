@@ -180,6 +180,27 @@ test('record numbers in the answer are chips, and one trust line says the figure
   assert.match(cut, /<\/button><\/span> is 5 days late\.<\/p>/)
 })
 
+// The owner on 2026-11-01: the phone panel felt too dense. Three lines show
+// and the rest open on request; an impact every line shares is said once.
+test('an answer shows three lines and folds the rest; an impact every line shares is said once', async () => {
+  const client = await loadClient()
+  const today = client.render((await answers())('today_priorities'))
+  const items = today.match(/data-testid="ai-focused-primary-items"[^]*?<\/ul>/)[0]
+  assert.equal((items.match(/<li /g) || []).length, 3)
+  assert.match(today, /data-testid="ai-more-lines"[^>]*>Show 2 more</)
+  const record = (id) => ({ id: `purchase_order:${id}`, entityType: 'purchase_order', entityId: id, entityLabel: id, label: id, summary: `${id} is late.` })
+  const shared = client.render({
+    version: 'v2', language: 'en-US', query: 'q', answerSource: 'workspace_rules', answerSourceLabel: 'Answered from your workspace data',
+    conclusion: { title: '2 purchase orders are overdue', summary: '', severity: 'risk', confidence: 'high' },
+    keyEvidence: [record('PO-1'), record('PO-2')],
+    businessImpact: [1, 2].map(() => ({ area: 'Stock', impact: 'A late receipt can hold up stock.', severity: 'risk', explanation: 'A late receipt can hold up stock.' })),
+    dataLimitations: [], reviewCards: [], navigationLinks: [], followUpSuggestions: [],
+  })
+  assert.equal((shared.match(/Impact: A late receipt can hold up stock\./g) || []).length, 1)
+  assert.match(shared, /data-testid="ai-shared-impact"/)
+  assert.doesNotMatch(shared, /data-testid="ai-more-lines"/)
+})
+
 test('an order proposal is a confirm card with its fields and one primary button', async () => {
   const client = await loadClient()
   const scenario = aiSkillScenario()

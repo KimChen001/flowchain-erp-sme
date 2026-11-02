@@ -1012,8 +1012,9 @@ export default function FloatingAiAssistant({
             )}
           </div>
 
-          <div className="shrink-0 px-4 pb-4 pt-2">
-            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm transition focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100">
+          {/* On a phone one row, the send button beside the text; docked, a taller box. */}
+          <div className="shrink-0 px-3 pb-3 pt-2 lg:px-4 lg:pb-4">
+            <div className="flex items-end gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm transition focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 lg:block lg:p-0">
               <textarea
                 ref={inputRef}
                 value={input}
@@ -1027,13 +1028,13 @@ export default function FloatingAiAssistant({
                   }
                 }}
                 disabled={asking}
-                rows={2}
+                rows={1}
                 placeholder={inputPlaceholder}
                 onInput={(event) => { const target = event.currentTarget; target.style.height = "auto"; target.style.height = `${Math.min(target.scrollHeight, 160)}px`; }}
-                className="block max-h-40 min-h-[60px] w-full resize-none overflow-y-auto rounded-2xl bg-transparent px-3.5 pt-3 text-sm leading-relaxed outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
+                className="block max-h-40 min-h-[40px] w-full flex-1 resize-none overflow-y-auto rounded-2xl bg-transparent px-2.5 py-2 text-sm leading-relaxed outline-none placeholder:text-slate-400 disabled:cursor-not-allowed lg:min-h-[60px] lg:px-3.5 lg:pb-0 lg:pt-3"
                 style={{ color: A.label, fontFamily: "inherit" }}
               />
-              <div className="flex items-center justify-end px-2 pb-2">
+              <div className="flex shrink-0 items-center justify-end p-1 lg:px-2 lg:pb-2 lg:pt-0">
                 <button
                   type="button"
                   onClick={() => asking ? cancelRequest() : askAi(input)}
